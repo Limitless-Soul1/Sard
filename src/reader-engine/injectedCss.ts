@@ -127,8 +127,11 @@ export function buildReadingCss(
       unicode-range: ${LATIN_RANGE};
     }
 
-    /* size via zoom (D6 — scales even absolute-CSS books, reflows columns) */
-    :root { zoom: ${style.zoom}; }
+    /* size via zoom (D6 — scales even absolute-CSS books). Zoom the column CONTENT (body),
+       NOT the column container (:root/html, where foliate sets column-width): that way the
+       scaled text reflows WITHIN foliate's fixed-width columns instead of overflowing them
+       and clipping line-ends (worse at higher zoom / narrower measures). */
+    body { zoom: ${style.zoom}; }
 
     /* deterministic section box → no stray paginated scrollbar (RAWY-04); inline margins */
     html, body { height: 100%; margin: 0; overflow: hidden; box-sizing: border-box; }

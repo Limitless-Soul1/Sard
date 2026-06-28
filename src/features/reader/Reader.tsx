@@ -6,19 +6,18 @@ import { useReader } from "../../reader-engine/store";
 import { ARABIC_DEFAULTS, defaultsForDir, type ReadingStyle } from "../../reader-engine/injectedCss";
 import { appInfo, bookRegister, progressGet, progressSave, settingsGet, settingsSet } from "../../lib/ipc";
 import { useI18n } from "../../i18n";
-import type { TKey } from "../../i18n/locales/en";
 import { THEMES, useTheme } from "../../theme";
-import { TypographyBar } from "./TypographyBar";
+import { ReaderChrome } from "./ReaderChrome";
+import { SettingsPanel } from "./SettingsPanel";
+import { useChromeOnIntent } from "./useChromeOnIntent";
 
-// RAWY-12: two dev sample books (Arabic RTL + English LTR) so we can prove that the
-// book's direction is independent of the UI language/direction. Real library import later.
 const BOOKS = {
   ar: { id: "dev-sample-shawqiyyat", file: "sample.epub" },
   en: { id: "dev-sample-alice", file: "sample-en.epub" },
 } as const;
 type BookKey = keyof typeof BOOKS;
 
-const STYLE_KEY = "reading_style"; // GLOBAL typography settings (D11)
+const STYLE_KEY = "reading_style";
 const SAVE_DEBOUNCE_MS = 500;
 
 async function loadStyle(): Promise<ReadingStyle | null> {
@@ -35,16 +34,18 @@ export function Reader() {
   const { t } = useI18n();
   const stageRef = useRef<HTMLDivElement>(null);
   const ctrlRef = useRef<FoliateController | null>(null);
-  if (!ctrlRef.current) ctrlRef.current = new FoliateController(); // one instance across StrictMode re-invokes
+  if (!ctrlRef.current) ctrlRef.current = new FoliateController();
 
-  const bookRef = useRef<BookKey>("ar"); // current book id for relocate saves
+  const bookRef = useRef<BookKey>("ar");
   const [book, setBook] = useState<BookKey>("ar");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const progressTimer = useRef<number | undefined>(undefined);
   const styleTimer = useRef<number | undefined>(undefined);
   const appDataDir = useRef<string>("");
 
-  const { status, dir, fraction, cfi, error, style } = useReader();
+  const { status, dir, fraction, chapterLabel, error, style } = useReader();
   const { themeId, overrideBookColor, hideChapterTitles } = useTheme();
+  const { visible: chromeVisible, wake, setHold } = useChromeOnIntent();
 
   const openBook = useCallback(async (which: BookKey) => {
     const set = useReader.getState().set;
@@ -58,12 +59,11 @@ export function Reader() {
 
       await bookRegister(BOOKS[which].id, filePath);
       const saved = await progressGet(BOOKS[which].id);
-      const current = useReader.getState().style;
-      const persisted = current ?? (await loadStyle());
+      const persisted = useReader.getState().style ?? (await loadStyle());
 
       const ctrl = ctrlRef.current!;
-      ctrl.onRelocate(({ cfi, fraction }) => {
-        set({ cfi, fraction });
+      ctrl.onRelocate(({ cfi, fraction, chapterLabel }) => {
+        set({ cfi, fraction, chapterLabel });
         if (progressTimer.current) clearTimeout(progressTimer.current);
         progressTimer.current = window.setTimeout(() => {
           if (cfi) progressSave(BOOKS[bookRef.current].id, cfi, fraction).catch(console.error);
@@ -95,10 +95,13 @@ export function Reader() {
     };
   }, [openBook]);
 
-  // Re-theme the book whenever the theme or book-colour flags change (app-wide → book).
+  // App-wide theme → book.
   useEffect(() => {
     ctrlRef.current?.applyTheme(THEMES[themeId], { overrideBookColor, hideChapterTitles });
   }, [themeId, overrideBookColor, hideChapterTitles]);
+
+  // Pin chrome open while the settings panel is open.
+  useEffect(() => setHold(settingsOpen), [settingsOpen, setHold]);
 
   const switchBook = (which: BookKey) => {
     if (which === bookRef.current) return;
@@ -118,23 +121,58 @@ export function Reader() {
     }, SAVE_DEBOUNCE_MS);
   };
 
-  const statusKey = `status.${status}` as TKey;
-  const statusText = `${t(statusKey)} · ${themeId} · book.dir=${dir} · ${(fraction * 100).toFixed(1)}%`;
+  const chapter = chapterLabel || t("reader.chapterFallback");
+  const isRtlBook = dir === "rtl";
 
   return (
     <div className="reader-root">
-      <TypographyBar
+      {/* desk + centered page sheet (the book) + page-turn affordances */}
+      <div className="reader-desk">
+        <button
+          className="page-chevron page-chevron-left"
+          onClick={() => ctrlRef.current?.next()}
+          title={t("reader.prev")}
+        >
+          ‹
+        </button>
+        <div className={`page-sheet${isRtlBook ? " rtl" : ""}`}>
+          <div className="page-ribbon" />
+          <div className="page-host" ref={stageRef} dir="ltr" />
+          <div className="page-grain" />
+        </div>
+        <button
+          className="page-chevron page-chevron-right"
+          onClick={() => ctrlRef.current?.prev()}
+          title={t("reader.next")}
+        >
+          ›
+        </button>
+      </div>
+
+      <ReaderChrome
+        visible={chromeVisible || settingsOpen}
+        chapter={chapter}
+        fraction={fraction}
+        bookDir={dir}
+        onBack={wake}
+        onContents={wake}
+        onTypography={() => setSettingsOpen(true)}
+        onTheme={() => setSettingsOpen(true)}
+        onBookmark={wake}
+      />
+
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
         style={style ?? ARABIC_DEFAULTS}
         update={update}
         onPrev={() => ctrlRef.current?.prev()}
         onNext={() => ctrlRef.current?.next()}
-        status={statusText}
+        status={`${status} · ${themeId}`}
         book={book}
         onBook={switchBook}
       />
-      {/* dir="ltr" isolates the reading stage from the UI direction; the book's own
-          direction is set by foliate (book.dir) inside its iframe — fully independent. */}
-      <div className="reader-stage" ref={stageRef} dir="ltr" />
+
       {status === "error" && <pre className="reader-error">{t("status.error")}: {error}</pre>}
     </div>
   );

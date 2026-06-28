@@ -50,8 +50,193 @@ html, body, #root {
   font-family: var(--ui-font);
 }
 
-/* ---- Reader layout ---- */
-.reader-root { position: fixed; inset: 0; display: flex; flex-direction: column; background: var(--app-bg); }
+/* ---- Reader layout (RAWY-14, band C) ---- */
+.reader-root { position: fixed; inset: 0; background: var(--app-bg); overflow: hidden; }
+
+/* the desk: the surface the page sheet rests on */
+.reader-desk {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: center;
+  background: var(--app-bg);
+}
+
+/* the paper page sheet — measure + page-edge shadow (the book renders inside .page-host) */
+.page-sheet {
+  position: relative;
+  inline-size: min(100%, 660px);
+  block-size: 100%;
+  background: var(--paper-bg);
+  box-shadow: 0 0 30px rgba(60, 40, 16, 0.1), -1px 0 0 rgba(43, 37, 33, 0.05), 1px 0 0 rgba(43, 37, 33, 0.05);
+  overflow: hidden;
+}
+.page-sheet.rtl { inline-size: min(100%, 680px); }
+/* dark themes: swap the warm cast for a subtle inset light edge */
+:root[data-dark="true"] .page-sheet {
+  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.05), inset -1px 0 0 rgba(255, 255, 255, 0.05);
+}
+.page-host { position: absolute; inset: 0; }
+.page-host foliate-view { width: 100%; height: 100%; display: block; }
+
+/* faint paper grain in the sheet margins (full-paper grain over the iframe is deferred) */
+.page-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* cloth ribbon bookmark — top-end corner of the page (mirrors with the book) */
+.page-ribbon {
+  position: absolute;
+  top: 0;
+  inset-inline-end: 78px;
+  width: 24px;
+  height: 104px;
+  z-index: 2;
+  background: linear-gradient(90deg, #8a2c26, #a23b34 45%, #bf4940);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 84%, 0 100%);
+  box-shadow: 2px 4px 7px rgba(0, 0, 0, 0.2);
+}
+.page-sheet.rtl .page-ribbon { background: linear-gradient(90deg, #bf4940, #a23b34 55%, #8a2c26); box-shadow: -2px 4px 7px rgba(0, 0, 0, 0.2); }
+
+/* page-turn affordance on the desk edges */
+.page-chevron {
+  position: absolute;
+  inset-block: 0;
+  width: 7%;
+  min-width: 56px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: 200 30px "Inter", sans-serif;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.45;
+  z-index: 3;
+  transition: opacity 0.18s ease;
+}
+.page-chevron:hover { opacity: 0.9; }
+.page-chevron-left { left: 0; justify-content: flex-start; padding-left: 22px; }
+.page-chevron-right { right: 0; justify-content: flex-end; padding-right: 22px; }
+
+/* ---- reading chrome (top bar + bottom progress), hidden until intent ---- */
+.reader-chrome {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+  opacity: 0;
+  transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.reader-chrome.show { opacity: 1; }
+.reader-chrome.show .rc-top,
+.reader-chrome.show .rc-bottom { pointer-events: auto; }
+.rc-top,
+.rc-bottom {
+  position: absolute;
+  inset-inline: 0;
+  display: flex;
+  align-items: center;
+  background: color-mix(in srgb, var(--chrome-bg) 86%, transparent);
+  backdrop-filter: blur(6px);
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.rc-top {
+  top: 0;
+  height: 46px;
+  justify-content: space-between;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--chrome-border);
+  transform: translateY(-100%);
+}
+.rc-bottom {
+  bottom: 0;
+  min-height: 44px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 7px;
+  padding: 7px 26px;
+  border-top: 1px solid var(--chrome-border);
+  transform: translateY(100%);
+}
+.reader-chrome.show .rc-top,
+.reader-chrome.show .rc-bottom { transform: translateY(0); }
+
+.rc-group { display: flex; align-items: center; gap: 18px; color: var(--muted); }
+.rc-chapter { font: 500 13px "Inter", "SardUIArabic", sans-serif; color: var(--muted); letter-spacing: 0.02em; }
+.rc-icon {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font: 300 19px "Inter", sans-serif;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  border-radius: 5px;
+}
+.rc-icon:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.rc-aa { font: 600 15px "Literata", serif; }
+.rc-aa span { font-size: 11px; }
+.rc-contents { flex-direction: column; gap: 3px; }
+.rc-contents span { width: 16px; height: 1.5px; background: currentColor; }
+.rc-contents span:last-child { width: 11px; }
+.rc-bookmark { width: 11px; height: 14px; border: 1.5px solid currentColor; border-top-width: 4px; border-radius: 1px; background: transparent; }
+
+.rc-progress { width: 100%; height: 2px; background: rgba(43, 37, 33, 0.1); border-radius: 2px; position: relative; }
+:root[data-dark="true"] .rc-progress { background: rgba(255, 255, 255, 0.12); }
+.rc-progress-fill { position: absolute; inset-block: 0; inset-inline-start: 0; background: var(--accent); border-radius: 2px; }
+.rc-meta { width: 100%; display: flex; justify-content: space-between; font: 500 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+
+/* ---- settings slide-over ---- */
+.panel-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: rgba(0, 0, 0, 0.18);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+}
+.panel-scrim.show { opacity: 1; pointer-events: auto; }
+.settings-panel {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  z-index: 6;
+  width: min(360px, 92vw);
+  background: var(--chrome-bg);
+  border-inline-start: 1px solid var(--chrome-border);
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.16);
+  transform: translateX(100%);
+  transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+  display: flex;
+  flex-direction: column;
+}
+:root[dir="rtl"] .settings-panel { transform: translateX(-100%); }
+.settings-panel.show { transform: translateX(0); }
+.sp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--chrome-border);
+}
+.sp-title { font: 600 14px "Inter", "SardUIArabic", sans-serif; color: var(--text); }
+.sp-body { padding: 10px; overflow: auto; }
+.sp-body .tbar { background: transparent; border: 0; box-shadow: none; padding: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .reader-chrome, .rc-top, .rc-bottom, .settings-panel, .panel-scrim, .page-chevron { transition: none; }
+}
 
 /* ---- Toolbar (chrome) ---- */
 .tbar {
@@ -115,10 +300,8 @@ html, body, #root {
 .picker-btn-ar { font-family: "SardUIArabic", system-ui, sans-serif; }
 
 /* ---- Reading stage (the desk; the book sheet is themed via injectedCss) ---- */
-.reader-stage { position: relative; flex: 1 1 auto; min-height: 0; background: var(--app-bg); }
-.reader-stage foliate-view { width: 100%; height: 100%; display: block; }
 .reader-error {
-  position: absolute; inset: 48px 0 0 0; margin: 0; padding: 20px;
+  position: absolute; inset: 0; margin: 0; padding: 20px;
   background: var(--paper-bg); color: #c0392b; font-family: ui-monospace, monospace;
-  font-size: 12px; white-space: pre-wrap; overflow: auto; z-index: 3;
+  font-size: 12px; white-space: pre-wrap; overflow: auto; z-index: 7;
 }

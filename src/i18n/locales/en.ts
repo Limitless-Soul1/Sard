@@ -10,6 +10,13 @@ export const en = {
 
   "reader.next": "Next page",
   "reader.prev": "Previous page",
+  "reader.back": "Library",
+  "reader.contents": "Contents",
+  "reader.typography": "Typography",
+  "reader.bookmark": "Bookmark",
+  "reader.settings": "Settings",
+  "reader.chapterFallback": "Reading",
+  "reader.untitledBook": "Untitled",
 
   "type.size": "Text size",
   "type.font": "Font",

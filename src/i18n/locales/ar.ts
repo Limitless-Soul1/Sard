@@ -11,6 +11,13 @@ export const ar: Record<TKey, string> = {
 
   "reader.next": "الصفحة التالية",
   "reader.prev": "الصفحة السابقة",
+  "reader.back": "المكتبة",
+  "reader.contents": "المحتويات",
+  "reader.typography": "الطباعة",
+  "reader.bookmark": "علامة مرجعية",
+  "reader.settings": "الإعدادات",
+  "reader.chapterFallback": "القراءة",
+  "reader.untitledBook": "بدون عنوان",
 
   "type.size": "حجم النص",
   "type.font": "الخط",

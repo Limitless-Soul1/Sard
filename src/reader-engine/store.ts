@@ -11,6 +11,7 @@ interface ReaderState {
   dir: string;
   fraction: number;
   cfi: string | null;
+  chapterLabel: string | null;
   status: ReaderStatus;
   error: string;
   style: ReadingStyle | null;
@@ -22,6 +23,7 @@ export const useReader = create<ReaderState>((set) => ({
   dir: "?",
   fraction: 0,
   cfi: null,
+  chapterLabel: null,
   status: "idle",
   error: "",
   style: null,

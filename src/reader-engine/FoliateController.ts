@@ -18,6 +18,7 @@ import type { Theme } from "../theme/tokens";
 export interface RelocateInfo {
   cfi: string | null;
   fraction: number;
+  chapterLabel: string | null;
 }
 
 interface OpenOptions {
@@ -116,6 +117,7 @@ export class FoliateController {
       this.relocateCb?.({
         cfi: e.detail?.cfi ?? null,
         fraction: typeof e.detail?.fraction === "number" ? e.detail.fraction : 0,
+        chapterLabel: e.detail?.tocItem?.label ?? null,
       });
     });
     view.addEventListener("load", (e: any) => {

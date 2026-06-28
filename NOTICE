@@ -1,0 +1,34 @@
+eRawy (الراوي)
+Copyright (C) 2026 eRawy contributors
+
+This program is free software: you can redistribute it and/or modify it under the
+terms of the GNU Affero General Public License v3.0 (AGPL-3.0) — see the LICENSE file.
+
+eRawy is AGPL-3.0 by the project's choice. Note that its bundled engine (foliate-js)
+is MIT-licensed and does NOT impose copyleft; AGPL is eRawy's own decision.
+
+================================================================================
+Third-party components bundled or planned
+================================================================================
+
+1) foliate-js  —  License: MIT
+   EPUB/ebook rendering & pagination engine (runs in the WebView).
+   Source:  https://github.com/johnfactotum/foliate-js
+   Vendored at commit: 78914aef4466eb960965702401634c2cb348e9b1 (2026-05-01)
+   Location: public/foliate-js/  (full MIT license at public/foliate-js/LICENSE)
+
+2) PDF.js  —  License: Apache-2.0
+   Source:  https://github.com/mozilla/pdf.js
+   NOTE: a copy of PDF.js ships *inside* the vendored foliate-js engine at
+   public/foliate-js/vendor/pdfjs/ (foliate-js uses it for PDF rendering). Its
+   bundled font/cmap licenses are under that directory (LICENSE_FOXIT,
+   LICENSE_LIBERATION, cmaps/LICENSE). eRawy's own PDF feature work is a later phase.
+
+3) Bundled fonts  —  License: SIL Open Font License 1.1 (OFL)
+   - Amiri              (public/fonts/Amiri-Regular.ttf, Amiri-Bold.ttf;  OFL-Amiri.txt)
+   - Noto Naskh Arabic  (public/fonts/NotoNaskhArabic.ttf;                OFL-NotoNaskhArabic.txt)
+   - Literata           (public/fonts/Literata.ttf;                       OFL-Literata.txt)
+   Each family's full OFL text is in public/fonts/ alongside the font files.
+
+================================================================================
+The full text of the AGPL-3.0 is in the LICENSE file at the repository root.

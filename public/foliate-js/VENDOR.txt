@@ -1,0 +1,3 @@
+﻿foliate-js vendored at commit 78914aef4466eb960965702401634c2cb348e9b1 (2026-05-01)
+Source: https://github.com/johnfactotum/foliate-js
+License: MIT (see ./LICENSE)

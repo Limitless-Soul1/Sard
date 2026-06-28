@@ -57,6 +57,59 @@ html, body, #root {
 
 .erawy-accent { color: var(--accent); }
 
+/* RAWY-09 reading-foundation layout */
+.reader-root {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper-bg);
+}
+.reader-bar {
+  height: 48px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  background: #fffaf2;
+  border-bottom: 1px solid #e3d9c6;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.04);
+  z-index: 2;
+}
+.reader-bar button {
+  border: 1px solid #d8cdb6;
+  background: #fff;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 15px;
+  color: var(--paper-fg);
+  cursor: pointer;
+}
+.reader-bar button:hover { background: #f6efe0; }
+.reader-status {
+  margin-inline-start: auto;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.reader-stage { position: relative; flex: 1 1 auto; min-height: 0; }
+.reader-stage foliate-view { width: 100%; height: 100%; display: block; }
+.reader-error {
+  position: absolute;
+  inset: 48px 0 0 0;
+  margin: 0;
+  padding: 20px;
+  background: #fff;
+  color: #a11;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow: auto;
+  z-index: 3;
+}
+
 /* RAWY-08 dev-only probe panel (temporary) */
 .erawy-devprobe {
   margin-top: 28px;

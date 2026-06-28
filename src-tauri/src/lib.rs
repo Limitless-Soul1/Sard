@@ -47,6 +47,9 @@ pub fn run() {
             commands::db_health,
             commands::settings_get,
             commands::settings_set,
+            commands::book_register,
+            commands::progress_save,
+            commands::progress_get,
         ])
         .run(tauri::generate_context!())
         .expect("error while running eRawy");

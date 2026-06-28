@@ -28,3 +28,23 @@ export const settingsGet = (key: string): Promise<string | null> =>
 /** Persist a setting; resolves true on success. */
 export const settingsSet = (key: string, value: string): Promise<boolean> =>
   invoke<boolean>("settings_set", { key, value });
+
+export interface Progress {
+  cfi: string | null;
+  fraction: number;
+}
+
+/** Ensure a minimal books row exists (FK bridge until real import). */
+export const bookRegister = (bookId: string, filePath: string): Promise<boolean> =>
+  invoke<boolean>("book_register", { bookId, filePath });
+
+/** Upsert reading position (CFI + fraction) for a book. */
+export const progressSave = (
+  bookId: string,
+  cfi: string,
+  fraction: number,
+): Promise<boolean> => invoke<boolean>("progress_save", { bookId, cfi, fraction });
+
+/** Read saved reading position, or null if never opened. */
+export const progressGet = (bookId: string): Promise<Progress | null> =>
+  invoke<Progress | null>("progress_get", { bookId });

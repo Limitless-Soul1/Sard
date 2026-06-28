@@ -5,7 +5,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::db::{self, AppState};
-use crate::settings;
+use crate::{books, library, settings};
 
 #[derive(Serialize)]
 pub struct AppInfo {
@@ -60,4 +60,37 @@ pub fn settings_set(key: String, value: String, state: State<AppState>) -> Resul
     let conn = state.db.lock().map_err(err)?;
     settings::set(&conn, &key, &value).map_err(err)?;
     Ok(true)
+}
+
+/// Ensure a minimal `books` row exists for `book_id` (FK bridge until real import).
+#[tauri::command]
+pub fn book_register(
+    book_id: String,
+    file_path: String,
+    state: State<AppState>,
+) -> Result<bool, String> {
+    let conn = state.db.lock().map_err(err)?;
+    books::ensure(&conn, &book_id, &file_path).map_err(err)?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn progress_save(
+    book_id: String,
+    cfi: String,
+    fraction: f64,
+    state: State<AppState>,
+) -> Result<bool, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::progress_save(&conn, &book_id, &cfi, fraction).map_err(err)?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn progress_get(
+    book_id: String,
+    state: State<AppState>,
+) -> Result<Option<library::Progress>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::progress_get(&conn, &book_id).map_err(err)
 }

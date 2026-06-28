@@ -11,6 +11,14 @@ import { ReaderChrome } from "./ReaderChrome";
 import { SettingsPanel } from "./SettingsPanel";
 import { useChromeOnIntent } from "./useChromeOnIntent";
 
+// The book to open: id (for progress) + absolute file path (for the asset protocol).
+export interface OpenTarget {
+  id: string;
+  filePath: string;
+  dir?: string | null;
+}
+
+// Dev sample switcher (kept as a convenience inside the reader): the two bundled EPUBs.
 const BOOKS = {
   ar: { id: "dev-sample-shawqiyyat", file: "sample.epub" },
   en: { id: "dev-sample-alice", file: "sample-en.epub" },
@@ -30,14 +38,14 @@ async function loadStyle(): Promise<ReadingStyle | null> {
   }
 }
 
-export function Reader() {
+export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: () => void }) {
   const { t } = useI18n();
   const stageRef = useRef<HTMLDivElement>(null);
   const ctrlRef = useRef<FoliateController | null>(null);
   if (!ctrlRef.current) ctrlRef.current = new FoliateController();
 
-  const bookRef = useRef<BookKey>("ar");
-  const [book, setBook] = useState<BookKey>("ar");
+  const bookRef = useRef<string>(initial.id);
+  const [book, setBook] = useState<BookKey>(initial.dir === "rtl" ? "ar" : "en");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const progressTimer = useRef<number | undefined>(undefined);
   const styleTimer = useRef<number | undefined>(undefined);
@@ -47,18 +55,16 @@ export function Reader() {
   const { themeId, overrideBookColor, hideChapterTitles } = useTheme();
   const { visible: chromeVisible, wake, setHold } = useChromeOnIntent();
 
-  const openBook = useCallback(async (which: BookKey) => {
+  const openBook = useCallback(async (target: OpenTarget) => {
     const set = useReader.getState().set;
     try {
-      bookRef.current = which;
-      set({ status: "loading", bookId: BOOKS[which].id });
+      bookRef.current = target.id;
+      set({ status: "loading", bookId: target.id });
 
-      if (!appDataDir.current) appDataDir.current = (await appInfo()).app_data_dir;
-      const filePath = `${appDataDir.current}\\${BOOKS[which].file}`;
-      const url = convertFileSrc(filePath);
+      const url = convertFileSrc(target.filePath);
 
-      await bookRegister(BOOKS[which].id, filePath);
-      const saved = await progressGet(BOOKS[which].id);
+      await bookRegister(target.id, target.filePath);
+      const saved = await progressGet(target.id);
       const persisted = useReader.getState().style ?? (await loadStyle());
 
       const ctrl = ctrlRef.current!;
@@ -66,7 +72,7 @@ export function Reader() {
         set({ cfi, fraction, chapterLabel });
         if (progressTimer.current) clearTimeout(progressTimer.current);
         progressTimer.current = window.setTimeout(() => {
-          if (cfi) progressSave(BOOKS[bookRef.current].id, cfi, fraction).catch(console.error);
+          if (cfi) progressSave(bookRef.current, cfi, fraction).catch(console.error);
         }, SAVE_DEBOUNCE_MS);
       });
 
@@ -88,12 +94,14 @@ export function Reader() {
   }, []);
 
   useEffect(() => {
-    openBook("ar");
+    openBook(initial);
     return () => {
       if (progressTimer.current) clearTimeout(progressTimer.current);
       ctrlRef.current?.dispose();
     };
-  }, [openBook]);
+    // Open the book the Library handed us; re-open if the selection changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial.id]);
 
   // App-wide theme → book.
   useEffect(() => {
@@ -103,10 +111,15 @@ export function Reader() {
   // Pin chrome open while the settings panel is open.
   useEffect(() => setHold(settingsOpen), [settingsOpen, setHold]);
 
-  const switchBook = (which: BookKey) => {
-    if (which === bookRef.current) return;
+  const switchBook = async (which: BookKey) => {
+    if (BOOKS[which].id === bookRef.current) return;
     setBook(which);
-    openBook(which);
+    if (!appDataDir.current) appDataDir.current = (await appInfo()).app_data_dir;
+    openBook({
+      id: BOOKS[which].id,
+      filePath: `${appDataDir.current}\\${BOOKS[which].file}`,
+      dir: which === "ar" ? "rtl" : "ltr",
+    });
   };
 
   const update = (patch: Partial<ReadingStyle>) => {
@@ -154,7 +167,7 @@ export function Reader() {
         chapter={chapter}
         fraction={fraction}
         bookDir={dir}
-        onBack={wake}
+        onBack={onExit}
         onContents={wake}
         onTypography={() => setSettingsOpen(true)}
         onTheme={() => setSettingsOpen(true)}

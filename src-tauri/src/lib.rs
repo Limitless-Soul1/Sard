@@ -97,6 +97,9 @@ pub fn run() {
             commands::book_register,
             commands::progress_save,
             commands::progress_get,
+            commands::library_list_books,
+            commands::collections_list,
+            commands::library_dev_seed,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sard");

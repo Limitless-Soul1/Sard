@@ -48,3 +48,54 @@ export const progressSave = (
 /** Read saved reading position, or null if never opened. */
 export const progressGet = (bookId: string): Promise<Progress | null> =>
   invoke<Progress | null>("progress_get", { bookId });
+
+// ---- Library (RAWY-15) ----------------------------------------------------
+
+export interface BookRow {
+  id: string;
+  file_path: string;
+  format: string | null;
+  title: string | null;
+  author: string | null;
+  language: string | null;
+  dir: string | null;
+  cover_path: string | null;
+  added_at: number | null;
+  last_opened_at: number | null;
+  fraction: number | null;
+  read_at: number | null;
+}
+
+export type SortKey = "title" | "author" | "format" | "date_read" | "date_added";
+export type SortOrder = "asc" | "desc";
+
+export interface ListQuery {
+  sort: SortKey;
+  order: SortOrder;
+  format?: string | null;
+  collection?: string | null;
+  search?: string | null;
+}
+
+/** List Library books (metadata joined with progress), sorted + filtered in SQL. */
+export const libraryListBooks = (q: ListQuery): Promise<BookRow[]> =>
+  invoke<BookRow[]>("library_list_books", {
+    sort: q.sort,
+    order: q.order,
+    format: q.format ?? null,
+    collection: q.collection ?? null,
+    search: q.search ?? null,
+  });
+
+export interface CollectionRow {
+  id: string;
+  name: string;
+  count: number;
+}
+
+/** List shelves (collections) with live book counts. */
+export const collectionsList = (): Promise<CollectionRow[]> =>
+  invoke<CollectionRow[]>("collections_list");
+
+/** DEV: seed a believable library from the bundled samples (idempotent). */
+export const libraryDevSeed = (): Promise<boolean> => invoke<boolean>("library_dev_seed");

@@ -94,3 +94,42 @@ pub fn progress_get(
     let conn = state.db.lock().map_err(err)?;
     library::progress_get(&conn, &book_id).map_err(err)
 }
+
+/// RAWY-15 — the Library home: books (metadata + progress), sorted/filtered in SQL.
+#[tauri::command]
+pub fn library_list_books(
+    sort: String,
+    order: String,
+    format: Option<String>,
+    collection: Option<String>,
+    search: Option<String>,
+    state: State<AppState>,
+) -> Result<Vec<library::BookRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::list_books(
+        &conn,
+        &sort,
+        &order,
+        format.as_deref(),
+        collection.as_deref(),
+        search.as_deref(),
+    )
+    .map_err(err)
+}
+
+/// RAWY-15 — shelves (collections) with live book counts, for the sidebar.
+#[tauri::command]
+pub fn collections_list(state: State<AppState>) -> Result<Vec<library::CollectionRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::collections_list(&conn).map_err(err)
+}
+
+/// RAWY-15 — seed a believable Library from the bundled samples (DEV fixtures only,
+/// idempotent; replaced by real drag-and-drop import in a later task).
+#[tauri::command]
+pub fn library_dev_seed(state: State<AppState>) -> Result<bool, String> {
+    let app_data_dir = state.app_data_dir.display().to_string();
+    let conn = state.db.lock().map_err(err)?;
+    library::dev_seed(&conn, &app_data_dir).map_err(err)?;
+    Ok(true)
+}

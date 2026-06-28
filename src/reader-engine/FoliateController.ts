@@ -12,7 +12,8 @@
 // a newer open() has superseded it — so a StrictMode double-invoke / remount can't race
 // two views (RAWY-10 hardening).
 
-import { buildReadingCss, type ReadingStyle } from "./injectedCss";
+import { buildReadingCss, type BookThemeFlags, type ReadingStyle } from "./injectedCss";
+import type { Theme } from "../theme/tokens";
 
 export interface RelocateInfo {
   cfi: string | null;
@@ -22,6 +23,8 @@ export interface RelocateInfo {
 interface OpenOptions {
   resumeCfi?: string | null;
   style: ReadingStyle;
+  theme?: Theme;
+  flags?: BookThemeFlags;
 }
 
 // Arabic combining marks (tashkīl). We wrap runs of them in spans so the diacritics
@@ -77,6 +80,8 @@ async function ensureFoliateDefined(): Promise<void> {
 export class FoliateController {
   private view: any | null = null;
   private style: ReadingStyle | null = null;
+  private theme: Theme | undefined = undefined;
+  private flags: BookThemeFlags = { overrideBookColor: false, hideChapterTitles: false };
   private relocateCb: ((info: RelocateInfo) => void) | null = null;
 
   /** Tear down the current view + listeners. Safe to call repeatedly. */
@@ -123,16 +128,31 @@ export class FoliateController {
       });
     });
 
-    this.applyStyle(opts.style);
+    this.style = opts.style;
+    if (opts.theme) this.theme = opts.theme;
+    if (opts.flags) this.flags = opts.flags;
+    this.reinject();
 
     if (opts.resumeCfi) await view.goTo(opts.resumeCfi);
     else await view.renderer.next();
   }
 
-  /** Re-inject the full stylesheet for a ReadingStyle (the single visual funnel). */
+  /** Re-inject the full stylesheet (typography + theme) — the single visual funnel. */
+  private reinject(): void {
+    if (this.style) this.view?.renderer?.setStyles?.(buildReadingCss(this.style, this.theme, this.flags));
+  }
+
+  /** Update typography (size/font/spacing/margins/align/diacritics). */
   applyStyle(style: ReadingStyle): void {
     this.style = style;
-    this.view?.renderer?.setStyles?.(buildReadingCss(style));
+    this.reinject();
+  }
+
+  /** Update theme colours + book flags (override-colour, hide-titles). */
+  applyTheme(theme: Theme, flags: BookThemeFlags): void {
+    this.theme = theme;
+    this.flags = flags;
+    this.reinject();
   }
 
   next(): void {

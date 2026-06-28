@@ -28,7 +28,10 @@ Third-party components bundled or planned
    - Amiri               (public/fonts/Amiri-Regular.ttf, Amiri-Bold.ttf;  OFL-Amiri.txt)
    - Noto Naskh Arabic   (public/fonts/NotoNaskhArabic.ttf;                OFL-NotoNaskhArabic.txt)
    - Literata            (public/fonts/Literata.ttf;                       OFL-Literata.txt)
-   - IBM Plex Sans Arabic (public/fonts/IBMPlexSansArabic-*.ttf;           OFL-IBMPlexSansArabic.txt) — UI font
+   - IBM Plex Sans Arabic (public/fonts/IBMPlexSansArabic-*.ttf;           OFL-IBMPlexSansArabic.txt) — Arabic UI font
+   - Inter                (public/fonts/Inter.ttf;                         OFL-Inter.txt) — Latin UI font
+   - Source Serif 4       (public/fonts/SourceSerif4.ttf;                  OFL-SourceSerif4.txt) — Latin reading (alt)
+   - Aref Ruqaa           (public/fonts/ArefRuqaa-*.ttf;                   OFL-ArefRuqaa.txt) — Arabic display/wordmark
    Each family's full OFL text is in public/fonts/ alongside the font files.
 
 ================================================================================

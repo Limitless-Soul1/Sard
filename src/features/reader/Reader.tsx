@@ -7,6 +7,7 @@ import { ARABIC_DEFAULTS, defaultsForDir, type ReadingStyle } from "../../reader
 import { appInfo, bookRegister, progressGet, progressSave, settingsGet, settingsSet } from "../../lib/ipc";
 import { useI18n } from "../../i18n";
 import type { TKey } from "../../i18n/locales/en";
+import { THEMES, useTheme } from "../../theme";
 import { TypographyBar } from "./TypographyBar";
 
 // RAWY-12: two dev sample books (Arabic RTL + English LTR) so we can prove that the
@@ -43,6 +44,7 @@ export function Reader() {
   const appDataDir = useRef<string>("");
 
   const { status, dir, fraction, cfi, error, style } = useReader();
+  const { themeId, overrideBookColor, hideChapterTitles } = useTheme();
 
   const openBook = useCallback(async (which: BookKey) => {
     const set = useReader.getState().set;
@@ -69,7 +71,13 @@ export function Reader() {
       });
 
       const initialStyle = persisted ?? defaultsForDir(undefined);
-      await ctrl.open(url, stageRef.current!, { resumeCfi: saved?.cfi ?? null, style: initialStyle });
+      const ts = useTheme.getState();
+      await ctrl.open(url, stageRef.current!, {
+        resumeCfi: saved?.cfi ?? null,
+        style: initialStyle,
+        theme: THEMES[ts.themeId],
+        flags: { overrideBookColor: ts.overrideBookColor, hideChapterTitles: ts.hideChapterTitles },
+      });
 
       const finalStyle = persisted ?? defaultsForDir(ctrl.dir);
       if (!persisted) ctrl.applyStyle(finalStyle);
@@ -86,6 +94,11 @@ export function Reader() {
       ctrlRef.current?.dispose();
     };
   }, [openBook]);
+
+  // Re-theme the book whenever the theme or book-colour flags change (app-wide → book).
+  useEffect(() => {
+    ctrlRef.current?.applyTheme(THEMES[themeId], { overrideBookColor, hideChapterTitles });
+  }, [themeId, overrideBookColor, hideChapterTitles]);
 
   const switchBook = (which: BookKey) => {
     if (which === bookRef.current) return;
@@ -106,7 +119,7 @@ export function Reader() {
   };
 
   const statusKey = `status.${status}` as TKey;
-  const statusText = `${t(statusKey)} · book.dir=${dir} · ${(fraction * 100).toFixed(1)}% · ${cfi ? "cfi✓" : "—"}`;
+  const statusText = `${t(statusKey)} · ${themeId} · book.dir=${dir} · ${(fraction * 100).toFixed(1)}%`;
 
   return (
     <div className="reader-root">

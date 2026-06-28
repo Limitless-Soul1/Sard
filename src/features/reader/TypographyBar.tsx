@@ -7,6 +7,7 @@ import {
   type ReadingStyle,
 } from "../../reader-engine/injectedCss";
 import type { TKey } from "../../i18n/locales/en";
+import { THEMES, THEME_ORDER, useTheme } from "../../theme";
 
 interface Props {
   style: ReadingStyle;
@@ -29,6 +30,8 @@ const DIA_KEY: Record<DiacriticsMode, TKey> = {
 // Inherits dir from <html> (set by the UI language) — no hard-coded direction.
 export function TypographyBar({ style, update, onPrev, onNext, status, book, onBook }: Props) {
   const { t, lang, setLang } = useI18n();
+  const { themeId, overrideBookColor, hideChapterTitles, setTheme, toggleDayNight, setOverride, setHideTitles } =
+    useTheme();
 
   const cycleDiacritics = () => {
     const order: DiacriticsMode[] = ["show", "dim", "hide"];
@@ -85,6 +88,22 @@ export function TypographyBar({ style, update, onPrev, onNext, status, book, onB
         <button className={book === "ar" ? "on" : ""} onClick={() => onBook("ar")} title={t("book.arabicSample")}>ع</button>
         <button className={book === "en" ? "on" : ""} onClick={() => onBook("en")} title={t("book.englishSample")}>EN</button>
       </span>
+
+      {/* theme controls (RAWY-13) — app-wide: swatches + day/night */}
+      <span className="grp" title={t("theme.label")}>
+        {THEME_ORDER.map((id) => (
+          <button
+            key={id}
+            className={`swatch${themeId === id ? " on" : ""}`}
+            style={{ background: THEMES[id].colors.paperBg }}
+            onClick={() => setTheme(id)}
+            title={THEMES[id].name}
+          />
+        ))}
+        <button onClick={toggleDayNight} title={t("theme.dayNight")}>{THEMES[themeId].dark ? "☀" : "☾"}</button>
+      </span>
+      <button className={overrideBookColor ? "on" : ""} onClick={() => setOverride(!overrideBookColor)} title={t("theme.override")}>🎨</button>
+      <button className={hideChapterTitles ? "on" : ""} onClick={() => setHideTitles(!hideChapterTitles)} title={t("theme.hideTitles")}>Ⓣ</button>
 
       {/* change the UI language later (scope: a simple settings control) */}
       <button onClick={() => setLang(lang === "ar" ? "en" : "ar")} title={t("settings.language")}>

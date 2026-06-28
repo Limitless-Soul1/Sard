@@ -28,6 +28,11 @@ export const ar: Record<TKey, string> = {
   "book.arabicSample": "كتاب عربي",
   "book.englishSample": "كتاب إنجليزي",
 
+  "theme.label": "السمة",
+  "theme.dayNight": "نهار / ليل",
+  "theme.override": "تجاوز ألوان الكتاب",
+  "theme.hideTitles": "إخفاء عناوين الفصول",
+
   "status.idle": "خامل",
   "status.loading": "جارٍ التحميل…",
   "status.ready": "جاهز",

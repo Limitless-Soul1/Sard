@@ -27,6 +27,11 @@ export const en = {
   "book.arabicSample": "Arabic book",
   "book.englishSample": "English book",
 
+  "theme.label": "Theme",
+  "theme.dayNight": "Day / Night",
+  "theme.override": "Override book colour",
+  "theme.hideTitles": "Hide chapter titles",
+
   "status.idle": "idle",
   "status.loading": "Loading…",
   "status.ready": "Ready",

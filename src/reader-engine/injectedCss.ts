@@ -3,6 +3,8 @@
 // here (size, fonts, leading, margins, alignment, diacritics). Structured so the theme
 // token system (next task) can plug colors into the same string.
 
+import type { Theme } from "../theme/tokens";
+
 export type DiacriticsMode = "show" | "dim" | "hide";
 export type Align = "justify" | "start";
 export type ArabicFont = "amiri" | "notoNaskh";
@@ -60,7 +62,38 @@ export const LATIN_DEFAULTS: ReadingStyle = {
 export const defaultsForDir = (dir?: string): ReadingStyle =>
   dir === "rtl" ? ARABIC_DEFAULTS : LATIN_DEFAULTS;
 
-export function buildReadingCss(style: ReadingStyle): string {
+export interface BookThemeFlags {
+  overrideBookColor: boolean;
+  hideChapterTitles: boolean;
+}
+
+// Theme colours + flags compile into the SAME injected string as typography (RAWY-13).
+// The page background always follows the theme; text colour is forced (!important) when
+// override is on OR the theme is dark (a light book on a dark page must be re-inked).
+function themeBlock(theme: Theme | undefined, flags: BookThemeFlags | undefined): string {
+  if (!theme) return "";
+  const c = theme.colors;
+  const forceText = (flags?.overrideBookColor ?? false) || theme.dark;
+  return `
+    html, body { background: ${c.paperBg} !important; }
+    ::selection { background: ${c.selection}; }
+    ${
+      forceText
+        ? `html, body, p, li, blockquote, div, span, h1, h2, h3, h4, h5, h6, td, th, dd, dt {
+             color: ${c.text} !important;
+           }
+           a, a:link, a:visited { color: ${c.accent} !important; }`
+        : `html, body { color: ${c.text}; }`
+    }
+    ${flags?.hideChapterTitles ? "h1, h2 { display: none !important; }" : ""}
+  `;
+}
+
+export function buildReadingCss(
+  style: ReadingStyle,
+  theme?: Theme,
+  flags?: BookThemeFlags,
+): string {
   const ar = ARABIC_FONTS[style.arabicFont];
   const lat = LATIN_FONTS[style.latinFont];
 
@@ -115,5 +148,6 @@ export function buildReadingCss(style: ReadingStyle): string {
     [align="right"] { text-align: right; }
 
     ${diacriticsRule}
+    ${themeBlock(theme, flags)}
   `;
 }

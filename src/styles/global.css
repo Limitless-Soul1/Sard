@@ -369,8 +369,34 @@ html, body, #root {
 
 .lib-sidefoot {
   margin-top: auto; display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 10px; font: 500 12px var(--ui-font); color: var(--lib-faint);
+  padding: 6px 4px; font: 500 12px var(--ui-font); color: var(--lib-faint);
 }
+.lib-lang {
+  display: flex; align-items: center; gap: 8px; padding: 7px 9px; border: none; border-radius: 7px;
+  background: transparent; color: var(--muted); font: 500 12px var(--ui-font); cursor: pointer;
+}
+.lib-lang:hover { background: var(--lib-hover); color: var(--text); }
+.lib-lang-globe { color: var(--accent); font-size: 13px; }
+.lib-lang-ar { font-family: "SardUIArabic", "Amiri", sans-serif; font-size: 13px; }
+
+.lib-theme { position: relative; }
+.lib-theme-btn {
+  width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
+  border: none; border-radius: 7px; background: transparent; color: var(--muted);
+  font-size: 17px; cursor: pointer;
+}
+.lib-theme-btn:hover { background: var(--lib-hover); color: var(--text); }
+.lib-theme-menu {
+  position: absolute; bottom: calc(100% + 8px); inset-inline-end: 0; z-index: 9;
+  display: flex; gap: 8px; padding: 9px 10px;
+  background: var(--chrome-bg); border: 1px solid var(--chrome-border); border-radius: 11px;
+  box-shadow: 0 14px 34px rgba(40, 28, 14, 0.24);
+}
+.lib-swatch {
+  width: 22px; height: 22px; flex: none; border-radius: 50%; cursor: pointer;
+  border: 1.5px solid; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+}
+.lib-swatch.active { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ---- main ---- */
 .lib-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
@@ -461,20 +487,43 @@ html, body, #root {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
   gap: 26px 24px; align-content: start;
 }
-.lib-card { padding: 0; border: none; background: none; cursor: pointer; display: block; }
+.lib-card {
+  padding: 0; border: none; background: none; cursor: pointer;
+  display: flex; flex-direction: column; gap: 9px; text-align: start; min-width: 0;
+}
 .lib-cover {
   aspect-ratio: 2 / 3; border-radius: 3px; overflow: hidden; position: relative;
   box-shadow: 0 6px 14px rgba(40, 28, 14, 0.2); transition: transform 140ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .lib-card:hover .lib-cover { transform: translateY(-3px); box-shadow: 0 12px 22px rgba(40, 28, 14, 0.26); }
+/* Crop (default): fill the cell, centred, cropped — never stretched (object-fit). */
 .lib-cover .auto-cover, .lib-cover img.real { position: absolute; inset: 0; width: 100%; height: 100%; }
-.lib-cover img.real { object-fit: cover; }
+.lib-cover img.real { object-fit: cover; object-position: center; }
+/* Fit: show the whole cover at its true ratio, centred on a letterbox (handles odd ratios). */
 .lib-cover[data-mode="fit"] { background: var(--lib-letterbox); display: flex; align-items: center; justify-content: center; }
-.lib-cover[data-mode="fit"] .auto-cover, .lib-cover[data-mode="fit"] img.real {
-  position: static; inset: auto; width: 76%; height: auto; aspect-ratio: 2 / 3;
+.lib-cover[data-mode="fit"] img.real {
+  position: static; inset: auto; width: auto; height: auto; max-width: 88%; max-height: 88%;
   object-fit: contain; border-radius: 2px; box-shadow: 0 3px 8px rgba(0, 0, 0, 0.18);
 }
+.lib-cover[data-mode="fit"] .auto-cover {
+  position: static; inset: auto; width: 78%; height: auto; aspect-ratio: 2 / 3;
+  border-radius: 2px; box-shadow: 0 3px 8px rgba(0, 0, 0, 0.18);
+}
 .lib-card-bar { position: absolute; inset-inline-start: 0; bottom: 0; height: 3px; background: var(--accent); }
+
+/* Caption under the cover — always identifies the book, in the script of its TITLE. */
+.lib-cap { min-width: 0; }
+.lib-cap-title {
+  font: 500 13px/1.3 "Literata", serif; color: var(--text);
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere;
+}
+.lib-cap-title.ar { font: 600 15px/1.4 "Amiri", serif; }
+.lib-cap-author {
+  margin-top: 3px; font: 400 11px var(--ui-font); color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lib-cap-author.ar { font: 400 12px "Amiri", serif; }
 
 /* ---- auto cover ---- */
 .auto-cover { position: relative; overflow: hidden; }

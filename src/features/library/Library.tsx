@@ -14,8 +14,13 @@ import {
   type SortKey,
   type SortOrder,
 } from "../../lib/ipc";
+import { THEME_ORDER, THEMES, useTheme } from "../../theme";
 import { AutoCover } from "./AutoCover";
 import { Hoopoe } from "./Hoopoe";
+
+// Detect Arabic from the TITLE TEXT itself, so a caption renders in Amiri even when the
+// book's metadata mislabels its language (RAWY-17: e.g. an Arabic book tagged lang=en).
+const ARABIC = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
 
 export interface OpenTarget {
   id: string;
@@ -49,7 +54,7 @@ function summarize(results: ImportResult[], t: TFn): string {
 }
 
 export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
-  const { t, lang } = useI18n();
+  const { t, lang, setLang } = useI18n();
 
   const [books, setBooks] = useState<BookRow[]>([]);
   const [shelves, setShelves] = useState<CollectionRow[]>([]);
@@ -211,7 +216,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
       <aside className="lib-sidebar">
         <div className="lib-brand">
           {/* Bird on the leading edge; the script nearest it is the UI's own (band K). */}
-          <Hoopoe size={24} className="lib-brand-bird" />
+          <Hoopoe size={30} className="lib-brand-bird" />
           {lang === "ar" ? (
             <>
               <span className="lib-word-ar">سَرْد</span>
@@ -261,8 +266,17 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         </div>
 
         <div className="lib-sidefoot">
-          <span>{lang === "ar" ? "العربية" : "English"}</span>
-          <span aria-hidden>⚙</span>
+          <button
+            className="lib-lang"
+            onClick={() => setLang(lang === "ar" ? "en" : "ar")}
+            title={t("settings.language")}
+          >
+            <span className="lib-lang-globe" aria-hidden>◍</span>
+            <span className={lang === "ar" ? "lib-lang-ar" : undefined}>
+              {lang === "ar" ? "العربية" : "English"}
+            </span>
+          </button>
+          <ThemeSwitcher />
         </div>
       </aside>
 
@@ -448,17 +462,67 @@ function progressInfo(b: BookRow) {
 
 function BookCard({ book, coverMode, onOpen }: { book: BookRow; coverMode: CoverMode; onOpen: () => void }) {
   const p = progressInfo(book);
+  const [failed, setFailed] = useState(false); // cover image absent or failed to load
+  const title = book.title ?? "—";
+  const arabic = ARABIC.test(title);
+  const showImg = !!book.cover_path && !failed;
   return (
-    <button className="lib-card" onClick={onOpen} title={book.title ?? undefined}>
+    <button className="lib-card" onClick={onOpen} title={title}>
       <div className="lib-cover" data-mode={coverMode}>
-        {book.cover_path ? (
-          <img className="real" src={convertFileSrc(book.cover_path)} alt="" />
+        {showImg ? (
+          <img className="real" src={convertFileSrc(book.cover_path!)} alt="" onError={() => setFailed(true)} />
         ) : (
-          <AutoCover title={book.title ?? "—"} author={book.author} dir={book.dir} />
+          <AutoCover title={title} author={book.author} dir={book.dir} />
         )}
         {p.state === "reading" && <span className="lib-card-bar" style={{ width: `${p.pct}%` }} />}
       </div>
+      <div className="lib-cap" dir={arabic ? "rtl" : "ltr"}>
+        <div className={`lib-cap-title${arabic ? " ar" : ""}`}>{title}</div>
+        {book.author && <div className={`lib-cap-author${arabic ? " ar" : ""}`}>{book.author}</div>}
+      </div>
     </button>
+  );
+}
+
+function ThemeSwitcher() {
+  const { t } = useI18n();
+  const themeId = useTheme((s) => s.themeId);
+  const setTheme = useTheme((s) => s.setTheme);
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="lib-theme">
+      <button
+        className="lib-theme-btn"
+        onClick={() => setOpen((o) => !o)}
+        title={t("theme.label")}
+        aria-label={t("theme.label")}
+      >
+        ◐
+      </button>
+      {open && (
+        <>
+          <div className="lib-clickaway" onClick={() => setOpen(false)} />
+          <div className="lib-theme-menu">
+            {THEME_ORDER.map((id) => {
+              const th = THEMES[id];
+              return (
+                <button
+                  key={id}
+                  className={`lib-swatch${id === themeId ? " active" : ""}`}
+                  style={{ background: th.colors.paperBg, borderColor: th.colors.accent }}
+                  onClick={() => {
+                    setTheme(id);
+                    setOpen(false);
+                  }}
+                  title={th.name}
+                  aria-label={th.name}
+                />
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

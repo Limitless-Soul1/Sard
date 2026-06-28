@@ -1,7 +1,11 @@
+import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 
-// NOTE: StrictMode is intentionally omitted. Its dev-only double-invoke of effects
-// races two <foliate-view> instances on the same container (the engine is a stateful
-// custom element opened asynchronously). Revisit with a proper idempotent guard later.
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(<App />);
+// StrictMode is ON again (RAWY-10): FoliateController.open() is now idempotent (disposes
+// any prior view + bails if superseded), so the dev double-invoke no longer races views.
+ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+);

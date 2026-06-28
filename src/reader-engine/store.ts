@@ -1,7 +1,8 @@
-// Reader store — UI dispatches intents, the controller executes, and relocate events
-// flow back here. Holds the current book id, direction, progress fraction, and CFI.
+// Reader store — UI dispatches intents, the controller executes, relocate flows back.
+// Holds book id, direction, progress (fraction/cfi), status, and the current ReadingStyle.
 
 import { create } from "zustand";
+import type { ReadingStyle } from "./injectedCss";
 
 export type ReaderStatus = "idle" | "loading" | "ready" | "error";
 
@@ -12,6 +13,7 @@ interface ReaderState {
   cfi: string | null;
   status: ReaderStatus;
   error: string;
+  style: ReadingStyle | null;
   set: (patch: Partial<ReaderState>) => void;
 }
 
@@ -22,5 +24,6 @@ export const useReader = create<ReaderState>((set) => ({
   cfi: null,
   status: "idle",
   error: "",
+  style: null,
   set: (patch) => set(patch),
 }));

@@ -66,14 +66,14 @@ export function buildReadingCss(style: ReadingStyle): string {
 
   const diacriticsRule =
     style.diacritics === "dim"
-      ? ".erawy-tashkil { opacity: 0.28; }"
+      ? ".sard-tashkil { opacity: 0.28; }"
       : style.diacritics === "hide"
-        ? ".erawy-tashkil { font-size: 0 !important; }"
+        ? ".sard-tashkil { font-size: 0 !important; }"
         : "";
 
   return `
     @font-face {
-      font-family: 'ErawyArabic';
+      font-family: 'SardArabic';
       src: url('${ar.regular}') format('truetype');
       font-weight: normal;
       unicode-range: ${ARABIC_RANGE};
@@ -81,7 +81,7 @@ export function buildReadingCss(style: ReadingStyle): string {
     ${
       ar.bold
         ? `@font-face {
-      font-family: 'ErawyArabic';
+      font-family: 'SardArabic';
       src: url('${ar.bold}') format('truetype');
       font-weight: bold;
       unicode-range: ${ARABIC_RANGE};
@@ -89,7 +89,7 @@ export function buildReadingCss(style: ReadingStyle): string {
         : ""
     }
     @font-face {
-      font-family: 'ErawyLatin';
+      font-family: 'SardLatin';
       src: url('${lat.regular}') format('truetype');
       unicode-range: ${LATIN_RANGE};
     }
@@ -104,7 +104,7 @@ export function buildReadingCss(style: ReadingStyle): string {
 
     /* per-script fonts: Arabic glyphs use the chosen Arabic face, Latin uses Literata */
     html, body, p, li, blockquote, div, span, h1, h2, h3, h4, h5, h6, td, th, a {
-      font-family: 'ErawyArabic', 'ErawyLatin', serif !important;
+      font-family: 'SardArabic', 'SardLatin', serif !important;
     }
     p, li, blockquote, div {
       line-height: ${style.lineHeight};

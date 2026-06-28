@@ -1,4 +1,4 @@
--- eRawy schema v1 (RAWY-08). Tables per PROJECT.md §5 (data model).
+-- Sard schema v1 (RAWY-08). Tables per PROJECT.md §5 (data model).
 -- foreign_keys is enabled per-connection (see db::open_database). Book-owned child
 -- rows cascade on book deletion; a note's optional highlight link is nulled if the
 -- highlight is removed.

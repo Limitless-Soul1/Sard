@@ -1,12 +1,13 @@
-# eRawy (الراوي)
+# Sard · سَرْد
 
 A beautiful, smooth, lightweight **ebook reader** — Windows-first, with first-class
-Arabic/RTL typography. The name means *"the storyteller."* Priority order:
-**beauty › smooth › lightweight.**
+Arabic/RTL typography. The name **سَرْد** means *"narration / storytelling."* Priority
+order: **beauty › smooth › lightweight.** *(Formerly "eRawy".)*
 
-> **Status:** early. This is the **RAWY-05 skeleton** — a running, empty shell with the
-> real architecture in place but **no reading/library features yet**. See
-> [`PROJECT.md`](./PROJECT.md) for the full project state, decisions, and roadmap.
+> **Status:** early. The app launches, opens an EPUB (paginated, RTL, scrollbar-free),
+> persists reading progress, and offers full typography controls (size, per-script fonts,
+> spacing, margins, alignment, diacritics). See [`PROJECT.md`](./PROJECT.md) for the full
+> project state, decisions, and roadmap.
 
 ## Stack
 

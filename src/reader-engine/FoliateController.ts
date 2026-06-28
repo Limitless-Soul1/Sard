@@ -33,7 +33,7 @@ const TASHKIL_SPLIT = new RegExp(`([${MARKS}]+)`);
 
 function wrapTashkil(doc: Document): void {
   const body = doc.body;
-  if (!body || body.dataset?.erawyTashkil === "1") return;
+  if (!body || body.dataset?.sardTashkil === "1") return;
   const walker = doc.createTreeWalker(body, NodeFilter.SHOW_TEXT);
   const targets: Text[] = [];
   let n: Node | null;
@@ -46,7 +46,7 @@ function wrapTashkil(doc: Document): void {
       if (!part) continue;
       if (TASHKIL.test(part)) {
         const span = doc.createElement("span");
-        span.className = "erawy-tashkil";
+        span.className = "sard-tashkil";
         span.textContent = part;
         frag.appendChild(span);
       } else {
@@ -55,7 +55,7 @@ function wrapTashkil(doc: Document): void {
     }
     tn.replaceWith(frag);
   }
-  if (body.dataset) body.dataset.erawyTashkil = "1";
+  if (body.dataset) body.dataset.sardTashkil = "1";
 }
 
 async function ensureFoliateDefined(): Promise<void> {

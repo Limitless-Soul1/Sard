@@ -25,9 +25,10 @@ Third-party components bundled or planned
    LICENSE_LIBERATION, cmaps/LICENSE). Sard's own PDF feature work is a later phase.
 
 3) Bundled fonts  —  License: SIL Open Font License 1.1 (OFL)
-   - Amiri              (public/fonts/Amiri-Regular.ttf, Amiri-Bold.ttf;  OFL-Amiri.txt)
-   - Noto Naskh Arabic  (public/fonts/NotoNaskhArabic.ttf;                OFL-NotoNaskhArabic.txt)
-   - Literata           (public/fonts/Literata.ttf;                       OFL-Literata.txt)
+   - Amiri               (public/fonts/Amiri-Regular.ttf, Amiri-Bold.ttf;  OFL-Amiri.txt)
+   - Noto Naskh Arabic   (public/fonts/NotoNaskhArabic.ttf;                OFL-NotoNaskhArabic.txt)
+   - Literata            (public/fonts/Literata.ttf;                       OFL-Literata.txt)
+   - IBM Plex Sans Arabic (public/fonts/IBMPlexSansArabic-*.ttf;           OFL-IBMPlexSansArabic.txt) — UI font
    Each family's full OFL text is in public/fonts/ alongside the font files.
 
 ================================================================================

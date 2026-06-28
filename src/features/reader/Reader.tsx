@@ -1,15 +1,22 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 
 import { FoliateController } from "../../reader-engine/FoliateController";
 import { useReader } from "../../reader-engine/store";
 import { ARABIC_DEFAULTS, defaultsForDir, type ReadingStyle } from "../../reader-engine/injectedCss";
 import { appInfo, bookRegister, progressGet, progressSave, settingsGet, settingsSet } from "../../lib/ipc";
+import { useI18n } from "../../i18n";
+import type { TKey } from "../../i18n/locales/en";
 import { TypographyBar } from "./TypographyBar";
 
-// RAWY-10: typography controls on top of the RAWY-09 engine. Still no themes/library.
-const DEV_BOOK_ID = "dev-sample-shawqiyyat";
-const SAMPLE_FILE = "sample.epub";
+// RAWY-12: two dev sample books (Arabic RTL + English LTR) so we can prove that the
+// book's direction is independent of the UI language/direction. Real library import later.
+const BOOKS = {
+  ar: { id: "dev-sample-shawqiyyat", file: "sample.epub" },
+  en: { id: "dev-sample-alice", file: "sample-en.epub" },
+} as const;
+type BookKey = keyof typeof BOOKS;
+
 const STYLE_KEY = "reading_style"; // GLOBAL typography settings (D11)
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -24,58 +31,68 @@ async function loadStyle(): Promise<ReadingStyle | null> {
 }
 
 export function Reader() {
+  const { t } = useI18n();
   const stageRef = useRef<HTMLDivElement>(null);
   const ctrlRef = useRef<FoliateController | null>(null);
   if (!ctrlRef.current) ctrlRef.current = new FoliateController(); // one instance across StrictMode re-invokes
+
+  const bookRef = useRef<BookKey>("ar"); // current book id for relocate saves
+  const [book, setBook] = useState<BookKey>("ar");
+  const progressTimer = useRef<number | undefined>(undefined);
+  const styleTimer = useRef<number | undefined>(undefined);
+  const appDataDir = useRef<string>("");
+
   const { status, dir, fraction, cfi, error, style } = useReader();
 
-  useEffect(() => {
-    let disposed = false;
-    let progressTimer: number | undefined;
+  const openBook = useCallback(async (which: BookKey) => {
+    const set = useReader.getState().set;
+    try {
+      bookRef.current = which;
+      set({ status: "loading", bookId: BOOKS[which].id });
 
-    (async () => {
-      const set = useReader.getState().set;
-      try {
-        set({ status: "loading", bookId: DEV_BOOK_ID });
+      if (!appDataDir.current) appDataDir.current = (await appInfo()).app_data_dir;
+      const filePath = `${appDataDir.current}\\${BOOKS[which].file}`;
+      const url = convertFileSrc(filePath);
 
-        const info = await appInfo();
-        const filePath = `${info.app_data_dir}\\${SAMPLE_FILE}`;
-        const url = convertFileSrc(filePath);
+      await bookRegister(BOOKS[which].id, filePath);
+      const saved = await progressGet(BOOKS[which].id);
+      const current = useReader.getState().style;
+      const persisted = current ?? (await loadStyle());
 
-        await bookRegister(DEV_BOOK_ID, filePath);
-        const [saved, persisted] = await Promise.all([progressGet(DEV_BOOK_ID), loadStyle()]);
+      const ctrl = ctrlRef.current!;
+      ctrl.onRelocate(({ cfi, fraction }) => {
+        set({ cfi, fraction });
+        if (progressTimer.current) clearTimeout(progressTimer.current);
+        progressTimer.current = window.setTimeout(() => {
+          if (cfi) progressSave(BOOKS[bookRef.current].id, cfi, fraction).catch(console.error);
+        }, SAVE_DEBOUNCE_MS);
+      });
 
-        const ctrl = ctrlRef.current!;
-        ctrl.onRelocate(({ cfi, fraction }) => {
-          set({ cfi, fraction });
-          if (progressTimer) clearTimeout(progressTimer);
-          progressTimer = window.setTimeout(() => {
-            if (cfi) progressSave(DEV_BOOK_ID, cfi, fraction).catch(console.error);
-          }, SAVE_DEBOUNCE_MS);
-        });
+      const initialStyle = persisted ?? defaultsForDir(undefined);
+      await ctrl.open(url, stageRef.current!, { resumeCfi: saved?.cfi ?? null, style: initialStyle });
 
-        // Provisional style for first render; corrected to per-script defaults once dir known.
-        const initialStyle = persisted ?? defaultsForDir(undefined);
-        await ctrl.open(url, stageRef.current!, { resumeCfi: saved?.cfi ?? null, style: initialStyle });
-        if (disposed) return;
-
-        const finalStyle = persisted ?? defaultsForDir(ctrl.dir);
-        if (!persisted) ctrl.applyStyle(finalStyle);
-        set({ status: "ready", dir: ctrl.dir ?? "?", style: finalStyle });
-      } catch (e) {
-        set({ status: "error", error: String(e) });
-      }
-    })();
-
-    return () => {
-      disposed = true;
-      if (progressTimer) clearTimeout(progressTimer);
-      ctrlRef.current?.dispose();
-    };
+      const finalStyle = persisted ?? defaultsForDir(ctrl.dir);
+      if (!persisted) ctrl.applyStyle(finalStyle);
+      set({ status: "ready", dir: ctrl.dir ?? "?", style: finalStyle });
+    } catch (e) {
+      set({ status: "error", error: String(e) });
+    }
   }, []);
 
-  // Apply + persist a style change (debounced write through the core).
-  const styleTimer = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    openBook("ar");
+    return () => {
+      if (progressTimer.current) clearTimeout(progressTimer.current);
+      ctrlRef.current?.dispose();
+    };
+  }, [openBook]);
+
+  const switchBook = (which: BookKey) => {
+    if (which === bookRef.current) return;
+    setBook(which);
+    openBook(which);
+  };
+
   const update = (patch: Partial<ReadingStyle>) => {
     const current = useReader.getState().style;
     if (!current) return;
@@ -88,7 +105,8 @@ export function Reader() {
     }, SAVE_DEBOUNCE_MS);
   };
 
-  const statusText = `${status} · dir=${dir} · ${(fraction * 100).toFixed(1)}% · ${cfi ? "cfi✓" : "—"}`;
+  const statusKey = `status.${status}` as TKey;
+  const statusText = `${t(statusKey)} · book.dir=${dir} · ${(fraction * 100).toFixed(1)}% · ${cfi ? "cfi✓" : "—"}`;
 
   return (
     <div className="reader-root">
@@ -98,10 +116,13 @@ export function Reader() {
         onPrev={() => ctrlRef.current?.prev()}
         onNext={() => ctrlRef.current?.next()}
         status={statusText}
+        book={book}
+        onBook={switchBook}
       />
-
-      <div className="reader-stage" ref={stageRef} />
-      {status === "error" && <pre className="reader-error">{error}</pre>}
+      {/* dir="ltr" isolates the reading stage from the UI direction; the book's own
+          direction is set by foliate (book.dir) inside its iframe — fully independent. */}
+      <div className="reader-stage" ref={stageRef} dir="ltr" />
+      {status === "error" && <pre className="reader-error">{t("status.error")}: {error}</pre>}
     </div>
   );
 }

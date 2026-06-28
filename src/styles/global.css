@@ -14,12 +14,30 @@
   font-weight: 200 900;
   font-display: swap;
 }
+/* UI chrome font (distinct from the BOOK reading fonts). Arabic UI text uses IBM Plex
+   Sans Arabic; Latin UI text uses the system sans. Scoped by unicode-range so each
+   script gets the right face. */
+@font-face {
+  font-family: "SardUIArabic";
+  src: url("/fonts/IBMPlexSansArabic-Regular.ttf") format("truetype");
+  font-weight: 400;
+  unicode-range: U+0600-06FF, U+0750-077F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF, U+200C-200F;
+  font-display: swap;
+}
+@font-face {
+  font-family: "SardUIArabic";
+  src: url("/fonts/IBMPlexSansArabic-SemiBold.ttf") format("truetype");
+  font-weight: 600;
+  unicode-range: U+0600-06FF, U+0750-077F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF, U+200C-200F;
+  font-display: swap;
+}
 
 :root {
   --paper-bg: #f4efe6;
   --paper-fg: #2b2b2b;
   --muted: #8a7f6b;
   --accent: #b06a3b;
+  --ui-font: "SardUIArabic", system-ui, "Segoe UI", sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -29,6 +47,7 @@ html, body, #root {
   height: 100%;
   background: var(--paper-bg);
   color: var(--paper-fg);
+  font-family: var(--ui-font);
 }
 
 .sard-shell {
@@ -133,6 +152,11 @@ html, body, #root {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+.tbar button.on {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
 .tbar .status {
   margin-inline-start: auto;
   font-family: ui-monospace, Consolas, monospace;
@@ -140,6 +164,40 @@ html, body, #root {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* First-run language picker (RAWY-12) */
+.picker {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--paper-bg);
+  user-select: none;
+}
+.picker-inner { text-align: center; }
+.picker-wordmark {
+  font-family: "Amiri", serif;
+  font-size: clamp(48px, 10vw, 96px);
+  font-weight: 400;
+  margin: 0 0 6px;
+}
+.picker-wordmark .sard-ar { color: var(--accent); }
+.picker-wordmark .picker-dot { color: var(--muted); }
+.picker-prompt { color: var(--muted); font-size: 15px; margin: 0 0 28px; }
+.picker-choices { display: flex; gap: 16px; justify-content: center; }
+.picker-btn {
+  min-width: 150px;
+  padding: 14px 22px;
+  font-size: 18px;
+  border: 1px solid #d8cdb6;
+  border-radius: 12px;
+  background: #fffaf2;
+  color: var(--paper-fg);
+  cursor: pointer;
+  font-family: var(--ui-font);
+}
+.picker-btn:hover { background: #f3ead8; border-color: var(--accent); }
+.picker-btn-ar { font-family: "SardUIArabic", system-ui, sans-serif; }
 
 .reader-stage { position: relative; flex: 1 1 auto; min-height: 0; }
 .reader-stage foliate-view { width: 100%; height: 100%; display: block; }

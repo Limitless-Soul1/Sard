@@ -85,7 +85,14 @@ export const en = {
   "lib.drop.titleOne": "Drop to add 1 book",
   "lib.drop.formats": "EPUB · PDF · MOBI — covers will be generated where missing",
   "lib.open": "Open",
-  "lib.importSoon": "Importing books arrives in the next update.",
+  "lib.importSoon": "Coming soon.",
+  "lib.add": "Add books",
+  "lib.importing": "Importing…",
+  "lib.import.imported": "{n} imported",
+  "lib.import.duplicate": "{n} already in library",
+  "lib.import.unsupported": "{n} unsupported",
+  "lib.import.error": "{n} failed",
+  "lib.import.none": "Nothing to import",
 } as const;
 
 export type TKey = keyof typeof en;

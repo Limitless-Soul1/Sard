@@ -86,5 +86,12 @@ export const ar: Record<TKey, string> = {
   "lib.drop.titleOne": "أفلِت لإضافة كتاب واحد",
   "lib.drop.formats": "EPUB · PDF · MOBI — ستُنشأ الأغلفة عند غيابها",
   "lib.open": "فتح",
-  "lib.importSoon": "الاستيراد يصل في التحديث القادم.",
+  "lib.importSoon": "قريبًا.",
+  "lib.add": "إضافة كتب",
+  "lib.importing": "جارٍ الاستيراد…",
+  "lib.import.imported": "{n} مُستورَد",
+  "lib.import.duplicate": "{n} موجود مسبقًا",
+  "lib.import.unsupported": "{n} غير مدعوم",
+  "lib.import.error": "{n} فشل",
+  "lib.import.none": "لا شيء للاستيراد",
 };

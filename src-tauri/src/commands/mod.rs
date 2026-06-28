@@ -124,12 +124,15 @@ pub fn collections_list(state: State<AppState>) -> Result<Vec<library::Collectio
     library::collections_list(&conn).map_err(err)
 }
 
-/// RAWY-15 — seed a believable Library from the bundled samples (DEV fixtures only,
-/// idempotent; replaced by real drag-and-drop import in a later task).
+/// RAWY-17 — import EPUB files into the library (copy-in, hash/dedup, extract metadata +
+/// cover). Returns one result per path so the UI can summarise imported/duplicate/
+/// unsupported/error. The only Rust↔JS path for adding books.
 #[tauri::command]
-pub fn library_dev_seed(state: State<AppState>) -> Result<bool, String> {
-    let app_data_dir = state.app_data_dir.display().to_string();
+pub fn import_books(
+    paths: Vec<String>,
+    state: State<AppState>,
+) -> Result<Vec<books::ImportResult>, String> {
+    let app_data_dir = state.app_data_dir.clone();
     let conn = state.db.lock().map_err(err)?;
-    library::dev_seed(&conn, &app_data_dir).map_err(err)?;
-    Ok(true)
+    Ok(books::import_books(&conn, &app_data_dir, &paths))
 }

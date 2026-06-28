@@ -5,7 +5,6 @@ import { initTheme, useTheme } from "./theme";
 import { LanguagePicker } from "./features/onboarding/LanguagePicker";
 import { Library, type OpenTarget } from "./features/library/Library";
 import { Reader } from "./features/reader/Reader";
-import { libraryDevSeed } from "./lib/ipc";
 
 // RAWY-12 i18n + RAWY-13 themes + RAWY-15 Library home. First run shows the language
 // picker; afterwards the saved language/theme drive the UI and the Library is the home
@@ -23,7 +22,6 @@ function Root() {
 function App() {
   useEffect(() => {
     initTheme(); // load + apply persisted theme/override/hide-titles
-    libraryDevSeed().catch(console.error); // DEV: seed a believable library (idempotent)
   }, []);
   return (
     <I18nProvider>

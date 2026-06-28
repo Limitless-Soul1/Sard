@@ -97,5 +97,15 @@ export interface CollectionRow {
 export const collectionsList = (): Promise<CollectionRow[]> =>
   invoke<CollectionRow[]>("collections_list");
 
-/** DEV: seed a believable library from the bundled samples (idempotent). */
-export const libraryDevSeed = (): Promise<boolean> => invoke<boolean>("library_dev_seed");
+export type ImportStatus = "imported" | "duplicate" | "unsupported" | "error";
+
+export interface ImportResult {
+  id: string;
+  title: string;
+  status: ImportStatus;
+  message: string | null;
+}
+
+/** Import EPUB files (copy-in, hash/dedup, extract metadata + cover). One result per path. */
+export const importBooks = (paths: string[]): Promise<ImportResult[]> =>
+  invoke<ImportResult[]>("import_books", { paths });

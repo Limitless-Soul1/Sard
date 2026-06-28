@@ -4,11 +4,13 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { useI18n } from "../../i18n";
 import {
   collectionsList,
+  importBooks,
   libraryListBooks,
   settingsGet,
   settingsSet,
   type BookRow,
   type CollectionRow,
+  type ImportResult,
   type SortKey,
   type SortOrder,
 } from "../../lib/ipc";
@@ -35,6 +37,17 @@ function sameDay(a: Date, b: Date) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
+function summarize(results: ImportResult[], t: TFn): string {
+  const c = { imported: 0, duplicate: 0, unsupported: 0, error: 0 };
+  for (const r of results) c[r.status]++;
+  const parts: string[] = [];
+  if (c.imported) parts.push(t("lib.import.imported", { n: String(c.imported) }));
+  if (c.duplicate) parts.push(t("lib.import.duplicate", { n: String(c.duplicate) }));
+  if (c.unsupported) parts.push(t("lib.import.unsupported", { n: String(c.unsupported) }));
+  if (c.error) parts.push(t("lib.import.error", { n: String(c.error) }));
+  return parts.join(" · ") || t("lib.import.none");
+}
+
 export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const { t, lang } = useI18n();
 
@@ -50,6 +63,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const [menu, setMenu] = useState<null | "sort" | "format">(null);
   const [drag, setDrag] = useState<{ count: number } | null>(null);
   const [forceEmpty, setForceEmpty] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
 
@@ -80,16 +94,21 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   useEffect(() => { if (hydrated) settingsSet("lib_cover", coverMode).catch(console.error); }, [coverMode, hydrated]);
   useEffect(() => { if (hydrated) settingsSet("lib_shelf", shelf ?? "").catch(console.error); }, [shelf, hydrated]);
 
-  // Shelves (real counts) once; books re-query whenever sort/filter/search change.
-  useEffect(() => {
+  // Shelves + books load on mount and re-load on import; books also re-query on sort/filter.
+  const loadShelves = useCallback(() => {
     collectionsList().then(setShelves).catch(console.error);
   }, []);
-  useEffect(() => {
+  const loadBooks = useCallback(() => {
     libraryListBooks({ sort, order, format, collection: shelf, search }).then(setBooks).catch(console.error);
   }, [sort, order, format, shelf, search]);
+  useEffect(() => loadShelves(), [loadShelves]);
+  useEffect(() => loadBooks(), [loadBooks]);
 
-  // Real drag-and-drop hover (band E · E5). Import itself is deferred (RAWY-16): a drop
-  // just shows a "coming" note. Dev-only keyboard aids force the drop / empty states for
+  // The drop listener is subscribed once; reach the latest import handler through a ref.
+  const runImportRef = useRef<(paths: string[]) => void>(() => {});
+
+  // Real drag-and-drop import (band E · E5): the hover overlay shows on enter/over and a
+  // drop runs the real importer. Dev-only keyboard aids force the drop / empty states for
   // capture, since PrintWindow can't screenshot a live OS drag.
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -103,7 +122,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
           else if (p.type === "leave") setDrag(null);
           else if (p.type === "drop") {
             setDrag(null);
-            flashToast(t("lib.importSoon"));
+            runImportRef.current(p.paths);
           }
         });
       } catch {
@@ -127,7 +146,53 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const flashToast = useCallback((msg: string) => {
     setToast(msg);
     if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(null), 2600);
+    toastTimer.current = window.setTimeout(() => setToast(null), 3600);
+  }, []);
+
+  // Import a batch of paths through the real Rust pipeline, then refresh + summarise.
+  const runImport = useCallback(
+    async (paths: string[]) => {
+      if (!paths.length || importing) return;
+      setImporting(true);
+      try {
+        const results = await importBooks(paths);
+        loadBooks();
+        loadShelves();
+        flashToast(summarize(results, t));
+      } catch (e) {
+        flashToast(String(e));
+      } finally {
+        setImporting(false);
+      }
+    },
+    [importing, loadBooks, loadShelves, flashToast, t],
+  );
+  useEffect(() => {
+    runImportRef.current = (paths) => void runImport(paths);
+  }, [runImport]);
+
+  // "Add books" → native file picker (EPUB only), then import the chosen files.
+  const addBooks = useCallback(async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const sel = await open({ multiple: true, filters: [{ name: "EPUB", extensions: ["epub"] }] });
+      if (!sel) return;
+      runImport(Array.isArray(sel) ? sel : [sel]);
+    } catch (e) {
+      flashToast(String(e));
+    }
+  }, [runImport, flashToast]);
+
+  // DEV: import a `;`-separated path list from the `dev_import` setting once (for capture/
+  // verification, since PrintWindow can't drive a live OS drag), then clear it.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    (async () => {
+      const di = await settingsGet("dev_import");
+      if (!di) return;
+      await settingsSet("dev_import", "");
+      runImportRef.current(di.split(";").map((s) => s.trim()).filter(Boolean));
+    })().catch(console.error);
   }, []);
 
   if (!hydrated) return null; // brief: settings loading (avoids a grid→list flash)
@@ -203,7 +268,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
 
       <main className="lib-main">
         {isEmpty ? (
-          <EmptyState onBrowse={() => flashToast(t("lib.importSoon"))} />
+          <EmptyState onBrowse={addBooks} />
         ) : (
           <>
             <header className="lib-head">
@@ -239,6 +304,9 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
                 </div>
 
                 <div className="lib-controls">
+                  <button className="lib-add" onClick={addBooks} disabled={importing}>
+                    + {t(importing ? "lib.importing" : "lib.add")}
+                  </button>
                   <div className="lib-viewtoggle" role="tablist">
                     <button
                       className={view === "grid" ? "active" : ""}

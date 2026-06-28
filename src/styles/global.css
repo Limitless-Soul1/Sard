@@ -401,6 +401,12 @@ html, body, #root {
 .lib-pill.active { background: var(--text); color: var(--paper-bg); }
 
 .lib-controls { display: flex; align-items: center; gap: 12px; }
+.lib-add {
+  padding: 6px 13px; border: none; border-radius: 7px; cursor: pointer;
+  background: var(--accent); color: var(--paper-bg); font: 600 12px var(--ui-font); white-space: nowrap;
+}
+.lib-add:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 86%, #000); }
+.lib-add:disabled { opacity: 0.6; cursor: default; }
 .lib-viewtoggle { display: flex; background: var(--chrome-bg); border-radius: 7px; padding: 3px; }
 .lib-viewtoggle button {
   display: flex; align-items: center; justify-content: center; padding: 5px 9px;

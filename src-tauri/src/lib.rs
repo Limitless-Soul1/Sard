@@ -64,6 +64,7 @@ fn migrate_legacy_appdata(new_dir: &Path, new_db: &Path) -> std::io::Result<()> 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // Resolve & create the OS app-data dir (%APPDATA%/com.sard.app on Windows).
             let app_data_dir = app.path().app_data_dir()?;
@@ -99,7 +100,7 @@ pub fn run() {
             commands::progress_get,
             commands::library_list_books,
             commands::collections_list,
-            commands::library_dev_seed,
+            commands::import_books,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sard");

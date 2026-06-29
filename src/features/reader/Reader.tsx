@@ -142,13 +142,16 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     settingsGet("chapters_open").then((v) => setChaptersOpen(v !== "0"));
   }, [status]);
 
+  // Placement model (RAWY-28): all reading panels are anchored to the BOOK direction —
+  // chapters on the leading edge, annotations + settings on the trailing edge. Chapters
+  // therefore COEXISTS with either trailing panel (opposite edges); annotations and the
+  // settings slide-over share the trailing edge, so opening one closes the other.
   const toggleChapters = useCallback(() => {
     setChaptersOpen((v) => {
       const next = !v;
       settingsSet("chapters_open", next ? "1" : "0").catch(console.error);
       return next;
     });
-    setAnnoOpen(false);
   }, []);
 
   // DEV: deterministically open a panel for screenshots (settings `dev_panel`: chapters |
@@ -283,9 +286,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         bookDir={dir}
         onBack={onExit}
         onContents={toggleChapters}
-        onAnnotations={() => { setAnnoOpen((v) => !v); setChaptersOpen(false); }}
-        onTypography={() => setSettingsOpen(true)}
-        onTheme={() => setSettingsOpen(true)}
+        onAnnotations={() => { setAnnoOpen((v) => !v); setSettingsOpen(false); }}
+        onTypography={() => { setSettingsOpen(true); setAnnoOpen(false); }}
+        onTheme={() => { setSettingsOpen(true); setAnnoOpen(false); }}
         onBookmark={wake}
         chaptersOpen={chaptersOpen}
         annoOpen={annoOpen}

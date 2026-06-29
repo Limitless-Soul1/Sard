@@ -17,7 +17,12 @@ export function SettingsPanel({ open, onClose, style, update, isRtlBook }: Props
   return (
     <>
       <div className={`panel-scrim${open ? " show" : ""}`} onClick={onClose} />
-      <aside className={`settings-panel${open ? " show" : ""}`} aria-hidden={!open}>
+      {/* Side = BOOK direction (book-trailing edge), independent of the UI language, so the
+          slide-over never shares an edge with the book-leading chapters panel (RAWY-28). */}
+      <aside
+        className={`settings-panel ${isRtlBook ? "sp-rtl" : "sp-ltr"}${open ? " show" : ""}`}
+        aria-hidden={!open}
+      >
         <div className="sp-head">
           <span className="sp-title">{t("reader.settings")}</span>
           <button className="rc-icon" onClick={onClose} title={t("reader.settings")}>✕</button>

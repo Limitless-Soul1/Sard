@@ -227,22 +227,32 @@ html, body, #root {
 .settings-panel {
   position: absolute;
   inset-block: 0;
-  inset-inline-end: 0;
   z-index: 6;
   width: min(384px, 94vw);
   background: var(--chrome-bg);
-  border-inline-start: 1px solid var(--chrome-border);
-  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.16);
-  transform: translateX(100%);
   transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
   display: flex;
   flex-direction: column;
 }
-:root[dir="rtl"] .settings-panel { transform: translateX(-100%); }
-/* the .show reset must match the RTL selector's specificity, or the panel stays hidden in
-   an Arabic UI (RAWY-24 fix — the panel was invisible in RTL). */
-.settings-panel.show,
-:root[dir="rtl"] .settings-panel.show { transform: translateX(0); }
+/* Side follows the BOOK (reading) direction, NOT the UI language (RAWY-28). It docks on the
+   book-TRAILING edge via PHYSICAL left/right (so it's immune to the UI <html dir>), always
+   opposite the book-leading chapters panel → the two never collide in either language. The
+   content inside still inherits the UI direction. (This supersedes the RAWY-24 :root[dir]
+   approach, whose UI-vs-book mismatch was the collision cause.) */
+.settings-panel.sp-ltr {
+  right: 0; left: auto;
+  border-left: 1px solid var(--chrome-border);
+  box-shadow: -10px 0 30px rgba(0, 0, 0, 0.16);
+  transform: translateX(100%);
+}
+.settings-panel.sp-rtl {
+  left: 0; right: auto;
+  border-right: 1px solid var(--chrome-border);
+  box-shadow: 10px 0 30px rgba(0, 0, 0, 0.16);
+  transform: translateX(-100%);
+}
+.settings-panel.sp-ltr.show,
+.settings-panel.sp-rtl.show { transform: translateX(0); }
 .sp-head {
   display: flex;
   align-items: center;

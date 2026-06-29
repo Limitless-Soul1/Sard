@@ -12,6 +12,7 @@ interface ReaderState {
   fraction: number;
   cfi: string | null;
   chapterLabel: string | null;
+  chapterHref: string | null; // current TOC href (chapters-panel highlighting, RAWY-21)
   status: ReaderStatus;
   error: string;
   style: ReadingStyle | null;
@@ -24,6 +25,7 @@ export const useReader = create<ReaderState>((set) => ({
   fraction: 0,
   cfi: null,
   chapterLabel: null,
+  chapterHref: null,
   status: "idle",
   error: "",
   style: null,

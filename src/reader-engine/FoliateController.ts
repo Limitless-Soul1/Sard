@@ -19,6 +19,14 @@ export interface RelocateInfo {
   cfi: string | null;
   fraction: number;
   chapterLabel: string | null;
+  chapterHref: string | null;
+}
+
+// A flattened table-of-contents entry (RAWY-21 chapters panel).
+export interface TocEntry {
+  label: string;
+  href: string | null;
+  level: number;
 }
 
 export interface AnchorRect {
@@ -176,6 +184,7 @@ export class FoliateController {
         cfi: e.detail?.cfi ?? null,
         fraction: typeof e.detail?.fraction === "number" ? e.detail.fraction : 0,
         chapterLabel: e.detail?.tocItem?.label ?? null,
+        chapterHref: e.detail?.tocItem?.href ?? null,
       });
     });
     view.addEventListener("load", (e: any) => {
@@ -291,6 +300,25 @@ export class FoliateController {
       this.annotations.set(h.cfi, h.color);
       await this.view?.addAnnotation({ value: h.cfi, color: h.color });
     }
+  }
+
+  /** Flattened TOC (chapters panel, RAWY-21). Empty if the book exposes none. */
+  getToc(): TocEntry[] {
+    const out: TocEntry[] = [];
+    const walk = (items: any[] | undefined, level: number) => {
+      if (!Array.isArray(items)) return;
+      for (const it of items) {
+        out.push({ label: String(it?.label ?? "").trim(), href: it?.href ?? null, level });
+        if (it?.subitems) walk(it.subitems, level + 1);
+      }
+    };
+    walk(this.view?.book?.toc, 0);
+    return out;
+  }
+
+  /** Jump to a TOC target (an href; foliate resolves it). */
+  goToHref(href: string): Promise<unknown> | undefined {
+    return this.view?.goTo(href);
   }
 
   next(): void {

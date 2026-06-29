@@ -7,9 +7,12 @@ interface Props {
   bookDir: string; // book's own direction — the progress fills from the book's start
   onBack: () => void;
   onContents: () => void;
+  onAnnotations: () => void;
   onTypography: () => void;
   onTheme: () => void;
   onBookmark: () => void;
+  chaptersOpen: boolean;
+  annoOpen: boolean;
 }
 
 // Reading chrome (band C): a translucent top bar (back/contents · chapter · type/theme/
@@ -22,9 +25,12 @@ export function ReaderChrome({
   bookDir,
   onBack,
   onContents,
+  onAnnotations,
   onTypography,
   onTheme,
   onBookmark,
+  chaptersOpen,
+  annoOpen,
 }: Props) {
   const { t } = useI18n();
   const pct = Math.round(fraction * 100);
@@ -34,7 +40,11 @@ export function ReaderChrome({
       <div className="rc-top">
         <div className="rc-group">
           <button className="rc-icon" onClick={onBack} title={t("reader.back")}>‹</button>
-          <button className="rc-icon rc-contents" onClick={onContents} title={t("reader.contents")}>
+          <button
+            className={`rc-icon rc-contents${chaptersOpen ? " on" : ""}`}
+            onClick={onContents}
+            title={t("reader.contents")}
+          >
             <span></span><span></span><span></span>
           </button>
         </div>
@@ -42,6 +52,13 @@ export function ReaderChrome({
         <div className="rc-group">
           <button className="rc-icon rc-aa" onClick={onTypography} title={t("reader.typography")}>
             A<span>a</span>
+          </button>
+          <button
+            className={`rc-icon rc-annos${annoOpen ? " on" : ""}`}
+            onClick={onAnnotations}
+            title={t("panel.annotations")}
+          >
+            <span></span><span></span><span></span>
           </button>
           <button className="rc-icon" onClick={onTheme} title={t("settings.language")}>◐</button>
           <button className="rc-icon rc-bookmark" onClick={onBookmark} title={t("reader.bookmark")} />

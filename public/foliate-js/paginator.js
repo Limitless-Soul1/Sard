@@ -466,10 +466,13 @@ export class Paginator extends HTMLElement {
         #top {
             --_gap: 7%;
             --_margin: 48px;
-            --_max-inline-size: 720px;
+            /* Sard patch (RAWY-21): read the max column width + count from inheritable custom
+               properties so the host app can drive the reading MEASURE through the closed
+               shadow boundary. Defaults preserve upstream behaviour when unset. */
+            --_max-inline-size: var(--sard-measure, 720px);
             --_max-block-size: 1440px;
-            --_max-column-count: 2;
-            --_max-column-count-portrait: 1;
+            --_max-column-count: var(--sard-columns, 2);
+            --_max-column-count-portrait: var(--sard-columns, 1);
             --_max-column-count-spread: var(--_max-column-count);
             --_half-gap: calc(var(--_gap) / 2);
             --_max-width: calc(var(--_max-inline-size) * var(--_max-column-count-spread));

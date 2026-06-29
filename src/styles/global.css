@@ -65,18 +65,24 @@ html, body, #root {
 /* the paper page sheet — measure + page-edge shadow (the book renders inside .page-host) */
 .page-sheet {
   position: relative;
-  inline-size: min(100%, 660px);
+  /* adjustable measure (RAWY-21): driven by --page-width set from ReadingStyle.pageWidth.
+     Widening eats the empty desk margins; the sheet stays the centred "page on desk". */
+  inline-size: min(100%, var(--page-width, 660px));
   block-size: 100%;
   background: var(--paper-bg);
   box-shadow: 0 0 30px rgba(60, 40, 16, 0.1), -1px 0 0 rgba(43, 37, 33, 0.05), 1px 0 0 rgba(43, 37, 33, 0.05);
   overflow: hidden;
+  transition: inline-size 0.18s ease;
 }
-.page-sheet.rtl { inline-size: min(100%, 680px); }
+/* "Match window" — the sheet fills the desk (up to a readable cap), margins shrink to a sliver */
+.page-sheet.fitw { inline-size: min(100%, 1180px); }
 /* dark themes: swap the warm cast for a subtle inset light edge */
 :root[data-dark="true"] .page-sheet {
   box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.05), inset -1px 0 0 rgba(255, 255, 255, 0.05);
 }
-.page-host { position: absolute; inset: 0; }
+/* Sard is a single-column "page on desk": force foliate to one column (via the patched
+   inheritable var) so widening the sheet grows the MEASURE, not a 2nd column (RAWY-21). */
+.page-host { position: absolute; inset: 0; --sard-columns: 1; }
 .page-host foliate-view { width: 100%; height: 100%; display: block; }
 
 /* faint paper grain in the sheet margins (full-paper grain over the iframe is deferred) */
@@ -234,8 +240,136 @@ html, body, #root {
 .sp-body { padding: 10px; overflow: auto; }
 .sp-body .tbar { background: transparent; border: 0; box-shadow: none; padding: 0; }
 
+/* annotations toggle in the chrome (band C-II): three lines with a tinted middle bar */
+.rc-annos { flex-direction: column; gap: 3px; }
+.rc-annos span { width: 16px; height: 2px; background: currentColor; border-radius: 1px; }
+.rc-annos span:nth-child(2) { background: var(--accent); }
+.rc-icon.on { color: var(--text); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+
+/* ---- Reading side panels (RAWY-21, band C-II): chapters (leading) + annotations (trailing) ---- */
+.reader-panel {
+  position: absolute;
+  inset-block: 0;
+  inline-size: 300px;
+  max-inline-size: 86vw;
+  display: flex;
+  flex-direction: column;
+  background: var(--chrome-bg);
+  color: var(--text);
+  z-index: 30;
+  box-shadow: 0 18px 44px rgba(20, 14, 6, 0.22);
+  transition: transform 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+:root[data-dark="true"] .reader-panel { box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45); }
+/* Side follows the BOOK direction (the panel's own dir attr) so it is independent of the UI
+   language: chapters on the reading-leading edge, annotations on the trailing edge. */
+.rp-lead { inset-inline-start: 0; border-inline-end: 1px solid var(--chrome-border); transform: translateX(-104%); }
+.rp-lead[dir="rtl"] { transform: translateX(104%); }
+.rp-trail { inset-inline-end: 0; border-inline-start: 1px solid var(--chrome-border); transform: translateX(104%); }
+.rp-trail[dir="rtl"] { transform: translateX(-104%); }
+.reader-panel.show { transform: translateX(0); }
+
+.rp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 16px 16px 10px;
+  border-bottom: 1px solid var(--chrome-border);
+}
+.rp-title { font: 600 15px "Literata", "SardUIArabic", serif; color: var(--text); }
+.rp-head-actions { display: flex; align-items: center; gap: 10px; }
+.rp-eye, .rp-x {
+  border: 0; background: transparent; cursor: pointer; color: var(--muted);
+  font-size: 14px; line-height: 1; padding: 4px; border-radius: 6px;
+}
+.rp-eye.off { opacity: 0.6; }
+.rp-eye:hover, .rp-x:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.rp-meta { padding: 8px 18px 4px; font: 400 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.rp-hint {
+  margin: 8px 14px 4px; padding: 7px 11px; border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  font: 400 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted);
+}
+.rp-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 6px 10px 18px; }
+.rp-empty { padding: 22px 16px; font: 400 12px/1.6 "Inter", "SardUIArabic", sans-serif; color: var(--muted); text-align: center; }
+
+/* chapters rows */
+.rp-row {
+  display: flex; align-items: baseline; gap: 11px; width: 100%;
+  padding: 9px 11px; border: 0; background: transparent; cursor: pointer;
+  border-radius: 7px; text-align: start; color: var(--text);
+}
+.rp-row:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.rp-row:disabled { cursor: default; opacity: 0.55; }
+.toc-row.active { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
+.rp-lead[dir="rtl"] .toc-row.active { box-shadow: inset -2px 0 0 var(--accent); }
+.toc-num { flex: 0 0 18px; font: 600 11px "Inter", sans-serif; color: var(--muted); }
+.toc-row.active .toc-num { color: var(--accent); }
+.toc-label { flex: 1; font: 400 14px/1.35 "Literata", "SardUIArabic", serif; color: color-mix(in srgb, var(--text) 86%, transparent); }
+.toc-row.active .toc-label { font-weight: 600; color: var(--text); }
+.toc-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--text) 18%, transparent); }
+.toc-dot.current { background: transparent; border: 1.5px solid var(--accent); }
+
+/* annotations: tabs */
+.rp-tabs { display: flex; gap: 4px; }
+.rp-tab {
+  border: 0; background: transparent; cursor: pointer; padding: 5px 10px; border-radius: 7px;
+  font: 600 13px "Inter", "SardUIArabic", sans-serif; color: var(--muted);
+}
+.rp-tab.on { color: var(--text); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.rp-count {
+  font: 600 10px "Inter", sans-serif; padding: 1px 6px; border-radius: 10px; margin-inline-start: 4px;
+  background: color-mix(in srgb, var(--text) 12%, transparent); color: var(--muted);
+}
+.rp-tab.on .rp-count { background: color-mix(in srgb, var(--accent) 26%, transparent); color: var(--text); }
+
+/* annotations: list items */
+.rp-toolrow { padding: 6px 6px 10px; }
+.rp-add {
+  width: 100%; border: 1px dashed var(--chrome-border); background: transparent; cursor: pointer;
+  padding: 9px; border-radius: 8px; color: var(--muted);
+  font: 500 12px "Inter", "SardUIArabic", sans-serif;
+}
+.rp-add:hover { color: var(--text); border-color: var(--accent); }
+.rp-item {
+  margin: 6px; padding: 11px 12px; border-radius: 9px;
+  background: color-mix(in srgb, var(--paper-bg) 55%, transparent);
+  border-inline-start: 3px solid var(--swatch, var(--accent));
+}
+.rp-item-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
+.rp-chapter { font: 600 10.5px "Inter", "SardUIArabic", sans-serif; letter-spacing: 0.02em; color: var(--muted); cursor: pointer; text-transform: uppercase; }
+.rp-chapter:hover { color: var(--accent); }
+.rp-item-actions { display: flex; gap: 6px; }
+.rp-mini { border: 0; background: transparent; cursor: pointer; color: var(--muted); font: 500 11px "Inter", "SardUIArabic", sans-serif; padding: 3px 6px; border-radius: 6px; }
+.rp-mini:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.rp-mini.primary { color: var(--paper-bg); background: var(--accent); }
+.rp-mini.danger:hover { color: #fff; background: #b5524a; }
+.rp-note-body { font: 400 13.5px/1.55 "Literata", "SardUIArabic", serif; color: var(--text); cursor: pointer; white-space: pre-wrap; }
+.rp-excerpt {
+  font: 400 13px/1.5 "Literata", "SardUIArabic", serif; color: color-mix(in srgb, var(--text) 84%, transparent);
+  cursor: pointer; margin-bottom: 8px;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.rp-dots { display: flex; gap: 7px; }
+.rp-dot { width: 15px; height: 15px; border-radius: 50%; border: 0; cursor: pointer; box-shadow: 0 0 0 1px rgba(0,0,0,0.08); }
+.rp-dot.active { box-shadow: 0 0 0 2px var(--paper-bg), 0 0 0 3.5px var(--accent); }
+.rp-compose { display: flex; flex-direction: column; gap: 6px; }
+.rp-textarea {
+  width: 100%; resize: vertical; border: 1px solid var(--chrome-border); border-radius: 7px;
+  background: var(--paper-bg); color: var(--text); padding: 8px; box-sizing: border-box;
+  font: 400 13px/1.5 "Literata", "SardUIArabic", serif;
+}
+.rp-textarea:focus { outline: none; border-color: var(--accent); }
+.rp-compose-foot { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* page-width control in the type panel (RAWY-21) */
+.tbar-width { gap: 8px; }
+.tbar-width input[type="range"] { inline-size: 116px; accent-color: var(--accent); cursor: pointer; }
+.tbar-width input[type="range"]:disabled { opacity: 0.4; cursor: default; }
+
 @media (prefers-reduced-motion: reduce) {
-  .reader-chrome, .rc-top, .rc-bottom, .settings-panel, .panel-scrim, .page-chevron { transition: none; }
+  .reader-chrome, .rc-top, .rc-bottom, .settings-panel, .panel-scrim, .page-chevron, .reader-panel, .page-sheet { transition: none; }
 }
 
 /* ---- Toolbar (chrome) ---- */

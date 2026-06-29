@@ -1,27 +1,17 @@
-// In-context highlights + notes (RAWY-20). Selecting text shows a floating toolbar (5
-// theme colours + Note); clicking a highlight opens a popover to recolour, note, or
-// remove it. Highlights are anchored by CFI through foliate's overlayer (they re-draw
-// across reflow/zoom/font and reopen); colour is stored as a SEMANTIC slot so it adapts
-// to the theme. All chrome via theme tokens. Notes attach to a highlight (highlight_id).
+// In-context highlights + notes (RAWY-20; RAWY-21 moves data into the shared store).
+// Selecting text shows a floating toolbar (5 theme colours + Note); clicking a highlight
+// opens a popover to recolour, note, or remove it. Highlights are anchored by CFI through
+// foliate's overlayer (they re-draw across reflow/zoom/font and reopen); colour is a
+// SEMANTIC slot so it adapts to the theme. State lives in useAnnotations so the side panel
+// (AnnotationsPanel) reflects every change.
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
+import { useEffect, useState, type CSSProperties, type RefObject } from "react";
 
 import { useI18n } from "../../i18n";
 import { THEMES, useTheme } from "../../theme";
-import { useReader } from "../../reader-engine/store";
 import type { AnchorRect, AnnotationHit, FoliateController, SelectionInfo } from "../../reader-engine/FoliateController";
-import {
-  highlightCreate,
-  highlightDelete,
-  highlightSetColor,
-  highlightsForBook,
-  noteCreate,
-  noteDelete,
-  notesForBook,
-  type HighlightColor,
-  type HighlightRow,
-  type NoteRow,
-} from "../../lib/ipc";
+import { useAnnotations } from "./annotationsStore";
+import type { HighlightColor, HighlightRow, NoteRow } from "../../lib/ipc";
 
 const COLORS: HighlightColor[] = ["amber", "rose", "sky", "green", "purple"];
 
@@ -123,23 +113,16 @@ function HighlightPopover({
   );
 }
 
-export function AnnotationLayer({
-  ctrlRef,
-  bookId,
-  reloadKey,
-}: {
-  ctrlRef: RefObject<FoliateController | null>;
-  bookId: string | null;
-  reloadKey: number;
-}) {
+export function AnnotationLayer({ ctrlRef }: { ctrlRef: RefObject<FoliateController | null> }) {
   const [selection, setSelection] = useState<SelectionInfo | null>(null);
   const [active, setActive] = useState<AnnotationHit | null>(null);
-  const hiRef = useRef<Map<string, HighlightRow>>(new Map()); // cfi → highlight
-  const noteRef = useRef<Map<string, NoteRow>>(new Map()); // highlight_id → note
-  const [, force] = useState(0);
-  const refresh = () => force((n) => n + 1);
+  const highlightByCfi = useAnnotations((s) => s.highlightByCfi);
+  const noteForHighlight = useAnnotations((s) => s.noteForHighlight);
+  // Subscribe to the arrays so the popover re-renders when the store mutates.
+  useAnnotations((s) => s.highlights);
+  useAnnotations((s) => s.notes);
 
-  // Wire the controller's selection + click callbacks once.
+  // Wire the controller's selection + click callbacks once (the controller instance is stable).
   useEffect(() => {
     const ctrl = ctrlRef.current;
     if (!ctrl) return;
@@ -164,86 +147,33 @@ export function AnnotationLayer({
     return () => window.removeEventListener("pointerdown", onDown);
   }, []);
 
-  // (Re)load this book's highlights + notes and re-apply them to the page.
-  useEffect(() => {
-    if (!bookId) return;
-    let alive = true;
-    (async () => {
-      const [hs, ns] = await Promise.all([highlightsForBook(bookId), notesForBook(bookId)]);
-      if (!alive) return;
-      hiRef.current = new Map(hs.map((h) => [h.cfi, h]));
-      noteRef.current = new Map(ns.filter((n) => n.highlight_id).map((n) => [n.highlight_id as string, n]));
-      await ctrlRef.current?.loadHighlights(hs.map((h) => ({ cfi: h.cfi, color: h.color })));
-      refresh();
-    })().catch(console.error);
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reloadKey, bookId]);
-
-  const chapter = () => useReader.getState().chapterLabel;
-
-  const createHighlight = useCallback(async (cfi: string, color: HighlightColor, text: string): Promise<HighlightRow | null> => {
-    if (!bookId) return null;
-    const label = await ctrlRef.current?.addHighlight(cfi, color);
-    const row = await highlightCreate(bookId, cfi, color, text, label ?? chapter());
-    if (row) hiRef.current.set(cfi, row);
-    return row;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bookId]);
+  const store = useAnnotations.getState;
 
   const onPickColor = async (c: HighlightColor) => {
     if (!selection) return;
-    await createHighlight(selection.cfi, c, selection.text);
+    await store().createHighlight(selection.cfi, c, selection.text);
     setSelection(null);
   };
   const onNote = async () => {
     if (!selection) return;
-    const row = (await createHighlight(selection.cfi, "amber", selection.text)) ?? hiRef.current.get(selection.cfi);
+    const row = (await store().createHighlight(selection.cfi, "amber", selection.text)) ?? highlightByCfi(selection.cfi);
+    const rect = selection.rect;
     setSelection(null);
-    if (row) setActive({ cfi: row.cfi, rect: selection.rect }); // open the popover to type
+    if (row) setActive({ cfi: row.cfi, rect }); // open the popover to type
   };
 
-  const activeHi = active ? hiRef.current.get(active.cfi) : undefined;
-  const activeNote = activeHi ? noteRef.current.get(activeHi.id) : undefined;
+  const activeHi = active ? highlightByCfi(active.cfi) : undefined;
+  const activeNote = activeHi ? noteForHighlight(activeHi.id) : undefined;
 
-  const changeColor = async (c: HighlightColor) => {
-    if (!activeHi) return;
-    ctrlRef.current?.setHighlightColor(activeHi.cfi, c);
-    const updated = await highlightSetColor(activeHi.id, c);
-    if (updated) hiRef.current.set(activeHi.cfi, updated);
-    refresh();
+  const changeColor = (c: HighlightColor) => {
+    if (activeHi) store().setColor(activeHi.id, c);
   };
-  const saveNote = async (rawBody: string) => {
-    if (!activeHi || !bookId) return;
-    const body = rawBody.trim();
-    const existing = noteRef.current.get(activeHi.id);
-    if (!body) {
-      if (existing) {
-        await noteDelete(existing.id);
-        noteRef.current.delete(activeHi.id);
-      }
-    } else {
-      const note = await noteCreate({
-        bookId,
-        highlightId: activeHi.id,
-        color: activeHi.color,
-        body,
-        chapterLabel: activeHi.chapter_label,
-      });
-      if (note) noteRef.current.set(activeHi.id, note);
-    }
+  const saveNote = async (body: string) => {
+    if (activeHi) await store().saveNoteForHighlight(activeHi, body);
     setActive(null);
   };
   const removeHighlight = async () => {
-    if (!activeHi) return;
-    ctrlRef.current?.removeHighlight(activeHi.cfi);
-    await highlightDelete(activeHi.id);
-    const note = noteRef.current.get(activeHi.id);
-    if (note) await noteDelete(note.id);
-    hiRef.current.delete(activeHi.cfi);
-    noteRef.current.delete(activeHi.id);
+    if (activeHi) await store().removeHighlight(activeHi.id);
     setActive(null);
   };
 

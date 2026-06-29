@@ -1,13 +1,22 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 
-import { FoliateController } from "../../reader-engine/FoliateController";
+import { FoliateController, type TocEntry } from "../../reader-engine/FoliateController";
 import { useReader } from "../../reader-engine/store";
-import { ARABIC_DEFAULTS, defaultsForDir, type ReadingStyle } from "../../reader-engine/injectedCss";
+import {
+  ARABIC_DEFAULTS,
+  defaultsForDir,
+  PAGE_WIDTH_DEFAULT,
+  type ReadingStyle,
+} from "../../reader-engine/injectedCss";
 import { appInfo, bookRegister, progressGet, progressSave, settingsGet, settingsSet } from "../../lib/ipc";
 import { useI18n } from "../../i18n";
+import { localeNum } from "../../lib/format";
 import { THEMES, useTheme } from "../../theme";
 import { AnnotationLayer } from "./AnnotationLayer";
+import { AnnotationsPanel } from "./AnnotationsPanel";
+import { ChaptersPanel } from "./ChaptersPanel";
+import { useAnnotations } from "./annotationsStore";
 import { ReaderChrome } from "./ReaderChrome";
 import { SettingsPanel } from "./SettingsPanel";
 import { useChromeOnIntent } from "./useChromeOnIntent";
@@ -40,7 +49,7 @@ async function loadStyle(): Promise<ReadingStyle | null> {
 }
 
 export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: () => void }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const stageRef = useRef<HTMLDivElement>(null);
   const ctrlRef = useRef<FoliateController | null>(null);
   if (!ctrlRef.current) ctrlRef.current = new FoliateController();
@@ -48,13 +57,16 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const bookRef = useRef<string>(initial.id);
   const [book, setBook] = useState<BookKey>(initial.dir === "rtl" ? "ar" : "en");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [annoKey, setAnnoKey] = useState(0); // bumped after each open → reload annotations
+  const [chaptersOpen, setChaptersOpen] = useState(false);
+  const [annoOpen, setAnnoOpen] = useState(false);
+  const [toc, setToc] = useState<TocEntry[]>([]);
+  const [annoTab, setAnnoTab] = useState<"notes" | "highlights">("notes");
   const progressTimer = useRef<number | undefined>(undefined);
   const styleTimer = useRef<number | undefined>(undefined);
   const appDataDir = useRef<string>("");
 
-  const { status, dir, fraction, chapterLabel, error, style, bookId } = useReader();
-  const { themeId, overrideBookColor, hideChapterTitles } = useTheme();
+  const { status, dir, fraction, chapterLabel, chapterHref, error, style } = useReader();
+  const { themeId, overrideBookColor, hideChapterTitles, setHideTitles } = useTheme();
   const { visible: chromeVisible, wake, setHold } = useChromeOnIntent();
 
   const openBook = useCallback(async (target: OpenTarget) => {
@@ -70,8 +82,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       const persisted = useReader.getState().style ?? (await loadStyle());
 
       const ctrl = ctrlRef.current!;
-      ctrl.onRelocate(({ cfi, fraction, chapterLabel }) => {
-        set({ cfi, fraction, chapterLabel });
+      ctrl.onRelocate(({ cfi, fraction, chapterLabel, chapterHref }) => {
+        set({ cfi, fraction, chapterLabel, chapterHref });
         if (progressTimer.current) clearTimeout(progressTimer.current);
         progressTimer.current = window.setTimeout(() => {
           if (cfi) progressSave(bookRef.current, cfi, fraction).catch(console.error);
@@ -91,7 +103,10 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       const finalStyle = persisted ?? defaultsForDir(ctrl.dir);
       if (!persisted) ctrl.applyStyle(finalStyle);
       set({ status: "ready", dir: ctrl.dir ?? "?", style: finalStyle });
-      setAnnoKey((k) => k + 1); // load this book's highlights/notes
+      setToc(ctrl.getToc()); // chapters panel (RAWY-21)
+      // Load this book's highlights/notes into the shared store (in-context layer + panel).
+      useAnnotations.getState().bind(ctrl, target.id);
+      await useAnnotations.getState().load();
     } catch (e) {
       set({ status: "error", error: String(e) });
     }
@@ -112,8 +127,19 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     ctrlRef.current?.applyTheme(THEMES[themeId], { overrideBookColor, hideChapterTitles });
   }, [themeId, overrideBookColor, hideChapterTitles]);
 
-  // Pin chrome open while the settings panel is open.
-  useEffect(() => setHold(settingsOpen), [settingsOpen, setHold]);
+  // Pin chrome open while any panel is open.
+  useEffect(() => setHold(settingsOpen || chaptersOpen || annoOpen), [settingsOpen, chaptersOpen, annoOpen, setHold]);
+
+  // DEV: deterministically open a panel for screenshots (settings `dev_panel`: chapters |
+  // notes | highlights). Mirrors the dev_open hook; no effect in production builds.
+  useEffect(() => {
+    if (!import.meta.env.DEV || status !== "ready") return;
+    settingsGet("dev_panel").then((p) => {
+      if (p === "chapters") setChaptersOpen(true);
+      else if (p === "notes") { setAnnoTab("notes"); setAnnoOpen(true); }
+      else if (p === "highlights") { setAnnoTab("highlights"); setAnnoOpen(true); }
+    });
+  }, [status]);
 
   const switchBook = async (which: BookKey) => {
     if (BOOKS[which].id === bookRef.current) return;
@@ -138,13 +164,24 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     }, SAVE_DEBOUNCE_MS);
   };
 
-  const chapter = chapterLabel || t("reader.chapterFallback");
   const isRtlBook = dir === "rtl";
+  // When chapter titles are hidden (anti-spoiler), the chrome shows a neutral "Chapter N".
+  const tocIndex = toc.findIndex((c) => c.href && c.href === chapterHref);
+  const chapter = hideChapterTitles
+    ? t("panel.chapter", { n: localeNum((tocIndex >= 0 ? tocIndex : 0) + 1, lang) })
+    : chapterLabel || t("reader.chapterFallback");
+
+  // Adjustable page width (RAWY-21): a CSS var on the desk; "match window" fills it.
+  const pageWidth = style?.pageWidth ?? PAGE_WIDTH_DEFAULT;
+  const fitWindow = style?.pageFitWindow ?? false;
+
+  const jumpHref = (href: string) => ctrlRef.current?.goToHref(href);
+  const jumpCfi = (cfi: string) => ctrlRef.current?.goToLocator(cfi);
 
   return (
     <div className="reader-root">
       {/* desk + centered page sheet (the book) + page-turn affordances */}
-      <div className="reader-desk">
+      <div className="reader-desk" style={{ "--page-width": `${pageWidth}px` } as CSSProperties}>
         <button
           className="page-chevron page-chevron-left"
           onClick={() => ctrlRef.current?.next()}
@@ -152,7 +189,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         >
           ‹
         </button>
-        <div className={`page-sheet${isRtlBook ? " rtl" : ""}`}>
+        <div className={`page-sheet${isRtlBook ? " rtl" : ""}${fitWindow ? " fitw" : ""}`}>
           <div className="page-ribbon" />
           <div className="page-host" ref={stageRef} dir="ltr" />
           <div className="page-grain" />
@@ -166,16 +203,39 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         </button>
       </div>
 
+      <ChaptersPanel
+        open={chaptersOpen}
+        onClose={() => setChaptersOpen(false)}
+        toc={toc}
+        currentHref={chapterHref}
+        hideTitles={hideChapterTitles}
+        onToggleHideTitles={() => setHideTitles(!hideChapterTitles)}
+        onJump={jumpHref}
+        isRtlBook={isRtlBook}
+        fraction={fraction}
+      />
+
+      <AnnotationsPanel
+        open={annoOpen}
+        onClose={() => setAnnoOpen(false)}
+        onJump={jumpCfi}
+        isRtlBook={isRtlBook}
+        initialTab={annoTab}
+      />
+
       <ReaderChrome
-        visible={chromeVisible || settingsOpen}
+        visible={chromeVisible || settingsOpen || chaptersOpen || annoOpen}
         chapter={chapter}
         fraction={fraction}
         bookDir={dir}
         onBack={onExit}
-        onContents={wake}
+        onContents={() => { setChaptersOpen((v) => !v); setAnnoOpen(false); }}
+        onAnnotations={() => { setAnnoOpen((v) => !v); setChaptersOpen(false); }}
         onTypography={() => setSettingsOpen(true)}
         onTheme={() => setSettingsOpen(true)}
         onBookmark={wake}
+        chaptersOpen={chaptersOpen}
+        annoOpen={annoOpen}
       />
 
       <SettingsPanel
@@ -190,7 +250,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         onBook={switchBook}
       />
 
-      <AnnotationLayer ctrlRef={ctrlRef} bookId={bookId} reloadKey={annoKey} />
+      <AnnotationLayer ctrlRef={ctrlRef} />
 
       {status === "error" && <pre className="reader-error">{t("status.error")}: {error}</pre>}
     </div>

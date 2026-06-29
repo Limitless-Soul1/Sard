@@ -1,6 +1,9 @@
 import { useI18n } from "../../i18n";
 import {
   ARABIC_FONTS,
+  PAGE_WIDTH_DEFAULT,
+  PAGE_WIDTH_MAX,
+  PAGE_WIDTH_MIN,
   type Align,
   type ArabicFont,
   type DiacriticsMode,
@@ -70,6 +73,28 @@ export function TypographyBar({ style, update, onPrev, onNext, status, book, onB
         <button onClick={() => update({ marginPx: clamp(style.marginPx - 12, 0, 160) })}>⇥−</button>
         <span className="val">{style.marginPx}</span>
         <button onClick={() => update({ marginPx: clamp(style.marginPx + 12, 0, 160) })}>⇥+</button>
+      </span>
+
+      {/* page width / measure (RAWY-21): widening trims the desk margins, not the leading */}
+      <span className="grp tbar-width" title={t("type.pageWidth")}>
+        <label>{t("type.pageWidth")}</label>
+        <input
+          type="range"
+          min={PAGE_WIDTH_MIN}
+          max={PAGE_WIDTH_MAX}
+          step={20}
+          value={style.pageWidth ?? PAGE_WIDTH_DEFAULT}
+          disabled={style.pageFitWindow ?? false}
+          onChange={(e) => update({ pageWidth: Number(e.target.value) })}
+          aria-label={t("type.pageWidth")}
+        />
+        <button
+          className={style.pageFitWindow ? "on" : ""}
+          onClick={() => update({ pageFitWindow: !style.pageFitWindow })}
+          title={t("type.matchWindow")}
+        >
+          {t("type.matchWindow")}
+        </button>
       </span>
 
       <button

@@ -115,6 +115,29 @@ export const en = {
   "hl.addNote": "Add a note…",
   "hl.remove": "Remove",
   "hl.save": "Save",
+
+  // Reading side panels + page width (RAWY-21)
+  "panel.contents": "Contents",
+  "panel.chaptersMeta": "{n} chapters · {p}% read",
+  "panel.chapter": "Chapter {n}",
+  "panel.titlesHidden": "Titles hidden to avoid spoilers",
+  "panel.hideTitles": "Hide titles",
+  "panel.showTitles": "Show titles",
+  "panel.noChapters": "This book has no contents list",
+  "panel.annotations": "Highlights & notes",
+  "panel.notes": "Notes",
+  "panel.highlights": "Highlights",
+  "panel.noNotes": "No notes yet — select text and add one, or note this spot.",
+  "panel.noHighlights": "No highlights yet — select text in the book to highlight it.",
+  "panel.addMarginNote": "Note this spot",
+  "panel.marginNote": "Margin note",
+  "note.edit": "Edit",
+  "note.delete": "Delete",
+  "note.cancel": "Cancel",
+  "type.pageWidth": "Page width",
+  "type.matchWindow": "Match window",
+  "type.narrow": "Narrow",
+  "type.wide": "Wide",
 } as const;
 
 export type TKey = keyof typeof en;

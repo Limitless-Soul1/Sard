@@ -18,7 +18,17 @@ export interface ReadingStyle {
   marginPx: number; // inline page padding
   align: Align;
   diacritics: DiacriticsMode;
+  // Page width / measure (RAWY-21): the paper-sheet width on the desk, in px. Widening
+  // trims the empty desk margins, never the leading. Applied to the chrome sheet (a CSS
+  // var), NOT injected into the book — so it composes cleanly with zoom (D6).
+  pageWidth: number;
+  pageFitWindow: boolean; // "match window" — the sheet fills the desk, ignoring pageWidth
 }
+
+// Page-width bounds (px). Default lands at a comfortable ~66-char measure.
+export const PAGE_WIDTH_MIN = 480;
+export const PAGE_WIDTH_MAX = 1040;
+export const PAGE_WIDTH_DEFAULT = 660;
 
 interface FontDef {
   regular: string;
@@ -48,6 +58,8 @@ export const ARABIC_DEFAULTS: ReadingStyle = {
   marginPx: 56,
   align: "start",
   diacritics: "show",
+  pageWidth: 680,
+  pageFitWindow: false,
 };
 export const LATIN_DEFAULTS: ReadingStyle = {
   zoom: 1.0,
@@ -57,6 +69,8 @@ export const LATIN_DEFAULTS: ReadingStyle = {
   marginPx: 56,
   align: "justify",
   diacritics: "show",
+  pageWidth: PAGE_WIDTH_DEFAULT,
+  pageFitWindow: false,
 };
 
 export const defaultsForDir = (dir?: string): ReadingStyle =>

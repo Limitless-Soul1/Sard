@@ -39,23 +39,23 @@ export function ChaptersPanel({
     <aside className={`reader-panel rp-lead${open ? " show" : ""}`} dir={dir} aria-hidden={!open}>
       <div className="rp-head">
         <span className="rp-title">{t("panel.contents")}</span>
-        <div className="rp-head-actions">
-          <button
-            className={`rp-eye${hideTitles ? " off" : ""}`}
-            onClick={onToggleHideTitles}
-            title={hideTitles ? t("panel.showTitles") : t("panel.hideTitles")}
-            aria-pressed={hideTitles}
-          >
-            {hideTitles ? "🙈" : "👁"}
-          </button>
-          <button className="rp-x" onClick={onClose} aria-label="✕">✕</button>
-        </div>
+        <button className="rp-x" onClick={onClose} aria-label="✕">✕</button>
       </div>
 
       <div className="rp-meta">
         {t("panel.chaptersMeta", { n: localeNum(toc.length, lang), p: localeNum(pct, lang) })}
       </div>
-      {hideTitles && <div className="rp-hint">🙈 {t("panel.titlesHidden")}</div>}
+
+      {/* clear labelled anti-spoiler toggle (RAWY-22) */}
+      <button className="rp-toggle" onClick={onToggleHideTitles} aria-pressed={hideTitles}>
+        <span className="rp-toggle-text">
+          <span className="rp-toggle-label">{t("theme.hideTitles")}</span>
+          <span className="rp-toggle-hint">{hideTitles ? t("panel.titlesHidden") : t("panel.spoilerSafe")}</span>
+        </span>
+        <span className={`rp-switch${hideTitles ? " on" : ""}`} aria-hidden>
+          <span className="rp-knob" />
+        </span>
+      </button>
 
       <div className="rp-scroll">
         {toc.length === 0 && <div className="rp-empty">{t("panel.noChapters")}</div>}

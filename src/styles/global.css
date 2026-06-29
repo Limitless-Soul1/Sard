@@ -60,7 +60,10 @@ html, body, #root {
   display: flex;
   justify-content: center;
   background: var(--app-bg);
+  /* shifts to make room for an open edge panel (RAWY-22) so it never crowds the page */
+  transition: padding 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
+@media (prefers-reduced-motion: reduce) { .reader-desk { transition: none; } }
 
 /* the paper page sheet — measure + page-edge shadow (the book renders inside .page-host) */
 .page-sheet {
@@ -294,6 +297,28 @@ html, body, #root {
 .rp-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 6px 10px 18px; }
 .rp-empty { padding: 22px 16px; font: 400 12px/1.6 "Inter", "SardUIArabic", sans-serif; color: var(--muted); text-align: center; }
 
+/* anti-spoiler toggle (RAWY-22): a clear labelled pill switch with a hint */
+.rp-toggle {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; width: calc(100% - 28px);
+  margin: 6px 14px 4px; padding: 10px 12px; border: 1px solid var(--chrome-border); border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 6%, transparent); cursor: pointer; text-align: start;
+}
+.rp-toggle:hover { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.rp-toggle-text { display: flex; flex-direction: column; gap: 2px; }
+.rp-toggle-label { font: 600 12.5px "Inter", "SardUIArabic", sans-serif; color: var(--text); }
+.rp-toggle-hint { font: 400 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.rp-switch {
+  flex: 0 0 auto; width: 40px; height: 23px; border-radius: 23px; position: relative;
+  background: color-mix(in srgb, var(--text) 18%, transparent); transition: background 0.18s ease;
+}
+.rp-switch.on { background: var(--accent); }
+.rp-knob {
+  position: absolute; top: 2px; inset-inline-start: 2px; width: 19px; height: 19px; border-radius: 50%;
+  background: var(--paper-bg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: transform 0.18s ease;
+}
+.rp-switch.on .rp-knob { transform: translateX(17px); }
+.rp-lead[dir="rtl"] .rp-switch.on .rp-knob { transform: translateX(-17px); }
+
 /* chapters rows */
 .rp-row {
   display: flex; align-items: baseline; gap: 11px; width: 100%;
@@ -332,10 +357,13 @@ html, body, #root {
   font: 500 12px "Inter", "SardUIArabic", sans-serif;
 }
 .rp-add:hover { color: var(--text); border-color: var(--accent); }
+/* side-list rows carry a REAL colour (RAWY-22): a soft tint of their colour + matching
+   border + a solid colour bar — obvious at a glance, readable on every paper. */
 .rp-item {
-  margin: 6px; padding: 11px 12px; border-radius: 9px;
-  background: color-mix(in srgb, var(--paper-bg) 55%, transparent);
-  border-inline-start: 3px solid var(--swatch, var(--accent));
+  margin: 7px 6px; padding: 12px 14px; border-radius: 9px;
+  background: color-mix(in srgb, var(--swatch, var(--accent)) 26%, transparent);
+  border: 1px solid color-mix(in srgb, var(--swatch, var(--accent)) 52%, transparent);
+  border-inline-start: 4px solid var(--swatch, var(--accent));
 }
 .rp-item-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
 .rp-chapter { font: 600 10.5px "Inter", "SardUIArabic", sans-serif; letter-spacing: 0.02em; color: var(--muted); cursor: pointer; text-transform: uppercase; }
@@ -819,13 +847,20 @@ html, body, #root {
   border-left: 7px solid transparent; border-right: 7px solid transparent; border-top: 8px solid var(--text);
 }
 .hl-bar.below::after, .hl-card.below::after { bottom: auto; top: -7px; border-top: none; border-bottom: 8px solid var(--text); }
-.hl-bar { display: flex; align-items: center; gap: 4px; padding: 9px 12px; }
-.hl-dots { display: flex; align-items: center; gap: 6px; }
+.hl-bar { display: flex; align-items: center; gap: 4px; padding: 9px 12px; max-width: 92vw; flex-wrap: wrap; }
+.hl-dots { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .hl-dot {
-  width: 22px; height: 22px; border-radius: 50%; border: none; cursor: pointer; padding: 0;
+  position: relative; width: 19px; height: 19px; border-radius: 50%; border: none; cursor: pointer; padding: 0;
   box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.2);
 }
 .hl-dot.active { outline: 2px solid var(--paper-bg); outline-offset: 1px; }
+/* custom-colour swatch (RAWY-22): a conic-gradient "+" that opens the native colour picker */
+.hl-custom {
+  display: inline-flex; align-items: center; justify-content: center; overflow: hidden;
+  background: conic-gradient(from 90deg, #E8C36A, #E7A867, #E2978D, #D285A4, #BFA8D6, #9DC0D6, #8DC3BA, #AEC798, #E8C36A);
+}
+.hl-custom-plus { font: 700 12px var(--ui-font); color: #fff; line-height: 1; text-shadow: 0 0 2px rgba(0, 0, 0, 0.5); pointer-events: none; }
+.hl-custom-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; padding: 0; cursor: pointer; }
 .hl-sep { width: 1px; height: 22px; background: color-mix(in srgb, var(--paper-bg) 22%, transparent); margin: 0 5px; }
 .hl-action {
   display: flex; align-items: center; gap: 6px; border: none; background: none; color: var(--paper-bg);
@@ -833,8 +868,10 @@ html, body, #root {
 }
 .hl-pen { font: 600 14px "Literata", serif; }
 
-.hl-card { width: 280px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-.hl-card .hl-dots { gap: 8px; }
+.hl-card { width: 284px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.hl-card .hl-dots { gap: 7px; }
+.hl-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.hl-card-top .hl-dots { flex: 1; }
 .hl-grow { flex: 1; }
 .hl-remove {
   border: none; background: none; color: color-mix(in srgb, var(--paper-bg) 70%, transparent);

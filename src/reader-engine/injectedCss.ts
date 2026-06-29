@@ -99,7 +99,22 @@ function themeBlock(theme: Theme | undefined, flags: BookThemeFlags | undefined)
            a, a:link, a:visited { color: ${c.accent} !important; }`
         : `html, body { color: ${c.text}; }`
     }
-    ${flags?.hideChapterTitles ? "h1, h2 { display: none !important; }" : ""}
+    ${
+      flags?.hideChapterTitles
+        ? /* Hide the chapter-title TEXT, but keep the heading element in normal flow with a
+             valid (zero-size) box. `display:none` removed it from layout entirely, and since
+             TOC entries anchor to the heading id, navigating to a chapter whose heading was
+             display:none landed on a geometry-less element → a blank page (RAWY-22 bug). Here
+             the heading still has a position the paginator can resolve, so the page renders. */
+          `h1, h2 {
+             visibility: hidden !important;
+             font-size: 0 !important; line-height: 0 !important;
+             height: 0 !important; min-height: 0 !important; max-height: 0 !important;
+             margin: 0 !important; padding: 0 !important; border: 0 !important;
+             overflow: hidden !important;
+           }`
+        : ""
+    }
   `;
 }
 
@@ -153,8 +168,12 @@ export function buildReadingCss(
     html { padding-inline: ${style.marginPx}px; }
     /* a corrected reading direction (RAWY-19 override) flows + aligns the text accordingly */
     ${bookDir ? `html, body { direction: ${bookDir}; }` : ""}
-    /* highlight ink opacity for foliate's overlayer (RAWY-20) — heavier on dark paper */
-    :root { --overlayer-highlight-opacity: ${theme?.dark ? "0.42" : "0.3"}; }
+    /* highlight ink (RAWY-22): a clearly-visible "wick" — multiply blend on light paper,
+       screen on dark, at a per-theme opacity (was a washed-out flat 0.3). */
+    :root {
+      --overlayer-highlight-opacity: ${theme?.dark ? "0.5" : "0.62"};
+      --overlayer-highlight-blend: ${theme?.dark ? "screen" : "multiply"};
+    }
     img, svg, video, table { max-width: 100%; max-height: 100%; }
 
     /* per-script fonts: Arabic glyphs use the chosen Arabic face, Latin uses Literata */

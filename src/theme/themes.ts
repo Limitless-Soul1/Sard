@@ -2,7 +2,21 @@
 // specified exactly; surfaceBg/chromeBg for Sepia/Slate are sensibly derived (see
 // DESIGN-SPEC.md §9 / PROJECT.md §9 risks).
 
-import type { Theme, ThemeId } from "./tokens";
+import type { HighlightSlot, Theme, ThemeId } from "./tokens";
+
+// The 8 highlight inks (RAWY-22, design band D toolbar). Shared across themes — the on-page
+// "wick" adapts to the paper via per-theme blend mode + opacity (injectedCss), and the swatch
+// dots read cleanly on every paper. A custom highlight stores its own #hex instead of a slot.
+const PALETTE: Record<HighlightSlot, string> = {
+  amber: "#E8C36A",
+  marigold: "#E7A867",
+  coral: "#E2978D",
+  rose: "#D285A4",
+  purple: "#BFA8D6",
+  sky: "#9DC0D6",
+  teal: "#8DC3BA",
+  green: "#AEC798",
+};
 
 export const THEMES: Record<ThemeId, Theme> = {
   ivory: {
@@ -18,7 +32,7 @@ export const THEMES: Record<ThemeId, Theme> = {
       muted: "#8A7E6E",
       accent: "#9C5A3C",
       selection: "rgba(156,90,60,.20)",
-      highlight: { amber: "#E8C36A", rose: "#E0A6A0", sky: "#A8C4D6", green: "#B6C9A6", purple: "#C7B6D6" },
+      highlight: PALETTE,
     },
   },
   sepia: {
@@ -34,7 +48,7 @@ export const THEMES: Record<ThemeId, Theme> = {
       muted: "#8C7A5E",
       accent: "#97582F",
       selection: "rgba(151,88,47,.20)",
-      highlight: { amber: "#D9AE54", rose: "#CE8E73", sky: "#8FA9B5", green: "#9DAE83", purple: "#AD96B8" },
+      highlight: PALETTE,
     },
   },
   slate: {
@@ -50,7 +64,7 @@ export const THEMES: Record<ThemeId, Theme> = {
       muted: "#7E8A93",
       accent: "#C98A5E",
       selection: "rgba(201,138,94,.28)",
-      highlight: { amber: "#C7A24E", rose: "#C28A82", sky: "#7FA0B3", green: "#8DA37F", purple: "#A892B6" },
+      highlight: PALETTE,
     },
   },
   trueblack: {
@@ -66,7 +80,7 @@ export const THEMES: Record<ThemeId, Theme> = {
       muted: "#6E6A62",
       accent: "#C98A5E",
       selection: "rgba(201,138,94,.30)",
-      highlight: { amber: "#B89348", rose: "#B07F77", sky: "#6F90A3", green: "#7E946F", purple: "#9783A5" },
+      highlight: PALETTE,
     },
   },
 };

@@ -5,6 +5,12 @@
 
 export type ThemeId = "ivory" | "sepia" | "slate" | "trueblack";
 
+// Highlight palette (RAWY-22): 8 semantic slots (was 5). Stored colours are EITHER one of
+// these slot names (adapts per theme) OR a literal #hex (a custom colour) — resolveColor
+// handles both. Order = the on-screen swatch order from the design (band D).
+export const HIGHLIGHT_SLOTS = ["amber", "marigold", "coral", "rose", "purple", "sky", "teal", "green"] as const;
+export type HighlightSlot = (typeof HIGHLIGHT_SLOTS)[number];
+
 export interface ThemeColors {
   paperBg: string; // page / card surface
   surfaceBg: string; // app desk / window background
@@ -14,7 +20,7 @@ export interface ThemeColors {
   muted: string;
   accent: string;
   selection: string; // text-selection background
-  highlight: { amber: string; rose: string; sky: string; green: string; purple: string };
+  highlight: Record<HighlightSlot, string>;
 }
 
 export interface Theme {

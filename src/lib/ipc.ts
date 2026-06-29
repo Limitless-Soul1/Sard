@@ -133,7 +133,9 @@ export const bookRevertCover = (id: string): Promise<BookRow | null> =>
 
 // ---- Highlights + notes (RAWY-20) -----------------------------------------
 
-export type HighlightColor = "amber" | "rose" | "sky" | "green" | "purple";
+// A highlight colour is a semantic slot name (adapts per theme) OR a literal #hex (custom).
+// Stored as TEXT in SQLite either way; resolveColor / colorValue handle both (RAWY-20/22).
+export type HighlightColor = string;
 
 export interface HighlightRow {
   id: string;

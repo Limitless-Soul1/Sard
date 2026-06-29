@@ -11,13 +11,42 @@ import { useI18n } from "../../i18n";
 import { THEMES, useTheme } from "../../theme";
 import type { AnchorRect, AnnotationHit, FoliateController, SelectionInfo } from "../../reader-engine/FoliateController";
 import { useAnnotations } from "./annotationsStore";
+import { HIGHLIGHT_SLOTS, isHex } from "./highlightColors";
 import type { HighlightColor, HighlightRow, NoteRow } from "../../lib/ipc";
-
-const COLORS: HighlightColor[] = ["amber", "rose", "sky", "green", "purple"];
 
 function useHl() {
   const id = useTheme((s) => s.themeId);
   return THEMES[id].colors.highlight;
+}
+
+// The 8 slot dots + a custom-colour swatch (conic-gradient "+", opens a native picker → #hex).
+// `active` is the currently-applied colour (a slot name or a #hex) so the right dot is ringed.
+export function ColorRow({ active, onPick }: { active?: string | null; onPick: (c: HighlightColor) => void }) {
+  const hl = useHl();
+  const custom = isHex(active);
+  return (
+    <div className="hl-dots">
+      {HIGHLIGHT_SLOTS.map((c) => (
+        <button
+          key={c}
+          className={`hl-dot${active === c ? " active" : ""}`}
+          style={{ background: hl[c] }}
+          onClick={() => onPick(c)}
+          aria-label={c}
+        />
+      ))}
+      <label className={`hl-dot hl-custom${custom ? " active" : ""}`} style={custom ? { background: active as string } : undefined} title="Custom colour">
+        {!custom && <span className="hl-custom-plus" aria-hidden>+</span>}
+        <input
+          type="color"
+          className="hl-custom-input"
+          value={custom ? (active as string) : "#C98A5E"}
+          onChange={(e) => onPick(e.target.value)}
+          aria-label="Custom colour"
+        />
+      </label>
+    </div>
+  );
 }
 
 // Place the floating UI centred over the selection; clamp to the viewport, flip below if
@@ -37,7 +66,6 @@ function SelectionToolbar({
   onNote: () => void;
 }) {
   const { t } = useI18n();
-  const hl = useHl();
   const below = sel.rect.top < 90;
   return (
     <div
@@ -45,11 +73,7 @@ function SelectionToolbar({
       style={anchorStyle(sel.rect, below)}
       onPointerDown={(e) => e.stopPropagation()}
     >
-      <div className="hl-dots">
-        {COLORS.map((c) => (
-          <button key={c} className="hl-dot" style={{ background: hl[c] }} onClick={() => onColor(c)} aria-label={c} />
-        ))}
-      </div>
+      <ColorRow onPick={onColor} />
       <span className="hl-sep" />
       <button className="hl-action" onClick={onNote}>
         <span className="hl-pen" aria-hidden>✎</span>
@@ -75,7 +99,6 @@ function HighlightPopover({
   onRemove: () => void;
 }) {
   const { t } = useI18n();
-  const hl = useHl();
   const [body, setBody] = useState(note?.body ?? "");
   useEffect(() => setBody(note?.body ?? ""), [note?.id, hi.id]);
   const below = hit.rect.top < 150;
@@ -85,17 +108,8 @@ function HighlightPopover({
       style={anchorStyle(hit.rect, below)}
       onPointerDown={(e) => e.stopPropagation()}
     >
-      <div className="hl-dots">
-        {COLORS.map((c) => (
-          <button
-            key={c}
-            className={`hl-dot${hi.color === c ? " active" : ""}`}
-            style={{ background: hl[c] }}
-            onClick={() => onColor(c)}
-            aria-label={c}
-          />
-        ))}
-        <span className="hl-grow" />
+      <div className="hl-card-top">
+        <ColorRow active={hi.color} onPick={onColor} />
         <button className="hl-remove" onClick={onRemove}>{t("hl.remove")}</button>
       </div>
       <textarea

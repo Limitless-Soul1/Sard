@@ -130,6 +130,21 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // Pin chrome open while any panel is open.
   useEffect(() => setHold(settingsOpen || chaptersOpen || annoOpen), [settingsOpen, chaptersOpen, annoOpen, setHold]);
 
+  // Chapters panel is OPEN BY DEFAULT (RAWY-22); the user's choice persists per `chapters_open`.
+  useEffect(() => {
+    if (status !== "ready") return;
+    settingsGet("chapters_open").then((v) => setChaptersOpen(v !== "0"));
+  }, [status]);
+
+  const toggleChapters = useCallback(() => {
+    setChaptersOpen((v) => {
+      const next = !v;
+      settingsSet("chapters_open", next ? "1" : "0").catch(console.error);
+      return next;
+    });
+    setAnnoOpen(false);
+  }, []);
+
   // DEV: deterministically open a panel for screenshots (settings `dev_panel`: chapters |
   // notes | highlights). Mirrors the dev_open hook; no effect in production builds.
   useEffect(() => {
@@ -138,6 +153,17 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       if (p === "chapters") setChaptersOpen(true);
       else if (p === "notes") { setAnnoTab("notes"); setAnnoOpen(true); }
       else if (p === "highlights") { setAnnoTab("highlights"); setAnnoOpen(true); }
+    });
+    settingsGet("dev_seek").then((s) => {
+      if (!s) return;
+      setTimeout(async () => {
+        const ctrl = ctrlRef.current;
+        if (!ctrl) return;
+        if (s === "toc:last") await ctrl.goToTocEntry("last");
+        else if (s.startsWith("toc:")) await ctrl.goToTocEntry(Number(s.slice(4)));
+        else if (!Number.isNaN(Number(s))) await ctrl.goToFraction(Number(s));
+        setTimeout(() => settingsSet("dev_diag", ctrl.diagnose()).catch(() => {}), 500);
+      }, 350);
     });
   }, [status]);
 
@@ -178,10 +204,22 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const jumpHref = (href: string) => ctrlRef.current?.goToHref(href);
   const jumpCfi = (cfi: string) => ctrlRef.current?.goToLocator(cfi);
 
+  // Shift the desk so an open edge panel sits BESIDE the page, never over it (RAWY-22). The
+  // chapters panel is on the book-leading side, annotations on the trailing side.
+  const PANEL = 300;
+  const lead = chaptersOpen ? PANEL : 0;
+  const trail = annoOpen ? PANEL : 0;
+  // Physical sides (panels are placed by BOOK direction, independent of the UI direction).
+  const deskStyle = {
+    "--page-width": `${pageWidth}px`,
+    paddingLeft: isRtlBook ? trail : lead,
+    paddingRight: isRtlBook ? lead : trail,
+  } as CSSProperties;
+
   return (
     <div className="reader-root">
       {/* desk + centered page sheet (the book) + page-turn affordances */}
-      <div className="reader-desk" style={{ "--page-width": `${pageWidth}px` } as CSSProperties}>
+      <div className="reader-desk" style={deskStyle}>
         <button
           className="page-chevron page-chevron-left"
           onClick={() => ctrlRef.current?.next()}
@@ -229,7 +267,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         fraction={fraction}
         bookDir={dir}
         onBack={onExit}
-        onContents={() => { setChaptersOpen((v) => !v); setAnnoOpen(false); }}
+        onContents={toggleChapters}
         onAnnotations={() => { setAnnoOpen((v) => !v); setChaptersOpen(false); }}
         onTypography={() => setSettingsOpen(true)}
         onTheme={() => setSettingsOpen(true)}

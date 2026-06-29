@@ -49,20 +49,28 @@ export interface AnnotationHit {
 // Fallback highlight palette (used if a theme somehow lacks a slot — matches the design).
 const HL_FALLBACK: Record<string, string> = {
   amber: "#E8C36A",
-  rose: "#E0A6A0",
-  sky: "#A8C4D6",
-  green: "#B6C9A6",
-  purple: "#C7B6D6",
+  marigold: "#E7A867",
+  coral: "#E2978D",
+  rose: "#D285A4",
+  purple: "#BFA8D6",
+  sky: "#9DC0D6",
+  teal: "#8DC3BA",
+  green: "#AEC798",
 };
 
 // Our own highlight draw function (so we never import from /public): an SVG <g> of
 // translucent rects over the selection — the "inked" highlighter look. Elements are
 // created in the parent document and adopted when foliate's overlayer appends them.
-function drawHighlight(rects: Iterable<DOMRect>, options: { color?: string } = {}): SVGGElement {
+function drawHighlight(rects: Iterable<DOMRect>, options: { color?: string; dark?: boolean } = {}): SVGGElement {
   const NS = "http://www.w3.org/2000/svg";
   const g = document.createElementNS(NS, "g");
   g.setAttribute("fill", options.color ?? "#E8C36A");
-  g.style.opacity = "var(--overlayer-highlight-opacity, .35)";
+  // Intensity + "wick into the paper" blend, applied DIRECTLY (RAWY-22) rather than via an
+  // inherited CSS var — the SVG <g> is created in the parent doc and adopted into foliate's
+  // overlayer, and the var didn't reliably reach it (it fell back to multiply → invisible on
+  // black). Light paper: multiply; dark paper: screen so the ink lifts off the page.
+  g.style.opacity = options.dark ? "0.7" : "0.62";
+  g.style.mixBlendMode = options.dark ? "screen" : "multiply";
   for (const r of rects) {
     const rect = document.createElementNS(NS, "rect");
     rect.setAttribute("x", String(r.left));
@@ -217,7 +225,7 @@ export class FoliateController {
     // Highlights: draw on (re)render, re-apply per section, surface clicks (RAWY-20).
     view.addEventListener("draw-annotation", (e: any) => {
       const { draw, annotation } = e.detail;
-      draw(drawHighlight, { color: this.resolveColor(annotation.color) });
+      draw(drawHighlight, { color: this.resolveColor(annotation.color), dark: this.theme?.dark ?? false });
     });
     view.addEventListener("show-annotation", (e: any) => {
       const { value, index, range } = e.detail;
@@ -258,9 +266,10 @@ export class FoliateController {
   }
 
   // ---- highlights / notes anchoring (RAWY-20) ----
-  private resolveColor(slot: string): string {
+  private resolveColor(color: string): string {
+    if (/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(color)) return color; // custom hex
     const set = this.theme?.colors.highlight as Record<string, string> | undefined;
-    return set?.[slot] ?? HL_FALLBACK[slot] ?? slot;
+    return set?.[color] ?? HL_FALLBACK[color] ?? color;
   }
   private rectInParent(rect: DOMRect, doc: Document): AnchorRect {
     const fr = (doc.defaultView as Window & { frameElement?: Element })?.frameElement?.getBoundingClientRect();
@@ -329,6 +338,31 @@ export class FoliateController {
   }
   goToLocator(cfi: string): Promise<unknown> | undefined {
     return this.view?.goTo(cfi);
+  }
+  /** Jump to a fraction (0..1) of the whole book — used by the dev seek hook + future slider. */
+  goToFraction(frac: number): Promise<unknown> | undefined {
+    return this.view?.goToFraction?.(Math.max(0, Math.min(1, frac)));
+  }
+  /** DEV: jump to a TOC entry by index or 'last' (investigation/verification helper). */
+  goToTocEntry(which: "last" | number): Promise<unknown> | undefined {
+    const toc = this.getToc().filter((t) => t.href);
+    if (!toc.length) return;
+    const i = which === "last" ? toc.length - 1 : Math.max(0, Math.min(toc.length - 1, which));
+    return this.goToHref(toc[i].href as string);
+  }
+  /** DEV: snapshot the current section's layout to explain rendering bugs. */
+  diagnose(): string {
+    const c = this.view?.renderer?.getContents?.()?.[0];
+    const doc: Document | undefined = c?.doc;
+    const body = doc?.body;
+    if (!body) return "no section";
+    const kids = Array.from(body.children).slice(0, 8).map((e) => e.tagName + (e.getAttribute("class") ? "." + e.getAttribute("class") : ""));
+    const heads = Array.from(body.querySelectorAll("h1,h2"));
+    const headInfo = heads.slice(0, 4).map((h) => {
+      const cs = doc!.defaultView!.getComputedStyle(h);
+      return { tag: h.tagName, display: cs.display, columnSpan: (cs as any).columnSpan ?? cs.getPropertyValue("column-span"), txt: (h.textContent ?? "").slice(0, 18) };
+    });
+    return JSON.stringify({ index: c?.index, scrollW: body.scrollWidth, clientW: body.clientWidth, scrollH: body.scrollHeight, headings: heads.length, firstKids: kids, headInfo });
   }
   onRelocate(cb: (info: RelocateInfo) => void): void {
     this.relocateCb = cb;

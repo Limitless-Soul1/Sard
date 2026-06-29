@@ -11,10 +11,9 @@ import { useI18n } from "../../i18n";
 import { THEMES, useTheme } from "../../theme";
 import { useReader } from "../../reader-engine/store";
 import { useAnnotations } from "./annotationsStore";
+import { ColorRow } from "./AnnotationLayer";
+import { colorValue } from "./highlightColors";
 import type { HighlightColor, HighlightRow, NoteRow } from "../../lib/ipc";
-
-const COLORS: HighlightColor[] = ["amber", "rose", "sky", "green", "purple"];
-const slot = (c: string | null | undefined): HighlightColor => (COLORS.includes(c as HighlightColor) ? (c as HighlightColor) : "amber");
 
 function useHl() {
   const id = useTheme((s) => s.themeId);
@@ -72,6 +71,7 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
   const [draft, setDraft] = useState("");
   const [composing, setComposing] = useState(false);
   const [marginDraft, setMarginDraft] = useState("");
+  const [marginColor, setMarginColor] = useState<HighlightColor>("amber");
 
   const locate = (n: NoteRow): string | null =>
     n.cfi ?? highlights.find((h) => h.id === n.highlight_id)?.cfi ?? null;
@@ -84,7 +84,7 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
       setMarginDraft("");
       return;
     }
-    await addMarginNote(cfi, "amber", marginDraft, chapter);
+    await addMarginNote(cfi, marginColor, marginDraft, chapter);
     setComposing(false);
     setMarginDraft("");
   };
@@ -103,6 +103,7 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
               dir="auto"
               rows={3}
             />
+            <ColorRow active={marginColor} onPick={setMarginColor} />
             <div className="rp-compose-foot">
               <button className="rp-mini" onClick={() => { setComposing(false); setMarginDraft(""); }}>{t("note.cancel")}</button>
               <button className="rp-mini primary" onClick={addMargin}>{t("hl.save")}</button>
@@ -119,7 +120,7 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
         const target = locate(n);
         const editing = editId === n.id;
         return (
-          <div key={n.id} className="rp-item note-item" style={{ "--swatch": hl[slot(n.color)] } as CSSProperties}>
+          <div key={n.id} className="rp-item note-item" style={{ "--swatch": colorValue(n.color, hl) } as CSSProperties}>
             <div className="rp-item-head">
               <span className="rp-chapter" onClick={() => target && onJump(target)} role="button" tabIndex={0}>
                 {n.chapter_label || (n.highlight_id ? "" : t("panel.marginNote"))}
@@ -157,23 +158,13 @@ function HighlightsTab({ highlights, onJump }: { highlights: HighlightRow[]; onJ
     <>
       {highlights.length === 0 && <div className="rp-empty">{t("panel.noHighlights")}</div>}
       {highlights.map((h) => (
-        <div key={h.id} className="rp-item hi-item" style={{ "--swatch": hl[slot(h.color)] } as CSSProperties}>
+        <div key={h.id} className="rp-item hi-item" style={{ "--swatch": colorValue(h.color, hl) } as CSSProperties}>
           <div className="rp-item-head">
             <span className="rp-chapter" onClick={() => onJump(h.cfi)} role="button" tabIndex={0}>{h.chapter_label}</span>
             <button className="rp-mini danger" onClick={() => removeHighlight(h.id)}>{t("note.delete")}</button>
           </div>
           <div className="rp-excerpt" onClick={() => onJump(h.cfi)}>{h.text_excerpt}</div>
-          <div className="rp-dots">
-            {COLORS.map((c) => (
-              <button
-                key={c}
-                className={`rp-dot${h.color === c ? " active" : ""}`}
-                style={{ background: hl[c] }}
-                onClick={() => setColor(h.id, c)}
-                aria-label={c}
-              />
-            ))}
-          </div>
+          <ColorRow active={h.color} onPick={(c) => setColor(h.id, c)} />
         </div>
       ))}
     </>

@@ -152,6 +152,9 @@ export const en = {
   "type.paper": "Paper",
   "theme.day": "Day",
   "theme.night": "Night",
+  "mode.label": "Reading mode",
+  "mode.scrolled": "Scrolled",
+  "mode.paged": "Paged",
 } as const;
 
 export type TKey = keyof typeof en;

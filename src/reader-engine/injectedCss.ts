@@ -7,6 +7,7 @@ import type { Theme } from "../theme/tokens";
 
 export type DiacriticsMode = "show" | "dim" | "hide";
 export type Align = "justify" | "start";
+export type FlowMode = "scrolled" | "paged";
 export type ArabicFont = "amiri" | "notoNaskh";
 export type LatinFont = "literata" | "sourceSerif";
 
@@ -29,6 +30,10 @@ export interface ReadingStyle {
   paragraphSpacing: number; // px of extra space between paragraphs
   firstLineIndent: boolean; // classic first-line indent instead of/with spacing
   letterSpacing: number; // px tracking — LATIN ONLY (it breaks Arabic cursive joining)
+  // Reading flow (RAWY-25): "scrolled" (default — continuous vertical scroll per chapter,
+  // boundary-stop) or "paged" (foliate columns/pages). Drives the renderer's flow attribute,
+  // not injected CSS — but the deterministic paged section box (overflow:hidden) is paged-only.
+  flowMode: FlowMode;
 }
 
 // Page-width fraction (0 = Narrow, 1 = Wide). Default ~comfortable. The CSS clamp bounds the
@@ -79,6 +84,7 @@ export const ARABIC_DEFAULTS: ReadingStyle = {
   paragraphSpacing: 0,
   firstLineIndent: false,
   letterSpacing: 0,
+  flowMode: "scrolled",
 };
 export const LATIN_DEFAULTS: ReadingStyle = {
   zoom: 1.0,
@@ -94,6 +100,7 @@ export const LATIN_DEFAULTS: ReadingStyle = {
   paragraphSpacing: 0,
   firstLineIndent: false,
   letterSpacing: 0,
+  flowMode: "scrolled",
 };
 
 export const defaultsForDir = (dir?: string): ReadingStyle =>
@@ -207,8 +214,11 @@ export function buildReadingCss(
        and clipping line-ends (worse at higher zoom / narrower measures). */
     body { zoom: ${style.zoom}; }
 
-    /* deterministic section box → no stray paginated scrollbar (RAWY-04); inline margins */
-    html, body { height: 100%; margin: 0; overflow: hidden; box-sizing: border-box; }
+    /* deterministic section box → no stray paginated scrollbar (RAWY-04). PAGED-ONLY
+       (RAWY-25): in scrolled mode foliate makes the section full-height and the container
+       scrolls, so forcing height:100%/overflow:hidden here would clip the scroll. */
+    html, body { margin: 0; box-sizing: border-box; }
+    ${style.flowMode === "paged" ? "html, body { height: 100%; overflow: hidden; }" : ""}
     html { padding-inline: ${style.marginPx}px; }
     /* a corrected reading direction (RAWY-19 override) flows + aligns the text accordingly */
     ${bookDir ? `html, body { direction: ${bookDir}; }` : ""}

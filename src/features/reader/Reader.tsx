@@ -100,6 +100,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         theme: THEMES[ts.themeId],
         flags: { overrideBookColor: ts.overrideBookColor, hideChapterTitles: ts.hideChapterTitles },
         dir: target.dir ?? undefined,
+        flow: initialStyle.flowMode, // scrolled (default) or paged — RAWY-25
       });
 
       const finalStyle = persisted ?? defaultsForDir(ctrl.dir);
@@ -175,7 +176,25 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     if (!current) return;
     const next = { ...current, ...patch };
     useReader.getState().set({ style: next });
-    ctrlRef.current?.applyStyle(next);
+    // flowMode is a renderer attribute set at open() — switching it re-opens at the current CFI
+    // (preserves position); every other field is the live injected-CSS funnel.
+    const flowChanged = patch.flowMode != null && patch.flowMode !== current.flowMode;
+    if (flowChanged) {
+      const cfi = useReader.getState().cfi;
+      ctrlRef.current?.open(convertFileSrc(initial.filePath), stageRef.current!, {
+        resumeCfi: cfi,
+        style: next,
+        theme: THEMES[useTheme.getState().themeId],
+        flags: {
+          overrideBookColor: useTheme.getState().overrideBookColor,
+          hideChapterTitles: useTheme.getState().hideChapterTitles,
+        },
+        dir: initial.dir ?? undefined,
+        flow: next.flowMode,
+      }).then(() => useAnnotations.getState().load()).catch(console.error);
+    } else {
+      ctrlRef.current?.applyStyle(next);
+    }
     if (styleTimer.current) clearTimeout(styleTimer.current);
     styleTimer.current = window.setTimeout(() => {
       settingsSet(STYLE_KEY, JSON.stringify(next)).catch(console.error);

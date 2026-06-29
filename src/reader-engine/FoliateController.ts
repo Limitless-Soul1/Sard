@@ -89,6 +89,8 @@ interface OpenOptions {
   flags?: BookThemeFlags;
   /** Corrected reading direction (a metadata override) — wins over the EPUB's own. */
   dir?: string | null;
+  /** Reading flow (RAWY-25): "scrolled" (default) or "paged". */
+  flow?: "scrolled" | "paged";
 }
 
 // Arabic combining marks (tashkīl). We wrap runs of them in spans so the diacritics
@@ -141,6 +143,12 @@ async function ensureFoliateDefined(): Promise<void> {
   });
 }
 
+// Chapter-boundary scroll gesture (RAWY-25): a wheel gap longer than this starts a NEW
+// gesture. So a single burst that reaches the chapter end STOPS there; only a fresh gesture
+// (after this pause) advances to the next chapter.
+const BOUNDARY_PAUSE_MS = 220;
+const BOUNDARY_EDGE_PX = 4;
+
 export class FoliateController {
   private view: any | null = null;
   private style: ReadingStyle | null = null;
@@ -152,6 +160,11 @@ export class FoliateController {
   private annotations = new Map<string, string>();
   private selectionCb: ((sel: SelectionInfo | null) => void) | null = null;
   private showCb: ((hit: AnnotationHit) => void) | null = null;
+  // Scrolled mode + chapter-boundary gesture state (RAWY-25).
+  private scrolledMode = false;
+  private wheelTs = 0;
+  private gestureEdge: "top" | "bottom" | null = null;
+  private gestureActed = false;
 
   /** Tear down the current view + listeners. Safe to call repeatedly. */
   dispose(): void {
@@ -180,7 +193,10 @@ export class FoliateController {
     await view.open(source);
     if (this.view !== view) return; // superseded by a newer open()
 
-    view.renderer.setAttribute("flow", "paginated");
+    // Reading flow (RAWY-25): scrolled is the default. Set BEFORE the first section lays out
+    // so foliate computes the right (scrolled vs columnised) layout from the start.
+    this.scrolledMode = opts.flow !== "paged";
+    view.renderer.setAttribute("flow", this.scrolledMode ? "scrolled" : "paginated");
 
     // RAWY-19: a corrected direction (override) wins over the EPUB's page-progression so a
     // mistagged book (e.g. an Arabic book tagged ltr) reads + pages RTL once fixed.
@@ -204,6 +220,9 @@ export class FoliateController {
         if (ev.key === "ArrowLeft") this.next();
         else if (ev.key === "ArrowRight") this.prev();
       });
+      // Scrolled mode: the chapter-boundary "new gesture to advance" handler (RAWY-25).
+      if (this.scrolledMode)
+        doc.addEventListener("wheel", (ev: WheelEvent) => this.onBoundaryWheel(ev), { passive: false });
       // Selection → in-context toolbar (RAWY-20).
       doc.addEventListener("pointerdown", () => this.selectionCb?.(null));
       doc.addEventListener("pointerup", () => {
@@ -241,6 +260,7 @@ export class FoliateController {
     this.reinject();
 
     if (opts.resumeCfi) await view.goTo(opts.resumeCfi);
+    else if (this.scrolledMode) await view.goToFraction(0); // start at the top of section 0
     else await view.renderer.next();
   }
 
@@ -308,6 +328,49 @@ export class FoliateController {
     for (const h of list) {
       this.annotations.set(h.cfi, h.color);
       await this.view?.addAnnotation({ value: h.cfi, color: h.color });
+    }
+  }
+
+  /** Is the reader currently in scrolled mode? */
+  get isScrolled(): boolean {
+    return this.scrolledMode;
+  }
+
+  // Chapter-boundary scroll gesture (RAWY-25). Scrolling is continuous WITHIN a chapter
+  // (native). At the chapter edge we preventDefault so a single gesture STOPS at the boundary
+  // (never chains into the next chapter); a NEW gesture (after BOUNDARY_PAUSE_MS) that BEGINS
+  // at the edge advances to the next/prev section (foliate loads it anchored at the top/bottom).
+  private onBoundaryWheel(e: WheelEvent): void {
+    const r = this.view?.renderer;
+    if (!r || !this.scrolledMode) return;
+    const viewSize = r.viewSize as number;
+    const size = r.size as number;
+    const start = r.start as number;
+    // Renderer not laid out yet (getters 0/NaN) → never trap the wheel, or we'd freeze the page.
+    if (!(viewSize > 0) || !(size > 0)) return;
+    const now = performance.now();
+    const fresh = now - this.wheelTs > BOUNDARY_PAUSE_MS;
+    this.wheelTs = now;
+    const scrollable = viewSize - size > BOUNDARY_EDGE_PX;
+    const atBottom = scrollable ? viewSize - (start + size) <= BOUNDARY_EDGE_PX : true;
+    const atTop = start <= BOUNDARY_EDGE_PX;
+    if (fresh) {
+      this.gestureEdge = atBottom ? "bottom" : atTop ? "top" : null;
+      this.gestureActed = false;
+    }
+    const down = e.deltaY > 0;
+    if (down && atBottom) {
+      e.preventDefault(); // hold the boundary — don't chain to the next chapter mid-gesture
+      if (this.gestureEdge === "bottom" && !this.gestureActed) {
+        this.gestureActed = true;
+        r.next?.();
+      }
+    } else if (!down && atTop) {
+      e.preventDefault();
+      if (this.gestureEdge === "top" && !this.gestureActed) {
+        this.gestureActed = true;
+        r.prev?.();
+      }
     }
   }
 

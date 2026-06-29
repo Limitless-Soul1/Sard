@@ -89,7 +89,11 @@ html, body, #root {
    fill the sheet (RAWY-21 + RAWY-23). --sard-columns:1 prevents a 2-column spread; --sard-measure
    raises foliate's per-column max width (default 720px, which was capping the text to a narrow
    strip centred in a wide sheet) to the sheet width, so widening the sheet widens the MEASURE. */
-.page-host { position: absolute; inset: 0; --sard-columns: 1; --sard-measure: 100vw; }
+/* --sard-measure must be a PX value: foliate `parseFloat()`s it, and in SCROLLED mode it
+   becomes the body max-width directly (a vw string parses to a tiny px number → a sliver
+   column). A large px keeps paged single-column (divisor=1) AND lets scrolled fill the sheet
+   (the body is then bounded by the actual sheet width). (RAWY-21/23/25) */
+.page-host { position: absolute; inset: 0; --sard-columns: 1; --sard-measure: 3000px; }
 .page-host foliate-view { width: 100%; height: 100%; display: block; }
 
 /* faint paper grain in the sheet margins (full-paper grain over the iframe is deferred) */

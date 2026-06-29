@@ -153,4 +153,7 @@ export const ar: Record<TKey, string> = {
   "type.paper": "الورق",
   "theme.day": "نهار",
   "theme.night": "ليل",
+  "mode.label": "وضع القراءة",
+  "mode.scrolled": "تمرير",
+  "mode.paged": "صفحات",
 };

@@ -16,6 +16,7 @@ import {
   type Align,
   type ArabicFont,
   type DiacriticsMode,
+  type FlowMode,
   type LatinFont,
   type ReadingStyle,
 } from "../../reader-engine/injectedCss";
@@ -238,6 +239,17 @@ export function ReadingSettings({ style, update, isRtlBook }: Props) {
       <div className="rs-divider" />
 
       {/* ---- PAGE ---- */}
+      <Section label={t("mode.label")}>
+        <Segmented<FlowMode>
+          value={style.flowMode}
+          onPick={(m) => update({ flowMode: m })}
+          options={[
+            { key: "scrolled", label: t("mode.scrolled") },
+            { key: "paged", label: t("mode.paged") },
+          ]}
+        />
+      </Section>
+
       <Section
         label={t("type.pageWidth")}
         value={style.pageFitWindow ? <span className="rs-na">{t("type.matchWindow")}</span> : undefined}

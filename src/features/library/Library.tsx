@@ -3,6 +3,9 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 
 import { useI18n } from "../../i18n";
 import {
+  bookRevertCover,
+  bookSetCover,
+  bookUpdate,
   collectionsList,
   importBooks,
   libraryListBooks,
@@ -54,9 +57,10 @@ function summarize(results: ImportResult[], t: TFn): string {
 }
 
 export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
-  const { t, lang, setLang } = useI18n();
+  const { t, lang } = useI18n();
 
   const [books, setBooks] = useState<BookRow[]>([]);
+  const [editing, setEditing] = useState<BookRow | null>(null);
   const [shelves, setShelves] = useState<CollectionRow[]>([]);
   const [view, setView] = useState<View>("grid");
   const [coverMode, setCoverMode] = useState<CoverMode>("crop");
@@ -266,16 +270,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         </div>
 
         <div className="lib-sidefoot">
-          <button
-            className="lib-lang"
-            onClick={() => setLang(lang === "ar" ? "en" : "ar")}
-            title={t("settings.language")}
-          >
-            <span className="lib-lang-globe" aria-hidden>◍</span>
-            <span className={lang === "ar" ? "lib-lang-ar" : undefined}>
-              {lang === "ar" ? "العربية" : "English"}
-            </span>
-          </button>
+          <LanguageSwitcher />
           <ThemeSwitcher />
         </div>
       </aside>
@@ -414,7 +409,13 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
             {view === "grid" ? (
               <div className="lib-grid">
                 {books.map((b) => (
-                  <BookCard key={b.id} book={b} coverMode={coverMode} onOpen={() => open(b)} />
+                  <BookCard
+                    key={b.id}
+                    book={b}
+                    coverMode={coverMode}
+                    onOpen={() => open(b)}
+                    onEdit={() => setEditing(b)}
+                  />
                 ))}
               </div>
             ) : (
@@ -446,7 +447,57 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         {drag && <DropOverlay count={drag.count} t={t} />}
       </main>
 
+      {editing && (
+        <EditBook
+          book={editing}
+          onClose={() => setEditing(null)}
+          onSaved={(b) => {
+            loadBooks();
+            loadShelves();
+            if (b) setEditing(b); // keep open with refreshed cover after replace/revert
+          }}
+        />
+      )}
       {toast && <div className="lib-toast">{toast}</div>}
+    </div>
+  );
+}
+
+const LANGS = [
+  { code: "en", label: "English" },
+  { code: "ar", label: "العربية" },
+] as const;
+
+function LanguageSwitcher() {
+  const { lang, setLang, t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const current = LANGS.find((l) => l.code === lang) ?? LANGS[0];
+  return (
+    <div className="lib-lang">
+      <button className="lib-lang-btn" onClick={() => setOpen((o) => !o)} title={t("settings.language")}>
+        <span className="lib-lang-globe" aria-hidden>◍</span>
+        <span className={lang === "ar" ? "lib-lang-ar" : undefined}>{current.label}</span>
+      </button>
+      {open && (
+        <>
+          <div className="lib-clickaway" onClick={() => setOpen(false)} />
+          <div className="lib-menu lib-lang-menu">
+            {LANGS.map((l) => (
+              <button
+                key={l.code}
+                className={l.code === lang ? "active" : ""}
+                onClick={() => {
+                  setLang(l.code);
+                  setOpen(false);
+                }}
+              >
+                <span className={l.code === "ar" ? "lib-lang-ar" : undefined}>{l.label}</span>
+                {l.code === lang && <span className="lib-lang-check" aria-hidden>✓</span>}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -460,27 +511,182 @@ function progressInfo(b: BookRow) {
   return { state: "reading" as const, pct: Math.round(f * 100) };
 }
 
-function BookCard({ book, coverMode, onOpen }: { book: BookRow; coverMode: CoverMode; onOpen: () => void }) {
+function BookCard({
+  book,
+  coverMode,
+  onOpen,
+  onEdit,
+}: {
+  book: BookRow;
+  coverMode: CoverMode;
+  onOpen: () => void;
+  onEdit: () => void;
+}) {
+  const { t } = useI18n();
   const p = progressInfo(book);
   const [failed, setFailed] = useState(false); // cover image absent or failed to load
   const title = book.title ?? "—";
   const arabic = ARABIC.test(title);
   const showImg = !!book.cover_path && !failed;
+  // A per-book Crop/Fit override (RAWY-19) wins over the library-wide mode.
+  const mode = book.cover_fit === "crop" || book.cover_fit === "fit" ? book.cover_fit : coverMode;
   return (
-    <button className="lib-card" onClick={onOpen} title={title}>
-      <div className="lib-cover" data-mode={coverMode}>
+    <div
+      className="lib-card"
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpen();
+        }
+      }}
+      title={title}
+    >
+      <div className="lib-cover" data-mode={mode}>
         {showImg ? (
           <img className="real" src={convertFileSrc(book.cover_path!)} alt="" onError={() => setFailed(true)} />
         ) : (
           <AutoCover title={title} author={book.author} dir={book.dir} />
         )}
         {p.state === "reading" && <span className="lib-card-bar" style={{ width: `${p.pct}%` }} />}
+        <button
+          className="lib-card-edit"
+          onClick={(e) => {
+            e.stopPropagation();
+            onEdit();
+          }}
+          title={t("edit.edit")}
+          aria-label={t("edit.edit")}
+        >
+          ⋯
+        </button>
       </div>
       <div className="lib-cap" dir={arabic ? "rtl" : "ltr"}>
         <div className={`lib-cap-title${arabic ? " ar" : ""}`}>{title}</div>
         {book.author && <div className={`lib-cap-author${arabic ? " ar" : ""}`}>{book.author}</div>}
       </div>
-    </button>
+    </div>
+  );
+}
+
+function EditBook({
+  book,
+  onSaved,
+  onClose,
+}: {
+  book: BookRow;
+  onSaved: (b: BookRow | null) => void;
+  onClose: () => void;
+}) {
+  const { t } = useI18n();
+  const [title, setTitle] = useState(book.title ?? "");
+  const [author, setAuthor] = useState(book.author ?? "");
+  const [language, setLanguage] = useState(book.language ?? "");
+  const [dir, setDir] = useState<"ltr" | "rtl">(book.dir === "rtl" ? "rtl" : "ltr");
+  const initialFit = book.cover_fit === "crop" || book.cover_fit === "fit" ? book.cover_fit : "";
+  const [coverFit, setCoverFit] = useState<"" | "crop" | "fit">(initialFit);
+  const [busy, setBusy] = useState(false);
+  const arabicTitle = ARABIC.test(title);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const updated = await bookUpdate(book.id, { title, author, language, dir, coverFit });
+      onSaved(updated);
+      onClose();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const replaceCover = async () => {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const sel = await open({
+        multiple: false,
+        filters: [{ name: "Image", extensions: ["jpg", "jpeg", "png", "webp", "gif"] }],
+      });
+      if (!sel || Array.isArray(sel)) return;
+      onSaved(await bookSetCover(book.id, sel));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+  const revertCover = async () => {
+    try {
+      onSaved(await bookRevertCover(book.id));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  return (
+    <>
+      <div className="panel-scrim show" onClick={onClose} />
+      <div className="edit-dialog" role="dialog" aria-modal="true">
+        <div className="edit-head">
+          <span className="edit-title">{t("edit.title")}</span>
+          <button className="rc-icon" onClick={onClose} aria-label={t("edit.cancel")}>✕</button>
+        </div>
+        <div className="edit-body">
+          <div className="edit-cover">
+            <div className="lib-cover" data-mode={coverFit || "crop"}>
+              {book.cover_path ? (
+                <img className="real" src={convertFileSrc(book.cover_path)} alt="" />
+              ) : (
+                <AutoCover title={book.title ?? "—"} author={book.author} dir={book.dir} />
+              )}
+            </div>
+            <button className="edit-btn" onClick={replaceCover}>{t("edit.replaceCover")}</button>
+            <button className="edit-link" onClick={revertCover}>{t("edit.revertCover")}</button>
+          </div>
+
+          <div className="edit-fields">
+            <label className="edit-field">
+              <span>{t("edit.fieldTitle")}</span>
+              <input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                className={arabicTitle ? "ar" : ""}
+                dir={arabicTitle ? "rtl" : "ltr"}
+              />
+            </label>
+            <label className="edit-field">
+              <span>{t("edit.author")}</span>
+              <input value={author} onChange={(e) => setAuthor(e.target.value)} />
+            </label>
+            <div className="edit-row">
+              <label className="edit-field">
+                <span>{t("edit.language")}</span>
+                <input value={language} onChange={(e) => setLanguage(e.target.value)} placeholder="en · ar · …" />
+              </label>
+              <div className="edit-field">
+                <span>{t("edit.direction")}</span>
+                <div className="edit-seg">
+                  <button className={dir === "ltr" ? "active" : ""} onClick={() => setDir("ltr")}>{t("edit.ltr")}</button>
+                  <button className={dir === "rtl" ? "active" : ""} onClick={() => setDir("rtl")}>{t("edit.rtl")}</button>
+                </div>
+              </div>
+            </div>
+            <div className="edit-field">
+              <span>{t("edit.coverFit")}</span>
+              <div className="edit-seg">
+                <button className={coverFit === "" ? "active" : ""} onClick={() => setCoverFit("")}>{t("edit.fitDefault")}</button>
+                <button className={coverFit === "crop" ? "active" : ""} onClick={() => setCoverFit("crop")}>{t("lib.cover.crop")}</button>
+                <button className={coverFit === "fit" ? "active" : ""} onClick={() => setCoverFit("fit")}>{t("lib.cover.fit")}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div className="edit-foot">
+          <button className="edit-cancel" onClick={onClose}>{t("edit.cancel")}</button>
+          <button className="edit-save" onClick={save} disabled={busy}>{t("edit.save")}</button>
+        </div>
+      </div>
+    </>
   );
 }
 

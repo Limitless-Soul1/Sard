@@ -26,6 +26,8 @@ interface OpenOptions {
   style: ReadingStyle;
   theme?: Theme;
   flags?: BookThemeFlags;
+  /** Corrected reading direction (a metadata override) — wins over the EPUB's own. */
+  dir?: string | null;
 }
 
 // Arabic combining marks (tashkīl). We wrap runs of them in spans so the diacritics
@@ -83,6 +85,7 @@ export class FoliateController {
   private style: ReadingStyle | null = null;
   private theme: Theme | undefined = undefined;
   private flags: BookThemeFlags = { overrideBookColor: false, hideChapterTitles: false };
+  private forcedDir: string | undefined = undefined; // corrected direction (RAWY-19)
   private relocateCb: ((info: RelocateInfo) => void) | null = null;
 
   /** Tear down the current view + listeners. Safe to call repeatedly. */
@@ -113,6 +116,11 @@ export class FoliateController {
 
     view.renderer.setAttribute("flow", "paginated");
 
+    // RAWY-19: a corrected direction (override) wins over the EPUB's page-progression so a
+    // mistagged book (e.g. an Arabic book tagged ltr) reads + pages RTL once fixed.
+    this.forcedDir = opts.dir ?? undefined;
+    if (this.forcedDir && view.book) view.book.dir = this.forcedDir;
+
     view.addEventListener("relocate", (e: any) => {
       this.relocateCb?.({
         cfi: e.detail?.cfi ?? null,
@@ -141,7 +149,8 @@ export class FoliateController {
 
   /** Re-inject the full stylesheet (typography + theme) — the single visual funnel. */
   private reinject(): void {
-    if (this.style) this.view?.renderer?.setStyles?.(buildReadingCss(this.style, this.theme, this.flags));
+    if (this.style)
+      this.view?.renderer?.setStyles?.(buildReadingCss(this.style, this.theme, this.flags, this.forcedDir));
   }
 
   /** Update typography (size/font/spacing/margins/align/diacritics). */
@@ -170,6 +179,6 @@ export class FoliateController {
     this.relocateCb = cb;
   }
   get dir(): string | undefined {
-    return this.view?.book?.dir;
+    return this.forcedDir ?? this.view?.book?.dir;
   }
 }

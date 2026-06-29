@@ -64,6 +64,7 @@ export interface BookRow {
   last_opened_at: number | null;
   fraction: number | null;
   read_at: number | null;
+  cover_fit: string | null; // per-book crop/fit override (RAWY-19)
 }
 
 export type SortKey = "title" | "author" | "format" | "date_read" | "date_added";
@@ -109,3 +110,23 @@ export interface ImportResult {
 /** Import EPUB files (copy-in, hash/dedup, extract metadata + cover). One result per path. */
 export const importBooks = (paths: string[]): Promise<ImportResult[]> =>
   invoke<ImportResult[]>("import_books", { paths });
+
+export interface BookPatch {
+  title?: string;
+  author?: string;
+  language?: string;
+  dir?: string;
+  coverFit?: string; // "crop" | "fit" | "" (clear)
+}
+
+/** Edit a book's metadata as overrides (never rewrites the source EPUB). Returns the book. */
+export const bookUpdate = (id: string, patch: BookPatch): Promise<BookRow | null> =>
+  invoke<BookRow | null>("book_update", { id, patch });
+
+/** Replace a book's cover with a copied-in image. Returns the updated book. */
+export const bookSetCover = (id: string, imagePath: string): Promise<BookRow | null> =>
+  invoke<BookRow | null>("book_set_cover", { id, imagePath });
+
+/** Revert to the extracted/auto cover. Returns the updated book. */
+export const bookRevertCover = (id: string): Promise<BookRow | null> =>
+  invoke<BookRow | null>("book_revert_cover", { id });

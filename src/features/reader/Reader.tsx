@@ -83,6 +83,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         style: initialStyle,
         theme: THEMES[ts.themeId],
         flags: { overrideBookColor: ts.overrideBookColor, hideChapterTitles: ts.hideChapterTitles },
+        dir: target.dir ?? undefined,
       });
 
       const finalStyle = persisted ?? defaultsForDir(ctrl.dir);

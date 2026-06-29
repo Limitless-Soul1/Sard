@@ -93,6 +93,7 @@ export function buildReadingCss(
   style: ReadingStyle,
   theme?: Theme,
   flags?: BookThemeFlags,
+  bookDir?: string,
 ): string {
   const ar = ARABIC_FONTS[style.arabicFont];
   const lat = LATIN_FONTS[style.latinFont];
@@ -136,6 +137,8 @@ export function buildReadingCss(
     /* deterministic section box → no stray paginated scrollbar (RAWY-04); inline margins */
     html, body { height: 100%; margin: 0; overflow: hidden; box-sizing: border-box; }
     html { padding-inline: ${style.marginPx}px; }
+    /* a corrected reading direction (RAWY-19 override) flows + aligns the text accordingly */
+    ${bookDir ? `html, body { direction: ${bookDir}; }` : ""}
     img, svg, video, table { max-width: 100%; max-height: 100%; }
 
     /* per-script fonts: Arabic glyphs use the chosen Arabic face, Latin uses Literata */

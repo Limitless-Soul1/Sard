@@ -136,3 +136,56 @@ pub fn import_books(
     let conn = state.db.lock().map_err(err)?;
     Ok(books::import_books(&conn, &app_data_dir, &paths))
 }
+
+/// RAWY-19 — editable metadata patch (all optional; absent = leave unchanged).
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BookPatch {
+    pub title: Option<String>,
+    pub author: Option<String>,
+    pub language: Option<String>,
+    pub dir: Option<String>,
+    pub cover_fit: Option<String>,
+}
+
+/// RAWY-19 — update a book's metadata as OVERRIDES (never touches the source EPUB).
+#[tauri::command]
+pub fn book_update(
+    id: String,
+    patch: BookPatch,
+    state: State<AppState>,
+) -> Result<Option<library::BookRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::update_book(
+        &conn,
+        &id,
+        patch.title.as_deref(),
+        patch.author.as_deref(),
+        patch.language.as_deref(),
+        patch.dir.as_deref(),
+        patch.cover_fit.as_deref(),
+    )
+    .map_err(err)
+}
+
+/// RAWY-19 — replace a book's cover with a copied-in image (managed storage).
+#[tauri::command]
+pub fn book_set_cover(
+    id: String,
+    image_path: String,
+    state: State<AppState>,
+) -> Result<Option<library::BookRow>, String> {
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.db.lock().map_err(err)?;
+    library::set_cover(&conn, &app_data_dir, &id, &image_path)
+}
+
+/// RAWY-19 — revert to the extracted/auto cover (delete the custom override + file).
+#[tauri::command]
+pub fn book_revert_cover(
+    id: String,
+    state: State<AppState>,
+) -> Result<Option<library::BookRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::revert_cover(&conn, &id)
+}

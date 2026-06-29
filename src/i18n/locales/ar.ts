@@ -94,4 +94,20 @@ export const ar: Record<TKey, string> = {
   "lib.import.unsupported": "{n} غير مدعوم",
   "lib.import.error": "{n} فشل",
   "lib.import.none": "لا شيء للاستيراد",
+
+  // Edit book (RAWY-19)
+  "edit.edit": "تحرير",
+  "edit.title": "تحرير التفاصيل",
+  "edit.fieldTitle": "العنوان",
+  "edit.author": "المؤلف",
+  "edit.language": "اللغة",
+  "edit.direction": "الاتجاه",
+  "edit.ltr": "يسار→يمين",
+  "edit.rtl": "يمين→يسار",
+  "edit.replaceCover": "استبدال الغلاف",
+  "edit.revertCover": "استعادة الأصلي",
+  "edit.coverFit": "ملاءمة الغلاف",
+  "edit.fitDefault": "افتراضي",
+  "edit.save": "حفظ",
+  "edit.cancel": "إلغاء",
 };

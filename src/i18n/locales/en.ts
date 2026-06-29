@@ -93,6 +93,22 @@ export const en = {
   "lib.import.unsupported": "{n} unsupported",
   "lib.import.error": "{n} failed",
   "lib.import.none": "Nothing to import",
+
+  // Edit book (RAWY-19)
+  "edit.edit": "Edit",
+  "edit.title": "Edit details",
+  "edit.fieldTitle": "Title",
+  "edit.author": "Author",
+  "edit.language": "Language",
+  "edit.direction": "Direction",
+  "edit.ltr": "LTR",
+  "edit.rtl": "RTL",
+  "edit.replaceCover": "Replace cover",
+  "edit.revertCover": "Revert to original",
+  "edit.coverFit": "Cover fit",
+  "edit.fitDefault": "Default",
+  "edit.save": "Save",
+  "edit.cancel": "Cancel",
 } as const;
 
 export type TKey = keyof typeof en;

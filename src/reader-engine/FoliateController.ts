@@ -143,10 +143,13 @@ async function ensureFoliateDefined(): Promise<void> {
   });
 }
 
-// Chapter-boundary scroll gesture (RAWY-25): a wheel gap longer than this starts a NEW
-// gesture. So a single burst that reaches the chapter end STOPS there; only a fresh gesture
-// (after this pause) advances to the next chapter.
-const BOUNDARY_PAUSE_MS = 220;
+// Chapter-boundary scroll gesture (RAWY-25; tuned RAWY-26). A wheel gap longer than this
+// starts a NEW gesture: a single continuous burst that reaches the chapter end STOPS there,
+// and only a fresh gesture (after this pause) advances to the next chapter. ⬅ TUNE HERE if the
+// boundary feels too heavy/light. 140 ms (RAWY-26, down from 220): still well above the gap
+// between wheel events inside one continuous scroll (~16–80 ms), so same-gesture chaining is
+// still blocked, but a deliberate second flick advances more readily (lighter).
+const BOUNDARY_PAUSE_MS = 140;
 const BOUNDARY_EDGE_PX = 4;
 
 export class FoliateController {

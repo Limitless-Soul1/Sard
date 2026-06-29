@@ -144,9 +144,14 @@ export const en = {
   "weight.medium": "Medium",
   "weight.bold": "Bold",
   "type.paraSpacing": "Paragraph space",
-  "type.indent": "Indent",
+  "type.indent": "First-line indent",
   "type.tracking": "Tracking",
-  "type.latinOnly": "Latin",
+  "type.latinOnly": "Latin only",
+  "type.latin": "Latin",
+  "type.arabic": "Arabic",
+  "type.paper": "Paper",
+  "theme.day": "Day",
+  "theme.night": "Night",
 } as const;
 
 export type TKey = keyof typeof en;

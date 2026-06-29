@@ -8,7 +8,7 @@ import type { Theme } from "../theme/tokens";
 export type DiacriticsMode = "show" | "dim" | "hide";
 export type Align = "justify" | "start";
 export type ArabicFont = "amiri" | "notoNaskh";
-export type LatinFont = "literata";
+export type LatinFont = "literata" | "sourceSerif";
 
 export interface ReadingStyle {
   zoom: number; // size via CSS zoom (D6): 0.8 .. 2.5
@@ -52,6 +52,7 @@ export const ARABIC_FONTS: Record<ArabicFont, FontDef> = {
 };
 export const LATIN_FONTS: Record<LatinFont, FontDef> = {
   literata: { regular: "/fonts/Literata.ttf", variable: true, label: "Literata" },
+  sourceSerif: { regular: "/fonts/SourceSerif4.ttf", variable: true, label: "Source Serif" },
 };
 
 // Bold works on Amiri (real Amiri-Bold) + the variable faces; Amiri has only 400/700 so 500

@@ -1,5 +1,5 @@
 import { useI18n } from "../../i18n";
-import { TypographyBar } from "./TypographyBar";
+import { ReadingSettings } from "./ReadingSettings";
 import type { ReadingStyle } from "../../reader-engine/injectedCss";
 
 interface Props {
@@ -7,18 +7,12 @@ interface Props {
   onClose: () => void;
   style: ReadingStyle;
   update: (patch: Partial<ReadingStyle>) => void;
-  onPrev: () => void;
-  onNext: () => void;
-  status: string;
-  book: "ar" | "en";
-  onBook: (which: "ar" | "en") => void;
   isRtlBook: boolean;
 }
 
-// Minimal settings slide-over (band D is a "calm slide-over"; the full settings screen is
-// a later task). For now it hosts the existing, working controls (typography + theme +
-// language + dev book switcher) so nothing regresses while the reading view is redesigned.
-export function SettingsPanel({ open, onClose, ...bar }: Props) {
+// The reading-settings slide-over (band D). A calm, sectioned panel hosting the rebuilt
+// ReadingSettings (RAWY-24) — every control wired to the existing funnel/theme/i18n logic.
+export function SettingsPanel({ open, onClose, style, update, isRtlBook }: Props) {
   const { t } = useI18n();
   return (
     <>
@@ -29,7 +23,7 @@ export function SettingsPanel({ open, onClose, ...bar }: Props) {
           <button className="rc-icon" onClick={onClose} title={t("reader.settings")}>✕</button>
         </div>
         <div className="sp-body">
-          <TypographyBar {...bar} />
+          <ReadingSettings style={style} update={update} isRtlBook={isRtlBook} />
         </div>
       </aside>
     </>

@@ -225,7 +225,7 @@ html, body, #root {
   inset-block: 0;
   inset-inline-end: 0;
   z-index: 6;
-  width: min(360px, 92vw);
+  width: min(384px, 94vw);
   background: var(--chrome-bg);
   border-inline-start: 1px solid var(--chrome-border);
   box-shadow: -10px 0 30px rgba(0, 0, 0, 0.16);
@@ -235,7 +235,10 @@ html, body, #root {
   flex-direction: column;
 }
 :root[dir="rtl"] .settings-panel { transform: translateX(-100%); }
-.settings-panel.show { transform: translateX(0); }
+/* the .show reset must match the RTL selector's specificity, or the panel stays hidden in
+   an Arabic UI (RAWY-24 fix — the panel was invisible in RTL). */
+.settings-panel.show,
+:root[dir="rtl"] .settings-panel.show { transform: translateX(0); }
 .sp-head {
   display: flex;
   align-items: center;
@@ -244,8 +247,77 @@ html, body, #root {
   border-bottom: 1px solid var(--chrome-border);
 }
 .sp-title { font: 600 14px "Inter", "SardUIArabic", sans-serif; color: var(--text); }
-.sp-body { padding: 10px; overflow: auto; }
-.sp-body .tbar { background: transparent; border: 0; box-shadow: none; padding: 0; }
+.sp-body { padding: 6px 22px 26px; overflow-y: auto; overflow-x: hidden; }
+
+/* ---- reading settings (RAWY-24): a calm, sectioned panel (design band D), all tokens ---- */
+.rs { display: flex; flex-direction: column; gap: 17px; }
+.rs-sec { display: flex; flex-direction: column; gap: 10px; }
+.rs-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 22px; }
+.rs-label, .rs-sec-title {
+  font: 600 11px "Inter", "SardUIArabic", sans-serif; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
+}
+.rs-sec-title { margin-bottom: -4px; }
+.rs-value { font: 500 12px "Inter", "SardUIArabic", sans-serif; color: var(--accent); }
+.rs-na { font: 500 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted); font-style: italic; }
+.rs-divider { height: 1px; background: var(--chrome-border); margin: 3px 0; }
+
+/* slider */
+.rs-slider-row { display: flex; align-items: center; gap: 12px; }
+.rs-slider-cap { color: var(--muted); font-family: "Literata", serif; line-height: 1; flex: 0 0 auto; }
+.rs-slider { flex: 1; accent-color: var(--accent); cursor: pointer; height: 4px; min-width: 0; }
+.rs-slider:disabled { opacity: 0.4; cursor: default; }
+.rs-tiny { font: 500 10px "Inter", "SardUIArabic", sans-serif; color: var(--muted); flex: 0 0 auto; }
+
+/* segmented control */
+.rs-seg { display: flex; background: color-mix(in srgb, var(--text) 8%, transparent); border-radius: 8px; padding: 3px; }
+.rs-seg-item {
+  flex: 1; border: 0; background: transparent; cursor: pointer; padding: 7px 10px; border-radius: 6px;
+  color: var(--muted); font: 500 12px "Inter", "SardUIArabic", sans-serif; white-space: nowrap;
+}
+.rs-seg-item.on { background: var(--paper-bg); color: var(--accent); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+.rs-sec-head .rs-seg { padding: 2px; }
+.rs-sec-head .rs-seg-item { padding: 4px 11px; }
+
+/* toggle row */
+.rs-toggle-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%;
+  border: 0; background: transparent; cursor: pointer; padding: 2px 0; text-align: start;
+}
+.rs-toggle-text { display: flex; flex-direction: column; gap: 2px; }
+.rs-toggle-label { font: 500 13px "Inter", "SardUIArabic", sans-serif; color: var(--text); }
+.rs-toggle-hint { font: 400 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.rs-switch {
+  flex: 0 0 auto; width: 40px; height: 23px; border-radius: 23px; position: relative;
+  background: color-mix(in srgb, var(--text) 18%, transparent); transition: background 0.18s ease;
+}
+.rs-switch.on { background: var(--accent); }
+.rs-knob {
+  position: absolute; top: 2px; inset-inline-start: 2px; width: 19px; height: 19px; border-radius: 50%;
+  background: var(--paper-bg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: transform 0.18s ease;
+}
+.rs-switch.on .rs-knob { transform: translateX(17px); }
+:root[dir="rtl"] .rs-switch.on .rs-knob { transform: translateX(-17px); }
+
+/* typeface select row */
+.rs-select-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 14px; background: var(--paper-bg); border: 1px solid var(--chrome-border); border-radius: 8px;
+}
+.rs-select-label { font: 500 12px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.rs-select-wrap { position: relative; display: flex; align-items: center; }
+.rs-select {
+  appearance: none; -webkit-appearance: none; border: 0; background: transparent; color: var(--text);
+  font: 500 15px "Literata", "SardUIArabic", serif; cursor: pointer; padding-inline-end: 16px; text-align: end;
+}
+.rs-select-caret { position: absolute; inset-inline-end: 0; pointer-events: none; color: var(--muted); font-size: 11px; }
+.rs-select option { color: #1a1a1a; }
+
+/* theme swatches */
+.rs-swatches { display: flex; gap: 10px; }
+.rs-swatch-cell { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 7px; border: 0; background: transparent; cursor: pointer; }
+.rs-swatch { width: 100%; height: 42px; border-radius: 6px; border: 1px solid var(--chrome-border); }
+.rs-swatch.on { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg); border-color: transparent; }
+.rs-swatch-name { font: 500 10px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
 
 /* annotations toggle in the chrome (band C-II): three lines with a tinted middle bar */
 .rc-annos { flex-direction: column; gap: 3px; }

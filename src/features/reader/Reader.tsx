@@ -11,7 +11,7 @@ import {
   pageWidthVw,
   type ReadingStyle,
 } from "../../reader-engine/injectedCss";
-import { appInfo, bookRegister, progressGet, progressSave, settingsGet, settingsSet } from "../../lib/ipc";
+import { bookRegister, progressGet, progressSave, settingsGet, settingsSet } from "../../lib/ipc";
 import { useI18n } from "../../i18n";
 import { localeNum } from "../../lib/format";
 import { THEMES, useTheme } from "../../theme";
@@ -29,13 +29,6 @@ export interface OpenTarget {
   filePath: string;
   dir?: string | null;
 }
-
-// Dev sample switcher (kept as a convenience inside the reader): the two bundled EPUBs.
-const BOOKS = {
-  ar: { id: "dev-sample-shawqiyyat", file: "sample.epub" },
-  en: { id: "dev-sample-alice", file: "sample-en.epub" },
-} as const;
-type BookKey = keyof typeof BOOKS;
 
 const STYLE_KEY = "reading_style";
 const SAVE_DEBOUNCE_MS = 500;
@@ -66,7 +59,6 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   if (!ctrlRef.current) ctrlRef.current = new FoliateController();
 
   const bookRef = useRef<string>(initial.id);
-  const [book, setBook] = useState<BookKey>(initial.dir === "rtl" ? "ar" : "en");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [chaptersOpen, setChaptersOpen] = useState(false);
   const [annoOpen, setAnnoOpen] = useState(false);
@@ -74,7 +66,6 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const [annoTab, setAnnoTab] = useState<"notes" | "highlights">("notes");
   const progressTimer = useRef<number | undefined>(undefined);
   const styleTimer = useRef<number | undefined>(undefined);
-  const appDataDir = useRef<string>("");
 
   const { status, dir, fraction, chapterLabel, chapterHref, error, style } = useReader();
   const { themeId, overrideBookColor, hideChapterTitles, setHideTitles } = useTheme();
@@ -164,6 +155,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       if (p === "chapters") setChaptersOpen(true);
       else if (p === "notes") { setAnnoTab("notes"); setAnnoOpen(true); }
       else if (p === "highlights") { setAnnoTab("highlights"); setAnnoOpen(true); }
+      else if (p === "settings") setSettingsOpen(true);
     });
     settingsGet("dev_seek").then((s) => {
       if (!s) return;
@@ -177,17 +169,6 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       }, 350);
     });
   }, [status]);
-
-  const switchBook = async (which: BookKey) => {
-    if (BOOKS[which].id === bookRef.current) return;
-    setBook(which);
-    if (!appDataDir.current) appDataDir.current = (await appInfo()).app_data_dir;
-    openBook({
-      id: BOOKS[which].id,
-      filePath: `${appDataDir.current}\\${BOOKS[which].file}`,
-      dir: which === "ar" ? "rtl" : "ltr",
-    });
-  };
 
   const update = (patch: Partial<ReadingStyle>) => {
     const current = useReader.getState().style;
@@ -293,11 +274,6 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         onClose={() => setSettingsOpen(false)}
         style={style ?? ARABIC_DEFAULTS}
         update={update}
-        onPrev={() => ctrlRef.current?.prev()}
-        onNext={() => ctrlRef.current?.next()}
-        status={`${status} · ${themeId}`}
-        book={book}
-        onBook={switchBook}
         isRtlBook={isRtlBook}
       />
 

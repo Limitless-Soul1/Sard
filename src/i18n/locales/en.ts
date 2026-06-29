@@ -139,6 +139,14 @@ export const en = {
   "type.matchWindow": "Match window",
   "type.narrow": "Narrow",
   "type.wide": "Wide",
+  "type.weight": "Weight",
+  "weight.normal": "Regular",
+  "weight.medium": "Medium",
+  "weight.bold": "Bold",
+  "type.paraSpacing": "Paragraph space",
+  "type.indent": "Indent",
+  "type.tracking": "Tracking",
+  "type.latinOnly": "Latin",
 } as const;
 
 export type TKey = keyof typeof en;

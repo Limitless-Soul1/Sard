@@ -1,6 +1,7 @@
 import { useI18n } from "../../i18n";
 import {
   ARABIC_FONTS,
+  FONT_WEIGHTS,
   PAGE_WIDTH_DEFAULT,
   PAGE_WIDTH_MAX,
   PAGE_WIDTH_MIN,
@@ -20,6 +21,7 @@ interface Props {
   status: string;
   book: "ar" | "en";
   onBook: (which: "ar" | "en") => void;
+  isRtlBook: boolean;
 }
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
@@ -29,9 +31,10 @@ const DIA_KEY: Record<DiacriticsMode, TKey> = {
   dim: "diacritics.dim",
   hide: "diacritics.hide",
 };
+const WEIGHT_KEY: Record<number, TKey> = { 400: "weight.normal", 500: "weight.medium", 700: "weight.bold" };
 
 // Inherits dir from <html> (set by the UI language) — no hard-coded direction.
-export function TypographyBar({ style, update, onPrev, onNext, status, book, onBook }: Props) {
+export function TypographyBar({ style, update, onPrev, onNext, status, book, onBook, isRtlBook }: Props) {
   const { t, lang, setLang } = useI18n();
   const { themeId, overrideBookColor, hideChapterTitles, setTheme, toggleDayNight, setOverride, setHideTitles } =
     useTheme();
@@ -75,14 +78,14 @@ export function TypographyBar({ style, update, onPrev, onNext, status, book, onB
         <button onClick={() => update({ marginPx: clamp(style.marginPx + 12, 0, 160) })}>⇥+</button>
       </span>
 
-      {/* page width / measure (RAWY-21): widening trims the desk margins, not the leading */}
+      {/* page width / measure (RAWY-21; responsive RAWY-23): a Narrow→Wide fraction */}
       <span className="grp tbar-width" title={t("type.pageWidth")}>
         <label>{t("type.pageWidth")}</label>
         <input
           type="range"
           min={PAGE_WIDTH_MIN}
           max={PAGE_WIDTH_MAX}
-          step={20}
+          step={0.05}
           value={style.pageWidth ?? PAGE_WIDTH_DEFAULT}
           disabled={style.pageFitWindow ?? false}
           onChange={(e) => update({ pageWidth: Number(e.target.value) })}
@@ -107,6 +110,43 @@ export function TypographyBar({ style, update, onPrev, onNext, status, book, onB
       <button onClick={cycleDiacritics} title={t("type.diacritics")}>
         {t("type.diacritics")}: {t(DIA_KEY[style.diacritics])}
       </button>
+
+      {/* text features (RAWY-23) — weight / paragraph spacing / indent / tracking, via the funnel */}
+      <span className="grp" title={t("type.weight")}>
+        <label>{t("type.weight")}</label>
+        {FONT_WEIGHTS.map((w) => (
+          <button
+            key={w}
+            className={style.fontWeight === w ? "on" : ""}
+            style={{ fontWeight: w }}
+            onClick={() => update({ fontWeight: w })}
+          >
+            {t(WEIGHT_KEY[w])}
+          </button>
+        ))}
+      </span>
+
+      <span className="grp" title={t("type.paraSpacing")}>
+        <label>{t("type.paraSpacing")}</label>
+        <button onClick={() => update({ paragraphSpacing: clamp(style.paragraphSpacing - 4, 0, 28) })}>¶−</button>
+        <span className="val">{style.paragraphSpacing}</span>
+        <button onClick={() => update({ paragraphSpacing: clamp(style.paragraphSpacing + 4, 0, 28) })}>¶+</button>
+      </span>
+
+      <button
+        className={style.firstLineIndent ? "on" : ""}
+        onClick={() => update({ firstLineIndent: !style.firstLineIndent })}
+        title={t("type.indent")}
+      >
+        {t("type.indent")}
+      </button>
+
+      <span className="grp" title={t("type.tracking")}>
+        <label>{t("type.tracking")}</label>
+        <button disabled={isRtlBook} onClick={() => update({ letterSpacing: clamp(r2(style.letterSpacing - 0.5), 0, 3) })}>A‹›−</button>
+        <span className="val">{isRtlBook ? t("type.latinOnly") : style.letterSpacing}</span>
+        <button disabled={isRtlBook} onClick={() => update({ letterSpacing: clamp(r2(style.letterSpacing + 0.5), 0, 3) })}>A‹›+</button>
+      </span>
 
       {/* dev-only book switcher (proves UI/book direction independence; not a product feature) */}
       <span className="grp">

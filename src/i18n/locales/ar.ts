@@ -140,4 +140,12 @@ export const ar: Record<TKey, string> = {
   "type.matchWindow": "ملء النافذة",
   "type.narrow": "ضيّق",
   "type.wide": "واسع",
+  "type.weight": "الوزن",
+  "weight.normal": "عادي",
+  "weight.medium": "متوسط",
+  "weight.bold": "عريض",
+  "type.paraSpacing": "تباعد الفقرات",
+  "type.indent": "إزاحة السطر",
+  "type.tracking": "تباعد الأحرف",
+  "type.latinOnly": "لاتيني",
 };

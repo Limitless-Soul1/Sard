@@ -68,24 +68,28 @@ html, body, #root {
 /* the paper page sheet — measure + page-edge shadow (the book renders inside .page-host) */
 .page-sheet {
   position: relative;
-  /* adjustable measure (RAWY-21): driven by --page-width set from ReadingStyle.pageWidth.
-     Widening eats the empty desk margins; the sheet stays the centred "page on desk". */
-  inline-size: min(100%, var(--page-width, 660px));
+  /* RESPONSIVE measure (RAWY-23): --page-pref is a window-relative vw set from the slider,
+     CLAMPED to a readable 540..1280px. So the page scales with window size (no tiny-column-in-
+     a-void on a maximized window) while a long line stays bounded. min(100%, …) keeps it inside
+     the desk when a panel narrows it. RAWY-21's single-column patch makes this the MEASURE. */
+  inline-size: min(100%, clamp(540px, var(--page-pref, 65vw), 1280px));
   block-size: 100%;
   background: var(--paper-bg);
   box-shadow: 0 0 30px rgba(60, 40, 16, 0.1), -1px 0 0 rgba(43, 37, 33, 0.05), 1px 0 0 rgba(43, 37, 33, 0.05);
   overflow: hidden;
   transition: inline-size 0.18s ease;
 }
-/* "Match window" — the sheet fills the desk (up to a readable cap), margins shrink to a sliver */
-.page-sheet.fitw { inline-size: min(100%, 1180px); }
+/* "Match window" — the sheet fills the window (leaving a sliver of desk), single column kept */
+.page-sheet.fitw { inline-size: min(100%, 96vw); }
 /* dark themes: swap the warm cast for a subtle inset light edge */
 :root[data-dark="true"] .page-sheet {
   box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.05), inset -1px 0 0 rgba(255, 255, 255, 0.05);
 }
-/* Sard is a single-column "page on desk": force foliate to one column (via the patched
-   inheritable var) so widening the sheet grows the MEASURE, not a 2nd column (RAWY-21). */
-.page-host { position: absolute; inset: 0; --sard-columns: 1; }
+/* Sard is a single-column "page on desk": force foliate to ONE column AND let that column
+   fill the sheet (RAWY-21 + RAWY-23). --sard-columns:1 prevents a 2-column spread; --sard-measure
+   raises foliate's per-column max width (default 720px, which was capping the text to a narrow
+   strip centred in a wide sheet) to the sheet width, so widening the sheet widens the MEASURE. */
+.page-host { position: absolute; inset: 0; --sard-columns: 1; --sard-measure: 100vw; }
 .page-host foliate-view { width: 100%; height: 100%; display: block; }
 
 /* faint paper grain in the sheet margins (full-paper grain over the iframe is deferred) */

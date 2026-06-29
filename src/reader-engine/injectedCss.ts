@@ -18,31 +18,45 @@ export interface ReadingStyle {
   marginPx: number; // inline page padding
   align: Align;
   diacritics: DiacriticsMode;
-  // Page width / measure (RAWY-21): the paper-sheet width on the desk, in px. Widening
-  // trims the empty desk margins, never the leading. Applied to the chrome sheet (a CSS
-  // var), NOT injected into the book — so it composes cleanly with zoom (D6).
+  // Page width / measure (RAWY-21; RAWY-23 made it RESPONSIVE): a 0..1 "Narrow → Wide" fraction.
+  // It maps to a window-relative preferred width (vw) clamped to a readable range, so the page
+  // SCALES with window size instead of staying a fixed narrow column in a void. Applied to the
+  // chrome sheet (a CSS var), NOT injected into the book, so it composes cleanly with zoom (D6).
   pageWidth: number;
   pageFitWindow: boolean; // "match window" — the sheet fills the desk, ignoring pageWidth
+  // Typography extras (RAWY-23), all via this funnel, both scripts unless noted:
+  fontWeight: number; // 400 normal · 500 medium · 700 bold (real weight — variable Latin / Amiri-Bold)
+  paragraphSpacing: number; // px of extra space between paragraphs
+  firstLineIndent: boolean; // classic first-line indent instead of/with spacing
+  letterSpacing: number; // px tracking — LATIN ONLY (it breaks Arabic cursive joining)
 }
 
-// Page-width bounds (px). Default lands at a comfortable ~66-char measure.
-export const PAGE_WIDTH_MIN = 480;
-export const PAGE_WIDTH_MAX = 1040;
-export const PAGE_WIDTH_DEFAULT = 660;
+// Page-width fraction (0 = Narrow, 1 = Wide). Default ~comfortable. The CSS clamp bounds the
+// actual rendered width to a readable range; "Match window" overrides to fill.
+export const PAGE_WIDTH_MIN = 0;
+export const PAGE_WIDTH_MAX = 1;
+export const PAGE_WIDTH_DEFAULT = 0.5;
+// Slider fraction → preferred width in vw (then clamped 540..1280px in CSS). Narrow≈42vw, Wide≈88vw.
+export const pageWidthVw = (t: number): number => 42 + Math.max(0, Math.min(1, t)) * 46;
 
 interface FontDef {
   regular: string;
-  bold?: string;
+  bold?: string; // a separate static bold file (Amiri)
+  variable?: boolean; // a variable font with a weight axis (Literata, Noto Naskh) → real weights
   label: string;
 }
 
 export const ARABIC_FONTS: Record<ArabicFont, FontDef> = {
   amiri: { regular: "/fonts/Amiri-Regular.ttf", bold: "/fonts/Amiri-Bold.ttf", label: "Amiri" },
-  notoNaskh: { regular: "/fonts/NotoNaskhArabic.ttf", label: "Noto Naskh" },
+  notoNaskh: { regular: "/fonts/NotoNaskhArabic.ttf", variable: true, label: "Noto Naskh" },
 };
 export const LATIN_FONTS: Record<LatinFont, FontDef> = {
-  literata: { regular: "/fonts/Literata.ttf", label: "Literata" },
+  literata: { regular: "/fonts/Literata.ttf", variable: true, label: "Literata" },
 };
+
+// Bold works on Amiri (real Amiri-Bold) + the variable faces; Amiri has only 400/700 so 500
+// snaps to the nearest. We never synth-bold Arabic by choice (faux-bold harms shaping).
+export const FONT_WEIGHTS = [400, 500, 700] as const;
 
 // Per-script Unicode ranges so the right face renders the right script (font fallback).
 const ARABIC_RANGE =
@@ -58,8 +72,12 @@ export const ARABIC_DEFAULTS: ReadingStyle = {
   marginPx: 56,
   align: "start",
   diacritics: "show",
-  pageWidth: 680,
+  pageWidth: PAGE_WIDTH_DEFAULT,
   pageFitWindow: false,
+  fontWeight: 400,
+  paragraphSpacing: 0,
+  firstLineIndent: false,
+  letterSpacing: 0,
 };
 export const LATIN_DEFAULTS: ReadingStyle = {
   zoom: 1.0,
@@ -71,6 +89,10 @@ export const LATIN_DEFAULTS: ReadingStyle = {
   diacritics: "show",
   pageWidth: PAGE_WIDTH_DEFAULT,
   pageFitWindow: false,
+  fontWeight: 400,
+  paragraphSpacing: 0,
+  firstLineIndent: false,
+  letterSpacing: 0,
 };
 
 export const defaultsForDir = (dir?: string): ReadingStyle =>
@@ -134,15 +156,17 @@ export function buildReadingCss(
         ? ".sard-tashkil { font-size: 0 !important; }"
         : "";
 
-  return `
+  // Per-script @font-face. Variable fonts (Literata, Noto Naskh) declare a weight RANGE so the
+  // weight control drives the real axis; Amiri ships two static files (regular + a real Bold).
+  const fontFaces = `
     @font-face {
       font-family: 'SardArabic';
       src: url('${ar.regular}') format('truetype');
-      font-weight: normal;
+      font-weight: ${ar.variable ? "100 900" : "normal"};
       unicode-range: ${ARABIC_RANGE};
     }
     ${
-      ar.bold
+      ar.bold && !ar.variable
         ? `@font-face {
       font-family: 'SardArabic';
       src: url('${ar.bold}') format('truetype');
@@ -154,8 +178,27 @@ export function buildReadingCss(
     @font-face {
       font-family: 'SardLatin';
       src: url('${lat.regular}') format('truetype');
+      font-weight: ${lat.variable ? "200 700" : "normal"};
       unicode-range: ${LATIN_RANGE};
+    }`;
+
+  // Typography extras (RAWY-23). Weight applies to body text (not headings → keep hierarchy).
+  // Letter-spacing is LATIN-ONLY — it inserts gaps that break Arabic cursive joining.
+  const latinText = bookDir !== "rtl";
+  const extras = `
+    p, li, blockquote, div, td, th, dd, dt {
+      font-weight: ${style.fontWeight};
     }
+    ${style.paragraphSpacing > 0 ? `p { margin-block: ${style.paragraphSpacing}px; }` : ""}
+    ${style.firstLineIndent ? `p { text-indent: 1.5em; }` : ""}
+    ${
+      latinText && style.letterSpacing > 0
+        ? `p, li, blockquote, div, td, th { letter-spacing: ${style.letterSpacing}px; }`
+        : ""
+    }`;
+
+  return `
+    ${fontFaces}
 
     /* size via zoom (D6 — scales even absolute-CSS books). Zoom the column CONTENT (body),
        NOT the column container (:root/html, where foliate sets column-width): that way the
@@ -188,6 +231,7 @@ export function buildReadingCss(
     [align="center"], center { text-align: center; }
     [align="right"] { text-align: right; }
 
+    ${extras}
     ${diacriticsRule}
     ${themeBlock(theme, flags)}
   `;

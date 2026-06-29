@@ -12,6 +12,7 @@ interface Props {
   status: string;
   book: "ar" | "en";
   onBook: (which: "ar" | "en") => void;
+  isRtlBook: boolean;
 }
 
 // Minimal settings slide-over (band D is a "calm slide-over"; the full settings screen is

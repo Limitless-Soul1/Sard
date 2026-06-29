@@ -247,7 +247,7 @@ export class FoliateController {
   /** Re-inject the full stylesheet (typography + theme) — the single visual funnel. */
   private reinject(): void {
     if (this.style)
-      this.view?.renderer?.setStyles?.(buildReadingCss(this.style, this.theme, this.flags, this.forcedDir));
+      this.view?.renderer?.setStyles?.(buildReadingCss(this.style, this.theme, this.flags, this.dir));
   }
 
   /** Update typography (size/font/spacing/margins/align/diacritics). */

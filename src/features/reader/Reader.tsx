@@ -6,7 +6,9 @@ import { useReader } from "../../reader-engine/store";
 import {
   ARABIC_DEFAULTS,
   defaultsForDir,
+  LATIN_DEFAULTS,
   PAGE_WIDTH_DEFAULT,
+  pageWidthVw,
   type ReadingStyle,
 } from "../../reader-engine/injectedCss";
 import { appInfo, bookRegister, progressGet, progressSave, settingsGet, settingsSet } from "../../lib/ipc";
@@ -42,7 +44,16 @@ async function loadStyle(): Promise<ReadingStyle | null> {
   const raw = await settingsGet(STYLE_KEY);
   if (!raw) return null;
   try {
-    return JSON.parse(raw) as ReadingStyle;
+    const s = JSON.parse(raw) as Partial<ReadingStyle>;
+    // RAWY-23 migration: pageWidth used to be an absolute px (480..1040); it is now a 0..1
+    // Narrow→Wide fraction. Convert any old px value; backfill the new typography fields.
+    if (typeof s.pageWidth === "number" && s.pageWidth > 1.5) {
+      s.pageWidth = Math.max(0, Math.min(1, (s.pageWidth - 480) / 560));
+    }
+    return {
+      ...LATIN_DEFAULTS,
+      ...s,
+    } as ReadingStyle;
   } catch {
     return null;
   }
@@ -197,8 +208,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     ? t("panel.chapter", { n: localeNum((tocIndex >= 0 ? tocIndex : 0) + 1, lang) })
     : chapterLabel || t("reader.chapterFallback");
 
-  // Adjustable page width (RAWY-21): a CSS var on the desk; "match window" fills it.
-  const pageWidth = style?.pageWidth ?? PAGE_WIDTH_DEFAULT;
+  // Responsive page width (RAWY-23): the slider fraction → a window-relative preferred width
+  // (vw), clamped to a readable range in CSS; "match window" fills it.
+  const pageFraction = style?.pageWidth ?? PAGE_WIDTH_DEFAULT;
   const fitWindow = style?.pageFitWindow ?? false;
 
   const jumpHref = (href: string) => ctrlRef.current?.goToHref(href);
@@ -211,7 +223,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const trail = annoOpen ? PANEL : 0;
   // Physical sides (panels are placed by BOOK direction, independent of the UI direction).
   const deskStyle = {
-    "--page-width": `${pageWidth}px`,
+    "--page-pref": `${pageWidthVw(pageFraction)}vw`,
     paddingLeft: isRtlBook ? trail : lead,
     paddingRight: isRtlBook ? lead : trail,
   } as CSSProperties;
@@ -286,6 +298,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         status={`${status} · ${themeId}`}
         book={book}
         onBook={switchBook}
+        isRtlBook={isRtlBook}
       />
 
       <AnnotationLayer ctrlRef={ctrlRef} />

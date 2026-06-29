@@ -3,7 +3,24 @@
 // (via the injectedCss funnel). Colours are literal values because the book renders in a
 // separate iframe that can't read the parent's CSS vars.
 
-export type ThemeId = "ivory" | "sepia" | "slate" | "trueblack";
+// The original 4 (RAWY-13) + 11 added in RAWY-29 (from docs/design/themes.json — the canonical
+// token export, since Claude Design's editing project ≠ the read-only MCP project). 15 total.
+export type ThemeId =
+  | "ivory"
+  | "sepia"
+  | "slate"
+  | "trueblack"
+  | "sage"
+  | "rosequartz"
+  | "parchment"
+  | "dusk"
+  | "ink"
+  | "espresso"
+  | "forestnight"
+  | "mulberry"
+  | "charcoal"
+  | "nocturne"
+  | "linen";
 
 // Highlight palette (RAWY-22): 8 semantic slots (was 5). Stored colours are EITHER one of
 // these slot names (adapts per theme) OR a literal #hex (a custom colour) — resolveColor
@@ -28,4 +45,8 @@ export interface Theme {
   name: string;
   dark: boolean;
   colors: ThemeColors;
+  // On-page highlight ink opacity (RAWY-29, design themes.json). Light themes ink at
+  // multiply / full alpha (1); dark themes at a low alpha so the ink lightens, not blots.
+  // Optional: the original 4 omit it and keep their RAWY-22 intensities (0.62 / 0.5).
+  highlightAlpha?: number;
 }

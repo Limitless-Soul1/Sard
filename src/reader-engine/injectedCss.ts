@@ -223,9 +223,11 @@ export function buildReadingCss(
     /* a corrected reading direction (RAWY-19 override) flows + aligns the text accordingly */
     ${bookDir ? `html, body { direction: ${bookDir}; }` : ""}
     /* highlight ink (RAWY-22): a clearly-visible "wick" — multiply blend on light paper,
-       screen on dark, at a per-theme opacity (was a washed-out flat 0.3). */
+       screen on dark. Opacity = the theme's own highlightAlpha when set (RAWY-29 themes.json:
+       light = 1, dark ≈ 0.32–0.36), else the original RAWY-22 intensities (0.62 / 0.5) so the
+       first 4 themes are unchanged. */
     :root {
-      --overlayer-highlight-opacity: ${theme?.dark ? "0.5" : "0.62"};
+      --overlayer-highlight-opacity: ${theme?.highlightAlpha ?? (theme?.dark ? 0.5 : 0.62)};
       --overlayer-highlight-blend: ${theme?.dark ? "screen" : "multiply"};
     }
     img, svg, video, table { max-width: 100%; max-height: 100%; }

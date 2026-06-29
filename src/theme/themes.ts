@@ -1,6 +1,9 @@
-// The four paper themes from the Sard design (Band A). Ivory + the dark frames are
-// specified exactly; surfaceBg/chromeBg for Sepia/Slate are sensibly derived (see
-// DESIGN-SPEC.md §9 / PROJECT.md §9 risks).
+// The paper themes — 15 total. The original 4 (Ivory/Sepia/Slate/True-Black, RAWY-13, design
+// Band A) + 11 added in RAWY-29 from docs/design/themes.json — the canonical token export,
+// because Claude Design's editing project ≠ the read-only MCP project (d39e130b) we read, so the
+// new tokens never reached the live MCP file. The 11: Sage, Rose Quartz, Parchment, Dusk, Ink,
+// Espresso, Forest Night, Mulberry, Charcoal, Nocturne, Linen. One token system drives chrome
+// (applyTheme) + book (injectedCss) + the 8-slot highlights — adding a preset is enough.
 
 import type { HighlightSlot, Theme, ThemeId } from "./tokens";
 
@@ -83,9 +86,240 @@ export const THEMES: Record<ThemeId, Theme> = {
       highlight: PALETTE,
     },
   },
+
+  // ---- RAWY-29: 5 new themes from docs/design/themes.json (the canonical token export) ----
+  // Each carries its OWN highlight palette (the design tunes the inks to the paper) + a
+  // highlightAlpha. The JSON slot names map to our RAWY-22 keys by position/colour:
+  //   gold→amber · apricot→marigold · rose→coral · berry→rose · lilac→purple · sky→sky ·
+  //   teal→teal · sage→green — so existing stored highlights (which use OUR keys) still resolve.
+  sage: {
+    id: "sage",
+    name: "Sage",
+    dark: false,
+    highlightAlpha: 1,
+    colors: {
+      paperBg: "#F0F2E8",
+      surfaceBg: "#DCE0D0",
+      chromeBg: "#E9ECE0",
+      chromeBorder: "rgba(46,52,43,.12)",
+      text: "#2E342B",
+      muted: "#7C8473",
+      accent: "#5E7A52",
+      selection: "rgba(199,212,158,.55)",
+      highlight: {
+        amber: "#D9C36A", marigold: "#D9A867", coral: "#D98F86", rose: "#C886A2",
+        purple: "#B79CC4", sky: "#7FA6C0", teal: "#7FB6A8", green: "#9BB089",
+      },
+    },
+  },
+  rosequartz: {
+    id: "rosequartz",
+    name: "Rose Quartz",
+    dark: false,
+    highlightAlpha: 1,
+    colors: {
+      paperBg: "#FBF1F1",
+      surfaceBg: "#EEDEDE",
+      chromeBg: "#F5EAEA",
+      chromeBorder: "rgba(58,47,48,.12)",
+      text: "#3A2F30",
+      muted: "#9B7E80",
+      accent: "#B5727B",
+      selection: "rgba(239,194,182,.55)",
+      highlight: {
+        amber: "#E0BC6E", marigold: "#DD9088", coral: "#DD9088", rose: "#C77E96",
+        purple: "#B8A0C8", sky: "#9FB8C2", teal: "#86BBA8", green: "#A8BC8E",
+      },
+    },
+  },
+  parchment: {
+    id: "parchment",
+    name: "Parchment",
+    dark: false,
+    highlightAlpha: 1,
+    colors: {
+      paperBg: "#F0E2BE",
+      surfaceBg: "#DFCEA3",
+      chromeBg: "#E7D7B0",
+      chromeBorder: "rgba(58,46,24,.14)",
+      text: "#3A2E14",
+      muted: "#8A7448",
+      accent: "#9A7B3F",
+      selection: "rgba(224,184,92,.50)",
+      highlight: {
+        amber: "#D4AF52", marigold: "#CC8C6A", coral: "#C58379", rose: "#B5736A",
+        purple: "#A98FB0", sky: "#8FA5B0", teal: "#80A893", green: "#8FA07A",
+      },
+    },
+  },
+  dusk: {
+    id: "dusk",
+    name: "Dusk",
+    dark: true,
+    highlightAlpha: 0.34,
+    colors: {
+      paperBg: "#1B2130",
+      surfaceBg: "#11141D",
+      chromeBg: "#181D29",
+      chromeBorder: "rgba(255,255,255,.08)",
+      text: "#D8DEEC",
+      muted: "#7E8AA6",
+      accent: "#8FA6D8",
+      selection: "rgba(143,166,216,.32)",
+      highlight: {
+        amber: "#D9C36A", marigold: "#D9A867", coral: "#D98F86", rose: "#C886A2",
+        purple: "#AE9CD0", sky: "#8FA6D8", teal: "#86BBA8", green: "#9BB089",
+      },
+    },
+  },
+  ink: {
+    id: "ink",
+    name: "Ink",
+    dark: false, // light, high-contrast
+    highlightAlpha: 1,
+    colors: {
+      paperBg: "#FFFFFF",
+      surfaceBg: "#F1EFE6",
+      chromeBg: "#FBFAF5",
+      chromeBorder: "rgba(0,0,0,.30)",
+      text: "#0E0D0A",
+      muted: "#444038",
+      accent: "#7A2E1E",
+      selection: "rgba(244,196,48,.60)",
+      highlight: {
+        amber: "#F4C430", marigold: "#E0A92E", coral: "#C9603F", rose: "#B23A6B",
+        purple: "#7A5BA8", sky: "#2E6E8A", teal: "#1F7A6E", green: "#3E7A4A",
+      },
+    },
+  },
+
+  // ---- RAWY-29 (resumed): 6 more themes from the updated themes.json (5 dark + 1 light) ----
+  espresso: {
+    id: "espresso",
+    name: "Espresso",
+    dark: true,
+    highlightAlpha: 0.33,
+    colors: {
+      paperBg: "#221912",
+      surfaceBg: "#1A130D",
+      chromeBg: "#1B130C",
+      chromeBorder: "rgba(255,255,255,.07)",
+      text: "#EADCC6",
+      muted: "#998771",
+      accent: "#D49A6A",
+      selection: "rgba(212,154,106,.30)",
+      highlight: {
+        amber: "#E8C36A", marigold: "#E7A867", coral: "#E2978D", rose: "#D285A4",
+        purple: "#BFA8D6", sky: "#9DC0D6", teal: "#8DC3BA", green: "#AEC798",
+      },
+    },
+  },
+  forestnight: {
+    id: "forestnight",
+    name: "Forest Night",
+    dark: true,
+    highlightAlpha: 0.32,
+    colors: {
+      paperBg: "#15201A",
+      surfaceBg: "#101813",
+      chromeBg: "#131D17",
+      chromeBorder: "rgba(255,255,255,.07)",
+      text: "#D6E2D4",
+      muted: "#7C9381",
+      accent: "#82B08C",
+      selection: "rgba(130,176,140,.30)",
+      highlight: {
+        amber: "#D9C36A", marigold: "#D9A867", coral: "#D98F86", rose: "#C886A2",
+        purple: "#B79CC4", sky: "#8FB6CC", teal: "#86C3B2", green: "#9BC089",
+      },
+    },
+  },
+  mulberry: {
+    id: "mulberry",
+    name: "Mulberry",
+    dark: true,
+    highlightAlpha: 0.33,
+    colors: {
+      paperBg: "#221620",
+      surfaceBg: "#1A1119",
+      chromeBg: "#1C131A",
+      chromeBorder: "rgba(255,255,255,.07)",
+      text: "#E6D8E2",
+      muted: "#A98FA3",
+      accent: "#C189B0",
+      selection: "rgba(193,137,176,.30)",
+      highlight: {
+        amber: "#E8C36A", marigold: "#E7A867", coral: "#E2978D", rose: "#D285A4",
+        purple: "#C7A6E0", sky: "#9DC0D6", teal: "#8DC3BA", green: "#AEC798",
+      },
+    },
+  },
+  charcoal: {
+    id: "charcoal",
+    name: "Charcoal",
+    dark: true,
+    highlightAlpha: 0.34,
+    colors: {
+      paperBg: "#1C1C1E",
+      surfaceBg: "#161617",
+      chromeBg: "#161617",
+      chromeBorder: "rgba(255,255,255,.07)",
+      text: "#DCD9D2",
+      muted: "#8A8881",
+      accent: "#C98A5E",
+      selection: "rgba(201,138,94,.28)",
+      highlight: {
+        amber: "#E8C36A", marigold: "#E7A867", coral: "#E2978D", rose: "#D285A4",
+        purple: "#BFA8D6", sky: "#9DC0D6", teal: "#8DC3BA", green: "#AEC798",
+      },
+    },
+  },
+  nocturne: {
+    id: "nocturne",
+    name: "Nocturne",
+    dark: true,
+    highlightAlpha: 0.32,
+    colors: {
+      paperBg: "#122023",
+      surfaceBg: "#0E1719",
+      chromeBg: "#101C1F",
+      chromeBorder: "rgba(255,255,255,.07)",
+      text: "#CFE0E0",
+      muted: "#6E8A8C",
+      accent: "#5FA8A8",
+      selection: "rgba(95,168,168,.30)",
+      highlight: {
+        amber: "#D9C36A", marigold: "#D9A867", coral: "#D98F86", rose: "#C886A2",
+        purple: "#B79CC4", sky: "#86C0D9", teal: "#6FC3BE", green: "#9BC089",
+      },
+    },
+  },
+  linen: {
+    id: "linen",
+    name: "Linen",
+    dark: false,
+    highlightAlpha: 1,
+    colors: {
+      paperBg: "#F4F2EA",
+      surfaceBg: "#E6E4DC",
+      chromeBg: "#ECEAE1",
+      chromeBorder: "rgba(42,41,37,.10)",
+      text: "#2A2925",
+      muted: "#8E8B82",
+      accent: "#5E6B7A",
+      selection: "rgba(94,107,122,.18)",
+      highlight: {
+        amber: "#E8C36A", marigold: "#E7A867", coral: "#E2978D", rose: "#D285A4",
+        purple: "#BFA8D6", sky: "#9DC0D6", teal: "#8DC3BA", green: "#AEC798",
+      },
+    },
+  },
 };
 
-export const THEME_ORDER: ThemeId[] = ["ivory", "sepia", "slate", "trueblack"];
+export const THEME_ORDER: ThemeId[] = [
+  "ivory", "sepia", "slate", "trueblack", "sage", "rosequartz", "parchment", "dusk", "ink",
+  "espresso", "forestnight", "mulberry", "charcoal", "nocturne", "linen",
+];
 export const DEFAULT_LIGHT: ThemeId = "ivory";
 export const DEFAULT_DARK: ThemeId = "trueblack";
 export const isThemeId = (v: unknown): v is ThemeId =>

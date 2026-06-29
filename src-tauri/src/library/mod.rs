@@ -456,3 +456,64 @@ pub fn note_delete(conn: &Connection, id: &str) -> rusqlite::Result<()> {
     conn.execute("DELETE FROM notes WHERE id = ?1", [id])?;
     Ok(())
 }
+
+// ---- Cross-book Highlights & Notes inbox (RAWY-27) ----
+
+/// One row of the global inbox: every HIGHLIGHT (with its attached note body, if any) plus
+/// every STANDALONE note, joined to its book. `chapter_label` is denormalised (RAWY-20) so
+/// this is a cheap query; `book_title`/`book_dir`/`file_path` are the effective book fields so
+/// an item carries everything needed to render it AND to open the book at its CFI.
+#[derive(Serialize)]
+pub struct AnnoItem {
+    pub id: String,
+    pub kind: String, // "highlight" | "note"
+    pub book_id: String,
+    pub book_title: Option<String>,
+    pub file_path: String,
+    pub book_dir: Option<String>,
+    pub chapter_label: Option<String>,
+    pub color: Option<String>,
+    pub text: Option<String>, // highlight excerpt OR note body
+    pub note: Option<String>, // for a highlight that HAS a note: the note body (else null)
+    pub cfi: Option<String>,  // jump target
+    pub created_at: Option<i64>,
+}
+
+fn anno_item(r: &rusqlite::Row) -> rusqlite::Result<AnnoItem> {
+    Ok(AnnoItem {
+        id: r.get(0)?,
+        kind: r.get(1)?,
+        book_id: r.get(2)?,
+        book_title: r.get(3)?,
+        file_path: r.get(4)?,
+        book_dir: r.get(5)?,
+        chapter_label: r.get(6)?,
+        color: r.get(7)?,
+        text: r.get(8)?,
+        note: r.get(9)?,
+        cfi: r.get(10)?,
+        created_at: r.get(11)?,
+    })
+}
+
+/// All highlights + standalone notes across every book, newest first. Notes attached to a
+/// highlight ride INSIDE that highlight's row (`note`), not as separate items.
+pub fn annotations_all(conn: &Connection) -> rusqlite::Result<Vec<AnnoItem>> {
+    let sql = format!(
+        "SELECT h.id, 'highlight', h.book_id, {OV_TITLE}, b.file_path, \
+            COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='dir'), b.dir), \
+            h.chapter_label, h.color, h.text_excerpt, n.body, h.start_cfi, h.created_at \
+         FROM highlights h JOIN books b ON b.id = h.book_id \
+         LEFT JOIN notes n ON n.highlight_id = h.id \
+         UNION ALL \
+         SELECT n.id, 'note', n.book_id, {OV_TITLE}, b.file_path, \
+            COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='dir'), b.dir), \
+            n.chapter_label, n.color, n.body, NULL, n.locator_cfi, n.created_at \
+         FROM notes n JOIN books b ON b.id = n.book_id \
+         WHERE n.highlight_id IS NULL \
+         ORDER BY created_at DESC"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], anno_item)?;
+    rows.collect()
+}

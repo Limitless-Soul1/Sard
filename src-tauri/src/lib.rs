@@ -105,6 +105,7 @@ pub fn run() {
             commands::book_set_cover,
             commands::book_revert_cover,
             commands::highlights_for_book,
+            commands::annotations_all,
             commands::highlight_create,
             commands::highlight_set_color,
             commands::highlight_delete,

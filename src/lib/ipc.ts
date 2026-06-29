@@ -162,6 +162,26 @@ export interface NoteRow {
 export const highlightsForBook = (bookId: string): Promise<HighlightRow[]> =>
   invoke<HighlightRow[]>("highlights_for_book", { bookId });
 
+// ---- Cross-book Highlights & Notes inbox (RAWY-27) ------------------------
+
+export interface AnnoItem {
+  id: string;
+  kind: "highlight" | "note";
+  book_id: string;
+  book_title: string | null;
+  file_path: string;
+  book_dir: string | null;
+  chapter_label: string | null;
+  color: string | null;
+  text: string | null; // highlight excerpt OR note body
+  note: string | null; // a highlight's attached note body (if any)
+  cfi: string | null; // jump target
+  created_at: number | null;
+}
+
+/** Every highlight + standalone note across all books, newest first. */
+export const annotationsAll = (): Promise<AnnoItem[]> => invoke<AnnoItem[]>("annotations_all");
+
 export const highlightCreate = (
   bookId: string,
   cfi: string,

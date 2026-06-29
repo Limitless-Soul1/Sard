@@ -967,3 +967,59 @@ html, body, #root {
 .hl-note::placeholder { color: color-mix(in srgb, var(--paper-bg) 50%, transparent); }
 .hl-card-foot { display: flex; justify-content: flex-end; }
 .hl-save { border: none; background: var(--accent); color: var(--paper-bg); font: 600 12px var(--ui-font); padding: 7px 16px; border-radius: 7px; cursor: pointer; }
+
+/* ---- Cross-book Highlights & Notes inbox (RAWY-27, design band D) ---- */
+.inbox { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+.inbox-head { padding: 28px 36px 8px; display: flex; flex-direction: column; gap: 18px; }
+.inbox-head-top { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.inbox-title-wrap { display: flex; align-items: baseline; gap: 12px; }
+.inbox-title { margin: 0; font: 600 26px "Literata", "SardUIArabic", serif; color: var(--text); }
+.inbox-count { font: 500 13px "Inter", "SardUIArabic", sans-serif; color: var(--muted); white-space: nowrap; }
+.inbox-search { width: 240px; flex: 0 0 auto; }
+.inbox-filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.inbox-dots { display: flex; align-items: center; gap: 7px; }
+.inbox-dot { position: relative; width: 18px; height: 18px; border-radius: 50%; border: 0; cursor: pointer; padding: 0; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08); }
+.inbox-dot.on { box-shadow: 0 0 0 2px var(--app-bg), 0 0 0 3.5px var(--accent); }
+.inbox-dot-all { background: transparent; box-shadow: none; color: var(--muted); font-size: 15px; line-height: 1; }
+.inbox-dot-all.on { color: var(--accent); box-shadow: none; }
+.inbox-dot-custom { background: conic-gradient(from 90deg, #E8C36A, #E7A867, #E2978D, #D285A4, #BFA8D6, #9DC0D6, #8DC3BA, #AEC798, #E8C36A); }
+.inbox-sep { width: 1px; height: 20px; background: var(--chrome-border); margin: 0 4px; }
+.inbox-ctl-wrap { position: relative; }
+.inbox-ctl {
+  font: 500 12px "Inter", "SardUIArabic", sans-serif; color: var(--text); background: var(--chrome-bg);
+  border: 1px solid var(--chrome-border); border-radius: 7px; padding: 7px 12px; cursor: pointer;
+  max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.inbox-menu { max-height: 320px; overflow-y: auto; }
+.inbox-seg { display: flex; background: color-mix(in srgb, var(--text) 8%, transparent); border-radius: 8px; padding: 3px; }
+.inbox-seg button {
+  border: 0; background: transparent; cursor: pointer; padding: 6px 12px; border-radius: 6px;
+  color: var(--muted); font: 500 12px "Inter", "SardUIArabic", sans-serif; white-space: nowrap;
+}
+.inbox-seg button.on { background: var(--paper-bg); color: var(--accent); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+.inbox-list { flex: 1; overflow-y: auto; padding: 8px 36px 28px; display: flex; flex-direction: column; gap: 12px; }
+/* a card carries a soft tint of its colour + matching border + a 4px colour bar (RAWY-22 cards) */
+.inbox-card {
+  display: flex; gap: 14px; width: 100%; text-align: start; cursor: pointer; padding: 15px 18px; border-radius: 10px;
+  background: color-mix(in srgb, var(--swatch, var(--accent)) 24%, transparent);
+  border: 1px solid color-mix(in srgb, var(--swatch, var(--accent)) 50%, transparent);
+}
+.inbox-card:hover { border-color: var(--swatch, var(--accent)); }
+.inbox-card-bar { flex: 0 0 4px; align-self: stretch; border-radius: 3px; background: var(--swatch, var(--accent)); }
+.inbox-card-body { flex: 1; display: flex; flex-direction: column; gap: 7px; min-width: 0; }
+.inbox-card-text {
+  font: 400 16px/1.5 "Literata", "SardUIArabic", serif; color: var(--text);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.inbox-card-text.ar { font-family: "Amiri", "SardUIArabic", serif; font-size: 19px; line-height: 1.7; }
+.inbox-card-meta { font: 500 12px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.inbox-card-kind { color: var(--accent); }
+.inbox-card-note {
+  margin-top: 4px; padding: 9px 12px; border-radius: 7px; background: color-mix(in srgb, var(--text) 7%, transparent);
+  font: 400 13px/1.5 "Inter", "SardUIArabic", sans-serif; color: color-mix(in srgb, var(--text) 80%, transparent);
+}
+.inbox-card-note-label { color: var(--accent); font-weight: 600; }
+.inbox-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 40px; text-align: center; }
+.inbox-empty-mark { font: 400 64px "Literata", serif; color: color-mix(in srgb, var(--accent) 40%, transparent); line-height: 1; }
+.inbox-empty-title { font: 600 18px "Literata", "SardUIArabic", serif; color: var(--text); }
+.inbox-empty-sub { font: 400 13px "Inter", "SardUIArabic", sans-serif; color: var(--muted); max-width: 360px; }

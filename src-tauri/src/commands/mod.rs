@@ -198,6 +198,13 @@ pub fn highlights_for_book(book_id: String, state: State<AppState>) -> Result<Ve
     library::highlights_for_book(&conn, &book_id).map_err(err)
 }
 
+/// Cross-book inbox (RAWY-27): every highlight + standalone note across all books.
+#[tauri::command]
+pub fn annotations_all(state: State<AppState>) -> Result<Vec<library::AnnoItem>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::annotations_all(&conn).map_err(err)
+}
+
 #[tauri::command]
 pub fn highlight_create(
     book_id: String,

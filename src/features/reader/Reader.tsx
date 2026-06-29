@@ -28,6 +28,7 @@ export interface OpenTarget {
   id: string;
   filePath: string;
   dir?: string | null;
+  cfi?: string | null; // jump-to location (RAWY-27 inbox); else resume saved progress
 }
 
 const STYLE_KEY = "reading_style";
@@ -81,6 +82,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
 
       await bookRegister(target.id, target.filePath);
       const saved = await progressGet(target.id);
+      // RAWY-27: an inbox item passes a jump CFI that wins over the saved reading position.
+      const resumeCfi = target.cfi ?? saved?.cfi ?? null;
       const persisted = useReader.getState().style ?? (await loadStyle());
 
       const ctrl = ctrlRef.current!;
@@ -95,7 +98,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       const initialStyle = persisted ?? defaultsForDir(undefined);
       const ts = useTheme.getState();
       await ctrl.open(url, stageRef.current!, {
-        resumeCfi: saved?.cfi ?? null,
+        resumeCfi,
         style: initialStyle,
         theme: THEMES[ts.themeId],
         flags: { overrideBookColor: ts.overrideBookColor, hideChapterTitles: ts.hideChapterTitles },

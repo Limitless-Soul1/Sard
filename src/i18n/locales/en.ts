@@ -155,6 +155,17 @@ export const en = {
   "mode.label": "Reading mode",
   "mode.scrolled": "Scrolled",
   "mode.paged": "Paged",
+
+  // Cross-book Highlights & Notes inbox (RAWY-27)
+  "inbox.count": "{n} across {m} books",
+  "inbox.search": "Search highlights…",
+  "inbox.all": "All",
+  "inbox.custom": "Custom colour",
+  "inbox.allBooks": "All books",
+  "inbox.empty.title": "No highlights or notes yet",
+  "inbox.empty.sub": "Highlight a passage or add a note while reading — it shows up here.",
+  "inbox.empty.none": "Nothing matches",
+  "inbox.empty.noneSub": "Try a different colour, book, type, or search.",
 } as const;
 
 export type TKey = keyof typeof en;

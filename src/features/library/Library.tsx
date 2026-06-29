@@ -20,6 +20,7 @@ import {
 import { THEME_ORDER, THEMES, useTheme } from "../../theme";
 import { AutoCover } from "./AutoCover";
 import { Hoopoe } from "./Hoopoe";
+import { Inbox } from "./Inbox";
 
 // Detect Arabic from the TITLE TEXT itself, so a caption renders in Amiri even when the
 // book's metadata mislabels its language (RAWY-17: e.g. an Arabic book tagged lang=en).
@@ -29,6 +30,7 @@ export interface OpenTarget {
   id: string;
   filePath: string;
   dir?: string | null;
+  cfi?: string | null; // jump-to location (RAWY-27 inbox); else resume saved progress
 }
 
 type View = "grid" | "list";
@@ -59,6 +61,7 @@ function summarize(results: ImportResult[], t: TFn): string {
 export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const { t, lang } = useI18n();
 
+  const [section, setSection] = useState<"library" | "inbox">("library");
   const [books, setBooks] = useState<BookRow[]>([]);
   const [editing, setEditing] = useState<BookRow | null>(null);
   const [shelves, setShelves] = useState<CollectionRow[]>([]);
@@ -93,6 +96,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
       if (import.meta.env.DEV) {
         if ((await settingsGet("lib_force_empty")) === "1") setForceEmpty(true);
         if ((await settingsGet("lib_force_drop")) === "1") setDrag({ count: 3 });
+        if ((await settingsGet("dev_section")) === "inbox") setSection("inbox"); // RAWY-27 screenshots
       }
       setHydrated(true);
     })().catch(() => setHydrated(true));
@@ -237,11 +241,17 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         </div>
 
         <nav className="lib-nav">
-          <button className="lib-nav-item active" onClick={() => pickShelf(null)}>
+          <button
+            className={`lib-nav-item${section === "library" ? " active" : ""}`}
+            onClick={() => { setSection("library"); pickShelf(null); }}
+          >
             <span className="lib-nav-ico lib-ico-library" />
             {t("lib.nav.library")}
           </button>
-          <button className="lib-nav-item" disabled title={t("lib.importSoon")}>
+          <button
+            className={`lib-nav-item${section === "inbox" ? " active" : ""}`}
+            onClick={() => setSection("inbox")}
+          >
             <span className="lib-nav-ico lib-ico-highlights" />
             {t("lib.nav.highlights")}
           </button>
@@ -276,7 +286,9 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
       </aside>
 
       <main className="lib-main">
-        {isEmpty ? (
+        {section === "inbox" ? (
+          <Inbox onOpen={onOpen} />
+        ) : isEmpty ? (
           <EmptyState onBrowse={addBooks} />
         ) : (
           <>

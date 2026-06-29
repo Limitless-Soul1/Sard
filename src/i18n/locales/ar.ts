@@ -156,4 +156,15 @@ export const ar: Record<TKey, string> = {
   "mode.label": "وضع القراءة",
   "mode.scrolled": "تمرير",
   "mode.paged": "صفحات",
+
+  // Cross-book Highlights & Notes inbox (RAWY-27)
+  "inbox.count": "{n} عبر {m} كتب",
+  "inbox.search": "ابحث في التظليلات…",
+  "inbox.all": "الكل",
+  "inbox.custom": "لون مخصص",
+  "inbox.allBooks": "كل الكتب",
+  "inbox.empty.title": "لا تظليلات أو ملاحظات بعد",
+  "inbox.empty.sub": "ظلّل مقطعًا أو أضف ملاحظة أثناء القراءة لتظهر هنا.",
+  "inbox.empty.none": "لا نتائج مطابقة",
+  "inbox.empty.noneSub": "جرّب لونًا أو كتابًا أو نوعًا أو بحثًا مختلفًا.",
 };

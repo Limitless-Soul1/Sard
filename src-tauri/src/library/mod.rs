@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::{params_from_iter, types::ToSql, Connection, OptionalExtension};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 /// Persisted reading position for a book.
 #[derive(Serialize)]
@@ -294,4 +295,164 @@ fn now_unix() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+// ---------------------------------------------------------------------------
+// RAWY-20 — highlights + notes (anchored by CFI; chapter_label denormalised so the
+// future cross-book inbox is a cheap query). `color` stores the SEMANTIC slot
+// (amber/rose/sky/green/purple), not a hex, so it adapts when the theme changes.
+// ---------------------------------------------------------------------------
+
+/// 24-hex id derived from stable parts → re-acting on the same range/target is idempotent.
+fn gen_id(seed: &str) -> String {
+    let mut h = Sha256::new();
+    h.update(seed.as_bytes());
+    h.finalize().iter().take(12).map(|b| format!("{b:02x}")).collect()
+}
+
+#[derive(Serialize)]
+pub struct HighlightRow {
+    pub id: String,
+    pub book_id: String,
+    pub cfi: String, // the range CFI (foliate getCFI) — stored in start_cfi
+    pub color: String,
+    pub text_excerpt: Option<String>,
+    pub chapter_label: Option<String>,
+    pub created_at: Option<i64>,
+}
+
+fn highlight_row(r: &rusqlite::Row) -> rusqlite::Result<HighlightRow> {
+    Ok(HighlightRow {
+        id: r.get(0)?,
+        book_id: r.get(1)?,
+        cfi: r.get(2)?,
+        color: r.get(3)?,
+        text_excerpt: r.get(4)?,
+        chapter_label: r.get(5)?,
+        created_at: r.get(6)?,
+    })
+}
+
+const HL_COLS: &str = "id, book_id, start_cfi, color, text_excerpt, chapter_label, created_at";
+
+pub fn highlights_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<HighlightRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {HL_COLS} FROM highlights WHERE book_id = ?1 ORDER BY created_at"
+    ))?;
+    let rows = stmt.query_map([book_id], highlight_row)?;
+    rows.collect()
+}
+
+fn get_highlight(conn: &Connection, id: &str) -> rusqlite::Result<Option<HighlightRow>> {
+    conn.query_row(&format!("SELECT {HL_COLS} FROM highlights WHERE id = ?1"), [id], highlight_row)
+        .optional()
+}
+
+/// Create/update a highlight for a CFI range (idempotent per book+range).
+pub fn highlight_create(
+    conn: &Connection,
+    book_id: &str,
+    cfi: &str,
+    color: &str,
+    excerpt: Option<&str>,
+    chapter: Option<&str>,
+) -> rusqlite::Result<Option<HighlightRow>> {
+    let id = gen_id(&format!("hl:{book_id}:{cfi}"));
+    conn.execute(
+        "INSERT INTO highlights(id, book_id, start_cfi, color, text_excerpt, chapter_label, created_at) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7) \
+         ON CONFLICT(id) DO UPDATE SET color=excluded.color, \
+            text_excerpt=excluded.text_excerpt, chapter_label=excluded.chapter_label",
+        rusqlite::params![id, book_id, cfi, color, excerpt, chapter, now_unix()],
+    )?;
+    get_highlight(conn, &id)
+}
+
+pub fn highlight_set_color(conn: &Connection, id: &str, color: &str) -> rusqlite::Result<Option<HighlightRow>> {
+    conn.execute("UPDATE highlights SET color = ?2 WHERE id = ?1", rusqlite::params![id, color])?;
+    get_highlight(conn, id)
+}
+
+pub fn highlight_delete(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    // notes.highlight_id is ON DELETE SET NULL — a note survives its highlight as a stray.
+    conn.execute("DELETE FROM highlights WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+#[derive(Serialize)]
+pub struct NoteRow {
+    pub id: String,
+    pub book_id: String,
+    pub highlight_id: Option<String>,
+    pub cfi: Option<String>, // locator_cfi for a standalone note
+    pub color: Option<String>,
+    pub body: Option<String>,
+    pub chapter_label: Option<String>,
+    pub created_at: Option<i64>,
+    pub updated_at: Option<i64>,
+}
+
+fn note_row(r: &rusqlite::Row) -> rusqlite::Result<NoteRow> {
+    Ok(NoteRow {
+        id: r.get(0)?,
+        book_id: r.get(1)?,
+        highlight_id: r.get(2)?,
+        cfi: r.get(3)?,
+        color: r.get(4)?,
+        body: r.get(5)?,
+        chapter_label: r.get(6)?,
+        created_at: r.get(7)?,
+        updated_at: r.get(8)?,
+    })
+}
+
+const NOTE_COLS: &str =
+    "id, book_id, highlight_id, locator_cfi, color, body, chapter_label, created_at, updated_at";
+
+pub fn notes_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<NoteRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {NOTE_COLS} FROM notes WHERE book_id = ?1 ORDER BY created_at"
+    ))?;
+    let rows = stmt.query_map([book_id], note_row)?;
+    rows.collect()
+}
+
+fn get_note(conn: &Connection, id: &str) -> rusqlite::Result<Option<NoteRow>> {
+    conn.query_row(&format!("SELECT {NOTE_COLS} FROM notes WHERE id = ?1"), [id], note_row)
+        .optional()
+}
+
+/// One note per highlight (or per standalone location) — idempotent on the anchor.
+pub fn note_create(
+    conn: &Connection,
+    book_id: &str,
+    highlight_id: Option<&str>,
+    cfi: Option<&str>,
+    color: Option<&str>,
+    body: &str,
+    chapter: Option<&str>,
+) -> rusqlite::Result<Option<NoteRow>> {
+    let anchor = highlight_id.or(cfi).unwrap_or("");
+    let id = gen_id(&format!("note:{book_id}:{anchor}"));
+    let now = now_unix();
+    conn.execute(
+        "INSERT INTO notes(id, book_id, highlight_id, locator_cfi, color, body, chapter_label, created_at, updated_at) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?8) \
+         ON CONFLICT(id) DO UPDATE SET body=excluded.body, color=excluded.color, updated_at=excluded.updated_at",
+        rusqlite::params![id, book_id, highlight_id, cfi, color, body, chapter, now],
+    )?;
+    get_note(conn, &id)
+}
+
+pub fn note_update(conn: &Connection, id: &str, body: &str, color: Option<&str>) -> rusqlite::Result<Option<NoteRow>> {
+    conn.execute(
+        "UPDATE notes SET body = ?2, color = COALESCE(?3, color), updated_at = ?4 WHERE id = ?1",
+        rusqlite::params![id, body, color, now_unix()],
+    )?;
+    get_note(conn, id)
+}
+
+pub fn note_delete(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM notes WHERE id = ?1", [id])?;
+    Ok(())
 }

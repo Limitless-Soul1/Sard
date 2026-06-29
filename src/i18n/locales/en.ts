@@ -109,6 +109,12 @@ export const en = {
   "edit.fitDefault": "Default",
   "edit.save": "Save",
   "edit.cancel": "Cancel",
+
+  // Highlights & notes (RAWY-20)
+  "hl.note": "Note",
+  "hl.addNote": "Add a note…",
+  "hl.remove": "Remove",
+  "hl.save": "Save",
 } as const;
 
 export type TKey = keyof typeof en;

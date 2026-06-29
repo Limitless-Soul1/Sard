@@ -130,3 +130,73 @@ export const bookSetCover = (id: string, imagePath: string): Promise<BookRow | n
 /** Revert to the extracted/auto cover. Returns the updated book. */
 export const bookRevertCover = (id: string): Promise<BookRow | null> =>
   invoke<BookRow | null>("book_revert_cover", { id });
+
+// ---- Highlights + notes (RAWY-20) -----------------------------------------
+
+export type HighlightColor = "amber" | "rose" | "sky" | "green" | "purple";
+
+export interface HighlightRow {
+  id: string;
+  book_id: string;
+  cfi: string; // the range CFI
+  color: HighlightColor;
+  text_excerpt: string | null;
+  chapter_label: string | null;
+  created_at: number | null;
+}
+
+export interface NoteRow {
+  id: string;
+  book_id: string;
+  highlight_id: string | null;
+  cfi: string | null;
+  color: string | null;
+  body: string | null;
+  chapter_label: string | null;
+  created_at: number | null;
+  updated_at: number | null;
+}
+
+export const highlightsForBook = (bookId: string): Promise<HighlightRow[]> =>
+  invoke<HighlightRow[]>("highlights_for_book", { bookId });
+
+export const highlightCreate = (
+  bookId: string,
+  cfi: string,
+  color: HighlightColor,
+  excerpt?: string | null,
+  chapterLabel?: string | null,
+): Promise<HighlightRow | null> =>
+  invoke<HighlightRow | null>("highlight_create", { bookId, cfi, color, excerpt: excerpt ?? null, chapterLabel: chapterLabel ?? null });
+
+export const highlightSetColor = (id: string, color: HighlightColor): Promise<HighlightRow | null> =>
+  invoke<HighlightRow | null>("highlight_set_color", { id, color });
+
+export const highlightDelete = (id: string): Promise<boolean> =>
+  invoke<boolean>("highlight_delete", { id });
+
+export const notesForBook = (bookId: string): Promise<NoteRow[]> =>
+  invoke<NoteRow[]>("notes_for_book", { bookId });
+
+export const noteCreate = (args: {
+  bookId: string;
+  highlightId?: string | null;
+  cfi?: string | null;
+  color?: string | null;
+  body: string;
+  chapterLabel?: string | null;
+}): Promise<NoteRow | null> =>
+  invoke<NoteRow | null>("note_create", {
+    bookId: args.bookId,
+    highlightId: args.highlightId ?? null,
+    cfi: args.cfi ?? null,
+    color: args.color ?? null,
+    body: args.body,
+    chapterLabel: args.chapterLabel ?? null,
+  });
+
+export const noteUpdate = (id: string, body: string, color?: string | null): Promise<NoteRow | null> =>
+  invoke<NoteRow | null>("note_update", { id, body, color: color ?? null });
+
+export const noteDelete = (id: string): Promise<boolean> =>
+  invoke<boolean>("note_delete", { id });

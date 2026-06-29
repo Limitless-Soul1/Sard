@@ -189,3 +189,81 @@ pub fn book_revert_cover(
     let conn = state.db.lock().map_err(err)?;
     library::revert_cover(&conn, &id)
 }
+
+// ---- Highlights + notes (RAWY-20) ----------------------------------------
+
+#[tauri::command]
+pub fn highlights_for_book(book_id: String, state: State<AppState>) -> Result<Vec<library::HighlightRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::highlights_for_book(&conn, &book_id).map_err(err)
+}
+
+#[tauri::command]
+pub fn highlight_create(
+    book_id: String,
+    cfi: String,
+    color: String,
+    excerpt: Option<String>,
+    chapter_label: Option<String>,
+    state: State<AppState>,
+) -> Result<Option<library::HighlightRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::highlight_create(&conn, &book_id, &cfi, &color, excerpt.as_deref(), chapter_label.as_deref())
+        .map_err(err)
+}
+
+#[tauri::command]
+pub fn highlight_set_color(id: String, color: String, state: State<AppState>) -> Result<Option<library::HighlightRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::highlight_set_color(&conn, &id, &color).map_err(err)
+}
+
+#[tauri::command]
+pub fn highlight_delete(id: String, state: State<AppState>) -> Result<bool, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::highlight_delete(&conn, &id).map_err(err)?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn notes_for_book(book_id: String, state: State<AppState>) -> Result<Vec<library::NoteRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::notes_for_book(&conn, &book_id).map_err(err)
+}
+
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn note_create(
+    book_id: String,
+    highlight_id: Option<String>,
+    cfi: Option<String>,
+    color: Option<String>,
+    body: String,
+    chapter_label: Option<String>,
+    state: State<AppState>,
+) -> Result<Option<library::NoteRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::note_create(
+        &conn,
+        &book_id,
+        highlight_id.as_deref(),
+        cfi.as_deref(),
+        color.as_deref(),
+        &body,
+        chapter_label.as_deref(),
+    )
+    .map_err(err)
+}
+
+#[tauri::command]
+pub fn note_update(id: String, body: String, color: Option<String>, state: State<AppState>) -> Result<Option<library::NoteRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::note_update(&conn, &id, &body, color.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+pub fn note_delete(id: String, state: State<AppState>) -> Result<bool, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::note_delete(&conn, &id).map_err(err)?;
+    Ok(true)
+}

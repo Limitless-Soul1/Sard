@@ -139,6 +139,8 @@ export function buildReadingCss(
     html { padding-inline: ${style.marginPx}px; }
     /* a corrected reading direction (RAWY-19 override) flows + aligns the text accordingly */
     ${bookDir ? `html, body { direction: ${bookDir}; }` : ""}
+    /* highlight ink opacity for foliate's overlayer (RAWY-20) — heavier on dark paper */
+    :root { --overlayer-highlight-opacity: ${theme?.dark ? "0.42" : "0.3"}; }
     img, svg, video, table { max-width: 100%; max-height: 100%; }
 
     /* per-script fonts: Arabic glyphs use the chosen Arabic face, Latin uses Literata */

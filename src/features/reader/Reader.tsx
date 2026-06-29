@@ -7,6 +7,7 @@ import { ARABIC_DEFAULTS, defaultsForDir, type ReadingStyle } from "../../reader
 import { appInfo, bookRegister, progressGet, progressSave, settingsGet, settingsSet } from "../../lib/ipc";
 import { useI18n } from "../../i18n";
 import { THEMES, useTheme } from "../../theme";
+import { AnnotationLayer } from "./AnnotationLayer";
 import { ReaderChrome } from "./ReaderChrome";
 import { SettingsPanel } from "./SettingsPanel";
 import { useChromeOnIntent } from "./useChromeOnIntent";
@@ -47,11 +48,12 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const bookRef = useRef<string>(initial.id);
   const [book, setBook] = useState<BookKey>(initial.dir === "rtl" ? "ar" : "en");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [annoKey, setAnnoKey] = useState(0); // bumped after each open → reload annotations
   const progressTimer = useRef<number | undefined>(undefined);
   const styleTimer = useRef<number | undefined>(undefined);
   const appDataDir = useRef<string>("");
 
-  const { status, dir, fraction, chapterLabel, error, style } = useReader();
+  const { status, dir, fraction, chapterLabel, error, style, bookId } = useReader();
   const { themeId, overrideBookColor, hideChapterTitles } = useTheme();
   const { visible: chromeVisible, wake, setHold } = useChromeOnIntent();
 
@@ -89,6 +91,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       const finalStyle = persisted ?? defaultsForDir(ctrl.dir);
       if (!persisted) ctrl.applyStyle(finalStyle);
       set({ status: "ready", dir: ctrl.dir ?? "?", style: finalStyle });
+      setAnnoKey((k) => k + 1); // load this book's highlights/notes
     } catch (e) {
       set({ status: "error", error: String(e) });
     }
@@ -186,6 +189,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         book={book}
         onBook={switchBook}
       />
+
+      <AnnotationLayer ctrlRef={ctrlRef} bookId={bookId} reloadKey={annoKey} />
 
       {status === "error" && <pre className="reader-error">{t("status.error")}: {error}</pre>}
     </div>

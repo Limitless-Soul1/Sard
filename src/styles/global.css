@@ -672,3 +672,47 @@ html, body, #root {
 .edit-cancel { border: 1px solid var(--chrome-border); background: transparent; color: var(--muted); font: 500 13px var(--ui-font); padding: 9px 20px; border-radius: 8px; cursor: pointer; }
 .edit-save { border: none; background: var(--text); color: var(--paper-bg); font: 600 13px var(--ui-font); padding: 9px 24px; border-radius: 8px; cursor: pointer; }
 .edit-save:disabled { opacity: 0.6; cursor: default; }
+
+/* ---- highlight selection toolbar + note popover (RAWY-20) ---- */
+.hl-bar, .hl-card {
+  position: fixed; z-index: 30; transform: translate(-50%, -100%);
+  background: var(--text); color: var(--paper-bg); border-radius: 11px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32); font-family: var(--ui-font);
+}
+.hl-bar.below, .hl-card.below { transform: translate(-50%, 0); }
+.hl-bar::after, .hl-card::after {
+  content: ""; position: absolute; left: 50%; bottom: -7px; transform: translateX(-50%);
+  border-left: 7px solid transparent; border-right: 7px solid transparent; border-top: 8px solid var(--text);
+}
+.hl-bar.below::after, .hl-card.below::after { bottom: auto; top: -7px; border-top: none; border-bottom: 8px solid var(--text); }
+.hl-bar { display: flex; align-items: center; gap: 4px; padding: 9px 12px; }
+.hl-dots { display: flex; align-items: center; gap: 6px; }
+.hl-dot {
+  width: 22px; height: 22px; border-radius: 50%; border: none; cursor: pointer; padding: 0;
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.2);
+}
+.hl-dot.active { outline: 2px solid var(--paper-bg); outline-offset: 1px; }
+.hl-sep { width: 1px; height: 22px; background: color-mix(in srgb, var(--paper-bg) 22%, transparent); margin: 0 5px; }
+.hl-action {
+  display: flex; align-items: center; gap: 6px; border: none; background: none; color: var(--paper-bg);
+  font: 500 12px var(--ui-font); cursor: pointer; padding: 4px 6px;
+}
+.hl-pen { font: 600 14px "Literata", serif; }
+
+.hl-card { width: 280px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.hl-card .hl-dots { gap: 8px; }
+.hl-grow { flex: 1; }
+.hl-remove {
+  border: none; background: none; color: color-mix(in srgb, var(--paper-bg) 70%, transparent);
+  font: 500 12px var(--ui-font); cursor: pointer;
+}
+.hl-remove:hover { color: var(--paper-bg); }
+.hl-note {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 56px;
+  background: color-mix(in srgb, var(--paper-bg) 12%, transparent); color: var(--paper-bg);
+  border: 1px solid color-mix(in srgb, var(--paper-bg) 22%, transparent); border-radius: 8px;
+  padding: 9px 11px; font: 400 13px var(--ui-font); outline: none;
+}
+.hl-note::placeholder { color: color-mix(in srgb, var(--paper-bg) 50%, transparent); }
+.hl-card-foot { display: flex; justify-content: flex-end; }
+.hl-save { border: none; background: var(--accent); color: var(--paper-bg); font: 600 12px var(--ui-font); padding: 7px 16px; border-radius: 7px; cursor: pointer; }

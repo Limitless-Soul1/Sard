@@ -104,6 +104,14 @@ pub fn run() {
             commands::book_update,
             commands::book_set_cover,
             commands::book_revert_cover,
+            commands::highlights_for_book,
+            commands::highlight_create,
+            commands::highlight_set_color,
+            commands::highlight_delete,
+            commands::notes_for_book,
+            commands::note_create,
+            commands::note_update,
+            commands::note_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sard");

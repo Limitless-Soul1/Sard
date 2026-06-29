@@ -110,4 +110,10 @@ export const ar: Record<TKey, string> = {
   "edit.fitDefault": "افتراضي",
   "edit.save": "حفظ",
   "edit.cancel": "إلغاء",
+
+  // Highlights & notes (RAWY-20)
+  "hl.note": "ملاحظة",
+  "hl.addNote": "أضف ملاحظة…",
+  "hl.remove": "إزالة",
+  "hl.save": "حفظ",
 };

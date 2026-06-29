@@ -114,6 +114,16 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const loadBooks = useCallback(() => {
     libraryListBooks({ sort, order, format, collection: shelf, search }).then(setBooks).catch(console.error);
   }, [sort, order, format, shelf, search]);
+
+  // Pick a sort column with a sensible default order (RAWY-30): date columns default to
+  // DESCENDING (newest first) so the most-recent book is the FIRST item — which the grid then
+  // places where the reading eye starts (top-right in an Arabic RTL UI, top-left in LTR). Text
+  // columns default to ascending (A→Z). Clicking the already-active column toggles the order.
+  const pickSort = useCallback((k: SortKey) => {
+    if (k === sort) { setOrder((o) => (o === "asc" ? "desc" : "asc")); return; }
+    setSort(k);
+    setOrder(k === "date_read" || k === "date_added" ? "desc" : "asc");
+  }, [sort]);
   useEffect(() => loadShelves(), [loadShelves]);
   useEffect(() => loadBooks(), [loadBooks]);
 
@@ -376,7 +386,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
                             key={k}
                             className={k === sort ? "active" : ""}
                             onClick={() => {
-                              setSort(k);
+                              pickSort(k);
                               setMenu(null);
                             }}
                           >
@@ -434,17 +444,17 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
               <div className="lib-list">
                 <div className="lib-list-head">
                   <span className="ll-thumb" />
-                  <button className={`ll-title sortable${sort === "title" ? " active" : ""}`} onClick={() => setSort("title")}>
+                  <button className={`ll-title sortable${sort === "title" ? " active" : ""}`} onClick={() => pickSort("title")}>
                     {t("lib.col.title")} {sort === "title" && (order === "asc" ? "↑" : "↓")}
                   </button>
-                  <button className={`ll-author sortable${sort === "author" ? " active" : ""}`} onClick={() => setSort("author")}>
+                  <button className={`ll-author sortable${sort === "author" ? " active" : ""}`} onClick={() => pickSort("author")}>
                     {t("lib.col.author")} {sort === "author" && (order === "asc" ? "↑" : "↓")}
                   </button>
-                  <button className={`ll-format sortable${sort === "format" ? " active" : ""}`} onClick={() => setSort("format")}>
+                  <button className={`ll-format sortable${sort === "format" ? " active" : ""}`} onClick={() => pickSort("format")}>
                     {t("lib.col.format")} {sort === "format" && (order === "asc" ? "↑" : "↓")}
                   </button>
                   <span className="ll-progress">{t("lib.col.progress")}</span>
-                  <button className={`ll-read sortable${sort === "date_read" ? " active" : ""}`} onClick={() => setSort("date_read")}>
+                  <button className={`ll-read sortable${sort === "date_read" ? " active" : ""}`} onClick={() => pickSort("date_read")}>
                     {t("lib.col.read")} {sort === "date_read" && (order === "asc" ? "↑" : "↓")}
                   </button>
                 </div>

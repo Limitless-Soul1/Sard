@@ -2,7 +2,9 @@
 // book's table of contents (from foliate). The current chapter is marked; clicking a row
 // jumps via the entry's href (CFI-equivalent navigation). When "Hide chapter titles" is on
 // (the RAWY-13 anti-spoiler setting) it shows neutral "Chapter N" labels instead of titles.
-// Placement + content mirror with the BOOK direction (leading side) via logical properties.
+// Placement + content follow the UI direction (RAWY-30) — chapters sits on the UI-leading
+// edge, the same side as the toolbar "contents" button. Book-derived chapter titles use
+// dir="auto" so Arabic titles still render RTL inside an LTR UI (and vice-versa).
 
 import { useI18n } from "../../i18n";
 import { localeNum } from "../../lib/format";
@@ -16,7 +18,6 @@ interface Props {
   hideTitles: boolean;
   onToggleHideTitles: () => void;
   onJump: (href: string) => void;
-  isRtlBook: boolean;
   fraction: number;
 }
 
@@ -28,12 +29,10 @@ export function ChaptersPanel({
   hideTitles,
   onToggleHideTitles,
   onJump,
-  isRtlBook,
   fraction,
 }: Props) {
-  const { t, lang } = useI18n();
+  const { t, lang, dir } = useI18n();
   const pct = Math.round(fraction * 100);
-  const dir = isRtlBook ? "rtl" : "ltr";
 
   return (
     <aside className={`reader-panel rp-lead${open ? " show" : ""}`} dir={dir} aria-hidden={!open}>
@@ -71,7 +70,7 @@ export function ChaptersPanel({
               disabled={!c.href}
             >
               <span className="toc-num">{localeNum(i + 1, lang)}</span>
-              <span className="toc-label">{label}</span>
+              <span className="toc-label" dir="auto">{label}</span>
               <span className={`toc-dot${active ? " current" : ""}`} />
             </button>
           );

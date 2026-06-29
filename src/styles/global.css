@@ -234,25 +234,27 @@ html, body, #root {
   display: flex;
   flex-direction: column;
 }
-/* Side follows the BOOK (reading) direction, NOT the UI language (RAWY-28). It docks on the
-   book-TRAILING edge via PHYSICAL left/right (so it's immune to the UI <html dir>), always
-   opposite the book-leading chapters panel → the two never collide in either language. The
-   content inside still inherits the UI direction. (This supersedes the RAWY-24 :root[dir]
-   approach, whose UI-vs-book mismatch was the collision cause.) */
-.settings-panel.sp-ltr {
-  right: 0; left: auto;
-  border-left: 1px solid var(--chrome-border);
+/* Side follows the UI direction (RAWY-30 — supersedes RAWY-24/28). It docks on the UI-TRAILING
+   edge via the logical `inset-inline-end`, so it mirrors with <html dir> exactly like the
+   chapters/annotations panels: same single basis for every reading panel. The off-screen
+   transform is physical (translateX), so it is flipped under RTL. This is the same UI-trailing
+   edge as the annotations panel, so the two are mutually exclusive (Reader closes one when the
+   other opens); the UI-leading chapters panel always sits opposite → no collisions. */
+.settings-panel {
+  inset-inline-end: 0;
+  border-inline-start: 1px solid var(--chrome-border);
   box-shadow: -10px 0 30px rgba(0, 0, 0, 0.16);
   transform: translateX(100%);
 }
-.settings-panel.sp-rtl {
-  left: 0; right: auto;
-  border-right: 1px solid var(--chrome-border);
+:root[dir="rtl"] .settings-panel {
   box-shadow: 10px 0 30px rgba(0, 0, 0, 0.16);
   transform: translateX(-100%);
 }
-.settings-panel.sp-ltr.show,
-.settings-panel.sp-rtl.show { transform: translateX(0); }
+/* `.show` must out-specify the RTL off-screen rule above, so the open transform wins in BOTH
+   directions (the RAWY-24 specificity trap: a :root[dir] rule silently pinning the panel off-
+   screen). LTR uses the plain .show; RTL needs the :root[dir] prefix to match specificity. */
+.settings-panel.show,
+:root[dir="rtl"] .settings-panel.show { transform: translateX(0); }
 .sp-head {
   display: flex;
   align-items: center;
@@ -356,8 +358,9 @@ html, body, #root {
   transition: transform 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 :root[data-dark="true"] .reader-panel { box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45); }
-/* Side follows the BOOK direction (the panel's own dir attr) so it is independent of the UI
-   language: chapters on the reading-leading edge, annotations on the trailing edge. */
+/* Side follows the UI direction (RAWY-30): each panel carries the UI `dir`, so `inset-inline-*`
+   and the off-screen transform both resolve by <html dir> — chapters on the UI-leading edge,
+   annotations on the UI-trailing edge, each on the same side as the toolbar button that opens it. */
 .rp-lead { inset-inline-start: 0; border-inline-end: 1px solid var(--chrome-border); transform: translateX(-104%); }
 .rp-lead[dir="rtl"] { transform: translateX(104%); }
 .rp-trail { inset-inline-end: 0; border-inline-start: 1px solid var(--chrome-border); transform: translateX(104%); }
@@ -745,6 +748,10 @@ html, body, #root {
 .lib-clickaway { position: fixed; inset: 0; z-index: 8; }
 
 /* ---- grid ---- */
+/* The grid inherits <html dir>, so item flow follows the UI direction (RAWY-30): in an Arabic
+   RTL UI the first sorted item lands top-RIGHT and the row flows right-to-left; in LTR it lands
+   top-left. Pairing this with the per-column default sort order (date → newest first, see
+   pickSort) puts the most-recently-read book where the reader's eye starts. */
 .lib-grid {
   flex: 1; overflow: auto; padding: 8px 30px 26px;
   display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));

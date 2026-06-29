@@ -17,10 +17,11 @@ export function SettingsPanel({ open, onClose, style, update, isRtlBook }: Props
   return (
     <>
       <div className={`panel-scrim${open ? " show" : ""}`} onClick={onClose} />
-      {/* Side = BOOK direction (book-trailing edge), independent of the UI language, so the
-          slide-over never shares an edge with the book-leading chapters panel (RAWY-28). */}
+      {/* Side follows the UI direction (RAWY-30): the slide-over docks on the UI-trailing edge
+          (same side as the toolbar type/theme buttons that open it), opposite the UI-leading
+          chapters panel. The CSS keys off <html dir>, so no per-book class is needed. */}
       <aside
-        className={`settings-panel ${isRtlBook ? "sp-rtl" : "sp-ltr"}${open ? " show" : ""}`}
+        className={`settings-panel${open ? " show" : ""}`}
         aria-hidden={!open}
       >
         <div className="sp-head">

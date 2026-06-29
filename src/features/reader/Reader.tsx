@@ -142,10 +142,12 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     settingsGet("chapters_open").then((v) => setChaptersOpen(v !== "0"));
   }, [status]);
 
-  // Placement model (RAWY-28): all reading panels are anchored to the BOOK direction —
-  // chapters on the leading edge, annotations + settings on the trailing edge. Chapters
-  // therefore COEXISTS with either trailing panel (opposite edges); annotations and the
-  // settings slide-over share the trailing edge, so opening one closes the other.
+  // Placement model (RAWY-30 — supersedes RAWY-21/24/28): EVERY reading panel follows the UI
+  // direction (one basis, no mixing). Chapters sits on the UI-leading edge; annotations and the
+  // settings slide-over both sit on the UI-trailing edge — each on the SAME side as the toolbar
+  // button that opens it, so a panel never lands opposite its control. Chapters (leading) thus
+  // COEXISTS with either trailing panel; annotations and settings share the trailing edge, so
+  // opening one closes the other. The reading TEXT stays book-directed (foliate, isolated).
   const toggleChapters = useCallback(() => {
     setChaptersOpen((v) => {
       const next = !v;
@@ -222,16 +224,17 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const jumpHref = (href: string) => ctrlRef.current?.goToHref(href);
   const jumpCfi = (cfi: string) => ctrlRef.current?.goToLocator(cfi);
 
-  // Shift the desk so an open edge panel sits BESIDE the page, never over it (RAWY-22). The
-  // chapters panel is on the book-leading side, annotations on the trailing side.
+  // Shift the desk so an open edge panel sits BESIDE the page, never over it (RAWY-22). Panels
+  // follow the UI direction (RAWY-30): chapters on the UI-leading edge, annotations on the
+  // UI-trailing edge. Logical padding resolves by the desk's inherited <html dir>, so the desk
+  // makes room on the correct side automatically — the SAME basis as the panels themselves.
   const PANEL = 300;
   const lead = chaptersOpen ? PANEL : 0;
   const trail = annoOpen ? PANEL : 0;
-  // Physical sides (panels are placed by BOOK direction, independent of the UI direction).
   const deskStyle = {
     "--page-pref": `${pageWidthVw(pageFraction)}vw`,
-    paddingLeft: isRtlBook ? trail : lead,
-    paddingRight: isRtlBook ? lead : trail,
+    paddingInlineStart: lead,
+    paddingInlineEnd: trail,
   } as CSSProperties;
 
   return (
@@ -267,7 +270,6 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         hideTitles={hideChapterTitles}
         onToggleHideTitles={() => setHideTitles(!hideChapterTitles)}
         onJump={jumpHref}
-        isRtlBook={isRtlBook}
         fraction={fraction}
       />
 
@@ -275,7 +277,6 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         open={annoOpen}
         onClose={() => setAnnoOpen(false)}
         onJump={jumpCfi}
-        isRtlBook={isRtlBook}
         initialTab={annoTab}
       />
 

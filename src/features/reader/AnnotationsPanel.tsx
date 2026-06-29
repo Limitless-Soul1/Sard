@@ -3,7 +3,9 @@
 // jumps to its location via CFI. Notes are editable/deletable inline and can be added as a
 // standalone "margin note" at the current spot (the affordance deferred from RAWY-20).
 // Highlights can be recoloured or deleted from the list. State comes from useAnnotations,
-// so the in-context layer and this panel always agree. Mirrors with the BOOK direction.
+// so the in-context layer and this panel always agree. Placement + content follow the UI
+// direction (RAWY-30) — the trailing edge, same side as the toolbar annotations button;
+// book-derived text (chapter labels, excerpts, note bodies) uses dir="auto".
 
 import { useEffect, useState, type CSSProperties } from "react";
 
@@ -24,17 +26,15 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onJump: (cfi: string) => void;
-  isRtlBook: boolean;
   initialTab?: "notes" | "highlights";
 }
 
-export function AnnotationsPanel({ open, onClose, onJump, isRtlBook, initialTab = "notes" }: Props) {
-  const { t } = useI18n();
+export function AnnotationsPanel({ open, onClose, onJump, initialTab = "notes" }: Props) {
+  const { t, dir } = useI18n();
   const [tab, setTab] = useState<"notes" | "highlights">(initialTab);
   useEffect(() => setTab(initialTab), [initialTab]);
   const highlights = useAnnotations((s) => s.highlights);
   const notes = useAnnotations((s) => s.notes);
-  const dir = isRtlBook ? "rtl" : "ltr";
 
   return (
     <aside className={`reader-panel rp-trail${open ? " show" : ""}`} dir={dir} aria-hidden={!open}>
@@ -122,7 +122,7 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
         return (
           <div key={n.id} className="rp-item note-item" style={{ "--swatch": colorValue(n.color, hl) } as CSSProperties}>
             <div className="rp-item-head">
-              <span className="rp-chapter" onClick={() => target && onJump(target)} role="button" tabIndex={0}>
+              <span className="rp-chapter" dir="auto" onClick={() => target && onJump(target)} role="button" tabIndex={0}>
                 {n.chapter_label || (n.highlight_id ? "" : t("panel.marginNote"))}
               </span>
               <div className="rp-item-actions">
@@ -139,7 +139,7 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
                 </div>
               </div>
             ) : (
-              <div className="rp-note-body" onClick={() => target && onJump(target)}>{n.body}</div>
+              <div className="rp-note-body" dir="auto" onClick={() => target && onJump(target)}>{n.body}</div>
             )}
           </div>
         );
@@ -160,10 +160,10 @@ function HighlightsTab({ highlights, onJump }: { highlights: HighlightRow[]; onJ
       {highlights.map((h) => (
         <div key={h.id} className="rp-item hi-item" style={{ "--swatch": colorValue(h.color, hl) } as CSSProperties}>
           <div className="rp-item-head">
-            <span className="rp-chapter" onClick={() => onJump(h.cfi)} role="button" tabIndex={0}>{h.chapter_label}</span>
+            <span className="rp-chapter" dir="auto" onClick={() => onJump(h.cfi)} role="button" tabIndex={0}>{h.chapter_label}</span>
             <button className="rp-mini danger" onClick={() => removeHighlight(h.id)}>{t("note.delete")}</button>
           </div>
-          <div className="rp-excerpt" onClick={() => onJump(h.cfi)}>{h.text_excerpt}</div>
+          <div className="rp-excerpt" dir="auto" onClick={() => onJump(h.cfi)}>{h.text_excerpt}</div>
           <ColorRow active={h.color} onPick={(c) => setColor(h.id, c)} />
         </div>
       ))}

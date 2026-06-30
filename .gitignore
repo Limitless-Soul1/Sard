@@ -16,6 +16,9 @@ dist-ssr
 /src-tauri/target
 /src-tauri/gen/schemas
 
+# Standalone test build the owner launches directly (RAWY-35) — a copy of the release binary
+/test-build/
+
 # Env
 .env
 .env.*

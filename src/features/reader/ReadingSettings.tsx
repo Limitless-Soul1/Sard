@@ -24,6 +24,7 @@ import {
 import type { TKey } from "../../i18n/locales/en";
 import { DEFAULT_DARK, DEFAULT_LIGHT, THEMES, THEME_ORDER, useTheme, type ThemeId } from "../../theme";
 import { contrastIsReadable } from "../../lib/contrast";
+import { useFonts } from "../../lib/fonts";
 
 interface Props {
   style: ReadingStyle;
@@ -167,6 +168,7 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
   const { t } = useI18n();
   // Override-book-colour + hide-chapter-titles stay GLOBAL flags (RAWY-40); the THEME is per-book.
   const { overrideBookColor, hideChapterTitles, setOverride, setHideTitles } = useTheme();
+  const customFonts = useFonts((s) => s.custom); // RAWY-44 — imported fonts for the book pickers
   const theme = THEMES[bookThemeId];
   const dark = theme.dark;
   const paper = theme.colors.paperBg;
@@ -236,19 +238,25 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
 
       <div className="rs-divider" />
 
-      {/* ---- TYPEFACE ---- */}
+      {/* ---- TYPEFACE (RAWY-44: imported fonts are listed alongside the built-ins) ---- */}
       <div className="rs-sec-title">{t("type.font")}</div>
-      <SelectRow<LatinFont>
+      <SelectRow<string>
         label={t("type.latin")}
         value={style.latinFont}
         onChange={(k) => update({ latinFont: k })}
-        options={(Object.keys(LATIN_FONTS) as LatinFont[]).map((k) => ({ key: k, label: LATIN_FONTS[k].label }))}
+        options={[
+          ...(Object.keys(LATIN_FONTS) as LatinFont[]).map((k) => ({ key: k, label: LATIN_FONTS[k].label })),
+          ...customFonts.map((c) => ({ key: c.family_name, label: `${c.family_name} · ${t("gs.imported")}` })),
+        ]}
       />
-      <SelectRow<ArabicFont>
+      <SelectRow<string>
         label={t("type.arabic")}
         value={style.arabicFont}
         onChange={(k) => update({ arabicFont: k })}
-        options={(Object.keys(ARABIC_FONTS) as ArabicFont[]).map((k) => ({ key: k, label: ARABIC_FONTS[k].label }))}
+        options={[
+          ...(Object.keys(ARABIC_FONTS) as ArabicFont[]).map((k) => ({ key: k, label: ARABIC_FONTS[k].label })),
+          ...customFonts.map((c) => ({ key: c.family_name, label: `${c.family_name} · ${t("gs.imported")}` })),
+        ]}
       />
 
       <Section label={t("type.diacritics")}>

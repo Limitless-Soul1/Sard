@@ -10,6 +10,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { create } from "zustand";
 
 import { fontImport, fontRemove, fontsList, settingsGet, settingsSet, type CustomFont } from "./ipc";
+import { setImportedFontUrlResolver } from "../reader-engine/injectedCss";
 
 const UI_FONT_KEY = "ui_font";
 const CUSTOM_STYLE_ID = "sard-custom-fonts";
@@ -113,6 +114,15 @@ export const useFonts = create<FontsState>((set, get) => ({
     ...get().custom.map((c) => ({ family: c.family_name, label: c.family_name, builtin: false })),
   ],
 }));
+
+/** An imported font's asset-protocol URL by family name (RAWY-44) — used to declare its
+ *  @font-face INSIDE the foliate iframe via the injectedCss resolver. */
+export function customFontUrl(family: string): string | null {
+  const f = useFonts.getState().custom.find((c) => c.family_name === family);
+  return f ? convertFileSrc(f.file_path) : null;
+}
+// Wire the book-font resolver so injectedCss can point a book @font-face at an imported file.
+setImportedFontUrlResolver(customFontUrl);
 
 /** Load + apply the persisted UI font and register imported @font-faces. Call once at startup. */
 export async function initFonts(): Promise<void> {

@@ -13,8 +13,10 @@ export type LatinFont = "literata" | "sourceSerif";
 
 export interface ReadingStyle {
   zoom: number; // size via CSS zoom (D6): 0.8 .. 2.5
-  arabicFont: ArabicFont;
-  latinFont: LatinFont;
+  // A built-in key (ArabicFont/LatinFont) OR an IMPORTED font's family name (RAWY-44). Imported
+  // fonts resolve to an asset URL via the resolver below so their @font-face reaches the iframe.
+  arabicFont: string;
+  latinFont: string;
   lineHeight: number;
   marginPx: number; // inline page padding
   align: Align;
@@ -64,6 +66,17 @@ export const LATIN_FONTS: Record<LatinFont, FontDef> = {
   literata: { regular: "/fonts/Literata.ttf", variable: true, label: "Literata" },
   sourceSerif: { regular: "/fonts/SourceSerif4.ttf", variable: true, label: "Source Serif" },
 };
+
+// RAWY-44: an IMPORTED book font's @font-face must be declared INSIDE the foliate content iframe
+// (the app-document @font-face registered by lib/fonts.ts does NOT reach the iframe). injectedCss
+// stays pure: lib/fonts.ts (which holds the custom_fonts list) wires this resolver, mapping an
+// imported family name → its asset-protocol URL (accessible from the iframe too). null = unknown.
+let importedFontUrl: (family: string) => string | null = () => null;
+export function setImportedFontUrlResolver(fn: (family: string) => string | null): void {
+  importedFontUrl = fn;
+}
+const isBuiltinLatin = (k: string): k is LatinFont => k in LATIN_FONTS;
+const isBuiltinArabic = (k: string): k is ArabicFont => k in ARABIC_FONTS;
 
 // Bold works on Amiri (real Amiri-Bold) + the variable faces; Amiri has only 400/700 so 500
 // snaps to the nearest. We never synth-bold Arabic by choice (faux-bold harms shaping).
@@ -194,8 +207,14 @@ export function buildReadingCss(
   flags?: BookThemeFlags,
   bookDir?: string,
 ): string {
-  const ar = ARABIC_FONTS[style.arabicFont];
-  const lat = LATIN_FONTS[style.latinFont];
+  // Resolve each slot to a source URL. Built-in → its bundled file; imported → its asset URL
+  // (RAWY-44; falls back to the built-in default if the imported font is missing/unloaded).
+  const latBuiltin = isBuiltinLatin(style.latinFont) ? LATIN_FONTS[style.latinFont] : undefined;
+  const arBuiltin = isBuiltinArabic(style.arabicFont) ? ARABIC_FONTS[style.arabicFont] : undefined;
+  const latSrc = latBuiltin?.regular ?? importedFontUrl(style.latinFont) ?? LATIN_FONTS.literata.regular;
+  const arSrc = arBuiltin?.regular ?? importedFontUrl(style.arabicFont) ?? ARABIC_FONTS.amiri.regular;
+  const latImported = !latBuiltin;
+  const arImported = !arBuiltin;
 
   const diacriticsRule =
     style.diacritics === "dim"
@@ -204,20 +223,24 @@ export function buildReadingCss(
         ? ".sard-tashkil { font-size: 0 !important; }"
         : "";
 
-  // Per-script @font-face. Variable fonts (Literata, Noto Naskh) declare a weight RANGE so the
-  // weight control drives the real axis; Amiri ships two static files (regular + a real Bold).
+  // Per-script @font-face injected INTO the foliate content. Variable built-ins (Literata, Noto
+  // Naskh) declare a weight RANGE so the weight control drives the real axis; Amiri ships two
+  // static files (regular + a real Bold). IMPORTED fonts (RAWY-44) omit the format() hint (so any
+  // ttf/otf/woff loads) and the weight descriptor (→ normal; bolder weights synth-bold), and carry
+  // the same unicode-range as their slot so script routing still works (an imported Arabic font in
+  // the Arabic slot renders Arabic).
   const fontFaces = `
     @font-face {
       font-family: 'SardArabic';
-      src: url('${ar.regular}') format('truetype');
-      font-weight: ${ar.variable ? "100 900" : "normal"};
+      src: url('${arSrc}')${arImported ? "" : " format('truetype')"};
+      ${arImported ? "" : `font-weight: ${arBuiltin!.variable ? "100 900" : "normal"};`}
       unicode-range: ${ARABIC_RANGE};
     }
     ${
-      ar.bold && !ar.variable
+      arBuiltin?.bold && !arBuiltin.variable
         ? `@font-face {
       font-family: 'SardArabic';
-      src: url('${ar.bold}') format('truetype');
+      src: url('${arBuiltin.bold}') format('truetype');
       font-weight: bold;
       unicode-range: ${ARABIC_RANGE};
     }`
@@ -225,8 +248,8 @@ export function buildReadingCss(
     }
     @font-face {
       font-family: 'SardLatin';
-      src: url('${lat.regular}') format('truetype');
-      font-weight: ${lat.variable ? "200 700" : "normal"};
+      src: url('${latSrc}')${latImported ? "" : " format('truetype')"};
+      ${latImported ? "" : `font-weight: ${latBuiltin!.variable ? "200 700" : "normal"};`}
       unicode-range: ${LATIN_RANGE};
     }`;
 

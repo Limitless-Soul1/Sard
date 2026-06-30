@@ -112,18 +112,15 @@ html, body, #root {
 }
 
 /* cloth ribbon bookmark — top-end corner of the page (mirrors with the book) */
-.page-ribbon {
-  position: absolute;
-  top: 0;
-  inset-inline-end: 78px;
-  width: 24px;
-  height: 104px;
-  z-index: 2;
-  background: linear-gradient(90deg, #8a2c26, #a23b34 45%, #bf4940);
-  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 84%, 0 100%);
-  box-shadow: 2px 4px 7px rgba(0, 0, 0, 0.2);
+/* On-page bookmark marker (RAWY-41) — shown ONLY where a saved bookmark is visible. Hangs from
+   the top edge at the app-wide horizontal position; FIXED physical `left` (no language flip);
+   draggable. The shape itself is drawn by <BookmarkShape>. */
+.page-bookmark {
+  position: absolute; top: -2px; z-index: 4; transform: translateX(-50%);
+  cursor: grab; touch-action: none; user-select: none;
 }
-.page-sheet.rtl .page-ribbon { background: linear-gradient(90deg, #bf4940, #a23b34 55%, #8a2c26); box-shadow: -2px 4px 7px rgba(0, 0, 0, 0.2); }
+.page-bookmark:active { cursor: grabbing; }
+.bm-shape { display: inline-block; }
 
 /* page-turn affordance — circular floating buttons on the desk edges (RAWY-33, design C-VI) */
 .page-chevron {
@@ -1357,6 +1354,27 @@ html, body, #root {
   color: var(--muted); font: 500 13px var(--ui-font);
 }
 .gs-soon-ico { color: var(--accent); font-size: 15px; }
+/* Bookmark-style picker (RAWY-41, Band J): shape grid + colour row + position preview. */
+.gs-bm-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 9px; }
+.gs-bm-cell {
+  aspect-ratio: 1; border: 0; border-radius: 8px; background: var(--paper-bg); cursor: pointer;
+  display: flex; align-items: center; justify-content: center; box-shadow: inset 0 0 0 1px var(--chrome-border);
+  overflow: hidden;
+}
+.gs-bm-cell.on { box-shadow: 0 0 0 2px var(--accent); }
+.gs-bm-colors { display: flex; gap: 11px; flex-wrap: wrap; }
+.gs-bm-color { width: 28px; height: 28px; border-radius: 50%; border: 0; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(43, 37, 33, 0.15); }
+.gs-bm-color.on { outline: 2px solid var(--text); outline-offset: 2px; }
+.gs-bm-preview {
+  position: relative; height: 56px; margin-top: 10px; border-radius: 8px;
+  background: var(--paper-bg); box-shadow: inset 0 0 0 1px var(--chrome-border); overflow: hidden;
+}
+.gs-bm-preview-mark { position: absolute; top: -2px; transform: translateX(-50%); }
+/* Bookmarks list item (RAWY-41). */
+.rp-item.bm-item { display: flex; align-items: center; gap: 11px; }
+.bm-item-mark { flex: none; display: flex; align-items: center; justify-content: center; width: 26px; }
+.bm-item-label { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; cursor: pointer; }
+.bm-item-pct { font: 500 11px "Inter", "SardUIArabic", sans-serif; color: var(--accent); }
 /* about */
 .gs-about { display: flex; align-items: center; gap: 16px; }
 .gs-about-name { font: 700 18px "Literata", "SardUIArabic", serif; color: var(--text); }

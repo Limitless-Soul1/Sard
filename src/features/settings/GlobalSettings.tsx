@@ -11,6 +11,8 @@ import type { TKey } from "../../i18n/locales/en";
 import { Hoopoe } from "../library/Hoopoe";
 import { settingsGet, settingsSet } from "../../lib/ipc";
 import { BUILTIN_BOOK_FONTS, useFonts } from "../../lib/fonts";
+import { BOOKMARK_COLORS, BOOKMARK_SHAPES, useBookmarkStyle } from "../../lib/bookmarkStyle";
+import { BookmarkShape } from "../reader/BookmarkShape";
 import {
   ARABIC_FONTS,
   LATIN_DEFAULTS,
@@ -308,12 +310,64 @@ function ReadingDefaultsSection() {
 
 function BookmarkSection() {
   const { t } = useI18n();
+  const { shape, color, pos, setShape, setColor, setPos } = useBookmarkStyle();
   return (
     <>
       <SecHead>{t("gs.bookmark")}</SecHead>
-      <div className="gs-soon">
-        <span className="gs-soon-ico" aria-hidden>▸</span>
-        <span>{t("gs.bookmarkSoon")}</span>
+      <div className="gs-note">{t("gs.bookmark.subtitle")}</div>
+
+      <div className="gs-sec">
+        <Label>{t("gs.bookmark.shape")}</Label>
+        <div className="gs-bm-grid">
+          {BOOKMARK_SHAPES.map((s) => (
+            <button
+              key={s.key}
+              className={`gs-bm-cell${shape === s.key ? " on" : ""}`}
+              onClick={() => setShape(s.key)}
+              title={s.label}
+              aria-label={s.label}
+            >
+              <BookmarkShape shape={s.key} color={color} h={30} />
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="gs-sec">
+        <Label hint={BOOKMARK_COLORS.find((c) => c.hex.toLowerCase() === color.toLowerCase())?.name}>
+          {t("gs.bookmark.color")}
+        </Label>
+        <div className="gs-bm-colors">
+          {BOOKMARK_COLORS.map((c) => (
+            <button
+              key={c.key}
+              className={`gs-bm-color${color.toLowerCase() === c.hex.toLowerCase() ? " on" : ""}`}
+              style={{ background: c.hex }}
+              onClick={() => setColor(c.hex)}
+              title={c.name}
+              aria-label={c.name}
+            />
+          ))}
+        </div>
+      </div>
+
+      <div className="gs-sec">
+        <Label hint={t("gs.bookmark.posHint")}>{t("gs.bookmark.position")}</Label>
+        <input
+          className="gs-slider"
+          type="range"
+          min={0}
+          max={1}
+          step={0.01}
+          value={pos}
+          onChange={(e) => setPos(Number(e.target.value))}
+        />
+        {/* a live preview of the marker on a mock page edge */}
+        <div className="gs-bm-preview">
+          <span className="gs-bm-preview-mark" style={{ left: `${pos * 100}%` }}>
+            <BookmarkShape shape={shape} color={color} h={34} />
+          </span>
+        </div>
       </div>
     </>
   );

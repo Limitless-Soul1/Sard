@@ -323,6 +323,41 @@ pub fn note_delete(id: String, state: State<AppState>) -> Result<bool, String> {
     Ok(true)
 }
 
+// ---- Bookmarks (RAWY-41): a saved CFI location, toggled at the current spot. ----
+
+#[tauri::command]
+pub fn bookmark_create(
+    book_id: String,
+    cfi: String,
+    chapter_label: Option<String>,
+    fraction: Option<f64>,
+    label: Option<String>,
+    state: State<AppState>,
+) -> Result<Option<library::BookmarkRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::bookmark_create(&conn, &book_id, &cfi, chapter_label.as_deref(), fraction, label.as_deref())
+        .map_err(err)
+}
+
+#[tauri::command]
+pub fn bookmark_delete(id: String, state: State<AppState>) -> Result<bool, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::bookmark_delete(&conn, &id).map_err(err)?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn bookmarks_for_book(book_id: String, state: State<AppState>) -> Result<Vec<library::BookmarkRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::bookmarks_for_book(&conn, &book_id).map_err(err)
+}
+
+#[tauri::command]
+pub fn bookmarks_all(state: State<AppState>) -> Result<Vec<library::BookmarkItem>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::bookmarks_all(&conn).map_err(err)
+}
+
 // ---- Fonts (RAWY-39): import a user font file + list imported fonts. ----
 
 #[tauri::command]

@@ -10,11 +10,18 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rusqlite::Connection;
 
 /// Ordered list of `(version, name, sql)`. Append-only.
-pub const MIGRATIONS: &[(i64, &str, &str)] = &[(
-    1,
-    "initial_schema",
-    include_str!("migrations_sql/0001_initial_schema.sql"),
-)];
+pub const MIGRATIONS: &[(i64, &str, &str)] = &[
+    (
+        1,
+        "initial_schema",
+        include_str!("migrations_sql/0001_initial_schema.sql"),
+    ),
+    (
+        2,
+        "bookmark_fields",
+        include_str!("migrations_sql/0002_bookmark_fields.sql"),
+    ),
+];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.
 pub fn run(conn: &Connection) -> rusqlite::Result<()> {

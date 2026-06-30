@@ -13,9 +13,15 @@ import { useI18n } from "../../i18n";
 import { THEMES, useTheme } from "../../theme";
 import { useReader } from "../../reader-engine/store";
 import { useAnnotations } from "./annotationsStore";
+import { useBookmarks } from "./bookmarksStore";
+import { BookmarkShape } from "./BookmarkShape";
+import { useBookmarkStyle } from "../../lib/bookmarkStyle";
 import { ColorRow } from "./AnnotationLayer";
 import { colorValue } from "./highlightColors";
-import type { HighlightColor, HighlightRow, NoteRow } from "../../lib/ipc";
+import { localeNum } from "../../lib/format";
+import type { BookmarkRow, HighlightColor, HighlightRow, NoteRow } from "../../lib/ipc";
+
+export type AnnoTab = "notes" | "highlights" | "bookmarks";
 
 function useHl() {
   const id = useTheme((s) => s.themeId);
@@ -26,15 +32,16 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onJump: (cfi: string) => void;
-  initialTab?: "notes" | "highlights";
+  initialTab?: AnnoTab;
 }
 
 export function AnnotationsPanel({ open, onClose, onJump, initialTab = "notes" }: Props) {
   const { t, dir } = useI18n();
-  const [tab, setTab] = useState<"notes" | "highlights">(initialTab);
+  const [tab, setTab] = useState<AnnoTab>(initialTab);
   useEffect(() => setTab(initialTab), [initialTab]);
   const highlights = useAnnotations((s) => s.highlights);
   const notes = useAnnotations((s) => s.notes);
+  const bookmarks = useBookmarks((s) => s.bookmarks);
 
   return (
     <aside className={`reader-panel rp-trail${open ? " show" : ""}`} dir={dir} aria-hidden={!open}>
@@ -46,6 +53,9 @@ export function AnnotationsPanel({ open, onClose, onJump, initialTab = "notes" }
           <button className={`rp-tab${tab === "highlights" ? " on" : ""}`} onClick={() => setTab("highlights")}>
             {t("panel.highlights")} <span className="rp-count">{highlights.length}</span>
           </button>
+          <button className={`rp-tab${tab === "bookmarks" ? " on" : ""}`} onClick={() => setTab("bookmarks")}>
+            {t("panel.bookmarks")} <span className="rp-count">{bookmarks.length}</span>
+          </button>
         </div>
         <button className="rp-x" onClick={onClose} aria-label="✕">✕</button>
       </div>
@@ -53,11 +63,36 @@ export function AnnotationsPanel({ open, onClose, onJump, initialTab = "notes" }
       <div className="rp-scroll">
         {tab === "notes" ? (
           <NotesTab highlights={highlights} notes={notes} onJump={onJump} />
-        ) : (
+        ) : tab === "highlights" ? (
           <HighlightsTab highlights={highlights} onJump={onJump} />
+        ) : (
+          <BookmarksTab bookmarks={bookmarks} onJump={onJump} />
         )}
       </div>
     </aside>
+  );
+}
+
+function BookmarksTab({ bookmarks, onJump }: { bookmarks: BookmarkRow[]; onJump: (cfi: string) => void }) {
+  const { t, lang } = useI18n();
+  const { shape, color } = useBookmarkStyle();
+  const remove = useBookmarks((s) => s.remove);
+  return (
+    <>
+      {bookmarks.length === 0 && <div className="rp-empty">{t("panel.noBookmarks")}</div>}
+      {bookmarks.map((b) => (
+        <div key={b.id} className="rp-item bm-item">
+          <span className="bm-item-mark" aria-hidden>
+            <BookmarkShape shape={shape} color={color} h={30} />
+          </span>
+          <span className="rp-chapter bm-item-label" dir="auto" onClick={() => onJump(b.cfi)} role="button" tabIndex={0}>
+            {b.chapter_label || t("reader.chapterFallback")}
+            <span className="bm-item-pct">{localeNum(Math.round((b.fraction ?? 0) * 100), lang)}%</span>
+          </span>
+          <button className="rp-mini danger" onClick={() => remove(b.id)}>{t("note.delete")}</button>
+        </div>
+      ))}
+    </>
   );
 }
 

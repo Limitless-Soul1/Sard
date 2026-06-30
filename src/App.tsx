@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import "./styles/global.css";
 import { I18nProvider, useI18n } from "./i18n";
+import { initBookmarkStyle } from "./lib/bookmarkStyle";
 import { initFonts } from "./lib/fonts";
 import { initTheme, useTheme } from "./theme";
 import { LanguagePicker } from "./features/onboarding/LanguagePicker";
@@ -38,6 +39,7 @@ function App() {
   useEffect(() => {
     initTheme(); // load + apply persisted theme/override/hide-titles/mode (RAWY-39)
     initFonts(); // load + apply persisted UI font + register imported @font-faces (RAWY-39)
+    initBookmarkStyle(); // load persisted bookmark shape/colour/position (RAWY-41)
   }, []);
   return (
     <I18nProvider>

@@ -47,6 +47,42 @@ export const fontsList = (): Promise<CustomFont[]> => invoke<CustomFont[]>("font
 /** Remove an imported font (row + managed file). */
 export const fontRemove = (id: string): Promise<boolean> => invoke<boolean>("font_remove", { id });
 
+// ---- Bookmarks (RAWY-41): a saved CFI location, toggled at the current spot. ----
+export interface BookmarkRow {
+  id: string;
+  book_id: string;
+  cfi: string;
+  chapter_label: string | null;
+  fraction: number | null;
+  label: string | null;
+  created_at: number | null;
+}
+export interface BookmarkItem extends BookmarkRow {
+  book_title: string | null;
+  file_path: string;
+  book_dir: string | null;
+}
+
+export const bookmarkCreate = (args: {
+  bookId: string;
+  cfi: string;
+  chapterLabel?: string | null;
+  fraction?: number | null;
+  label?: string | null;
+}): Promise<BookmarkRow | null> =>
+  invoke<BookmarkRow | null>("bookmark_create", {
+    bookId: args.bookId,
+    cfi: args.cfi,
+    chapterLabel: args.chapterLabel ?? null,
+    fraction: args.fraction ?? null,
+    label: args.label ?? null,
+  });
+
+export const bookmarkDelete = (id: string): Promise<boolean> => invoke<boolean>("bookmark_delete", { id });
+export const bookmarksForBook = (bookId: string): Promise<BookmarkRow[]> =>
+  invoke<BookmarkRow[]>("bookmarks_for_book", { bookId });
+export const bookmarksAll = (): Promise<BookmarkItem[]> => invoke<BookmarkItem[]>("bookmarks_all");
+
 export interface Progress {
   cfi: string | null;
   fraction: number;

@@ -122,6 +122,10 @@ pub fn run() {
             commands::font_import,
             commands::fonts_list,
             commands::font_remove,
+            commands::bookmark_create,
+            commands::bookmark_delete,
+            commands::bookmarks_for_book,
+            commands::bookmarks_all,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sard");

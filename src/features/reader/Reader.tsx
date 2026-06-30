@@ -26,7 +26,9 @@ import {
 import { AnnotationLayer } from "./AnnotationLayer";
 import { AnnotationsPanel } from "./AnnotationsPanel";
 import { ChaptersPanel } from "./ChaptersPanel";
+import { PageBookmark } from "./PageBookmark";
 import { useAnnotations } from "./annotationsStore";
+import { MARKER_WINDOW, useBookmarks } from "./bookmarksStore";
 import { ReaderChrome, type SettingsSection } from "./ReaderChrome";
 import { SettingsPanel } from "./SettingsPanel";
 import { useChromeOnIntent } from "./useChromeOnIntent";
@@ -53,7 +55,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const [chaptersOpen, setChaptersOpen] = useState(false);
   const [annoOpen, setAnnoOpen] = useState(false);
   const [toc, setToc] = useState<TocEntry[]>([]);
-  const [annoTab, setAnnoTab] = useState<"notes" | "highlights">("notes");
+  const [annoTab, setAnnoTab] = useState<import("./AnnotationsPanel").AnnoTab>("notes");
   const progressTimer = useRef<number | undefined>(undefined);
   const styleTimer = useRef<number | undefined>(undefined);
   // Per-book settings (RAWY-40): the global reading defaults (baseline), this book's PARTIAL
@@ -65,6 +67,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const [hasOv, setHasOv] = useState(false);
 
   const { status, dir, fraction, chapterLabel, chapterHref, error, style, bookTitle } = useReader();
+  // RAWY-41: the current book's bookmarks; the marker shows ONLY when one is at the visible spot.
+  const bookmarks = useBookmarks((s) => s.bookmarks);
+  const activeBm = bookmarks.find((b) => b.fraction != null && Math.abs(b.fraction - fraction) <= MARKER_WINDOW) ?? null;
   // THEME is per-book (RAWY-40) — read from `bookThemeId`, not the global store. Override-book-
   // colour + hide-chapter-titles stay GLOBAL flags (set in Global Settings / chapters panel).
   const { overrideBookColor, hideChapterTitles, setHideTitles } = useTheme();
@@ -123,6 +128,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       // Load this book's highlights/notes into the shared store (in-context layer + panel).
       useAnnotations.getState().bind(ctrl, target.id);
       await useAnnotations.getState().load();
+      useBookmarks.getState().load(target.id); // RAWY-41 — this book's saved locations
     } catch (e) {
       set({ status: "error", error: String(e) });
     }
@@ -265,6 +271,14 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     ctrlRef.current?.applyStyle(global);
   };
 
+  // RAWY-41: toggle a bookmark at the CURRENT reading location (CFI + fraction + chapter). If the
+  // visible spot is already bookmarked, remove it; else add. The button reflects bookmarked state.
+  const onBookmark = () => {
+    const st = useReader.getState();
+    if (!st.cfi) return;
+    useBookmarks.getState().toggle(st.cfi, st.chapterLabel, st.fraction);
+  };
+
   const isRtlBook = dir === "rtl";
   // When chapter titles are hidden (anti-spoiler), the chrome shows a neutral "Chapter N".
   const tocIndex = toc.findIndex((c) => c.href && c.href === chapterHref);
@@ -328,7 +342,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
           ‹
         </button>
         <div className={`page-sheet${isRtlBook ? " rtl" : ""}${fitWindow ? " fitw" : ""}`}>
-          <div className="page-ribbon" />
+          {/* RAWY-41: the bookmark marker shows ONLY where a saved bookmark is visible (not the
+              old always-on ribbon). Fixed physical position; draggable along the top edge. */}
+          {activeBm && <PageBookmark title={t("bookmark.here")} />}
           <div className="page-host" ref={stageRef} dir="ltr" />
           <div className="page-grain" />
         </div>
@@ -370,6 +386,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         onTheme={() => openSettings("theme")}
         onLayout={() => openSettings("page")}
         onAnnotations={() => { setAnnoOpen((v) => !v); setSettingsOpen(false); }}
+        onBookmark={onBookmark}
+        bookmarked={!!activeBm}
         chaptersOpen={chaptersOpen}
         annoOpen={annoOpen}
         settingsOpen={settingsOpen}

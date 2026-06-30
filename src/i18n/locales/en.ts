@@ -181,6 +181,18 @@ export const en = {
   "inbox.empty.none": "Nothing matches",
   "inbox.empty.noneSub": "Try a different colour, book, type, or search.",
 
+  // Bookmarks (RAWY-41, Band J)
+  "panel.bookmarks": "Bookmarks",
+  "panel.noBookmarks": "No bookmarks yet — press the Bookmark button to save your spot.",
+  "bookmark.here": "Bookmarked",
+  "bookmark.add": "Bookmark this spot",
+  "bookmark.remove": "Remove bookmark",
+  "gs.bookmark.subtitle": "How your saved place looks on the page. Pick a shape, then a colour.",
+  "gs.bookmark.shape": "SHAPE",
+  "gs.bookmark.color": "COLOUR",
+  "gs.bookmark.position": "POSITION ON THE EDGE",
+  "gs.bookmark.posHint": "Fixed — doesn't flip with language. You can also drag the marker on the page.",
+
   // Per-book reading settings + text colour (RAWY-40, Band I)
   "perbook.scope": "Applies to this book",
   "perbook.scopeSub": "won't change other books",

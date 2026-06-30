@@ -13,6 +13,8 @@ interface Props {
   onTheme: () => void;
   onLayout: () => void;
   onAnnotations: () => void;
+  onBookmark: () => void;
+  bookmarked: boolean;
   chaptersOpen: boolean;
   annoOpen: boolean;
   settingsOpen: boolean;
@@ -37,6 +39,8 @@ export function ReaderChrome({
   onTheme,
   onLayout,
   onAnnotations,
+  onBookmark,
+  bookmarked,
   chaptersOpen,
   annoOpen,
   settingsOpen,
@@ -87,9 +91,13 @@ export function ReaderChrome({
             <span className="rc-btn-ico"><span className="ico-cols"><span /><span /></span></span>
             <span className="rc-btn-label">{t("reader.layout")}</span>
           </button>
-          {/* Bookmark is DISABLED until the bookmark system is built (RAWY-34): a dead button is
-              worse than a clearly "coming" one. Kept in place so the cluster matches the design. */}
-          <button className="rc-btn rc-btn-soon" disabled title={t("reader.bookmarkSoon")} aria-disabled>
+          {/* Bookmark (RAWY-41): toggles a saved location at the current spot; "on" when the
+              visible location is bookmarked. */}
+          <button
+            className={`rc-btn${bookmarked ? " on" : ""}`}
+            onClick={onBookmark}
+            title={bookmarked ? t("bookmark.remove") : t("bookmark.add")}
+          >
             <span className="rc-btn-ico"><span className="ico-ribbon" /></span>
             <span className="rc-btn-label">{t("reader.bookmark")}</span>
           </button>

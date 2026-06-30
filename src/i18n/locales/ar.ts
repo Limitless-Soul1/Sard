@@ -182,6 +182,18 @@ export const ar: Record<TKey, string> = {
   "inbox.empty.none": "لا نتائج مطابقة",
   "inbox.empty.noneSub": "جرّب لونًا أو كتابًا أو نوعًا أو بحثًا مختلفًا.",
 
+  // الفواصل (RAWY-41، نطاق J)
+  "panel.bookmarks": "الفواصل",
+  "panel.noBookmarks": "لا فواصل بعد — اضغط زر الفاصل لحفظ موضعك.",
+  "bookmark.here": "محفوظ",
+  "bookmark.add": "ضع فاصلًا هنا",
+  "bookmark.remove": "أزل الفاصل",
+  "gs.bookmark.subtitle": "كيف يبدو موضعك المحفوظ على الصفحة. اختر شكلًا ثم لونًا.",
+  "gs.bookmark.shape": "الشكل",
+  "gs.bookmark.color": "اللون",
+  "gs.bookmark.position": "الموضع على الحافة",
+  "gs.bookmark.posHint": "ثابت — لا ينقلب مع اللغة. ويمكنك أيضًا سحب الفاصل على الصفحة.",
+
   // إعدادات القراءة لكل كتاب + لون النص (RAWY-40، نطاق I)
   "perbook.scope": "يُطبَّق على هذا الكتاب",
   "perbook.scopeSub": "لا يؤثّر في الكتب الأخرى",

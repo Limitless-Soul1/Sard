@@ -439,6 +439,110 @@ pub fn highlight_delete(conn: &Connection, id: &str) -> rusqlite::Result<()> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// RAWY-41 — bookmarks: a saved CFI location the user returns to. Mirrors the highlights
+// pattern (denormalised chapter_label; a fraction 0..1 so the on-page marker can show only
+// where placed). id derived from book+cfi so toggling the same spot is idempotent.
+// ---------------------------------------------------------------------------
+#[derive(Serialize)]
+pub struct BookmarkRow {
+    pub id: String,
+    pub book_id: String,
+    pub cfi: String,
+    pub chapter_label: Option<String>,
+    pub fraction: Option<f64>,
+    pub label: Option<String>,
+    pub created_at: Option<i64>,
+}
+
+const BM_COLS: &str = "id, book_id, locator_cfi, chapter_label, fraction, label, created_at";
+
+fn bookmark_row(r: &rusqlite::Row) -> rusqlite::Result<BookmarkRow> {
+    Ok(BookmarkRow {
+        id: r.get(0)?,
+        book_id: r.get(1)?,
+        cfi: r.get(2)?,
+        chapter_label: r.get(3)?,
+        fraction: r.get(4)?,
+        label: r.get(5)?,
+        created_at: r.get(6)?,
+    })
+}
+
+pub fn bookmarks_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<BookmarkRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {BM_COLS} FROM bookmarks WHERE book_id = ?1 ORDER BY fraction"
+    ))?;
+    let rows = stmt.query_map([book_id], bookmark_row)?;
+    rows.collect()
+}
+
+pub fn bookmark_create(
+    conn: &Connection,
+    book_id: &str,
+    cfi: &str,
+    chapter: Option<&str>,
+    fraction: Option<f64>,
+    label: Option<&str>,
+) -> rusqlite::Result<Option<BookmarkRow>> {
+    let id = gen_id(&format!("bm:{book_id}:{cfi}"));
+    conn.execute(
+        "INSERT INTO bookmarks(id, book_id, locator_cfi, chapter_label, fraction, label, created_at) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7) \
+         ON CONFLICT(id) DO UPDATE SET chapter_label=excluded.chapter_label, \
+            fraction=excluded.fraction, label=excluded.label",
+        rusqlite::params![id, book_id, cfi, chapter, fraction, label, now_unix()],
+    )?;
+    conn.query_row(&format!("SELECT {BM_COLS} FROM bookmarks WHERE id = ?1"), [&id], bookmark_row)
+        .optional()
+}
+
+pub fn bookmark_delete(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM bookmarks WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+#[derive(Serialize)]
+pub struct BookmarkItem {
+    pub id: String,
+    pub book_id: String,
+    pub book_title: Option<String>,
+    pub file_path: String,
+    pub book_dir: Option<String>,
+    pub chapter_label: Option<String>,
+    pub fraction: Option<f64>,
+    pub label: Option<String>,
+    pub cfi: String,
+    pub created_at: Option<i64>,
+}
+
+/// All bookmarks across every book, newest first (the global list, like annotations_all).
+pub fn bookmarks_all(conn: &Connection) -> rusqlite::Result<Vec<BookmarkItem>> {
+    let sql = format!(
+        "SELECT k.id, k.book_id, {OV_TITLE}, b.file_path, \
+            COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='dir'), b.dir), \
+            k.chapter_label, k.fraction, k.label, k.locator_cfi, k.created_at \
+         FROM bookmarks k JOIN books b ON b.id = k.book_id \
+         ORDER BY k.created_at DESC"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], |r| {
+        Ok(BookmarkItem {
+            id: r.get(0)?,
+            book_id: r.get(1)?,
+            book_title: r.get(2)?,
+            file_path: r.get(3)?,
+            book_dir: r.get(4)?,
+            chapter_label: r.get(5)?,
+            fraction: r.get(6)?,
+            label: r.get(7)?,
+            cfi: r.get(8)?,
+            created_at: r.get(9)?,
+        })
+    })?;
+    rows.collect()
+}
+
 #[derive(Serialize)]
 pub struct NoteRow {
     pub id: String,

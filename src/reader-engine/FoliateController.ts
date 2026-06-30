@@ -436,4 +436,10 @@ export class FoliateController {
   get dir(): string | undefined {
     return this.forcedDir ?? this.view?.book?.dir;
   }
+  /** Book title from the EPUB metadata (RAWY-33 — shown in the reading-chrome nav block). */
+  get title(): string | undefined {
+    const t = this.view?.book?.metadata?.title;
+    if (!t) return undefined;
+    return typeof t === "string" ? t : (t.value ?? t["#text"] ?? undefined);
+  }
 }

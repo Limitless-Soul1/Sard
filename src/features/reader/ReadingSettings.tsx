@@ -4,9 +4,10 @@
 // chrome → inherits the UI direction and uses theme tokens. Replaces the old cramped
 // TypographyBar wall-of-buttons; the dev page-turn / book-switcher / status controls are gone.
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 import { useI18n } from "../../i18n";
+import type { SettingsSection } from "./ReaderChrome";
 import {
   ARABIC_FONTS,
   FONT_WEIGHTS,
@@ -27,6 +28,8 @@ interface Props {
   style: ReadingStyle;
   update: (patch: Partial<ReadingStyle>) => void;
   isRtlBook: boolean;
+  section?: SettingsSection;
+  sectionNonce?: number;
 }
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
@@ -150,14 +153,26 @@ function SelectRow<T extends string>({
   );
 }
 
-export function ReadingSettings({ style, update, isRtlBook }: Props) {
+export function ReadingSettings({ style, update, isRtlBook, section, sectionNonce }: Props) {
   const { t } = useI18n();
   const { themeId, overrideBookColor, hideChapterTitles, setTheme, toggleDayNight, setOverride, setHideTitles } =
     useTheme();
   const dark = THEMES[themeId].dark;
 
+  // RAWY-33: the chrome's Text / Layout / Theme buttons open this one panel scrolled to the
+  // matching anchor (the three labelled controls are entry points, not separate panels).
+  const anchorText = useRef<HTMLDivElement>(null);
+  const anchorPage = useRef<HTMLDivElement>(null);
+  const anchorTheme = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!sectionNonce) return;
+    const ref = section === "page" ? anchorPage : section === "theme" ? anchorTheme : anchorText;
+    ref.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [section, sectionNonce]);
+
   return (
     <div className="rs">
+      <div className="rs-anchor" ref={anchorText} />
       {/* ---- TEXT ---- */}
       <Section label={t("type.size")} value={`${Math.round(style.zoom * 100)}%`}>
         <Slider
@@ -238,6 +253,7 @@ export function ReadingSettings({ style, update, isRtlBook }: Props) {
 
       <div className="rs-divider" />
 
+      <div className="rs-anchor" ref={anchorPage} />
       {/* ---- PAGE ---- */}
       <Section label={t("mode.label")}>
         <Segmented<FlowMode>
@@ -273,6 +289,7 @@ export function ReadingSettings({ style, update, isRtlBook }: Props) {
 
       <div className="rs-divider" />
 
+      <div className="rs-anchor" ref={anchorTheme} />
       {/* ---- PAPER / THEME ---- */}
       <div className="rs-sec-head">
         <span className="rs-label">{t("type.paper")}</span>

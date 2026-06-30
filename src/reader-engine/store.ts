@@ -8,6 +8,7 @@ export type ReaderStatus = "idle" | "loading" | "ready" | "error";
 
 interface ReaderState {
   bookId: string | null;
+  bookTitle: string | null; // EPUB metadata title (reading-chrome nav block, RAWY-33)
   dir: string;
   fraction: number;
   cfi: string | null;
@@ -21,6 +22,7 @@ interface ReaderState {
 
 export const useReader = create<ReaderState>((set) => ({
   bookId: null,
+  bookTitle: null,
   dir: "?",
   fraction: 0,
   cfi: null,

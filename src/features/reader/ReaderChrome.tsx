@@ -1,36 +1,48 @@
 import { useI18n } from "../../i18n";
 
+export type SettingsSection = "text" | "page" | "theme";
+
 interface Props {
   visible: boolean;
+  bookTitle: string | null;
   chapter: string;
   fraction: number;
-  bookDir: string; // book's own direction — the progress fills from the book's start
   onBack: () => void;
   onContents: () => void;
-  onAnnotations: () => void;
-  onTypography: () => void;
+  onText: () => void;
   onTheme: () => void;
+  onLayout: () => void;
+  onAnnotations: () => void;
   onBookmark: () => void;
   chaptersOpen: boolean;
   annoOpen: boolean;
+  settingsOpen: boolean;
+  settingsSection: SettingsSection;
 }
 
-// Reading chrome (band C): a translucent top bar (back/contents · chapter · type/theme/
-// bookmark) and a bottom progress bar. NO logo here — the page is the hero. The chrome
-// follows the UI direction (inherits <html dir>); the progress fill follows the BOOK.
+// Reading chrome (RAWY-33, design bands C-VI / C-VII): a cohesive full-width top bar with
+// CLEAR, LABELLED controls (the old faint icons were the complaint) and a bottom progress
+// bar. NO logo — the page is the hero. The chrome is PINNED (RAWY-32/D21): nav on the
+// physical LEFT, the control cluster on the physical RIGHT — they do NOT flip with the UI
+// language (the bar forces `direction: ltr`). Only labels translate; the reading TEXT and the
+// page-turn chevrons follow the BOOK. Contents opens the LEFT panel, Notes the RIGHT panel;
+// Text/Theme/Layout open the settings slide-over at the matching section.
 export function ReaderChrome({
   visible,
+  bookTitle,
   chapter,
   fraction,
-  bookDir,
   onBack,
   onContents,
-  onAnnotations,
-  onTypography,
+  onText,
   onTheme,
+  onLayout,
+  onAnnotations,
   onBookmark,
   chaptersOpen,
   annoOpen,
+  settingsOpen,
+  settingsSection,
 }: Props) {
   const { t } = useI18n();
   const pct = Math.round(fraction * 100);
@@ -38,40 +50,65 @@ export function ReaderChrome({
   return (
     <div className={`reader-chrome${visible ? " show" : ""}`} aria-hidden={!visible}>
       <div className="rc-top">
-        <div className="rc-group">
-          <button className="rc-icon" onClick={onBack} title={t("reader.back")}>‹</button>
-          <button
-            className={`rc-icon rc-contents${chaptersOpen ? " on" : ""}`}
-            onClick={onContents}
-            title={t("reader.contents")}
-          >
-            <span></span><span></span><span></span>
-          </button>
+        {/* left nav: back + book/chapter context */}
+        <div className="rc-nav">
+          <button className="rc-back" onClick={onBack} title={t("reader.back")}>‹</button>
+          <div className="rc-title-block">
+            <span className="rc-book" dir="auto">{bookTitle || t("reader.untitledBook")}</span>
+            <span className="rc-chapter" dir="auto">{chapter}</span>
+          </div>
         </div>
-        <div className="rc-chapter" dir="auto">{chapter}</div>
-        <div className="rc-group">
-          <button className="rc-icon rc-aa" onClick={onTypography} title={t("reader.typography")}>
-            A<span>a</span>
+
+        {/* right controls: bordered, labelled buttons (pinned to the right) */}
+        <div className="rc-btns">
+          <button className={`rc-btn${chaptersOpen ? " on" : ""}`} onClick={onContents} title={t("reader.contents")}>
+            <span className="rc-btn-ico"><span className="ico-lines"><span /><span /><span /></span></span>
+            <span className="rc-btn-label">{t("reader.contents")}</span>
           </button>
           <button
-            className={`rc-icon rc-annos${annoOpen ? " on" : ""}`}
-            onClick={onAnnotations}
-            title={t("panel.annotations")}
+            className={`rc-btn${settingsOpen && settingsSection === "text" ? " on" : ""}`}
+            onClick={onText}
+            title={t("reader.text")}
           >
-            <span></span><span></span><span></span>
+            <span className="rc-btn-ico ico-aa">A<span>a</span></span>
+            <span className="rc-btn-label">{t("reader.text")}</span>
           </button>
-          <button className="rc-icon" onClick={onTheme} title={t("theme.label")}>◐</button>
-          <button className="rc-icon rc-bookmark" onClick={onBookmark} title={t("reader.bookmark")} />
+          <button
+            className={`rc-btn${settingsOpen && settingsSection === "theme" ? " on" : ""}`}
+            onClick={onTheme}
+            title={t("theme.label")}
+          >
+            <span className="rc-btn-ico"><span className="ico-half" /></span>
+            <span className="rc-btn-label">{t("theme.label")}</span>
+          </button>
+          <button
+            className={`rc-btn${settingsOpen && settingsSection === "page" ? " on" : ""}`}
+            onClick={onLayout}
+            title={t("reader.layout")}
+          >
+            <span className="rc-btn-ico"><span className="ico-cols"><span /><span /></span></span>
+            <span className="rc-btn-label">{t("reader.layout")}</span>
+          </button>
+          <button className="rc-btn" onClick={onBookmark} title={t("reader.bookmark")}>
+            <span className="rc-btn-ico"><span className="ico-ribbon" /></span>
+            <span className="rc-btn-label">{t("reader.bookmark")}</span>
+          </button>
+          <span className="rc-divider" aria-hidden />
+          <button className={`rc-btn${annoOpen ? " on" : ""}`} onClick={onAnnotations} title={t("reader.notes")}>
+            <span className="rc-btn-ico"><span className="ico-note" /></span>
+            <span className="rc-btn-label">{t("reader.notes")}</span>
+          </button>
         </div>
       </div>
 
       <div className="rc-bottom">
-        <div className="rc-progress" dir={bookDir === "rtl" ? "rtl" : "ltr"}>
-          <div className="rc-progress-fill" style={{ inlineSize: `${pct}%` }} />
-        </div>
         <div className="rc-meta">
-          <span>{chapter}</span>
+          <span dir="auto">{chapter}</span>
           <span>{pct}%</span>
+        </div>
+        <div className="rc-progress">
+          <div className="rc-progress-fill" style={{ width: `${pct}%` }} />
+          <div className="rc-progress-knob" style={{ left: `${pct}%` }} />
         </div>
       </div>
     </div>

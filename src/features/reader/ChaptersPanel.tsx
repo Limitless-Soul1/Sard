@@ -36,25 +36,27 @@ export function ChaptersPanel({
 
   return (
     <aside className={`reader-panel rp-lead${open ? " show" : ""}`} dir={dir} aria-hidden={!open}>
+      {/* header (RAWY-33, design C-VI): title + chapter/percent meta, with the anti-spoiler
+          control as a compact eye toggle (RAWY-22 function kept, design's look) + close. */}
       <div className="rp-head">
-        <span className="rp-title">{t("panel.contents")}</span>
-        <button className="rp-x" onClick={onClose} aria-label="✕">✕</button>
+        <div className="rp-head-titles">
+          <span className="rp-title">{t("panel.contents")}</span>
+          <span className="rp-submeta">
+            {t("panel.chaptersMeta", { n: localeNum(toc.length, lang), p: localeNum(pct, lang) })}
+          </span>
+        </div>
+        <div className="rp-head-actions">
+          <button
+            className={`rp-eye${hideTitles ? " off" : ""}`}
+            onClick={onToggleHideTitles}
+            aria-pressed={hideTitles}
+            title={hideTitles ? t("panel.showTitles") : t("panel.hideTitles")}
+          >
+            {hideTitles ? "🙈" : "👁"}
+          </button>
+          <button className="rp-x" onClick={onClose} aria-label="✕">✕</button>
+        </div>
       </div>
-
-      <div className="rp-meta">
-        {t("panel.chaptersMeta", { n: localeNum(toc.length, lang), p: localeNum(pct, lang) })}
-      </div>
-
-      {/* clear labelled anti-spoiler toggle (RAWY-22) */}
-      <button className="rp-toggle" onClick={onToggleHideTitles} aria-pressed={hideTitles}>
-        <span className="rp-toggle-text">
-          <span className="rp-toggle-label">{t("theme.hideTitles")}</span>
-          <span className="rp-toggle-hint">{hideTitles ? t("panel.titlesHidden") : t("panel.spoilerSafe")}</span>
-        </span>
-        <span className={`rp-switch${hideTitles ? " on" : ""}`} aria-hidden>
-          <span className="rp-knob" />
-        </span>
-      </button>
 
       <div className="rp-scroll">
         {toc.length === 0 && <div className="rp-empty">{t("panel.noChapters")}</div>}

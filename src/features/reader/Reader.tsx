@@ -19,7 +19,7 @@ import { AnnotationLayer } from "./AnnotationLayer";
 import { AnnotationsPanel } from "./AnnotationsPanel";
 import { ChaptersPanel } from "./ChaptersPanel";
 import { useAnnotations } from "./annotationsStore";
-import { ReaderChrome } from "./ReaderChrome";
+import { ReaderChrome, type SettingsSection } from "./ReaderChrome";
 import { SettingsPanel } from "./SettingsPanel";
 import { useChromeOnIntent } from "./useChromeOnIntent";
 
@@ -61,6 +61,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
 
   const bookRef = useRef<string>(initial.id);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("text");
+  const [sectionNonce, setSectionNonce] = useState(0);
   const [chaptersOpen, setChaptersOpen] = useState(false);
   const [annoOpen, setAnnoOpen] = useState(false);
   const [toc, setToc] = useState<TocEntry[]>([]);
@@ -68,7 +70,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const progressTimer = useRef<number | undefined>(undefined);
   const styleTimer = useRef<number | undefined>(undefined);
 
-  const { status, dir, fraction, chapterLabel, chapterHref, error, style } = useReader();
+  const { status, dir, fraction, chapterLabel, chapterHref, error, style, bookTitle } = useReader();
   const { themeId, overrideBookColor, hideChapterTitles, setHideTitles } = useTheme();
   const { visible: chromeVisible, wake, setHold } = useChromeOnIntent();
 
@@ -108,7 +110,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
 
       const finalStyle = persisted ?? defaultsForDir(ctrl.dir);
       if (!persisted) ctrl.applyStyle(finalStyle);
-      set({ status: "ready", dir: ctrl.dir ?? "?", style: finalStyle });
+      set({ status: "ready", dir: ctrl.dir ?? "?", style: finalStyle, bookTitle: ctrl.title ?? null });
       setToc(ctrl.getToc()); // chapters panel (RAWY-21)
       // Load this book's highlights/notes into the shared store (in-context layer + panel).
       useAnnotations.getState().bind(ctrl, target.id);
@@ -225,6 +227,16 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const jumpHref = (href: string) => ctrlRef.current?.goToHref(href);
   const jumpCfi = (cfi: string) => ctrlRef.current?.goToLocator(cfi);
 
+  // RAWY-33: Text / Theme / Layout are three clear entry points into the ONE existing settings
+  // slide-over (RAWY-24) — they open it scrolled to the matching section (no new panel, no new
+  // feature). The nonce re-triggers the scroll even when the panel is already open.
+  const openSettings = (section: SettingsSection) => {
+    setSettingsSection(section);
+    setSectionNonce((n) => n + 1);
+    setSettingsOpen(true);
+    setAnnoOpen(false);
+  };
+
   // Shift the desk so an open edge panel sits BESIDE the page, never over it (RAWY-22). Panels are
   // PINNED to fixed PHYSICAL sides (RAWY-32 — supersedes the RAWY-30/D20 follow-direction model):
   // chapters on the physical LEFT, annotations on the physical RIGHT — they do NOT move with the
@@ -283,17 +295,20 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
 
       <ReaderChrome
         visible={chromeVisible || settingsOpen || chaptersOpen || annoOpen}
+        bookTitle={bookTitle}
         chapter={chapter}
         fraction={fraction}
-        bookDir={dir}
         onBack={onExit}
         onContents={toggleChapters}
+        onText={() => openSettings("text")}
+        onTheme={() => openSettings("theme")}
+        onLayout={() => openSettings("page")}
         onAnnotations={() => { setAnnoOpen((v) => !v); setSettingsOpen(false); }}
-        onTypography={() => { setSettingsOpen(true); setAnnoOpen(false); }}
-        onTheme={() => { setSettingsOpen(true); setAnnoOpen(false); }}
         onBookmark={wake}
         chaptersOpen={chaptersOpen}
         annoOpen={annoOpen}
+        settingsOpen={settingsOpen}
+        settingsSection={settingsSection}
       />
 
       <SettingsPanel
@@ -302,6 +317,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         style={style ?? ARABIC_DEFAULTS}
         update={update}
         isRtlBook={isRtlBook}
+        section={settingsSection}
+        sectionNonce={sectionNonce}
       />
 
       <AnnotationLayer ctrlRef={ctrlRef} />

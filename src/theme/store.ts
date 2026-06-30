@@ -26,7 +26,10 @@ interface ThemeState {
 
 export const useTheme = create<ThemeState>((set, get) => ({
   themeId: DEFAULT_LIGHT,
-  overrideBookColor: false,
+  // Default ON (RAWY-37, decision D25): the page follows the active theme on every book, so
+  // Day/Night flips ALL books (incl. ones that hard-code their own colours) and the reading
+  // surface stays theme-consistent. Turning it OFF reveals the book's own authored colours.
+  overrideBookColor: true,
   hideChapterTitles: false,
   ready: false,
   setTheme: (id) => {
@@ -59,7 +62,8 @@ export async function initTheme(): Promise<void> {
   applyTheme(THEMES[themeId]);
   useTheme.setState({
     themeId,
-    overrideBookColor: ov === "1",
+    // Default ON unless the user has explicitly turned it OFF (D25) — a missing key reads as ON.
+    overrideBookColor: ov !== "0",
     hideChapterTitles: ht === "1",
     ready: true,
   });

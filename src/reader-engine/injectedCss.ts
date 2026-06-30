@@ -113,8 +113,19 @@ export interface BookThemeFlags {
 }
 
 // Theme colours + flags compile into the SAME injected string as typography (RAWY-13).
-// The page background always follows the theme; text colour is forced (!important) when
-// override is on OR the theme is dark (a light book on a dark page must be re-inked).
+// The page background always follows the theme; text colour is forced when override is on OR
+// the theme is dark (a light-inked book on a dark page must be re-inked).
+//
+// SPECIFICITY (RAWY-37 — the real fix): self-published EPUBs routinely hard-code their OWN
+// colours with `!important` on CLASS selectors — e.g. this repo's test book bakes in a dark
+// mode: `.bixbox{background:#1a1a1a!important} .epcontent{color:#e8e8e8!important} article{…}`.
+// A class selector (0,1,0) out-specifies an element selector (0,0,1) EVEN when ours has
+// !important, and our injected <style> is only *appended* (source order can't break a
+// specificity tie the book wins). RAWY-36's element-level rules therefore lost on these books
+// → override looked weak and Day/Night never repainted the page (the book's container bg won).
+// Fix: anchor the forced rules on `:root:root` — two structural pseudo-classes, specificity
+// (0,2,0), NO IDs — so they beat class-level !important, and NEUTRALISE the book's container
+// backgrounds so the themed paper actually shows.
 function themeBlock(theme: Theme | undefined, flags: BookThemeFlags | undefined): string {
   if (!theme) return "";
   const c = theme.colors;
@@ -124,10 +135,12 @@ function themeBlock(theme: Theme | undefined, flags: BookThemeFlags | undefined)
     ::selection { background: ${c.selection}; }
     ${
       forceText
-        ? `html, body, p, li, blockquote, div, span, h1, h2, h3, h4, h5, h6, td, th, dd, dt {
-             color: ${c.text} !important;
-           }
-           a, a:link, a:visited { color: ${c.accent} !important; }`
+        ? `:root:root, :root:root body { background-color: ${c.paperBg} !important; }
+           /* neutralise the book's own container backgrounds so the themed paper shows through */
+           :root:root body * { background-color: transparent !important; }
+           /* re-ink every text element (incl. <body> itself) to the theme; links take the accent */
+           :root:root body, :root:root body *:not(a) { color: ${c.text} !important; }
+           :root:root body a, :root:root body a * { color: ${c.accent} !important; }`
         : `html, body { color: ${c.text}; }`
     }
     ${
@@ -198,7 +211,9 @@ export function buildReadingCss(
     p, li, blockquote, div, td, th, dd, dt {
       font-weight: ${style.fontWeight};
     }
-    ${style.paragraphSpacing > 0 ? `p { margin-block: ${style.paragraphSpacing}px; }` : ""}
+    ${/* RAWY-37: !important + `:root:root` (0,2,1) so it beats the book's own class margins
+          (e.g. `.calibre4{margin:1em 0}`) — an element-level `p{margin-block}` lost to those. */ ""}
+    ${style.paragraphSpacing > 0 ? `:root:root p { margin-block: ${style.paragraphSpacing}px !important; }` : ""}
     ${style.firstLineIndent ? `p { text-indent: 1.5em; }` : ""}
     ${
       latinText && style.letterSpacing > 0

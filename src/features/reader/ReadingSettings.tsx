@@ -4,7 +4,7 @@
 // chrome → inherits the UI direction and uses theme tokens. Replaces the old cramped
 // TypographyBar wall-of-buttons; the dev page-turn / book-switcher / status controls are gone.
 
-import { useEffect, useRef, type ReactNode } from "react";
+import type { ReactNode } from "react";
 
 import { useI18n } from "../../i18n";
 import type { SettingsSection } from "./ReaderChrome";
@@ -28,8 +28,8 @@ interface Props {
   style: ReadingStyle;
   update: (patch: Partial<ReadingStyle>) => void;
   isRtlBook: boolean;
+  // Which tab to render (RAWY-34): Text · Page · Theme — the chrome's Text/Layout/Theme buttons.
   section?: SettingsSection;
-  sectionNonce?: number;
 }
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
@@ -153,26 +153,18 @@ function SelectRow<T extends string>({
   );
 }
 
-export function ReadingSettings({ style, update, isRtlBook, section, sectionNonce }: Props) {
+export function ReadingSettings({ style, update, isRtlBook, section = "text" }: Props) {
   const { t } = useI18n();
   const { themeId, overrideBookColor, hideChapterTitles, setTheme, toggleDayNight, setOverride, setHideTitles } =
     useTheme();
   const dark = THEMES[themeId].dark;
 
-  // RAWY-33: the chrome's Text / Layout / Theme buttons open this one panel scrolled to the
-  // matching anchor (the three labelled controls are entry points, not separate panels).
-  const anchorText = useRef<HTMLDivElement>(null);
-  const anchorPage = useRef<HTMLDivElement>(null);
-  const anchorTheme = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!sectionNonce) return;
-    const ref = section === "page" ? anchorPage : section === "theme" ? anchorTheme : anchorText;
-    ref.current?.scrollIntoView({ block: "start", behavior: "smooth" });
-  }, [section, sectionNonce]);
-
+  // RAWY-34: render only the active tab's controls (Text · Page · Theme — the design's band I),
+  // so the chrome's Text/Layout/Theme buttons each land on a DISTINCT view (not one scrolled panel).
   return (
     <div className="rs">
-      <div className="rs-anchor" ref={anchorText} />
+      {section === "text" && (
+      <>
       {/* ---- TEXT ---- */}
       <Section label={t("type.size")} value={`${Math.round(style.zoom * 100)}%`}>
         <Slider
@@ -251,9 +243,11 @@ export function ReadingSettings({ style, update, isRtlBook, section, sectionNonc
         />
       </Section>
 
-      <div className="rs-divider" />
+      </>
+      )}
 
-      <div className="rs-anchor" ref={anchorPage} />
+      {section === "page" && (
+      <>
       {/* ---- PAGE ---- */}
       <Section label={t("mode.label")}>
         <Segmented<FlowMode>
@@ -287,9 +281,11 @@ export function ReadingSettings({ style, update, isRtlBook, section, sectionNonc
         <Slider value={style.marginPx} min={0} max={160} step={8} onInput={(v) => update({ marginPx: clamp(v, 0, 160) })} />
       </Section>
 
-      <div className="rs-divider" />
+      </>
+      )}
 
-      <div className="rs-anchor" ref={anchorTheme} />
+      {section === "theme" && (
+      <>
       {/* ---- PAPER / THEME ---- */}
       <div className="rs-sec-head">
         <span className="rs-label">{t("type.paper")}</span>
@@ -313,6 +309,8 @@ export function ReadingSettings({ style, update, isRtlBook, section, sectionNonc
       <ToggleRow label={t("theme.override")} on={overrideBookColor} onToggle={() => setOverride(!overrideBookColor)} />
       <ToggleRow label={t("theme.hideTitles")} on={hideChapterTitles} onToggle={() => setHideTitles(!hideChapterTitles)} />
       {/* Language lives in ONE place — the Library settings (sidebar foot), not here (RAWY-32). */}
+      </>
+      )}
     </div>
   );
 }

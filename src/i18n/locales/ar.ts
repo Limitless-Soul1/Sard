@@ -18,6 +18,8 @@ export const ar: Record<TKey, string> = {
   "reader.layout": "التخطيط",
   "reader.notes": "ملاحظات",
   "reader.bookmark": "علامة مرجعية",
+  "reader.bookmarkSoon": "العلامات المرجعية — قريبًا",
+  "settings.page": "الصفحة",
   "reader.settings": "الإعدادات",
   "reader.chapterFallback": "القراءة",
   "reader.untitledBook": "بدون عنوان",

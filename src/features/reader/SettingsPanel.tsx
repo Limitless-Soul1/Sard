@@ -10,37 +10,43 @@ interface Props {
   update: (patch: Partial<ReadingStyle>) => void;
   isRtlBook: boolean;
   section: SettingsSection;
-  sectionNonce: number;
+  onSection: (s: SettingsSection) => void;
 }
 
-// The reading-settings slide-over (band D). A calm, sectioned panel hosting the rebuilt
-// ReadingSettings (RAWY-24) — every control wired to the existing funnel/theme/i18n logic.
-export function SettingsPanel({ open, onClose, style, update, isRtlBook, section, sectionNonce }: Props) {
+// The reading-settings drawer (RAWY-34, design band I). A right-edge drawer docked BETWEEN the
+// reading bars (no scrim) so the top control cluster stays clickable above it — consistent with
+// the Contents/Notes drawers. Its Text · Page · Theme tabs split the RAWY-24 controls so the
+// chrome's Text/Theme/Layout buttons each land on a DISTINCT view. Pinned RIGHT (RAWY-32/D21);
+// mutually exclusive with the Notes drawer; coexists with the left Contents drawer.
+export function SettingsPanel({ open, onClose, style, update, isRtlBook, section, onSection }: Props) {
   const { t } = useI18n();
+  const tabs: { key: SettingsSection; label: string }[] = [
+    { key: "text", label: t("reader.text") },
+    { key: "page", label: t("settings.page") },
+    { key: "theme", label: t("theme.label") },
+  ];
   return (
-    <>
-      <div className={`panel-scrim${open ? " show" : ""}`} onClick={onClose} />
-      {/* Side follows the UI direction (RAWY-30): the slide-over docks on the UI-trailing edge
-          (same side as the toolbar type/theme buttons that open it), opposite the UI-leading
-          chapters panel. The CSS keys off <html dir>, so no per-book class is needed. */}
-      <aside
-        className={`settings-panel${open ? " show" : ""}`}
-        aria-hidden={!open}
-      >
-        <div className="sp-head">
-          <span className="sp-title">{t("reader.settings")}</span>
-          <button className="rc-icon" onClick={onClose} title={t("reader.settings")}>✕</button>
-        </div>
-        <div className="sp-body">
-          <ReadingSettings
-            style={style}
-            update={update}
-            isRtlBook={isRtlBook}
-            section={section}
-            sectionNonce={sectionNonce}
-          />
-        </div>
-      </aside>
-    </>
+    <aside className={`settings-panel${open ? " show" : ""}`} aria-hidden={!open}>
+      <div className="sp-head">
+        <span className="sp-title">{t("reader.settings")}</span>
+        <button className="rc-icon" onClick={onClose} title={t("reader.settings")} aria-label="✕">✕</button>
+      </div>
+      <div className="sp-tabs" role="tablist">
+        {tabs.map((tb) => (
+          <button
+            key={tb.key}
+            role="tab"
+            aria-selected={section === tb.key}
+            className={`sp-tab${section === tb.key ? " on" : ""}`}
+            onClick={() => onSection(tb.key)}
+          >
+            {tb.label}
+          </button>
+        ))}
+      </div>
+      <div className="sp-body">
+        <ReadingSettings style={style} update={update} isRtlBook={isRtlBook} section={section} />
+      </div>
+    </aside>
   );
 }

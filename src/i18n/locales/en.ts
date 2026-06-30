@@ -17,6 +17,8 @@ export const en = {
   "reader.layout": "Layout",
   "reader.notes": "Notes",
   "reader.bookmark": "Bookmark",
+  "reader.bookmarkSoon": "Bookmarks — coming soon",
+  "settings.page": "Page",
   "reader.settings": "Settings",
   "reader.chapterFallback": "Reading",
   "reader.untitledBook": "Untitled",

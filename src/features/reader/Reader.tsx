@@ -62,7 +62,6 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const bookRef = useRef<string>(initial.id);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("text");
-  const [sectionNonce, setSectionNonce] = useState(0);
   const [chaptersOpen, setChaptersOpen] = useState(false);
   const [annoOpen, setAnnoOpen] = useState(false);
   const [toc, setToc] = useState<TocEntry[]>([]);
@@ -72,7 +71,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
 
   const { status, dir, fraction, chapterLabel, chapterHref, error, style, bookTitle } = useReader();
   const { themeId, overrideBookColor, hideChapterTitles, setHideTitles } = useTheme();
-  const { visible: chromeVisible, wake, setHold } = useChromeOnIntent();
+  const { visible: chromeVisible, setHold } = useChromeOnIntent();
 
   const openBook = useCallback(async (target: OpenTarget) => {
     const set = useReader.getState().set;
@@ -227,12 +226,16 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const jumpHref = (href: string) => ctrlRef.current?.goToHref(href);
   const jumpCfi = (cfi: string) => ctrlRef.current?.goToLocator(cfi);
 
-  // RAWY-33: Text / Theme / Layout are three clear entry points into the ONE existing settings
-  // slide-over (RAWY-24) — they open it scrolled to the matching section (no new panel, no new
-  // feature). The nonce re-triggers the scroll even when the panel is already open.
+  // RAWY-34: Text / Theme / Layout each select a distinct TAB of the ONE settings drawer
+  // (Text · Page · Theme — the design's band I), reusing the RAWY-24 controls. Pressing the
+  // button whose tab is already showing toggles the drawer closed. Settings and Notes share the
+  // right edge → opening Settings closes Notes; Contents (left) coexists with either.
   const openSettings = (section: SettingsSection) => {
+    if (settingsOpen && settingsSection === section) {
+      setSettingsOpen(false);
+      return;
+    }
     setSettingsSection(section);
-    setSectionNonce((n) => n + 1);
     setSettingsOpen(true);
     setAnnoOpen(false);
   };
@@ -241,9 +244,12 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // PINNED to fixed PHYSICAL sides (RAWY-32 — supersedes the RAWY-30/D20 follow-direction model):
   // chapters on the physical LEFT, annotations on the physical RIGHT — they do NOT move with the
   // UI language. Physical paddingLeft/Right match those fixed sides regardless of <html dir>.
+  // The three right-edge drawers (Settings 384 / Notes 300) are mutually exclusive; Contents
+  // (left) coexists. Shift the desk by whichever right drawer is open so the page recenters.
   const PANEL = 300;
+  const SETTINGS_W = 384;
   const leftPad = chaptersOpen ? PANEL : 0;
-  const rightPad = annoOpen ? PANEL : 0;
+  const rightPad = settingsOpen ? SETTINGS_W : annoOpen ? PANEL : 0;
   const deskStyle = {
     "--page-pref": `${pageWidthVw(pageFraction)}vw`,
     paddingLeft: leftPad,
@@ -304,7 +310,6 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         onTheme={() => openSettings("theme")}
         onLayout={() => openSettings("page")}
         onAnnotations={() => { setAnnoOpen((v) => !v); setSettingsOpen(false); }}
-        onBookmark={wake}
         chaptersOpen={chaptersOpen}
         annoOpen={annoOpen}
         settingsOpen={settingsOpen}
@@ -318,7 +323,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         update={update}
         isRtlBook={isRtlBook}
         section={settingsSection}
-        sectionNonce={sectionNonce}
+        onSection={setSettingsSection}
       />
 
       <AnnotationLayer ctrlRef={ctrlRef} />

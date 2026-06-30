@@ -237,6 +237,10 @@ html, body, #root {
 .rc-btn:hover .rc-btn-label { color: var(--text); }
 .rc-btn.on .rc-btn-ico { background: var(--accent); border-color: var(--accent); color: var(--paper-bg); }
 .rc-btn.on .rc-btn-label { color: var(--accent); font-weight: 600; }
+/* Bookmark is disabled until the bookmark system exists (RAWY-34): clearly "coming", not dead */
+.rc-btn-soon { cursor: default; opacity: 0.4; }
+.rc-btn-soon:hover .rc-btn-ico { background: var(--rc-surface); border-color: var(--chrome-border); }
+.rc-btn-soon:hover .rc-btn-label { color: var(--muted); }
 
 /* button glyphs (currentColor follows the ico → flips to paper colour on the accent .on face) */
 .ico-aa { font: 600 17px "Literata", serif; }
@@ -293,7 +297,11 @@ html, body, #root {
 .panel-scrim.show { opacity: 1; pointer-events: auto; }
 .settings-panel {
   position: absolute;
-  inset-block: 0;
+  /* RAWY-34: a right-edge DRAWER docked between the bars (no scrim) — the top control cluster
+     stays clickable above it, so Contents/Notes/Settings buttons all stay reachable while it is
+     open. Consistent with the Contents/Notes drawers; mutually exclusive with Notes. */
+  top: 58px;
+  bottom: 56px;
   z-index: 6;
   width: min(384px, 94vw);
   background: var(--chrome-bg);
@@ -319,11 +327,24 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px;
-  border-bottom: 1px solid var(--chrome-border);
+  padding: 14px 16px 10px;
 }
-.sp-title { font: 600 14px "Inter", "SardUIArabic", sans-serif; color: var(--text); }
-.sp-body { padding: 6px 22px 26px; overflow-y: auto; overflow-x: hidden; }
+.sp-title { font: 600 15px "Literata", "SardUIArabic", serif; color: var(--text); }
+/* Text · Page · Theme tab group (RAWY-34, design band I) — a segmented pill, active raised */
+.sp-tabs {
+  display: flex; gap: 3px; margin: 0 16px 4px; padding: 3px; border-radius: 9px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.sp-tab {
+  flex: 1; border: 0; background: transparent; cursor: pointer; padding: 8px 0; border-radius: 6px;
+  font: 500 13px "Inter", "SardUIArabic", sans-serif; color: var(--muted);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.sp-tab.on {
+  color: var(--text); font-weight: 600;
+  background: var(--paper-bg); box-shadow: 0 1px 3px rgba(40, 28, 14, 0.12);
+}
+.sp-body { padding: 8px 22px 26px; overflow-y: auto; overflow-x: hidden; }
 
 /* ---- reading settings (RAWY-24): a calm, sectioned panel (design band D), all tokens ---- */
 .rs { display: flex; flex-direction: column; gap: 17px; }

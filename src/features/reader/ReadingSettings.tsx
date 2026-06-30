@@ -22,7 +22,8 @@ import {
   type ReadingStyle,
 } from "../../reader-engine/injectedCss";
 import type { TKey } from "../../i18n/locales/en";
-import { DEFAULT_DARK, DEFAULT_LIGHT, THEMES, THEME_ORDER, useTheme } from "../../theme";
+import { DEFAULT_DARK, DEFAULT_LIGHT, THEMES, THEME_ORDER, useTheme, type ThemeId } from "../../theme";
+import { contrastIsReadable } from "../../lib/contrast";
 
 interface Props {
   style: ReadingStyle;
@@ -30,7 +31,16 @@ interface Props {
   isRtlBook: boolean;
   // Which tab to render (RAWY-34): Text · Page · Theme — the chrome's Text/Layout/Theme buttons.
   section?: SettingsSection;
+  // Per-book THEME (RAWY-40): the Theme tab + text-colour presets operate on the BOOK's theme
+  // (not the global store), so changing them affects only this book.
+  bookThemeId: ThemeId;
+  onPickTheme: (id: ThemeId) => void;
 }
+
+// Per-book text-colour presets, keyed by theme polarity (RAWY-40, Band I). The first is "Default"
+// (null → follow the theme ink); the rest are calm inks that read well on the paper.
+const INK_PRESETS_LIGHT = ["#4A4036", "#5A4632", "#3A4048", "#5B4B6E"];
+const INK_PRESETS_DARK = ["#E4DED2", "#B8B0A0", "#C9BFA8", "#AFC1D6"];
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -153,10 +163,17 @@ function SelectRow<T extends string>({
   );
 }
 
-export function ReadingSettings({ style, update, isRtlBook, section = "text" }: Props) {
+export function ReadingSettings({ style, update, isRtlBook, section = "text", bookThemeId, onPickTheme }: Props) {
   const { t } = useI18n();
-  const { themeId, overrideBookColor, hideChapterTitles, setTheme, setOverride, setHideTitles } = useTheme();
-  const dark = THEMES[themeId].dark;
+  // Override-book-colour + hide-chapter-titles stay GLOBAL flags (RAWY-40); the THEME is per-book.
+  const { overrideBookColor, hideChapterTitles, setOverride, setHideTitles } = useTheme();
+  const theme = THEMES[bookThemeId];
+  const dark = theme.dark;
+  const paper = theme.colors.paperBg;
+  // Effective ink for the contrast check + which preset is "active".
+  const ink = style.textColor ?? theme.colors.text;
+  const presets = dark ? INK_PRESETS_DARK : INK_PRESETS_LIGHT;
+  const readable = contrastIsReadable(ink, paper);
 
   // RAWY-34: render only the active tab's controls (Text · Page · Theme — the design's band I),
   // so the chrome's Text/Layout/Theme buttons each land on a DISTINCT view (not one scrolled panel).
@@ -242,6 +259,47 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text" }: 
         />
       </Section>
 
+      <div className="rs-divider" />
+
+      {/* ---- TEXT COLOUR (RAWY-40, Band I) — per-book ink within the active theme ---- */}
+      <div className="rs-sec-head">
+        <span className="rs-label">{t("color.text")}</span>
+        <span className="rs-value rs-na">{t("color.within", { theme: theme.name })}</span>
+      </div>
+      <div className="rs-inks">
+        {/* Default = follow the theme ink (textColor null) */}
+        <button
+          className={`rs-ink${style.textColor == null ? " on" : ""}`}
+          style={{ background: theme.colors.text }}
+          onClick={() => update({ textColor: null })}
+          title={t("color.default")}
+          aria-label={t("color.default")}
+        />
+        {presets.map((hex) => (
+          <button
+            key={hex}
+            className={`rs-ink${style.textColor?.toLowerCase() === hex.toLowerCase() ? " on" : ""}`}
+            style={{ background: hex }}
+            onClick={() => update({ textColor: hex })}
+            title={hex}
+            aria-label={hex}
+          />
+        ))}
+        {/* Custom colour via the native picker */}
+        <label className="rs-ink rs-ink-custom" title={t("color.custom")}>
+          <span className="rs-ink-plus" aria-hidden>+</span>
+          <input
+            type="color"
+            value={/^#[0-9a-fA-F]{6}$/.test(style.textColor ?? "") ? (style.textColor as string) : theme.colors.text}
+            onChange={(e) => update({ textColor: e.target.value })}
+          />
+        </label>
+      </div>
+      <div className={`rs-contrast${readable ? "" : " warn"}`}>
+        <span aria-hidden>{readable ? "✓" : "⚠"}</span>
+        <span>{readable ? t("color.contrastOk") : t("color.contrastWarn", { theme: theme.name })}</span>
+      </div>
+
       </>
       )}
 
@@ -285,17 +343,16 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text" }: 
 
       {section === "theme" && (
       <>
-      {/* ---- PAPER / THEME ---- */}
+      {/* ---- PAPER / THEME (RAWY-40: PER-BOOK — onPickTheme affects only this book) ---- */}
       <div className="rs-sec-head">
         <span className="rs-label">{t("type.paper")}</span>
-        {/* Day/Night = an explicit light↔dark switch (RAWY-36). "Day" selects the default light
-            theme, "Night" the default dark; clicking the already-active side is a no-op (keeps the
-            current theme). The swatches below pick a specific theme. */}
+        {/* Day/Night = an explicit light↔dark switch for THIS book. "Day" selects the default
+            light theme, "Night" the default dark; clicking the active side is a no-op. */}
         <Segmented
           value={dark ? "night" : "day"}
           onPick={(k) => {
-            if (k === "night" && !dark) setTheme(DEFAULT_DARK);
-            else if (k === "day" && dark) setTheme(DEFAULT_LIGHT);
+            if (k === "night" && !dark) onPickTheme(DEFAULT_DARK);
+            else if (k === "day" && dark) onPickTheme(DEFAULT_LIGHT);
           }}
           options={[
             { key: "day", label: t("theme.day") },
@@ -305,15 +362,15 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text" }: 
       </div>
       <div className="rs-swatches">
         {THEME_ORDER.map((id) => (
-          <button key={id} className="rs-swatch-cell" onClick={() => setTheme(id)}>
-            <span className={`rs-swatch${themeId === id ? " on" : ""}`} style={{ background: THEMES[id].colors.paperBg }} />
+          <button key={id} className="rs-swatch-cell" onClick={() => onPickTheme(id)}>
+            <span className={`rs-swatch${bookThemeId === id ? " on" : ""}`} style={{ background: THEMES[id].colors.paperBg }} />
             <span className="rs-swatch-name">{THEMES[id].name}</span>
           </button>
         ))}
       </div>
       <ToggleRow label={t("theme.override")} on={overrideBookColor} onToggle={() => setOverride(!overrideBookColor)} />
       <ToggleRow label={t("theme.hideTitles")} on={hideChapterTitles} onToggle={() => setHideTitles(!hideChapterTitles)} />
-      {/* Language lives in ONE place — the Library settings (sidebar foot), not here (RAWY-32). */}
+      {/* Theme + text colour are per-book (RAWY-40); override-colour + hide-titles remain global. */}
       </>
       )}
     </div>

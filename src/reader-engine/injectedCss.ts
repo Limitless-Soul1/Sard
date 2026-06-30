@@ -30,6 +30,10 @@ export interface ReadingStyle {
   paragraphSpacing: number; // px of extra space between paragraphs
   firstLineIndent: boolean; // classic first-line indent instead of/with spacing
   letterSpacing: number; // px tracking — LATIN ONLY (it breaks Arabic cursive joining)
+  // Per-book TEXT COLOUR (RAWY-40): an explicit ink within the active theme. `null` = follow the
+  // theme's own text colour. A set colour is forced through the same `:root:root` mechanism the
+  // override uses (RAWY-38), so it wins over the book's own CSS. Contrast is guarded in the UI.
+  textColor: string | null;
   // Reading flow (RAWY-25): "scrolled" (default — continuous vertical scroll per chapter,
   // boundary-stop) or "paged" (foliate columns/pages). Drives the renderer's flow attribute,
   // not injected CSS — but the deterministic paged section box (overflow:hidden) is paged-only.
@@ -85,6 +89,7 @@ export const ARABIC_DEFAULTS: ReadingStyle = {
   paragraphSpacing: 0,
   firstLineIndent: false,
   letterSpacing: 0,
+  textColor: null,
   flowMode: "scrolled",
 };
 export const LATIN_DEFAULTS: ReadingStyle = {
@@ -101,6 +106,7 @@ export const LATIN_DEFAULTS: ReadingStyle = {
   paragraphSpacing: 0,
   firstLineIndent: false,
   letterSpacing: 0,
+  textColor: null,
   flowMode: "scrolled",
 };
 
@@ -131,24 +137,37 @@ export interface BookThemeFlags {
 // paper shows. HONEST LIMITS (can't be beaten from a stylesheet): an inline `style="…!important"`
 // on the element, or a multi-ID chain like `#a #b{…!important}` (specificity ≥ 2,0,0) — both are
 // essentially unseen in real EPUBs. See §9.
-function themeBlock(theme: Theme | undefined, flags: BookThemeFlags | undefined): string {
+function themeBlock(
+  theme: Theme | undefined,
+  flags: BookThemeFlags | undefined,
+  textColor?: string | null,
+): string {
   if (!theme) return "";
   const c = theme.colors;
-  const forceText = (flags?.overrideBookColor ?? false) || theme.dark;
+  // The ink: a per-book TEXT COLOUR (RAWY-40) wins over the theme's own text colour when set.
+  const ink = textColor || c.text;
+  // Background + container neutralisation are forced when override is on OR the theme is dark
+  // (a light-inked book on a dark page must be re-inked). The INK is also forced whenever a
+  // custom text colour is set — an explicit per-book choice that must win over the book's CSS.
+  const forceBg = (flags?.overrideBookColor ?? false) || theme.dark;
+  const forceInk = forceBg || !!textColor;
   // A never-matching id (no element is `id="__sard_never__"`) used purely to raise specificity.
   const ID = ":not(#__sard_never__)";
+  const inkRules = `:root:root body${ID}, :root:root body${ID} *:not(a) { color: ${ink} !important; }
+           :root:root body${ID} a, :root:root body${ID} a * { color: ${c.accent} !important; }`;
   return `
     html, body { background: ${c.paperBg} !important; }
     ::selection { background: ${c.selection}; }
     ${
-      forceText
+      forceBg
         ? `:root:root, :root:root body${ID} { background-color: ${c.paperBg} !important; }
            /* neutralise the book's own container backgrounds so the themed paper shows through */
            :root:root body${ID} * { background-color: transparent !important; }
            /* re-ink every text element (incl. <body> itself) to the theme; links take the accent */
-           :root:root body${ID}, :root:root body${ID} *:not(a) { color: ${c.text} !important; }
-           :root:root body${ID} a, :root:root body${ID} a * { color: ${c.accent} !important; }`
-        : `html, body { color: ${c.text}; }`
+           ${inkRules}`
+        : forceInk
+          ? /* a custom ink with no bg-override: force just the ink (RAWY-40) */ inkRules
+          : `html, body { color: ${ink}; }`
     }
     ${
       flags?.hideChapterTitles
@@ -284,6 +303,6 @@ export function buildReadingCss(
 
     ${extras}
     ${diacriticsRule}
-    ${themeBlock(theme, flags)}
+    ${themeBlock(theme, flags, style.textColor)}
   `;
 }

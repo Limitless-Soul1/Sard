@@ -336,6 +336,52 @@ html, body, #root {
 }
 .sp-title { font: 600 15px "Literata", "SardUIArabic", serif; color: var(--text); }
 /* Text · Page · Theme tab group (RAWY-34, design band I) — a segmented pill, active raised */
+/* Per-book scope banner (RAWY-40, Band I) — everything in this panel overrides THIS book only. */
+.sp-scope {
+  display: flex; align-items: center; gap: 10px; margin: 12px 16px 6px; padding: 10px 12px;
+  border-radius: 9px; background: color-mix(in srgb, #7b59a0 14%, var(--paper-bg));
+  border: 1px solid color-mix(in srgb, #7b59a0 28%, transparent);
+}
+.sp-scope-ico {
+  width: 24px; height: 24px; flex: none; border-radius: 6px; display: flex; align-items: center;
+  justify-content: center; background: #7b59a0; color: #fff; font-size: 12px;
+}
+.sp-scope-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.sp-scope-title { font: 600 12px "Inter", "SardUIArabic", sans-serif; color: var(--text); }
+.sp-scope-sub { font: 400 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-reset {
+  flex: none; border: 0; background: transparent; cursor: pointer; white-space: nowrap;
+  font: 500 11px "Inter", "SardUIArabic", sans-serif; color: #7b59a0; padding: 4px 6px; border-radius: 6px;
+}
+.sp-reset:hover:not(:disabled) { background: color-mix(in srgb, #7b59a0 14%, transparent); }
+.sp-reset:disabled { opacity: 0.4; cursor: default; }
+
+/* Per-book TEXT COLOUR inks + contrast guard (RAWY-40, Band I). */
+.rs-inks { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rs-ink {
+  width: 32px; height: 32px; border-radius: 9px; border: 0; cursor: pointer; padding: 0;
+  box-shadow: inset 0 0 0 1px rgba(43, 37, 33, 0.12);
+}
+.rs-ink.on { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rs-ink-custom {
+  display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden;
+  background: conic-gradient(from 90deg, var(--text), var(--accent), var(--muted), var(--text));
+}
+.rs-ink-plus {
+  width: 16px; height: 16px; border-radius: 50%; background: var(--paper-bg); color: var(--text);
+  font: 600 12px "Inter", sans-serif; display: flex; align-items: center; justify-content: center;
+}
+.rs-ink-custom input[type="color"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.rs-contrast {
+  display: flex; align-items: center; gap: 8px; margin-top: 11px; padding: 9px 12px; border-radius: 8px;
+  background: var(--paper-bg); border: 1px solid var(--chrome-border);
+  font: 400 11.5px/1.45 "Inter", "SardUIArabic", sans-serif; color: var(--muted);
+}
+.rs-contrast.warn {
+  background: color-mix(in srgb, #b05220 16%, var(--paper-bg));
+  border-color: color-mix(in srgb, #b05220 35%, transparent); color: color-mix(in srgb, #b05220 80%, var(--text));
+}
+
 .sp-tabs {
   display: flex; gap: 3px; margin: 0 16px 4px; padding: 3px; border-radius: 9px;
   background: color-mix(in srgb, var(--text) 8%, transparent);

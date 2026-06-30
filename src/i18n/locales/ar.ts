@@ -182,6 +182,17 @@ export const ar: Record<TKey, string> = {
   "inbox.empty.none": "لا نتائج مطابقة",
   "inbox.empty.noneSub": "جرّب لونًا أو كتابًا أو نوعًا أو بحثًا مختلفًا.",
 
+  // إعدادات القراءة لكل كتاب + لون النص (RAWY-40، نطاق I)
+  "perbook.scope": "يُطبَّق على هذا الكتاب",
+  "perbook.scopeSub": "لا يؤثّر في الكتب الأخرى",
+  "perbook.reset": "إعادة",
+  "color.text": "لون النص",
+  "color.within": "ضمن سمة {theme}",
+  "color.default": "لون السمة الافتراضي",
+  "color.custom": "لون مخصص",
+  "color.contrastOk": "التباين جيّد. يُنبّه سَرْد إلى الألوان الباهتة التي يصعب قراءتها على هذه الورقة.",
+  "color.contrastWarn": "باهت على سمة {theme} — اختر لونًا أغمق أو غيّر الورقة.",
+
   // إعدادات التطبيق العامة — من المكتبة (RAWY-39، نطاق H)
   "gs.open": "الإعدادات",
   "gs.title": "الإعدادات",

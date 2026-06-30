@@ -181,6 +181,17 @@ export const en = {
   "inbox.empty.none": "Nothing matches",
   "inbox.empty.noneSub": "Try a different colour, book, type, or search.",
 
+  // Per-book reading settings + text colour (RAWY-40, Band I)
+  "perbook.scope": "Applies to this book",
+  "perbook.scopeSub": "won't change other books",
+  "perbook.reset": "Reset",
+  "color.text": "Text colour",
+  "color.within": "within the {theme} theme",
+  "color.default": "Theme default",
+  "color.custom": "Custom colour",
+  "color.contrastOk": "Contrast looks good. Sard flags colours too faint to read on this paper.",
+  "color.contrastWarn": "Too faint on {theme} — pick a darker shade or change the paper.",
+
   // Global app settings — opened from the Library (RAWY-39, Band H)
   "gs.open": "Settings",
   "gs.title": "Settings",

@@ -6,7 +6,6 @@ import { useReader } from "../../reader-engine/store";
 import {
   ARABIC_DEFAULTS,
   defaultsForDir,
-  LATIN_DEFAULTS,
   PAGE_WIDTH_DEFAULT,
   pageWidthVw,
   type ReadingStyle,
@@ -14,7 +13,16 @@ import {
 import { bookRegister, progressGet, progressSave, settingsGet, settingsSet } from "../../lib/ipc";
 import { useI18n } from "../../i18n";
 import { localeNum } from "../../lib/format";
-import { THEMES, useTheme } from "../../theme";
+import { applyTheme, THEMES, useTheme, type ThemeId } from "../../theme";
+import {
+  clearBookOverride,
+  effectiveStyle,
+  hasOverride as calcHasOverride,
+  loadBookOverride,
+  loadGlobalStyle,
+  saveBookOverride,
+  type BookOverride,
+} from "./perBookSettings";
 import { AnnotationLayer } from "./AnnotationLayer";
 import { AnnotationsPanel } from "./AnnotationsPanel";
 import { ChaptersPanel } from "./ChaptersPanel";
@@ -31,27 +39,7 @@ export interface OpenTarget {
   cfi?: string | null; // jump-to location (RAWY-27 inbox); else resume saved progress
 }
 
-const STYLE_KEY = "reading_style";
 const SAVE_DEBOUNCE_MS = 500;
-
-async function loadStyle(): Promise<ReadingStyle | null> {
-  const raw = await settingsGet(STYLE_KEY);
-  if (!raw) return null;
-  try {
-    const s = JSON.parse(raw) as Partial<ReadingStyle>;
-    // RAWY-23 migration: pageWidth used to be an absolute px (480..1040); it is now a 0..1
-    // Narrow→Wide fraction. Convert any old px value; backfill the new typography fields.
-    if (typeof s.pageWidth === "number" && s.pageWidth > 1.5) {
-      s.pageWidth = Math.max(0, Math.min(1, (s.pageWidth - 480) / 560));
-    }
-    return {
-      ...LATIN_DEFAULTS,
-      ...s,
-    } as ReadingStyle;
-  } catch {
-    return null;
-  }
-}
 
 export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: () => void }) {
   const { t, lang } = useI18n();
@@ -68,9 +56,18 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const [annoTab, setAnnoTab] = useState<"notes" | "highlights">("notes");
   const progressTimer = useRef<number | undefined>(undefined);
   const styleTimer = useRef<number | undefined>(undefined);
+  // Per-book settings (RAWY-40): the global reading defaults (baseline), this book's PARTIAL
+  // override, and the global theme captured on entry (restored to the chrome on exit).
+  const globalStyleRef = useRef<ReadingStyle | null>(null);
+  const overrideRef = useRef<BookOverride>({});
+  const globalThemeRef = useRef<ThemeId>(useTheme.getState().themeId);
+  const [bookThemeId, setBookThemeId] = useState<ThemeId>(useTheme.getState().themeId);
+  const [hasOv, setHasOv] = useState(false);
 
   const { status, dir, fraction, chapterLabel, chapterHref, error, style, bookTitle } = useReader();
-  const { themeId, overrideBookColor, hideChapterTitles, setHideTitles } = useTheme();
+  // THEME is per-book (RAWY-40) — read from `bookThemeId`, not the global store. Override-book-
+  // colour + hide-chapter-titles stay GLOBAL flags (set in Global Settings / chapters panel).
+  const { overrideBookColor, hideChapterTitles, setHideTitles } = useTheme();
   const { visible: chromeVisible, setHold } = useChromeOnIntent();
 
   const openBook = useCallback(async (target: OpenTarget) => {
@@ -85,7 +82,18 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       const saved = await progressGet(target.id);
       // RAWY-27: an inbox item passes a jump CFI that wins over the saved reading position.
       const resumeCfi = target.cfi ?? saved?.cfi ?? null;
-      const persisted = useReader.getState().style ?? (await loadStyle());
+
+      // RAWY-40: effective style = GLOBAL defaults with THIS book's PARTIAL override on top; the
+      // theme is the book's override theme else the global default. Per-script defaults still
+      // back-fill anything the global row lacks (RTL books get the Arabic baseline).
+      const ts = useTheme.getState();
+      globalThemeRef.current = ts.themeId;
+      const global = await loadGlobalStyle();
+      const override = await loadBookOverride(target.id);
+      globalStyleRef.current = global;
+      overrideRef.current = override;
+      const effTheme = override.themeId ?? ts.themeId;
+      const initialStyle = effectiveStyle(global, override);
 
       const ctrl = ctrlRef.current!;
       ctrl.onRelocate(({ cfi, fraction, chapterLabel, chapterHref }) => {
@@ -96,20 +104,21 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         }, SAVE_DEBOUNCE_MS);
       });
 
-      const initialStyle = persisted ?? defaultsForDir(undefined);
-      const ts = useTheme.getState();
+      // The whole reader (chrome + page) takes the book's effective theme while reading; the
+      // Library keeps the global default (restored on exit). The global store is NOT mutated.
+      applyTheme(THEMES[effTheme]);
       await ctrl.open(url, stageRef.current!, {
         resumeCfi,
         style: initialStyle,
-        theme: THEMES[ts.themeId],
+        theme: THEMES[effTheme],
         flags: { overrideBookColor: ts.overrideBookColor, hideChapterTitles: ts.hideChapterTitles },
         dir: target.dir ?? undefined,
         flow: initialStyle.flowMode, // scrolled (default) or paged — RAWY-25
       });
 
-      const finalStyle = persisted ?? defaultsForDir(ctrl.dir);
-      if (!persisted) ctrl.applyStyle(finalStyle);
-      set({ status: "ready", dir: ctrl.dir ?? "?", style: finalStyle, bookTitle: ctrl.title ?? null });
+      setBookThemeId(effTheme);
+      setHasOv(calcHasOverride(override));
+      set({ status: "ready", dir: ctrl.dir ?? "?", style: initialStyle, bookTitle: ctrl.title ?? null });
       setToc(ctrl.getToc()); // chapters panel (RAWY-21)
       // Load this book's highlights/notes into the shared store (in-context layer + panel).
       useAnnotations.getState().bind(ctrl, target.id);
@@ -124,15 +133,21 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     return () => {
       if (progressTimer.current) clearTimeout(progressTimer.current);
       ctrlRef.current?.dispose();
+      // Restore the GLOBAL theme to the chrome on exit (RAWY-40) — the per-book theme was only
+      // for this reading session; the Library shows the app default again.
+      applyTheme(THEMES[globalThemeRef.current]);
     };
     // Open the book the Library handed us; re-open if the selection changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial.id]);
 
-  // App-wide theme → book.
+  // GLOBAL flags (override-book-colour, hide-chapter-titles) → re-inject the book at its PER-BOOK
+  // theme (RAWY-40). Theme itself is per-book and handled by setBookTheme, not here.
   useEffect(() => {
-    ctrlRef.current?.applyTheme(THEMES[themeId], { overrideBookColor, hideChapterTitles });
-  }, [themeId, overrideBookColor, hideChapterTitles]);
+    if (status !== "ready") return;
+    ctrlRef.current?.applyTheme(THEMES[bookThemeId], { overrideBookColor, hideChapterTitles });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overrideBookColor, hideChapterTitles]);
 
   // Pin chrome open while any panel is open.
   useEffect(() => setHold(settingsOpen || chaptersOpen || annoOpen), [settingsOpen, chaptersOpen, annoOpen, setHold]);
@@ -181,11 +196,26 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     });
   }, [status]);
 
+  // RAWY-40: a reading-setting change WHILE READING writes a PER-BOOK override (the global
+  // `reading_style` defaults are only touched by Global Settings). Effective = global ∪ override;
+  // the override accumulates exactly the fields the user changed for THIS book.
   const update = (patch: Partial<ReadingStyle>) => {
     const current = useReader.getState().style;
-    if (!current) return;
+    const global = globalStyleRef.current;
+    if (!current || !global) return;
     const next = { ...current, ...patch };
     useReader.getState().set({ style: next });
+
+    // Fold the patch into this book's partial override: a field back at the global default drops
+    // out of the override (so it keeps following global), otherwise it's recorded.
+    const ovStyle: Partial<ReadingStyle> = { ...(overrideRef.current.style ?? {}) };
+    for (const k of Object.keys(patch) as (keyof ReadingStyle)[]) {
+      if (next[k] === global[k]) delete ovStyle[k];
+      else (ovStyle as Record<string, unknown>)[k] = next[k];
+    }
+    overrideRef.current = { ...overrideRef.current, style: ovStyle };
+    setHasOv(calcHasOverride(overrideRef.current));
+
     // flowMode is a renderer attribute set at open() — switching it re-opens at the current CFI
     // (preserves position); every other field is the live injected-CSS funnel.
     const flowChanged = patch.flowMode != null && patch.flowMode !== current.flowMode;
@@ -194,7 +224,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       ctrlRef.current?.open(convertFileSrc(initial.filePath), stageRef.current!, {
         resumeCfi: cfi,
         style: next,
-        theme: THEMES[useTheme.getState().themeId],
+        theme: THEMES[bookThemeId],
         flags: {
           overrideBookColor: useTheme.getState().overrideBookColor,
           hideChapterTitles: useTheme.getState().hideChapterTitles,
@@ -207,8 +237,32 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     }
     if (styleTimer.current) clearTimeout(styleTimer.current);
     styleTimer.current = window.setTimeout(() => {
-      settingsSet(STYLE_KEY, JSON.stringify(next)).catch(console.error);
+      saveBookOverride(bookRef.current, overrideRef.current);
     }, SAVE_DEBOUNCE_MS);
+  };
+
+  // Per-book THEME (RAWY-40): change ONLY this book's paper + ink — the global store/Library are
+  // untouched. Applies to the chrome (:root) + the page injection; persists in the book override.
+  const setBookTheme = (id: ThemeId) => {
+    setBookThemeId(id);
+    overrideRef.current = { ...overrideRef.current, themeId: id === globalThemeRef.current ? undefined : id };
+    setHasOv(calcHasOverride(overrideRef.current));
+    applyTheme(THEMES[id]);
+    ctrlRef.current?.applyTheme(THEMES[id], { overrideBookColor, hideChapterTitles });
+    saveBookOverride(bookRef.current, overrideRef.current);
+  };
+
+  // Reset this book to the app defaults (RAWY-40, Band I "↻ Reset"): drop the whole override.
+  const resetBook = () => {
+    overrideRef.current = {};
+    setHasOv(false);
+    clearBookOverride(bookRef.current);
+    const global = globalStyleRef.current ?? defaultsForDir(dir);
+    useReader.getState().set({ style: global });
+    setBookThemeId(globalThemeRef.current);
+    applyTheme(THEMES[globalThemeRef.current]);
+    ctrlRef.current?.applyTheme(THEMES[globalThemeRef.current], { overrideBookColor, hideChapterTitles });
+    ctrlRef.current?.applyStyle(global);
   };
 
   const isRtlBook = dir === "rtl";
@@ -330,6 +384,11 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         isRtlBook={isRtlBook}
         section={settingsSection}
         onSection={setSettingsSection}
+        bookThemeId={bookThemeId}
+        onPickTheme={setBookTheme}
+        bookTitle={bookTitle}
+        hasOverride={hasOv}
+        onReset={resetBook}
       />
 
       <AnnotationLayer ctrlRef={ctrlRef} />

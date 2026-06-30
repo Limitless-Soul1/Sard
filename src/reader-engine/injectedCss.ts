@@ -123,24 +123,31 @@ export interface BookThemeFlags {
 // !important, and our injected <style> is only *appended* (source order can't break a
 // specificity tie the book wins). RAWY-36's element-level rules therefore lost on these books
 // → override looked weak and Day/Night never repainted the page (the book's container bg won).
-// Fix: anchor the forced rules on `:root:root` — two structural pseudo-classes, specificity
-// (0,2,0), NO IDs — so they beat class-level !important, and NEUTRALISE the book's container
-// backgrounds so the themed paper actually shows.
+// Fix: anchor the forced rules on `:root:root` (two structural pseudo-classes → specificity
+// (0,2,0), NO IDs) so they beat class-level !important, plus ONE never-matching ID guard
+// `:not(#<NEVER>)` (RAWY-38) that adds an ID-column of specificity (→ (1,2,x)) WITHOUT changing
+// what matches — so the rules also beat a book's own ID-selector !important (specificity 1,0,0),
+// e.g. `#wrap{background:#0a0a0a!important}`. Container backgrounds are neutralised so the themed
+// paper shows. HONEST LIMITS (can't be beaten from a stylesheet): an inline `style="…!important"`
+// on the element, or a multi-ID chain like `#a #b{…!important}` (specificity ≥ 2,0,0) — both are
+// essentially unseen in real EPUBs. See §9.
 function themeBlock(theme: Theme | undefined, flags: BookThemeFlags | undefined): string {
   if (!theme) return "";
   const c = theme.colors;
   const forceText = (flags?.overrideBookColor ?? false) || theme.dark;
+  // A never-matching id (no element is `id="__sard_never__"`) used purely to raise specificity.
+  const ID = ":not(#__sard_never__)";
   return `
     html, body { background: ${c.paperBg} !important; }
     ::selection { background: ${c.selection}; }
     ${
       forceText
-        ? `:root:root, :root:root body { background-color: ${c.paperBg} !important; }
+        ? `:root:root, :root:root body${ID} { background-color: ${c.paperBg} !important; }
            /* neutralise the book's own container backgrounds so the themed paper shows through */
-           :root:root body * { background-color: transparent !important; }
+           :root:root body${ID} * { background-color: transparent !important; }
            /* re-ink every text element (incl. <body> itself) to the theme; links take the accent */
-           :root:root body, :root:root body *:not(a) { color: ${c.text} !important; }
-           :root:root body a, :root:root body a * { color: ${c.accent} !important; }`
+           :root:root body${ID}, :root:root body${ID} *:not(a) { color: ${c.text} !important; }
+           :root:root body${ID} a, :root:root body${ID} a * { color: ${c.accent} !important; }`
         : `html, body { color: ${c.text}; }`
     }
     ${
@@ -211,9 +218,20 @@ export function buildReadingCss(
     p, li, blockquote, div, td, th, dd, dt {
       font-weight: ${style.fontWeight};
     }
-    ${/* RAWY-37: !important + `:root:root` (0,2,1) so it beats the book's own class margins
-          (e.g. `.calibre4{margin:1em 0}`) — an element-level `p{margin-block}` lost to those. */ ""}
-    ${style.paragraphSpacing > 0 ? `:root:root p { margin-block: ${style.paragraphSpacing}px !important; }` : ""}
+    ${/* Paragraph spacing. RAWY-37: !important + `:root:root` so it beats the book's own class
+          margins (e.g. `.calibre4{margin:1em 0}`). RAWY-38 hardening: (a) a never-matching id guard
+          `:not(#__sard_never__)` raises specificity into the ID column so it also beats `#x{margin}`;
+          (b) ALSO target <div> paragraphs — some EPUBs use <div> not <p> for paragraphs — but ONLY
+          a "leaf" text div (`:not(:has(<block>))`), so layout/container divs (which wrap headings,
+          paragraphs, lists, figures…) are spared and the page isn't stretched apart. `:has()` is
+          supported in the bundled evergreen WebView2 (Chromium). */ ""}
+    ${
+      style.paragraphSpacing > 0
+        ? `:root:root p:not(#__sard_never__),
+           :root:root body div:not(#__sard_never__):not(:has(p, div, ul, ol, table, section, article, aside, figure, blockquote, h1, h2, h3, h4, h5, h6, hr))
+           { margin-block: ${style.paragraphSpacing}px !important; }`
+        : ""
+    }
     ${style.firstLineIndent ? `p { text-indent: 1.5em; }` : ""}
     ${
       latinText && style.letterSpacing > 0

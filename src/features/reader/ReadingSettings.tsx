@@ -36,6 +36,7 @@ interface Props {
   // (not the global store), so changing them affects only this book.
   bookThemeId: ThemeId;
   onPickTheme: (id: ThemeId) => void;
+  unified: boolean; // RAWY-45 — the font label reflects the active scope (this book vs all books)
 }
 
 // Per-book text-colour presets, keyed by theme polarity (RAWY-40, Band I). The first is "Default"
@@ -164,7 +165,7 @@ function SelectRow<T extends string>({
   );
 }
 
-export function ReadingSettings({ style, update, isRtlBook, section = "text", bookThemeId, onPickTheme }: Props) {
+export function ReadingSettings({ style, update, isRtlBook, section = "text", bookThemeId, onPickTheme, unified }: Props) {
   const { t } = useI18n();
   // Override-book-colour + hide-chapter-titles stay GLOBAL flags (RAWY-40); the THEME is per-book.
   const { overrideBookColor, hideChapterTitles, setOverride, setHideTitles } = useTheme();
@@ -238,8 +239,9 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
 
       <div className="rs-divider" />
 
-      {/* ---- TYPEFACE (RAWY-44: imported fonts are listed alongside the built-ins) ---- */}
-      <div className="rs-sec-title">{t("type.font")}</div>
+      {/* ---- BOOK TEXT FONT — scoped to THIS book (RAWY-45); imported fonts listed too (RAWY-44) ---- */}
+      <div className="rs-sec-title">{unified ? t("type.fontAllBooks") : t("type.fontThisBook")}</div>
+      <div className="rs-sec-hint">{unified ? t("type.fontAllBooksHint") : t("type.fontThisBookHint")}</div>
       <SelectRow<string>
         label={t("type.latin")}
         value={style.latinFont}

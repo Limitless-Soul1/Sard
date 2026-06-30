@@ -245,6 +245,7 @@ function FontsSection() {
 function ReadingDefaultsSection() {
   const { t } = useI18n();
   const { scope, setScope } = useStyleScope();
+  const custom = useFonts((s) => s.custom); // RAWY-45: imported fonts in the default book-font picker
   const [style, setStyle] = useState<ReadingStyle | null>(null);
 
   useEffect(() => {
@@ -291,22 +292,32 @@ function ReadingDefaultsSection() {
         <div className="gs-note">{scope === "unified" ? t("gs.scope.unifiedHint") : t("gs.scope.perbookHint")}</div>
       </div>
 
-      <div className="gs-sec gs-two">
-        <div>
-          <Label>{t("gs.defaultLatin")}</Label>
-          <select className="gs-select" value={style.latinFont} onChange={(e) => patch({ latinFont: e.target.value as LatinFont })}>
-            {(Object.keys(LATIN_FONTS) as LatinFont[]).map((k) => (
-              <option key={k} value={k}>{LATIN_FONTS[k].label}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <Label>{t("gs.defaultArabic")}</Label>
-          <select className="gs-select" value={style.arabicFont} onChange={(e) => patch({ arabicFont: e.target.value as ArabicFont })}>
-            {(Object.keys(ARABIC_FONTS) as ArabicFont[]).map((k) => (
-              <option key={k} value={k}>{ARABIC_FONTS[k].label}</option>
-            ))}
-          </select>
+      {/* BOOK TEXT FONT (default) — clearly distinct from the APP FONT in Appearance (RAWY-45). */}
+      <div className="gs-sec">
+        <Label hint={t("gs.bookFontHint")}>{t("gs.bookFont")}</Label>
+        <div className="gs-two-row">
+          <div>
+            <Label>{t("gs.defaultLatin")}</Label>
+            <select className="gs-select" value={style.latinFont} onChange={(e) => patch({ latinFont: e.target.value })}>
+              {(Object.keys(LATIN_FONTS) as LatinFont[]).map((k) => (
+                <option key={k} value={k}>{LATIN_FONTS[k].label}</option>
+              ))}
+              {custom.map((c) => (
+                <option key={c.family_name} value={c.family_name}>{`${c.family_name} · ${t("gs.imported")}`}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label>{t("gs.defaultArabic")}</Label>
+            <select className="gs-select" value={style.arabicFont} onChange={(e) => patch({ arabicFont: e.target.value })}>
+              {(Object.keys(ARABIC_FONTS) as ArabicFont[]).map((k) => (
+                <option key={k} value={k}>{ARABIC_FONTS[k].label}</option>
+              ))}
+              {custom.map((c) => (
+                <option key={c.family_name} value={c.family_name}>{`${c.family_name} · ${t("gs.imported")}`}</option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
 

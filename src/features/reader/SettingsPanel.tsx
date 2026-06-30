@@ -91,6 +91,7 @@ export function SettingsPanel({
           section={section}
           bookThemeId={bookThemeId}
           onPickTheme={onPickTheme}
+          unified={unified}
         />
       </div>
     </aside>

@@ -417,6 +417,8 @@ html, body, #root {
   font: 600 11px "Inter", "SardUIArabic", sans-serif; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
 }
 .rs-sec-title { margin-bottom: -4px; }
+/* one-line hint under a section title (RAWY-45 — clarifies the font scope) */
+.rs-sec-hint { font: 400 11px/1.45 "Inter", "SardUIArabic", sans-serif; color: color-mix(in srgb, var(--muted) 85%, var(--paper-bg)); margin: 2px 0 2px; }
 .rs-value { font: 500 12px "Inter", "SardUIArabic", sans-serif; color: var(--accent); }
 .rs-na { font: 500 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted); font-style: italic; }
 .rs-divider { height: 1px; background: var(--chrome-border); margin: 3px 0; }
@@ -1305,6 +1307,9 @@ html, body, #root {
 .gs-sec { display: flex; flex-direction: column; gap: 11px; }
 .gs-sec.gs-two { flex-direction: row; gap: 14px; }
 .gs-sec.gs-two > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 9px; }
+/* Two-column font row nested under a group label (RAWY-45 — BOOK TEXT FONT · Latin/Arabic). */
+.gs-two-row { display: flex; gap: 14px; }
+.gs-two-row > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 9px; }
 .gs-lbl-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .gs-lbl { font: 600 11px var(--ui-font); letter-spacing: 0.1em; color: var(--muted); text-transform: uppercase; }
 .gs-lbl-hint { font: 400 11px var(--ui-font); color: color-mix(in srgb, var(--muted) 75%, var(--paper-bg)); }

@@ -142,12 +142,13 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     settingsGet("chapters_open").then((v) => setChaptersOpen(v !== "0"));
   }, [status]);
 
-  // Placement model (RAWY-30 — supersedes RAWY-21/24/28): EVERY reading panel follows the UI
-  // direction (one basis, no mixing). Chapters sits on the UI-leading edge; annotations and the
-  // settings slide-over both sit on the UI-trailing edge — each on the SAME side as the toolbar
-  // button that opens it, so a panel never lands opposite its control. Chapters (leading) thus
-  // COEXISTS with either trailing panel; annotations and settings share the trailing edge, so
-  // opening one closes the other. The reading TEXT stays book-directed (foliate, isolated).
+  // Placement model (RAWY-32 — supersedes the RAWY-30/D20 follow-direction model): reading panels
+  // are PINNED to FIXED PHYSICAL sides that DO NOT move when the UI language flips. Chapters sits
+  // on the physical LEFT; annotations and the settings slide-over both sit on the physical RIGHT —
+  // each on the SAME physical side as the toolbar button that opens it (the top bar is pinned to
+  // match). Chapters (left) COEXISTS with either right panel; annotations and settings share the
+  // right edge, so opening one closes the other. Only panel CONTENT/labels translate with the UI
+  // language; the reading TEXT stays book-directed (foliate, isolated — RAWY-12).
   const toggleChapters = useCallback(() => {
     setChaptersOpen((v) => {
       const next = !v;
@@ -224,17 +225,17 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const jumpHref = (href: string) => ctrlRef.current?.goToHref(href);
   const jumpCfi = (cfi: string) => ctrlRef.current?.goToLocator(cfi);
 
-  // Shift the desk so an open edge panel sits BESIDE the page, never over it (RAWY-22). Panels
-  // follow the UI direction (RAWY-30): chapters on the UI-leading edge, annotations on the
-  // UI-trailing edge. Logical padding resolves by the desk's inherited <html dir>, so the desk
-  // makes room on the correct side automatically — the SAME basis as the panels themselves.
+  // Shift the desk so an open edge panel sits BESIDE the page, never over it (RAWY-22). Panels are
+  // PINNED to fixed PHYSICAL sides (RAWY-32 — supersedes the RAWY-30/D20 follow-direction model):
+  // chapters on the physical LEFT, annotations on the physical RIGHT — they do NOT move with the
+  // UI language. Physical paddingLeft/Right match those fixed sides regardless of <html dir>.
   const PANEL = 300;
-  const lead = chaptersOpen ? PANEL : 0;
-  const trail = annoOpen ? PANEL : 0;
+  const leftPad = chaptersOpen ? PANEL : 0;
+  const rightPad = annoOpen ? PANEL : 0;
   const deskStyle = {
     "--page-pref": `${pageWidthVw(pageFraction)}vw`,
-    paddingInlineStart: lead,
-    paddingInlineEnd: trail,
+    paddingLeft: leftPad,
+    paddingRight: rightPad,
   } as CSSProperties;
 
   return (

@@ -48,7 +48,7 @@ export function ReaderChrome({
             <span></span><span></span><span></span>
           </button>
         </div>
-        <div className="rc-chapter">{chapter}</div>
+        <div className="rc-chapter" dir="auto">{chapter}</div>
         <div className="rc-group">
           <button className="rc-icon rc-aa" onClick={onTypography} title={t("reader.typography")}>
             A<span>a</span>
@@ -60,7 +60,7 @@ export function ReaderChrome({
           >
             <span></span><span></span><span></span>
           </button>
-          <button className="rc-icon" onClick={onTheme} title={t("settings.language")}>◐</button>
+          <button className="rc-icon" onClick={onTheme} title={t("theme.label")}>◐</button>
           <button className="rc-icon rc-bookmark" onClick={onBookmark} title={t("reader.bookmark")} />
         </div>
       </div>

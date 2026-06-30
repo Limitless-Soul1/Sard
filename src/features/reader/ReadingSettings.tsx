@@ -151,7 +151,7 @@ function SelectRow<T extends string>({
 }
 
 export function ReadingSettings({ style, update, isRtlBook }: Props) {
-  const { t, lang, setLang } = useI18n();
+  const { t } = useI18n();
   const { themeId, overrideBookColor, hideChapterTitles, setTheme, toggleDayNight, setOverride, setHideTitles } =
     useTheme();
   const dark = THEMES[themeId].dark;
@@ -295,20 +295,7 @@ export function ReadingSettings({ style, update, isRtlBook }: Props) {
       </div>
       <ToggleRow label={t("theme.override")} on={overrideBookColor} onToggle={() => setOverride(!overrideBookColor)} />
       <ToggleRow label={t("theme.hideTitles")} on={hideChapterTitles} onToggle={() => setHideTitles(!hideChapterTitles)} />
-
-      <div className="rs-divider" />
-
-      {/* ---- LANGUAGE ---- */}
-      <Section label={t("settings.language")}>
-        <Segmented
-          value={lang}
-          onPick={(l) => setLang(l as "en" | "ar")}
-          options={[
-            { key: "en", label: "English" },
-            { key: "ar", label: "العربية" },
-          ]}
-        />
-      </Section>
+      {/* Language lives in ONE place — the Library settings (sidebar foot), not here (RAWY-32). */}
     </div>
   );
 }

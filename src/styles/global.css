@@ -171,6 +171,11 @@ html, body, #root {
   padding: 0 20px;
   border-bottom: 1px solid var(--chrome-border);
   transform: translateY(-100%);
+  /* FIXED physical layout (RAWY-32): force LTR so the button groups DON'T swap sides with the UI
+     language — the contents button stays physical-LEFT (same side as the pinned chapters panel)
+     and the type/annotations/theme buttons stay physical-RIGHT (same side as the pinned
+     annotations + settings panels). The chapter label centres and uses dir="auto" for its text. */
+  direction: ltr;
 }
 .rc-bottom {
   bottom: 0;
@@ -234,27 +239,20 @@ html, body, #root {
   display: flex;
   flex-direction: column;
 }
-/* Side follows the UI direction (RAWY-30 — supersedes RAWY-24/28). It docks on the UI-TRAILING
-   edge via the logical `inset-inline-end`, so it mirrors with <html dir> exactly like the
-   chapters/annotations panels: same single basis for every reading panel. The off-screen
-   transform is physical (translateX), so it is flipped under RTL. This is the same UI-trailing
-   edge as the annotations panel, so the two are mutually exclusive (Reader closes one when the
-   other opens); the UI-leading chapters panel always sits opposite → no collisions. */
+/* FIXED physical side (RAWY-32 — supersedes the RAWY-30/D20 follow-direction model): the
+   settings slide-over is PINNED to the physical RIGHT edge and does NOT move when the UI
+   language flips. Only its content/labels translate (they inherit <html dir>). It shares the
+   right edge with the annotations panel → the two are mutually exclusive (Reader closes one
+   when the other opens); the chapters panel is pinned LEFT, so it always sits opposite. Using
+   physical `right`/`translateX` (not logical) means no :root[dir] rule and no specificity trap. */
 .settings-panel {
-  inset-inline-end: 0;
-  border-inline-start: 1px solid var(--chrome-border);
+  right: 0;
+  left: auto;
+  border-left: 1px solid var(--chrome-border);
   box-shadow: -10px 0 30px rgba(0, 0, 0, 0.16);
   transform: translateX(100%);
 }
-:root[dir="rtl"] .settings-panel {
-  box-shadow: 10px 0 30px rgba(0, 0, 0, 0.16);
-  transform: translateX(-100%);
-}
-/* `.show` must out-specify the RTL off-screen rule above, so the open transform wins in BOTH
-   directions (the RAWY-24 specificity trap: a :root[dir] rule silently pinning the panel off-
-   screen). LTR uses the plain .show; RTL needs the :root[dir] prefix to match specificity. */
-.settings-panel.show,
-:root[dir="rtl"] .settings-panel.show { transform: translateX(0); }
+.settings-panel.show { transform: translateX(0); }
 .sp-head {
   display: flex;
   align-items: center;
@@ -358,13 +356,14 @@ html, body, #root {
   transition: transform 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 :root[data-dark="true"] .reader-panel { box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45); }
-/* Side follows the UI direction (RAWY-30): each panel carries the UI `dir`, so `inset-inline-*`
-   and the off-screen transform both resolve by <html dir> — chapters on the UI-leading edge,
-   annotations on the UI-trailing edge, each on the same side as the toolbar button that opens it. */
-.rp-lead { inset-inline-start: 0; border-inline-end: 1px solid var(--chrome-border); transform: translateX(-104%); }
-.rp-lead[dir="rtl"] { transform: translateX(104%); }
-.rp-trail { inset-inline-end: 0; border-inline-start: 1px solid var(--chrome-border); transform: translateX(104%); }
-.rp-trail[dir="rtl"] { transform: translateX(-104%); }
+/* FIXED physical sides (RAWY-32 — supersedes the RAWY-30/D20 follow-direction model): chapters
+   is PINNED to the physical LEFT, annotations to the physical RIGHT, and they DO NOT move when
+   the UI language flips. Physical `left`/`right` (not logical) ignore the panel's `dir` attr, so
+   the side is stable; the `dir` attr is kept only so the panel CONTENT/labels mirror with the UI
+   language. Each panel is on the same physical side as the toolbar button that opens it (the
+   top bar is pinned to match — see .rc-top). */
+.rp-lead { left: 0; right: auto; border-right: 1px solid var(--chrome-border); transform: translateX(-104%); }
+.rp-trail { right: 0; left: auto; border-left: 1px solid var(--chrome-border); transform: translateX(104%); }
 .reader-panel.show { transform: translateX(0); }
 
 .rp-head {

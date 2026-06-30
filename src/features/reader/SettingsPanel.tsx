@@ -18,6 +18,7 @@ interface Props {
   bookTitle: string | null;
   hasOverride: boolean;
   onReset: () => void;
+  unified: boolean; // RAWY-43 — the banner + Reset reflect the active book-style scope
 }
 
 // The reading-settings drawer (RAWY-34, design band I). A right-edge drawer docked BETWEEN the
@@ -39,6 +40,7 @@ export function SettingsPanel({
   bookTitle,
   hasOverride,
   onReset,
+  unified,
 }: Props) {
   const { t } = useI18n();
   const tabs: { key: SettingsSection; label: string }[] = [
@@ -52,18 +54,21 @@ export function SettingsPanel({
         <span className="sp-title">{t("reader.settings")}</span>
         <button className="rc-icon" onClick={onClose} title={t("reader.settings")} aria-label="✕">✕</button>
       </div>
-      {/* Per-book scope banner (RAWY-40, Band I) — "applies to this book; won't change others" + Reset. */}
-      <div className="sp-scope">
-        <span className="sp-scope-ico" aria-hidden>▤</span>
+      {/* Scope banner (RAWY-40/43) — reflects the active book-style model. Per-book: "applies to
+          this book · won't change others" + Reset. Unified: "applies to all books". */}
+      <div className={`sp-scope${unified ? " unified" : ""}`}>
+        <span className="sp-scope-ico" aria-hidden>{unified ? "⊞" : "▤"}</span>
         <span className="sp-scope-text">
-          <span className="sp-scope-title">{t("perbook.scope")}</span>
+          <span className="sp-scope-title">{unified ? t("perbook.scopeAll") : t("perbook.scope")}</span>
           <span className="sp-scope-sub" dir="auto">
-            {(bookTitle ? `${bookTitle} · ` : "") + t("perbook.scopeSub")}
+            {unified ? t("perbook.scopeAllSub") : (bookTitle ? `${bookTitle} · ` : "") + t("perbook.scopeSub")}
           </span>
         </span>
-        <button className="sp-reset" onClick={onReset} disabled={!hasOverride} title={t("perbook.reset")}>
-          ↻ {t("perbook.reset")}
-        </button>
+        {!unified && (
+          <button className="sp-reset" onClick={onReset} disabled={!hasOverride} title={t("perbook.reset")}>
+            ↻ {t("perbook.reset")}
+          </button>
+        )}
       </div>
       <div className="sp-tabs" role="tablist">
         {tabs.map((tb) => (

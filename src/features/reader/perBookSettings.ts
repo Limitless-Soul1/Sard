@@ -34,6 +34,11 @@ export async function loadGlobalStyle(): Promise<ReadingStyle> {
   }
 }
 
+/** Persist the GLOBAL reading style (RAWY-43 unified mode writes here, like Global Settings). */
+export function saveGlobalStyle(style: ReadingStyle): void {
+  settingsSet(GLOBAL_KEY, JSON.stringify(style)).catch(console.error);
+}
+
 export async function loadBookOverride(bookId: string): Promise<BookOverride> {
   const raw = await settingsGet(bookKey(bookId)).catch(() => null);
   if (!raw) return {};

@@ -4,6 +4,7 @@ import "./styles/global.css";
 import { I18nProvider, useI18n } from "./i18n";
 import { initBookmarkStyle } from "./lib/bookmarkStyle";
 import { initFonts } from "./lib/fonts";
+import { initStyleScope } from "./lib/styleScope";
 import { initTheme, useTheme } from "./theme";
 import { LanguagePicker } from "./features/onboarding/LanguagePicker";
 import { Library, type OpenTarget } from "./features/library/Library";
@@ -41,6 +42,7 @@ function App() {
     initTheme(); // load + apply persisted theme/override/hide-titles/mode (RAWY-39)
     initFonts(); // load + apply persisted UI font + register imported @font-faces (RAWY-39)
     initBookmarkStyle(); // load persisted bookmark shape/colour/position (RAWY-41)
+    initStyleScope(); // load unified-vs-per-book book-style scope (RAWY-43)
   }, []);
 
   // F11 toggles fullscreen (the Windows convention); Esc exits when fullscreen (RAWY-42). Works

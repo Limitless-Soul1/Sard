@@ -13,6 +13,7 @@ import { settingsGet, settingsSet } from "../../lib/ipc";
 import { BUILTIN_BOOK_FONTS, useFonts } from "../../lib/fonts";
 import { BOOKMARK_COLORS, BOOKMARK_SHAPES, useBookmarkStyle } from "../../lib/bookmarkStyle";
 import { BookmarkShape } from "../reader/BookmarkShape";
+import { useStyleScope } from "../../lib/styleScope";
 import {
   ARABIC_FONTS,
   LATIN_DEFAULTS,
@@ -243,6 +244,7 @@ function FontsSection() {
 // ---- Reading defaults (for NEW books): the global reading_style baseline ----
 function ReadingDefaultsSection() {
   const { t } = useI18n();
+  const { scope, setScope } = useStyleScope();
   const [style, setStyle] = useState<ReadingStyle | null>(null);
 
   useEffect(() => {
@@ -274,6 +276,20 @@ function ReadingDefaultsSection() {
     <>
       <SecHead>{t("gs.reading")}</SecHead>
       <div className="gs-banner">↻ {t("gs.readingBanner")}</div>
+
+      {/* RAWY-43: choose whether all books share one style (unified) or each keeps its own. */}
+      <div className="gs-sec">
+        <Label>{t("gs.scope")}</Label>
+        <Seg<"unified" | "perbook">
+          value={scope}
+          onPick={(s) => setScope(s)}
+          options={[
+            { key: "perbook", label: t("gs.scope.perbook") },
+            { key: "unified", label: t("gs.scope.unified") },
+          ]}
+        />
+        <div className="gs-note">{scope === "unified" ? t("gs.scope.unifiedHint") : t("gs.scope.perbookHint")}</div>
+      </div>
 
       <div className="gs-sec gs-two">
         <div>

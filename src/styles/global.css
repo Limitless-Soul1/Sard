@@ -346,6 +346,12 @@ html, body, #root {
   border-radius: 9px; background: color-mix(in srgb, #7b59a0 14%, var(--paper-bg));
   border: 1px solid color-mix(in srgb, #7b59a0 28%, transparent);
 }
+/* Unified scope (RAWY-43): "applies to all books" — use the accent instead of the per-book purple. */
+.sp-scope.unified {
+  background: color-mix(in srgb, var(--accent) 12%, var(--paper-bg));
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.sp-scope.unified .sp-scope-ico { background: var(--accent); }
 .sp-scope-ico {
   width: 24px; height: 24px; flex: none; border-radius: 6px; display: flex; align-items: center;
   justify-content: center; background: #7b59a0; color: #fff; font-size: 12px;

@@ -21,8 +21,10 @@ import {
   loadBookOverride,
   loadGlobalStyle,
   saveBookOverride,
+  saveGlobalStyle,
   type BookOverride,
 } from "./perBookSettings";
+import { useStyleScope } from "../../lib/styleScope";
 import { AnnotationLayer } from "./AnnotationLayer";
 import { AnnotationsPanel } from "./AnnotationsPanel";
 import { ChaptersPanel } from "./ChaptersPanel";
@@ -67,6 +69,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const [hasOv, setHasOv] = useState(false);
 
   const { status, dir, fraction, chapterLabel, chapterHref, error, style, bookTitle } = useReader();
+  // RAWY-43: unified (all books share one style) vs per-book. Drives where changes are written
+  // and how a book's effective style/theme is resolved.
+  const scope = useStyleScope((s) => s.scope);
   // RAWY-41: the current book's bookmarks; the marker shows ONLY when one is at the visible spot.
   const bookmarks = useBookmarks((s) => s.bookmarks);
   const activeBm = bookmarks.find((b) => b.fraction != null && Math.abs(b.fraction - fraction) <= MARKER_WINDOW) ?? null;
@@ -88,17 +93,19 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       // RAWY-27: an inbox item passes a jump CFI that wins over the saved reading position.
       const resumeCfi = target.cfi ?? saved?.cfi ?? null;
 
-      // RAWY-40: effective style = GLOBAL defaults with THIS book's PARTIAL override on top; the
-      // theme is the book's override theme else the global default. Per-script defaults still
-      // back-fill anything the global row lacks (RTL books get the Arabic baseline).
+      // RAWY-40/43: per-book → effective = GLOBAL defaults with THIS book's PARTIAL override on
+      // top, theme = override theme else global. UNIFIED → the GLOBAL style/theme, IGNORING (never
+      // deleting) the override so switching back to per-book restores it. Per-script defaults
+      // still back-fill anything the global row lacks (RTL books get the Arabic baseline).
       const ts = useTheme.getState();
+      const unified = useStyleScope.getState().scope === "unified";
       globalThemeRef.current = ts.themeId;
       const global = await loadGlobalStyle();
       const override = await loadBookOverride(target.id);
       globalStyleRef.current = global;
       overrideRef.current = override;
-      const effTheme = override.themeId ?? ts.themeId;
-      const initialStyle = effectiveStyle(global, override);
+      const effTheme = unified ? ts.themeId : (override.themeId ?? ts.themeId);
+      const initialStyle = unified ? global : effectiveStyle(global, override);
 
       const ctrl = ctrlRef.current!;
       ctrl.onRelocate(({ cfi, fraction, chapterLabel, chapterHref }) => {
@@ -122,7 +129,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       });
 
       setBookThemeId(effTheme);
-      setHasOv(calcHasOverride(override));
+      setHasOv(!unified && calcHasOverride(override)); // Reset is a per-book affordance
       set({ status: "ready", dir: ctrl.dir ?? "?", style: initialStyle, bookTitle: ctrl.title ?? null });
       setToc(ctrl.getToc()); // chapters panel (RAWY-21)
       // Load this book's highlights/notes into the shared store (in-context layer + panel).
@@ -154,6 +161,26 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     ctrlRef.current?.applyTheme(THEMES[bookThemeId], { overrideBookColor, hideChapterTitles });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overrideBookColor, hideChapterTitles]);
+
+  // RAWY-43: toggling the unified/per-book scope LIVE re-resolves the open book's effective
+  // style + theme immediately. Unified → the global style/theme (overrides ignored, kept);
+  // per-book → global ∪ this book's preserved override.
+  useEffect(() => {
+    if (status !== "ready") return;
+    const global = globalStyleRef.current;
+    if (!global) return;
+    const unified = scope === "unified";
+    const override = overrideRef.current;
+    const effStyle = unified ? global : effectiveStyle(global, override);
+    const effTheme = unified ? globalThemeRef.current : (override.themeId ?? globalThemeRef.current);
+    useReader.getState().set({ style: effStyle });
+    setBookThemeId(effTheme);
+    setHasOv(!unified && calcHasOverride(override));
+    applyTheme(THEMES[effTheme]);
+    ctrlRef.current?.applyTheme(THEMES[effTheme], { overrideBookColor, hideChapterTitles });
+    ctrlRef.current?.applyStyle(effStyle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope]);
 
   // Pin chrome open while any panel is open.
   useEffect(() => setHold(settingsOpen || chaptersOpen || annoOpen), [settingsOpen, chaptersOpen, annoOpen, setHold]);
@@ -212,15 +239,22 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     const next = { ...current, ...patch };
     useReader.getState().set({ style: next });
 
-    // Fold the patch into this book's partial override: a field back at the global default drops
-    // out of the override (so it keeps following global), otherwise it's recorded.
-    const ovStyle: Partial<ReadingStyle> = { ...(overrideRef.current.style ?? {}) };
-    for (const k of Object.keys(patch) as (keyof ReadingStyle)[]) {
-      if (next[k] === global[k]) delete ovStyle[k];
-      else (ovStyle as Record<string, unknown>)[k] = next[k];
+    const unified = useStyleScope.getState().scope === "unified";
+    if (unified) {
+      // UNIFIED (RAWY-43): the change is the new GLOBAL baseline → write the global row (affects
+      // every book). The per-book override is left untouched (ignored, not deleted).
+      globalStyleRef.current = next;
+    } else {
+      // PER-BOOK (RAWY-40): fold the patch into this book's partial override — a field back at the
+      // global default drops out (so it keeps following global), otherwise it's recorded.
+      const ovStyle: Partial<ReadingStyle> = { ...(overrideRef.current.style ?? {}) };
+      for (const k of Object.keys(patch) as (keyof ReadingStyle)[]) {
+        if (next[k] === global[k]) delete ovStyle[k];
+        else (ovStyle as Record<string, unknown>)[k] = next[k];
+      }
+      overrideRef.current = { ...overrideRef.current, style: ovStyle };
+      setHasOv(calcHasOverride(overrideRef.current));
     }
-    overrideRef.current = { ...overrideRef.current, style: ovStyle };
-    setHasOv(calcHasOverride(overrideRef.current));
 
     // flowMode is a renderer attribute set at open() — switching it re-opens at the current CFI
     // (preserves position); every other field is the live injected-CSS funnel.
@@ -243,19 +277,26 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     }
     if (styleTimer.current) clearTimeout(styleTimer.current);
     styleTimer.current = window.setTimeout(() => {
-      saveBookOverride(bookRef.current, overrideRef.current);
+      if (useStyleScope.getState().scope === "unified") saveGlobalStyle(useReader.getState().style!);
+      else saveBookOverride(bookRef.current, overrideRef.current);
     }, SAVE_DEBOUNCE_MS);
   };
 
-  // Per-book THEME (RAWY-40): change ONLY this book's paper + ink — the global store/Library are
-  // untouched. Applies to the chrome (:root) + the page injection; persists in the book override.
+  // THEME change from the Theme tab. PER-BOOK (RAWY-40): change ONLY this book's paper+ink (the
+  // global store/Library are untouched; persisted in the book override). UNIFIED (RAWY-43): set
+  // the GLOBAL theme (app-wide, persists `theme_id`) so every book + the Library follow it.
   const setBookTheme = (id: ThemeId) => {
     setBookThemeId(id);
-    overrideRef.current = { ...overrideRef.current, themeId: id === globalThemeRef.current ? undefined : id };
-    setHasOv(calcHasOverride(overrideRef.current));
     applyTheme(THEMES[id]);
     ctrlRef.current?.applyTheme(THEMES[id], { overrideBookColor, hideChapterTitles });
-    saveBookOverride(bookRef.current, overrideRef.current);
+    if (useStyleScope.getState().scope === "unified") {
+      globalThemeRef.current = id;
+      useTheme.getState().setTheme(id); // global theme — applies to :root + persists theme_id
+    } else {
+      overrideRef.current = { ...overrideRef.current, themeId: id === globalThemeRef.current ? undefined : id };
+      setHasOv(calcHasOverride(overrideRef.current));
+      saveBookOverride(bookRef.current, overrideRef.current);
+    }
   };
 
   // Reset this book to the app defaults (RAWY-40, Band I "↻ Reset"): drop the whole override.
@@ -410,6 +451,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         bookTitle={bookTitle}
         hasOverride={hasOv}
         onReset={resetBook}
+        unified={scope === "unified"}
       />
 
       <AnnotationLayer ctrlRef={ctrlRef} />

@@ -124,6 +124,54 @@ pub fn collections_list(state: State<AppState>) -> Result<Vec<library::Collectio
     library::collections_list(&conn).map_err(err)
 }
 
+// RAWY-31 — shelf writes (the only Rust↔JS path for collections). Each returns the
+// refreshed shelf list so the UI updates names + counts in one call.
+
+#[tauri::command]
+pub fn collection_create(name: String, state: State<AppState>) -> Result<Vec<library::CollectionRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::collection_create(&conn, &name).map_err(err)
+}
+
+#[tauri::command]
+pub fn collection_rename(id: String, name: String, state: State<AppState>) -> Result<Vec<library::CollectionRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::collection_rename(&conn, &id, &name).map_err(err)
+}
+
+#[tauri::command]
+pub fn collection_delete(id: String, state: State<AppState>) -> Result<Vec<library::CollectionRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::collection_delete(&conn, &id).map_err(err)
+}
+
+#[tauri::command]
+pub fn collection_add_book(
+    collection_id: String,
+    book_id: String,
+    state: State<AppState>,
+) -> Result<Vec<library::CollectionRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::collection_add_book(&conn, &collection_id, &book_id).map_err(err)
+}
+
+#[tauri::command]
+pub fn collection_remove_book(
+    collection_id: String,
+    book_id: String,
+    state: State<AppState>,
+) -> Result<Vec<library::CollectionRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::collection_remove_book(&conn, &collection_id, &book_id).map_err(err)
+}
+
+/// The shelf ids a book belongs to (for the edit-dialog chips).
+#[tauri::command]
+pub fn collections_for_book(book_id: String, state: State<AppState>) -> Result<Vec<String>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::collections_for_book(&conn, &book_id).map_err(err)
+}
+
 /// RAWY-17 — import EPUB files into the library (copy-in, hash/dedup, extract metadata +
 /// cover). Returns one result per path so the UI can summarise imported/duplicate/
 /// unsupported/error. The only Rust↔JS path for adding books.

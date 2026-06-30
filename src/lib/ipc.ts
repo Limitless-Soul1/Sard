@@ -98,6 +98,21 @@ export interface CollectionRow {
 export const collectionsList = (): Promise<CollectionRow[]> =>
   invoke<CollectionRow[]>("collections_list");
 
+// RAWY-31 — shelf writes. Each returns the refreshed shelf list (names + live counts).
+export const collectionCreate = (name: string): Promise<CollectionRow[]> =>
+  invoke<CollectionRow[]>("collection_create", { name });
+export const collectionRename = (id: string, name: string): Promise<CollectionRow[]> =>
+  invoke<CollectionRow[]>("collection_rename", { id, name });
+export const collectionDelete = (id: string): Promise<CollectionRow[]> =>
+  invoke<CollectionRow[]>("collection_delete", { id });
+export const collectionAddBook = (collectionId: string, bookId: string): Promise<CollectionRow[]> =>
+  invoke<CollectionRow[]>("collection_add_book", { collectionId, bookId });
+export const collectionRemoveBook = (collectionId: string, bookId: string): Promise<CollectionRow[]> =>
+  invoke<CollectionRow[]>("collection_remove_book", { collectionId, bookId });
+/** The shelf ids a book currently belongs to (for the edit-dialog chips). */
+export const collectionsForBook = (bookId: string): Promise<string[]> =>
+  invoke<string[]>("collections_for_book", { bookId });
+
 export type ImportStatus = "imported" | "duplicate" | "unsupported" | "error";
 
 export interface ImportResult {

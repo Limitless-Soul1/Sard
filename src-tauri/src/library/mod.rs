@@ -290,6 +290,66 @@ pub fn collections_list(conn: &Connection) -> rusqlite::Result<Vec<CollectionRow
     rows.collect()
 }
 
+// ---------------------------------------------------------------------------
+// RAWY-31 — shelf (collection) writes. Every write returns the REFRESHED shelf
+// list (collections_list) so the UI updates names + live counts in one round-trip.
+// Reuses the RAWY-08 tables; deleting a shelf removes the collection and (via the
+// book_collections FK `ON DELETE CASCADE`) its membership rows — the BOOKS are
+// never touched.
+// ---------------------------------------------------------------------------
+
+/// Create a shelf (placed at the end). The new shelf starts with count 0.
+pub fn collection_create(conn: &Connection, name: &str) -> rusqlite::Result<Vec<CollectionRow>> {
+    let now = now_unix();
+    let id = gen_id(&format!("shelf|{name}|{now}"));
+    let next: i64 = conn
+        .query_row("SELECT COALESCE(MAX(sort_order), 0) + 1 FROM collections", [], |r| r.get(0))
+        .unwrap_or(0);
+    conn.execute(
+        "INSERT INTO collections(id, name, sort_order, created_at) VALUES(?1, ?2, ?3, ?4)",
+        rusqlite::params![id, name, next, now],
+    )?;
+    collections_list(conn)
+}
+
+/// Rename a shelf (the books and memberships are untouched).
+pub fn collection_rename(conn: &Connection, id: &str, name: &str) -> rusqlite::Result<Vec<CollectionRow>> {
+    conn.execute("UPDATE collections SET name = ?2 WHERE id = ?1", rusqlite::params![id, name])?;
+    collections_list(conn)
+}
+
+/// Delete a shelf. `book_collections` rows cascade away (FK ON DELETE CASCADE); the
+/// BOOKS remain in the library.
+pub fn collection_delete(conn: &Connection, id: &str) -> rusqlite::Result<Vec<CollectionRow>> {
+    conn.execute("DELETE FROM collections WHERE id = ?1", [id])?;
+    collections_list(conn)
+}
+
+/// Add a book to a shelf (idempotent — re-adding is a no-op).
+pub fn collection_add_book(conn: &Connection, collection_id: &str, book_id: &str) -> rusqlite::Result<Vec<CollectionRow>> {
+    conn.execute(
+        "INSERT OR IGNORE INTO book_collections(book_id, collection_id) VALUES(?1, ?2)",
+        rusqlite::params![book_id, collection_id],
+    )?;
+    collections_list(conn)
+}
+
+/// Remove a book from a shelf (the book itself is untouched).
+pub fn collection_remove_book(conn: &Connection, collection_id: &str, book_id: &str) -> rusqlite::Result<Vec<CollectionRow>> {
+    conn.execute(
+        "DELETE FROM book_collections WHERE book_id = ?1 AND collection_id = ?2",
+        rusqlite::params![book_id, collection_id],
+    )?;
+    collections_list(conn)
+}
+
+/// The shelf ids a book currently belongs to (drives the edit-dialog chips).
+pub fn collections_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT collection_id FROM book_collections WHERE book_id = ?1")?;
+    let rows = stmt.query_map([book_id], |r| r.get::<_, String>(0))?;
+    rows.collect()
+}
+
 fn now_unix() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

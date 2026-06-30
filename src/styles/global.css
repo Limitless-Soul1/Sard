@@ -613,16 +613,46 @@ html, body, #root {
   color: var(--lib-faint); padding: 24px 10px 10px;
 }
 .lib-shelves { display: flex; flex-direction: column; gap: 2px; }
+/* RAWY-31: a shelf row = a filter button (name) + a trailing count that swaps to rename/delete
+   actions on hover, so the resting state stays calm (the design's name + count). */
 .lib-shelf {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 7px 10px; border: none; border-radius: 6px; background: transparent;
-  color: var(--muted); font: 500 13px var(--ui-font); cursor: pointer; text-align: start;
+  display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: 6px;
+  color: var(--muted); font: 500 13px var(--ui-font);
 }
-.lib-shelf:hover:not(:disabled) { background: var(--lib-hover); }
+.lib-shelf:hover { background: var(--lib-hover); }
 .lib-shelf.active { background: var(--lib-active); color: var(--text); }
-.lib-shelf-count { color: var(--lib-faint); font-size: 12px; }
-.lib-shelf-new, .lib-shelf-empty { color: var(--lib-faint); }
-.lib-shelf-empty { padding: 4px 10px; font: 400 12px var(--ui-font); }
+.lib-shelf-main {
+  flex: 1; min-width: 0; display: flex; align-items: center; padding: 7px 0;
+  border: none; background: transparent; color: inherit; font: inherit; cursor: pointer; text-align: start;
+}
+.lib-shelf-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-shelf-count { flex: none; color: var(--lib-faint); font-size: 12px; }
+.lib-shelf-actions { display: none; align-items: center; gap: 2px; flex: none; }
+.lib-shelf:hover .lib-shelf-actions { display: flex; }
+.lib-shelf:hover .lib-shelf-count { display: none; }
+.lib-shelf-act {
+  border: none; background: transparent; cursor: pointer; color: var(--lib-faint);
+  font-size: 12px; line-height: 1; padding: 3px 5px; border-radius: 5px;
+}
+.lib-shelf-act:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.lib-shelf-input {
+  padding: 7px 10px; border: 1px solid var(--accent); border-radius: 6px;
+  background: var(--lib-soft); color: var(--text); font: 500 13px var(--ui-font); outline: none;
+}
+.lib-shelf-new {
+  padding: 7px 10px; border: none; border-radius: 6px; background: transparent;
+  color: var(--lib-faint); font: 500 13px var(--ui-font); cursor: pointer; text-align: start;
+}
+.lib-shelf-new:hover { background: var(--lib-hover); color: var(--text); }
+.lib-shelf-empty { padding: 4px 10px; font: 400 12px var(--ui-font); color: var(--lib-faint); }
+/* an empty selected shelf (vs. the whole-library empty state) */
+.lib-shelf-empty-state {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; padding: 60px 40px; text-align: center;
+}
+.lib-shelf-empty-title { font: 600 20px "Literata", serif; color: var(--text); }
+:root[dir="rtl"] .lib-shelf-empty-title { font: 700 20px "Amiri", serif; }
+.lib-shelf-empty-hint { font: 400 14px var(--ui-font); color: var(--muted); max-width: 360px; }
 
 .lib-sidefoot {
   margin-top: auto; display: flex; align-items: center; justify-content: space-between;
@@ -929,6 +959,15 @@ html, body, #root {
   color: var(--muted); font: 500 12px var(--ui-font); cursor: pointer; white-space: nowrap;
 }
 .edit-seg button.active { background: var(--accent); color: var(--paper-bg); }
+/* RAWY-31: shelf-membership chips — toggle a book in/out of a shelf (design band E7). */
+.edit-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.edit-chip {
+  font: 500 12px var(--ui-font); color: var(--muted); background: transparent;
+  border: 1px solid var(--chrome-border); padding: 5px 11px; border-radius: 999px; cursor: pointer;
+}
+.edit-chip:hover { border-color: var(--accent); color: var(--text); }
+.edit-chip.on { background: var(--accent); border-color: var(--accent); color: var(--paper-bg); }
+.edit-shelves-hint { font: 400 12px var(--ui-font); color: var(--lib-faint); }
 .edit-foot {
   display: flex; justify-content: flex-end; gap: 10px; padding: 14px 22px; border-top: 1px solid var(--chrome-border);
 }

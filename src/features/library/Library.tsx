@@ -6,6 +6,12 @@ import {
   bookRevertCover,
   bookSetCover,
   bookUpdate,
+  collectionAddBook,
+  collectionCreate,
+  collectionDelete,
+  collectionRemoveBook,
+  collectionRename,
+  collectionsForBook,
   collectionsList,
   importBooks,
   libraryListBooks,
@@ -71,6 +77,10 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const [order, setOrder] = useState<SortOrder>("desc");
   const [format, setFormat] = useState<string | null>(null);
   const [shelf, setShelf] = useState<string | null>(null);
+  // Shelf management (RAWY-31): inline create + rename, driven from the sidebar.
+  const [creating, setCreating] = useState(false);
+  const [draftName, setDraftName] = useState("");
+  const [renaming, setRenaming] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [menu, setMenu] = useState<null | "sort" | "format">(null);
   const [drag, setDrag] = useState<{ count: number } | null>(null);
@@ -229,6 +239,28 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   };
   const open = (b: BookRow) => onOpen({ id: b.id, filePath: b.file_path, dir: b.dir });
 
+  // Shelf writes (RAWY-31): each returns the refreshed shelf list (names + counts).
+  const commitCreate = async () => {
+    const name = draftName.trim();
+    setCreating(false);
+    setDraftName("");
+    if (!name) return;
+    setShelves(await collectionCreate(name).catch((e) => { console.error(e); return shelves; }));
+  };
+  const commitRename = async (id: string) => {
+    const name = draftName.trim();
+    setRenaming(null);
+    setDraftName("");
+    if (!name) return;
+    setShelves(await collectionRename(id, name).catch((e) => { console.error(e); return shelves; }));
+  };
+  const removeShelf = async (s: CollectionRow) => {
+    if (shelf === s.id) pickShelf(null); // leave a filtered view we're about to delete
+    setShelves(await collectionDelete(s.id).catch((e) => { console.error(e); return shelves; }));
+    flashToast(t("lib.shelf.deleted", { name: s.name }));
+  };
+  const activeShelf = shelf ? shelves.find((s) => s.id === shelf) ?? null : null;
+
   return (
     <div className="lib-root">
       <aside className="lib-sidebar">
@@ -273,20 +305,72 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
 
         <div className="lib-shelves-label">{t("lib.shelves")}</div>
         <div className="lib-shelves">
-          {shelves.length === 0 && <div className="lib-shelf-empty">{t("lib.noShelves")}</div>}
-          {shelves.map((s) => (
+          {shelves.length === 0 && !creating && <div className="lib-shelf-empty">{t("lib.noShelves")}</div>}
+          {shelves.map((s) =>
+            renaming === s.id ? (
+              <input
+                key={s.id}
+                className="lib-shelf-input"
+                autoFocus
+                value={draftName}
+                dir="auto"
+                placeholder={t("lib.shelf.namePlaceholder")}
+                onChange={(e) => setDraftName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitRename(s.id);
+                  else if (e.key === "Escape") { setRenaming(null); setDraftName(""); }
+                }}
+                onBlur={() => commitRename(s.id)}
+              />
+            ) : (
+              <div key={s.id} className={`lib-shelf${shelf === s.id ? " active" : ""}`}>
+                <button className="lib-shelf-main" onClick={() => pickShelf(shelf === s.id ? null : s.id)}>
+                  <span className="lib-shelf-name" dir="auto">{s.name}</span>
+                </button>
+                <span className="lib-shelf-count">{num(s.count, lang)}</span>
+                <span className="lib-shelf-actions">
+                  <button
+                    className="lib-shelf-act"
+                    title={t("lib.shelf.rename")}
+                    aria-label={t("lib.shelf.rename")}
+                    onClick={() => { setRenaming(s.id); setDraftName(s.name); }}
+                  >
+                    ✎
+                  </button>
+                  <button
+                    className="lib-shelf-act"
+                    title={t("lib.shelf.delete")}
+                    aria-label={t("lib.shelf.delete")}
+                    onClick={() => removeShelf(s)}
+                  >
+                    ✕
+                  </button>
+                </span>
+              </div>
+            )
+          )}
+          {creating ? (
+            <input
+              className="lib-shelf-input"
+              autoFocus
+              value={draftName}
+              dir="auto"
+              placeholder={t("lib.shelf.namePlaceholder")}
+              onChange={(e) => setDraftName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") commitCreate();
+                else if (e.key === "Escape") { setCreating(false); setDraftName(""); }
+              }}
+              onBlur={commitCreate}
+            />
+          ) : (
             <button
-              key={s.id}
-              className={`lib-shelf${shelf === s.id ? " active" : ""}`}
-              onClick={() => pickShelf(shelf === s.id ? null : s.id)}
+              className="lib-shelf-new"
+              onClick={() => { setRenaming(null); setDraftName(""); setCreating(true); }}
             >
-              <span className="lib-shelf-name">{s.name}</span>
-              <span className="lib-shelf-count">{num(s.count, lang)}</span>
+              {t("lib.newShelf")}
             </button>
-          ))}
-          <button className="lib-shelf lib-shelf-new" disabled>
-            {t("lib.newShelf")}
-          </button>
+          )}
         </div>
 
         <div className="lib-sidefoot">
@@ -305,7 +389,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
             <header className="lib-head">
               <div className="lib-head-top">
                 <div className="lib-title-wrap">
-                  <h1 className="lib-title">{t("lib.title")}</h1>
+                  <h1 className="lib-title" dir="auto">{activeShelf ? activeShelf.name : t("lib.title")}</h1>
                   <span className="lib-title-count">{t("lib.count", { n: num(count, lang) })}</span>
                 </div>
                 <label className="lib-search">
@@ -428,7 +512,12 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
 
             {menu && <div className="lib-clickaway" onClick={() => setMenu(null)} />}
 
-            {view === "grid" ? (
+            {activeShelf && count === 0 && !search ? (
+              <div className="lib-shelf-empty-state">
+                <div className="lib-shelf-empty-title">{t("lib.shelfEmpty.title")}</div>
+                <div className="lib-shelf-empty-hint">{t("lib.shelfEmpty.hint")}</div>
+              </div>
+            ) : view === "grid" ? (
               <div className="lib-grid">
                 {books.map((b) => (
                   <BookCard
@@ -472,6 +561,11 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
       {editing && (
         <EditBook
           book={editing}
+          shelves={shelves}
+          onShelves={(rows) => {
+            setShelves(rows);
+            loadBooks(); // a chip toggle can add/remove the open book from the active shelf filter
+          }}
           onClose={() => setEditing(null)}
           onSaved={(b) => {
             loadBooks();
@@ -595,14 +689,36 @@ function BookCard({
 
 function EditBook({
   book,
+  shelves,
+  onShelves,
   onSaved,
   onClose,
 }: {
   book: BookRow;
+  shelves: CollectionRow[];
+  onShelves: (rows: CollectionRow[]) => void;
   onSaved: (b: BookRow | null) => void;
   onClose: () => void;
 }) {
   const { t } = useI18n();
+  // Shelf membership (RAWY-31): toggling a chip persists immediately (separate from the
+  // metadata Save) and refreshes the sidebar counts via onShelves.
+  const [member, setMember] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    collectionsForBook(book.id).then((ids) => setMember(new Set(ids))).catch(console.error);
+  }, [book.id]);
+  const toggleShelf = async (id: string) => {
+    const has = member.has(id);
+    // optimistic
+    setMember((prev) => {
+      const next = new Set(prev);
+      if (has) next.delete(id); else next.add(id);
+      return next;
+    });
+    const rows = await (has ? collectionRemoveBook(id, book.id) : collectionAddBook(id, book.id))
+      .catch((e) => { console.error(e); return null; });
+    if (rows) onShelves(rows);
+  };
   const [title, setTitle] = useState(book.title ?? "");
   const [author, setAuthor] = useState(book.author ?? "");
   const [language, setLanguage] = useState(book.language ?? "");
@@ -700,6 +816,25 @@ function EditBook({
                 <button className={coverFit === "crop" ? "active" : ""} onClick={() => setCoverFit("crop")}>{t("lib.cover.crop")}</button>
                 <button className={coverFit === "fit" ? "active" : ""} onClick={() => setCoverFit("fit")}>{t("lib.cover.fit")}</button>
               </div>
+            </div>
+            <div className="edit-field">
+              <span>{t("edit.shelves")}</span>
+              {shelves.length === 0 ? (
+                <div className="edit-shelves-hint">{t("edit.shelvesHint")}</div>
+              ) : (
+                <div className="edit-chips">
+                  {shelves.map((s) => (
+                    <button
+                      key={s.id}
+                      className={`edit-chip${member.has(s.id) ? " on" : ""}`}
+                      onClick={() => toggleShelf(s.id)}
+                      dir="auto"
+                    >
+                      {s.name}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>

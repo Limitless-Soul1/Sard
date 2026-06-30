@@ -41,8 +41,9 @@ export interface ReadingStyle {
 export const PAGE_WIDTH_MIN = 0;
 export const PAGE_WIDTH_MAX = 1;
 export const PAGE_WIDTH_DEFAULT = 0.5;
-// Slider fraction → preferred width in vw (then clamped 540..1280px in CSS). Narrow≈42vw, Wide≈88vw.
-export const pageWidthVw = (t: number): number => 42 + Math.max(0, Math.min(1, t)) * 46;
+// Slider fraction → preferred width in vw (then clamped 460..1360px in CSS, RAWY-36). A wider
+// 36→92vw span makes Narrow↔Wide clearly visible across window sizes. Narrow≈36vw, Wide≈92vw.
+export const pageWidthVw = (t: number): number => 36 + Math.max(0, Math.min(1, t)) * 56;
 
 interface FontDef {
   regular: string;
@@ -219,7 +220,11 @@ export function buildReadingCss(
        scrolls, so forcing height:100%/overflow:hidden here would clip the scroll. */
     html, body { margin: 0; box-sizing: border-box; }
     ${style.flowMode === "paged" ? "html, body { height: 100%; overflow: hidden; }" : ""}
-    html { padding-inline: ${style.marginPx}px; }
+    /* MARGINS are applied on the CHROME side (RAWY-36): foliate's paginator sets html padding
+       inline with !important in BOTH scrolled + paged modes, which overrode an injected
+       html padding-inline here (inline styles always beat a stylesheet rule). So the page
+       margin now insets the foliate host within the sheet (--page-margin -> .page-host), which
+       foliate cannot override and which works identically in both flow modes. */
     /* a corrected reading direction (RAWY-19 override) flows + aligns the text accordingly */
     ${bookDir ? `html, body { direction: ${bookDir}; }` : ""}
     /* highlight ink (RAWY-22): a clearly-visible "wick" — multiply blend on light paper,

@@ -247,11 +247,17 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // The three right-edge drawers (Settings 384 / Notes 300) are mutually exclusive; Contents
   // (left) coexists. Shift the desk by whichever right drawer is open so the page recenters.
   const PANEL = 300;
-  const SETTINGS_W = 384;
   const leftPad = chaptersOpen ? PANEL : 0;
-  const rightPad = settingsOpen ? SETTINGS_W : annoOpen ? PANEL : 0;
+  // The Notes drawer pushes the desk so the page sits beside it. The SETTINGS drawer does NOT
+  // (RAWY-36): it overlays the page's edge, so the page keeps its full width and the Page-width
+  // control shows its real effect live while you adjust it (pushing the desk capped the sheet to
+  // the narrowed space → "page width does nothing"). The top cluster stays clickable above both.
+  const rightPad = annoOpen ? PANEL : 0;
   const deskStyle = {
     "--page-pref": `${pageWidthVw(pageFraction)}vw`,
+    // Page margin insets the foliate host within the sheet (RAWY-36) — reliable across flow modes
+    // (foliate's !important html padding can't be beaten from injected CSS).
+    "--page-margin": `${style?.marginPx ?? 56}px`,
     paddingLeft: leftPad,
     paddingRight: rightPad,
   } as CSSProperties;

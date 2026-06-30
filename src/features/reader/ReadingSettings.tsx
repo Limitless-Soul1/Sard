@@ -22,7 +22,7 @@ import {
   type ReadingStyle,
 } from "../../reader-engine/injectedCss";
 import type { TKey } from "../../i18n/locales/en";
-import { THEMES, THEME_ORDER, useTheme } from "../../theme";
+import { DEFAULT_DARK, DEFAULT_LIGHT, THEMES, THEME_ORDER, useTheme } from "../../theme";
 
 interface Props {
   style: ReadingStyle;
@@ -155,8 +155,7 @@ function SelectRow<T extends string>({
 
 export function ReadingSettings({ style, update, isRtlBook, section = "text" }: Props) {
   const { t } = useI18n();
-  const { themeId, overrideBookColor, hideChapterTitles, setTheme, toggleDayNight, setOverride, setHideTitles } =
-    useTheme();
+  const { themeId, overrideBookColor, hideChapterTitles, setTheme, setOverride, setHideTitles } = useTheme();
   const dark = THEMES[themeId].dark;
 
   // RAWY-34: render only the active tab's controls (Text · Page · Theme — the design's band I),
@@ -289,9 +288,15 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text" }: 
       {/* ---- PAPER / THEME ---- */}
       <div className="rs-sec-head">
         <span className="rs-label">{t("type.paper")}</span>
+        {/* Day/Night = an explicit light↔dark switch (RAWY-36). "Day" selects the default light
+            theme, "Night" the default dark; clicking the already-active side is a no-op (keeps the
+            current theme). The swatches below pick a specific theme. */}
         <Segmented
           value={dark ? "night" : "day"}
-          onPick={() => toggleDayNight()}
+          onPick={(k) => {
+            if (k === "night" && !dark) setTheme(DEFAULT_DARK);
+            else if (k === "day" && dark) setTheme(DEFAULT_LIGHT);
+          }}
           options={[
             { key: "day", label: t("theme.day") },
             { key: "night", label: t("theme.night") },

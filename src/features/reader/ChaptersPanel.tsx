@@ -36,8 +36,7 @@ export function ChaptersPanel({
 
   return (
     <aside className={`reader-panel rp-lead${open ? " show" : ""}`} dir={dir} aria-hidden={!open}>
-      {/* header (RAWY-33, design C-VI): title + chapter/percent meta, with the anti-spoiler
-          control as a compact eye toggle (RAWY-22 function kept, design's look) + close. */}
+      {/* header (RAWY-33; RAWY-36): title + chapter/percent meta + close. */}
       <div className="rp-head">
         <div className="rp-head-titles">
           <span className="rp-title">{t("panel.contents")}</span>
@@ -46,17 +45,17 @@ export function ChaptersPanel({
           </span>
         </div>
         <div className="rp-head-actions">
-          <button
-            className={`rp-eye${hideTitles ? " off" : ""}`}
-            onClick={onToggleHideTitles}
-            aria-pressed={hideTitles}
-            title={hideTitles ? t("panel.showTitles") : t("panel.hideTitles")}
-          >
-            {hideTitles ? "🙈" : "👁"}
-          </button>
           <button className="rp-x" onClick={onClose} aria-label="✕">✕</button>
         </div>
       </div>
+
+      {/* anti-spoiler control — a clear, labelled toggle (RAWY-36 replaces the emoji button) */}
+      <button className="rp-spoiler" onClick={onToggleHideTitles} aria-pressed={hideTitles}>
+        <span className="rp-spoiler-label">{t("theme.hideTitles")}</span>
+        <span className={`rp-switch${hideTitles ? " on" : ""}`} aria-hidden>
+          <span className="rp-knob" />
+        </span>
+      </button>
 
       <div className="rp-scroll">
         {toc.length === 0 && <div className="rp-empty">{t("panel.noChapters")}</div>}

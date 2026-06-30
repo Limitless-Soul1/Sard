@@ -5,4 +5,4 @@
 export * from "./tokens";
 export * from "./themes";
 export { applyTheme } from "./applyTheme";
-export { useTheme, initTheme } from "./store";
+export { useTheme, initTheme, currentMode, type ThemeMode } from "./store";

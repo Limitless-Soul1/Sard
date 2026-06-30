@@ -29,6 +29,24 @@ export const settingsGet = (key: string): Promise<string | null> =>
 export const settingsSet = (key: string, value: string): Promise<boolean> =>
   invoke<boolean>("settings_set", { key, value });
 
+// ---- Fonts (RAWY-39): import + list user fonts (stored under app-data/fonts, served via asset). ----
+export interface CustomFont {
+  id: string;
+  family_name: string;
+  file_path: string;
+  script: string | null;
+}
+
+/** Copy a font file into the app + record it; returns the new row. */
+export const fontImport = (path: string): Promise<CustomFont> =>
+  invoke<CustomFont>("font_import", { path });
+
+/** List imported fonts (newest first). */
+export const fontsList = (): Promise<CustomFont[]> => invoke<CustomFont[]>("fonts_list");
+
+/** Remove an imported font (row + managed file). */
+export const fontRemove = (id: string): Promise<boolean> => invoke<boolean>("font_remove", { id });
+
 export interface Progress {
   cfi: string | null;
   fraction: number;

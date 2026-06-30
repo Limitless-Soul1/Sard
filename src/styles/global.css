@@ -1190,3 +1190,136 @@ html, body, #root {
 .inbox-empty-mark { font: 400 64px "Literata", serif; color: color-mix(in srgb, var(--accent) 40%, transparent); line-height: 1; }
 .inbox-empty-title { font: 600 18px "Literata", "SardUIArabic", serif; color: var(--text); }
 .inbox-empty-sub { font: 400 13px "Inter", "SardUIArabic", sans-serif; color: var(--muted); max-width: 360px; }
+
+/* ============================================================================
+   Global App Settings — Band H (RAWY-39). A sectioned modal opened from the
+   Library: left nav + content. Theme-tokened; mirrors with the UI direction.
+   ============================================================================ */
+.lib-settings-btn {
+  display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px 11px; border: none;
+  border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer;
+  font: 600 12.5px var(--ui-font); text-align: start;
+}
+.lib-settings-btn:hover { background: var(--lib-hover); color: var(--text); }
+.lib-settings-ico { color: var(--accent); font-size: 15px; }
+
+.gs {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 41;
+  width: min(960px, calc(100vw - 56px)); height: min(660px, calc(100vh - 64px));
+  display: flex; border-radius: 13px; overflow: hidden; background: var(--paper-bg);
+  box-shadow: 0 28px 64px rgba(20, 12, 4, 0.42); border: 1px solid var(--chrome-border);
+  font-family: var(--ui-font);
+}
+/* left nav */
+.gs-nav {
+  width: 232px; flex: none; display: flex; flex-direction: column; padding: 22px 14px;
+  background: var(--chrome-bg); border-inline-end: 1px solid var(--chrome-border);
+}
+.gs-brand { display: flex; align-items: center; gap: 9px; padding: 0 8px 20px; }
+.gs-brand-name { font: 600 16px "Literata", "SardUIArabic", serif; color: var(--text); }
+.gs-nav-list { display: flex; flex-direction: column; gap: 2px; }
+.gs-nav-item {
+  display: flex; align-items: center; gap: 11px; padding: 10px 12px; border: none; border-radius: 8px;
+  background: transparent; color: var(--muted); cursor: pointer; font: 500 13px var(--ui-font);
+  text-align: start; width: 100%;
+}
+.gs-nav-item:hover { background: var(--lib-hover); color: var(--text); }
+.gs-nav-item.on {
+  background: var(--paper-bg); color: var(--text); box-shadow: 0 1px 3px rgba(20, 12, 4, 0.12);
+}
+.gs-nav-ico { width: 16px; text-align: center; color: var(--accent); font-size: 14px; }
+.gs-appwide {
+  margin-top: auto; background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius: 9px;
+  padding: 11px 12px; font: 400 11px/1.55 var(--ui-font); color: var(--muted);
+}
+.gs-appwide b { color: var(--accent); font-weight: 700; }
+/* content */
+.gs-content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.gs-topbar {
+  height: 38px; flex: none; display: flex; align-items: center; justify-content: flex-end;
+  padding-inline-end: 10px; border-bottom: 1px solid var(--chrome-border);
+}
+.gs-x {
+  width: 32px; height: 32px; border: none; background: transparent; color: var(--muted);
+  font-size: 15px; cursor: pointer; border-radius: 7px;
+}
+.gs-x:hover { background: var(--lib-hover); color: var(--text); }
+.gs-body { flex: 1; overflow-y: auto; padding: 24px 30px; display: flex; flex-direction: column; gap: 22px; }
+.gs-h1 { font: 600 21px "Literata", "SardUIArabic", serif; color: var(--text); }
+.gs-sec { display: flex; flex-direction: column; gap: 11px; }
+.gs-sec.gs-two { flex-direction: row; gap: 14px; }
+.gs-sec.gs-two > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 9px; }
+.gs-lbl-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.gs-lbl { font: 600 11px var(--ui-font); letter-spacing: 0.1em; color: var(--muted); text-transform: uppercase; }
+.gs-lbl-hint { font: 400 11px var(--ui-font); color: color-mix(in srgb, var(--muted) 75%, var(--paper-bg)); }
+/* segmented */
+.gs-seg { display: flex; gap: 4px; background: var(--chrome-bg); border-radius: 9px; padding: 4px; max-width: 420px; }
+.gs-seg-item {
+  flex: 1; border: none; background: transparent; color: var(--muted); cursor: pointer;
+  padding: 9px 8px; border-radius: 6px; font: 500 13px var(--ui-font);
+}
+.gs-seg-item.on { background: var(--paper-bg); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); font-weight: 600; }
+/* theme swatches */
+.gs-swatches { display: flex; flex-wrap: wrap; gap: 10px; }
+.gs-swatch-cell { display: flex; flex-direction: column; align-items: center; gap: 5px; border: none; background: transparent; cursor: pointer; padding: 0; width: 64px; }
+.gs-swatch {
+  width: 100%; height: 46px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+  font: 400 17px "Literata", serif; box-shadow: inset 0 0 0 1px var(--chrome-border);
+}
+.gs-swatch.on { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--paper-bg); }
+.gs-swatch-name { font: 500 10px var(--ui-font); color: var(--muted); }
+/* font row + select */
+.gs-fontrow { display: flex; gap: 10px; align-items: stretch; }
+.gs-select {
+  flex: 1; min-width: 0; background: var(--paper-bg); color: var(--text); border: 1px solid var(--chrome-border);
+  border-radius: 9px; padding: 11px 13px; font: 500 14px var(--ui-font); cursor: pointer;
+}
+.gs-addfont {
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 55%, transparent); background: transparent;
+  color: var(--accent); font: 600 13px var(--ui-font); padding: 0 16px; border-radius: 9px; cursor: pointer; white-space: nowrap;
+}
+.gs-addfont:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.gs-addfont:disabled { opacity: 0.5; cursor: default; }
+.gs-fontpreview {
+  margin-top: 4px; padding: 12px 14px; border-radius: 9px; background: color-mix(in srgb, var(--accent) 5%, transparent);
+  color: var(--text); font-size: 17px;
+}
+/* font library chips */
+.gs-chips { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.gs-chip {
+  display: inline-flex; align-items: center; gap: 7px; font: 500 11.5px var(--ui-font); color: var(--muted);
+  padding: 6px 11px; background: color-mix(in srgb, var(--accent) 7%, transparent); border-radius: 16px;
+}
+.gs-chip-imported { color: #fff; background: var(--accent); }
+.gs-chip-x { border: none; background: transparent; color: inherit; cursor: pointer; font-size: 14px; line-height: 1; padding: 0; opacity: 0.8; }
+.gs-chip-x:hover { opacity: 1; }
+.gs-note { font: 400 11.5px var(--ui-font); color: color-mix(in srgb, var(--muted) 80%, var(--paper-bg)); }
+/* reading defaults */
+.gs-banner {
+  display: inline-flex; align-items: center; gap: 7px; align-self: flex-start;
+  background: color-mix(in srgb, #7b59a0 16%, var(--paper-bg)); border: 1px solid color-mix(in srgb, #7b59a0 30%, transparent);
+  border-radius: 16px; padding: 6px 13px; font: 500 11.5px var(--ui-font); color: color-mix(in srgb, #7b59a0 75%, var(--text));
+}
+.gs-slider-head { display: flex; align-items: baseline; justify-content: space-between; }
+.gs-slider-head span:first-child { font: 500 13px var(--ui-font); color: var(--text); }
+.gs-slider-val { font: 500 12px var(--ui-font); color: var(--accent); }
+.gs-slider { width: 100%; accent-color: var(--accent); }
+/* bookmark placeholder */
+.gs-soon {
+  display: flex; align-items: center; gap: 11px; padding: 16px 18px; border-radius: 10px;
+  border: 1px dashed var(--chrome-border); background: color-mix(in srgb, var(--accent) 4%, transparent);
+  color: var(--muted); font: 500 13px var(--ui-font);
+}
+.gs-soon-ico { color: var(--accent); font-size: 15px; }
+/* about */
+.gs-about { display: flex; align-items: center; gap: 16px; }
+.gs-about-name { font: 700 18px "Literata", "SardUIArabic", serif; color: var(--text); }
+.gs-about-tag { font: 400 13px var(--ui-font); color: var(--muted); margin-top: 2px; }
+.gs-about-ver { font: 500 12px var(--ui-font); color: color-mix(in srgb, var(--muted) 80%, var(--paper-bg)); margin-top: 6px; }
+/* two-level distinction card */
+.gs-twolevel { display: flex; gap: 14px; margin-top: 4px; }
+.gs-tl-card { flex: 1; background: color-mix(in srgb, var(--accent) 5%, transparent); border: 1px solid var(--chrome-border); border-radius: 10px; padding: 16px 18px; }
+.gs-tl-head { display: flex; align-items: center; gap: 9px; font: 600 14px var(--ui-font); color: var(--text); margin-bottom: 7px; }
+.gs-tl-ico { width: 24px; height: 24px; border-radius: 7px; display: flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; font-size: 13px; }
+.gs-tl-ico-book { background: #7b59a0; }
+.gs-tl-desc { font: 400 12px/1.55 var(--ui-font); color: var(--muted); }

@@ -119,6 +119,9 @@ pub fn run() {
             commands::note_create,
             commands::note_update,
             commands::note_delete,
+            commands::font_import,
+            commands::fonts_list,
+            commands::font_remove,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sard");

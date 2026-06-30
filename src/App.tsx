@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import "./styles/global.css";
 import { I18nProvider, useI18n } from "./i18n";
+import { initFonts } from "./lib/fonts";
 import { initTheme, useTheme } from "./theme";
 import { LanguagePicker } from "./features/onboarding/LanguagePicker";
 import { Library, type OpenTarget } from "./features/library/Library";
@@ -35,7 +36,8 @@ function Root() {
 
 function App() {
   useEffect(() => {
-    initTheme(); // load + apply persisted theme/override/hide-titles
+    initTheme(); // load + apply persisted theme/override/hide-titles/mode (RAWY-39)
+    initFonts(); // load + apply persisted UI font + register imported @font-faces (RAWY-39)
   }, []);
   return (
     <I18nProvider>

@@ -23,8 +23,8 @@ import {
   type SortKey,
   type SortOrder,
 } from "../../lib/ipc";
-import { THEME_ORDER, THEMES, useTheme } from "../../theme";
 import { AutoCover } from "./AutoCover";
+import { GlobalSettings } from "../settings/GlobalSettings";
 import { Hoopoe } from "./Hoopoe";
 import { Inbox } from "./Inbox";
 
@@ -68,6 +68,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const { t, lang } = useI18n();
 
   const [section, setSection] = useState<"library" | "inbox">("library");
+  const [settingsOpen, setSettingsOpen] = useState(false); // RAWY-39 global settings
   const [books, setBooks] = useState<BookRow[]>([]);
   const [editing, setEditing] = useState<BookRow | null>(null);
   const [shelves, setShelves] = useState<CollectionRow[]>([]);
@@ -373,9 +374,13 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
           )}
         </div>
 
+        {/* RAWY-39: the Library foot opens GLOBAL app settings (theme, UI font, reading
+            defaults, language). The single language control now lives there (D22). */}
         <div className="lib-sidefoot">
-          <LanguageSwitcher />
-          <ThemeSwitcher />
+          <button className="lib-settings-btn" onClick={() => setSettingsOpen(true)} title={t("gs.open")}>
+            <span className="lib-settings-ico" aria-hidden>⚙</span>
+            <span>{t("gs.open")}</span>
+          </button>
         </div>
       </aside>
 
@@ -575,45 +580,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         />
       )}
       {toast && <div className="lib-toast">{toast}</div>}
-    </div>
-  );
-}
-
-const LANGS = [
-  { code: "en", label: "English" },
-  { code: "ar", label: "العربية" },
-] as const;
-
-function LanguageSwitcher() {
-  const { lang, setLang, t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const current = LANGS.find((l) => l.code === lang) ?? LANGS[0];
-  return (
-    <div className="lib-lang">
-      <button className="lib-lang-btn" onClick={() => setOpen((o) => !o)} title={t("settings.language")}>
-        <span className="lib-lang-globe" aria-hidden>◍</span>
-        <span className={lang === "ar" ? "lib-lang-ar" : undefined}>{current.label}</span>
-      </button>
-      {open && (
-        <>
-          <div className="lib-clickaway" onClick={() => setOpen(false)} />
-          <div className="lib-menu lib-lang-menu">
-            {LANGS.map((l) => (
-              <button
-                key={l.code}
-                className={l.code === lang ? "active" : ""}
-                onClick={() => {
-                  setLang(l.code);
-                  setOpen(false);
-                }}
-              >
-                <span className={l.code === "ar" ? "lib-lang-ar" : undefined}>{l.label}</span>
-                {l.code === lang && <span className="lib-lang-check" aria-hidden>✓</span>}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
+      <GlobalSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }
@@ -844,48 +811,6 @@ function EditBook({
         </div>
       </div>
     </>
-  );
-}
-
-function ThemeSwitcher() {
-  const { t } = useI18n();
-  const themeId = useTheme((s) => s.themeId);
-  const setTheme = useTheme((s) => s.setTheme);
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="lib-theme">
-      <button
-        className="lib-theme-btn"
-        onClick={() => setOpen((o) => !o)}
-        title={t("theme.label")}
-        aria-label={t("theme.label")}
-      >
-        ◐
-      </button>
-      {open && (
-        <>
-          <div className="lib-clickaway" onClick={() => setOpen(false)} />
-          <div className="lib-theme-menu">
-            {THEME_ORDER.map((id) => {
-              const th = THEMES[id];
-              return (
-                <button
-                  key={id}
-                  className={`lib-swatch${id === themeId ? " active" : ""}`}
-                  style={{ background: th.colors.paperBg, borderColor: th.colors.accent }}
-                  onClick={() => {
-                    setTheme(id);
-                    setOpen(false);
-                  }}
-                  title={th.name}
-                  aria-label={th.name}
-                />
-              );
-            })}
-          </div>
-        </>
-      )}
-    </div>
   );
 }
 

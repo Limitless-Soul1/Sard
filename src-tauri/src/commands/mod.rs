@@ -5,7 +5,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::db::{self, AppState};
-use crate::{books, library, settings};
+use crate::{books, fonts, library, settings};
 
 #[derive(Serialize)]
 pub struct AppInfo {
@@ -320,5 +320,28 @@ pub fn note_update(id: String, body: String, color: Option<String>, state: State
 pub fn note_delete(id: String, state: State<AppState>) -> Result<bool, String> {
     let conn = state.db.lock().map_err(err)?;
     library::note_delete(&conn, &id).map_err(err)?;
+    Ok(true)
+}
+
+// ---- Fonts (RAWY-39): import a user font file + list imported fonts. ----
+
+#[tauri::command]
+pub fn font_import(path: String, state: State<AppState>) -> Result<fonts::CustomFont, String> {
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.db.lock().map_err(err)?;
+    fonts::import(&conn, &app_data_dir, &path)
+}
+
+#[tauri::command]
+pub fn fonts_list(state: State<AppState>) -> Result<Vec<fonts::CustomFont>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    fonts::list(&conn)
+}
+
+#[tauri::command]
+pub fn font_remove(id: String, state: State<AppState>) -> Result<bool, String> {
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.db.lock().map_err(err)?;
+    fonts::remove(&conn, &app_data_dir, &id)?;
     Ok(true)
 }

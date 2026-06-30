@@ -116,9 +116,16 @@ html, body, #root {
    the top edge at the app-wide horizontal position; FIXED physical `left` (no language flip);
    draggable. The shape itself is drawn by <BookmarkShape>. */
 .page-bookmark {
-  position: absolute; top: -2px; z-index: 4; transform: translateX(-50%);
+  position: absolute; top: -2px; transform: translateX(-50%);
+  /* RAWY-42: above the chrome (z5 > chrome z4) so it's never hidden by the top bar, and a soft
+     shadow for clarity. When the bar is shown the marker drops BELOW it (.below) so it stays
+     fully legible; when immersive it tucks at the page top. */
+  z-index: 5;
   cursor: grab; touch-action: none; user-select: none;
+  filter: drop-shadow(0 3px 4px rgba(30, 18, 6, 0.32));
+  transition: top 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
+.page-bookmark.below { top: 62px; } /* clears the 58px top bar (RAWY-42) */
 .page-bookmark:active { cursor: grabbing; }
 .bm-shape { display: inline-block; }
 

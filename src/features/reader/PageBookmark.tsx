@@ -10,7 +10,7 @@ import { useRef } from "react";
 import { useBookmarkStyle } from "../../lib/bookmarkStyle";
 import { BookmarkShape } from "./BookmarkShape";
 
-export function PageBookmark({ title }: { title?: string }) {
+export function PageBookmark({ title, belowChrome }: { title?: string; belowChrome?: boolean }) {
   const { shape, color, pos, setPos } = useBookmarkStyle();
   const ref = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
@@ -39,13 +39,13 @@ export function PageBookmark({ title }: { title?: string }) {
   return (
     <div
       ref={ref}
-      className="page-bookmark"
+      className={`page-bookmark${belowChrome ? " below" : ""}`}
       style={{ left: `${pos * 100}%` }}
       onPointerDown={onPointerDown}
       title={title}
       role="img"
     >
-      <BookmarkShape shape={shape} color={color} h={46} />
+      <BookmarkShape shape={shape} color={color} h={68} />
     </div>
   );
 }

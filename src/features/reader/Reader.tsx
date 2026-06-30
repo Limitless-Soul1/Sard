@@ -280,6 +280,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   };
 
   const isRtlBook = dir === "rtl";
+  // Whether the chrome bar is currently shown — the bookmark marker drops below it so it stays
+  // visible (RAWY-42); same condition the chrome itself uses.
+  const chromeShown = chromeVisible || settingsOpen || chaptersOpen || annoOpen;
   // When chapter titles are hidden (anti-spoiler), the chrome shows a neutral "Chapter N".
   const tocIndex = toc.findIndex((c) => c.href && c.href === chapterHref);
   const chapter = hideChapterTitles
@@ -344,7 +347,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         <div className={`page-sheet${isRtlBook ? " rtl" : ""}${fitWindow ? " fitw" : ""}`}>
           {/* RAWY-41: the bookmark marker shows ONLY where a saved bookmark is visible (not the
               old always-on ribbon). Fixed physical position; draggable along the top edge. */}
-          {activeBm && <PageBookmark title={t("bookmark.here")} />}
+          {activeBm && <PageBookmark title={t("bookmark.here")} belowChrome={chromeShown} />}
           <div className="page-host" ref={stageRef} dir="ltr" />
           <div className="page-grain" />
         </div>
@@ -376,7 +379,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       />
 
       <ReaderChrome
-        visible={chromeVisible || settingsOpen || chaptersOpen || annoOpen}
+        visible={chromeShown}
         bookTitle={bookTitle}
         chapter={chapter}
         fraction={fraction}

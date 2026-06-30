@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles/global.css";
 import { I18nProvider, useI18n } from "./i18n";
 import { initBookmarkStyle } from "./lib/bookmarkStyle";
@@ -40,6 +41,27 @@ function App() {
     initTheme(); // load + apply persisted theme/override/hide-titles/mode (RAWY-39)
     initFonts(); // load + apply persisted UI font + register imported @font-faces (RAWY-39)
     initBookmarkStyle(); // load persisted bookmark shape/colour/position (RAWY-41)
+  }, []);
+
+  // F11 toggles fullscreen (the Windows convention); Esc exits when fullscreen (RAWY-42). Works
+  // app-wide via the Tauri window API. We track our OWN intent rather than reading
+  // `isFullscreen()` (which can lag the actual state, so a naive `!isFullscreen()` re-entered
+  // instead of exiting). Esc is a no-op when not fullscreen, so it never clobbers other Esc use.
+  useEffect(() => {
+    let full = false;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "F11") {
+        e.preventDefault();
+        full = !full;
+        getCurrentWindow().setFullscreen(full).catch(console.error);
+      } else if (e.key === "Escape" && full) {
+        e.preventDefault();
+        full = false;
+        getCurrentWindow().setFullscreen(false).catch(console.error);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
   return (
     <I18nProvider>

@@ -1586,18 +1586,29 @@ html, body, #root {
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3), 0 30px 60px rgba(0, 0, 0, 0.5);
 }
 .pg-lb-caption { text-align: center; font: 400 12.5px var(--ui-font); color: rgba(243, 236, 219, 0.72); max-width: 520px; }
+/* Action pill — design-exact colours per light/dark polarity (RAWY-57): a cream/paper pill on
+   light, a dark pill on dark; Save = the theme accent; Copy/Edit quiet; Delete a tinted
+   destructive chip (#B24A4A on light, the lighter #E88C8C on dark). */
 .pg-lb-pill {
-  display: flex; align-items: center; gap: 4px; background: var(--chrome-bg); border: 1px solid var(--chrome-border);
+  display: flex; align-items: center; gap: 4px; background: #FBF7EC; border: 1px solid rgba(43, 37, 33, 0.08);
   border-radius: 14px; padding: 7px; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
 }
-.pg-lb-pill button { display: flex; align-items: center; gap: 8px; border: none; background: transparent; color: var(--text); font: 600 13px var(--ui-font); padding: 11px 16px; border-radius: 9px; cursor: pointer; }
+.pg-lightbox.dark .pg-lb-pill { background: #20212F; border-color: rgba(255, 255, 255, 0.08); }
+.pg-lb-pill button { display: flex; align-items: center; gap: 8px; border: none; background: transparent; color: #3a332c; font: 600 13px var(--ui-font); padding: 11px 15px; border-radius: 9px; cursor: pointer; }
+.pg-lightbox.dark .pg-lb-pill button { color: #E4E2F0; }
 .pg-lb-pill button:disabled { opacity: 0.55; cursor: default; }
 .pg-lb-ico { flex: none; }
 .pg-lb-save { background: var(--accent) !important; color: var(--paper-bg) !important; padding-inline: 18px !important; }
-.pg-lb-copy:hover, .pg-lb-cancel:hover { background: var(--chrome-border); }
-.pg-lb-sep { width: 1px; height: 22px; background: var(--chrome-border); margin: 0 3px; flex: none; }
-.pg-lb-del { background: rgba(178, 74, 74, 0.12) !important; color: #B24A4A !important; }
-.pg-lb-del:hover { background: rgba(178, 74, 74, 0.2) !important; }
+.pg-lb-copy:hover, .pg-lb-edit:hover, .pg-lb-cancel:hover { background: rgba(43, 37, 33, 0.06); }
+.pg-lightbox.dark .pg-lb-copy:hover, .pg-lightbox.dark .pg-lb-edit:hover, .pg-lightbox.dark .pg-lb-cancel:hover { background: rgba(255, 255, 255, 0.07); }
+.pg-lb-sep { width: 1px; height: 22px; background: rgba(43, 37, 33, 0.14); margin: 0 3px; flex: none; }
+.pg-lightbox.dark .pg-lb-sep { background: rgba(255, 255, 255, 0.08); }
+.pg-lb-del { background: rgba(178, 74, 74, 0.1) !important; color: #B24A4A !important; }
+.pg-lb-del:hover { background: rgba(178, 74, 74, 0.18) !important; }
+.pg-lightbox.dark .pg-lb-del { background: rgba(232, 140, 140, 0.14) !important; color: #E88C8C !important; }
+.pg-lightbox.dark .pg-lb-del:hover { background: rgba(232, 140, 140, 0.22) !important; }
 .pg-lb-del.confirm { background: #B24A4A !important; color: #fff !important; }
-.pg-lb-confirm-text { font: 500 13px var(--ui-font); color: var(--text); padding-inline: 12px 4px; }
+.pg-lightbox.dark .pg-lb-del.confirm { background: #E88C8C !important; color: #12131F !important; }
+.pg-lb-confirm-text { font: 500 13px var(--ui-font); color: #3a332c; padding-inline: 12px 4px; }
+.pg-lightbox.dark .pg-lb-confirm-text { color: #E4E2F0; }
 .pg-toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 60; background: var(--text); color: var(--app-bg); font: 600 13px var(--ui-font); padding: 10px 22px; border-radius: 22px; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28); }

@@ -162,6 +162,7 @@ export const ar: Record<TKey, string> = {
   "photo.copyFail": "تعذّر النسخ",
   "photo.saveInApp": "حفظ في التطبيق",
   "photo.savedInApp": "حُفظت في سَرْد",
+  "photo.updatedInApp": "تم التحديث",
   "fmt.square": "مربّع",
   "fmt.portrait": "طولي",
   "fmt.story": "قصة",
@@ -176,6 +177,7 @@ export const ar: Record<TKey, string> = {
   "cards.empty.hint": "عندما تحوّل مقطعًا إلى بطاقة مصوّرة وتختار «حفظ في التطبيق»، تظهر هنا — مع كتابها وفصلها وتاريخها، جاهزة لإعادة المشاركة في أي وقت.",
   "cards.delete": "حذف",
   "cards.cancel": "إلغاء",
+  "cards.edit": "تعديل",
   "cards.deleteConfirm": "حذف هذه البطاقة المصوّرة؟",
 
   // Reading side panels + page width (RAWY-21)

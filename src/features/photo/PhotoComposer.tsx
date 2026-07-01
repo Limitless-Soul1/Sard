@@ -176,18 +176,24 @@ function PhotoCard({
 export function PhotoComposer({
   data,
   initialThemeId,
+  initialFormat,
+  initialMeta,
+  editId,
   lang,
   onClose,
 }: {
   data: CardData;
   initialThemeId: ThemeId;
+  initialFormat?: CardFormat; // RAWY-57: reopen a saved card in the same format…
+  initialMeta?: CardMeta;
+  editId?: string; // …and re-save over the same card (Edit) instead of creating a new one
   lang: string;
   onClose: () => void;
 }) {
   const { t } = useI18n();
   const [themeId, setThemeId] = useState<ThemeId>(initialThemeId);
-  const [format, setFormat] = useState<CardFormat>("portrait");
-  const [meta, setMeta] = useState<CardMeta>(DEFAULT_META);
+  const [format, setFormat] = useState<CardFormat>(initialFormat ?? "portrait");
+  const [meta, setMeta] = useState<CardMeta>(initialMeta ?? DEFAULT_META);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -258,19 +264,22 @@ export function PhotoComposer({
     try {
       const blob = await rasterize();
       const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+      // Edit (RAWY-57): re-save over the same id (upsert), keeping the original save time; a
+      // fresh card gets a new id + now.
       await photocardSave({
-        id: crypto.randomUUID(),
+        id: editId ?? crypto.randomUUID(),
         bookId: data.bookId ?? null,
         bookTitle: data.bookTitle ?? null,
+        author: data.author ?? null,
         chapterLabel: data.chapterLabel ?? null,
         cfi: data.cfi ?? null,
         format,
         themeId,
         quote: data.quote,
-        createdAt: Math.floor(Date.now() / 1000),
+        createdAt: editId ? Math.floor(data.date.getTime() / 1000) : Math.floor(Date.now() / 1000),
         data: bytes,
       });
-      flash(t("photo.savedInApp"));
+      flash(editId ? t("photo.updatedInApp") : t("photo.savedInApp"));
     } catch (e) {
       console.error(e);
       flash(t("photo.saveFail"));

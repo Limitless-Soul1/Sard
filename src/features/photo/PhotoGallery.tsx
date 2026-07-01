@@ -8,8 +8,30 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 
 import { useI18n } from "../../i18n";
-import { THEMES, useTheme } from "../../theme";
+import { THEMES, useTheme, type ThemeId } from "../../theme";
 import { photocardDelete, photocardsList, type PhotoCardRow } from "../../lib/ipc";
+import { PhotoComposer } from "./PhotoComposer";
+import { DEFAULT_META, FORMATS, type CardData, type CardFormat } from "./photo";
+
+const ARABIC = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
+
+// Reopen a saved card in the composer (RAWY-57 Edit): rebuild CardData from the stored row.
+// Format + theme are restored; the direction is inferred from the quote; the show-on-card
+// toggles were not stored, so they fall back to the defaults (noted).
+function rowToCardData(row: PhotoCardRow): CardData {
+  return {
+    quote: row.quote ?? "",
+    dir: ARABIC.test(row.quote ?? "") ? "rtl" : "ltr",
+    bookId: row.book_id ?? undefined,
+    cfi: row.cfi ?? undefined,
+    bookTitle: row.book_title ?? undefined,
+    author: row.author ?? undefined,
+    chapterLabel: row.chapter_label ?? undefined,
+    date: new Date(row.created_at * 1000),
+  };
+}
+const validTheme = (id: string | null): ThemeId | null => (id && id in THEMES ? (id as ThemeId) : null);
+const validFormat = (f: string | null): CardFormat | undefined => FORMATS.find((x) => x.key === f)?.key;
 
 // Line icons for the lightbox action pill (stroke = currentColor so they inherit the button ink).
 const IconDownload = () => (
@@ -26,6 +48,11 @@ const IconTrash = () => (
   <svg className="pg-lb-ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
     <line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" />
+  </svg>
+);
+const IconEdit = () => (
+  <svg className="pg-lb-ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" /><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z" />
   </svg>
 );
 
@@ -58,6 +85,7 @@ export function PhotoGallery() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [confirmDel, setConfirmDel] = useState(false);
+  const [editing, setEditing] = useState<PhotoCardRow | null>(null); // RAWY-57: Edit → composer
 
   const load = () => {
     photocardsList()
@@ -175,6 +203,7 @@ export function PhotoGallery() {
                 <>
                   <button className="pg-lb-save" onClick={() => onSave(open)} disabled={busy}><IconDownload />{t("photo.save")}</button>
                   <button className="pg-lb-copy" onClick={() => onCopy(open)} disabled={busy}><IconCopy />{t("photo.copy")}</button>
+                  <button className="pg-lb-edit" onClick={() => { setEditing(open); setOpen(null); }}><IconEdit />{t("cards.edit")}</button>
                   <span className="pg-lb-sep" />
                   <button className="pg-lb-del" onClick={() => setConfirmDel(true)}><IconTrash />{t("cards.delete")}</button>
                 </>
@@ -182,6 +211,19 @@ export function PhotoGallery() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Edit (RAWY-57): reopen the composer pre-loaded with the saved card; re-save overwrites it. */}
+      {editing && (
+        <PhotoComposer
+          data={rowToCardData(editing)}
+          initialThemeId={validTheme(editing.theme_id) ?? useTheme.getState().bookThemeId}
+          initialFormat={validFormat(editing.format)}
+          initialMeta={DEFAULT_META}
+          editId={editing.id}
+          lang={lang}
+          onClose={() => { setEditing(null); load(); }}
+        />
       )}
 
       {toast && <div className="pg-toast">{toast}</div>}

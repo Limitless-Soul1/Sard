@@ -297,6 +297,7 @@ export interface PhotoCardRow {
   id: string;
   book_id: string | null;
   book_title: string | null;
+  author: string | null;
   chapter_label: string | null;
   cfi: string | null;
   format: string | null;
@@ -310,6 +311,7 @@ export const photocardSave = (args: {
   id: string;
   bookId?: string | null;
   bookTitle?: string | null;
+  author?: string | null;
   chapterLabel?: string | null;
   cfi?: string | null;
   format?: string | null;
@@ -322,6 +324,7 @@ export const photocardSave = (args: {
     id: args.id,
     bookId: args.bookId ?? null,
     bookTitle: args.bookTitle ?? null,
+    author: args.author ?? null,
     chapterLabel: args.chapterLabel ?? null,
     cfi: args.cfi ?? null,
     format: args.format ?? null,

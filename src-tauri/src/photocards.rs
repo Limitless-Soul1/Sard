@@ -13,6 +13,7 @@ pub struct PhotoCard {
     pub id: String,
     pub book_id: Option<String>,
     pub book_title: Option<String>,
+    pub author: Option<String>,
     pub chapter_label: Option<String>,
     pub cfi: Option<String>,
     pub format: Option<String>,
@@ -28,6 +29,7 @@ pub struct SaveMeta {
     pub id: String,
     pub book_id: Option<String>,
     pub book_title: Option<String>,
+    pub author: Option<String>,
     pub chapter_label: Option<String>,
     pub cfi: Option<String>,
     pub format: Option<String>,
@@ -55,14 +57,16 @@ pub fn save(
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join(format!("{}.png", meta.id));
     fs::write(&path, data).map_err(|e| e.to_string())?;
+    // INSERT OR REPLACE so an "Edit" re-save with the same id overwrites the row (RAWY-57).
     conn.execute(
-        "INSERT INTO photo_cards \
-         (id, book_id, book_title, chapter_label, cfi, format, theme_id, quote, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT OR REPLACE INTO photo_cards \
+         (id, book_id, book_title, author, chapter_label, cfi, format, theme_id, quote, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         rusqlite::params![
             meta.id,
             meta.book_id,
             meta.book_title,
+            meta.author,
             meta.chapter_label,
             meta.cfi,
             meta.format,
@@ -77,6 +81,7 @@ pub fn save(
         id: meta.id,
         book_id: meta.book_id,
         book_title: meta.book_title,
+        author: meta.author,
         chapter_label: meta.chapter_label,
         cfi: meta.cfi,
         format: meta.format,
@@ -90,7 +95,7 @@ pub fn save(
 pub fn list(conn: &Connection, app_data_dir: &Path) -> Result<Vec<PhotoCard>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, book_id, book_title, chapter_label, cfi, format, theme_id, quote, created_at \
+            "SELECT id, book_id, book_title, author, chapter_label, cfi, format, theme_id, quote, created_at \
              FROM photo_cards ORDER BY created_at DESC",
         )
         .map_err(|e| e.to_string())?;
@@ -102,12 +107,13 @@ pub fn list(conn: &Connection, app_data_dir: &Path) -> Result<Vec<PhotoCard>, St
                 id,
                 book_id: r.get(1)?,
                 book_title: r.get(2)?,
-                chapter_label: r.get(3)?,
-                cfi: r.get(4)?,
-                format: r.get(5)?,
-                theme_id: r.get(6)?,
-                quote: r.get(7)?,
-                created_at: r.get(8)?,
+                author: r.get(3)?,
+                chapter_label: r.get(4)?,
+                cfi: r.get(5)?,
+                format: r.get(6)?,
+                theme_id: r.get(7)?,
+                quote: r.get(8)?,
+                created_at: r.get(9)?,
             })
         })
         .map_err(|e| e.to_string())?;

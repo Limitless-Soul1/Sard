@@ -161,6 +161,7 @@ export const en = {
   "photo.copyFail": "Couldn't copy",
   "photo.saveInApp": "Save in app",
   "photo.savedInApp": "Saved in Sard",
+  "photo.updatedInApp": "Updated",
   "fmt.square": "Square",
   "fmt.portrait": "Portrait",
   "fmt.story": "Story",
@@ -175,6 +176,7 @@ export const en = {
   "cards.empty.hint": "When you turn a passage into a photo card and choose “Save in app”, it lands here — with its book, chapter and date, ready to re-share anytime.",
   "cards.delete": "Delete",
   "cards.cancel": "Cancel",
+  "cards.edit": "Edit",
   "cards.deleteConfirm": "Delete this photo card?",
 
   // Reading side panels + page width (RAWY-21)

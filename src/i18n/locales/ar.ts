@@ -147,6 +147,7 @@ export const ar: Record<TKey, string> = {
   "photo.card": "إنشاء بطاقة مصوّرة",
   "photo.title": "بطاقة مصوّرة",
   "photo.subtitle": "مقطع واحد · خط البطاقة يتبع الكتاب",
+  "photo.subtitleMulti": "{n} مقاطع · خط البطاقة يتبع الكتاب",
   "photo.paper": "الورق",
   "photo.format": "المقاس",
   "photo.show": "إظهار على البطاقة",
@@ -165,6 +166,17 @@ export const ar: Record<TKey, string> = {
   "photo.saveInApp": "حفظ في التطبيق",
   "photo.savedInApp": "حُفظت في سَرْد",
   "photo.updatedInApp": "تم التحديث",
+
+  // Photo Mode — multi-passage collection / basket (RAWY-60)
+  "photo.addToCard": "أضِف للبطاقة",
+  "photo.basket": "السلّة",
+  "basket.title": "سلّة البطاقة",
+  "basket.count": "{n} مقاطع",
+  "basket.empty": "لا مقاطع بعد",
+  "basket.create": "أنشئ البطاقة · {n}",
+  "basket.clear": "مسح",
+  "basket.remove": "إزالة",
+
   "fmt.square": "مربّع",
   "fmt.portrait": "طولي",
   "fmt.story": "قصة",

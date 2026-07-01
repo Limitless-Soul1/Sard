@@ -402,6 +402,7 @@ pub fn photocard_save(
     format: Option<String>,
     theme_id: Option<String>,
     quote: Option<String>,
+    passages: Option<String>,
     created_at: i64,
     data: Vec<u8>,
     state: State<AppState>,
@@ -418,6 +419,7 @@ pub fn photocard_save(
         format,
         theme_id,
         quote,
+        passages,
         created_at,
     };
     photocards::save(&conn, &app_data_dir, meta, &data)

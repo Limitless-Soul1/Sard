@@ -14,6 +14,7 @@ import { photocardSave } from "../../lib/ipc";
 import { useI18n } from "../../i18n";
 import { THEMES, THEME_ORDER, type ThemeId } from "../../theme";
 import {
+  cardSeparator,
   DEFAULT_META,
   EXPORT_RATIO,
   FORMATS,
@@ -22,6 +23,7 @@ import {
   type CardData,
   type CardFormat,
   type CardMeta,
+  type CardPassage,
 } from "./photo";
 
 const STAGE_MAX_W = 520;
@@ -53,11 +55,23 @@ function PhotoCard({
   const s = (n: number) => W * n; // proportional px from the card width
   const lineH = arabic ? 1.85 : 1.55;
 
+  // Multi-passage collection (RAWY-60): normalise to a passages list (a single-passage card is one
+  // entry — it renders EXACTLY as before). When passages span >1 chapter we drop the footer chapter
+  // and give each passage its own small label; when they share a chapter (or there's just one) the
+  // book+chapter shows once in the footer (design Band I-IV "metadata rule of thumb").
+  const passages: CardPassage[] = data.passages && data.passages.length
+    ? data.passages
+    : [{ text: data.quote, chapterLabel: data.chapterLabel }];
+  const multi = passages.length > 1;
+  const chaptersDiffer = multi && new Set(passages.map((p) => (p.chapterLabel ?? "").trim())).size > 1;
+  const sep = cardSeparator(themeId);
+  const footChapter = chaptersDiffer ? undefined : passages[0]?.chapterLabel ?? data.chapterLabel;
+
   // The credit "chapter — author" line + the footer row (date + brand). The credit + footer are
   // NATURAL-height siblings of the flex:1 quote area, and the quote area is min-height:0 +
   // overflow:hidden — so the footer details are ALWAYS reserved (RAWY-50 fix: a long quote can no
   // longer push them off the card in Square/Portrait; it's the QUOTE that fits, never the footer).
-  const subtitle = [meta.chapter && data.chapterLabel, meta.author && data.author]
+  const subtitle = [meta.chapter && footChapter, meta.author && data.author]
     .filter(Boolean)
     .join("  —  ");
   const dateStr = meta.date ? formatCardDate(data.date, lang) : "";
@@ -68,9 +82,10 @@ function PhotoCard({
   // area — short quotes grow large, long quotes shrink to fit (never clipping the footer). Set
   // imperatively so it survives theme re-renders (fontSize is never in the JSX style prop).
   const wrapRef = useRef<HTMLDivElement>(null);
-  const pRef = useRef<HTMLParagraphElement>(null);
-  const base = s(0.066);
+  const pRef = useRef<HTMLElement>(null); // the <p> (single) or the collection container (multi)
+  const base = s(multi ? 0.06 : 0.066); // a collection starts a touch smaller (more to fit)
   const metaKey = `${meta.title}${meta.author}${meta.chapter}${meta.date}${meta.brand}`;
+  const passagesKey = passages.map((p) => `${p.text}|${p.chapterLabel ?? ""}`).join("¶");
   useLayoutEffect(() => {
     const wrap = wrapRef.current;
     const p = pRef.current;
@@ -87,7 +102,7 @@ function PhotoCard({
     // If it STILL can't fit at the floor (an extreme passage for a small format), read from the
     // TOP so it clips only the tail — never both ends — and the footer stays put.
     wrap.style.alignItems = p.scrollHeight > wrap.clientHeight + 1 ? "flex-start" : "center";
-  }, [data.quote, format, metaKey, W, H, arabic, base]);
+  }, [passagesKey, format, metaKey, chaptersDiffer, W, H, arabic, base]);
 
   return (
     <div
@@ -110,13 +125,48 @@ function PhotoCard({
       </div>
 
       <div ref={wrapRef} className="pc-quote-wrap">
-        <p
-          ref={pRef}
-          className="pc-quote"
-          style={{ fontFamily: bookFont, fontWeight: 400, lineHeight: lineH, color: c.text, textAlign: arabic ? "center" : "start" }}
-        >
-          {data.quote}
-        </p>
+        {multi ? (
+          <div
+            ref={pRef as React.RefObject<HTMLDivElement>}
+            className="pc-quote pc-quote-multi"
+            style={{ fontFamily: bookFont, lineHeight: lineH, color: c.text, textAlign: arabic ? "center" : "start" }}
+          >
+            {passages.map((p, i) => (
+              <div key={i} className="pc-passage-block">
+                {i > 0 && (
+                  <div className="pc-sep" style={{ color: c.accent }} aria-hidden>
+                    {sep}
+                  </div>
+                )}
+                <p className="pc-passage" style={{ fontWeight: 400 }}>
+                  {p.text}
+                </p>
+                {chaptersDiffer && meta.chapter && p.chapterLabel && (
+                  <div
+                    className="pc-passage-chapter"
+                    style={{
+                      fontFamily: metaFont,
+                      fontWeight: 600,
+                      color: c.muted,
+                      letterSpacing: arabic ? 0 : ".1em",
+                      textTransform: arabic ? "none" : "uppercase",
+                    }}
+                  >
+                    {p.chapterLabel}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p
+            ref={pRef as React.RefObject<HTMLParagraphElement>}
+            className="pc-quote"
+            style={{ fontFamily: bookFont, fontWeight: 400, lineHeight: lineH, color: c.text, textAlign: arabic ? "center" : "start" }}
+          >
+            {passages[0].text}
+          </p>
+        )}
       </div>
 
       {hasCredit && (
@@ -276,6 +326,9 @@ export function PhotoComposer({
         format,
         themeId,
         quote: data.quote,
+        // A multi-passage card (RAWY-60) persists its passages so "Edit" restores the full
+        // collection; a single-passage card leaves this null and rides on `quote` as before.
+        passages: data.passages && data.passages.length > 1 ? JSON.stringify(data.passages) : null,
         createdAt: editId ? Math.floor(data.date.getTime() / 1000) : Math.floor(Date.now() / 1000),
         data: bytes,
       });
@@ -312,7 +365,11 @@ export function PhotoComposer({
           <div className="pc-panel-body">
             <div className="pc-panel-title">
               <div className="pc-panel-name">{t("photo.title")}</div>
-              <div className="pc-panel-sub">{t("photo.subtitle")}</div>
+              <div className="pc-panel-sub">
+                {data.passages && data.passages.length > 1
+                  ? t("photo.subtitleMulti", { n: String(data.passages.length) })
+                  : t("photo.subtitle")}
+              </div>
             </div>
 
             <div className="pc-group">

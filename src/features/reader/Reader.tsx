@@ -29,6 +29,8 @@ import {
 import { useStyleScope } from "../../lib/styleScope";
 import { AnnotationLayer } from "./AnnotationLayer";
 import { AnnotationsPanel } from "./AnnotationsPanel";
+import { PhotoBasketTray } from "./PhotoBasketTray";
+import { usePhotoBasket } from "./photoBasket";
 import { ChaptersPanel } from "./ChaptersPanel";
 import { PageBookmark } from "./PageBookmark";
 import { useAnnotations } from "./annotationsStore";
@@ -72,6 +74,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const [bookThemeId, setBookThemeId] = useState<ThemeId>(useTheme.getState().bookThemeId);
   const [hasOv, setHasOv] = useState(false);
   const [photoCard, setPhotoCard] = useState<CardData | null>(null); // RAWY-49 Photo Mode composer
+  const [basketOpen, setBasketOpen] = useState(false); // RAWY-60 passages tray
+  const basketCount = usePhotoBasket((s) => s.passages.length);
 
   const { status, dir, fraction, chapterLabel, chapterHref, error, style, bookTitle } = useReader();
   // RAWY-43: unified (all books share one style) vs per-book. Drives where changes are written
@@ -154,6 +158,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     return () => {
       if (progressTimer.current) clearTimeout(progressTimer.current);
       ctrlRef.current?.dispose();
+      // The photo-card basket is a per-reading-session collection (RAWY-60) — clear it on exit.
+      usePhotoBasket.getState().clear();
       // Restore the LIBRARY theme to the chrome on exit (RAWY-40/48) — the book theme was only
       // for this reading session; the Library shows its own independent theme again.
       applyTheme(THEMES[libraryThemeRef.current]);
@@ -191,8 +197,17 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
 
-  // Pin chrome open while any panel is open.
-  useEffect(() => setHold(settingsOpen || chaptersOpen || annoOpen), [settingsOpen, chaptersOpen, annoOpen, setHold]);
+  // Pin chrome open while any panel (or the basket tray) is open.
+  useEffect(
+    () => setHold(settingsOpen || chaptersOpen || annoOpen || basketOpen),
+    [settingsOpen, chaptersOpen, annoOpen, basketOpen, setHold],
+  );
+
+  // When the basket empties (Clear, or removing the last passage) the top-bar button hides, so
+  // close the now-orphaned tray too (RAWY-60).
+  useEffect(() => {
+    if (basketCount === 0) setBasketOpen(false);
+  }, [basketCount]);
 
   // Chapters panel is OPEN BY DEFAULT (RAWY-22); the user's choice persists per `chapters_open`.
   useEffect(() => {
@@ -350,10 +365,49 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     });
   };
 
+  // RAWY-60: "Add to card" collects a passage into the session basket with the chapter it was
+  // taken from (so a card can span chapters). A new book resets the basket (store-side).
+  const addToBasket = (sel: SelectionInfo) => {
+    const ctrl = ctrlRef.current;
+    const st = useReader.getState();
+    usePhotoBasket.getState().add(
+      {
+        id: crypto.randomUUID(),
+        text: sel.text.replace(/\s+/g, " ").trim(),
+        chapterLabel: st.chapterLabel ?? null,
+        cfi: sel.cfi,
+      },
+      {
+        bookId: bookRef.current,
+        bookTitle: ctrl?.title ?? st.bookTitle ?? null,
+        author: ctrl?.author ?? null,
+        dir: dir === "rtl" ? "rtl" : "ltr",
+      },
+    );
+  };
+
+  // RAWY-60: compose every collected passage into ONE multi-passage card. The metadata rule
+  // (footer chapter once vs per-passage labels) is decided inside PhotoCard from the passages.
+  const composeBasket = () => {
+    const b = usePhotoBasket.getState();
+    if (!b.passages.length) return;
+    setBasketOpen(false);
+    setPhotoCard({
+      quote: b.passages.map((p) => p.text).join("\n\n"), // joined text (gallery/storage fallback)
+      passages: b.passages.map((p) => ({ text: p.text, chapterLabel: p.chapterLabel ?? undefined })),
+      dir: b.dir,
+      bookId: b.bookId ?? undefined,
+      bookTitle: b.bookTitle ?? undefined,
+      author: b.author ?? undefined,
+      chapterLabel: b.passages[0]?.chapterLabel ?? undefined,
+      date: new Date(),
+    });
+  };
+
   const isRtlBook = dir === "rtl";
   // Whether the chrome bar is currently shown — the bookmark marker drops below it so it stays
   // visible (RAWY-42); same condition the chrome itself uses.
-  const chromeShown = chromeVisible || settingsOpen || chaptersOpen || annoOpen;
+  const chromeShown = chromeVisible || settingsOpen || chaptersOpen || annoOpen || basketOpen;
   // When chapter titles are hidden (anti-spoiler), the chrome shows a neutral "Chapter N".
   const tocIndex = toc.findIndex((c) => c.href && c.href === chapterHref);
   const chapter = hideChapterTitles
@@ -466,6 +520,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         annoOpen={annoOpen}
         settingsOpen={settingsOpen}
         settingsSection={settingsSection}
+        basketCount={basketCount}
+        basketOpen={basketOpen}
+        onBasket={() => setBasketOpen((v) => !v)}
       />
 
       <SettingsPanel
@@ -484,7 +541,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         unified={scope === "unified"}
       />
 
-      <AnnotationLayer ctrlRef={ctrlRef} onPhotoCard={openPhotoCard} />
+      <AnnotationLayer ctrlRef={ctrlRef} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} />
+
+      <PhotoBasketTray open={basketOpen} onClose={() => setBasketOpen(false)} onCompose={composeBasket} />
 
       {photoCard && (
         <PhotoComposer

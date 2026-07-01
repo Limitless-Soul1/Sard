@@ -31,6 +31,11 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "photo_card_author",
         include_str!("migrations_sql/0004_photo_card_author.sql"),
     ),
+    (
+        5,
+        "photo_card_passages",
+        include_str!("migrations_sql/0005_photo_card_passages.sql"),
+    ),
 ];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.

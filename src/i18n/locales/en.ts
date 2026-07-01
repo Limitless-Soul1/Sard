@@ -146,6 +146,7 @@ export const en = {
   "photo.card": "Create photo card",
   "photo.title": "Photo card",
   "photo.subtitle": "One passage · card font follows the book",
+  "photo.subtitleMulti": "{n} passages · card font follows the book",
   "photo.paper": "PAPER",
   "photo.format": "FORMAT",
   "photo.show": "SHOW ON CARD",
@@ -164,6 +165,17 @@ export const en = {
   "photo.saveInApp": "Save in app",
   "photo.savedInApp": "Saved in Sard",
   "photo.updatedInApp": "Updated",
+
+  // Photo Mode — multi-passage collection / basket (RAWY-60)
+  "photo.addToCard": "Add to card",
+  "photo.basket": "Basket",
+  "basket.title": "Card basket",
+  "basket.count": "{n} passages",
+  "basket.empty": "No passages yet",
+  "basket.create": "Create card · {n}",
+  "basket.clear": "Clear",
+  "basket.remove": "Remove",
+
   "fmt.square": "Square",
   "fmt.portrait": "Portrait",
   "fmt.story": "Story",

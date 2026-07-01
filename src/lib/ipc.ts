@@ -303,6 +303,7 @@ export interface PhotoCardRow {
   format: string | null;
   theme_id: string | null;
   quote: string | null;
+  passages: string | null; // JSON array of { text, chapterLabel } for a multi-passage card (RAWY-60)
   created_at: number;
   image_path: string; // absolute path to the stored PNG (load via convertFileSrc)
 }
@@ -317,6 +318,7 @@ export const photocardSave = (args: {
   format?: string | null;
   themeId?: string | null;
   quote?: string | null;
+  passages?: string | null;
   createdAt: number;
   data: number[];
 }): Promise<PhotoCardRow> =>
@@ -330,6 +332,7 @@ export const photocardSave = (args: {
     format: args.format ?? null,
     themeId: args.themeId ?? null,
     quote: args.quote ?? null,
+    passages: args.passages ?? null,
     createdAt: args.createdAt,
     data: args.data,
   });

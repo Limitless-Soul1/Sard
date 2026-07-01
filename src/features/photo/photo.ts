@@ -37,8 +37,16 @@ export const DEFAULT_META: CardMeta = {
   brand: true,
 };
 
+// One collected passage on a multi-passage card (RAWY-60). `chapterLabel` is captured at the
+// moment it was added, so a card can span chapters and still show each passage's provenance.
+export interface CardPassage {
+  text: string;
+  chapterLabel?: string;
+}
+
 export interface CardData {
-  quote: string;
+  quote: string; // the single passage (part 1) OR the joined text of `passages` (fallback/storage)
+  passages?: CardPassage[]; // RAWY-60: when present with >1 entry, the card renders a collection
   dir: "rtl" | "ltr";
   bookId?: string; // for "Save in app" provenance (RAWY-52)
   cfi?: string; // the selection location (RAWY-52)
@@ -47,6 +55,21 @@ export interface CardData {
   chapterLabel?: string;
   date: Date;
 }
+
+// The separator drawn BETWEEN passages on a multi-passage card (RAWY-60, design Band I-IV: "elegant
+// separators ✦ / dot / ۞ per theme"). A per-theme glyph so the ornament suits the paper — an ornate
+// Arabic star on the deep/rich darks, a quiet dot on the cool darks, the four-pointed star elsewhere.
+const SEPARATORS: Record<string, string> = {
+  trueblack: "۞",
+  nocturne: "۞",
+  mulberry: "۞",
+  espresso: "۞",
+  forestnight: "۞",
+  slate: "•",
+  charcoal: "•",
+  dusk: "•",
+};
+export const cardSeparator = (themeId: string): string => SEPARATORS[themeId] ?? "✦";
 
 // The card fits the quote to the reserved area by MEASUREMENT (fit-to-box in PhotoComposer), so
 // the length→scale heuristic is no longer needed (RAWY-50).

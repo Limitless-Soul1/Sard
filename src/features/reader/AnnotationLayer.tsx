@@ -72,6 +72,12 @@ const PhotoIcon = () => (
     <rect x="3" y="4.5" width="18" height="15" rx="2.6" /><circle cx="8.4" cy="10" r="1.5" /><path d="m20 17-5.2-5.2L5 19.5" />
   </svg>
 );
+// "Add to card" (RAWY-60) — a card with a plus: collect this passage into the photo-card basket.
+const AddCardIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <rect x="3" y="4.5" width="18" height="15" rx="2.6" /><path d="M12 9.2v6.1M8.9 12.2h6.2" />
+  </svg>
+);
 
 // The redesigned selection toolbar (RAWY-59, design "Selection Toolbar — two-tier popover"):
 // a floating dark popover with the COLOUR PALETTE on top (one tap highlights in that ink — no
@@ -82,12 +88,14 @@ function SelectionToolbar({
   onColor,
   onNote,
   onCopy,
+  onAddToCard,
   onPhotoCard,
 }: {
   sel: SelectionInfo;
   onColor: (c: HighlightColor) => void;
   onNote: () => void;
   onCopy: () => void;
+  onAddToCard: () => void;
   onPhotoCard: () => void;
 }) {
   const { t } = useI18n();
@@ -112,10 +120,11 @@ function SelectionToolbar({
       </div>
       {/* hairline */}
       <div className="hl-pop-line" />
-      {/* tier 2 — actions */}
+      {/* tier 2 — actions (Note · Copy · Add to card · Create photo card) */}
       <div className="hl-pop-actions">
         <button className="hl-pop-act" onClick={onNote}><PenIcon />{t("hl.note")}</button>
         <button className="hl-pop-act" onClick={onCopy}><CopyIcon />{t("hl.copy")}</button>
+        <button className="hl-pop-act" onClick={onAddToCard}><AddCardIcon />{t("photo.addToCard")}</button>
         <button className="hl-pop-act primary" onClick={onPhotoCard}><PhotoIcon />{t("photo.card")}</button>
       </div>
     </div>
@@ -169,9 +178,11 @@ function HighlightPopover({
 export function AnnotationLayer({
   ctrlRef,
   onPhotoCard,
+  onAddToCard,
 }: {
   ctrlRef: RefObject<FoliateController | null>;
   onPhotoCard?: (sel: SelectionInfo) => void;
+  onAddToCard?: (sel: SelectionInfo) => void;
 }) {
   const [selection, setSelection] = useState<SelectionInfo | null>(null);
   const [active, setActive] = useState<AnnotationHit | null>(null);
@@ -225,6 +236,13 @@ export function AnnotationLayer({
     navigator.clipboard.writeText(selection.text).catch(console.error);
     setSelection(null);
   };
+  // Add to the photo-card basket (RAWY-60) — collect this passage, keep reading, compose later.
+  const onAdd = () => {
+    if (!selection) return;
+    const s = selection;
+    setSelection(null);
+    onAddToCard?.(s);
+  };
 
   const activeHi = active ? highlightByCfi(active.cfi) : undefined;
   const activeNote = activeHi ? noteForHighlight(activeHi.id) : undefined;
@@ -249,6 +267,7 @@ export function AnnotationLayer({
           onColor={onPickColor}
           onNote={onNote}
           onCopy={onCopy}
+          onAddToCard={onAdd}
           onPhotoCard={() => {
             const s = selection;
             setSelection(null);

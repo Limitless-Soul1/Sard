@@ -11,17 +11,29 @@ import { useI18n } from "../../i18n";
 import { THEMES, useTheme, type ThemeId } from "../../theme";
 import { photocardDelete, photocardsList, type PhotoCardRow } from "../../lib/ipc";
 import { PhotoComposer } from "./PhotoComposer";
-import { DEFAULT_META, FORMATS, type CardData, type CardFormat } from "./photo";
+import { DEFAULT_META, FORMATS, type CardData, type CardFormat, type CardPassage } from "./photo";
 
 const ARABIC = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
 
 // Reopen a saved card in the composer (RAWY-57 Edit): rebuild CardData from the stored row.
-// Format + theme are restored; the direction is inferred from the quote; the show-on-card
-// toggles were not stored, so they fall back to the defaults (noted).
+// Format + theme are restored; the direction is inferred from the text; the show-on-card toggles
+// were not stored, so they fall back to the defaults (noted). A multi-passage card (RAWY-60)
+// restores its full collection from the stored `passages` JSON so Edit re-composes it faithfully.
 function rowToCardData(row: PhotoCardRow): CardData {
+  let passages: CardPassage[] | undefined;
+  if (row.passages) {
+    try {
+      const parsed = JSON.parse(row.passages);
+      if (Array.isArray(parsed) && parsed.length) passages = parsed as CardPassage[];
+    } catch {
+      /* malformed → fall back to the single quote */
+    }
+  }
+  const dirText = passages ? passages.map((p) => p.text).join(" ") : row.quote ?? "";
   return {
     quote: row.quote ?? "",
-    dir: ARABIC.test(row.quote ?? "") ? "rtl" : "ltr",
+    passages,
+    dir: ARABIC.test(dirText) ? "rtl" : "ltr",
     bookId: row.book_id ?? undefined,
     cfi: row.cfi ?? undefined,
     bookTitle: row.book_title ?? undefined,

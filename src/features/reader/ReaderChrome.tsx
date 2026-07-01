@@ -1,4 +1,5 @@
 import { useI18n } from "../../i18n";
+import { localeNum } from "../../lib/format";
 
 export type SettingsSection = "text" | "page" | "theme";
 
@@ -19,7 +20,19 @@ interface Props {
   annoOpen: boolean;
   settingsOpen: boolean;
   settingsSection: SettingsSection;
+  // Photo-card basket (RAWY-60): appears only when the basket has passages; the badge shows the
+  // count; it sits in this pinned cluster (physical side, D21) and opens the passages tray.
+  basketCount: number;
+  basketOpen: boolean;
+  onBasket: () => void;
 }
+
+// A small "stack of cards" glyph for the basket button.
+const BasketIco = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <rect x="7" y="3.5" width="13" height="13" rx="2.2" /><path d="M4 7.5v11a2 2 0 0 0 2 2h11" />
+  </svg>
+);
 
 // Reading chrome (RAWY-33, design bands C-VI / C-VII): a cohesive full-width top bar with
 // CLEAR, LABELLED controls (the old faint icons were the complaint) and a bottom progress
@@ -45,8 +58,11 @@ export function ReaderChrome({
   annoOpen,
   settingsOpen,
   settingsSection,
+  basketCount,
+  basketOpen,
+  onBasket,
 }: Props) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const pct = Math.round(fraction * 100);
 
   return (
@@ -106,6 +122,16 @@ export function ReaderChrome({
             <span className="rc-btn-ico"><span className="ico-note" /></span>
             <span className="rc-btn-label">{t("reader.notes")}</span>
           </button>
+          {/* Photo-card basket (RAWY-60) — hidden when empty, so normal reading stays clean. */}
+          {basketCount > 0 && (
+            <button className={`rc-btn rc-basket${basketOpen ? " on" : ""}`} onClick={onBasket} title={t("basket.title")}>
+              <span className="rc-btn-ico">
+                <BasketIco />
+                <span className="rc-basket-badge">{localeNum(basketCount, lang)}</span>
+              </span>
+              <span className="rc-btn-label">{t("photo.basket")}</span>
+            </button>
+          )}
         </div>
       </div>
 

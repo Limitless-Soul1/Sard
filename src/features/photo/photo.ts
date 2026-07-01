@@ -46,13 +46,8 @@ export interface CardData {
   date: Date;
 }
 
-// Long selections shrink so they still fit the fixed card height (no clipping). A gentle ramp
-// from the base quote size (short quotes) down to ~0.68× (very long ones).
-export function quoteScale(len: number): number {
-  if (len <= 90) return 1;
-  if (len >= 360) return 0.68;
-  return 1 - ((len - 90) / (360 - 90)) * 0.32;
-}
+// The card fits the quote to the reserved area by MEASUREMENT (fit-to-box in PhotoComposer), so
+// the length→scale heuristic is no longer needed (RAWY-50).
 
 // A localized "30 June 2026" style date for the card meta line.
 export function formatCardDate(d: Date, lang: string): string {

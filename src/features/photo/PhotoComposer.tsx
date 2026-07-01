@@ -5,7 +5,7 @@
 // exact export px; the same node the user sees is the node exported (WYSIWYG). Save writes the
 // PNG via the dialog + a tiny Rust command; Copy puts an image/png on the clipboard.
 
-import { useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toBlob } from "html-to-image";
 import { save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
@@ -18,7 +18,6 @@ import {
   FORMATS,
   formatCardDate,
   formatDims,
-  quoteScale,
   type CardData,
   type CardFormat,
   type CardMeta,
@@ -51,11 +50,43 @@ function PhotoCard({
   const bookFont = arabic ? "'Amiri', serif" : "'Literata', serif";
   const metaFont = arabic ? "'Amiri', serif" : "'Inter', sans-serif";
   const s = (n: number) => W * n; // proportional px from the card width
-  const qs = quoteScale(data.quote.length);
+  const lineH = arabic ? 1.85 : 1.55;
 
-  const metaBits: string[] = [];
-  if (meta.chapter && data.chapterLabel) metaBits.push(data.chapterLabel);
-  if (meta.date) metaBits.push(formatCardDate(data.date, lang));
+  // The credit "chapter — author" line + the footer row (date + brand). The credit + footer are
+  // NATURAL-height siblings of the flex:1 quote area, and the quote area is min-height:0 +
+  // overflow:hidden — so the footer details are ALWAYS reserved (RAWY-50 fix: a long quote can no
+  // longer push them off the card in Square/Portrait; it's the QUOTE that fits, never the footer).
+  const subtitle = [meta.chapter && data.chapterLabel, meta.author && data.author]
+    .filter(Boolean)
+    .join("  —  ");
+  const dateStr = meta.date ? formatCardDate(data.date, lang) : "";
+  const hasCredit = (meta.title && data.bookTitle) || subtitle;
+  const hasFooter = dateStr || meta.brand;
+
+  // Fit-to-box: pick the LARGEST quote font (within bounds) whose text fits the reserved quote
+  // area — short quotes grow large, long quotes shrink to fit (never clipping the footer). Set
+  // imperatively so it survives theme re-renders (fontSize is never in the JSX style prop).
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const pRef = useRef<HTMLParagraphElement>(null);
+  const base = s(0.066);
+  const metaKey = `${meta.title}${meta.author}${meta.chapter}${meta.date}${meta.brand}`;
+  useLayoutEffect(() => {
+    const wrap = wrapRef.current;
+    const p = pRef.current;
+    if (!wrap || !p) return;
+    let lo = base * 0.3; // extreme quotes shrink hard so the footer always survives
+    let hi = base * 1.7; // short quotes grow large
+    for (let i = 0; i < 10; i++) {
+      const mid = (lo + hi) / 2;
+      p.style.fontSize = `${mid}px`;
+      if (p.scrollHeight <= wrap.clientHeight) lo = mid;
+      else hi = mid;
+    }
+    p.style.fontSize = `${lo}px`;
+    // If it STILL can't fit at the floor (an extreme passage for a small format), read from the
+    // TOP so it clips only the tail — never both ends — and the footer stays put.
+    wrap.style.alignItems = p.scrollHeight > wrap.clientHeight + 1 ? "flex-start" : "center";
+  }, [data.quote, format, metaKey, W, H, arabic, base]);
 
   return (
     <div
@@ -70,69 +101,73 @@ function PhotoCard({
         padding: `${s(0.11)}px ${s(0.1)}px`,
       }}
     >
-      <div className="pc-quotemark" style={{ font: `${arabic ? 700 : 600} ${s(0.15)}px/0 ${bookFont}`, color: c.accent }}>
+      <div
+        className="pc-quotemark"
+        style={{ fontFamily: bookFont, fontWeight: arabic ? 700 : 600, fontSize: s(0.15), lineHeight: 0, height: s(0.055), color: c.accent }}
+      >
         {arabic ? "”" : "“"}
       </div>
 
-      <div className="pc-quote-wrap">
+      <div ref={wrapRef} className="pc-quote-wrap">
         <p
+          ref={pRef}
           className="pc-quote"
-          style={{
-            font: `400 ${s(0.062) * qs}px/${arabic ? 1.9 : 1.6} ${bookFont}`,
-            color: c.text,
-            textAlign: arabic ? "center" : "start",
-          }}
+          style={{ fontFamily: bookFont, fontWeight: 400, lineHeight: lineH, color: c.text, textAlign: arabic ? "center" : "start" }}
         >
           {data.quote}
         </p>
       </div>
 
-      <div className="pc-foot" style={{ gap: s(0.05) }}>
-        <div className="pc-credit" style={{ textAlign: arabic ? "right" : "left" }}>
-          <div className="pc-rule" style={{ width: s(0.11), height: Math.max(2, s(0.005)), background: c.accent }} />
+      {hasCredit && (
+        <div className="pc-credit" style={{ textAlign: arabic ? "right" : "left", marginTop: s(0.03) }}>
+          <div className="pc-rule" style={{ width: s(0.12), height: Math.max(2, s(0.006)), background: c.accent, marginBottom: s(0.028) }} />
           {meta.title && data.bookTitle && (
-            <div className="pc-title" style={{ font: `600 ${s(0.041)}px ${bookFont}`, color: c.text }}>
+            <div className="pc-title" style={{ fontFamily: bookFont, fontWeight: 700, fontSize: s(0.052), color: c.text }}>
               {data.bookTitle}
             </div>
           )}
-          {meta.author && data.author && (
-            <div className="pc-author" style={{ font: `400 ${s(0.032)}px ${metaFont}`, color: c.muted, marginTop: s(0.008) }}>
-              {data.author}
-            </div>
-          )}
-          {metaBits.length > 0 && (
+          {subtitle && (
             <div
-              className="pc-meta"
-              style={{ font: `500 ${s(0.026)}px ${metaFont}`, color: c.muted, marginTop: s(0.016), letterSpacing: arabic ? 0 : ".06em" }}
+              className="pc-subtitle"
+              style={{ fontFamily: metaFont, fontWeight: 600, fontSize: s(0.036), color: c.muted, marginTop: s(0.012) }}
             >
-              {metaBits.join(" · ")}
+              {subtitle}
             </div>
           )}
         </div>
+      )}
 
-        {meta.brand && (
-          <div className="pc-brand" style={{ gap: s(0.015) }}>
-            <img
-              src="/assets/sard-bird.png"
-              alt=""
-              style={{ height: s(0.05), width: "auto", transform: arabic ? "scaleX(-1)" : undefined, opacity: 0.9 }}
-            />
-            {arabic ? (
-              <>
-                <span style={{ font: `700 ${s(0.038)}px 'Amiri', serif`, color: c.muted }}>سَرْد</span>
-                <span className="pc-brand-div" style={{ background: c.muted, height: s(0.03) }} />
-                <span style={{ font: `600 ${s(0.03)}px 'Literata', serif`, color: c.muted }}>Sard</span>
-              </>
-            ) : (
-              <>
-                <span style={{ font: `600 ${s(0.032)}px 'Literata', serif`, color: c.muted }}>Sard</span>
-                <span className="pc-brand-div" style={{ background: c.muted, height: s(0.03) }} />
-                <span style={{ font: `700 ${s(0.038)}px 'Amiri', serif`, color: c.muted }}>سَرْد</span>
-              </>
-            )}
-          </div>
-        )}
-      </div>
+      {hasFooter && (
+        <div className="pc-footrow" style={{ marginTop: s(0.038) }}>
+          <span style={{ fontFamily: metaFont, fontWeight: 500, fontSize: s(0.03), color: c.muted, letterSpacing: arabic ? 0 : ".02em" }}>
+            {dateStr}
+          </span>
+          {meta.brand ? (
+            <div className="pc-brand" style={{ gap: s(0.016) }}>
+              <img
+                src="/assets/sard-bird.png"
+                alt=""
+                style={{ height: s(0.052), width: "auto", objectFit: "contain", transform: arabic ? "scaleX(-1)" : undefined, opacity: 0.9 }}
+              />
+              {arabic ? (
+                <>
+                  <span style={{ font: `700 ${s(0.044)}px 'Amiri', serif`, color: c.muted }}>سَرْد</span>
+                  <span className="pc-brand-div" style={{ background: c.muted, height: s(0.036) }} />
+                  <span style={{ font: `700 ${s(0.036)}px 'Literata', serif`, color: c.muted }}>Sard</span>
+                </>
+              ) : (
+                <>
+                  <span style={{ font: `700 ${s(0.04)}px 'Literata', serif`, color: c.muted }}>Sard</span>
+                  <span className="pc-brand-div" style={{ background: c.muted, height: s(0.036) }} />
+                  <span style={{ font: `700 ${s(0.044)}px 'Amiri', serif`, color: c.muted }}>سَرْد</span>
+                </>
+              )}
+            </div>
+          ) : (
+            <span />
+          )}
+        </div>
+      )}
     </div>
   );
 }

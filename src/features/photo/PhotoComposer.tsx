@@ -10,6 +10,7 @@ import { toBlob } from "html-to-image";
 import { save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 
+import { photocardSave } from "../../lib/ipc";
 import { useI18n } from "../../i18n";
 import { THEMES, THEME_ORDER, type ThemeId } from "../../theme";
 import {
@@ -249,6 +250,35 @@ export function PhotoComposer({
     }
   };
 
+  // Save in app (RAWY-52): rasterise → store the PNG + a photo_cards row so it appears in the
+  // Library "Cards" gallery, with its book / chapter / date.
+  const onSaveInApp = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const blob = await rasterize();
+      const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+      await photocardSave({
+        id: crypto.randomUUID(),
+        bookId: data.bookId ?? null,
+        bookTitle: data.bookTitle ?? null,
+        chapterLabel: data.chapterLabel ?? null,
+        cfi: data.cfi ?? null,
+        format,
+        themeId,
+        quote: data.quote,
+        createdAt: Math.floor(Date.now() / 1000),
+        data: bytes,
+      });
+      flash(t("photo.savedInApp"));
+    } catch (e) {
+      console.error(e);
+      flash(t("photo.saveFail"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const dark = THEMES[themeId].dark;
 
   return (
@@ -329,6 +359,10 @@ export function PhotoComposer({
               <button className="pc-save" onClick={onSave} disabled={busy}>{t("photo.save")}</button>
               <button className="pc-copy" onClick={onCopy} disabled={busy} title={t("photo.copy")}>{t("photo.copy")}</button>
             </div>
+            <button className="pc-saveinapp" onClick={onSaveInApp} disabled={busy}>
+              <span className="pc-saveinapp-ico" aria-hidden />
+              {t("photo.saveInApp")}
+            </button>
           </div>
         </div>
       </div>

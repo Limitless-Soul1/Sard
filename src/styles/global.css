@@ -771,6 +771,9 @@ html, body, #root {
 .lib-ico-library { border: 1.5px solid currentColor; border-radius: 2px; }
 .lib-ico-highlights { border-radius: 3px; background: linear-gradient(135deg, #E8C36A 50%, #E0A6A0 50%); }
 .lib-ico-reading { width: 14px; height: 14px; border: 1.5px solid currentColor; border-radius: 50%; }
+/* Cards nav icon (RAWY-52) — a small card with a line, matching the design's sidebar glyph. */
+.lib-ico-cards { width: 15px; height: 12px; border: 1.5px solid currentColor; border-radius: 2px; position: relative; }
+.lib-ico-cards::before { content: ""; position: absolute; left: 2.5px; top: 3px; width: 8px; height: 1.5px; background: currentColor; }
 
 .lib-shelves-label {
   font: 600 10px var(--ui-font); letter-spacing: 0.12em; text-transform: uppercase;
@@ -1514,3 +1517,61 @@ html, body, #root {
 .pc-save { flex: 1; border: none; background: var(--pc-accent); color: var(--pc-modal-bg); font: 600 14px "Inter", sans-serif; padding: 13px 0; border-radius: 9px; cursor: pointer; }
 .pc-copy { border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text); font: 500 13px "Inter", sans-serif; padding: 13px 16px; border-radius: 9px; cursor: pointer; }
 .pc-save:disabled, .pc-copy:disabled { opacity: 0.55; cursor: default; }
+
+/* ============================================================================
+   Photo Mode part 2a (RAWY-52) — "Save in app" button + the saved-cards gallery.
+   ============================================================================ */
+/* composer: the tertiary "Save in app" action under the Save/Copy row */
+.pc-saveinapp {
+  display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%;
+  margin-top: 10px; border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text);
+  font: 600 13px "Inter", sans-serif; padding: 11px 0; border-radius: 9px; cursor: pointer;
+}
+.pc-saveinapp:hover { background: var(--pc-border); }
+.pc-saveinapp:disabled { opacity: 0.55; cursor: default; }
+.pc-saveinapp-ico { width: 15px; height: 12px; border: 1.6px solid currentColor; border-radius: 2px; position: relative; flex: none; }
+.pc-saveinapp-ico::before { content: ""; position: absolute; left: 2.5px; top: 3px; width: 8px; height: 1.6px; background: currentColor; }
+
+/* gallery — a cross-book grid, styled from the app theme tokens */
+.pg-root { display: flex; flex-direction: column; padding: 24px 30px 0; overflow-y: auto; }
+.pg-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; }
+.pg-title { margin: 0; font: 600 26px "Literata", "SardUIArabic", serif; color: var(--text); }
+.pg-count { font: 500 13px var(--ui-font); color: var(--muted); }
+.pg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 24px 22px; align-content: start; padding-bottom: 30px; }
+.pg-cell { display: flex; flex-direction: column; background: none; border: none; padding: 0; cursor: pointer; text-align: start; }
+.pg-thumb {
+  display: block; aspect-ratio: 4 / 5; border-radius: 6px; overflow: hidden; background: var(--paper-bg);
+  box-shadow: 0 8px 20px rgba(20, 14, 6, 0.18), inset 0 0 0 1px var(--chrome-border);
+}
+.pg-thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.pg-cell:hover .pg-thumb { box-shadow: 0 12px 26px rgba(20, 14, 6, 0.26), inset 0 0 0 1px var(--accent); }
+.pg-meta-title { font: 600 13px var(--ui-font); color: var(--text); margin-top: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pg-meta-sub { font: 400 11.5px var(--ui-font); color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pg-meta-date { font: 400 11px var(--ui-font); color: var(--muted); opacity: 0.8; margin-top: 2px; }
+/* empty state */
+.pg-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 6px; padding: 0 24px 60px; }
+.pg-empty-bird { width: 62px; height: auto; opacity: 0.9; margin-bottom: 8px; }
+.pg-empty-title { font: 600 21px "Literata", "SardUIArabic", serif; color: var(--text); }
+.pg-empty-hint { font: 400 13.5px/1.65 var(--ui-font); color: var(--muted); max-width: 360px; }
+/* viewer overlay */
+.pg-overlay { position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; background: rgba(20, 14, 6, 0.42); backdrop-filter: blur(3px); padding: 24px; }
+.pg-viewer { position: relative; display: flex; gap: 0; background: var(--chrome-bg); border-radius: 12px; overflow: hidden; box-shadow: 0 24px 60px rgba(20, 14, 6, 0.4); max-width: min(760px, 94vw); max-height: 90vh; }
+.pg-close { position: absolute; top: 10px; inset-inline-end: 12px; z-index: 2; border: none; background: transparent; color: var(--muted); font: 300 17px var(--ui-font); cursor: pointer; width: 30px; height: 30px; border-radius: 7px; }
+.pg-close:hover { background: var(--chrome-border); }
+.pg-viewer-img { flex: none; width: 340px; max-width: 46vw; background: var(--app-bg); display: flex; align-items: center; justify-content: center; padding: 26px; }
+.pg-viewer-img img { max-width: 100%; max-height: 66vh; border-radius: 5px; box-shadow: 0 16px 38px rgba(20, 14, 6, 0.3); }
+.pg-viewer-side { width: 260px; padding: 40px 26px 24px; display: flex; flex-direction: column; }
+.pg-viewer-title { font: 600 18px "Literata", "SardUIArabic", serif; color: var(--text); }
+.pg-viewer-sub { font: 400 13px var(--ui-font); color: var(--muted); margin-top: 4px; }
+.pg-viewer-date { font: 400 12px var(--ui-font); color: var(--muted); opacity: 0.8; margin-top: 3px; }
+.pg-viewer-actions { display: flex; gap: 10px; margin-top: 22px; }
+.pg-viewer-actions .pc-save, .pg-viewer-actions .pc-copy {
+  --pc-accent: var(--accent); --pc-modal-bg: var(--paper-bg); --pc-text: var(--text); --pc-border: var(--chrome-border);
+}
+.pg-delete { margin-top: auto; align-self: flex-start; border: none; background: transparent; color: #b04a3a; font: 500 13px var(--ui-font); cursor: pointer; padding: 8px 0; }
+.pg-delete:hover { text-decoration: underline; }
+.pg-confirm { margin-top: auto; display: flex; flex-direction: column; gap: 10px; font: 500 13px var(--ui-font); color: var(--text); }
+.pg-confirm-row { display: flex; gap: 10px; }
+.pg-del-yes { border: none; background: #b04a3a; color: #fff; font: 600 13px var(--ui-font); padding: 9px 16px; border-radius: 8px; cursor: pointer; }
+.pg-del-no { border: 1px solid var(--chrome-border); background: transparent; color: var(--text); font: 500 13px var(--ui-font); padding: 9px 16px; border-radius: 8px; cursor: pointer; }
+.pg-toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 60; background: var(--text); color: var(--app-bg); font: 600 13px var(--ui-font); padding: 10px 22px; border-radius: 22px; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28); }

@@ -21,6 +21,11 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "bookmark_fields",
         include_str!("migrations_sql/0002_bookmark_fields.sql"),
     ),
+    (
+        3,
+        "photo_cards",
+        include_str!("migrations_sql/0003_photo_cards.sql"),
+    ),
 ];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.

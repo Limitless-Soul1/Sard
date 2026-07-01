@@ -11,6 +11,7 @@ pub mod library; // repositories: books, shelves, highlights, notes, bookmarks, 
 pub mod books; // file import, format detection, EPUB/PDF orchestration (placeholder)
 pub mod metadata; // read embedded metadata + persist user overrides (placeholder)
 pub mod fonts; // register/validate custom fonts (placeholder)
+pub mod photocards; // saved photo cards: PNG store + DB rows (RAWY-52, Photo Mode part 2a)
 pub mod settings; // key/value settings persistence
 pub mod sync; // FUTURE seam: backend trait only (placeholder)
 
@@ -127,6 +128,9 @@ pub fn run() {
             commands::bookmarks_for_book,
             commands::bookmarks_all,
             commands::save_photo_card,
+            commands::photocard_save,
+            commands::photocards_list,
+            commands::photocard_delete,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sard");

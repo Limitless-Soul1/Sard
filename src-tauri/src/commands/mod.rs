@@ -5,7 +5,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::db::{self, AppState};
-use crate::{books, fonts, library, settings};
+use crate::{books, fonts, library, photocards, settings};
 
 #[derive(Serialize)]
 pub struct AppInfo {
@@ -387,4 +387,51 @@ pub fn font_remove(id: String, state: State<AppState>) -> Result<bool, String> {
 #[tauri::command]
 pub fn save_photo_card(path: String, data: Vec<u8>) -> Result<(), String> {
     std::fs::write(&path, &data).map_err(err)
+}
+
+// ---- Saved photo cards + gallery (RAWY-52, Photo Mode part 2a). ----
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn photocard_save(
+    id: String,
+    book_id: Option<String>,
+    book_title: Option<String>,
+    chapter_label: Option<String>,
+    cfi: Option<String>,
+    format: Option<String>,
+    theme_id: Option<String>,
+    quote: Option<String>,
+    created_at: i64,
+    data: Vec<u8>,
+    state: State<AppState>,
+) -> Result<photocards::PhotoCard, String> {
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.db.lock().map_err(err)?;
+    let meta = photocards::SaveMeta {
+        id,
+        book_id,
+        book_title,
+        chapter_label,
+        cfi,
+        format,
+        theme_id,
+        quote,
+        created_at,
+    };
+    photocards::save(&conn, &app_data_dir, meta, &data)
+}
+
+#[tauri::command]
+pub fn photocards_list(state: State<AppState>) -> Result<Vec<photocards::PhotoCard>, String> {
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.db.lock().map_err(err)?;
+    photocards::list(&conn, &app_data_dir)
+}
+
+#[tauri::command]
+pub fn photocard_delete(id: String, state: State<AppState>) -> Result<bool, String> {
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.db.lock().map_err(err)?;
+    photocards::delete(&conn, &app_data_dir, &id)?;
+    Ok(true)
 }

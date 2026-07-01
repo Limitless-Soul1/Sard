@@ -40,6 +40,8 @@ export const DEFAULT_META: CardMeta = {
 export interface CardData {
   quote: string;
   dir: "rtl" | "ltr";
+  bookId?: string; // for "Save in app" provenance (RAWY-52)
+  cfi?: string; // the selection location (RAWY-52)
   bookTitle?: string;
   author?: string;
   chapterLabel?: string;

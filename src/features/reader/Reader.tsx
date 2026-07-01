@@ -341,6 +341,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     setPhotoCard({
       quote: sel.text.replace(/\s+/g, " ").trim(),
       dir: dir === "rtl" ? "rtl" : "ltr",
+      bookId: bookRef.current,
+      cfi: sel.cfi,
       bookTitle: ctrl?.title ?? st.bookTitle ?? undefined,
       author: ctrl?.author,
       chapterLabel: st.chapterLabel ?? undefined,

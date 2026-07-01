@@ -160,10 +160,23 @@ export const ar: Record<TKey, string> = {
   "photo.copied": "تم النسخ",
   "photo.saveFail": "تعذّر الحفظ",
   "photo.copyFail": "تعذّر النسخ",
+  "photo.saveInApp": "حفظ في التطبيق",
+  "photo.savedInApp": "حُفظت في سَرْد",
   "fmt.square": "مربّع",
   "fmt.portrait": "طولي",
   "fmt.story": "قصة",
   "fmt.landscape": "عرضي",
+
+  // معرض البطاقات المحفوظة (RAWY-52)
+  "lib.nav.cards": "البطاقات",
+  "cards.title": "البطاقات",
+  "cards.count": "{n} محفوظة",
+  "cards.untitled": "بدون عنوان",
+  "cards.empty.title": "لا بطاقات بعد",
+  "cards.empty.hint": "عندما تحوّل مقطعًا إلى بطاقة وتختار «حفظ في التطبيق»، تظهر هنا — مع كتابها وفصلها وتاريخها، جاهزة لإعادة المشاركة في أي وقت.",
+  "cards.delete": "حذف",
+  "cards.cancel": "إلغاء",
+  "cards.deleteConfirm": "حذف هذه البطاقة؟",
 
   // Reading side panels + page width (RAWY-21)
   "panel.contents": "المحتويات",

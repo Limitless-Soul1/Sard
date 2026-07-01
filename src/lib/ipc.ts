@@ -291,3 +291,45 @@ export const noteUpdate = (id: string, body: string, color?: string | null): Pro
 
 export const noteDelete = (id: string): Promise<boolean> =>
   invoke<boolean>("note_delete", { id });
+
+// Saved photo cards + gallery (RAWY-52, Photo Mode part 2a).
+export interface PhotoCardRow {
+  id: string;
+  book_id: string | null;
+  book_title: string | null;
+  chapter_label: string | null;
+  cfi: string | null;
+  format: string | null;
+  theme_id: string | null;
+  quote: string | null;
+  created_at: number;
+  image_path: string; // absolute path to the stored PNG (load via convertFileSrc)
+}
+
+export const photocardSave = (args: {
+  id: string;
+  bookId?: string | null;
+  bookTitle?: string | null;
+  chapterLabel?: string | null;
+  cfi?: string | null;
+  format?: string | null;
+  themeId?: string | null;
+  quote?: string | null;
+  createdAt: number;
+  data: number[];
+}): Promise<PhotoCardRow> =>
+  invoke<PhotoCardRow>("photocard_save", {
+    id: args.id,
+    bookId: args.bookId ?? null,
+    bookTitle: args.bookTitle ?? null,
+    chapterLabel: args.chapterLabel ?? null,
+    cfi: args.cfi ?? null,
+    format: args.format ?? null,
+    themeId: args.themeId ?? null,
+    quote: args.quote ?? null,
+    createdAt: args.createdAt,
+    data: args.data,
+  });
+
+export const photocardsList = (): Promise<PhotoCardRow[]> => invoke<PhotoCardRow[]>("photocards_list");
+export const photocardDelete = (id: string): Promise<boolean> => invoke<boolean>("photocard_delete", { id });

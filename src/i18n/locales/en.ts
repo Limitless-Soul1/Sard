@@ -159,10 +159,23 @@ export const en = {
   "photo.copied": "Copied",
   "photo.saveFail": "Couldn't save",
   "photo.copyFail": "Couldn't copy",
+  "photo.saveInApp": "Save in app",
+  "photo.savedInApp": "Saved in Sard",
   "fmt.square": "Square",
   "fmt.portrait": "Portrait",
   "fmt.story": "Story",
   "fmt.landscape": "Land.",
+
+  // Saved-cards gallery (RAWY-52)
+  "lib.nav.cards": "Cards",
+  "cards.title": "Cards",
+  "cards.count": "{n} saved",
+  "cards.untitled": "Untitled",
+  "cards.empty.title": "No cards yet",
+  "cards.empty.hint": "When you turn a passage into a card and choose “Save in app”, it lands here — with its book, chapter and date, ready to re-share anytime.",
+  "cards.delete": "Delete",
+  "cards.cancel": "Cancel",
+  "cards.deleteConfirm": "Delete this card?",
 
   // Reading side panels + page width (RAWY-21)
   "panel.contents": "Contents",

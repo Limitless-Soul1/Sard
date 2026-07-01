@@ -27,6 +27,7 @@ import { AutoCover } from "./AutoCover";
 import { GlobalSettings } from "../settings/GlobalSettings";
 import { Hoopoe } from "./Hoopoe";
 import { Inbox } from "./Inbox";
+import { PhotoGallery } from "../photo/PhotoGallery";
 
 // Detect Arabic from the TITLE TEXT itself, so a caption renders in Amiri even when the
 // book's metadata mislabels its language (RAWY-17: e.g. an Arabic book tagged lang=en).
@@ -67,7 +68,7 @@ function summarize(results: ImportResult[], t: TFn): string {
 export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const { t, lang } = useI18n();
 
-  const [section, setSection] = useState<"library" | "inbox">("library");
+  const [section, setSection] = useState<"library" | "inbox" | "cards">("library");
   const [settingsOpen, setSettingsOpen] = useState(false); // RAWY-39 global settings
   const [books, setBooks] = useState<BookRow[]>([]);
   const [editing, setEditing] = useState<BookRow | null>(null);
@@ -298,6 +299,13 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
             <span className="lib-nav-ico lib-ico-highlights" />
             {t("lib.nav.highlights")}
           </button>
+          <button
+            className={`lib-nav-item${section === "cards" ? " active" : ""}`}
+            onClick={() => setSection("cards")}
+          >
+            <span className="lib-nav-ico lib-ico-cards" />
+            {t("lib.nav.cards")}
+          </button>
           <button className="lib-nav-item" disabled>
             <span className="lib-nav-ico lib-ico-reading" />
             {t("lib.nav.readingNow")}
@@ -385,7 +393,9 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
       </aside>
 
       <main className="lib-main">
-        {section === "inbox" ? (
+        {section === "cards" ? (
+          <PhotoGallery />
+        ) : section === "inbox" ? (
           <Inbox onOpen={onOpen} />
         ) : isEmpty ? (
           <EmptyState onBrowse={addBooks} />

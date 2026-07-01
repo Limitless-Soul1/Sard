@@ -1518,7 +1518,13 @@ html, body, #root {
 .pc-switch.on { background: var(--pc-accent); }
 .pc-knob { position: absolute; top: 2px; inset-inline-start: 2px; width: 17px; height: 17px; background: var(--pc-panel-bg); border-radius: 50%; transition: inset-inline-start .15s; }
 .pc-switch.on .pc-knob { inset-inline-start: 17px; }
-.pc-actions { margin-top: auto; display: flex; gap: 10px; padding-top: 6px; }
+/* Export actions pinned to the panel bottom (RAWY-56) — a fixed footer outside the scroll body,
+   so Copy · Save · "Save in app" are always visible without scrolling. */
+.pc-panel-foot {
+  flex: none; display: flex; flex-direction: column; gap: 10px;
+  padding: 14px 26px 18px; border-top: 1px solid var(--pc-border); background: var(--pc-panel-bg);
+}
+.pc-actions { display: flex; gap: 10px; }
 .pc-save { flex: 1; border: none; background: var(--pc-accent); color: var(--pc-modal-bg); font: 600 14px "Inter", sans-serif; padding: 13px 0; border-radius: 9px; cursor: pointer; }
 .pc-copy { border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text); font: 500 13px "Inter", sans-serif; padding: 13px 16px; border-radius: 9px; cursor: pointer; }
 .pc-save:disabled, .pc-copy:disabled { opacity: 0.55; cursor: default; }
@@ -1529,7 +1535,7 @@ html, body, #root {
 /* composer: the tertiary "Save in app" action under the Save/Copy row */
 .pc-saveinapp {
   display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%;
-  margin-top: 10px; border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text);
+  border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text);
   font: 600 13px "Inter", sans-serif; padding: 11px 0; border-radius: 9px; cursor: pointer;
 }
 .pc-saveinapp:hover { background: var(--pc-border); }

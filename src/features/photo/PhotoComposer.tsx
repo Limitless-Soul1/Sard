@@ -355,6 +355,11 @@ export function PhotoComposer({
               </div>
             </div>
 
+          </div>
+
+          {/* Export actions pinned as a footer (RAWY-56) — always visible, outside the scroll
+              body, so Copy · Save · "Save in app" are all reachable without scrolling. */}
+          <div className="pc-panel-foot">
             <div className="pc-actions">
               <button className="pc-save" onClick={onSave} disabled={busy}>{t("photo.save")}</button>
               <button className="pc-copy" onClick={onCopy} disabled={busy} title={t("photo.copy")}>{t("photo.copy")}</button>

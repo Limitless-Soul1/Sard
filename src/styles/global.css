@@ -1203,6 +1203,63 @@ html, body, #root {
 }
 .hl-pen { font: 600 14px "Literata", serif; }
 
+/* ============================================================================
+   Two-tier selection popover (RAWY-59) — the redesigned reading selection toolbar:
+   the COLOUR palette on top, a hairline, then the ACTIONS (Note · Copy · Create photo
+   card). A dark floating popover: on a LIGHT reading theme its bg is the ink (`--text`,
+   light text); on a DARK theme a raised chrome (`--chrome-bg`). RTL mirrors both rows
+   (flex + logical props). Anchored/flipped like the old bar.
+   ============================================================================ */
+.hl-pop {
+  position: fixed; z-index: 30; transform: translate(-50%, -100%);
+  background: var(--text); color: var(--paper-bg);
+  border-radius: 15px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4); font-family: var(--ui-font);
+  padding: 11px 13px 12px; display: flex; flex-direction: column; max-width: 94vw;
+}
+:root[data-dark="true"] .hl-pop { background: var(--chrome-bg); color: var(--text); }
+.hl-pop.below { transform: translate(-50%, 0); }
+.hl-pop::after {
+  content: ""; position: absolute; left: 50%; bottom: -7px; transform: translateX(-50%);
+  border-left: 7px solid transparent; border-right: 7px solid transparent; border-top: 8px solid var(--text);
+}
+:root[data-dark="true"] .hl-pop::after { border-top-color: var(--chrome-bg); }
+.hl-pop.below::after { bottom: auto; top: -7px; border-top: none; border-bottom: 8px solid var(--text); }
+:root[data-dark="true"] .hl-pop.below::after { border-bottom-color: var(--chrome-bg); }
+/* tier 1 — palette */
+.hl-pop-colors { display: flex; align-items: center; gap: 9px; }
+.hl-pop-swatch {
+  width: 26px; height: 26px; border-radius: 50%; border: none; cursor: pointer; padding: 0; flex: none;
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.18);
+}
+.hl-pop-swatch:hover { transform: scale(1.08); }
+.hl-pop-vsep { width: 1px; height: 26px; background: rgba(255, 255, 255, 0.14); margin: 0 3px; flex: none; }
+.hl-pop-custom {
+  position: relative; width: 26px; height: 26px; border-radius: 50%; overflow: hidden; flex: none; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: conic-gradient(from 90deg, #E8C36A, #E7A867, #E2978D, #D285A4, #BFA8D6, #9DC0D6, #8DC3BA, #AEC798, #E8C36A);
+}
+.hl-pop-custom-dot {
+  width: 15px; height: 15px; border-radius: 50%; background: rgba(10, 14, 18, 0.55);
+  display: flex; align-items: center; justify-content: center; color: #fff; font: 600 13px var(--ui-font); line-height: 1;
+}
+.hl-pop-custom input { position: absolute; inset: 0; opacity: 0; border: 0; padding: 0; cursor: pointer; }
+/* hairline between the tiers */
+.hl-pop-line { height: 1px; background: rgba(255, 255, 255, 0.1); margin: 11px 2px; }
+/* tier 2 — actions */
+.hl-pop-actions { display: flex; align-items: center; gap: 4px; }
+.hl-pop-act {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 9px;
+  background: transparent; border: 0; cursor: pointer; font: 500 12.5px var(--ui-font); color: inherit; white-space: nowrap;
+}
+.hl-pop-act svg { flex: none; }
+.hl-pop-act:hover { background: rgba(255, 255, 255, 0.09); }
+.hl-pop-act.primary {
+  padding: 8px 13px; font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: color-mix(in srgb, var(--accent) 60%, #fff);
+}
+.hl-pop-act.primary:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+
 .hl-card { width: 284px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .hl-card .hl-dots { gap: 7px; }
 .hl-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }

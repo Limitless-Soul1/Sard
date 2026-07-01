@@ -136,6 +136,8 @@ export const en = {
 
   // Highlights & notes (RAWY-20)
   "hl.note": "Note",
+  "hl.copy": "Copy",
+  "hl.custom": "Custom colour",
   "hl.addNote": "Add a note…",
   "hl.remove": "Remove",
   "hl.save": "Save",

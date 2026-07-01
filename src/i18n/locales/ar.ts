@@ -137,6 +137,8 @@ export const ar: Record<TKey, string> = {
 
   // Highlights & notes (RAWY-20)
   "hl.note": "ملاحظة",
+  "hl.copy": "نسخ",
+  "hl.custom": "لون مخصّص",
   "hl.addNote": "أضف ملاحظة…",
   "hl.remove": "إزالة",
   "hl.save": "حفظ",

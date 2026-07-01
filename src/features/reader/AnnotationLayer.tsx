@@ -56,35 +56,68 @@ function anchorStyle(rect: AnchorRect, below: boolean): CSSProperties {
   return below ? { left, top: rect.bottom + 10 } : { left, top: rect.top - 10 };
 }
 
+// Action-tier line icons (design's SVGs; stroke = currentColor so they inherit the button ink).
+const PenIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+  </svg>
+);
+const CopyIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <rect x="9" y="9" width="11" height="11" rx="2.4" /><path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
+  </svg>
+);
+const PhotoIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <rect x="3" y="4.5" width="18" height="15" rx="2.6" /><circle cx="8.4" cy="10" r="1.5" /><path d="m20 17-5.2-5.2L5 19.5" />
+  </svg>
+);
+
+// The redesigned selection toolbar (RAWY-59, design "Selection Toolbar — two-tier popover"):
+// a floating dark popover with the COLOUR PALETTE on top (one tap highlights in that ink — no
+// highlight sub-step) and, below a hairline, the ACTIONS row (Note · Copy · Create photo card).
+// The palette + custom picker keep the RAWY-20 semantic-slot behaviour; RTL mirrors both rows.
 function SelectionToolbar({
   sel,
   onColor,
   onNote,
+  onCopy,
   onPhotoCard,
 }: {
   sel: SelectionInfo;
   onColor: (c: HighlightColor) => void;
   onNote: () => void;
+  onCopy: () => void;
   onPhotoCard: () => void;
 }) {
   const { t } = useI18n();
+  const hl = useHl();
   const below = sel.rect.top < 90;
   return (
     <div
-      className={`hl-bar${below ? " below" : ""}`}
+      className={`hl-pop${below ? " below" : ""}`}
       style={anchorStyle(sel.rect, below)}
       onPointerDown={(e) => e.stopPropagation()}
     >
-      <ColorRow onPick={onColor} />
-      <span className="hl-sep" />
-      <button className="hl-action" onClick={onNote}>
-        <span className="hl-pen" aria-hidden>✎</span>
-        {t("hl.note")}
-      </button>
-      <button className="hl-action" onClick={onPhotoCard}>
-        <span className="hl-pen" aria-hidden>▨</span>
-        {t("photo.card")}
-      </button>
+      {/* tier 1 — palette (one tap highlights) */}
+      <div className="hl-pop-colors">
+        {HIGHLIGHT_SLOTS.map((c) => (
+          <button key={c} className="hl-pop-swatch" style={{ background: hl[c] }} onClick={() => onColor(c)} aria-label={c} />
+        ))}
+        <span className="hl-pop-vsep" />
+        <label className="hl-pop-custom" title={t("hl.custom")}>
+          <span className="hl-pop-custom-dot" aria-hidden>+</span>
+          <input type="color" defaultValue="#C98A5E" onChange={(e) => onColor(e.target.value)} aria-label={t("hl.custom")} />
+        </label>
+      </div>
+      {/* hairline */}
+      <div className="hl-pop-line" />
+      {/* tier 2 — actions */}
+      <div className="hl-pop-actions">
+        <button className="hl-pop-act" onClick={onNote}><PenIcon />{t("hl.note")}</button>
+        <button className="hl-pop-act" onClick={onCopy}><CopyIcon />{t("hl.copy")}</button>
+        <button className="hl-pop-act primary" onClick={onPhotoCard}><PhotoIcon />{t("photo.card")}</button>
+      </div>
     </div>
   );
 }
@@ -187,6 +220,11 @@ export function AnnotationLayer({
     setSelection(null);
     if (row) setActive({ cfi: row.cfi, rect }); // open the popover to type
   };
+  const onCopy = () => {
+    if (!selection) return;
+    navigator.clipboard.writeText(selection.text).catch(console.error);
+    setSelection(null);
+  };
 
   const activeHi = active ? highlightByCfi(active.cfi) : undefined;
   const activeNote = activeHi ? noteForHighlight(activeHi.id) : undefined;
@@ -210,6 +248,7 @@ export function AnnotationLayer({
           sel={selection}
           onColor={onPickColor}
           onNote={onNote}
+          onCopy={onCopy}
           onPhotoCard={() => {
             const s = selection;
             setSelection(null);

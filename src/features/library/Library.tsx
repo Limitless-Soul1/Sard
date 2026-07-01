@@ -525,12 +525,12 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
 
             {menu && <div className="lib-clickaway" onClick={() => setMenu(null)} />}
 
-            {activeShelf && count === 0 && !search ? (
-              <div className="lib-shelf-empty-state">
-                <div className="lib-shelf-empty-title">{t("lib.shelfEmpty.title")}</div>
-                <div className="lib-shelf-empty-hint">{t("lib.shelfEmpty.hint")}</div>
-              </div>
-            ) : view === "rows" ? (
+            {/* ROWS is checked FIRST so the toggle always switches to it (RAWY-51): ShelfRows has
+                its own per-shelf "empty" handling, so it must NOT be pre-empted by the flat
+                empty-shelf state below — otherwise, with an empty shelf/filter selected, clicking
+                Rows appeared to do nothing (the empty-state stayed). The empty-state now guards
+                only the flat grid/list. */}
+            {view === "rows" ? (
               <ShelfRows
                 shelves={shelves}
                 activeShelf={shelf}
@@ -544,6 +544,11 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
                 onSeeAll={(id) => { pickShelf(id); setView("grid"); }}
                 onAddBooks={addBooks}
               />
+            ) : activeShelf && count === 0 && !search ? (
+              <div className="lib-shelf-empty-state">
+                <div className="lib-shelf-empty-title">{t("lib.shelfEmpty.title")}</div>
+                <div className="lib-shelf-empty-hint">{t("lib.shelfEmpty.hint")}</div>
+              </div>
             ) : view === "grid" ? (
               <div className="lib-grid">
                 {books.map((b) => (

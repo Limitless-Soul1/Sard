@@ -917,6 +917,9 @@ html, body, #root {
   background-image: linear-gradient(currentColor 0 0), linear-gradient(currentColor 0 0), linear-gradient(currentColor 0 0);
   background-size: 13px 2px; background-position: 0 0, 0 5px, 0 10px;
 }
+/* Rows icon (RAWY-46): two stacked rows of covers, the last column clipped = sideways scroll. */
+.ico-rows { width: 14px; height: 12px; display: inline-flex; flex-direction: column; gap: 2.5px; overflow: hidden; }
+.ico-rows > span { height: 4.5px; width: 16px; background: repeating-linear-gradient(90deg, currentColor 0 3.5px, transparent 3.5px 5.5px); }
 .lib-ctl {
   padding: 6px 11px; border: 1px solid var(--chrome-border); border-radius: 7px;
   background: var(--lib-soft); color: var(--muted); font: 500 12px var(--ui-font); cursor: pointer;
@@ -947,6 +950,31 @@ html, body, #root {
    RTL UI the first sorted item lands top-RIGHT and the row flows right-to-left; in LTR it lands
    top-left. Pairing this with the per-column default sort order (date → newest first, see
    pickSort) puts the most-recently-read book where the reader's eye starts. */
+/* ---- shelf rows (RAWY-46, Band E-II): labelled horizontal rows, sideways scroll, RTL-mirroring ---- */
+.lib-rows { flex: 1; overflow-y: auto; padding: 6px 0 26px; display: flex; flex-direction: column; gap: 2px; }
+.lib-shelfrow { padding: 0 0 18px; }
+.lib-shelfrow-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 30px 11px; }
+.lib-shelfrow-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.lib-shelfrow-name { font: 600 17px "Literata", "SardUIArabic", serif; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lib-shelfrow-count { font: 500 12px var(--ui-font); color: var(--lib-faint); flex: none; }
+.lib-shelfrow-seeall { border: none; background: transparent; cursor: pointer; font: 500 12px var(--ui-font); color: var(--accent); white-space: nowrap; flex: none; }
+.lib-shelfrow-seeall:hover { text-decoration: underline; }
+.lib-seeall-arrow { display: inline-block; }
+:root[dir="rtl"] .lib-seeall-arrow { transform: scaleX(-1); }
+.lib-shelfrow-scroll {
+  display: flex; gap: 18px; padding: 4px 30px 8px; overflow-x: auto; overflow-y: hidden;
+  scroll-snap-type: x proximity; scrollbar-width: thin;
+}
+.lib-rowitem { flex: none; width: 116px; scroll-snap-align: start; }
+.lib-shelfrow-empty {
+  margin: 0 30px; padding: 20px 22px; border-radius: 9px; border: 1px dashed var(--chrome-border);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+  font: 400 13px/1.55 var(--ui-font); color: var(--muted);
+}
+.lib-rows-noshelves { padding: 44px 30px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.lib-rows-noshelves-title { font: 600 19px "Literata", "SardUIArabic", serif; color: var(--text); }
+.lib-rows-noshelves-hint { font: 400 13.5px/1.65 var(--ui-font); color: var(--muted); max-width: 440px; margin-bottom: 8px; }
+
 .lib-grid {
   flex: 1; overflow: auto; padding: 8px 30px 26px;
   display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));

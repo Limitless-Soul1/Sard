@@ -39,7 +39,7 @@ export interface OpenTarget {
   cfi?: string | null; // jump-to location (RAWY-27 inbox); else resume saved progress
 }
 
-type View = "grid" | "list";
+type View = "grid" | "list" | "rows";
 type CoverMode = "crop" | "fit";
 
 const SORTS: SortKey[] = ["title", "author", "format", "date_read", "date_added"];
@@ -99,7 +99,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         settingsGet("lib_view"), settingsGet("lib_sort"), settingsGet("lib_order"),
         settingsGet("lib_cover"), settingsGet("lib_shelf"),
       ]);
-      if (v === "list" || v === "grid") setView(v);
+      if (v === "list" || v === "grid" || v === "rows") setView(v);
       if (s && (SORTS as string[]).includes(s)) setSort(s as SortKey);
       if (o === "asc" || o === "desc") setOrder(o);
       if (c === "crop" || c === "fit") setCoverMode(c);
@@ -444,6 +444,14 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
                     >
                       <span className="ico-list" />
                     </button>
+                    <button
+                      className={view === "rows" ? "active" : ""}
+                      onClick={() => setView("rows")}
+                      title={t("lib.view.rows")}
+                      aria-label={t("lib.view.rows")}
+                    >
+                      <span className="ico-rows"><span /><span /></span>
+                    </button>
                   </div>
 
                   {view === "grid" && (
@@ -522,6 +530,20 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
                 <div className="lib-shelf-empty-title">{t("lib.shelfEmpty.title")}</div>
                 <div className="lib-shelf-empty-hint">{t("lib.shelfEmpty.hint")}</div>
               </div>
+            ) : view === "rows" ? (
+              <ShelfRows
+                shelves={shelves}
+                activeShelf={shelf}
+                sort={sort}
+                order={order}
+                coverMode={coverMode}
+                lang={lang}
+                t={t}
+                onOpen={open}
+                onEdit={setEditing}
+                onSeeAll={(id) => { pickShelf(id); setView("grid"); }}
+                onAddBooks={addBooks}
+              />
             ) : view === "grid" ? (
               <div className="lib-grid">
                 {books.map((b) => (
@@ -586,6 +608,148 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
 }
 
 type TFn = ReturnType<typeof useI18n>["t"];
+
+// Shelf-rows view (RAWY-46, design Band E-II): the Library as bookstore/streaming-style horizontal
+// shelf rows — a built-in "Currently Reading" row + one row per user shelf. Reuses the existing
+// shelves (collections_list) + per-shelf book query + the BookCard; a third option beside Grid/List.
+// Rows read + scroll sideways and mirror in RTL (the container inherits the UI direction). "See all"
+// hands off to the flat grid filtered to that shelf (the best all-books view — the design's note).
+function ShelfRows({
+  shelves,
+  activeShelf,
+  sort,
+  order,
+  coverMode,
+  lang,
+  t,
+  onOpen,
+  onEdit,
+  onSeeAll,
+  onAddBooks,
+}: {
+  shelves: CollectionRow[];
+  activeShelf: string | null;
+  sort: SortKey;
+  order: SortOrder;
+  coverMode: CoverMode;
+  lang: string;
+  t: TFn;
+  onOpen: (b: BookRow) => void;
+  onEdit: (b: BookRow) => void;
+  onSeeAll: (id: string) => void;
+  onAddBooks: () => void;
+}) {
+  const [reading, setReading] = useState<BookRow[]>([]);
+  const [shelfBooks, setShelfBooks] = useState<Record<string, BookRow[]>>({});
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      // "Currently Reading" is a DERIVED row (books with in-progress reading) — not a new shelf.
+      const all = await libraryListBooks({ sort: "date_read", order: "desc" }).catch(() => [] as BookRow[]);
+      const inProgress = all.filter((b) => {
+        const f = b.fraction ?? 0;
+        return f > 0 && f < 0.999;
+      });
+      const targets = activeShelf ? shelves.filter((s) => s.id === activeShelf) : shelves;
+      const lists = await Promise.all(
+        targets.map((s) => libraryListBooks({ sort, order, collection: s.id }).catch(() => [] as BookRow[])),
+      );
+      if (cancel) return;
+      setReading(inProgress);
+      const map: Record<string, BookRow[]> = {};
+      targets.forEach((s, i) => (map[s.id] = lists[i]));
+      setShelfBooks(map);
+    })();
+    return () => {
+      cancel = true;
+    };
+  }, [shelves, activeShelf, sort, order]);
+
+  const rowShelves = activeShelf ? shelves.filter((s) => s.id === activeShelf) : shelves;
+  const showReading = !activeShelf && reading.length > 0;
+
+  return (
+    <div className="lib-rows">
+      {showReading && (
+        <ShelfRow title={t("lib.row.reading")} count={reading.length} books={reading} coverMode={coverMode} lang={lang} t={t} onOpen={onOpen} onEdit={onEdit} />
+      )}
+      {rowShelves.map((s) => (
+        <ShelfRow
+          key={s.id}
+          title={s.name}
+          count={s.count}
+          books={shelfBooks[s.id] ?? []}
+          coverMode={coverMode}
+          lang={lang}
+          t={t}
+          onOpen={onOpen}
+          onEdit={onEdit}
+          onSeeAll={() => onSeeAll(s.id)}
+          emptyMsg={t("lib.shelfRow.empty")}
+        />
+      ))}
+      {shelves.length === 0 && (
+        <div className="lib-rows-noshelves">
+          <div className="lib-rows-noshelves-title">{t("lib.rows.noShelvesTitle")}</div>
+          <div className="lib-rows-noshelves-hint">{t("lib.rows.noShelvesHint")}</div>
+          <button className="lib-btn-primary" onClick={onAddBooks}>+ {t("lib.add")}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ShelfRow({
+  title,
+  count,
+  books,
+  coverMode,
+  lang,
+  t,
+  onOpen,
+  onEdit,
+  onSeeAll,
+  emptyMsg,
+}: {
+  title: string;
+  count: number;
+  books: BookRow[];
+  coverMode: CoverMode;
+  lang: string;
+  t: TFn;
+  onOpen: (b: BookRow) => void;
+  onEdit: (b: BookRow) => void;
+  onSeeAll?: () => void;
+  emptyMsg?: string;
+}) {
+  return (
+    <section className="lib-shelfrow">
+      <div className="lib-shelfrow-head">
+        <div className="lib-shelfrow-title">
+          <span className="lib-shelfrow-name" dir="auto">{title}</span>
+          <span className="lib-shelfrow-count">{num(count, lang)}</span>
+        </div>
+        {onSeeAll && (
+          <button className="lib-shelfrow-seeall" onClick={onSeeAll}>
+            {t("lib.seeAll")} <span className="lib-seeall-arrow" aria-hidden>→</span>
+          </button>
+        )}
+      </div>
+      {books.length ? (
+        <div className="lib-shelfrow-scroll">
+          {books.map((b) => (
+            <div key={b.id} className="lib-rowitem">
+              <BookCard book={b} coverMode={coverMode} onOpen={() => onOpen(b)} onEdit={() => onEdit(b)} />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="lib-shelfrow-empty">{emptyMsg}</div>
+      )}
+    </section>
+  );
+}
 
 function progressInfo(b: BookRow) {
   const f = b.fraction ?? 0;

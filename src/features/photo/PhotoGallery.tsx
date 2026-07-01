@@ -31,6 +31,14 @@ function rowToCardData(row: PhotoCardRow): CardData {
   };
 }
 const validTheme = (id: string | null): ThemeId | null => (id && id in THEMES ? (id as ThemeId) : null);
+
+// The lightbox backdrop + pill follow the SAVED CARD's polarity (RAWY-58), not the Library theme:
+// a light-theme card → the warm backdrop; a dark-theme card → the near-black one. An unknown
+// theme falls back to light.
+const cardIsDark = (themeId: string | null): boolean => {
+  const t = validTheme(themeId);
+  return t ? THEMES[t].dark : false;
+};
 const validFormat = (f: string | null): CardFormat | undefined => FORMATS.find((x) => x.key === f)?.key;
 
 // Line icons for the lightbox action pill (stroke = currentColor so they inherit the button ink).
@@ -78,7 +86,6 @@ async function cardBlob(imagePath: string): Promise<Blob> {
 
 export function PhotoGallery() {
   const { t, lang } = useI18n();
-  const dark = THEMES[useTheme((s) => s.themeId)].dark; // lightbox backdrop follows the Library theme
   const [cards, setCards] = useState<PhotoCardRow[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [open, setOpen] = useState<PhotoCardRow | null>(null);
@@ -178,7 +185,7 @@ export function PhotoGallery() {
 
       {open && (
         <div
-          className={`pg-lightbox${dark ? " dark" : ""}`}
+          className={`pg-lightbox${cardIsDark(open.theme_id) ? " dark" : ""}`}
           onPointerDown={() => { setOpen(null); setConfirmDel(false); }}
         >
           <button className="pg-lb-close" onClick={() => setOpen(null)} aria-label={t("photo.close")}>✕</button>

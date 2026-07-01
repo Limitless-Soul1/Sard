@@ -60,10 +60,12 @@ function SelectionToolbar({
   sel,
   onColor,
   onNote,
+  onPhotoCard,
 }: {
   sel: SelectionInfo;
   onColor: (c: HighlightColor) => void;
   onNote: () => void;
+  onPhotoCard: () => void;
 }) {
   const { t } = useI18n();
   const below = sel.rect.top < 90;
@@ -78,6 +80,10 @@ function SelectionToolbar({
       <button className="hl-action" onClick={onNote}>
         <span className="hl-pen" aria-hidden>✎</span>
         {t("hl.note")}
+      </button>
+      <button className="hl-action" onClick={onPhotoCard}>
+        <span className="hl-pen" aria-hidden>▨</span>
+        {t("photo.card")}
       </button>
     </div>
   );
@@ -127,7 +133,13 @@ function HighlightPopover({
   );
 }
 
-export function AnnotationLayer({ ctrlRef }: { ctrlRef: RefObject<FoliateController | null> }) {
+export function AnnotationLayer({
+  ctrlRef,
+  onPhotoCard,
+}: {
+  ctrlRef: RefObject<FoliateController | null>;
+  onPhotoCard?: (sel: SelectionInfo) => void;
+}) {
   const [selection, setSelection] = useState<SelectionInfo | null>(null);
   const [active, setActive] = useState<AnnotationHit | null>(null);
   const highlightByCfi = useAnnotations((s) => s.highlightByCfi);
@@ -193,7 +205,18 @@ export function AnnotationLayer({ ctrlRef }: { ctrlRef: RefObject<FoliateControl
 
   return (
     <>
-      {selection && <SelectionToolbar sel={selection} onColor={onPickColor} onNote={onNote} />}
+      {selection && (
+        <SelectionToolbar
+          sel={selection}
+          onColor={onPickColor}
+          onNote={onNote}
+          onPhotoCard={() => {
+            const s = selection;
+            setSelection(null);
+            onPhotoCard?.(s);
+          }}
+        />
+      )}
       {active && activeHi && (
         <HighlightPopover
           hit={active}

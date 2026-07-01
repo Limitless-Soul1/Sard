@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 
-import { FoliateController, type TocEntry } from "../../reader-engine/FoliateController";
+import { FoliateController, type SelectionInfo, type TocEntry } from "../../reader-engine/FoliateController";
+import { PhotoComposer } from "../photo/PhotoComposer";
+import type { CardData } from "../photo/photo";
 import { useReader } from "../../reader-engine/store";
 import {
   ARABIC_DEFAULTS,
@@ -69,6 +71,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const libraryThemeRef = useRef<ThemeId>(useTheme.getState().themeId);
   const [bookThemeId, setBookThemeId] = useState<ThemeId>(useTheme.getState().bookThemeId);
   const [hasOv, setHasOv] = useState(false);
+  const [photoCard, setPhotoCard] = useState<CardData | null>(null); // RAWY-49 Photo Mode composer
 
   const { status, dir, fraction, chapterLabel, chapterHref, error, style, bookTitle } = useReader();
   // RAWY-43: unified (all books share one style) vs per-book. Drives where changes are written
@@ -330,6 +333,21 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     useBookmarks.getState().toggle(st.cfi, st.chapterLabel, st.fraction);
   };
 
+  // RAWY-49: open the Photo Mode composer for a selected passage. The card starts on the book's
+  // current theme + direction, with the book title/author/chapter as removable metadata.
+  const openPhotoCard = (sel: SelectionInfo) => {
+    const ctrl = ctrlRef.current;
+    const st = useReader.getState();
+    setPhotoCard({
+      quote: sel.text.replace(/\s+/g, " ").trim(),
+      dir: dir === "rtl" ? "rtl" : "ltr",
+      bookTitle: ctrl?.title ?? st.bookTitle ?? undefined,
+      author: ctrl?.author,
+      chapterLabel: st.chapterLabel ?? undefined,
+      date: new Date(),
+    });
+  };
+
   const isRtlBook = dir === "rtl";
   // Whether the chrome bar is currently shown — the bookmark marker drops below it so it stays
   // visible (RAWY-42); same condition the chrome itself uses.
@@ -464,7 +482,16 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         unified={scope === "unified"}
       />
 
-      <AnnotationLayer ctrlRef={ctrlRef} />
+      <AnnotationLayer ctrlRef={ctrlRef} onPhotoCard={openPhotoCard} />
+
+      {photoCard && (
+        <PhotoComposer
+          data={photoCard}
+          initialThemeId={bookThemeId}
+          lang={lang}
+          onClose={() => setPhotoCard(null)}
+        />
+      )}
 
       {status === "error" && <pre className="reader-error">{t("status.error")}: {error}</pre>}
     </div>

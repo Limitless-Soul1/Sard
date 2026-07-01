@@ -126,6 +126,7 @@ pub fn run() {
             commands::bookmark_delete,
             commands::bookmarks_for_book,
             commands::bookmarks_all,
+            commands::save_photo_card,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sard");

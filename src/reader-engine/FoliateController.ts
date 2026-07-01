@@ -442,4 +442,14 @@ export class FoliateController {
     if (!t) return undefined;
     return typeof t === "string" ? t : (t.value ?? t["#text"] ?? undefined);
   }
+  /** Book author/creator from the EPUB metadata (RAWY-49 — the photo-card credit line).
+   *  foliate normalises author to a string, an object with `name`, or an array of either. */
+  get author(): string | undefined {
+    const a = (this.view?.book?.metadata as { author?: unknown } | undefined)?.author;
+    if (!a) return undefined;
+    const one = (v: unknown): string | undefined =>
+      typeof v === "string" ? v : (v as { name?: string })?.name;
+    if (Array.isArray(a)) return a.map(one).filter(Boolean).join("، ") || undefined;
+    return one(a);
+  }
 }

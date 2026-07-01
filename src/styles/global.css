@@ -1438,3 +1438,76 @@ html, body, #root {
 .gs-tl-ico { width: 24px; height: 24px; border-radius: 7px; display: flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; font-size: 13px; }
 .gs-tl-ico-book { background: #7b59a0; }
 .gs-tl-desc { font: 400 12px/1.55 var(--ui-font); color: var(--muted); }
+
+/* ============================================================================
+   Photo Mode — the photo-card composer (RAWY-49, design Band I). The MODAL CHROME
+   adapts to the chosen card theme's light/dark (design I1 light vs I2 dark) via a
+   local token set; the CARD itself is coloured inline from the selected theme tokens.
+   ============================================================================ */
+.pc-overlay {
+  position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
+  background: rgba(20, 14, 6, 0.5); backdrop-filter: blur(3px); padding: 24px;
+}
+.pc-modal {
+  --pc-modal-bg: #F3ECDB; --pc-stage-bg: #E7DCC4; --pc-panel-bg: #FBF7EC;
+  --pc-text: #2B2521; --pc-muted: #9b8e7c; --pc-border: rgba(43, 37, 33, 0.09); --pc-accent: #9C5A3C;
+  display: flex; height: min(720px, 92vh); width: min(1000px, 94vw);
+  border-radius: 12px; overflow: hidden; background: var(--pc-modal-bg);
+  box-shadow: 0 24px 60px rgba(20, 14, 6, 0.4); color: var(--pc-text);
+}
+.pc-modal.dark {
+  --pc-modal-bg: #0E1114; --pc-stage-bg: #0A0C0E; --pc-panel-bg: #15191D;
+  --pc-text: #E4DED2; --pc-muted: #7E8A93; --pc-border: rgba(255, 255, 255, 0.06); --pc-accent: #C98A5E;
+}
+/* stage / preview */
+.pc-stage {
+  flex: 1; background: var(--pc-stage-bg); display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 16px; position: relative; padding: 24px;
+}
+.pc-stage-label { font: 500 11px "Inter", sans-serif; letter-spacing: .08em; color: var(--pc-muted); text-transform: uppercase; }
+.pc-scale { position: relative; }
+.pc-card { position: relative; overflow: hidden; border-radius: 5px; box-shadow: 0 22px 50px rgba(20, 14, 6, 0.32); display: flex; flex-direction: column; box-sizing: border-box; }
+.pc-quotemark { position: relative; }
+.pc-quote-wrap { position: relative; flex: 1; display: flex; align-items: center; }
+.pc-quote { margin: 0; width: 100%; }
+.pc-foot { position: relative; display: flex; align-items: flex-end; justify-content: space-between; }
+.pc-credit { position: relative; min-width: 0; }
+.pc-rule { border-radius: 2px; margin-bottom: 3.5%; }
+.pc-brand { display: flex; align-items: center; opacity: 0.85; flex: none; }
+.pc-brand-div { width: 1px; opacity: 0.42; }
+.pc-toast {
+  position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
+  background: var(--pc-text); color: var(--pc-modal-bg); font: 600 13px "Inter", sans-serif;
+  padding: 9px 20px; border-radius: 22px; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
+}
+/* controls panel */
+.pc-panel { width: 344px; background: var(--pc-panel-bg); border-inline-start: 1px solid var(--pc-border); display: flex; flex-direction: column; }
+.pc-panel-head { height: 40px; display: flex; align-items: center; justify-content: flex-end; padding-inline-end: 12px; }
+.pc-close { border: none; background: transparent; color: var(--pc-muted); font: 300 17px "Inter", sans-serif; cursor: pointer; width: 30px; height: 30px; border-radius: 7px; }
+.pc-close:hover { background: var(--pc-border); }
+.pc-panel-body { padding: 4px 26px 22px; flex: 1; display: flex; flex-direction: column; gap: 22px; overflow-y: auto; }
+.pc-panel-name { font: 600 17px "Literata", serif; color: var(--pc-text); }
+.pc-panel-sub { font: 400 12px "Inter", sans-serif; color: var(--pc-muted); margin-top: 2px; }
+.pc-group-label { font: 600 11px "Inter", sans-serif; letter-spacing: .12em; color: var(--pc-muted); margin-bottom: 11px; }
+.pc-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.pc-swatch {
+  width: 40px; height: 34px; border-radius: 7px; border: 1px solid var(--pc-border); cursor: pointer;
+  font: 600 13px "Literata", serif; display: flex; align-items: center; justify-content: center;
+}
+.pc-swatch.on { box-shadow: 0 0 0 2px var(--pc-accent), 0 0 0 4px var(--pc-panel-bg); }
+.pc-formats { display: flex; gap: 9px; }
+.pc-format { flex: 1; border: none; background: transparent; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 0; }
+.pc-format-ico { display: block; height: 30px; width: auto; border: 1.5px solid var(--pc-muted); border-radius: 2px; }
+.pc-format.on .pc-format-ico { border-color: var(--pc-accent); background: color-mix(in srgb, var(--pc-accent) 12%, transparent); }
+.pc-format-label { font: 500 10px "Inter", sans-serif; color: var(--pc-muted); }
+.pc-format.on .pc-format-label { color: var(--pc-accent); font-weight: 600; }
+.pc-toggles { display: flex; flex-direction: column; gap: 13px; }
+.pc-toggle { display: flex; align-items: center; justify-content: space-between; font: 500 13px "Inter", sans-serif; color: var(--pc-text); }
+.pc-switch { width: 36px; height: 21px; border: none; background: var(--pc-border); border-radius: 21px; position: relative; cursor: pointer; padding: 0; transition: background .15s; }
+.pc-switch.on { background: var(--pc-accent); }
+.pc-knob { position: absolute; top: 2px; inset-inline-start: 2px; width: 17px; height: 17px; background: var(--pc-panel-bg); border-radius: 50%; transition: inset-inline-start .15s; }
+.pc-switch.on .pc-knob { inset-inline-start: 17px; }
+.pc-actions { margin-top: auto; display: flex; gap: 10px; padding-top: 6px; }
+.pc-save { flex: 1; border: none; background: var(--pc-accent); color: var(--pc-modal-bg); font: 600 14px "Inter", sans-serif; padding: 13px 0; border-radius: 9px; cursor: pointer; }
+.pc-copy { border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text); font: 500 13px "Inter", sans-serif; padding: 13px 16px; border-radius: 9px; cursor: pointer; }
+.pc-save:disabled, .pc-copy:disabled { opacity: 0.55; cursor: default; }

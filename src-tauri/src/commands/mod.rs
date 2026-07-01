@@ -380,3 +380,11 @@ pub fn font_remove(id: String, state: State<AppState>) -> Result<bool, String> {
     fonts::remove(&conn, &app_data_dir, &id)?;
     Ok(true)
 }
+
+// ---- Photo Mode (RAWY-49): write a rendered photo-card PNG to a user-chosen path. ----
+// The frontend rasterises the card DOM to PNG bytes (html-to-image) and picks a path via the
+// dialog plugin; this just writes the bytes. Kept in Rust so no extra JS fs plugin is needed.
+#[tauri::command]
+pub fn save_photo_card(path: String, data: Vec<u8>) -> Result<(), String> {
+    std::fs::write(&path, &data).map_err(err)
+}

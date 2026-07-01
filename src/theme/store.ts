@@ -9,7 +9,8 @@ import { applyTheme } from "./applyTheme";
 import { DEFAULT_DARK, DEFAULT_LIGHT, THEMES, isThemeId } from "./themes";
 import type { ThemeId } from "./tokens";
 
-const K_THEME = "theme_id";
+const K_THEME = "theme_id"; // the LIBRARY (app chrome) theme — independent of books (RAWY-48/D29)
+const K_BOOK_THEME = "book_theme_id"; // the shared/default BOOK theme (unified + per-book fallback)
 const K_OVERRIDE = "override_book_color";
 const K_HIDE = "hide_chapter_titles";
 const K_MODE = "theme_mode"; // "manual" | "auto" (RAWY-39 — Follow OS)
@@ -23,13 +24,17 @@ const osPrefersDark = (): boolean =>
     : false;
 
 interface ThemeState {
-  themeId: ThemeId;
+  themeId: ThemeId; // the LIBRARY (app chrome) theme — what :root shows outside reading (D29)
+  bookThemeId: ThemeId; // the shared/default BOOK theme — unified mode + per-book fallback (D29)
   autoMode: boolean; // follow the OS light/dark scheme (RAWY-39)
   overrideBookColor: boolean;
   hideChapterTitles: boolean;
   ready: boolean;
-  /** Apply a specific theme. An explicit theme choice exits Follow-OS mode. */
+  /** Apply a specific LIBRARY theme. An explicit theme choice exits Follow-OS mode. */
   setTheme: (id: ThemeId) => void;
+  /** Set the shared/default BOOK theme (RAWY-48/D29). Persists only — does NOT touch :root; the
+   *  Reader applies it to the reading surface while a book is open, never to the Library. */
+  setBookTheme: (id: ThemeId) => void;
   toggleDayNight: () => void;
   /** Band-H app mode: Day → default light, Night → default dark, Follow OS → track the system. */
   setMode: (m: ThemeMode) => void;
@@ -46,6 +51,7 @@ function applyThemeId(set: (p: Partial<ThemeState>) => void, id: ThemeId): void 
 
 export const useTheme = create<ThemeState>((set, get) => ({
   themeId: DEFAULT_LIGHT,
+  bookThemeId: DEFAULT_LIGHT,
   autoMode: false,
   // Default ON (RAWY-37, decision D25): the page follows the active theme on every book, so
   // Day/Night flips ALL books (incl. ones that hard-code their own colours) and the reading
@@ -59,6 +65,13 @@ export const useTheme = create<ThemeState>((set, get) => ({
       settingsSet(K_MODE, "manual").catch(console.error);
     }
     applyThemeId(set, id);
+  },
+  setBookTheme: (id) => {
+    // BOOK theme only (D29): persist + store. The Library (:root) is NOT touched — the Reader
+    // applies this to the reading surface while a book is open. This is what makes choosing a
+    // book/unified theme leave the Library's own theme alone (the RAWY-48 decouple).
+    set({ bookThemeId: id });
+    settingsSet(K_BOOK_THEME, id).catch(console.error);
   },
   toggleDayNight: () => {
     const next = THEMES[get().themeId].dark ? DEFAULT_LIGHT : DEFAULT_DARK;
@@ -93,23 +106,25 @@ export function currentMode(s: Pick<ThemeState, "autoMode" | "themeId">): ThemeM
 
 /** Load persisted theme settings and apply them. Call once at startup. */
 export async function initTheme(): Promise<void> {
-  const [tid, ov, ht, mode] = await Promise.all([
+  const [tid, btid, ov, ht, mode] = await Promise.all([
     settingsGet(K_THEME).catch(() => null),
+    settingsGet(K_BOOK_THEME).catch(() => null),
     settingsGet(K_OVERRIDE).catch(() => null),
     settingsGet(K_HIDE).catch(() => null),
     settingsGet(K_MODE).catch(() => null),
   ]);
   const auto = mode === "auto";
-  const themeId = auto
-    ? osPrefersDark()
-      ? DEFAULT_DARK
-      : DEFAULT_LIGHT
-    : isThemeId(tid)
-      ? tid
-      : DEFAULT_LIGHT;
+  // The LIBRARY theme drives the app chrome (and is what Follow-OS swaps). It is NOT affected by
+  // any book theme (RAWY-48/D29) — only Global Settings → Appearance changes it.
+  const libraryTheme = isThemeId(tid) ? tid : DEFAULT_LIGHT;
+  const themeId = auto ? (osPrefersDark() ? DEFAULT_DARK : DEFAULT_LIGHT) : libraryTheme;
+  // The shared/default BOOK theme (unified + per-book fallback). Migration: a missing key inherits
+  // the library theme so existing books keep their look; thereafter the two move independently.
+  const bookThemeId = isThemeId(btid) ? btid : libraryTheme;
   applyTheme(THEMES[themeId]);
   useTheme.setState({
     themeId,
+    bookThemeId,
     autoMode: auto,
     // Default ON unless the user has explicitly turned it OFF (D25) — a missing key reads as ON.
     overrideBookColor: ov !== "0",

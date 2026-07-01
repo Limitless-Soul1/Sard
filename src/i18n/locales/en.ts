@@ -200,6 +200,7 @@ export const en = {
   "gs.bookmark.subtitle": "How your saved place looks on the page. Pick a shape, then a colour.",
   "gs.bookmark.shape": "SHAPE",
   "gs.bookmark.color": "COLOUR",
+  "gs.bookmark.size": "SIZE",
   "gs.bookmark.position": "POSITION ON THE EDGE",
   "gs.bookmark.posHint": "Fixed — doesn't flip with language. You can also drag the marker on the page.",
 
@@ -239,6 +240,8 @@ export const en = {
   "gs.mode.auto": "Follow OS",
   "gs.defaultTheme": "DEFAULT THEME",
   "gs.appliesAppWide": "applies app-wide",
+  "gs.libraryTheme": "LIBRARY THEME",
+  "gs.libraryThemeHint": "the Library screen only — books keep their own theme",
   "gs.uiFont": "APP FONT",
   "gs.uiFontHint": "The whole app interface — menus, library, buttons. Not book text.",
   "gs.uiFontDefault": "System default",

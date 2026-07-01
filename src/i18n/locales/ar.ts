@@ -201,6 +201,7 @@ export const ar: Record<TKey, string> = {
   "gs.bookmark.subtitle": "كيف يبدو موضعك المحفوظ على الصفحة. اختر شكلًا ثم لونًا.",
   "gs.bookmark.shape": "الشكل",
   "gs.bookmark.color": "اللون",
+  "gs.bookmark.size": "الحجم",
   "gs.bookmark.position": "الموضع على الحافة",
   "gs.bookmark.posHint": "ثابت — لا ينقلب مع اللغة. ويمكنك أيضًا سحب الفاصل على الصفحة.",
 
@@ -240,6 +241,8 @@ export const ar: Record<TKey, string> = {
   "gs.mode.auto": "حسب النظام",
   "gs.defaultTheme": "السمة الافتراضية",
   "gs.appliesAppWide": "على مستوى التطبيق",
+  "gs.libraryTheme": "سمة المكتبة",
+  "gs.libraryThemeHint": "شاشة المكتبة فقط — تحتفظ الكتب بسمتها الخاصة",
   "gs.uiFont": "خط البرنامج",
   "gs.uiFontHint": "واجهة البرنامج كلها — القوائم والمكتبة والأزرار. لا نصّ الكتاب.",
   "gs.uiFontDefault": "الافتراضي",

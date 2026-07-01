@@ -11,7 +11,7 @@ import type { TKey } from "../../i18n/locales/en";
 import { Hoopoe } from "../library/Hoopoe";
 import { settingsGet, settingsSet } from "../../lib/ipc";
 import { BUILTIN_BOOK_FONTS, useFonts } from "../../lib/fonts";
-import { BOOKMARK_COLORS, BOOKMARK_SHAPES, useBookmarkStyle } from "../../lib/bookmarkStyle";
+import { BOOKMARK_COLORS, BOOKMARK_SHAPES, BOOKMARK_SIZE_MAX, BOOKMARK_SIZE_MIN, useBookmarkStyle } from "../../lib/bookmarkStyle";
 import { BookmarkShape } from "../reader/BookmarkShape";
 import { useStyleScope } from "../../lib/styleScope";
 import {
@@ -138,7 +138,7 @@ function AppearanceSection() {
       </div>
 
       <div className="gs-sec">
-        <Label hint={t("gs.appliesAppWide")}>{t("gs.defaultTheme")}</Label>
+        <Label hint={t("gs.libraryThemeHint")}>{t("gs.libraryTheme")}</Label>
         <div className="gs-swatches">
           {THEME_ORDER.map((id) => (
             <button key={id} className="gs-swatch-cell" onClick={() => setTheme(id)} title={THEMES[id].name}>
@@ -337,7 +337,7 @@ function ReadingDefaultsSection() {
 
 function BookmarkSection() {
   const { t } = useI18n();
-  const { shape, color, pos, setShape, setColor, setPos } = useBookmarkStyle();
+  const { shape, color, pos, size, setShape, setColor, setPos, setSize } = useBookmarkStyle();
   return (
     <>
       <SecHead>{t("gs.bookmark")}</SecHead>
@@ -375,6 +375,23 @@ function BookmarkSection() {
               aria-label={c.name}
             />
           ))}
+        </div>
+      </div>
+
+      <div className="gs-sec">
+        <Label hint={`${size}px`}>{t("gs.bookmark.size")}</Label>
+        <input
+          className="gs-slider"
+          type="range"
+          min={BOOKMARK_SIZE_MIN}
+          max={BOOKMARK_SIZE_MAX}
+          step={2}
+          value={size}
+          onChange={(e) => setSize(Number(e.target.value))}
+        />
+        {/* preview at the ACTUAL chosen size */}
+        <div className="gs-bm-sizeprev">
+          <BookmarkShape shape={shape} color={color} h={size} />
         </div>
       </div>
 

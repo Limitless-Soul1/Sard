@@ -47,9 +47,15 @@ export interface ReadingStyle {
 export const PAGE_WIDTH_MIN = 0;
 export const PAGE_WIDTH_MAX = 1;
 export const PAGE_WIDTH_DEFAULT = 0.5;
-// Slider fraction → preferred width in vw (then clamped 460..1360px in CSS, RAWY-36). A wider
-// 36→92vw span makes Narrow↔Wide clearly visible across window sizes. Narrow≈36vw, Wide≈92vw.
-export const pageWidthVw = (t: number): number => 36 + Math.max(0, Math.min(1, t)) * 56;
+// Slider fraction → preferred page width in PX, mapped LINEARLY across the whole 0..1 range so
+// the ENTIRE slider changes the width (RAWY-48 fix). The old model returned a vw value that CSS
+// then `clamp(…, 1360px)`-ed, so on a wide/maximized window the width hit 1360px around t≈0.3 and
+// the top ~⅔ of the slider did nothing. Now the fraction maps directly to 480..1400px; CSS only
+// caps it with `min(100%)` so it never exceeds the window. "Match window" still fills the sheet.
+export const PAGE_WIDTH_PX_MIN = 480;
+export const PAGE_WIDTH_PX_MAX = 1400;
+export const pageWidthPx = (t: number): number =>
+  PAGE_WIDTH_PX_MIN + Math.max(0, Math.min(1, t)) * (PAGE_WIDTH_PX_MAX - PAGE_WIDTH_PX_MIN);
 
 interface FontDef {
   regular: string;

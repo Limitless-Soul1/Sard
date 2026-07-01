@@ -7,7 +7,7 @@ import {
   ARABIC_DEFAULTS,
   defaultsForDir,
   PAGE_WIDTH_DEFAULT,
-  pageWidthVw,
+  pageWidthPx,
   type ReadingStyle,
 } from "../../reader-engine/injectedCss";
 import { bookRegister, progressGet, progressSave, settingsGet, settingsSet } from "../../lib/ipc";
@@ -64,8 +64,10 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // override, and the global theme captured on entry (restored to the chrome on exit).
   const globalStyleRef = useRef<ReadingStyle | null>(null);
   const overrideRef = useRef<BookOverride>({});
-  const globalThemeRef = useRef<ThemeId>(useTheme.getState().themeId);
-  const [bookThemeId, setBookThemeId] = useState<ThemeId>(useTheme.getState().themeId);
+  // The LIBRARY theme captured on entry, restored to the chrome on exit (RAWY-48/D29 — the
+  // Library has its OWN theme, independent of any book/unified theme).
+  const libraryThemeRef = useRef<ThemeId>(useTheme.getState().themeId);
+  const [bookThemeId, setBookThemeId] = useState<ThemeId>(useTheme.getState().bookThemeId);
   const [hasOv, setHasOv] = useState(false);
 
   const { status, dir, fraction, chapterLabel, chapterHref, error, style, bookTitle } = useReader();
@@ -99,12 +101,15 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       // still back-fill anything the global row lacks (RTL books get the Arabic baseline).
       const ts = useTheme.getState();
       const unified = useStyleScope.getState().scope === "unified";
-      globalThemeRef.current = ts.themeId;
+      libraryThemeRef.current = ts.themeId; // restore this to the chrome on exit
       const global = await loadGlobalStyle();
       const override = await loadBookOverride(target.id);
       globalStyleRef.current = global;
       overrideRef.current = override;
-      const effTheme = unified ? ts.themeId : (override.themeId ?? ts.themeId);
+      // The book's theme comes from the shared BOOK theme (D29), NOT the Library theme:
+      // unified → the shared book theme; per-book → this book's override, else the shared book theme.
+      const bookDefault = ts.bookThemeId;
+      const effTheme = unified ? bookDefault : (override.themeId ?? bookDefault);
       const initialStyle = unified ? global : effectiveStyle(global, override);
 
       const ctrl = ctrlRef.current!;
@@ -146,9 +151,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     return () => {
       if (progressTimer.current) clearTimeout(progressTimer.current);
       ctrlRef.current?.dispose();
-      // Restore the GLOBAL theme to the chrome on exit (RAWY-40) — the per-book theme was only
-      // for this reading session; the Library shows the app default again.
-      applyTheme(THEMES[globalThemeRef.current]);
+      // Restore the LIBRARY theme to the chrome on exit (RAWY-40/48) — the book theme was only
+      // for this reading session; the Library shows its own independent theme again.
+      applyTheme(THEMES[libraryThemeRef.current]);
     };
     // Open the book the Library handed us; re-open if the selection changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -172,7 +177,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     const unified = scope === "unified";
     const override = overrideRef.current;
     const effStyle = unified ? global : effectiveStyle(global, override);
-    const effTheme = unified ? globalThemeRef.current : (override.themeId ?? globalThemeRef.current);
+    const bookDefault = useTheme.getState().bookThemeId;
+    const effTheme = unified ? bookDefault : (override.themeId ?? bookDefault);
     useReader.getState().set({ style: effStyle });
     setBookThemeId(effTheme);
     setHasOv(!unified && calcHasOverride(override));
@@ -282,18 +288,20 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     }, SAVE_DEBOUNCE_MS);
   };
 
-  // THEME change from the Theme tab. PER-BOOK (RAWY-40): change ONLY this book's paper+ink (the
-  // global store/Library are untouched; persisted in the book override). UNIFIED (RAWY-43): set
-  // the GLOBAL theme (app-wide, persists `theme_id`) so every book + the Library follow it.
+  // THEME change from the Theme tab. Applies to the reading surface (:root while reading + the
+  // book iframe) but NEVER to the Library's own theme (RAWY-48/D29). PER-BOOK (RAWY-40): change
+  // ONLY this book's paper+ink (persisted in the book override). UNIFIED (RAWY-43): set the shared
+  // BOOK theme (`book_theme_id`) so every book follows it — the Library theme (`theme_id`) is left
+  // untouched, so returning to the Library still shows its own theme.
   const setBookTheme = (id: ThemeId) => {
     setBookThemeId(id);
     applyTheme(THEMES[id]);
     ctrlRef.current?.applyTheme(THEMES[id], { overrideBookColor, hideChapterTitles });
     if (useStyleScope.getState().scope === "unified") {
-      globalThemeRef.current = id;
-      useTheme.getState().setTheme(id); // global theme — applies to :root + persists theme_id
+      useTheme.getState().setBookTheme(id); // shared BOOK theme — persists book_theme_id, not the Library
     } else {
-      overrideRef.current = { ...overrideRef.current, themeId: id === globalThemeRef.current ? undefined : id };
+      const bookDefault = useTheme.getState().bookThemeId;
+      overrideRef.current = { ...overrideRef.current, themeId: id === bookDefault ? undefined : id };
       setHasOv(calcHasOverride(overrideRef.current));
       saveBookOverride(bookRef.current, overrideRef.current);
     }
@@ -306,9 +314,11 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     clearBookOverride(bookRef.current);
     const global = globalStyleRef.current ?? defaultsForDir(dir);
     useReader.getState().set({ style: global });
-    setBookThemeId(globalThemeRef.current);
-    applyTheme(THEMES[globalThemeRef.current]);
-    ctrlRef.current?.applyTheme(THEMES[globalThemeRef.current], { overrideBookColor, hideChapterTitles });
+    // Reset → follow the shared BOOK theme (D29), not the Library theme.
+    const bookDefault = useTheme.getState().bookThemeId;
+    setBookThemeId(bookDefault);
+    applyTheme(THEMES[bookDefault]);
+    ctrlRef.current?.applyTheme(THEMES[bookDefault], { overrideBookColor, hideChapterTitles });
     ctrlRef.current?.applyStyle(global);
   };
 
@@ -366,7 +376,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // the narrowed space → "page width does nothing"). The top cluster stays clickable above both.
   const rightPad = annoOpen ? PANEL : 0;
   const deskStyle = {
-    "--page-pref": `${pageWidthVw(pageFraction)}vw`,
+    "--page-pref": `${pageWidthPx(pageFraction)}px`,
     // Page margin insets the foliate host within the sheet (RAWY-36) — reliable across flow modes
     // (foliate's !important html padding can't be beaten from injected CSS).
     "--page-margin": `${style?.marginPx ?? 56}px`,

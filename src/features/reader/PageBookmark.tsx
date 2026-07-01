@@ -11,7 +11,7 @@ import { useBookmarkStyle } from "../../lib/bookmarkStyle";
 import { BookmarkShape } from "./BookmarkShape";
 
 export function PageBookmark({ title, belowChrome }: { title?: string; belowChrome?: boolean }) {
-  const { shape, color, pos, setPos } = useBookmarkStyle();
+  const { shape, color, pos, size, setPos } = useBookmarkStyle();
   const ref = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
 
@@ -45,7 +45,7 @@ export function PageBookmark({ title, belowChrome }: { title?: string; belowChro
       title={title}
       role="img"
     >
-      <BookmarkShape shape={shape} color={color} h={68} />
+      <BookmarkShape shape={shape} color={color} h={size} />
     </div>
   );
 }

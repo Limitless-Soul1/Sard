@@ -50,24 +50,35 @@ export const BOOKMARK_COLORS: { key: string; name: string; hex: string }[] = [
 const DEFAULT_SHAPE: BookmarkShapeKey = "ribbon";
 const DEFAULT_COLOR = "#9C5A3C"; // Terracotta
 const DEFAULT_POS = 0.84; // fraction along the top edge (0 = left, 1 = right), physical (fixed)
+// Marker HEIGHT in px (RAWY-48). The <BookmarkShape> scales entirely by this. User-sizable so the
+// on-page marker can be made bigger or smaller; the RAWY-42 non-occlusion offset still applies.
+export const BOOKMARK_SIZE_MIN = 40;
+export const BOOKMARK_SIZE_MAX = 120;
+const DEFAULT_SIZE = 68; // the RAWY-42 on-page height
 
 const K_SHAPE = "bookmark_style";
 const K_COLOR = "bookmark_color";
 const K_POS = "bookmark_pos";
+const K_SIZE = "bookmark_size";
+
+const clampSize = (n: number) => Math.max(BOOKMARK_SIZE_MIN, Math.min(BOOKMARK_SIZE_MAX, Math.round(n)));
 
 interface BookmarkStyleState {
   shape: BookmarkShapeKey;
   color: string;
   pos: number;
+  size: number;
   setShape: (s: BookmarkShapeKey) => void;
   setColor: (c: string) => void;
   setPos: (p: number, persist?: boolean) => void;
+  setSize: (n: number) => void;
 }
 
 export const useBookmarkStyle = create<BookmarkStyleState>((set) => ({
   shape: DEFAULT_SHAPE,
   color: DEFAULT_COLOR,
   pos: DEFAULT_POS,
+  size: DEFAULT_SIZE,
   setShape: (s) => {
     set({ shape: s });
     settingsSet(K_SHAPE, s).catch(console.error);
@@ -81,6 +92,11 @@ export const useBookmarkStyle = create<BookmarkStyleState>((set) => ({
     set({ pos: clamped });
     if (persist) settingsSet(K_POS, String(clamped)).catch(console.error);
   },
+  setSize: (n) => {
+    const s = clampSize(n);
+    set({ size: s });
+    settingsSet(K_SIZE, String(s)).catch(console.error);
+  },
 }));
 
 const isShape = (s: string | null): s is BookmarkShapeKey =>
@@ -88,15 +104,18 @@ const isShape = (s: string | null): s is BookmarkShapeKey =>
 
 /** Load persisted bookmark style/colour/position. Call once at startup. */
 export async function initBookmarkStyle(): Promise<void> {
-  const [shape, color, pos] = await Promise.all([
+  const [shape, color, pos, size] = await Promise.all([
     settingsGet(K_SHAPE).catch(() => null),
     settingsGet(K_COLOR).catch(() => null),
     settingsGet(K_POS).catch(() => null),
+    settingsGet(K_SIZE).catch(() => null),
   ]);
   const p = pos != null ? Number(pos) : NaN;
+  const sz = size != null ? Number(size) : NaN;
   useBookmarkStyle.setState({
     shape: isShape(shape) ? shape : DEFAULT_SHAPE,
     color: color && /^#[0-9a-fA-F]{6}$/.test(color) ? color : DEFAULT_COLOR,
     pos: Number.isFinite(p) ? Math.max(0, Math.min(1, p)) : DEFAULT_POS,
+    size: Number.isFinite(sz) ? clampSize(sz) : DEFAULT_SIZE,
   });
 }

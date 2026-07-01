@@ -1593,8 +1593,12 @@ html, body, #root {
   display: flex; align-items: flex-start; gap: 9px; padding: 9px 10px;
   background: var(--rc-surface); border: 1px solid var(--chrome-border); border-radius: 10px; cursor: grab;
 }
-.pbt-row.drop { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
-.pbt-grip { flex: none; color: var(--muted); font-size: 13px; line-height: 1.6; letter-spacing: -1px; user-select: none; }
+/* The dragged row lifts while reordering (RAWY-61 pointer-drag). */
+.pbt-row.dragging { border-color: var(--accent); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.22); opacity: 0.96; cursor: grabbing; }
+/* The grip is the pointer-drag handle: touch-action:none so the gesture isn't stolen by scroll. */
+.pbt-grip { flex: none; color: var(--muted); font-size: 15px; line-height: 1.4; letter-spacing: -1px; user-select: none; cursor: grab; touch-action: none; padding: 0 2px; align-self: center; }
+.pbt-grip:hover { color: var(--text); }
+.pbt-row.dragging .pbt-grip { cursor: grabbing; }
 .pbt-body { flex: 1; min-width: 0; }
 .pbt-text { font: 400 12.5px/1.45 "Literata", "SardUIArabic", serif; color: var(--text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .pbt-chapter { font: 600 9.5px "Inter", "SardUIArabic", sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }

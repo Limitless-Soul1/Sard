@@ -175,6 +175,7 @@ export const en = {
   "basket.create": "Create card · {n}",
   "basket.clear": "Clear",
   "basket.remove": "Remove",
+  "basket.reorder": "Drag to reorder",
 
   "fmt.square": "Square",
   "fmt.portrait": "Portrait",

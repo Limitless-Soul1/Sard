@@ -176,6 +176,7 @@ export const ar: Record<TKey, string> = {
   "basket.create": "أنشئ البطاقة · {n}",
   "basket.clear": "مسح",
   "basket.remove": "إزالة",
+  "basket.reorder": "اسحب لإعادة الترتيب",
 
   "fmt.square": "مربّع",
   "fmt.portrait": "طولي",

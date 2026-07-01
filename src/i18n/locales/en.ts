@@ -140,8 +140,8 @@ export const en = {
   "hl.remove": "Remove",
   "hl.save": "Save",
 
-  // Photo Mode — photo card (RAWY-49)
-  "photo.card": "Photo card",
+  // Photo Mode — photo card (RAWY-49; naming unified RAWY-53)
+  "photo.card": "Create photo card",
   "photo.title": "Photo card",
   "photo.subtitle": "One passage · card font follows the book",
   "photo.paper": "PAPER",
@@ -166,16 +166,16 @@ export const en = {
   "fmt.story": "Story",
   "fmt.landscape": "Land.",
 
-  // Saved-cards gallery (RAWY-52)
-  "lib.nav.cards": "Cards",
-  "cards.title": "Cards",
+  // Saved photo-cards gallery (RAWY-52; naming unified RAWY-53)
+  "lib.nav.cards": "Photo cards",
+  "cards.title": "Photo cards",
   "cards.count": "{n} saved",
   "cards.untitled": "Untitled",
-  "cards.empty.title": "No cards yet",
-  "cards.empty.hint": "When you turn a passage into a card and choose “Save in app”, it lands here — with its book, chapter and date, ready to re-share anytime.",
+  "cards.empty.title": "No photo cards yet",
+  "cards.empty.hint": "When you turn a passage into a photo card and choose “Save in app”, it lands here — with its book, chapter and date, ready to re-share anytime.",
   "cards.delete": "Delete",
   "cards.cancel": "Cancel",
-  "cards.deleteConfirm": "Delete this card?",
+  "cards.deleteConfirm": "Delete this photo card?",
 
   // Reading side panels + page width (RAWY-21)
   "panel.contents": "Contents",

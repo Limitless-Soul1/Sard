@@ -1554,24 +1554,39 @@ html, body, #root {
 .pg-empty-title { font: 600 21px "Literata", "SardUIArabic", serif; color: var(--text); }
 .pg-empty-hint { font: 400 13.5px/1.65 var(--ui-font); color: var(--muted); max-width: 360px; }
 /* viewer overlay */
-.pg-overlay { position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; background: rgba(20, 14, 6, 0.42); backdrop-filter: blur(3px); padding: 24px; }
-.pg-viewer { position: relative; display: flex; gap: 0; background: var(--chrome-bg); border-radius: 12px; overflow: hidden; box-shadow: 0 24px 60px rgba(20, 14, 6, 0.4); max-width: min(760px, 94vw); max-height: 90vh; }
-.pg-close { position: absolute; top: 10px; inset-inline-end: 12px; z-index: 2; border: none; background: transparent; color: var(--muted); font: 300 17px var(--ui-font); cursor: pointer; width: 30px; height: 30px; border-radius: 7px; }
-.pg-close:hover { background: var(--chrome-border); }
-.pg-viewer-img { flex: none; width: 340px; max-width: 46vw; background: var(--app-bg); display: flex; align-items: center; justify-content: center; padding: 26px; }
-.pg-viewer-img img { max-width: 100%; max-height: 66vh; border-radius: 5px; box-shadow: 0 16px 38px rgba(20, 14, 6, 0.3); }
-.pg-viewer-side { width: 260px; padding: 40px 26px 24px; display: flex; flex-direction: column; }
-.pg-viewer-title { font: 600 18px "Literata", "SardUIArabic", serif; color: var(--text); }
-.pg-viewer-sub { font: 400 13px var(--ui-font); color: var(--muted); margin-top: 4px; }
-.pg-viewer-date { font: 400 12px var(--ui-font); color: var(--muted); opacity: 0.8; margin-top: 3px; }
-.pg-viewer-actions { display: flex; gap: 10px; margin-top: 22px; }
-.pg-viewer-actions .pc-save, .pg-viewer-actions .pc-copy {
-  --pc-accent: var(--accent); --pc-modal-bg: var(--paper-bg); --pc-text: var(--text); --pc-border: var(--chrome-border);
+/* Saved photo-card viewer — LIGHTBOX (RAWY-53): the card large & centered as the hero on a
+   dark radial backdrop, a quiet caption, one floating action pill, a circular close. Mirrors
+   in RTL; the backdrop follows the Library theme (warm on light, near-black on dark). */
+.pg-lightbox {
+  position: fixed; inset: 0; z-index: 45; display: flex; align-items: center; justify-content: center; padding: 40px;
+  background: radial-gradient(120% 100% at 50% 30%, #4A3A26 0%, #2C2013 80%);
 }
-.pg-delete { margin-top: auto; align-self: flex-start; border: none; background: transparent; color: #b04a3a; font: 500 13px var(--ui-font); cursor: pointer; padding: 8px 0; }
-.pg-delete:hover { text-decoration: underline; }
-.pg-confirm { margin-top: auto; display: flex; flex-direction: column; gap: 10px; font: 500 13px var(--ui-font); color: var(--text); }
-.pg-confirm-row { display: flex; gap: 10px; }
-.pg-del-yes { border: none; background: #b04a3a; color: #fff; font: 600 13px var(--ui-font); padding: 9px 16px; border-radius: 8px; cursor: pointer; }
-.pg-del-no { border: 1px solid var(--chrome-border); background: transparent; color: var(--text); font: 500 13px var(--ui-font); padding: 9px 16px; border-radius: 8px; cursor: pointer; }
+.pg-lightbox.dark { background: radial-gradient(120% 100% at 50% 30%, #14141F 0%, #06060A 82%); }
+.pg-lb-close {
+  position: absolute; top: 18px; inset-inline-end: 20px; z-index: 2; width: 34px; height: 34px; border: none;
+  border-radius: 50%; background: rgba(255, 255, 255, 0.12); backdrop-filter: blur(4px); color: #F3ECDB;
+  font: 300 18px var(--ui-font); cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.pg-lb-close:hover { background: rgba(255, 255, 255, 0.2); }
+.pg-lb-stage { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; max-width: 100%; }
+.pg-lb-card { display: flex; }
+.pg-lb-card img {
+  max-height: 60vh; max-width: min(92vw, 520px); width: auto; border-radius: 7px; display: block;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3), 0 30px 60px rgba(0, 0, 0, 0.5);
+}
+.pg-lb-caption { text-align: center; font: 400 12.5px var(--ui-font); color: rgba(243, 236, 219, 0.72); max-width: 520px; }
+.pg-lb-pill {
+  display: flex; align-items: center; gap: 4px; background: var(--chrome-bg); border: 1px solid var(--chrome-border);
+  border-radius: 14px; padding: 7px; box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+}
+.pg-lb-pill button { display: flex; align-items: center; gap: 8px; border: none; background: transparent; color: var(--text); font: 600 13px var(--ui-font); padding: 11px 16px; border-radius: 9px; cursor: pointer; }
+.pg-lb-pill button:disabled { opacity: 0.55; cursor: default; }
+.pg-lb-ico { flex: none; }
+.pg-lb-save { background: var(--accent) !important; color: var(--paper-bg) !important; padding-inline: 18px !important; }
+.pg-lb-copy:hover, .pg-lb-cancel:hover { background: var(--chrome-border); }
+.pg-lb-sep { width: 1px; height: 22px; background: var(--chrome-border); margin: 0 3px; flex: none; }
+.pg-lb-del { background: rgba(178, 74, 74, 0.12) !important; color: #B24A4A !important; }
+.pg-lb-del:hover { background: rgba(178, 74, 74, 0.2) !important; }
+.pg-lb-del.confirm { background: #B24A4A !important; color: #fff !important; }
+.pg-lb-confirm-text { font: 500 13px var(--ui-font); color: var(--text); padding-inline: 12px 4px; }
 .pg-toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 60; background: var(--text); color: var(--app-bg); font: 600 13px var(--ui-font); padding: 10px 22px; border-radius: 22px; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28); }

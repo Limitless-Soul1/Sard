@@ -8,7 +8,26 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 
 import { useI18n } from "../../i18n";
+import { THEMES, useTheme } from "../../theme";
 import { photocardDelete, photocardsList, type PhotoCardRow } from "../../lib/ipc";
+
+// Line icons for the lightbox action pill (stroke = currentColor so they inherit the button ink).
+const IconDownload = () => (
+  <svg className="pg-lb-ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+  </svg>
+);
+const IconCopy = () => (
+  <svg className="pg-lb-ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </svg>
+);
+const IconTrash = () => (
+  <svg className="pg-lb-ico" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    <line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" />
+  </svg>
+);
 
 function whenLabel(sec: number, lang: string): string {
   try {
@@ -32,6 +51,7 @@ async function cardBlob(imagePath: string): Promise<Blob> {
 
 export function PhotoGallery() {
   const { t, lang } = useI18n();
+  const dark = THEMES[useTheme((s) => s.themeId)].dark; // lightbox backdrop follows the Library theme
   const [cards, setCards] = useState<PhotoCardRow[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [open, setOpen] = useState<PhotoCardRow | null>(null);
@@ -129,30 +149,35 @@ export function PhotoGallery() {
       )}
 
       {open && (
-        <div className="pg-overlay" onPointerDown={() => { setOpen(null); setConfirmDel(false); }}>
-          <div className="pg-viewer" onPointerDown={(e) => e.stopPropagation()}>
-            <button className="pg-close" onClick={() => setOpen(null)} aria-label={t("photo.close")}>✕</button>
-            <div className="pg-viewer-img">
+        <div
+          className={`pg-lightbox${dark ? " dark" : ""}`}
+          onPointerDown={() => { setOpen(null); setConfirmDel(false); }}
+        >
+          <button className="pg-lb-close" onClick={() => setOpen(null)} aria-label={t("photo.close")}>✕</button>
+          <div className="pg-lb-stage" onPointerDown={(e) => e.stopPropagation()}>
+            {/* the saved card, large — the hero */}
+            <div className="pg-lb-card">
               <img src={convertFileSrc(open.image_path)} alt="" />
             </div>
-            <div className="pg-viewer-side">
-              <div className="pg-viewer-title" dir="auto">{open.book_title || t("cards.untitled")}</div>
-              {open.chapter_label && <div className="pg-viewer-sub" dir="auto">{open.chapter_label}</div>}
-              <div className="pg-viewer-date">{whenLabel(open.created_at, lang)}</div>
-              <div className="pg-viewer-actions">
-                <button className="pc-save" onClick={() => onSave(open)} disabled={busy}>{t("photo.save")}</button>
-                <button className="pc-copy" onClick={() => onCopy(open)} disabled={busy}>{t("photo.copy")}</button>
-              </div>
+            {/* a quiet caption: book · chapter · date */}
+            <div className="pg-lb-caption" dir="auto">
+              {[open.book_title, open.chapter_label, whenLabel(open.created_at, lang)].filter(Boolean).join("  ·  ")}
+            </div>
+            {/* one floating action pill */}
+            <div className="pg-lb-pill">
               {confirmDel ? (
-                <div className="pg-confirm">
-                  <span>{t("cards.deleteConfirm")}</span>
-                  <div className="pg-confirm-row">
-                    <button className="pg-del-yes" onClick={() => onDelete(open)}>{t("cards.delete")}</button>
-                    <button className="pg-del-no" onClick={() => setConfirmDel(false)}>{t("cards.cancel")}</button>
-                  </div>
-                </div>
+                <>
+                  <span className="pg-lb-confirm-text">{t("cards.deleteConfirm")}</span>
+                  <button className="pg-lb-del confirm" onClick={() => onDelete(open)}><IconTrash />{t("cards.delete")}</button>
+                  <button className="pg-lb-cancel" onClick={() => setConfirmDel(false)}>{t("cards.cancel")}</button>
+                </>
               ) : (
-                <button className="pg-delete" onClick={() => setConfirmDel(true)}>{t("cards.delete")}</button>
+                <>
+                  <button className="pg-lb-save" onClick={() => onSave(open)} disabled={busy}><IconDownload />{t("photo.save")}</button>
+                  <button className="pg-lb-copy" onClick={() => onCopy(open)} disabled={busy}><IconCopy />{t("photo.copy")}</button>
+                  <span className="pg-lb-sep" />
+                  <button className="pg-lb-del" onClick={() => setConfirmDel(true)}><IconTrash />{t("cards.delete")}</button>
+                </>
               )}
             </div>
           </div>

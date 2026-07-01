@@ -141,9 +141,9 @@ export const ar: Record<TKey, string> = {
   "hl.remove": "إزالة",
   "hl.save": "حفظ",
 
-  // Photo Mode — بطاقة صورة (RAWY-49)
-  "photo.card": "بطاقة صورة",
-  "photo.title": "بطاقة صورة",
+  // Photo Mode — بطاقة مصوّرة (RAWY-49؛ توحيد التسمية RAWY-53)
+  "photo.card": "إنشاء بطاقة مصوّرة",
+  "photo.title": "بطاقة مصوّرة",
   "photo.subtitle": "مقطع واحد · خط البطاقة يتبع الكتاب",
   "photo.paper": "الورق",
   "photo.format": "المقاس",
@@ -167,16 +167,16 @@ export const ar: Record<TKey, string> = {
   "fmt.story": "قصة",
   "fmt.landscape": "عرضي",
 
-  // معرض البطاقات المحفوظة (RAWY-52)
-  "lib.nav.cards": "البطاقات",
-  "cards.title": "البطاقات",
+  // معرض البطاقات المصوّرة المحفوظة (RAWY-52؛ توحيد التسمية RAWY-53)
+  "lib.nav.cards": "البطاقات المصوّرة",
+  "cards.title": "البطاقات المصوّرة",
   "cards.count": "{n} محفوظة",
   "cards.untitled": "بدون عنوان",
-  "cards.empty.title": "لا بطاقات بعد",
-  "cards.empty.hint": "عندما تحوّل مقطعًا إلى بطاقة وتختار «حفظ في التطبيق»، تظهر هنا — مع كتابها وفصلها وتاريخها، جاهزة لإعادة المشاركة في أي وقت.",
+  "cards.empty.title": "لا بطاقات مصوّرة بعد",
+  "cards.empty.hint": "عندما تحوّل مقطعًا إلى بطاقة مصوّرة وتختار «حفظ في التطبيق»، تظهر هنا — مع كتابها وفصلها وتاريخها، جاهزة لإعادة المشاركة في أي وقت.",
   "cards.delete": "حذف",
   "cards.cancel": "إلغاء",
-  "cards.deleteConfirm": "حذف هذه البطاقة؟",
+  "cards.deleteConfirm": "حذف هذه البطاقة المصوّرة؟",
 
   // Reading side panels + page width (RAWY-21)
   "panel.contents": "المحتويات",

@@ -30,6 +30,7 @@ export function useChromeOnIntent(): {
   visible: boolean;
   wake: () => void;
   signalMove: (x: number, y: number) => void;
+  signalScroll: (down: boolean) => void;
   setHold: (v: boolean) => void;
 } {
   const [visible, setVisible] = useState(true); // visible on entry, then settles
@@ -66,6 +67,25 @@ export function useChromeOnIntent(): {
     [arm],
   );
 
+  // RAWY-73: scroll intent (scrolled mode). Scrolling DOWN is a strong "I'm reading" signal → hide
+  // now (and stop the idle timer — the scroll position is the intent). Scrolling UP → show (like a
+  // wake). Respects a legitimate pin (a Settings/Notes drawer being open), so it never fights those.
+  const signalScroll = useCallback(
+    (down: boolean) => {
+      if (down) {
+        if (holdRef.current) return; // a pinned drawer stays; don't hide under it
+        if (timer.current) clearTimeout(timer.current);
+        anchor.current = null;
+        setVisible(false);
+      } else {
+        anchor.current = null;
+        setVisible(true);
+        arm();
+      }
+    },
+    [arm],
+  );
+
   const setHold = useCallback(
     (v: boolean) => {
       holdRef.current = v;
@@ -90,5 +110,5 @@ export function useChromeOnIntent(): {
     };
   }, [signalMove, wake]);
 
-  return { visible, wake, signalMove, setHold };
+  return { visible, wake, signalMove, signalScroll, setHold };
 }

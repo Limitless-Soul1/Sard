@@ -99,7 +99,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // THEME is per-book (RAWY-40) — read from `bookThemeId`, not the global store. Override-book-
   // colour + hide-chapter-titles stay GLOBAL flags (set in Global Settings / chapters panel).
   const { overrideBookColor, hideChapterTitles, hideFirstLine, setHideTitles, setHideFirstLine } = useTheme();
-  const { visible: chromeVisible, wake, signalMove, setHold } = useChromeOnIntent();
+  const { visible: chromeVisible, wake, signalMove, signalScroll, setHold } = useChromeOnIntent();
 
   const openBook = useCallback(async (target: OpenTarget) => {
     const set = useReader.getState().set;
@@ -217,18 +217,24 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
 
-  // Pin chrome open while any panel (or the basket tray) is open.
+  // Pin the chrome open only while an ACTIVELY-DRIVEN drawer is open — Settings/Notes/basket, which
+  // you interact with via the top bar. The Contents panel is DELIBERATELY excluded (RAWY-73): it is
+  // a side navigation list you keep open WHILE reading, and it opens by default (RAWY-22) — pinning
+  // the bar to it meant the bar never auto-hid for the owner. Contents now leaves the bar free to
+  // auto-hide on idle/scroll (the panel itself stays open; it just doesn't force the bar shown).
   useEffect(
-    () => setHold(settingsOpen || chaptersOpen || annoOpen || basketOpen),
-    [settingsOpen, chaptersOpen, annoOpen, basketOpen, setHold],
+    () => setHold(settingsOpen || annoOpen || basketOpen),
+    [settingsOpen, annoOpen, basketOpen, setHold],
   );
 
   // RAWY-72: wake the auto-hiding chrome on pointer activity inside the content iframe (which never
-  // reaches a window listener). A move goes through the jitter dedup; a tap always wakes. `wake` and
-  // `signalMove` are stable, so this registers once and stays valid across section loads.
+  // reaches a window listener). A move goes through the jitter dedup; a tap always wakes.
+  // RAWY-73: scroll intent (scrolled mode) — scroll down hides, scroll up shows. `wake`/`signalMove`/
+  // `signalScroll` are stable, so this registers once and stays valid across section loads.
   useEffect(() => {
     ctrlRef.current?.onActivity((x, y, isTap) => (isTap ? wake() : signalMove(x, y)));
-  }, [wake, signalMove]);
+    ctrlRef.current?.onScrollIntent((down) => signalScroll(down));
+  }, [wake, signalMove, signalScroll]);
 
   // When the basket empties (Clear, or removing the last passage) the top-bar button hides, so
   // close the now-orphaned tray too (RAWY-60).
@@ -435,8 +441,10 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
 
   const isRtlBook = dir === "rtl";
   // Whether the chrome bar is currently shown — the bookmark marker drops below it so it stays
-  // visible (RAWY-42); same condition the chrome itself uses.
-  const chromeShown = chromeVisible || settingsOpen || chaptersOpen || annoOpen || basketOpen;
+  // visible (RAWY-42); same condition the chrome itself uses. RAWY-73: `chaptersOpen` is excluded
+  // (matching the pin above) so the Contents panel being open no longer forces the bar shown — the
+  // bar follows the auto-hide (chromeVisible), and the marker tracks it.
+  const chromeShown = chromeVisible || settingsOpen || annoOpen || basketOpen;
   // When chapter titles are hidden (anti-spoiler), the chrome shows a neutral "Chapter N" — using
   // the book's OWN chapter number, parsed straight from `chapterLabel` (already the real,
   // currently-matched TOC label — RAWY-67). A single-volume import whose real first chapter is

@@ -303,6 +303,9 @@ async function ensureFoliateDefined(): Promise<void> {
 // still blocked, but a deliberate second flick advances more readily (lighter).
 const BOUNDARY_PAUSE_MS = 140;
 const BOUNDARY_EDGE_PX = 4;
+// RAWY-73: wheel travel (accumulated px) that constitutes a deliberate scroll in one direction —
+// enough to ignore trackpad micro-jitter / a stray notch, small enough to feel immediate.
+const SCROLL_INTENT_PX = 24;
 
 export class FoliateController {
   private view: any | null = null;
@@ -320,6 +323,10 @@ export class FoliateController {
   // parent-window listener) so the chrome-on-intent hook can wake the auto-hiding bar. Coords are
   // translated to parent-viewport space so the hook's jitter dedup shares one coordinate system.
   private activityCb: ((x: number, y: number, isTap: boolean) => void) | null = null;
+  // RAWY-73: scroll intent (scrolled mode) — accumulate wheel delta and fire a debounced direction
+  // so a small jitter doesn't toggle the bar. down = scroll down (hide), up = scroll up (show).
+  private scrollIntentCb: ((down: boolean) => void) | null = null;
+  private scrollAccum = 0;
   // Scrolled mode + chapter-boundary gesture state (RAWY-25).
   private scrolledMode = false;
   private wheelTs = 0;
@@ -532,6 +539,26 @@ export class FoliateController {
   onActivity(cb: (x: number, y: number, isTap: boolean) => void): void {
     this.activityCb = cb;
   }
+  /** RAWY-73: receive scroll-direction intent (scrolled mode) so the reader can hide on scroll-down /
+   *  show on scroll-up. `down` = the reader scrolled toward later content. */
+  onScrollIntent(cb: (down: boolean) => void): void {
+    this.scrollIntentCb = cb;
+  }
+  // Debounce wheel deltas into a directional intent: accumulate, reset on a direction flip (so a
+  // reversal is responsive), and fire once a clear SCROLL_INTENT_PX of travel builds up in one
+  // direction. A DOM wheel deltaY > 0 means scrolling DOWN (content moves up) → hide.
+  private onWheelScrollIntent(deltaY: number): void {
+    if (!this.scrollIntentCb || !deltaY) return;
+    if (Math.sign(deltaY) !== Math.sign(this.scrollAccum)) this.scrollAccum = 0;
+    this.scrollAccum += deltaY;
+    if (this.scrollAccum >= SCROLL_INTENT_PX) {
+      this.scrollAccum = 0;
+      this.scrollIntentCb(true);
+    } else if (this.scrollAccum <= -SCROLL_INTENT_PX) {
+      this.scrollAccum = 0;
+      this.scrollIntentCb(false);
+    }
+  }
   /** Add/redraw a highlight for a range CFI; returns the section's chapter label. */
   async addHighlight(cfi: string, color: string): Promise<string | null> {
     this.annotations.set(cfi, color);
@@ -565,6 +592,10 @@ export class FoliateController {
   private onBoundaryWheel(e: WheelEvent): void {
     const r = this.view?.renderer;
     if (!r || !this.scrolledMode) return;
+    // RAWY-73: scroll intent for the chrome auto-hide runs FIRST, unconditionally — even before the
+    // layout guard below — so scrolling always drives hide/show (the content iframe's wheel is the
+    // only place the parent can observe scroll direction; foliate scrolls inside a closed shadow root).
+    this.onWheelScrollIntent(e.deltaY);
     const viewSize = r.viewSize as number;
     const size = r.size as number;
     const start = r.start as number;

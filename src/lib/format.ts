@@ -18,7 +18,7 @@ export function localeDigits(s: string, lang: string): string {
 // so a TOC label ("الفصل ١٠٢٢") can be parsed the same way as one already using Western digits
 // ("Chapter 1022"). Only touches digit glyphs; everything else in the string is untouched.
 const AR_TO_WESTERN: Record<string, string> = Object.fromEntries(AR_DIGITS.map((d, i) => [d, String(i)]));
-function toWesternDigits(s: string): string {
+export function toWesternDigits(s: string): string {
   return s.replace(/[٠-٩]/g, (d) => AR_TO_WESTERN[d]);
 }
 

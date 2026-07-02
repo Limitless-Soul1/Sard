@@ -61,13 +61,20 @@ export function ChaptersPanel({
         {toc.length === 0 && <div className="rp-empty">{t("panel.noChapters")}</div>}
         {toc.map((c, i) => {
           const active = !!c.href && c.href === currentHref;
-          // RAWY-67: when hiding titles, show the book's OWN chapter number (parsed from its real
-          // TOC label — e.g. a single-volume import that starts at "الفصل 200" correctly shows
-          // 200, not the imposed list position 1) — never fabricated; a book/entry with no
-          // extractable number falls back to the position, same as before.
+          // RAWY-67: show the book's OWN chapter number (parsed from its real TOC label — e.g. a
+          // single-volume import that starts at "الفصل 200" correctly shows 200, not the imposed
+          // list position 1) — never fabricated; a book/entry with no extractable number falls
+          // back to the position, same as before.
           const realNum = extractChapterNumber(c.label);
-          const neutralLabel = t("panel.chapter", { n: localeNum(realNum ?? i + 1, lang) });
-          const label = hideTitles ? neutralLabel : c.label || neutralLabel;
+          const badgeNum = realNum ?? i + 1;
+          // RAWY-68: the badge above is ALWAYS the number — a "Chapter N" text label restating
+          // it whenever titles are hidden showed the same number twice per row (confirmed live on
+          // a real 1300+ chapter book: "1026" badge next to a "Chapter 1026" label). With titles
+          // hidden there's nothing else to show (that's the point of the anti-spoiler toggle), so
+          // the badge alone is the row's identifier and the text label is omitted entirely. With
+          // titles shown, the label is the book's own title text (falling back to "Chapter N"
+          // only when that TOC entry genuinely has no title of its own).
+          const label = hideTitles ? null : c.label || t("panel.chapter", { n: localeNum(badgeNum, lang) });
           return (
             <button
               key={`${c.href ?? "x"}-${i}`}
@@ -76,8 +83,12 @@ export function ChaptersPanel({
               onClick={() => c.href && onJump(c.href)}
               disabled={!c.href}
             >
-              <span className="toc-num">{localeNum(realNum ?? i + 1, lang)}</span>
-              <span className="toc-label" dir="auto">{label}</span>
+              <span className="toc-num">{localeNum(badgeNum, lang)}</span>
+              {label && (
+                <span className="toc-label" dir="auto">
+                  {label}
+                </span>
+              )}
               <span className={`toc-dot${active ? " current" : ""}`} />
             </button>
           );

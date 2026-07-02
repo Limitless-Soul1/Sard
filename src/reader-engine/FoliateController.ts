@@ -14,7 +14,7 @@
 
 import { buildReadingCss, type BookThemeFlags, type ReadingStyle } from "./injectedCss";
 import type { Theme } from "../theme/tokens";
-import { extractChapterNumber } from "../lib/format";
+import { extractChapterNumber, toWesternDigits } from "../lib/format";
 
 export interface RelocateInfo {
   cfi: string | null;
@@ -137,12 +137,56 @@ function wrapTashkil(doc: Document): void {
 // short prose); instead this is GROUNDED in data we already trust: the book's OWN TOC label for
 // this exact section (resolved via the section id, not a stale/racy "last relocate" — `load`
 // fires BEFORE the new section's `relocate`, confirmed live, so that shortcut would read the
-// PREVIOUS chapter's label at exactly the moment it matters). If the section's real chapter number
-// (parsed from that label) appears as the very start of the section's FIRST piece of visible text,
-// and that text is short (a title, not a paragraph of prose), we mark it — never a generic
-// "starts with a number" guess. A section whose TOC label has no number, or whose first text
-// doesn't match, is left untouched — fails safe, never over-hides.
+// PREVIOUS chapter's label at exactly the moment it matters). A section whose TOC label has no
+// number is left untouched — fails safe, never over-hides.
 const IN_BODY_HEADING_MAX_LEN = 120;
+
+// RAWY-68: RAWY-67 checked only the section's very FIRST text-bearing element and required the
+// number at position 0. Real books broke both assumptions — confirmed live on a real 1300+
+// chapter Arabic novel: the section has a hidden semantic <h1> ("1026 - <title>") FOLLOWED
+// immediately by a second, genuinely visible leading <p> ("الفصل 1026: <title>", with a
+// "chapter"-word prefix before the number) — the second element is what the reader actually
+// sees, and `startsWith` rejected it outright because it starts with "الفصل", not a digit. Fixed
+// generally (no hardcoded word list, any language's "Chapter"/"الفصل"/etc. prefix): the number
+// just needs to be the FIRST digit run in the candidate AND appear near the start (a short
+// label-word prefix, not a paragraph of prose that happens to mention this exact number deep
+// in); and detection now walks MULTIPLE leading elements (not just the first), hiding every
+// consecutive one that matches and stopping at the first one that doesn't — that first
+// non-match is real body prose starting, and scanning never goes past it.
+const MAX_HEADING_NUMBER_PREFIX = 20;
+const MAX_LEADING_HEADING_ELEMENTS = 5;
+
+function isChapterHeadingCandidate(rawText: string, realNum: number): boolean {
+  const text = toWesternDigits(rawText).trim();
+  if (!text || text.length > IN_BODY_HEADING_MAX_LEN) return false;
+  const m = text.match(/\d+/);
+  if (!m || m.index == null || m.index > MAX_HEADING_NUMBER_PREFIX) return false;
+  return m[0] === String(realNum);
+}
+
+// RAWY-68: candidates must be gathered at the BLOCK level (p/h1-h6), not by walking individual
+// text nodes — `wrapTashkil` (runs first, on every section) splits any run of Arabic diacritics
+// into its own `<span class="sard-tashkil">`, so a single visible heading line like "الفصل 1026:
+// أعطيَ ..." is really several sibling text nodes with DIFFERENT immediate parents (the <p>, then
+// a tashkil <span>, then the <p> again...). Walking text-node-by-text-node evaluated each tiny
+// fragment on its own and broke on the first one (usually a lone diacritic) that didn't match.
+// Structural wrapper tags are drilled into (a book's whole chapter is often one <div> holding many
+// <p> children — testing the DIV's own aggregate textContent would both fail the length check and
+// risk hiding the entire chapter if it ever didn't); true text-leaf tags are tested as one whole
+// block via `.textContent`, which already aggregates any nested tashkil spans correctly.
+const HEADING_WRAPPER_TAGS = new Set(["DIV", "SECTION", "ARTICLE", "MAIN", "ASIDE"]);
+
+function collectLeadingBlocks(el: Element, maxCount: number, out: Element[]): void {
+  for (const child of Array.from(el.children)) {
+    if (out.length >= maxCount) return;
+    if (!(child.textContent ?? "").trim()) continue; // skip empty/whitespace-only elements
+    // EPUB sections are XHTML parsed as XML (application/xhtml+xml), where tagName preserves the
+    // source's case verbatim (lowercase "div", not HTML's uppercased "DIV") — normalize before
+    // the Set lookup, or every wrapper check silently misses and this never drills into anything.
+    if (HEADING_WRAPPER_TAGS.has(child.tagName.toUpperCase())) collectLeadingBlocks(child, maxCount, out);
+    else out.push(child);
+  }
+}
 
 // Shared with the class's getToc() — one flattening walk over foliate's (possibly nested)
 // book.toc, so the free functions below and the public TOC API never drift apart.
@@ -174,21 +218,12 @@ function markInBodyHeading(doc: Document, tocLabel: string | null): void {
   if (body.dataset) body.dataset.sardHeadingScanned = "1";
   const realNum = extractChapterNumber(tocLabel);
   if (realNum == null) return; // no number to ground the match against — don't guess
-  const walker = doc.createTreeWalker(body, NodeFilter.SHOW_TEXT);
-  let firstText: Text | null = null;
-  let n: Node | null;
-  while ((n = walker.nextNode())) {
-    if ((n as Text).data.trim()) {
-      firstText = n as Text;
-      break;
-    }
+  const blocks: Element[] = [];
+  collectLeadingBlocks(body, MAX_LEADING_HEADING_ELEMENTS, blocks);
+  for (const el of blocks) {
+    if (!isChapterHeadingCandidate(el.textContent ?? "", realNum)) break; // real prose starts here — stop
+    el.classList.add("sard-chapter-heading");
   }
-  const el = firstText?.parentElement;
-  if (!el) return;
-  const candidate = (el.textContent ?? "").trim().replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
-  if (candidate.length > IN_BODY_HEADING_MAX_LEN) return;
-  if (!candidate.startsWith(String(realNum))) return;
-  el.classList.add("sard-chapter-heading");
 }
 
 async function ensureFoliateDefined(): Promise<void> {

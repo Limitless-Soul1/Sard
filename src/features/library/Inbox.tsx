@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 import { useI18n } from "../../i18n";
+import { localeDigits } from "../../lib/format";
 import { THEMES, useTheme } from "../../theme";
 import { colorValue, HIGHLIGHT_SLOTS, isHex } from "../reader/highlightColors";
 import { annotationsAll, type AnnoItem } from "../../lib/ipc";
@@ -77,7 +78,7 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
           <div className="inbox-title-wrap">
             <h1 className="inbox-title">{t("lib.nav.highlights")}</h1>
             <span className="inbox-count">
-              {t("inbox.count", { n: String(items.length), m: String(books.length) })}
+              {t("inbox.count", { n: localeDigits(String(items.length), lang), m: localeDigits(String(books.length), lang) })}
             </span>
           </div>
           <label className="lib-search inbox-search">

@@ -8,6 +8,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 
 import { useI18n } from "../../i18n";
+import { localeNum } from "../../lib/format";
 import { THEMES, useTheme, type ThemeId } from "../../theme";
 import { photocardDelete, photocardsList, type PhotoCardRow } from "../../lib/ipc";
 import { PhotoComposer } from "./PhotoComposer";
@@ -171,7 +172,7 @@ export function PhotoGallery() {
     <div className="lib-main pg-root">
       <header className="pg-head">
         <h1 className="pg-title">{t("cards.title")}</h1>
-        <span className="pg-count">{cards.length > 0 ? t("cards.count", { n: cards.length }) : ""}</span>
+        <span className="pg-count">{cards.length > 0 ? t("cards.count", { n: localeNum(cards.length, lang) }) : ""}</span>
       </header>
 
       {cards.length === 0 ? (

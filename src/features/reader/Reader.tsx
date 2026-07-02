@@ -465,7 +465,11 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         <button
           className="page-chevron page-chevron-left"
           onClick={() => ctrlRef.current?.next()}
-          title={t("reader.prev")}
+          // The LEFT chevron always moves to the physical-left page (foliate's goLeft()) —
+          // for an LTR book that's Previous; for an RTL book it's actually Next (RAWY-65: the
+          // tooltip previously always said "Previous", which was wrong for Arabic books even
+          // though the click behavior itself was already correct).
+          title={isRtlBook ? t("reader.next") : t("reader.prev")}
         >
           ‹
         </button>
@@ -479,7 +483,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         <button
           className="page-chevron page-chevron-right"
           onClick={() => ctrlRef.current?.prev()}
-          title={t("reader.next")}
+          title={isRtlBook ? t("reader.prev") : t("reader.next")}
         >
           ›
         </button>

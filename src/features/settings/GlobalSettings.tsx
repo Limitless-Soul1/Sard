@@ -7,6 +7,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import { useI18n } from "../../i18n";
+import { localeDigits } from "../../lib/format";
 import type { TKey } from "../../i18n/locales/en";
 import { Hoopoe } from "../library/Hoopoe";
 import { settingsGet, settingsSet } from "../../lib/ipc";
@@ -243,7 +244,7 @@ function FontsSection() {
 
 // ---- Reading defaults (for NEW books): the global reading_style baseline ----
 function ReadingDefaultsSection() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const { scope, setScope } = useStyleScope();
   const custom = useFonts((s) => s.custom); // RAWY-45: imported fonts in the default book-font picker
   const [style, setStyle] = useState<ReadingStyle | null>(null);
@@ -322,12 +323,15 @@ function ReadingDefaultsSection() {
       </div>
 
       <div className="gs-sec">
-        <div className="gs-slider-head"><span>{t("gs.defaultSize")}</span><span className="gs-slider-val">{Math.round(style.zoom * 100)}%</span></div>
+        <div className="gs-slider-head"><span>{t("gs.defaultSize")}</span><span className="gs-slider-val">{localeDigits(`${Math.round(style.zoom * 100)}%`, lang)}</span></div>
+        {/* RAWY-65: an RTL-mirror fix was investigated (see the Slider component's comment in
+            ReadingSettings.tsx) and found unnecessary — this runtime already auto-mirrors native
+            <input type=range> correctly for RTL, both visually and for click/drag, with no code. */}
         <input className="gs-slider" type="range" min={0.8} max={2.5} step={0.05} value={style.zoom}
           onChange={(e) => patch({ zoom: Math.round(Number(e.target.value) * 100) / 100 })} />
       </div>
       <div className="gs-sec">
-        <div className="gs-slider-head"><span>{t("gs.defaultLineSpacing")}</span><span className="gs-slider-val">{style.lineHeight.toFixed(2)}</span></div>
+        <div className="gs-slider-head"><span>{t("gs.defaultLineSpacing")}</span><span className="gs-slider-val">{localeDigits(style.lineHeight.toFixed(2), lang)}</span></div>
         <input className="gs-slider" type="range" min={1.2} max={2.6} step={0.05} value={style.lineHeight}
           onChange={(e) => patch({ lineHeight: Math.round(Number(e.target.value) * 100) / 100 })} />
       </div>
@@ -336,7 +340,7 @@ function ReadingDefaultsSection() {
 }
 
 function BookmarkSection() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const { shape, color, pos, size, setShape, setColor, setPos, setSize } = useBookmarkStyle();
   return (
     <>
@@ -379,7 +383,7 @@ function BookmarkSection() {
       </div>
 
       <div className="gs-sec">
-        <Label hint={`${size}px`}>{t("gs.bookmark.size")}</Label>
+        <Label hint={localeDigits(`${size}px`, lang)}>{t("gs.bookmark.size")}</Label>
         <input
           className="gs-slider"
           type="range"

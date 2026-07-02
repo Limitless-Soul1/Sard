@@ -12,6 +12,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { photocardSave } from "../../lib/ipc";
 import { useI18n } from "../../i18n";
+import { localeDigits } from "../../lib/format";
 import { THEMES, THEME_ORDER, type ThemeId } from "../../theme";
 import {
   cardSeparator,
@@ -367,7 +368,7 @@ export function PhotoComposer({
               <div className="pc-panel-name">{t("photo.title")}</div>
               <div className="pc-panel-sub">
                 {data.passages && data.passages.length > 1
-                  ? t("photo.subtitleMulti", { n: String(data.passages.length) })
+                  ? t("photo.subtitleMulti", { n: localeDigits(String(data.passages.length), lang) })
                   : t("photo.subtitle")}
               </div>
             </div>

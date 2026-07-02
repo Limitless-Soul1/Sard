@@ -36,7 +36,7 @@ interface Props {
 }
 
 export function AnnotationsPanel({ open, onClose, onJump, initialTab = "notes" }: Props) {
-  const { t, dir } = useI18n();
+  const { t, dir, lang } = useI18n();
   const [tab, setTab] = useState<AnnoTab>(initialTab);
   useEffect(() => setTab(initialTab), [initialTab]);
   const highlights = useAnnotations((s) => s.highlights);
@@ -48,13 +48,13 @@ export function AnnotationsPanel({ open, onClose, onJump, initialTab = "notes" }
       <div className="rp-head">
         <div className="rp-tabs">
           <button className={`rp-tab${tab === "notes" ? " on" : ""}`} onClick={() => setTab("notes")}>
-            {t("panel.notes")} <span className="rp-count">{notes.length}</span>
+            {t("panel.notes")} <span className="rp-count">{localeNum(notes.length, lang)}</span>
           </button>
           <button className={`rp-tab${tab === "highlights" ? " on" : ""}`} onClick={() => setTab("highlights")}>
-            {t("panel.highlights")} <span className="rp-count">{highlights.length}</span>
+            {t("panel.highlights")} <span className="rp-count">{localeNum(highlights.length, lang)}</span>
           </button>
           <button className={`rp-tab${tab === "bookmarks" ? " on" : ""}`} onClick={() => setTab("bookmarks")}>
-            {t("panel.bookmarks")} <span className="rp-count">{bookmarks.length}</span>
+            {t("panel.bookmarks")} <span className="rp-count">{localeNum(bookmarks.length, lang)}</span>
           </button>
         </div>
         <button className="rp-x" onClick={onClose} aria-label="✕">✕</button>

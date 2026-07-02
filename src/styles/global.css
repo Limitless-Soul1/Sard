@@ -1534,7 +1534,7 @@ html, body, #root {
   flex: 1; background: var(--pc-stage-bg); display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 16px; position: relative; padding: 24px;
 }
-.pc-stage-label { font: 500 11px "Inter", sans-serif; letter-spacing: .08em; color: var(--pc-muted); text-transform: uppercase; }
+.pc-stage-label { font: 500 11px "Inter", "SardUIArabic", sans-serif; letter-spacing: .08em; color: var(--pc-muted); text-transform: uppercase; }
 /* The scale wrapper is a pure layout box that must NOT inherit the UI direction (RAWY-54): in
    RTL its full-size inner child was placed right-aligned and then scaled from `top left`, so the
    card landed shifted LEFT and overlapped the controls panel. Forcing `direction: ltr` pins the
@@ -1564,7 +1564,7 @@ html, body, #root {
 .pc-brand-div { width: 1px; opacity: 0.5; }
 .pc-toast {
   position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
-  background: var(--pc-text); color: var(--pc-modal-bg); font: 600 13px "Inter", sans-serif;
+  background: var(--pc-text); color: var(--pc-modal-bg); font: 600 13px "Inter", "SardUIArabic", sans-serif;
   padding: 9px 20px; border-radius: 22px; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
 }
 
@@ -1618,9 +1618,9 @@ html, body, #root {
 .pc-close { border: none; background: transparent; color: var(--pc-muted); font: 300 17px "Inter", sans-serif; cursor: pointer; width: 30px; height: 30px; border-radius: 7px; }
 .pc-close:hover { background: var(--pc-border); }
 .pc-panel-body { padding: 4px 26px 22px; flex: 1; display: flex; flex-direction: column; gap: 22px; overflow-y: auto; }
-.pc-panel-name { font: 600 17px "Literata", serif; color: var(--pc-text); }
-.pc-panel-sub { font: 400 12px "Inter", sans-serif; color: var(--pc-muted); margin-top: 2px; }
-.pc-group-label { font: 600 11px "Inter", sans-serif; letter-spacing: .12em; color: var(--pc-muted); margin-bottom: 11px; }
+.pc-panel-name { font: 600 17px "Literata", "SardUIArabic", serif; color: var(--pc-text); }
+.pc-panel-sub { font: 400 12px "Inter", "SardUIArabic", sans-serif; color: var(--pc-muted); margin-top: 2px; }
+.pc-group-label { font: 600 11px "Inter", "SardUIArabic", sans-serif; letter-spacing: .12em; color: var(--pc-muted); margin-bottom: 11px; }
 .pc-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
 .pc-swatch {
   width: 40px; height: 34px; border-radius: 7px; border: 1px solid var(--pc-border); cursor: pointer;
@@ -1631,10 +1631,10 @@ html, body, #root {
 .pc-format { flex: 1; border: none; background: transparent; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 0; }
 .pc-format-ico { display: block; height: 30px; width: auto; border: 1.5px solid var(--pc-muted); border-radius: 2px; }
 .pc-format.on .pc-format-ico { border-color: var(--pc-accent); background: color-mix(in srgb, var(--pc-accent) 12%, transparent); }
-.pc-format-label { font: 500 10px "Inter", sans-serif; color: var(--pc-muted); }
+.pc-format-label { font: 500 10px "Inter", "SardUIArabic", sans-serif; color: var(--pc-muted); }
 .pc-format.on .pc-format-label { color: var(--pc-accent); font-weight: 600; }
 .pc-toggles { display: flex; flex-direction: column; gap: 13px; }
-.pc-toggle { display: flex; align-items: center; justify-content: space-between; font: 500 13px "Inter", sans-serif; color: var(--pc-text); }
+.pc-toggle { display: flex; align-items: center; justify-content: space-between; font: 500 13px "Inter", "SardUIArabic", sans-serif; color: var(--pc-text); }
 .pc-switch { width: 36px; height: 21px; border: none; background: var(--pc-border); border-radius: 21px; position: relative; cursor: pointer; padding: 0; transition: background .15s; }
 .pc-switch.on { background: var(--pc-accent); }
 .pc-knob { position: absolute; top: 2px; inset-inline-start: 2px; width: 17px; height: 17px; background: var(--pc-panel-bg); border-radius: 50%; transition: inset-inline-start .15s; }
@@ -1646,8 +1646,8 @@ html, body, #root {
   padding: 14px 26px 18px; border-top: 1px solid var(--pc-border); background: var(--pc-panel-bg);
 }
 .pc-actions { display: flex; gap: 10px; }
-.pc-save { flex: 1; border: none; background: var(--pc-accent); color: var(--pc-modal-bg); font: 600 14px "Inter", sans-serif; padding: 13px 0; border-radius: 9px; cursor: pointer; }
-.pc-copy { border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text); font: 500 13px "Inter", sans-serif; padding: 13px 16px; border-radius: 9px; cursor: pointer; }
+.pc-save { flex: 1; border: none; background: var(--pc-accent); color: var(--pc-modal-bg); font: 600 14px "Inter", "SardUIArabic", sans-serif; padding: 13px 0; border-radius: 9px; cursor: pointer; }
+.pc-copy { border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text); font: 500 13px "Inter", "SardUIArabic", sans-serif; padding: 13px 16px; border-radius: 9px; cursor: pointer; }
 .pc-save:disabled, .pc-copy:disabled { opacity: 0.55; cursor: default; }
 
 /* ============================================================================
@@ -1657,7 +1657,7 @@ html, body, #root {
 .pc-saveinapp {
   display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%;
   border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text);
-  font: 600 13px "Inter", sans-serif; padding: 11px 0; border-radius: 9px; cursor: pointer;
+  font: 600 13px "Inter", "SardUIArabic", sans-serif; padding: 11px 0; border-radius: 9px; cursor: pointer;
 }
 .pc-saveinapp:hover { background: var(--pc-border); }
 .pc-saveinapp:disabled { opacity: 0.55; cursor: default; }

@@ -7,6 +7,7 @@
 import type { ReactNode } from "react";
 
 import { useI18n } from "../../i18n";
+import { localeDigits } from "../../lib/format";
 import type { SettingsSection } from "./ReaderChrome";
 import {
   ARABIC_FONTS,
@@ -85,6 +86,16 @@ function Slider({
   lead?: ReactNode;
   trail?: ReactNode;
 }) {
+  // RAWY-65: an audit flagged native <input type=range> as a well-known browser quirk that
+  // doesn't mirror for RTL. Investigated live on the release build (WebView2/Chromium) before
+  // touching anything — a CSS transform and a JS value-complement were both tried and both made
+  // it WORSE (the transform looked mirrored but broke click/drag-to-value math; the complement
+  // then double-flipped an already-correct native mapping). An empirical click-position sweep
+  // (`docs/shots/rawy65-slider-*.png`) proved this specific runtime already auto-mirrors BOTH the
+  // paint (low value's thumb sits at the physical right, next to the `lead` label the RTL flex-
+  // row already puts there; high value's thumb sits at physical left, next to `trail`) AND the
+  // click/drag-to-value math correctly, with zero code involved. No fix needed — left as plain
+  // passthrough, deliberately, not merely unedited.
   return (
     <div className="rs-slider-row">
       {lead != null && <span className="rs-slider-cap">{lead}</span>}
@@ -166,7 +177,7 @@ function SelectRow<T extends string>({
 }
 
 export function ReadingSettings({ style, update, isRtlBook, section = "text", bookThemeId, onPickTheme, unified }: Props) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   // Override-book-colour + hide-chapter-titles stay GLOBAL flags (RAWY-40); the THEME is per-book.
   const { overrideBookColor, hideChapterTitles, setOverride, setHideTitles } = useTheme();
   const customFonts = useFonts((s) => s.custom); // RAWY-44 — imported fonts for the book pickers
@@ -185,7 +196,7 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
       {section === "text" && (
       <>
       {/* ---- TEXT ---- */}
-      <Section label={t("type.size")} value={`${Math.round(style.zoom * 100)}%`}>
+      <Section label={t("type.size")} value={localeDigits(`${Math.round(style.zoom * 100)}%`, lang)}>
         <Slider
           value={style.zoom}
           min={0.8}
@@ -205,15 +216,15 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
         />
       </Section>
 
-      <Section label={t("type.lineSpacing")} value={style.lineHeight.toFixed(2)}>
+      <Section label={t("type.lineSpacing")} value={localeDigits(style.lineHeight.toFixed(2), lang)}>
         <Slider value={style.lineHeight} min={1.2} max={2.6} step={0.05} onInput={(v) => update({ lineHeight: r2(v) })} />
       </Section>
 
-      <Section label={t("type.paraSpacing")} value={`${style.paragraphSpacing}px`}>
+      <Section label={t("type.paraSpacing")} value={localeDigits(`${style.paragraphSpacing}px`, lang)}>
         <Slider value={style.paragraphSpacing} min={0} max={28} step={2} onInput={(v) => update({ paragraphSpacing: v })} />
       </Section>
 
-      <Section label={t("type.tracking")} value={isRtlBook ? <span className="rs-na">{t("type.latinOnly")}</span> : style.letterSpacing}>
+      <Section label={t("type.tracking")} value={isRtlBook ? <span className="rs-na">{t("type.latinOnly")}</span> : localeDigits(String(style.letterSpacing), lang)}>
         <Slider
           value={style.letterSpacing}
           min={0}
@@ -344,7 +355,7 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
       </Section>
       <ToggleRow label={t("type.matchWindow")} on={style.pageFitWindow} onToggle={() => update({ pageFitWindow: !style.pageFitWindow })} />
 
-      <Section label={t("type.margins")} value={`${style.marginPx}px`}>
+      <Section label={t("type.margins")} value={localeDigits(`${style.marginPx}px`, lang)}>
         <Slider value={style.marginPx} min={0} max={160} step={8} onInput={(v) => update({ marginPx: clamp(v, 0, 160) })} />
       </Section>
 

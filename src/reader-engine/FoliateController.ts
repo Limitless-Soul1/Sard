@@ -95,8 +95,10 @@ interface OpenOptions {
 
 // Arabic combining marks (tashkīl). We wrap runs of them in spans so the diacritics
 // toggle can dim/hide them purely via injected CSS (no character removal → text offsets
-// stay stable, keeping CFIs valid).
-const MARKS = "\\u064B-\\u065F\\u0670\\u06D6-\\u06DC\\u06DF-\\u06E4\\u06E7\\u06E8\\u06EA-\\u06ED";
+// stay stable, keeping CFIs valid). RAWY-65: extended with ؐ-ؚ (the Quranic/honorific
+// combining marks — e.g. the "peace be upon him" mark — common in classical/religious Arabic
+// prose and poetry, which the toggle previously left always-visible regardless of the setting).
+const MARKS = "\\u0610-\\u061A\\u064B-\\u065F\\u0670\\u06D6-\\u06DC\\u06DF-\\u06E4\\u06E7\\u06E8\\u06EA-\\u06ED";
 const TASHKIL = new RegExp(`[${MARKS}]`);
 const TASHKIL_SPLIT = new RegExp(`([${MARKS}]+)`);
 

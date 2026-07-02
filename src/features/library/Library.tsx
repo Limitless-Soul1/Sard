@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 
 import { useI18n } from "../../i18n";
+import { localeDigits, localeNum } from "../../lib/format";
 import {
   bookRevertCover,
   bookSetCover,
@@ -54,14 +55,14 @@ function sameDay(a: Date, b: Date) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
-function summarize(results: ImportResult[], t: TFn): string {
+function summarize(results: ImportResult[], t: TFn, lang: string): string {
   const c = { imported: 0, duplicate: 0, unsupported: 0, error: 0 };
   for (const r of results) c[r.status]++;
   const parts: string[] = [];
-  if (c.imported) parts.push(t("lib.import.imported", { n: String(c.imported) }));
-  if (c.duplicate) parts.push(t("lib.import.duplicate", { n: String(c.duplicate) }));
-  if (c.unsupported) parts.push(t("lib.import.unsupported", { n: String(c.unsupported) }));
-  if (c.error) parts.push(t("lib.import.error", { n: String(c.error) }));
+  if (c.imported) parts.push(t("lib.import.imported", { n: localeNum(c.imported, lang) }));
+  if (c.duplicate) parts.push(t("lib.import.duplicate", { n: localeNum(c.duplicate, lang) }));
+  if (c.unsupported) parts.push(t("lib.import.unsupported", { n: localeNum(c.unsupported, lang) }));
+  if (c.error) parts.push(t("lib.import.error", { n: localeNum(c.error, lang) }));
   return parts.join(" · ") || t("lib.import.none");
 }
 
@@ -193,7 +194,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         const results = await importBooks(paths);
         loadBooks();
         loadShelves();
-        flashToast(summarize(results, t));
+        flashToast(summarize(results, t, lang));
       } catch (e) {
         flashToast(String(e));
       } finally {
@@ -597,7 +598,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
           </>
         )}
 
-        {drag && <DropOverlay count={drag.count} t={t} />}
+        {drag && <DropOverlay count={drag.count} t={t} lang={lang} />}
       </main>
 
       {editing && (
@@ -1024,7 +1025,7 @@ function ListRow({ book, onOpen, lang, t }: { book: BookRow; onOpen: () => void;
           />
         </span>
         <span className={`ll-pct${p.state === "done" ? " done" : ""}`}>
-          {p.state === "done" ? t("lib.progress.done") : p.state === "none" ? t("lib.progress.none") : `${p.pct}%`}
+          {p.state === "done" ? t("lib.progress.done") : p.state === "none" ? t("lib.progress.none") : localeDigits(`${p.pct}%`, lang)}
         </span>
       </span>
       <span className="ll-read">{readLabel}</span>
@@ -1070,17 +1071,17 @@ function EmptyState({ onBrowse }: { onBrowse: () => void }) {
   );
 }
 
-function DropOverlay({ count, t }: { count: number; t: TFn }) {
+function DropOverlay({ count, t, lang }: { count: number; t: TFn; lang: string }) {
   return (
     <div className="lib-drop">
       <div className="lib-drop-card">
         <div className="lib-drop-stack" aria-hidden>
           <span className="lib-drop-a" />
           <span className="lib-drop-b" />
-          {count > 0 && <span className="lib-drop-badge">{count}</span>}
+          {count > 0 && <span className="lib-drop-badge">{localeNum(count, lang)}</span>}
         </div>
         <div className="lib-drop-title">
-          {count === 1 ? t("lib.drop.titleOne") : t("lib.drop.title", { n: String(count || "") }).replace("  ", " ")}
+          {count === 1 ? t("lib.drop.titleOne") : t("lib.drop.title", { n: localeDigits(String(count || ""), lang) }).replace("  ", " ")}
         </div>
         <div className="lib-drop-formats">{t("lib.drop.formats")}</div>
       </div>

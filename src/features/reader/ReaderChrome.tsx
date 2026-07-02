@@ -138,7 +138,7 @@ export function ReaderChrome({
       <div className="rc-bottom">
         <div className="rc-meta">
           <span dir="auto">{chapter}</span>
-          <span>{pct}%</span>
+          <span>{localeNum(pct, lang)}%</span>
         </div>
         <div className="rc-progress">
           <div className="rc-progress-fill" style={{ width: `${pct}%` }} />

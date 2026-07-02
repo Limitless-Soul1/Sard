@@ -194,8 +194,13 @@ function themeBlock(
              valid (zero-size) box. `display:none` removed it from layout entirely, and since
              TOC entries anchor to the heading id, navigating to a chapter whose heading was
              display:none landed on a geometry-less element → a blank page (RAWY-22 bug). Here
-             the heading still has a position the paginator can resolve, so the page renders. */
-          `h1, h2 {
+             the heading still has a position the paginator can resolve, so the page renders.
+             RAWY-67: h1-h6 (was only h1/h2 — some books use a lower heading level for the
+             chapter title) PLUS `.sard-chapter-heading`, a class FoliateController adds to a
+             section's first paragraph ONLY when it provably echoes that section's own TOC
+             number (see markInBodyHeading) — covers books that bake the heading into a plain
+             <p>, not a semantic heading, which no selector alone could ever catch. */
+          `h1, h2, h3, h4, h5, h6, .sard-chapter-heading {
              visibility: hidden !important;
              font-size: 0 !important; line-height: 0 !important;
              height: 0 !important; min-height: 0 !important; max-height: 0 !important;

@@ -7,7 +7,7 @@
 // dir="auto" so Arabic titles still render RTL inside an LTR UI (and vice-versa).
 
 import { useI18n } from "../../i18n";
-import { localeNum } from "../../lib/format";
+import { extractChapterNumber, localeNum } from "../../lib/format";
 import type { TocEntry } from "../../reader-engine/FoliateController";
 
 interface Props {
@@ -61,7 +61,13 @@ export function ChaptersPanel({
         {toc.length === 0 && <div className="rp-empty">{t("panel.noChapters")}</div>}
         {toc.map((c, i) => {
           const active = !!c.href && c.href === currentHref;
-          const label = hideTitles ? t("panel.chapter", { n: localeNum(i + 1, lang) }) : c.label || t("panel.chapter", { n: localeNum(i + 1, lang) });
+          // RAWY-67: when hiding titles, show the book's OWN chapter number (parsed from its real
+          // TOC label — e.g. a single-volume import that starts at "الفصل 200" correctly shows
+          // 200, not the imposed list position 1) — never fabricated; a book/entry with no
+          // extractable number falls back to the position, same as before.
+          const realNum = extractChapterNumber(c.label);
+          const neutralLabel = t("panel.chapter", { n: localeNum(realNum ?? i + 1, lang) });
+          const label = hideTitles ? neutralLabel : c.label || neutralLabel;
           return (
             <button
               key={`${c.href ?? "x"}-${i}`}
@@ -70,7 +76,7 @@ export function ChaptersPanel({
               onClick={() => c.href && onJump(c.href)}
               disabled={!c.href}
             >
-              <span className="toc-num">{localeNum(i + 1, lang)}</span>
+              <span className="toc-num">{localeNum(realNum ?? i + 1, lang)}</span>
               <span className="toc-label" dir="auto">{label}</span>
               <span className={`toc-dot${active ? " current" : ""}`} />
             </button>

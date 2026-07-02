@@ -13,3 +13,23 @@ export function localeNum(n: number, lang: string): string {
 export function localeDigits(s: string, lang: string): string {
   return lang === "ar" ? s.replace(/\d/g, (d) => AR_DIGITS[Number(d)]) : s;
 }
+
+// RAWY-67: the reverse direction — Arabic-Indic digits IN a book-provided string back to Western,
+// so a TOC label ("الفصل ١٠٢٢") can be parsed the same way as one already using Western digits
+// ("Chapter 1022"). Only touches digit glyphs; everything else in the string is untouched.
+const AR_TO_WESTERN: Record<string, string> = Object.fromEntries(AR_DIGITS.map((d, i) => [d, String(i)]));
+function toWesternDigits(s: string): string {
+  return s.replace(/[٠-٩]/g, (d) => AR_TO_WESTERN[d]);
+}
+
+// Extract the book's OWN chapter number from its TOC label ("الفصل 1022: عنوان" -> 1022,
+// "Chapter 1022" -> 1022) — the first run of digits, Western or Arabic-Indic. Never fabricates:
+// returns null if the label has no digits at all (e.g. "Prologue"/"المقدمة"), so callers can fall
+// back honestly instead of inventing a number the book doesn't provide.
+export function extractChapterNumber(label: string | null | undefined): number | null {
+  if (!label) return null;
+  const m = toWesternDigits(label).match(/\d+/);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return Number.isFinite(n) ? n : null;
+}

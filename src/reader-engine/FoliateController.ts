@@ -14,6 +14,7 @@
 
 import { buildReadingCss, type BookThemeFlags, type ReadingStyle } from "./injectedCss";
 import type { Theme } from "../theme/tokens";
+import { extractChapterNumber } from "../lib/format";
 
 export interface RelocateInfo {
   cfi: string | null;
@@ -129,6 +130,67 @@ function wrapTashkil(doc: Document): void {
   if (body.dataset) body.dataset.sardTashkil = "1";
 }
 
+// RAWY-67: some converted/scraped EPUBs (common for long serialized web-novel translations) bake
+// the chapter heading into the section's own body as a plain paragraph — not a semantic <h1-h6> —
+// so the existing hide-chapter-titles rule (which only ever targeted headings) could never catch
+// it. Detecting "is this paragraph a title" in general is unreliable (false positives on ordinary
+// short prose); instead this is GROUNDED in data we already trust: the book's OWN TOC label for
+// this exact section (resolved via the section id, not a stale/racy "last relocate" — `load`
+// fires BEFORE the new section's `relocate`, confirmed live, so that shortcut would read the
+// PREVIOUS chapter's label at exactly the moment it matters). If the section's real chapter number
+// (parsed from that label) appears as the very start of the section's FIRST piece of visible text,
+// and that text is short (a title, not a paragraph of prose), we mark it — never a generic
+// "starts with a number" guess. A section whose TOC label has no number, or whose first text
+// doesn't match, is left untouched — fails safe, never over-hides.
+const IN_BODY_HEADING_MAX_LEN = 120;
+
+// Shared with the class's getToc() — one flattening walk over foliate's (possibly nested)
+// book.toc, so the free functions below and the public TOC API never drift apart.
+function flattenToc(raw: any, level = 0): { label: string; href: string | null; level: number }[] {
+  const out: { label: string; href: string | null; level: number }[] = [];
+  const walk = (items: any[] | undefined, lvl: number) => {
+    if (!Array.isArray(items)) return;
+    for (const it of items) {
+      out.push({ label: String(it?.label ?? "").trim(), href: it?.href ?? null, level: lvl });
+      if (it?.subitems) walk(it.subitems, lvl + 1);
+    }
+  };
+  walk(raw, level);
+  return out;
+}
+
+function sectionTocLabel(view: any, index: number): string | null {
+  const sections = view?.book?.sections;
+  const sectionId: string | undefined = sections?.[index]?.id;
+  if (!sectionId) return null;
+  const flat = flattenToc(view?.book?.toc);
+  const hit = flat.find((t) => t.href === sectionId || t.href?.split("#")[0] === sectionId);
+  return hit?.label || null;
+}
+
+function markInBodyHeading(doc: Document, tocLabel: string | null): void {
+  const body = doc.body;
+  if (!body || body.dataset?.sardHeadingScanned === "1") return;
+  if (body.dataset) body.dataset.sardHeadingScanned = "1";
+  const realNum = extractChapterNumber(tocLabel);
+  if (realNum == null) return; // no number to ground the match against — don't guess
+  const walker = doc.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+  let firstText: Text | null = null;
+  let n: Node | null;
+  while ((n = walker.nextNode())) {
+    if ((n as Text).data.trim()) {
+      firstText = n as Text;
+      break;
+    }
+  }
+  const el = firstText?.parentElement;
+  if (!el) return;
+  const candidate = (el.textContent ?? "").trim().replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
+  if (candidate.length > IN_BODY_HEADING_MAX_LEN) return;
+  if (!candidate.startsWith(String(realNum))) return;
+  el.classList.add("sard-chapter-heading");
+}
+
 async function ensureFoliateDefined(): Promise<void> {
   if (customElements.get("foliate-view")) return;
   await new Promise<void>((resolve, reject) => {
@@ -221,6 +283,7 @@ export class FoliateController {
       const index: number = e.detail?.index ?? 0;
       if (!doc) return;
       wrapTashkil(doc); // enable the diacritics toggle for this section
+      markInBodyHeading(doc, sectionTocLabel(view, index)); // RAWY-67: hide-titles catches this too
       doc.addEventListener("keydown", (ev: KeyboardEvent) => {
         if (ev.key === "ArrowLeft") this.next();
         else if (ev.key === "ArrowRight") this.prev();
@@ -381,16 +444,7 @@ export class FoliateController {
 
   /** Flattened TOC (chapters panel, RAWY-21). Empty if the book exposes none. */
   getToc(): TocEntry[] {
-    const out: TocEntry[] = [];
-    const walk = (items: any[] | undefined, level: number) => {
-      if (!Array.isArray(items)) return;
-      for (const it of items) {
-        out.push({ label: String(it?.label ?? "").trim(), href: it?.href ?? null, level });
-        if (it?.subitems) walk(it.subitems, level + 1);
-      }
-    };
-    walk(this.view?.book?.toc, 0);
-    return out;
+    return flattenToc(this.view?.book?.toc);
   }
 
   /** Jump to a TOC target (an href; foliate resolves it). */

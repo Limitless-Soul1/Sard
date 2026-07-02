@@ -14,7 +14,7 @@ import {
 } from "../../reader-engine/injectedCss";
 import { bookRegister, progressGet, progressSave, settingsGet, settingsSet } from "../../lib/ipc";
 import { useI18n } from "../../i18n";
-import { localeNum } from "../../lib/format";
+import { extractChapterNumber, localeNum } from "../../lib/format";
 import { applyTheme, THEMES, useTheme, type ThemeId } from "../../theme";
 import {
   clearBookOverride,
@@ -408,10 +408,15 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // Whether the chrome bar is currently shown — the bookmark marker drops below it so it stays
   // visible (RAWY-42); same condition the chrome itself uses.
   const chromeShown = chromeVisible || settingsOpen || chaptersOpen || annoOpen || basketOpen;
-  // When chapter titles are hidden (anti-spoiler), the chrome shows a neutral "Chapter N".
+  // When chapter titles are hidden (anti-spoiler), the chrome shows a neutral "Chapter N" — using
+  // the book's OWN chapter number, parsed straight from `chapterLabel` (already the real,
+  // currently-matched TOC label — RAWY-67). A single-volume import whose real first chapter is
+  // "الفصل 200" now correctly shows 200, not the imposed list position. Never fabricated: a
+  // label/entry with no extractable number falls back to the TOC array position, same as before.
   const tocIndex = toc.findIndex((c) => c.href && c.href === chapterHref);
+  const realChapterNum = extractChapterNumber(chapterLabel);
   const chapter = hideChapterTitles
-    ? t("panel.chapter", { n: localeNum((tocIndex >= 0 ? tocIndex : 0) + 1, lang) })
+    ? t("panel.chapter", { n: localeNum(realChapterNum ?? (tocIndex >= 0 ? tocIndex : 0) + 1, lang) })
     : chapterLabel || t("reader.chapterFallback");
 
   // Responsive page width (RAWY-23): the slider fraction → a window-relative preferred width

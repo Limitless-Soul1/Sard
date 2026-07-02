@@ -97,7 +97,14 @@ html, body, #root {
 /* MARGINS (RAWY-36): inset the foliate host within the sheet so the paper shows in the margins.
    This is the reliable place — foliate forces html `padding` with inline !important, so an
    injected page margin can't win; insetting the host here works in both scrolled + paged modes. */
-.page-host { position: absolute; inset-block: 0; inset-inline: var(--page-margin, 56px); --sard-columns: 1; --sard-measure: 3000px; }
+/* RAWY-71: inset the TOP by the chrome-bar height (70px — RAWY-66) so a chapter's first line (and
+   the RAWY-70 "Title hidden" placeholder) always starts BELOW the top chrome bar, never tucked under
+   it. The bar is an auto-hiding overlay that is SHOWN on entry + on any pointer/keydown (see
+   useChromeOnIntent), so at scroll-top the first line was routinely covered. A fixed inset (vs a
+   dynamic one) keeps the reading position from jumping as the chrome fades in/out. The paper sheet
+   itself still fills full height, so its background shows behind the bar; only the text is inset.
+   Applies in both scrolled + paged flows and both directions (it's a block-axis inset, not inline). */
+.page-host { position: absolute; inset-block: 70px 0; inset-inline: var(--page-margin, 56px); --sard-columns: 1; --sard-measure: 3000px; }
 .page-host foliate-view { width: 100%; height: 100%; display: block; }
 
 /* faint paper grain in the sheet margins (full-paper grain over the iframe is deferred) */

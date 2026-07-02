@@ -150,12 +150,19 @@ export interface RevealLabels {
   confirm: string; // "Reveal the title?" — the confirm question (step 2)
   reveal: string; // "Reveal" — confirm-yes
   cancel: string; // "Cancel" — confirm-no
+  // RAWY-71: the UI-LANGUAGE direction (not the book's). The placeholder is a localized widget whose
+  // text is entirely CSS `content` (pseudo-elements) — `dir="auto"` on the element sees NO real text
+  // nodes and so resolves LTR always, which laid the confirm row (question · Reveal · Cancel) out
+  // element-reversed in an Arabic UI. Setting `direction` explicitly from the UI language fixes the
+  // logical order in both directions (and rides the same re-inject as the labels on a language change).
+  dir: "rtl" | "ltr";
 }
 const DEFAULT_REVEAL_LABELS: RevealLabels = {
   hidden: "Title hidden",
   confirm: "Reveal the title?",
   reveal: "Reveal",
   cancel: "Cancel",
+  dir: "ltr",
 };
 
 // A CSS string literal from an arbitrary label — escape the two chars that could break out of a
@@ -412,8 +419,13 @@ export function buildReadingCss(
        into every section with a detected first line, regardless of the toggle — matching how the
        sard-chapter-heading class is always tagged and CSS gates the effect). themeBlock reveals
        it only when hideFirstLine is on. So with the toggle OFF there is no placeholder at all and
-       the real first line renders normally. */
-    .sard-title-ph { display: none; }
+       the real first line renders normally.
+       RAWY-71: force the placeholder's direction to the UI language (its labels' language) and
+       bidi-isolate it — a self-contained localized widget. A dir=auto attribute failed here because
+       the text is all CSS pseudo-content (no real text nodes to infer direction from), so the confirm
+       row (question · Reveal · Cancel) came out element-reversed in Arabic. Explicit direction lays
+       it out in correct logical order, mirrored, in both LTR and RTL. */
+    .sard-title-ph { display: none; direction: ${rl.dir}; unicode-bidi: isolate; }
     img, svg, video, table { max-width: 100%; max-height: 100%; }
 
     /* per-script fonts: Arabic glyphs use the chosen Arabic face, Latin uses Literata */

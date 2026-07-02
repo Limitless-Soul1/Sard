@@ -51,16 +51,20 @@ export interface OpenTarget {
 const SAVE_DEBOUNCE_MS = 500;
 
 export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: () => void }) {
-  const { t, lang } = useI18n();
+  // `uiDir` is the UI LANGUAGE direction (distinct from the book's `dir` below) — RAWY-71 uses it
+  // to lay the localized placeholder/reveal widget out in the right direction.
+  const { t, lang, dir: uiDir } = useI18n();
   const stageRef = useRef<HTMLDivElement>(null);
   const ctrlRef = useRef<FoliateController | null>(null);
   if (!ctrlRef.current) ctrlRef.current = new FoliateController();
   // RAWY-70: the hide-first-line placeholder/reveal strings that ride into the content frame.
+  // RAWY-71: + the UI direction so the confirm row (question · Reveal · Cancel) mirrors correctly.
   const makeRevealLabels = (): RevealLabels => ({
     hidden: t("reader.titleHidden"),
     confirm: t("reader.revealTitleConfirm"),
     reveal: t("reader.reveal"),
     cancel: t("reader.revealCancel"),
+    dir: uiDir,
   });
 
   const bookRef = useRef<string>(initial.id);

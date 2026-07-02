@@ -232,7 +232,9 @@ function buildTitlePlaceholder(doc: Document): HTMLElement {
   const ph = doc.createElement("span");
   ph.className = "sard-title-ph";
   ph.setAttribute("data-sard-state", "idle");
-  ph.setAttribute("dir", "auto");
+  // RAWY-71: NO `dir="auto"` — the placeholder's text is entirely CSS `content` (pseudo-elements),
+  // which dir=auto can't see, so it resolved LTR always and reversed the Arabic confirm row. The
+  // direction is set explicitly from the UI language via injected CSS (`.sard-title-ph{direction}`).
   const main = doc.createElement("button"); // idle: the tappable "Title hidden"
   main.type = "button";
   main.className = "sard-ph-main";

@@ -124,7 +124,7 @@ html, body, #root {
   filter: drop-shadow(0 3px 4px rgba(30, 18, 6, 0.32));
   transition: top 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.page-bookmark.below { top: 62px; } /* clears the 58px top bar (RAWY-42) */
+.page-bookmark.below { top: 74px; } /* clears the 70px top bar (RAWY-42; bar enlarged RAWY-66) */
 .page-bookmark:active { cursor: grabbing; }
 .bm-shape { display: inline-block; }
 
@@ -188,7 +188,7 @@ html, body, #root {
 }
 .rc-top {
   top: 0;
-  height: 58px;
+  height: 70px; /* RAWY-66: enlarged from 58px for easier tapping/clarity */
   justify-content: space-between;
   padding: 0 16px;
   border-bottom: 1px solid var(--chrome-border);
@@ -213,11 +213,11 @@ html, body, #root {
 .rc-nav { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .rc-back {
   flex: 0 0 auto;
-  width: 40px; height: 40px; border-radius: 10px;
+  width: 46px; height: 46px; border-radius: 11px; /* RAWY-66: enlarged with the cluster, to match */
   background: var(--rc-surface); border: 1px solid var(--chrome-border);
   box-shadow: 0 1px 2px rgba(40, 28, 14, 0.06);
   color: var(--text); cursor: pointer;
-  font: 300 22px "Inter", sans-serif;
+  font: 300 24px "Inter", sans-serif;
   display: inline-flex; align-items: center; justify-content: center;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
@@ -226,32 +226,35 @@ html, body, #root {
 .rc-book { font: 600 13px "Inter", "SardUIArabic", sans-serif; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32vw; }
 .rc-chapter { font: 400 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32vw; }
 
-/* right controls: bordered, labelled buttons (icon + caption) */
-.rc-btns { display: flex; align-items: center; gap: 7px; }
-.rc-divider { width: 1px; height: 30px; background: var(--chrome-border); margin: 0 3px; }
+/* right controls: bordered, labelled buttons (icon + caption). RAWY-66: enlarged for easier
+   tapping/clarity (owner feedback on the release build); fixed positions (D21), non-occlusion
+   (RAWY-42) and the RAWY-59/60 popover/tray behavior are all unaffected — only sizing changed. */
+.rc-btns { display: flex; align-items: center; gap: 8px; }
+.rc-divider { width: 1px; height: 34px; background: var(--chrome-border); margin: 0 3px; }
 .rc-btn {
   display: flex; flex-direction: column; align-items: center; gap: 3px;
   border: 0; background: transparent; cursor: pointer; padding: 0;
 }
 .rc-btn-ico {
-  width: 42px; height: 38px; border-radius: 9px;
+  width: 48px; height: 44px; border-radius: 10px;
   background: var(--rc-surface); border: 1px solid var(--chrome-border);
   color: var(--text);
   display: inline-flex; align-items: center; justify-content: center;
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
-.rc-btn-label { font: 500 9px "Inter", "SardUIArabic", sans-serif; color: var(--muted); transition: color 0.15s ease; }
+.rc-btn-label { font: 500 10px "Inter", "SardUIArabic", sans-serif; color: var(--muted); transition: color 0.15s ease; }
 .rc-btn:hover .rc-btn-ico { background: color-mix(in srgb, var(--accent) 14%, var(--rc-surface)); border-color: color-mix(in srgb, var(--accent) 45%, var(--chrome-border)); }
 .rc-btn:hover .rc-btn-label { color: var(--text); }
 .rc-btn.on .rc-btn-ico { background: var(--accent); border-color: var(--accent); color: var(--paper-bg); }
 .rc-btn.on .rc-btn-label { color: var(--accent); font-weight: 600; }
-/* Photo-card basket (RAWY-60): the count badge sits on the button's outer-top corner. The .rc-top
-   cluster is pinned direction:ltr (D21), so this stays on the physical corner in both languages. */
+/* Photo-card Quotes collection (RAWY-60; renamed from "Basket" RAWY-66): the count badge sits on
+   the button's outer-top corner. The .rc-top cluster is pinned direction:ltr (D21), so this stays
+   on the physical corner in both languages. */
 .rc-basket .rc-btn-ico { position: relative; overflow: visible; }
 .rc-basket-badge {
-  position: absolute; top: -7px; right: -7px; min-width: 17px; height: 17px; padding: 0 4px;
-  border-radius: 9px; background: var(--accent); color: var(--paper-bg);
-  font: 700 10px "Inter", "SardUIArabic", sans-serif; line-height: 17px; text-align: center;
+  position: absolute; top: -8px; right: -8px; min-width: 19px; height: 19px; padding: 0 4px;
+  border-radius: 10px; background: var(--accent); color: var(--paper-bg);
+  font: 700 11px "Inter", "SardUIArabic", sans-serif; line-height: 19px; text-align: center;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); pointer-events: none;
 }
 .rc-basket.on .rc-basket-badge { background: var(--paper-bg); color: var(--accent); }
@@ -260,20 +263,21 @@ html, body, #root {
 .rc-btn-soon:hover .rc-btn-ico { background: var(--rc-surface); border-color: var(--chrome-border); }
 .rc-btn-soon:hover .rc-btn-label { color: var(--muted); }
 
-/* button glyphs (currentColor follows the ico → flips to paper colour on the accent .on face) */
-.ico-aa { font: 600 17px "Literata", serif; }
-.ico-aa span { font-size: 11px; }
-.ico-lines { display: flex; flex-direction: column; gap: 2.5px; }
-.ico-lines span { width: 15px; height: 2px; background: currentColor; border-radius: 1px; }
-.ico-lines span:last-child { width: 10px; }
-.ico-half { width: 15px; height: 15px; border-radius: 50%; background: linear-gradient(90deg, currentColor 50%, transparent 50%); box-shadow: inset 0 0 0 1.6px currentColor; }
+/* button glyphs (currentColor follows the ico → flips to paper colour on the accent .on face).
+   RAWY-66: scaled up proportionally (~15%) with the enlarged .rc-btn-ico box. */
+.ico-aa { font: 600 19px "Literata", serif; }
+.ico-aa span { font-size: 12px; }
+.ico-lines { display: flex; flex-direction: column; gap: 3px; }
+.ico-lines span { width: 17px; height: 2px; background: currentColor; border-radius: 1px; }
+.ico-lines span:last-child { width: 11px; }
+.ico-half { width: 17px; height: 17px; border-radius: 50%; background: linear-gradient(90deg, currentColor 50%, transparent 50%); box-shadow: inset 0 0 0 1.8px currentColor; }
 .ico-cols { display: flex; gap: 2px; align-items: center; }
-.ico-cols span { border: 1.6px solid currentColor; border-radius: 1px; height: 14px; }
-.ico-cols span:first-child { width: 4px; }
-.ico-cols span:last-child { width: 9px; }
-.ico-ribbon { width: 12px; height: 16px; background: var(--accent); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 80%, 0 100%); }
+.ico-cols span { border: 1.8px solid currentColor; border-radius: 1px; height: 16px; }
+.ico-cols span:first-child { width: 5px; }
+.ico-cols span:last-child { width: 10px; }
+.ico-ribbon { width: 14px; height: 18px; background: var(--accent); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 80%, 0 100%); }
 .rc-btn.on .ico-ribbon { background: var(--paper-bg); }
-.ico-note { width: 14px; height: 14px; border: 1.6px solid currentColor; border-radius: 3px; }
+.ico-note { width: 16px; height: 16px; border: 1.8px solid currentColor; border-radius: 3px; }
 
 /* bottom: chapter / percent meta + progress track with a knob. The bar is pinned LTR (the
    fill grows from the physical left); only the page-turn chevrons follow the book (RAWY-33). */
@@ -318,7 +322,7 @@ html, body, #root {
   /* RAWY-34: a right-edge DRAWER docked between the bars (no scrim) — the top control cluster
      stays clickable above it, so Contents/Notes/Settings buttons all stay reachable while it is
      open. Consistent with the Contents/Notes drawers; mutually exclusive with Notes. */
-  top: 58px;
+  top: 70px; /* RAWY-66: matches the enlarged .rc-top */
   bottom: 56px;
   z-index: 6;
   width: min(384px, 94vw);
@@ -496,10 +500,10 @@ html, body, #root {
 /* ---- Reading side panels (RAWY-21, band C-II): chapters (leading) + annotations (trailing) ---- */
 .reader-panel {
   position: absolute;
-  /* RAWY-33: dock BETWEEN the bars (top 58px / bottom 56px) so the full-width top bar — and
-     especially the right-hand control cluster — stays visible above an open panel, exactly as
-     the design shows (panel has its own header below the bar). */
-  top: 58px;
+  /* RAWY-33: dock BETWEEN the bars (top 70px / bottom 56px — top enlarged RAWY-66) so the
+     full-width top bar — and especially the right-hand control cluster — stays visible above an
+     open panel, exactly as the design shows (panel has its own header below the bar). */
+  top: 70px;
   bottom: 56px;
   inline-size: 300px;
   max-inline-size: 86vw;
@@ -1573,7 +1577,7 @@ html, body, #root {
    UI language); only its labels translate (dir set on the element). Reader-theme tokens so it
    matches the chrome while reading. z-index above the chrome/panels, below the composer (50). ---- */
 .pc-basket-tray {
-  position: fixed; top: 66px; right: 14px; z-index: 44;
+  position: fixed; top: 78px; right: 14px; z-index: 44; /* RAWY-66: matches the enlarged .rc-top */
   width: 322px; max-width: calc(100vw - 28px); max-height: 66vh;
   display: flex; flex-direction: column;
   background: var(--chrome-bg); color: var(--text);

@@ -20,16 +20,17 @@ interface Props {
   annoOpen: boolean;
   settingsOpen: boolean;
   settingsSection: SettingsSection;
-  // Photo-card basket (RAWY-60): appears only when the basket has passages; the badge shows the
-  // count; it sits in this pinned cluster (physical side, D21) and opens the passages tray.
+  // Photo-card Quotes collection (RAWY-60; user-facing "Quotes"/"اقتباسات" — RAWY-66): appears
+  // only when non-empty; the badge shows the count; it sits in this pinned cluster (physical
+  // side, D21) and opens the passages tray.
   basketCount: number;
   basketOpen: boolean;
   onBasket: () => void;
 }
 
-// A small "stack of cards" glyph for the basket button.
+// A small "stack of cards" glyph for the Quotes button. RAWY-66: 18→20 with the enlarged icon box.
 const BasketIco = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <rect x="7" y="3.5" width="13" height="13" rx="2.2" /><path d="M4 7.5v11a2 2 0 0 0 2 2h11" />
   </svg>
 );
@@ -122,7 +123,8 @@ export function ReaderChrome({
             <span className="rc-btn-ico"><span className="ico-note" /></span>
             <span className="rc-btn-label">{t("reader.notes")}</span>
           </button>
-          {/* Photo-card basket (RAWY-60) — hidden when empty, so normal reading stays clean. */}
+          {/* Photo-card Quotes collection (RAWY-60; user-facing name "Quotes"/"اقتباسات" RAWY-66,
+              internal "basket" names kept) — hidden when empty, so normal reading stays clean. */}
           {basketCount > 0 && (
             <button className={`rc-btn rc-basket${basketOpen ? " on" : ""}`} onClick={onBasket} title={t("basket.title")}>
               <span className="rc-btn-ico">

@@ -166,10 +166,11 @@ export const en = {
   "photo.savedInApp": "Saved in Sard",
   "photo.updatedInApp": "Updated",
 
-  // Photo Mode — multi-passage collection / basket (RAWY-60)
+  // Photo Mode — multi-passage collection / basket (RAWY-60; renamed to "Quotes" RAWY-66 — user-
+  // facing text only, internal names ("basket"/"Basket*") kept as-is)
   "photo.addToCard": "Add to card",
-  "photo.basket": "Basket",
-  "basket.title": "Card basket",
+  "photo.basket": "Quotes",
+  "basket.title": "Quotes",
   "basket.count": "{n} passages",
   "basket.empty": "No passages yet",
   "basket.create": "Create card · {n}",

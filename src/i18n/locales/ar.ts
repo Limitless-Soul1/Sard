@@ -167,10 +167,10 @@ export const ar: Record<TKey, string> = {
   "photo.savedInApp": "حُفظت في سَرْد",
   "photo.updatedInApp": "تم التحديث",
 
-  // Photo Mode — multi-passage collection / basket (RAWY-60)
+  // Photo Mode — multi-passage collection / basket (RAWY-60; renamed to "اقتباسات" RAWY-66)
   "photo.addToCard": "أضِف للبطاقة",
-  "photo.basket": "السلّة",
-  "basket.title": "سلّة البطاقة",
+  "photo.basket": "اقتباسات",
+  "basket.title": "اقتباسات",
   "basket.count": "{n} مقاطع",
   "basket.empty": "لا مقاطع بعد",
   "basket.create": "أنشئ البطاقة · {n}",

@@ -20,15 +20,11 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost https://asset.localhost blob: data:; font-src 'self' asset: http://asset.localhost https://asset.localhost blob: data:; connect-src 'self' ipc: http://ipc.localhost asset: http://asset.localhost https://asset.localhost; frame-src 'self' blob:",
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$APPDATA/**",
-          "$APPLOCALDATA/**",
-          "$DOCUMENT/**",
-          "$DOWNLOAD/**",
-          "$HOME/**"
+          "$APPDATA/**"
         ]
       }
     }

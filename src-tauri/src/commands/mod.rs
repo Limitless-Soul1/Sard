@@ -26,6 +26,20 @@ fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
+/// RAWY-64 — every legitimate `id` this app hands to Rust (a photo-card id, a book id) is a
+/// `crypto.randomUUID()` or a SHA-256 hex string; neither ever contains a path separator or `..`.
+/// Reject anything else before it's spliced into a filename, so an id can't be used to write/read
+/// outside its intended managed subdirectory (defense-in-depth alongside the RAWY-64 sandbox fix,
+/// which is what actually stops untrusted content from reaching these commands at all).
+fn safe_id(id: &str) -> Result<(), String> {
+    let ok = !id.is_empty()
+        && !id.contains('/')
+        && !id.contains('\\')
+        && !id.contains("..")
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if ok { Ok(()) } else { Err("invalid id".into()) }
+}
+
 #[tauri::command]
 pub fn app_info(state: State<AppState>) -> Result<AppInfo, String> {
     let conn = state.db.lock().map_err(err)?;
@@ -223,6 +237,7 @@ pub fn book_set_cover(
     image_path: String,
     state: State<AppState>,
 ) -> Result<Option<library::BookRow>, String> {
+    safe_id(&id)?;
     let app_data_dir = state.app_data_dir.clone();
     let conn = state.db.lock().map_err(err)?;
     library::set_cover(&conn, &app_data_dir, &id, &image_path)
@@ -407,6 +422,7 @@ pub fn photocard_save(
     data: Vec<u8>,
     state: State<AppState>,
 ) -> Result<photocards::PhotoCard, String> {
+    safe_id(&id)?;
     let app_data_dir = state.app_data_dir.clone();
     let conn = state.db.lock().map_err(err)?;
     let meta = photocards::SaveMeta {
@@ -434,6 +450,7 @@ pub fn photocards_list(state: State<AppState>) -> Result<Vec<photocards::PhotoCa
 
 #[tauri::command]
 pub fn photocard_delete(id: String, state: State<AppState>) -> Result<bool, String> {
+    safe_id(&id)?;
     let app_data_dir = state.app_data_dir.clone();
     let conn = state.db.lock().map_err(err)?;
     photocards::delete(&conn, &app_data_dir, &id)?;

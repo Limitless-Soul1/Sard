@@ -239,9 +239,17 @@ class View {
             display: 'none',
             width: '100%', height: '100%',
         })
-        // `allow-scripts` is needed for events because of WebKit bug
-        // https://bugs.webkit.org/show_bug.cgi?id=218086
-        this.#iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts')
+        // Sard patch (RAWY-64, security): upstream sets `allow-scripts` here only to work
+        // around a WebKit event-dispatch bug (bugs.webkit.org #218086) — Sard ships on WebView2
+        // (Chromium), a different engine, and doesn't need book content to execute script at all
+        // (every event Sard listens for — pointerdown/pointerup/wheel/keydown — is wired from
+        // PARENT-context code via `doc.addEventListener` on the cross-frame document, which needs
+        // only `allow-same-origin`, not `allow-scripts`). Dropping `allow-scripts` closes a real
+        // local-code-execution path (a malicious EPUB's inline `<script>` reaching `window.parent`
+        // and the Tauri IPC bridge) while keeping 100% of Sard's own reading/theming/highlight
+        // functionality, which all depends on `allow-same-origin` for `iframe.contentDocument`
+        // access. Re-apply on any re-vendor, alongside the RAWY-21 --sard-measure patch above.
+        this.#iframe.setAttribute('sandbox', 'allow-same-origin')
         this.#iframe.setAttribute('scrolling', 'no')
     }
     get element() {

@@ -81,9 +81,11 @@ export class FixedLayout extends HTMLElement {
             display: 'none',
             overflow: 'hidden',
         })
-        // `allow-scripts` is needed for events because of WebKit bug
-        // https://bugs.webkit.org/show_bug.cgi?id=218086
-        iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts')
+        // Sard patch (RAWY-64, security) — same reasoning as paginator.js: drop `allow-scripts`
+        // (a WebKit-only event workaround Sard's Chromium/WebView2 runtime doesn't need) to close
+        // the local-code-execution path; `allow-same-origin` alone preserves parent-side
+        // `iframe.contentDocument` access for everything Sard's own code needs.
+        iframe.setAttribute('sandbox', 'allow-same-origin')
         iframe.setAttribute('scrolling', 'no')
         iframe.setAttribute('part', 'filter')
         this.#root.append(element)

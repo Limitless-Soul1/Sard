@@ -141,6 +141,27 @@ export interface BookThemeFlags {
   hideFirstLine: boolean;
 }
 
+// RAWY-70: the localized strings for the hide-first-line placeholder + two-step reveal. They ride
+// into the content frame as CSS `content` custom properties (the placeholder DOM FoliateController
+// injects is purely structural — text lives in CSS), so a UI-language change is a plain re-inject,
+// no DOM text to keep in sync. Defaults are English so a missing config never renders blank.
+export interface RevealLabels {
+  hidden: string; // "Title hidden" — the idle placeholder
+  confirm: string; // "Reveal the title?" — the confirm question (step 2)
+  reveal: string; // "Reveal" — confirm-yes
+  cancel: string; // "Cancel" — confirm-no
+}
+const DEFAULT_REVEAL_LABELS: RevealLabels = {
+  hidden: "Title hidden",
+  confirm: "Reveal the title?",
+  reveal: "Reveal",
+  cancel: "Cancel",
+};
+
+// A CSS string literal from an arbitrary label — escape the two chars that could break out of a
+// double-quoted `content` value. Arabic/English labels never contain these, but never trust input.
+const cssString = (s: string): string => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+
 // Theme colours + flags compile into the SAME injected string as typography (RAWY-13).
 // The page background always follows the theme; text colour is forced when override is on OR
 // the theme is dark (a light-inked book on a dark page must be re-inked).
@@ -180,6 +201,10 @@ function themeBlock(
 ): string {
   if (!theme) return "";
   const c = theme.colors;
+  // A never-matching id guard — raises specificity into the ID column so placeholder colours beat
+  // the forceInk re-ink rule below (which paints every `body *` to the theme ink !important) and
+  // the container-background neutraliser. Same technique/name as the RAWY-38 forced rules.
+  const G = ":root:root .sard-title-ph:not(#__sard_never__)";
   // The ink: a per-book TEXT COLOUR (RAWY-40) wins over the theme's own text colour when set.
   const ink = textColor || c.text;
   // Background + container neutralisation are forced when override is on OR the theme is dark
@@ -228,8 +253,38 @@ function themeBlock(
              echoes that section's own TOC number; never a semantic heading, see above). A
              converted/scraped EPUB that repeats its title as a plain first line of body text
              (not a real heading) is exactly what this catches — the RAWY-67 problem this toggle
-             was originally introduced for, now controllable separately from the heading itself. */
-          HIDE_BOX_RULE(".sard-chapter-heading")
+             was originally introduced for, now controllable separately from the heading itself.
+             RAWY-70: instead of a blank removal, the line is replaced by a quiet placeholder
+             (the `.sard-title-ph` element FoliateController injects right before each detected
+             line) offering a TWO-STEP reveal — tap → "Reveal the title?" → confirm — so an
+             accidental tap can never instantly spoil. A revealed instance carries
+             `.sard-revealed`, so it is excluded from the hide here (per-instance; a fresh section
+             loads a fresh idle placeholder). */
+          `${HIDE_BOX_RULE(".sard-chapter-heading:not(.sard-revealed)")}
+           /* the placeholder takes the hidden line's place — quiet, in the book's theme */
+           .sard-title-ph {
+             display: inline-flex; align-items: baseline; gap: .4em; flex-wrap: wrap;
+             margin: .15em 0 .75em; font-size: .82em; line-height: 1.6;
+             font-family: 'SardArabic', 'SardLatin', serif;
+             user-select: none; -webkit-user-select: none;
+           }
+           .sard-title-ph[data-sard-state="revealed"] { display: none; }
+           .sard-title-ph .sard-ph-confirm { display: none; }
+           .sard-title-ph[data-sard-state="confirm"] .sard-ph-main { display: none; }
+           .sard-title-ph[data-sard-state="confirm"] .sard-ph-confirm { display: inline-flex; align-items: baseline; gap: .5em; flex-wrap: wrap; }
+           /* the clickable bits — reset UA button chrome, keep them looking like quiet links */
+           .sard-title-ph .sard-ph-main, .sard-title-ph .sard-ph-yes, .sard-title-ph .sard-ph-no {
+             background: none; border: 0; padding: 0; margin: 0; font: inherit; cursor: pointer;
+             text-decoration: underline; text-underline-offset: 3px;
+           }
+           /* text comes from the localized CSS vars (defined once in :root, RAWY-70) */
+           .sard-title-ph .sard-ph-main::before { content: var(--sard-ph-hidden); }
+           .sard-title-ph .sard-ph-q::before { content: var(--sard-ph-confirm); }
+           .sard-title-ph .sard-ph-yes::before { content: var(--sard-ph-reveal); }
+           .sard-title-ph .sard-ph-no::before { content: var(--sard-ph-cancel); }
+           /* colours — the G-guarded selectors beat the forceInk re-ink + bg-neutralise rules above */
+           ${G}, ${G} .sard-ph-main, ${G} .sard-ph-q, ${G} .sard-ph-no { color: ${c.muted} !important; }
+           ${G} .sard-ph-yes { color: ${c.accent} !important; }`
         : ""
     }
   `;
@@ -240,7 +295,9 @@ export function buildReadingCss(
   theme?: Theme,
   flags?: BookThemeFlags,
   bookDir?: string,
+  revealLabels?: RevealLabels,
 ): string {
+  const rl = revealLabels ?? DEFAULT_REVEAL_LABELS;
   // Resolve each slot to a source URL. Built-in → its bundled file; imported → its asset URL
   // (RAWY-44; falls back to the built-in default if the imported font is missing/unloaded).
   const latBuiltin = isBuiltinLatin(style.latinFont) ? LATIN_FONTS[style.latinFont] : undefined;
@@ -343,7 +400,20 @@ export function buildReadingCss(
     :root {
       --overlayer-highlight-opacity: ${theme?.highlightAlpha ?? (theme?.dark ? 0.5 : 0.62)};
       --overlayer-highlight-blend: ${theme?.dark ? "screen" : "multiply"};
+      /* RAWY-70: localized text for the hide-first-line placeholder + reveal (CSS-var driven, so a
+         UI-language change is a re-inject, not a DOM edit). Definitions live here; the placeholder
+         is only ever VISIBLE when hideFirstLine is on (themeBlock), so these are inert otherwise. */
+      --sard-ph-hidden: ${cssString(rl.hidden)};
+      --sard-ph-confirm: ${cssString(rl.confirm)};
+      --sard-ph-reveal: ${cssString(rl.reveal)};
+      --sard-ph-cancel: ${cssString(rl.cancel)};
     }
+    /* RAWY-70: the injected placeholder is display:none by default (FoliateController injects it
+       into every section with a detected first line, regardless of the toggle — matching how the
+       sard-chapter-heading class is always tagged and CSS gates the effect). themeBlock reveals
+       it only when hideFirstLine is on. So with the toggle OFF there is no placeholder at all and
+       the real first line renders normally. */
+    .sard-title-ph { display: none; }
     img, svg, video, table { max-width: 100%; max-height: 100%; }
 
     /* per-script fonts: Arabic glyphs use the chosen Arabic face, Latin uses Literata */

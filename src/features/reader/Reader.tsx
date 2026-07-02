@@ -11,6 +11,7 @@ import {
   PAGE_WIDTH_DEFAULT,
   pageWidthPx,
   type ReadingStyle,
+  type RevealLabels,
 } from "../../reader-engine/injectedCss";
 import { bookRegister, progressGet, progressSave, settingsGet, settingsSet } from "../../lib/ipc";
 import { useI18n } from "../../i18n";
@@ -54,6 +55,13 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const stageRef = useRef<HTMLDivElement>(null);
   const ctrlRef = useRef<FoliateController | null>(null);
   if (!ctrlRef.current) ctrlRef.current = new FoliateController();
+  // RAWY-70: the hide-first-line placeholder/reveal strings that ride into the content frame.
+  const makeRevealLabels = (): RevealLabels => ({
+    hidden: t("reader.titleHidden"),
+    confirm: t("reader.revealTitleConfirm"),
+    reveal: t("reader.reveal"),
+    cancel: t("reader.revealCancel"),
+  });
 
   const bookRef = useRef<string>(initial.id);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -138,6 +146,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         flags: { overrideBookColor: ts.overrideBookColor, hideChapterTitles: ts.hideChapterTitles, hideFirstLine: ts.hideFirstLine },
         dir: target.dir ?? undefined,
         flow: initialStyle.flowMode, // scrolled (default) or paged — RAWY-25
+        revealLabels: makeRevealLabels(), // RAWY-70
       });
 
       setBookThemeId(effTheme);
@@ -175,6 +184,13 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     ctrlRef.current?.applyTheme(THEMES[bookThemeId], { overrideBookColor, hideChapterTitles, hideFirstLine });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overrideBookColor, hideChapterTitles, hideFirstLine]);
+
+  // RAWY-70: keep the in-content placeholder/reveal strings in sync with the UI language — a plain
+  // re-inject swaps the localized CSS `content` vars (the placeholder DOM itself is text-free).
+  useEffect(() => {
+    ctrlRef.current?.setRevealLabels(makeRevealLabels());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lang]);
 
   // RAWY-43: toggling the unified/per-book scope LIVE re-resolves the open book's effective
   // style + theme immediately. Unified → the global style/theme (overrides ignored, kept);
@@ -296,6 +312,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         },
         dir: initial.dir ?? undefined,
         flow: next.flowMode,
+        revealLabels: makeRevealLabels(), // RAWY-70
       }).then(() => useAnnotations.getState().load()).catch(console.error);
     } else {
       ctrlRef.current?.applyStyle(next);

@@ -84,14 +84,13 @@ export function ChaptersPanel({
           // back to the position, same as before.
           const realNum = extractChapterNumber(c.label);
           const badgeNum = realNum ?? i + 1;
-          // RAWY-68: the badge above is ALWAYS the number — a "Chapter N" text label restating
-          // it whenever titles are hidden showed the same number twice per row (confirmed live on
-          // a real 1300+ chapter book: "1026" badge next to a "Chapter 1026" label). With titles
-          // hidden there's nothing else to show (that's the point of the anti-spoiler toggle), so
-          // the badge alone is the row's identifier and the text label is omitted entirely. With
-          // titles shown, the label is the book's own title text (falling back to "Chapter N"
-          // only when that TOC entry genuinely has no title of its own).
-          const label = hideTitles ? null : c.label || t("panel.chapter", { n: localeNum(badgeNum, lang) });
+          // RAWY-70: when titles are hidden, the row reads "الفصل N" / "Chapter N" (localized) once
+          // — not a bare "N" (RAWY-69) and not the number twice (RAWY-68's double-numbering it
+          // replaced). It's the single, enlarged, readable identifier for the row; the book's own
+          // title text is withheld (that's the anti-spoiler point). With titles SHOWN, the row is
+          // the book's own title (falling back to "Chapter N" only when that TOC entry has none).
+          const chapterLabel = t("panel.chapter", { n: localeNum(badgeNum, lang) });
+          const label = hideTitles ? null : c.label || chapterLabel;
           return (
             <button
               key={`${c.href ?? "x"}-${i}`}
@@ -100,10 +99,14 @@ export function ChaptersPanel({
               onClick={() => c.href && onJump(c.href)}
               disabled={!c.href}
             >
-              {/* RAWY-69: enlarged when titles are hidden — the badge is then the row's ONLY
-                  content (no label text alongside it), so it needs to carry readability on its
-                  own instead of the small/muted size that suited it as a secondary index. */}
-              <span className={`toc-num${hideTitles ? " big" : ""}`}>{localeNum(badgeNum, lang)}</span>
+              {/* RAWY-69/70: when titles are hidden the row's sole content is the enlarged
+                  "الفصل N" / "Chapter N" (readable on its own — no small/muted secondary index,
+                  no title text). When shown, the small numeric badge sits beside the title. */}
+              {hideTitles ? (
+                <span className="toc-num big" dir="auto">{chapterLabel}</span>
+              ) : (
+                <span className="toc-num">{localeNum(badgeNum, lang)}</span>
+              )}
               {label && (
                 <span className="toc-label" dir="auto">
                   {label}

@@ -22,6 +22,11 @@ export const en = {
   "reader.settings": "Settings",
   "reader.chapterFallback": "Reading",
   "reader.untitledBook": "Untitled",
+  // RAWY-70: in-body "first line" hide → a spoiler-safe placeholder with a two-step reveal.
+  "reader.titleHidden": "Title hidden",
+  "reader.revealTitleConfirm": "Reveal the title?",
+  "reader.reveal": "Reveal",
+  "reader.revealCancel": "Cancel",
 
   "type.size": "Text size",
   "type.font": "Font",

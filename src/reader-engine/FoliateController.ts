@@ -12,7 +12,7 @@
 // a newer open() has superseded it — so a StrictMode double-invoke / remount can't race
 // two views (RAWY-10 hardening).
 
-import { buildReadingCss, type BookThemeFlags, type ReadingStyle } from "./injectedCss";
+import { buildReadingCss, type BookThemeFlags, type ReadingStyle, type RevealLabels } from "./injectedCss";
 import type { Theme } from "../theme/tokens";
 import { extractChapterNumber, toWesternDigits } from "../lib/format";
 
@@ -92,6 +92,8 @@ interface OpenOptions {
   dir?: string | null;
   /** Reading flow (RAWY-25): "scrolled" (default) or "paged". */
   flow?: "scrolled" | "paged";
+  /** Localized text for the hide-first-line placeholder + reveal (RAWY-70). */
+  revealLabels?: RevealLabels;
 }
 
 // Arabic combining marks (tashkīl). We wrap runs of them in spans so the diacritics
@@ -220,6 +222,35 @@ function sectionTocLabel(view: any, index: number): string | null {
   return hit?.label || null;
 }
 
+// RAWY-70: build the spoiler-safe placeholder that stands in for a hidden first line. The element
+// is purely STRUCTURAL — every visible string is CSS `content` (localized vars, injected by
+// buildReadingCss), so a language switch is a re-inject with nothing to rewrite here. The two-step
+// reveal is a `data-sard-state` machine driven by clicks the parent frame handles (the content
+// iframe has no scripts — RAWY-64 — so the app attaches the listener via cross-frame DOM access,
+// exactly like the existing pointer/keydown handlers). CSS shows only the state's relevant bits.
+function buildTitlePlaceholder(doc: Document): HTMLElement {
+  const ph = doc.createElement("span");
+  ph.className = "sard-title-ph";
+  ph.setAttribute("data-sard-state", "idle");
+  ph.setAttribute("dir", "auto");
+  const main = doc.createElement("button"); // idle: the tappable "Title hidden"
+  main.type = "button";
+  main.className = "sard-ph-main";
+  const confirm = doc.createElement("span"); // step 2: "Reveal the title?  Reveal  Cancel"
+  confirm.className = "sard-ph-confirm";
+  const q = doc.createElement("span");
+  q.className = "sard-ph-q";
+  const yes = doc.createElement("button");
+  yes.type = "button";
+  yes.className = "sard-ph-yes";
+  const no = doc.createElement("button");
+  no.type = "button";
+  no.className = "sard-ph-no";
+  confirm.append(q, yes, no);
+  ph.append(main, confirm);
+  return ph;
+}
+
 function markInBodyHeading(doc: Document, tocLabel: string | null): void {
   const body = doc.body;
   if (!body || body.dataset?.sardHeadingScanned === "1") return;
@@ -230,7 +261,11 @@ function markInBodyHeading(doc: Document, tocLabel: string | null): void {
   collectLeadingBlocks(body, MAX_LEADING_HEADING_ELEMENTS, blocks);
   for (const el of blocks) {
     if (!isChapterHeadingCandidate(el.textContent ?? "", realNum)) break; // real prose starts here — stop
-    if (!HEADING_TAGS.has(el.tagName.toUpperCase())) el.classList.add("sard-chapter-heading");
+    if (HEADING_TAGS.has(el.tagName.toUpperCase())) continue; // a real heading — the title toggle owns it
+    el.classList.add("sard-chapter-heading");
+    // RAWY-70: put a placeholder immediately before the line so the reveal handler can find the
+    // line as `ph.nextElementSibling`. It's inert (CSS `display:none`) until hideFirstLine is on.
+    el.insertAdjacentElement("beforebegin", buildTitlePlaceholder(doc));
   }
 }
 
@@ -264,6 +299,7 @@ export class FoliateController {
   private style: ReadingStyle | null = null;
   private theme: Theme | undefined = undefined;
   private flags: BookThemeFlags = { overrideBookColor: false, hideChapterTitles: false, hideFirstLine: false };
+  private revealLabels: RevealLabels | undefined = undefined; // RAWY-70: placeholder/reveal strings
   private forcedDir: string | undefined = undefined; // corrected direction (RAWY-19)
   private relocateCb: ((info: RelocateInfo) => void) | null = null;
   // Highlights (RAWY-20): cfi → semantic colour slot; re-applied per section render.
@@ -327,6 +363,11 @@ export class FoliateController {
       if (!doc) return;
       wrapTashkil(doc); // enable the diacritics toggle for this section
       markInBodyHeading(doc, sectionTocLabel(view, index)); // RAWY-67: hide-titles catches this too
+      // RAWY-70: the two-step reveal for the hide-first-line placeholder. Handled from the parent
+      // frame (the content iframe runs no scripts, RAWY-64) via cross-frame DOM access, like the
+      // handlers below. Per-instance + reset-on-navigation is automatic: each section is a fresh
+      // doc with a fresh idle placeholder.
+      doc.addEventListener("click", (ev: Event) => this.onRevealClick(ev));
       doc.addEventListener("keydown", (ev: KeyboardEvent) => {
         if (ev.key === "ArrowLeft") this.next();
         else if (ev.key === "ArrowRight") this.prev();
@@ -368,6 +409,7 @@ export class FoliateController {
     this.style = opts.style;
     if (opts.theme) this.theme = opts.theme;
     if (opts.flags) this.flags = opts.flags;
+    if (opts.revealLabels) this.revealLabels = opts.revealLabels;
     this.reinject();
 
     if (opts.resumeCfi) await view.goTo(opts.resumeCfi);
@@ -378,7 +420,35 @@ export class FoliateController {
   /** Re-inject the full stylesheet (typography + theme) — the single visual funnel. */
   private reinject(): void {
     if (this.style)
-      this.view?.renderer?.setStyles?.(buildReadingCss(this.style, this.theme, this.flags, this.dir));
+      this.view?.renderer?.setStyles?.(
+        buildReadingCss(this.style, this.theme, this.flags, this.dir, this.revealLabels),
+      );
+  }
+
+  /** RAWY-70: update the hide-first-line placeholder/reveal strings (UI-language change) + re-inject. */
+  setRevealLabels(labels: RevealLabels): void {
+    this.revealLabels = labels;
+    this.reinject();
+  }
+
+  // RAWY-70: two-step reveal of a hidden first line. The placeholder sits immediately before its
+  // line (`ph.nextElementSibling`), so revealing = tag that line `.sard-revealed` (excluded from
+  // the hide rule) and mark the placeholder "revealed" (CSS collapses it). Only the placeholder's
+  // own controls are ever the target here — a click anywhere else in the book is ignored.
+  private onRevealClick(ev: Event): void {
+    const target = ev.target as Element | null;
+    const ph = target?.closest?.(".sard-title-ph") as HTMLElement | null;
+    if (!ph) return;
+    ev.preventDefault();
+    if (target!.closest(".sard-ph-yes")) {
+      ph.setAttribute("data-sard-state", "revealed");
+      const line = ph.nextElementSibling;
+      if (line?.classList.contains("sard-chapter-heading")) line.classList.add("sard-revealed");
+    } else if (target!.closest(".sard-ph-no")) {
+      ph.setAttribute("data-sard-state", "idle");
+    } else if (target!.closest(".sard-ph-main")) {
+      ph.setAttribute("data-sard-state", "confirm");
+    }
   }
 
   /** Update typography (size/font/spacing/margins/align/diacritics). */

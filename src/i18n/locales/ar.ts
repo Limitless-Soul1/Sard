@@ -23,6 +23,11 @@ export const ar: Record<TKey, string> = {
   "reader.settings": "الإعدادات",
   "reader.chapterFallback": "القراءة",
   "reader.untitledBook": "بدون عنوان",
+  // RAWY-70: نائب "السطر الأول" المخفي — عنصر نائب آمن من الحرق مع كشف من خطوتين.
+  "reader.titleHidden": "تم إخفاء العنوان",
+  "reader.revealTitleConfirm": "هل تريد كشف العنوان؟",
+  "reader.reveal": "كشف",
+  "reader.revealCancel": "إلغاء",
 
   "type.size": "حجم النص",
   "type.font": "الخط",

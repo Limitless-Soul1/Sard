@@ -99,7 +99,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // THEME is per-book (RAWY-40) — read from `bookThemeId`, not the global store. Override-book-
   // colour + hide-chapter-titles stay GLOBAL flags (set in Global Settings / chapters panel).
   const { overrideBookColor, hideChapterTitles, hideFirstLine, setHideTitles, setHideFirstLine } = useTheme();
-  const { visible: chromeVisible, setHold } = useChromeOnIntent();
+  const { visible: chromeVisible, wake, signalMove, setHold } = useChromeOnIntent();
 
   const openBook = useCallback(async (target: OpenTarget) => {
     const set = useReader.getState().set;
@@ -222,6 +222,13 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     () => setHold(settingsOpen || chaptersOpen || annoOpen || basketOpen),
     [settingsOpen, chaptersOpen, annoOpen, basketOpen, setHold],
   );
+
+  // RAWY-72: wake the auto-hiding chrome on pointer activity inside the content iframe (which never
+  // reaches a window listener). A move goes through the jitter dedup; a tap always wakes. `wake` and
+  // `signalMove` are stable, so this registers once and stays valid across section loads.
+  useEffect(() => {
+    ctrlRef.current?.onActivity((x, y, isTap) => (isTap ? wake() : signalMove(x, y)));
+  }, [wake, signalMove]);
 
   // When the basket empties (Clear, or removing the last passage) the top-bar button hides, so
   // close the now-orphaned tray too (RAWY-60).

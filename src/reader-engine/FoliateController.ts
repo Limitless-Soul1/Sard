@@ -222,6 +222,14 @@ function sectionTocLabel(view: any, index: number): string | null {
   return hit?.label || null;
 }
 
+// RAWY-72: the content iframe's top-left in PARENT-viewport coords, so a content-frame pointer
+// position (clientX/Y relative to the iframe) can be translated into the same space the window's
+// own pointer events use — letting the chrome-on-intent jitter dedup compare both consistently.
+function frameOffset(doc: Document): { x: number; y: number } {
+  const r = (doc.defaultView as Window & { frameElement?: Element })?.frameElement?.getBoundingClientRect();
+  return { x: r?.left ?? 0, y: r?.top ?? 0 };
+}
+
 // RAWY-70: build the spoiler-safe placeholder that stands in for a hidden first line. The element
 // is purely STRUCTURAL — every visible string is CSS `content` (localized vars, injected by
 // buildReadingCss), so a language switch is a re-inject with nothing to rewrite here. The two-step
@@ -308,6 +316,10 @@ export class FoliateController {
   private annotations = new Map<string, string>();
   private selectionCb: ((sel: SelectionInfo | null) => void) | null = null;
   private showCb: ((hit: AnnotationHit) => void) | null = null;
+  // RAWY-72: forward pointer activity happening INSIDE the content iframe (which never reaches a
+  // parent-window listener) so the chrome-on-intent hook can wake the auto-hiding bar. Coords are
+  // translated to parent-viewport space so the hook's jitter dedup shares one coordinate system.
+  private activityCb: ((x: number, y: number, isTap: boolean) => void) | null = null;
   // Scrolled mode + chapter-boundary gesture state (RAWY-25).
   private scrolledMode = false;
   private wheelTs = 0;
@@ -377,8 +389,30 @@ export class FoliateController {
       // Scrolled mode: the chapter-boundary "new gesture to advance" handler (RAWY-25).
       if (this.scrolledMode)
         doc.addEventListener("wheel", (ev: WheelEvent) => this.onBoundaryWheel(ev), { passive: false });
-      // Selection → in-context toolbar (RAWY-20).
-      doc.addEventListener("pointerdown", () => this.selectionCb?.(null));
+      // RAWY-72: wake the auto-hiding chrome on pointer activity over the reading content. A move is
+      // throttled (~8/s) since the hook only needs to know "the pointer moved"; both move + tap are
+      // translated to parent-viewport coords for the hook's shared jitter dedup.
+      let lastMoveFwd = 0;
+      doc.addEventListener(
+        "pointermove",
+        (ev: PointerEvent) => {
+          if (!this.activityCb) return;
+          const now = performance.now();
+          if (now - lastMoveFwd < 120) return;
+          lastMoveFwd = now;
+          const off = frameOffset(doc);
+          this.activityCb(ev.clientX + off.x, ev.clientY + off.y, false);
+        },
+        { passive: true },
+      );
+      // Selection → in-context toolbar (RAWY-20). Also a tap → wake the chrome (RAWY-72).
+      doc.addEventListener("pointerdown", (ev: PointerEvent) => {
+        this.selectionCb?.(null);
+        if (this.activityCb) {
+          const off = frameOffset(doc);
+          this.activityCb(ev.clientX + off.x, ev.clientY + off.y, true);
+        }
+      });
       doc.addEventListener("pointerup", () => {
         const sel = doc.getSelection();
         if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
@@ -492,6 +526,11 @@ export class FoliateController {
   }
   onShowAnnotation(cb: (hit: AnnotationHit) => void): void {
     this.showCb = cb;
+  }
+  /** RAWY-72: receive pointer activity from inside the content frame (parent-viewport coords + a
+   *  tap flag) so the reader can wake the auto-hiding chrome on movement/tap over the reading text. */
+  onActivity(cb: (x: number, y: number, isTap: boolean) => void): void {
+    this.activityCb = cb;
   }
   /** Add/redraw a highlight for a range CFI; returns the section's chapter label. */
   async addHighlight(cfi: string, color: string): Promise<string | null> {

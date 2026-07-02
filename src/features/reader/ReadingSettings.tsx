@@ -178,8 +178,9 @@ function SelectRow<T extends string>({
 
 export function ReadingSettings({ style, update, isRtlBook, section = "text", bookThemeId, onPickTheme, unified }: Props) {
   const { t, lang } = useI18n();
-  // Override-book-colour + hide-chapter-titles stay GLOBAL flags (RAWY-40); the THEME is per-book.
-  const { overrideBookColor, hideChapterTitles, setOverride, setHideTitles } = useTheme();
+  // Override-book-colour + hide-chapter-title + hide-first-line stay GLOBAL flags (RAWY-40); the
+  // THEME is per-book. RAWY-69 split hide-chapter-title/hide-first-line into two independent flags.
+  const { overrideBookColor, hideChapterTitles, hideFirstLine, setOverride, setHideTitles, setHideFirstLine } = useTheme();
   const customFonts = useFonts((s) => s.custom); // RAWY-44 — imported fonts for the book pickers
   const theme = THEMES[bookThemeId];
   const dark = theme.dark;
@@ -391,7 +392,14 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
       </div>
       <ToggleRow label={t("theme.override")} on={overrideBookColor} onToggle={() => setOverride(!overrideBookColor)} />
       <ToggleRow label={t("theme.hideTitles")} on={hideChapterTitles} onToggle={() => setHideTitles(!hideChapterTitles)} />
-      {/* Theme + text colour are per-book (RAWY-40); override-colour + hide-titles remain global. */}
+      <ToggleRow
+        label={t("panel.hideFirstLine")}
+        hint={t("panel.hideFirstLineHint")}
+        on={hideFirstLine}
+        onToggle={() => setHideFirstLine(!hideFirstLine)}
+      />
+      {/* Theme + text colour are per-book (RAWY-40); override-colour + hide-title + hide-first-line
+          remain global, independent flags (RAWY-69 split the latter two). */}
       </>
       )}
     </div>

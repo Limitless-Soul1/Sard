@@ -135,6 +135,10 @@ export const defaultsForDir = (dir?: string): ReadingStyle =>
 export interface BookThemeFlags {
   overrideBookColor: boolean;
   hideChapterTitles: boolean;
+  // RAWY-69: independent from hideChapterTitles — hides the section's detected leading "first
+  // line" (FoliateController's `.sard-chapter-heading`, RAWY-68) without touching the semantic
+  // heading. A book can have EITHER a title, a repeated first line, both, or neither hidden.
+  hideFirstLine: boolean;
 }
 
 // Theme colours + flags compile into the SAME injected string as typography (RAWY-13).
@@ -156,6 +160,19 @@ export interface BookThemeFlags {
 // paper shows. HONEST LIMITS (can't be beaten from a stylesheet): an inline `style="…!important"`
 // on the element, or a multi-ID chain like `#a #b{…!important}` (specificity ≥ 2,0,0) — both are
 // essentially unseen in real EPUBs. See §9.
+// Shared by both hide-title/hide-first-line rules (RAWY-69 split them into two independent
+// selectors): `visibility:hidden` + a collapsed box, never `display:none` — see the RAWY-22 note
+// where a fully-removed heading (no layout box) broke CFI navigation to a chapter whose TOC anchor
+// pointed at it.
+const HIDE_BOX_RULE = (selector: string): string => `
+  ${selector} {
+    visibility: hidden !important;
+    font-size: 0 !important; line-height: 0 !important;
+    height: 0 !important; min-height: 0 !important; max-height: 0 !important;
+    margin: 0 !important; padding: 0 !important; border: 0 !important;
+    overflow: hidden !important;
+  }`;
+
 function themeBlock(
   theme: Theme | undefined,
   flags: BookThemeFlags | undefined,
@@ -195,18 +212,24 @@ function themeBlock(
              TOC entries anchor to the heading id, navigating to a chapter whose heading was
              display:none landed on a geometry-less element → a blank page (RAWY-22 bug). Here
              the heading still has a position the paginator can resolve, so the page renders.
-             RAWY-67: h1-h6 (was only h1/h2 — some books use a lower heading level for the
-             chapter title) PLUS `.sard-chapter-heading`, a class FoliateController adds to a
-             section's first paragraph ONLY when it provably echoes that section's own TOC
-             number (see markInBodyHeading) — covers books that bake the heading into a plain
-             <p>, not a semantic heading, which no selector alone could ever catch. */
-          `h1, h2, h3, h4, h5, h6, .sard-chapter-heading {
-             visibility: hidden !important;
-             font-size: 0 !important; line-height: 0 !important;
-             height: 0 !important; min-height: 0 !important; max-height: 0 !important;
-             margin: 0 !important; padding: 0 !important; border: 0 !important;
-             overflow: hidden !important;
-           }`
+             h1-h6 (RAWY-67 — was only h1/h2; some books use a lower heading level for the
+             chapter title) — the book's OWN semantic heading element. `.sard-chapter-heading`
+             is deliberately NOT included here (RAWY-69 split it into its own independent toggle
+             below) — a heading-tag element never gets that class in the first place (see
+             `markInBodyHeading`), so the two rules can never fight over the same element. */
+          HIDE_BOX_RULE("h1, h2, h3, h4, h5, h6")
+        : ""
+    }
+    ${
+      flags?.hideFirstLine
+        ? /* RAWY-69: independent from hideChapterTitles above — hides ONLY the section's
+             detected leading "first line" (`.sard-chapter-heading`, a class FoliateController
+             adds — RAWY-68 — to a section's leading non-heading block ONLY when it provably
+             echoes that section's own TOC number; never a semantic heading, see above). A
+             converted/scraped EPUB that repeats its title as a plain first line of body text
+             (not a real heading) is exactly what this catches — the RAWY-67 problem this toggle
+             was originally introduced for, now controllable separately from the heading itself. */
+          HIDE_BOX_RULE(".sard-chapter-heading")
         : ""
     }
   `;

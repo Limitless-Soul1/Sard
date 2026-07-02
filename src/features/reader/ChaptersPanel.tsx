@@ -17,6 +17,10 @@ interface Props {
   currentHref: string | null;
   hideTitles: boolean;
   onToggleHideTitles: () => void;
+  // RAWY-69: independent from hideTitles — hides the section's leading in-body "first line"
+  // (often a repeated/spoiler title) without touching the app's own chapter-title display.
+  hideFirstLine: boolean;
+  onToggleHideFirstLine: () => void;
   onJump: (href: string) => void;
   fraction: number;
 }
@@ -28,6 +32,8 @@ export function ChaptersPanel({
   currentHref,
   hideTitles,
   onToggleHideTitles,
+  hideFirstLine,
+  onToggleHideFirstLine,
   onJump,
   fraction,
 }: Props) {
@@ -49,10 +55,21 @@ export function ChaptersPanel({
         </div>
       </div>
 
-      {/* anti-spoiler control — a clear, labelled toggle (RAWY-36 replaces the emoji button) */}
+      {/* anti-spoiler controls — TWO independent toggles (RAWY-69, split from one): the app's own
+          chapter-title display vs. an in-body leading "first line" that's often a repeated title
+          and can itself carry spoilers (RAWY-68's markInBodyHeading). Either, both, or neither. */}
       <button className="rp-spoiler" onClick={onToggleHideTitles} aria-pressed={hideTitles}>
         <span className="rp-spoiler-label">{t("theme.hideTitles")}</span>
         <span className={`rp-switch${hideTitles ? " on" : ""}`} aria-hidden>
+          <span className="rp-knob" />
+        </span>
+      </button>
+      <button className="rp-toggle" onClick={onToggleHideFirstLine} aria-pressed={hideFirstLine}>
+        <span className="rp-toggle-text">
+          <span className="rp-toggle-label">{t("panel.hideFirstLine")}</span>
+          <span className="rp-toggle-hint">{t("panel.hideFirstLineHint")}</span>
+        </span>
+        <span className={`rp-switch${hideFirstLine ? " on" : ""}`} aria-hidden>
           <span className="rp-knob" />
         </span>
       </button>
@@ -83,7 +100,10 @@ export function ChaptersPanel({
               onClick={() => c.href && onJump(c.href)}
               disabled={!c.href}
             >
-              <span className="toc-num">{localeNum(badgeNum, lang)}</span>
+              {/* RAWY-69: enlarged when titles are hidden — the badge is then the row's ONLY
+                  content (no label text alongside it), so it needs to carry readability on its
+                  own instead of the small/muted size that suited it as a secondary index. */}
+              <span className={`toc-num${hideTitles ? " big" : ""}`}>{localeNum(badgeNum, lang)}</span>
               {label && (
                 <span className="toc-label" dir="auto">
                   {label}

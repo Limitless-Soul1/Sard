@@ -176,6 +176,14 @@ function isChapterHeadingCandidate(rawText: string, realNum: number): boolean {
 // block via `.textContent`, which already aggregates any nested tashkil spans correctly.
 const HEADING_WRAPPER_TAGS = new Set(["DIV", "SECTION", "ARTICLE", "MAIN", "ASIDE"]);
 
+// RAWY-69: semantic headings (h1-h6) are governed exclusively by the "hide chapter title" toggle
+// (a plain tag selector in injectedCss.ts) — a heading must never ALSO receive the
+// `.sard-chapter-heading` class, or the independent "hide first line" toggle would hide it too,
+// even with "hide chapter title" off. It still counts as a matched leading block for the purpose
+// of continuing the scan into whatever follows it (e.g. a real book's hidden <h1> immediately
+// followed by the genuinely-visible first-line <p> that repeats it) — it just isn't tagged itself.
+const HEADING_TAGS = new Set(["H1", "H2", "H3", "H4", "H5", "H6"]);
+
 function collectLeadingBlocks(el: Element, maxCount: number, out: Element[]): void {
   for (const child of Array.from(el.children)) {
     if (out.length >= maxCount) return;
@@ -222,7 +230,7 @@ function markInBodyHeading(doc: Document, tocLabel: string | null): void {
   collectLeadingBlocks(body, MAX_LEADING_HEADING_ELEMENTS, blocks);
   for (const el of blocks) {
     if (!isChapterHeadingCandidate(el.textContent ?? "", realNum)) break; // real prose starts here — stop
-    el.classList.add("sard-chapter-heading");
+    if (!HEADING_TAGS.has(el.tagName.toUpperCase())) el.classList.add("sard-chapter-heading");
   }
 }
 
@@ -255,7 +263,7 @@ export class FoliateController {
   private view: any | null = null;
   private style: ReadingStyle | null = null;
   private theme: Theme | undefined = undefined;
-  private flags: BookThemeFlags = { overrideBookColor: false, hideChapterTitles: false };
+  private flags: BookThemeFlags = { overrideBookColor: false, hideChapterTitles: false, hideFirstLine: false };
   private forcedDir: string | undefined = undefined; // corrected direction (RAWY-19)
   private relocateCb: ((info: RelocateInfo) => void) | null = null;
   // Highlights (RAWY-20): cfi → semantic colour slot; re-applied per section render.

@@ -86,7 +86,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const activeBm = bookmarks.find((b) => b.fraction != null && Math.abs(b.fraction - fraction) <= MARKER_WINDOW) ?? null;
   // THEME is per-book (RAWY-40) — read from `bookThemeId`, not the global store. Override-book-
   // colour + hide-chapter-titles stay GLOBAL flags (set in Global Settings / chapters panel).
-  const { overrideBookColor, hideChapterTitles, setHideTitles } = useTheme();
+  const { overrideBookColor, hideChapterTitles, hideFirstLine, setHideTitles, setHideFirstLine } = useTheme();
   const { visible: chromeVisible, setHold } = useChromeOnIntent();
 
   const openBook = useCallback(async (target: OpenTarget) => {
@@ -135,7 +135,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         resumeCfi,
         style: initialStyle,
         theme: THEMES[effTheme],
-        flags: { overrideBookColor: ts.overrideBookColor, hideChapterTitles: ts.hideChapterTitles },
+        flags: { overrideBookColor: ts.overrideBookColor, hideChapterTitles: ts.hideChapterTitles, hideFirstLine: ts.hideFirstLine },
         dir: target.dir ?? undefined,
         flow: initialStyle.flowMode, // scrolled (default) or paged — RAWY-25
       });
@@ -168,13 +168,13 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial.id]);
 
-  // GLOBAL flags (override-book-colour, hide-chapter-titles) → re-inject the book at its PER-BOOK
-  // theme (RAWY-40). Theme itself is per-book and handled by setBookTheme, not here.
+  // GLOBAL flags (override-book-colour, hide-chapter-title, hide-first-line) → re-inject the book
+  // at its PER-BOOK theme (RAWY-40). Theme itself is per-book and handled by setBookTheme, not here.
   useEffect(() => {
     if (status !== "ready") return;
-    ctrlRef.current?.applyTheme(THEMES[bookThemeId], { overrideBookColor, hideChapterTitles });
+    ctrlRef.current?.applyTheme(THEMES[bookThemeId], { overrideBookColor, hideChapterTitles, hideFirstLine });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [overrideBookColor, hideChapterTitles]);
+  }, [overrideBookColor, hideChapterTitles, hideFirstLine]);
 
   // RAWY-43: toggling the unified/per-book scope LIVE re-resolves the open book's effective
   // style + theme immediately. Unified → the global style/theme (overrides ignored, kept);
@@ -192,7 +192,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     setBookThemeId(effTheme);
     setHasOv(!unified && calcHasOverride(override));
     applyTheme(THEMES[effTheme]);
-    ctrlRef.current?.applyTheme(THEMES[effTheme], { overrideBookColor, hideChapterTitles });
+    ctrlRef.current?.applyTheme(THEMES[effTheme], { overrideBookColor, hideChapterTitles, hideFirstLine });
     ctrlRef.current?.applyStyle(effStyle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
@@ -292,6 +292,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         flags: {
           overrideBookColor: useTheme.getState().overrideBookColor,
           hideChapterTitles: useTheme.getState().hideChapterTitles,
+          hideFirstLine: useTheme.getState().hideFirstLine,
         },
         dir: initial.dir ?? undefined,
         flow: next.flowMode,
@@ -314,7 +315,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const setBookTheme = (id: ThemeId) => {
     setBookThemeId(id);
     applyTheme(THEMES[id]);
-    ctrlRef.current?.applyTheme(THEMES[id], { overrideBookColor, hideChapterTitles });
+    ctrlRef.current?.applyTheme(THEMES[id], { overrideBookColor, hideChapterTitles, hideFirstLine });
     if (useStyleScope.getState().scope === "unified") {
       useTheme.getState().setBookTheme(id); // shared BOOK theme — persists book_theme_id, not the Library
     } else {
@@ -336,7 +337,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     const bookDefault = useTheme.getState().bookThemeId;
     setBookThemeId(bookDefault);
     applyTheme(THEMES[bookDefault]);
-    ctrlRef.current?.applyTheme(THEMES[bookDefault], { overrideBookColor, hideChapterTitles });
+    ctrlRef.current?.applyTheme(THEMES[bookDefault], { overrideBookColor, hideChapterTitles, hideFirstLine });
     ctrlRef.current?.applyStyle(global);
   };
 
@@ -501,6 +502,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         currentHref={chapterHref}
         hideTitles={hideChapterTitles}
         onToggleHideTitles={() => setHideTitles(!hideChapterTitles)}
+        hideFirstLine={hideFirstLine}
+        onToggleHideFirstLine={() => setHideFirstLine(!hideFirstLine)}
         onJump={jumpHref}
         fraction={fraction}
       />

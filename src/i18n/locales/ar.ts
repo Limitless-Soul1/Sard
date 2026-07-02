@@ -47,7 +47,7 @@ export const ar: Record<TKey, string> = {
   "theme.label": "السمة",
   "theme.dayNight": "نهار / ليل",
   "theme.override": "تجاوز ألوان الكتاب",
-  "theme.hideTitles": "إخفاء عناوين الفصول",
+  "theme.hideTitles": "إخفاء عنوان الفصل",
 
   "status.idle": "خامل",
   "status.loading": "جارٍ التحميل…",
@@ -203,6 +203,8 @@ export const ar: Record<TKey, string> = {
   "panel.spoilerSafe": "مُعطّل — عناوين الفصول ظاهرة",
   "panel.hideTitles": "إخفاء العناوين",
   "panel.showTitles": "إظهار العناوين",
+  "panel.hideFirstLine": "إخفاء السطر الأول",
+  "panel.hideFirstLineHint": "يخفي السطر الأول من كل فصل (غالبًا عنوان مكرّر — وقد يحتوي على حرق للأحداث).",
   "panel.noChapters": "لا تتوفّر قائمة محتويات لهذا الكتاب",
   "panel.annotations": "التظليلات والملاحظات",
   "panel.notes": "الملاحظات",

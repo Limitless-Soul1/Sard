@@ -46,7 +46,7 @@ export const en = {
   "theme.label": "Theme",
   "theme.dayNight": "Day / Night",
   "theme.override": "Override book colour",
-  "theme.hideTitles": "Hide chapter titles",
+  "theme.hideTitles": "Hide chapter title",
 
   "status.idle": "idle",
   "status.loading": "Loading…",
@@ -203,6 +203,8 @@ export const en = {
   "panel.spoilerSafe": "Off — chapter titles are shown",
   "panel.hideTitles": "Hide titles",
   "panel.showTitles": "Show titles",
+  "panel.hideFirstLine": "Hide first line",
+  "panel.hideFirstLineHint": "Hides the first line of each chapter (often a repeated title — and may contain spoilers).",
   "panel.noChapters": "This book has no contents list",
   "panel.annotations": "Highlights & notes",
   "panel.notes": "Notes",

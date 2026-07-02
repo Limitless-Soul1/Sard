@@ -597,6 +597,10 @@ html, body, #root {
 .rp-lead[dir="rtl"] .toc-row.active { box-shadow: inset -2px 0 0 var(--accent); }
 .toc-num { flex: 0 0 18px; font: 600 11px "Inter", sans-serif; color: var(--muted); }
 .toc-row.active .toc-num { color: var(--accent); }
+/* RAWY-69: with titles hidden the badge is the row's ONLY content — bigger + full-strength ink
+   (was the deliberately de-emphasized --muted, sized for a secondary index next to a title) so it
+   reads on its own at a glance down a long list. */
+.toc-num.big { flex-basis: 34px; font-size: 16px; font-weight: 700; color: var(--text); }
 .toc-label { flex: 1; font: 400 14px/1.35 "Literata", "SardUIArabic", serif; color: color-mix(in srgb, var(--text) 86%, transparent); }
 .toc-row.active .toc-label { font-weight: 600; color: var(--text); }
 .toc-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--text) 18%, transparent); }

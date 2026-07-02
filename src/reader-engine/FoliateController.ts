@@ -544,6 +544,18 @@ export class FoliateController {
   onScrollIntent(cb: (down: boolean) => void): void {
     this.scrollIntentCb = cb;
   }
+  /** RAWY-74: scroll the book by a wheel delta coming from OUTSIDE the content iframe — i.e. the
+   *  reading-area side MARGINS, where the native wheel can't reach foliate's scroller (it lives in
+   *  the iframe's closed shadow root). Scrolled mode only. foliate's `scrollBy` in scrolled,
+   *  non-vertical writing reads the delta from its FIRST arg and applies it to `scrollTop`, so the
+   *  wheel's vertical delta is passed as `dx`. Also feeds the RAWY-73 auto-hide scroll-intent so the
+   *  bar hides/shows for margin wheels too. A wheel over the TEXT never reaches here (it fires inside
+   *  the iframe, past the frame boundary), so there is no double-scroll. */
+  scrollByWheel(deltaY: number): void {
+    if (!this.scrolledMode || !deltaY) return;
+    this.view?.renderer?.scrollBy?.(deltaY, 0);
+    this.onWheelScrollIntent(deltaY);
+  }
   // Debounce wheel deltas into a directional intent: accumulate, reset on a direction flip (so a
   // reversal is responsive), and fire once a clear SCROLL_INTENT_PX of travel builds up in one
   // direction. A DOM wheel deltaY > 0 means scrolling DOWN (content moves up) → hide.

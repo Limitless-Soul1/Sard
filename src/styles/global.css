@@ -518,10 +518,24 @@ html, body, #root {
 .rs-switch.on { background: var(--accent); }
 .rs-knob {
   position: absolute; top: 2px; inset-inline-start: 2px; width: 19px; height: 19px; border-radius: 50%;
-  background: var(--paper-bg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: transform 0.18s ease;
+  background: var(--paper-bg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: inset-inline-start 0.18s ease;
 }
-.rs-switch.on .rs-knob { transform: translateX(17px); }
-:root[dir="rtl"] .rs-switch.on .rs-knob { transform: translateX(-17px); }
+/* RAWY-90: the knob slides start→end purely via logical inset-inline-start (no direction-gated
+   transform), so off + on always resolve from the SAME direction. See the direction-pin rule below. */
+.rs-switch.on .rs-knob { inset-inline-start: 19px; }
+
+/* RAWY-90 — the on/off toggle PINS its own writing direction to the UI's, so it mirrors correctly in
+   Arabic AND a forced-LTR ancestor can't flip it. Before RAWY-89 the reading area inherited dir=rtl,
+   so these toggles happened to resolve their `inset-inline-start` knob to the right edge; RAWY-89's
+   `.reader-root { direction: ltr }` (which fixed the panel overlap) then made the settings-drawer
+   toggles — whose `.settings-panel` root sets no `dir`, unlike the `dir="rtl"` chapters/search panels
+   — resolve LTR, desyncing off vs on (proven: the ON knob computed to x=-15, off the left edge).
+   Pinning `direction` on the switch itself (default LTR; RTL when the UI is RTL) makes every toggle
+   instance self-contained — reading settings, chapters/search panels, and the photo composer. */
+.rs-switch, .rp-switch, .pc-switch { direction: ltr; }
+:root[dir="rtl"] .rs-switch,
+:root[dir="rtl"] .rp-switch,
+:root[dir="rtl"] .pc-switch { direction: rtl; }
 
 /* typeface select row */
 .rs-select-row {
@@ -630,10 +644,9 @@ html, body, #root {
 .rp-switch.on { background: var(--accent); }
 .rp-knob {
   position: absolute; top: 2px; inset-inline-start: 2px; width: 19px; height: 19px; border-radius: 50%;
-  background: var(--paper-bg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: transform 0.18s ease;
+  background: var(--paper-bg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25); transition: inset-inline-start 0.18s ease;
 }
-.rp-switch.on .rp-knob { transform: translateX(17px); }
-.rp-lead[dir="rtl"] .rp-switch.on .rp-knob { transform: translateX(-17px); }
+.rp-switch.on .rp-knob { inset-inline-start: 19px; } /* RAWY-90: logical slide (see the pin below) */
 
 /* chapters rows */
 .rp-row {

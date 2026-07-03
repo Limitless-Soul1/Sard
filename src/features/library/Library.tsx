@@ -57,6 +57,10 @@ function sameDay(a: Date, b: Date) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
 
+// RAWY-82 (#16): search input → book-list reload delay. Short enough to stay snappy, long enough
+// that a fast typist fires ONE query at the end rather than one per keystroke.
+const SEARCH_DEBOUNCE_MS = 250;
+
 function summarize(results: ImportResult[], t: TFn, lang: string): string {
   const c = { imported: 0, duplicate: 0, unsupported: 0, error: 0 };
   for (const r of results) c[r.status]++;
@@ -129,8 +133,14 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const loadShelves = useCallback(() => {
     collectionsList().then(setShelves).catch(console.error);
   }, []);
+  // RAWY-82 (#16): every load is request-ordered — a monotonic seq means a slower, STALER response
+  // (e.g. a shorter earlier query) can't overwrite a fresher one; the latest request always wins.
+  const loadSeqRef = useRef(0);
   const loadBooks = useCallback(() => {
-    libraryListBooks({ sort, order, format, collection: shelf, search }).then(setBooks).catch(console.error);
+    const seq = ++loadSeqRef.current;
+    libraryListBooks({ sort, order, format, collection: shelf, search })
+      .then((rows) => { if (seq === loadSeqRef.current) setBooks(rows); })
+      .catch(console.error);
   }, [sort, order, format, shelf, search]);
 
   // Pick a sort column with a sensible default order (RAWY-30): date columns default to
@@ -143,7 +153,20 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     setOrder(k === "date_read" || k === "date_added" ? "desc" : "asc");
   }, [sort]);
   useEffect(() => loadShelves(), [loadShelves]);
-  useEffect(() => loadBooks(), [loadBooks]);
+  // Discrete filter/sort picks reload IMMEDIATELY (they're single clicks, not typing).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { loadBooks(); }, [sort, order, format, shelf]);
+  // RAWY-82 (#16): search is DEBOUNCED (~250ms) so a fast typist doesn't fire an IPC per keystroke;
+  // the trailing timer means the final query always runs, and `loadBooks`' seq-ordering means its
+  // result wins even if an earlier in-flight query resolves later. Skip the mount tick — the
+  // immediate effect above already did the initial load.
+  const searchMounted = useRef(false);
+  useEffect(() => {
+    if (!searchMounted.current) { searchMounted.current = true; return; }
+    const id = window.setTimeout(() => loadBooks(), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   // The drop listener is subscribed once; reach the latest import handler through a ref.
   const runImportRef = useRef<(paths: string[]) => void>(() => {});

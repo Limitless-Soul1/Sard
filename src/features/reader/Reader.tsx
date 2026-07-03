@@ -83,6 +83,10 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const [annoTab, setAnnoTab] = useState<import("./AnnotationsPanel").AnnoTab>("notes");
   const progressTimer = useRef<number | undefined>(undefined);
   const styleTimer = useRef<number | undefined>(undefined);
+  // RAWY-82 (#15): rAF-batch the live style apply during a slider drag — hold the latest style and
+  // apply it at most once per frame (persistence stays on the 500ms debounce below).
+  const styleRafRef = useRef<number | null>(null);
+  const pendingStyleRef = useRef<ReadingStyle | null>(null);
   // Per-book settings (RAWY-40): the global reading defaults (baseline), this book's PARTIAL
   // override, and the global theme captured on entry (restored to the chrome on exit).
   const globalStyleRef = useRef<ReadingStyle | null>(null);
@@ -199,6 +203,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       // of running applyTheme/ctrl.open/set() against the disposed controller + null stage.
       openEpoch.current++;
       if (progressTimer.current) clearTimeout(progressTimer.current);
+      if (styleRafRef.current) cancelAnimationFrame(styleRafRef.current); // RAWY-82: drop a pending live-apply frame
       ctrlRef.current?.dispose();
       // The photo-card basket is a per-reading-session collection (RAWY-60) — clear it on exit.
       usePhotoBasket.getState().clear();
@@ -381,7 +386,21 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         revealLabels: makeRevealLabels(), // RAWY-70
       }).then(() => useAnnotations.getState().load()).catch(console.error);
     } else {
-      ctrlRef.current?.applyStyle(next);
+      // RAWY-82 (#15): a slider drag fires many onChange ticks, and each applyStyle rebuilds the
+      // injected CSS + re-lays-out the whole chapter (buildReadingCss → foliate setStyles). Coalesce
+      // to at most ONE apply per animation frame with the LATEST value — the drag stays smooth and
+      // the final settled value always applies (the last tick updates pendingStyleRef, and any
+      // already-scheduled frame reads it). The store `set({ style })` above stays immediate, so the
+      // slider itself and the desk page-width/margin vars track every tick with no lag.
+      pendingStyleRef.current = next;
+      if (styleRafRef.current == null) {
+        styleRafRef.current = requestAnimationFrame(() => {
+          styleRafRef.current = null;
+          const s = pendingStyleRef.current;
+          pendingStyleRef.current = null;
+          if (s) ctrlRef.current?.applyStyle(s);
+        });
+      }
     }
     if (styleTimer.current) clearTimeout(styleTimer.current);
     styleTimer.current = window.setTimeout(() => {

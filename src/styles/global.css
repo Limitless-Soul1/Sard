@@ -726,20 +726,78 @@ html, body, #root {
 }
 
 /* ---- First-run language picker ---- */
-.picker { position: fixed; inset: 0; display: grid; place-items: center; background: var(--app-bg); user-select: none; }
-.picker-inner { text-align: center; }
-.picker-wordmark { font-family: "Amiri", serif; font-size: clamp(48px, 10vw, 96px); font-weight: 400; margin: 0 0 6px; color: var(--text); }
-.picker-wordmark .sard-ar { color: var(--accent); }
-.picker-wordmark .picker-dot { color: var(--muted); }
-.picker-prompt { color: var(--muted); font-size: 15px; margin: 0 0 28px; }
-.picker-choices { display: flex; gap: 16px; justify-content: center; }
-.picker-btn {
-  min-width: 150px; padding: 14px 22px; font-size: 18px;
-  border: 1px solid var(--chrome-border); border-radius: 12px;
-  background: var(--chrome-bg); color: var(--text); cursor: pointer; font-family: var(--ui-font);
+/* ---- First-run welcome / language picker (RAWY-84, design Band W) — warm-Ivory hero: the hoopoe
+   haloed above a balanced bilingual "Sard · سَرْد" lockup (Arabic in the app UI Arabic font, sized
+   up to match the Latin — resolves the earlier "Arabic looks smaller"), a book-cover keyline frame,
+   two equal language cards that glow terracotta on hover. Structural colours are theme tokens
+   (Ivory at first run); the warm brand glow (halo gold, ◆) is kept literal. ---- */
+.welcome {
+  position: fixed; inset: 0; overflow: hidden; user-select: none;
+  background: var(--paper-bg); color: var(--text);
+  display: flex; align-items: center; justify-content: center;
 }
-.picker-btn:hover { background: color-mix(in srgb, var(--accent) 14%, var(--chrome-bg)); border-color: var(--accent); }
-.picker-btn-ar { font-family: "SardUIArabic", system-ui, sans-serif; }
+.welcome-grain { position: absolute; inset: 0; opacity: 0.045; mix-blend-mode: multiply; pointer-events: none; }
+.welcome-vignette {
+  position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(120% 85% at 50% 16%, transparent 42%, rgba(60, 40, 16, 0.08));
+}
+.welcome-watermark {
+  position: absolute; right: -40px; bottom: -90px; pointer-events: none;
+  font: 700 400px/1 "Amiri", serif; color: color-mix(in srgb, var(--text) 4%, transparent);
+}
+.welcome-keyline { position: absolute; pointer-events: none; }
+.welcome-keyline-outer { inset: 46px 38px 38px; border: 1px solid color-mix(in srgb, var(--text) 16%, transparent); border-radius: 3px; }
+.welcome-keyline-inner { inset: 52px 44px 44px; border: 1px solid color-mix(in srgb, var(--text) 6%, transparent); border-radius: 2px; }
+
+.welcome-col {
+  position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center;
+  text-align: center; padding: 0 100px; max-width: 100%;
+}
+
+/* hoopoe hero + warm halo */
+.welcome-hero { position: relative; margin-bottom: 16px; display: flex; align-items: center; justify-content: center; }
+.welcome-halo {
+  position: absolute; left: 50%; top: 54%; transform: translate(-50%, -50%);
+  width: 340px; height: 250px; pointer-events: none; filter: blur(4px);
+  background: radial-gradient(50% 50% at 50% 50%, rgba(232, 195, 106, 0.38), transparent 70%);
+}
+.welcome-bird { position: relative; height: 128px; width: auto; filter: drop-shadow(0 10px 18px rgba(40, 28, 14, 0.20)); }
+
+/* balanced bilingual wordmark */
+.welcome-wordmark { position: relative; display: flex; align-items: center; gap: 26px; margin-bottom: 20px; }
+.welcome-latin { font: 600 56px/1 "Literata", serif; letter-spacing: 0.01em; color: var(--text); }
+.welcome-bar { width: 1px; height: 54px; background: var(--text); opacity: 0.28; }
+.welcome-ar { font: 600 66px/1 "SardUIArabic", system-ui, sans-serif; color: var(--text); transform: translateY(-2px); }
+
+/* ornament rule */
+.welcome-rule { display: flex; align-items: center; gap: 14px; margin-bottom: 26px; }
+.welcome-rule-line { width: 64px; height: 1px; }
+.welcome-rule-line:first-child { background: linear-gradient(to left, color-mix(in srgb, var(--text) 26%, transparent), transparent); }
+.welcome-rule-line:last-child { background: linear-gradient(to right, color-mix(in srgb, var(--text) 26%, transparent), transparent); }
+.welcome-rule-dot { font-size: 10px; line-height: 1; color: #C9A15E; }
+
+/* choose-language — bilingual */
+.welcome-prompt { display: flex; align-items: baseline; gap: 12px; margin-bottom: 38px; color: var(--muted); }
+.welcome-prompt-en { font: 400 14px/1 "Inter", sans-serif; letter-spacing: 0.03em; }
+.welcome-prompt-ar { font: 400 15px/1 "SardUIArabic", system-ui, sans-serif; }
+.welcome-sep { color: color-mix(in srgb, var(--muted) 55%, var(--paper-bg)); font-size: 13px; }
+
+/* two equal language cards; terracotta ring on hover */
+.welcome-choices { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+.welcome-lang {
+  width: 224px; border: none; cursor: pointer; color: var(--text);
+  background: color-mix(in srgb, var(--paper-bg) 45%, #fff);
+  font: 600 21px/1 "Literata", serif; padding: 24px 0 22px; border-radius: 11px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 12%, transparent), 0 3px 10px rgba(40, 28, 14, 0.07);
+  transition: box-shadow 0.18s, transform 0.18s;
+}
+.welcome-lang:hover { box-shadow: 0 0 0 2px var(--accent), 0 14px 30px rgba(40, 28, 14, 0.16); transform: translateY(-2px); }
+.welcome-lang-ar { font: 600 20px/1 "SardUIArabic", system-ui, sans-serif; padding: 23px 0 24px; }
+
+/* changeable-later footnote — bilingual */
+.welcome-foot { display: flex; align-items: baseline; gap: 10px; margin-top: 34px; color: color-mix(in srgb, var(--muted) 78%, var(--paper-bg)); }
+.welcome-foot-en { font: 400 12px/1 "Inter", sans-serif; }
+.welcome-foot-ar { font: 400 12px/1 "SardUIArabic", system-ui, sans-serif; }
 
 /* ---- Reading stage (the desk; the book sheet is themed via injectedCss) ---- */
 /* RAWY-79 (#11): calm, themed reader error state with its own recovery actions. Covers the stage

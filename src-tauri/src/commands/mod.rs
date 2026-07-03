@@ -199,6 +199,18 @@ pub fn import_books(
     Ok(books::import_books(&conn, &app_data_dir, &paths))
 }
 
+/// RAWY-80 (audit #7) — import every EPUB inside a chosen folder (recursive), through the
+/// same pipeline as `import_books`. One `ImportResult` per EPUB found.
+#[tauri::command]
+pub fn import_folder(
+    dir: String,
+    state: State<AppState>,
+) -> Result<Vec<books::ImportResult>, String> {
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.db.lock().map_err(err)?;
+    Ok(books::import_folder(&conn, &app_data_dir, &dir))
+}
+
 /// RAWY-19 — editable metadata patch (all optional; absent = leave unchanged).
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -300,6 +300,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       else if (p === "notes") { setAnnoTab("notes"); setAnnoOpen(true); }
       else if (p === "highlights") { setAnnoTab("highlights"); setAnnoOpen(true); }
       else if (p === "settings") setSettingsOpen(true);
+      // RAWY-80: open the Settings drawer on a specific tab (e.g. `settings:theme`) for capture.
+      else if (p?.startsWith("settings:")) { setSettingsSection(p.slice(9) as SettingsSection); setSettingsOpen(true); }
     });
     settingsGet("dev_seek").then((s) => {
       if (!s) return;

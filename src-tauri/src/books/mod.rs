@@ -50,6 +50,53 @@ pub fn import_books(conn: &Connection, app_data_dir: &Path, paths: &[String]) ->
     paths.iter().map(|p| import_one(conn, app_data_dir, p)).collect()
 }
 
+/// RAWY-80 (audit #7): "Import a folder" for real — collect every `.epub` under `dir`
+/// (recursively, depth-capped, symlinks skipped to stay loop-safe) and run them through the
+/// exact same pipeline as a multi-file pick (dedup, magic-byte format check, managed copy).
+/// An empty folder simply yields an empty result list.
+pub fn import_folder(conn: &Connection, app_data_dir: &Path, dir: &str) -> Vec<ImportResult> {
+    let mut paths: Vec<String> = Vec::new();
+    collect_epubs(Path::new(dir), 0, &mut paths);
+    paths.sort(); // stable, human-legible import order
+    import_books(conn, app_data_dir, &paths)
+}
+
+/// Recurse `dir` collecting `.epub` file paths. `read_dir`'s `file_type()` does NOT follow
+/// symlinks, so skipping symlinked entries keeps the walk free of cycles; depth is capped as a
+/// backstop against pathological trees.
+fn collect_epubs(dir: &Path, depth: u32, out: &mut Vec<String>) {
+    if depth > 16 {
+        return;
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return, // unreadable dir → just contribute nothing
+    };
+    for entry in entries.flatten() {
+        let ft = match entry.file_type() {
+            Ok(ft) => ft,
+            Err(_) => continue,
+        };
+        if ft.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        if ft.is_dir() {
+            collect_epubs(&path, depth + 1, out);
+        } else if ft.is_file()
+            && path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e.eq_ignore_ascii_case("epub"))
+                .unwrap_or(false)
+        {
+            if let Some(s) = path.to_str() {
+                out.push(s.to_string());
+            }
+        }
+    }
+}
+
 fn import_one(conn: &Connection, app_data_dir: &Path, src: &str) -> ImportResult {
     let name = file_stem(src);
     let bytes = match std::fs::read(src) {
@@ -360,4 +407,43 @@ fn now_unix() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // RAWY-80 (#7): the folder walk recurses, matches `.epub` case-insensitively, and skips
+    // everything else. (The rest of `import_folder` is just handing these paths to the already-
+    // proven `import_books`.)
+    #[test]
+    fn collect_epubs_recurses_and_filters() {
+        let base = std::env::temp_dir().join("sard_rawy80_collect_epubs");
+        let _ = std::fs::remove_dir_all(&base);
+        let nested = base.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(base.join("a.epub"), b"x").unwrap();
+        std::fs::write(base.join("B.EPUB"), b"x").unwrap(); // case-insensitive extension
+        std::fs::write(base.join("notes.txt"), b"x").unwrap(); // not an epub → skipped
+        std::fs::write(base.join("cover.jpg"), b"x").unwrap(); // not an epub → skipped
+        std::fs::write(nested.join("c.epub"), b"x").unwrap(); // in a subfolder → recursion
+
+        let mut out = Vec::new();
+        collect_epubs(&base, 0, &mut out);
+        out.sort();
+
+        assert_eq!(out.len(), 3, "expected exactly 3 .epub files, got {out:?}");
+        assert!(out.iter().any(|p| p.ends_with("a.epub")));
+        assert!(out.iter().any(|p| p.to_lowercase().ends_with("b.epub")));
+        assert!(
+            out.iter().any(|p| p.ends_with("c.epub")),
+            "must recurse into subfolders"
+        );
+        assert!(
+            !out.iter().any(|p| p.ends_with(".txt") || p.ends_with(".jpg")),
+            "must skip non-epub files"
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }

@@ -180,6 +180,10 @@ export interface ImportResult {
 export const importBooks = (paths: string[]): Promise<ImportResult[]> =>
   invoke<ImportResult[]>("import_books", { paths });
 
+/** RAWY-80 — import every EPUB inside a chosen folder (recursive). One result per EPUB found. */
+export const importFolder = (dir: string): Promise<ImportResult[]> =>
+  invoke<ImportResult[]>("import_folder", { dir });
+
 export interface BookPatch {
   title?: string;
   author?: string;

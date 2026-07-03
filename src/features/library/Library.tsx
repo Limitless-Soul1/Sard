@@ -16,6 +16,7 @@ import {
   collectionsForBook,
   collectionsList,
   importBooks,
+  importFolder,
   libraryListBooks,
   settingsGet,
   settingsSet,
@@ -211,7 +212,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     runImportRef.current = (paths) => void runImport(paths);
   }, [runImport]);
 
-  // "Add books" → native file picker (EPUB only), then import the chosen files.
+  // "Browse files…" → native file picker (EPUB only), then import the chosen files.
   const addBooks = useCallback(async () => {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
@@ -223,16 +224,52 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     }
   }, [runImport, flashToast]);
 
+  // "Import a folder" → native DIRECTORY picker, then import every EPUB inside it (RAWY-80,
+  // audit #7 — this button used to open the same file picker as "Browse files"). Same pipeline
+  // (dedup, format-detect, managed copy); an empty folder just reports "no books added".
+  const addFolder = useCallback(async () => {
+    if (importing) return;
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const dir = await open({ directory: true, multiple: false });
+      if (!dir || Array.isArray(dir)) return;
+      setImporting(true);
+      try {
+        const results = await importFolder(dir);
+        loadBooks();
+        loadShelves();
+        flashToast(summarize(results, t, lang));
+      } finally {
+        setImporting(false);
+      }
+    } catch (e) {
+      flashToast(String(e));
+    }
+  }, [importing, loadBooks, loadShelves, flashToast, t, lang]);
+
   // DEV: import a `;`-separated path list from the `dev_import` setting once (for capture/
-  // verification, since PrintWindow can't drive a live OS drag), then clear it.
+  // verification, since PrintWindow can't drive a live OS drag), then clear it. RAWY-80 adds
+  // `dev_import_folder` — a single directory path routed through the REAL `import_folder` command
+  // (the folder picker can't be driven headless either), so the end-to-end folder import is
+  // testable without a click.
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     (async () => {
       const di = await settingsGet("dev_import");
-      if (!di) return;
-      await settingsSet("dev_import", "");
-      runImportRef.current(di.split(";").map((s) => s.trim()).filter(Boolean));
+      if (di) {
+        await settingsSet("dev_import", "");
+        runImportRef.current(di.split(";").map((s) => s.trim()).filter(Boolean));
+      }
+      const df = await settingsGet("dev_import_folder");
+      if (df) {
+        await settingsSet("dev_import_folder", "");
+        const results = await importFolder(df.trim());
+        loadBooks();
+        loadShelves();
+        flashToast(summarize(results, t, lang));
+      }
     })().catch(console.error);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (!hydrated) return null; // brief: settings loading (avoids a grid→list flash)
@@ -415,7 +452,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         ) : section === "inbox" ? (
           <Inbox onOpen={onOpen} />
         ) : isEmpty ? (
-          <EmptyState onBrowse={addBooks} />
+          <EmptyState onBrowse={addBooks} onFolder={addFolder} />
         ) : (
           <>
             <header className="lib-head">
@@ -1088,7 +1125,7 @@ function ListRow({ book, onOpen, lang, t }: { book: BookRow; onOpen: () => void;
   );
 }
 
-function EmptyState({ onBrowse }: { onBrowse: () => void }) {
+function EmptyState({ onBrowse, onFolder }: { onBrowse: () => void; onFolder: () => void }) {
   const { t } = useI18n();
   const [bird, setBird] = useState(true);
   return (
@@ -1118,7 +1155,7 @@ function EmptyState({ onBrowse }: { onBrowse: () => void }) {
         <button className="lib-btn-primary" onClick={onBrowse}>
           {t("lib.empty.browse")}
         </button>
-        <button className="lib-btn-ghost" onClick={onBrowse}>
+        <button className="lib-btn-ghost" onClick={onFolder}>
           {t("lib.empty.folder")}
         </button>
       </div>

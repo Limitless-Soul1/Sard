@@ -56,6 +56,10 @@ export const ar: Record<TKey, string> = {
 
   "theme.label": "السمة",
   "theme.dayNight": "نهار / ليل",
+  // RAWY-80 (#8): هذه المفاتيح الثلاثة عامّة، فتوضع تحت ترويسة صريحة «كل الكتب» (لافتة اللوحة
+  // تقول بخلاف ذلك «يسري على هذا الكتاب»).
+  "theme.globalGroup": "يسري على كل الكتب",
+  "theme.globalGroupHint": "هذه تسري على التطبيق كله، لا على هذا الكتاب وحده.",
   "theme.override": "تجاوز ألوان الكتاب",
   "theme.hideTitles": "إخفاء عنوان الفصل",
 

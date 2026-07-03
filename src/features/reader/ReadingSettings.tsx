@@ -390,6 +390,13 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
           </button>
         ))}
       </div>
+      {/* Paper/theme + text colour above are PER-BOOK (RAWY-40). These three are GLOBAL flags
+          (RAWY-40/69) — so they're pulled below a divider under an explicit "applies to all books"
+          header, correcting the drawer's per-book banner (RAWY-80, audit #8: a reader who'd just
+          read "this book only" could flip one and silently change EVERY book). */}
+      <div className="rs-divider" />
+      <div className="rs-sec-title">{t("theme.globalGroup")}</div>
+      <div className="rs-sec-hint">{t("theme.globalGroupHint")}</div>
       <ToggleRow label={t("theme.override")} on={overrideBookColor} onToggle={() => setOverride(!overrideBookColor)} />
       <ToggleRow label={t("theme.hideTitles")} on={hideChapterTitles} onToggle={() => setHideTitles(!hideChapterTitles)} />
       <ToggleRow
@@ -398,8 +405,6 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
         on={hideFirstLine}
         onToggle={() => setHideFirstLine(!hideFirstLine)}
       />
-      {/* Theme + text colour are per-book (RAWY-40); override-colour + hide-title + hide-first-line
-          remain global, independent flags (RAWY-69 split the latter two). */}
       </>
       )}
     </div>

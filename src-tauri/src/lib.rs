@@ -108,6 +108,7 @@ pub fn run() {
             commands::collection_remove_book,
             commands::collections_for_book,
             commands::import_books,
+            commands::import_folder,
             commands::book_update,
             commands::book_set_cover,
             commands::book_revert_cover,

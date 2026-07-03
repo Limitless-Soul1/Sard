@@ -55,6 +55,10 @@ export const en = {
 
   "theme.label": "Theme",
   "theme.dayNight": "Day / Night",
+  // RAWY-80 (#8): these three toggles are GLOBAL, so they sit under an explicit "all books" header
+  // (the drawer's banner otherwise reads "applies to this book").
+  "theme.globalGroup": "Applies to all books",
+  "theme.globalGroupHint": "These are app-wide, not just this book.",
   "theme.override": "Override book colour",
   "theme.hideTitles": "Hide chapter title",
 

@@ -8,8 +8,8 @@ import type { Theme } from "../theme/tokens";
 export type DiacriticsMode = "show" | "dim" | "hide";
 export type Align = "justify" | "start";
 export type FlowMode = "scrolled" | "paged";
-export type ArabicFont = "amiri" | "notoNaskh";
-export type LatinFont = "literata" | "sourceSerif";
+export type ArabicFont = "amiri" | "notoNaskh" | "arefRuqaa" | "plexArabic";
+export type LatinFont = "literata" | "sourceSerif" | "inter" | "plexLatin";
 
 export interface ReadingStyle {
   zoom: number; // size via CSS zoom (D6): 0.8 .. 2.5
@@ -64,13 +64,22 @@ interface FontDef {
   label: string;
 }
 
+// RAWY-92: every bundled face eligible for its SCRIPT is book-selectable here (the book pickers —
+// GlobalSettings defaults + the in-reader per-book picker — both iterate these registries, and the
+// @font-face injected into the foliate iframe resolves its src from `regular`/`bold`). Arabic faces
+// and Latin faces are kept separate because the book injects per-script via unicode-range, so a face
+// only appears in the picker for the script it actually covers.
 export const ARABIC_FONTS: Record<ArabicFont, FontDef> = {
   amiri: { regular: "/fonts/Amiri-Regular.ttf", bold: "/fonts/Amiri-Bold.ttf", label: "Amiri" },
   notoNaskh: { regular: "/fonts/NotoNaskhArabic.ttf", variable: true, label: "Noto Naskh" },
+  arefRuqaa: { regular: "/fonts/ArefRuqaa-Regular.ttf", bold: "/fonts/ArefRuqaa-Bold.ttf", label: "Aref Ruqaa" },
+  plexArabic: { regular: "/fonts/IBMPlexSansArabic-Regular.ttf", bold: "/fonts/IBMPlexSansArabic-SemiBold.ttf", label: "IBM Plex Sans Arabic" },
 };
 export const LATIN_FONTS: Record<LatinFont, FontDef> = {
   literata: { regular: "/fonts/Literata.ttf", variable: true, label: "Literata" },
   sourceSerif: { regular: "/fonts/SourceSerif4.ttf", variable: true, label: "Source Serif" },
+  inter: { regular: "/fonts/Inter.ttf", variable: true, label: "Inter" },
+  plexLatin: { regular: "/fonts/IBMPlexSans-Regular.ttf", bold: "/fonts/IBMPlexSans-Bold.ttf", label: "IBM Plex Sans" },
 };
 
 // RAWY-44: an IMPORTED book font's @font-face must be declared INSIDE the foliate content iframe

@@ -1763,11 +1763,16 @@ html, body, #root {
 .gs-badge { font: 700 9.5px var(--ui-font); letter-spacing: 0.05em; padding: 3px 7px; border-radius: 6px; white-space: nowrap; }
 .gs-badge-app { background: var(--accent); color: #fff; }
 .gs-badge-book { background: color-mix(in srgb, var(--accent) 16%, transparent); color: color-mix(in srgb, var(--accent) 88%, var(--text)); }
+/* RAWY-92: always-visible, obviously-a-control affordance (was var(--muted) → invisible against the
+   meta text). Terracotta accent (matches the on-disk design's #9C5A3C) in a tinted, bordered chip. */
 .gs-lib-remove {
-  flex: none; border: none; background: transparent; cursor: pointer;
-  font: 500 11px var(--ui-font); color: var(--muted); padding: 3px 6px; border-radius: 6px;
+  flex: none; cursor: pointer; white-space: nowrap;
+  font: 600 11px var(--ui-font); color: var(--accent);
+  padding: 4px 10px; border-radius: 7px;
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
 }
-.gs-lib-remove:hover { color: #c0392b; background: color-mix(in srgb, #c0392b 10%, transparent); }
+.gs-lib-remove:hover { color: #fff; background: var(--accent); border-color: var(--accent); }
 /* reading defaults */
 .gs-banner {
   display: inline-flex; align-items: center; gap: 7px; align-self: flex-start;

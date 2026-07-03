@@ -44,13 +44,13 @@ export interface CatFont {
 }
 
 export const FONT_CATALOGUE: CatFont[] = [
-  { id: "plex", css: "", label: "IBM Plex Sans Arabic", scripts: ["ar", "la"], weights: [400, 500, 700], builtin: true },
+  { id: "plex", css: "", label: "IBM Plex Sans Arabic", scripts: ["ar", "la"], bookArabic: "plexArabic", bookLatin: "plexLatin", weights: [400, 500, 700], builtin: true },
   { id: "amiri", css: "Amiri", label: "أميري · Amiri", scripts: ["ar", "la"], bookArabic: "amiri", weights: [400, 700], builtin: true },
   { id: "literata", css: "Literata", label: "Literata", scripts: ["la"], bookLatin: "literata", weights: [400, 500, 600, 700], builtin: true },
-  { id: "inter", css: "Inter", label: "Inter", scripts: ["la"], weights: [400, 500, 700], builtin: true },
+  { id: "inter", css: "Inter", label: "Inter", scripts: ["la"], bookLatin: "inter", weights: [400, 500, 700], builtin: true },
   { id: "sourceSerif", css: "SourceSerif4", label: "Source Serif", scripts: ["la"], bookLatin: "sourceSerif", weights: [400, 500, 700], builtin: true },
   { id: "notoNaskh", css: "NotoNaskhArabic", label: "نسخ عربي · Noto Naskh", scripts: ["ar"], bookArabic: "notoNaskh", weights: [400, 500, 700], builtin: true },
-  { id: "arefRuqaa", css: "ArefRuqaa", label: "رقعة · Aref Ruqaa", scripts: ["ar"], weights: [400, 700], builtin: true },
+  { id: "arefRuqaa", css: "ArefRuqaa", label: "رقعة · Aref Ruqaa", scripts: ["ar"], bookArabic: "arefRuqaa", weights: [400, 700], builtin: true },
 ];
 
 // App-font choices for the picker (family "" = the IBM Plex default). Imported fonts appended by the store.

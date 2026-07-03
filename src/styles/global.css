@@ -1007,14 +1007,14 @@ html, body, #root {
   width: 228px; flex: none; display: flex; flex-direction: column; padding: 20px 16px;
   background: var(--chrome-bg); border-inline-end: 1px solid var(--chrome-border);
 }
-/* RAWY-95 — app wordmark, variant 2b (D34): fixed IBM-Plex lockup, monochrome, quiet ink bar.
-   `.lib-brand` follows the UI direction, so the whole lockup sits on the sidebar's LEADING edge
-   (right in the Arabic RTL UI); `.lib-lockup` is `direction: ltr`, pinning the internal order
-   (bird · Sard · bar · سَرْد) so it never mirrors. The bird is vertically centred beside the
-   baseline-aligned text (level, not below). */
+/* RAWY-95/96 — app wordmark, variant 2b (D34): IBM-Plex lockup, monochrome, quiet ink bar.
+   `.lib-brand` + `.lib-lockup` follow the UI direction, so the hoopoe (the lockup's first child)
+   leads on the reading-START edge — LEFT in LTR, RIGHT in the Arabic RTL UI (RAWY-96). Only the
+   `.lib-wordmark` text block is `direction: ltr`, pinning its INTERNAL order (Sard · bar · سَرْد)
+   so it never mirrors. The bird is vertically centred beside the baseline-aligned text. */
 .lib-brand { display: flex; align-items: center; padding: 0 8px 22px; }
-.lib-lockup { display: inline-flex; align-items: center; gap: 7px; direction: ltr; }
-.lib-wordmark { display: inline-flex; align-items: baseline; gap: 7px; }
+.lib-lockup { display: inline-flex; align-items: center; gap: 7px; }
+.lib-wordmark { display: inline-flex; align-items: baseline; gap: 7px; direction: ltr; }
 .lib-word-latin { font: 600 18.5px/1 "SardUILatin", "IBM Plex Sans", sans-serif; letter-spacing: 0.01em; color: var(--text); }
 .lib-word-ar { font: 600 20px/1 "SardUIArabic", sans-serif; color: var(--text); }
 /* the divider is quiet INK at ~28% (not the terracotta 2a bar) — the whole mark stays monochrome */

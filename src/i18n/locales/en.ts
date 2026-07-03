@@ -37,6 +37,7 @@ export const en = {
   "search.hideAgain": "Hide them again",
   "search.ahead": "Ahead",
   "search.searching": "Searching…",
+  "search.searchingCount": "Searching… {n} found · {p}% scanned",
   "search.none": "No matches for “{q}”",
   "search.noneBody": "Check the spelling, or try a shorter word. Searching ignores case — and tashkīl in Arabic.",
   "search.beforeTitle": "Search this book",

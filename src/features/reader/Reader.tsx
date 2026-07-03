@@ -79,8 +79,12 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const openEpoch = useRef(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("text");
-  const [chaptersOpen, setChaptersOpen] = useState(false);
-  const [searchOpen, setSearchOpen] = useState(false); // RAWY-88 (declared early — the chrome-hold effect reads it)
+  // RAWY-89: Contents + Search share the physical-left, so only ONE is open at a time — a single
+  // source of truth makes that structural (no two-setter races; the persisted-open effect can't
+  // re-open Contents over a Search the user just opened). `chaptersOpen`/`searchOpen` are derived.
+  const [leftPanel, setLeftPanel] = useState<"contents" | "search" | null>(null);
+  const chaptersOpen = leftPanel === "contents";
+  const searchOpen = leftPanel === "search";
   const [annoOpen, setAnnoOpen] = useState(false);
   const [toc, setToc] = useState<TocEntry[]>([]);
   const [annoTab, setAnnoTab] = useState<import("./AnnotationsPanel").AnnoTab>("notes");
@@ -299,10 +303,13 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     if (basketCount === 0) setBasketOpen(false);
   }, [basketCount]);
 
+
   // Chapters panel is OPEN BY DEFAULT (RAWY-22); the user's choice persists per `chapters_open`.
   useEffect(() => {
     if (status !== "ready") return;
-    settingsGet("chapters_open").then((v) => setChaptersOpen(v !== "0"));
+    // RAWY-89: open Contents by default ONLY if no left panel is already open (don't clobber a Search
+    // the user opened during this async read — the collision the owner saw).
+    settingsGet("chapters_open").then((v) => setLeftPanel((p) => (v !== "0" && p == null ? "contents" : p)));
   }, [status]);
 
   // Placement model (RAWY-32 — supersedes the RAWY-30/D20 follow-direction model): reading panels
@@ -313,10 +320,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // right edge, so opening one closes the other. Only panel CONTENT/labels translate with the UI
   // language; the reading TEXT stays book-directed (foliate, isolated — RAWY-12).
   const toggleChapters = useCallback(() => {
-    setChaptersOpen((v) => {
-      const next = !v;
-      settingsSet("chapters_open", next ? "1" : "0").catch(console.error);
-      if (next) setSearchOpen(false); // RAWY-88: Contents + Search share the physical-left — exclusive
+    setLeftPanel((p) => {
+      const next = p === "contents" ? null : "contents"; // opening Contents closes Search (single left panel)
+      settingsSet("chapters_open", next === "contents" ? "1" : "0").catch(console.error);
       return next;
     });
   }, []);
@@ -326,7 +332,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   useEffect(() => {
     if (!import.meta.env.DEV || status !== "ready") return;
     settingsGet("dev_panel").then((p) => {
-      if (p === "chapters") setChaptersOpen(true);
+      if (p === "chapters") setLeftPanel("contents");
       else if (p === "notes") { setAnnoTab("notes"); setAnnoOpen(true); }
       else if (p === "highlights") { setAnnoTab("highlights"); setAnnoOpen(true); }
       else if (p === "settings") setSettingsOpen(true);
@@ -357,7 +363,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
           const frac = Number(rest.slice(0, ci));
           const q = rest.slice(ci + 1);
           if (!Number.isNaN(frac) && frac > 0) { await ctrl.goToFraction(frac); await new Promise((r) => setTimeout(r, 500)); }
-          setChaptersOpen(false); setSearchOpen(true); setSearchQuery(q);
+          setLeftPanel("search"); setSearchQuery(q);
         }
         // RAWY-88: prove jump-to-result — search, then goToSearchHit the LAST match; the landed fraction
         // (saved to reading_progress on relocate) should match that hit's location. "searchjump:<query>"
@@ -587,6 +593,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const [searchQuery, setSearchQuery] = useState("");
   const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
   const [searching, setSearching] = useState(false);
+  const [searchProgress, setSearchProgress] = useState(0); // RAWY-89: scan fraction (0..1) for the live indicator
   const [spoilerSafe, setSpoilerSafe] = useState(true); // ON by default (the whole point), per book
   const [revealAhead, setRevealAhead] = useState(false); // "show them anyway" — this once
   const [activeHitCfi, setActiveHitCfi] = useState<string | null>(null);
@@ -609,16 +616,24 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     if (searchDebounce.current) clearTimeout(searchDebounce.current);
     searchAbort.current?.abort();
     const myEpoch = ++searchEpoch.current;
-    if (!q) { setSearchHits([]); setSearching(false); return; }
+    if (!q) { setSearchHits([]); setSearching(false); setSearchProgress(0); return; }
     setSearching(true);
+    setSearchProgress(0);
+    setSearchHits([]);
     searchDebounce.current = window.setTimeout(() => {
       const ctrl = ctrlRef.current;
       if (!ctrl) return;
       const ac = new AbortController();
       searchAbort.current = ac;
-      ctrl.searchBook(q, { signal: ac.signal }).then((hits) => {
+      // RAWY-89: stream partial results + scan progress as foliate scans, so the panel feels alive.
+      ctrl.searchBook(q, {
+        signal: ac.signal,
+        onProgress: (f) => { if (searchEpoch.current === myEpoch) setSearchProgress(f); },
+        onBatch: (hits) => { if (searchEpoch.current === myEpoch) setSearchHits(hits); },
+      }).then((hits) => {
         if (searchEpoch.current !== myEpoch) return; // superseded
         setSearchHits(hits);
+        setSearchProgress(1);
         setSearching(false);
       }).catch(() => { if (searchEpoch.current === myEpoch) setSearching(false); });
     }, 320);
@@ -626,11 +641,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   }, [searchQuery]);
 
   const toggleSearch = useCallback(() => {
-    setSearchOpen((v) => {
-      const next = !v;
-      if (next) setChaptersOpen(false); // both live on the physical-left — mutually exclusive
-      return next;
-    });
+    setLeftPanel((p) => (p === "search" ? null : "search")); // opening Search closes Contents
   }, []);
   const onToggleSpoiler = () => {
     setRevealAhead(false);
@@ -656,8 +667,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       const slash = e.key === "/" && !typing;
       if (cmdF || slash) {
         e.preventDefault();
-        setChaptersOpen(false);
-        setSearchOpen(true);
+        setLeftPanel("search");
       }
     };
     window.addEventListener("keydown", onKey);
@@ -835,7 +845,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
 
       <ChaptersPanel
         open={chaptersOpen}
-        onClose={() => setChaptersOpen(false)}
+        onClose={() => setLeftPanel((p) => (p === "contents" ? null : p))}
         toc={toc}
         currentHref={chapterHref}
         hideTitles={hideChapterTitles}
@@ -850,13 +860,14 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       {!isPdf && (
         <SearchPanel
           open={searchOpen}
-          onClose={() => setSearchOpen(false)}
+          onClose={() => setLeftPanel((p) => (p === "search" ? null : p))}
           bookTitle={bookTitle}
           positionLabel={searchPositionLabel}
           bookDir={isRtlBook ? "rtl" : "ltr"}
           query={searchQuery}
           onQuery={setSearchQuery}
           searching={searching}
+          searchProgress={searchProgress}
           hits={searchHits}
           spoilerSafe={spoilerSafe}
           onToggleSpoiler={onToggleSpoiler}

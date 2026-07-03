@@ -21,6 +21,7 @@ interface Props {
   query: string;
   onQuery: (q: string) => void;
   searching: boolean;
+  searchProgress: number; // RAWY-89: scan fraction (0..1) for the live in-progress indicator
   hits: SearchHit[];
   spoilerSafe: boolean;
   onToggleSpoiler: () => void;
@@ -55,7 +56,7 @@ function ResultRow({
 
 export function SearchPanel({
   open, onClose, bookTitle, positionLabel, bookDir,
-  query, onQuery, searching, hits,
+  query, onQuery, searching, searchProgress, hits,
   spoilerSafe, onToggleSpoiler, revealAhead, onRevealAhead,
   activeCfi, onJump,
 }: Props) {
@@ -121,10 +122,19 @@ export function SearchPanel({
           </div>
         )}
 
-        {/* searching */}
-        {q && searching && <div className="sp-searching">{t("search.searching")}</div>}
+        {/* RAWY-89: lively in-progress feedback — an animated spinner + live "N found · X% scanned" +
+            a scan bar, so a long book (1000+ chapters) clearly feels like it's actively searching. */}
+        {q && searching && (
+          <div className="sp-searching">
+            <span className="sp-spinner" aria-hidden />
+            <span className="sp-searching-text">
+              {t("search.searchingCount", { n: localeNum(hits.length, lang), p: localeNum(Math.round(searchProgress * 100), lang) })}
+            </span>
+            <span className="sp-scanbar" aria-hidden><span className="sp-scanbar-fill" style={{ width: `${Math.round(searchProgress * 100)}%` }} /></span>
+          </div>
+        )}
 
-        {/* no matches */}
+        {/* no matches (only once the scan is finished) */}
         {q && !searching && hits.length === 0 && (
           <div className="sp-empty">
             <div className="sp-empty-title">{t("search.none", { q })}</div>
@@ -132,21 +142,26 @@ export function SearchPanel({
           </div>
         )}
 
-        {/* results */}
-        {q && !searching && hits.length > 0 && (
+        {/* results — up-to-position rows stream in AS FOUND (even while searching); the summary chrome
+            (count · you-are-here · sealed card · notes) settles in only once the scan finishes so it
+            doesn't flicker as counts climb. Ahead snippets are never rendered while spoiler-safe. */}
+        {q && hits.length > 0 && (
           <>
-            <div className="sp-count">
-              {reveal
-                ? t("search.countAll", { n: localeNum(hits.length, lang) })
-                : t("search.count", { n: localeNum(hits.length, lang), m: localeNum(upTo.length, lang) })}
-            </div>
+            {/* count — final only (the spinner carries the live count while scanning) */}
+            {!searching && (
+              <div className="sp-count">
+                {reveal
+                  ? t("search.countAll", { n: localeNum(hits.length, lang) })
+                  : t("search.count", { n: localeNum(hits.length, lang), m: localeNum(upTo.length, lang) })}
+              </div>
+            )}
 
             {/* nothing before the position (spoiler-safe, all matches ahead) */}
-            {!reveal && upTo.length === 0 && ahead.length > 0 && (
+            {!searching && !reveal && upTo.length === 0 && ahead.length > 0 && (
               <div className="sp-nothing-before" dir="auto">{t("search.nothingBefore", { pos: positionLabel })}</div>
             )}
 
-            {/* up-to-position results (always real snippets) */}
+            {/* up-to-position results (always real snippets) — stream in live */}
             {upTo.map((h) => (
               <ResultRow
                 key={h.cfi} hit={h} active={h.cfi === activeCfi} ahead={false}
@@ -154,8 +169,8 @@ export function SearchPanel({
               />
             ))}
 
-            {/* the "you are here" boundary — shown whenever there are ahead matches to place it against */}
-            {ahead.length > 0 && (
+            {/* the "you are here" boundary — final only */}
+            {!searching && ahead.length > 0 && (
               <div className="sp-here" dir="auto">
                 <span className="sp-here-line" />
                 <span className="sp-here-label">{t("search.youAreHere", { pos: positionLabel })}</span>
@@ -163,31 +178,28 @@ export function SearchPanel({
               </div>
             )}
 
-            {/* ahead matches: sealed (spoiler-safe) OR revealed (off / show-anyway) */}
-            {ahead.length > 0 && (reveal
-              ? (
-                <>
-                  {ahead.map((h) => (
-                    <ResultRow
-                      key={h.cfi} hit={h} active={h.cfi === activeCfi} ahead
-                      onJump={() => onJump(h)} bookDir={bookDir} lang={lang} aheadLabel={t("search.ahead")}
-                    />
-                  ))}
-                  {spoilerSafe && revealAhead && (
-                    <button className="sp-hide-again" onClick={() => onRevealAhead(false)}>{t("search.hideAgain")}</button>
-                  )}
-                </>
-              )
-              : (
-                <div className="sp-sealed">
-                  <div className="sp-sealed-count">{t("search.hidden", { n: localeNum(ahead.length, lang) })}</div>
-                  <div className="sp-sealed-body">{t("search.hiddenBody")}</div>
-                  <button className="sp-sealed-reveal" onClick={() => onRevealAhead(true)}>{t("search.reveal")}</button>
-                </div>
-              ))}
+            {/* ahead matches when revealed (spoiler off / show-anyway) — stream too when spoiler is off */}
+            {reveal && ahead.map((h) => (
+              <ResultRow
+                key={h.cfi} hit={h} active={h.cfi === activeCfi} ahead
+                onJump={() => onJump(h)} bookDir={bookDir} lang={lang} aheadLabel={t("search.ahead")}
+              />
+            ))}
+            {!searching && reveal && spoilerSafe && revealAhead && (
+              <button className="sp-hide-again" onClick={() => onRevealAhead(false)}>{t("search.hideAgain")}</button>
+            )}
+
+            {/* the sealed card — final only, spoiler-safe on with ahead matches */}
+            {!searching && !reveal && ahead.length > 0 && (
+              <div className="sp-sealed">
+                <div className="sp-sealed-count">{t("search.hidden", { n: localeNum(ahead.length, lang) })}</div>
+                <div className="sp-sealed-body">{t("search.hiddenBody")}</div>
+                <button className="sp-sealed-reveal" onClick={() => onRevealAhead(true)}>{t("search.reveal")}</button>
+              </div>
+            )}
 
             {/* Arabic-first: a quiet reminder that matching ignores tashkīl (design's Arabic panel note) */}
-            {bookDir === "rtl" && <div className="sp-tashkil-note">{t("search.tashkilNote")}</div>}
+            {!searching && bookDir === "rtl" && <div className="sp-tashkil-note">{t("search.tashkilNote")}</div>}
           </>
         )}
       </div>

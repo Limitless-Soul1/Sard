@@ -898,10 +898,13 @@ export class FoliateController {
    *  whether it lies AHEAD of the furthest-read position (for spoiler-safe). Diacritics-/case-
    *  insensitive: foliate matches with an Intl.Collator at `base` sensitivity (ignores tashkīl + case,
    *  folds hamza/alef variants). `draw:()=>{}` suppresses the engine's per-match outline (we do our own
-   *  flash on jump); cancel via `signal`. */
+   *  flash on jump); cancel via `signal`. RAWY-89: `onProgress` (scan fraction 0..1) + `onBatch` (a
+   *  snapshot of hits so far) fire THROTTLED as sections are scanned, so the panel can show live,
+   *  reassuring progress (an animated indicator + "N found · X% scanned" + results streaming in) on a
+   *  long book — instead of a static "Searching…". */
   async searchBook(
     query: string,
-    opts: { signal?: AbortSignal; onProgress?: (frac: number) => void } = {},
+    opts: { signal?: AbortSignal; onProgress?: (frac: number) => void; onBatch?: (hits: SearchHit[]) => void } = {},
   ): Promise<SearchHit[]> {
     const view = this.view;
     const q = query.trim();
@@ -912,13 +915,25 @@ export class FoliateController {
     const boundary = this.furthestCfi;
     const hits: SearchHit[] = [];
     let curIndex = 0;
+    let scanFrac = 0;
+    // Throttle the UI callbacks — a 1000+ section book yields ~1000 progress ticks; firing setState on
+    // each would thrash. Emit at most ~every 90ms (and always once at the end).
+    let lastEmit = 0;
+    const emit = (force: boolean) => {
+      const now = performance.now();
+      if (!force && now - lastEmit < 90) return;
+      lastEmit = now;
+      opts.onProgress?.(scanFrac);
+      opts.onBatch?.(hits.slice());
+    };
     try {
       for await (const r of view.search({ query: q, draw: () => {} })) {
         if (opts.signal?.aborted) break;
         if (r === "done") break;
         if (typeof (r as any).progress === "number") {
-          curIndex = Math.max(0, Math.round((r as any).progress * n) - 1);
-          opts.onProgress?.((r as any).progress);
+          scanFrac = (r as any).progress;
+          curIndex = Math.max(0, Math.round(scanFrac * n) - 1);
+          emit(false);
           continue;
         }
         const rr = r as any;
@@ -936,6 +951,7 @@ export class FoliateController {
               ahead: boundary && compare ? compare(s.cfi, boundary) > 0 : false,
             });
           }
+          emit(false);
         }
       }
     } catch {

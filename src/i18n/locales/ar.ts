@@ -38,6 +38,7 @@ export const ar: Record<TKey, string> = {
   "search.hideAgain": "أخفِها مجدّدًا",
   "search.ahead": "بعد موضعك",
   "search.searching": "جارٍ البحث…",
+  "search.searchingCount": "جارٍ البحث… {n} نتيجة · فُحِص {p}٪",
   "search.none": "لا نتائج لـ «{q}»",
   "search.noneBody": "تحقّق من الإملاء أو جرّب كلمة أقصر. البحث يتجاهل الحالة — والتشكيل في العربية.",
   "search.beforeTitle": "ابحث في هذا الكتاب",

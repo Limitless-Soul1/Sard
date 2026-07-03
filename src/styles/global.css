@@ -51,7 +51,13 @@ html, body, #root {
 }
 
 /* ---- Reader layout (RAWY-14, band C) ---- */
-.reader-root { position: fixed; inset: 0; background: var(--app-bg); overflow: hidden; }
+/* RAWY-89: force a stable LTR positioning context for the whole reading area (like the chrome bar,
+   which pins LTR for the same reason — .rc-top). In an Arabic (RTL) UI the reading area inherited
+   `dir=rtl`, which shifted the absolutely-positioned drawers off their physical `left`/`right`
+   anchors — Contents + Search then overlapped and crowded. The panels' own CONTENT direction is set
+   per-element (the panel roots carry `dir`, the reading text is foliate-isolated), so nothing that
+   should mirror is affected — only the physical box placement is made direction-agnostic. */
+.reader-root { position: fixed; inset: 0; background: var(--app-bg); overflow: hidden; direction: ltr; }
 
 /* the desk: the surface the page sheet rests on */
 .reader-desk {
@@ -216,8 +222,11 @@ html, body, #root {
 .reader-chrome.show .rc-top,
 .reader-chrome.show .rc-bottom { transform: translateY(0); }
 
-/* left nav: back button + book / chapter context */
-.rc-nav { display: flex; align-items: center; gap: 12px; min-width: 0; }
+/* left nav: back button + book / chapter context. RAWY-89: the nav FLEXES and its title truncates so
+   the right-hand control cluster (7 buttons since RAWY-88 added Search) always keeps its full,
+   readable size and never clips off the bar — the owner saw the last button(s) cut off in Arabic
+   (longer labels) once Search held the chrome open. */
+.rc-nav { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1 1 auto; }
 .rc-back {
   flex: 0 0 auto;
   width: 46px; height: 46px; border-radius: 11px; /* RAWY-66: enlarged with the cluster, to match */
@@ -236,7 +245,7 @@ html, body, #root {
 /* right controls: bordered, labelled buttons (icon + caption). RAWY-66: enlarged for easier
    tapping/clarity (owner feedback on the release build); fixed positions (D21), non-occlusion
    (RAWY-42) and the RAWY-59/60 popover/tray behavior are all unaffected — only sizing changed. */
-.rc-btns { display: flex; align-items: center; gap: 8px; }
+.rc-btns { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .rc-divider { width: 1px; height: 34px; background: var(--chrome-border); margin: 0 3px; }
 .rc-btn {
   display: flex; flex-direction: column; align-items: center; gap: 3px;
@@ -249,7 +258,7 @@ html, body, #root {
   display: inline-flex; align-items: center; justify-content: center;
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
-.rc-btn-label { font: 500 10px "Inter", "SardUIArabic", sans-serif; color: var(--muted); transition: color 0.15s ease; }
+.rc-btn-label { font: 500 10px "Inter", "SardUIArabic", sans-serif; color: var(--muted); transition: color 0.15s ease; max-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rc-btn:hover .rc-btn-ico { background: color-mix(in srgb, var(--accent) 14%, var(--rc-surface)); border-color: color-mix(in srgb, var(--accent) 45%, var(--chrome-border)); }
 .rc-btn:hover .rc-btn-label { color: var(--text); }
 .rc-btn.on .rc-btn-ico { background: var(--accent); border-color: var(--accent); color: var(--paper-bg); }
@@ -709,7 +718,19 @@ html, body, #root {
 .sp-sealed-reveal:hover, .sp-hide-again:hover { text-decoration: underline; }
 .sp-tashkil-note { margin: 8px 12px 4px; padding-top: 8px; border-top: 1px solid var(--chrome-border); font: 400 11px/1.5 "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
 /* empty / searching / before-typing */
-.sp-searching { padding: 20px 12px; font: 400 13px "Inter", "SardUIArabic", sans-serif; color: var(--muted); text-align: center; }
+/* RAWY-89: lively in-progress feedback — a spinning ring + live count + a scan bar (vs a static line) */
+.sp-searching { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 16px 14px 12px; font: 500 12.5px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.sp-searching-text { text-align: center; }
+.sp-spinner {
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 2.5px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-top-color: var(--accent);
+  animation: sp-spin 0.7s linear infinite;
+}
+@keyframes sp-spin { to { transform: rotate(360deg); } }
+.sp-scanbar { width: 100%; height: 3px; border-radius: 3px; overflow: hidden; background: color-mix(in srgb, var(--text) 10%, transparent); }
+.sp-scanbar-fill { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.12s linear; }
+@media (prefers-reduced-motion: reduce) { .sp-spinner { animation-duration: 1.4s; } }
 .sp-empty, .sp-hint { padding: 22px 16px; text-align: center; }
 .sp-empty-title { font: 600 14px "Literata", "SardUIArabic", serif; color: var(--text); }
 .sp-empty-body, .sp-hint-body { margin-top: 8px; font: 400 12.5px/1.6 "Inter", "SardUIArabic", sans-serif; color: var(--muted); }

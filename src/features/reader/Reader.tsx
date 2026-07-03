@@ -68,6 +68,13 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   });
 
   const bookRef = useRef<string>(initial.id);
+  // RAWY-78: cancellation/epoch guard for openBook (audit #3). Each open bumps this and captures
+  // the value; after every await it re-checks. A SUPERSEDED open — a newer open started, or this
+  // reader unmounted (the effect cleanup bumps it) — bails BEFORE any side effect (module-level
+  // applyTheme, the GLOBAL reader store, the shared annotations/bookmarks stores, or ctrl.open on a
+  // possibly-null stage). This is the same "is this still current?" identity check FoliateController
+  // does for its own view, lifted one layer up to the whole open sequence.
+  const openEpoch = useRef(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("text");
   const [chaptersOpen, setChaptersOpen] = useState(false);
@@ -103,6 +110,11 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
 
   const openBook = useCallback(async (target: OpenTarget) => {
     const set = useReader.getState().set;
+    // RAWY-78: supersede any in-flight open and capture THIS invocation's epoch. `stale()` turns
+    // true once a newer open starts or this reader unmounts — re-checked after every await so a
+    // superseded continuation bails before touching any shared state.
+    const epoch = ++openEpoch.current;
+    const stale = () => openEpoch.current !== epoch;
     try {
       bookRef.current = target.id;
       set({ status: "loading", bookId: target.id });
@@ -110,7 +122,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       const url = convertFileSrc(target.filePath);
 
       await bookRegister(target.id, target.filePath);
+      if (stale()) return;
       const saved = await progressGet(target.id);
+      if (stale()) return;
       // RAWY-27: an inbox item passes a jump CFI that wins over the saved reading position.
       const resumeCfi = target.cfi ?? saved?.cfi ?? null;
 
@@ -120,9 +134,13 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       // still back-fill anything the global row lacks (RTL books get the Arabic baseline).
       const ts = useTheme.getState();
       const unified = useStyleScope.getState().scope === "unified";
-      libraryThemeRef.current = ts.themeId; // restore this to the chrome on exit
       const global = await loadGlobalStyle();
+      if (stale()) return;
       const override = await loadBookOverride(target.id);
+      // Guards the block below — the ref writes, module-level applyTheme, and ctrl.open (which would
+      // otherwise run on a null/superseded stage and throw A's error onto B).
+      if (stale()) return;
+      libraryThemeRef.current = ts.themeId; // restore this to the chrome on exit
       globalStyleRef.current = global;
       overrideRef.current = override;
       // The book's theme comes from the shared BOOK theme (D29), NOT the Library theme:
@@ -152,6 +170,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         flow: initialStyle.flowMode, // scrolled (default) or paged — RAWY-25
         revealLabels: makeRevealLabels(), // RAWY-70
       });
+      // Superseded during the (async) open → don't publish ready/toc or bind the shared stores; the
+      // newer open owns them now.
+      if (stale()) return;
 
       setBookThemeId(effTheme);
       setHasOv(!unified && calcHasOverride(override)); // Reset is a per-book affordance
@@ -160,8 +181,12 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       // Load this book's highlights/notes into the shared store (in-context layer + panel).
       useAnnotations.getState().bind(ctrl, target.id);
       await useAnnotations.getState().load();
+      if (stale()) return;
       useBookmarks.getState().load(target.id); // RAWY-41 — this book's saved locations
     } catch (e) {
+      // A SUPERSEDED open's error (e.g. ctrl.open on a null stage after unmount) must NOT flip the
+      // current book into the error overlay — only report a failure that belongs to the live open.
+      if (stale()) return;
       set({ status: "error", error: String(e) });
     }
   }, []);
@@ -169,6 +194,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   useEffect(() => {
     openBook(initial);
     return () => {
+      // RAWY-78: supersede any in-flight open so its continuation bails after its next await instead
+      // of running applyTheme/ctrl.open/set() against the disposed controller + null stage.
+      openEpoch.current++;
       if (progressTimer.current) clearTimeout(progressTimer.current);
       ctrlRef.current?.dispose();
       // The photo-card basket is a per-reading-session collection (RAWY-60) — clear it on exit.

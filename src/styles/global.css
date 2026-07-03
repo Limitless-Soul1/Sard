@@ -265,10 +265,6 @@ html, body, #root {
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); pointer-events: none;
 }
 .rc-basket.on .rc-basket-badge { background: var(--paper-bg); color: var(--accent); }
-/* Bookmark is disabled until the bookmark system exists (RAWY-34): clearly "coming", not dead */
-.rc-btn-soon { cursor: default; opacity: 0.4; }
-.rc-btn-soon:hover .rc-btn-ico { background: var(--rc-surface); border-color: var(--chrome-border); }
-.rc-btn-soon:hover .rc-btn-label { color: var(--muted); }
 
 /* button glyphs (currentColor follows the ico → flips to paper colour on the accent .on face).
    RAWY-66: scaled up proportionally (~15%) with the enlarged .rc-btn-ico box. */
@@ -1259,19 +1255,19 @@ html, body, #root {
 .lib-shelf-act.danger { background: #B24A4A; color: #fff; font: 600 10.5px var(--ui-font); padding: 0 7px; width: auto; }
 :root[data-dark="true"] .lib-shelf-act.danger { background: #E88C8C; color: #12131F; }
 
-/* ---- highlight selection toolbar + note popover (RAWY-20) ---- */
-.hl-bar, .hl-card {
+/* ---- note popover (RAWY-20) — the floating note card; the live selection toolbar is .hl-pop
+   (RAWY-59). The pre-RAWY-59 .hl-bar toolbar classes were removed in RAWY-83 (dead). ---- */
+.hl-card {
   position: fixed; z-index: 30; transform: translate(-50%, -100%);
   background: var(--text); color: var(--paper-bg); border-radius: 11px;
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32); font-family: var(--ui-font);
 }
-.hl-bar.below, .hl-card.below { transform: translate(-50%, 0); }
-.hl-bar::after, .hl-card::after {
+.hl-card.below { transform: translate(-50%, 0); }
+.hl-card::after {
   content: ""; position: absolute; left: 50%; bottom: -7px; transform: translateX(-50%);
   border-left: 7px solid transparent; border-right: 7px solid transparent; border-top: 8px solid var(--text);
 }
-.hl-bar.below::after, .hl-card.below::after { bottom: auto; top: -7px; border-top: none; border-bottom: 8px solid var(--text); }
-.hl-bar { display: flex; align-items: center; gap: 4px; padding: 9px 12px; max-width: 92vw; flex-wrap: wrap; }
+.hl-card.below::after { bottom: auto; top: -7px; border-top: none; border-bottom: 8px solid var(--text); }
 .hl-dots { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .hl-dot {
   position: relative; width: 19px; height: 19px; border-radius: 50%; border: none; cursor: pointer; padding: 0;
@@ -1285,12 +1281,6 @@ html, body, #root {
 }
 .hl-custom-plus { font: 700 12px var(--ui-font); color: #fff; line-height: 1; text-shadow: 0 0 2px rgba(0, 0, 0, 0.5); pointer-events: none; }
 .hl-custom-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; padding: 0; cursor: pointer; }
-.hl-sep { width: 1px; height: 22px; background: color-mix(in srgb, var(--paper-bg) 22%, transparent); margin: 0 5px; }
-.hl-action {
-  display: flex; align-items: center; gap: 6px; border: none; background: none; color: var(--paper-bg);
-  font: 500 12px var(--ui-font); cursor: pointer; padding: 4px 6px;
-}
-.hl-pen { font: 600 14px "Literata", serif; }
 
 /* ============================================================================
    Two-tier selection popover (RAWY-59) — the redesigned reading selection toolbar:
@@ -1353,7 +1343,6 @@ html, body, #root {
 .hl-card .hl-dots { gap: 7px; }
 .hl-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .hl-card-top .hl-dots { flex: 1; }
-.hl-grow { flex: 1; }
 .hl-remove {
   border: none; background: none; color: color-mix(in srgb, var(--paper-bg) 70%, transparent);
   font: 500 12px var(--ui-font); cursor: pointer;

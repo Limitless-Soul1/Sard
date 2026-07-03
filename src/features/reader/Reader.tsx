@@ -596,7 +596,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
             ‹
           </button>
         )}
-        <div className={`page-sheet${isRtlBook ? " rtl" : ""}${fitWindow ? " fitw" : ""}`}>
+        <div className={`page-sheet${fitWindow ? " fitw" : ""}`}>
           {/* RAWY-41: the bookmark marker shows ONLY where a saved bookmark is visible (not the
               old always-on ribbon). Fixed physical position; draggable along the top edge. */}
           {activeBm && <PageBookmark title={t("bookmark.here")} belowChrome={chromeShown} />}

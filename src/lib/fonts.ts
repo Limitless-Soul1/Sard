@@ -13,11 +13,14 @@ import { fontImport, fontRemove, fontsList, settingsGet, settingsSet, type Custo
 import { setImportedFontUrlResolver } from "../reader-engine/injectedCss";
 
 const UI_FONT_KEY = "ui_font";
+const UI_WEIGHT_KEY = "ui_weight";
 const CUSTOM_STYLE_ID = "sard-custom-fonts";
 
-// The chrome's UI-font default (mirrors global.css). The chosen family is prepended; the Arabic
-// + Inter fallbacks always remain so Arabic UI keeps shaping whatever the user picks.
-const UI_FALLBACK = `"SardUIArabic", "Inter", system-ui, sans-serif`;
+// RAWY-91: the App-font default (mirrors global.css --ui-font). A user choice is PREPENDED; the Plex
+// per-script fallbacks always remain — Latin → IBM Plex Sans (SardUILatin), Arabic → IBM Plex Sans
+// Arabic (SardUIArabic) — so whatever the user picks, each script keeps a good default for glyphs the
+// chosen face lacks.
+const UI_FALLBACK = `"SardUILatin", "SardUIArabic", system-ui, "Segoe UI", sans-serif`;
 
 export interface FontChoice {
   family: string; // the CSS font-family value
@@ -25,20 +28,33 @@ export interface FontChoice {
   builtin: boolean;
 }
 
-// Built-in families that are actually registered as chrome @font-faces (so they render in the UI).
-export const BUILTIN_UI_FONTS: FontChoice[] = [
-  { family: "Inter", label: "Inter", builtin: true },
-  { family: "SardUIArabic", label: "IBM Plex Arabic", builtin: true },
+// RAWY-91: the shared font catalogue (design "FONT LIBRARY") — every built-in face, usable by the app
+// AND the book. `css` is the CSS family; `cssArabic` (if set) is the paired Arabic face for a Latin
+// UI pick so Arabic chrome still shapes. `book*` are the book-picker keys (injectedCss). `weights` are
+// the real weights the face ships (for the honest weight readout — e.g. Amiri is 400/700 only).
+export interface CatFont {
+  id: string;
+  css: string; // app-font CSS family (empty = the IBM Plex default pair)
+  label: string; // shown in the library, rendered in its own face
+  scripts: ("ar" | "la")[];
+  bookArabic?: string; // book-picker key if usable as the Arabic book font
+  bookLatin?: string; // book-picker key if usable as the Latin book font
+  weights: number[];
+  builtin: true;
+}
+
+export const FONT_CATALOGUE: CatFont[] = [
+  { id: "plex", css: "", label: "IBM Plex Sans Arabic", scripts: ["ar", "la"], weights: [400, 500, 700], builtin: true },
+  { id: "amiri", css: "Amiri", label: "أميري · Amiri", scripts: ["ar", "la"], bookArabic: "amiri", weights: [400, 700], builtin: true },
+  { id: "literata", css: "Literata", label: "Literata", scripts: ["la"], bookLatin: "literata", weights: [400, 500, 600, 700], builtin: true },
+  { id: "inter", css: "Inter", label: "Inter", scripts: ["la"], weights: [400, 500, 700], builtin: true },
+  { id: "sourceSerif", css: "SourceSerif4", label: "Source Serif", scripts: ["la"], bookLatin: "sourceSerif", weights: [400, 500, 700], builtin: true },
+  { id: "notoNaskh", css: "NotoNaskhArabic", label: "نسخ عربي · Noto Naskh", scripts: ["ar"], bookArabic: "notoNaskh", weights: [400, 500, 700], builtin: true },
+  { id: "arefRuqaa", css: "ArefRuqaa", label: "رقعة · Aref Ruqaa", scripts: ["ar"], weights: [400, 700], builtin: true },
 ];
 
-// Catalogue of built-in BOOK faces — shown in the shared font library (display + book defaults),
-// not selectable as the chrome font (they're injected into the book under SardLatin/SardArabic).
-export const BUILTIN_BOOK_FONTS = [
-  { family: "Literata", label: "Literata" },
-  { family: "Source Serif", label: "Source Serif" },
-  { family: "Amiri", label: "Amiri" },
-  { family: "Noto Naskh", label: "Noto Naskh" },
-];
+// App-font choices for the picker (family "" = the IBM Plex default). Imported fonts appended by the store.
+export const BUILTIN_UI_FONTS: FontChoice[] = FONT_CATALOGUE.map((f) => ({ family: f.css, label: f.label, builtin: true }));
 
 function applyUiFontVar(family: string | null): void {
   const root = document.documentElement;
@@ -47,6 +63,13 @@ function applyUiFontVar(family: string | null): void {
   } else {
     root.style.removeProperty("--ui-font"); // fall back to the global.css default
   }
+}
+
+// RAWY-91: the App-font WEIGHT (Regular 400 / Medium 500 / Bold 700) → the --ui-weight var.
+function applyUiWeightVar(weight: number): void {
+  const root = document.documentElement;
+  if (weight && weight !== 400) root.style.setProperty("--ui-weight", String(weight));
+  else root.style.removeProperty("--ui-weight");
 }
 
 function injectCustomFaces(fonts: CustomFont[]): void {
@@ -69,9 +92,11 @@ function injectCustomFaces(fonts: CustomFont[]): void {
 
 interface FontsState {
   uiFont: string | null; // chosen chrome family (null = default stack)
+  uiWeight: number; // App-font weight (400/500/700)
   custom: CustomFont[];
   ready: boolean;
   setUiFont: (family: string | null) => void;
+  setUiWeight: (weight: number) => void;
   importFont: () => Promise<CustomFont | null>;
   removeFont: (id: string) => Promise<void>;
   /** Built-in chrome fonts + every imported font, as selectable UI-font choices. */
@@ -80,12 +105,18 @@ interface FontsState {
 
 export const useFonts = create<FontsState>((set, get) => ({
   uiFont: null,
+  uiWeight: 400,
   custom: [],
   ready: false,
   setUiFont: (family) => {
     applyUiFontVar(family);
     set({ uiFont: family });
     settingsSet(UI_FONT_KEY, family ?? "").catch(console.error);
+  },
+  setUiWeight: (weight) => {
+    applyUiWeightVar(weight);
+    set({ uiWeight: weight });
+    settingsSet(UI_WEIGHT_KEY, String(weight)).catch(console.error);
   },
   importFont: async () => {
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -126,13 +157,16 @@ setImportedFontUrlResolver(customFontUrl);
 
 /** Load + apply the persisted UI font and register imported @font-faces. Call once at startup. */
 export async function initFonts(): Promise<void> {
-  const [font, list] = await Promise.all([
+  const [font, weightRaw, list] = await Promise.all([
     settingsGet(UI_FONT_KEY).catch(() => null),
+    settingsGet(UI_WEIGHT_KEY).catch(() => null),
     fontsList().catch(() => [] as CustomFont[]),
   ]);
   const custom = list ?? [];
   injectCustomFaces(custom);
   const uiFont = font && font.trim() ? font : null;
+  const uiWeight = Number(weightRaw) === 500 || Number(weightRaw) === 700 ? Number(weightRaw) : 400;
   applyUiFontVar(uiFont);
-  useFonts.setState({ uiFont, custom, ready: true });
+  applyUiWeightVar(uiWeight);
+  useFonts.setState({ uiFont, uiWeight, custom, ready: true });
 }

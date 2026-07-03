@@ -7,8 +7,13 @@
 @font-face { font-family: "Literata"; src: url("/fonts/Literata.ttf") format("truetype"); font-weight: 200 900; font-display: swap; }
 @font-face { font-family: "SourceSerif4"; src: url("/fonts/SourceSerif4.ttf") format("truetype"); font-weight: 200 900; font-display: swap; }
 
-/* ---- UI chrome faces: Inter (Latin) + IBM Plex Sans Arabic (Arabic, unicode-range) ---- */
+/* ---- UI chrome faces (RAWY-91): the app font is IBM Plex Sans (Latin) + IBM Plex Sans Arabic,
+   per-script via unicode-range on the Arabic; both carry Regular/Medium/Bold so the App-font WEIGHT
+   control resolves to a real face. Inter is kept as a selectable/library face. ---- */
 @font-face { font-family: "Inter"; src: url("/fonts/Inter.ttf") format("truetype"); font-weight: 100 900; font-display: swap; }
+@font-face { font-family: "SardUILatin"; src: url("/fonts/IBMPlexSans-Regular.ttf") format("truetype"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "SardUILatin"; src: url("/fonts/IBMPlexSans-Medium.ttf") format("truetype"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "SardUILatin"; src: url("/fonts/IBMPlexSans-Bold.ttf") format("truetype"); font-weight: 700; font-display: swap; }
 @font-face {
   font-family: "SardUIArabic"; src: url("/fonts/IBMPlexSansArabic-Regular.ttf") format("truetype");
   font-weight: 400; font-display: swap;
@@ -36,7 +41,12 @@
   /* scalar tokens */
   --radius-card: 2px;
   --radius-panel: 3px;
-  --ui-font: "SardUIArabic", "Inter", system-ui, "Segoe UI", sans-serif;
+  /* RAWY-91: the APP font (all chrome). Per-script: Latin → IBM Plex Sans (SardUILatin), Arabic →
+     IBM Plex Sans Arabic (SardUIArabic, unicode-range). A user choice is prepended by fonts.ts; the
+     Plex fallbacks always remain so each script keeps a good default. --ui-weight is the App-font
+     weight control (Regular/Medium/Bold). Numeric App-font SIZE is RAWY-92 (chrome-only scaling). */
+  --ui-font: "SardUILatin", "SardUIArabic", system-ui, "Segoe UI", sans-serif;
+  --ui-weight: 400;
 }
 
 * { box-sizing: border-box; }
@@ -48,6 +58,7 @@ html, body, #root {
   background: var(--app-bg);
   color: var(--text);
   font-family: var(--ui-font);
+  font-weight: var(--ui-weight, 400); /* RAWY-91: App-font weight baseline (inherited by chrome) */
 }
 
 /* ---- Reader layout (RAWY-14, band C) ---- */
@@ -154,7 +165,7 @@ html, body, #root {
   backdrop-filter: blur(6px);
   box-shadow: 0 3px 10px rgba(40, 28, 14, 0.12);
   color: var(--text);
-  font: 300 22px "Inter", sans-serif;
+  font: 300 22px var(--ui-font);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -233,14 +244,14 @@ html, body, #root {
   background: var(--rc-surface); border: 1px solid var(--chrome-border);
   box-shadow: 0 1px 2px rgba(40, 28, 14, 0.06);
   color: var(--text); cursor: pointer;
-  font: 300 24px "Inter", sans-serif;
+  font: 300 24px var(--ui-font);
   display: inline-flex; align-items: center; justify-content: center;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 .rc-back:hover { background: color-mix(in srgb, var(--accent) 16%, var(--rc-surface)); border-color: color-mix(in srgb, var(--accent) 45%, var(--chrome-border)); }
 .rc-title-block { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
-.rc-book { font: 600 13px "Inter", "SardUIArabic", sans-serif; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32vw; }
-.rc-chapter { font: 400 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32vw; }
+.rc-book { font: 600 13px var(--ui-font); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32vw; }
+.rc-chapter { font: 400 11px var(--ui-font); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32vw; }
 
 /* right controls: bordered, labelled buttons (icon + caption). RAWY-66: enlarged for easier
    tapping/clarity (owner feedback on the release build); fixed positions (D21), non-occlusion
@@ -258,7 +269,7 @@ html, body, #root {
   display: inline-flex; align-items: center; justify-content: center;
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
-.rc-btn-label { font: 500 10px "Inter", "SardUIArabic", sans-serif; color: var(--muted); transition: color 0.15s ease; max-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rc-btn-label { font: 500 10px var(--ui-font); color: var(--muted); transition: color 0.15s ease; max-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rc-btn:hover .rc-btn-ico { background: color-mix(in srgb, var(--accent) 14%, var(--rc-surface)); border-color: color-mix(in srgb, var(--accent) 45%, var(--chrome-border)); }
 .rc-btn:hover .rc-btn-label { color: var(--text); }
 .rc-btn.on .rc-btn-ico { background: var(--accent); border-color: var(--accent); color: var(--paper-bg); }
@@ -270,7 +281,7 @@ html, body, #root {
 .rc-basket-badge {
   position: absolute; top: -8px; right: -8px; min-width: 19px; height: 19px; padding: 0 4px;
   border-radius: 10px; background: var(--accent); color: var(--paper-bg);
-  font: 700 11px "Inter", "SardUIArabic", sans-serif; line-height: 19px; text-align: center;
+  font: 700 11px var(--ui-font); line-height: 19px; text-align: center;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); pointer-events: none;
 }
 .rc-basket.on .rc-basket-badge { background: var(--paper-bg); color: var(--accent); }
@@ -293,7 +304,7 @@ html, body, #root {
 
 /* bottom: chapter / percent meta + progress track with a knob. The bar is pinned LTR (the
    fill grows from the physical left); only the page-turn chevrons follow the book (RAWY-33). */
-.rc-meta { width: 100%; display: flex; justify-content: space-between; font: 500 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.rc-meta { width: 100%; display: flex; justify-content: space-between; font: 500 11px var(--ui-font); color: var(--muted); }
 .rc-progress { width: 100%; height: 3px; background: color-mix(in srgb, var(--text) 12%, transparent); border-radius: 3px; position: relative; }
 .rc-progress-fill { position: absolute; inset-block: 0; left: 0; background: var(--accent); border-radius: 3px; }
 .rc-progress-knob {
@@ -315,7 +326,7 @@ html, body, #root {
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  font: 300 19px "Inter", sans-serif;
+  font: 300 19px var(--ui-font);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -370,7 +381,7 @@ html, body, #root {
   justify-content: space-between;
   padding: 14px 16px 10px;
 }
-.sp-title { font: 600 15px "Literata", "SardUIArabic", serif; color: var(--text); }
+.sp-title { font: 600 15px var(--ui-font); color: var(--text); }
 /* Text · Page · Theme tab group (RAWY-34, design band I) — a segmented pill, active raised */
 /* Per-book scope banner (RAWY-40, Band I) — everything in this panel overrides THIS book only. */
 .sp-scope {
@@ -420,11 +431,11 @@ html, body, #root {
   justify-content: center; background: #7b59a0; color: #fff; font-size: 12px;
 }
 .sp-scope-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.sp-scope-title { font: 600 12px "Inter", "SardUIArabic", sans-serif; color: var(--text); }
-.sp-scope-sub { font: 400 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-scope-title { font: 600 12px var(--ui-font); color: var(--text); }
+.sp-scope-sub { font: 400 11px var(--ui-font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sp-reset {
   flex: none; border: 0; background: transparent; cursor: pointer; white-space: nowrap;
-  font: 500 11px "Inter", "SardUIArabic", sans-serif; color: #7b59a0; padding: 4px 6px; border-radius: 6px;
+  font: 500 11px var(--ui-font); color: #7b59a0; padding: 4px 6px; border-radius: 6px;
 }
 .sp-reset:hover:not(:disabled) { background: color-mix(in srgb, #7b59a0 14%, transparent); }
 .sp-reset:disabled { opacity: 0.4; cursor: default; }
@@ -442,13 +453,13 @@ html, body, #root {
 }
 .rs-ink-plus {
   width: 16px; height: 16px; border-radius: 50%; background: var(--paper-bg); color: var(--text);
-  font: 600 12px "Inter", sans-serif; display: flex; align-items: center; justify-content: center;
+  font: 600 12px var(--ui-font); display: flex; align-items: center; justify-content: center;
 }
 .rs-ink-custom input[type="color"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
 .rs-contrast {
   display: flex; align-items: center; gap: 8px; margin-top: 11px; padding: 9px 12px; border-radius: 8px;
   background: var(--paper-bg); border: 1px solid var(--chrome-border);
-  font: 400 11.5px/1.45 "Inter", "SardUIArabic", sans-serif; color: var(--muted);
+  font: 400 11.5px/1.45 var(--ui-font); color: var(--muted);
 }
 .rs-contrast.warn {
   background: color-mix(in srgb, #b05220 16%, var(--paper-bg));
@@ -461,7 +472,7 @@ html, body, #root {
 }
 .sp-tab {
   flex: 1; border: 0; background: transparent; cursor: pointer; padding: 8px 0; border-radius: 6px;
-  font: 500 13px "Inter", "SardUIArabic", sans-serif; color: var(--muted);
+  font: 500 13px var(--ui-font); color: var(--muted);
   transition: background 0.15s ease, color 0.15s ease;
 }
 .sp-tab.on {
@@ -477,13 +488,13 @@ html, body, #root {
 .rs-sec { display: flex; flex-direction: column; gap: 10px; }
 .rs-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 22px; }
 .rs-label, .rs-sec-title {
-  font: 600 11px "Inter", "SardUIArabic", sans-serif; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
+  font: 600 11px var(--ui-font); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
 }
 .rs-sec-title { margin-bottom: -4px; }
 /* one-line hint under a section title (RAWY-45 — clarifies the font scope) */
-.rs-sec-hint { font: 400 11px/1.45 "Inter", "SardUIArabic", sans-serif; color: color-mix(in srgb, var(--muted) 85%, var(--paper-bg)); margin: 2px 0 2px; }
-.rs-value { font: 500 12px "Inter", "SardUIArabic", sans-serif; color: var(--accent); }
-.rs-na { font: 500 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted); font-style: italic; }
+.rs-sec-hint { font: 400 11px/1.45 var(--ui-font); color: color-mix(in srgb, var(--muted) 85%, var(--paper-bg)); margin: 2px 0 2px; }
+.rs-value { font: 500 12px var(--ui-font); color: var(--accent); }
+.rs-na { font: 500 11px var(--ui-font); color: var(--muted); font-style: italic; }
 .rs-divider { height: 1px; background: var(--chrome-border); margin: 3px 0; }
 
 /* slider */
@@ -491,13 +502,13 @@ html, body, #root {
 .rs-slider-cap { color: var(--muted); font-family: "Literata", serif; line-height: 1; flex: 0 0 auto; }
 .rs-slider { flex: 1; accent-color: var(--accent); cursor: pointer; height: 4px; min-width: 0; }
 .rs-slider:disabled { opacity: 0.4; cursor: default; }
-.rs-tiny { font: 500 10px "Inter", "SardUIArabic", sans-serif; color: var(--muted); flex: 0 0 auto; }
+.rs-tiny { font: 500 10px var(--ui-font); color: var(--muted); flex: 0 0 auto; }
 
 /* segmented control */
 .rs-seg { display: flex; background: color-mix(in srgb, var(--text) 8%, transparent); border-radius: 8px; padding: 3px; }
 .rs-seg-item {
   flex: 1; border: 0; background: transparent; cursor: pointer; padding: 7px 10px; border-radius: 6px;
-  color: var(--muted); font: 500 12px "Inter", "SardUIArabic", sans-serif; white-space: nowrap;
+  color: var(--muted); font: 500 12px var(--ui-font); white-space: nowrap;
 }
 .rs-seg-item.on { background: var(--paper-bg); color: var(--accent); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
 .rs-sec-head .rs-seg { padding: 2px; }
@@ -509,8 +520,8 @@ html, body, #root {
   border: 0; background: transparent; cursor: pointer; padding: 2px 0; text-align: start;
 }
 .rs-toggle-text { display: flex; flex-direction: column; gap: 2px; }
-.rs-toggle-label { font: 500 13px "Inter", "SardUIArabic", sans-serif; color: var(--text); }
-.rs-toggle-hint { font: 400 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.rs-toggle-label { font: 500 13px var(--ui-font); color: var(--text); }
+.rs-toggle-hint { font: 400 11px var(--ui-font); color: var(--muted); }
 .rs-switch {
   flex: 0 0 auto; width: 40px; height: 23px; border-radius: 23px; position: relative;
   background: color-mix(in srgb, var(--text) 18%, transparent); transition: background 0.18s ease;
@@ -542,7 +553,7 @@ html, body, #root {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 10px 14px; background: var(--paper-bg); border: 1px solid var(--chrome-border); border-radius: 8px;
 }
-.rs-select-label { font: 500 12px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.rs-select-label { font: 500 12px var(--ui-font); color: var(--muted); }
 .rs-select-wrap { position: relative; display: flex; align-items: center; }
 .rs-select {
   appearance: none; -webkit-appearance: none; border: 0; background: transparent; color: var(--text);
@@ -558,7 +569,7 @@ html, body, #root {
 .rs-swatch-cell { display: flex; flex-direction: column; align-items: center; gap: 7px; border: 0; background: transparent; cursor: pointer; min-width: 0; }
 .rs-swatch { width: 100%; height: 42px; border-radius: 6px; border: 1px solid var(--chrome-border); }
 .rs-swatch.on { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg); border-color: transparent; }
-.rs-swatch-name { font: 500 10px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.rs-swatch-name { font: 500 10px var(--ui-font); color: var(--muted); }
 
 
 /* ---- Reading side panels (RAWY-21, band C-II): chapters (leading) + annotations (trailing) ---- */
@@ -598,9 +609,9 @@ html, body, #root {
   padding: 16px 16px 10px;
   border-bottom: 1px solid var(--chrome-border);
 }
-.rp-title { font: 600 15px "Literata", "SardUIArabic", serif; color: var(--text); }
+.rp-title { font: 600 15px var(--ui-font); color: var(--text); }
 .rp-head-titles { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.rp-submeta { font: 400 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.rp-submeta { font: 400 11px var(--ui-font); color: var(--muted); }
 .rp-head-actions { display: flex; align-items: center; gap: 6px; }
 .rp-eye, .rp-x {
   border: 0; background: transparent; cursor: pointer; color: var(--muted);
@@ -608,14 +619,14 @@ html, body, #root {
 }
 .rp-eye.off { opacity: 0.6; }
 .rp-eye:hover, .rp-x:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.rp-meta { padding: 8px 18px 4px; font: 400 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.rp-meta { padding: 8px 18px 4px; font: 400 11px var(--ui-font); color: var(--muted); }
 .rp-hint {
   margin: 8px 14px 4px; padding: 7px 11px; border-radius: 7px;
   background: color-mix(in srgb, var(--accent) 10%, transparent);
-  font: 400 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted);
+  font: 400 11px var(--ui-font); color: var(--muted);
 }
 .rp-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 6px 10px 18px; }
-.rp-empty { padding: 22px 16px; font: 400 12px/1.6 "Inter", "SardUIArabic", sans-serif; color: var(--muted); text-align: center; }
+.rp-empty { padding: 22px 16px; font: 400 12px/1.6 var(--ui-font); color: var(--muted); text-align: center; }
 
 /* anti-spoiler toggle in the Contents header (RAWY-36 — a clear LABELLED switch, replaces the
    emoji button): a label + the shared pill switch, sits under the header above the chapter list */
@@ -625,7 +636,7 @@ html, body, #root {
   background: color-mix(in srgb, var(--accent) 6%, transparent); cursor: pointer; text-align: start;
 }
 .rp-spoiler:hover { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
-.rp-spoiler-label { font: 600 12.5px "Inter", "SardUIArabic", sans-serif; color: var(--text); }
+.rp-spoiler-label { font: 600 12.5px var(--ui-font); color: var(--text); }
 
 /* anti-spoiler toggle (RAWY-22): a clear labelled pill switch with a hint */
 .rp-toggle {
@@ -635,8 +646,8 @@ html, body, #root {
 }
 .rp-toggle:hover { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 .rp-toggle-text { display: flex; flex-direction: column; gap: 2px; }
-.rp-toggle-label { font: 600 12.5px "Inter", "SardUIArabic", sans-serif; color: var(--text); }
-.rp-toggle-hint { font: 400 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.rp-toggle-label { font: 600 12.5px var(--ui-font); color: var(--text); }
+.rp-toggle-hint { font: 400 11px var(--ui-font); color: var(--muted); }
 .rp-switch {
   flex: 0 0 auto; width: 40px; height: 23px; border-radius: 23px; position: relative;
   background: color-mix(in srgb, var(--text) 18%, transparent); transition: background 0.18s ease;
@@ -658,13 +669,13 @@ html, body, #root {
 .rp-row:disabled { cursor: default; opacity: 0.55; }
 .toc-row.active { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
 .rp-lead[dir="rtl"] .toc-row.active { box-shadow: inset -2px 0 0 var(--accent); }
-.toc-num { flex: 0 0 18px; font: 600 11px "Inter", sans-serif; color: var(--muted); }
+.toc-num { flex: 0 0 18px; font: 600 11px var(--ui-font); color: var(--muted); }
 .toc-row.active .toc-num { color: var(--accent); }
 /* RAWY-69/70: with titles hidden the row's only content is the enlarged "الفصل N" / "Chapter N"
    (RAWY-70 — was a bare number in RAWY-69) — full-strength ink, sized to read on its own at a
    glance down a long list. It flexes to hold the whole localized label, not a fixed numeric column. */
-.toc-num.big { flex: 1; font: 700 16px/1.3 "Inter", "SardUIArabic", sans-serif; color: var(--text); }
-.toc-label { flex: 1; font: 400 14px/1.35 "Literata", "SardUIArabic", serif; color: color-mix(in srgb, var(--text) 86%, transparent); }
+.toc-num.big { flex: 1; font: 700 16px/1.3 var(--ui-font); color: var(--text); }
+.toc-label { flex: 1; font: 400 14px/1.35 var(--ui-font); color: color-mix(in srgb, var(--text) 86%, transparent); }
 .toc-row.active .toc-label { font-weight: 600; color: var(--text); }
 .toc-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--text) 18%, transparent); }
 .toc-dot.current { background: transparent; border: 1.5px solid var(--accent); }
@@ -686,7 +697,7 @@ html, body, #root {
 .sp-search-input::placeholder { color: var(--muted); }
 .sp-search-clear {
   flex: none; border: 0; background: transparent; cursor: pointer; color: var(--muted);
-  font: 300 15px "Inter", sans-serif; line-height: 1; padding: 2px 4px; border-radius: 5px;
+  font: 300 15px var(--ui-font); line-height: 1; padding: 2px 4px; border-radius: 5px;
 }
 .sp-search-clear:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 /* spoiler-safe toggle (app furniture — reuses .rp-switch) */
@@ -698,12 +709,12 @@ html, body, #root {
 }
 .sp-spoiler:hover { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 .sp-spoiler-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.sp-spoiler-label { font: 600 12.5px "Inter", "SardUIArabic", sans-serif; color: var(--accent); }
-.sp-spoiler-sub { font: 400 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-spoiler-label { font: 600 12.5px var(--ui-font); color: var(--accent); }
+.sp-spoiler-sub { font: 400 11px var(--ui-font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* results */
 .sp-results { padding-top: 2px; }
-.sp-count { padding: 6px 12px 4px; font: 700 10px "Inter", "SardUIArabic", sans-serif; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
-.sp-nothing-before { padding: 2px 12px 8px; font: 400 12px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.sp-count { padding: 6px 12px 4px; font: 700 10px var(--ui-font); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.sp-nothing-before { padding: 2px 12px 8px; font: 400 12px var(--ui-font); color: var(--muted); }
 .sr-row {
   display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: start;
   padding: 9px 12px; border: 0; background: transparent; cursor: pointer; border-radius: 8px;
@@ -713,26 +724,26 @@ html, body, #root {
 .rp-lead[dir="rtl"] .sr-row.active { box-shadow: inset -2px 0 0 var(--accent); }
 .sr-row.ahead { opacity: 0.86; }
 .sr-meta { display: flex; align-items: baseline; gap: 8px; }
-.sr-chapter { flex: 1; min-width: 0; font: 700 10.5px "Inter", "SardUIArabic", sans-serif; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sr-loc { flex: none; font: 500 11px "Inter", "SardUIArabic", sans-serif; color: color-mix(in srgb, var(--accent) 90%, var(--muted)); }
-.sr-ahead-tag { flex: none; font: 700 8.5px "Inter", "SardUIArabic", sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 5px; padding: 1px 5px; }
+.sr-chapter { flex: 1; min-width: 0; font: 700 10.5px var(--ui-font); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sr-loc { flex: none; font: 500 11px var(--ui-font); color: color-mix(in srgb, var(--accent) 90%, var(--muted)); }
+.sr-ahead-tag { flex: none; font: 700 8.5px var(--ui-font); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 5px; padding: 1px 5px; }
 .sr-snippet { font: 400 13px/1.5 "Literata", "SardUIArabic", serif; color: color-mix(in srgb, var(--text) 90%, transparent); }
 .sr-hit { background: color-mix(in srgb, var(--accent) 26%, transparent); color: var(--text); border-radius: 3px; padding: 0 1px; font-weight: 600; }
 /* you-are-here boundary */
 .sp-here { display: flex; align-items: center; gap: 10px; margin: 12px 12px 8px; }
 .sp-here-line { flex: 1; height: 1px; background: color-mix(in srgb, var(--accent) 34%, transparent); }
-.sp-here-label { flex: none; font: 700 9.5px "Inter", "SardUIArabic", sans-serif; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+.sp-here-label { flex: none; font: 700 9.5px var(--ui-font); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
 /* sealed card — a count, never a snippet */
 .sp-sealed { margin: 4px 12px 10px; padding: 14px; border-radius: 11px; text-align: center; background: color-mix(in srgb, var(--accent) 8%, transparent); border: 1px dashed color-mix(in srgb, var(--accent) 34%, transparent); }
-.sp-sealed-count { font: 600 13.5px "Inter", "SardUIArabic", sans-serif; color: var(--text); }
-.sp-sealed-body { margin-top: 5px; font: 400 12px/1.5 "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
-.sp-sealed-reveal, .sp-hide-again { margin-top: 10px; border: 0; background: transparent; cursor: pointer; font: 600 12px "Inter", "SardUIArabic", sans-serif; color: var(--accent); }
+.sp-sealed-count { font: 600 13.5px var(--ui-font); color: var(--text); }
+.sp-sealed-body { margin-top: 5px; font: 400 12px/1.5 var(--ui-font); color: var(--muted); }
+.sp-sealed-reveal, .sp-hide-again { margin-top: 10px; border: 0; background: transparent; cursor: pointer; font: 600 12px var(--ui-font); color: var(--accent); }
 .sp-hide-again { display: block; margin: 6px auto 4px; }
 .sp-sealed-reveal:hover, .sp-hide-again:hover { text-decoration: underline; }
-.sp-tashkil-note { margin: 8px 12px 4px; padding-top: 8px; border-top: 1px solid var(--chrome-border); font: 400 11px/1.5 "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.sp-tashkil-note { margin: 8px 12px 4px; padding-top: 8px; border-top: 1px solid var(--chrome-border); font: 400 11px/1.5 var(--ui-font); color: var(--muted); }
 /* empty / searching / before-typing */
 /* RAWY-89: lively in-progress feedback — a spinning ring + live count + a scan bar (vs a static line) */
-.sp-searching { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 16px 14px 12px; font: 500 12.5px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.sp-searching { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 16px 14px 12px; font: 500 12.5px var(--ui-font); color: var(--muted); }
 .sp-searching-text { text-align: center; }
 .sp-spinner {
   width: 20px; height: 20px; border-radius: 50%;
@@ -745,9 +756,9 @@ html, body, #root {
 .sp-scanbar-fill { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.12s linear; }
 @media (prefers-reduced-motion: reduce) { .sp-spinner { animation-duration: 1.4s; } }
 .sp-empty, .sp-hint { padding: 22px 16px; text-align: center; }
-.sp-empty-title { font: 600 14px "Literata", "SardUIArabic", serif; color: var(--text); }
-.sp-empty-body, .sp-hint-body { margin-top: 8px; font: 400 12.5px/1.6 "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
-.sp-hint-title { font: 600 14px "Literata", "SardUIArabic", serif; color: var(--text); }
+.sp-empty-title { font: 600 14px var(--ui-font); color: var(--text); }
+.sp-empty-body, .sp-hint-body { margin-top: 8px; font: 400 12.5px/1.6 var(--ui-font); color: var(--muted); }
+.sp-hint-title { font: 600 14px var(--ui-font); color: var(--text); }
 
 /* annotations: a segmented pill tab group (RAWY-33, design C-VI) */
 .rp-tabs {
@@ -756,7 +767,7 @@ html, body, #root {
 }
 .rp-tab {
   border: 0; background: transparent; cursor: pointer; padding: 6px 14px; border-radius: 5px;
-  font: 500 12px "Inter", "SardUIArabic", sans-serif; color: var(--muted);
+  font: 500 12px var(--ui-font); color: var(--muted);
   transition: background 0.15s ease, color 0.15s ease;
 }
 .rp-tab.on {
@@ -764,7 +775,7 @@ html, body, #root {
   background: var(--paper-bg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 .rp-count {
-  font: 600 10px "Inter", sans-serif; padding: 1px 6px; border-radius: 10px; margin-inline-start: 4px;
+  font: 600 10px var(--ui-font); padding: 1px 6px; border-radius: 10px; margin-inline-start: 4px;
   background: color-mix(in srgb, var(--text) 12%, transparent); color: var(--muted);
 }
 .rp-tab.on .rp-count { background: color-mix(in srgb, var(--accent) 26%, transparent); color: var(--text); }
@@ -774,7 +785,7 @@ html, body, #root {
 .rp-add {
   width: 100%; border: 1px dashed var(--chrome-border); background: transparent; cursor: pointer;
   padding: 9px; border-radius: 8px; color: var(--muted);
-  font: 500 12px "Inter", "SardUIArabic", sans-serif;
+  font: 500 12px var(--ui-font);
 }
 .rp-add:hover { color: var(--text); border-color: var(--accent); }
 /* side-list rows carry a REAL colour (RAWY-22): a soft tint of their colour + matching
@@ -786,10 +797,10 @@ html, body, #root {
   border-inline-start: 4px solid var(--swatch, var(--accent));
 }
 .rp-item-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
-.rp-chapter { font: 600 10.5px "Inter", "SardUIArabic", sans-serif; letter-spacing: 0.02em; color: var(--muted); cursor: pointer; text-transform: uppercase; }
+.rp-chapter { font: 600 10.5px var(--ui-font); letter-spacing: 0.02em; color: var(--muted); cursor: pointer; text-transform: uppercase; }
 .rp-chapter:hover { color: var(--accent); }
 .rp-item-actions { display: flex; gap: 6px; }
-.rp-mini { border: 0; background: transparent; cursor: pointer; color: var(--muted); font: 500 11px "Inter", "SardUIArabic", sans-serif; padding: 3px 6px; border-radius: 6px; }
+.rp-mini { border: 0; background: transparent; cursor: pointer; color: var(--muted); font: 500 11px var(--ui-font); padding: 3px 6px; border-radius: 6px; }
 .rp-mini:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .rp-mini.primary { color: var(--paper-bg); background: var(--accent); }
 .rp-mini.danger:hover { color: #fff; background: #b5524a; }
@@ -918,7 +929,7 @@ html, body, #root {
 
 /* choose-language — bilingual */
 .welcome-prompt { display: flex; align-items: baseline; gap: 12px; margin-bottom: 38px; color: var(--muted); }
-.welcome-prompt-en { font: 400 14px/1 "Inter", sans-serif; letter-spacing: 0.03em; }
+.welcome-prompt-en { font: 400 14px/1 var(--ui-font); letter-spacing: 0.03em; }
 .welcome-prompt-ar { font: 400 15px/1 "SardUIArabic", system-ui, sans-serif; }
 .welcome-sep { color: color-mix(in srgb, var(--muted) 55%, var(--paper-bg)); font-size: 13px; }
 
@@ -936,7 +947,7 @@ html, body, #root {
 
 /* changeable-later footnote — bilingual */
 .welcome-foot { display: flex; align-items: baseline; gap: 10px; margin-top: 34px; color: color-mix(in srgb, var(--muted) 78%, var(--paper-bg)); }
-.welcome-foot-en { font: 400 12px/1 "Inter", sans-serif; }
+.welcome-foot-en { font: 400 12px/1 var(--ui-font); }
 .welcome-foot-ar { font: 400 12px/1 "SardUIArabic", system-ui, sans-serif; }
 
 /* ---- Reading stage (the desk; the book sheet is themed via injectedCss) ---- */
@@ -955,8 +966,8 @@ html, body, #root {
   font-size: 26px; color: var(--accent); border-radius: 50%;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
-.reader-error-title { font: 600 20px/1.4 "Literata", "SardUIArabic", serif; color: var(--text); }
-:root[dir="rtl"] .reader-error-title { font: 700 22px/1.4 "Amiri", "SardUIArabic", serif; }
+.reader-error-title { font: 600 20px/1.4 var(--ui-font); color: var(--text); }
+:root[dir="rtl"] .reader-error-title { font: 700 22px/1.4 var(--ui-font); }
 .reader-error-detail {
   max-width: 100%; max-height: 28vh; overflow: auto; word-break: break-word;
   font: 400 12px/1.55 ui-monospace, monospace; color: var(--muted);
@@ -1062,8 +1073,8 @@ html, body, #root {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: 10px; padding: 60px 40px; text-align: center;
 }
-.lib-shelf-empty-title { font: 600 20px "Literata", serif; color: var(--text); }
-:root[dir="rtl"] .lib-shelf-empty-title { font: 700 20px "Amiri", serif; }
+.lib-shelf-empty-title { font: 600 20px var(--ui-font); color: var(--text); }
+:root[dir="rtl"] .lib-shelf-empty-title { font: 700 20px var(--ui-font); }
 .lib-shelf-empty-hint { font: 400 14px var(--ui-font); color: var(--muted); max-width: 360px; }
 
 .lib-sidefoot {
@@ -1111,8 +1122,8 @@ html, body, #root {
 .lib-head { padding: 26px 30px 14px; }
 .lib-head-top { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
 .lib-title-wrap { display: flex; align-items: baseline; gap: 12px; }
-.lib-title { margin: 0; font: 600 26px "Literata", serif; color: var(--text); }
-:root[dir="rtl"] .lib-title { font: 700 28px "Amiri", serif; }
+.lib-title { margin: 0; font: 600 26px var(--ui-font); color: var(--text); }
+:root[dir="rtl"] .lib-title { font: 700 28px var(--ui-font); }
 .lib-title-count { font: 500 13px var(--ui-font); color: var(--lib-faint); }
 .lib-search {
   display: flex; align-items: center; gap: 9px; width: 210px; padding: 8px 13px;
@@ -1202,7 +1213,7 @@ html, body, #root {
 .lib-shelfrow { padding: 0 0 18px; }
 .lib-shelfrow-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 30px 11px; }
 .lib-shelfrow-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
-.lib-shelfrow-name { font: 600 17px "Literata", "SardUIArabic", serif; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lib-shelfrow-name { font: 600 17px var(--ui-font); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lib-shelfrow-count { font: 500 12px var(--ui-font); color: var(--lib-faint); flex: none; }
 .lib-shelfrow-seeall { border: none; background: transparent; cursor: pointer; font: 500 12px var(--ui-font); color: var(--accent); white-space: nowrap; flex: none; }
 .lib-shelfrow-seeall:hover { text-decoration: underline; }
@@ -1219,7 +1230,7 @@ html, body, #root {
   font: 400 13px/1.55 var(--ui-font); color: var(--muted);
 }
 .lib-rows-noshelves { padding: 44px 30px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
-.lib-rows-noshelves-title { font: 600 19px "Literata", "SardUIArabic", serif; color: var(--text); }
+.lib-rows-noshelves-title { font: 600 19px var(--ui-font); color: var(--text); }
 .lib-rows-noshelves-hint { font: 400 13.5px/1.65 var(--ui-font); color: var(--muted); max-width: 440px; margin-bottom: 8px; }
 
 .lib-grid {
@@ -1254,16 +1265,16 @@ html, body, #root {
 /* Caption under the cover — always identifies the book, in the script of its TITLE. */
 .lib-cap { min-width: 0; }
 .lib-cap-title {
-  font: 500 13px/1.3 "Literata", serif; color: var(--text);
+  font: 500 13px/1.3 var(--ui-font); color: var(--text);
   display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden; overflow-wrap: anywhere;
 }
-.lib-cap-title.ar { font: 600 15px/1.4 "Amiri", serif; }
+.lib-cap-title.ar { font: 600 15px/1.4 var(--ui-font); }
 .lib-cap-author {
   margin-top: 3px; font: 400 11px var(--ui-font); color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.lib-cap-author.ar { font: 400 12px "Amiri", serif; }
+.lib-cap-author.ar { font: 400 12px var(--ui-font); }
 
 /* ---- auto cover ---- */
 .auto-cover { position: relative; overflow: hidden; }
@@ -1305,10 +1316,10 @@ html, body, #root {
 :root[dir="rtl"] .lib-row:focus-visible { box-shadow: inset -2px 0 0 var(--accent); }
 .ll-thumb { width: 34px; height: 50px; border-radius: 2px 3px 3px 2px; overflow: hidden; box-shadow: 0 2px 5px rgba(0, 0, 0, 0.16); }
 :root[dir="rtl"] .ll-thumb { border-radius: 3px 2px 2px 3px; }
-.ll-title { min-width: 0; font: 500 15px/1.5 "Literata", serif; color: var(--text); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ll-title.ar { font: 700 17px/1.5 "Amiri", serif; }
+.ll-title { min-width: 0; font: 500 15px/1.5 var(--ui-font); color: var(--text); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ll-title.ar { font: 700 17px/1.5 var(--ui-font); }
 .ll-author { min-width: 0; font: 400 13px var(--ui-font); color: var(--muted); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ll-author.ar { font: 400 15px "Amiri", serif; }
+.ll-author.ar { font: 400 15px var(--ui-font); }
 :root[dir="rtl"] .ll-title, :root[dir="rtl"] .ll-author { text-align: right; }
 .ll-format { min-width: 0; }
 .ll-badge { font: 600 10px var(--ui-font); letter-spacing: 0.05em; color: var(--muted); background: color-mix(in srgb, var(--text) 7%, transparent); padding: 3px 7px; border-radius: 4px; }
@@ -1333,8 +1344,8 @@ html, body, #root {
 .lib-empty-spines span:nth-child(2) { background: linear-gradient(#9c5a3c, #854b30); }
 .lib-empty-spines span:nth-child(3) { background: linear-gradient(#2c3a42, #222d33); }
 .lib-empty-spines span:nth-child(4) { background: linear-gradient(#d8c29a, #cab488); border: 1px solid rgba(43, 37, 33, 0.08); }
-.lib-empty-title { position: relative; font: 600 28px "Literata", serif; color: var(--text); margin-bottom: 10px; }
-:root[dir="rtl"] .lib-empty-title { font: 700 28px "Amiri", serif; }
+.lib-empty-title { position: relative; font: 600 28px var(--ui-font); color: var(--text); margin-bottom: 10px; }
+:root[dir="rtl"] .lib-empty-title { font: 700 28px var(--ui-font); }
 .lib-empty-sub { position: relative; font: 400 15px/1.6 var(--ui-font); color: var(--muted); max-width: 390px; margin-bottom: 30px; }
 .lib-empty-actions { position: relative; display: flex; gap: 12px; }
 .lib-btn-primary { border: none; background: var(--text); color: var(--paper-bg); font: 500 14px var(--ui-font); padding: 12px 26px; border-radius: 9px; cursor: pointer; }
@@ -1353,8 +1364,8 @@ html, body, #root {
 .lib-drop-a { left: 6px; top: 8px; background: #2c3a42; transform: rotate(-8deg); }
 .lib-drop-b { left: 18px; top: 4px; background: var(--accent); transform: rotate(7deg); }
 .lib-drop-badge { position: absolute; inset-inline-end: -6px; bottom: -4px; width: 26px; height: 26px; border-radius: 50%; background: var(--text); color: var(--paper-bg); font: 600 12px var(--ui-font); display: flex; align-items: center; justify-content: center; }
-.lib-drop-title { font: 600 22px "Literata", serif; color: var(--text); margin-bottom: 8px; }
-:root[dir="rtl"] .lib-drop-title { font: 700 22px "Amiri", serif; }
+.lib-drop-title { font: 600 22px var(--ui-font); color: var(--text); margin-bottom: 8px; }
+:root[dir="rtl"] .lib-drop-title { font: 700 22px var(--ui-font); }
 .lib-drop-formats { font: 400 14px var(--ui-font); color: var(--muted); }
 
 /* ---- toast ---- */
@@ -1389,8 +1400,8 @@ html, body, #root {
   display: flex; align-items: center; justify-content: space-between; padding: 18px 22px 14px;
   border-bottom: 1px solid var(--chrome-border);
 }
-.edit-title { font: 600 17px "Literata", serif; color: var(--text); }
-:root[dir="rtl"] .edit-title { font: 700 18px "Amiri", serif; }
+.edit-title { font: 600 17px var(--ui-font); color: var(--text); }
+:root[dir="rtl"] .edit-title { font: 700 18px var(--ui-font); }
 .edit-body { display: flex; gap: 22px; padding: 22px; }
 .edit-cover { width: 130px; flex: none; display: flex; flex-direction: column; gap: 8px; }
 .edit-cover .lib-cover { width: 130px; }
@@ -1561,8 +1572,8 @@ html, body, #root {
 .inbox-head { padding: 28px 36px 8px; display: flex; flex-direction: column; gap: 18px; }
 .inbox-head-top { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
 .inbox-title-wrap { display: flex; align-items: baseline; gap: 12px; }
-.inbox-title { margin: 0; font: 600 26px "Literata", "SardUIArabic", serif; color: var(--text); }
-.inbox-count { font: 500 13px "Inter", "SardUIArabic", sans-serif; color: var(--muted); white-space: nowrap; }
+.inbox-title { margin: 0; font: 600 26px var(--ui-font); color: var(--text); }
+.inbox-count { font: 500 13px var(--ui-font); color: var(--muted); white-space: nowrap; }
 .inbox-search { width: 240px; flex: 0 0 auto; }
 .inbox-filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .inbox-dots { display: flex; align-items: center; gap: 7px; }
@@ -1574,7 +1585,7 @@ html, body, #root {
 .inbox-sep { width: 1px; height: 20px; background: var(--chrome-border); margin: 0 4px; }
 .inbox-ctl-wrap { position: relative; }
 .inbox-ctl {
-  font: 500 12px "Inter", "SardUIArabic", sans-serif; color: var(--text); background: var(--chrome-bg);
+  font: 500 12px var(--ui-font); color: var(--text); background: var(--chrome-bg);
   border: 1px solid var(--chrome-border); border-radius: 7px; padding: 7px 12px; cursor: pointer;
   max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -1582,7 +1593,7 @@ html, body, #root {
 .inbox-seg { display: flex; background: color-mix(in srgb, var(--text) 8%, transparent); border-radius: 8px; padding: 3px; }
 .inbox-seg button {
   border: 0; background: transparent; cursor: pointer; padding: 6px 12px; border-radius: 6px;
-  color: var(--muted); font: 500 12px "Inter", "SardUIArabic", sans-serif; white-space: nowrap;
+  color: var(--muted); font: 500 12px var(--ui-font); white-space: nowrap;
 }
 .inbox-seg button.on { background: var(--paper-bg); color: var(--accent); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
 .inbox-list { flex: 1; overflow-y: auto; padding: 8px 36px 28px; display: flex; flex-direction: column; gap: 12px; }
@@ -1600,17 +1611,17 @@ html, body, #root {
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
 .inbox-card-text.ar { font-family: "Amiri", "SardUIArabic", serif; font-size: 19px; line-height: 1.7; }
-.inbox-card-meta { font: 500 12px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.inbox-card-meta { font: 500 12px var(--ui-font); color: var(--muted); }
 .inbox-card-kind { color: var(--accent); }
 .inbox-card-note {
   margin-top: 4px; padding: 9px 12px; border-radius: 7px; background: color-mix(in srgb, var(--text) 7%, transparent);
-  font: 400 13px/1.5 "Inter", "SardUIArabic", sans-serif; color: color-mix(in srgb, var(--text) 80%, transparent);
+  font: 400 13px/1.5 var(--ui-font); color: color-mix(in srgb, var(--text) 80%, transparent);
 }
 .inbox-card-note-label { color: var(--accent); font-weight: 600; }
 .inbox-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 40px; text-align: center; }
 .inbox-empty-mark { font: 400 64px "Literata", serif; color: color-mix(in srgb, var(--accent) 40%, transparent); line-height: 1; }
-.inbox-empty-title { font: 600 18px "Literata", "SardUIArabic", serif; color: var(--text); }
-.inbox-empty-sub { font: 400 13px "Inter", "SardUIArabic", sans-serif; color: var(--muted); max-width: 360px; }
+.inbox-empty-title { font: 600 18px var(--ui-font); color: var(--text); }
+.inbox-empty-sub { font: 400 13px var(--ui-font); color: var(--muted); max-width: 360px; }
 
 /* ============================================================================
    Global App Settings — Band H (RAWY-39). A sectioned modal opened from the
@@ -1666,7 +1677,7 @@ html, body, #root {
 }
 .gs-x:hover { background: var(--lib-hover); color: var(--text); }
 .gs-body { flex: 1; overflow-y: auto; padding: 24px 30px; display: flex; flex-direction: column; gap: 22px; }
-.gs-h1 { font: 600 21px "Literata", "SardUIArabic", serif; color: var(--text); }
+.gs-h1 { font: 600 21px var(--ui-font); color: var(--text); }
 .gs-sec { display: flex; flex-direction: column; gap: 11px; }
 .gs-sec.gs-two { flex-direction: row; gap: 14px; }
 .gs-sec.gs-two > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 9px; }
@@ -1718,6 +1729,45 @@ html, body, #root {
 .gs-chip-x { border: none; background: transparent; color: inherit; cursor: pointer; font-size: 14px; line-height: 1; padding: 0; opacity: 0.8; }
 .gs-chip-x:hover { opacity: 1; }
 .gs-note { font: 400 11.5px var(--ui-font); color: color-mix(in srgb, var(--muted) 80%, var(--paper-bg)); }
+
+/* RAWY-91 — Fonts panel cards: App font · Book font · Library */
+.gs-fontcard {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 16px 18px; border-radius: 12px;
+  background: color-mix(in srgb, var(--chrome-bg) 55%, var(--paper-bg));
+  border: 1px solid var(--chrome-border);
+}
+.gs-fc-title { font: 600 15px var(--ui-font); color: var(--text); }
+.gs-fc-sub { font: 400 12px var(--ui-font); color: var(--muted); margin-top: -6px; }
+.gs-fc-cap { font: 600 10.5px var(--ui-font); letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
+.gs-fc-libhead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.gs-fc-libhead > div { display: flex; flex-direction: column; gap: 4px; }
+.gs-fc-preview {
+  padding: 13px 15px; border-radius: 9px; background: color-mix(in srgb, var(--accent) 5%, var(--paper-bg));
+  color: var(--text); font-size: 17px; line-height: 1.5; display: flex; flex-direction: column; gap: 6px;
+}
+/* weight control — a face that lacks a weight is dimmed + flagged (honest, RAWY-36) */
+.gs-weight-seg { max-width: 340px; }
+.gs-weight-seg .gs-w-na { opacity: 0.5; }
+.gs-weight-seg .gs-w-na.on { opacity: 0.85; }
+/* library list */
+.gs-fontlib { display: flex; flex-direction: column; }
+.gs-lib-row {
+  display: flex; align-items: center; gap: 10px; padding: 9px 2px;
+  border-bottom: 1px solid color-mix(in srgb, var(--chrome-border) 60%, transparent);
+}
+.gs-lib-row:last-child { border-bottom: none; }
+.gs-lib-name { flex: 1 1 auto; min-width: 0; font-size: 16px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gs-lib-meta { flex: none; font: 400 11px var(--ui-font); color: var(--muted); }
+.gs-lib-badges { flex: none; display: flex; gap: 5px; }
+.gs-badge { font: 700 9.5px var(--ui-font); letter-spacing: 0.05em; padding: 3px 7px; border-radius: 6px; white-space: nowrap; }
+.gs-badge-app { background: var(--accent); color: #fff; }
+.gs-badge-book { background: color-mix(in srgb, var(--accent) 16%, transparent); color: color-mix(in srgb, var(--accent) 88%, var(--text)); }
+.gs-lib-remove {
+  flex: none; border: none; background: transparent; cursor: pointer;
+  font: 500 11px var(--ui-font); color: var(--muted); padding: 3px 6px; border-radius: 6px;
+}
+.gs-lib-remove:hover { color: #c0392b; background: color-mix(in srgb, #c0392b 10%, transparent); }
 /* reading defaults */
 .gs-banner {
   display: inline-flex; align-items: center; gap: 7px; align-self: flex-start;
@@ -1761,7 +1811,7 @@ html, body, #root {
 .rp-item.bm-item { display: flex; align-items: center; gap: 11px; }
 .bm-item-mark { flex: none; display: flex; align-items: center; justify-content: center; width: 26px; }
 .bm-item-label { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; cursor: pointer; }
-.bm-item-pct { font: 500 11px "Inter", "SardUIArabic", sans-serif; color: var(--accent); }
+.bm-item-pct { font: 500 11px var(--ui-font); color: var(--accent); }
 /* about */
 .gs-about { display: flex; align-items: center; gap: 16px; }
 .gs-about-name { font: 700 18px "Literata", "SardUIArabic", serif; color: var(--text); }
@@ -1800,7 +1850,7 @@ html, body, #root {
   flex: 1; background: var(--pc-stage-bg); display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 16px; position: relative; padding: 24px;
 }
-.pc-stage-label { font: 500 11px "Inter", "SardUIArabic", sans-serif; letter-spacing: .08em; color: var(--pc-muted); text-transform: uppercase; }
+.pc-stage-label { font: 500 11px var(--ui-font); letter-spacing: .08em; color: var(--pc-muted); text-transform: uppercase; }
 /* The scale wrapper is a pure layout box that must NOT inherit the UI direction (RAWY-54): in
    RTL its full-size inner child was placed right-aligned and then scaled from `top left`, so the
    card landed shifted LEFT and overlapped the controls panel. Forcing `direction: ltr` pins the
@@ -1830,7 +1880,7 @@ html, body, #root {
 .pc-brand-div { width: 1px; opacity: 0.5; }
 .pc-toast {
   position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
-  background: var(--pc-text); color: var(--pc-modal-bg); font: 600 13px "Inter", "SardUIArabic", sans-serif;
+  background: var(--pc-text); color: var(--pc-modal-bg); font: 600 13px var(--ui-font);
   padding: 9px 20px; border-radius: 22px; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
 }
 
@@ -1849,12 +1899,12 @@ html, body, #root {
 }
 :root[data-dark="true"] .pc-basket-tray { box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5); }
 .pbt-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 15px 11px; border-bottom: 1px solid var(--chrome-border); }
-.pbt-title { font: 600 14px "Inter", "SardUIArabic", sans-serif; color: var(--text); }
-.pbt-count { font: 500 11.5px "Inter", "SardUIArabic", sans-serif; color: var(--muted); margin-top: 2px; }
-.pbt-close { flex: none; border: none; background: transparent; color: var(--muted); font: 300 16px "Inter", sans-serif; cursor: pointer; width: 28px; height: 28px; border-radius: 7px; }
+.pbt-title { font: 600 14px var(--ui-font); color: var(--text); }
+.pbt-count { font: 500 11.5px var(--ui-font); color: var(--muted); margin-top: 2px; }
+.pbt-close { flex: none; border: none; background: transparent; color: var(--muted); font: 300 16px var(--ui-font); cursor: pointer; width: 28px; height: 28px; border-radius: 7px; }
 .pbt-close:hover { background: var(--rc-surface); color: var(--text); }
 .pbt-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 7px; }
-.pbt-empty { padding: 22px 8px; text-align: center; font: 400 12.5px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.pbt-empty { padding: 22px 8px; text-align: center; font: 400 12.5px var(--ui-font); color: var(--muted); }
 .pbt-row {
   display: flex; align-items: flex-start; gap: 9px; padding: 9px 10px;
   background: var(--rc-surface); border: 1px solid var(--chrome-border); border-radius: 10px; cursor: grab;
@@ -1867,26 +1917,26 @@ html, body, #root {
 .pbt-row.dragging .pbt-grip { cursor: grabbing; }
 .pbt-body { flex: 1; min-width: 0; }
 .pbt-text { font: 400 12.5px/1.45 "Literata", "SardUIArabic", serif; color: var(--text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.pbt-chapter { font: 600 9.5px "Inter", "SardUIArabic", sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
+.pbt-chapter { font: 600 9.5px var(--ui-font); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
 .pc-basket-tray[dir="rtl"] .pbt-chapter { letter-spacing: 0; text-transform: none; }
-.pbt-remove { flex: none; border: none; background: transparent; color: var(--muted); font: 300 17px "Inter", sans-serif; cursor: pointer; width: 22px; height: 22px; border-radius: 6px; }
+.pbt-remove { flex: none; border: none; background: transparent; color: var(--muted); font: 300 17px var(--ui-font); cursor: pointer; width: 22px; height: 22px; border-radius: 6px; }
 .pbt-remove:hover { background: color-mix(in srgb, #b24a4a 18%, transparent); color: #d06868; }
 .pbt-foot { display: flex; align-items: center; gap: 8px; padding: 11px 13px; border-top: 1px solid var(--chrome-border); }
-.pbt-create { flex: 1; border: none; border-radius: 9px; padding: 10px 12px; background: var(--accent); color: var(--paper-bg); font: 600 12.5px "Inter", "SardUIArabic", sans-serif; cursor: pointer; }
+.pbt-create { flex: 1; border: none; border-radius: 9px; padding: 10px 12px; background: var(--accent); color: var(--paper-bg); font: 600 12.5px var(--ui-font); cursor: pointer; }
 .pbt-create:disabled { opacity: .5; cursor: default; }
-.pbt-clear { flex: none; border: 1px solid var(--chrome-border); border-radius: 9px; padding: 10px 14px; background: transparent; color: var(--muted); font: 500 12.5px "Inter", "SardUIArabic", sans-serif; cursor: pointer; }
+.pbt-clear { flex: none; border: 1px solid var(--chrome-border); border-radius: 9px; padding: 10px 14px; background: transparent; color: var(--muted); font: 500 12.5px var(--ui-font); cursor: pointer; }
 .pbt-clear:hover:not(:disabled) { color: var(--text); border-color: var(--muted); }
 .pbt-clear:disabled { opacity: .5; cursor: default; }
 
 /* controls panel */
 .pc-panel { width: 344px; background: var(--pc-panel-bg); border-inline-start: 1px solid var(--pc-border); display: flex; flex-direction: column; }
 .pc-panel-head { height: 40px; display: flex; align-items: center; justify-content: flex-end; padding-inline-end: 12px; }
-.pc-close { border: none; background: transparent; color: var(--pc-muted); font: 300 17px "Inter", sans-serif; cursor: pointer; width: 30px; height: 30px; border-radius: 7px; }
+.pc-close { border: none; background: transparent; color: var(--pc-muted); font: 300 17px var(--ui-font); cursor: pointer; width: 30px; height: 30px; border-radius: 7px; }
 .pc-close:hover { background: var(--pc-border); }
 .pc-panel-body { padding: 4px 26px 22px; flex: 1; display: flex; flex-direction: column; gap: 22px; overflow-y: auto; }
-.pc-panel-name { font: 600 17px "Literata", "SardUIArabic", serif; color: var(--pc-text); }
-.pc-panel-sub { font: 400 12px "Inter", "SardUIArabic", sans-serif; color: var(--pc-muted); margin-top: 2px; }
-.pc-group-label { font: 600 11px "Inter", "SardUIArabic", sans-serif; letter-spacing: .12em; color: var(--pc-muted); margin-bottom: 11px; }
+.pc-panel-name { font: 600 17px var(--ui-font); color: var(--pc-text); }
+.pc-panel-sub { font: 400 12px var(--ui-font); color: var(--pc-muted); margin-top: 2px; }
+.pc-group-label { font: 600 11px var(--ui-font); letter-spacing: .12em; color: var(--pc-muted); margin-bottom: 11px; }
 .pc-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
 .pc-swatch {
   width: 40px; height: 34px; border-radius: 7px; border: 1px solid var(--pc-border); cursor: pointer;
@@ -1897,20 +1947,20 @@ html, body, #root {
 .pc-format { flex: 1; border: none; background: transparent; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 0; }
 .pc-format-ico { display: block; height: 30px; width: auto; border: 1.5px solid var(--pc-muted); border-radius: 2px; }
 .pc-format.on .pc-format-ico { border-color: var(--pc-accent); background: color-mix(in srgb, var(--pc-accent) 12%, transparent); }
-.pc-format-label { font: 500 10px "Inter", "SardUIArabic", sans-serif; color: var(--pc-muted); }
+.pc-format-label { font: 500 10px var(--ui-font); color: var(--pc-muted); }
 .pc-format.on .pc-format-label { color: var(--pc-accent); font-weight: 600; }
 /* RAWY-81 (#1): the independent quote-font picker — a themed native select. */
 .pc-select-wrap { position: relative; }
 .pc-select {
   width: 100%; appearance: none; -webkit-appearance: none; cursor: pointer;
   border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text);
-  font: 500 13px "Inter", "SardUIArabic", sans-serif; padding: 10px 34px 10px 12px; border-radius: 9px;
+  font: 500 13px var(--ui-font); padding: 10px 34px 10px 12px; border-radius: 9px;
 }
 .pc-select:focus-visible { outline: none; border-color: var(--pc-accent); }
 .pc-select option { background: var(--pc-panel-bg); color: var(--pc-text); }
 .pc-select-caret { position: absolute; inset-inline-end: 12px; top: 50%; transform: translateY(-50%); color: var(--pc-muted); pointer-events: none; font-size: 11px; }
 .pc-toggles { display: flex; flex-direction: column; gap: 13px; }
-.pc-toggle { display: flex; align-items: center; justify-content: space-between; font: 500 13px "Inter", "SardUIArabic", sans-serif; color: var(--pc-text); }
+.pc-toggle { display: flex; align-items: center; justify-content: space-between; font: 500 13px var(--ui-font); color: var(--pc-text); }
 .pc-switch { width: 36px; height: 21px; border: none; background: var(--pc-border); border-radius: 21px; position: relative; cursor: pointer; padding: 0; transition: background .15s; }
 .pc-switch.on { background: var(--pc-accent); }
 .pc-knob { position: absolute; top: 2px; inset-inline-start: 2px; width: 17px; height: 17px; background: var(--pc-panel-bg); border-radius: 50%; transition: inset-inline-start .15s; }
@@ -1922,8 +1972,8 @@ html, body, #root {
   padding: 14px 26px 18px; border-top: 1px solid var(--pc-border); background: var(--pc-panel-bg);
 }
 .pc-actions { display: flex; gap: 10px; }
-.pc-save { flex: 1; border: none; background: var(--pc-accent); color: var(--pc-modal-bg); font: 600 14px "Inter", "SardUIArabic", sans-serif; padding: 13px 0; border-radius: 9px; cursor: pointer; }
-.pc-copy { border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text); font: 500 13px "Inter", "SardUIArabic", sans-serif; padding: 13px 16px; border-radius: 9px; cursor: pointer; }
+.pc-save { flex: 1; border: none; background: var(--pc-accent); color: var(--pc-modal-bg); font: 600 14px var(--ui-font); padding: 13px 0; border-radius: 9px; cursor: pointer; }
+.pc-copy { border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text); font: 500 13px var(--ui-font); padding: 13px 16px; border-radius: 9px; cursor: pointer; }
 .pc-save:disabled, .pc-copy:disabled { opacity: 0.55; cursor: default; }
 
 /* ============================================================================
@@ -1933,7 +1983,7 @@ html, body, #root {
 .pc-saveinapp {
   display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%;
   border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text);
-  font: 600 13px "Inter", "SardUIArabic", sans-serif; padding: 11px 0; border-radius: 9px; cursor: pointer;
+  font: 600 13px var(--ui-font); padding: 11px 0; border-radius: 9px; cursor: pointer;
 }
 .pc-saveinapp:hover { background: var(--pc-border); }
 .pc-saveinapp:disabled { opacity: 0.55; cursor: default; }
@@ -1943,7 +1993,7 @@ html, body, #root {
 /* gallery — a cross-book grid, styled from the app theme tokens */
 .pg-root { display: flex; flex-direction: column; padding: 24px 30px 0; overflow-y: auto; }
 .pg-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; }
-.pg-title { margin: 0; font: 600 26px "Literata", "SardUIArabic", serif; color: var(--text); }
+.pg-title { margin: 0; font: 600 26px var(--ui-font); color: var(--text); }
 .pg-count { font: 500 13px var(--ui-font); color: var(--muted); }
 .pg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 24px 22px; align-content: start; padding-bottom: 30px; }
 .pg-cell { display: flex; flex-direction: column; background: none; border: none; padding: 0; cursor: pointer; text-align: start; }
@@ -1959,7 +2009,7 @@ html, body, #root {
 /* empty state */
 .pg-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: 6px; padding: 0 24px 60px; }
 .pg-empty-bird { width: 62px; height: auto; opacity: 0.9; margin-bottom: 8px; }
-.pg-empty-title { font: 600 21px "Literata", "SardUIArabic", serif; color: var(--text); }
+.pg-empty-title { font: 600 21px var(--ui-font); color: var(--text); }
 .pg-empty-hint { font: 400 13.5px/1.65 var(--ui-font); color: var(--muted); max-width: 360px; }
 /* viewer overlay */
 /* Saved photo-card viewer — LIGHTBOX (RAWY-53): the card large & centered as the hero on a
@@ -2009,3 +2059,16 @@ html, body, #root {
 .pg-lb-confirm-text { font: 500 13px var(--ui-font); color: #3a332c; padding-inline: 12px 4px; }
 .pg-lightbox.dark .pg-lb-confirm-text { color: #E4E2F0; }
 .pg-toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 60; background: var(--text); color: var(--app-bg); font: 600 13px var(--ui-font); padding: 10px 22px; border-radius: 22px; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28); }
+
+
+/* ===== RAWY-91: App-font WEIGHT control ===== the control sets --ui-weight (Regular 400 / Medium 500
+   / Bold 700); it drives the main chrome text weight here (last rule wins over shorthand weights).
+   Big display titles keep their design weight so size still marks the hierarchy; a font that lacks a
+   weight (Amiri = 400/700) falls to its nearest — the panel surfaces that honestly. */
+.gs-nav-item, .gs-lbl, .gs-lbl-hint, .gs-note, .gs-tl-desc, .gs-seg-item,
+.rc-book, .rc-chapter, .rc-btn-label, .rc-meta,
+.rp-submeta, .rp-toggle-label, .rp-toggle-hint,
+.rs-toggle-label, .rs-toggle-hint, .rs-sec-title, .rs-sec-hint, .rs-label, .rs-seg-item, .rs-value,
+.toc-label, .toc-num, .toc-num.big,
+.ll-author, .ll-read, .lib-shelfrow-name,
+.sp-spoiler-label, .sp-spoiler-sub, .sr-chapter { font-weight: var(--ui-weight, 400); }

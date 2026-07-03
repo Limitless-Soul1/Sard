@@ -11,7 +11,7 @@ import { localeDigits } from "../../lib/format";
 import type { TKey } from "../../i18n/locales/en";
 import { Hoopoe } from "../library/Hoopoe";
 import { settingsGet, settingsSet } from "../../lib/ipc";
-import { BUILTIN_BOOK_FONTS, useFonts } from "../../lib/fonts";
+import { FONT_CATALOGUE, useFonts } from "../../lib/fonts";
 import { BOOKMARK_COLORS, BOOKMARK_SHAPES, BOOKMARK_SIZE_MAX, BOOKMARK_SIZE_MIN, useBookmarkStyle } from "../../lib/bookmarkStyle";
 import { BookmarkShape } from "../reader/BookmarkShape";
 import { useStyleScope } from "../../lib/styleScope";
@@ -119,7 +119,6 @@ function Seg<T extends string>({ value, options, onPick }: { value: T; options: 
 function AppearanceSection() {
   const { t } = useI18n();
   const { themeId, autoMode, setTheme, setMode } = useTheme();
-  const fonts = useFonts();
   const mode = currentMode({ themeId, autoMode });
   return (
     <>
@@ -155,29 +154,7 @@ function AppearanceSection() {
         </div>
       </div>
 
-      <div className="gs-sec">
-        <Label hint={t("gs.uiFontHint")}>{t("gs.uiFont")}</Label>
-        <div className="gs-fontrow">
-          <select
-            className="gs-select"
-            value={fonts.uiFont ?? ""}
-            onChange={(e) => fonts.setUiFont(e.target.value || null)}
-          >
-            <option value="">{t("gs.uiFontDefault")}</option>
-            {fonts.uiChoices().map((c) => (
-              <option key={c.family} value={c.family}>
-                {c.label}
-                {c.builtin ? "" : ` · ${t("gs.imported")}`}
-              </option>
-            ))}
-          </select>
-          <AddFontButton />
-        </div>
-        {/* live preview in the chosen face */}
-        <div className="gs-fontpreview" style={{ fontFamily: fonts.uiFont ? `"${fonts.uiFont}", var(--ui-font)` : "var(--ui-font)" }}>
-          Sard · سَرْد · The quick brown fox — 0123
-        </div>
-      </div>
+      <div className="gs-note">{t("gs.appearance.fontsMoved")}</div>
     </>
   );
 }
@@ -213,30 +190,159 @@ function AddFontButton() {
   );
 }
 
-// ---- Fonts & library: the shared catalogue ----
-function FontsSection() {
+// ---- Fonts & Library (RAWY-91, from the on-disk design): App font · Book font · shared library ----
+const UI_WEIGHTS: { w: number; key: TKey }[] = [
+  { w: 400, key: "fonts.weight.regular" },
+  { w: 500, key: "fonts.weight.medium" },
+  { w: 700, key: "fonts.weight.bold" },
+];
+// book-picker key → the @font-face family used for the live preview (imported = the family itself).
+const BOOK_FAMILY: Record<string, string> = { amiri: "Amiri", notoNaskh: "NotoNaskhArabic", literata: "Literata", sourceSerif: "SourceSerif4" };
+const bookFamily = (key: string) => `"${BOOK_FAMILY[key] ?? key}"`;
+
+// A weight segmented control that marks weights the chosen face does NOT ship (honest, RAWY-36 —
+// e.g. Amiri is 400/700 only, so Medium is flagged; picking it still works, rendering the nearest).
+function WeightSeg({ value, avail, onPick }: { value: number; avail: number[]; onPick: (w: number) => void }) {
   const { t } = useI18n();
-  const { custom, removeFont } = useFonts();
+  return (
+    <div className="gs-seg gs-weight-seg" role="group">
+      {UI_WEIGHTS.map((o) => {
+        const has = avail.includes(o.w);
+        return (
+          <button
+            key={o.w}
+            className={`gs-seg-item${value === o.w ? " on" : ""}${has ? "" : " gs-w-na"}`}
+            onClick={() => onPick(o.w)}
+            title={has ? undefined : t("fonts.weight.na")}
+          >
+            {t(o.key)}{has ? "" : " ·"}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function FontsSection() {
+  const { t, lang } = useI18n();
+  const { uiFont, uiWeight, custom, setUiFont, setUiWeight, removeFont } = useFonts();
+  const [style, setStyle] = useState<ReadingStyle | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const raw = await settingsGet(STYLE_KEY).catch(() => null);
+      let parsed: Partial<ReadingStyle> = {};
+      if (raw) { try { parsed = JSON.parse(raw) as Partial<ReadingStyle>; } catch { parsed = {}; } }
+      setStyle({ ...LATIN_DEFAULTS, ...parsed });
+    })();
+  }, []);
+  const patchBook = (p: Partial<ReadingStyle>) => setStyle((cur) => {
+    if (!cur) return cur;
+    const next = { ...cur, ...p };
+    settingsSet(STYLE_KEY, JSON.stringify(next)).catch(console.error);
+    return next;
+  });
+
+  const appCat = FONT_CATALOGUE.find((f) => f.css === (uiFont ?? ""));
+  const appAvail = appCat?.weights ?? [400, 500, 700]; // imported fonts: assume the full set
+  const appStack = uiFont ? `"${uiFont}", var(--ui-font)` : "var(--ui-font)";
+  const libCount = FONT_CATALOGUE.length + custom.length;
+  // remove an imported font AND drop it from any default that used it (clean fall-back to the built-ins).
+  const onRemove = (id: string, family: string) => {
+    removeFont(id);
+    if (style?.arabicFont === family) patchBook({ arabicFont: LATIN_DEFAULTS.arabicFont });
+    if (style?.latinFont === family) patchBook({ latinFont: LATIN_DEFAULTS.latinFont });
+  };
+  const badges = (isApp: boolean, isAr: boolean, isEn: boolean) => (
+    <span className="gs-lib-badges">
+      {isApp && <span className="gs-badge gs-badge-app">{t("fonts.badge.app")}</span>}
+      {isAr && <span className="gs-badge gs-badge-book">{t("fonts.badge.bookAr")}</span>}
+      {isEn && <span className="gs-badge gs-badge-book">{t("fonts.badge.bookEn")}</span>}
+    </span>
+  );
+
   return (
     <>
       <SecHead>{t("gs.nav.fonts")}</SecHead>
-      <div className="gs-sec">
-        <Label>{t("gs.sharedLibrary")}</Label>
-        <div className="gs-chips">
-          {BUILTIN_BOOK_FONTS.map((f) => (
-            <span key={f.family} className="gs-chip" style={{ fontFamily: f.family }}>{f.label}</span>
-          ))}
-          <span className="gs-chip">Inter</span>
-          <span className="gs-chip">IBM Plex Arabic</span>
-          {custom.map((c) => (
-            <span key={c.id} className="gs-chip gs-chip-imported" style={{ fontFamily: `"${c.family_name}"` }}>
-              {c.family_name} · {t("gs.imported")}
-              <button className="gs-chip-x" onClick={() => removeFont(c.id)} title={t("gs.remove")} aria-label={t("gs.remove")}>×</button>
-            </span>
-          ))}
+      <div className="gs-note">{t("fonts.appwide")}</div>
+
+      {/* ===== APP FONT — one family for the whole interface ===== */}
+      <div className="gs-fontcard">
+        <div className="gs-fc-title">{t("fonts.app")}</div>
+        <div className="gs-fc-sub">{t("fonts.app.sub")}</div>
+        <div className="gs-fontrow">
+          <select className="gs-select" value={uiFont ?? ""} onChange={(e) => setUiFont(e.target.value || null)}>
+            <option value="">{t("fonts.app.default")}</option>
+            {FONT_CATALOGUE.filter((f) => f.css).map((f) => <option key={f.id} value={f.css}>{f.label}</option>)}
+            {custom.map((c) => <option key={c.id} value={c.family_name}>{`${c.family_name} · ${t("gs.imported")}`}</option>)}
+          </select>
           <AddFontButton />
         </div>
-        <div className="gs-note">{t("gs.fontsUsedBy")}</div>
+        <div className="gs-fc-cap">{t("fonts.weight")}</div>
+        <WeightSeg value={uiWeight} avail={appAvail} onPick={setUiWeight} />
+        <div className="gs-fc-cap">{t("fonts.preview")}</div>
+        <div className="gs-fc-preview" style={{ fontFamily: appStack, fontWeight: uiWeight }}>{t("fonts.app.previewText")}</div>
+      </div>
+
+      {/* ===== BOOK FONT — the default for NEW books (per-book overrides while reading are separate) ===== */}
+      {style && (
+        <div className="gs-fontcard">
+          <div className="gs-fc-title">{t("fonts.book")}</div>
+          <div className="gs-fc-sub">{t("fonts.book.sub")}</div>
+          <div className="gs-two-row">
+            <div>
+              <div className="gs-fc-cap">{t("gs.defaultArabic")}</div>
+              <select className="gs-select" value={style.arabicFont} onChange={(e) => patchBook({ arabicFont: e.target.value })}>
+                {(Object.keys(ARABIC_FONTS) as ArabicFont[]).map((k) => <option key={k} value={k}>{ARABIC_FONTS[k].label}</option>)}
+                {custom.map((c) => <option key={c.family_name} value={c.family_name}>{`${c.family_name} · ${t("gs.imported")}`}</option>)}
+              </select>
+            </div>
+            <div>
+              <div className="gs-fc-cap">{t("gs.defaultLatin")}</div>
+              <select className="gs-select" value={style.latinFont} onChange={(e) => patchBook({ latinFont: e.target.value })}>
+                {(Object.keys(LATIN_FONTS) as LatinFont[]).map((k) => <option key={k} value={k}>{LATIN_FONTS[k].label}</option>)}
+                {custom.map((c) => <option key={c.family_name} value={c.family_name}>{`${c.family_name} · ${t("gs.imported")}`}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="gs-fc-cap">{t("fonts.weight")}</div>
+          <WeightSeg value={style.fontWeight} avail={[400, 500, 700]} onPick={(w) => patchBook({ fontWeight: w })} />
+          <div className="gs-slider-head"><span className="gs-fc-cap">{t("gs.defaultSize")}</span><span className="gs-slider-val">{localeDigits(`${Math.round(style.zoom * 100)}%`, lang)}</span></div>
+          <input className="gs-slider" type="range" min={0.8} max={2.5} step={0.05} value={style.zoom} onChange={(e) => patchBook({ zoom: Math.round(Number(e.target.value) * 100) / 100 })} />
+          <div className="gs-fc-cap">{t("fonts.preview")}</div>
+          <div className="gs-fc-preview" style={{ fontWeight: style.fontWeight }}>
+            <div dir="rtl" style={{ fontFamily: bookFamily(style.arabicFont) }}>{t("fonts.book.previewAr")}</div>
+            <div dir="ltr" style={{ fontFamily: bookFamily(style.latinFont) }}>{t("fonts.book.previewEn")}</div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== FONT LIBRARY — every face, usable by the app AND books ===== */}
+      <div className="gs-fontcard">
+        <div className="gs-fc-libhead">
+          <div>
+            <div className="gs-fc-title">{t("fonts.library")}</div>
+            <div className="gs-fc-sub">{t("fonts.library.sub", { n: localeDigits(String(libCount), lang) })}</div>
+          </div>
+          <AddFontButton />
+        </div>
+        <div className="gs-fontlib">
+          {FONT_CATALOGUE.map((f) => (
+            <div key={f.id} className="gs-lib-row">
+              <span className="gs-lib-name" style={{ fontFamily: f.css ? `"${f.css}"` : "var(--ui-font)" }}>{f.label}</span>
+              <span className="gs-lib-meta">{t("fonts.builtin")} · {f.scripts.map((s) => t(s === "ar" ? "fonts.ar" : "fonts.la")).join(" + ")}</span>
+              {badges((uiFont ?? "") === f.css, !!f.bookArabic && style?.arabicFont === f.bookArabic, !!f.bookLatin && style?.latinFont === f.bookLatin)}
+            </div>
+          ))}
+          {custom.map((c) => (
+            <div key={c.id} className="gs-lib-row gs-lib-imported">
+              <span className="gs-lib-name" style={{ fontFamily: `"${c.family_name}"` }}>{c.family_name}</span>
+              <span className="gs-lib-meta">{t("gs.imported")}</span>
+              {badges(uiFont === c.family_name, style?.arabicFont === c.family_name, style?.latinFont === c.family_name)}
+              <button className="gs-lib-remove" onClick={() => onRemove(c.id, c.family_name)} title={t("fonts.remove")}>✕ {t("fonts.remove")}</button>
+            </div>
+          ))}
+        </div>
       </div>
     </>
   );
@@ -246,7 +352,6 @@ function FontsSection() {
 function ReadingDefaultsSection() {
   const { t, lang } = useI18n();
   const { scope, setScope } = useStyleScope();
-  const custom = useFonts((s) => s.custom); // RAWY-45: imported fonts in the default book-font picker
   const [style, setStyle] = useState<ReadingStyle | null>(null);
 
   useEffect(() => {
@@ -293,48 +398,16 @@ function ReadingDefaultsSection() {
         <div className="gs-note">{scope === "unified" ? t("gs.scope.unifiedHint") : t("gs.scope.perbookHint")}</div>
       </div>
 
-      {/* BOOK TEXT FONT (default) — clearly distinct from the APP FONT in Appearance (RAWY-45). */}
+      {/* Book font, weight & size now live in the Fonts panel (RAWY-91); line spacing stays here. */}
       <div className="gs-sec">
-        <Label hint={t("gs.bookFontHint")}>{t("gs.bookFont")}</Label>
-        <div className="gs-two-row">
-          <div>
-            <Label>{t("gs.defaultLatin")}</Label>
-            <select className="gs-select" value={style.latinFont} onChange={(e) => patch({ latinFont: e.target.value })}>
-              {(Object.keys(LATIN_FONTS) as LatinFont[]).map((k) => (
-                <option key={k} value={k}>{LATIN_FONTS[k].label}</option>
-              ))}
-              {custom.map((c) => (
-                <option key={c.family_name} value={c.family_name}>{`${c.family_name} · ${t("gs.imported")}`}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <Label>{t("gs.defaultArabic")}</Label>
-            <select className="gs-select" value={style.arabicFont} onChange={(e) => patch({ arabicFont: e.target.value })}>
-              {(Object.keys(ARABIC_FONTS) as ArabicFont[]).map((k) => (
-                <option key={k} value={k}>{ARABIC_FONTS[k].label}</option>
-              ))}
-              {custom.map((c) => (
-                <option key={c.family_name} value={c.family_name}>{`${c.family_name} · ${t("gs.imported")}`}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </div>
-
-      <div className="gs-sec">
-        <div className="gs-slider-head"><span>{t("gs.defaultSize")}</span><span className="gs-slider-val">{localeDigits(`${Math.round(style.zoom * 100)}%`, lang)}</span></div>
+        <div className="gs-slider-head"><span>{t("gs.defaultLineSpacing")}</span><span className="gs-slider-val">{localeDigits(style.lineHeight.toFixed(2), lang)}</span></div>
         {/* RAWY-65: an RTL-mirror fix was investigated (see the Slider component's comment in
             ReadingSettings.tsx) and found unnecessary — this runtime already auto-mirrors native
             <input type=range> correctly for RTL, both visually and for click/drag, with no code. */}
-        <input className="gs-slider" type="range" min={0.8} max={2.5} step={0.05} value={style.zoom}
-          onChange={(e) => patch({ zoom: Math.round(Number(e.target.value) * 100) / 100 })} />
-      </div>
-      <div className="gs-sec">
-        <div className="gs-slider-head"><span>{t("gs.defaultLineSpacing")}</span><span className="gs-slider-val">{localeDigits(style.lineHeight.toFixed(2), lang)}</span></div>
         <input className="gs-slider" type="range" min={1.2} max={2.6} step={0.05} value={style.lineHeight}
           onChange={(e) => patch({ lineHeight: Math.round(Number(e.target.value) * 100) / 100 })} />
       </div>
+      <div className="gs-note">{t("gs.reading.fontsHint")}</div>
     </>
   );
 }

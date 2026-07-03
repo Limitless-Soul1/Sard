@@ -204,6 +204,10 @@ export const bookSetCover = (id: string, imagePath: string): Promise<BookRow | n
 export const bookRevertCover = (id: string): Promise<BookRow | null> =>
   invoke<BookRow | null>("book_revert_cover", { id });
 
+/** RAWY-85 — set a PDF's page-1 cover from PNG bytes (the reader extracts it on first open). */
+export const bookSetCoverPng = (id: string, data: number[]): Promise<boolean> =>
+  invoke<boolean>("book_set_cover_png", { id, data });
+
 /** RAWY-76 — delete a book and cascade ALL related rows + files (zero orphans). `true` if it existed. */
 export const bookDelete = (id: string): Promise<boolean> => invoke<boolean>("book_delete", { id });
 

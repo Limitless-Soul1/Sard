@@ -26,7 +26,13 @@ const render = async (page, doc, zoom) => {
     canvas.width = viewport.width
     const canvasContext = canvas.getContext('2d')
     await page.render({ canvasContext, viewport }).promise
-    doc.querySelector('#canvas').replaceChildren(doc.adoptNode(canvas))
+    // RAWY-85 test: adopting a painted canvas across documents renders blank in Chromium/WebView2;
+    // copy the pixels into an <img> in the page iframe instead (engine-robust).
+    const pageImg = doc.createElement('img')
+    pageImg.src = canvas.toDataURL()
+    pageImg.style.width = canvas.width + 'px'
+    pageImg.style.height = canvas.height + 'px'
+    doc.querySelector('#canvas').replaceChildren(pageImg)
 
     const container = doc.querySelector('.textLayer')
     const textLayer = new pdfjsLib.TextLayer({

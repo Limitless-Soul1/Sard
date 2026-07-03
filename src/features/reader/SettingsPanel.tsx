@@ -19,6 +19,11 @@ interface Props {
   hasOverride: boolean;
   onReset: () => void;
   unified: boolean; // RAWY-43 — the banner + Reset reflect the active book-style scope
+  // RAWY-85: for a PDF the drawer becomes a "read-only" panel — the honest limits + a reading-
+  // direction override (a PDF has no spine page-progression).
+  isPdf?: boolean;
+  pdfDir?: "ltr" | "rtl";
+  onPdfDir?: (d: "ltr" | "rtl") => void;
 }
 
 // The reading-settings drawer (RAWY-34, design band I). A right-edge drawer docked BETWEEN the
@@ -41,6 +46,9 @@ export function SettingsPanel({
   hasOverride,
   onReset,
   unified,
+  isPdf,
+  pdfDir,
+  onPdfDir,
 }: Props) {
   const { t } = useI18n();
   const tabs: { key: SettingsSection; label: string }[] = [
@@ -48,6 +56,35 @@ export function SettingsPanel({
     { key: "page", label: t("settings.page") },
     { key: "theme", label: t("theme.label") },
   ];
+  // RAWY-85: a PDF is read-only — the drawer states the honest limits + offers a reading-direction
+  // override (auto-detect can't know a PDF's direction; an Arabic PDF turns pages right-to-left).
+  if (isPdf) {
+    return (
+      <aside className={`settings-panel${open ? " show" : ""}`} aria-hidden={!open}>
+        <div className="sp-head">
+          <span className="sp-title">{t("pdf.options")}</span>
+          <button className="rc-icon" onClick={onClose} title={t("pdf.options")} aria-label="✕">✕</button>
+        </div>
+        <div className="sp-body">
+          <div className="sp-pdf-note">
+            <div className="sp-pdf-title">{t("pdf.readonly.title")}</div>
+            <div className="sp-pdf-body">{t("pdf.readonly.body")}</div>
+          </div>
+          <div className="rs-sec">
+            <div className="rs-sec-head"><span className="rs-label">{t("pdf.direction")}</span></div>
+            <div className="rs-seg" role="group">
+              <button className={`rs-seg-item${pdfDir !== "rtl" ? " on" : ""}`} onClick={() => onPdfDir?.("ltr")}>
+                {t("pdf.dir.ltr")}
+              </button>
+              <button className={`rs-seg-item${pdfDir === "rtl" ? " on" : ""}`} onClick={() => onPdfDir?.("rtl")}>
+                {t("pdf.dir.rtl")}
+              </button>
+            </div>
+          </div>
+        </div>
+      </aside>
+    );
+  }
   return (
     <aside className={`settings-panel${open ? " show" : ""}`} aria-hidden={!open}>
       <div className="sp-head">

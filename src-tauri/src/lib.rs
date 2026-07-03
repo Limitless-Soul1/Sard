@@ -111,6 +111,7 @@ pub fn run() {
             commands::import_folder,
             commands::book_update,
             commands::book_set_cover,
+            commands::book_set_cover_png,
             commands::book_revert_cover,
             commands::book_delete,
             commands::highlights_for_book,

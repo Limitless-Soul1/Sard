@@ -23,6 +23,7 @@ interface Props {
   onToggleHideFirstLine: () => void;
   onJump: (href: string) => void;
   fraction: number;
+  isPdf?: boolean; // RAWY-85: hide the EPUB-only anti-spoiler toggles for a PDF
 }
 
 export function ChaptersPanel({
@@ -36,6 +37,7 @@ export function ChaptersPanel({
   onToggleHideFirstLine,
   onJump,
   fraction,
+  isPdf,
 }: Props) {
   const { t, lang, dir } = useI18n();
   const pct = Math.round(fraction * 100);
@@ -57,22 +59,27 @@ export function ChaptersPanel({
 
       {/* anti-spoiler controls — TWO independent toggles (RAWY-69, split from one): the app's own
           chapter-title display vs. an in-body leading "first line" that's often a repeated title
-          and can itself carry spoilers (RAWY-68's markInBodyHeading). Either, both, or neither. */}
-      <button className="rp-spoiler" onClick={onToggleHideTitles} aria-pressed={hideTitles}>
-        <span className="rp-spoiler-label">{t("theme.hideTitles")}</span>
-        <span className={`rp-switch${hideTitles ? " on" : ""}`} aria-hidden>
-          <span className="rp-knob" />
-        </span>
-      </button>
-      <button className="rp-toggle" onClick={onToggleHideFirstLine} aria-pressed={hideFirstLine}>
-        <span className="rp-toggle-text">
-          <span className="rp-toggle-label">{t("panel.hideFirstLine")}</span>
-          <span className="rp-toggle-hint">{t("panel.hideFirstLineHint")}</span>
-        </span>
-        <span className={`rp-switch${hideFirstLine ? " on" : ""}`} aria-hidden>
-          <span className="rp-knob" />
-        </span>
-      </button>
+          and can itself carry spoilers (RAWY-68's markInBodyHeading). Either, both, or neither.
+          RAWY-85: these are EPUB-only — hidden for a fixed-layout PDF (it just lists the outline). */}
+      {!isPdf && (
+        <>
+          <button className="rp-spoiler" onClick={onToggleHideTitles} aria-pressed={hideTitles}>
+            <span className="rp-spoiler-label">{t("theme.hideTitles")}</span>
+            <span className={`rp-switch${hideTitles ? " on" : ""}`} aria-hidden>
+              <span className="rp-knob" />
+            </span>
+          </button>
+          <button className="rp-toggle" onClick={onToggleHideFirstLine} aria-pressed={hideFirstLine}>
+            <span className="rp-toggle-text">
+              <span className="rp-toggle-label">{t("panel.hideFirstLine")}</span>
+              <span className="rp-toggle-hint">{t("panel.hideFirstLineHint")}</span>
+            </span>
+            <span className={`rp-switch${hideFirstLine ? " on" : ""}`} aria-hidden>
+              <span className="rp-knob" />
+            </span>
+          </button>
+        </>
+      )}
 
       <div className="rp-scroll">
         {toc.length === 0 && <div className="rp-empty">{t("panel.noChapters")}</div>}

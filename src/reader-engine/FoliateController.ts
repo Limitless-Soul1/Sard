@@ -85,6 +85,8 @@ function drawHighlight(rects: Iterable<DOMRect>, options: { color?: string; dark
 
 interface OpenOptions {
   resumeCfi?: string | null;
+  /** RAWY-85: resume a fixed-layout book (PDF) by fraction — a PDF has a page index, not a CFI. */
+  resumeFraction?: number | null;
   style: ReadingStyle;
   theme?: Theme;
   flags?: BookThemeFlags;
@@ -463,6 +465,8 @@ export class FoliateController {
     this.reinject();
 
     if (opts.resumeCfi) await view.goTo(opts.resumeCfi);
+    // RAWY-85: a PDF resumes by fraction (no CFI) — jump to the saved page.
+    else if (opts.resumeFraction != null && opts.resumeFraction > 0) await view.goToFraction(opts.resumeFraction);
     else if (this.scrolledMode) await view.goToFraction(0); // start at the top of section 0
     else await view.renderer.next();
   }
@@ -745,5 +749,20 @@ export class FoliateController {
       typeof v === "string" ? v : (v as { name?: string })?.name;
     if (Array.isArray(a)) return a.map(one).filter(Boolean).join("، ") || undefined;
     return one(a);
+  }
+
+  /** RAWY-85: a fixed-layout book (a PDF) — read-only, no injected typography/theme. */
+  get isFixedLayout(): boolean {
+    return this.view?.book?.rendition?.layout === "pre-paginated";
+  }
+  /** RAWY-85: the page-1 cover as PNG bytes (PDF adapter's getCover), for library enrichment. */
+  async getCoverBytes(): Promise<number[] | null> {
+    try {
+      const blob: Blob | undefined = await this.view?.book?.getCover?.();
+      if (!blob) return null;
+      return Array.from(new Uint8Array(await blob.arrayBuffer()));
+    } catch {
+      return null;
+    }
   }
 }

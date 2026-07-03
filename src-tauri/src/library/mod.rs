@@ -257,6 +257,22 @@ pub fn set_cover(conn: &Connection, app_data_dir: &Path, id: &str, image_path: &
     get_book(conn, id).map_err(|e| e.to_string())
 }
 
+/// RAWY-85: persist a page-1 cover for a PDF from raw PNG bytes (the reader extracts it via the
+/// adapter's `getCover()` on first open). Stored as the book's EXTRACTED cover (`books.cover_path`,
+/// like an EPUB cover) — so "revert cover" still works and the RAWY-76 delete cascade removes it.
+pub fn set_cover_bytes(conn: &Connection, app_data_dir: &Path, id: &str, data: &[u8]) -> Result<(), String> {
+    let covers = app_data_dir.join("library").join("covers");
+    std::fs::create_dir_all(&covers).map_err(|e| e.to_string())?;
+    let dest = covers.join(format!("{id}-cover.png"));
+    std::fs::write(&dest, data).map_err(|e| format!("Couldn't write cover: {e}"))?;
+    conn.execute(
+        "UPDATE books SET cover_path=?1 WHERE id=?2",
+        rusqlite::params![dest.to_string_lossy(), id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Revert to the extracted/auto cover: delete the custom file + the 'cover' override.
 pub fn revert_cover(conn: &Connection, id: &str) -> Result<Option<BookRow>, String> {
     if let Some(path) = get_override(conn, id, "cover").map_err(|e| e.to_string())? {

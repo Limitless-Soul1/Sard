@@ -26,6 +26,13 @@ export const en = {
   "reader.error.title": "This book couldn’t be opened",
   "reader.error.retry": "Try again",
   "reader.error.back": "Back to library",
+  // RAWY-85: PDF Phase 0 — read-only "view as-is". Honest in-app limits.
+  "pdf.options": "PDF",
+  "pdf.readonly.title": "PDF — view only",
+  "pdf.readonly.body": "PDFs open for reading as-is. Themes, fonts, highlights, notes, bookmarks and Photo Mode aren’t available for PDFs yet.",
+  "pdf.direction": "Reading direction",
+  "pdf.dir.ltr": "Left → right",
+  "pdf.dir.rtl": "Right → left",
   // RAWY-70: in-body "first line" hide → a spoiler-safe placeholder with a two-step reveal.
   "reader.titleHidden": "Title hidden",
   "reader.revealTitleConfirm": "Reveal the title?",

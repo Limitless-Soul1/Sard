@@ -27,6 +27,13 @@ export const ar: Record<TKey, string> = {
   "reader.error.title": "تعذّر فتح هذا الكتاب",
   "reader.error.retry": "إعادة المحاولة",
   "reader.error.back": "العودة إلى المكتبة",
+  // RAWY-85: عرض PDF كما هو (المرحلة 0) — للقراءة فقط، مع حدود صريحة داخل التطبيق.
+  "pdf.options": "PDF",
+  "pdf.readonly.title": "PDF — للعرض فقط",
+  "pdf.readonly.body": "تُفتح ملفات PDF للقراءة كما هي. السمات والخطوط والتظليلات والملاحظات والفواصل ووضع البطاقات المصوّرة غير متاحة لملفات PDF بعد.",
+  "pdf.direction": "اتجاه القراءة",
+  "pdf.dir.ltr": "يسار ← يمين",
+  "pdf.dir.rtl": "يمين ← يسار",
   // RAWY-70: نائب "السطر الأول" المخفي — عنصر نائب آمن من الحرق مع كشف من خطوتين.
   "reader.titleHidden": "تم إخفاء العنوان",
   "reader.revealTitleConfirm": "هل تريد كشف العنوان؟",

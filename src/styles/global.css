@@ -367,6 +367,14 @@ html, body, #root {
   background: color-mix(in srgb, var(--accent) 12%, var(--paper-bg));
   border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
+/* RAWY-85: the PDF read-only note in the reader Settings drawer. */
+.sp-pdf-note {
+  margin: 12px 16px 16px; padding: 12px 14px; border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--paper-bg));
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+}
+.sp-pdf-title { font: 600 13px var(--ui-font); color: var(--text); margin-bottom: 4px; }
+.sp-pdf-body { font: 400 12px/1.55 var(--ui-font); color: var(--muted); }
 .sp-scope.unified .sp-scope-ico { background: var(--accent); }
 .sp-scope-ico {
   width: 24px; height: 24px; flex: none; border-radius: 6px; display: flex; align-items: center;

@@ -26,6 +26,7 @@ interface Props {
   basketCount: number;
   basketOpen: boolean;
   onBasket: () => void;
+  isPdf?: boolean; // RAWY-85: a PDF is read-only — hide the EPUB-only controls
 }
 
 // A small "stack of cards" glyph for the Quotes button. RAWY-66: 18→20 with the enlarged icon box.
@@ -62,6 +63,7 @@ export function ReaderChrome({
   basketCount,
   basketOpen,
   onBasket,
+  isPdf,
 }: Props) {
   const { t, lang } = useI18n();
   const pct = Math.round(fraction * 100);
@@ -84,45 +86,54 @@ export function ReaderChrome({
             <span className="rc-btn-ico"><span className="ico-lines"><span /><span /><span /></span></span>
             <span className="rc-btn-label">{t("reader.contents")}</span>
           </button>
-          <button
-            className={`rc-btn${settingsOpen && settingsSection === "text" ? " on" : ""}`}
-            onClick={onText}
-            title={t("reader.text")}
-          >
-            <span className="rc-btn-ico ico-aa">A<span>a</span></span>
-            <span className="rc-btn-label">{t("reader.text")}</span>
-          </button>
-          <button
-            className={`rc-btn${settingsOpen && settingsSection === "theme" ? " on" : ""}`}
-            onClick={onTheme}
-            title={t("theme.label")}
-          >
-            <span className="rc-btn-ico"><span className="ico-half" /></span>
-            <span className="rc-btn-label">{t("theme.label")}</span>
-          </button>
+          {/* Typography + theme are EPUB-only — hidden for a fixed-layout PDF (RAWY-85). */}
+          {!isPdf && (
+            <button
+              className={`rc-btn${settingsOpen && settingsSection === "text" ? " on" : ""}`}
+              onClick={onText}
+              title={t("reader.text")}
+            >
+              <span className="rc-btn-ico ico-aa">A<span>a</span></span>
+              <span className="rc-btn-label">{t("reader.text")}</span>
+            </button>
+          )}
+          {!isPdf && (
+            <button
+              className={`rc-btn${settingsOpen && settingsSection === "theme" ? " on" : ""}`}
+              onClick={onTheme}
+              title={t("theme.label")}
+            >
+              <span className="rc-btn-ico"><span className="ico-half" /></span>
+              <span className="rc-btn-label">{t("theme.label")}</span>
+            </button>
+          )}
+          {/* For a PDF this opens the "read-only" panel (reading direction + honest limits). */}
           <button
             className={`rc-btn${settingsOpen && settingsSection === "page" ? " on" : ""}`}
             onClick={onLayout}
-            title={t("reader.layout")}
+            title={isPdf ? t("pdf.options") : t("reader.layout")}
           >
             <span className="rc-btn-ico"><span className="ico-cols"><span /><span /></span></span>
-            <span className="rc-btn-label">{t("reader.layout")}</span>
+            <span className="rc-btn-label">{isPdf ? t("pdf.options") : t("reader.layout")}</span>
           </button>
-          {/* Bookmark (RAWY-41): toggles a saved location at the current spot; "on" when the
-              visible location is bookmarked. */}
-          <button
-            className={`rc-btn${bookmarked ? " on" : ""}`}
-            onClick={onBookmark}
-            title={bookmarked ? t("bookmark.remove") : t("bookmark.add")}
-          >
-            <span className="rc-btn-ico"><span className="ico-ribbon" /></span>
-            <span className="rc-btn-label">{t("reader.bookmark")}</span>
-          </button>
-          <span className="rc-divider" aria-hidden />
-          <button className={`rc-btn${annoOpen ? " on" : ""}`} onClick={onAnnotations} title={t("reader.notes")}>
-            <span className="rc-btn-ico"><span className="ico-note" /></span>
-            <span className="rc-btn-label">{t("reader.notes")}</span>
-          </button>
+          {/* Bookmark + Notes are CFI-based — unavailable for a PDF in Phase 0 (RAWY-85). */}
+          {!isPdf && (
+            <button
+              className={`rc-btn${bookmarked ? " on" : ""}`}
+              onClick={onBookmark}
+              title={bookmarked ? t("bookmark.remove") : t("bookmark.add")}
+            >
+              <span className="rc-btn-ico"><span className="ico-ribbon" /></span>
+              <span className="rc-btn-label">{t("reader.bookmark")}</span>
+            </button>
+          )}
+          {!isPdf && <span className="rc-divider" aria-hidden />}
+          {!isPdf && (
+            <button className={`rc-btn${annoOpen ? " on" : ""}`} onClick={onAnnotations} title={t("reader.notes")}>
+              <span className="rc-btn-ico"><span className="ico-note" /></span>
+              <span className="rc-btn-label">{t("reader.notes")}</span>
+            </button>
+          )}
           {/* Photo-card Quotes collection (RAWY-60; user-facing name "Quotes"/"اقتباسات" RAWY-66,
               internal "basket" names kept) — hidden when empty, so normal reading stays clean. */}
           {basketCount > 0 && (

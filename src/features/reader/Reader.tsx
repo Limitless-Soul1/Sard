@@ -13,7 +13,7 @@ import {
   type ReadingStyle,
   type RevealLabels,
 } from "../../reader-engine/injectedCss";
-import { bookRegister, progressGet, progressSave, settingsGet, settingsSet } from "../../lib/ipc";
+import { bookRegister, bookSetCoverPng, bookUpdate, progressGet, progressSave, settingsGet, settingsSet } from "../../lib/ipc";
 import { useI18n } from "../../i18n";
 import { extractChapterNumber, localeNum } from "../../lib/format";
 import { applyTheme, THEMES, useTheme, type ThemeId } from "../../theme";
@@ -46,6 +46,7 @@ export interface OpenTarget {
   filePath: string;
   dir?: string | null;
   cfi?: string | null; // jump-to location (RAWY-27 inbox); else resume saved progress
+  format?: string | null; // RAWY-85 — 'pdf' opens read-only (no themes/annotations); else EPUB
 }
 
 const SAVE_DEBOUNCE_MS = 500;
@@ -130,8 +131,12 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       if (stale()) return;
       const saved = await progressGet(target.id);
       if (stale()) return;
+      // RAWY-85: a PDF is fixed-layout — it has a page index, not a CFI. It resumes by FRACTION and
+      // gets none of the EPUB typography/annotation machinery.
+      const targetIsPdf = (target.format ?? "").toLowerCase() === "pdf";
       // RAWY-27: an inbox item passes a jump CFI that wins over the saved reading position.
-      const resumeCfi = target.cfi ?? saved?.cfi ?? null;
+      const resumeCfi = target.cfi ?? (targetIsPdf ? null : saved?.cfi) ?? null;
+      const resumeFraction = targetIsPdf ? (saved?.fraction ?? null) : null;
 
       // RAWY-40/43: per-book → effective = GLOBAL defaults with THIS book's PARTIAL override on
       // top, theme = override theme else global. UNIFIED → the GLOBAL style/theme, IGNORING (never
@@ -159,7 +164,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         set({ cfi, fraction, chapterLabel, chapterHref });
         if (progressTimer.current) clearTimeout(progressTimer.current);
         progressTimer.current = window.setTimeout(() => {
-          if (cfi) progressSave(bookRef.current, cfi, fraction).catch(console.error);
+          // RAWY-85: a PDF has no CFI — persist it by fraction (empty cfi) so it still resumes.
+          if (cfi || targetIsPdf) progressSave(bookRef.current, cfi ?? "", fraction).catch(console.error);
         }, SAVE_DEBOUNCE_MS);
       });
 
@@ -168,10 +174,11 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       applyTheme(THEMES[effTheme]);
       await ctrl.open(url, stageRef.current!, {
         resumeCfi,
+        resumeFraction, // RAWY-85: PDFs resume by page fraction
         style: initialStyle,
         theme: THEMES[effTheme],
         flags: { overrideBookColor: ts.overrideBookColor, hideChapterTitles: ts.hideChapterTitles, hideFirstLine: ts.hideFirstLine },
-        dir: target.dir ?? undefined,
+        dir: target.dir ?? undefined, // RAWY-85: a PDF's manual RTL override lives in books.dir too
         flow: initialStyle.flowMode, // scrolled (default) or paged — RAWY-25
         revealLabels: makeRevealLabels(), // RAWY-70
       });
@@ -183,6 +190,19 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       setHasOv(!unified && calcHasOverride(override)); // Reset is a per-book affordance
       set({ status: "ready", dir: ctrl.dir ?? "?", style: initialStyle, bookTitle: ctrl.title ?? null });
       setToc(ctrl.getToc()); // chapters panel (RAWY-21)
+
+      // RAWY-85: enrich a PDF's real title/author (PDF.js getMetadata) + a page-1 cover (getCover)
+      // ONCE — import stored only the filename + no cover. The library reflects it on next visit.
+      if (targetIsPdf) {
+        const done = await settingsGet(`pdf_meta:${target.id}`).catch(() => null);
+        if (!done && !stale()) {
+          const t = ctrl.title;
+          if (t && t.trim()) await bookUpdate(target.id, { title: t, author: ctrl.author }).catch(console.error);
+          const bytes = await ctrl.getCoverBytes();
+          if (bytes && bytes.length) await bookSetCoverPng(target.id, bytes).catch(console.error);
+          await settingsSet(`pdf_meta:${target.id}`, "1").catch(() => {});
+        }
+      }
       // Load this book's highlights/notes into the shared store (in-context layer + panel).
       useAnnotations.getState().bind(ctrl, target.id);
       await useAnnotations.getState().load();
@@ -451,6 +471,27 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     useBookmarks.getState().toggle(st.cfi, st.chapterLabel, st.fraction);
   };
 
+  // RAWY-85: PDF Phase 0 is READ-ONLY. `isPdf` gates the EPUB-only affordances (themes/fonts/
+  // annotations/Photo Mode) behind honest in-app messaging. A PDF has no spine page-progression, so
+  // the reader offers a manual reading-DIRECTION override for Arabic PDFs; changing it persists the
+  // choice (books.dir via metadata_override) and re-opens the PDF at the current page.
+  const isPdf = (initial.format ?? "").toLowerCase() === "pdf";
+  const setPdfDir = (d: "ltr" | "rtl") => {
+    if (d === dir) return;
+    bookUpdate(initial.id, { dir: d }).catch(console.error);
+    const st = useReader.getState();
+    st.set({ dir: d });
+    ctrlRef.current
+      ?.open(convertFileSrc(initial.filePath), stageRef.current!, {
+        resumeFraction: st.fraction,
+        style: st.style ?? ARABIC_DEFAULTS,
+        theme: THEMES[bookThemeId],
+        dir: d,
+        flow: "scrolled",
+      })
+      .catch(console.error);
+  };
+
   // RAWY-49: open the Photo Mode composer for a selected passage. The card starts on the book's
   // current theme + direction, with the book title/author/chapter as removable metadata.
   const openPhotoCard = (sel: SelectionInfo) => {
@@ -625,6 +666,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         onToggleHideFirstLine={() => setHideFirstLine(!hideFirstLine)}
         onJump={jumpHref}
         fraction={fraction}
+        isPdf={isPdf}
       />
 
       <AnnotationsPanel
@@ -654,6 +696,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         basketCount={basketCount}
         basketOpen={basketOpen}
         onBasket={() => setBasketOpen((v) => !v)}
+        isPdf={isPdf}
       />
 
       <SettingsPanel
@@ -670,9 +713,14 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         hasOverride={hasOv}
         onReset={resetBook}
         unified={scope === "unified"}
+        isPdf={isPdf}
+        pdfDir={dir === "rtl" ? "rtl" : "ltr"}
+        onPdfDir={setPdfDir}
       />
 
-      <AnnotationLayer ctrlRef={ctrlRef} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} />
+      {/* RAWY-85: no in-context selection toolbar (highlight/note/Photo Mode) for PDFs — they're
+          CFI-less in Phase 0, so the whole annotation layer is disabled rather than half-working. */}
+      {!isPdf && <AnnotationLayer ctrlRef={ctrlRef} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} />}
 
       <PhotoBasketTray open={basketOpen} onClose={() => setBasketOpen(false)} onCompose={composeBasket} />
 

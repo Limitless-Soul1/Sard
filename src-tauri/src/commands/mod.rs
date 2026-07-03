@@ -255,6 +255,16 @@ pub fn book_set_cover(
     library::set_cover(&conn, &app_data_dir, &id, &image_path)
 }
 
+/// RAWY-85 — set a PDF's page-1 cover from raw PNG bytes (extracted by the reader on first open).
+#[tauri::command]
+pub fn book_set_cover_png(id: String, data: Vec<u8>, state: State<AppState>) -> Result<bool, String> {
+    safe_id(&id)?;
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.db.lock().map_err(err)?;
+    library::set_cover_bytes(&conn, &app_data_dir, &id, &data)?;
+    Ok(true)
+}
+
 /// RAWY-19 — revert to the extracted/auto cover (delete the custom override + file).
 #[tauri::command]
 pub fn book_revert_cover(

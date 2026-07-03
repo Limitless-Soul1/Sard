@@ -97,6 +97,38 @@ fn collect_epubs(dir: &Path, depth: u32, out: &mut Vec<String>) {
     }
 }
 
+/// RAWY-85 (PDF Phase 0, "view as-is"): a PDF has no EPUB OPF, so this is a simpler branch —
+/// content-hash dedup, copy to managed storage as `<id>.pdf`, and store `format='pdf'` with the
+/// filename as a placeholder title. The real title/author (PDF.js `getMetadata`) and a page-1 cover
+/// (`getCover`) are enriched from the reader the first time the PDF is opened. `dir` is NULL (a PDF
+/// has no spine page-progression); the reader offers a manual RTL override for Arabic PDFs.
+fn import_pdf(conn: &Connection, app_data_dir: &Path, name: &str, bytes: &[u8]) -> ImportResult {
+    let id = hex_sha256(bytes);
+    if let Ok(Some(existing)) = book_title(conn, &id) {
+        return ImportResult::of("duplicate", &id, &existing, Some("Already in your library".into()));
+    }
+    let title = name.to_string();
+    let library_dir = app_data_dir.join("library");
+    if let Err(e) = std::fs::create_dir_all(library_dir.join("covers")) {
+        return ImportResult::of("error", &id, &title, Some(format!("Storage error: {e}")));
+    }
+    let managed = library_dir.join(format!("{id}.pdf"));
+    if let Err(e) = std::fs::write(&managed, bytes) {
+        return ImportResult::of("error", &id, &title, Some(format!("Couldn't store the file: {e}")));
+    }
+    let size = bytes.len() as i64;
+    let res = conn.execute(
+        "INSERT INTO books(id, file_path, file_hash, format, title, author, language, dir, \
+                           cover_path, size_bytes, added_at, last_opened_at) \
+         VALUES(?1,?2,?3,'pdf',?4,NULL,NULL,NULL,NULL,?5,?6,NULL)",
+        rusqlite::params![id, managed.to_string_lossy(), id, title, size, now_unix()],
+    );
+    match res {
+        Ok(_) => ImportResult::of("imported", &id, &title, None),
+        Err(e) => ImportResult::of("error", &id, &title, Some(format!("Database error: {e}"))),
+    }
+}
+
 fn import_one(conn: &Connection, app_data_dir: &Path, src: &str) -> ImportResult {
     let name = file_stem(src);
     let bytes = match std::fs::read(src) {
@@ -105,8 +137,9 @@ fn import_one(conn: &Connection, app_data_dir: &Path, src: &str) -> ImportResult
     };
 
     // Format detection by CONTENT (magic bytes), not the extension.
+    // RAWY-85: PDFs are accepted (Phase 0 "view as-is") via a simpler branch — no EPUB OPF.
     if bytes.starts_with(b"%PDF") {
-        return ImportResult::of("unsupported", "", &name, Some("PDF support is coming".into()));
+        return import_pdf(conn, app_data_dir, &name, &bytes);
     }
     if !bytes.starts_with(b"PK\x03\x04") {
         return ImportResult::of("unsupported", "", &name, Some("Not an EPUB file".into()));

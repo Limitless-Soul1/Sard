@@ -28,7 +28,7 @@ function Root() {
       await settingsSet("dev_open", "");
       const books = await libraryListBooks({ sort: "date_added", order: "desc" });
       const b = books.find((x) => x.id === id);
-      if (b) setOpen({ id: b.id, filePath: b.file_path, dir: b.dir });
+      if (b) setOpen({ id: b.id, filePath: b.file_path, dir: b.dir, format: b.format });
     })().catch(console.error);
   }, []);
 

@@ -41,6 +41,7 @@ export interface OpenTarget {
   filePath: string;
   dir?: string | null;
   cfi?: string | null; // jump-to location (RAWY-27 inbox); else resume saved progress
+  format?: string | null; // RAWY-85 — 'pdf' opens read-only (no themes/annotations); else EPUB
 }
 
 type View = "grid" | "list" | "rows";
@@ -319,7 +320,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     setMenu(null);
     setConfirmShelf(null); // RAWY-76: navigating away backs out of a pending shelf-delete confirm
   };
-  const open = (b: BookRow) => onOpen({ id: b.id, filePath: b.file_path, dir: b.dir });
+  const open = (b: BookRow) => onOpen({ id: b.id, filePath: b.file_path, dir: b.dir, format: b.format });
 
   // Shelf writes (RAWY-31): each returns the refreshed shelf list (names + counts).
   const commitCreate = async () => {

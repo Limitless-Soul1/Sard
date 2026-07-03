@@ -11,7 +11,7 @@ import { localeDigits } from "../../lib/format";
 import type { TKey } from "../../i18n/locales/en";
 import { Hoopoe } from "../library/Hoopoe";
 import { settingsGet, settingsSet } from "../../lib/ipc";
-import { FONT_CATALOGUE, useFonts } from "../../lib/fonts";
+import { FONT_CATALOGUE, UI_SCALE_MAX, UI_SCALE_MIN, useFonts } from "../../lib/fonts";
 import { BOOKMARK_COLORS, BOOKMARK_SHAPES, BOOKMARK_SIZE_MAX, BOOKMARK_SIZE_MIN, useBookmarkStyle } from "../../lib/bookmarkStyle";
 import { BookmarkShape } from "../reader/BookmarkShape";
 import { useStyleScope } from "../../lib/styleScope";
@@ -258,7 +258,7 @@ function FontPickRow({ faceFamily, name, sub, value, onChange, children }: {
 
 function FontsSection() {
   const { t, lang } = useI18n();
-  const { uiFont, uiWeight, custom, setUiFont, setUiWeight, removeFont } = useFonts();
+  const { uiFont, uiWeight, uiScale, custom, setUiFont, setUiWeight, setUiScale, removeFont } = useFonts();
   const [style, setStyle] = useState<ReadingStyle | null>(null);
 
   useEffect(() => {
@@ -329,6 +329,12 @@ function FontsSection() {
           <div className="gs-wblock">
             <div className="gs-fc-cap">{t("fonts.weight")}</div>
             <WeightSeg value={uiWeight} avail={appAvail} onPick={setUiWeight} face={appStack} />
+          </div>
+          {/* RAWY-98: the manual UI size (--ui-user). Composes with the auto viewport baseline;
+              scales chrome only — never book text. */}
+          <div className="gs-sblock">
+            <div className="gs-slider-head"><span className="gs-fc-cap">{t("fonts.size")}</span><span className="gs-slider-val">{localeDigits(`${Math.round(uiScale * 100)}%`, lang)}</span></div>
+            <input className="gs-slider" type="range" min={UI_SCALE_MIN} max={UI_SCALE_MAX} step={0.05} value={uiScale} onChange={(e) => setUiScale(Number(e.target.value))} />
           </div>
           <div className="gs-fprev">
             <div className="gs-fc-cap">{t("fonts.preview")}</div>

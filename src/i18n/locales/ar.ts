@@ -400,6 +400,7 @@ export const ar: Record<TKey, string> = {
   "fonts.title": "الخطوط والمكتبة",
   "fonts.appwideShort": "على مستوى التطبيق",
   "fonts.change": "تغيير",
+  "fonts.size": "الحجم",
   "fonts.app.rowDefault": "عربي + لاتيني (IBM Plex Sans) · افتراضي",
   "fonts.app": "خط الواجهة",
   "fonts.app.sub": "العناوين والقوائم والأزرار — الواجهة كلها. ليس نصّ الكتاب.",

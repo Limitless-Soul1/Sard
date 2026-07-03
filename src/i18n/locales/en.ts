@@ -400,6 +400,7 @@ export const en = {
   "fonts.title": "Fonts & Library",
   "fonts.appwideShort": "applies app-wide",
   "fonts.change": "Change",
+  "fonts.size": "Size",
   "fonts.app.rowDefault": "Arabic + Latin (IBM Plex Sans) · default",
   "fonts.app": "App font",
   "fonts.app.sub": "Titles, menus, buttons — the whole interface. Not book text.",

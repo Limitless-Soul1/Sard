@@ -14,7 +14,13 @@ import { setImportedFontUrlResolver } from "../reader-engine/injectedCss";
 
 const UI_FONT_KEY = "ui_font";
 const UI_WEIGHT_KEY = "ui_weight";
+const UI_SCALE_KEY = "ui_scale";
 const CUSTOM_STYLE_ID = "sard-custom-fonts";
+
+// RAWY-98: the manual UI-size factor (--ui-user) composes with global.css's auto viewport baseline.
+export const UI_SCALE_MIN = 0.8;
+export const UI_SCALE_MAX = 1.4;
+export const UI_SCALE_DEFAULT = 1.0;
 
 // RAWY-91: the App-font default (mirrors global.css --ui-font). A user choice is PREPENDED; the Plex
 // per-script fallbacks always remain — Latin → IBM Plex Sans (SardUILatin), Arabic → IBM Plex Sans
@@ -72,6 +78,16 @@ function applyUiWeightVar(weight: number): void {
   else root.style.removeProperty("--ui-weight");
 }
 
+// RAWY-98: the manual UI-size factor → the --ui-user var (composes with the auto viewport baseline
+// in global.css). Chrome-only: the book iframe is a separate document and never sees this var.
+function applyUiScaleVar(scale: number): void {
+  const root = document.documentElement;
+  if (scale && scale !== 1) root.style.setProperty("--ui-user", String(scale));
+  else root.style.removeProperty("--ui-user");
+}
+const clampScale = (n: number): number =>
+  Number.isFinite(n) && n > 0 ? Math.min(UI_SCALE_MAX, Math.max(UI_SCALE_MIN, n)) : UI_SCALE_DEFAULT;
+
 function injectCustomFaces(fonts: CustomFont[]): void {
   const css = fonts
     .map(
@@ -93,10 +109,12 @@ function injectCustomFaces(fonts: CustomFont[]): void {
 interface FontsState {
   uiFont: string | null; // chosen chrome family (null = default stack)
   uiWeight: number; // App-font weight (400/500/700)
+  uiScale: number; // manual UI size factor (0.8..1.4) — composes with the auto viewport baseline
   custom: CustomFont[];
   ready: boolean;
   setUiFont: (family: string | null) => void;
   setUiWeight: (weight: number) => void;
+  setUiScale: (scale: number) => void;
   importFont: () => Promise<CustomFont | null>;
   removeFont: (id: string) => Promise<void>;
   /** Built-in chrome fonts + every imported font, as selectable UI-font choices. */
@@ -106,6 +124,7 @@ interface FontsState {
 export const useFonts = create<FontsState>((set, get) => ({
   uiFont: null,
   uiWeight: 400,
+  uiScale: UI_SCALE_DEFAULT,
   custom: [],
   ready: false,
   setUiFont: (family) => {
@@ -117,6 +136,12 @@ export const useFonts = create<FontsState>((set, get) => ({
     applyUiWeightVar(weight);
     set({ uiWeight: weight });
     settingsSet(UI_WEIGHT_KEY, String(weight)).catch(console.error);
+  },
+  setUiScale: (scale) => {
+    const s = clampScale(scale);
+    applyUiScaleVar(s);
+    set({ uiScale: s });
+    settingsSet(UI_SCALE_KEY, String(s)).catch(console.error);
   },
   importFont: async () => {
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -157,16 +182,19 @@ setImportedFontUrlResolver(customFontUrl);
 
 /** Load + apply the persisted UI font and register imported @font-faces. Call once at startup. */
 export async function initFonts(): Promise<void> {
-  const [font, weightRaw, list] = await Promise.all([
+  const [font, weightRaw, scaleRaw, list] = await Promise.all([
     settingsGet(UI_FONT_KEY).catch(() => null),
     settingsGet(UI_WEIGHT_KEY).catch(() => null),
+    settingsGet(UI_SCALE_KEY).catch(() => null),
     fontsList().catch(() => [] as CustomFont[]),
   ]);
   const custom = list ?? [];
   injectCustomFaces(custom);
   const uiFont = font && font.trim() ? font : null;
   const uiWeight = Number(weightRaw) === 500 || Number(weightRaw) === 700 ? Number(weightRaw) : 400;
+  const uiScale = clampScale(Number(scaleRaw));
   applyUiFontVar(uiFont);
   applyUiWeightVar(uiWeight);
-  useFonts.setState({ uiFont, uiWeight, custom, ready: true });
+  applyUiScaleVar(uiScale);
+  useFonts.setState({ uiFont, uiWeight, uiScale, custom, ready: true });
 }

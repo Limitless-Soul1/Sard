@@ -203,6 +203,10 @@ const BOOK_FAMILY: Record<string, string> = {
   literata: "Literata", sourceSerif: "SourceSerif4", inter: "Inter", plexLatin: "SardUILatin",
 };
 const bookFamily = (key: string) => `"${BOOK_FAMILY[key] ?? key}"`;
+// RAWY-94: the Book-card preview px that MIRRORS the size slider. Maps the book-default zoom range
+// (0.8..2.5, the same value applied inside books via injectedCss) into a card-safe 13..26px so the
+// preview visibly tracks the slider without overflowing the card. Presentation only — never written.
+const bookPreviewPx = (zoom: number) => Math.round(13 + ((Math.max(0.8, Math.min(2.5, zoom)) - 0.8) / 1.7) * 13);
 
 // A weight segmented control (design: each label rendered in the target face AT that weight, so the
 // control previews the weight). Marks weights the chosen face does NOT ship (honest, RAWY-36 — e.g.
@@ -359,7 +363,7 @@ function FontsSection() {
             </div>
             <div className="gs-fprev">
               <div className="gs-fc-cap">{t("fonts.preview")}</div>
-              <div className="gs-fprev-text" style={{ fontWeight: style.fontWeight }}>
+              <div className="gs-fprev-text" style={{ fontWeight: style.fontWeight, fontSize: bookPreviewPx(style.zoom) }}>
                 <div dir="rtl" style={{ fontFamily: bookFamily(style.arabicFont) }}>{t("fonts.book.previewAr")}</div>
                 <div dir="ltr" style={{ fontFamily: bookFamily(style.latinFont) }}>{t("fonts.book.previewEn")}</div>
               </div>

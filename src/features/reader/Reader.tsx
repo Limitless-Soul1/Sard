@@ -93,6 +93,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const [bookThemeId, setBookThemeId] = useState<ThemeId>(useTheme.getState().bookThemeId);
   const [hasOv, setHasOv] = useState(false);
   const [photoCard, setPhotoCard] = useState<CardData | null>(null); // RAWY-49 Photo Mode composer
+  const [devCardFont, setDevCardFont] = useState<string | null>(null); // RAWY-81 DEV capture only
   const [basketOpen, setBasketOpen] = useState(false); // RAWY-60 passages tray
   const basketCount = usePhotoBasket((s) => s.passages.length);
 
@@ -313,6 +314,24 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         else if (!Number.isNaN(Number(s))) await ctrl.goToFraction(Number(s));
         setTimeout(() => settingsSet("dev_diag", ctrl.diagnose()).catch(() => {}), 500);
       }, 350);
+    });
+    // RAWY-81 (#1): open the Photo composer on a sample passage with a preset quote font, so the
+    // independent-quote-font control can be captured (the picker can't be driven headless). The
+    // preset rides in as `initialQuoteFont` — the SAME path the gallery "Edit" uses to restore it.
+    settingsGet("dev_photocard").then((v) => {
+      if (!v) return;
+      const rtl = useReader.getState().dir === "rtl";
+      setDevCardFont(v === "default" ? null : v);
+      setPhotoCard({
+        quote: rtl
+          ? "الكُتبُ بساتينُ العقلاء، ومن قرأ فيها أينعت في نفسه ثمارُ الحكمة."
+          : "The quote font is now its own choice — set the card’s face apart from the book.",
+        dir: rtl ? "rtl" : "ltr",
+        bookTitle: useReader.getState().bookTitle ?? undefined,
+        author: rtl ? "أحمد شوقي" : "Lewis Carroll",
+        chapterLabel: useReader.getState().chapterLabel ?? undefined,
+        date: new Date(),
+      });
     });
   }, [status]);
 
@@ -642,6 +661,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         <PhotoComposer
           data={photoCard}
           initialThemeId={bookThemeId}
+          initialQuoteFont={devCardFont}
           lang={lang}
           onClose={() => setPhotoCard(null)}
         />

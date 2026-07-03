@@ -171,6 +171,9 @@ export const en = {
   "photo.subtitleMulti": "{n} passages · card font follows the book",
   "photo.paper": "PAPER",
   "photo.format": "FORMAT",
+  // RAWY-81 (#1): the quote's own font, independent of the book's font.
+  "photo.quoteFont": "QUOTE FONT",
+  "photo.quoteFontDefault": "Book font",
   "photo.show": "SHOW ON CARD",
   "photo.meta.title": "Book title",
   "photo.meta.author": "Author",

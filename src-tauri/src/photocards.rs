@@ -22,6 +22,9 @@ pub struct PhotoCard {
     /// JSON array of { text, chapterLabel } when the card collects >1 passage (RAWY-60); NULL for
     /// a single-passage card (which uses `quote`). Lets "Edit" restore the full collection.
     pub passages: Option<String>,
+    /// RAWY-81 (#1): the quote's own font key (built-in family key or imported family name); NULL =
+    /// follow the book's script font. Lets "Edit" restore the chosen quote font.
+    pub quote_font: Option<String>,
     pub created_at: i64,
     /// Absolute path to the stored PNG (served to the UI via the asset protocol).
     pub image_path: String,
@@ -39,6 +42,7 @@ pub struct SaveMeta {
     pub theme_id: Option<String>,
     pub quote: Option<String>,
     pub passages: Option<String>,
+    pub quote_font: Option<String>,
     pub created_at: i64,
 }
 
@@ -64,8 +68,8 @@ pub fn save(
     // INSERT OR REPLACE so an "Edit" re-save with the same id overwrites the row (RAWY-57).
     conn.execute(
         "INSERT OR REPLACE INTO photo_cards \
-         (id, book_id, book_title, author, chapter_label, cfi, format, theme_id, quote, passages, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+         (id, book_id, book_title, author, chapter_label, cfi, format, theme_id, quote, passages, quote_font, created_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
         rusqlite::params![
             meta.id,
             meta.book_id,
@@ -77,6 +81,7 @@ pub fn save(
             meta.theme_id,
             meta.quote,
             meta.passages,
+            meta.quote_font,
             meta.created_at,
         ],
     )
@@ -93,6 +98,7 @@ pub fn save(
         theme_id: meta.theme_id,
         quote: meta.quote,
         passages: meta.passages,
+        quote_font: meta.quote_font,
         created_at: meta.created_at,
     })
 }
@@ -101,7 +107,7 @@ pub fn save(
 pub fn list(conn: &Connection, app_data_dir: &Path) -> Result<Vec<PhotoCard>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, book_id, book_title, author, chapter_label, cfi, format, theme_id, quote, passages, created_at \
+            "SELECT id, book_id, book_title, author, chapter_label, cfi, format, theme_id, quote, passages, quote_font, created_at \
              FROM photo_cards ORDER BY created_at DESC",
         )
         .map_err(|e| e.to_string())?;
@@ -120,7 +126,8 @@ pub fn list(conn: &Connection, app_data_dir: &Path) -> Result<Vec<PhotoCard>, St
                 theme_id: r.get(7)?,
                 quote: r.get(8)?,
                 passages: r.get(9)?,
-                created_at: r.get(10)?,
+                quote_font: r.get(10)?,
+                created_at: r.get(11)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -135,4 +142,47 @@ pub fn delete(conn: &Connection, app_data_dir: &Path, id: &str) -> Result<(), St
     let path = app_data_dir.join("photocards").join(format!("{id}.png"));
     let _ = fs::remove_file(path); // best-effort; a missing file is fine
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::migrations;
+
+    // RAWY-81 (#1): a card's quote font survives save → list (so "Edit" restores it), and a null
+    // font (the book-font default) round-trips too.
+    #[test]
+    fn quote_font_round_trips() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrations::run(&conn).unwrap();
+        let tmp = std::env::temp_dir().join("sard_rawy81_cards");
+        let _ = fs::remove_dir_all(&tmp);
+
+        let meta = |id: &str, qf: Option<&str>, at: i64| SaveMeta {
+            id: id.into(),
+            book_id: None,
+            book_title: Some("Book".into()),
+            author: None,
+            chapter_label: None,
+            cfi: None,
+            format: Some("portrait".into()),
+            theme_id: Some("ivory".into()),
+            quote: Some("hello".into()),
+            passages: None,
+            quote_font: qf.map(|s| s.to_string()),
+            created_at: at,
+        };
+
+        let saved = save(&conn, &tmp, meta("card1", Some("arefRuqaa"), 100), b"png").unwrap();
+        assert_eq!(saved.quote_font.as_deref(), Some("arefRuqaa"));
+        save(&conn, &tmp, meta("card2", None, 200), b"png").unwrap(); // default (book font)
+
+        let listed = list(&conn, &tmp).unwrap();
+        let c1 = listed.iter().find(|c| c.id == "card1").unwrap();
+        let c2 = listed.iter().find(|c| c.id == "card2").unwrap();
+        assert_eq!(c1.quote_font.as_deref(), Some("arefRuqaa"), "chosen font must survive save→list");
+        assert!(c2.quote_font.is_none(), "null (book-font) must round-trip as null");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
 }

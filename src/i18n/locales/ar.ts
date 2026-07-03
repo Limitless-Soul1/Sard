@@ -172,6 +172,9 @@ export const ar: Record<TKey, string> = {
   "photo.subtitleMulti": "{n} مقاطع · خط البطاقة يتبع الكتاب",
   "photo.paper": "الورق",
   "photo.format": "المقاس",
+  // RAWY-81 (#1): خط الاقتباس مستقلّ عن خط الكتاب.
+  "photo.quoteFont": "خط الاقتباس",
+  "photo.quoteFontDefault": "خط الكتاب",
   "photo.show": "إظهار على البطاقة",
   "photo.meta.title": "عنوان الكتاب",
   "photo.meta.author": "المؤلف",

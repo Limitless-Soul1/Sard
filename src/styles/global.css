@@ -1712,6 +1712,16 @@ html, body, #root {
 .pc-format.on .pc-format-ico { border-color: var(--pc-accent); background: color-mix(in srgb, var(--pc-accent) 12%, transparent); }
 .pc-format-label { font: 500 10px "Inter", "SardUIArabic", sans-serif; color: var(--pc-muted); }
 .pc-format.on .pc-format-label { color: var(--pc-accent); font-weight: 600; }
+/* RAWY-81 (#1): the independent quote-font picker — a themed native select. */
+.pc-select-wrap { position: relative; }
+.pc-select {
+  width: 100%; appearance: none; -webkit-appearance: none; cursor: pointer;
+  border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text);
+  font: 500 13px "Inter", "SardUIArabic", sans-serif; padding: 10px 34px 10px 12px; border-radius: 9px;
+}
+.pc-select:focus-visible { outline: none; border-color: var(--pc-accent); }
+.pc-select option { background: var(--pc-panel-bg); color: var(--pc-text); }
+.pc-select-caret { position: absolute; inset-inline-end: 12px; top: 50%; transform: translateY(-50%); color: var(--pc-muted); pointer-events: none; font-size: 11px; }
 .pc-toggles { display: flex; flex-direction: column; gap: 13px; }
 .pc-toggle { display: flex; align-items: center; justify-content: space-between; font: 500 13px "Inter", "SardUIArabic", sans-serif; color: var(--pc-text); }
 .pc-switch { width: 36px; height: 21px; border: none; background: var(--pc-border); border-radius: 21px; position: relative; cursor: pointer; padding: 0; transition: background .15s; }

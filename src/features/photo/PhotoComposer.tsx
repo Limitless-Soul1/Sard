@@ -13,6 +13,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { photocardSave } from "../../lib/ipc";
 import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
+import { useFonts } from "../../lib/fonts";
 import { THEMES, THEME_ORDER, type ThemeId } from "../../theme";
 import {
   cardSeparator,
@@ -30,6 +31,27 @@ import {
 const STAGE_MAX_W = 520;
 const STAGE_MAX_H = 468;
 
+// RAWY-81 (#1): the quote's own font, chosen independently of the book. Keys map to the
+// app-document @font-face families (global.css) — the card lives in the app document, not the
+// reader iframe. `null` = follow the book's script font (the prior behaviour). Imported fonts
+// (RAWY-44) are appended at render time; they're registered as app-document faces by lib/fonts.
+const CARD_FONTS: { key: string; label: string; family: string }[] = [
+  { key: "literata", label: "Literata", family: "'Literata', serif" },
+  { key: "sourceSerif", label: "Source Serif", family: "'SourceSerif4', serif" },
+  { key: "amiri", label: "Amiri", family: "'Amiri', serif" },
+  { key: "arefRuqaa", label: "Aref Ruqaa", family: "'ArefRuqaa', serif" },
+  { key: "inter", label: "Inter", family: "'Inter', sans-serif" },
+];
+
+function resolveCardFont(key: string | null, arabic: boolean, custom: { family_name: string }[]): string {
+  const bookFont = arabic ? "'Amiri', serif" : "'Literata', serif";
+  if (!key) return bookFont; // default → the book's script font (unchanged look)
+  const builtin = CARD_FONTS.find((f) => f.key === key);
+  if (builtin) return builtin.family;
+  if (custom.some((c) => c.family_name === key)) return `'${key}', serif`; // an imported family
+  return bookFont; // an unknown/removed key → safe fallback
+}
+
 // ---- the card itself (shared by the preview + the export; rendered at natural px) ----
 function PhotoCard({
   data,
@@ -37,6 +59,7 @@ function PhotoCard({
   themeId,
   format,
   lang,
+  quoteFont,
   cardRef,
 }: {
   data: CardData;
@@ -44,6 +67,7 @@ function PhotoCard({
   themeId: ThemeId;
   format: CardFormat;
   lang: string;
+  quoteFont: string; // RAWY-81 (#1): the quote's own resolved CSS font-family (book font by default)
   cardRef?: React.Ref<HTMLDivElement>;
 }) {
   const dim = formatDims(format);
@@ -130,7 +154,7 @@ function PhotoCard({
           <div
             ref={pRef as React.RefObject<HTMLDivElement>}
             className="pc-quote pc-quote-multi"
-            style={{ fontFamily: bookFont, lineHeight: lineH, color: c.text, textAlign: arabic ? "center" : "start" }}
+            style={{ fontFamily: quoteFont, lineHeight: lineH, color: c.text, textAlign: arabic ? "center" : "start" }}
           >
             {passages.map((p, i) => (
               <div key={i} className="pc-passage-block">
@@ -163,7 +187,7 @@ function PhotoCard({
           <p
             ref={pRef as React.RefObject<HTMLParagraphElement>}
             className="pc-quote"
-            style={{ fontFamily: bookFont, fontWeight: 400, lineHeight: lineH, color: c.text, textAlign: arabic ? "center" : "start" }}
+            style={{ fontFamily: quoteFont, fontWeight: 400, lineHeight: lineH, color: c.text, textAlign: arabic ? "center" : "start" }}
           >
             {passages[0].text}
           </p>
@@ -229,6 +253,7 @@ export function PhotoComposer({
   initialThemeId,
   initialFormat,
   initialMeta,
+  initialQuoteFont,
   editId,
   lang,
   onClose,
@@ -237,6 +262,7 @@ export function PhotoComposer({
   initialThemeId: ThemeId;
   initialFormat?: CardFormat; // RAWY-57: reopen a saved card in the same format…
   initialMeta?: CardMeta;
+  initialQuoteFont?: string | null; // RAWY-81 (#1): reopen with the card's saved quote font
   editId?: string; // …and re-save over the same card (Edit) instead of creating a new one
   lang: string;
   onClose: () => void;
@@ -245,6 +271,10 @@ export function PhotoComposer({
   const [themeId, setThemeId] = useState<ThemeId>(initialThemeId);
   const [format, setFormat] = useState<CardFormat>(initialFormat ?? "portrait");
   const [meta, setMeta] = useState<CardMeta>(initialMeta ?? DEFAULT_META);
+  // RAWY-81 (#1): the quote's own font key — null means "follow the book font" (unchanged look).
+  const [quoteFont, setQuoteFont] = useState<string | null>(initialQuoteFont ?? null);
+  const customFonts = useFonts((s) => s.custom);
+  const resolvedQuoteFont = resolveCardFont(quoteFont, data.dir === "rtl", customFonts);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -330,6 +360,7 @@ export function PhotoComposer({
         // A multi-passage card (RAWY-60) persists its passages so "Edit" restores the full
         // collection; a single-passage card leaves this null and rides on `quote` as before.
         passages: data.passages && data.passages.length > 1 ? JSON.stringify(data.passages) : null,
+        quoteFont, // RAWY-81 (#1): persist the chosen quote font so Edit restores it
         createdAt: editId ? Math.floor(data.date.getTime() / 1000) : Math.floor(Date.now() / 1000),
         data: bytes,
       });
@@ -352,7 +383,7 @@ export function PhotoComposer({
           <div className="pc-stage-label">{FORMATS.find((f) => f.key === format)!.label} · {dim.w}×{dim.h}</div>
           <div className="pc-scale" style={{ width: natW * scale, height: natH * scale }}>
             <div style={{ transform: `scale(${scale})`, transformOrigin: "top left", width: natW, height: natH }}>
-              <PhotoCard data={data} meta={meta} themeId={themeId} format={format} lang={lang} cardRef={cardRef} />
+              <PhotoCard data={data} meta={meta} themeId={themeId} format={format} lang={lang} quoteFont={resolvedQuoteFont} cardRef={cardRef} />
             </div>
           </div>
           {toast && <div className="pc-toast">{toast}</div>}
@@ -400,6 +431,28 @@ export function PhotoComposer({
                     <span className="pc-format-label">{t(`fmt.${f.key}`)}</span>
                   </button>
                 ))}
+              </div>
+            </div>
+
+            <div className="pc-group">
+              <div className="pc-group-label">{t("photo.quoteFont")}</div>
+              <div className="pc-select-wrap">
+                <select
+                  className="pc-select"
+                  value={quoteFont ?? ""}
+                  onChange={(e) => setQuoteFont(e.target.value || null)}
+                >
+                  <option value="">{t("photo.quoteFontDefault")}</option>
+                  {CARD_FONTS.map((f) => (
+                    <option key={f.key} value={f.key}>{f.label}</option>
+                  ))}
+                  {customFonts.map((c) => (
+                    <option key={c.family_name} value={c.family_name}>
+                      {c.family_name} · {t("gs.imported")}
+                    </option>
+                  ))}
+                </select>
+                <span className="pc-select-caret" aria-hidden>▾</span>
               </div>
             </div>
 

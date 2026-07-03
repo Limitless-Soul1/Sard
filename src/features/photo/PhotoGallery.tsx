@@ -240,6 +240,7 @@ export function PhotoGallery() {
           initialThemeId={validTheme(editing.theme_id) ?? useTheme.getState().bookThemeId}
           initialFormat={validFormat(editing.format)}
           initialMeta={DEFAULT_META}
+          initialQuoteFont={editing.quote_font}
           editId={editing.id}
           lang={lang}
           onClose={() => { setEditing(null); load(); }}

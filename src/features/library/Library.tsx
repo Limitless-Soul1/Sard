@@ -190,6 +190,18 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     toastTimer.current = window.setTimeout(() => setToast(null), 3600);
   }, []);
 
+  // RAWY-81 (#3): after a SINGLE new book is imported, surface its Edit dialog (rename / cover) so
+  // the user can fix it up right away — a dismissible modal, never forced. A batch (>1 imported) or
+  // a pure-duplicate import is left alone (just the summary toast): a bulk add isn't a moment to
+  // focus on one book. Fetched unfiltered so the new book is found regardless of the active filter.
+  const surfaceEditForNew = useCallback(async (results: ImportResult[]) => {
+    const imported = results.filter((r) => r.status === "imported");
+    if (imported.length !== 1) return;
+    const all = await libraryListBooks({ sort: "date_added", order: "desc" }).catch(() => [] as BookRow[]);
+    const row = all.find((b) => b.id === imported[0].id);
+    if (row) setEditing(row);
+  }, []);
+
   // Import a batch of paths through the real Rust pipeline, then refresh + summarise.
   const runImport = useCallback(
     async (paths: string[]) => {
@@ -200,13 +212,14 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         loadBooks();
         loadShelves();
         flashToast(summarize(results, t, lang));
+        await surfaceEditForNew(results);
       } catch (e) {
         flashToast(String(e));
       } finally {
         setImporting(false);
       }
     },
-    [importing, loadBooks, loadShelves, flashToast, t],
+    [importing, loadBooks, loadShelves, flashToast, t, lang, surfaceEditForNew],
   );
   useEffect(() => {
     runImportRef.current = (paths) => void runImport(paths);
@@ -239,13 +252,14 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         loadBooks();
         loadShelves();
         flashToast(summarize(results, t, lang));
+        await surfaceEditForNew(results);
       } finally {
         setImporting(false);
       }
     } catch (e) {
       flashToast(String(e));
     }
-  }, [importing, loadBooks, loadShelves, flashToast, t, lang]);
+  }, [importing, loadBooks, loadShelves, flashToast, t, lang, surfaceEditForNew]);
 
   // DEV: import a `;`-separated path list from the `dev_import` setting once (for capture/
   // verification, since PrintWindow can't drive a live OS drag), then clear it. RAWY-80 adds

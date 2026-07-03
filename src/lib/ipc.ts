@@ -311,6 +311,7 @@ export interface PhotoCardRow {
   theme_id: string | null;
   quote: string | null;
   passages: string | null; // JSON array of { text, chapterLabel } for a multi-passage card (RAWY-60)
+  quote_font: string | null; // RAWY-81 — the quote's own font key; null = follow the book font
   created_at: number;
   image_path: string; // absolute path to the stored PNG (load via convertFileSrc)
 }
@@ -326,6 +327,7 @@ export const photocardSave = (args: {
   themeId?: string | null;
   quote?: string | null;
   passages?: string | null;
+  quoteFont?: string | null;
   createdAt: number;
   data: number[];
 }): Promise<PhotoCardRow> =>
@@ -340,6 +342,7 @@ export const photocardSave = (args: {
     themeId: args.themeId ?? null,
     quote: args.quote ?? null,
     passages: args.passages ?? null,
+    quoteFont: args.quoteFont ?? null,
     createdAt: args.createdAt,
     data: args.data,
   });

@@ -200,6 +200,9 @@ export const bookSetCover = (id: string, imagePath: string): Promise<BookRow | n
 export const bookRevertCover = (id: string): Promise<BookRow | null> =>
   invoke<BookRow | null>("book_revert_cover", { id });
 
+/** RAWY-76 — delete a book and cascade ALL related rows + files (zero orphans). `true` if it existed. */
+export const bookDelete = (id: string): Promise<boolean> => invoke<boolean>("book_delete", { id });
+
 // ---- Highlights + notes (RAWY-20) -----------------------------------------
 
 // A highlight colour is a semantic slot name (adapts per theme) OR a literal #hex (custom).

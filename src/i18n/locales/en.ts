@@ -68,7 +68,10 @@ export const en = {
   "lib.shelf.namePlaceholder": "Shelf name",
   "lib.shelf.rename": "Rename",
   "lib.shelf.delete": "Delete shelf",
+  "lib.shelf.deleteConfirm": "Delete this shelf? Your books stay in the library.",
+  "lib.shelf.deleteYes": "Delete",
   "lib.shelf.deleted": "Shelf “{name}” deleted — its books are still in your library.",
+  "lib.book.deleted": "“{title}” deleted — book and all its data removed.",
   "lib.shelfEmpty.title": "This shelf is empty",
   "lib.shelfEmpty.hint": "Open a book’s ⋯ menu and pick this shelf to add it.",
   "lib.shelfCount": "{n} books",
@@ -138,6 +141,11 @@ export const en = {
   "edit.fitDefault": "Default",
   "edit.save": "Save",
   "edit.cancel": "Cancel",
+  // RAWY-76: delete a book (cascades all its data) — a deliberate two-step confirm.
+  "edit.delete": "Delete book",
+  "edit.deleteConfirm": "Delete this book and all its highlights, notes, bookmarks, and cards? This can’t be undone.",
+  "edit.deleteYes": "Delete",
+  "edit.deleteKeep": "Keep",
 
   // Highlights & notes (RAWY-20)
   "hl.note": "Note",

@@ -253,6 +253,16 @@ pub fn book_revert_cover(
     library::revert_cover(&conn, &id)
 }
 
+/// RAWY-76 — delete a book and cascade ALL related rows + files (zero orphans). Other books intact.
+/// `safe_id` guards the id before it's spliced into a settings key / filenames.
+#[tauri::command]
+pub fn book_delete(id: String, state: State<AppState>) -> Result<bool, String> {
+    safe_id(&id)?;
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.db.lock().map_err(err)?;
+    library::delete_book(&conn, &app_data_dir, &id)
+}
+
 // ---- Highlights + notes (RAWY-20) ----------------------------------------
 
 #[tauri::command]

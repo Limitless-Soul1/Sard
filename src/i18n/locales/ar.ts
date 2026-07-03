@@ -69,7 +69,10 @@ export const ar: Record<TKey, string> = {
   "lib.shelf.namePlaceholder": "اسم الرفّ",
   "lib.shelf.rename": "إعادة تسمية",
   "lib.shelf.delete": "حذف الرفّ",
+  "lib.shelf.deleteConfirm": "حذف هذا الرفّ؟ تبقى كتبك في المكتبة.",
+  "lib.shelf.deleteYes": "حذف",
   "lib.shelf.deleted": "حُذف الرفّ «{name}» — كتبه لا تزال في مكتبتك.",
+  "lib.book.deleted": "حُذف «{title}» — الكتاب وكل بياناته.",
   "lib.shelfEmpty.title": "هذا الرفّ فارغ",
   "lib.shelfEmpty.hint": "افتح قائمة ⋯ لكتابٍ واختر هذا الرفّ لإضافته.",
   "lib.shelfCount": "{n} كتاب",
@@ -139,6 +142,11 @@ export const ar: Record<TKey, string> = {
   "edit.fitDefault": "افتراضي",
   "edit.save": "حفظ",
   "edit.cancel": "إلغاء",
+  // RAWY-76: حذف كتاب (يشمل كل بياناته) — تأكيد من خطوتين.
+  "edit.delete": "حذف الكتاب",
+  "edit.deleteConfirm": "حذف هذا الكتاب وكل ما يتعلق به من تظليلات وملاحظات وفواصل وبطاقات؟ لا يمكن التراجع عن ذلك.",
+  "edit.deleteYes": "حذف",
+  "edit.deleteKeep": "إبقاء",
 
   // Highlights & notes (RAWY-20)
   "hl.note": "ملاحظة",

@@ -1188,12 +1188,32 @@ html, body, #root {
 .edit-chip:hover { border-color: var(--accent); color: var(--text); }
 .edit-chip.on { background: var(--accent); border-color: var(--accent); color: var(--paper-bg); }
 .edit-shelves-hint { font: 400 12px var(--ui-font); color: var(--lib-faint); }
+/* RAWY-76: the footer holds the destructive Delete on the leading edge, Cancel+Save trailing.
+   space-between splits them; the actions cluster keeps its own gap. */
 .edit-foot {
-  display: flex; justify-content: flex-end; gap: 10px; padding: 14px 22px; border-top: 1px solid var(--chrome-border);
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 14px 22px; border-top: 1px solid var(--chrome-border);
 }
+.edit-foot-actions { display: flex; gap: 10px; }
 .edit-cancel { border: 1px solid var(--chrome-border); background: transparent; color: var(--muted); font: 500 13px var(--ui-font); padding: 9px 20px; border-radius: 8px; cursor: pointer; }
 .edit-save { border: none; background: var(--text); color: var(--paper-bg); font: 600 13px var(--ui-font); padding: 9px 24px; border-radius: 8px; cursor: pointer; }
-.edit-save:disabled { opacity: 0.6; cursor: default; }
+.edit-save:disabled, .edit-cancel:disabled, .edit-del:disabled { opacity: 0.6; cursor: default; }
+/* RAWY-76: destructive delete — quiet danger tint idle, solid danger when it's the confirm button
+   (same red the photo-card confirm uses, so destructive confirms read the same everywhere). */
+.edit-del {
+  border: 1px solid transparent; background: color-mix(in srgb, #B24A4A 12%, transparent);
+  color: #B24A4A; font: 600 13px var(--ui-font); padding: 9px 18px; border-radius: 8px; cursor: pointer;
+}
+.edit-del:hover { background: color-mix(in srgb, #B24A4A 20%, transparent); }
+.edit-del.confirm { background: #B24A4A; color: #fff; }
+:root[data-dark="true"] .edit-del { background: color-mix(in srgb, #E88C8C 16%, transparent); color: #E88C8C; }
+:root[data-dark="true"] .edit-del.confirm { background: #E88C8C; color: #12131F; }
+/* confirm-state footer: the warning takes the room, actions stay trailing */
+.edit-foot-confirm { align-items: center; }
+.edit-del-warn { flex: 1; min-width: 0; font: 500 12.5px/1.4 var(--ui-font); color: var(--text); }
+/* shelf-delete confirm (RAWY-76): the ✕ morphs into a small solid "Delete" for that row */
+.lib-shelf-act.danger { background: #B24A4A; color: #fff; font: 600 10.5px var(--ui-font); padding: 0 7px; width: auto; }
+:root[data-dark="true"] .lib-shelf-act.danger { background: #E88C8C; color: #12131F; }
 
 /* ---- highlight selection toolbar + note popover (RAWY-20) ---- */
 .hl-bar, .hl-card {

@@ -266,6 +266,72 @@ pub fn revert_cover(conn: &Connection, id: &str) -> Result<Option<BookRow>, Stri
     get_book(conn, id).map_err(|e| e.to_string())
 }
 
+/// RAWY-76 (data-integrity wave 1) — delete a book AND everything tied to its `book_id`, leaving
+/// ZERO orphans, then remove its files. Every other book is untouched.
+///
+/// The DB work runs in one transaction. Most child tables carry `FOREIGN KEY(book_id) REFERENCES
+/// books(id) ON DELETE CASCADE` (metadata_overrides, book_collections, reading_progress, highlights,
+/// notes, bookmarks, book_index) and `foreign_keys=ON` (db::open_database), so `DELETE FROM books`
+/// removes them automatically. Two things have NO FK and are deleted explicitly: `photo_cards`
+/// (book_id is a plain nullable column — a saved card would otherwise dangle) and the per-book style
+/// row in `settings` (`book_style:<id>`, RAWY-19/40). Files removed best-effort AFTER the commit: the
+/// managed `.epub`, the extracted cover, a replaced-cover file (the 'cover' override), and each
+/// saved photo-card PNG. `false` = no such book.
+pub fn delete_book(conn: &Connection, app_data_dir: &Path, id: &str) -> Result<bool, String> {
+    // Gather every file path BEFORE the rows go away (cover override read via metadata_overrides).
+    let (epub_path, cover_path) = match get_book_files(conn, id).map_err(|e| e.to_string())? {
+        Some(paths) => paths,
+        None => return Ok(false), // unknown book — nothing to do
+    };
+    let custom_cover = get_override(conn, id, "cover").map_err(|e| e.to_string())?;
+    let card_ids: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT id FROM photo_cards WHERE book_id = ?1")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([id], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        rows.collect::<rusqlite::Result<Vec<_>>>().map_err(|e| e.to_string())?
+    };
+
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    // No FK on these two — delete explicitly.
+    tx.execute("DELETE FROM photo_cards WHERE book_id = ?1", [id]).map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM settings WHERE key = ?1", [format!("book_style:{id}")])
+        .map_err(|e| e.to_string())?;
+    // The book row + all FK-cascade children (overrides, shelf membership, progress, highlights,
+    // notes, bookmarks, index) in one shot.
+    let removed = tx
+        .execute("DELETE FROM books WHERE id = ?1", [id])
+        .map_err(|e| e.to_string())?;
+    tx.commit().map_err(|e| e.to_string())?;
+
+    // Files: best-effort (a missing file is fine — the DB is already consistent).
+    let _ = std::fs::remove_file(&epub_path);
+    if let Some(c) = cover_path {
+        let _ = std::fs::remove_file(&c);
+    }
+    if let Some(c) = custom_cover {
+        let _ = std::fs::remove_file(&c);
+    }
+    let cards_dir = app_data_dir.join("photocards");
+    for cid in card_ids {
+        let _ = std::fs::remove_file(cards_dir.join(format!("{cid}.png")));
+    }
+    Ok(removed > 0)
+}
+
+/// The book's managed .epub path + its EXTRACTED cover path (the raw `books` columns, not the
+/// COALESCE'd view — a replaced cover lives in the 'cover' override and is handled separately).
+fn get_book_files(conn: &Connection, id: &str) -> rusqlite::Result<Option<(String, Option<String>)>> {
+    conn.query_row(
+        "SELECT file_path, cover_path FROM books WHERE id = ?1",
+        [id],
+        |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)),
+    )
+    .optional()
+}
+
 /// A shelf (collection) with its live book count, for the sidebar.
 #[derive(Serialize)]
 pub struct CollectionRow {

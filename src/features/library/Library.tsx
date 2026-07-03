@@ -4,6 +4,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
 import {
+  bookDelete,
   bookRevertCover,
   bookSetCover,
   bookUpdate,
@@ -84,6 +85,9 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const [creating, setCreating] = useState(false);
   const [draftName, setDraftName] = useState("");
   const [renaming, setRenaming] = useState<string | null>(null);
+  // RAWY-76: shelf delete now takes a two-step confirm (was instant — #6). Holds the shelf id
+  // awaiting confirmation; the ✕ morphs into a small "Delete?" prompt for that row only.
+  const [confirmShelf, setConfirmShelf] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [menu, setMenu] = useState<null | "sort" | "format">(null);
   const [drag, setDrag] = useState<{ count: number } | null>(null);
@@ -239,6 +243,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const pickShelf = (id: string | null) => {
     setShelf(id);
     setMenu(null);
+    setConfirmShelf(null); // RAWY-76: navigating away backs out of a pending shelf-delete confirm
   };
   const open = (b: BookRow) => onOpen({ id: b.id, filePath: b.file_path, dir: b.dir });
 
@@ -258,6 +263,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     setShelves(await collectionRename(id, name).catch((e) => { console.error(e); return shelves; }));
   };
   const removeShelf = async (s: CollectionRow) => {
+    setConfirmShelf(null);
     if (shelf === s.id) pickShelf(null); // leave a filtered view we're about to delete
     setShelves(await collectionDelete(s.id).catch((e) => { console.error(e); return shelves; }));
     flashToast(t("lib.shelf.deleted", { name: s.name }));
@@ -347,14 +353,24 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
                   >
                     ✎
                   </button>
-                  <button
-                    className="lib-shelf-act"
-                    title={t("lib.shelf.delete")}
-                    aria-label={t("lib.shelf.delete")}
-                    onClick={() => removeShelf(s)}
-                  >
-                    ✕
-                  </button>
+                  {confirmShelf === s.id ? (
+                    <button
+                      className="lib-shelf-act danger"
+                      title={t("lib.shelf.deleteConfirm")}
+                      onClick={() => removeShelf(s)}
+                    >
+                      {t("lib.shelf.deleteYes")}
+                    </button>
+                  ) : (
+                    <button
+                      className="lib-shelf-act"
+                      title={t("lib.shelf.delete")}
+                      aria-label={t("lib.shelf.delete")}
+                      onClick={() => setConfirmShelf(s.id)}
+                    >
+                      ✕
+                    </button>
+                  )}
                 </span>
               </div>
             )
@@ -615,6 +631,13 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
             loadShelves();
             if (b) setEditing(b); // keep open with refreshed cover after replace/revert
           }}
+          onDeleted={() => {
+            const title = editing.title ?? "—"; // capture before we clear `editing`
+            setEditing(null); // RAWY-76: close the dialog and refresh the library + shelf counts
+            loadBooks();
+            loadShelves();
+            flashToast(t("lib.book.deleted", { title }));
+          }}
         />
       )}
       {toast && <div className="lib-toast">{toast}</div>}
@@ -839,12 +862,14 @@ function EditBook({
   shelves,
   onShelves,
   onSaved,
+  onDeleted,
   onClose,
 }: {
   book: BookRow;
   shelves: CollectionRow[];
   onShelves: (rows: CollectionRow[]) => void;
   onSaved: (b: BookRow | null) => void;
+  onDeleted: () => void;
   onClose: () => void;
 }) {
   const { t } = useI18n();
@@ -873,7 +898,22 @@ function EditBook({
   const initialFit = book.cover_fit === "crop" || book.cover_fit === "fit" ? book.cover_fit : "";
   const [coverFit, setCoverFit] = useState<"" | "crop" | "fit">(initialFit);
   const [busy, setBusy] = useState(false);
+  // RAWY-76: a deliberate two-step delete (matches the photo-card confirm pattern) — the footer
+  // swaps to a confirm row so a stray click can't cascade-delete a book and all its data.
+  const [confirmDel, setConfirmDel] = useState(false);
   const arabicTitle = ARABIC.test(title);
+
+  const del = async () => {
+    setBusy(true);
+    try {
+      await bookDelete(book.id);
+      onDeleted();
+    } catch (e) {
+      console.error(e);
+      setBusy(false);
+      setConfirmDel(false);
+    }
+  };
 
   const save = async () => {
     setBusy(true);
@@ -985,10 +1025,23 @@ function EditBook({
             </div>
           </div>
         </div>
-        <div className="edit-foot">
-          <button className="edit-cancel" onClick={onClose}>{t("edit.cancel")}</button>
-          <button className="edit-save" onClick={save} disabled={busy}>{t("edit.save")}</button>
-        </div>
+        {confirmDel ? (
+          <div className="edit-foot edit-foot-confirm">
+            <span className="edit-del-warn" dir="auto">{t("edit.deleteConfirm")}</span>
+            <div className="edit-foot-actions">
+              <button className="edit-cancel" onClick={() => setConfirmDel(false)} disabled={busy}>{t("edit.deleteKeep")}</button>
+              <button className="edit-del confirm" onClick={del} disabled={busy}>{t("edit.deleteYes")}</button>
+            </div>
+          </div>
+        ) : (
+          <div className="edit-foot">
+            <button className="edit-del" onClick={() => setConfirmDel(true)} disabled={busy}>{t("edit.delete")}</button>
+            <div className="edit-foot-actions">
+              <button className="edit-cancel" onClick={onClose}>{t("edit.cancel")}</button>
+              <button className="edit-save" onClick={save} disabled={busy}>{t("edit.save")}</button>
+            </div>
+          </div>
+        )}
       </div>
     </>
   );

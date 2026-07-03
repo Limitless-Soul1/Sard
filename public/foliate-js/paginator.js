@@ -812,6 +812,17 @@ export class Paginator extends HTMLElement {
         element[scrollProp] = Math.max(min, Math.min(max,
             element[scrollProp] + delta))
     }
+    // Sard patch (RAWY-75; the 2nd local edit to the pinned engine after RAWY-21's --sard-* one —
+    // re-apply BOTH on any re-vendor): scrolled-mode wheel forwarding from the PARENT frame (the
+    // reading margins, outside the content iframe). `scrollBy` above clamps into ±one screen of the
+    // offset captured at the last #scrollTo (navigation), so forwarded wheels dead-stop one screen
+    // after any chapter open/jump. A native wheel simply moves the container's scroll position (the
+    // browser clamps to the element's real scroll limits) and the resulting scroll event drives the
+    // same #afterScroll anchoring as native scrolling — this method does exactly that, nothing more.
+    scrollByDelta(delta) {
+        if (!this.scrolled) return
+        this.#container[this.scrollProp] += delta
+    }
     snap(vx, vy) {
         const velocity = this.#vertical ? vy : vx
         const [offset, a, b] = this.#scrollBounds

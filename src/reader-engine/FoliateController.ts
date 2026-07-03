@@ -303,9 +303,15 @@ async function ensureFoliateDefined(): Promise<void> {
 // still blocked, but a deliberate second flick advances more readily (lighter).
 const BOUNDARY_PAUSE_MS = 140;
 const BOUNDARY_EDGE_PX = 4;
-// RAWY-73: wheel travel (accumulated px) that constitutes a deliberate scroll in one direction —
-// enough to ignore trackpad micro-jitter / a stray notch, small enough to feel immediate.
-const SCROLL_INTENT_PX = 24;
+// RAWY-73/75: wheel travel (accumulated px) that constitutes a deliberate scroll intent — now
+// ASYMMETRIC (RAWY-75). Hiding on scroll-down stays near-immediate (any real notch ≈ 100–120px
+// clears 24). Showing on scroll-up needs a CLEAR, deliberate gesture: one notch is a light nudge
+// the owner found annoying, so the show threshold is ~2–3 notches of accumulated upward travel.
+const SCROLL_HIDE_PX = 24;
+const SCROLL_SHOW_PX = 240;
+// A pause longer than this starts a NEW wheel gesture: the intent accumulator resets, so slow
+// scattered nudges minutes apart can never add up to a "deliberate" scroll-up.
+const SCROLL_GESTURE_GAP_MS = 400;
 
 export class FoliateController {
   private view: any | null = null;
@@ -327,6 +333,7 @@ export class FoliateController {
   // so a small jitter doesn't toggle the bar. down = scroll down (hide), up = scroll up (show).
   private scrollIntentCb: ((down: boolean) => void) | null = null;
   private scrollAccum = 0;
+  private scrollIntentTs = 0; // RAWY-75: last wheel time — a long gap resets the accumulator
   // Scrolled mode + chapter-boundary gesture state (RAWY-25).
   private scrolledMode = false;
   private wheelTs = 0;
@@ -544,29 +551,47 @@ export class FoliateController {
   onScrollIntent(cb: (down: boolean) => void): void {
     this.scrollIntentCb = cb;
   }
-  /** RAWY-74: scroll the book by a wheel delta coming from OUTSIDE the content iframe — i.e. the
+  /** RAWY-74/75: scroll the book by a wheel delta coming from OUTSIDE the content iframe — i.e. the
    *  reading-area side MARGINS, where the native wheel can't reach foliate's scroller (it lives in
-   *  the iframe's closed shadow root). Scrolled mode only. foliate's `scrollBy` in scrolled,
-   *  non-vertical writing reads the delta from its FIRST arg and applies it to `scrollTop`, so the
-   *  wheel's vertical delta is passed as `dx`. Also feeds the RAWY-73 auto-hide scroll-intent so the
-   *  bar hides/shows for margin wheels too. A wheel over the TEXT never reaches here (it fires inside
-   *  the iframe, past the frame boundary), so there is no double-scroll. */
+   *  the iframe's closed shadow root). Scrolled mode only. A wheel over the TEXT never reaches here
+   *  (it fires inside the iframe, past the frame boundary), so there is no double-scroll.
+   *  RAWY-75 made this path behave EXACTLY like the native text path, fixing the intermittency:
+   *  (1) it scrolls via the paginator's `scrollByDelta` Sard patch — a plain container-scroll move,
+   *  like a native wheel — instead of `scrollBy`, whose bounds are frozen at the last NAVIGATION's
+   *  offset and dead-stopped forwarded wheels one screen past any chapter open/jump (measured:
+   *  start 2027 → clamped at exactly 2677 = 2027 + one 650px screen, with 20k px of chapter left);
+   *  (2) it runs the same RAWY-25 chapter-boundary gesture as the text path, so a margin wheel at a
+   *  chapter edge advances/holds exactly like wheeling over the text (previously it dead-stopped). */
   scrollByWheel(deltaY: number): void {
     if (!this.scrolledMode || !deltaY) return;
-    this.view?.renderer?.scrollBy?.(deltaY, 0);
     this.onWheelScrollIntent(deltaY);
+    const r = this.view?.renderer;
+    if (!r) return;
+    const action = this.wheelBoundaryAction(deltaY);
+    if (action === "next") r.next?.();
+    else if (action === "prev") r.prev?.();
+    else if (action === "scroll") {
+      if (typeof r.scrollByDelta === "function") r.scrollByDelta(deltaY);
+      else r.scrollBy?.(deltaY, 0); // stale-engine fallback (pre-patch vendored copy)
+    }
+    // "hold": at the edge mid-gesture — do nothing, same as the text path's preventDefault
   }
-  // Debounce wheel deltas into a directional intent: accumulate, reset on a direction flip (so a
-  // reversal is responsive), and fire once a clear SCROLL_INTENT_PX of travel builds up in one
-  // direction. A DOM wheel deltaY > 0 means scrolling DOWN (content moves up) → hide.
+  // Debounce wheel deltas into a directional intent: accumulate within ONE gesture (a pause resets
+  // — RAWY-75), reset on a direction flip (so a reversal is responsive), and fire once a clear
+  // stretch of travel builds up in one direction. A DOM wheel deltaY > 0 means scrolling DOWN
+  // (content moves up) → hide. Thresholds are asymmetric (RAWY-75): hide is near-immediate, show
+  // needs a deliberate multi-notch scroll-up so a light upward nudge doesn't pop the bar.
   private onWheelScrollIntent(deltaY: number): void {
     if (!this.scrollIntentCb || !deltaY) return;
+    const now = performance.now();
+    if (now - this.scrollIntentTs > SCROLL_GESTURE_GAP_MS) this.scrollAccum = 0;
+    this.scrollIntentTs = now;
     if (Math.sign(deltaY) !== Math.sign(this.scrollAccum)) this.scrollAccum = 0;
     this.scrollAccum += deltaY;
-    if (this.scrollAccum >= SCROLL_INTENT_PX) {
+    if (this.scrollAccum >= SCROLL_HIDE_PX) {
       this.scrollAccum = 0;
       this.scrollIntentCb(true);
-    } else if (this.scrollAccum <= -SCROLL_INTENT_PX) {
+    } else if (this.scrollAccum <= -SCROLL_SHOW_PX) {
       this.scrollAccum = 0;
       this.scrollIntentCb(false);
     }
@@ -601,18 +626,19 @@ export class FoliateController {
   // (native). At the chapter edge we preventDefault so a single gesture STOPS at the boundary
   // (never chains into the next chapter); a NEW gesture (after BOUNDARY_PAUSE_MS) that BEGINS
   // at the edge advances to the next/prev section (foliate loads it anchored at the top/bottom).
-  private onBoundaryWheel(e: WheelEvent): void {
+  // RAWY-75: the boundary-gesture decision, shared by BOTH wheel paths — the content iframe's
+  // native wheel (onBoundaryWheel) and the forwarded margin wheel (scrollByWheel). One physical
+  // wheel = one gesture state, and the two paths are mutually exclusive per event (the frame
+  // boundary), so sharing wheelTs/gestureEdge/gestureActed is exactly right. Returns what the
+  // caller should do: advance a section, hold at the edge, or scroll normally.
+  private wheelBoundaryAction(deltaY: number): "next" | "prev" | "hold" | "scroll" {
     const r = this.view?.renderer;
-    if (!r || !this.scrolledMode) return;
-    // RAWY-73: scroll intent for the chrome auto-hide runs FIRST, unconditionally — even before the
-    // layout guard below — so scrolling always drives hide/show (the content iframe's wheel is the
-    // only place the parent can observe scroll direction; foliate scrolls inside a closed shadow root).
-    this.onWheelScrollIntent(e.deltaY);
+    if (!r) return "scroll";
     const viewSize = r.viewSize as number;
     const size = r.size as number;
     const start = r.start as number;
     // Renderer not laid out yet (getters 0/NaN) → never trap the wheel, or we'd freeze the page.
-    if (!(viewSize > 0) || !(size > 0)) return;
+    if (!(viewSize > 0) || !(size > 0)) return "scroll";
     const now = performance.now();
     const fresh = now - this.wheelTs > BOUNDARY_PAUSE_MS;
     this.wheelTs = now;
@@ -623,20 +649,35 @@ export class FoliateController {
       this.gestureEdge = atBottom ? "bottom" : atTop ? "top" : null;
       this.gestureActed = false;
     }
-    const down = e.deltaY > 0;
+    const down = deltaY > 0;
     if (down && atBottom) {
-      e.preventDefault(); // hold the boundary — don't chain to the next chapter mid-gesture
       if (this.gestureEdge === "bottom" && !this.gestureActed) {
         this.gestureActed = true;
-        r.next?.();
+        return "next";
       }
+      return "hold";
     } else if (!down && atTop) {
-      e.preventDefault();
       if (this.gestureEdge === "top" && !this.gestureActed) {
         this.gestureActed = true;
-        r.prev?.();
+        return "prev";
       }
+      return "hold";
     }
+    return "scroll";
+  }
+
+  private onBoundaryWheel(e: WheelEvent): void {
+    const r = this.view?.renderer;
+    if (!r || !this.scrolledMode) return;
+    // RAWY-73: scroll intent for the chrome auto-hide runs FIRST, unconditionally — even before the
+    // layout guard — so scrolling always drives hide/show (the content iframe's wheel is the only
+    // place the parent can observe scroll direction; foliate scrolls inside a closed shadow root).
+    this.onWheelScrollIntent(e.deltaY);
+    const action = this.wheelBoundaryAction(e.deltaY);
+    if (action === "scroll") return; // mid-chapter — the browser's native scroll handles it
+    e.preventDefault(); // at the edge: hold the boundary — never chain into a chapter mid-gesture
+    if (action === "next") r.next?.();
+    else if (action === "prev") r.prev?.();
   }
 
   /** Flattened TOC (chapters panel, RAWY-21). Empty if the book exposes none. */

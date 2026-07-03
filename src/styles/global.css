@@ -746,11 +746,37 @@ html, body, #root {
 .picker-btn-ar { font-family: "SardUIArabic", system-ui, sans-serif; }
 
 /* ---- Reading stage (the desk; the book sheet is themed via injectedCss) ---- */
-.reader-error {
-  position: absolute; inset: 0; margin: 0; padding: 20px;
-  background: var(--paper-bg); color: #c0392b; font-family: ui-monospace, monospace;
-  font-size: 12px; white-space: pre-wrap; overflow: auto; z-index: 7;
+/* RAWY-79 (#11): calm, themed reader error state with its own recovery actions. Covers the stage
+   above the chrome (z above the top bar) so it's always reachable regardless of the auto-hide. */
+.reader-error-overlay {
+  position: absolute; inset: 0; z-index: 30; padding: 32px;
+  display: flex; align-items: center; justify-content: center; background: var(--paper-bg);
 }
+.reader-error-card {
+  max-width: 440px; width: 100%; display: flex; flex-direction: column; align-items: center;
+  gap: 14px; text-align: center;
+}
+.reader-error-mark {
+  width: 56px; height: 56px; display: flex; align-items: center; justify-content: center;
+  font-size: 26px; color: var(--accent); border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.reader-error-title { font: 600 20px/1.4 "Literata", "SardUIArabic", serif; color: var(--text); }
+:root[dir="rtl"] .reader-error-title { font: 700 22px/1.4 "Amiri", "SardUIArabic", serif; }
+.reader-error-detail {
+  max-width: 100%; max-height: 28vh; overflow: auto; word-break: break-word;
+  font: 400 12px/1.55 ui-monospace, monospace; color: var(--muted);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  padding: 9px 13px; border-radius: 8px;
+}
+.reader-error-actions { display: flex; gap: 12px; margin-top: 4px; }
+.reader-error-btn {
+  font: 500 14px var(--ui-font); padding: 10px 22px; border-radius: 9px; cursor: pointer;
+  border: 1px solid var(--chrome-border); background: transparent; color: var(--muted);
+}
+.reader-error-btn:hover { border-color: var(--accent); color: var(--text); }
+.reader-error-btn.primary { border: none; background: var(--accent); color: var(--paper-bg); }
+.reader-error-btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, #000); color: var(--paper-bg); }
 
 /* ============================================================================
    LIBRARY (RAWY-15, band E) — page-on-desk home. Every colour via theme tokens;
@@ -1054,33 +1080,51 @@ html, body, #root {
 
 /* ---- list ---- */
 .lib-list { flex: 1; overflow: auto; padding: 0 32px 16px; }
-.lib-list-head {
-  display: flex; align-items: center; gap: 16px; padding: 10px 0 8px; position: sticky; top: 0;
-  background: var(--paper-bg); border-bottom: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
-  font: 600 11px var(--ui-font); letter-spacing: 0.06em; color: var(--lib-faint); text-transform: uppercase;
+/* RAWY-79 (audit #4, design "Sard Library List Row"): the header and every row share ONE grid, so
+   the column labels line up EXACTLY with the cells (the old flex header + flex rows didn't align).
+   Columns: cover · title (fluid, truncates) · author · format · progress · last-read. Every colour a
+   theme token, so it holds across all four themes; logical alignment mirrors for RTL. */
+.lib-list-head, .lib-row {
+  display: grid; grid-template-columns: 44px minmax(0, 1fr) 190px 64px 150px 84px;
+  gap: 18px; align-items: center;
 }
-.lib-list-head .sortable { border: none; background: none; cursor: pointer; color: inherit; font: inherit; letter-spacing: inherit; text-transform: inherit; padding: 0; text-align: start; }
+.lib-list-head {
+  position: sticky; top: 0; z-index: 1; padding: 0 12px 9px;
+  background: var(--paper-bg); border-bottom: 1px solid color-mix(in srgb, var(--text) 13%, transparent);
+  font: 600 10.5px var(--ui-font); letter-spacing: 0.09em; color: var(--lib-faint); text-transform: uppercase;
+}
+.lib-list-head .sortable {
+  border: none; background: none; cursor: pointer; color: inherit; font: inherit; letter-spacing: inherit;
+  text-transform: inherit; padding: 0; text-align: start; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .lib-list-head .sortable.active { color: var(--accent); }
 .lib-row {
-  display: flex; align-items: center; gap: 16px; width: 100%; padding: 11px 0; cursor: pointer;
-  border: none; background: none; text-align: start;
-  border-bottom: 1px solid color-mix(in srgb, var(--text) 6%, transparent);
+  width: 100%; padding: 10px 12px; cursor: pointer; border: none; background: none; text-align: start;
+  border-radius: 8px; box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--text) 7%, transparent);
 }
-.lib-row:hover { background: var(--lib-hover); }
-.ll-thumb { width: 34px; height: 50px; flex: none; border-radius: 2px; overflow: hidden; box-shadow: 0 2px 5px rgba(0, 0, 0, 0.18); }
-.ll-title { flex: 1; min-width: 0; font: 500 15px "Literata", serif; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ll-title.ar { font: 500 18px "Amiri", serif; }
-.ll-author { width: 150px; flex: none; font: 400 13px var(--ui-font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ll-author.ar { font: 400 14px "Amiri", serif; }
-.ll-format { width: 64px; flex: none; }
-.ll-badge { font: 600 10px var(--ui-font); color: var(--muted); background: color-mix(in srgb, var(--text) 7%, transparent); padding: 3px 7px; border-radius: 4px; }
-.ll-progress { width: 150px; flex: none; display: flex; align-items: center; gap: 9px; }
-.ll-bar { flex: 1; height: 3px; border-radius: 3px; background: color-mix(in srgb, var(--text) 12%, transparent); position: relative; overflow: hidden; }
+.lib-row:hover { background: var(--lib-hover); box-shadow: none; }
+.lib-row:focus-visible {
+  outline: none; background: color-mix(in srgb, var(--accent) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+:root[dir="rtl"] .lib-row:focus-visible { box-shadow: inset -2px 0 0 var(--accent); }
+.ll-thumb { width: 34px; height: 50px; border-radius: 2px 3px 3px 2px; overflow: hidden; box-shadow: 0 2px 5px rgba(0, 0, 0, 0.16); }
+:root[dir="rtl"] .ll-thumb { border-radius: 3px 2px 2px 3px; }
+.ll-title { min-width: 0; font: 500 15px/1.5 "Literata", serif; color: var(--text); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ll-title.ar { font: 700 17px/1.5 "Amiri", serif; }
+.ll-author { min-width: 0; font: 400 13px var(--ui-font); color: var(--muted); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ll-author.ar { font: 400 15px "Amiri", serif; }
+:root[dir="rtl"] .ll-title, :root[dir="rtl"] .ll-author { text-align: right; }
+.ll-format { min-width: 0; }
+.ll-badge { font: 600 10px var(--ui-font); letter-spacing: 0.05em; color: var(--muted); background: color-mix(in srgb, var(--text) 7%, transparent); padding: 3px 7px; border-radius: 4px; }
+.ll-progress { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.ll-bar { flex: 1; height: 3px; border-radius: 3px; background: color-mix(in srgb, var(--text) 11%, transparent); position: relative; overflow: hidden; }
 .ll-bar-fill { position: absolute; inset-inline-start: 0; top: 0; height: 3px; background: var(--accent); border-radius: 3px; }
 .ll-bar-fill.done { background: #6f8a5e; }
-.ll-pct { font: 500 11px var(--ui-font); color: var(--lib-faint); min-width: 28px; }
+.ll-pct { width: 38px; text-align: end; font: 500 11px var(--ui-font); color: var(--lib-faint); font-variant-numeric: tabular-nums; }
 .ll-pct.done { color: #6f8a5e; }
-.ll-read { width: 64px; flex: none; font: 400 12px var(--ui-font); color: var(--lib-faint); }
+.ll-read { min-width: 0; font: 400 12px var(--ui-font); color: var(--lib-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---- empty state ---- */
 .lib-empty {

@@ -645,7 +645,26 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         />
       )}
 
-      {status === "error" && <pre className="reader-error">{t("status.error")}: {error}</pre>}
+      {status === "error" && (
+        // RAWY-79 (#11): a calm, themed failure state with its OWN recovery actions — always visible,
+        // independent of the auto-hiding chrome (so a load failure with no mouse movement isn't a
+        // dead end). "Try again" re-runs openBook for the same target; "Back to library" exits.
+        <div className="reader-error-overlay" role="alert">
+          <div className="reader-error-card">
+            <div className="reader-error-mark" aria-hidden>⚠</div>
+            <div className="reader-error-title">{t("reader.error.title")}</div>
+            {error && <div className="reader-error-detail">{error}</div>}
+            <div className="reader-error-actions">
+              <button className="reader-error-btn primary" onClick={() => openBook(initial)}>
+                {t("reader.error.retry")}
+              </button>
+              <button className="reader-error-btn" onClick={onExit}>
+                {t("reader.error.back")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -591,7 +591,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
             ) : (
               <div className="lib-list">
                 <div className="lib-list-head">
-                  <span className="ll-thumb" />
+                  <span aria-hidden />
                   <button className={`ll-title sortable${sort === "title" ? " active" : ""}`} onClick={() => pickSort("title")}>
                     {t("lib.col.title")} {sort === "title" && (order === "asc" ? "↑" : "↓")}
                   </button>
@@ -1061,10 +1061,12 @@ function ListRow({ book, onOpen, lang, t }: { book: BookRow; onOpen: () => void;
       <span className="ll-thumb">
         <AutoCover title={book.title ?? "—"} dir={book.dir} variant="mini" />
       </span>
-      <span className={`ll-title${rtl ? " ar" : ""}`} dir={rtl ? "rtl" : "ltr"}>
+      {/* dir="auto" so a mixed AR title / Latin author each render + ellipsis-truncate on the
+          correct side (design "Sard Library List Row"); block alignment follows the view direction. */}
+      <span className={`ll-title${rtl ? " ar" : ""}`} dir="auto">
         {book.title}
       </span>
-      <span className={`ll-author${rtl ? " ar" : ""}`} dir={rtl ? "rtl" : "ltr"}>
+      <span className={`ll-author${rtl ? " ar" : ""}`} dir="auto">
         {book.author}
       </span>
       <span className="ll-format">

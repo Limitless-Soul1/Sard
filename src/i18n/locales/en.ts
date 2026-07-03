@@ -22,6 +22,11 @@ export const en = {
   "reader.settings": "Settings",
   "reader.chapterFallback": "Reading",
   "reader.untitledBook": "Untitled",
+  // RAWY-79 (#11): a calm, themed error state with its OWN recovery actions (independent of the
+  // auto-hiding chrome) so a load failure is never a dead end.
+  "reader.error.title": "This book couldn’t be opened",
+  "reader.error.retry": "Try again",
+  "reader.error.back": "Back to library",
   // RAWY-70: in-body "first line" hide → a spoiler-safe placeholder with a two-step reveal.
   "reader.titleHidden": "Title hidden",
   "reader.revealTitleConfirm": "Reveal the title?",

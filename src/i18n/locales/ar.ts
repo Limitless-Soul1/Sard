@@ -23,6 +23,11 @@ export const ar: Record<TKey, string> = {
   "reader.settings": "الإعدادات",
   "reader.chapterFallback": "القراءة",
   "reader.untitledBook": "بدون عنوان",
+  // RAWY-79 (#11): حالة خطأ هادئة ومنسّقة بأزرار تعافٍ خاصّة بها (مستقلّة عن الشريط الذي يختفي
+  // تلقائيًا) حتى لا يكون فشل الفتح طريقًا مسدودًا.
+  "reader.error.title": "تعذّر فتح هذا الكتاب",
+  "reader.error.retry": "إعادة المحاولة",
+  "reader.error.back": "العودة إلى المكتبة",
   // RAWY-70: نائب "السطر الأول" المخفي — عنصر نائب آمن من الحرق مع كشف من خطوتين.
   "reader.titleHidden": "تم إخفاء العنوان",
   "reader.revealTitleConfirm": "هل تريد كشف العنوان؟",

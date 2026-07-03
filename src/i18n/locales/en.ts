@@ -397,6 +397,10 @@ export const en = {
   "gs.reading.fontsHint": "Book font, weight & size are set in the Fonts panel.",
   // RAWY-91 — Fonts panel: App font (chrome) fully separate from Book font (reading text)
   "fonts.appwide": "Two separate fonts: one for the app interface, one for the text inside books.",
+  "fonts.title": "Fonts & Library",
+  "fonts.appwideShort": "applies app-wide",
+  "fonts.change": "Change",
+  "fonts.app.rowDefault": "Arabic + Latin (IBM Plex Sans) · default",
   "fonts.app": "App font",
   "fonts.app.sub": "Titles, menus, buttons — the whole interface. Not book text.",
   "fonts.app.default": "IBM Plex Sans Arabic — default",

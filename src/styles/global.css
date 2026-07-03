@@ -37,6 +37,7 @@
   --text: #2B2521;
   --muted: #8A7E6E;
   --accent: #9C5A3C;
+  --gs-book: #6a4d86; /* RAWY-93: the BOOK·AR / BOOK·EN badge + Book-card icon purple (design #6a4d86) */
   --selection: rgba(156, 90, 60, 0.2);
   /* scalar tokens */
   --radius-card: 2px;
@@ -1730,49 +1731,84 @@ html, body, #root {
 .gs-chip-x:hover { opacity: 1; }
 .gs-note { font: 400 11.5px var(--ui-font); color: color-mix(in srgb, var(--muted) 80%, var(--paper-bg)); }
 
-/* RAWY-91 — Fonts panel cards: App font · Book font · Library */
-.gs-fontcard {
-  display: flex; flex-direction: column; gap: 10px;
-  padding: 16px 18px; border-radius: 12px;
-  background: color-mix(in srgb, var(--chrome-bg) 55%, var(--paper-bg));
-  border: 1px solid var(--chrome-border);
+/* RAWY-93 — Fonts & Library panel, rebuilt to the on-disk design (App · Book side-by-side cards +
+   the shared library grid). Wiring unchanged (RAWY-91/92); this is presentation only. */
+.gs-fh { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.gs-fh-note { flex: none; font: 400 11px var(--ui-font); color: color-mix(in srgb, var(--muted) 72%, var(--paper-bg)); white-space: nowrap; }
+.gs-fc-cap { font: 600 10.5px var(--ui-font); letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+
+/* App | Book — two cards side by side, top-aligned (wrap on a narrow window). NOT stretched: the App
+   card has no SIZE control yet (App-font Size % is a planned follow-up), so its natural height differs. */
+.gs-fcards { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+.gs-fcard {
+  flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 14px;
+  background: color-mix(in srgb, var(--chrome-bg) 45%, var(--paper-bg));
+  border: 1px solid var(--chrome-border); border-radius: 11px; padding: 18px 20px;
 }
-.gs-fc-title { font: 600 15px var(--ui-font); color: var(--text); }
-.gs-fc-sub { font: 400 12px var(--ui-font); color: var(--muted); margin-top: -6px; }
-.gs-fc-cap { font: 600 10.5px var(--ui-font); letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); }
-.gs-fc-libhead { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.gs-fc-libhead > div { display: flex; flex-direction: column; gap: 4px; }
-.gs-fc-preview {
-  padding: 13px 15px; border-radius: 9px; background: color-mix(in srgb, var(--accent) 5%, var(--paper-bg));
-  color: var(--text); font-size: 17px; line-height: 1.5; display: flex; flex-direction: column; gap: 6px;
+.gs-fcard-head { display: flex; align-items: flex-start; gap: 10px; }
+.gs-fcard-ico {
+  width: 26px; height: 26px; flex: none; border-radius: 7px; color: #fff;
+  display: flex; align-items: center; justify-content: center; font-size: 13px;
 }
-/* weight control — a face that lacks a weight is dimmed + flagged (honest, RAWY-36) */
-.gs-weight-seg { max-width: 340px; }
-.gs-weight-seg .gs-w-na { opacity: 0.5; }
-.gs-weight-seg .gs-w-na.on { opacity: 0.85; }
-/* library list */
-.gs-fontlib { display: flex; flex-direction: column; }
-.gs-lib-row {
-  display: flex; align-items: center; gap: 10px; padding: 9px 2px;
-  border-bottom: 1px solid color-mix(in srgb, var(--chrome-border) 60%, transparent);
+.gs-fcard-ico-app { background: var(--accent); }
+.gs-fcard-ico-book { background: var(--gs-book); }
+.gs-fcard-title { font: 600 14px var(--ui-font); color: var(--text); }
+.gs-fcard-sub { font: 400 11.5px var(--ui-font); color: var(--muted); margin-top: 2px; }
+
+/* picker row: current face's name IN ITS OWN FACE + sub + "Change ›"; the real <select> is laid
+   transparently on top (opacity 0), so the styled row shows while the native menu still drives it. */
+.gs-fpick-stack { display: flex; flex-direction: column; gap: 8px; }
+.gs-fpick {
+  position: relative; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: var(--paper-bg); border: 1px solid var(--chrome-border); border-radius: 9px; padding: 10px 14px; cursor: pointer;
 }
-.gs-lib-row:last-child { border-bottom: none; }
-.gs-lib-name { flex: 1 1 auto; min-width: 0; font-size: 16px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.gs-lib-meta { flex: none; font: 400 11px var(--ui-font); color: var(--muted); }
-.gs-lib-badges { flex: none; display: flex; gap: 5px; }
-.gs-badge { font: 700 9.5px var(--ui-font); letter-spacing: 0.05em; padding: 3px 7px; border-radius: 6px; white-space: nowrap; }
-.gs-badge-app { background: var(--accent); color: #fff; }
-.gs-badge-book { background: color-mix(in srgb, var(--accent) 16%, transparent); color: color-mix(in srgb, var(--accent) 88%, var(--text)); }
-/* RAWY-92: always-visible, obviously-a-control affordance (was var(--muted) → invisible against the
-   meta text). Terracotta accent (matches the on-disk design's #9C5A3C) in a tinted, bordered chip. */
-.gs-lib-remove {
-  flex: none; cursor: pointer; white-space: nowrap;
-  font: 600 11px var(--ui-font); color: var(--accent);
-  padding: 4px 10px; border-radius: 7px;
-  border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
-  background: color-mix(in srgb, var(--accent) 9%, transparent);
+.gs-fpick:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--chrome-border)); }
+.gs-fpick-main { min-width: 0; display: flex; flex-direction: column; }
+.gs-fpick-name { font-size: 16px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gs-fpick-sub { font: 400 10.5px var(--ui-font); color: var(--muted); margin-top: 2px; }
+.gs-fpick-change { flex: none; font: 500 12px var(--ui-font); color: var(--accent); white-space: nowrap; }
+.gs-fpick-native { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: none; }
+
+/* weight — each label rendered in the target face AT its weight (design); a missing weight is dimmed */
+.gs-wblock, .gs-sblock { display: flex; flex-direction: column; gap: 8px; }
+.gs-wseg { display: flex; background: color-mix(in srgb, var(--chrome-bg) 72%, var(--paper-bg)); border-radius: 8px; padding: 3px; }
+.gs-wseg-item {
+  flex: 1; text-align: center; border: none; background: transparent; cursor: pointer;
+  padding: 7px 0; border-radius: 6px; font-size: 12px; color: var(--muted);
 }
-.gs-lib-remove:hover { color: #fff; background: var(--accent); border-color: var(--accent); }
+.gs-wseg-item.on { background: var(--paper-bg); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+.gs-wseg-item.na { opacity: 0.5; }
+
+/* preview box */
+.gs-fprev {
+  display: flex; flex-direction: column; gap: 5px;
+  background: var(--paper-bg); border: 1px dashed color-mix(in srgb, var(--muted) 34%, transparent);
+  border-radius: 8px; padding: 10px 13px;
+}
+.gs-fprev-text { font-size: 14px; line-height: 1.5; color: var(--text); display: flex; flex-direction: column; gap: 5px; }
+
+/* font library — a 2-column grid of cards, each font name IN ITS OWN FACE + badges */
+.gs-flib { display: flex; flex-direction: column; gap: 11px; }
+.gs-flib-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.gs-flib-titles { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.gs-flib-title { font: 600 11px var(--ui-font); letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
+.gs-flib-sub { font: 400 11px var(--ui-font); color: color-mix(in srgb, var(--muted) 72%, var(--paper-bg)); }
+.gs-flib-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.gs-flib-card {
+  display: flex; align-items: center; gap: 12px; min-width: 0;
+  background: var(--paper-bg); border: 1px solid var(--chrome-border); border-radius: 9px; padding: 10px 14px;
+}
+.gs-flib-card-imported { border-style: dashed; border-color: color-mix(in srgb, var(--accent) 42%, transparent); }
+.gs-flib-main { flex: 1; min-width: 0; }
+.gs-flib-name { font-size: 14.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gs-flib-meta { font: 400 10.5px var(--ui-font); color: var(--muted); margin-top: 3px; }
+.gs-flib-badges { flex: none; display: flex; gap: 5px; }
+.gs-badge { font: 600 9px var(--ui-font); letter-spacing: 0.05em; padding: 3px 8px; border-radius: 10px; color: #fff; white-space: nowrap; flex: none; }
+.gs-badge-app { background: var(--accent); }
+.gs-badge-book { background: var(--gs-book); }
+/* remove — terracotta (RAWY-92), placed at the imported card's trailing edge as the design shows */
+.gs-flib-remove { flex: none; border: none; background: transparent; cursor: pointer; font: 500 11px var(--ui-font); color: var(--accent); padding: 2px 4px; border-radius: 6px; white-space: nowrap; }
+.gs-flib-remove:hover { text-decoration: underline; }
 /* reading defaults */
 .gs-banner {
   display: inline-flex; align-items: center; gap: 7px; align-self: flex-start;

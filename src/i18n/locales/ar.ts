@@ -397,6 +397,10 @@ export const ar: Record<TKey, string> = {
   "gs.reading.fontsHint": "خط الكتاب ووزنه وحجمه تُضبط في لوحة الخطوط.",
   // RAWY-91 — لوحة الخطوط: خط الواجهة منفصل تمامًا عن خط الكتاب
   "fonts.appwide": "خطّان منفصلان: أحدهما لواجهة التطبيق، والآخر لنصّ الكتب.",
+  "fonts.title": "الخطوط والمكتبة",
+  "fonts.appwideShort": "على مستوى التطبيق",
+  "fonts.change": "تغيير",
+  "fonts.app.rowDefault": "عربي + لاتيني (IBM Plex Sans) · افتراضي",
   "fonts.app": "خط الواجهة",
   "fonts.app.sub": "العناوين والقوائم والأزرار — الواجهة كلها. ليس نصّ الكتاب.",
   "fonts.app.default": "IBM Plex Sans Arabic — الافتراضي",

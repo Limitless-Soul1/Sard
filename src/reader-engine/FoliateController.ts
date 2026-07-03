@@ -436,6 +436,13 @@ export class FoliateController {
           if (ev.key === "ArrowLeft" || ev.key === "ArrowUp" || ev.key === "PageUp") this.view?.prev?.();
           else if (ev.key === "ArrowRight" || ev.key === "ArrowDown" || ev.key === "PageDown" || ev.key === " ") this.view?.next?.();
         });
+        // RAWY-87 (#2): a wheel over the PDF PAGE fires INSIDE this iframe, so it never reaches the
+        // reader-desk's onWheel (the frame boundary) — that's why wheeling the page did nothing while
+        // the margins (which DO reach the desk → pageByWheel) turned pages. Forward the page's own
+        // wheel to the SAME pageByWheel path, so a wheel anywhere in the reading area pages the PDF.
+        // The two paths are mutually exclusive per physical wheel (page XOR margin), so no double-turn;
+        // the page is fit-to-view (no native scroll to fight), so this is passive with no preventDefault.
+        doc.addEventListener("wheel", (ev: WheelEvent) => this.pageByWheel(ev.deltaY), { passive: true });
         doc.addEventListener("pointerdown", (ev: PointerEvent) => {
           if (this.activityCb) {
             const off = frameOffset(doc);
@@ -770,6 +777,12 @@ export class FoliateController {
   get pdfPageCount(): number {
     return this.view?.book?.sections?.length ?? 0;
   }
+  /** DEV (RAWY-87 #2): dispatch a synthetic wheel on the PDF page doc to exercise the page-wheel →
+   *  pageByWheel forwarding added in the load handler. WebView2 can't inject a REAL wheel, but a real
+   *  wheel over the page would fire on exactly this document, so this drives the same code path. */
+  devPageWheel(deltaY: number): void {
+    this.pdfPageDoc?.dispatchEvent(new WheelEvent("wheel", { deltaY, bubbles: true }));
+  }
   /** RAWY-86: the current 0-based PDF page index (from the last relocate). */
   pdfPageIndex = 0;
 
@@ -830,6 +843,20 @@ export class FoliateController {
   }
   /** DEV: snapshot the current section's layout to explain rendering bugs. */
   diagnose(): string {
+    if (this.isFixedLayout) {
+      // RAWY-87 investigation: is the PDF page fit-page (no intra-page scroll) or scrollable? Measure
+      // the foliate-fxl host (overflow:auto) + the page iframe body.
+      const r: any = this.view?.renderer;
+      const idoc: Document | undefined = r?.getContents?.()?.[0]?.doc;
+      const ibody = idoc?.body;
+      return JSON.stringify({
+        fxl: true,
+        pageIndex: this.pdfPageIndex,
+        pageCount: this.pdfPageCount,
+        host: { clientH: r?.clientHeight, scrollH: r?.scrollHeight, scrollTop: r?.scrollTop, clientW: r?.clientWidth, scrollW: r?.scrollWidth },
+        iframeBody: ibody ? { scrollH: ibody.scrollHeight, clientH: ibody.clientHeight } : null,
+      });
+    }
     const c = this.view?.renderer?.getContents?.()?.[0];
     const doc: Document | undefined = c?.doc;
     const body = doc?.body;

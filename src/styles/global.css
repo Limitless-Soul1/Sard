@@ -292,6 +292,13 @@ html, body, #root {
   width: 11px; height: 11px; border-radius: 50%; background: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
 }
+/* RAWY-87 (#1): the PDF progress bar is scrubbable (click/drag to jump to any page). A transparent
+   ::before enlarges the pointer hit area while the visible bar stays 3px; the fill/knob are
+   click-through so a drag always targets the track. PDF-only — the EPUB bar stays display-only. */
+.rc-progress-scrub { cursor: pointer; touch-action: none; }
+.rc-progress-scrub::before { content: ""; position: absolute; inset-block: -10px; inset-inline: 0; }
+.rc-progress-scrub .rc-progress-fill, .rc-progress-scrub .rc-progress-knob { pointer-events: none; }
+.rc-progress-scrub.scrubbing .rc-progress-knob { width: 14px; height: 14px; box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 28%, transparent); }
 
 /* the settings panel's ✕ close still uses .rc-icon (kept) */
 .rc-icon {

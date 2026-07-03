@@ -189,6 +189,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       setBookThemeId(effTheme);
       setHasOv(!unified && calcHasOverride(override)); // Reset is a per-book affordance
       set({ status: "ready", dir: ctrl.dir ?? "?", style: initialStyle, bookTitle: ctrl.title ?? null });
+      if (targetIsPdf) setPdfPageCount(ctrl.pdfPageCount); // RAWY-87: total pages for the position readout
       setToc(ctrl.getToc()); // chapters panel (RAWY-21)
 
       // RAWY-85: enrich a PDF's real title/author (PDF.js getMetadata) + a page-1 cover (getCover)
@@ -342,6 +343,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         else if (s.startsWith("prev:")) { for (let i = 0; i < Number(s.slice(5)); i++) { ctrl.pageByWheel(-120); await new Promise((r) => setTimeout(r, 340)); } }
         // RAWY-86: drive the in-PDF find path (pdfFind) with a query, so a jump-to-match can be captured.
         else if (s.startsWith("find:")) { const hit = await ctrl.pdfFind(s.slice(5), 0); await settingsSet("dev_find_hit", hit == null ? "none" : String(hit)).catch(() => {}); }
+        // RAWY-87 (#2): drive the page-wheel → pageByWheel forwarding by dispatching synthetic wheels
+        // ON THE PDF PAGE DOC (where a real wheel over the page fires), N times, to prove it pages.
+        else if (s.startsWith("pagewheel:")) { for (let i = 0; i < Number(s.slice(10)); i++) { ctrl.devPageWheel(120); await new Promise((r) => setTimeout(r, 340)); } }
         else if (!Number.isNaN(Number(s))) await ctrl.goToFraction(Number(s));
         setTimeout(() => settingsSet("dev_diag", ctrl.diagnose()).catch(() => {}), 500);
       }, 350);
@@ -530,6 +534,28 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const copyPdfSelection = async () => {
     const txt = (await ctrlRef.current?.copyPdfSelection()) ?? "";
     flashPdf(txt ? t("pdf.copied") : t("pdf.copyEmpty"));
+  };
+
+  // RAWY-87 (#1): a PDF has no chapters, so the bottom chrome shows page position (page / total) and
+  // the progress bar is scrubbable to jump. pageCount = the PDF's fixed-layout section count (set on
+  // open); the current page derives from the saved fraction (= (pageIndex+0.5)/count, RAWY-86).
+  const [pdfPageCount, setPdfPageCount] = useState(0);
+  // Scrub → jump to the latest requested fraction with ONE goToFraction in flight at a time: a fast
+  // drag across a 3000-page PDF must never stack page renders — run the freshest, drop the stale.
+  const scrubPendingRef = useRef<number | null>(null);
+  const scrubBusyRef = useRef(false);
+  const onPdfScrub = (frac: number) => {
+    scrubPendingRef.current = Math.max(0, Math.min(1, frac));
+    if (scrubBusyRef.current) return;
+    scrubBusyRef.current = true;
+    (async () => {
+      const ctrl = ctrlRef.current;
+      while (ctrl && scrubPendingRef.current != null) {
+        const f = scrubPendingRef.current;
+        scrubPendingRef.current = null;
+        await ctrl.goToFraction(f);
+      }
+    })().catch(() => {}).finally(() => { scrubBusyRef.current = false; });
   };
 
   // RAWY-49: open the Photo Mode composer for a selected passage. The card starts on the book's
@@ -741,6 +767,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         basketOpen={basketOpen}
         onBasket={() => setBasketOpen((v) => !v)}
         isPdf={isPdf}
+        pdfPageCount={pdfPageCount}
+        onScrub={onPdfScrub}
       />
 
       <SettingsPanel

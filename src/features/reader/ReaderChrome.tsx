@@ -1,3 +1,5 @@
+import { useRef, useState } from "react";
+
 import { useI18n } from "../../i18n";
 import { localeNum } from "../../lib/format";
 
@@ -27,6 +29,10 @@ interface Props {
   basketOpen: boolean;
   onBasket: () => void;
   isPdf?: boolean; // RAWY-85: a PDF is read-only — hide the EPUB-only controls
+  // RAWY-87 (#1): a PDF has no chapters, so the bottom shows a page position (page / total) and the
+  // progress bar is scrubbable to jump anywhere. EPUB is untouched (these are only wired for a PDF).
+  pdfPageCount?: number;
+  onScrub?: (fraction: number) => void;
 }
 
 // A small "stack of cards" glyph for the Quotes button. RAWY-66: 18→20 with the enlarged icon box.
@@ -64,9 +70,50 @@ export function ReaderChrome({
   basketOpen,
   onBasket,
   isPdf,
+  pdfPageCount,
+  onScrub,
 }: Props) {
   const { t, lang } = useI18n();
-  const pct = Math.round(fraction * 100);
+
+  // RAWY-87 (#1): PDF scrub. While dragging, the knob + page readout follow the pointer LIVE (cheap
+  // math); the actual page jump (onScrub → goToFraction) is driven by the parent, throttled to one
+  // in flight. The track is pinned LTR (like the EPUB bar), so fraction = x within the track width.
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [scrub, setScrub] = useState<number | null>(null);
+  const fracFromX = (clientX: number) => {
+    const el = trackRef.current;
+    if (!el) return 0;
+    const r = el.getBoundingClientRect();
+    return Math.max(0, Math.min(1, (clientX - r.left) / r.width));
+  };
+  const scrubDown = (e: React.PointerEvent) => {
+    if (!isPdf) return;
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    const f = fracFromX(e.clientX);
+    setScrub(f);
+    onScrub?.(f);
+  };
+  const scrubMove = (e: React.PointerEvent) => {
+    if (!isPdf || scrub == null) return;
+    const f = fracFromX(e.clientX);
+    setScrub(f);
+    onScrub?.(f);
+  };
+  const scrubUp = (e: React.PointerEvent) => {
+    if (!isPdf || scrub == null) return;
+    onScrub?.(scrub);
+    setScrub(null);
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+  };
+
+  // Live fraction: the scrub position while dragging, otherwise the real reading fraction.
+  const dispFrac = scrub ?? fraction;
+  const pct = Math.round(dispFrac * 100);
+  // Current page (1-based) from the fraction: RAWY-86 saves (pageIndex+0.5)/count, so pageIndex =
+  // round(frac*count − 0.5). Clamped to [1, count].
+  const pdfPage = pdfPageCount
+    ? Math.min(pdfPageCount, Math.max(1, Math.round(dispFrac * pdfPageCount - 0.5) + 1))
+    : 0;
 
   return (
     <div className={`reader-chrome${visible ? " show" : ""}`} aria-hidden={!visible}>
@@ -150,10 +197,19 @@ export function ReaderChrome({
 
       <div className="rc-bottom">
         <div className="rc-meta">
-          <span dir="auto">{chapter}</span>
+          {/* PDF: a page position (no chapters); EPUB: the chapter label — RAWY-87 */}
+          <span dir="auto">
+            {isPdf && pdfPageCount
+              ? t("pdf.pageOf", { n: localeNum(pdfPage, lang), total: localeNum(pdfPageCount, lang) })
+              : chapter}
+          </span>
           <span>{localeNum(pct, lang)}%</span>
         </div>
-        <div className="rc-progress">
+        <div
+          className={`rc-progress${isPdf ? " rc-progress-scrub" : ""}${scrub != null ? " scrubbing" : ""}`}
+          ref={trackRef}
+          {...(isPdf ? { onPointerDown: scrubDown, onPointerMove: scrubMove, onPointerUp: scrubUp } : {})}
+        >
           <div className="rc-progress-fill" style={{ width: `${pct}%` }} />
           <div className="rc-progress-knob" style={{ left: `${pct}%` }} />
         </div>

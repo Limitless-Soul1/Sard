@@ -48,6 +48,7 @@ export const en = {
   "pdf.copy": "Copy selection",
   "pdf.copied": "Copied",
   "pdf.copyEmpty": "Select text on the page first",
+  "pdf.pageOf": "{n} / {total}",
   // RAWY-70: in-body "first line" hide → a spoiler-safe placeholder with a two-step reveal.
   "reader.titleHidden": "Title hidden",
   "reader.revealTitleConfirm": "Reveal the title?",

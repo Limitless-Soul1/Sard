@@ -73,31 +73,70 @@ export const useAnnotations = create<AnnoState>((set, get) => ({
   createHighlight: async (cfi, color, text) => {
     const { bookId, ctrl } = get();
     if (!bookId) return null;
+    // Draw the overlay first — it's local (instant, keeps selection→highlight snappy) and yields the
+    // chapter label the row needs. If the DB write then fails or returns nothing, revert the overlay
+    // so no highlight is left drawn with no row backing it (which would vanish on reopen).
     const label = await ctrl?.addHighlight(cfi, color);
     const fallback = label ?? useReader.getState().chapterLabel;
-    const row = await highlightCreate(bookId, cfi, color, text, fallback);
-    if (row) set({ highlights: upsert(get().highlights, row) });
-    return row;
+    try {
+      const row = await highlightCreate(bookId, cfi, color, text, fallback);
+      if (row) {
+        set({ highlights: upsert(get().highlights, row) });
+        return row;
+      }
+      ctrl?.removeHighlight(cfi); // no DB row → erase the dangling overlay
+      return null;
+    } catch (e) {
+      console.error(e);
+      ctrl?.removeHighlight(cfi); // failed write → erase the dangling overlay
+      return null;
+    }
   },
 
   setColor: async (id, color) => {
     const hi = get().highlights.find((h) => h.id === id);
     if (!hi) return;
-    get().ctrl?.setHighlightColor(hi.cfi, color);
-    const updated = await highlightSetColor(id, color);
-    if (updated) set({ highlights: upsert(get().highlights, updated) });
+    const prevColor = hi.color;
+    get().ctrl?.setHighlightColor(hi.cfi, color); // optimistic recolour (local, instant)
+    try {
+      const updated = await highlightSetColor(id, color);
+      if (updated) set({ highlights: upsert(get().highlights, updated) });
+      else get().ctrl?.setHighlightColor(hi.cfi, prevColor); // no DB row → restore the on-page colour
+    } catch (e) {
+      console.error(e);
+      get().ctrl?.setHighlightColor(hi.cfi, prevColor); // failed write → restore the on-page colour
+    }
   },
 
   removeHighlight: async (id) => {
     const hi = get().highlights.find((h) => h.id === id);
     if (!hi) return;
+    // Erase the overlay optimistically, but gate the array removal on the DB delete: if it fails,
+    // redraw the highlight so the panel entry + on-page mark stay in step with the surviving row
+    // (no ghost entry whose jump would land on unhighlighted text).
     get().ctrl?.removeHighlight(hi.cfi);
-    await highlightDelete(id);
+    try {
+      await highlightDelete(id);
+    } catch (e) {
+      console.error(e);
+      get().ctrl?.addHighlight(hi.cfi, hi.color); // failed delete → restore the overlay, keep arrays
+      return;
+    }
+    // Row is gone from the DB — commit the removal. Its note delete is best-effort (the FK already
+    // detached it); only drop the note from the panel if its own delete resolves.
     const note = get().notes.find((n) => n.highlight_id === id);
-    if (note) await noteDelete(note.id);
+    let noteRemoved = true;
+    if (note) {
+      try {
+        await noteDelete(note.id);
+      } catch (e) {
+        console.error(e);
+        noteRemoved = false;
+      }
+    }
     set({
       highlights: get().highlights.filter((h) => h.id !== id),
-      notes: get().notes.filter((n) => n.highlight_id !== id),
+      notes: noteRemoved ? get().notes.filter((n) => n.highlight_id !== id) : get().notes,
     });
   },
 
@@ -109,8 +148,13 @@ export const useAnnotations = create<AnnoState>((set, get) => ({
     const existing = get().notes.find((n) => n.highlight_id === hi.id);
     if (!body) {
       if (existing) {
-        await noteDelete(existing.id);
-        set({ notes: get().notes.filter((n) => n.id !== existing.id) });
+        // Apply-on-success: only drop it from the panel if the DB delete resolves.
+        try {
+          await noteDelete(existing.id);
+          set({ notes: get().notes.filter((n) => n.id !== existing.id) });
+        } catch (e) {
+          console.error(e);
+        }
       }
       return;
     }
@@ -138,7 +182,13 @@ export const useAnnotations = create<AnnoState>((set, get) => ({
   },
 
   deleteNote: async (id) => {
-    await noteDelete(id);
-    set({ notes: get().notes.filter((n) => n.id !== id) });
+    // Apply-on-success: drop it from the panel only when the DB delete resolves, else it would vanish
+    // from the UI while its row survives (and reappear on reopen).
+    try {
+      await noteDelete(id);
+      set({ notes: get().notes.filter((n) => n.id !== id) });
+    } catch (e) {
+      console.error(e);
+    }
   },
 }));

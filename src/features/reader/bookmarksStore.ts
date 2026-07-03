@@ -35,8 +35,15 @@ export const useBookmarks = create<BookmarksState>((set, get) => ({
     if (!bookId) return;
     const existing = get().nearest(fraction);
     if (existing) {
-      await bookmarkDelete(existing.id).catch(console.error);
-      set({ bookmarks: get().bookmarks.filter((b) => b.id !== existing.id) });
+      // Apply-on-success: drop it locally only if the DB row is actually gone. On failure keep it —
+      // state stays consistent with the surviving row (no phantom-gone bookmark), and a retry deletes
+      // the SAME id via nearest() instead of creating a duplicate.
+      try {
+        await bookmarkDelete(existing.id);
+        set({ bookmarks: get().bookmarks.filter((b) => b.id !== existing.id) });
+      } catch (e) {
+        console.error(e);
+      }
       return;
     }
     const row = await bookmarkCreate({ bookId, cfi, chapterLabel, fraction }).catch(() => null);
@@ -45,8 +52,14 @@ export const useBookmarks = create<BookmarksState>((set, get) => ({
     }
   },
   remove: async (id) => {
-    await bookmarkDelete(id).catch(console.error);
-    set({ bookmarks: get().bookmarks.filter((b) => b.id !== id) });
+    // Apply-on-success: drop it locally only when the DB delete resolves; on failure keep it so the
+    // list stays consistent with the surviving row (no phantom-gone bookmark, no duplicate on retry).
+    try {
+      await bookmarkDelete(id);
+      set({ bookmarks: get().bookmarks.filter((b) => b.id !== id) });
+    } catch (e) {
+      console.error(e);
+    }
   },
   nearest: (fraction) => {
     let best: BookmarkRow | null = null;

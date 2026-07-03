@@ -647,6 +647,74 @@ html, body, #root {
 .toc-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--text) 18%, transparent); }
 .toc-dot.current { background: transparent; border: 1.5px solid var(--accent); }
 
+/* ===== RAWY-88: in-book search panel (design: In-Book Search) ===== */
+.search-panel { inline-size: 340px; }
+/* search input */
+.sp-search-field {
+  display: flex; align-items: center; gap: 8px; margin: 4px 12px 10px;
+  padding: 9px 12px; border-radius: 10px; background: var(--paper-bg);
+  border: 1px solid var(--chrome-border);
+}
+.sp-search-field:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.sp-search-ico { display: inline-flex; color: var(--muted); flex: none; }
+.sp-search-input {
+  flex: 1; min-width: 0; border: 0; background: transparent; outline: none;
+  font: 400 14px "Literata", "SardUIArabic", serif; color: var(--text);
+}
+.sp-search-input::placeholder { color: var(--muted); }
+.sp-search-clear {
+  flex: none; border: 0; background: transparent; cursor: pointer; color: var(--muted);
+  font: 300 15px "Inter", sans-serif; line-height: 1; padding: 2px 4px; border-radius: 5px;
+}
+.sp-search-clear:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* spoiler-safe toggle (app furniture — reuses .rp-switch) */
+.sp-spoiler {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; width: calc(100% - 24px);
+  margin: 0 12px 8px; padding: 10px 12px; border-radius: 10px; cursor: pointer; text-align: start;
+  border: 1px solid var(--chrome-border);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.sp-spoiler:hover { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.sp-spoiler-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sp-spoiler-label { font: 600 12.5px "Inter", "SardUIArabic", sans-serif; color: var(--accent); }
+.sp-spoiler-sub { font: 400 11px "Inter", "SardUIArabic", sans-serif; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* results */
+.sp-results { padding-top: 2px; }
+.sp-count { padding: 6px 12px 4px; font: 700 10px "Inter", "SardUIArabic", sans-serif; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.sp-nothing-before { padding: 2px 12px 8px; font: 400 12px "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.sr-row {
+  display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: start;
+  padding: 9px 12px; border: 0; background: transparent; cursor: pointer; border-radius: 8px;
+}
+.sr-row:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.sr-row.active { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
+.rp-lead[dir="rtl"] .sr-row.active { box-shadow: inset -2px 0 0 var(--accent); }
+.sr-row.ahead { opacity: 0.86; }
+.sr-meta { display: flex; align-items: baseline; gap: 8px; }
+.sr-chapter { flex: 1; min-width: 0; font: 700 10.5px "Inter", "SardUIArabic", sans-serif; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sr-loc { flex: none; font: 500 11px "Inter", "SardUIArabic", sans-serif; color: color-mix(in srgb, var(--accent) 90%, var(--muted)); }
+.sr-ahead-tag { flex: none; font: 700 8.5px "Inter", "SardUIArabic", sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 5px; padding: 1px 5px; }
+.sr-snippet { font: 400 13px/1.5 "Literata", "SardUIArabic", serif; color: color-mix(in srgb, var(--text) 90%, transparent); }
+.sr-hit { background: color-mix(in srgb, var(--accent) 26%, transparent); color: var(--text); border-radius: 3px; padding: 0 1px; font-weight: 600; }
+/* you-are-here boundary */
+.sp-here { display: flex; align-items: center; gap: 10px; margin: 12px 12px 8px; }
+.sp-here-line { flex: 1; height: 1px; background: color-mix(in srgb, var(--accent) 34%, transparent); }
+.sp-here-label { flex: none; font: 700 9.5px "Inter", "SardUIArabic", sans-serif; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+/* sealed card — a count, never a snippet */
+.sp-sealed { margin: 4px 12px 10px; padding: 14px; border-radius: 11px; text-align: center; background: color-mix(in srgb, var(--accent) 8%, transparent); border: 1px dashed color-mix(in srgb, var(--accent) 34%, transparent); }
+.sp-sealed-count { font: 600 13.5px "Inter", "SardUIArabic", sans-serif; color: var(--text); }
+.sp-sealed-body { margin-top: 5px; font: 400 12px/1.5 "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.sp-sealed-reveal, .sp-hide-again { margin-top: 10px; border: 0; background: transparent; cursor: pointer; font: 600 12px "Inter", "SardUIArabic", sans-serif; color: var(--accent); }
+.sp-hide-again { display: block; margin: 6px auto 4px; }
+.sp-sealed-reveal:hover, .sp-hide-again:hover { text-decoration: underline; }
+.sp-tashkil-note { margin: 8px 12px 4px; padding-top: 8px; border-top: 1px solid var(--chrome-border); font: 400 11px/1.5 "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+/* empty / searching / before-typing */
+.sp-searching { padding: 20px 12px; font: 400 13px "Inter", "SardUIArabic", sans-serif; color: var(--muted); text-align: center; }
+.sp-empty, .sp-hint { padding: 22px 16px; text-align: center; }
+.sp-empty-title { font: 600 14px "Literata", "SardUIArabic", serif; color: var(--text); }
+.sp-empty-body, .sp-hint-body { margin-top: 8px; font: 400 12.5px/1.6 "Inter", "SardUIArabic", sans-serif; color: var(--muted); }
+.sp-hint-title { font: 600 14px "Literata", "SardUIArabic", serif; color: var(--text); }
+
 /* annotations: a segmented pill tab group (RAWY-33, design C-VI) */
 .rp-tabs {
   display: flex; gap: 3px; padding: 3px; border-radius: 8px;

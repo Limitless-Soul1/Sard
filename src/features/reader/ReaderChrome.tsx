@@ -12,6 +12,8 @@ interface Props {
   fraction: number;
   onBack: () => void;
   onContents: () => void;
+  onSearch: () => void; // RAWY-88: in-book search (EPUB only)
+  searchOpen: boolean;
   onText: () => void;
   onTheme: () => void;
   onLayout: () => void;
@@ -56,6 +58,8 @@ export function ReaderChrome({
   fraction,
   onBack,
   onContents,
+  onSearch,
+  searchOpen,
   onText,
   onTheme,
   onLayout,
@@ -133,6 +137,16 @@ export function ReaderChrome({
             <span className="rc-btn-ico"><span className="ico-lines"><span /><span /><span /></span></span>
             <span className="rc-btn-label">{t("reader.contents")}</span>
           </button>
+          {/* RAWY-88: Search sits FIRST AFTER Contents — the two "find your way" tools together, before
+              the appearance tools (design §1). EPUB-only; a PDF keeps its own RAWY-86 find. */}
+          {!isPdf && (
+            <button className={`rc-btn${searchOpen ? " on" : ""}`} onClick={onSearch} title={t("search.title")}>
+              <span className="rc-btn-ico">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
+              </span>
+              <span className="rc-btn-label">{t("search.title")}</span>
+            </button>
+          )}
           {/* Typography + theme are EPUB-only — hidden for a fixed-layout PDF (RAWY-85). */}
           {!isPdf && (
             <button

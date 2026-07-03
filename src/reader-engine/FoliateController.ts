@@ -30,6 +30,20 @@ export interface TocEntry {
   level: number;
 }
 
+// RAWY-88: one in-book search match. `ahead` = the match lies BEYOND the reader's furthest-read
+// position (so spoiler-safe hides its snippet); `frac` (0..1, the match's chapter start) is the
+// location readout; the excerpt is split so the panel can bold the `match` inside pre…post.
+export interface SearchHit {
+  cfi: string;
+  sectionIndex: number;
+  chapterLabel: string;
+  pre: string;
+  match: string;
+  post: string;
+  frac: number;
+  ahead: boolean;
+}
+
 export interface AnchorRect {
   left: number;
   top: number;
@@ -362,6 +376,13 @@ export class FoliateController {
   private gestureEdge: "top" | "bottom" | null = null;
   private gestureActed = false;
 
+  // RAWY-88: in-book search + spoiler-safe boundary. `furthestCfi` = the FURTHEST-read position (per
+  // the design: not the page currently open — flipping back to re-read never un-hides results); it
+  // only advances (via epubcfi.compare). `cfiCompareFn` is the vendored engine's CFI comparator,
+  // loaded once per open (runtime dynamic import — Vite can't statically import /public).
+  private furthestCfi: string | null = null;
+  private cfiCompareFn: ((a: string, b: string) => number) | null = null;
+
   /** Tear down the current view + listeners. Safe to call repeatedly. */
   dispose(): void {
     const v = this.view;
@@ -398,6 +419,13 @@ export class FoliateController {
     this.scrolledMode = !fxl && opts.flow !== "paged";
     if (!fxl) view.renderer.setAttribute("flow", this.scrolledMode ? "scrolled" : "paginated");
 
+    // RAWY-88: seed the spoiler-safe boundary at the resume position + load the CFI comparator (EPUB
+    // only — a PDF has no CFI/whole-book text search). Done before reading starts so relocate can
+    // advance `furthestCfi` synchronously.
+    this.furthestCfi = fxl ? null : (opts.resumeCfi ?? null);
+    if (!fxl) await this.ensureCfiCompare();
+    if (this.view !== view) return; // superseded during the await
+
     // RAWY-19: a corrected direction (override) wins over the EPUB's page-progression so a
     // mistagged book (e.g. an Arabic book tagged ltr) reads + pages RTL once fixed.
     this.forcedDir = opts.dir ?? undefined;
@@ -416,8 +444,14 @@ export class FoliateController {
         const n = this.pdfPageCount;
         if (n > 0) fraction = (pageIdx + 0.5) / n;
       }
+      // RAWY-88: advance the furthest-read boundary (never retreat — re-reading earlier never un-hides
+      // spoiler-safe results). EPUB only; the comparator is preloaded so this stays synchronous.
+      const cfi = e.detail?.cfi ?? null;
+      if (!fxl && cfi) {
+        if (!this.furthestCfi || (this.cfiCompareFn?.(cfi, this.furthestCfi) ?? 0) > 0) this.furthestCfi = cfi;
+      }
       this.relocateCb?.({
-        cfi: e.detail?.cfi ?? null,
+        cfi,
         fraction,
         chapterLabel: e.detail?.tocItem?.label ?? null,
         chapterHref: e.detail?.tocItem?.href ?? null,
@@ -833,6 +867,102 @@ export class FoliateController {
   /** Jump to a fraction (0..1) of the whole book — used by the dev seek hook + future slider. */
   goToFraction(frac: number): Promise<unknown> | undefined {
     return this.view?.goToFraction?.(Math.max(0, Math.min(1, frac)));
+  }
+
+  // RAWY-88: load the vendored engine's CFI comparator once (spoiler-safe ordering). Vite refuses to
+  // let source import a /public module, so — like view.js (ensureFoliateDefined) — a runtime module
+  // <script> (public/cfi-bridge.js) imports it and stashes `compare` on window; we poll for it.
+  private async ensureCfiCompare(): Promise<void> {
+    const w = window as unknown as { __sardCfiCompare?: (a: string, b: string) => number };
+    if (this.cfiCompareFn) return;
+    if (typeof w.__sardCfiCompare === "function") { this.cfiCompareFn = w.__sardCfiCompare; return; }
+    if (!document.querySelector("script[data-cfibridge]")) {
+      const s = document.createElement("script");
+      s.type = "module";
+      s.src = "/cfi-bridge.js";
+      s.dataset.cfibridge = "1";
+      document.head.appendChild(s);
+    }
+    for (let i = 0; i < 100 && typeof w.__sardCfiCompare !== "function"; i++) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    this.cfiCompareFn = typeof w.__sardCfiCompare === "function" ? w.__sardCfiCompare : null;
+  }
+  /** The furthest-read CFI (spoiler-safe boundary) — null for a PDF / before any relocate. */
+  get furthestPosition(): string | null {
+    return this.furthestCfi;
+  }
+
+  /** RAWY-88: in-book search over the WHOLE book (EPUB only). Streams foliate's search generator into
+   *  a flat, ordered list of hits — each with its chapter label, location fraction, split excerpt, and
+   *  whether it lies AHEAD of the furthest-read position (for spoiler-safe). Diacritics-/case-
+   *  insensitive: foliate matches with an Intl.Collator at `base` sensitivity (ignores tashkīl + case,
+   *  folds hamza/alef variants). `draw:()=>{}` suppresses the engine's per-match outline (we do our own
+   *  flash on jump); cancel via `signal`. */
+  async searchBook(
+    query: string,
+    opts: { signal?: AbortSignal; onProgress?: (frac: number) => void } = {},
+  ): Promise<SearchHit[]> {
+    const view = this.view;
+    const q = query.trim();
+    if (!view?.search || this.isFixedLayout || !q) return [];
+    const n = view.book?.sections?.length ?? 0;
+    const fractions: number[] = view.getSectionFractions?.() ?? [];
+    const compare = this.cfiCompareFn;
+    const boundary = this.furthestCfi;
+    const hits: SearchHit[] = [];
+    let curIndex = 0;
+    try {
+      for await (const r of view.search({ query: q, draw: () => {} })) {
+        if (opts.signal?.aborted) break;
+        if (r === "done") break;
+        if (typeof (r as any).progress === "number") {
+          curIndex = Math.max(0, Math.round((r as any).progress * n) - 1);
+          opts.onProgress?.((r as any).progress);
+          continue;
+        }
+        const rr = r as any;
+        if (Array.isArray(rr.subitems)) {
+          for (const s of rr.subitems) {
+            if (!s?.cfi) continue;
+            hits.push({
+              cfi: s.cfi,
+              sectionIndex: curIndex,
+              chapterLabel: rr.label ?? "",
+              pre: s.excerpt?.pre ?? "",
+              match: s.excerpt?.match ?? "",
+              post: s.excerpt?.post ?? "",
+              frac: fractions[curIndex] ?? 0,
+              ahead: boundary && compare ? compare(s.cfi, boundary) > 0 : false,
+            });
+          }
+        }
+      }
+    } catch {
+      /* a superseded/cancelled search — return what we have */
+    } finally {
+      try { view.clearSearch?.(); } catch { /* ignore */ }
+    }
+    return hits;
+  }
+
+  /** RAWY-88: jump to a search hit and flash it (gold highlight for ~2s, then fade) — the panel stays
+   *  open for stepping through results. */
+  private flashTimer = 0;
+  async goToSearchHit(cfi: string): Promise<void> {
+    const view = this.view;
+    if (!view) return;
+    await view.goTo?.(cfi);
+    try {
+      if (this.flashTimer) clearTimeout(this.flashTimer);
+      const item = { value: cfi, color: "#E8C36A" }; // gold ink (design) — resolveColor passes hex through
+      view.addAnnotation?.(item);
+      this.flashTimer = window.setTimeout(() => {
+        try { view.deleteAnnotation?.(item); } catch { /* ignore */ }
+      }, 2000);
+    } catch {
+      /* flash is best-effort */
+    }
   }
   /** DEV: jump to a TOC entry by index or 'last' (investigation/verification helper). */
   goToTocEntry(which: "last" | number): Promise<unknown> | undefined {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 
-import { FoliateController, type SelectionInfo, type TocEntry } from "../../reader-engine/FoliateController";
+import { FoliateController, type SearchHit, type SelectionInfo, type TocEntry } from "../../reader-engine/FoliateController";
 import { PhotoComposer } from "../photo/PhotoComposer";
 import type { CardData } from "../photo/photo";
 import { useReader } from "../../reader-engine/store";
@@ -33,6 +33,7 @@ import { AnnotationsPanel } from "./AnnotationsPanel";
 import { PhotoBasketTray } from "./PhotoBasketTray";
 import { usePhotoBasket } from "./photoBasket";
 import { ChaptersPanel } from "./ChaptersPanel";
+import { SearchPanel } from "./SearchPanel";
 import { PageBookmark } from "./PageBookmark";
 import { useAnnotations } from "./annotationsStore";
 import { MARKER_WINDOW, useBookmarks } from "./bookmarksStore";
@@ -79,6 +80,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("text");
   const [chaptersOpen, setChaptersOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false); // RAWY-88 (declared early — the chrome-hold effect reads it)
   const [annoOpen, setAnnoOpen] = useState(false);
   const [toc, setToc] = useState<TocEntry[]>([]);
   const [annoTab, setAnnoTab] = useState<import("./AnnotationsPanel").AnnoTab>("notes");
@@ -278,8 +280,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // the bar to it meant the bar never auto-hid for the owner. Contents now leaves the bar free to
   // auto-hide on idle/scroll (the panel itself stays open; it just doesn't force the bar shown).
   useEffect(
-    () => setHold(settingsOpen || annoOpen || basketOpen),
-    [settingsOpen, annoOpen, basketOpen, setHold],
+    () => setHold(settingsOpen || annoOpen || basketOpen || searchOpen),
+    [settingsOpen, annoOpen, basketOpen, searchOpen, setHold],
   );
 
   // RAWY-72: wake the auto-hiding chrome on pointer activity inside the content iframe (which never
@@ -314,6 +316,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     setChaptersOpen((v) => {
       const next = !v;
       settingsSet("chapters_open", next ? "1" : "0").catch(console.error);
+      if (next) setSearchOpen(false); // RAWY-88: Contents + Search share the physical-left — exclusive
       return next;
     });
   }, []);
@@ -346,6 +349,27 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         // RAWY-87 (#2): drive the page-wheel → pageByWheel forwarding by dispatching synthetic wheels
         // ON THE PDF PAGE DOC (where a real wheel over the page fires), N times, to prove it pages.
         else if (s.startsWith("pagewheel:")) { for (let i = 0; i < Number(s.slice(10)); i++) { ctrl.devPageWheel(120); await new Promise((r) => setTimeout(r, 340)); } }
+        // RAWY-88: drive in-book search for capture (WebView2 injects no typing/clicks): "search:<frac>:<query>"
+        // — jump to <frac> (advances the furthest-read spoiler boundary), then open the panel + set the query.
+        else if (s.startsWith("search:")) {
+          const rest = s.slice(7);
+          const ci = rest.indexOf(":");
+          const frac = Number(rest.slice(0, ci));
+          const q = rest.slice(ci + 1);
+          if (!Number.isNaN(frac) && frac > 0) { await ctrl.goToFraction(frac); await new Promise((r) => setTimeout(r, 500)); }
+          setChaptersOpen(false); setSearchOpen(true); setSearchQuery(q);
+        }
+        // RAWY-88: prove jump-to-result — search, then goToSearchHit the LAST match; the landed fraction
+        // (saved to reading_progress on relocate) should match that hit's location. "searchjump:<query>"
+        else if (s.startsWith("searchjump:")) {
+          const hits = await ctrl.searchBook(s.slice(11));
+          await settingsSet("dev_search_n", String(hits.length)).catch(() => {});
+          if (hits.length) {
+            const target = hits[hits.length - 1];
+            await settingsSet("dev_search_targetfrac", target.frac.toFixed(4)).catch(() => {});
+            await ctrl.goToSearchHit(target.cfi);
+          }
+        }
         else if (!Number.isNaN(Number(s))) await ctrl.goToFraction(Number(s));
         setTimeout(() => settingsSet("dev_diag", ctrl.diagnose()).catch(() => {}), 500);
       }, 350);
@@ -558,6 +582,89 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     })().catch(() => {}).finally(() => { scrubBusyRef.current = false; });
   };
 
+  // ---- RAWY-88: in-book search + spoiler-safe (EPUB only; a PDF keeps its RAWY-86 find) ----
+  // (searchOpen is declared with the other panel state above, so the chrome-hold effect can read it.)
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [spoilerSafe, setSpoilerSafe] = useState(true); // ON by default (the whole point), per book
+  const [revealAhead, setRevealAhead] = useState(false); // "show them anyway" — this once
+  const [activeHitCfi, setActiveHitCfi] = useState<string | null>(null);
+  const searchEpoch = useRef(0);
+  const searchDebounce = useRef<number | undefined>(undefined);
+  const searchAbort = useRef<AbortController | null>(null);
+
+  // per-book spoiler-safe preference (default ON) — remembered per book (design §5)
+  useEffect(() => {
+    if (isPdf) return;
+    settingsGet(`spoiler_safe:${initial.id}`).then((v) => setSpoilerSafe(v !== "0")).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // debounced whole-book search; a newer query supersedes (epoch) + aborts the in-flight scan
+  useEffect(() => {
+    const q = searchQuery.trim();
+    setRevealAhead(false);
+    setActiveHitCfi(null);
+    if (searchDebounce.current) clearTimeout(searchDebounce.current);
+    searchAbort.current?.abort();
+    const myEpoch = ++searchEpoch.current;
+    if (!q) { setSearchHits([]); setSearching(false); return; }
+    setSearching(true);
+    searchDebounce.current = window.setTimeout(() => {
+      const ctrl = ctrlRef.current;
+      if (!ctrl) return;
+      const ac = new AbortController();
+      searchAbort.current = ac;
+      ctrl.searchBook(q, { signal: ac.signal }).then((hits) => {
+        if (searchEpoch.current !== myEpoch) return; // superseded
+        setSearchHits(hits);
+        setSearching(false);
+      }).catch(() => { if (searchEpoch.current === myEpoch) setSearching(false); });
+    }, 320);
+    return () => { if (searchDebounce.current) clearTimeout(searchDebounce.current); };
+  }, [searchQuery]);
+
+  const toggleSearch = useCallback(() => {
+    setSearchOpen((v) => {
+      const next = !v;
+      if (next) setChaptersOpen(false); // both live on the physical-left — mutually exclusive
+      return next;
+    });
+  }, []);
+  const onToggleSpoiler = () => {
+    setRevealAhead(false);
+    setSpoilerSafe((v) => {
+      const next = !v;
+      settingsSet(`spoiler_safe:${initial.id}`, next ? "1" : "0").catch(() => {});
+      return next;
+    });
+  };
+  const onJumpHit = (hit: SearchHit) => {
+    setActiveHitCfi(hit.cfi);
+    ctrlRef.current?.goToSearchHit(hit.cfi);
+  };
+  // the reader's position label for the toggle + "you are here" (current chapter, else a percent)
+  const searchPositionLabel = chapterLabel || t("reader.percentRead", { p: localeNum(Math.round(fraction * 100), lang) });
+
+  // RAWY-88: ⌘F / Ctrl-F / "/" opens search even in immersive mode (design §1). Ignored while typing.
+  useEffect(() => {
+    if (isPdf) return;
+    const onKey = (e: KeyboardEvent) => {
+      const typing = /^(INPUT|TEXTAREA)$/.test((e.target as HTMLElement)?.tagName ?? "");
+      const cmdF = (e.metaKey || e.ctrlKey) && (e.key === "f" || e.key === "F");
+      const slash = e.key === "/" && !typing;
+      if (cmdF || slash) {
+        e.preventDefault();
+        setChaptersOpen(false);
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPdf]);
+
   // RAWY-49: open the Photo Mode composer for a selected passage. The card starts on the book's
   // current theme + direction, with the book title/author/chapter as removable metadata.
   const openPhotoCard = (sel: SelectionInfo) => {
@@ -619,7 +726,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // visible (RAWY-42); same condition the chrome itself uses. RAWY-73: `chaptersOpen` is excluded
   // (matching the pin above) so the Contents panel being open no longer forces the bar shown — the
   // bar follows the auto-hide (chromeVisible), and the marker tracks it.
-  const chromeShown = chromeVisible || settingsOpen || annoOpen || basketOpen;
+  const chromeShown = chromeVisible || settingsOpen || annoOpen || basketOpen || searchOpen;
   // When chapter titles are hidden (anti-spoiler), the chrome shows a neutral "Chapter N" — using
   // the book's OWN chapter number, parsed straight from `chapterLabel` (already the real,
   // currently-matched TOC label — RAWY-67). A single-volume import whose real first chapter is
@@ -675,7 +782,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // The three right-edge drawers (Settings 384 / Notes 300) are mutually exclusive; Contents
   // (left) coexists. Shift the desk by whichever right drawer is open so the page recenters.
   const PANEL = 300;
-  const leftPad = chaptersOpen ? PANEL : 0;
+  // Contents + Search both live on the physical-left and are mutually exclusive — either shifts the desk.
+  const leftPad = chaptersOpen || searchOpen ? PANEL : 0;
   // The Notes drawer pushes the desk so the page sits beside it. The SETTINGS drawer does NOT
   // (RAWY-36): it overlays the page's edge, so the page keeps its full width and the Page-width
   // control shows its real effect live while you adjust it (pushing the desk capped the sheet to
@@ -739,6 +847,26 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         isPdf={isPdf}
       />
 
+      {!isPdf && (
+        <SearchPanel
+          open={searchOpen}
+          onClose={() => setSearchOpen(false)}
+          bookTitle={bookTitle}
+          positionLabel={searchPositionLabel}
+          bookDir={isRtlBook ? "rtl" : "ltr"}
+          query={searchQuery}
+          onQuery={setSearchQuery}
+          searching={searching}
+          hits={searchHits}
+          spoilerSafe={spoilerSafe}
+          onToggleSpoiler={onToggleSpoiler}
+          revealAhead={revealAhead}
+          onRevealAhead={setRevealAhead}
+          activeCfi={activeHitCfi}
+          onJump={onJumpHit}
+        />
+      )}
+
       <AnnotationsPanel
         open={annoOpen}
         onClose={() => setAnnoOpen(false)}
@@ -753,6 +881,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         fraction={fraction}
         onBack={onExit}
         onContents={toggleChapters}
+        onSearch={toggleSearch}
+        searchOpen={searchOpen}
         onText={() => openSettings("text")}
         onTheme={() => openSettings("theme")}
         onLayout={() => openSettings("page")}

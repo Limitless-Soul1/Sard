@@ -348,22 +348,18 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   return (
     <div className="lib-root">
       <aside className="lib-sidebar">
+        {/* RAWY-95 — app wordmark, design variant 2b (D34): a FIXED IBM-Plex lockup —
+            hoopoe · "Sard" · quiet ink bar · "سَرْد" (with tashkīl), fully monochrome (the bird
+            carries the only colour). LTR-pinned so the internal order never mirrors in the RTL UI. */}
         <div className="lib-brand">
-          {/* Bird on the leading edge; the script nearest it is the UI's own (band K). */}
-          <Hoopoe size={30} className="lib-brand-bird" />
-          {lang === "ar" ? (
-            <>
-              <span className="lib-word-ar">سَرْد</span>
-              <span className="lib-word-sep" />
+          <span className="lib-lockup">
+            <Hoopoe size={28} className="lib-brand-bird" />
+            <span className="lib-wordmark">
               <span className="lib-word-latin">Sard</span>
-            </>
-          ) : (
-            <>
-              <span className="lib-word-latin">Sard</span>
-              <span className="lib-word-sep" />
+              <span className="lib-word-sep" aria-hidden />
               <span className="lib-word-ar">سَرْد</span>
-            </>
-          )}
+            </span>
+          </span>
         </div>
 
         <nav className="lib-nav">

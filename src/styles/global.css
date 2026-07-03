@@ -1007,10 +1007,18 @@ html, body, #root {
   width: 228px; flex: none; display: flex; flex-direction: column; padding: 20px 16px;
   background: var(--chrome-bg); border-inline-end: 1px solid var(--chrome-border);
 }
-.lib-brand { display: flex; align-items: center; gap: 9px; padding: 0 8px 22px; }
-.lib-word-latin { font: 600 19px "Literata", serif; color: var(--text); }
-.lib-word-ar { font: 700 19px "Amiri", serif; color: var(--text); }
-.lib-word-sep { width: 1px; height: 17px; background: var(--text); opacity: 0.3; }
+/* RAWY-95 — app wordmark, variant 2b (D34): fixed IBM-Plex lockup, monochrome, quiet ink bar.
+   `.lib-brand` follows the UI direction, so the whole lockup sits on the sidebar's LEADING edge
+   (right in the Arabic RTL UI); `.lib-lockup` is `direction: ltr`, pinning the internal order
+   (bird · Sard · bar · سَرْد) so it never mirrors. The bird is vertically centred beside the
+   baseline-aligned text (level, not below). */
+.lib-brand { display: flex; align-items: center; padding: 0 8px 22px; }
+.lib-lockup { display: inline-flex; align-items: center; gap: 7px; direction: ltr; }
+.lib-wordmark { display: inline-flex; align-items: baseline; gap: 7px; }
+.lib-word-latin { font: 600 18.5px/1 "SardUILatin", "IBM Plex Sans", sans-serif; letter-spacing: 0.01em; color: var(--text); }
+.lib-word-ar { font: 600 20px/1 "SardUIArabic", sans-serif; color: var(--text); }
+/* the divider is quiet INK at ~28% (not the terracotta 2a bar) — the whole mark stays monochrome */
+.lib-word-sep { flex: none; align-self: center; width: 1.5px; height: 19px; border-radius: 2px; background: color-mix(in srgb, var(--text) 28%, transparent); }
 
 .lib-nav { display: flex; flex-direction: column; gap: 3px; }
 .lib-nav-item {

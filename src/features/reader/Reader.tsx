@@ -336,6 +336,12 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         if (!ctrl) return;
         if (s === "toc:last") await ctrl.goToTocEntry("last");
         else if (s.startsWith("toc:")) await ctrl.goToTocEntry(Number(s.slice(4)));
+        // RAWY-86: drive the EXACT wheel-paging path (pageByWheel, logical forward/back) N times, to
+        // verify PDF paging works through the document (the chevrons use the same underlying nav).
+        else if (s.startsWith("next:")) { for (let i = 0; i < Number(s.slice(5)); i++) { ctrl.pageByWheel(120); await new Promise((r) => setTimeout(r, 340)); } }
+        else if (s.startsWith("prev:")) { for (let i = 0; i < Number(s.slice(5)); i++) { ctrl.pageByWheel(-120); await new Promise((r) => setTimeout(r, 340)); } }
+        // RAWY-86: drive the in-PDF find path (pdfFind) with a query, so a jump-to-match can be captured.
+        else if (s.startsWith("find:")) { const hit = await ctrl.pdfFind(s.slice(5), 0); await settingsSet("dev_find_hit", hit == null ? "none" : String(hit)).catch(() => {}); }
         else if (!Number.isNaN(Number(s))) await ctrl.goToFraction(Number(s));
         setTimeout(() => settingsSet("dev_diag", ctrl.diagnose()).catch(() => {}), 500);
       }, 350);
@@ -491,6 +497,40 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       })
       .catch(console.error);
   };
+  // RAWY-86: PDF appearance INVERT (approximate night mode — a CSS invert filter, NOT real themes;
+  // it flips images too), persisted per book. Plus a basic in-PDF find (jump to a match) and
+  // copy-selection. Feedback rides a small transient message.
+  const [pdfInvert, setPdfInvert] = useState(false);
+  const [pdfMsg, setPdfMsg] = useState<string | null>(null);
+  const pdfMsgTimer = useRef<number | undefined>(undefined);
+  const flashPdf = (m: string) => {
+    setPdfMsg(m);
+    if (pdfMsgTimer.current) clearTimeout(pdfMsgTimer.current);
+    pdfMsgTimer.current = window.setTimeout(() => setPdfMsg(null), 2600);
+  };
+  useEffect(() => {
+    if (!isPdf) return;
+    settingsGet(`pdf_invert:${initial.id}`).then((v) => setPdfInvert(v === "1")).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const togglePdfInvert = () => {
+    setPdfInvert((v) => {
+      const next = !v;
+      settingsSet(`pdf_invert:${initial.id}`, next ? "1" : "0").catch(() => {});
+      return next;
+    });
+  };
+  const pdfFind = async (q: string) => {
+    const ctrl = ctrlRef.current;
+    if (!ctrl || !q.trim()) return;
+    flashPdf(t("pdf.find.searching"));
+    const idx = await ctrl.pdfFind(q, ctrl.pdfPageIndex ?? 0);
+    flashPdf(idx == null ? t("pdf.find.none") : t("pdf.find.found", { n: localeNum(idx + 1, lang) }));
+  };
+  const copyPdfSelection = async () => {
+    const txt = (await ctrlRef.current?.copyPdfSelection()) ?? "";
+    flashPdf(txt ? t("pdf.copied") : t("pdf.copyEmpty"));
+  };
 
   // RAWY-49: open the Photo Mode composer for a selected passage. The card starts on the book's
   // current theme + direction, with the book title/author/chapter as removable metadata.
@@ -572,11 +612,15 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // RAWY-74: the page-turn chevrons belong to PAGED mode only — in scrolled mode there are no pages
   // to turn, so they're hidden (they were showing in scrolled mode where next()/prev() jump sections).
   const isPaged = (style?.flowMode ?? "scrolled") === "paged";
+  // RAWY-86: a PDF is fixed-layout — ALWAYS paged (chevrons + wheel-to-page), never scrolled. This
+  // is the stuck-nav fix (RAWY-85 left a PDF with no chevrons + a scroll no-op).
+  const showChevrons = isPaged || isPdf;
   // RAWY-74: forward wheel events happening over the reading MARGINS (the desk / sheet padding,
   // outside foliate's content iframe) to the book's scroller, so the wheel scrolls anywhere in the
   // reading area — not only over the text. A wheel over the text fires INSIDE the iframe (never
   // bubbles here across the frame boundary), so this can't double-scroll. Paged mode ignores it.
   const onDeskWheel = (e: React.WheelEvent) => {
+    if (isPdf) { ctrlRef.current?.pageByWheel(e.deltaY); return; } // RAWY-86: wheel turns PDF pages
     if (isPaged) return;
     ctrlRef.current?.scrollByWheel(e.deltaY);
   };
@@ -623,8 +667,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   return (
     <div className="reader-root">
       {/* desk + centered page sheet (the book) + page-turn affordances */}
-      <div className="reader-desk" style={deskStyle} onWheel={onDeskWheel}>
-        {isPaged && (
+      <div className={`reader-desk${isPdf && pdfInvert ? " pdf-invert" : ""}`} style={deskStyle} onWheel={onDeskWheel}>
+        {showChevrons && (
           <button
             className="page-chevron page-chevron-left"
             onClick={() => ctrlRef.current?.next()}
@@ -644,7 +688,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
           <div className="page-host" ref={stageRef} dir="ltr" />
           <div className="page-grain" />
         </div>
-        {isPaged && (
+        {showChevrons && (
           <button
             className="page-chevron page-chevron-right"
             onClick={() => ctrlRef.current?.prev()}
@@ -716,11 +760,18 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         isPdf={isPdf}
         pdfDir={dir === "rtl" ? "rtl" : "ltr"}
         onPdfDir={setPdfDir}
+        pdfInvert={pdfInvert}
+        onPdfInvert={togglePdfInvert}
+        onPdfFind={pdfFind}
+        onPdfCopy={copyPdfSelection}
       />
 
       {/* RAWY-85: no in-context selection toolbar (highlight/note/Photo Mode) for PDFs — they're
           CFI-less in Phase 0, so the whole annotation layer is disabled rather than half-working. */}
       {!isPdf && <AnnotationLayer ctrlRef={ctrlRef} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} />}
+
+      {/* RAWY-86: transient PDF feedback (find result / copied). */}
+      {pdfMsg && <div className="pdf-toast">{pdfMsg}</div>}
 
       <PhotoBasketTray open={basketOpen} onClose={() => setBasketOpen(false)} onCompose={composeBasket} />
 

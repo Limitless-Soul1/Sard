@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import { useI18n } from "../../i18n";
 import { ReadingSettings } from "./ReadingSettings";
 import type { SettingsSection } from "./ReaderChrome";
@@ -19,11 +21,16 @@ interface Props {
   hasOverride: boolean;
   onReset: () => void;
   unified: boolean; // RAWY-43 — the banner + Reset reflect the active book-style scope
-  // RAWY-85: for a PDF the drawer becomes a "read-only" panel — the honest limits + a reading-
-  // direction override (a PDF has no spine page-progression).
+  // RAWY-85/86: for a PDF the drawer becomes a "read-only" panel — the honest limits, a reading-
+  // direction override (no spine page-progression), an INVERT appearance (approximate night mode,
+  // NOT real themes), a basic in-PDF find, and copy-selection.
   isPdf?: boolean;
   pdfDir?: "ltr" | "rtl";
   onPdfDir?: (d: "ltr" | "rtl") => void;
+  pdfInvert?: boolean;
+  onPdfInvert?: () => void;
+  onPdfFind?: (q: string) => void;
+  onPdfCopy?: () => void;
 }
 
 // The reading-settings drawer (RAWY-34, design band I). A right-edge drawer docked BETWEEN the
@@ -49,8 +56,13 @@ export function SettingsPanel({
   isPdf,
   pdfDir,
   onPdfDir,
+  pdfInvert,
+  onPdfInvert,
+  onPdfFind,
+  onPdfCopy,
 }: Props) {
   const { t } = useI18n();
+  const [findQ, setFindQ] = useState("");
   const tabs: { key: SettingsSection; label: string }[] = [
     { key: "text", label: t("reader.text") },
     { key: "page", label: t("settings.page") },
@@ -81,6 +93,42 @@ export function SettingsPanel({
               </button>
             </div>
           </div>
+
+          {/* Appearance: an INVERT filter as an approximate night mode — NOT real themes. */}
+          <div className="rs-sec">
+            <div className="rs-sec-head"><span className="rs-label">{t("pdf.appearance")}</span></div>
+            <div className="rs-seg" role="group">
+              <button className={`rs-seg-item${!pdfInvert ? " on" : ""}`} onClick={() => pdfInvert && onPdfInvert?.()}>
+                {t("pdf.appearance.normal")}
+              </button>
+              <button className={`rs-seg-item${pdfInvert ? " on" : ""}`} onClick={() => !pdfInvert && onPdfInvert?.()}>
+                {t("pdf.appearance.inverted")}
+              </button>
+            </div>
+            <div className="rs-sec-hint">{t("pdf.appearance.hint")}</div>
+          </div>
+
+          {/* Basic in-PDF find — jumps to the first page (from the current one) containing the text. */}
+          <div className="rs-sec">
+            <div className="rs-sec-head"><span className="rs-label">{t("pdf.find")}</span></div>
+            <form
+              className="sp-pdf-find"
+              onSubmit={(e) => { e.preventDefault(); onPdfFind?.(findQ); }}
+            >
+              <input
+                className="sp-pdf-find-input"
+                value={findQ}
+                onChange={(e) => setFindQ(e.target.value)}
+                placeholder={t("pdf.find.placeholder")}
+                dir="auto"
+              />
+              <button type="submit" className="sp-pdf-find-btn" disabled={!findQ.trim()}>{t("pdf.find.action")}</button>
+            </form>
+            <div className="rs-sec-hint">{t("pdf.find.hint")}</div>
+          </div>
+
+          {/* Copy the current text selection (where the text layer allows). */}
+          <button className="sp-pdf-copy" onClick={() => onPdfCopy?.()}>{t("pdf.copy")}</button>
         </div>
       </aside>
     );

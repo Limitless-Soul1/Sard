@@ -315,6 +315,26 @@ const SCROLL_SHOW_PX = 240;
 // scattered nudges minutes apart can never add up to a "deliberate" scroll-up.
 const SCROLL_GESTURE_GAP_MS = 400;
 
+// RAWY-86: normalize text for a best-effort, Arabic-aware in-PDF find. Folds the differences that
+// commonly separate a typed query from an embedded PDF text layer WHEN that layer is otherwise clean
+// (logical order, real Unicode): NFKC collapses Arabic Presentation Forms/ligatures to base letters;
+// tashkil (harakat) and tatweel are stripped; alef/ya/teh-marbuta variants are folded; case is
+// lowered; and ALL whitespace is dropped so a query still matches a text layer that emits one glyph
+// per item. It deliberately does NOT try to undo VISUALLY-REORDERED (reversed) glyph runs — some
+// Arabic PDFs embed subset fonts with a missing/broken ToUnicode CMap and expose garbage no reader can
+// reliably reconstruct; those simply won't match (reported honestly, not faked).
+const TASHKIL_TATWEEL = /[ـً-ْٰۖ-ۭ]/g;
+function normalizeForSearch(s: string): string {
+  return s
+    .normalize("NFKC")
+    .replace(TASHKIL_TATWEEL, "")
+    .replace(/[آأإٱ]/g, "ا") // آأإٱ → ا
+    .replace(/ى/g, "ي") // ى → ي
+    .replace(/ة/g, "ه") // ة → ه
+    .toLowerCase()
+    .replace(/\s+/g, ""); // drop all whitespace (rescues one-glyph-per-item text layers)
+}
+
 export class FoliateController {
   private view: any | null = null;
   private style: ReadingStyle | null = null;
@@ -371,8 +391,12 @@ export class FoliateController {
 
     // Reading flow (RAWY-25): scrolled is the default. Set BEFORE the first section lays out
     // so foliate computes the right (scrolled vs columnised) layout from the start.
-    this.scrolledMode = opts.flow !== "paged";
-    view.renderer.setAttribute("flow", this.scrolledMode ? "scrolled" : "paginated");
+    // RAWY-86: a PDF is FIXED-LAYOUT — its own renderer (foliate-fxl) paginates by spread and has
+    // no scrolled flow, so it is always PAGED (the scrolled-mode wheel/flow attr don't apply — that
+    // was why RAWY-85's PDF was stuck: no chevrons + a scroll no-op).
+    const fxl = this.isFixedLayout;
+    this.scrolledMode = !fxl && opts.flow !== "paged";
+    if (!fxl) view.renderer.setAttribute("flow", this.scrolledMode ? "scrolled" : "paginated");
 
     // RAWY-19: a corrected direction (override) wins over the EPUB's page-progression so a
     // mistagged book (e.g. an Arabic book tagged ltr) reads + pages RTL once fixed.
@@ -380,9 +404,21 @@ export class FoliateController {
     if (this.forcedDir && view.book) view.book.dir = this.forcedDir;
 
     view.addEventListener("relocate", (e: any) => {
+      let fraction = typeof e.detail?.fraction === "number" ? e.detail.fraction : 0;
+      // foliate-view puts the section (= PDF page) index at detail.section.current, NOT detail.index.
+      const pageIdx = e.detail?.section?.current;
+      if (fxl && typeof pageIdx === "number") {
+        this.pdfPageIndex = pageIdx; // RAWY-86 (drives in-PDF find's start page + page readout)
+        // RAWY-86: a PDF page (fixed-layout spread) has no in-section fraction, so foliate reports the
+        // section BOUNDARY fraction (page i → (i+1)/n). Its own inverse `getSection()` then rounds a
+        // boundary UP to the next section, so resuming that value lands one page too far. Persist the
+        // section MIDPOINT instead — `getSection((i+0.5)/n) === i` — so resume returns to the exact page.
+        const n = this.pdfPageCount;
+        if (n > 0) fraction = (pageIdx + 0.5) / n;
+      }
       this.relocateCb?.({
         cfi: e.detail?.cfi ?? null,
-        fraction: typeof e.detail?.fraction === "number" ? e.detail.fraction : 0,
+        fraction,
         chapterLabel: e.detail?.tocItem?.label ?? null,
         chapterHref: e.detail?.tocItem?.href ?? null,
       });
@@ -391,6 +427,23 @@ export class FoliateController {
       const doc: Document | undefined = e.detail?.doc;
       const index: number = e.detail?.index ?? 0;
       if (!doc) return;
+      // RAWY-86: a PDF page is a rendered image + a pdf.js text layer — none of the EPUB-content
+      // machinery (tashkīl wrapping, in-body heading marking, the reveal, boundary-scroll) applies.
+      // Capture the page doc (for copy) + keep arrow-key paging + chrome-wake activity; skip the rest.
+      if (fxl) {
+        this.pdfPageDoc = doc;
+        doc.addEventListener("keydown", (ev: KeyboardEvent) => {
+          if (ev.key === "ArrowLeft" || ev.key === "ArrowUp" || ev.key === "PageUp") this.view?.prev?.();
+          else if (ev.key === "ArrowRight" || ev.key === "ArrowDown" || ev.key === "PageDown" || ev.key === " ") this.view?.next?.();
+        });
+        doc.addEventListener("pointerdown", (ev: PointerEvent) => {
+          if (this.activityCb) {
+            const off = frameOffset(doc);
+            this.activityCb(ev.clientX + off.x, ev.clientY + off.y, true);
+          }
+        });
+        return;
+      }
       wrapTashkil(doc); // enable the diacritics toggle for this section
       markInBodyHeading(doc, sectionTocLabel(view, index)); // RAWY-67: hide-titles catches this too
       // RAWY-70: the two-step reveal for the hide-first-line placeholder. Handled from the parent
@@ -699,6 +752,67 @@ export class FoliateController {
   }
   prev(): void {
     this.view?.goRight();
+  }
+
+  // RAWY-86: PDF (fixed-layout) paging by wheel — one page per gesture, throttled. Uses LOGICAL
+  // forward/back (view.next/prev), so scroll-down advances in reading order regardless of dir.
+  private lastPageWheel = 0;
+  pageByWheel(deltaY: number): void {
+    if (!this.isFixedLayout || !deltaY) return;
+    const now = performance.now();
+    if (now - this.lastPageWheel < 280) return; // ~one page per wheel notch/gesture
+    this.lastPageWheel = now;
+    if (deltaY > 0) this.view?.next?.();
+    else this.view?.prev?.();
+  }
+
+  /** RAWY-86: the number of pages in the open PDF (fixed-layout sections). */
+  get pdfPageCount(): number {
+    return this.view?.book?.sections?.length ?? 0;
+  }
+  /** RAWY-86: the current 0-based PDF page index (from the last relocate). */
+  pdfPageIndex = 0;
+
+  // RAWY-86: a basic in-PDF find — scan pages' text (from the page after `fromIndex`, wrapping once)
+  // for `query`, jump to the first hit's page (by fraction), return its 0-based index (or null).
+  // Capped so a no-match doesn't scan thousands of pages. Arabic text layers can be disconnected
+  // upstream, so matches are best-effort.
+  async pdfFind(query: string, fromIndex: number): Promise<number | null> {
+    const book: any = this.view?.book;
+    if (!book?.getPageText || !book?.sections?.length) return null;
+    const q = normalizeForSearch(query);
+    if (!q) return null;
+    const n = book.sections.length;
+    const cap = Math.min(n, 400); // scan at most this many pages for a match
+    for (let k = 1; k <= cap; k++) {
+      const i = (fromIndex + k) % n;
+      let text = "";
+      try {
+        text = (await book.getPageText(i)) ?? "";
+      } catch {
+        continue;
+      }
+      if (normalizeForSearch(text).includes(q)) {
+        await this.view?.goToFraction?.((i + 0.5) / n); // section midpoint → getSection() lands on page i
+        return i;
+      }
+    }
+    return null;
+  }
+
+  // RAWY-86: the current PDF page's document (captured on `load`) — used to read the text selection
+  // for copy. The fixed-layout page renders into an iframe whose `load` fires the view's load event.
+  private pdfPageDoc: Document | null = null;
+  /** Copy the current text selection inside the PDF page to the clipboard; returns the copied text. */
+  async copyPdfSelection(): Promise<string> {
+    try {
+      const sel = this.pdfPageDoc?.getSelection?.();
+      const text = sel && !sel.isCollapsed ? sel.toString().trim() : "";
+      if (text) await navigator.clipboard.writeText(text);
+      return text;
+    } catch {
+      return "";
+    }
   }
   goToLocator(cfi: string): Promise<unknown> | undefined {
     return this.view?.goTo(cfi);

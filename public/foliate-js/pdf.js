@@ -132,7 +132,9 @@ export const makePDF = async file => {
         isEvalSupported: false,
     }).promise
 
-    const book = { rendition: { layout: 'pre-paginated' } }
+    // RAWY-86: one page per view (spread:'none') — the natural PDF experience, and a clean 1:1
+    // page↔spread mapping for navigation + fraction resume (vs foliate's default 2-up book spread).
+    const book = { rendition: { layout: 'pre-paginated', spread: 'none' } }
 
     const { metadata, info } = await pdf.getMetadata() ?? {}
     // TODO: for better results, parse `metadata.getRaw()`
@@ -181,6 +183,13 @@ export const makePDF = async file => {
     }
     book.getTOCFragment = doc => doc.documentElement
     book.getCover = async () => renderPage(await pdf.getPage(1), true)
+    // RAWY-86: plain text of a page (0-based) for a basic in-PDF find. Arabic text layers can be
+    // segmented/disconnected upstream, so matches are best-effort.
+    book.getPageText = async i => {
+        const page = await pdf.getPage(i + 1)
+        const tc = await page.getTextContent()
+        return tc.items.map(it => it.str ?? '').join(' ')
+    }
     book.destroy = () => pdf.destroy()
     return book
 }

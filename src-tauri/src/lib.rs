@@ -14,6 +14,7 @@ pub mod fonts; // register/validate custom fonts (placeholder)
 pub mod photocards; // saved photo cards: PNG store + DB rows (RAWY-52, Photo Mode part 2a)
 pub mod settings; // key/value settings persistence
 pub mod sync; // FUTURE seam: backend trait only (placeholder)
+pub mod tts; // RAWY-105: bundled piper sidecar (persistent process) + on-demand voice download
 
 use std::path::Path;
 
@@ -89,6 +90,7 @@ pub fn run() {
                 app_data_dir,
                 db_path,
             });
+            app.manage(tts::TtsEngine::default()); // RAWY-105: persistent piper process holder
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -134,6 +136,10 @@ pub fn run() {
             commands::photocard_save,
             commands::photocards_list,
             commands::photocard_delete,
+            tts::tts_voice_present,
+            tts::tts_download_voice,
+            tts::tts_synthesize,
+            tts::tts_stop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sard");

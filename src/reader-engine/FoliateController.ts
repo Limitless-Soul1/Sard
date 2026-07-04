@@ -783,6 +783,52 @@ export class FoliateController {
     return flattenToc(this.view?.book?.toc);
   }
 
+  /** RAWY-105 (TTS): the current chapter's text as an ordered list of sentences. Walks the current
+   *  section's LEAF block elements in document order and segments each with Intl.Segmenter
+   *  (Arabic-aware). Stage-1 simple — Stage 2 (RAWY-106) adds the hidden-title/first-line exclusion
+   *  (skip `visibility:hidden` nodes + `.sard-title-ph`) so hidden text is never spoken. */
+  getCurrentChapterSentences(lang?: string): string[] {
+    const doc: Document | undefined = this.view?.renderer?.getContents?.()?.[0]?.doc;
+    if (!doc?.body) return [];
+    const BLOCK = new Set(["P", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "BLOCKQUOTE"]);
+    const NESTED = "p,h1,h2,h3,h4,h5,h6,li,blockquote";
+    const blocks: string[] = [];
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_ELEMENT);
+    let node: Node | null;
+    while ((node = walker.nextNode())) {
+      const el = node as HTMLElement;
+      if (!BLOCK.has(el.tagName) || el.querySelector(NESTED)) continue; // leaf blocks only (no double-count)
+      const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+      if (text) blocks.push(text);
+    }
+    if (blocks.length === 0) {
+      // some EPUBs use <div> for paragraphs — take leaf divs
+      doc.body.querySelectorAll("div").forEach((el) => {
+        if (el.querySelector("div," + NESTED)) return;
+        const t = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+        if (t) blocks.push(t);
+      });
+    }
+    // Intl.Segmenter is present in WebView2/Chromium but not always in the TS lib — type it locally.
+    type Segmenter = { segment: (s: string) => Iterable<{ segment: string }> };
+    const Seg = (Intl as unknown as {
+      Segmenter?: new (l: string, o: { granularity: string }) => Segmenter;
+    }).Segmenter;
+    const seg: Segmenter | null = Seg ? new Seg(lang || "en", { granularity: "sentence" }) : null;
+    const out: string[] = [];
+    for (const b of blocks) {
+      if (seg) {
+        for (const part of seg.segment(b)) {
+          const t = part.segment.trim();
+          if (t) out.push(t);
+        }
+      } else {
+        out.push(b);
+      }
+    }
+    return out;
+  }
+
   /** Jump to a TOC target (an href; foliate resolves it). */
   goToHref(href: string): Promise<unknown> | undefined {
     return this.view?.goTo(href);

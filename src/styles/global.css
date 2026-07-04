@@ -637,6 +637,61 @@ html, body, #root {
 .rp-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 6px 10px 18px; }
 .rp-empty { padding: 22px 16px; font: 400 0.75rem/1.6 var(--ui-font); color: var(--muted); text-align: center; }
 
+/* ---- RAWY-105: TTS read-aloud player pill (design "Sard TTS Player") ---- */
+.tts-pill {
+  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); z-index: 25;
+  display: flex; align-items: center; gap: 12px;
+  width: min(404px, calc(100vw - 32px)); padding: 6px 8px;
+  border-radius: 999px; border: 1px solid var(--chrome-border);
+  background: color-mix(in srgb, var(--paper-bg) 90%, transparent);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 14px 36px rgba(40, 28, 14, 0.22); font-family: var(--ui-font);
+}
+:root[data-dark="true"] .tts-pill { box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5); }
+.tts-pill.expanded { border-radius: 18px; padding: 12px 16px; width: min(448px, calc(100vw - 32px)); }
+.tts-play {
+  flex: none; width: 36px; height: 36px; border-radius: 50%; border: 0; cursor: pointer;
+  background: var(--accent); color: var(--paper-bg); display: flex; align-items: center; justify-content: center;
+}
+.tts-pill.expanded .tts-play { width: 48px; height: 48px; }
+.tts-play svg { width: 15px; height: 15px; }
+.tts-play:disabled { opacity: 0.65; cursor: default; }
+.tts-skip {
+  flex: none; width: 38px; height: 38px; border-radius: 50%; border: 0; cursor: pointer; background: transparent;
+  color: var(--text); display: flex; align-items: center; justify-content: center;
+}
+.tts-skip:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.tts-skip svg { width: 17px; height: 17px; }
+.tts-skip:disabled { opacity: 0.4; cursor: default; }
+.tts-pill[dir="rtl"] .tts-skip svg { transform: scaleX(-1); }
+.tts-ghost {
+  flex: none; width: 30px; height: 30px; border-radius: 50%; border: 0; cursor: pointer; background: transparent;
+  color: var(--muted); display: flex; align-items: center; justify-content: center;
+}
+.tts-ghost:hover { background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); }
+.tts-ghost svg { width: 15px; height: 15px; }
+.tts-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; cursor: pointer; padding: 2px 0; }
+.tts-meta { display: flex; justify-content: space-between; gap: 8px; font: 500 0.656rem var(--ui-font); color: var(--muted); }
+.tts-chapter { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tts-pos { flex: none; }
+.tts-track { position: relative; height: 3px; border-radius: 3px; background: color-mix(in srgb, var(--text) 12%, transparent); }
+.tts-fill { position: absolute; inset-inline-start: 0; top: 0; height: 3px; border-radius: 3px; background: var(--accent); }
+.tts-dot {
+  position: absolute; top: 50%; transform: translate(-50%, -50%); width: 9px; height: 9px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.tts-pill[dir="rtl"] .tts-dot { transform: translate(50%, -50%); }
+.tts-chip {
+  flex: none; border-radius: 999px; border: 1px solid var(--chrome-border); background: transparent; cursor: pointer;
+  padding: 7px 13px; font: 600 0.75rem var(--ui-font); color: var(--text); white-space: nowrap;
+}
+.tts-chip:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.tts-spin {
+  width: 15px; height: 15px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--paper-bg) 45%, transparent);
+  border-top-color: var(--paper-bg); animation: tts-spin 0.7s linear infinite;
+}
+@keyframes tts-spin { to { transform: rotate(360deg); } }
+
 /* anti-spoiler toggle in the Contents header (RAWY-36 — a clear LABELLED switch, replaces the
    emoji button): a label + the shared pill switch, sits under the header above the chapter list */
 .rp-spoiler {

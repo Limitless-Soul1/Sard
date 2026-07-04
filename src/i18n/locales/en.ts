@@ -425,6 +425,21 @@ export const en = {
   "fonts.badge.bookAr": "BOOK · AR",
   "fonts.badge.bookEn": "BOOK · EN",
   "fonts.remove": "Remove",
+  // RAWY-105 — TTS read-aloud (Stage 1)
+  "tts.listen": "Listen",
+  "tts.player": "Read-aloud player",
+  "tts.play": "Play",
+  "tts.pause": "Pause",
+  "tts.paused": "paused",
+  "tts.preparing": "preparing…",
+  "tts.error": "couldn’t play",
+  "tts.skipBack": "Previous sentence",
+  "tts.skipFwd": "Next sentence",
+  "tts.pos": "¶ {n} of {m}",
+  "tts.speed": "Speed",
+  "tts.close": "Stop",
+  "tts.expand": "Expand",
+  "tts.collapse": "Collapse",
 } as const;
 
 export type TKey = keyof typeof en;

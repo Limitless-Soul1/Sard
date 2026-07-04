@@ -39,6 +39,8 @@ import { useAnnotations } from "./annotationsStore";
 import { MARKER_WINDOW, useBookmarks } from "./bookmarksStore";
 import { ReaderChrome, type SettingsSection } from "./ReaderChrome";
 import { SettingsPanel } from "./SettingsPanel";
+import { TtsPlayer } from "./TtsPlayer";
+import { defaultVoiceForDir, useTts } from "../../lib/tts";
 import { useChromeOnIntent } from "./useChromeOnIntent";
 
 // The book to open: id (for progress) + absolute file path (for the asset protocol).
@@ -107,6 +109,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const [devCardFont, setDevCardFont] = useState<string | null>(null); // RAWY-81 DEV capture only
   const [basketOpen, setBasketOpen] = useState(false); // RAWY-60 passages tray
   const basketCount = usePhotoBasket((s) => s.passages.length);
+  const ttsActive = useTts((s) => s.active); // RAWY-105: read-aloud player visible?
 
   const { status, dir, fraction, chapterLabel, chapterHref, error, style, bookTitle } = useReader();
   // RAWY-43: unified (all books share one style) vs per-book. Drives where changes are written
@@ -748,6 +751,20 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     ? t("panel.chapter", { n: localeNum(realChapterNum ?? (tocIndex >= 0 ? tocIndex : 0) + 1, lang) })
     : chapterLabel || t("reader.chapterFallback");
 
+  // RAWY-105: start read-aloud from the current chapter (Stage 1 entry; Stage 2 adds
+  // listen-from-selection). Voice defaults by the BOOK's direction (Arabic book → Arabic voice).
+  const startListen = () => {
+    const ctrl = ctrlRef.current;
+    if (!ctrl) return;
+    const bookLang = isRtlBook ? "ar" : "en";
+    useTts.getState().start({
+      sentences: ctrl.getCurrentChapterSentences(bookLang),
+      voice: defaultVoiceForDir(isRtlBook ? "rtl" : "ltr"),
+      startIndex: 0,
+      chapterLabel: chapter,
+    });
+  };
+
   // Responsive page width (RAWY-23): the slider fraction → a window-relative preferred width
   // (vw), clamped to a readable range in CSS; "match window" fills it.
   const pageFraction = style?.pageWidth ?? PAGE_WIDTH_DEFAULT;
@@ -894,6 +911,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         onContents={toggleChapters}
         onSearch={toggleSearch}
         searchOpen={searchOpen}
+        onListen={startListen}
+        ttsActive={ttsActive}
         onText={() => openSettings("text")}
         onTheme={() => openSettings("theme")}
         onLayout={() => openSettings("page")}
@@ -938,6 +957,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       {/* RAWY-85: no in-context selection toolbar (highlight/note/Photo Mode) for PDFs — they're
           CFI-less in Phase 0, so the whole annotation layer is disabled rather than half-working. */}
       {!isPdf && <AnnotationLayer ctrlRef={ctrlRef} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} />}
+
+      {/* RAWY-105: read-aloud player (EPUB-only) — floats above the reading area while listening. */}
+      {!isPdf && <TtsPlayer />}
 
       {/* RAWY-86: transient PDF feedback (find result / copied). */}
       {pdfMsg && <div className="pdf-toast">{pdfMsg}</div>}

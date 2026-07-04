@@ -29,6 +29,19 @@ export const settingsGet = (key: string): Promise<string | null> =>
 export const settingsSet = (key: string, value: string): Promise<boolean> =>
   invoke<boolean>("settings_set", { key, value });
 
+// ---- TTS (RAWY-105): bundled piper sidecar + on-demand voice download ----
+/** Is the voice model present on disk (both .onnx + .onnx.json)? */
+export const ttsVoicePresent = (id: string): Promise<boolean> =>
+  invoke<boolean>("tts_voice_present", { id });
+/** Download a voice's model into app-data (blocking; Stage 1). */
+export const ttsDownloadVoice = (id: string): Promise<void> =>
+  invoke<void>("tts_download_voice", { id });
+/** Synthesize one sentence → raw WAV bytes (WebAudio decodes them). */
+export const ttsSynthesize = (id: string, text: string): Promise<ArrayBuffer> =>
+  invoke<ArrayBuffer>("tts_synthesize", { id, text });
+/** Stop + drop the persistent piper process. */
+export const ttsStop = (): Promise<void> => invoke<void>("tts_stop");
+
 // ---- Fonts (RAWY-39): import + list user fonts (stored under app-data/fonts, served via asset). ----
 export interface CustomFont {
   id: string;

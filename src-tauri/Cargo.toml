@@ -28,4 +28,6 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
 quick-xml = "0.36"
+# TTS (RAWY-105): download voice models on demand (voices are NOT bundled — installer stays small).
+ureq = "2"
 

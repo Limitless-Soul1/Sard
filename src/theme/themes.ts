@@ -1,6 +1,6 @@
 // The paper themes — 15 total. The original 4 (Ivory/Sepia/Slate/True-Black, RAWY-13, design
 // Band A) + 11 added in RAWY-29 from docs/design/themes.json — the canonical token export,
-// because Claude Design's editing project ≠ the read-only MCP project (d39e130b) we read, so the
+// because the design editing project ≠ the read-only MCP project (d39e130b) we read, so the
 // new tokens never reached the live MCP file. The 11: Sage, Rose Quartz, Parchment, Dusk, Ink,
 // Espresso, Forest Night, Mulberry, Charcoal, Nocturne, Linen. One token system drives chrome
 // (applyTheme) + book (injectedCss) + the 8-slot highlights — adding a preset is enough.

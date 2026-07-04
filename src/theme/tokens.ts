@@ -4,7 +4,7 @@
 // separate iframe that can't read the parent's CSS vars.
 
 // The original 4 (RAWY-13) + 11 added in RAWY-29 (from docs/design/themes.json — the canonical
-// token export, since Claude Design's editing project ≠ the read-only MCP project). 15 total.
+// token export, since the design editing project ≠ the read-only MCP project). 15 total.
 export type ThemeId =
   | "ivory"
   | "sepia"

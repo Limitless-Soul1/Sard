@@ -9,9 +9,9 @@
 //! the WAV bytes, and return them raw to the frontend (WebAudio decodes + plays them).
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Manager, State};
 
@@ -48,6 +48,10 @@ struct Running {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
+    // piper's stderr, drained by a background thread into this buffer (RAWY-108) so a real engine
+    // error is surfaced verbatim instead of a bare path — and so an undrained pipe can't ever block
+    // piper mid-session.
+    errlog: Arc<Mutex<String>>,
 }
 
 fn engine_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -127,11 +131,41 @@ pub fn tts_download_voice(
     Ok(())
 }
 
+/// Build the piper Command EXACTLY as the app spawns it. Pure — takes resolved paths (no Tauri
+/// AppHandle), so the real spawn path can be exercised from a test against the actual test-build /
+/// installer engine layout (RAWY-108) instead of a hand-run of piper.exe. `current_dir(eng)` is what
+/// lets Windows load piper's sibling DLLs (onnxruntime, espeak-ng, piper_phonemize); those DLLs +
+/// espeak-ng-data + the tashkeel model must all sit in `eng`.
+pub fn piper_command(eng: &Path, model: &Path, arabic: bool, out_dir: &Path) -> Command {
+    let mut cmd = Command::new(eng.join("piper.exe"));
+    cmd.arg("-m").arg(model)
+        .arg("--espeak_data").arg(eng.join("espeak-ng-data"))
+        .arg("--json-input")
+        .arg("--output_dir").arg(out_dir)
+        .arg("-q")
+        .current_dir(eng)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    if arabic {
+        cmd.arg("--tashkeel_model").arg(eng.join("libtashkeel_model.ort"));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW — no console flash
+    }
+    cmd
+}
+
 fn spawn_piper(app: &AppHandle, state: &AppState, v: &VoiceDef) -> Result<Running, String> {
     let eng = engine_dir(app)?;
     let piper = eng.join("piper.exe");
     if !piper.exists() {
-        return Err(format!("piper engine not found at {}", piper.display()));
+        // RAWY-108: the engine (piper.exe + its DLLs + espeak-ng-data + tashkeel model) ships beside
+        // the app as bundled resources; if the whole `piper/` folder is missing next to the exe, the
+        // app wasn't laid out with its resources (the test-build gap this task fixed).
+        return Err(format!("piper engine not found at {} — the app is missing its bundled engine folder", piper.display()));
     }
     let model = voices_dir(state).join(format!("{}.onnx", v.file));
     if !model.exists() {
@@ -140,28 +174,31 @@ fn spawn_piper(app: &AppHandle, state: &AppState, v: &VoiceDef) -> Result<Runnin
     let out_dir = std::env::temp_dir().join("sard-tts");
     std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
 
-    let mut cmd = Command::new(&piper);
-    cmd.arg("-m").arg(&model)
-        .arg("--espeak_data").arg(eng.join("espeak-ng-data"))
-        .arg("--json-input")
-        .arg("--output_dir").arg(&out_dir)
-        .arg("-q")
-        .current_dir(&eng) // so piper finds its DLLs (onnxruntime, espeak-ng, …) beside it
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    if v.arabic {
-        cmd.arg("--tashkeel_model").arg(eng.join("libtashkeel_model.ort"));
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW — no console flash
-    }
-    let mut child = cmd.spawn().map_err(|e| format!("spawn piper: {e}"))?;
+    let mut cmd = piper_command(&eng, &model, v.arabic, &out_dir);
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("couldn't start piper ({}): {e}", piper.display()))?;
     let stdin = child.stdin.take().ok_or("no stdin")?;
     let stdout = BufReader::new(child.stdout.take().ok_or("no stdout")?);
-    Ok(Running { voice_id: v.id.to_string(), child, stdin, stdout })
+
+    // Drain stderr on a background thread → errlog. Piper is `-q` (near-silent) in normal use, but on
+    // an error it writes here; draining continuously means the pipe never fills (which would stall
+    // piper) and the real message is available to surface if synthesis fails.
+    let errlog = Arc::new(Mutex::new(String::new()));
+    if let Some(err) = child.stderr.take() {
+        let sink = errlog.clone();
+        std::thread::spawn(move || {
+            let mut reader = BufReader::new(err);
+            let mut line = String::new();
+            while reader.read_line(&mut line).map(|n| n > 0).unwrap_or(false) {
+                if let Ok(mut g) = sink.lock() {
+                    g.push_str(&line);
+                }
+                line.clear();
+            }
+        });
+    }
+    Ok(Running { voice_id: v.id.to_string(), child, stdin, stdout, errlog })
 }
 
 /// Synthesize ONE sentence with the given voice; returns the raw WAV bytes (frontend decodes +
@@ -201,8 +238,22 @@ pub fn tts_synthesize(
     let mut path_line = String::new();
     let n = r.stdout.read_line(&mut path_line).map_err(|e| e.to_string())?;
     if n == 0 {
-        *guard = None; // process closed — drop it so the next call respawns
-        return Err("piper closed unexpectedly".into());
+        // Piper exited without emitting a WAV path — surface WHY (RAWY-108) so a failure is
+        // diagnosable, not hidden behind a bare "closed unexpectedly". Piper is near-silent on stderr
+        // even on a bad model (it just exits non-zero), so the EXIT CODE is the main signal; include
+        // any stderr it did write. (A missing DLL fails earlier at spawn with the OS error; a missing
+        // engine/voice is caught before spawn.)
+        let errlog = r.errlog.clone();
+        let code = r.child.wait().ok().and_then(|s| s.code());
+        *guard = None; // drop it so the next call respawns
+        std::thread::sleep(std::time::Duration::from_millis(30)); // let the drain thread flush
+        let msg = errlog.lock().ok().map(|g| g.trim().to_string()).unwrap_or_default();
+        return Err(match (msg.is_empty(), code) {
+            (false, Some(c)) => format!("piper failed (exit {c}): {msg}"),
+            (false, None) => format!("piper failed: {msg}"),
+            (true, Some(c)) => format!("piper exited with code {c} without producing audio"),
+            (true, None) => "piper exited without producing audio".into(),
+        });
     }
     let wav_path = path_line.trim();
     let bytes = std::fs::read(wav_path).map_err(|e| format!("read wav {wav_path}: {e}"))?;

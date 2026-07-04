@@ -6,6 +6,8 @@
 // edge, the same side as the toolbar "contents" button. Book-derived chapter titles use
 // dir="auto" so Arabic titles still render RTL inside an LTR UI (and vice-versa).
 
+import { useEffect, useRef } from "react";
+
 import { useI18n } from "../../i18n";
 import { extractChapterNumber, localeNum } from "../../lib/format";
 import type { TocEntry } from "../../reader-engine/FoliateController";
@@ -41,6 +43,29 @@ export function ChaptersPanel({
 }: Props) {
   const { t, lang, dir } = useI18n();
   const pct = Math.round(fraction * 100);
+
+  // RAWY-103: when the panel opens (or the current chapter / TOC becomes known while it's open),
+  // scroll the list so the ACTIVE chapter is centred in view. Without this the list always sits at
+  // chapter 1, so in a long book (1300+ chapters) the current chapter — though highlighted — is far
+  // off-screen and the reader has to hunt for it. All rows are rendered (not virtualised), so the
+  // active row exists in the DOM; we set the container's scrollTop directly (vertical scroll is
+  // direction-agnostic, so this works identically in LTR and RTL). Instant (not smooth) so opening a
+  // huge book lands on the current chapter at once instead of animating past hundreds of rows.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const scrollEl = scrollRef.current;
+    if (!scrollEl) return;
+    const raf = requestAnimationFrame(() => {
+      const activeEl = scrollEl.querySelector<HTMLElement>(".toc-row.active");
+      if (!activeEl) return; // no current chapter (e.g. empty/unmatched TOC) → leave at the top
+      const cRect = scrollEl.getBoundingClientRect();
+      const aRect = activeEl.getBoundingClientRect();
+      // centre the active row within the scroll viewport (clamped by the browser at the ends)
+      scrollEl.scrollTop += aRect.top - cRect.top - (scrollEl.clientHeight - aRect.height) / 2;
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [open, currentHref, toc]);
 
   return (
     <aside className={`reader-panel rp-lead${open ? " show" : ""}`} dir={dir} aria-hidden={!open}>
@@ -81,7 +106,7 @@ export function ChaptersPanel({
         </>
       )}
 
-      <div className="rp-scroll">
+      <div className="rp-scroll" ref={scrollRef}>
         {toc.length === 0 && <div className="rp-empty">{t("panel.noChapters")}</div>}
         {toc.map((c, i) => {
           const active = !!c.href && c.href === currentHref;

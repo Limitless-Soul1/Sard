@@ -18,7 +18,9 @@ export const TTS_SPEED_STEP = 0.25;
 export const defaultVoiceForDir = (dir: string): string =>
   dir === "rtl" ? "ar_JO-kareem-medium" : "en_US-lessac-medium";
 
-type Status = "idle" | "preparing" | "playing" | "paused" | "error";
+type Status = "idle" | "preparing" | "downloading" | "playing" | "paused" | "error";
+
+interface StartOpts { sentences: string[]; voice: string; startIndex?: number; chapterLabel: string }
 
 interface TtsState {
   active: boolean; // player pill visible
@@ -27,12 +29,14 @@ interface TtsState {
   speed: number;
   index: number; // current sentence
   total: number;
+  progress: number; // voice-download fraction 0–1 (only meaningful while status === "downloading")
   chapterLabel: string;
   error: string | null;
-  start: (o: { sentences: string[]; voice: string; startIndex?: number; chapterLabel: string }) => Promise<void>;
+  start: (o: StartOpts) => Promise<void>;
   toggle: () => void;
   skip: (delta: number) => void;
   setSpeed: (s: number) => void;
+  retry: () => void;
   stop: () => void;
 }
 
@@ -43,6 +47,7 @@ let source: AudioBufferSourceNode | null = null;
 let cache = new Map<number, Promise<AudioBuffer>>();
 let curVoice = "";
 let gen = 0; // bumped by stop/skip/start to invalidate in-flight async work
+let lastStart: StartOpts | null = null; // for retry() after a download/synth failure
 
 const audioCtx = (): AudioContext => {
   if (!ctx || ctx.state === "closed") ctx = new AudioContext();
@@ -113,10 +118,13 @@ export const useTts = create<TtsState>((set, get) => ({
   speed: 1,
   index: 0,
   total: 0,
+  progress: 0,
   chapterLabel: "",
   error: null,
 
-  start: async ({ sentences: sen, voice, startIndex = 0, chapterLabel }) => {
+  start: async (opts) => {
+    lastStart = opts;
+    const { sentences: sen, voice, startIndex = 0, chapterLabel } = opts;
     audioCtx(); // create within the user gesture so autoplay policy unlocks it
     const myGen = ++gen;
     stopSource();
@@ -125,15 +133,24 @@ export const useTts = create<TtsState>((set, get) => ({
     curVoice = voice;
     const saved = Number(await settingsGet("tts_speed").catch(() => null));
     const speed = saved >= TTS_MIN_SPEED && saved <= TTS_MAX_SPEED ? saved : get().speed;
-    set({ active: true, status: "preparing", voice, speed, index: startIndex, total: sentences.length, chapterLabel, error: null });
+    set({ active: true, status: "preparing", voice, speed, index: startIndex, total: sentences.length, progress: 0, chapterLabel, error: null });
     if (sentences.length === 0) {
       set({ status: "error", error: "empty chapter" });
       return;
     }
+    // First use of a voice fetches it on demand (~60 MB). Show a REAL progress bar (RAWY-106):
+    // the old build downloaded silently and swallowed any error into a bare "couldn't play".
     try {
-      if (!(await ttsVoicePresent(voice))) await ttsDownloadVoice(voice);
+      if (!(await ttsVoicePresent(voice))) {
+        set({ status: "downloading", progress: 0 });
+        await ttsDownloadVoice(voice, (frac) => {
+          if (myGen === gen) set({ progress: frac });
+        });
+        if (myGen !== gen) return; // stopped mid-download
+        set({ status: "preparing" });
+      }
     } catch (e) {
-      set({ status: "error", error: `voice: ${e}` });
+      if (myGen === gen) set({ status: "error", error: `${e}` });
       return;
     }
     if (myGen !== gen) return; // stopped during download
@@ -167,6 +184,12 @@ export const useTts = create<TtsState>((set, get) => ({
     void settingsSet("tts_speed", String(sp)).catch(() => {});
   },
 
+  // Re-run the last Listen after a download/synth failure (RAWY-106: a visible way to recover from a
+  // flaky first-use download without leaving the reader).
+  retry: () => {
+    if (lastStart) void get().start(lastStart);
+  },
+
   stop: () => {
     gen++;
     stopSource();
@@ -174,6 +197,6 @@ export const useTts = create<TtsState>((set, get) => ({
     sentences = [];
     if (ctx && ctx.state !== "closed") void ctx.suspend().catch(() => {});
     void ttsStop().catch(() => {});
-    set({ active: false, status: "idle", index: 0, total: 0, error: null });
+    set({ active: false, status: "idle", index: 0, total: 0, progress: 0, error: null });
   },
 }));

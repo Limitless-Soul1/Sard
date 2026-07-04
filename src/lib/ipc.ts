@@ -1,7 +1,7 @@
 // Typed bindings over Tauri's invoke — the single Rust↔JS boundary (RAWY-08).
 // Shapes mirror the serde structs in src-tauri/src/commands/mod.rs.
 
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 export interface AppInfo {
   app_data_dir: string;
@@ -33,9 +33,12 @@ export const settingsSet = (key: string, value: string): Promise<boolean> =>
 /** Is the voice model present on disk (both .onnx + .onnx.json)? */
 export const ttsVoicePresent = (id: string): Promise<boolean> =>
   invoke<boolean>("tts_voice_present", { id });
-/** Download a voice's model into app-data (blocking; Stage 1). */
-export const ttsDownloadVoice = (id: string): Promise<void> =>
-  invoke<void>("tts_download_voice", { id });
+/** Download a voice's model into app-data, reporting a 0–1 progress fraction (RAWY-106). */
+export const ttsDownloadVoice = (id: string, onProgress?: (frac: number) => void): Promise<void> => {
+  const ch = new Channel<number>();
+  if (onProgress) ch.onmessage = onProgress;
+  return invoke<void>("tts_download_voice", { id, onProgress: ch });
+};
 /** Synthesize one sentence → raw WAV bytes (WebAudio decodes them). */
 export const ttsSynthesize = (id: string, text: string): Promise<ArrayBuffer> =>
   invoke<ArrayBuffer>("tts_synthesize", { id, text });

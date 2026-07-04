@@ -8,7 +8,7 @@
 //! stdin; piper writes a WAV to a temp dir and prints that path on stdout. We read the path, read
 //! the WAV bytes, and return them raw to the frontend (WebAudio decodes + plays them).
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
@@ -71,29 +71,59 @@ pub fn tts_voice_present(state: State<'_, AppState>, id: String) -> bool {
         .all(|ext| dir.join(format!("{}.{ext}", v.file)).exists())
 }
 
-/// Download a voice's model files (.onnx + .onnx.json) into app-data if missing. Blocking (Stage 1;
-/// Stage 2 adds progress + a picker). Written to a `.part` then renamed so a partial download never
-/// looks complete.
+/// Download a voice's model files (.onnx.json config + the ~60 MB .onnx model) into app-data if
+/// missing, streaming the big model in chunks and reporting a 0.0–1.0 fraction over `on_progress`
+/// (RAWY-106) so the player shows a real "downloading voice…" bar instead of a silent, swallowed
+/// hang — the exact failure the owner hit on a fresh install. Written to a `.part` then renamed so a
+/// partial download never looks complete; connect/read timeouts turn a stalled link into a visible
+/// error rather than an endless "preparing".
 #[tauri::command]
-pub fn tts_download_voice(state: State<'_, AppState>, id: String) -> Result<(), String> {
+pub fn tts_download_voice(
+    state: State<'_, AppState>,
+    id: String,
+    on_progress: tauri::ipc::Channel<f64>,
+) -> Result<(), String> {
     let v = voice_def(&id).ok_or("unknown voice")?;
     let dir = voices_dir(&state);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    for ext in ["onnx", "onnx.json"] {
+
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(20))
+        .timeout_read(std::time::Duration::from_secs(45))
+        .build();
+
+    on_progress.send(0.0).ok();
+    // Config first (tiny, instant), then the model (~60 MB) — the model drives the visible bar.
+    for ext in ["onnx.json", "onnx"] {
         let dest = dir.join(format!("{}.{ext}", v.file));
         if dest.exists() && std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0) > 1000 {
             continue;
         }
         let url = format!("{HF_BASE}/{}/{}.{ext}", v.url_dir, v.file);
-        let resp = ureq::get(&url).call().map_err(|e| format!("fetch {url}: {e}"))?;
+        let resp = agent.get(&url).call().map_err(|e| format!("fetch {ext}: {e}"))?;
+        let total: u64 = resp.header("Content-Length").and_then(|h| h.parse().ok()).unwrap_or(0);
+        let big = ext == "onnx";
         let tmp = dir.join(format!("{}.{ext}.part", v.file));
         let mut reader = resp.into_reader();
         let mut f = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
-        std::io::copy(&mut reader, &mut f).map_err(|e| e.to_string())?;
+        let mut buf = vec![0u8; 64 * 1024];
+        let mut got: u64 = 0;
+        loop {
+            let n = reader.read(&mut buf).map_err(|e| format!("read {ext}: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            f.write_all(&buf[..n]).map_err(|e| e.to_string())?;
+            got += n as u64;
+            if big && total > 0 {
+                on_progress.send((got as f64 / total as f64).min(0.999)).ok();
+            }
+        }
         f.sync_all().ok();
         drop(f);
         std::fs::rename(&tmp, &dest).map_err(|e| e.to_string())?;
     }
+    on_progress.send(1.0).ok();
     Ok(())
 }
 

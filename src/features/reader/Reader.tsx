@@ -825,8 +825,16 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     paddingRight: rightPad,
   } as CSSProperties;
 
+  // RAWY-106: drive the floating read-aloud pill's position. It centres over the READING AREA (so it
+  // follows the same shift the page gets when a side panel opens) and rides ABOVE the bottom
+  // reading-progress bar while the chrome is shown — both as CSS vars the pill reads.
+  const rootVars = {
+    "--reading-shift": `${(leftPad - rightPad) / 2}px`,
+    "--tts-bottom": `${chromeShown ? 88 : 20}px`,
+  } as CSSProperties;
+
   return (
-    <div className="reader-root">
+    <div className="reader-root" style={rootVars}>
       {/* desk + centered page sheet (the book) + page-turn affordances */}
       <div className={`reader-desk${isPdf && pdfInvert ? " pdf-invert" : ""}`} style={deskStyle} onWheel={onDeskWheel}>
         {showChevrons && (

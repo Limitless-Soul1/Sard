@@ -434,6 +434,7 @@ export const en = {
   "tts.preparing": "preparing…",
   "tts.downloading": "downloading voice… {pct}%",
   "tts.error": "couldn’t play",
+  "tts.emptyChapter": "no readable text here",
   "tts.retry": "Try again",
   "tts.skipBack": "Previous sentence",
   "tts.skipFwd": "Next sentence",

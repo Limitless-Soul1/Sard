@@ -434,6 +434,7 @@ export const ar: Record<TKey, string> = {
   "tts.preparing": "جارٍ التحضير…",
   "tts.downloading": "جارٍ تنزيل الصوت… {pct}٪",
   "tts.error": "تعذّر التشغيل",
+  "tts.emptyChapter": "لا يوجد نص قابل للقراءة هنا",
   "tts.retry": "إعادة المحاولة",
   "tts.skipBack": "الجملة السابقة",
   "tts.skipFwd": "الجملة التالية",

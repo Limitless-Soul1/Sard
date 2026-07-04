@@ -783,32 +783,49 @@ export class FoliateController {
     return flattenToc(this.view?.book?.toc);
   }
 
-  /** RAWY-105 (TTS): the current chapter's text as an ordered list of sentences. Walks the current
-   *  section's LEAF block elements in document order and segments each with Intl.Segmenter
-   *  (Arabic-aware). Stage-1 simple — Stage 2 (RAWY-106) adds the hidden-title/first-line exclusion
-   *  (skip `visibility:hidden` nodes + `.sard-title-ph`) so hidden text is never spoken. */
+  /** RAWY-105 (TTS): the current chapter's text as an ordered list of sentences — the visible
+   *  reading text, walked as LEAF blocks and segmented with Intl.Segmenter (Arabic-aware).
+   *
+   *  RAWY-107: extract STRUCTURE-agnostically. EPUB sections are XHTML (application/xhtml+xml), where
+   *  `element.tagName` is LOWERCASE ("p", not "P"); the old check tested `BLOCK.has(el.tagName)`
+   *  against an UPPERCASE set, so it matched nothing, and its `<div>`-only fallback skipped any
+   *  `<div>` that WRAPPED a `<p>` — so a chapter authored as `<div><p>…</p></div>` came back EMPTY
+   *  even though it renders full of text (a `<div>`-as-paragraph book only worked by accident of the
+   *  fallback). Now a "leaf block" = any block-ish container that holds text but no nested block-ish
+   *  container — covers both shapes. */
   getCurrentChapterSentences(lang?: string): string[] {
     const doc: Document | undefined = this.view?.renderer?.getContents?.()?.[0]?.doc;
     if (!doc?.body) return [];
-    const BLOCK = new Set(["P", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "BLOCKQUOTE"]);
-    const NESTED = "p,h1,h2,h3,h4,h5,h6,li,blockquote";
-    const blocks: string[] = [];
-    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_ELEMENT);
-    let node: Node | null;
-    while ((node = walker.nextNode())) {
-      const el = node as HTMLElement;
-      if (!BLOCK.has(el.tagName) || el.querySelector(NESTED)) continue; // leaf blocks only (no double-count)
-      const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
-      if (text) blocks.push(text);
-    }
-    if (blocks.length === 0) {
-      // some EPUBs use <div> for paragraphs — take leaf divs
-      doc.body.querySelectorAll("div").forEach((el) => {
-        if (el.querySelector("div," + NESTED)) return;
+    const win = doc.defaultView;
+    const CONTAINER = "p, h1, h2, h3, h4, h5, h6, li, blockquote, div, section, article";
+
+    // Don't speak the HIDDEN chapter title / first line (the owner runs hide-title + hide-first-line;
+    // both hide via `visibility:hidden`, RAWY-22/69). This is a cheap per-leaf skip, NOT the full
+    // Stage-2 hidden-text gate — the fallback below guarantees it can never null a chapter with text.
+    const isHidden = (el: Element): boolean => {
+      const cs = win?.getComputedStyle(el);
+      return !!cs && (cs.visibility === "hidden" || cs.display === "none");
+    };
+    const collect = (skipHidden: boolean): string[] => {
+      const acc: string[] = [];
+      doc.body.querySelectorAll(CONTAINER).forEach((el) => {
+        if (el.querySelector(CONTAINER)) return; // leaf containers only (no double-count)
+        if (skipHidden && (isHidden(el) || el.closest(".sard-title-ph"))) return;
         const t = (el.textContent ?? "").replace(/\s+/g, " ").trim();
-        if (t) blocks.push(t);
+        if (t) acc.push(t);
       });
-    }
+      if (acc.length === 0) {
+        // no block leaf held text (text sits directly in <body>, or inline-only) — take it all so a
+        // visibly-full chapter is never reported empty.
+        const t = (doc.body.textContent ?? "").replace(/\s+/g, " ").trim();
+        if (t) acc.push(t);
+      }
+      return acc;
+    };
+    // Prefer the visible reading text; if excluding hidden nodes left nothing but the chapter DOES
+    // have text, fall back to the unfiltered text — never return empty when text is present.
+    let blocks = collect(true);
+    if (blocks.length === 0) blocks = collect(false);
     // Intl.Segmenter is present in WebView2/Chromium but not always in the TS lib — type it locally.
     type Segmenter = { segment: (s: string) => Iterable<{ segment: string }> };
     const Seg = (Intl as unknown as {

@@ -7,7 +7,7 @@ import { useState } from "react";
 
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
-import { TTS_MAX_SPEED, TTS_MIN_SPEED, TTS_SPEED_STEP, useTts } from "../../lib/tts";
+import { TTS_EMPTY, TTS_MAX_SPEED, TTS_MIN_SPEED, TTS_SPEED_STEP, useTts } from "../../lib/tts";
 
 export function TtsPlayer() {
   const { active, status, index, total, speed, progress, chapterLabel, error, toggle, skip, setSpeed, retry, stop } = useTts();
@@ -32,8 +32,10 @@ export function TtsPlayer() {
     downloading ? ` · ${t("tts.downloading", { pct: localeNum(dlPct, lang) })}` :
     preparing ? ` · ${t("tts.preparing")}` :
     status === "paused" ? ` · ${t("tts.paused")}` : "";
-  // Surface the REAL failure (swallowed before) so the owner sees WHY, not just "couldn't play".
-  const metaText = errored ? (error || t("tts.error")) : `${chapterLabel || t("panel.contents")}${sub}`;
+  // Surface the REAL failure (swallowed before) so the owner sees WHY, not just "couldn't play";
+  // the empty-chapter sentinel gets a localized message (RAWY-107), raw engine errors show verbatim.
+  const errText = error === TTS_EMPTY ? t("tts.emptyChapter") : (error || t("tts.error"));
+  const metaText = errored ? errText : `${chapterLabel || t("panel.contents")}${sub}`;
 
   return (
     <div className={`tts-pill${expanded ? " expanded" : ""}${errored ? " errored" : ""}`} dir={dir} role="group" aria-label={t("tts.player")}>
@@ -65,7 +67,7 @@ export function TtsPlayer() {
 
       <div className="tts-mid" onClick={() => setExpanded((e) => !e)} role="button" aria-label={expanded ? t("tts.collapse") : t("tts.expand")}>
         <div className="tts-meta">
-          <span className="tts-chapter" title={errored ? (error ?? undefined) : undefined}>{metaText}</span>
+          <span className="tts-chapter" title={errored ? errText : undefined}>{metaText}</span>
           <span className="tts-pos">{errored || downloading ? "" : t("tts.pos", { n: localeNum(index + 1, lang), m: localeNum(total, lang) })}</span>
         </div>
         <div className="tts-track">

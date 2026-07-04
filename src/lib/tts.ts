@@ -13,6 +13,9 @@ import { settingsGet, settingsSet, ttsDownloadVoice, ttsStop, ttsVoicePresent } 
 export const TTS_MIN_SPEED = 0.75;
 export const TTS_MAX_SPEED = 2.0;
 export const TTS_SPEED_STEP = 0.25;
+// Sentinel error the player localizes (RAWY-107) — distinct from a raw engine/download error, which
+// the pill shows verbatim (RAWY-106). Set when a section genuinely has no readable text.
+export const TTS_EMPTY = "empty-chapter";
 
 // Default voice per book direction (Stage 1: one Arabic + one English; Stage 2 adds the picker).
 export const defaultVoiceForDir = (dir: string): string =>
@@ -135,7 +138,7 @@ export const useTts = create<TtsState>((set, get) => ({
     const speed = saved >= TTS_MIN_SPEED && saved <= TTS_MAX_SPEED ? saved : get().speed;
     set({ active: true, status: "preparing", voice, speed, index: startIndex, total: sentences.length, progress: 0, chapterLabel, error: null });
     if (sentences.length === 0) {
-      set({ status: "error", error: "empty chapter" });
+      set({ status: "error", error: TTS_EMPTY });
       return;
     }
     // First use of a voice fetches it on demand (~60 MB). Show a REAL progress bar (RAWY-106):

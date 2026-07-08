@@ -57,7 +57,7 @@ export function AnnotationsPanel({ open, onClose, onJump, initialTab = "notes" }
             {t("panel.bookmarks")} <span className="rp-count">{localeNum(bookmarks.length, lang)}</span>
           </button>
         </div>
-        <button className="rp-x" onClick={onClose} aria-label="✕">✕</button>
+        <button className="rp-x" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
       </div>
 
       <div className="rp-scroll">

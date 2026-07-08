@@ -265,6 +265,7 @@ export const en = {
 
   // Reading side panels + page width (RAWY-21)
   "panel.contents": "Contents",
+  "panel.close": "Close", // RAWY-119: the panel/drawer close (✕) — a real label so it isn't a bare glyph
   "panel.chaptersMeta": "{n} chapters · {p}% read",
   "panel.chapter": "Chapter {n}",
   "panel.hideTitles": "Hide titles",

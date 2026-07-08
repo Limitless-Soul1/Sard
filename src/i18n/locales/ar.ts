@@ -265,6 +265,7 @@ export const ar: Record<TKey, string> = {
 
   // Reading side panels + page width (RAWY-21)
   "panel.contents": "المحتويات",
+  "panel.close": "إغلاق", // RAWY-119: the panel/drawer close (✕) — a real label so it isn't a bare glyph
   "panel.chaptersMeta": "{n} فصلًا · قُرئ {p}٪",
   "panel.chapter": "الفصل {n}",
   "panel.hideTitles": "إخفاء العناوين",

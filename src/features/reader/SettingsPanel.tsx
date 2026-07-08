@@ -75,7 +75,7 @@ export function SettingsPanel({
       <aside className={`settings-panel${open ? " show" : ""}`} aria-hidden={!open}>
         <div className="sp-head">
           <span className="sp-title">{t("pdf.options")}</span>
-          <button className="rc-icon" onClick={onClose} title={t("pdf.options")} aria-label="✕">✕</button>
+          <button className="rc-icon" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
         </div>
         <div className="sp-body">
           <div className="sp-pdf-note">
@@ -137,7 +137,7 @@ export function SettingsPanel({
     <aside className={`settings-panel${open ? " show" : ""}`} aria-hidden={!open}>
       <div className="sp-head">
         <span className="sp-title">{t("reader.settings")}</span>
-        <button className="rc-icon" onClick={onClose} title={t("reader.settings")} aria-label="✕">✕</button>
+        <button className="rc-icon" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
       </div>
       {/* Scope banner (RAWY-40/43) — reflects the active book-style model. Per-book: "applies to
           this book · won't change others" + Reset. Unified: "applies to all books". */}

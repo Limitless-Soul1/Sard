@@ -81,7 +81,7 @@ export function SearchPanel({
           <span className="rp-submeta" dir="auto">{bookTitle || t("reader.untitledBook")}</span>
         </div>
         <div className="rp-head-actions">
-          <button className="rp-x" onClick={onClose} aria-label="✕">✕</button>
+          <button className="rp-x" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
         </div>
       </div>
 

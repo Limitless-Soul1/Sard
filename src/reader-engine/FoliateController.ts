@@ -361,6 +361,7 @@ export class FoliateController {
   private annotations = new Map<string, string>();
   private selectionCb: ((sel: SelectionInfo | null) => void) | null = null;
   private showCb: ((hit: AnnotationHit) => void) | null = null;
+  private contentDoc: Document | null = null; // RAWY-122: the current section doc (for clearSelection)
   // RAWY-72: forward pointer activity happening INSIDE the content iframe (which never reaches a
   // parent-window listener) so the chrome-on-intent hook can wake the auto-hiding bar. Coords are
   // translated to parent-viewport space so the hook's jitter dedup shares one coordinate system.
@@ -485,6 +486,7 @@ export class FoliateController {
         });
         return;
       }
+      this.contentDoc = doc; // RAWY-122: kept so clearSelection() can drop a lingering text selection
       wrapTashkil(doc); // enable the diacritics toggle for this section
       markInBodyHeading(doc, sectionTocLabel(view, index)); // RAWY-67: hide-titles catches this too
       // RAWY-70: the two-step reveal for the hide-first-line placeholder. Handled from the parent
@@ -495,6 +497,12 @@ export class FoliateController {
       doc.addEventListener("keydown", (ev: KeyboardEvent) => {
         if (ev.key === "ArrowLeft") this.next();
         else if (ev.key === "ArrowRight") this.prev();
+        // RAWY-122: Esc while reading dismisses a just-made selection + its popover, and clears the
+        // real text selection so it can't re-fire (the reading frame has focus, so its own Esc is here).
+        else if (ev.key === "Escape") {
+          this.clearSelection();
+          this.selectionCb?.(null);
+        }
       });
       // Scrolled mode: the chapter-boundary "new gesture to advance" handler (RAWY-25).
       if (this.scrolledMode)
@@ -635,6 +643,22 @@ export class FoliateController {
 
   onSelection(cb: (sel: SelectionInfo | null) => void): void {
     this.selectionCb = cb;
+  }
+  /** RAWY-122: drop any live text selection (content frame + parent). Dismissing the selection popover
+   *  used to only HIDE it — the browser selection lingered, so a later pointerup re-fired the toolbar
+   *  and the text stayed visibly selected. Callers clear it on Esc / click-away so a select-to-read is
+   *  effortless to cancel. */
+  clearSelection(): void {
+    try {
+      this.contentDoc?.getSelection?.()?.removeAllRanges?.();
+    } catch {
+      /* cross-doc access can throw on a torn-down frame — ignore */
+    }
+    try {
+      window.getSelection?.()?.removeAllRanges?.();
+    } catch {
+      /* ignore */
+    }
   }
   onShowAnnotation(cb: (hit: AnnotationHit) => void): void {
     this.showCb = cb;

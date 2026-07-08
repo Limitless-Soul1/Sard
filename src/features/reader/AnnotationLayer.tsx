@@ -19,6 +19,18 @@ function useHl() {
   return THEMES[id].colors.highlight;
 }
 
+// RAWY-122 (ISSUE B): the native <input type="color"> OS colour dialog vanished on the first click in
+// this WebView2 build (it opens then closes before a colour can be chosen — confirmed it is NOT our
+// click-away). Until the custom-picker is redesigned on disk, the "+" is a clean, NON-vanishing stub:
+// clicking it applies one warm custom shade (no native dialog, no dead control). The "+" affordance
+// stays and is now an SVG (perfectly centred — ISSUE C).
+const CUSTOM_STUB_COLOR = "#C98A5E";
+const PlusGlyph = () => (
+  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden>
+    <path d="M12 5.5v13M5.5 12h13" />
+  </svg>
+);
+
 // The 8 slot dots + a custom-colour swatch (conic-gradient "+", opens a native picker → #hex).
 // `active` is the currently-applied colour (a slot name or a #hex) so the right dot is ringed.
 export function ColorRow({ active, onPick }: { active?: string | null; onPick: (c: HighlightColor) => void }) {
@@ -35,16 +47,16 @@ export function ColorRow({ active, onPick }: { active?: string | null; onPick: (
           aria-label={c}
         />
       ))}
-      <label className={`hl-dot hl-custom${custom ? " active" : ""}`} style={custom ? { background: active as string } : undefined} title="Custom colour">
-        {!custom && <span className="hl-custom-plus" aria-hidden>+</span>}
-        <input
-          type="color"
-          className="hl-custom-input"
-          value={custom ? (active as string) : "#C98A5E"}
-          onChange={(e) => onPick(e.target.value)}
-          aria-label="Custom colour"
-        />
-      </label>
+      <button
+        type="button"
+        className={`hl-dot hl-custom${custom ? " active" : ""}`}
+        style={custom ? { background: active as string } : undefined}
+        onClick={() => onPick(CUSTOM_STUB_COLOR)}
+        title="Custom colour"
+        aria-label="Custom colour"
+      >
+        {!custom && <span className="hl-custom-plus" aria-hidden><PlusGlyph /></span>}
+      </button>
     </div>
   );
 }
@@ -113,10 +125,9 @@ function SelectionToolbar({
           <button key={c} className="hl-pop-swatch" style={{ background: hl[c] }} onClick={() => onColor(c)} aria-label={c} />
         ))}
         <span className="hl-pop-vsep" />
-        <label className="hl-pop-custom" title={t("hl.custom")}>
-          <span className="hl-pop-custom-dot" aria-hidden>+</span>
-          <input type="color" defaultValue="#C98A5E" onChange={(e) => onColor(e.target.value)} aria-label={t("hl.custom")} />
-        </label>
+        <button type="button" className="hl-pop-custom" onClick={() => onColor(CUSTOM_STUB_COLOR)} title={t("hl.custom")} aria-label={t("hl.custom")}>
+          <span className="hl-pop-custom-dot" aria-hidden><PlusGlyph /></span>
+        </button>
       </div>
       {/* hairline */}
       <div className="hl-pop-line" />
@@ -207,40 +218,59 @@ export function AnnotationLayer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Dismiss on a click anywhere in the parent chrome (toolbars stop propagation).
+  // Dismiss on a click anywhere in the parent chrome, or on Esc (toolbars stop propagation). RAWY-122:
+  // ALSO clear the REAL text selection — not just the React popover — so a lingering browser selection
+  // can't re-fire the toolbar on the next pointerup and the highlighted text doesn't stay visibly
+  // selected. Select-to-read is then effortless to cancel (click away / Esc). Esc from inside the
+  // reading frame is handled in the controller (the frame has focus there); this covers parent focus.
   useEffect(() => {
-    const onDown = () => {
+    const dismiss = () => {
       setSelection(null);
       setActive(null);
+      ctrlRef.current?.clearSelection();
     };
-    window.addEventListener("pointerdown", onDown);
-    return () => window.removeEventListener("pointerdown", onDown);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") dismiss();
+    };
+    window.addEventListener("pointerdown", dismiss);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("pointerdown", dismiss);
+      window.removeEventListener("keydown", onKey);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const store = useAnnotations.getState;
 
+  // RAWY-122: after any action (or dismiss) also drop the live text selection so nothing re-fires.
+  const clearSel = () => ctrlRef.current?.clearSelection();
   const onPickColor = async (c: HighlightColor) => {
     if (!selection) return;
     await store().createHighlight(selection.cfi, c, selection.text);
     setSelection(null);
+    clearSel();
   };
   const onNote = async () => {
     if (!selection) return;
     const row = (await store().createHighlight(selection.cfi, "amber", selection.text)) ?? highlightByCfi(selection.cfi);
     const rect = selection.rect;
     setSelection(null);
+    clearSel();
     if (row) setActive({ cfi: row.cfi, rect }); // open the popover to type
   };
   const onCopy = () => {
     if (!selection) return;
     navigator.clipboard.writeText(selection.text).catch(console.error);
     setSelection(null);
+    clearSel();
   };
   // Add to the photo-card basket (RAWY-60) — collect this passage, keep reading, compose later.
   const onAdd = () => {
     if (!selection) return;
     const s = selection;
     setSelection(null);
+    clearSel();
     onAddToCard?.(s);
   };
 
@@ -271,6 +301,7 @@ export function AnnotationLayer({
           onPhotoCard={() => {
             const s = selection;
             setSelection(null);
+            clearSel();
             onPhotoCard?.(s);
           }}
         />

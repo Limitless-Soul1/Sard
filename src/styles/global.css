@@ -1695,13 +1695,15 @@ html, body, #root {
   box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.2);
 }
 .hl-dot.active { outline: 2px solid var(--paper-bg); outline-offset: 1px; }
-/* custom-colour swatch (RAWY-22): a conic-gradient "+" that opens the native colour picker */
+/* custom-colour swatch (RAWY-22; RAWY-122): a conic-gradient circle with a centred "+" (SVG). The
+   native colour picker was removed (it vanished in WebView2) — the "+" is a clean stub button for now. */
 .hl-custom {
-  display: inline-flex; align-items: center; justify-content: center; overflow: hidden;
+  display: inline-flex; align-items: center; justify-content: center; overflow: hidden; border: 0; padding: 0;
   background: conic-gradient(from 90deg, #E8C36A, #E7A867, #E2978D, #D285A4, #BFA8D6, #9DC0D6, #8DC3BA, #AEC798, #E8C36A);
 }
-.hl-custom-plus { font: 700 0.75rem var(--ui-font); color: #fff; line-height: 1; text-shadow: 0 0 2px rgba(0, 0, 0, 0.5); pointer-events: none; }
-.hl-custom-input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; padding: 0; cursor: pointer; }
+/* RAWY-122 (ISSUE C): the "+" is an SVG flex-centred in the circle — perfectly centred on both axes,
+   unlike the old text glyph (whose ink sat off-centre in its line box). */
+.hl-custom-plus { display: inline-flex; align-items: center; justify-content: center; color: #fff; filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.55)); pointer-events: none; }
 
 /* ============================================================================
    Two-tier selection popover (RAWY-59) — the redesigned reading selection toolbar:
@@ -1735,14 +1737,15 @@ html, body, #root {
 .hl-pop-vsep { width: 1px; height: 26px; background: rgba(255, 255, 255, 0.14); margin: 0 3px; flex: none; }
 .hl-pop-custom {
   position: relative; width: 26px; height: 26px; border-radius: 50%; overflow: hidden; flex: none; cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; padding: 0; display: inline-flex; align-items: center; justify-content: center;
   background: conic-gradient(from 90deg, #E8C36A, #E7A867, #E2978D, #D285A4, #BFA8D6, #9DC0D6, #8DC3BA, #AEC798, #E8C36A);
 }
+/* RAWY-122 (ISSUE C): the inner dot flex-centres an SVG "+" — centred on both axes (the old text "+"
+   sat off-centre). RAWY-122 (ISSUE B): no native <input type="color"> — this is a plain stub button. */
 .hl-pop-custom-dot {
   width: 15px; height: 15px; border-radius: 50%; background: rgba(10, 14, 18, 0.55);
-  display: flex; align-items: center; justify-content: center; color: #fff; font: 600 0.8125rem var(--ui-font); line-height: 1;
+  display: flex; align-items: center; justify-content: center; color: #fff;
 }
-.hl-pop-custom input { position: absolute; inset: 0; opacity: 0; border: 0; padding: 0; cursor: pointer; }
 /* hairline between the tiers */
 .hl-pop-line { height: 1px; background: rgba(255, 255, 255, 0.1); margin: 11px 2px; }
 /* tier 2 — actions */

@@ -757,9 +757,11 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     const ctrl = ctrlRef.current;
     if (!ctrl) return;
     const bookLang = isRtlBook ? "ar" : "en";
+    const v = defaultVoiceForDir(isRtlBook ? "rtl" : "ltr"); // RAWY-110: {engine, id}
     useTts.getState().start({
       sentences: ctrl.getCurrentChapterSentences(bookLang),
-      voice: defaultVoiceForDir(isRtlBook ? "rtl" : "ltr"),
+      engine: v.engine,
+      voice: v.id,
       startIndex: 0,
       chapterLabel: chapter,
     });

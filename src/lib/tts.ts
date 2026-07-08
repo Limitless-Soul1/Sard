@@ -1,9 +1,12 @@
-// TTS playback (RAWY-105, Phase 1) — the frontend half of read-aloud. Rust synthesizes each
-// sentence with the bundled piper engine and returns raw WAV bytes; here we decode them with
-// WebAudio and play a QUEUE of sentences, synthesizing the NEXT one while the current plays (hides
-// piper's sub-second latency). Controls: play/pause, skip ±sentence, speed. Voice is ensured
-// (downloaded on demand) before playback. Kept deliberately extensible for Stage 2 (voice picker,
-// listen-from-selection, hidden-text-safe extraction).
+// TTS playback (RAWY-105) — the frontend half of read-aloud. Rust synthesizes each sentence and
+// returns raw audio bytes; here we decode them with WebAudio and play a QUEUE of sentences,
+// synthesizing the NEXT while the current plays (hides synth latency). Controls: play/pause,
+// skip ±sentence, speed.
+//
+// RAWY-110 (engine abstraction): a voice is {engine, id}; `synth` calls the dispatching
+// `tts_synthesize(engine, id, text)`. Everything here is engine-agnostic — WebAudio decodes both
+// Piper's WAV and (Stage B) Edge's MP3, and play/pause/skip/speed work the same regardless. Stage A
+// wires only "piper"; the Edge engine + voice picker come in Stage B.
 
 import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
@@ -17,18 +20,27 @@ export const TTS_SPEED_STEP = 0.25;
 // the pill shows verbatim (RAWY-106). Set when a section genuinely has no readable text.
 export const TTS_EMPTY = "empty-chapter";
 
-// Default voice per book direction (Stage 1: one Arabic + one English; Stage 2 adds the picker).
-export const defaultVoiceForDir = (dir: string): string =>
-  dir === "rtl" ? "ar_JO-kareem-medium" : "en_US-lessac-medium";
+// RAWY-110: a voice is identified by its ENGINE + id. Stage A ships only "piper"; "edge" (the free
+// Edge Read-Aloud neural voices, incl. Arabic) lands in Stage B behind this same abstraction.
+export type TtsEngineKind = "piper" | "edge";
+export interface TtsVoiceRef { engine: TtsEngineKind; id: string }
+
+// Default voice per book direction — Piper stays the offline default (Stage B adds the picker + the
+// per-language engine/voice choice; an Arabic book can then opt into an Edge neural voice).
+export const defaultVoiceForDir = (dir: string): TtsVoiceRef =>
+  dir === "rtl"
+    ? { engine: "piper", id: "ar_JO-kareem-medium" }
+    : { engine: "piper", id: "en_US-lessac-medium" };
 
 type Status = "idle" | "preparing" | "downloading" | "playing" | "paused" | "error";
 
-interface StartOpts { sentences: string[]; voice: string; startIndex?: number; chapterLabel: string }
+interface StartOpts { sentences: string[]; engine: TtsEngineKind; voice: string; startIndex?: number; chapterLabel: string }
 
 interface TtsState {
   active: boolean; // player pill visible
   status: Status;
-  voice: string;
+  engine: TtsEngineKind;
+  voice: string; // voice id within the engine
   speed: number;
   index: number; // current sentence
   total: number;
@@ -48,6 +60,7 @@ let ctx: AudioContext | null = null;
 let sentences: string[] = [];
 let source: AudioBufferSourceNode | null = null;
 let cache = new Map<number, Promise<AudioBuffer>>();
+let curEngine: TtsEngineKind = "piper";
 let curVoice = "";
 let gen = 0; // bumped by stop/skip/start to invalidate in-flight async work
 let lastStart: StartOpts | null = null; // for retry() after a download/synth failure
@@ -61,7 +74,7 @@ const synth = (i: number): Promise<AudioBuffer> => {
   let p = cache.get(i);
   if (!p) {
     p = (async () => {
-      const buf = await invoke<ArrayBuffer>("tts_synthesize", { id: curVoice, text: sentences[i] });
+      const buf = await invoke<ArrayBuffer>("tts_synthesize", { engine: curEngine, id: curVoice, text: sentences[i] });
       return await audioCtx().decodeAudioData(buf);
     })();
     cache.set(i, p);
@@ -117,6 +130,7 @@ async function playFrom(i: number, myGen: number) {
 export const useTts = create<TtsState>((set, get) => ({
   active: false,
   status: "idle",
+  engine: "piper",
   voice: "",
   speed: 1,
   index: 0,
@@ -127,34 +141,37 @@ export const useTts = create<TtsState>((set, get) => ({
 
   start: async (opts) => {
     lastStart = opts;
-    const { sentences: sen, voice, startIndex = 0, chapterLabel } = opts;
+    const { sentences: sen, engine, voice, startIndex = 0, chapterLabel } = opts;
     audioCtx(); // create within the user gesture so autoplay policy unlocks it
     const myGen = ++gen;
     stopSource();
     cache = new Map();
     sentences = sen.map((s) => s.trim()).filter(Boolean);
+    curEngine = engine;
     curVoice = voice;
     const saved = Number(await settingsGet("tts_speed").catch(() => null));
     const speed = saved >= TTS_MIN_SPEED && saved <= TTS_MAX_SPEED ? saved : get().speed;
-    set({ active: true, status: "preparing", voice, speed, index: startIndex, total: sentences.length, progress: 0, chapterLabel, error: null });
+    set({ active: true, status: "preparing", engine, voice, speed, index: startIndex, total: sentences.length, progress: 0, chapterLabel, error: null });
     if (sentences.length === 0) {
       set({ status: "error", error: TTS_EMPTY });
       return;
     }
-    // First use of a voice fetches it on demand (~60 MB). Show a REAL progress bar (RAWY-106):
-    // the old build downloaded silently and swallowed any error into a bare "couldn't play".
-    try {
-      if (!(await ttsVoicePresent(voice))) {
-        set({ status: "downloading", progress: 0 });
-        await ttsDownloadVoice(voice, (frac) => {
-          if (myGen === gen) set({ progress: frac });
-        });
-        if (myGen !== gen) return; // stopped mid-download
-        set({ status: "preparing" });
+    // Only PIPER voices fetch on demand (~60 MB) with a REAL progress bar (RAWY-106). Edge (Stage B)
+    // synthesizes over the network with no local model, so it skips this step entirely.
+    if (engine === "piper") {
+      try {
+        if (!(await ttsVoicePresent(voice))) {
+          set({ status: "downloading", progress: 0 });
+          await ttsDownloadVoice(voice, (frac) => {
+            if (myGen === gen) set({ progress: frac });
+          });
+          if (myGen !== gen) return; // stopped mid-download
+          set({ status: "preparing" });
+        }
+      } catch (e) {
+        if (myGen === gen) set({ status: "error", error: `${e}` });
+        return;
       }
-    } catch (e) {
-      if (myGen === gen) set({ status: "error", error: `${e}` });
-      return;
     }
     if (myGen !== gen) return; // stopped during download
     void playFrom(Math.min(startIndex, sentences.length - 1), myGen);

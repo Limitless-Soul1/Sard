@@ -201,19 +201,37 @@ fn spawn_piper(app: &AppHandle, state: &AppState, v: &VoiceDef) -> Result<Runnin
     Ok(Running { voice_id: v.id.to_string(), child, stdin, stdout, errlog })
 }
 
-/// Synthesize ONE sentence with the given voice; returns the raw WAV bytes (frontend decodes +
-/// plays via WebAudio). Reuses the persistent piper process (warm) — respawns only if the voice
-/// changed or the process died.
+/// Synthesize ONE sentence → raw audio bytes the frontend decodes + plays via WebAudio.
+///
+/// RAWY-110: the engine-abstraction boundary. A voice is `{engine, id}`; this dispatches by engine.
+/// `piper` (Stage A / engine #1) is the existing persistent-process path returning WAV; `edge`
+/// (Stage B / engine #2) will add an arm here returning MP3 from the Edge Read-Aloud API. Everything
+/// downstream (the WebAudio queue, play/pause/skip/speed) is engine-agnostic — WebAudio decodes both.
 #[tauri::command]
 pub fn tts_synthesize(
     app: AppHandle,
     state: State<'_, AppState>,
-    engine: State<'_, TtsEngine>,
+    engines: State<'_, TtsEngine>,
+    engine: String,
+    id: String,
+    text: String,
+) -> Result<tauri::ipc::Response, String> {
+    match engine.as_str() {
+        "piper" => piper_synthesize(&app, &state, &engines, id, text),
+        other => Err(format!("unknown TTS engine: {other}")),
+    }
+}
+
+/// Piper (engine #1): reuse the persistent warm process; respawn only if the voice changed or died.
+fn piper_synthesize(
+    app: &AppHandle,
+    state: &AppState,
+    engines: &TtsEngine,
     id: String,
     text: String,
 ) -> Result<tauri::ipc::Response, String> {
     let v = voice_def(&id).ok_or("unknown voice")?;
-    let mut guard = engine.inner.lock().map_err(|e| e.to_string())?;
+    let mut guard = engines.inner.lock().map_err(|e| e.to_string())?;
 
     let reuse = if let Some(r) = guard.as_mut() {
         r.voice_id == id && r.child.try_wait().map(|s| s.is_none()).unwrap_or(false)
@@ -224,7 +242,7 @@ pub fn tts_synthesize(
         if let Some(mut old) = guard.take() {
             let _ = old.child.kill();
         }
-        *guard = Some(spawn_piper(&app, &state, v)?);
+        *guard = Some(spawn_piper(app, state, v)?);
     }
     let r = guard.as_mut().unwrap();
 

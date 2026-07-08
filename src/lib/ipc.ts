@@ -39,9 +39,10 @@ export const ttsDownloadVoice = (id: string, onProgress?: (frac: number) => void
   if (onProgress) ch.onmessage = onProgress;
   return invoke<void>("tts_download_voice", { id, onProgress: ch });
 };
-/** Synthesize one sentence → raw WAV bytes (WebAudio decodes them). */
-export const ttsSynthesize = (id: string, text: string): Promise<ArrayBuffer> =>
-  invoke<ArrayBuffer>("tts_synthesize", { id, text });
+/** Synthesize one sentence with the given engine → raw audio bytes (WebAudio decodes them).
+ *  RAWY-110: engine-dispatched ("piper" WAV; "edge" MP3 in Stage B). */
+export const ttsSynthesize = (engine: string, id: string, text: string): Promise<ArrayBuffer> =>
+  invoke<ArrayBuffer>("tts_synthesize", { engine, id, text });
 /** Stop + drop the persistent piper process. */
 export const ttsStop = (): Promise<void> => invoke<void>("tts_stop");
 

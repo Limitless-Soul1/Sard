@@ -97,6 +97,51 @@ function drawHighlight(rects: Iterable<DOMRect>, options: { color?: string; dark
   return g;
 }
 
+// RAWY-126 (TTS reading indicator, Phase 1 — design 1b "Spotlight"): the currently-SPOKEN sentence
+// gets a SOFT WARM TRACK — a low-opacity terracotta band + a thin baseline rule the eye follows.
+// Deliberately NOT the ink look: no mix-blend-mode (the 8 highlight washes use multiply/screen at
+// 0.62/0.70), a much lower fill opacity, and a baseline rule no ink wash has — so it reads as a
+// "reading cursor," never as one of the user's saved highlights. Brand terracotta (light) / a
+// lighter warm (dark), matching the on-disk design 1b; the solid word "pill" is Phase 2, not here.
+// The overlay key is RESERVED (READING_KEY) and the draw goes straight to the section overlayer —
+// it never enters the persisted annotations map or the DB.
+const READING_KEY = "sard-reading";
+const READING_SPOTLIGHT = {
+  light: { fill: "rgb(156,90,60)", band: 0.1, rule: 0.3 }, // #9C5A3C — the brand terracotta
+  dark: { fill: "rgb(201,138,94)", band: 0.16, rule: 0.44 }, // #C98A5E — a lighter warm for dark paper
+};
+function drawReadingSpotlight(rects: Iterable<DOMRect>, options: { dark?: boolean } = {}): SVGGElement {
+  const NS = "http://www.w3.org/2000/svg";
+  const g = document.createElementNS(NS, "g");
+  const p = options.dark ? READING_SPOTLIGHT.dark : READING_SPOTLIGHT.light;
+  for (const r of rects) {
+    if (!(r.width > 0) || !(r.height > 0)) continue; // skip zero-width fragments (e.g. hyphen columns)
+    const radius = Math.min(6, r.height * 0.2); // design ~.3em rounded ends, per line fragment
+    const ruleH = Math.max(1.5, r.height * 0.08); // design ~.12em baseline rule
+    // soft warm band
+    const band = document.createElementNS(NS, "rect");
+    band.setAttribute("x", String(r.left));
+    band.setAttribute("y", String(r.top));
+    band.setAttribute("width", String(r.width));
+    band.setAttribute("height", String(r.height));
+    band.setAttribute("rx", String(radius));
+    band.setAttribute("fill", p.fill);
+    band.setAttribute("fill-opacity", String(p.band));
+    g.append(band);
+    // thin baseline rule the eye follows
+    const rule = document.createElementNS(NS, "rect");
+    rule.setAttribute("x", String(r.left));
+    rule.setAttribute("y", String(r.bottom - ruleH));
+    rule.setAttribute("width", String(r.width));
+    rule.setAttribute("height", String(ruleH));
+    rule.setAttribute("rx", String(Math.min(radius, ruleH / 2)));
+    rule.setAttribute("fill", p.fill);
+    rule.setAttribute("fill-opacity", String(p.rule));
+    g.append(rule);
+  }
+  return g;
+}
+
 interface OpenOptions {
   resumeCfi?: string | null;
   /** RAWY-85: resume a fixed-layout book (PDF) by fraction — a PDF has a page index, not a CFI. */
@@ -359,6 +404,11 @@ export class FoliateController {
   private relocateCb: ((info: RelocateInfo) => void) | null = null;
   // Highlights (RAWY-20): cfi → semantic colour slot; re-applied per section render.
   private annotations = new Map<string, string>();
+  // RAWY-126 (TTS reading indicator): the current chapter walked ONCE into {text, range} units — the
+  // SAME order + SAME hidden-skip that feeds the TTS queue, so queue-index N ↔ range N stay aligned.
+  // `ttsUnitsIndex` is the section index these were built for (a chapter change invalidates them).
+  private ttsUnits: { text: string; range: Range | null }[] = [];
+  private ttsUnitsIndex = -1;
   private selectionCb: ((sel: SelectionInfo | null) => void) | null = null;
   private showCb: ((hit: AnnotationHit) => void) | null = null;
   private contentDoc: Document | null = null; // RAWY-122: the current section doc (for clearSelection)
@@ -808,66 +858,214 @@ export class FoliateController {
   }
 
   /** RAWY-105 (TTS): the current chapter's text as an ordered list of sentences — the visible
-   *  reading text, walked as LEAF blocks and segmented with Intl.Segmenter (Arabic-aware).
-   *
-   *  RAWY-107: extract STRUCTURE-agnostically. EPUB sections are XHTML (application/xhtml+xml), where
-   *  `element.tagName` is LOWERCASE ("p", not "P"); the old check tested `BLOCK.has(el.tagName)`
-   *  against an UPPERCASE set, so it matched nothing, and its `<div>`-only fallback skipped any
-   *  `<div>` that WRAPPED a `<p>` — so a chapter authored as `<div><p>…</p></div>` came back EMPTY
-   *  even though it renders full of text (a `<div>`-as-paragraph book only worked by accident of the
-   *  fallback). Now a "leaf block" = any block-ish container that holds text but no nested block-ish
-   *  container — covers both shapes. */
+   *  reading text, walked as LEAF blocks and segmented with Intl.Segmenter (Arabic-aware). Thin
+   *  wrapper over `getChapterUnits` (RAWY-126) so the spoken sentences and the highlight ranges come
+   *  from ONE walk and stay index-aligned. */
   getCurrentChapterSentences(lang?: string): string[] {
-    const doc: Document | undefined = this.view?.renderer?.getContents?.()?.[0]?.doc;
-    if (!doc?.body) return [];
+    return this.getChapterUnits(lang).map((u) => u.text);
+  }
+
+  /** RAWY-126: the current chapter walked into `{text, range}` UNITS — the reading-indicator's
+   *  lockstep source. The queue speaks `units[i].text`; the spotlight highlights `units[i].range`.
+   *  The list is built + RETAINED here (with the section index it belongs to) so `showReadingHighlight`
+   *  can draw range N when the queue reaches sentence N. The CRITICAL invariant: this is the SAME
+   *  order + SAME hidden-skip the queue sees — a misaligned index would light up the wrong (or a
+   *  hidden) node. Units are pre-trimmed/non-empty, so the TTS store's own `.filter(Boolean)` is a
+   *  no-op and can't shift the indices.
+   *
+   *  RAWY-107 preserved: leaf blocks are STRUCTURE-agnostic (any block-ish container holding text but
+   *  no nested block-ish container), the hidden chapter-title / first-line are skipped, and if NO
+   *  visible leaf holds text the whole body is read as a fallback (so a visibly-full chapter is never
+   *  reported empty) — but that fallback yields `range: null` (no highlight; honest degrade). */
+  getChapterUnits(lang?: string): { text: string; range: Range | null }[] {
+    const content = this.view?.renderer?.getContents?.()?.[0];
+    const doc: Document | undefined = content?.doc;
+    if (!doc?.body || this.isFixedLayout) {
+      this.ttsUnits = [];
+      this.ttsUnitsIndex = -1;
+      return [];
+    }
     const win = doc.defaultView;
     const CONTAINER = "p, h1, h2, h3, h4, h5, h6, li, blockquote, div, section, article";
+    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
 
-    // Don't speak the HIDDEN chapter title / first line (the owner runs hide-title + hide-first-line;
-    // both hide via `visibility:hidden`, RAWY-22/69). This is a cheap per-leaf skip, NOT the full
-    // Stage-2 hidden-text gate — the fallback below guarantees it can never null a chapter with text.
+    // Don't speak the HIDDEN chapter title / first line (hide-title + hide-first-line hide via
+    // `visibility:hidden`, RAWY-22/69) — a cheap per-leaf skip; the whole-body fallback below still
+    // guarantees a text-bearing chapter is never reported empty.
     const isHidden = (el: Element): boolean => {
       const cs = win?.getComputedStyle(el);
       return !!cs && (cs.visibility === "hidden" || cs.display === "none");
     };
-    const collect = (skipHidden: boolean): string[] => {
-      const acc: string[] = [];
-      doc.body.querySelectorAll(CONTAINER).forEach((el) => {
-        if (el.querySelector(CONTAINER)) return; // leaf containers only (no double-count)
-        if (skipHidden && (isHidden(el) || el.closest(".sard-title-ph"))) return;
-        const t = (el.textContent ?? "").replace(/\s+/g, " ").trim();
-        if (t) acc.push(t);
-      });
-      if (acc.length === 0) {
-        // no block leaf held text (text sits directly in <body>, or inline-only) — take it all so a
-        // visibly-full chapter is never reported empty.
-        const t = (doc.body.textContent ?? "").replace(/\s+/g, " ").trim();
-        if (t) acc.push(t);
-      }
-      return acc;
-    };
-    // Prefer the visible reading text; if excluding hidden nodes left nothing but the chapter DOES
-    // have text, fall back to the unfiltered text — never return empty when text is present.
-    let blocks = collect(true);
-    if (blocks.length === 0) blocks = collect(false);
+    // Visible leaf blocks, in document order.
+    const leaves: Element[] = [];
+    doc.body.querySelectorAll(CONTAINER).forEach((el) => {
+      if (el.querySelector(CONTAINER)) return; // leaf containers only (no double-count)
+      if (isHidden(el) || el.closest(".sard-title-ph")) return; // skip hidden title / first-line
+      if ((el.textContent ?? "").trim()) leaves.push(el);
+    });
+
     // Intl.Segmenter is present in WebView2/Chromium but not always in the TS lib — type it locally.
-    type Segmenter = { segment: (s: string) => Iterable<{ segment: string }> };
+    type SegPart = { index: number; segment: string };
+    type Segmenter = { segment: (s: string) => Iterable<SegPart> };
     const Seg = (Intl as unknown as {
       Segmenter?: new (l: string, o: { granularity: string }) => Segmenter;
     }).Segmenter;
     const seg: Segmenter | null = Seg ? new Seg(lang || "en", { granularity: "sentence" }) : null;
-    const out: string[] = [];
-    for (const b of blocks) {
-      if (seg) {
-        for (const part of seg.segment(b)) {
-          const t = part.segment.trim();
-          if (t) out.push(t);
+
+    const units: { text: string; range: Range | null }[] = [];
+    if (leaves.length > 0) {
+      for (const el of leaves) this.segmentBlock(el, doc, seg, norm, units);
+    } else {
+      // No visible leaf held text (text sits directly in <body>, or inline-only, or all-hidden) —
+      // read the whole body so a full chapter is never empty, but WITHOUT ranges (honest no-highlight).
+      const whole = norm(doc.body.textContent ?? "");
+      if (whole) {
+        if (seg) {
+          for (const part of seg.segment(whole)) {
+            const t = norm(part.segment);
+            if (t) units.push({ text: t, range: null });
+          }
+        } else {
+          units.push({ text: whole, range: null });
         }
-      } else {
-        out.push(b);
       }
     }
-    return out;
+
+    this.ttsUnits = units;
+    this.ttsUnitsIndex = content?.index ?? -1;
+    return units;
+  }
+
+  /** RAWY-126: segment one leaf block into `{text, range}` units. Adapts foliate's own tts.js
+   *  running-sum offset math: gather the block's non-empty text nodes, segment the RAW joined string
+   *  ONCE, and for each sentence map its [start,end] char offsets back to a live DOM Range — so the
+   *  spoken text and its highlight range are produced together and can never drift apart. */
+  private segmentBlock(
+    el: Element,
+    doc: Document,
+    seg: { segment: (s: string) => Iterable<{ index: number; segment: string }> } | null,
+    norm: (s: string) => string,
+    out: { text: string; range: Range | null }[],
+  ): void {
+    const walker = doc.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const nodes: Text[] = [];
+    const strs: string[] = [];
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const t = n as Text;
+      if (t.data.length) {
+        nodes.push(t);
+        strs.push(t.data);
+      }
+    }
+    if (nodes.length === 0) return;
+    const full = strs.join("");
+    if (!full.trim()) return;
+    const makeRange = (si: number, so: number, ei: number, eo: number): Range | null => {
+      try {
+        const r = doc.createRange();
+        r.setStart(nodes[si], so);
+        r.setEnd(nodes[ei], eo);
+        return r;
+      } catch {
+        return null; // defensive — a bad offset never breaks extraction
+      }
+    };
+    if (!seg) {
+      const t = norm(full);
+      if (t) out.push({ text: t, range: makeRange(0, 0, nodes.length - 1, strs[nodes.length - 1].length) });
+      return;
+    }
+    // Walk segments in order; `sum`/`strIndex` advance monotonically over the concatenated nodes so
+    // each sentence's char offsets resolve to the right node + offset (foliate tts.js technique).
+    let strIndex = -1;
+    let sum = 0;
+    for (const { index, segment } of seg.segment(full)) {
+      while (sum <= index) sum += strs[++strIndex].length;
+      const startIndex = strIndex;
+      const startOffset = index - (sum - strs[strIndex].length);
+      const end = index + segment.length - 1;
+      if (end < full.length) while (sum <= end) sum += strs[++strIndex].length;
+      const endIndex = strIndex;
+      const endOffset = end - (sum - strs[strIndex].length) + 1;
+      const t = norm(segment);
+      if (t) out.push({ text: t, range: makeRange(startIndex, startOffset, endIndex, endOffset) });
+    }
+  }
+
+  // ---- RAWY-126: the sentence "spotlight" reading highlight (transient; never persisted) ----
+
+  /** Draw the reading spotlight on sentence `i` of the retained units. Talks DIRECTLY to the current
+   *  section's overlayer with a RESERVED key — never `addAnnotation`/the annotations map/the DB, so it
+   *  can't collide with a user highlight (RAWY-123) or be saved. Guards: skips if the loaded section
+   *  isn't the one the units were built for (a chapter change → clear), or the sentence has no range
+   *  (whole-body fallback → honest no-highlight). */
+  showReadingHighlight(i: number): void {
+    if (this.isFixedLayout) return;
+    const content = this.view?.renderer?.getContents?.()?.[0];
+    const overlayer = content?.overlayer as
+      | { add: (k: string, r: Range, d: typeof drawReadingSpotlight, o: unknown) => void; remove: (k: string) => void }
+      | undefined;
+    if (!content || !overlayer) return;
+    if (content.index !== this.ttsUnitsIndex) {
+      this.clearReadingHighlight();
+      return;
+    }
+    try {
+      overlayer.remove(READING_KEY);
+    } catch {
+      /* not present — fine */
+    }
+    const range = this.ttsUnits[i]?.range;
+    if (!range) return; // out of range / whole-body fallback → no highlight (honest)
+    try {
+      overlayer.add(READING_KEY, range, drawReadingSpotlight, { dark: this.theme?.dark ?? false });
+    } catch {
+      /* stale/detached range (chapter navigated mid-play) — skip silently */
+    }
+  }
+
+  /** Remove the reading spotlight (stop / play closed / left the chapter). */
+  clearReadingHighlight(): void {
+    const overlayer = this.view?.renderer?.getContents?.()?.[0]?.overlayer as
+      | { remove: (k: string) => void }
+      | undefined;
+    try {
+      overlayer?.remove(READING_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** Gentle scroll-follow: keep the spoken sentence in view. PROGRAMMATIC (never a synthetic wheel),
+   *  so it can't trip the RAWY-25 chapter-boundary gesture or the RAWY-73 scroll-intent chrome
+   *  auto-hide (both are wheel-driven) — the chrome stays put during auto-scroll for free. Scrolled
+   *  mode: only nudge when the sentence leaves a 15–85% comfort band, landing it ~30% down.
+   *  Paged mode: flip to its page only when the sentence's centre is off the visible box. */
+  followReadingSentence(i: number): void {
+    if (this.isFixedLayout) return;
+    const content = this.view?.renderer?.getContents?.()?.[0];
+    if (!content || content.index !== this.ttsUnitsIndex) return;
+    const range = this.ttsUnits[i]?.range;
+    const doc: Document | undefined = content.doc;
+    const r = this.view?.renderer;
+    if (!range || !doc || !r) return;
+    const raw = range.getBoundingClientRect();
+    if (!(raw.width > 0) && !(raw.height > 0)) return; // not laid out yet
+    const pr = this.rectInParent(raw, doc); // range rect in PARENT-viewport coords
+    const rv = (r as Element).getBoundingClientRect?.(); // the visible reading box
+    if (!rv || !(rv.height > 0)) return;
+    if (this.scrolledMode) {
+      const comfortTop = rv.top + rv.height * 0.15;
+      const comfortBottom = rv.top + rv.height * 0.85;
+      if (pr.top >= comfortTop && pr.bottom <= comfortBottom) return; // already comfortably in view
+      const delta = pr.top - (rv.top + rv.height * 0.3); // >0 scrolls down (content up)
+      if (typeof r.scrollByDelta === "function") r.scrollByDelta(delta);
+    } else {
+      const cx = pr.left + pr.width / 2;
+      const cy = pr.top + pr.height / 2;
+      const inView = cx >= rv.left && cx <= rv.right && cy >= rv.top && cy <= rv.bottom;
+      if (!inView) r.scrollToAnchor?.(range); // flip to the sentence's page
+    }
   }
 
   /** Jump to a TOC target (an href; foliate resolves it). */

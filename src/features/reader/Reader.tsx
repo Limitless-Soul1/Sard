@@ -110,6 +110,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const [basketOpen, setBasketOpen] = useState(false); // RAWY-60 passages tray
   const basketCount = usePhotoBasket((s) => s.passages.length);
   const ttsActive = useTts((s) => s.active); // RAWY-105: read-aloud player visible?
+  const ttsIndex = useTts((s) => s.index); // RAWY-126: current spoken sentence (drives the spotlight)
+  const ttsStatus = useTts((s) => s.status); // RAWY-126: playing vs paused (paused keeps, doesn't follow)
 
   const { status, dir, fraction, chapterLabel, chapterHref, error, style, bookTitle } = useReader();
   // RAWY-43: unified (all books share one style) vs per-book. Drives where changes are written
@@ -305,6 +307,22 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   useEffect(() => {
     if (basketCount === 0) setBasketOpen(false);
   }, [basketCount]);
+
+  // RAWY-126 (TTS reading indicator, Phase 1): drive the sentence "spotlight" off the queue's current
+  // sentence. The units were built in lockstep with the queue at start (startListen*), so
+  // `ttsIndex` maps straight to a range. Playing → draw + gently follow; paused → keep the highlight
+  // where it stopped (draw, no scroll); stopped / closed → clear. A chapter change is handled inside
+  // the controller (the units carry their section index; a mismatch clears the stale highlight).
+  useEffect(() => {
+    const ctrl = ctrlRef.current;
+    if (!ctrl) return;
+    if (!ttsActive) {
+      ctrl.clearReadingHighlight();
+      return;
+    }
+    ctrl.showReadingHighlight(ttsIndex);
+    if (ttsStatus === "playing") ctrl.followReadingSentence(ttsIndex);
+  }, [ttsActive, ttsIndex, ttsStatus]);
 
 
   // Chapters panel is OPEN BY DEFAULT (RAWY-22); the user's choice persists per `chapters_open`.

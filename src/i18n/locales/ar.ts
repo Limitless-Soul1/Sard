@@ -274,6 +274,7 @@ export const ar: Record<TKey, string> = {
   "panel.hideFirstLineHint": "يخفي السطر الأول من كل فصل (غالبًا عنوان مكرّر — وقد يحتوي على حرق للأحداث).",
   "panel.noChapters": "لا تتوفّر قائمة محتويات لهذا الكتاب",
   "panel.annotations": "التظليلات والملاحظات",
+  "panel.annoEyebrow": "التعليقات", // RAWY-121: the quiet eyebrow label above the segmented tabs (design 2a)
   "panel.notes": "الملاحظات",
   "panel.highlights": "التظليلات",
   "panel.noNotes": "لا ملاحظات بعد — حدّد نصًّا وأضِف ملاحظة، أو علِّق على هذا الموضع.",

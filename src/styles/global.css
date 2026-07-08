@@ -662,6 +662,25 @@ html, body, #root {
 }
 .rp-eye.off { opacity: 0.6; }
 .rp-eye:hover, .rp-x:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* RAWY-121 (design 2a "Segmented — quiet numerals, warm active wash"): the annotations header is a
+   TWO-ROW layout so the three Arabic tab labels + counts + close never overflow the 300px panel (the
+   old single row pushed the ✕ off the panel edge in RTL). Row 1 = a quiet eyebrow label + a round
+   close ✕; row 2 = the segmented tab track. Colours are THEME TOKENS so it adapts across all 15 themes. */
+.rp-head-anno { flex-direction: column; align-items: stretch; gap: 11px; padding: 11px 13px 12px; }
+.rp-eyebrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.rp-eyebrow-label {
+  font: 700 0.65625rem var(--ui-font); letter-spacing: 0.02em; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* round close (design 2a) — the shared .rp-x still carries the RAWY-119 close/tooltip behaviour; this
+   only re-skins it into a soft round button that sits cleanly INSIDE the eyebrow row. */
+.rp-x-round {
+  width: 30px; height: 30px; padding: 0; border-radius: 50%; flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--muted);
+}
+.rp-x-round:hover { background: color-mix(in srgb, var(--text) 14%, transparent); color: var(--text); }
 .rp-meta { padding: 8px 18px 4px; font: 400 0.6875rem var(--ui-font); color: var(--muted); }
 .rp-hint {
   margin: 8px 14px 4px; padding: 7px 11px; border-radius: 7px;
@@ -931,25 +950,39 @@ html, body, #root {
 .sp-empty-body, .sp-hint-body { margin-top: 8px; font: 400 0.78125rem/1.6 var(--ui-font); color: var(--muted); }
 .sp-hint-title { font: 600 0.875rem var(--ui-font); color: var(--text); }
 
-/* annotations: a segmented pill tab group (RAWY-33, design C-VI) */
+/* annotations: the segmented tab track (RAWY-121, design 2a — supersedes the RAWY-33 pill row). Three
+   EQUAL segments (flex:1 → each a third of the track); labels ellipsize under pressure, so the header's
+   scrollWidth never exceeds the panel width (no overflow, no detached ✕). The active segment lifts onto
+   a warm surface with a 16px accent underline; counts are quiet accent numerals BESIDE the label (not
+   grey pills). Anchored to `.rp-head-anno` (the two-row header) — the tab classes are annotations-only. */
 .rp-tabs {
-  display: flex; gap: 3px; padding: 3px; border-radius: 8px;
-  background: color-mix(in srgb, var(--text) 8%, transparent);
+  display: flex; gap: 4px; padding: 4px; border-radius: 12px;
+  background: color-mix(in srgb, var(--text) 9%, transparent);
 }
 .rp-tab {
-  border: 0; background: transparent; cursor: pointer; padding: 6px 14px; border-radius: 5px;
-  font: 500 0.75rem var(--ui-font); color: var(--muted);
+  flex: 1 1 0; min-width: 0; position: relative;
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  height: 38px; border-radius: 9px; border: 0; background: transparent; padding: 0 6px; cursor: pointer;
+  font: 600 0.78125rem var(--ui-font); color: var(--muted);
   transition: background 0.15s ease, color 0.15s ease;
 }
+.rp-tab:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
 .rp-tab.on {
-  color: var(--text); font-weight: 600;
-  background: var(--paper-bg); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  color: var(--text); background: var(--paper-bg); box-shadow: 0 1px 3px rgba(60, 40, 16, 0.14);
 }
+:root[data-dark="true"] .rp-tab.on { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); }
+/* the 16px terracotta underline marker under the active segment (design 2a) */
+.rp-tab.on::after {
+  content: ""; position: absolute; bottom: 5px; inset-inline: 0; margin-inline: auto;
+  width: 16px; height: 2px; border-radius: 2px; background: var(--accent);
+}
+.rp-tab-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* quiet numerals beside the label — accent when active, faded muted when not (no pill) */
 .rp-count {
-  font: 600 0.625rem var(--ui-font); padding: 1px 6px; border-radius: 10px; margin-inline-start: 4px;
-  background: color-mix(in srgb, var(--text) 12%, transparent); color: var(--muted);
+  flex: 0 0 auto; font: 700 0.6875rem var(--ui-font);
+  color: color-mix(in srgb, var(--muted) 55%, transparent);
 }
-.rp-tab.on .rp-count { background: color-mix(in srgb, var(--accent) 26%, transparent); color: var(--text); }
+.rp-tab.on .rp-count { color: var(--accent); }
 
 /* annotations: list items */
 .rp-toolrow { padding: 6px 6px 10px; }

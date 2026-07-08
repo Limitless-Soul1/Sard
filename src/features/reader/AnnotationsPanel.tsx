@@ -45,19 +45,33 @@ export function AnnotationsPanel({ open, onClose, onJump, initialTab = "notes" }
 
   return (
     <aside className={`reader-panel rp-trail${open ? " show" : ""}`} dir={dir} aria-hidden={!open}>
-      <div className="rp-head">
-        <div className="rp-tabs">
-          <button className={`rp-tab${tab === "notes" ? " on" : ""}`} onClick={() => setTab("notes")}>
-            {t("panel.notes")} <span className="rp-count">{localeNum(notes.length, lang)}</span>
-          </button>
-          <button className={`rp-tab${tab === "highlights" ? " on" : ""}`} onClick={() => setTab("highlights")}>
-            {t("panel.highlights")} <span className="rp-count">{localeNum(highlights.length, lang)}</span>
-          </button>
-          <button className={`rp-tab${tab === "bookmarks" ? " on" : ""}`} onClick={() => setTab("bookmarks")}>
-            {t("panel.bookmarks")} <span className="rp-count">{localeNum(bookmarks.length, lang)}</span>
+      {/* RAWY-121 (design 2a "Segmented — quiet numerals, warm active wash"): a TWO-ROW header — a quiet
+          eyebrow label + a round close ✕ on its own row, then a full-width segmented tab track — so the
+          three Arabic labels + counts + close fit the 300px panel without overflowing (the old single
+          row pushed the ✕ off the edge — RAWY-120/121). */}
+      <div className="rp-head rp-head-anno">
+        <div className="rp-eyebrow">
+          <span className="rp-eyebrow-label">{t("panel.annoEyebrow")}</span>
+          <button className="rp-x rp-x-round" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
           </button>
         </div>
-        <button className="rp-x" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
+        <div className="rp-tabs">
+          <button className={`rp-tab${tab === "notes" ? " on" : ""}`} onClick={() => setTab("notes")}>
+            <span className="rp-tab-label">{t("panel.notes")}</span>
+            <span className="rp-count">{localeNum(notes.length, lang)}</span>
+          </button>
+          <button className={`rp-tab${tab === "highlights" ? " on" : ""}`} onClick={() => setTab("highlights")}>
+            <span className="rp-tab-label">{t("panel.highlights")}</span>
+            <span className="rp-count">{localeNum(highlights.length, lang)}</span>
+          </button>
+          <button className={`rp-tab${tab === "bookmarks" ? " on" : ""}`} onClick={() => setTab("bookmarks")}>
+            <span className="rp-tab-label">{t("panel.bookmarks")}</span>
+            <span className="rp-count">{localeNum(bookmarks.length, lang)}</span>
+          </button>
+        </div>
       </div>
 
       <div className="rp-scroll">

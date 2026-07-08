@@ -274,6 +274,7 @@ export const en = {
   "panel.hideFirstLineHint": "Hides the first line of each chapter (often a repeated title — and may contain spoilers).",
   "panel.noChapters": "This book has no contents list",
   "panel.annotations": "Highlights & notes",
+  "panel.annoEyebrow": "Annotations", // RAWY-121: the quiet eyebrow label above the segmented tabs (design 2a)
   "panel.notes": "Notes",
   "panel.highlights": "Highlights",
   "panel.noNotes": "No notes yet — select text and add one, or note this spot.",

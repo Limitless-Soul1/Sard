@@ -33,6 +33,14 @@ export const PIPER_VOICE: Record<TtsLang, string> = {
 };
 export const defaultVoiceForLang = (lang: TtsLang): TtsVoiceRef => ({ engine: "piper", id: PIPER_VOICE[lang] });
 
+// Friendly display name for the player's VOICE CHIP (RAWY-112 — the design's labelled chip, not a
+// bare icon). Piper: the two bundled names; Edge: the short_name's voice part ("ar-EG-SalmaNeural" → "Salma").
+export function voiceLabel(engine: TtsEngineKind, id: string): string {
+  if (engine === "piper") return id === PIPER_VOICE.ar ? "Kareem" : id === PIPER_VOICE.en ? "Lessac" : id;
+  const tail = id.split("-").pop() ?? id; // "SalmaNeural"
+  return tail.replace(/Neural$/, "") || id; // "Salma"
+}
+
 // A row in the voice picker (RAWY-111) — Piper (2, offline) + every Edge neural voice for ar/en.
 export interface PickerVoice { engine: TtsEngineKind; id: string; lang: TtsLang; locale: string; label: string; gender: string }
 const PIPER_PICKER: PickerVoice[] = [

@@ -1,17 +1,18 @@
 // TTS player pill (RAWY-105). Floats above the reading area while listening. Collapsed: play/pause +
 // chapter line + progress + dot + expand + close. Expanded: skip ±sentence + play + VOICE + speed.
-// RAWY-111: the Voice button opens the picker (Piper + Edge neural voices, grouped by language); a
+// RAWY-111/112: the labelled VOICE CHIP (shows the current voice, e.g. "Salma") opens the picker
+// (Piper + Edge neural voices, grouped by language) — a discoverable control, not a bare icon; a
 // transient notice line shows the Edge→Piper fallback. The position dot is intentionally subtle.
 
 import { useState } from "react";
 
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
-import { TTS_EMPTY, TTS_MAX_SPEED, TTS_MIN_SPEED, TTS_SPEED_STEP, useTts } from "../../lib/tts";
+import { TTS_EMPTY, TTS_MAX_SPEED, TTS_MIN_SPEED, TTS_SPEED_STEP, useTts, voiceLabel } from "../../lib/tts";
 import { TtsVoicePicker } from "./TtsVoicePicker";
 
 export function TtsPlayer() {
-  const { active, status, index, total, speed, progress, chapterLabel, error, notice, toggle, skip, setSpeed, retry, stop } = useTts();
+  const { active, status, engine, voice, index, total, speed, progress, chapterLabel, error, notice, toggle, skip, setSpeed, retry, stop } = useTts();
   const { t, lang, dir } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const [picking, setPicking] = useState(false);
@@ -83,8 +84,9 @@ export function TtsPlayer() {
       </div>
 
       {expanded && (
-        <button className={`tts-ghost tts-voicebtn${picking ? " on" : ""}`} onClick={() => setPicking((p) => !p)} aria-label={t("tts.voices")} title={t("tts.voices")}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v18M8 7v10M16 7v10M4 10v4M20 10v4" /></svg>
+        <button className={`tts-chip tts-voice-chip${picking ? " on" : ""}`} onClick={() => setPicking((p) => !p)} aria-label={t("tts.voices")} title={t("tts.voices")}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 3v18M8 7v10M16 7v10M4 10v4M20 10v4" /></svg>
+          <span className="tts-voice-chip-label">{voiceLabel(engine, voice)}</span>
         </button>
       )}
       {expanded && (

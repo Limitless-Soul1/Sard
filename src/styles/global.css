@@ -660,7 +660,7 @@ html, body, #root {
 .tts-pill.errored .tts-chapter { color: color-mix(in srgb, #b05220 78%, var(--text)); }
 .tts-retry { background: color-mix(in srgb, #b05220 88%, var(--accent)) !important; }
 .tts-retry svg { width: 17px; height: 17px; }
-.tts-pill.expanded { border-radius: 18px; padding: 12px 16px; width: min(448px, calc(100vw - 32px)); }
+.tts-pill.expanded { border-radius: 18px; padding: 12px 16px; width: min(486px, calc(100vw - 24px)); }
 .tts-play {
   flex: none; width: 36px; height: 36px; border-radius: 50%; border: 0; cursor: pointer;
   background: var(--accent); color: var(--paper-bg); display: flex; align-items: center; justify-content: center;
@@ -703,7 +703,15 @@ html, body, #root {
   border-top-color: var(--paper-bg); animation: tts-spin 0.7s linear infinite;
 }
 @keyframes tts-spin { to { transform: rotate(360deg); } }
-.tts-voicebtn.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* RAWY-112: the VOICE CHIP (design's labelled "voice chip", not a bare icon) — shows the current
+   voice + opens the picker, so it's discoverable. */
+.tts-voice-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 11px; }
+.tts-voice-chip svg { width: 15px; height: 15px; flex: none; }
+.tts-voice-chip-label { max-width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tts-voice-chip.on {
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--chrome-border));
+}
 
 /* RAWY-111: TTS voice picker — floats above the pill, reusing the pill's centering vars. */
 .tts-picker {

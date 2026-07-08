@@ -199,6 +199,12 @@ const AddCardIcon = () => (
     <rect x="3" y="4.5" width="18" height="15" rx="2.6" /><path d="M12 9.2v6.1M8.9 12.2h6.2" />
   </svg>
 );
+// RAWY-124: Listen — start read-aloud FROM the selection (the TTS waveform, matching the top bar).
+const ListenIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2" />
+  </svg>
+);
 
 // The redesigned selection toolbar (RAWY-59, design "Selection Toolbar — two-tier popover"):
 // a floating dark popover with the COLOUR PALETTE on top (one tap highlights in that ink — no
@@ -207,6 +213,7 @@ const AddCardIcon = () => (
 function SelectionToolbar({
   sel,
   onColor,
+  onListen,
   onNote,
   onCopy,
   onAddToCard,
@@ -214,6 +221,7 @@ function SelectionToolbar({
 }: {
   sel: SelectionInfo;
   onColor: (c: HighlightColor) => void;
+  onListen: () => void;
   onNote: () => void;
   onCopy: () => void;
   onAddToCard: () => void;
@@ -246,8 +254,11 @@ function SelectionToolbar({
           </div>
           {/* hairline */}
           <div className="hl-pop-line" />
-          {/* tier 2 — actions (Note · Copy · Add to card · Create photo card) */}
+          {/* tier 2 — actions. RAWY-124: the FULL set is FIVE — Listen · Note · Copy · Add-to-card ·
+              Create-photo-card. Do NOT drop one (listen-from-selection was long missing because it was
+              never wired here — it is EPUB-only, and the selection toolbar is EPUB-only, so it always shows). */}
           <div className="hl-pop-actions">
+            <button className="hl-pop-act" onClick={onListen}><ListenIcon />{t("tts.listen")}</button>
             <button className="hl-pop-act" onClick={onNote}><PenIcon />{t("hl.note")}</button>
             <button className="hl-pop-act" onClick={onCopy}><CopyIcon />{t("hl.copy")}</button>
             <button className="hl-pop-act" onClick={onAddToCard}><AddCardIcon />{t("photo.addToCard")}</button>
@@ -307,10 +318,12 @@ export function AnnotationLayer({
   ctrlRef,
   onPhotoCard,
   onAddToCard,
+  onListen,
 }: {
   ctrlRef: RefObject<FoliateController | null>;
   onPhotoCard?: (sel: SelectionInfo) => void;
   onAddToCard?: (sel: SelectionInfo) => void;
+  onListen?: (sel: SelectionInfo) => void; // RAWY-124: listen-from-selection (start TTS from here)
 }) {
   const [selection, setSelection] = useState<SelectionInfo | null>(null);
   const [active, setActive] = useState<AnnotationHit | null>(null);
@@ -382,6 +395,14 @@ export function AnnotationLayer({
     setSelection(null);
     clearSel();
   };
+  // RAWY-124: Listen from the selection — hand the passage up to start read-aloud from here.
+  const onListenSel = () => {
+    if (!selection) return;
+    const s = selection;
+    setSelection(null);
+    clearSel();
+    onListen?.(s);
+  };
   // Add to the photo-card basket (RAWY-60) — collect this passage, keep reading, compose later.
   const onAdd = () => {
     if (!selection) return;
@@ -412,6 +433,7 @@ export function AnnotationLayer({
         <SelectionToolbar
           sel={selection}
           onColor={onPickColor}
+          onListen={onListenSel}
           onNote={onNote}
           onCopy={onCopy}
           onAddToCard={onAdd}

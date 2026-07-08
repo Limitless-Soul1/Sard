@@ -764,6 +764,22 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       chapterLabel: chapter,
     });
   };
+  // RAWY-124: listen from the SELECTION (the "Stage 2" that was planned in the comment above but never
+  // built). Read the chapter's blocks, find the one the selection begins in (whitespace-normalised
+  // substring match), and start read-aloud from there — flowing forward. Falls back to the chapter
+  // start if the block can't be located, so Listen always speaks.
+  const startListenFromSelection = (sel: SelectionInfo) => {
+    const ctrl = ctrlRef.current;
+    if (!ctrl) return;
+    const bookLang = isRtlBook ? "ar" : "en";
+    const sentences = ctrl.getCurrentChapterSentences(bookLang);
+    if (sentences.length === 0) return;
+    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+    const needle = norm(sel.text).slice(0, 24);
+    let startIndex = needle ? sentences.findIndex((s) => norm(s).includes(needle)) : -1;
+    if (startIndex < 0) startIndex = 0;
+    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: chapter });
+  };
 
   // Responsive page width (RAWY-23): the slider fraction → a window-relative preferred width
   // (vw), clamped to a readable range in CSS; "match window" fills it.
@@ -964,7 +980,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
 
       {/* RAWY-85: no in-context selection toolbar (highlight/note/Photo Mode) for PDFs — they're
           CFI-less in Phase 0, so the whole annotation layer is disabled rather than half-working. */}
-      {!isPdf && <AnnotationLayer ctrlRef={ctrlRef} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} />}
+      {!isPdf && <AnnotationLayer ctrlRef={ctrlRef} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} onListen={startListenFromSelection} />}
 
       {/* RAWY-105: read-aloud player (EPUB-only) — floats above the reading area while listening. */}
       {!isPdf && <TtsPlayer />}

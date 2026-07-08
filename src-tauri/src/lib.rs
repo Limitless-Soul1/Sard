@@ -64,6 +64,11 @@ fn migrate_legacy_appdata(new_dir: &Path, new_db: &Path) -> std::io::Result<()> 
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // RAWY-111: two rustls crypto providers (aws-lc-rs via msedge-tts + ring via ureq 3) are compiled
+    // in, so rustls' auto-detection is ambiguous and would PANIC on the first TLS handshake (the Edge
+    // TTS WebSocket). Pin aws-lc-rs as the explicit process default before anything opens a connection.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -139,6 +144,7 @@ pub fn run() {
             tts::tts_voice_present,
             tts::tts_download_voice,
             tts::tts_synthesize,
+            tts::tts_edge_voices,
             tts::tts_stop,
         ])
         .run(tauri::generate_context!())

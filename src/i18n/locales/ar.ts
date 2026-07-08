@@ -443,4 +443,15 @@ export const ar: Record<TKey, string> = {
   "tts.close": "إيقاف",
   "tts.expand": "توسيع",
   "tts.collapse": "طيّ",
+  // RAWY-111 — منتقي الأصوات (محرّكا بايبر وإيدج)
+  "tts.voices": "الأصوات",
+  "tts.voice": "الصوت",
+  "tts.lang.ar": "العربية",
+  "tts.lang.en": "الإنجليزية",
+  "tts.piperBadge": "بايبر · دون اتصال",
+  "tts.edgeBadge": "إيدج · متصل",
+  "tts.male": "ذكر",
+  "tts.female": "أنثى",
+  "tts.fellBack": "إيدج غير متاح — نستخدم بايبر",
+  "tts.loadingVoices": "جارٍ تحميل الأصوات…",
 };

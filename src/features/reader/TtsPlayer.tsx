@@ -1,18 +1,20 @@
-// TTS player pill (RAWY-105, Phase 1 — minimal functional player to the on-disk design). Floats
-// above the reading area while listening. Collapsed: play/pause + chapter line + progress + dot +
-// expand + close. Expanded: skip ±sentence + play + speed chip. The voice picker is Stage 2.
-// The position indicator is intentionally SUBTLE (dot + counter) — no in-text karaoke highlight yet.
+// TTS player pill (RAWY-105). Floats above the reading area while listening. Collapsed: play/pause +
+// chapter line + progress + dot + expand + close. Expanded: skip ±sentence + play + VOICE + speed.
+// RAWY-111: the Voice button opens the picker (Piper + Edge neural voices, grouped by language); a
+// transient notice line shows the Edge→Piper fallback. The position dot is intentionally subtle.
 
 import { useState } from "react";
 
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
 import { TTS_EMPTY, TTS_MAX_SPEED, TTS_MIN_SPEED, TTS_SPEED_STEP, useTts } from "../../lib/tts";
+import { TtsVoicePicker } from "./TtsVoicePicker";
 
 export function TtsPlayer() {
-  const { active, status, index, total, speed, progress, chapterLabel, error, toggle, skip, setSpeed, retry, stop } = useTts();
+  const { active, status, index, total, speed, progress, chapterLabel, error, notice, toggle, skip, setSpeed, retry, stop } = useTts();
   const { t, lang, dir } = useI18n();
   const [expanded, setExpanded] = useState(false);
+  const [picking, setPicking] = useState(false);
   if (!active) return null;
 
   const playing = status === "playing";
@@ -27,8 +29,10 @@ export function TtsPlayer() {
     const next = speed + TTS_SPEED_STEP;
     setSpeed(next > TTS_MAX_SPEED ? TTS_MIN_SPEED : next);
   };
+  const noticeText = notice === "tts.fellBack" ? t("tts.fellBack") : notice;
   const sub =
     errored ? ` · ${t("tts.error")}` :
+    noticeText ? ` · ${noticeText}` :
     downloading ? ` · ${t("tts.downloading", { pct: localeNum(dlPct, lang) })}` :
     preparing ? ` · ${t("tts.preparing")}` :
     status === "paused" ? ` · ${t("tts.paused")}` : "";
@@ -38,6 +42,8 @@ export function TtsPlayer() {
   const metaText = errored ? errText : `${chapterLabel || t("panel.contents")}${sub}`;
 
   return (
+    <>
+      {picking && <TtsVoicePicker onClose={() => setPicking(false)} />}
     <div className={`tts-pill${expanded ? " expanded" : ""}${errored ? " errored" : ""}`} dir={dir} role="group" aria-label={t("tts.player")}>
       {expanded && (
         <button className="tts-skip" onClick={() => skip(-1)} disabled={busy || errored} aria-label={t("tts.skipBack")} title={t("tts.skipBack")}>
@@ -77,6 +83,11 @@ export function TtsPlayer() {
       </div>
 
       {expanded && (
+        <button className={`tts-ghost tts-voicebtn${picking ? " on" : ""}`} onClick={() => setPicking((p) => !p)} aria-label={t("tts.voices")} title={t("tts.voices")}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3v18M8 7v10M16 7v10M4 10v4M20 10v4" /></svg>
+        </button>
+      )}
+      {expanded && (
         <button className="tts-chip tts-speed" onClick={cycleSpeed} aria-label={t("tts.speed")} title={t("tts.speed")}>
           {localeDigits(speed.toFixed(2).replace(/0$/, "").replace(/\.$/, ""), lang)}×
         </button>
@@ -90,5 +101,6 @@ export function TtsPlayer() {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
       </button>
     </div>
+    </>
   );
 }

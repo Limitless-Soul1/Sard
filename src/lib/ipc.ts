@@ -40,9 +40,19 @@ export const ttsDownloadVoice = (id: string, onProgress?: (frac: number) => void
   return invoke<void>("tts_download_voice", { id, onProgress: ch });
 };
 /** Synthesize one sentence with the given engine → raw audio bytes (WebAudio decodes them).
- *  RAWY-110: engine-dispatched ("piper" WAV; "edge" MP3 in Stage B). */
+ *  RAWY-110: engine-dispatched ("piper" WAV; "edge" MP3). */
 export const ttsSynthesize = (engine: string, id: string, text: string): Promise<ArrayBuffer> =>
   invoke<ArrayBuffer>("tts_synthesize", { engine, id, text });
+
+/** A selectable Edge (engine #2) neural voice. */
+export interface EdgeVoiceInfo {
+  id: string; // short_name, e.g. "ar-EG-SalmaNeural"
+  lang: string; // locale, e.g. "ar-EG"
+  gender: string;
+  label: string; // friendly name, e.g. "Salma"
+}
+/** List the free Edge Read-Aloud voices (Arabic + English), for the picker (RAWY-111). */
+export const ttsEdgeVoices = (): Promise<EdgeVoiceInfo[]> => invoke<EdgeVoiceInfo[]>("tts_edge_voices");
 /** Stop + drop the persistent piper process. */
 export const ttsStop = (): Promise<void> => invoke<void>("tts_stop");
 

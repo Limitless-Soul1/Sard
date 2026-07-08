@@ -28,6 +28,14 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
 quick-xml = "0.36"
-# TTS (RAWY-105): download voice models on demand (voices are NOT bundled — installer stays small).
-ureq = "2"
+# TTS (RAWY-105): download Piper voice models on demand (voices are NOT bundled — installer stays small).
+# ureq 3 (RAWY-111): bumped from 2 so it dedupes with msedge-tts's ureq (one copy in the tree).
+ureq = "3"
+# TTS engine #2 (RAWY-111): the FREE, keyless Edge "Read Aloud" neural voices (edge-tts protocol) —
+# the Arabic-quality path. Blocking client (ureq + tungstenite + rustls), MIT, whole tree permissive.
+msedge-tts = "0.4"
+# RAWY-111: msedge-tts (aws-lc-rs) + ureq 3 (ring) compile TWO rustls crypto providers into one
+# rustls, so `ClientConfig::builder()`'s auto-detection is ambiguous and PANICS (hanging the Edge WS
+# connect). We install aws-lc-rs as the explicit process default at startup to disambiguate.
+rustls = { version = "0.23", features = ["aws_lc_rs"] }
 

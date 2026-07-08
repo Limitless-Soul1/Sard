@@ -9,10 +9,14 @@
 //! the WAV bytes, and return them raw to the frontend (WebAudio decodes + plays them).
 
 use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
+use msedge_tts::tts::client::{connect, MSEdgeTTSClient};
+use msedge_tts::tts::SpeechConfig;
+use msedge_tts::voice::{get_voices_list, Voice};
 use tauri::{AppHandle, Manager, State};
 
 use crate::db::AppState;
@@ -37,10 +41,29 @@ fn voice_def(id: &str) -> Option<&'static VoiceDef> {
     VOICES.iter().find(|v| v.id == id)
 }
 
-/// Managed state: the single persistent piper process (or none).
+/// Managed state: the persistent Piper process + the warm Edge WebSocket + the cached Edge voices.
 #[derive(Default)]
 pub struct TtsEngine {
-    inner: Mutex<Option<Running>>,
+    inner: Mutex<Option<Running>>,          // Piper (engine #1) — one warm process per voice
+    edge: Mutex<Option<EdgeRunning>>,       // Edge (engine #2) — one warm WS client per voice
+    edge_voices: Mutex<Option<Vec<Voice>>>, // cached get_voices_list() (fetched once, for the picker)
+}
+
+/// Edge (engine #2, RAWY-111): a warm WebSocket client bound to one voice's SpeechConfig, reused
+/// across sentences and reconnected on drop. `MSEdgeTTSClient<TcpStream>` is Send (rustls StreamOwned).
+struct EdgeRunning {
+    voice_id: String,
+    config: SpeechConfig,
+    client: MSEdgeTTSClient<TcpStream>,
+}
+
+/// A UI-facing Edge voice — the picker groups these by language and labels them by engine.
+#[derive(serde::Serialize)]
+pub struct EdgeVoiceInfo {
+    pub id: String,     // short_name, e.g. "ar-EG-SalmaNeural"
+    pub lang: String,   // locale, e.g. "ar-EG"
+    pub gender: String, // "Female" / "Male"
+    pub label: String,  // friendly display name, e.g. "Salma"
 }
 
 struct Running {
@@ -91,10 +114,15 @@ pub fn tts_download_voice(
     let dir = voices_dir(&state);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
 
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(std::time::Duration::from_secs(20))
-        .timeout_read(std::time::Duration::from_secs(45))
-        .build();
+    // RAWY-111: ureq 3 API (bumped from 2 to dedupe with msedge-tts). `timeout_connect` +
+    // `timeout_recv_response` turn an unreachable host into a fast visible error (RAWY-106 intent);
+    // the body itself is left untimed so a slow-but-progressing 60 MB download isn't falsely aborted.
+    let agent = ureq::Agent::new_with_config(
+        ureq::Agent::config_builder()
+            .timeout_connect(Some(std::time::Duration::from_secs(20)))
+            .timeout_recv_response(Some(std::time::Duration::from_secs(45)))
+            .build(),
+    );
 
     on_progress.send(0.0).ok();
     // Config first (tiny, instant), then the model (~60 MB) — the model drives the visible bar.
@@ -105,10 +133,10 @@ pub fn tts_download_voice(
         }
         let url = format!("{HF_BASE}/{}/{}.{ext}", v.url_dir, v.file);
         let resp = agent.get(&url).call().map_err(|e| format!("fetch {ext}: {e}"))?;
-        let total: u64 = resp.header("Content-Length").and_then(|h| h.parse().ok()).unwrap_or(0);
+        let total: u64 = resp.body().content_length().unwrap_or(0);
         let big = ext == "onnx";
         let tmp = dir.join(format!("{}.{ext}.part", v.file));
-        let mut reader = resp.into_reader();
+        let mut reader = resp.into_body().into_reader();
         let mut f = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
         let mut buf = vec![0u8; 64 * 1024];
         let mut got: u64 = 0;
@@ -218,8 +246,92 @@ pub fn tts_synthesize(
 ) -> Result<tauri::ipc::Response, String> {
     match engine.as_str() {
         "piper" => piper_synthesize(&app, &state, &engines, id, text),
+        "edge" => edge_synthesize(&engines, id, text),
         other => Err(format!("unknown TTS engine: {other}")),
     }
+}
+
+// ---- Edge (engine #2, RAWY-111): the FREE, keyless Edge Read-Aloud neural voices ----
+
+/// "ar-EG-SalmaNeural" → "Salma" (drop the `<lang>-` prefix + a `Neural` suffix); fall back to the
+/// friendly name or the raw short_name.
+fn edge_label(short_name: &str, v: &Voice) -> String {
+    let tail = short_name.rsplit('-').next().unwrap_or(short_name); // "SalmaNeural"
+    let name = tail.strip_suffix("Neural").unwrap_or(tail); // "Salma"
+    if name.is_empty() {
+        v.friendly_name.clone().unwrap_or_else(|| short_name.to_string())
+    } else {
+        name.to_string()
+    }
+}
+
+/// List the Edge voices for the picker — Arabic + English only, cached after the first fetch.
+#[tauri::command]
+pub fn tts_edge_voices(engines: State<'_, TtsEngine>) -> Result<Vec<EdgeVoiceInfo>, String> {
+    let mut cache = engines.edge_voices.lock().map_err(|e| e.to_string())?;
+    if cache.is_none() {
+        *cache = Some(get_voices_list().map_err(|e| format!("edge voices: {e:?}"))?);
+    }
+    let out = cache
+        .as_ref()
+        .unwrap()
+        .iter()
+        .filter(|v| {
+            v.locale
+                .as_deref()
+                .map(|l| l.starts_with("ar-") || l.starts_with("en-"))
+                .unwrap_or(false)
+        })
+        .filter_map(|v| {
+            v.short_name.as_ref().map(|sn| EdgeVoiceInfo {
+                id: sn.clone(),
+                lang: v.locale.clone().unwrap_or_default(),
+                gender: v.gender.clone().unwrap_or_default(),
+                label: edge_label(sn, v),
+            })
+        })
+        .collect();
+    Ok(out)
+}
+
+/// Synthesize one sentence → MP3 bytes over the free Edge Read-Aloud WebSocket. Reuses a warm client
+/// per voice; a dropped socket reconnects once. Online-required — an unreachable endpoint surfaces a
+/// clear error, and the frontend then falls back to Piper.
+fn edge_synthesize(engines: &TtsEngine, id: String, text: String) -> Result<tauri::ipc::Response, String> {
+    let mut guard = engines.edge.lock().map_err(|e| e.to_string())?;
+    let need_new = guard.as_ref().map(|r| r.voice_id != id).unwrap_or(true);
+    if need_new {
+        // build the voice's config from the (cached) voice list, then open a warm connection
+        let mut vcache = engines.edge_voices.lock().map_err(|e| e.to_string())?;
+        if vcache.is_none() {
+            *vcache = Some(get_voices_list().map_err(|e| format!("edge voices: {e:?}"))?);
+        }
+        let voice = vcache
+            .as_ref()
+            .unwrap()
+            .iter()
+            .find(|v| v.short_name.as_deref() == Some(id.as_str()))
+            .ok_or_else(|| format!("unknown edge voice: {id}"))?;
+        let mut config = SpeechConfig::from(voice);
+        config.audio_format = "audio-24khz-48kbitrate-mono-mp3".to_string(); // force MP3 for WebAudio
+        drop(vcache);
+        let client = connect().map_err(|e| format!("edge connect: {e:?}"))?;
+        *guard = Some(EdgeRunning { voice_id: id.clone(), config, client });
+    }
+    let r = guard.as_mut().unwrap();
+    let audio = match r.client.synthesize(&text, &r.config) {
+        Ok(a) => a,
+        Err(_) => {
+            // the socket likely dropped (idle / flaky network) — reconnect once and retry
+            let mut client = connect().map_err(|e| format!("edge reconnect: {e:?}"))?;
+            let a = client
+                .synthesize(&text, &r.config)
+                .map_err(|e| format!("edge synth: {e:?}"))?;
+            r.client = client;
+            a
+        }
+    };
+    Ok(tauri::ipc::Response::new(audio.audio_bytes))
 }
 
 /// Piper (engine #1): reuse the persistent warm process; respawn only if the voice changed or died.
@@ -279,12 +391,15 @@ fn piper_synthesize(
     Ok(tauri::ipc::Response::new(bytes))
 }
 
-/// Stop + drop the persistent piper process (called when the user closes the player).
+/// Stop + drop both engines' warm connections (called when the user closes the player).
 #[tauri::command]
 pub fn tts_stop(engine: State<'_, TtsEngine>) {
     if let Ok(mut guard) = engine.inner.lock() {
         if let Some(mut r) = guard.take() {
-            let _ = r.child.kill();
+            let _ = r.child.kill(); // Piper process
         }
+    }
+    if let Ok(mut guard) = engine.edge.lock() {
+        *guard = None; // Edge WebSocket (dropped → closed)
     }
 }

@@ -3,15 +3,16 @@
 // synthesizing the NEXT while the current plays (hides synth latency). Controls: play/pause,
 // skip ±sentence, speed.
 //
-// RAWY-110 (engine abstraction): a voice is {engine, id}; `synth` calls the dispatching
-// `tts_synthesize(engine, id, text)`. Everything here is engine-agnostic — WebAudio decodes both
-// Piper's WAV and (Stage B) Edge's MP3, and play/pause/skip/speed work the same regardless. Stage A
-// wires only "piper"; the Edge engine + voice picker come in Stage B.
+// RAWY-110/111 (engine abstraction): a voice is {engine, id}; `synth` calls the dispatching
+// `tts_synthesize(engine, id, text)`. Engine-agnostic — WebAudio decodes both Piper's WAV and Edge's
+// MP3, so play/pause/skip/speed work the same. The chosen engine+voice persists PER LANGUAGE
+// (`tts_voice:ar`/`tts_voice:en`), defaulting to Piper (offline). Edge is online-required — if it
+// fails, playback falls back to Piper with a clear notice (never a silent dead state).
 
 import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 
-import { settingsGet, settingsSet, ttsDownloadVoice, ttsStop, ttsVoicePresent } from "./ipc";
+import { settingsGet, settingsSet, ttsDownloadVoice, ttsEdgeVoices, ttsStop, ttsVoicePresent } from "./ipc";
 
 export const TTS_MIN_SPEED = 0.75;
 export const TTS_MAX_SPEED = 2.0;
@@ -20,37 +21,80 @@ export const TTS_SPEED_STEP = 0.25;
 // the pill shows verbatim (RAWY-106). Set when a section genuinely has no readable text.
 export const TTS_EMPTY = "empty-chapter";
 
-// RAWY-110: a voice is identified by its ENGINE + id. Stage A ships only "piper"; "edge" (the free
-// Edge Read-Aloud neural voices, incl. Arabic) lands in Stage B behind this same abstraction.
+// A voice is identified by its ENGINE + id (RAWY-110). "piper" = offline; "edge" = online neural.
 export type TtsEngineKind = "piper" | "edge";
 export interface TtsVoiceRef { engine: TtsEngineKind; id: string }
+export type TtsLang = "ar" | "en";
 
-// Default voice per book direction — Piper stays the offline default (Stage B adds the picker + the
-// per-language engine/voice choice; an Arabic book can then opt into an Edge neural voice).
-export const defaultVoiceForDir = (dir: string): TtsVoiceRef =>
-  dir === "rtl"
-    ? { engine: "piper", id: "ar_JO-kareem-medium" }
-    : { engine: "piper", id: "en_US-lessac-medium" };
+// The bundled Piper voices (one per language) — the offline defaults, always available.
+export const PIPER_VOICE: Record<TtsLang, string> = {
+  ar: "ar_JO-kareem-medium",
+  en: "en_US-lessac-medium",
+};
+export const defaultVoiceForLang = (lang: TtsLang): TtsVoiceRef => ({ engine: "piper", id: PIPER_VOICE[lang] });
+
+// A row in the voice picker (RAWY-111) — Piper (2, offline) + every Edge neural voice for ar/en.
+export interface PickerVoice { engine: TtsEngineKind; id: string; lang: TtsLang; locale: string; label: string; gender: string }
+const PIPER_PICKER: PickerVoice[] = [
+  { engine: "piper", id: PIPER_VOICE.ar, lang: "ar", locale: "ar", label: "Kareem", gender: "" },
+  { engine: "piper", id: PIPER_VOICE.en, lang: "en", locale: "en", label: "Lessac", gender: "" },
+];
+let edgeVoicesCache: PickerVoice[] | null = null;
+/** Piper (offline) + Edge (online neural) voices for the picker. Edge list is fetched once + cached;
+ *  a failure (offline) yields Piper-only rather than throwing. */
+export async function loadPickerVoices(): Promise<PickerVoice[]> {
+  if (!edgeVoicesCache) {
+    try {
+      const list = await ttsEdgeVoices();
+      edgeVoicesCache = list.map((v) => ({
+        engine: "edge" as const,
+        id: v.id,
+        lang: (v.lang.toLowerCase().startsWith("ar") ? "ar" : "en") as TtsLang,
+        locale: v.lang,
+        label: v.label,
+        gender: v.gender,
+      }));
+    } catch {
+      edgeVoicesCache = []; // offline / endpoint down → Piper-only picker
+    }
+  }
+  return [...PIPER_PICKER, ...edgeVoicesCache];
+}
+
+// Resolve the saved engine+voice for a language (persisted as "engine:id"); default = Piper.
+async function resolveVoicePref(lang: TtsLang): Promise<TtsVoiceRef> {
+  const saved = await settingsGet(`tts_voice:${lang}`).catch(() => null);
+  if (saved) {
+    const i = saved.indexOf(":");
+    const engine = saved.slice(0, i);
+    const id = saved.slice(i + 1);
+    if ((engine === "piper" || engine === "edge") && id) return { engine, id };
+  }
+  return defaultVoiceForLang(lang);
+}
 
 type Status = "idle" | "preparing" | "downloading" | "playing" | "paused" | "error";
 
-interface StartOpts { sentences: string[]; engine: TtsEngineKind; voice: string; startIndex?: number; chapterLabel: string }
+interface StartOpts { sentences: string[]; lang: TtsLang; startIndex?: number; chapterLabel: string }
 
 interface TtsState {
   active: boolean; // player pill visible
   status: Status;
   engine: TtsEngineKind;
   voice: string; // voice id within the engine
+  lang: TtsLang; // current book language (which voice pref applies)
   speed: number;
   index: number; // current sentence
   total: number;
   progress: number; // voice-download fraction 0–1 (only meaningful while status === "downloading")
   chapterLabel: string;
   error: string | null;
+  notice: string | null; // transient message (e.g. fell back to Piper); auto-clears
   start: (o: StartOpts) => Promise<void>;
   toggle: () => void;
   skip: (delta: number) => void;
   setSpeed: (s: number) => void;
+  setVoice: (engine: TtsEngineKind, id: string, lang: TtsLang) => void;
   retry: () => void;
   stop: () => void;
 }
@@ -62,8 +106,18 @@ let source: AudioBufferSourceNode | null = null;
 let cache = new Map<number, Promise<AudioBuffer>>();
 let curEngine: TtsEngineKind = "piper";
 let curVoice = "";
+let curLang: TtsLang = "en";
+let edgeFellBack = false; // guard: fall back Edge→Piper at most once per session
+let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 let gen = 0; // bumped by stop/skip/start to invalidate in-flight async work
 let lastStart: StartOpts | null = null; // for retry() after a download/synth failure
+
+// Show a transient notice in the pill for a few seconds (RAWY-111: e.g. "Edge unavailable — Piper").
+function flashNotice(msg: string) {
+  useTts.setState({ notice: msg });
+  if (noticeTimer) clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => useTts.setState({ notice: null }), 5000);
+}
 
 const audioCtx = (): AudioContext => {
   if (!ctx || ctx.state === "closed") ctx = new AudioContext();
@@ -107,7 +161,21 @@ async function playFrom(i: number, myGen: number) {
   try {
     buffer = await synth(idx);
   } catch (e) {
-    if (myGen === gen) set({ status: "error", error: String(e) });
+    if (myGen !== gen) return;
+    // Edge is online-required — on failure, fall back to Piper (once) for this language and keep
+    // reading with a clear notice, rather than dead-ending on a bare error (RAWY-111).
+    if (curEngine === "edge" && !edgeFellBack) {
+      edgeFellBack = true;
+      const fb = defaultVoiceForLang(curLang);
+      curEngine = fb.engine;
+      curVoice = fb.id;
+      cache = new Map(); // drop any half-synthesized Edge audio
+      set({ engine: fb.engine, voice: fb.id });
+      flashNotice("tts.fellBack");
+      void ensureAndPlay(fb.engine, fb.id, idx, ++gen);
+      return;
+    }
+    set({ status: "error", error: String(e) });
     return;
   }
   if (myGen !== gen) return; // superseded by stop/skip
@@ -127,54 +195,68 @@ async function playFrom(i: number, myGen: number) {
   s.start();
 }
 
+// Ensure the chosen voice is usable, then play from `fromIndex`. Only PIPER voices fetch on demand
+// (~60 MB) with a REAL progress bar (RAWY-106); Edge synthesizes over the network with no local
+// model, so it skips straight to playback. Shared by start / setVoice / the Edge→Piper fallback.
+async function ensureAndPlay(engine: TtsEngineKind, voice: string, fromIndex: number, myGen: number) {
+  const set = useTts.setState;
+  if (engine === "piper") {
+    try {
+      if (!(await ttsVoicePresent(voice))) {
+        set({ status: "downloading", progress: 0 });
+        await ttsDownloadVoice(voice, (frac) => {
+          if (myGen === gen) set({ progress: frac });
+        });
+        if (myGen !== gen) return; // stopped mid-download
+        set({ status: "preparing" });
+      }
+    } catch (e) {
+      if (myGen === gen) set({ status: "error", error: `${e}` });
+      return;
+    }
+  }
+  if (myGen !== gen) return;
+  void playFrom(fromIndex, myGen);
+}
+
 export const useTts = create<TtsState>((set, get) => ({
   active: false,
   status: "idle",
   engine: "piper",
   voice: "",
+  lang: "en",
   speed: 1,
   index: 0,
   total: 0,
   progress: 0,
   chapterLabel: "",
   error: null,
+  notice: null,
 
   start: async (opts) => {
     lastStart = opts;
-    const { sentences: sen, engine, voice, startIndex = 0, chapterLabel } = opts;
+    const { sentences: sen, lang, startIndex = 0, chapterLabel } = opts;
     audioCtx(); // create within the user gesture so autoplay policy unlocks it
     const myGen = ++gen;
     stopSource();
     cache = new Map();
+    edgeFellBack = false;
     sentences = sen.map((s) => s.trim()).filter(Boolean);
-    curEngine = engine;
-    curVoice = voice;
+    curLang = lang;
     const saved = Number(await settingsGet("tts_speed").catch(() => null));
     const speed = saved >= TTS_MIN_SPEED && saved <= TTS_MAX_SPEED ? saved : get().speed;
-    set({ active: true, status: "preparing", engine, voice, speed, index: startIndex, total: sentences.length, progress: 0, chapterLabel, error: null });
+    set({ active: true, status: "preparing", lang, speed, index: startIndex, total: sentences.length, progress: 0, chapterLabel, error: null, notice: null });
     if (sentences.length === 0) {
       set({ status: "error", error: TTS_EMPTY });
       return;
     }
-    // Only PIPER voices fetch on demand (~60 MB) with a REAL progress bar (RAWY-106). Edge (Stage B)
-    // synthesizes over the network with no local model, so it skips this step entirely.
-    if (engine === "piper") {
-      try {
-        if (!(await ttsVoicePresent(voice))) {
-          set({ status: "downloading", progress: 0 });
-          await ttsDownloadVoice(voice, (frac) => {
-            if (myGen === gen) set({ progress: frac });
-          });
-          if (myGen !== gen) return; // stopped mid-download
-          set({ status: "preparing" });
-        }
-      } catch (e) {
-        if (myGen === gen) set({ status: "error", error: `${e}` });
-        return;
-      }
-    }
-    if (myGen !== gen) return; // stopped during download
-    void playFrom(Math.min(startIndex, sentences.length - 1), myGen);
+    // Resolve the saved engine+voice for this language (default = Piper) inside the gesture chain.
+    const { engine, id } = await resolveVoicePref(lang);
+    if (myGen !== gen) return;
+    curEngine = engine;
+    curVoice = id;
+    set({ engine, voice: id });
+    void ensureAndPlay(engine, id, Math.min(startIndex, sentences.length - 1), myGen);
   },
 
   toggle: () => {
@@ -204,6 +286,22 @@ export const useTts = create<TtsState>((set, get) => ({
     void settingsSet("tts_speed", String(sp)).catch(() => {});
   },
 
+  // Pick an engine+voice for a language (RAWY-111). Always persists the choice; if it's for the
+  // language being read RIGHT NOW, switch live from the current sentence so the owner hears it.
+  setVoice: (engine, id, lang) => {
+    void settingsSet(`tts_voice:${lang}`, `${engine}:${id}`).catch(() => {});
+    const st = get();
+    if (!st.active || st.lang !== lang) return; // saved; applies next time that language is read
+    curEngine = engine;
+    curVoice = id;
+    edgeFellBack = false;
+    cache = new Map(); // new voice → invalidate cached audio
+    const myGen = ++gen;
+    stopSource();
+    set({ engine, voice: id, status: "preparing", error: null, notice: null });
+    void ensureAndPlay(engine, id, st.index, myGen);
+  },
+
   // Re-run the last Listen after a download/synth failure (RAWY-106: a visible way to recover from a
   // flaky first-use download without leaving the reader).
   retry: () => {
@@ -215,8 +313,10 @@ export const useTts = create<TtsState>((set, get) => ({
     stopSource();
     cache = new Map();
     sentences = [];
+    edgeFellBack = false;
+    if (noticeTimer) { clearTimeout(noticeTimer); noticeTimer = null; }
     if (ctx && ctx.state !== "closed") void ctx.suspend().catch(() => {});
     void ttsStop().catch(() => {});
-    set({ active: false, status: "idle", index: 0, total: 0, progress: 0, error: null });
+    set({ active: false, status: "idle", index: 0, total: 0, progress: 0, error: null, notice: null });
   },
 }));

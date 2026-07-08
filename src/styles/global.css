@@ -703,6 +703,48 @@ html, body, #root {
   border-top-color: var(--paper-bg); animation: tts-spin 0.7s linear infinite;
 }
 @keyframes tts-spin { to { transform: rotate(360deg); } }
+.tts-voicebtn.on { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* RAWY-111: TTS voice picker — floats above the pill, reusing the pill's centering vars. */
+.tts-picker {
+  position: fixed; z-index: 26;
+  left: 50%; bottom: calc(var(--tts-bottom, 20px) + 84px);
+  transform: translateX(calc(-50% + var(--reading-shift, 0px)));
+  width: min(360px, calc(100vw - 32px)); max-height: min(52vh, 440px);
+  display: flex; flex-direction: column;
+  border-radius: 16px; border: 1px solid var(--chrome-border);
+  background: color-mix(in srgb, var(--paper-bg) 94%, transparent);
+  backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 18px 44px rgba(40, 28, 14, 0.26); font-family: var(--ui-font);
+  overflow: hidden;
+}
+:root[data-dark="true"] .tts-picker { box-shadow: 0 18px 44px rgba(0, 0, 0, 0.55); }
+.tts-picker-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 12px 6px 14px; font: 700 0.8125rem var(--ui-font); color: var(--text);
+}
+.tts-picker-scroll { overflow-y: auto; padding: 0 8px 10px; }
+.tts-picker-empty { padding: 20px; text-align: center; color: var(--muted); font: 400 0.8125rem var(--ui-font); }
+.tts-picker-glabel {
+  padding: 9px 8px 4px; font: 700 0.625rem var(--ui-font); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
+}
+.tts-voice-row {
+  width: 100%; display: flex; align-items: center; gap: 8px; text-align: start;
+  padding: 9px 10px; border: 0; border-radius: 10px; background: transparent; cursor: pointer;
+  color: var(--text); font-family: var(--ui-font);
+}
+.tts-voice-row:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.tts-voice-row.on { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.tts-voice-name { flex: none; font: 600 0.8125rem var(--ui-font); }
+.tts-voice-meta { flex: 1; min-width: 0; font: 400 0.6875rem var(--ui-font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tts-voice-badge {
+  flex: none; font: 600 0.5625rem var(--ui-font); letter-spacing: 0.03em; padding: 2px 7px; border-radius: 999px;
+  border: 1px solid var(--chrome-border); color: var(--muted); white-space: nowrap;
+}
+.tts-voice-badge.edge {
+  color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
 
 /* anti-spoiler toggle in the Contents header (RAWY-36 — a clear LABELLED switch, replaces the
    emoji button): a label + the shared pill switch, sits under the header above the chapter list */

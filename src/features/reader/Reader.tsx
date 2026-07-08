@@ -40,7 +40,7 @@ import { MARKER_WINDOW, useBookmarks } from "./bookmarksStore";
 import { ReaderChrome, type SettingsSection } from "./ReaderChrome";
 import { SettingsPanel } from "./SettingsPanel";
 import { TtsPlayer } from "./TtsPlayer";
-import { defaultVoiceForDir, useTts } from "../../lib/tts";
+import { useTts } from "../../lib/tts";
 import { useChromeOnIntent } from "./useChromeOnIntent";
 
 // The book to open: id (for progress) + absolute file path (for the asset protocol).
@@ -756,12 +756,10 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const startListen = () => {
     const ctrl = ctrlRef.current;
     if (!ctrl) return;
-    const bookLang = isRtlBook ? "ar" : "en";
-    const v = defaultVoiceForDir(isRtlBook ? "rtl" : "ltr"); // RAWY-110: {engine, id}
+    const bookLang = isRtlBook ? "ar" : "en"; // RAWY-111: the store resolves the per-language voice
     useTts.getState().start({
       sentences: ctrl.getCurrentChapterSentences(bookLang),
-      engine: v.engine,
-      voice: v.id,
+      lang: bookLang,
       startIndex: 0,
       chapterLabel: chapter,
     });

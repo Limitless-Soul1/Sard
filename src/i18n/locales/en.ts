@@ -443,6 +443,17 @@ export const en = {
   "tts.close": "Stop",
   "tts.expand": "Expand",
   "tts.collapse": "Collapse",
+  // RAWY-111 — voice picker (Piper + Edge engines)
+  "tts.voices": "Voices",
+  "tts.voice": "Voice",
+  "tts.lang.ar": "Arabic",
+  "tts.lang.en": "English",
+  "tts.piperBadge": "Piper · offline",
+  "tts.edgeBadge": "Edge · online",
+  "tts.male": "Male",
+  "tts.female": "Female",
+  "tts.fellBack": "Edge unavailable — using Piper",
+  "tts.loadingVoices": "loading voices…",
 } as const;
 
 export type TKey = keyof typeof en;

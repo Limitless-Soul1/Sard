@@ -36,6 +36,13 @@ const AUTO_HIDE_MS = 2600;
 // a resting hand's tremor and the browser's near-zero-distance synthetic moves (bar toggling / content
 // scrolling under the cursor) no longer re-show the bar.
 const JITTER_PX = 12;
+// RAWY-118: on the owner's machine a widened jitter box still wasn't enough — ANY ordinary reading
+// move (well over 12 px) re-showed the bar. So a mouse move now RE-SHOWS a hidden bar only when the
+// pointer reaches the top-edge zone (a deliberate reach for the bar, like fullscreen-video controls);
+// a move anywhere else in the reading area is ignored while hidden. Tap / key / scroll-up still bring
+// it back from anywhere, and while the bar is already shown any move keeps it awake (resets the idle
+// timer) so it never hides mid-use. ~ the bar height, so the target is easy without being twitchy.
+const TOP_REVEAL_PX = 64;
 
 export function useChromeOnIntent(): {
   visible: boolean;
@@ -45,6 +52,13 @@ export function useChromeOnIntent(): {
   setHold: (v: boolean) => void;
 } {
   const [visible, setVisible] = useState(true); // visible on entry, then settles
+  // RAWY-118: a ref mirror of `visible` so the move handler can branch on it synchronously (React
+  // state is stale inside the stable callback). `setVis` keeps the two in lock-step.
+  const visibleRef = useRef(true);
+  const setVis = useCallback((v: boolean) => {
+    visibleRef.current = v;
+    setVisible(v);
+  }, []);
   const holdRef = useRef(false);
   const timer = useRef<number | undefined>(undefined);
   // The pointer position at the last wake; a move is "real" only if it leaves the jitter box around it.
@@ -57,30 +71,42 @@ export function useChromeOnIntent(): {
   const arm = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
     if (holdRef.current) return; // pinned open by a panel
-    timer.current = window.setTimeout(() => setVisible(false), AUTO_HIDE_MS);
-  }, []);
+    timer.current = window.setTimeout(() => setVis(false), AUTO_HIDE_MS);
+  }, [setVis]);
 
   // A tap / key / programmatic wake — always intent. Clears the anchor so the NEXT move re-anchors
   // (and thus wakes) from wherever the pointer then is.
   const wake = useCallback(() => {
     anchor.current = null;
-    setVisible(true);
+    setVis(true);
     arm();
-  }, [arm]);
+  }, [arm, setVis]);
 
   // A pointer MOVE (from the window OR the forwarded content frame, both in parent-viewport coords).
-  // Ignored when it stays within the jitter box of the last wake — this is what makes the bar hide
-  // reliably despite synthetic/jitter moves. A genuine move re-anchors and keeps the bar awake.
+  // Jitter (a move within the box of the last anchor) is ignored, so the idle timer can still run to
+  // completion. For a genuine move (RAWY-118):
+  //   • while the bar is SHOWN — keep it awake (re-anchor + reset the idle timer), never hide mid-use;
+  //   • while the bar is HIDDEN — re-show ONLY when the pointer reaches the top-edge zone (a deliberate
+  //     reach for the bar). An ordinary reading move elsewhere leaves the bar hidden — this is the
+  //     twitch fix; JITTER_PX alone was not enough on the owner's machine.
   const signalMove = useCallback(
     (x: number, y: number) => {
       lastPos.current = { x, y }; // remember the true cursor even for a jitter move (RAWY-117)
       const a = anchor.current;
       if (a && Math.abs(x - a.x) <= JITTER_PX && Math.abs(y - a.y) <= JITTER_PX) return;
       anchor.current = { x, y };
-      setVisible(true);
-      arm();
+      if (visibleRef.current) {
+        arm(); // already shown → keep awake, reset the idle timer
+        return;
+      }
+      if (y <= TOP_REVEAL_PX) {
+        // hidden → a deliberate reach into the top-edge zone brings the bar back
+        setVis(true);
+        arm();
+      }
+      // hidden + move elsewhere → stay hidden (the idle timer is already stopped)
     },
-    [arm],
+    [arm, setVis],
   );
 
   // RAWY-73: scroll intent (scrolled mode). Scrolling DOWN is a strong "I'm reading" signal → hide
@@ -95,23 +121,23 @@ export function useChromeOnIntent(): {
         if (holdRef.current) return; // a pinned drawer stays; don't hide under it
         if (timer.current) clearTimeout(timer.current);
         anchor.current = lastPos.current;
-        setVisible(false);
+        setVis(false);
       } else {
         anchor.current = lastPos.current;
-        setVisible(true);
+        setVis(true);
         arm();
       }
     },
-    [arm],
+    [arm, setVis],
   );
 
   const setHold = useCallback(
     (v: boolean) => {
       holdRef.current = v;
-      if (v) setVisible(true);
+      if (v) setVis(true);
       else arm();
     },
-    [arm],
+    [arm, setVis],
   );
 
   useEffect(() => {

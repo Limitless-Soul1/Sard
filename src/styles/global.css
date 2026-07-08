@@ -130,16 +130,17 @@ html, body, #root {
    dynamic one) keeps the reading position from jumping as the chrome fades in/out. The paper sheet
    itself still fills full height, so its background shows behind the bar; only the text is inset.
    Applies in both scrolled + paged flows and both directions (it's a block-axis inset, not inline). */
-.page-host { position: absolute; inset-block: 70px 0; inset-inline: var(--page-margin, 56px); --sard-columns: 1; --sard-measure: 3000px; transition: inset-block-start 0.22s cubic-bezier(0.22, 1, 0.36, 1); }
+.page-host { position: absolute; inset-block: 70px 0; inset-inline: var(--page-margin, 56px); --sard-columns: 1; --sard-measure: 3000px; }
 .page-host foliate-view { width: 100%; height: 100%; display: block; }
 /* RAWY-117 (fixes ISSUE A — supersedes RAWY-71's PERMANENT 70px top inset): the 70px only clears the
    top bar while it is SHOWN. When the chrome auto-hides, TRULY free that space — the reading text
    lifts to the top edge (symmetric with the always-0 bottom), so a hidden bar no longer leaves a dead
-   paper band clipping the first line. The reclaim is dynamic, not frozen: safe now that the bar toggles
-   only on deliberate intent (RAWY-117 fix B), so it no longer bounces on every micro-move. Scrolled
-   mode (the default) just grows the viewport — no reflow; paged mode repaginates like a window resize,
-   foliate keeping the anchor. Block-axis only → unaffected by LTR/RTL. */
-@media (prefers-reduced-motion: reduce) { .page-host { transition: none; } }
+   paper band clipping the first line. Scrolled mode (the default) just grows the viewport — no reflow;
+   paged mode repaginates like a window resize, foliate keeping the anchor. Block-axis only → LTR/RTL-safe.
+   RAWY-118 (fixes the scroll HITCH): the reclaim is now INSTANT — the 0.22s transition here animated the
+   foliate-host resize DURING scroll-to-hide, forcing a repaint/relayout on every frame of the slide (a
+   stutter at the start of scrolling). Snapping the inset does the same reflow ONCE instead of ~13×, so
+   there is no animated reflow mid-scroll; the reclaim itself (first line reaches the top) is unchanged. */
 .reader-root.chrome-hidden .page-host { inset-block-start: 0; }
 
 /* faint paper grain in the sheet margins (full-paper grain over the iframe is deferred) */

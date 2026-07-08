@@ -4,5 +4,5 @@
 
 export * from "./tokens";
 export * from "./themes";
-export { applyTheme } from "./applyTheme";
+export { applyTheme, reapplyTitlebarTheme } from "./applyTheme";
 export { useTheme, initTheme, currentMode, type ThemeMode } from "./store";

@@ -5,7 +5,7 @@ import { I18nProvider, useI18n } from "./i18n";
 import { initBookmarkStyle } from "./lib/bookmarkStyle";
 import { initFonts } from "./lib/fonts";
 import { initStyleScope } from "./lib/styleScope";
-import { initTheme, useTheme } from "./theme";
+import { initTheme, reapplyTitlebarTheme, useTheme } from "./theme";
 import { LanguagePicker } from "./features/onboarding/LanguagePicker";
 import { Library, type OpenTarget } from "./features/library/Library";
 import { Reader } from "./features/reader/Reader";
@@ -43,6 +43,26 @@ function App() {
     initFonts(); // load + apply persisted UI font + register imported @font-faces (RAWY-39)
     initBookmarkStyle(); // load persisted bookmark shape/colour/position (RAWY-41)
     initStyleScope(); // load unified-vs-per-book book-style scope (RAWY-43)
+  }, []);
+
+  // RAWY-118: WebView2 re-themes the native title-bar caption during its own startup, AFTER our first
+  // applyTheme, so the initial caption reverts to the system (black) even though we set it. Re-apply it
+  // a moment after boot and whenever the window regains focus, so the caption tracks the app theme.
+  useEffect(() => {
+    const t = window.setTimeout(reapplyTitlebarTheme, 1200);
+    let unlisten: (() => void) | undefined;
+    getCurrentWindow()
+      .onFocusChanged(({ payload: focused }) => {
+        if (focused) reapplyTitlebarTheme();
+      })
+      .then((f) => {
+        unlisten = f;
+      })
+      .catch(() => {});
+    return () => {
+      window.clearTimeout(t);
+      unlisten?.();
+    };
   }, []);
 
   // F11 toggles fullscreen (the Windows convention); Esc exits when fullscreen (RAWY-42). Works

@@ -15,6 +15,7 @@ pub mod photocards; // saved photo cards: PNG store + DB rows (RAWY-52, Photo Mo
 pub mod settings; // key/value settings persistence
 pub mod sync; // FUTURE seam: backend trait only (placeholder)
 pub mod tts; // RAWY-105: bundled piper sidecar (persistent process) + on-demand voice download
+pub mod window_chrome; // RAWY-118: theme the native title bar to match the app theme (DWM, Windows)
 
 use std::path::Path;
 
@@ -146,6 +147,7 @@ pub fn run() {
             tts::tts_synthesize,
             tts::tts_edge_voices,
             tts::tts_stop,
+            window_chrome::set_titlebar_theme,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sard");

@@ -17,14 +17,25 @@ import { useCallback, useEffect, useRef, useState } from "react";
 //    content frame's pointermove/pointerdown here (already-parent-viewport coords) via `signalMove` /
 //    `wake`, so activity anywhere in the reading area brings the bar back.
 //
+// RAWY-117 kills the SCROLL FLICKER: a hide (scroll-down, and the idle timer) used to `null` the
+// jitter anchor, so the very next move of ANY size re-showed the bar. But scrolling under a resting
+// cursor FIRES mousemoves (the content, not the pointer, moves — a new element sits under the cursor),
+// which the controller forwards here. So each wheel tick hid the bar while its induced move re-showed
+// it → a rapid show/hide flicker; likewise any resting-hand tremor re-showed it. Now a hide ANCHORS
+// the jitter box on the resting cursor (`lastPos`) instead of clearing it, so those synthetic/same-
+// position moves fall inside the box and are ignored — the bar returns only on a DELIBERATE move that
+// leaves the (widened) box. Tap/key `wake` stays intent and still re-anchors from wherever the pointer
+// lands next.
+//
 // Panels still PIN the bar: while a panel/drawer is open the reader calls setHold(true), which keeps
 // it shown and suppresses the timer until everything closes. Honors prefers-reduced-motion at the CSS
 // layer (transitions disabled there).
 const AUTO_HIDE_MS = 2600;
-// A pointer move within this many px of the last wake position is treated as jitter (or a synthetic
-// same-position move) and ignored — small enough that any deliberate move escapes it immediately,
-// large enough to absorb a resting hand's tremor and the browser's zero-distance synthetic moves.
-const JITTER_PX = 4;
+// A pointer move within this many px of the anchor is treated as jitter (or a synthetic same-position
+// move) and ignored. Widened RAWY-117 from 4 → 12: a deliberate reach still escapes it instantly, but
+// a resting hand's tremor and the browser's near-zero-distance synthetic moves (bar toggling / content
+// scrolling under the cursor) no longer re-show the bar.
+const JITTER_PX = 12;
 
 export function useChromeOnIntent(): {
   visible: boolean;
@@ -38,6 +49,10 @@ export function useChromeOnIntent(): {
   const timer = useRef<number | undefined>(undefined);
   // The pointer position at the last wake; a move is "real" only if it leaves the jitter box around it.
   const anchor = useRef<{ x: number; y: number } | null>(null);
+  // RAWY-117: the latest pointer position seen (updated on every move, before the jitter test). A hide
+  // anchors the jitter box HERE — on the resting cursor — so the synthetic same-position move a scroll
+  // fires under it is absorbed instead of re-showing the bar (the old `anchor = null` re-showed on it).
+  const lastPos = useRef<{ x: number; y: number } | null>(null);
 
   const arm = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
@@ -58,6 +73,7 @@ export function useChromeOnIntent(): {
   // reliably despite synthetic/jitter moves. A genuine move re-anchors and keeps the bar awake.
   const signalMove = useCallback(
     (x: number, y: number) => {
+      lastPos.current = { x, y }; // remember the true cursor even for a jitter move (RAWY-117)
       const a = anchor.current;
       if (a && Math.abs(x - a.x) <= JITTER_PX && Math.abs(y - a.y) <= JITTER_PX) return;
       anchor.current = { x, y };
@@ -72,13 +88,16 @@ export function useChromeOnIntent(): {
   // wake). Respects a legitimate pin (a Settings/Notes drawer being open), so it never fights those.
   const signalScroll = useCallback(
     (down: boolean) => {
+      // RAWY-117: anchor the jitter box on the resting cursor (not null) so the mousemove a scroll
+      // fires under a stationary pointer is absorbed — no scroll flicker. It re-shows only on a
+      // deliberate move that leaves the box.
       if (down) {
         if (holdRef.current) return; // a pinned drawer stays; don't hide under it
         if (timer.current) clearTimeout(timer.current);
-        anchor.current = null;
+        anchor.current = lastPos.current;
         setVisible(false);
       } else {
-        anchor.current = null;
+        anchor.current = lastPos.current;
         setVisible(true);
         arm();
       }

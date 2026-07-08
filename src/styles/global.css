@@ -130,8 +130,17 @@ html, body, #root {
    dynamic one) keeps the reading position from jumping as the chrome fades in/out. The paper sheet
    itself still fills full height, so its background shows behind the bar; only the text is inset.
    Applies in both scrolled + paged flows and both directions (it's a block-axis inset, not inline). */
-.page-host { position: absolute; inset-block: 70px 0; inset-inline: var(--page-margin, 56px); --sard-columns: 1; --sard-measure: 3000px; }
+.page-host { position: absolute; inset-block: 70px 0; inset-inline: var(--page-margin, 56px); --sard-columns: 1; --sard-measure: 3000px; transition: inset-block-start 0.22s cubic-bezier(0.22, 1, 0.36, 1); }
 .page-host foliate-view { width: 100%; height: 100%; display: block; }
+/* RAWY-117 (fixes ISSUE A — supersedes RAWY-71's PERMANENT 70px top inset): the 70px only clears the
+   top bar while it is SHOWN. When the chrome auto-hides, TRULY free that space — the reading text
+   lifts to the top edge (symmetric with the always-0 bottom), so a hidden bar no longer leaves a dead
+   paper band clipping the first line. The reclaim is dynamic, not frozen: safe now that the bar toggles
+   only on deliberate intent (RAWY-117 fix B), so it no longer bounces on every micro-move. Scrolled
+   mode (the default) just grows the viewport — no reflow; paged mode repaginates like a window resize,
+   foliate keeping the anchor. Block-axis only → unaffected by LTR/RTL. */
+@media (prefers-reduced-motion: reduce) { .page-host { transition: none; } }
+.reader-root.chrome-hidden .page-host { inset-block-start: 0; }
 
 /* faint paper grain in the sheet margins (full-paper grain over the iframe is deferred) */
 .page-grain {
@@ -599,9 +608,17 @@ html, body, #root {
   color: var(--text);
   z-index: 30;
   box-shadow: 0 18px 44px rgba(20, 14, 6, 0.22);
-  transition: transform 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
+  /* top/bottom join the transition (RAWY-117) so the panel GLIDES to fill as the bars slide away,
+     in step with the bars' own 0.22s slide — not a snap. transform still drives the open/close slide. */
+  transition: transform 0.22s cubic-bezier(0.22, 0.61, 0.36, 1),
+    top 0.22s cubic-bezier(0.22, 1, 0.36, 1), bottom 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 :root[data-dark="true"] .reader-panel { box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45); }
+/* RAWY-117 (fixes ISSUE C): the panel docks BETWEEN the bars (top 70 / bottom 56) only while they're
+   shown. Contents is the one panel that can be open with the chrome hidden (it's excluded from the
+   pin — RAWY-73), so when the bars hide it must FILL the space they vacate instead of holding gaps for
+   absent bars. Inert for Notes/Settings/Search, which force the chrome shown while open. */
+.reader-root.chrome-hidden .reader-panel { top: 0; bottom: 0; }
 /* FIXED physical sides (RAWY-32 — supersedes the RAWY-30/D20 follow-direction model): chapters
    is PINNED to the physical LEFT, annotations to the physical RIGHT, and they DO NOT move when
    the UI language flips. Physical `left`/`right` (not logical) ignore the panel's `dir` attr, so

@@ -830,7 +830,11 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const rootVars = { "--reading-shift": `${(leftPad - rightPad) / 2}px` } as CSSProperties;
 
   return (
-    <div className="reader-root" style={rootVars}>
+    // RAWY-117: `chrome-hidden` propagates the auto-hide state to the LAYOUT — the reading area
+    // reclaims the top the bar vacated (no dead band) and the Contents panel fills the space the
+    // bars leave. Frozen offsets keyed to bars-present (page-host 70px top; panel 70/56) were the
+    // A + C bugs; this class releases them. Safe now that the show-trigger only fires on intent (B).
+    <div className={`reader-root${chromeShown ? "" : " chrome-hidden"}`} style={rootVars}>
       {/* desk + centered page sheet (the book) + page-turn affordances */}
       <div className={`reader-desk${isPdf && pdfInvert ? " pdf-invert" : ""}`} style={deskStyle} onWheel={onDeskWheel}>
         {showChevrons && (

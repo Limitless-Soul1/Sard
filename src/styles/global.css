@@ -609,10 +609,17 @@ html, body, #root {
   color: var(--text);
   z-index: 30;
   box-shadow: 0 18px 44px rgba(20, 14, 6, 0.22);
+  /* RAWY-120: a CLOSED panel is fully HIDDEN, not merely translated off-screen. In the RTL UI the Notes
+     panel's header overflows (3 tab labels + the close ✕ don't fit 300px), which pushes its ✕ ~35px
+     PAST the panel's left edge; when the panel slid off-screen-right that ✕ peeked back ON-screen at the
+     top-right as a DEAD control (clicking it closed an already-closed panel = no-op) and collided with
+     the settings-drawer close ✕. `visibility: hidden` removes it from view AND from hit-testing; the
+     `0s 0.22s` delay fires it only AFTER the slide-out finishes, so the close animation still plays. */
+  visibility: hidden;
   /* top/bottom join the transition (RAWY-117) so the panel GLIDES to fill as the bars slide away,
      in step with the bars' own 0.22s slide — not a snap. transform still drives the open/close slide. */
   transition: transform 0.22s cubic-bezier(0.22, 0.61, 0.36, 1),
-    top 0.22s cubic-bezier(0.22, 1, 0.36, 1), bottom 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+    top 0.22s cubic-bezier(0.22, 1, 0.36, 1), bottom 0.22s cubic-bezier(0.22, 1, 0.36, 1), visibility 0s 0.22s;
 }
 :root[data-dark="true"] .reader-panel { box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45); }
 /* RAWY-117 (fixes ISSUE C): the panel docks BETWEEN the bars (top 70 / bottom 56) only while they're
@@ -628,7 +635,14 @@ html, body, #root {
    top bar is pinned to match — see .rc-top). */
 .rp-lead { left: 0; right: auto; border-right: 1px solid var(--chrome-border); transform: translateX(-104%); }
 .rp-trail { right: 0; left: auto; border-left: 1px solid var(--chrome-border); transform: translateX(104%); }
-.reader-panel.show { transform: translateX(0); }
+/* RAWY-120: shown → visible IMMEDIATELY (visibility 0s 0s, not the base 0.22s delay) so the panel is
+   seen as it slides IN; the base rule hides it again 0.22s after it slides out. */
+.reader-panel.show {
+  transform: translateX(0);
+  visibility: visible;
+  transition: transform 0.22s cubic-bezier(0.22, 0.61, 0.36, 1),
+    top 0.22s cubic-bezier(0.22, 1, 0.36, 1), bottom 0.22s cubic-bezier(0.22, 1, 0.36, 1), visibility 0s 0s;
+}
 
 .rp-head {
   display: flex;

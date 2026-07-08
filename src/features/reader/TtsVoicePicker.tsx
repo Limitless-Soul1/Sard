@@ -1,12 +1,12 @@
-// TTS voice picker (RAWY-111) — lists BOTH engines' voices grouped by language, each labelled by
-// engine: Piper (offline, the bundled default) + every free Edge neural voice for Arabic/English.
-// Picking a voice persists it for that language and, if it's the language being read now, switches
-// live. Opens above the player pill; the current book's language group is shown first.
+// TTS voice picker (RAWY-111; rescoped RAWY-113 for design 6) — the Voices chip opens this: the
+// voices available for the CURRENT engine + book language (Edge Arabic → Salma/Zariyah/Hamed/…;
+// Piper → the bundled voice). The Engine chip picks the engine; this refines the voice. Selecting
+// persists it per language and switches live. Opens above the trailing chips.
 
 import { useEffect, useMemo, useState } from "react";
 
 import { useI18n } from "../../i18n";
-import { loadPickerVoices, type PickerVoice, type TtsLang, useTts } from "../../lib/tts";
+import { loadPickerVoices, type PickerVoice, useTts } from "../../lib/tts";
 
 export function TtsVoicePicker({ onClose }: { onClose: () => void }) {
   const { t, lang: uiLang, dir } = useI18n();
@@ -36,58 +36,49 @@ export function TtsVoicePicker({ onClose }: { onClose: () => void }) {
     }
   }, [uiLang]);
 
-  // Group by language; the book's current language first so its voices are at the top.
-  const groups = useMemo(() => {
-    const all = voices ?? [];
-    const order: TtsLang[] = curLang === "ar" ? ["ar", "en"] : ["en", "ar"];
-    return order
-      .map((lg) => ({ lang: lg, items: all.filter((v) => v.lang === lg) }))
-      .filter((g) => g.items.length);
-  }, [voices, curLang]);
+  // Scope to the CURRENT engine + language (the engine is chosen on the Engine chip).
+  const items = useMemo(
+    () => (voices ?? []).filter((v) => v.engine === engine && v.lang === curLang),
+    [voices, engine, curLang],
+  );
 
   const meta = (v: PickerVoice): string => {
-    if (v.engine !== "edge") return "";
+    if (v.engine !== "edge") return t("tts.offline");
     const region = v.locale.includes("-") ? regionName(v.locale.split("-")[1]) : "";
     const g = v.gender ? t(v.gender === "Male" ? "tts.male" : "tts.female") : "";
     return [region, g].filter(Boolean).join(" · ");
   };
 
   return (
-    <div className="tts-picker" dir={dir} role="dialog" aria-label={t("tts.voices")}>
-      <div className="tts-picker-head">
-        <span>{t("tts.voices")}</span>
-        <button className="tts-ghost" onClick={onClose} aria-label={t("tts.collapse")}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="m6 10 6 6 6-6" /></svg>
-        </button>
-      </div>
-      <div className="tts-picker-scroll">
+    <div className="tts-menu tts-voices-menu" dir={dir} role="dialog" aria-label={t("tts.voices")}>
+      <div className="tts-menu-head">{t("tts.voices")}</div>
+      <div className="tts-menu-scroll">
         {voices === null ? (
-          <div className="tts-picker-empty">{t("tts.loadingVoices")}</div>
+          <div className="tts-menu-empty">{t("tts.loadingVoices")}</div>
+        ) : items.length === 0 ? (
+          <div className="tts-menu-empty">{t("tts.loadingVoices")}</div>
         ) : (
-          groups.map((g) => (
-            <div key={g.lang} className="tts-picker-group">
-              <div className="tts-picker-glabel">{t(g.lang === "ar" ? "tts.lang.ar" : "tts.lang.en")}</div>
-              {g.items.map((v) => {
-                const on = v.engine === engine && v.id === voice && v.lang === curLang;
-                return (
-                  <button
-                    key={v.engine + v.id}
-                    className={`tts-voice-row${on ? " on" : ""}`}
-                    onClick={() => {
-                      setVoice(v.engine, v.id, v.lang);
-                      onClose();
-                    }}
-                  >
-                    <span className="tts-voice-name">{v.label}</span>
-                    <span className="tts-voice-meta">{meta(v)}</span>
-                    <span className={`tts-voice-badge ${v.engine}`}>
-                      {t(v.engine === "piper" ? "tts.piperBadge" : "tts.edgeBadge")}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          ))
+          items.map((v) => {
+            const on = v.id === voice && v.engine === engine;
+            return (
+              <button
+                key={v.engine + v.id}
+                className={`tts-menu-row${on ? " on" : ""}`}
+                role="menuitemradio"
+                aria-checked={on}
+                onClick={() => {
+                  setVoice(v.engine, v.id, curLang);
+                  onClose();
+                }}
+              >
+                <span className="tts-menu-name">{v.label}</span>
+                <span className="tts-voice-meta">{meta(v)}</span>
+                {on && (
+                  <svg className="tts-menu-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6 9 17l-5-5" /></svg>
+                )}
+              </button>
+            );
+          })
         )}
       </div>
     </div>

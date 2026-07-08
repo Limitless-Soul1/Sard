@@ -222,7 +222,9 @@ export function ReaderChrome({
         </div>
       </div>
 
-      <div className="rc-bottom">
+      {/* RAWY-113: while the read-aloud bar is docked at the bottom, it replaces the reading-progress
+          bar (it carries the chapter + position + a progress hairline of its own). */}
+      <div className={`rc-bottom${ttsActive ? " rc-bottom-hidden" : ""}`}>
         <div className="rc-meta">
           {/* PDF: a page position (no chapters); EPUB: the chapter label — RAWY-87 */}
           <span dir="auto">

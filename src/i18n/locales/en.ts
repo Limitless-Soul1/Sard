@@ -443,9 +443,12 @@ export const en = {
   "tts.close": "Stop",
   "tts.expand": "Expand",
   "tts.collapse": "Collapse",
-  // RAWY-111 — voice picker (Piper + Edge engines)
+  // RAWY-111/113 — engine + voice picker (Piper + Edge engines)
   "tts.voices": "Voices",
   "tts.voice": "Voice",
+  "tts.engine": "Engine",
+  "tts.online": "online",
+  "tts.offline": "offline",
   "tts.lang.ar": "Arabic",
   "tts.lang.en": "English",
   "tts.piperBadge": "Piper · offline",
@@ -453,6 +456,7 @@ export const en = {
   "tts.male": "Male",
   "tts.female": "Female",
   "tts.fellBack": "Edge unavailable — using Piper",
+  "tts.edgeHiccup": "Edge hiccup — Piper for now",
   "tts.loadingVoices": "loading voices…",
 } as const;
 

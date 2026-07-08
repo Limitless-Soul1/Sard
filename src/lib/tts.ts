@@ -6,8 +6,9 @@
 // RAWY-110/111 (engine abstraction): a voice is {engine, id}; `synth` calls the dispatching
 // `tts_synthesize(engine, id, text)`. Engine-agnostic — WebAudio decodes both Piper's WAV and Edge's
 // MP3, so play/pause/skip/speed work the same. The chosen engine+voice persists PER LANGUAGE
-// (`tts_voice:ar`/`tts_voice:en`), defaulting to Piper (offline). Edge is online-required — if it
-// fails, playback falls back to Piper with a clear notice (never a silent dead state).
+// (`tts_voice:ar`/`tts_voice:en`), defaulting to EDGE (neural, design 6). Edge is online-required — a
+// transient failure falls back to Piper PER SENTENCE (RAWY-113) without changing the user's chosen
+// engine, and auto-recovers to Edge on the next sentence.
 
 import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
@@ -26,12 +27,21 @@ export type TtsEngineKind = "piper" | "edge";
 export interface TtsVoiceRef { engine: TtsEngineKind; id: string }
 export type TtsLang = "ar" | "en";
 
-// The bundled Piper voices (one per language) — the offline defaults, always available.
+// The bundled Piper voices (one per language) — the OFFLINE anchor, always available (also the
+// per-sentence fallback when Edge hiccups, RAWY-113).
 export const PIPER_VOICE: Record<TtsLang, string> = {
   ar: "ar_JO-kareem-medium",
   en: "en_US-lessac-medium",
 };
-export const defaultVoiceForLang = (lang: TtsLang): TtsVoiceRef => ({ engine: "piper", id: PIPER_VOICE[lang] });
+export const piperVoiceRef = (lang: TtsLang): TtsVoiceRef => ({ engine: "piper", id: PIPER_VOICE[lang] });
+
+// RAWY-113: Edge (neural) is the DEFAULT engine per design 6. First-use with no saved pref = Edge;
+// if offline, playback falls back to Piper PER SENTENCE (non-destructive) until Edge resumes.
+export const EDGE_DEFAULT: Record<TtsLang, string> = {
+  ar: "ar-EG-SalmaNeural",
+  en: "en-US-AriaNeural",
+};
+export const defaultVoiceForLang = (lang: TtsLang): TtsVoiceRef => ({ engine: "edge", id: EDGE_DEFAULT[lang] });
 
 // Friendly display name for the player's VOICE CHIP (RAWY-112 — the design's labelled chip, not a
 // bare icon). Piper: the two bundled names; Edge: the short_name's voice part ("ar-EG-SalmaNeural" → "Salma").
@@ -69,7 +79,7 @@ export async function loadPickerVoices(): Promise<PickerVoice[]> {
   return [...PIPER_PICKER, ...edgeVoicesCache];
 }
 
-// Resolve the saved engine+voice for a language (persisted as "engine:id"); default = Piper.
+// Resolve the saved engine+voice for a language (persisted as "engine:id"); default = Edge (design 6).
 async function resolveVoicePref(lang: TtsLang): Promise<TtsVoiceRef> {
   const saved = await settingsGet(`tts_voice:${lang}`).catch(() => null);
   if (saved) {
@@ -103,6 +113,7 @@ interface TtsState {
   skip: (delta: number) => void;
   setSpeed: (s: number) => void;
   setVoice: (engine: TtsEngineKind, id: string, lang: TtsLang) => void;
+  setEngine: (engine: TtsEngineKind) => void;
   retry: () => void;
   stop: () => void;
 }
@@ -115,7 +126,6 @@ let cache = new Map<number, Promise<AudioBuffer>>();
 let curEngine: TtsEngineKind = "piper";
 let curVoice = "";
 let curLang: TtsLang = "en";
-let edgeFellBack = false; // guard: fall back Edge→Piper at most once per session
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 let gen = 0; // bumped by stop/skip/start to invalidate in-flight async work
 let lastStart: StartOpts | null = null; // for retry() after a download/synth failure
@@ -136,7 +146,17 @@ const synth = (i: number): Promise<AudioBuffer> => {
   let p = cache.get(i);
   if (!p) {
     p = (async () => {
-      const buf = await invoke<ArrayBuffer>("tts_synthesize", { engine: curEngine, id: curVoice, text: sentences[i] });
+      let buf: ArrayBuffer;
+      try {
+        buf = await invoke<ArrayBuffer>("tts_synthesize", { engine: curEngine, id: curVoice, text: sentences[i] });
+      } catch (e) {
+        // RAWY-113 (bug #14 fix): a transient Edge failure (dropped warm socket / net blip) falls back
+        // to Piper for THIS SENTENCE ONLY — it does NOT change the user's chosen engine or the persisted
+        // pref, so the NEXT sentence retries Edge and playback auto-recovers when connectivity resumes.
+        if (curEngine !== "edge") throw e;
+        flashNotice("tts.edgeHiccup");
+        buf = await invoke<ArrayBuffer>("tts_synthesize", { engine: "piper", id: PIPER_VOICE[curLang], text: sentences[i] });
+      }
       return await audioCtx().decodeAudioData(buf);
     })();
     cache.set(i, p);
@@ -167,23 +187,11 @@ async function playFrom(i: number, myGen: number) {
   set({ index: idx, status: "playing" });
   let buffer: AudioBuffer;
   try {
-    buffer = await synth(idx);
+    buffer = await synth(idx); // Edge failures self-heal per-sentence inside synth() (RAWY-113)
   } catch (e) {
-    if (myGen !== gen) return;
-    // Edge is online-required — on failure, fall back to Piper (once) for this language and keep
-    // reading with a clear notice, rather than dead-ending on a bare error (RAWY-111).
-    if (curEngine === "edge" && !edgeFellBack) {
-      edgeFellBack = true;
-      const fb = defaultVoiceForLang(curLang);
-      curEngine = fb.engine;
-      curVoice = fb.id;
-      cache = new Map(); // drop any half-synthesized Edge audio
-      set({ engine: fb.engine, voice: fb.id });
-      flashNotice("tts.fellBack");
-      void ensureAndPlay(fb.engine, fb.id, idx, ++gen);
-      return;
-    }
-    set({ status: "error", error: String(e) });
+    // reached only if BOTH the chosen engine AND the Piper fallback failed (e.g. offline + the Piper
+    // voice isn't downloaded) — a genuine dead end, shown as a retryable error.
+    if (myGen === gen) set({ status: "error", error: String(e) });
     return;
   }
   if (myGen !== gen) return; // superseded by stop/skip
@@ -248,7 +256,6 @@ export const useTts = create<TtsState>((set, get) => ({
     const myGen = ++gen;
     stopSource();
     cache = new Map();
-    edgeFellBack = false;
     sentences = sen.map((s) => s.trim()).filter(Boolean);
     curLang = lang;
     const saved = Number(await settingsGet("tts_speed").catch(() => null));
@@ -302,12 +309,19 @@ export const useTts = create<TtsState>((set, get) => ({
     if (!st.active || st.lang !== lang) return; // saved; applies next time that language is read
     curEngine = engine;
     curVoice = id;
-    edgeFellBack = false;
     cache = new Map(); // new voice → invalidate cached audio
     const myGen = ++gen;
     stopSource();
     set({ engine, voice: id, status: "preparing", error: null, notice: null });
     void ensureAndPlay(engine, id, st.index, myGen);
+  },
+
+  // RAWY-113 (design 6): the Engine chip switches engine, keeping the current language. It picks that
+  // engine's default voice for the language (the Voices chip then refines the specific voice).
+  setEngine: (engine) => {
+    const lang = get().lang;
+    const id = engine === "edge" ? EDGE_DEFAULT[lang] : PIPER_VOICE[lang];
+    get().setVoice(engine, id, lang);
   },
 
   // Re-run the last Listen after a download/synth failure (RAWY-106: a visible way to recover from a
@@ -321,7 +335,6 @@ export const useTts = create<TtsState>((set, get) => ({
     stopSource();
     cache = new Map();
     sentences = [];
-    edgeFellBack = false;
     if (noticeTimer) { clearTimeout(noticeTimer); noticeTimer = null; }
     if (ctx && ctx.state !== "closed") void ctx.suspend().catch(() => {});
     void ttsStop().catch(() => {});

@@ -1,26 +1,26 @@
-// TTS player — the design-6 CLEAN BOTTOM BAR (RAWY-113). A full-width shelf docked to the bottom of
-// the reading area (not a floating pill): a 3px hairline progress along the top edge, transport on
-// the leading side, chapter + position centred, and Engine / Voices / Speed / close trailing. Two
-// clear labelled chips: ENGINE (name + trait + teal dot for Edge) and VOICES (current voice name),
-// each opening its menu. Mirrors wholesale under RTL. Logic is reused from RAWY-105–112 (engine
-// dispatch, per-language persistence, the voice list, the queue); this is the bar's markup/CSS.
+// TTS player — the design-5a COMPACT FLOATING PILL (RAWY-114). A ~330px pill centred ~26px above the
+// page bottom, floating over the reading page (NOT a full-width bar — that overlapped the Contents
+// panel; RAWY-113). Two calm rows: transport + a progress hairline with a position dot; then a
+// segmented Engine toggle (Piper | Edge, Edge carrying the teal online dot) + a Voices chip (current
+// voice) + a tap-to-cycle Speed chip. Logic is reused from RAWY-105–113 (engine dispatch, Edge
+// default, both synth paths, the voices picker, per-language persistence, the non-destructive
+// per-sentence fallback); this is the pill's markup/CSS, re-binding the same controls. Mirrors RTL.
 
 import { useState } from "react";
 
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
 import { TTS_EMPTY, TTS_MAX_SPEED, TTS_MIN_SPEED, TTS_SPEED_STEP, useTts, voiceLabel } from "../../lib/tts";
-import { TtsEngineMenu } from "./TtsEngineMenu";
 import { TtsVoicePicker } from "./TtsVoicePicker";
 
 const CHEV_UP = "m6 14 6-6 6 6";
 const CHEV_DOWN = "m6 10 6 6 6-6";
 
 export function TtsPlayer() {
-  const { active, status, engine, voice, index, total, speed, progress, chapterLabel, error, notice, toggle, skip, setSpeed, retry, stop } = useTts();
+  const { active, status, engine, voice, index, total, speed, progress, chapterLabel, error, notice, toggle, skip, setSpeed, setEngine, retry, stop } = useTts();
   const { t, lang, dir } = useI18n();
   const [expanded, setExpanded] = useState(true);
-  const [menu, setMenu] = useState<null | "engine" | "voices">(null);
+  const [picking, setPicking] = useState(false);
   if (!active) return null;
 
   const playing = status === "playing";
@@ -43,24 +43,20 @@ export function TtsPlayer() {
     status === "paused" ? ` · ${t("tts.paused")}` : "";
   const errText = error === TTS_EMPTY ? t("tts.emptyChapter") : (error || t("tts.error"));
   const metaText = errored ? errText : `${chapterLabel || t("panel.contents")}${sub}`;
-  const closeMenu = () => setMenu(null);
 
   return (
     <>
-      {menu === "engine" && <TtsEngineMenu onClose={closeMenu} />}
-      {menu === "voices" && <TtsVoicePicker onClose={closeMenu} />}
-      <div className={`tts-bar${expanded ? " expanded" : ""}${errored ? " errored" : ""}`} dir={dir} role="group" aria-label={t("tts.player")}>
-        <div className="tts-bar-progress" aria-hidden>
-          <div className="tts-bar-fill" style={{ width: `${trackPct}%` }} />
-        </div>
-        <div className="tts-bar-inner">
-          {/* transport (leading) */}
-          <div className="tts-transport">
-            {expanded && (
-              <button className="tts-skip" onClick={() => skip(-1)} disabled={busy || errored} aria-label={t("tts.skipBack")} title={t("tts.skipBack")}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 10 12l8 6M6 5v14" /></svg>
-              </button>
-            )}
+      {picking && <TtsVoicePicker onClose={() => setPicking(false)} />}
+      <div className={`tts-pill${expanded ? " expanded" : ""}${errored ? " errored" : ""}`} dir={dir} role="group" aria-label={t("tts.player")}>
+        {/* row 1 — transport */}
+        <div className="tts-pill-transport">
+          <button className="tts-ghost" onClick={() => setExpanded((e) => !e)} aria-label={expanded ? t("tts.collapse") : t("tts.expand")} title={expanded ? t("tts.collapse") : t("tts.expand")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d={expanded ? CHEV_DOWN : CHEV_UP} /></svg>
+          </button>
+          <div className="tts-transport-mid">
+            <button className="tts-skip" onClick={() => skip(-1)} disabled={busy || errored} aria-label={t("tts.skipBack")} title={t("tts.skipBack")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 10 12l8 6M6 5v14" /></svg>
+            </button>
             {errored ? (
               <button className="tts-play tts-retry" onClick={retry} aria-label={t("tts.retry")} title={t("tts.retry")}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 11a8 8 0 1 1-2.3-5.6M20 4v6h-6" /></svg>
@@ -76,59 +72,53 @@ export function TtsPlayer() {
                 )}
               </button>
             )}
-            {expanded && (
-              <button className="tts-skip" onClick={() => skip(1)} disabled={busy || errored} aria-label={t("tts.skipFwd")} title={t("tts.skipFwd")}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M6 6l8 6-8 6M18 5v14" /></svg>
-              </button>
-            )}
-          </div>
-
-          {/* chapter + position (centre) — tap to toggle expand/collapse */}
-          <div className="tts-bar-mid" onClick={() => setExpanded((e) => !e)} role="button" aria-label={expanded ? t("tts.collapse") : t("tts.expand")}>
-            <span className="tts-bar-chapter" title={errored ? errText : undefined}>{metaText}</span>
-            <span className="tts-bar-pos">{errored || downloading ? "" : t("tts.pos", { n: localeNum(index + 1, lang), m: localeNum(total, lang) })}</span>
-          </div>
-
-          {/* trailing controls */}
-          <div className="tts-bar-trailing">
-            {expanded ? (
-              <>
-                <button className={`tts-echip tts-engine-chip${menu === "engine" ? " on" : ""}`} onClick={() => setMenu((m) => (m === "engine" ? null : "engine"))} aria-label={t("tts.engine")}>
-                  <span className="tts-echip-cap">{t("tts.engine")}</span>
-                  <span className="tts-echip-val">
-                    <span className="tts-echip-name">{engine === "edge" ? "Edge" : "Piper"}</span>
-                    <span className={`tts-echip-trait${engine === "edge" ? " online" : ""}`}>
-                      {engine === "edge" && <span className="tts-teal-dot" aria-hidden />}
-                      {engine === "edge" ? t("tts.online") : t("tts.offline")}
-                    </span>
-                  </span>
-                  <svg className="tts-echip-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={menu === "engine" ? CHEV_DOWN : CHEV_UP} /></svg>
-                </button>
-
-                <button className={`tts-echip tts-voices-chip${menu === "voices" ? " on" : ""}`} onClick={() => setMenu((m) => (m === "voices" ? null : "voices"))} aria-label={t("tts.voices")}>
-                  <span className="tts-echip-cap">{t("tts.voices")}</span>
-                  <span className="tts-echip-name">{voiceLabel(engine, voice)}</span>
-                  <svg className="tts-echip-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={menu === "voices" ? CHEV_DOWN : CHEV_UP} /></svg>
-                </button>
-
-                <button className="tts-chip tts-speed" onClick={cycleSpeed} aria-label={t("tts.speed")} title={t("tts.speed")}>
-                  {localeDigits(speed.toFixed(2).replace(/0$/, "").replace(/\.$/, ""), lang)}×
-                </button>
-
-                <button className="tts-ghost" onClick={() => setExpanded(false)} aria-label={t("tts.collapse")} title={t("tts.collapse")}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d={CHEV_DOWN} /></svg>
-                </button>
-              </>
-            ) : (
-              <button className="tts-ghost" onClick={() => setExpanded(true)} aria-label={t("tts.expand")} title={t("tts.expand")}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d={CHEV_UP} /></svg>
-              </button>
-            )}
-            <button className="tts-ghost tts-x" onClick={stop} aria-label={t("tts.close")} title={t("tts.close")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            <button className="tts-skip" onClick={() => skip(1)} disabled={busy || errored} aria-label={t("tts.skipFwd")} title={t("tts.skipFwd")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M6 6l8 6-8 6M18 5v14" /></svg>
             </button>
           </div>
+          <button className="tts-ghost tts-x" onClick={stop} aria-label={t("tts.close")} title={t("tts.close")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
         </div>
+
+        {/* progress hairline + position dot, then a compact meta line for status/chapter */}
+        <div className="tts-pill-progress">
+          <div className="tts-pill-track">
+            <div className="tts-pill-fill" style={{ width: `${trackPct}%` }} />
+            {!errored && <div className="tts-pill-dot" style={{ insetInlineStart: `${trackPct}%` }} />}
+          </div>
+          <div className="tts-pill-meta">
+            <span className="tts-pill-chapter" title={errored ? errText : undefined}>{metaText}</span>
+            <span className="tts-pill-pos">{errored || downloading ? "" : t("tts.pos", { n: localeNum(index + 1, lang), m: localeNum(total, lang) })}</span>
+          </div>
+        </div>
+
+        {/* row 2 — Engine toggle (Piper | Edge) + Voices + Speed */}
+        {expanded && (
+          <div className="tts-pill-controls">
+            <div className="tts-engine-toggle" role="group" aria-label={t("tts.engine")}>
+              <button className={`tts-eng-seg${engine === "piper" ? " on" : ""}`} onClick={() => engine !== "piper" && setEngine("piper")} aria-pressed={engine === "piper"}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><rect x="7" y="7" width="10" height="10" rx="1.5" /><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3" /></svg>
+                <span>Piper</span>
+              </button>
+              <button className={`tts-eng-seg${engine === "edge" ? " on" : ""}`} onClick={() => engine !== "edge" && setEngine("edge")} aria-pressed={engine === "edge"}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M17.5 19a4.5 4.5 0 0 0 .5-9 6 6 0 0 0-11.6-1.6A4 4 0 0 0 6 19z" /></svg>
+                <span>Edge</span>
+                {engine === "edge" && <span className="tts-teal-dot" aria-hidden />}
+              </button>
+            </div>
+            <div className="tts-voices-speed">
+              <button className={`tts-voices-chip${picking ? " on" : ""}`} onClick={() => setPicking((p) => !p)} aria-label={t("tts.voices")} title={t("tts.voices")}>
+                <svg className="tts-voices-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 3v18M8 7v10M16 7v10M4 10v4M20 10v4" /></svg>
+                <span className="tts-voices-name">{voiceLabel(engine, voice)}</span>
+                <svg className="tts-voices-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={picking ? CHEV_DOWN : CHEV_UP} /></svg>
+              </button>
+              <button className="tts-speed-chip" onClick={cycleSpeed} aria-label={t("tts.speed")} title={t("tts.speed")}>
+                {localeDigits(speed.toFixed(2).replace(/0$/, "").replace(/\.$/, ""), lang)}×
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </>
   );

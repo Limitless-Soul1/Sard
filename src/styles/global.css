@@ -639,83 +639,100 @@ html, body, #root {
 .rp-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 6px 10px 18px; }
 .rp-empty { padding: 22px 16px; font: 400 0.75rem/1.6 var(--ui-font); color: var(--muted); text-align: center; }
 
-/* ---- RAWY-113: TTS read-aloud player — the design-6 CLEAN BOTTOM BAR ---- */
-/* Full-width shelf docked to the bottom of the reading area. Teal = the "online" (Edge) indicator,
-   deliberately distinct from the terracotta/gold reading accent. */
+/* ---- RAWY-114: TTS read-aloud player — the design-5a COMPACT FLOATING PILL ---- */
+/* A ~330px pill floating ~26px above the page bottom, centred over the READING AREA (--reading-shift
+   keeps it clear of an open Contents panel — the full-width bar overlapped it). Teal = the online
+   (Edge) indicator, distinct from the terracotta/gold reading accent. */
 :root { --tts-teal: #4E8A7B; --tts-teal-dot: #5EA88F; }
 :root[data-dark="true"] { --tts-teal: #8FC7B4; }
 
-.tts-bar {
-  position: fixed; left: 0; right: 0; bottom: 0; z-index: 25; font-family: var(--ui-font);
-  background: color-mix(in srgb, var(--chrome-bg) 97%, transparent);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
-  border-top: 1px solid var(--chrome-border); box-shadow: 0 -8px 28px rgba(40, 28, 14, 0.10);
+.tts-pill {
+  position: fixed; z-index: 25; left: 50%; bottom: 26px;
+  transform: translateX(calc(-50% + var(--reading-shift, 0px)));
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  width: min(330px, calc(100vw - 28px));
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 8px 10px 10px; border-radius: 16px; border: 1px solid var(--chrome-border);
+  background: color-mix(in srgb, var(--chrome-bg) 96%, transparent);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 16px 42px rgba(40, 28, 14, 0.24); font-family: var(--ui-font);
 }
-:root[data-dark="true"] .tts-bar { box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.35); }
-/* 3px hairline progress along the TOP edge; fill anchored to the START (RTL-aware). */
-.tts-bar-progress { position: absolute; left: 0; right: 0; top: 0; height: 3px; background: color-mix(in srgb, var(--text) 10%, transparent); }
-.tts-bar-fill { position: absolute; inset-inline-start: 0; top: 0; height: 3px; background: var(--accent); }
-.tts-bar-inner {
-  display: flex; align-items: center; gap: 16px; height: 52px; padding: 0 22px;
-  max-width: 1100px; margin: 0 auto; transition: height 0.18s ease;
-}
-.tts-bar.expanded .tts-bar-inner { height: 72px; }
+:root[data-dark="true"] .tts-pill { box-shadow: 0 16px 42px rgba(0, 0, 0, 0.5); }
 
-.tts-transport { flex: none; display: flex; align-items: center; gap: 10px; }
+.tts-pill-transport { display: flex; align-items: center; justify-content: space-between; }
+.tts-transport-mid { display: flex; align-items: center; gap: 12px; }
+.tts-ghost {
+  flex: none; width: 26px; height: 26px; border-radius: 50%; border: 0; cursor: pointer; background: transparent;
+  color: var(--muted); display: flex; align-items: center; justify-content: center;
+}
+.tts-ghost:hover { background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); }
+.tts-ghost svg { width: 14px; height: 14px; }
 .tts-play {
-  flex: none; width: 46px; height: 46px; border-radius: 50%; border: 0; cursor: pointer;
+  flex: none; width: 44px; height: 44px; border-radius: 50%; border: 0; cursor: pointer;
   background: var(--accent); color: var(--paper-bg); display: flex; align-items: center; justify-content: center;
 }
-.tts-bar:not(.expanded) .tts-play { width: 40px; height: 40px; }
 .tts-play svg { width: 16px; height: 16px; }
 .tts-play:disabled { opacity: 0.65; cursor: default; }
 .tts-retry { background: color-mix(in srgb, #b05220 88%, var(--accent)) !important; }
 .tts-skip {
-  flex: none; width: 36px; height: 36px; border-radius: 50%; cursor: pointer;
-  border: 1px solid var(--chrome-border); background: color-mix(in srgb, var(--text) 4%, transparent);
+  flex: none; width: 34px; height: 34px; border-radius: 50%; cursor: pointer;
+  border: 1px solid var(--chrome-border); background: color-mix(in srgb, var(--text) 5%, transparent);
   color: var(--text); display: flex; align-items: center; justify-content: center;
 }
-.tts-skip:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 9%, transparent); }
-.tts-skip svg { width: 16px; height: 16px; }
+.tts-skip:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 10%, transparent); }
+.tts-skip svg { width: 15px; height: 15px; }
 .tts-skip:disabled { opacity: 0.4; cursor: default; }
-.tts-bar[dir="rtl"] .tts-skip svg { transform: scaleX(-1); }
+.tts-pill[dir="rtl"] .tts-skip svg { transform: scaleX(-1); }
 
-.tts-bar-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; text-align: center; }
-.tts-bar-chapter { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 0.8125rem var(--ui-font); color: var(--text); }
-.tts-bar-pos { font: 500 0.6875rem var(--ui-font); color: var(--muted); }
-.tts-bar.errored .tts-bar-chapter { color: color-mix(in srgb, #b05220 78%, var(--text)); }
-
-.tts-bar-trailing { flex: none; display: flex; align-items: center; gap: 8px; }
-.tts-ghost {
-  flex: none; width: 34px; height: 34px; border-radius: 50%; border: 0; cursor: pointer; background: transparent;
-  color: var(--muted); display: flex; align-items: center; justify-content: center;
+.tts-pill-progress { display: flex; flex-direction: column; gap: 5px; margin: 3px 3px 2px; }
+.tts-pill-track { position: relative; height: 3px; border-radius: 3px; background: color-mix(in srgb, var(--text) 12%, transparent); }
+.tts-pill-fill { position: absolute; inset-inline-start: 0; top: 0; height: 3px; border-radius: 3px; background: var(--accent); }
+.tts-pill-dot {
+  position: absolute; top: 50%; transform: translate(-50%, -50%); width: 10px; height: 10px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
 }
-.tts-ghost:hover { background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); }
-.tts-ghost svg { width: 16px; height: 16px; }
+.tts-pill[dir="rtl"] .tts-pill-dot { transform: translate(50%, -50%); }
+.tts-pill-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; font: 500 0.625rem var(--ui-font); color: var(--muted); }
+.tts-pill-chapter { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tts-pill-pos { flex: none; }
+.tts-pill.errored .tts-pill-chapter { color: color-mix(in srgb, #b05220 78%, var(--text)); }
 
-/* the two clear labelled chips (Engine + Voices): a caption over the value, 44px tall, radius 11 */
-.tts-echip {
-  flex: none; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 1px;
-  height: 44px; padding-block: 0; padding-inline-start: 12px; padding-inline-end: 26px; border-radius: 11px;
-  cursor: pointer; line-height: 1.15; position: relative; text-align: start;
-  border: 1px solid var(--chrome-border); background: color-mix(in srgb, var(--text) 5%, transparent); color: var(--text);
+.tts-pill-controls { display: flex; flex-direction: column; gap: 7px; margin-top: 3px; }
+/* segmented Engine toggle: Piper | Edge (active = highlighted; Edge carries the teal dot) */
+.tts-engine-toggle {
+  display: flex; gap: 3px; padding: 3px; border-radius: 11px;
+  background: color-mix(in srgb, var(--text) 6%, transparent); border: 1px solid var(--chrome-border);
 }
-.tts-echip:hover { background: color-mix(in srgb, var(--text) 9%, transparent); }
-.tts-echip.on { border-color: color-mix(in srgb, var(--accent) 45%, var(--chrome-border)); background: color-mix(in srgb, var(--accent) 10%, transparent); }
-.tts-echip-cap { font: 600 0.5rem var(--ui-font); letter-spacing: 0.02em; color: var(--muted); }
-.tts-echip-val { display: flex; align-items: center; gap: 5px; }
-.tts-echip-name { font: 700 0.8125rem var(--ui-font); color: var(--text); }
-.tts-voices-chip .tts-echip-name { max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tts-echip-trait { display: inline-flex; align-items: center; gap: 3px; font: 600 0.625rem var(--ui-font); color: var(--muted); }
-.tts-echip-trait.online { color: var(--tts-teal); }
+.tts-eng-seg {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 7px 4px; border: 0; border-radius: 8px; background: transparent; cursor: pointer;
+  color: var(--muted); font: 600 0.75rem var(--ui-font);
+}
+.tts-eng-seg svg { width: 15px; height: 15px; }
+.tts-eng-seg.on {
+  background: color-mix(in srgb, var(--paper-bg) 70%, transparent); color: var(--text); font-weight: 700;
+  box-shadow: 0 1px 3px rgba(40, 28, 14, 0.14);
+}
+:root[data-dark="true"] .tts-eng-seg.on { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4); }
 .tts-teal-dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--tts-teal-dot); }
-.tts-echip-chev { position: absolute; inset-inline-end: 8px; top: 50%; transform: translateY(-50%); width: 13px; height: 13px; color: var(--muted); }
 
-.tts-chip {
-  flex: none; border-radius: 11px; border: 1px solid var(--chrome-border); background: color-mix(in srgb, var(--text) 5%, transparent);
-  cursor: pointer; height: 44px; padding: 0 13px; font: 700 0.8125rem var(--ui-font); color: var(--text); white-space: nowrap;
+.tts-voices-speed { display: flex; align-items: stretch; gap: 7px; }
+.tts-voices-chip {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; cursor: pointer; text-align: start;
+  height: 38px; padding: 0 11px; border-radius: 10px; border: 1px solid var(--chrome-border);
+  background: color-mix(in srgb, var(--text) 5%, transparent); color: var(--text);
 }
-.tts-chip:hover { background: color-mix(in srgb, var(--text) 9%, transparent); }
+.tts-voices-chip:hover, .tts-voices-chip.on { background: color-mix(in srgb, var(--text) 9%, transparent); }
+.tts-voices-chip.on { border-color: color-mix(in srgb, var(--accent) 40%, var(--chrome-border)); }
+.tts-voices-ico { flex: none; width: 15px; height: 15px; color: var(--muted); }
+.tts-voices-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 0.78125rem var(--ui-font); }
+.tts-voices-chev { flex: none; width: 13px; height: 13px; color: var(--muted); }
+.tts-speed-chip {
+  flex: none; height: 38px; padding: 0 12px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--chrome-border); background: color-mix(in srgb, var(--text) 5%, transparent);
+  color: var(--text); font: 700 0.78125rem var(--ui-font); white-space: nowrap;
+}
+.tts-speed-chip:hover { background: color-mix(in srgb, var(--text) 9%, transparent); }
 
 .tts-spin {
   width: 16px; height: 16px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--paper-bg) 45%, transparent);
@@ -723,17 +740,17 @@ html, body, #root {
 }
 @keyframes tts-spin { to { transform: rotate(360deg); } }
 
-/* Engine + Voices menus — open above the trailing chips (inline-end), RTL-aware. */
+/* the Voices picker — opens above the centred pill (RAWY-114), same centring vars. */
 .tts-menu {
-  position: fixed; z-index: 26; bottom: 84px; inset-inline-end: 22px;
-  width: min(320px, calc(100vw - 32px)); max-height: min(52vh, 420px);
+  position: fixed; z-index: 26; left: 50%; bottom: calc(26px + 184px);
+  transform: translateX(calc(-50% + var(--reading-shift, 0px)));
+  width: min(330px, calc(100vw - 28px)); max-height: min(46vh, 380px);
   display: flex; flex-direction: column; border-radius: 14px; border: 1px solid var(--chrome-border);
   background: color-mix(in srgb, var(--chrome-bg) 98%, transparent);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
   box-shadow: 0 16px 40px rgba(40, 28, 14, 0.24); font-family: var(--ui-font); overflow: hidden;
 }
 :root[data-dark="true"] .tts-menu { box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5); }
-.tts-engine-menu { width: min(244px, calc(100vw - 32px)); }
 .tts-menu-head { padding: 12px 14px 6px; font: 700 0.75rem var(--ui-font); letter-spacing: 0.02em; color: var(--muted); }
 .tts-menu-scroll { overflow-y: auto; padding: 0 8px 10px; }
 .tts-menu-empty { padding: 18px; text-align: center; color: var(--muted); font: 400 0.8125rem var(--ui-font); }

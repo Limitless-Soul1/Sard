@@ -825,8 +825,12 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     paddingRight: rightPad,
   } as CSSProperties;
 
+  // RAWY-114: centre the floating read-aloud pill over the READING AREA (not the raw viewport), so an
+  // open Contents/Notes panel shifts it clear of the panel — the compact pill reads this var.
+  const rootVars = { "--reading-shift": `${(leftPad - rightPad) / 2}px` } as CSSProperties;
+
   return (
-    <div className="reader-root">
+    <div className="reader-root" style={rootVars}>
       {/* desk + centered page sheet (the book) + page-turn affordances */}
       <div className={`reader-desk${isPdf && pdfInvert ? " pdf-invert" : ""}`} style={deskStyle} onWheel={onDeskWheel}>
         {showChevrons && (

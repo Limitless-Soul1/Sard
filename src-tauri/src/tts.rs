@@ -229,12 +229,36 @@ fn spawn_piper(app: &AppHandle, state: &AppState, v: &VoiceDef) -> Result<Runnin
     Ok(Running { voice_id: v.id.to_string(), child, stdin, stdout, errlog })
 }
 
-/// Synthesize ONE sentence → raw audio bytes the frontend decodes + plays via WebAudio.
+/// RAWY-127 (word karaoke): per-word timing for one synthesized sentence. `offset`/`duration` are
+/// Azure's 100-nanosecond ticks relative to the START of THIS sentence's audio (each sentence is its
+/// own synth call, so offsets reset per sentence — clean to schedule against the played buffer).
+/// EDGE emits these (`wordBoundary`); Piper emits none (an empty list → the frontend stays sentence-level).
+#[derive(serde::Serialize)]
+struct WordTiming {
+    text: String,
+    offset: u64,
+    duration: u64,
+}
+
+/// RAWY-127: pack `{words, audio}` into ONE response body so the audio stays RAW bytes (no base64
+/// bloat) yet carries its word timing. Framing: `[u32 BE json_len][json words][audio bytes]`. The
+/// frontend reads the header, parses the words, and decodes the rest as audio. Piper passes `&[]`.
+fn framed(audio: Vec<u8>, words: &[WordTiming]) -> Result<tauri::ipc::Response, String> {
+    let json = serde_json::to_vec(words).map_err(|e| e.to_string())?;
+    let mut out = Vec::with_capacity(4 + json.len() + audio.len());
+    out.extend_from_slice(&(json.len() as u32).to_be_bytes());
+    out.extend_from_slice(&json);
+    out.extend_from_slice(&audio);
+    Ok(tauri::ipc::Response::new(out))
+}
+
+/// Synthesize ONE sentence → framed `[words][audio]` bytes the frontend decodes + plays via WebAudio.
 ///
 /// RAWY-110: the engine-abstraction boundary. A voice is `{engine, id}`; this dispatches by engine.
-/// `piper` (Stage A / engine #1) is the existing persistent-process path returning WAV; `edge`
-/// (Stage B / engine #2) will add an arm here returning MP3 from the Edge Read-Aloud API. Everything
-/// downstream (the WebAudio queue, play/pause/skip/speed) is engine-agnostic — WebAudio decodes both.
+/// `piper` (engine #1) is the persistent-process path returning WAV; `edge` (engine #2) returns MP3
+/// from the free Edge Read-Aloud API. Everything downstream (the WebAudio queue, play/pause/skip/speed)
+/// is engine-agnostic — WebAudio decodes both. RAWY-127: the response is now `framed` so it also carries
+/// Edge's per-word timing (Piper's is empty).
 #[tauri::command]
 pub fn tts_synthesize(
     app: AppHandle,
@@ -331,7 +355,22 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String) -> Result<taur
             a
         }
     };
-    Ok(tauri::ipc::Response::new(audio.audio_bytes))
+    // RAWY-127: keep the per-word timing Edge already sends (it was discarded before). The crate
+    // requests `wordBoundaryEnabled` and parses each `audio.metadata` into `AudioMetadata`; take only
+    // the WORD boundaries (skip any sentence/punctuation boundary) with real word text.
+    let words: Vec<WordTiming> = audio
+        .audio_metadata
+        .iter()
+        .filter(|m| m.boundary_type.as_deref() == Some("WordBoundary"))
+        .filter_map(|m| {
+            m.text.as_ref().map(|t| WordTiming {
+                text: t.clone(),
+                offset: m.offset,
+                duration: m.duration,
+            })
+        })
+        .collect();
+    framed(audio.audio_bytes, &words)
 }
 
 /// Piper (engine #1): reuse the persistent warm process; respawn only if the voice changed or died.
@@ -388,7 +427,9 @@ fn piper_synthesize(
     let wav_path = path_line.trim();
     let bytes = std::fs::read(wav_path).map_err(|e| format!("read wav {wav_path}: {e}"))?;
     let _ = std::fs::remove_file(wav_path);
-    Ok(tauri::ipc::Response::new(bytes))
+    // RAWY-127: Piper exposes no word timing — frame with an EMPTY word list, so the frontend keeps
+    // this sentence at the Phase-1 sentence level (no pill). Same wire shape as Edge (audio still raw).
+    framed(bytes, &[])
 }
 
 /// Stop + drop both engines' warm connections (called when the user closes the player).

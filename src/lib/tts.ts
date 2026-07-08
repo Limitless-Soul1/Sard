@@ -104,6 +104,8 @@ interface TtsState {
   speed: number;
   index: number; // current sentence
   total: number;
+  words: TtsWord[]; // RAWY-127: the current sentence's Edge word timings ([] = sentence-level only)
+  wordIndex: number; // RAWY-127: active word within `words` (-1 = none / no karaoke) — drives the pill
   progress: number; // voice-download fraction 0–1 (only meaningful while status === "downloading")
   chapterLabel: string;
   error: string | null;
@@ -118,11 +120,17 @@ interface TtsState {
   stop: () => void;
 }
 
+// RAWY-127 (word karaoke): per-word timing for one sentence. `offset`/`duration` are Azure's 100-ns
+// ticks from the START of THIS sentence's audio (each sentence is its own buffer, so they're clean to
+// schedule against playback). EDGE emits them; Piper emits an empty list → sentence-level only.
+export interface TtsWord { text: string; offset: number; duration: number }
+interface Synthesized { buffer: AudioBuffer; words: TtsWord[] }
+
 // ---- imperative playback engine (WebAudio), kept outside the reactive store ----
 let ctx: AudioContext | null = null;
 let sentences: string[] = [];
 let source: AudioBufferSourceNode | null = null;
-let cache = new Map<number, Promise<AudioBuffer>>();
+let cache = new Map<number, Promise<Synthesized>>();
 let curEngine: TtsEngineKind = "piper";
 let curVoice = "";
 let curLang: TtsLang = "en";
@@ -142,27 +150,88 @@ const audioCtx = (): AudioContext => {
   return ctx;
 };
 
-const synth = (i: number): Promise<AudioBuffer> => {
+// RAWY-127: the Rust response is FRAMED — `[u32 BE json_len][json words][audio bytes]` — so the audio
+// stays raw (no base64) while carrying its per-word timing. Split the header off; `words` is `[]` for
+// Piper (and the Edge→Piper fallback), which keeps that sentence at the Phase-1 sentence level.
+function parseFramed(raw: ArrayBuffer): { words: TtsWord[]; audio: ArrayBuffer } {
+  const dv = new DataView(raw);
+  const jlen = dv.getUint32(0); // big-endian, matches Rust `to_be_bytes`
+  const words: TtsWord[] = jlen ? JSON.parse(new TextDecoder().decode(new Uint8Array(raw, 4, jlen))) : [];
+  return { words, audio: raw.slice(4 + jlen) };
+}
+
+const synth = (i: number): Promise<Synthesized> => {
   let p = cache.get(i);
   if (!p) {
     p = (async () => {
-      let buf: ArrayBuffer;
+      let raw: ArrayBuffer;
       try {
-        buf = await invoke<ArrayBuffer>("tts_synthesize", { engine: curEngine, id: curVoice, text: sentences[i] });
+        raw = await invoke<ArrayBuffer>("tts_synthesize", { engine: curEngine, id: curVoice, text: sentences[i] });
       } catch (e) {
         // RAWY-113 (bug #14 fix): a transient Edge failure (dropped warm socket / net blip) falls back
         // to Piper for THIS SENTENCE ONLY — it does NOT change the user's chosen engine or the persisted
         // pref, so the NEXT sentence retries Edge and playback auto-recovers when connectivity resumes.
+        // RAWY-127: the Piper fallback returns an empty word list, so this sentence degrades to
+        // sentence-level (no pill) and the next Edge sentence resumes karaoke — seamless.
         if (curEngine !== "edge") throw e;
         flashNotice("tts.edgeHiccup");
-        buf = await invoke<ArrayBuffer>("tts_synthesize", { engine: "piper", id: PIPER_VOICE[curLang], text: sentences[i] });
+        raw = await invoke<ArrayBuffer>("tts_synthesize", { engine: "piper", id: PIPER_VOICE[curLang], text: sentences[i] });
       }
-      return await audioCtx().decodeAudioData(buf);
+      const { words, audio } = parseFramed(raw);
+      return { buffer: await audioCtx().decodeAudioData(audio), words };
     })();
     cache.set(i, p);
   }
   return p;
 };
+
+// ---- RAWY-127: word-level karaoke scheduling (Edge only) ----
+// A requestAnimationFrame loop maps the AudioContext clock → the active word so the solid pill tracks
+// the spoken word. Pause is FREE (a suspended context freezes `currentTime`, so the loop just recomputes
+// the same word); a speed change re-anchors so the mapped audio-time stays continuous; skip/stop cancels.
+let karaokeRaf = 0;
+let karaokeWords: TtsWord[] = [];
+let karaokeLastIdx = -2;
+// audio-time anchor: at wall-clock `wall` (ctx.currentTime) this sentence had played `audio` seconds at `rate`.
+let karaokeAnchor = { wall: 0, audio: 0, rate: 1 };
+
+function stopKaraoke() {
+  if (karaokeRaf) { cancelAnimationFrame(karaokeRaf); karaokeRaf = 0; }
+  karaokeWords = [];
+  karaokeLastIdx = -2;
+}
+
+// Schedule (or clear) the pill for the sentence that just started playing at ctx time `t0`.
+function startKaraoke(words: TtsWord[], t0: number, myGen: number) {
+  stopKaraoke();
+  useTts.setState({ words, wordIndex: -1 });
+  if (!words.length) return; // Piper / fallback / no timing → sentence-level only (no pill)
+  karaokeWords = words;
+  karaokeAnchor = { wall: t0, audio: 0, rate: useTts.getState().speed };
+  const c = audioCtx();
+  const tick = () => {
+    if (myGen !== gen || !useTts.getState().active) { karaokeRaf = 0; return; }
+    const audioTime = karaokeAnchor.audio + (c.currentTime - karaokeAnchor.wall) * karaokeAnchor.rate;
+    let k = -1;
+    for (let j = 0; j < karaokeWords.length; j++) {
+      if (karaokeWords[j].offset / 1e7 <= audioTime) k = j; // 100-ns ticks → seconds; offsets ascend
+      else break;
+    }
+    if (k !== karaokeLastIdx) { karaokeLastIdx = k; useTts.setState({ wordIndex: k }); }
+    karaokeRaf = requestAnimationFrame(tick);
+  };
+  karaokeRaf = requestAnimationFrame(tick);
+}
+
+// Re-anchor on a speed change: playbackRate scales wall-clock, so freeze the audio-time reached so far
+// and continue at the new rate (otherwise the pill would jump).
+function reanchorKaraoke(newRate: number) {
+  if (!karaokeWords.length) return;
+  const c = audioCtx();
+  karaokeAnchor.audio += (c.currentTime - karaokeAnchor.wall) * karaokeAnchor.rate;
+  karaokeAnchor.wall = c.currentTime;
+  karaokeAnchor.rate = newRate;
+}
 
 const stopSource = () => {
   if (source) {
@@ -185,9 +254,9 @@ async function playFrom(i: number, myGen: number) {
   }
   const idx = Math.max(0, i);
   set({ index: idx, status: "playing" });
-  let buffer: AudioBuffer;
+  let synthd: Synthesized;
   try {
-    buffer = await synth(idx); // Edge failures self-heal per-sentence inside synth() (RAWY-113)
+    synthd = await synth(idx); // Edge failures self-heal per-sentence inside synth() (RAWY-113)
   } catch (e) {
     // reached only if BOTH the chosen engine AND the Piper fallback failed (e.g. offline + the Piper
     // voice isn't downloaded) — a genuine dead end, shown as a retryable error.
@@ -201,7 +270,7 @@ async function playFrom(i: number, myGen: number) {
   if (myGen !== gen) return;
   stopSource();
   const s = c.createBufferSource();
-  s.buffer = buffer;
+  s.buffer = synthd.buffer;
   s.playbackRate.value = useTts.getState().speed;
   s.connect(c.destination);
   s.onended = () => {
@@ -209,6 +278,8 @@ async function playFrom(i: number, myGen: number) {
   };
   source = s;
   s.start();
+  // RAWY-127: schedule the karaoke pill against this buffer's clock (empty words → sentence-level only).
+  startKaraoke(synthd.words, c.currentTime, myGen);
 }
 
 // Ensure the chosen voice is usable, then play from `fromIndex`. Only PIPER voices fetch on demand
@@ -244,6 +315,8 @@ export const useTts = create<TtsState>((set, get) => ({
   speed: 1,
   index: 0,
   total: 0,
+  words: [],
+  wordIndex: -1,
   progress: 0,
   chapterLabel: "",
   error: null,
@@ -255,12 +328,13 @@ export const useTts = create<TtsState>((set, get) => ({
     audioCtx(); // create within the user gesture so autoplay policy unlocks it
     const myGen = ++gen;
     stopSource();
+    stopKaraoke(); // RAWY-127
     cache = new Map();
     sentences = sen.map((s) => s.trim()).filter(Boolean);
     curLang = lang;
     const saved = Number(await settingsGet("tts_speed").catch(() => null));
     const speed = saved >= TTS_MIN_SPEED && saved <= TTS_MAX_SPEED ? saved : get().speed;
-    set({ active: true, status: "preparing", lang, speed, index: startIndex, total: sentences.length, progress: 0, chapterLabel, error: null, notice: null });
+    set({ active: true, status: "preparing", lang, speed, index: startIndex, total: sentences.length, progress: 0, chapterLabel, error: null, notice: null, words: [], wordIndex: -1 });
     if (sentences.length === 0) {
       set({ status: "error", error: TTS_EMPTY });
       return;
@@ -291,12 +365,15 @@ export const useTts = create<TtsState>((set, get) => ({
     if (!st.active || st.status === "preparing") return;
     const myGen = ++gen;
     stopSource();
+    stopKaraoke(); // RAWY-127: drop the old sentence's pill; playFrom restarts karaoke for the new one
+    set({ wordIndex: -1 });
     void playFrom(Math.max(0, Math.min(sentences.length - 1, st.index + delta)), myGen);
   },
 
   setSpeed: (s) => {
     const sp = Math.max(TTS_MIN_SPEED, Math.min(TTS_MAX_SPEED, Math.round(s / TTS_SPEED_STEP) * TTS_SPEED_STEP));
     if (source) source.playbackRate.value = sp;
+    reanchorKaraoke(sp); // RAWY-127: keep the karaoke audio-time continuous across the rate change
     set({ speed: sp });
     void settingsSet("tts_speed", String(sp)).catch(() => {});
   },
@@ -312,7 +389,8 @@ export const useTts = create<TtsState>((set, get) => ({
     cache = new Map(); // new voice → invalidate cached audio
     const myGen = ++gen;
     stopSource();
-    set({ engine, voice: id, status: "preparing", error: null, notice: null });
+    stopKaraoke(); // RAWY-127: switching engine (e.g. Edge→Piper) drops any pill; playFrom re-decides
+    set({ engine, voice: id, status: "preparing", error: null, notice: null, wordIndex: -1 });
     void ensureAndPlay(engine, id, st.index, myGen);
   },
 
@@ -333,11 +411,12 @@ export const useTts = create<TtsState>((set, get) => ({
   stop: () => {
     gen++;
     stopSource();
+    stopKaraoke(); // RAWY-127
     cache = new Map();
     sentences = [];
     if (noticeTimer) { clearTimeout(noticeTimer); noticeTimer = null; }
     if (ctx && ctx.state !== "closed") void ctx.suspend().catch(() => {});
     void ttsStop().catch(() => {});
-    set({ active: false, status: "idle", index: 0, total: 0, progress: 0, error: null, notice: null });
+    set({ active: false, status: "idle", index: 0, total: 0, progress: 0, error: null, notice: null, words: [], wordIndex: -1 });
   },
 }));

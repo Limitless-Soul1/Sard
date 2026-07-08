@@ -112,6 +112,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const ttsActive = useTts((s) => s.active); // RAWY-105: read-aloud player visible?
   const ttsIndex = useTts((s) => s.index); // RAWY-126: current spoken sentence (drives the spotlight)
   const ttsStatus = useTts((s) => s.status); // RAWY-126: playing vs paused (paused keeps, doesn't follow)
+  const ttsWords = useTts((s) => s.words); // RAWY-127: the sentence's Edge word timings ([] = Piper)
+  const ttsWordIndex = useTts((s) => s.wordIndex); // RAWY-127: active word (drives the karaoke pill)
 
   const { status, dir, fraction, chapterLabel, chapterHref, error, style, bookTitle } = useReader();
   // RAWY-43: unified (all books share one style) vs per-book. Drives where changes are written
@@ -321,8 +323,18 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       return;
     }
     ctrl.showReadingHighlight(ttsIndex);
+    // RAWY-127: (re)build the word sub-ranges for this sentence (empty for Piper → no pill).
+    ctrl.setReadingWords(ttsIndex, ttsWords);
     if (ttsStatus === "playing") ctrl.followReadingSentence(ttsIndex);
-  }, [ttsActive, ttsIndex, ttsStatus]);
+  }, [ttsActive, ttsIndex, ttsStatus, ttsWords]);
+
+  // RAWY-127 (word karaoke, Edge only): move the solid pill to the active word within the sentence
+  // track. Driven by the queue's `wordIndex` (a rAF loop maps the audio clock → the spoken word);
+  // -1 / no timing (Piper / fallback) → no pill, the Phase-1 sentence spotlight stands alone.
+  useEffect(() => {
+    if (!ttsActive) return;
+    ctrlRef.current?.showReadingWord(ttsWordIndex);
+  }, [ttsActive, ttsWordIndex]);
 
 
   // Chapters panel is OPEN BY DEFAULT (RAWY-22); the user's choice persists per `chapters_open`.

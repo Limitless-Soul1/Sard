@@ -142,6 +142,40 @@ function drawReadingSpotlight(rects: Iterable<DOMRect>, options: { dark?: boolea
   return g;
 }
 
+// RAWY-127 (TTS reading indicator, Phase 2 — design 1b "pill", EDGE ONLY): the currently-SPOKEN WORD
+// inside the sentence track becomes a SOLID terracotta token — an unmistakable moving cursor. Drawn
+// as a rounded rect via the overlayer (which sits ABOVE the text), so — unlike the design's inverted
+// text (which would need mutating the script-less book iframe, forbidden) — it uses a HIGH-opacity
+// terracotta with mix-blend multiply/screen: the word's background reads as a solid pill while the
+// glyphs stay legible (black text × terracotta ≈ dark on terracotta). A SECOND reserved key
+// (WORD_KEY), added AFTER the band so it paints on top; transient, never the annotations map/DB.
+const WORD_KEY = "sard-reading-word";
+const READING_PILL = {
+  light: { fill: "rgb(156,90,60)", op: 0.9, blend: "multiply" }, // #9C5A3C on paper → rich terracotta
+  dark: { fill: "rgb(201,138,94)", op: 0.9, blend: "screen" }, // #C98A5E lifts off dark paper
+};
+function drawReadingPill(rects: Iterable<DOMRect>, options: { dark?: boolean } = {}): SVGGElement {
+  const NS = "http://www.w3.org/2000/svg";
+  const g = document.createElementNS(NS, "g");
+  const p = options.dark ? READING_PILL.dark : READING_PILL.light;
+  g.setAttribute("fill", p.fill);
+  g.style.opacity = String(p.op);
+  g.style.mixBlendMode = p.blend;
+  for (const r of rects) {
+    if (!(r.width > 0) || !(r.height > 0)) continue;
+    const rect = document.createElementNS(NS, "rect");
+    // a touch of horizontal breathing room so the token reads as a pill around the word, not a tight box
+    const padX = Math.min(3, r.height * 0.12);
+    rect.setAttribute("x", String(r.left - padX));
+    rect.setAttribute("y", String(r.top));
+    rect.setAttribute("width", String(r.width + padX * 2));
+    rect.setAttribute("height", String(r.height));
+    rect.setAttribute("rx", String(Math.min(6, r.height * 0.22))); // design ~.28em rounded token
+    g.append(rect);
+  }
+  return g;
+}
+
 interface OpenOptions {
   resumeCfi?: string | null;
   /** RAWY-85: resume a fixed-layout book (PDF) by fraction — a PDF has a page index, not a CFI. */
@@ -409,6 +443,9 @@ export class FoliateController {
   // `ttsUnitsIndex` is the section index these were built for (a chapter change invalidates them).
   private ttsUnits: { text: string; range: Range | null }[] = [];
   private ttsUnitsIndex = -1;
+  // RAWY-127 (word karaoke): sub-ranges of the current sentence, one per Edge word (null = unmapped),
+  // rebuilt each time a sentence with word timing starts (in lockstep with the Reader's index effect).
+  private wordRanges: (Range | null)[] = [];
   private selectionCb: ((sel: SelectionInfo | null) => void) | null = null;
   private showCb: ((hit: AnnotationHit) => void) | null = null;
   private contentDoc: Document | null = null; // RAWY-122: the current section doc (for clearSelection)
@@ -1012,6 +1049,7 @@ export class FoliateController {
     }
     try {
       overlayer.remove(READING_KEY);
+      overlayer.remove(WORD_KEY); // RAWY-127: drop the old sentence's pill; the new one re-draws it
     } catch {
       /* not present — fine */
     }
@@ -1024,16 +1062,136 @@ export class FoliateController {
     }
   }
 
-  /** Remove the reading spotlight (stop / play closed / left the chapter). */
+  /** Remove the reading spotlight AND the word pill (stop / play closed / left the chapter). */
   clearReadingHighlight(): void {
     const overlayer = this.view?.renderer?.getContents?.()?.[0]?.overlayer as
       | { remove: (k: string) => void }
       | undefined;
     try {
       overlayer?.remove(READING_KEY);
+      overlayer?.remove(WORD_KEY); // RAWY-127
     } catch {
       /* ignore */
     }
+    this.wordRanges = [];
+  }
+
+  // ---- RAWY-127: the word "pill" karaoke (Edge only; transient, never persisted) ----
+
+  /** Build the per-word sub-ranges for sentence `i` from the ordered Edge WORD list. Each word is
+   *  located in the sentence's own text by an advancing cursor (match the word TEXT — robust to the
+   *  whitespace/punctuation between words, and to RTL since matching is in logical order), then mapped
+   *  to a live DOM sub-range of the sentence range. A word that can't be matched verbatim (a number
+   *  Edge spoke differently, say) falls back to consuming its char length — so the cursor never stalls.
+   *  No-op when the sentence has no timing (Piper) → the pill simply never shows (Phase-1 only). */
+  setReadingWords(sentenceIndex: number, words: { text: string }[] | undefined): void {
+    this.wordRanges = [];
+    if (this.isFixedLayout || !words?.length) return;
+    const content = this.view?.renderer?.getContents?.()?.[0];
+    if (!content || content.index !== this.ttsUnitsIndex) return;
+    const range = this.ttsUnits[sentenceIndex]?.range;
+    const doc: Document | undefined = content.doc;
+    if (!range || !doc) return;
+    const map = this.rangeNodeMap(range, doc);
+    if (!map) return;
+    const { full, sub } = map; // `full` = the sentence's raw text; `sub(a,b)` → a Range for [a,b)
+    let cursor = 0;
+    const ranges: (Range | null)[] = [];
+    for (const w of words) {
+      const text = w.text ?? "";
+      if (!text) { ranges.push(null); continue; }
+      let pos = full.indexOf(text, cursor);
+      let len = text.length;
+      if (pos < 0) {
+        // not found verbatim — skip whitespace, then consume the word's own length from the cursor
+        let c = cursor;
+        while (c < full.length && /\s/.test(full[c])) c++;
+        pos = c;
+        len = Math.min(text.length, Math.max(0, full.length - pos));
+      }
+      ranges.push(len > 0 ? sub(pos, pos + len) : null);
+      cursor = pos + len;
+    }
+    this.wordRanges = ranges;
+  }
+
+  /** Draw the solid pill on word `w` of the current sentence (or clear it when `w < 0` / unmapped).
+   *  Painted OVER the sentence band (added after it), under the reserved WORD_KEY — transient. */
+  showReadingWord(w: number): void {
+    if (this.isFixedLayout) return;
+    const content = this.view?.renderer?.getContents?.()?.[0];
+    const overlayer = content?.overlayer as
+      | { add: (k: string, r: Range, d: typeof drawReadingPill, o: unknown) => void; remove: (k: string) => void }
+      | undefined;
+    if (!overlayer) return;
+    try {
+      overlayer.remove(WORD_KEY);
+    } catch {
+      /* not present — fine */
+    }
+    if (!content || content.index !== this.ttsUnitsIndex) return;
+    const range = w >= 0 ? this.wordRanges[w] : null;
+    if (!range) return; // no word / unmapped → no pill (the sentence band still shows)
+    try {
+      overlayer.add(WORD_KEY, range, drawReadingPill, { dark: this.theme?.dark ?? false });
+    } catch {
+      /* stale/detached range — skip */
+    }
+  }
+
+  /** RAWY-127: map a sentence Range to its raw text `full` + a `sub(start,end)` that returns a live
+   *  sub-Range for a `[start,end)` char span — reused per Edge word to place the pill. Walks the
+   *  range's text nodes (clamping the boundary nodes) so tashkīl-split nodes (RAWY-65) still resolve. */
+  private rangeNodeMap(
+    range: Range,
+    doc: Document,
+  ): { full: string; sub: (a: number, b: number) => Range | null } | null {
+    const nodes: Text[] = [];
+    const starts: number[] = []; // offset within each node where its in-range text begins
+    const strs: string[] = []; // the in-range text of each node
+    const cac = range.commonAncestorContainer;
+    const pushNode = (n: Text) => {
+      let s = 0;
+      let e = n.data.length;
+      if (n === range.startContainer) s = range.startOffset;
+      if (n === range.endContainer) e = range.endOffset;
+      const text = n.data.slice(s, e);
+      if (text) { nodes.push(n); starts.push(s); strs.push(text); }
+    };
+    if (cac.nodeType === Node.TEXT_NODE) {
+      pushNode(cac as Text);
+    } else {
+      const walker = doc.createTreeWalker(cac, NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (range.intersectsNode(n)) pushNode(n as Text);
+      }
+    }
+    if (nodes.length === 0) return null;
+    const full = strs.join("");
+    const sub = (a: number, b: number): Range | null => {
+      if (b <= a || a < 0 || b > full.length) return null;
+      let acc = 0;
+      let si = -1;
+      let so = 0;
+      let ei = -1;
+      let eo = 0;
+      for (let j = 0; j < strs.length; j++) {
+        const len = strs[j].length;
+        if (si < 0 && a < acc + len) { si = j; so = starts[j] + (a - acc); }
+        if (ei < 0 && b <= acc + len) { ei = j; eo = starts[j] + (b - acc); break; }
+        acc += len;
+      }
+      if (si < 0 || ei < 0) return null;
+      try {
+        const r = doc.createRange();
+        r.setStart(nodes[si], so);
+        r.setEnd(nodes[ei], eo);
+        return r;
+      } catch {
+        return null;
+      }
+    };
+    return { full, sub };
   }
 
   /** Gentle scroll-follow: keep the spoken sentence in view. PROGRAMMATIC (never a synthetic wheel),

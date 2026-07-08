@@ -650,7 +650,7 @@ html, body, #root {
   position: fixed; z-index: 25; left: 50%; bottom: 26px;
   transform: translateX(calc(-50% + var(--reading-shift, 0px)));
   transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
-  width: min(330px, calc(100vw - 28px));
+  width: min(380px, calc(100vw - 28px)); /* RAWY-115: modest bump from 330 for breathing room */
   display: flex; flex-direction: column; gap: 4px;
   padding: 8px 10px 10px; border-radius: 16px; border: 1px solid var(--chrome-border);
   background: color-mix(in srgb, var(--chrome-bg) 96%, transparent);
@@ -742,9 +742,12 @@ html, body, #root {
 
 /* the Voices picker — opens above the centred pill (RAWY-114), same centring vars. */
 .tts-menu {
-  position: fixed; z-index: 26; left: 50%; bottom: calc(26px + 184px);
+  /* RAWY-115: open CLEANLY ABOVE the expanded pill (~198px tall from bottom:26px → top ≈ 224px) with
+     a clear gap — the old 184px offset put the menu's bottom edge INSIDE the pill (overlap the owner
+     saw); 26 + 210 = 236px leaves a ~12px gap above the pill. */
+  position: fixed; z-index: 26; left: 50%; bottom: calc(26px + 210px);
   transform: translateX(calc(-50% + var(--reading-shift, 0px)));
-  width: min(330px, calc(100vw - 28px)); max-height: min(46vh, 380px);
+  width: min(380px, calc(100vw - 28px)); max-height: min(42vh, 340px); /* RAWY-115: match the wider pill */
   display: flex; flex-direction: column; border-radius: 14px; border: 1px solid var(--chrome-border);
   background: color-mix(in srgb, var(--chrome-bg) 98%, transparent);
   backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);

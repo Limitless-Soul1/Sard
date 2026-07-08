@@ -204,6 +204,9 @@ export const ar: Record<TKey, string> = {
   "hl.note": "ملاحظة",
   "hl.copy": "نسخ",
   "hl.custom": "لون مخصّص",
+  "hl.orHue": "أو اضبط تدرّجًا", // RAWY-123: the hybrid custom-colour picker
+  "hl.apply": "تطبيق",
+  "hl.backToPresets": "رجوع",
   "hl.addNote": "أضف ملاحظة…",
   "hl.remove": "إزالة",
   "hl.save": "حفظ",

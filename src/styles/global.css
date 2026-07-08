@@ -1746,6 +1746,50 @@ html, body, #root {
   width: 15px; height: 15px; border-radius: 50%; background: rgba(10, 14, 18, 0.55);
   display: flex; align-items: center; justify-content: center; color: #fff;
 }
+
+/* RAWY-123: the hybrid custom-colour picker (design 1c) — rendered INSIDE `.hl-pop`, so it inherits the
+   popover's dark surface + the RAWY-122 click-away immunity. `currentColor` = the popover ink, so the
+   rules/borders adapt to light vs dark automatically. */
+.hl-cpick { display: flex; flex-direction: column; width: 248px; max-width: 82vw; }
+.hl-cpick-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.hl-cpick-back {
+  width: 26px; height: 26px; border-radius: 50%; border: 0; padding: 0; cursor: pointer; flex: none; color: inherit;
+  display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, currentColor 10%, transparent);
+}
+.hl-cpick-back:hover { background: color-mix(in srgb, currentColor 18%, transparent); }
+.hl-cpick-title { font: 600 0.78125rem var(--ui-font); }
+.hl-cpick-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 7px; justify-items: center; }
+.hl-cpick-swatch {
+  width: 24px; height: 24px; border-radius: 50%; border: 0; padding: 0; cursor: pointer;
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.18); transition: transform 0.12s ease;
+}
+.hl-cpick-swatch:hover { transform: scale(1.08); }
+.hl-cpick-swatch.on { box-shadow: 0 0 0 2px currentColor, inset 0 0 0 1.5px rgba(255, 255, 255, 0.2); }
+.hl-cpick-or { display: flex; align-items: center; gap: 9px; margin: 13px 0 11px; }
+.hl-cpick-rule { height: 1px; flex: 1; background: color-mix(in srgb, currentColor 16%, transparent); }
+.hl-cpick-or-label { font: 400 0.625rem var(--ui-font); letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.6; }
+.hl-cpick-hue {
+  position: relative; height: 20px; border-radius: 10px; cursor: pointer; touch-action: none;
+  background: linear-gradient(to right, hsl(0 62% 78%), hsl(45 62% 78%), hsl(90 58% 76%), hsl(150 52% 74%), hsl(200 56% 76%), hsl(260 52% 78%), hsl(320 58% 80%), hsl(360 62% 78%));
+}
+.hl-cpick-thumb {
+  position: absolute; top: 50%; transform: translate(-50%, -50%); width: 20px; height: 20px; border-radius: 50%;
+  background: #fff; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; pointer-events: none;
+}
+.hl-cpick-thumb-dot { width: 12px; height: 12px; border-radius: 50%; }
+.hl-cpick-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-top: 13px; padding-top: 13px; border-top: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+}
+.hl-cpick-preview { display: flex; align-items: center; gap: 8px; }
+.hl-cpick-dot { width: 22px; height: 22px; border-radius: 7px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.14); }
+.hl-cpick-hex { font: 600 0.6875rem var(--ui-font); letter-spacing: 0.03em; opacity: 0.8; }
+.hl-cpick-apply {
+  border: 0; cursor: pointer; padding: 8px 17px; border-radius: 9px; font: 600 0.75rem var(--ui-font);
+  color: #2b2521; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.14);
+}
+.hl-cpick-apply:hover { filter: brightness(1.05); }
+
 /* hairline between the tiers */
 .hl-pop-line { height: 1px; background: rgba(255, 255, 255, 0.1); margin: 11px 2px; }
 /* tier 2 — actions */

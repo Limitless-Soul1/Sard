@@ -5,7 +5,7 @@
 // SEMANTIC slot so it adapts to the theme. State lives in useAnnotations so the side panel
 // (AnnotationsPanel) reflects every change.
 
-import { useEffect, useState, type CSSProperties, type RefObject } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 
 import { useI18n } from "../../i18n";
 import { THEMES, useTheme } from "../../theme";
@@ -19,23 +19,132 @@ function useHl() {
   return THEMES[id].colors.highlight;
 }
 
-// RAWY-122 (ISSUE B): the native <input type="color"> OS colour dialog vanished on the first click in
-// this WebView2 build (it opens then closes before a colour can be chosen — confirmed it is NOT our
-// click-away). Until the custom-picker is redesigned on disk, the "+" is a clean, NON-vanishing stub:
-// clicking it applies one warm custom shade (no native dialog, no dead control). The "+" affordance
-// stays and is now an SVG (perfectly centred — ISSUE C).
-const CUSTOM_STUB_COLOR = "#C98A5E";
+// The "+" affordance (an SVG, perfectly centred — RAWY-122 ISSUE C) and the back chevron.
 const PlusGlyph = () => (
   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden>
     <path d="M12 5.5v13M5.5 12h13" />
   </svg>
 );
+const BackChevron = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="m15 18-6-6 6-6" />
+  </svg>
+);
 
-// The 8 slot dots + a custom-colour swatch (conic-gradient "+", opens a native picker → #hex).
-// `active` is the currently-applied colour (a slot name or a #hex) so the right dot is ringed.
+// RAWY-123: a hue → a PALE highlight wash #hex. Fixed L≈72%, S≈60% (per the design) so black/light text
+// stays readable under it (the highlight is drawn with the usual translucent wash opacity on top).
+function hueHex(h: number): string {
+  const s = 0.6;
+  const l = 0.72;
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  const [r, g, b] =
+    h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  const hx = (n: number) => Math.round((n + m) * 255).toString(16).padStart(2, "0");
+  return `#${hx(r)}${hx(g)}${hx(b)}`;
+}
+
+// RAWY-123: the hybrid custom-colour picker (design "1c — curated first, hue if you want it"). Opened
+// from the "+", it REPLACES the popover's rows IN PLACE: a back-to-presets button + title, the eight
+// curated slot shades for a fast tap, an "or fine-tune a hue" bar for a free colour, then a preview +
+// Apply. A picked slot applies the semantic theme slot (adapts to the theme); a hue applies a pale
+// #hex — both drawn as the usual translucent highlight wash. It renders INSIDE `.hl-pop`, so RAWY-122's
+// click-away can't close it (the popover stops pointerdown propagation); a click TRULY outside, or Esc,
+// still clears the selection. Replaces the RAWY-122 stub; no native <input type="color"> anywhere.
+function CustomColorPicker({
+  hl,
+  onApply,
+  onBack,
+}: {
+  hl: Record<string, string>;
+  onApply: (c: HighlightColor) => void;
+  onBack: () => void;
+}) {
+  const { t } = useI18n();
+  const [selected, setSelected] = useState<HighlightColor>(HIGHLIGHT_SLOTS[0]);
+  const [hue, setHue] = useState<number | null>(null); // set once the hue bar is dragged
+  const barRef = useRef<HTMLDivElement>(null);
+  const dragging = useRef(false);
+  const selHex = isHex(selected) ? (selected as string) : hl[selected as string] ?? hl.amber;
+
+  const hueFromX = (clientX: number) => {
+    const el = barRef.current;
+    if (!el) return 0;
+    const r = el.getBoundingClientRect();
+    return Math.max(0, Math.min(360, ((clientX - r.left) / r.width) * 360));
+  };
+  const pickHue = (clientX: number) => {
+    const h = hueFromX(clientX);
+    setHue(h);
+    setSelected(hueHex(h) as HighlightColor);
+  };
+  const onHueDown = (e: React.PointerEvent) => {
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+    dragging.current = true;
+    pickHue(e.clientX);
+  };
+  const onHueMove = (e: React.PointerEvent) => {
+    if (dragging.current) pickHue(e.clientX);
+  };
+  const onHueUp = (e: React.PointerEvent) => {
+    dragging.current = false;
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+  };
+
+  return (
+    <div className="hl-cpick">
+      <div className="hl-cpick-head">
+        <button type="button" className="hl-cpick-back" onClick={onBack} title={t("hl.backToPresets")} aria-label={t("hl.backToPresets")}>
+          <BackChevron />
+        </button>
+        <span className="hl-cpick-title">{t("hl.custom")}</span>
+      </div>
+      <div className="hl-cpick-grid">
+        {HIGHLIGHT_SLOTS.map((c) => (
+          <button
+            key={c}
+            type="button"
+            className={`hl-cpick-swatch${selected === c ? " on" : ""}`}
+            style={{ background: hl[c] }}
+            onClick={() => { setHue(null); setSelected(c); }}
+            aria-label={c}
+          />
+        ))}
+      </div>
+      <div className="hl-cpick-or">
+        <span className="hl-cpick-rule" />
+        <span className="hl-cpick-or-label">{t("hl.orHue")}</span>
+        <span className="hl-cpick-rule" />
+      </div>
+      <div className="hl-cpick-hue" ref={barRef} onPointerDown={onHueDown} onPointerMove={onHueMove} onPointerUp={onHueUp}>
+        <div className="hl-cpick-thumb" style={{ left: `${((hue ?? 0) / 360) * 100}%` }}>
+          <span className="hl-cpick-thumb-dot" style={{ background: hue != null ? hueHex(hue) : "transparent" }} />
+        </div>
+      </div>
+      <div className="hl-cpick-foot">
+        <div className="hl-cpick-preview">
+          <span className="hl-cpick-dot" style={{ background: selHex }} />
+          <span className="hl-cpick-hex">{selHex.toUpperCase()}</span>
+        </div>
+        <button type="button" className="hl-cpick-apply" style={{ background: selHex }} onClick={() => onApply(selected)}>
+          {t("hl.apply")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// The 8 slot dots + a custom-colour swatch. RAWY-123: the "+" opens the hybrid custom-colour picker
+// (in place of the dots); picking a colour recolours the highlight and returns to the dots. `active`
+// is the currently-applied colour (a slot name or a #hex) so the right dot is ringed.
 export function ColorRow({ active, onPick }: { active?: string | null; onPick: (c: HighlightColor) => void }) {
   const hl = useHl();
   const custom = isHex(active);
+  const [picking, setPicking] = useState(false);
+  if (picking) {
+    return <CustomColorPicker hl={hl} onApply={(c) => { onPick(c); setPicking(false); }} onBack={() => setPicking(false)} />;
+  }
   return (
     <div className="hl-dots">
       {HIGHLIGHT_SLOTS.map((c) => (
@@ -51,7 +160,7 @@ export function ColorRow({ active, onPick }: { active?: string | null; onPick: (
         type="button"
         className={`hl-dot hl-custom${custom ? " active" : ""}`}
         style={custom ? { background: active as string } : undefined}
-        onClick={() => onPick(CUSTOM_STUB_COLOR)}
+        onClick={() => setPicking(true)}
         title="Custom colour"
         aria-label="Custom colour"
       >
@@ -113,31 +222,39 @@ function SelectionToolbar({
   const { t } = useI18n();
   const hl = useHl();
   const below = sel.rect.top < 90;
+  // RAWY-123: the "+" opens the hybrid custom-colour picker IN PLACE of the two tiers (back returns).
+  const [picking, setPicking] = useState(false);
   return (
     <div
       className={`hl-pop${below ? " below" : ""}`}
       style={anchorStyle(sel.rect, below)}
       onPointerDown={(e) => e.stopPropagation()}
     >
-      {/* tier 1 — palette (one tap highlights) */}
-      <div className="hl-pop-colors">
-        {HIGHLIGHT_SLOTS.map((c) => (
-          <button key={c} className="hl-pop-swatch" style={{ background: hl[c] }} onClick={() => onColor(c)} aria-label={c} />
-        ))}
-        <span className="hl-pop-vsep" />
-        <button type="button" className="hl-pop-custom" onClick={() => onColor(CUSTOM_STUB_COLOR)} title={t("hl.custom")} aria-label={t("hl.custom")}>
-          <span className="hl-pop-custom-dot" aria-hidden><PlusGlyph /></span>
-        </button>
-      </div>
-      {/* hairline */}
-      <div className="hl-pop-line" />
-      {/* tier 2 — actions (Note · Copy · Add to card · Create photo card) */}
-      <div className="hl-pop-actions">
-        <button className="hl-pop-act" onClick={onNote}><PenIcon />{t("hl.note")}</button>
-        <button className="hl-pop-act" onClick={onCopy}><CopyIcon />{t("hl.copy")}</button>
-        <button className="hl-pop-act" onClick={onAddToCard}><AddCardIcon />{t("photo.addToCard")}</button>
-        <button className="hl-pop-act primary" onClick={onPhotoCard}><PhotoIcon />{t("photo.card")}</button>
-      </div>
+      {picking ? (
+        <CustomColorPicker hl={hl} onApply={onColor} onBack={() => setPicking(false)} />
+      ) : (
+        <>
+          {/* tier 1 — palette (one tap highlights) */}
+          <div className="hl-pop-colors">
+            {HIGHLIGHT_SLOTS.map((c) => (
+              <button key={c} className="hl-pop-swatch" style={{ background: hl[c] }} onClick={() => onColor(c)} aria-label={c} />
+            ))}
+            <span className="hl-pop-vsep" />
+            <button type="button" className="hl-pop-custom" onClick={() => setPicking(true)} title={t("hl.custom")} aria-label={t("hl.custom")}>
+              <span className="hl-pop-custom-dot" aria-hidden><PlusGlyph /></span>
+            </button>
+          </div>
+          {/* hairline */}
+          <div className="hl-pop-line" />
+          {/* tier 2 — actions (Note · Copy · Add to card · Create photo card) */}
+          <div className="hl-pop-actions">
+            <button className="hl-pop-act" onClick={onNote}><PenIcon />{t("hl.note")}</button>
+            <button className="hl-pop-act" onClick={onCopy}><CopyIcon />{t("hl.copy")}</button>
+            <button className="hl-pop-act" onClick={onAddToCard}><AddCardIcon />{t("photo.addToCard")}</button>
+            <button className="hl-pop-act primary" onClick={onPhotoCard}><PhotoIcon />{t("photo.card")}</button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

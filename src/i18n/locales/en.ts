@@ -203,6 +203,9 @@ export const en = {
   "hl.note": "Note",
   "hl.copy": "Copy",
   "hl.custom": "Custom colour",
+  "hl.orHue": "or fine-tune a hue", // RAWY-123: the hybrid custom-colour picker
+  "hl.apply": "Apply",
+  "hl.backToPresets": "Back to presets",
   "hl.addNote": "Add a note…",
   "hl.remove": "Remove",
   "hl.save": "Save",

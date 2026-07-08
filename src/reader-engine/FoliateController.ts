@@ -407,6 +407,12 @@ const SCROLL_SHOW_PX = 240;
 // A pause longer than this starts a NEW wheel gesture: the intent accumulator resets, so slow
 // scattered nudges minutes apart can never add up to a "deliberate" scroll-up.
 const SCROLL_GESTURE_GAP_MS = 400;
+// RAWY-128: while TTS plays, the auto scroll-follow (RAWY-126) used to yank the spoken sentence back
+// into view on every sentence advance — fighting the user's manual scroll (a tug every few seconds
+// that read as "heaviness"). Suppress the follow for this window after any manual WHEEL so scrolling
+// is free; the spotlight/pill still track the audio, and the gentle follow resumes once the user
+// settles. ⬅ TUNE HERE if follow resumes too eagerly/slowly after a manual scroll.
+const FOLLOW_SUPPRESS_MS = 1200;
 
 // RAWY-86: normalize text for a best-effort, Arabic-aware in-PDF find. Folds the differences that
 // commonly separate a typed query from an embedded PDF text layer WHEN that layer is otherwise clean
@@ -458,6 +464,7 @@ export class FoliateController {
   private scrollIntentCb: ((down: boolean) => void) | null = null;
   private scrollAccum = 0;
   private scrollIntentTs = 0; // RAWY-75: last wheel time — a long gap resets the accumulator
+  private lastUserScrollTs = 0; // RAWY-128: last MANUAL wheel — TTS auto-follow yields for a moment after
   // Scrolled mode + chapter-boundary gesture state (RAWY-25).
   private scrolledMode = false;
   private wheelTs = 0;
@@ -791,6 +798,9 @@ export class FoliateController {
   // (content moves up) → hide. Thresholds are asymmetric (RAWY-75): hide is near-immediate, show
   // needs a deliberate multi-notch scroll-up so a light upward nudge doesn't pop the bar.
   private onWheelScrollIntent(deltaY: number): void {
+    // RAWY-128: the single funnel for a MANUAL wheel (both the content-frame and margin paths) — stamp
+    // it so the TTS scroll-follow can yield briefly and not fight the user's scroll (see followReadingSentence).
+    if (deltaY) this.lastUserScrollTs = performance.now();
     if (!this.scrollIntentCb || !deltaY) return;
     const now = performance.now();
     if (now - this.scrollIntentTs > SCROLL_GESTURE_GAP_MS) this.scrollAccum = 0;
@@ -1201,6 +1211,11 @@ export class FoliateController {
    *  Paged mode: flip to its page only when the sentence's centre is off the visible box. */
   followReadingSentence(i: number): void {
     if (this.isFixedLayout) return;
+    // RAWY-128: never fight a manual scroll. If the user wheeled within the last window, skip the
+    // auto-follow this advance — the spotlight/pill still track the audio (only the VIEW isn't pulled),
+    // and the gentle follow resumes on the next sentence once the user settles. Fixes the scroll
+    // hitch/heaviness the owner hit while scrolling during read-aloud.
+    if (performance.now() - this.lastUserScrollTs < FOLLOW_SUPPRESS_MS) return;
     const content = this.view?.renderer?.getContents?.()?.[0];
     if (!content || content.index !== this.ttsUnitsIndex) return;
     const range = this.ttsUnits[i]?.range;

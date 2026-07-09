@@ -636,6 +636,13 @@ html, body, #root {
    pin — RAWY-73), so when the bars hide it must FILL the space they vacate instead of holding gaps for
    absent bars. Inert for Notes/Settings/Search, which force the chrome shown while open. */
 .reader-root.chrome-hidden .reader-panel { top: 0; bottom: 0; }
+/* RAWY-131: during TTS the bottom bar (.rc-bottom) is display:none (the pill replaces it, RAWY-113),
+   so a panel that's open while the chrome is SHOWN must not keep the 56px gap it reserves for that
+   (now-absent) bar — the chapter list stopped 56px short of the bottom ("cut off"). Fill to the bottom,
+   matching the RAWY-130 full-height reading area during TTS. Top stays 70 so the top bar/cluster stays
+   above the panel (RAWY-33); the pill floats centred and is shifted clear of the panel (RAWY-114), so
+   they don't overlap. Applies to Contents/Notes/Search alike (all `.reader-panel`). */
+.reader-root.tts-playing .reader-panel { bottom: 0; }
 /* FIXED physical sides (RAWY-32 — supersedes the RAWY-30/D20 follow-direction model): chapters
    is PINNED to the physical LEFT, annotations to the physical RIGHT, and they DO NOT move when
    the UI language flips. Physical `left`/`right` (not logical) ignore the panel's `dir` attr, so

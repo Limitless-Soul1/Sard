@@ -1476,29 +1476,6 @@ export class FoliateController {
   // for `query`, jump to the first hit's page (by fraction), return its 0-based index (or null).
   // Capped so a no-match doesn't scan thousands of pages. Arabic text layers can be disconnected
   // upstream, so matches are best-effort.
-  async pdfFind(query: string, fromIndex: number): Promise<number | null> {
-    const book: any = this.view?.book;
-    if (!book?.getPageText || !book?.sections?.length) return null;
-    const q = normalizeForSearch(query);
-    if (!q) return null;
-    const n = book.sections.length;
-    const cap = Math.min(n, 400); // scan at most this many pages for a match
-    for (let k = 1; k <= cap; k++) {
-      const i = (fromIndex + k) % n;
-      let text = "";
-      try {
-        text = (await book.getPageText(i)) ?? "";
-      } catch {
-        continue;
-      }
-      if (normalizeForSearch(text).includes(q)) {
-        await this.view?.goToFraction?.((i + 0.5) / n); // section midpoint → getSection() lands on page i
-        return i;
-      }
-    }
-    return null;
-  }
-
   // RAWY-86: the current PDF page's document (captured on `load`) — used to read the text selection
   // for copy. The fixed-layout page renders into an iframe whose `load` fires the view's load event.
   private pdfPageDoc: Document | null = null;

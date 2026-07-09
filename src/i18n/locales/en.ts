@@ -52,21 +52,13 @@ export const en = {
   "pdf.options": "PDF",
   "pdf.readonly.title": "PDF — view only",
   "pdf.readonly.body": "PDFs open for reading as-is. Themes, fonts, highlights, notes, bookmarks and Photo Mode aren’t available for PDFs yet.",
-  "pdf.direction": "Reading direction",
-  "pdf.dir.ltr": "Left → right",
-  "pdf.dir.rtl": "Right → left",
-  // RAWY-86: PDF Phase 1 — navigation, find, copy, invert.
+  // RAWY-86 gave PDFs an appearance INVERT + copy-selection. RAWY-141 removed the reading-direction
+  // toggle (cosmetic/confusing on a fixed-layout PDF) and the in-PDF find (unreliable for Arabic text
+  // layers + a cramped misfit), leaving a tidy menu: the read-only note + Appearance + Copy.
   "pdf.appearance": "Appearance",
   "pdf.appearance.normal": "Normal",
   "pdf.appearance.inverted": "Inverted",
   "pdf.appearance.hint": "Inverted is an approximate night mode (it flips colours and images) — not the reading themes.",
-  "pdf.find": "Find in PDF",
-  "pdf.find.placeholder": "Search text…",
-  "pdf.find.action": "Find",
-  "pdf.find.searching": "Searching…",
-  "pdf.find.found": "Found on page {n}",
-  "pdf.find.none": "No match found",
-  "pdf.find.hint": "Searches the PDF’s own text layer. Some PDFs — especially Arabic ones — store their text in a scrambled form the search can’t read.",
   "pdf.copy": "Copy selection",
   "pdf.copied": "Copied",
   "pdf.copyEmpty": "Select text on the page first",

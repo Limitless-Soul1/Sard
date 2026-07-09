@@ -403,8 +403,6 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         // verify PDF paging works through the document (the chevrons use the same underlying nav).
         else if (s.startsWith("next:")) { for (let i = 0; i < Number(s.slice(5)); i++) { ctrl.pageByWheel(120); await new Promise((r) => setTimeout(r, 340)); } }
         else if (s.startsWith("prev:")) { for (let i = 0; i < Number(s.slice(5)); i++) { ctrl.pageByWheel(-120); await new Promise((r) => setTimeout(r, 340)); } }
-        // RAWY-86: drive the in-PDF find path (pdfFind) with a query, so a jump-to-match can be captured.
-        else if (s.startsWith("find:")) { const hit = await ctrl.pdfFind(s.slice(5), 0); await settingsSet("dev_find_hit", hit == null ? "none" : String(hit)).catch(() => {}); }
         // RAWY-87 (#2): drive the page-wheel → pageByWheel forwarding by dispatching synthetic wheels
         // ON THE PDF PAGE DOC (where a real wheel over the page fires), N times, to prove it pages.
         else if (s.startsWith("pagewheel:")) { for (let i = 0; i < Number(s.slice(10)); i++) { ctrl.devPageWheel(120); await new Promise((r) => setTimeout(r, 340)); } }
@@ -569,24 +567,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // the reader offers a manual reading-DIRECTION override for Arabic PDFs; changing it persists the
   // choice (books.dir via metadata_override) and re-opens the PDF at the current page.
   const isPdf = (initial.format ?? "").toLowerCase() === "pdf";
-  const setPdfDir = (d: "ltr" | "rtl") => {
-    if (d === dir) return;
-    bookUpdate(initial.id, { dir: d }).catch(console.error);
-    const st = useReader.getState();
-    st.set({ dir: d });
-    ctrlRef.current
-      ?.open(convertFileSrc(initial.filePath), stageRef.current!, {
-        resumeFraction: st.fraction,
-        style: st.style ?? ARABIC_DEFAULTS,
-        theme: THEMES[bookThemeId],
-        dir: d,
-        flow: "scrolled",
-      })
-      .catch(console.error);
-  };
   // RAWY-86: PDF appearance INVERT (approximate night mode — a CSS invert filter, NOT real themes;
-  // it flips images too), persisted per book. Plus a basic in-PDF find (jump to a match) and
-  // copy-selection. Feedback rides a small transient message.
+  // it flips images too), persisted per book. Plus copy-selection. Feedback rides a small transient
+  // message. RAWY-141: the reading-direction override + in-PDF find were removed (see SettingsPanel).
   const [pdfInvert, setPdfInvert] = useState(false);
   const [pdfMsg, setPdfMsg] = useState<string | null>(null);
   const pdfMsgTimer = useRef<number | undefined>(undefined);
@@ -606,13 +589,6 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       settingsSet(`pdf_invert:${initial.id}`, next ? "1" : "0").catch(() => {});
       return next;
     });
-  };
-  const pdfFind = async (q: string) => {
-    const ctrl = ctrlRef.current;
-    if (!ctrl || !q.trim()) return;
-    flashPdf(t("pdf.find.searching"));
-    const idx = await ctrl.pdfFind(q, ctrl.pdfPageIndex ?? 0);
-    flashPdf(idx == null ? t("pdf.find.none") : t("pdf.find.found", { n: localeNum(idx + 1, lang) }));
   };
   const copyPdfSelection = async () => {
     const txt = (await ctrlRef.current?.copyPdfSelection()) ?? "";
@@ -1022,11 +998,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         onReset={resetBook}
         unified={scope === "unified"}
         isPdf={isPdf}
-        pdfDir={dir === "rtl" ? "rtl" : "ltr"}
-        onPdfDir={setPdfDir}
         pdfInvert={pdfInvert}
         onPdfInvert={togglePdfInvert}
-        onPdfFind={pdfFind}
         onPdfCopy={copyPdfSelection}
       />
 

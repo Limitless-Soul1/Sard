@@ -344,6 +344,9 @@ export function AnnotationLayer({
     ctrl.onShowAnnotation((hit) => {
       setSelection(null);
       setActive(hit);
+      // RAWY-132: tapping a stored highlight also dismisses any pending fresh text selection — clear the
+      // REAL browser selection too (RAWY-122 invariant) so a later pointerup can't re-raise the toolbar.
+      ctrl.clearSelection();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

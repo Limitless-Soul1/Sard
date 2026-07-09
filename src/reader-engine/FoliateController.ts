@@ -459,6 +459,12 @@ export class FoliateController {
   private selectionCb: ((sel: SelectionInfo | null) => void) | null = null;
   private showCb: ((hit: AnnotationHit) => void) | null = null;
   private contentDoc: Document | null = null; // RAWY-122: the current section doc (for clearSelection)
+  // RAWY-132: the content selection's text as it stood at the last content pointerdown. A plain click
+  // INSIDE an existing selection doesn't collapse it on mousedown — the browser defers the collapse for
+  // a possible drag-drop, so the pointerup still sees the old range and would re-raise the toolbar (the
+  // RAWY-122 "re-fires on the next tap" bug). If the selection is unchanged across the gesture, it's a
+  // dismiss, not a new selection: we clear it instead of re-firing. (Empty when nothing was selected.)
+  private downSelText = "";
   // RAWY-72: forward pointer activity happening INSIDE the content iframe (which never reaches a
   // parent-window listener) so the chrome-on-intent hook can wake the auto-hiding bar. Coords are
   // translated to parent-viewport space so the hook's jitter dedup shares one coordinate system.
@@ -624,6 +630,9 @@ export class FoliateController {
       // Selection → in-context toolbar (RAWY-20). Also a tap → wake the chrome (RAWY-72).
       doc.addEventListener("pointerdown", (ev: PointerEvent) => {
         this.selectionCb?.(null);
+        // RAWY-132: remember the selection as the gesture starts, so pointerup can tell a fresh
+        // drag-select from a plain click inside a lingering selection (see below + downSelText).
+        this.downSelText = doc.getSelection()?.toString() ?? "";
         if (this.activityCb) {
           const off = frameOffset(doc);
           this.activityCb(ev.clientX + off.x, ev.clientY + off.y, true);
@@ -634,6 +643,17 @@ export class FoliateController {
         if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
         const text = sel.toString().trim();
         if (!text) return;
+        // RAWY-132 INVARIANT: a click that does NOT change the selection is a dismiss, never a raise.
+        // Clicking inside an existing selection defers the browser's collapse (drag-drop candidate), so
+        // getSelection() still reports the old range here — raising the toolbar again is the RAWY-122
+        // "re-fires on the next tap" regression (made reachable during TTS by the reading band, whose
+        // overlay covers the reading text). Only a gesture that actually produced a NEW selection (drag
+        // or double-click-a-word → different text) reaches the raise; an unchanged one clears for real.
+        if (sel.toString() === this.downSelText) {
+          this.clearSelection();
+          this.selectionCb?.(null);
+          return;
+        }
         const range = sel.getRangeAt(0);
         let cfi: string;
         try {
@@ -652,6 +672,17 @@ export class FoliateController {
     });
     view.addEventListener("show-annotation", (e: any) => {
       const { value, index, range } = e.detail;
+      // RAWY-132: the TTS reading indicators (sard-reading / sard-reading-word) are transient overlays,
+      // NOT annotations — but the overlayer's geometric hitTest still emits show-annotation when a click
+      // lands within the reading band's rects (RAWY-126). Surfacing that as an annotation hit sets a
+      // bogus active with no popover AND skips clearSelection, so a click on the reading text could leave
+      // a lingering selection that re-fires the toolbar. Treat a tap on a reading overlay like a tap on
+      // plain text: dismiss the popover + clear the real selection, never emit an annotation hit.
+      if (typeof value === "string" && value.startsWith("sard-reading")) {
+        this.clearSelection();
+        this.selectionCb?.(null);
+        return;
+      }
       this.showCb?.({ cfi: value, rect: this.rangeRectInParent(index, range) });
     });
     view.addEventListener("create-overlay", (e: any) => {

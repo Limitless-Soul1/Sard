@@ -70,6 +70,19 @@ html, body, #root {
   font-weight: var(--ui-weight, 400); /* RAWY-91: App-font weight baseline (inherited by chrome) */
 }
 
+/* RAWY-134 (B): thin, on-brand scrollbars everywhere, replacing the generic OS bars (reading area,
+   Contents/Notes/Search panels, library, settings — every scroll surface). `scrollbar-color` is an
+   INHERITED property, so setting it on :root also themes the reading area's scroll, which lives in
+   foliate's CLOSED shadow root that a `::-webkit-scrollbar` rule can't reach — an inherited value
+   crosses that boundary. The thumb is a quiet tint of the theme text (so it adapts to light/dark and
+   all 15 themes) and the track is transparent so the bar melts into the paper/chrome. `scrollbar-width`
+   is NOT inherited, so it's set on every element to make the app-shell bars thin (it only affects the
+   ones that actually scroll). Native scrollbars stay fully draggable/functional — this only restyles
+   them, it doesn't hide or replace them. The book iframe (a separate document) is themed to match in
+   injectedCss.ts, since inherited values don't cross the frame boundary. */
+:root { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text) 32%, transparent) transparent; }
+* { scrollbar-width: thin; }
+
 /* ---- Reader layout (RAWY-14, band C) ---- */
 /* RAWY-89: force a stable LTR positioning context for the whole reading area (like the chrome bar,
    which pins LTR for the same reason — .rc-top). In an Arabic (RTL) UI the reading area inherited

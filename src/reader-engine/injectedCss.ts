@@ -314,6 +314,10 @@ export function buildReadingCss(
   revealLabels?: RevealLabels,
 ): string {
   const rl = revealLabels ?? DEFAULT_REVEAL_LABELS;
+  // RAWY-134 (B): the reading iframe's scrollbar thumb tracks the theme INK (a per-book text colour
+  // wins, then the theme's own) so it stays visible on dark paper — `currentColor` on the iframe's
+  // <html> is the default black under a forced-background theme, which would vanish on a dark page.
+  const scrollInk = style.textColor || theme?.colors?.text || "currentColor";
   // Resolve each slot to a source URL. Built-in → its bundled file; imported → its asset URL
   // (RAWY-44; falls back to the built-in default if the imported font is missing/unloaded).
   const latBuiltin = isBuiltinLatin(style.latinFont) ? LATIN_FONTS[style.latinFont] : undefined;
@@ -401,6 +405,11 @@ export function buildReadingCss(
        (RAWY-25): in scrolled mode foliate makes the section full-height and the container
        scrolls, so forcing height:100%/overflow:hidden here would clip the scroll. */
     html, body { margin: 0; box-sizing: border-box; }
+    /* RAWY-134 (B): thin, on-brand scrollbar for the reading iframe's OWN scroll (a wide table/pre can
+       overflow horizontally), matched to the app-shell bars (global.css). The app's inherited
+       scrollbar-color doesn't cross the frame boundary, so set it here from the reading ink (scrollInk)
+       so it tracks the theme/paper. Still a real, draggable scrollbar — only restyled. */
+    html, body { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, ${scrollInk} 30%, transparent) transparent; }
     ${style.flowMode === "paged" ? "html, body { height: 100%; overflow: hidden; }" : ""}
     /* MARGINS are applied on the CHROME side (RAWY-36): foliate's paginator sets html padding
        inline with !important in BOTH scrolled + paged modes, which overrode an injected

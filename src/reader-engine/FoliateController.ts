@@ -374,6 +374,27 @@ function markInBodyHeading(doc: Document, tocLabel: string | null): void {
   }
 }
 
+// RAWY-134 (A): a "…"-only scene-break line (neutral bidi chars — dots, asterisks, dashes, bullets)
+// aligns LEFT in an RTL book when the line carries dir="auto": auto/plaintext direction falls back to
+// LTR for a paragraph with NO strong-directional character, overriding the book's inherited RTL base
+// (Sard already injects `direction:rtl` for RTL books, but a per-line dir="auto" wins — confirmed in
+// the engine: `dir=auto` + "…" resolves LTR, and even unicode-bidi:plaintext can't rescue it). A neutral
+// line WITHOUT dir="auto" correctly inherits RTL. So, in an RTL book only, force short neutral-only leaf
+// lines to the book direction so they align RIGHT with the surrounding text. Strong-typed lines (Arabic
+// OR Latin) keep their own inferred direction; text-align is left untouched, so an intentionally centered
+// or otherwise book-aligned break is preserved — only the default-neutral case is corrected.
+function alignNeutralLines(doc: Document, dir?: string): void {
+  if (dir !== "rtl") return; // LTR books: a neutral line falling to the left is already correct
+  const STRONG = /\p{L}/u; // any letter → a strong-directional line; leave it to the bidi algorithm
+  const blocks = doc.querySelectorAll<HTMLElement>("p, div, li, blockquote, h1, h2, h3, h4, h5, h6");
+  for (const el of blocks) {
+    if (el.getAttribute("dir") === "rtl") continue; // already correct
+    const t = (el.textContent ?? "").trim();
+    if (!t || t.length > 16 || STRONG.test(t)) continue; // empty / a long container / has real text → skip
+    el.setAttribute("dir", "rtl"); // a short neutral-only line → follow the book's RTL direction
+  }
+}
+
 async function ensureFoliateDefined(): Promise<void> {
   if (customElements.get("foliate-view")) return;
   await new Promise<void>((resolve, reject) => {
@@ -593,6 +614,7 @@ export class FoliateController {
       this.contentDoc = doc; // RAWY-122: kept so clearSelection() can drop a lingering text selection
       wrapTashkil(doc); // enable the diacritics toggle for this section
       markInBodyHeading(doc, sectionTocLabel(view, index)); // RAWY-67: hide-titles catches this too
+      alignNeutralLines(doc, this.dir); // RAWY-134 (A): "…"-only scene breaks follow the book's RTL side
       // RAWY-70: the two-step reveal for the hide-first-line placeholder. Handled from the parent
       // frame (the content iframe runs no scripts, RAWY-64) via cross-frame DOM access, like the
       // handlers below. Per-instance + reset-on-navigation is automatic: each section is a fresh

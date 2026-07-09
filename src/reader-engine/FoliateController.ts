@@ -455,6 +455,57 @@ function normalizeForSearch(s: string): string {
     .replace(/\s+/g, ""); // drop all whitespace (rescues one-glyph-per-item text layers)
 }
 
+// RAWY-139: locate a search hit's TEXT in the RENDERED section doc and return a Range on it. A search
+// CFI is computed on foliate's raw `createDocument()`, but the rendered doc's structure differs (the
+// RAWY-70 hide-first-line placeholder is inserted, etc.), so the CFI's element/offset can point at the
+// wrong (shorter) node → `CFI.toRange` throws and the gold flash is silently skipped. The excerpt's
+// pre/match/post is exact, so we re-find it here, tolerantly: normalise both sides (drop whitespace +
+// tashkil, RAWY-88's `normalizeForSearch`) so diacritics/spacing can't defeat the match, using the
+// pre/post context to pick the right occurrence, then map the normalised hit back to a real DOM Range.
+function findMatchRange(doc: Document, pre: string, match: string, post: string): Range | null {
+  const m = match ?? "";
+  if (!m) return null;
+  const preW = (pre ?? "").slice(-40); // a context window keeps the needle unique without being unwieldy
+  const postW = (post ?? "").slice(0, 40);
+  const needle = normalizeForSearch(preW + m + postW);
+  const matchStart = normalizeForSearch(preW).length;
+  const matchLen = normalizeForSearch(m).length;
+  if (!needle || !matchLen) return null;
+  // Normalised concatenation of the section's text, with every normalised char mapped back to its
+  // source (text node + offset) so we can rebuild a real Range from a normalised index.
+  let norm = "";
+  const nodes: Text[] = [];
+  const offs: number[] = [];
+  try {
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+    let n: Node | null;
+    while ((n = walker.nextNode())) {
+      const t = n as Text;
+      const s = t.data;
+      for (let i = 0; i < s.length; i++) {
+        const nc = normalizeForSearch(s[i]); // 0 chars (whitespace/tashkil), 1, or (rarely) more
+        for (let k = 0; k < nc.length; k++) { norm += nc[k]; nodes.push(t); offs.push(i); }
+      }
+    }
+  } catch {
+    return null;
+  }
+  const idx = norm.indexOf(needle);
+  if (idx < 0) return null;
+  const start = idx + matchStart;
+  const endIdx = start + matchLen;
+  if (start >= nodes.length) return null;
+  try {
+    const range = doc.createRange();
+    range.setStart(nodes[start], offs[start]);
+    if (endIdx < nodes.length) range.setEnd(nodes[endIdx], offs[endIdx]);
+    else { const last = nodes[nodes.length - 1]; range.setEnd(last, last.data.length); }
+    return range.collapsed ? null : range;
+  } catch {
+    return null;
+  }
+}
+
 export class FoliateController {
   private view: any | null = null;
   private style: ReadingStyle | null = null;
@@ -1506,53 +1557,92 @@ export class FoliateController {
   /** RAWY-88: jump to a search hit and flash it (gold highlight for ~2s, then fade) — the panel stays
    *  open for stepping through results. */
   private flashTimer = 0;
-  private flashItem: { value: string; color: string } | null = null; // RAWY-138: the live flash (to drop on the next hit)
+  private flashRemove: (() => void) | null = null; // RAWY-138/139: removes the live flash (any draw path)
   private searchNavGen = 0; // RAWY-138: supersede an in-flight hit when a newer result is clicked
-  async goToSearchHit(cfi: string): Promise<void> {
+  async goToSearchHit(cfi: string, excerpt?: { pre: string; match: string; post: string }): Promise<void> {
     const view = this.view;
     if (!view) return;
     const gen = ++this.searchNavGen; // RAWY-138: this call's generation — a newer click bumps it
     // RAWY-138: drop the PREVIOUS flash immediately so rapid stepping never stacks stale gold overlays
     // (the old flashTimer only cancelled its own removal, leaving earlier flashes on screen forever).
     if (this.flashTimer) { clearTimeout(this.flashTimer); this.flashTimer = 0; }
-    if (this.flashItem) { try { view.deleteAnnotation?.(this.flashItem); } catch { /* ignore */ } this.flashItem = null; }
-    // 1) NAVIGATE — first and UNCONDITIONALLY; the jump never awaits fonts, so a result is reached at once.
-    await view.goTo?.(cfi);
-    if (gen !== this.searchNavGen) return; // a newer result was clicked — don't settle/flash a stale hit
-    // 2) FLASH — after the jump, on SETTLED geometry (RAWY-137: `goTo` resolves while the target section is
-    // still laying out and its font still loading, so the paginator has not yet run its
-    // `fonts.ready → expand → overlayer.redraw()`; drawing now paints the flash ~1000px off the text, and
-    // the one-time redraw can't fix a flash registered after it fires → stuck wrong). We still settle the
-    // font before drawing — but it must NEVER block or hang the navigation (RAWY-138): a section that
-    // UNLOADS mid-await leaves a `fonts.ready` that never resolves, and rapid clicks would pile up pending
-    // awaits. So race `fonts.ready` against a short timeout (it resolves at once if the font is already
-    // loaded, keeping RAWY-137's correct first paint; it can never hang), and bail the moment a newer hit
-    // supersedes this one. If the timeout wins for a genuinely slow font, foliate's own redraw — which now
-    // fires AFTER this (registered) flash — still corrects it. The jump is unaffected either way.
-    try {
-      const v = view as unknown as {
-        resolveNavigation?: (c: string) => Promise<{ index: number }>;
-        renderer?: { getContents?: () => { index: number; doc?: Document }[] };
+    if (this.flashRemove) { try { this.flashRemove(); } catch { /* ignore */ } this.flashRemove = null; }
+    const v = view as unknown as {
+      goTo?: (c: string) => Promise<{ index: number } | undefined>;
+      resolveNavigation?: (c: string) => { index: number; anchor?: (d: Document) => unknown } | undefined;
+      renderer?: {
+        getContents?: () => {
+          index: number;
+          doc?: Document;
+          overlayer?: { add?: (k: string, r: Range, d: unknown, o: unknown) => void; remove?: (k: string) => void };
+        }[];
+        scrollToAnchor?: (a: Range, select?: boolean) => unknown;
       };
-      const nav = await v.resolveNavigation?.(cfi);
-      if (gen !== this.searchNavGen) return;
-      const ct = v.renderer?.getContents?.().find((x) => x.index === nav?.index);
-      const fontsReady = ct?.doc?.fonts?.ready ?? Promise.resolve();
+      addAnnotation?: (a: { value: string; color: string }) => void;
+      deleteAnnotation?: (a: { value: string; color: string }) => void;
+    };
+    // 1) NAVIGATE — first and UNCONDITIONALLY; the jump never awaits fonts, so a result is reached at once.
+    await v.goTo?.(cfi);
+    if (gen !== this.searchNavGen) return; // a newer result was clicked — don't settle/flash a stale hit
+    // 2) Resolve the hit's RANGE in the rendered doc. The search CFI is computed on foliate's raw
+    // `createDocument()`, but the RENDERED doc's structure differs (RAWY-70's hide-first-line placeholder is
+    // inserted, etc.), so the CFI's element/offset can point at the WRONG node — `CFI.toRange` then throws
+    // (→ the gold flash is silently skipped, the owner's "jumped but no highlight") or resolves to the wrong
+    // text. So PREFER re-finding the hit's exact text in the rendered doc (findMatchRange, tolerant of
+    // tashkil/spacing); the CFI is only a last-resort fallback. resolveNavigation gives the section index
+    // reliably (only anchor(doc) throws, not the index lookup).
+    const nav = v.resolveNavigation?.(cfi);
+    const doc = nav ? v.renderer?.getContents?.().find((x) => x.index === nav.index)?.doc : undefined;
+    let range: Range | null = null;
+    if (doc && excerpt) range = findMatchRange(doc, excerpt.pre, excerpt.match, excerpt.post);
+    if (range) {
+      // Found the exact text — scroll to it so the passage is actually shown at the hit (goTo landed on
+      // the CFI's — possibly wrong — position, or failed to scroll at all when the CFI was out of bounds).
+      try { v.renderer?.scrollToAnchor?.(range); } catch { /* ignore */ }
+    } else {
+      // No excerpt / text not found → best-effort CFI range (may be off, but better than nothing).
+      try {
+        if (doc && typeof nav?.anchor === "function") {
+          const a = nav.anchor(doc);
+          if (a instanceof Range && !a.collapsed) range = a;
+        }
+      } catch {
+        /* CFI out of bounds in the rendered doc — leave range null; addAnnotation fallback below */
+      }
+    }
+    // 3) SETTLE the target font before drawing (RAWY-137: draw on POST-reflow geometry so the flash lands on
+    // the text — the range moves with the text as the font loads). It must NEVER block or hang the navigation
+    // (RAWY-138): a section that UNLOADS mid-await leaves a `fonts.ready` that never resolves, and rapid clicks
+    // would pile up pending awaits. So race `fonts.ready` against a short timeout (it resolves at once if the
+    // font is already loaded — RAWY-137's correct first paint) and bail the instant a newer hit supersedes.
+    try {
+      const fontsReady = doc?.fonts?.ready ?? Promise.resolve();
       await Promise.race([fontsReady, new Promise<void>((r) => setTimeout(r, 500))]);
       if (gen !== this.searchNavGen) return;
       await new Promise<void>((r) => requestAnimationFrame(() => r()));
       if (gen !== this.searchNavGen) return;
     } catch {
-      /* settle is best-effort — still flash below (correct for already-settled/cached-font sections) */
+      /* settle is best-effort */
     }
     if (gen !== this.searchNavGen) return;
+    // 4) DRAW the flash on the resolved range, DIRECTLY on the section's overlayer (the same overlayer.add
+    // `view.addAnnotation` reaches, minus the throwing CFI re-resolution), so it ALWAYS appears. Only fall
+    // back to `view.addAnnotation` when we have no range at all.
     try {
-      const item = { value: cfi, color: "#E8C36A" }; // gold ink (design) — resolveColor passes hex through
-      this.flashItem = item;
-      view.addAnnotation?.(item);
+      const ct = nav ? v.renderer?.getContents?.().find((x) => x.index === nav.index && x.overlayer) : undefined;
+      if (range && ct?.overlayer?.add) {
+        const overlayer = ct.overlayer;
+        overlayer.add?.(cfi, range, drawHighlight, { color: this.resolveColor("#E8C36A"), dark: this.theme?.dark ?? false });
+        this.flashRemove = () => { try { overlayer.remove?.(cfi); } catch { /* ignore */ } };
+      } else {
+        const item = { value: cfi, color: "#E8C36A" }; // gold ink (design) — resolveColor passes hex through
+        v.addAnnotation?.(item);
+        this.flashRemove = () => { try { v.deleteAnnotation?.(item); } catch { /* ignore */ } };
+      }
+      const removeFn = this.flashRemove;
       this.flashTimer = window.setTimeout(() => {
-        try { view.deleteAnnotation?.(item); } catch { /* ignore */ }
-        if (this.flashItem === item) this.flashItem = null;
+        try { removeFn?.(); } catch { /* ignore */ }
+        if (this.flashRemove === removeFn) this.flashRemove = null;
       }, 2000);
     } catch {
       /* flash is best-effort */

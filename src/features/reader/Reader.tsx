@@ -706,7 +706,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   };
   const onJumpHit = (hit: SearchHit) => {
     setActiveHitCfi(hit.cfi);
-    ctrlRef.current?.goToSearchHit(hit.cfi);
+    // RAWY-139: pass the split excerpt so goToSearchHit can re-find the hit's exact text in the rendered
+    // doc (the search CFI is unreliable there — the rendered structure differs from the search doc).
+    ctrlRef.current?.goToSearchHit(hit.cfi, { pre: hit.pre, match: hit.match, post: hit.post });
   };
   // the reader's position label for the toggle + "you are here" (current chapter, else a percent)
   const searchPositionLabel = chapterLabel || t("reader.percentRead", { p: localeNum(Math.round(fraction * 100), lang) });

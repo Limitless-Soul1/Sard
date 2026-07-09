@@ -93,6 +93,16 @@ export function setImportedFontUrlResolver(fn: (family: string) => string | null
 const isBuiltinLatin = (k: string): k is LatinFont => k in LATIN_FONTS;
 const isBuiltinArabic = (k: string): k is ArabicFont => k in ARABIC_FONTS;
 
+// RAWY-135: the book @font-face is injected into the foliate content iframe, which is a `blob:`
+// document. A built-in font's absolute-PATH url ("/fonts/Amiri-Regular.ttf") CANNOT be resolved
+// against a blob base — it fails to parse, the face loads with status "error", and every book falls
+// back to the same system serif, so picking Amiri vs Noto Naskh vs Aref Ruqaa vs IBM Plex looked
+// identical. Absolutise the bundled-font paths against the app origin (http://tauri.localhost) so the
+// url() resolves from inside the iframe. Imported fonts already carry an absolute asset-protocol URL
+// (RAWY-44), which doesn't start with "/", so they're left untouched.
+const absFontUrl = (u: string): string =>
+  u.startsWith("/") && typeof location !== "undefined" ? `${location.origin}${u}` : u;
+
 // Bold works on Amiri (real Amiri-Bold) + the variable faces; Amiri has only 400/700 so 500
 // snaps to the nearest. We never synth-bold Arabic by choice (faux-bold harms shaping).
 export const FONT_WEIGHTS = [400, 500, 700] as const;
@@ -322,8 +332,8 @@ export function buildReadingCss(
   // (RAWY-44; falls back to the built-in default if the imported font is missing/unloaded).
   const latBuiltin = isBuiltinLatin(style.latinFont) ? LATIN_FONTS[style.latinFont] : undefined;
   const arBuiltin = isBuiltinArabic(style.arabicFont) ? ARABIC_FONTS[style.arabicFont] : undefined;
-  const latSrc = latBuiltin?.regular ?? importedFontUrl(style.latinFont) ?? LATIN_FONTS.literata.regular;
-  const arSrc = arBuiltin?.regular ?? importedFontUrl(style.arabicFont) ?? ARABIC_FONTS.amiri.regular;
+  const latSrc = absFontUrl(latBuiltin?.regular ?? importedFontUrl(style.latinFont) ?? LATIN_FONTS.literata.regular);
+  const arSrc = absFontUrl(arBuiltin?.regular ?? importedFontUrl(style.arabicFont) ?? ARABIC_FONTS.amiri.regular);
   const latImported = !latBuiltin;
   const arImported = !arBuiltin;
 
@@ -351,7 +361,7 @@ export function buildReadingCss(
       arBuiltin?.bold && !arBuiltin.variable
         ? `@font-face {
       font-family: 'SardArabic';
-      src: url('${arBuiltin.bold}') format('truetype');
+      src: url('${absFontUrl(arBuiltin.bold)}') format('truetype');
       font-weight: bold;
       unicode-range: ${ARABIC_RANGE};
     }`

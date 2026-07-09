@@ -1506,41 +1506,53 @@ export class FoliateController {
   /** RAWY-88: jump to a search hit and flash it (gold highlight for ~2s, then fade) — the panel stays
    *  open for stepping through results. */
   private flashTimer = 0;
+  private flashItem: { value: string; color: string } | null = null; // RAWY-138: the live flash (to drop on the next hit)
+  private searchNavGen = 0; // RAWY-138: supersede an in-flight hit when a newer result is clicked
   async goToSearchHit(cfi: string): Promise<void> {
     const view = this.view;
     if (!view) return;
+    const gen = ++this.searchNavGen; // RAWY-138: this call's generation — a newer click bumps it
+    // RAWY-138: drop the PREVIOUS flash immediately so rapid stepping never stacks stale gold overlays
+    // (the old flashTimer only cancelled its own removal, leaving earlier flashes on screen forever).
+    if (this.flashTimer) { clearTimeout(this.flashTimer); this.flashTimer = 0; }
+    if (this.flashItem) { try { view.deleteAnnotation?.(this.flashItem); } catch { /* ignore */ } this.flashItem = null; }
+    // 1) NAVIGATE — first and UNCONDITIONALLY; the jump never awaits fonts, so a result is reached at once.
     await view.goTo?.(cfi);
-    // RAWY-137: `goTo` resolves while the TARGET section is still laying out and its reading font is still
-    // LOADING (the paginator resolves the section-load promise right after subscribing its own
-    // `doc.fonts.ready.then(expand)`, i.e. BEFORE fonts settle). The gold flash is `addAnnotation`, which
-    // computes its rect from `range.getClientRects()` immediately — so on that stale geometry the hit's
-    // range measured ~1000px too high (font "loading", body still growing), and the flash paints far from
-    // the text. foliate's OWN `fonts.ready → expand → overlayer.redraw()` corrects it, but only if that
-    // ONE-TIME event fires AFTER the flash was registered; when `addAnnotation` (async) lands after it, no
-    // further redraw ever runs and the flash is stuck wrong forever (the owner's non-deterministic "never
-    // corrects"). Fix: settle the target doc's fonts BEFORE drawing. `fonts.ready` is a PROMISE (resolves
-    // at once if the font is already loaded), so it can't be raced/missed; and because the paginator
-    // subscribed its `fonts.ready.then(expand)` FIRST (at section load), that reflow has already run by the
-    // time this await resolves — the geometry is final. One extra frame covers any trailing layout. The
-    // flash is drawn exactly once, on settled geometry → correct first paint, every time (no redraw race).
+    if (gen !== this.searchNavGen) return; // a newer result was clicked — don't settle/flash a stale hit
+    // 2) FLASH — after the jump, on SETTLED geometry (RAWY-137: `goTo` resolves while the target section is
+    // still laying out and its font still loading, so the paginator has not yet run its
+    // `fonts.ready → expand → overlayer.redraw()`; drawing now paints the flash ~1000px off the text, and
+    // the one-time redraw can't fix a flash registered after it fires → stuck wrong). We still settle the
+    // font before drawing — but it must NEVER block or hang the navigation (RAWY-138): a section that
+    // UNLOADS mid-await leaves a `fonts.ready` that never resolves, and rapid clicks would pile up pending
+    // awaits. So race `fonts.ready` against a short timeout (it resolves at once if the font is already
+    // loaded, keeping RAWY-137's correct first paint; it can never hang), and bail the moment a newer hit
+    // supersedes this one. If the timeout wins for a genuinely slow font, foliate's own redraw — which now
+    // fires AFTER this (registered) flash — still corrects it. The jump is unaffected either way.
     try {
       const v = view as unknown as {
         resolveNavigation?: (c: string) => Promise<{ index: number }>;
         renderer?: { getContents?: () => { index: number; doc?: Document }[] };
       };
       const nav = await v.resolveNavigation?.(cfi);
+      if (gen !== this.searchNavGen) return;
       const ct = v.renderer?.getContents?.().find((x) => x.index === nav?.index);
-      await ct?.doc?.fonts?.ready;
+      const fontsReady = ct?.doc?.fonts?.ready ?? Promise.resolve();
+      await Promise.race([fontsReady, new Promise<void>((r) => setTimeout(r, 500))]);
+      if (gen !== this.searchNavGen) return;
       await new Promise<void>((r) => requestAnimationFrame(() => r()));
+      if (gen !== this.searchNavGen) return;
     } catch {
       /* settle is best-effort — still flash below (correct for already-settled/cached-font sections) */
     }
+    if (gen !== this.searchNavGen) return;
     try {
-      if (this.flashTimer) clearTimeout(this.flashTimer);
       const item = { value: cfi, color: "#E8C36A" }; // gold ink (design) — resolveColor passes hex through
+      this.flashItem = item;
       view.addAnnotation?.(item);
       this.flashTimer = window.setTimeout(() => {
         try { view.deleteAnnotation?.(item); } catch { /* ignore */ }
+        if (this.flashItem === item) this.flashItem = null;
       }, 2000);
     } catch {
       /* flash is best-effort */

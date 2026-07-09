@@ -473,3 +473,40 @@ export function buildReadingCss(
     ${themeBlock(theme, flags, style.textColor)}
   `;
 }
+
+// RAWY-140: the PAINT-only slice of the reading CSS — the ink (per-book text colour / theme ink),
+// the tashkīl (diacritics) rule, and the reading iframe's scrollbar tint. None of these touch
+// geometry, so FoliateController pushes them through a dedicated in-book <style> updated IN PLACE
+// (see `writeDynamic`/`applyDynamic`) instead of foliate's `setStyles`, which re-declares @font-face
+// (a transient fallback-font flash) and re-runs `expand()` (a column re-layout → the visible jump).
+// buildReadingCss still emits these SAME rules so a freshly-loaded section is inked on its first
+// paint; the dynamic <style> is appended AFTER foliate's sheet, so a live colour/tashkīl change
+// shadows the (now-stale) copy in the geometry sheet until the next geometry re-inject re-syncs them.
+// Keep the ink/diacritics expressions here in step with `themeBlock` + `diacriticsRule` above.
+export function buildDynamicCss(style: ReadingStyle, theme?: Theme, flags?: BookThemeFlags): string {
+  const scrollInk = style.textColor || theme?.colors?.text || "currentColor";
+  const diacriticsRule =
+    style.diacritics === "dim"
+      ? ".sard-tashkil { opacity: 0.28; }"
+      : style.diacritics === "hide"
+        ? ".sard-tashkil { font-size: 0 !important; }"
+        : "";
+  let inkCss = "";
+  if (theme) {
+    const c = theme.colors;
+    const ink = style.textColor || c.text;
+    const forceBg = (flags?.overrideBookColor ?? false) || theme.dark;
+    const forceInk = forceBg || !!style.textColor;
+    const ID = ":not(#__sard_never__)";
+    const inkRules = `:root:root body${ID}, :root:root body${ID} *:not(a) { color: ${ink} !important; }
+           :root:root body${ID} a, :root:root body${ID} a * { color: ${c.accent} !important; }`;
+    // Matches themeBlock: forceInk → hard re-ink (the G-guarded placeholder colours in the geometry
+    // sheet still beat this by specificity); otherwise a plain base colour the book's own CSS wins over.
+    inkCss = forceInk ? inkRules : `html, body { color: ${ink}; }`;
+  }
+  return `
+    html, body { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, ${scrollInk} 30%, transparent) transparent; }
+    ${diacriticsRule}
+    ${inkCss}
+  `;
+}

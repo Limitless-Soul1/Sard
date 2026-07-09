@@ -12,9 +12,32 @@
 // a newer open() has superseded it — so a StrictMode double-invoke / remount can't race
 // two views (RAWY-10 hardening).
 
-import { buildReadingCss, type BookThemeFlags, type ReadingStyle, type RevealLabels } from "./injectedCss";
+import { buildReadingCss, buildDynamicCss, type BookThemeFlags, type ReadingStyle, type RevealLabels } from "./injectedCss";
 import type { Theme } from "../theme/tokens";
 import { extractChapterNumber, toWesternDigits } from "../lib/format";
+
+// RAWY-140: the per-doc PAINT sheet marker. buildDynamicCss's ink/tashkīl/scrollbar rules live in a
+// <style data-sard-dyn> appended AFTER foliate's own sheet, so colour/tashkīl changes update it in
+// place (a repaint) instead of re-injecting the whole sheet (foliate's setStyles → @font-face
+// re-declare + expand() → the flash/jump).
+const DYN_ATTR = "data-sard-dyn";
+// Reading-style fields that only affect PAINT (ink colour, tashkīl visibility) — applied via the
+// dynamic sheet with NO reflow. Every other field that appears in buildReadingCss (fonts, size/zoom,
+// line-height, alignment, weight, spacing, flow) is GEOMETRY → a real re-inject. Fields absent from
+// both lists (marginPx, pageWidth, pageFitWindow) are chrome-side (RAWY-36) — they touch neither.
+const PAINT_STYLE_KEYS: (keyof ReadingStyle)[] = ["textColor", "diacritics"];
+const GEOMETRY_STYLE_KEYS: (keyof ReadingStyle)[] = [
+  "zoom",
+  "arabicFont",
+  "latinFont",
+  "lineHeight",
+  "align",
+  "fontWeight",
+  "paragraphSpacing",
+  "firstLineIndent",
+  "letterSpacing",
+  "flowMode",
+];
 
 export interface RelocateInfo {
   cfi: string | null;
@@ -664,6 +687,7 @@ export class FoliateController {
       }
       this.contentDoc = doc; // RAWY-122: kept so clearSelection() can drop a lingering text selection
       wrapTashkil(doc); // enable the diacritics toggle for this section
+      this.writeDynamic(doc); // RAWY-140: this section's in-place PAINT sheet (colour/tashkīl skip re-inject)
       markInBodyHeading(doc, sectionTocLabel(view, index)); // RAWY-67: hide-titles catches this too
       alignNeutralLines(doc, this.dir); // RAWY-134 (A): "…"-only scene breaks follow the book's RTL side
       // RAWY-70: the two-step reveal for the hide-first-line placeholder. Handled from the parent
@@ -794,12 +818,35 @@ export class FoliateController {
     else await view.renderer.next();
   }
 
-  /** Re-inject the full stylesheet (typography + theme) — the single visual funnel. */
+  /** Re-inject the full stylesheet (typography + theme) — the single visual funnel. RAWY-140: this
+   *  path re-declares @font-face and re-runs foliate's expand() (a column re-layout), so it is used
+   *  ONLY for genuine geometry changes; colour/tashkīl go through the in-place dynamic sheet below. */
   private reinject(): void {
     if (this.style)
       this.view?.renderer?.setStyles?.(
         buildReadingCss(this.style, this.theme, this.flags, this.dir, this.revealLabels),
       );
+  }
+
+  // RAWY-140: (re)write the PAINT sheet for one content doc. Appended AFTER foliate's own <style> (so
+  // it wins the forced ink) and updated in place — a style recalc/repaint, never setStyles, so a
+  // colour/tashkīl change causes no @font-face re-resolve (FOUT flash) and no expand() (the jump).
+  private writeDynamic(doc: Document | undefined): void {
+    if (!this.style || !doc?.head) return;
+    let el = doc.head.querySelector<HTMLStyleElement>(`style[${DYN_ATTR}]`);
+    if (!el) {
+      el = doc.createElement("style");
+      el.setAttribute(DYN_ATTR, "");
+      doc.head.append(el); // last in <head> → beats foliate's sheet for the forced ink
+    }
+    el.textContent = buildDynamicCss(this.style, this.theme, this.flags);
+  }
+
+  /** RAWY-140: push the current PAINT sheet to every loaded content doc, in place (no reflow). */
+  private applyDynamic(): void {
+    const contents = this.view?.renderer?.getContents?.() as { doc?: Document }[] | undefined;
+    if (!contents) return;
+    for (const c of contents) this.writeDynamic(c?.doc);
   }
 
   /** RAWY-70: update the hide-first-line placeholder/reveal strings (UI-language change) + re-inject. */
@@ -828,10 +875,22 @@ export class FoliateController {
     }
   }
 
-  /** Update typography (size/font/spacing/margins/align/diacritics). */
+  /** Update typography (size/font/spacing/margins/align/diacritics). RAWY-140: a change that only
+   *  touches PAINT (font colour, tashkīl) is pushed through the in-book dynamic <style> with no
+   *  reflow; a GEOMETRY change (fonts/size/spacing/align/flow) still re-injects the full sheet
+   *  (which re-lays-out — inherent). A chrome-only change (margin/page-width) touches neither. */
   applyStyle(style: ReadingStyle): void {
+    const prev = this.style;
     this.style = style;
-    this.reinject();
+    if (!prev) {
+      this.reinject();
+      this.applyDynamic();
+      return;
+    }
+    const geom = GEOMETRY_STYLE_KEYS.some((k) => prev[k] !== style[k]);
+    const paint = PAINT_STYLE_KEYS.some((k) => prev[k] !== style[k]);
+    if (geom) this.reinject(); // inherent reflow — buildReadingCss also re-emits the fresh ink
+    if (geom || paint) this.applyDynamic(); // colour/tashkīl in place (no @font-face, no expand)
   }
 
   /** Update theme colours + book flags (override-colour, hide-titles). */
@@ -839,6 +898,7 @@ export class FoliateController {
     this.theme = theme;
     this.flags = flags;
     this.reinject();
+    this.applyDynamic(); // RAWY-140: theme ink → refresh the in-book PAINT sheet to match
     // Highlights store a semantic slot → re-draw them in the new theme's colours.
     for (const [cfi, color] of this.annotations) this.view?.addAnnotation({ value: cfi, color });
   }

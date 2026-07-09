@@ -114,6 +114,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const ttsStatus = useTts((s) => s.status); // RAWY-126: playing vs paused (paused keeps, doesn't follow)
   const ttsWords = useTts((s) => s.words); // RAWY-127: the sentence's Edge word timings ([] = Piper)
   const ttsWordIndex = useTts((s) => s.wordIndex); // RAWY-127: active word (drives the karaoke pill)
+  // RAWY-129 (B): a live mirror so the (stable) scroll-intent callback can branch on TTS without re-wiring.
+  const ttsActiveRef = useRef(false);
+  ttsActiveRef.current = ttsActive;
 
   const { status, dir, fraction, chapterLabel, chapterHref, error, style, bookTitle } = useReader();
   // RAWY-43: unified (all books share one style) vs per-book. Drives where changes are written
@@ -300,8 +303,22 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // RAWY-73: scroll intent (scrolled mode) — scroll down hides, scroll up shows. `wake`/`signalMove`/
   // `signalScroll` are stable, so this registers once and stays valid across section loads.
   useEffect(() => {
-    ctrlRef.current?.onActivity((x, y, isTap) => (isTap ? wake() : signalMove(x, y)));
-    ctrlRef.current?.onScrollIntent((down) => signalScroll(down));
+    const ctrl = ctrlRef.current;
+    ctrl?.onActivity((x, y, isTap) => (isTap ? wake() : signalMove(x, y)));
+    // RAWY-129 (B): while TTS plays, a scroll-DOWN must NOT hide the chrome — hiding reflows the page-host
+    // (top 70→0), and that one-time relayout (heaviest with the reading overlay present) is the first-scroll
+    // hitch the owner still felt after RAWY-128. The chrome still auto-hides on the idle timer (not tied to a
+    // scroll frame). Scroll-UP (show) is unaffected, so reaching for the bar still works.
+    ctrl?.onScrollIntent((down) => { if (ttsActiveRef.current && down) return; signalScroll(down); });
+    // RAWY-129 (A): after returning to a still-playing chapter (its overlay is recreated, units rebuilt with
+    // fresh ranges), re-draw the reading track at the CURRENT sentence/word from the store.
+    ctrl?.onReadingRedraw(() => {
+      const st = useTts.getState();
+      if (!st.active) return;
+      ctrl.showReadingHighlight(st.index);
+      ctrl.setReadingWords(st.index, st.words);
+      ctrl.showReadingWord(st.wordIndex);
+    });
   }, [wake, signalMove, signalScroll]);
 
   // When the basket empties (Clear, or removing the last passage) the top-bar button hides, so
@@ -880,7 +897,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     // reclaims the top the bar vacated (no dead band) and the Contents panel fills the space the
     // bars leave. Frozen offsets keyed to bars-present (page-host 70px top; panel 70/56) were the
     // A + C bugs; this class releases them. Safe now that the show-trigger only fires on intent (B).
-    <div className={`reader-root${chromeShown ? "" : " chrome-hidden"}`} style={rootVars}>
+    <div className={`reader-root${chromeShown ? "" : " chrome-hidden"}${ttsActive ? " tts-playing" : ""}`} style={rootVars}>
       {/* desk + centered page sheet (the book) + page-turn affordances */}
       <div className={`reader-desk${isPdf && pdfInvert ? " pdf-invert" : ""}`} style={deskStyle} onWheel={onDeskWheel}>
         {showChevrons && (

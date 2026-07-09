@@ -449,6 +449,10 @@ export class FoliateController {
   // `ttsUnitsIndex` is the section index these were built for (a chapter change invalidates them).
   private ttsUnits: { text: string; range: Range | null }[] = [];
   private ttsUnitsIndex = -1;
+  private ttsLang: string | undefined = undefined; // RAWY-129: lang the units were built with (for a rebuild)
+  // RAWY-129 (A): fired after the reading chapter's overlay is (re)created — the Reader re-draws the
+  // spotlight/pill at the current index, so returning to a still-playing chapter restores the track.
+  private readingRedrawCb: (() => void) | null = null;
   // RAWY-127 (word karaoke): sub-ranges of the current sentence, one per Edge word (null = unmapped),
   // rebuilt each time a sentence with word timing starts (in lockstep with the Reader's index effect).
   private wordRanges: (Range | null)[] = [];
@@ -650,8 +654,17 @@ export class FoliateController {
       const { value, index, range } = e.detail;
       this.showCb?.({ cfi: value, rect: this.rangeRectInParent(index, range) });
     });
-    view.addEventListener("create-overlay", () => {
+    view.addEventListener("create-overlay", (e: any) => {
       for (const [cfi, color] of this.annotations) view.addAnnotation({ value: cfi, color });
+      // RAWY-129 (A): the reading track (spotlight/pill) is drawn from Range objects tied to a section's
+      // doc; navigating away destroys that doc, so on RETURN the ranges are stale (0 client rects) and the
+      // overlay never comes back on its own (nothing re-fires the draw). When the TTS chapter's overlay is
+      // (re)created, rebuild its units against the FRESH doc and ask the Reader to redraw at the current
+      // sentence — so returning to a still-playing chapter restores the track wherever the audio now is.
+      if (this.ttsLang != null && this.ttsUnitsIndex >= 0 && e.detail?.index === this.ttsUnitsIndex) {
+        this.getChapterUnits(this.ttsLang); // fresh ranges for the reloaded doc (same order → still aligned)
+        this.readingRedrawCb?.();
+      }
     });
 
     this.style = opts.style;
@@ -980,6 +993,7 @@ export class FoliateController {
 
     this.ttsUnits = units;
     this.ttsUnitsIndex = content?.index ?? -1;
+    this.ttsLang = lang; // RAWY-129: remember it so a return-to-chapter rebuild segments identically
     return units;
   }
 
@@ -1037,6 +1051,12 @@ export class FoliateController {
       const t = norm(segment);
       if (t) out.push({ text: t, range: makeRange(startIndex, startOffset, endIndex, endOffset) });
     }
+  }
+
+  /** RAWY-129 (A): register the Reader's redraw — invoked after the TTS chapter's overlay is (re)created
+   *  (a return to the still-playing chapter) so the spotlight/pill re-attach at the current sentence. */
+  onReadingRedraw(cb: () => void): void {
+    this.readingRedrawCb = cb;
   }
 
   // ---- RAWY-126: the sentence "spotlight" reading highlight (transient; never persisted) ----

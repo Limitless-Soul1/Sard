@@ -629,6 +629,16 @@ export class FoliateController {
           this.clearSelection();
           this.selectionCb?.(null);
         }
+        // RAWY-136: F11 must toggle fullscreen from ANYWHERE, including with focus inside the book.
+        // The content iframe is a separate frame, so its keydown does NOT bubble to the parent `window`
+        // where App.tsx's fullscreen toggle listens — F11 "only worked from the app chrome". This
+        // listener runs in the parent context (cross-frame DOM), so re-dispatch the key on the parent
+        // window and App.tsx's single toggle (which owns the enter/exit state) handles it. preventDefault
+        // stops the iframe's own F11 default first.
+        else if (ev.key === "F11") {
+          ev.preventDefault();
+          window.dispatchEvent(new KeyboardEvent("keydown", { key: "F11" }));
+        }
       });
       // Scrolled mode: the chapter-boundary "new gesture to advance" handler (RAWY-25).
       if (this.scrolledMode)

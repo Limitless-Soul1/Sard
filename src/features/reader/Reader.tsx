@@ -125,7 +125,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // THEME is per-book (RAWY-40) — read from `bookThemeId`, not the global store. Override-book-
   // colour + hide-chapter-titles stay GLOBAL flags (set in Global Settings / chapters panel).
   const { overrideBookColor, hideChapterTitles, hideFirstLine, setHideTitles, setHideFirstLine } = useTheme();
-  const { visible: chromeVisible, wake, signalMove, signalScroll, setHold } = useChromeOnIntent();
+  const { visible: chromeVisible, signalMove, signalScroll, setHold } = useChromeOnIntent();
 
   const openBook = useCallback(async (target: OpenTarget) => {
     const set = useReader.getState().set;
@@ -295,13 +295,19 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     [settingsOpen, annoOpen, basketOpen, searchOpen, setHold],
   );
 
-  // RAWY-72: wake the auto-hiding chrome on pointer activity inside the content iframe (which never
-  // reaches a window listener). A move goes through the jitter dedup; a tap always wakes.
-  // RAWY-73: scroll intent (scrolled mode) — scroll down hides, scroll up shows. `wake`/`signalMove`/
-  // `signalScroll` are stable, so this registers once and stays valid across section loads.
+  // RAWY-72: keep the auto-hiding chrome awake on pointer activity inside the content iframe (which never
+  // reaches a window listener). RAWY-133: a tap/click on the reading CONTENT is for reading or selecting
+  // text (incl. RAWY-132's click-to-dismiss), NOT chrome intent — it must not flash the bars. So a content
+  // TAP is now routed through the SAME top-edge reveal as a move (RAWY-118) rather than an unconditional
+  // wake: while the bar is shown any content activity keeps it awake; while hidden, only a reach into the
+  // top-edge zone brings it back (a mid-text tap/selection stays hidden). Deliberate reveals are unchanged
+  // — the top-edge zone, scroll-up (below), a keydown, and a tap on the app chrome/desk (the hook's own
+  // window `pointerdown` → wake) all still show the bars.
+  // RAWY-73: scroll intent (scrolled mode) — scroll down hides, scroll up shows. `signalMove`/`signalScroll`
+  // are stable, so this registers once and stays valid across section loads.
   useEffect(() => {
     const ctrl = ctrlRef.current;
-    ctrl?.onActivity((x, y, isTap) => (isTap ? wake() : signalMove(x, y)));
+    ctrl?.onActivity((x, y) => signalMove(x, y));
     // RAWY-73/130: scroll-down hides the bars, scroll-up shows them — the SAME during TTS now (RAWY-129
     // gated this off to dodge a reflow hitch; RAWY-130 removes the gate and instead pins the reading area
     // full-height during TTS via `.reader-root.tts-playing .page-host` (global.css), so the bars hide/show
@@ -316,7 +322,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       ctrl.setReadingWords(st.index, st.words);
       ctrl.showReadingWord(st.wordIndex);
     });
-  }, [wake, signalMove, signalScroll]);
+  }, [signalMove, signalScroll]);
 
   // When the basket empties (Clear, or removing the last passage) the top-bar button hides, so
   // close the now-orphaned tray too (RAWY-60).

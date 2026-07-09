@@ -76,7 +76,12 @@ export const THEMES: Record<ThemeId, Theme> = {
     dark: true,
     colors: {
       paperBg: "#000000",
-      surfaceBg: "#000000",
+      // RAWY-130 (C2): the DESK/app-bg was pure #000, so the reading margins + the strip below the
+      // Contents panel (which reserves space for the now-hidden bottom bar during TTS) showed an
+      // out-of-theme black corner against the #0E0E0E chrome/panels. Match the chrome so the desk is
+      // theme-consistent everywhere; the READING PAPER stays true #000 (the OLED win). This is the
+      // root fix that retires RAWY-129's per-spot `.reader-desk::after` fade.
+      surfaceBg: "#0E0E0E",
       chromeBg: "#0E0E0E",
       chromeBorder: "rgba(255,255,255,.10)",
       text: "#CFC8BA",

@@ -114,9 +114,6 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const ttsStatus = useTts((s) => s.status); // RAWY-126: playing vs paused (paused keeps, doesn't follow)
   const ttsWords = useTts((s) => s.words); // RAWY-127: the sentence's Edge word timings ([] = Piper)
   const ttsWordIndex = useTts((s) => s.wordIndex); // RAWY-127: active word (drives the karaoke pill)
-  // RAWY-129 (B): a live mirror so the (stable) scroll-intent callback can branch on TTS without re-wiring.
-  const ttsActiveRef = useRef(false);
-  ttsActiveRef.current = ttsActive;
 
   const { status, dir, fraction, chapterLabel, chapterHref, error, style, bookTitle } = useReader();
   // RAWY-43: unified (all books share one style) vs per-book. Drives where changes are written
@@ -305,11 +302,11 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   useEffect(() => {
     const ctrl = ctrlRef.current;
     ctrl?.onActivity((x, y, isTap) => (isTap ? wake() : signalMove(x, y)));
-    // RAWY-129 (B): while TTS plays, a scroll-DOWN must NOT hide the chrome — hiding reflows the page-host
-    // (top 70→0), and that one-time relayout (heaviest with the reading overlay present) is the first-scroll
-    // hitch the owner still felt after RAWY-128. The chrome still auto-hides on the idle timer (not tied to a
-    // scroll frame). Scroll-UP (show) is unaffected, so reaching for the bar still works.
-    ctrl?.onScrollIntent((down) => { if (ttsActiveRef.current && down) return; signalScroll(down); });
+    // RAWY-73/130: scroll-down hides the bars, scroll-up shows them — the SAME during TTS now (RAWY-129
+    // gated this off to dodge a reflow hitch; RAWY-130 removes the gate and instead pins the reading area
+    // full-height during TTS via `.reader-root.tts-playing .page-host` (global.css), so the bars hide/show
+    // by compositing over a stationary reading area — smooth, no page-host relayout).
+    ctrl?.onScrollIntent((down) => signalScroll(down));
     // RAWY-129 (A): after returning to a still-playing chapter (its overlay is recreated, units rebuilt with
     // fresh ranges), re-draw the reading track at the CURRENT sentence/word from the store.
     ctrl?.onReadingRedraw(() => {

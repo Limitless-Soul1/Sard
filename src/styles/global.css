@@ -90,24 +90,15 @@ html, body, #root {
   transition: padding 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 @media (prefers-reduced-motion: reduce) { .reader-desk { transition: none; } }
-/* RAWY-129 (C): while TTS plays, the reading-progress bottom bar (.rc-bottom) is hidden (the pill takes
-   over), so the raw desk background shows at the bottom — on a dark theme like True-Black the desk is
-   pure #000, an out-of-theme black band that collides with the (lighter) chapters panel. A theme-matched
-   (chrome-bg) fade at the bottom of the reading area restores a theme-consistent bottom while the pill is
-   up — the same visual role the bottom bar played. `position:absolute` keeps it out of the desk's flex
-   flow; it fades to transparent so it never hard-edges over the text. Only shown when `tts-playing`. */
-.reader-desk::after {
-  content: "";
-  position: absolute;
-  inset-inline: 0;
-  bottom: 0;
-  height: 0;
-  pointer-events: none;
-  background: linear-gradient(to top, color-mix(in srgb, var(--chrome-bg) 92%, transparent), transparent);
-  transition: height 0.22s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.reader-root.tts-playing .reader-desk::after { height: 76px; }
-@media (prefers-reduced-motion: reduce) { .reader-desk::after { transition: none; } }
+/* RAWY-130 (D): while TTS plays, keep the reading area at its full-height (top:0) OVERLAY layout — the
+   chrome bars slide over it and slide away without ever changing `.page-host`'s top inset. That kills the
+   RAWY-129 "B" first-scroll hitch (a scroll-down that hid the bar used to move page-host top 70→0 and
+   jump/relayout the whole chapter) at its source, so scroll-to-hide can be RESTORED during TTS (the
+   RAWY-129 gate is removed) and stay smooth: the bar just composites away, the reading area doesn't move.
+   The bar overlays the top line only while shown — fine during read-aloud, where the follow keeps the
+   spoken sentence mid-view. (RAWY-129's per-spot `.reader-desk::after` bottom fade is retired — the
+   True-Black desk is now theme-matched at the root, see themes.ts surfaceBg.) */
+.reader-root.tts-playing .page-host { inset-block-start: 0; }
 
 /* the paper page sheet — measure + page-edge shadow (the book renders inside .page-host) */
 .page-sheet {

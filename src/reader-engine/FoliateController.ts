@@ -1510,6 +1510,31 @@ export class FoliateController {
     const view = this.view;
     if (!view) return;
     await view.goTo?.(cfi);
+    // RAWY-137: `goTo` resolves while the TARGET section is still laying out and its reading font is still
+    // LOADING (the paginator resolves the section-load promise right after subscribing its own
+    // `doc.fonts.ready.then(expand)`, i.e. BEFORE fonts settle). The gold flash is `addAnnotation`, which
+    // computes its rect from `range.getClientRects()` immediately — so on that stale geometry the hit's
+    // range measured ~1000px too high (font "loading", body still growing), and the flash paints far from
+    // the text. foliate's OWN `fonts.ready → expand → overlayer.redraw()` corrects it, but only if that
+    // ONE-TIME event fires AFTER the flash was registered; when `addAnnotation` (async) lands after it, no
+    // further redraw ever runs and the flash is stuck wrong forever (the owner's non-deterministic "never
+    // corrects"). Fix: settle the target doc's fonts BEFORE drawing. `fonts.ready` is a PROMISE (resolves
+    // at once if the font is already loaded), so it can't be raced/missed; and because the paginator
+    // subscribed its `fonts.ready.then(expand)` FIRST (at section load), that reflow has already run by the
+    // time this await resolves — the geometry is final. One extra frame covers any trailing layout. The
+    // flash is drawn exactly once, on settled geometry → correct first paint, every time (no redraw race).
+    try {
+      const v = view as unknown as {
+        resolveNavigation?: (c: string) => Promise<{ index: number }>;
+        renderer?: { getContents?: () => { index: number; doc?: Document }[] };
+      };
+      const nav = await v.resolveNavigation?.(cfi);
+      const ct = v.renderer?.getContents?.().find((x) => x.index === nav?.index);
+      await ct?.doc?.fonts?.ready;
+      await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    } catch {
+      /* settle is best-effort — still flash below (correct for already-settled/cached-font sections) */
+    }
     try {
       if (this.flashTimer) clearTimeout(this.flashTimer);
       const item = { value: cfi, color: "#E8C36A" }; // gold ink (design) — resolveColor passes hex through

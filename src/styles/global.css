@@ -2292,7 +2292,11 @@ html, body, #root {
    card landed shifted LEFT and overlapped the controls panel. Forcing `direction: ltr` pins the
    inner block to the physical left so the transform-origin is correct; the card sets its OWN
    `dir` for its Arabic text, so content still reads RTL. overflow:hidden clips any sub-px bleed. */
-.pc-scale { position: relative; direction: ltr; overflow: hidden; }
+/* RAWY-153: flex-shrink:0 so a GROWN card's scale box keeps its full (naturalH·scale) height. As a
+   flex child of the stage column it otherwise shrinks to fit, and its overflow:hidden then clips the
+   card's bottom while the stage never overflows → no scrollbar. Keeping the height lets the stage
+   scroll (overflow-y:auto + safe-center on `.pc-stage`) so the whole tall card is reachable. */
+.pc-scale { position: relative; direction: ltr; overflow: hidden; flex-shrink: 0; }
 .pc-card { position: relative; overflow: hidden; border-radius: 5px; box-shadow: 0 22px 50px rgba(20, 14, 6, 0.32); display: flex; flex-direction: column; box-sizing: border-box; }
 .pc-quotemark { position: relative; overflow: visible; }
 /* RAWY-50: the quote area is flex:1 with min-height:0 + overflow:hidden, so a long quote can

@@ -657,7 +657,10 @@ export function PhotoComposer({
       <div className={`pc-modal${dark ? " dark" : ""}`} onPointerDown={(e) => e.stopPropagation()}>
         {/* stage / preview */}
         <div className="pc-stage">
-          <div className="pc-stage-label">{FORMATS.find((f) => f.key === format)!.label} · {dim.w}×{dim.h}</div>
+          {/* RAWY-153: show the ACTUAL export size, not the nominal format size. The card WIDTH is
+              fixed (dim.w) but its HEIGHT grows to keep all text (RAWY-150/152), so the export is
+              dim.w × (naturalH·EXPORT_RATIO); the label now matches what actually exports. */}
+          <div className="pc-stage-label">{FORMATS.find((f) => f.key === format)!.label} · {dim.w}×{Math.round(naturalH * EXPORT_RATIO)}</div>
           <div className="pc-scale" style={{ width: natW * scale, height: naturalH * scale }}>
             <div style={{ transform: `scale(${scale})`, transformOrigin: "top left", width: natW, height: naturalH }}>
               <PhotoCard

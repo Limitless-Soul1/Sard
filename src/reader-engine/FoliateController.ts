@@ -276,12 +276,41 @@ const IN_BODY_HEADING_MAX_LEN = 120;
 const MAX_HEADING_NUMBER_PREFIX = 20;
 const MAX_LEADING_HEADING_ELEMENTS = 5;
 
-function isChapterHeadingCandidate(rawText: string, realNum: number): boolean {
+// RAWY-143: a fold key for comparing a leading line to the section's TOC chapter TITLE. Reuses
+// normalizeForSearch (NFKC + strip tashkīl/tatweel + fold alef/ya/teh-marbuta + lowercase + drop
+// whitespace) and additionally drops every non-letter/number char (quotes, colons, dots, brackets),
+// so "'المبارك' الحقيقي والخيالي." and a bare "المبارك الحقيقي والخيالي" fold to the same key.
+function headingKey(s: string): string {
+  return normalizeForSearch(s).replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+// The TOC label's TITLE portion, keyed: strip a leading "<chapter-word?> <number> <sep>" run
+// ("الفصل 322 : ", "Chapter 5 - ", "324 : ") then fold. Empty when the label carries no title text.
+function tocTitleKey(tocLabel: string | null): string {
+  if (!tocLabel) return "";
+  return headingKey(toWesternDigits(tocLabel).replace(/^\D*\d+\s*[:.\-–—·|]*\s*/u, ""));
+}
+
+// A candidate line's TITLE portion, keyed: strip an OPTIONAL leading "<number> <sep>" ("323: ") — a
+// bare title line (no number, e.g. a split "NNN:" + title heading's second line) folds as-is.
+function lineTitleKey(text: string): string {
+  return headingKey(toWesternDigits(text).replace(/^\s*\d+\s*[:.\-–—·|]*\s*/u, ""));
+}
+
+// RAWY-67/68 + RAWY-143: is a leading block the chapter's heading (safe to hide as the "first line")?
+// TWO conservative signals, both GROUNDED in the section's own TOC entry so neither can fire on real
+// prose: (1) the line's leading number IS the chapter's TOC number (RAWY-67/68); OR (2) the line, after
+// an optional "NNN:" prefix, EXACTLY equals the chapter's TOC title (RAWY-143 — a title-repeat is exactly
+// the spoiler this hides; a real first sentence is never verbatim-equal to the short title). (2) catches
+// LOTM ch322 (inline number 323 diverges from TOC 322, but the title matches) and ch324 (the title on its
+// own line, no number). Both paths keep the ≤120-char length cap. Prefer MISSING a heading over eating text.
+function isChapterHeadingCandidate(rawText: string, realNum: number, tocTitle: string): boolean {
   const text = toWesternDigits(rawText).trim();
   if (!text || text.length > IN_BODY_HEADING_MAX_LEN) return false;
   const m = text.match(/\d+/);
-  if (!m || m.index == null || m.index > MAX_HEADING_NUMBER_PREFIX) return false;
-  return m[0] === String(realNum);
+  if (m && m.index != null && m.index <= MAX_HEADING_NUMBER_PREFIX && m[0] === String(realNum)) return true;
+  if (tocTitle && lineTitleKey(text) === tocTitle) return true;
+  return false;
 }
 
 // RAWY-68: candidates must be gathered at the BLOCK level (p/h1-h6), not by walking individual
@@ -384,11 +413,12 @@ function markInBodyHeading(doc: Document, tocLabel: string | null): void {
   if (!body || body.dataset?.sardHeadingScanned === "1") return;
   if (body.dataset) body.dataset.sardHeadingScanned = "1";
   const realNum = extractChapterNumber(tocLabel);
-  if (realNum == null) return; // no number to ground the match against — don't guess
+  if (realNum == null) return; // no number to ground the match against — don't guess (safety boundary)
+  const tocTitle = tocTitleKey(tocLabel); // RAWY-143: the TOC title key for the title-match fallback
   const blocks: Element[] = [];
   collectLeadingBlocks(body, MAX_LEADING_HEADING_ELEMENTS, blocks);
   for (const el of blocks) {
-    if (!isChapterHeadingCandidate(el.textContent ?? "", realNum)) break; // real prose starts here — stop
+    if (!isChapterHeadingCandidate(el.textContent ?? "", realNum, tocTitle)) break; // real prose starts here — stop
     if (HEADING_TAGS.has(el.tagName.toUpperCase())) continue; // a real heading — the title toggle owns it
     el.classList.add("sard-chapter-heading");
     // RAWY-70: put a placeholder immediately before the line so the reveal handler can find the

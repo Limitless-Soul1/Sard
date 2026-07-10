@@ -21,9 +21,32 @@ export function formatDims(key: CardFormat): { w: number; h: number } {
   return { w: f.w, h: f.h };
 }
 
-// What the user can show/hide on the card (design "SHOW ON CARD"). Brand ON by default.
+// RAWY-150: the card STYLE — the layout/ornament treatment, chosen independently of the PAPER
+// (theme). Every style recolours from the selected theme's tokens (paper + ink + accent + muted),
+// so any style pairs with any of the 16 themes. "minimal" is the original card (unchanged), so an
+// existing card looks exactly as before; the four new styles ADD to it (the additive invariant).
+export type CardStyle = "minimal" | "moonlit" | "gilded" | "manuscript" | "editorial";
+export const CARD_STYLES: CardStyle[] = ["minimal", "moonlit", "gilded", "manuscript", "editorial"];
+
+// RAWY-150: the quote text size. "auto" = fit-to-box (the original behaviour — short quotes grow,
+// long quotes shrink to fit the fixed card). The five presets XS–XL are a manual override: the
+// chosen size is used verbatim and, if the passage is long, the CANVAS GROWS to fit it — text is
+// never trimmed (design "grow the canvas, never trim"). Fractions are of the card width.
+export type TextSize = "auto" | "xs" | "s" | "m" | "l" | "xl";
+export const TEXT_SIZE_STEPS: Exclude<TextSize, "auto">[] = ["xs", "s", "m", "l", "xl"];
+export const TEXT_SIZE_FRACTIONS: Record<Exclude<TextSize, "auto">, number> = {
+  xs: 0.04,
+  s: 0.05,
+  m: 0.062,
+  l: 0.076,
+  xl: 0.092,
+};
+
+// What the user can show/hide on the card (design "SHOW ON CARD"). Brand ON by default. RAWY-150
+// added `time` as a second, independent switch beside `date`.
 export interface CardMeta {
   date: boolean;
+  time: boolean;
   title: boolean;
   chapter: boolean;
   author: boolean;
@@ -31,6 +54,7 @@ export interface CardMeta {
 }
 export const DEFAULT_META: CardMeta = {
   date: false,
+  time: false,
   title: true,
   chapter: true,
   author: true,
@@ -84,5 +108,17 @@ export function formatCardDate(d: Date, lang: string): string {
     }).format(d);
   } catch {
     return d.toISOString().slice(0, 10);
+  }
+}
+
+// RAWY-150: a localized "7:42 PM" / "١٩:٤٢" style time for the card meta line (its own toggle).
+export function formatCardTime(d: Date, lang: string): string {
+  try {
+    return new Intl.DateTimeFormat(lang === "ar" ? "ar" : "en", {
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(d);
+  } catch {
+    return d.toISOString().slice(11, 16);
   }
 }

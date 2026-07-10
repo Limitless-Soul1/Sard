@@ -2297,6 +2297,20 @@ html, body, #root {
    always reserved; the QUOTE fits (fit-to-box shrinks it), never the footer. */
 .pc-quote-wrap { position: relative; flex: 1; min-height: 0; overflow: hidden; display: flex; align-items: center; }
 .pc-quote { margin: 0; width: 100%; overflow-wrap: break-word; }
+/* RAWY-150: shared structure for the four new card styles (Moonlit / Gilded / Manuscript /
+   Editorial). .pc-col is the content column lifted above the decorative layer (borders, glow,
+   stars); the quote wrap inside it stays flex:1, so the fit-to-box / grow-the-canvas logic is the
+   same across all five styles. All ornaments recolour from the theme accent (inline color-mix). */
+.pc-col { position: relative; z-index: 1; flex: 1; min-height: 0; width: 100%; display: flex; flex-direction: column; }
+.pc-footcol { display: flex; flex-direction: column; align-items: center; gap: 0.55em; }
+.pc-footcol .pc-brand { justify-content: center; }
+.pc-divider { display: flex; align-items: center; justify-content: center; gap: 0.9em; }
+.pc-cartouche-row { display: flex; align-items: center; justify-content: center; gap: 0.7em; margin-bottom: 1em; }
+.pc-cartouche-row .pc-hair { flex: 1; height: 1px; max-width: 22%; }
+.pc-cartouche { display: inline-block; box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18); white-space: nowrap; }
+/* Editorial: the attribution is split along a baseline rule — credit leading, meta trailing. */
+.pc-ed-foot { display: flex; align-items: flex-end; justify-content: space-between; gap: 8%; }
+.pc-ed-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 0.55em; }
 /* Multi-passage card (RAWY-60): a stack of passages sized as one unit by the fit-to-box logic
    (font-size set on .pc-quote-multi; the separator + per-passage label are in `em` so they scale
    with it). The separator is the per-theme glyph; per-passage chapter labels appear only when the
@@ -2392,6 +2406,28 @@ html, body, #root {
 .pc-select:focus-visible { outline: none; border-color: var(--pc-accent); }
 .pc-select option { background: var(--pc-panel-bg); color: var(--pc-text); }
 .pc-select-caret { position: absolute; inset-inline-end: 12px; top: 50%; transform: translateY(-50%); color: var(--pc-muted); pointer-events: none; font-size: 0.6875rem; }
+/* RAWY-150: CARD STYLE picker — a wrap of pill buttons (the style is chosen independently of the
+   paper). And the TEXT SIZE stepper — −/+ around the five presets XS–XL. */
+.pc-styles { display: flex; flex-wrap: wrap; gap: 7px; }
+.pc-style {
+  border: 1px solid var(--pc-border); background: transparent; color: var(--pc-muted);
+  font: 500 0.75rem var(--ui-font); padding: 7px 12px; border-radius: 8px; cursor: pointer;
+}
+.pc-style:hover { color: var(--pc-text); }
+.pc-style.on { border-color: var(--pc-accent); color: var(--pc-accent); background: color-mix(in srgb, var(--pc-accent) 12%, transparent); font-weight: 600; }
+.pc-sizerow { display: flex; align-items: stretch; gap: 8px; }
+.pc-size-step {
+  flex: none; width: 34px; border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text);
+  font: 400 1.125rem var(--ui-font); line-height: 1; border-radius: 8px; cursor: pointer;
+}
+.pc-size-step:hover { border-color: var(--pc-muted); }
+.pc-size-presets { flex: 1; display: flex; gap: 4px; }
+.pc-size-preset {
+  flex: 1; border: 1px solid var(--pc-border); background: transparent; color: var(--pc-muted);
+  font: 600 0.6875rem var(--ui-font); padding: 8px 0; border-radius: 7px; cursor: pointer;
+}
+.pc-size-preset:hover { color: var(--pc-text); }
+.pc-size-preset.on { border-color: var(--pc-accent); color: var(--pc-accent); background: color-mix(in srgb, var(--pc-accent) 12%, transparent); }
 .pc-toggles { display: flex; flex-direction: column; gap: 13px; }
 .pc-toggle { display: flex; align-items: center; justify-content: space-between; font: 500 0.8125rem var(--ui-font); color: var(--pc-text); }
 .pc-switch { width: 36px; height: 21px; border: none; background: var(--pc-border); border-radius: 21px; position: relative; cursor: pointer; padding: 0; transition: background .15s; }

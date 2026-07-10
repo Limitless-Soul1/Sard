@@ -11,7 +11,7 @@
 // manual override (XS–XL) beside the original auto-fit — a long passage GROWS the canvas instead of
 // being trimmed. DATE and TIME are two independent switches. Everything the editor had is kept.
 
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toBlob } from "html-to-image";
 import { save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
@@ -90,6 +90,8 @@ function PhotoCard({
   const W = dim.w / EXPORT_RATIO;
   const H = dim.h / EXPORT_RATIO;
   const c = THEMES[themeId].colors;
+  const dark = THEMES[themeId].dark; // RAWY-152: the Moonlit style's night ornaments only make sense on dark papers
+  const crescentId = `pc-crescent-${useId().replace(/[^a-zA-Z0-9]/g, "")}`; // RAWY-152: unique mask id for the SVG crescent
   const arabic = data.dir === "rtl";
   const bookFont = arabic ? "'Amiri', serif" : "'Literata', serif";
   const metaFont = arabic ? "'Amiri', serif" : "'Inter', sans-serif";
@@ -291,8 +293,11 @@ function PhotoCard({
       </>
     );
   } else if (style === "moonlit") {
-    // Night sky: a glowing crescent + scattered stars (all in the theme accent, kept clear of the
-    // text) and a gilt gradient rule. The crescent is a CSS punch-out so it recolours to any paper.
+    // Night sky (RAWY-152): the crescent + glow + stars are the Moonlit style's signature, but they
+    // only read as a night sky on a DARK paper — on a light paper they'd be an out-of-place terracotta
+    // constellation, so they're GATED to dark papers. A light paper gets the same clean centred layout
+    // (gilt rule + centred credit) with no night ornaments, so it never looks broken. The gilt
+    // gradient rule (below) stays on every paper.
     const stars = [
       { x: 15, y: 18, r: 0.008, o: 0.9 },
       { x: 27, y: 11, r: 0.005, o: 0.55 },
@@ -304,24 +309,45 @@ function PhotoCard({
       { x: 24, y: 87, r: 0.005, o: 0.5 },
       { x: 76, y: 88, r: 0.006, o: 0.6 },
     ];
-    const d = s(0.14); // crescent diameter
+    const d = s(0.15); // crescent size
     inner = (
       <>
-        <div
-          className="pc-deco"
-          aria-hidden
-          style={{ position: "absolute", inset: 0, background: `radial-gradient(circle at 82% 14%, ${tint(26)}, transparent 55%)` }}
-        />
-        {stars.map((st, i) => (
-          <span
-            key={i}
-            aria-hidden
-            style={{ position: "absolute", left: `${st.x}%`, top: `${st.y}%`, width: s(st.r) * 2, height: s(st.r) * 2, borderRadius: "50%", background: c.accent, opacity: st.o }}
-          />
-        ))}
-        <div aria-hidden style={{ position: "absolute", top: s(0.075), right: s(0.09), width: d, height: d, borderRadius: "50%", background: c.accent, boxShadow: `0 0 ${s(0.06)}px ${tint(50)}` }}>
-          <div style={{ position: "absolute", width: "100%", height: "100%", borderRadius: "50%", background: c.paperBg, left: d * 0.3, top: -d * 0.05 }} />
-        </div>
+        {dark && (
+          <>
+            <div
+              className="pc-deco"
+              aria-hidden
+              style={{ position: "absolute", inset: 0, background: `radial-gradient(circle at 82% 14%, ${tint(26)}, transparent 55%)` }}
+            />
+            {stars.map((st, i) => (
+              <span
+                key={i}
+                aria-hidden
+                style={{ position: "absolute", left: `${st.x}%`, top: `${st.y}%`, width: s(st.r) * 2, height: s(st.r) * 2, borderRadius: "50%", background: c.accent, opacity: st.o }}
+              />
+            ))}
+            {/* RAWY-152: a clean SVG crescent — a TRUE transparent bite (the mask's black circle) so
+                the glow shows through the concave side, filled with the theme accent, a soft
+                drop-shadow halo. Replaces the RAWY-150 CSS punch-out whose paper-filled disc showed
+                as a hard blob over the glow. */}
+            <svg
+              viewBox="0 0 100 100"
+              width={d}
+              height={d}
+              aria-hidden
+              style={{ position: "absolute", top: s(0.075), right: s(0.09), overflow: "visible", filter: `drop-shadow(0 0 ${s(0.03)}px ${tint(60)})` }}
+            >
+              <defs>
+                <mask id={crescentId}>
+                  <rect width="100" height="100" fill="#000" />
+                  <circle cx="48" cy="52" r="46" fill="#fff" />
+                  <circle cx="64" cy="40" r="41" fill="#000" />
+                </mask>
+              </defs>
+              <rect width="100" height="100" fill={c.accent} mask={`url(#${crescentId})`} />
+            </svg>
+          </>
+        )}
         <div className="pc-col">
           <div
             className="pc-quotemark"
@@ -508,16 +534,22 @@ export function PhotoComposer({
   const dim = formatDims(format);
   const natW = dim.w / EXPORT_RATIO;
   const natH = dim.h / EXPORT_RATIO;
-  // RAWY-150: a manual text size can grow the card past its format height; measure the card's real
-  // (natural, pre-transform) height so the preview scales the WHOLE card into the stage. offsetHeight
-  // ignores the scale() transform, so it reads the true layout height after the fit/grow settles.
+  // RAWY-152: the preview SCALE is derived from the FORMAT dimensions ONLY (not the measured height).
+  // RAWY-150 divided by the measured grown height, which (a) MASKED the text-size change — a bigger
+  // font grew the card, so the scale shrank to cancel it, making the CARD (not the text) appear to
+  // change [issue 2] — and (b) made two formats that share a width + a content-driven height render
+  // identically [issue 4, the "stuck" resize]. A format-based scale gives each format a distinct,
+  // stable scale, so a text-size change visibly changes the TEXT and a format change always visibly
+  // resizes. `naturalH` (measured) still sizes the scaled WRAPPER so a card that GROWS past its format
+  // height gets its full height allocated and the stage scrolls to it (offsetHeight ignores the
+  // scale() transform → the true layout height after the fit/grow settles).
   const [naturalH, setNaturalH] = useState(natH);
   const measureKey = `${themeId}|${format}|${cardStyle}|${textSize}|${JSON.stringify(meta)}|${resolvedQuoteFont}|${data.quote.length}|${(data.passages ?? []).length}`;
   useLayoutEffect(() => {
     const el = cardRef.current;
     if (el) setNaturalH(el.offsetHeight);
   }, [measureKey]);
-  const scale = useMemo(() => Math.min(STAGE_MAX_W / natW, STAGE_MAX_H / naturalH), [natW, naturalH]);
+  const scale = useMemo(() => Math.min(STAGE_MAX_W / natW, STAGE_MAX_H / natH), [natW, natH]);
 
   const flash = (msg: string) => {
     setToast(msg);

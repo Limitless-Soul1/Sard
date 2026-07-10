@@ -2281,7 +2281,10 @@ html, body, #root {
 /* stage / preview */
 .pc-stage {
   flex: 1; background: var(--pc-stage-bg); display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 16px; position: relative; padding: 24px;
+  align-items: center; justify-content: safe center; gap: 16px; position: relative; padding: 24px;
+  /* RAWY-152: a manual text size can grow the card past the stage — scroll to it. `safe center`
+     centres the card when it fits and top-aligns when it overflows, so nothing is clipped. */
+  overflow-y: auto;
 }
 .pc-stage-label { font: 500 0.6875rem var(--ui-font); letter-spacing: .08em; color: var(--pc-muted); text-transform: uppercase; }
 /* The scale wrapper is a pure layout box that must NOT inherit the UI direction (RAWY-54): in

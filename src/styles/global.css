@@ -209,9 +209,9 @@ html, body, #root {
   pointer-events: none;
   opacity: 0.55; /* whisper-subtle */
   background:
-    url("/moonlit/crescent.svg")  95% 12% / 96px 96px no-repeat,
-    url("/moonlit/cloud.svg")     99% 42% / 210px 96px no-repeat,
-    url("/moonlit/cloud.svg")      2% 64% / 188px 86px no-repeat,
+    url("/moonlit/crescent.svg")     95% 12% / 96px 96px no-repeat,
+    url("/moonlit/cloud-gilded.svg") 99% 46% / 232px 106px no-repeat,
+    url("/moonlit/cloud-wisp.svg")    1% 70% / 210px 84px no-repeat,
     url("/moonlit/star.svg")      90% 27% / 15px 15px no-repeat,
     url("/moonlit/star.svg")      96% 56% / 13px 13px no-repeat,
     url("/moonlit/star.svg")      85% 75% / 12px 12px no-repeat,
@@ -244,22 +244,38 @@ html, body, #root {
   pointer-events: none;
   opacity: 0.85;
   background:
-    url("/moonlit/crescent.svg")  15% 21% / 124px 124px no-repeat,
-    url("/moonlit/cloud.svg")     32% 48% / 280px 128px no-repeat,
-    url("/moonlit/cloud.svg")      7% 76% / 230px 104px no-repeat,
+    /* cradle cloud (style 7) listed BEFORE the crescent so it passes IN FRONT of the moon's lower
+       half (cradling it) — centred under the crescent (crescent bg-pos 15% 21%, 124px). */
+    url("/moonlit/cloud-cradle.svg") 13% 27% / 190px 71px no-repeat,
+    url("/moonlit/crescent.svg")     15% 21% / 124px 124px no-repeat,
+    url("/moonlit/cloud-gilded.svg") 64% 40% / 252px 116px no-repeat,
+    url("/moonlit/cloud-wisp.svg")    5% 82% / 230px 92px no-repeat,
+    /* RAWY-149: stars distributed across the FULL width so the night sky fills the library evenly —
+       left-centre + a right-side field in the open area BELOW the top-right cover grid (covers stay
+       clear, opaque on top). */
     url("/moonlit/star.svg")       9% 34% / 18px 18px no-repeat,
     url("/moonlit/star.svg")      24% 16% / 13px 13px no-repeat,
     url("/moonlit/star.svg")      40% 30% / 15px 15px no-repeat,
     url("/moonlit/star.svg")      20% 58% / 14px 14px no-repeat,
-    url("/moonlit/star.svg")      44% 70% / 13px 13px no-repeat,
-    url("/moonlit/star.svg")      33% 88% / 12px 12px no-repeat,
+    url("/moonlit/star.svg")      44% 72% / 13px 13px no-repeat,
+    url("/moonlit/star.svg")      33% 90% / 12px 12px no-repeat,
+    url("/moonlit/star.svg")      60% 46% / 15px 15px no-repeat,
+    url("/moonlit/star.svg")      74% 62% / 13px 13px no-repeat,
+    url("/moonlit/star.svg")      88% 42% / 14px 14px no-repeat,
+    url("/moonlit/star.svg")      66% 82% / 12px 12px no-repeat,
+    url("/moonlit/star.svg")      82% 90% / 13px 13px no-repeat,
     url("/moonlit/star-dot.svg")   6% 48% / 7px 7px no-repeat,
     url("/moonlit/star-dot.svg")  30% 24% / 6px 6px no-repeat,
     url("/moonlit/star-dot.svg")  16% 44% / 6px 6px no-repeat,
-    url("/moonlit/star-dot.svg")  46% 52% / 6px 6px no-repeat,
-    url("/moonlit/star-dot.svg")  12% 68% / 5px 5px no-repeat,
+    url("/moonlit/star-dot.svg")  46% 54% / 6px 6px no-repeat,
+    url("/moonlit/star-dot.svg")  12% 70% / 5px 5px no-repeat,
     url("/moonlit/star-dot.svg")  38% 40% / 5px 5px no-repeat,
-    url("/moonlit/star-dot.svg")  26% 82% / 6px 6px no-repeat,
+    url("/moonlit/star-dot.svg")  26% 84% / 6px 6px no-repeat,
+    url("/moonlit/star-dot.svg")  56% 68% / 6px 6px no-repeat,
+    url("/moonlit/star-dot.svg")  92% 58% / 6px 6px no-repeat,
+    url("/moonlit/star-dot.svg")  78% 36% / 5px 5px no-repeat,
+    url("/moonlit/star-dot.svg")  70% 92% / 5px 5px no-repeat,
+    url("/moonlit/star-dot.svg")  94% 74% / 6px 6px no-repeat,
     url("/moonlit/star-dot.svg")  50% 92% / 5px 5px no-repeat,
     /* RAWY-148: centre the moon-glow ON the crescent (`15% 21%`, 124px image) — its real centre is
        `calc(15% + 43px) calc(21% + 36px)`, tracking the crescent at any window size so the glow halos

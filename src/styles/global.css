@@ -223,7 +223,12 @@ html, body, #root {
     url("/moonlit/star-dot.svg")  12% 41% / 7px 7px no-repeat,
     url("/moonlit/star-dot.svg")   6% 72% / 6px 6px no-repeat,
     url("/moonlit/star-dot.svg")  14% 61% / 6px 6px no-repeat,
-    radial-gradient(560px 400px at 97% 2%, rgba(230, 199, 122, 0.30), transparent 60%);
+    /* RAWY-148: the moon-glow must HALO the crescent, not float in a separate spot. The crescent is
+       positioned by `background-position: 95% 12%` (a 96px image → its CENTRE is offset ~half its size
+       from that %-point), whereas a radial-gradient `at %` is a DIRECT centre point, so equal %s don't
+       coincide. Centre the glow on the crescent's real centre — `calc(95% - 43px) calc(12% + 36px)`
+       (= 95%·(W-96)+48px etc.) — which tracks the crescent EXACTLY at any window size. */
+    radial-gradient(560px 400px at calc(95% - 43px) calc(12% + 36px), rgba(230, 199, 122, 0.30), transparent 60%);
 }
 /* LIBRARY — richer: crescent + a denser (tasteful) star field + soft clouds + corner glows, behind
    the cover grid (`.lib-main` holds the grid; covers are opaque on top → they stay clear).
@@ -256,7 +261,10 @@ html, body, #root {
     url("/moonlit/star-dot.svg")  38% 40% / 5px 5px no-repeat,
     url("/moonlit/star-dot.svg")  26% 82% / 6px 6px no-repeat,
     url("/moonlit/star-dot.svg")  50% 92% / 5px 5px no-repeat,
-    radial-gradient(700px 520px at 13% 16%, rgba(230, 199, 122, 0.24), transparent 60%),
+    /* RAWY-148: centre the moon-glow ON the crescent (`15% 21%`, 124px image) — its real centre is
+       `calc(15% + 43px) calc(21% + 36px)`, tracking the crescent at any window size so the glow halos
+       the moon. (The cool ambient glow below is NOT the moon-glow — it stays where it is.) */
+    radial-gradient(700px 520px at calc(15% + 43px) calc(21% + 36px), rgba(230, 199, 122, 0.24), transparent 60%),
     radial-gradient(520px 380px at 46% 84%, rgba(157, 192, 214, 0.10), transparent 62%);
 }
 

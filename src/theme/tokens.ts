@@ -5,6 +5,7 @@
 
 // The original 4 (RAWY-13) + 11 added in RAWY-29 (from docs/design/themes.json — the canonical
 // token export, since the design editing project ≠ the read-only MCP project). 15 total.
+// RAWY-145: + Moonlit Sky (gold-on-night, from the Claude Design handoff) = 16.
 export type ThemeId =
   | "ivory"
   | "sepia"
@@ -20,7 +21,8 @@ export type ThemeId =
   | "mulberry"
   | "charcoal"
   | "nocturne"
-  | "linen";
+  | "linen"
+  | "moonlit";
 
 // Highlight palette (RAWY-22): 8 semantic slots (was 5). Stored colours are EITHER one of
 // these slot names (adapts per theme) OR a literal #hex (a custom colour) — resolveColor

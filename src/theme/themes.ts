@@ -319,11 +319,46 @@ export const THEMES: Record<ThemeId, Theme> = {
       },
     },
   },
+
+  // ---- RAWY-145: Moonlit Sky — Phase 1 (COLOUR TOKENS only; Phase 2 adds the decorative SVG layer:
+  // crescent/stars/clouds/glow). A gold-on-night theme from the Claude Design handoff
+  // (docs/design/Moonlit Sky Library and Reader (standalone).html). Its richer token block (bg-app/base,
+  // surface primary/secondary/elevated/chrome/input/glass, text primary/secondary/muted/faint, gold
+  // accent ×3, borders ×4, gradients, shadow/glow) MAPS onto Sard's compact schema — no new machinery,
+  // no component redesign, purely a 16th preset:
+  //   • paperBg  ← the reader-paper gradient `linear-gradient(180deg,#0E1730,#121A2E 42%)` settles to
+  //     surface-primary #121A2E (a solid page/card surface); the cream ink reads crisply on it.
+  //   • surfaceBg ← --bg-base #0B1021 (the "library = solid" app background), kept CLOSE to the chrome
+  //     #0E1526 so the desk shows NO out-of-theme seam next to the panels (RAWY-130 True-Black lesson;
+  //     no pure #000 anywhere here).
+  //   • chromeBg ← --surface-chrome #0E1526 · chromeBorder ← --border-hairline · accent ← gold #E6C77A
+  //   • text ← --text-primary cream #F5E8C8 · muted ← --text-muted #8FA6C8 · selection ← --selection.
+  // The 8 highlight inks (gold/apricot/rose/berry/lilac/sky/teal/sage) equal the shared PALETTE; ink
+  // alpha 0.34 (dark-paper "wick", lightens not blots). Deferred to Phase 2 (no slot in this schema):
+  // --bg-app, surface secondary/elevated/input/glass, text secondary/faint, accent-deep/pale, the extra
+  // borders, the gradients, and shadow/glow — those drive the decorations, not the flat colour layer.
+  moonlit: {
+    id: "moonlit",
+    name: "Moonlit Sky",
+    dark: true,
+    highlightAlpha: 0.34,
+    colors: {
+      paperBg: "#121A2E",
+      surfaceBg: "#0B1021",
+      chromeBg: "#0E1526",
+      chromeBorder: "rgba(143,166,200,.14)",
+      text: "#F5E8C8",
+      muted: "#8FA6C8",
+      accent: "#E6C77A",
+      selection: "rgba(230,199,122,.26)",
+      highlight: PALETTE,
+    },
+  },
 };
 
 export const THEME_ORDER: ThemeId[] = [
   "ivory", "sepia", "slate", "trueblack", "sage", "rosequartz", "parchment", "dusk", "ink",
-  "espresso", "forestnight", "mulberry", "charcoal", "nocturne", "linen",
+  "espresso", "forestnight", "mulberry", "charcoal", "nocturne", "linen", "moonlit",
 ];
 export const DEFAULT_LIGHT: ThemeId = "ivory";
 export const DEFAULT_DARK: ThemeId = "trueblack";

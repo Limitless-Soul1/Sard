@@ -30,6 +30,10 @@ import {
   formatCardDate,
   formatCardTime,
   formatDims,
+  QUOTE_ALIGN_OPTS,
+  QUOTE_SPACINGS,
+  QUOTE_WEIGHTS,
+  spacingLineHeight,
   TEXT_SIZE_FRACTIONS,
   TEXT_SIZE_STEPS,
   type CardData,
@@ -37,6 +41,9 @@ import {
   type CardMeta,
   type CardPassage,
   type CardStyle,
+  type QuoteAlign,
+  type QuoteSpacing,
+  type QuoteWeight,
   type TextSize,
 } from "./photo";
 
@@ -72,6 +79,9 @@ function PhotoCard({
   format,
   style,
   textSize,
+  quoteWeight,
+  quoteSpacing,
+  quoteAlign,
   lang,
   quoteFont,
   cardRef,
@@ -81,7 +91,10 @@ function PhotoCard({
   themeId: ThemeId;
   format: CardFormat;
   style: CardStyle; // RAWY-150: the layout/ornament treatment (recolours from the theme tokens)
-  textSize: TextSize; // RAWY-150: "auto" = fit-to-box; a preset = a manual size that grows the canvas
+  textSize: TextSize; // RAWY-150/154: "auto" fills the fixed card; a preset CAPS the auto-fit size
+  quoteWeight: QuoteWeight; // RAWY-154: the quote's font weight (light 300 / regular 400 / bold 700)
+  quoteSpacing: QuoteSpacing; // RAWY-154: the quote's line spacing (tight / normal / relaxed)
+  quoteAlign: QuoteAlign; // RAWY-154: the quote's alignment ("auto" = the style's built-in default)
   lang: string;
   quoteFont: string; // RAWY-81 (#1): the quote's own resolved CSS font-family (book font by default)
   cardRef?: React.Ref<HTMLDivElement>;
@@ -96,7 +109,7 @@ function PhotoCard({
   const bookFont = arabic ? "'Amiri', serif" : "'Literata', serif";
   const metaFont = arabic ? "'Amiri', serif" : "'Inter', sans-serif";
   const s = (n: number) => W * n; // proportional px from the card width
-  const lineH = arabic ? 1.85 : 1.55;
+  const lineH = spacingLineHeight(quoteSpacing, arabic); // RAWY-154: "normal" = the prior 1.85/1.55
   // A tint of the theme accent — every ornament (rules, borders, glow, stars) rides on this so the
   // whole style recolours with the paper. color-mix is native in the WebView (Chromium).
   const tint = (pct: number) => `color-mix(in srgb, ${c.accent} ${pct}%, transparent)`;
@@ -130,53 +143,56 @@ function PhotoCard({
   const hasCredit = (meta.title && data.bookTitle) || subtitle;
   const hasFooter = datetime || meta.brand;
 
-  // Fit-to-box (auto): pick the LARGEST quote font (within bounds) whose text fits the reserved
-  // quote area — short quotes grow large, long quotes shrink to fit (never clipping the footer).
-  // Manual: use the chosen size verbatim; the wrap is overflow:visible + the card height is auto, so
-  // a long passage grows the canvas instead of being trimmed. fontSize is set imperatively so it
-  // survives theme re-renders (it is never in the JSX style prop).
+  // RAWY-154: AUTO-FIT to the FIXED card. The card ALWAYS keeps its format's aspect ratio (it never
+  // grows), and the quote is sized by a binary search to the LARGEST font that fills the reserved
+  // quote area without overflow. A manual XS–XL size is a CAP on that fit ("auto" fills maximally up
+  // to `base·1.7`); a long passage shrinks toward a low floor so ALL text stays — fixed aspect +
+  // keep-all-text via shrinking, never growing the card or trimming. fontSize is set imperatively so
+  // it survives theme re-renders (it is never in the JSX style prop).
   const wrapRef = useRef<HTMLDivElement>(null);
   const pRef = useRef<HTMLElement>(null); // the <p> (single) or the collection container (multi)
   const base = s(multi ? 0.06 : 0.066); // a collection starts a touch smaller (more to fit)
+  const cap = manual ? manualPx : base * 1.7; // manual = the maximum; auto fills up to this ceiling
+  const floor = s(0.012); // a low floor so even a long passage fits (kept, just small — pick a taller format)
   const metaKey = `${meta.title}${meta.author}${meta.chapter}${meta.date}${meta.time}${meta.brand}`;
   const passagesKey = passages.map((p) => `${p.text}|${p.chapterLabel ?? ""}`).join("¶");
   useLayoutEffect(() => {
     const wrap = wrapRef.current;
     const p = pRef.current;
     if (!wrap || !p) return;
-    if (manual) {
-      p.style.fontSize = `${manualPx}px`;
-      wrap.style.alignItems = topAlign ? "flex-start" : "center"; // never clip — the canvas grows
-      return;
-    }
-    let lo = base * 0.3; // extreme quotes shrink hard so the footer always survives
-    let hi = base * 1.7; // short quotes grow large
-    for (let i = 0; i < 10; i++) {
+    let lo = floor;
+    let hi = Math.max(cap, floor + 1);
+    for (let i = 0; i < 12; i++) {
       const mid = (lo + hi) / 2;
       p.style.fontSize = `${mid}px`;
       if (p.scrollHeight <= wrap.clientHeight) lo = mid;
       else hi = mid;
     }
     p.style.fontSize = `${lo}px`;
-    // If it STILL can't fit at the floor (an extreme passage for a small format), read from the
-    // TOP so it clips only the tail — never both ends — and the footer stays put.
+    // Absolute last resort — a passage too long to fit even at the floor (essentially unreachable for
+    // a selected quote): read from the TOP so it clips only the tail, never both ends.
     const clip = p.scrollHeight > wrap.clientHeight + 1;
     wrap.style.alignItems = topAlign || clip ? "flex-start" : "center";
-  }, [passagesKey, format, metaKey, chaptersDiffer, W, H, arabic, base, manual, manualPx, style, topAlign]);
+  }, [passagesKey, format, metaKey, chaptersDiffer, W, H, arabic, cap, floor, style, topAlign, quoteWeight, quoteSpacing, quoteAlign]);
 
-  // The quote block (single <p> or the multi-passage stack), refs attached. `align` is the text
-  // alignment; every style reuses this so the fit/grow logic is shared across all five.
-  const renderQuote = (align: "center" | "start") => (
+  // The quote block (single <p> or the multi-passage stack), refs attached. `align` is the STYLE's
+  // built-in alignment; RAWY-154 lets the user's WEIGHT / LINE-SPACING / ALIGNMENT overrides ride on
+  // top (alignment "auto" keeps the style default). The card is fixed-size, so the wrap always
+  // clips-guards (overflow:hidden) while the auto-fit keeps everything inside.
+  const renderQuote = (align: "center" | "start") => {
+    // "auto" alignment follows the style's built-in default; otherwise the user's choice wins.
+    const ta: React.CSSProperties["textAlign"] = quoteAlign === "auto" ? align : quoteAlign;
+    return (
     <div
       ref={wrapRef}
       className="pc-quote-wrap"
-      style={{ overflow: manual ? "visible" : "hidden", alignItems: topAlign ? "flex-start" : "center" }}
+      style={{ overflow: "hidden", alignItems: topAlign ? "flex-start" : "center" }}
     >
       {multi ? (
         <div
           ref={pRef as React.RefObject<HTMLDivElement>}
           className="pc-quote pc-quote-multi"
-          style={{ fontFamily: quoteFont, lineHeight: lineH, color: c.text, textAlign: align }}
+          style={{ fontFamily: quoteFont, fontWeight: quoteWeight, lineHeight: lineH, color: c.text, textAlign: ta }}
         >
           {passages.map((p, i) => (
             <div key={i} className="pc-passage-block">
@@ -185,7 +201,7 @@ function PhotoCard({
                   {sep}
                 </div>
               )}
-              <p className="pc-passage" style={{ fontWeight: 400 }}>
+              <p className="pc-passage" style={{ fontWeight: quoteWeight }}>
                 {p.text}
               </p>
               {chaptersDiffer && meta.chapter && p.chapterLabel && (
@@ -209,13 +225,14 @@ function PhotoCard({
         <p
           ref={pRef as React.RefObject<HTMLParagraphElement>}
           className="pc-quote"
-          style={{ fontFamily: quoteFont, fontWeight: 400, lineHeight: lineH, color: c.text, textAlign: align }}
+          style={{ fontFamily: quoteFont, fontWeight: quoteWeight, lineHeight: lineH, color: c.text, textAlign: ta }}
         >
           {passages[0].text}
         </p>
       )}
     </div>
-  );
+    );
+  };
 
   // The Sard brand mark (hoopoe + wordmark), coloured to taste per style.
   const brandRow = (color: string) => (
@@ -481,8 +498,7 @@ function PhotoCard({
       dir={data.dir}
       style={{
         width: W,
-        height: manual ? "auto" : H, // manual size grows the canvas; auto keeps the fixed format
-        minHeight: manual ? H : undefined,
+        height: H, // RAWY-154: the card ALWAYS keeps its format's fixed size — the quote auto-fits to it
         background: c.paperBg,
         color: c.text,
         padding: pad,
@@ -523,6 +539,11 @@ export function PhotoComposer({
   // RAWY-150: the card style + text size, independent of the paper (theme) and the quote font.
   const [cardStyle, setCardStyle] = useState<CardStyle>(initialCardStyle ?? "minimal");
   const [textSize, setTextSize] = useState<TextSize>(initialTextSize ?? "auto");
+  // RAWY-154: the quote's own text controls (weight / line spacing / alignment). Defaults reproduce
+  // the pre-RAWY-154 look — 400 weight, "normal" spacing, "auto" alignment (each style's default).
+  const [quoteWeight, setQuoteWeight] = useState<QuoteWeight>(400);
+  const [quoteSpacing, setQuoteSpacing] = useState<QuoteSpacing>("normal");
+  const [quoteAlign, setQuoteAlign] = useState<QuoteAlign>("auto");
   // RAWY-81 (#1): the quote's own font key — null means "follow the book font" (unchanged look).
   const [quoteFont, setQuoteFont] = useState<string | null>(initialQuoteFont ?? null);
   const customFonts = useFonts((s) => s.custom);
@@ -544,7 +565,7 @@ export function PhotoComposer({
   // height gets its full height allocated and the stage scrolls to it (offsetHeight ignores the
   // scale() transform → the true layout height after the fit/grow settles).
   const [naturalH, setNaturalH] = useState(natH);
-  const measureKey = `${themeId}|${format}|${cardStyle}|${textSize}|${JSON.stringify(meta)}|${resolvedQuoteFont}|${data.quote.length}|${(data.passages ?? []).length}`;
+  const measureKey = `${themeId}|${format}|${cardStyle}|${textSize}|${quoteWeight}|${quoteSpacing}|${quoteAlign}|${JSON.stringify(meta)}|${resolvedQuoteFont}|${data.quote.length}|${(data.passages ?? []).length}`;
   useLayoutEffect(() => {
     const el = cardRef.current;
     if (el) setNaturalH(el.offsetHeight);
@@ -641,6 +662,11 @@ export function PhotoComposer({
   };
 
   const dark = THEMES[themeId].dark;
+  // RAWY-154: which alignment the current style uses by default — so the ALIGNMENT control shows the
+  // effective selection while `quoteAlign` is "auto" (mirrors PhotoCard's per-style `align`: Editorial
+  // and LTR-Minimal read from the start, every other style centres).
+  const styleNaturalAlign: Exclude<QuoteAlign, "auto"> =
+    cardStyle === "editorial" || (cardStyle === "minimal" && data.dir !== "rtl") ? "start" : "center";
 
   // TEXT SIZE stepper: −/+ move through the five presets; either exits auto-fit (starting at M).
   const step = (dir: -1 | 1) => {
@@ -670,6 +696,9 @@ export function PhotoComposer({
                 format={format}
                 style={cardStyle}
                 textSize={textSize}
+                quoteWeight={quoteWeight}
+                quoteSpacing={quoteSpacing}
+                quoteAlign={quoteAlign}
                 lang={lang}
                 quoteFont={resolvedQuoteFont}
                 cardRef={cardRef}
@@ -736,8 +765,9 @@ export function PhotoComposer({
               </div>
             </div>
 
-            {/* RAWY-150: TEXT SIZE — Auto-fit (the original fit-to-box) or a manual XS–XL preset that
-                grows the canvas for a long passage instead of trimming it. */}
+            {/* RAWY-150/154: TEXT SIZE — Auto-fit fills the fixed-aspect card with the largest text
+                that fits; an XS–XL preset CAPS that size (smaller/airier) and still shrinks to fit a
+                long passage. The card never grows out of aspect and text is never trimmed. */}
             <div className="pc-group">
               <div className="pc-group-label">{t("photo.textSize")}</div>
               <label className="pc-toggle" style={{ marginBottom: 13 }}>
@@ -783,6 +813,50 @@ export function PhotoComposer({
                   ))}
                 </select>
                 <span className="pc-select-caret" aria-hidden>▾</span>
+              </div>
+            </div>
+
+            {/* RAWY-154: quote text controls — weight, line spacing, alignment (applied live to the
+                quote text, RTL-aware; alignment defaults to each style's built-in look). */}
+            <div className="pc-group">
+              <div className="pc-group-label">{t("photo.weight")}</div>
+              <div className="pc-seg">
+                {QUOTE_WEIGHTS.map((w) => (
+                  <button
+                    key={w}
+                    className={`pc-seg-btn${quoteWeight === w ? " on" : ""}`}
+                    style={{ fontWeight: w }}
+                    onClick={() => setQuoteWeight(w)}
+                  >
+                    {t(`photo.weight.${w}`)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="pc-group">
+              <div className="pc-group-label">{t("photo.spacing")}</div>
+              <div className="pc-seg">
+                {QUOTE_SPACINGS.map((sp) => (
+                  <button key={sp} className={`pc-seg-btn${quoteSpacing === sp ? " on" : ""}`} onClick={() => setQuoteSpacing(sp)}>
+                    {t(`photo.spacing.${sp}`)}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="pc-group">
+              <div className="pc-group-label">{t("photo.align")}</div>
+              <div className="pc-seg">
+                {QUOTE_ALIGN_OPTS.map((a) => (
+                  <button
+                    key={a}
+                    className={`pc-seg-btn${quoteAlign === a || (quoteAlign === "auto" && styleNaturalAlign === a) ? " on" : ""}`}
+                    onClick={() => setQuoteAlign(a)}
+                  >
+                    {t(`photo.align.${a}`)}
+                  </button>
+                ))}
               </div>
             </div>
 

@@ -42,6 +42,32 @@ export const TEXT_SIZE_FRACTIONS: Record<Exclude<TextSize, "auto">, number> = {
   xl: 0.092,
 };
 
+// RAWY-154: the card now ALWAYS keeps its format's fixed aspect ratio — the quote AUTO-FITS (the
+// largest font that fills the fixed card without overflow). "auto" fills it maximally; a preset
+// XS–XL is a CAP (the fit never exceeds it, and still shrinks a long passage to fit). The card never
+// grows out of aspect and text is never trimmed — a long passage shrinks (down to a low floor).
+
+// The quote's own font weight. Amiri ships 400/700 (so "light" ≈ regular for it); Literata/Inter
+// carry all three. Applied to the quote text; default 400 = the pre-RAWY-154 look.
+export type QuoteWeight = 300 | 400 | 700;
+export const QUOTE_WEIGHTS: QuoteWeight[] = [300, 400, 700];
+
+// Line spacing (line-height) for the quote. "normal" = the pre-RAWY-154 values (Arabic 1.85 / Latin
+// 1.55), so the default is a no-op; Tight/Relaxed step around it. Arabic wants more leading.
+export type QuoteSpacing = "tight" | "normal" | "relaxed";
+export const QUOTE_SPACINGS: QuoteSpacing[] = ["tight", "normal", "relaxed"];
+export function spacingLineHeight(sp: QuoteSpacing, arabic: boolean): number {
+  const set = arabic
+    ? { tight: 1.5, normal: 1.85, relaxed: 2.2 }
+    : { tight: 1.3, normal: 1.55, relaxed: 1.95 };
+  return set[sp];
+}
+
+// Quote alignment (RTL-aware via the CSS logical `start`: right for RTL, left for LTR). "auto" =
+// follow each card style's built-in alignment (zero regression); a chosen value overrides it.
+export type QuoteAlign = "auto" | "start" | "center" | "justify";
+export const QUOTE_ALIGN_OPTS: Exclude<QuoteAlign, "auto">[] = ["start", "center", "justify"];
+
 // What the user can show/hide on the card (design "SHOW ON CARD"). Brand ON by default. RAWY-150
 // added `time` as a second, independent switch beside `date`.
 export interface CardMeta {

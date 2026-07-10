@@ -2435,6 +2435,14 @@ html, body, #root {
 }
 .pc-size-preset:hover { color: var(--pc-text); }
 .pc-size-preset.on { border-color: var(--pc-accent); color: var(--pc-accent); background: color-mix(in srgb, var(--pc-accent) 12%, transparent); }
+/* RAWY-154: a 3-option segmented control — the quote WEIGHT / LINE SPACING / ALIGNMENT pickers. */
+.pc-seg { display: flex; gap: 6px; }
+.pc-seg-btn {
+  flex: 1; border: 1px solid var(--pc-border); background: transparent; color: var(--pc-muted);
+  font: 500 0.75rem var(--ui-font); padding: 8px 4px; border-radius: 8px; cursor: pointer; white-space: nowrap;
+}
+.pc-seg-btn:hover { color: var(--pc-text); }
+.pc-seg-btn.on { border-color: var(--pc-accent); color: var(--pc-accent); background: color-mix(in srgb, var(--pc-accent) 12%, transparent); font-weight: 600; }
 .pc-toggles { display: flex; flex-direction: column; gap: 13px; }
 .pc-toggle { display: flex; align-items: center; justify-content: space-between; font: 500 0.8125rem var(--ui-font); color: var(--pc-text); }
 .pc-switch { width: 36px; height: 21px; border: none; background: var(--pc-border); border-radius: 21px; position: relative; cursor: pointer; padding: 0; transition: background .15s; }

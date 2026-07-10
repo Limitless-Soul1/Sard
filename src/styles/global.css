@@ -194,7 +194,12 @@ html, body, #root {
    the DESK behind the centred, OPAQUE `.page-sheet`, so it can only ever show in the L/R margins +
    corners — never behind the reading text. Library take is RICHER; reader take is whisper-subtle (1b).
    ================================================================================================ */
-/* READER — dim crescent + a few margin stars + a top-left corner glow, OUTSIDE the text column. */
+/* READER — dim crescent + margin stars + side clouds + a corner glow, OUTSIDE the text column.
+   RAWY-147: the crescent + glow moved to the TOP-RIGHT margin — the LEFT margin is covered by the
+   Contents panel (open by default, RAWY-22), which hid the crescent; the right margin is reliably
+   clear (a right panel only opens transiently). Stars are denser (both margins — right always shows,
+   left shows when Contents is closed), 2 side clouds added, and the glow is stronger. Still behind the
+   opaque centred page sheet → the text column is never touched. */
 :root[data-theme="moonlit"] .reader-desk { isolation: isolate; }
 :root[data-theme="moonlit"] .reader-desk::before {
   content: "";
@@ -202,19 +207,29 @@ html, body, #root {
   inset: 0;
   z-index: -1; /* above the desk bg, behind the (opaque, centred) page sheet → margins/corners only */
   pointer-events: none;
-  opacity: 0.5; /* whisper-subtle */
+  opacity: 0.55; /* whisper-subtle */
   background:
-    url("/moonlit/crescent.svg")   4% 13% / 90px 90px no-repeat,
-    url("/moonlit/star.svg")       9% 33% / 16px 16px no-repeat,
-    url("/moonlit/star.svg")      92% 20% / 13px 13px no-repeat,
-    url("/moonlit/star-dot.svg")   5% 55% / 7px 7px no-repeat,
-    url("/moonlit/star-dot.svg")  95% 46% / 6px 6px no-repeat,
-    url("/moonlit/star.svg")      89% 70% / 12px 12px no-repeat,
-    url("/moonlit/star-dot.svg")  12% 78% / 6px 6px no-repeat,
-    radial-gradient(460px 320px at 6% 0%, rgba(230, 199, 122, 0.16), transparent 56%);
+    url("/moonlit/crescent.svg")  95% 12% / 96px 96px no-repeat,
+    url("/moonlit/cloud.svg")     99% 42% / 210px 96px no-repeat,
+    url("/moonlit/cloud.svg")      2% 64% / 188px 86px no-repeat,
+    url("/moonlit/star.svg")      90% 27% / 15px 15px no-repeat,
+    url("/moonlit/star.svg")      96% 56% / 13px 13px no-repeat,
+    url("/moonlit/star.svg")      85% 75% / 12px 12px no-repeat,
+    url("/moonlit/star-dot.svg")  93% 38% / 7px 7px no-repeat,
+    url("/moonlit/star-dot.svg")  98% 21% / 6px 6px no-repeat,
+    url("/moonlit/star-dot.svg")  88% 63% / 6px 6px no-repeat,
+    url("/moonlit/star.svg")       8% 29% / 15px 15px no-repeat,
+    url("/moonlit/star.svg")       5% 51% / 13px 13px no-repeat,
+    url("/moonlit/star-dot.svg")  12% 41% / 7px 7px no-repeat,
+    url("/moonlit/star-dot.svg")   6% 72% / 6px 6px no-repeat,
+    url("/moonlit/star-dot.svg")  14% 61% / 6px 6px no-repeat,
+    radial-gradient(560px 400px at 97% 2%, rgba(230, 199, 122, 0.30), transparent 60%);
 }
-/* LIBRARY — richer: crescent + a denser (tasteful) star field + a soft cloud + two corner glows,
-   behind the cover grid (`.lib-main` holds the grid; covers are opaque on top → they stay clear). */
+/* LIBRARY — richer: crescent + a denser (tasteful) star field + soft clouds + corner glows, behind
+   the cover grid (`.lib-main` holds the grid; covers are opaque on top → they stay clear).
+   RAWY-147: the crescent + clouds moved BELOW the top toolbar (`.lib-head` spans the full width, top
+   ~10%, and was hiding them) into the clear LEFT-CENTRE — with the grid right-aligned (RTL, few
+   books) the left-centre is open space; the sidebar is outside `.lib-main`. Glow strengthened. */
 :root[data-theme="moonlit"] .lib-main { isolation: isolate; }
 :root[data-theme="moonlit"] .lib-main::before {
   content: "";
@@ -224,24 +239,25 @@ html, body, #root {
   pointer-events: none;
   opacity: 0.85;
   background:
-    url("/moonlit/crescent.svg")   5% 7% / 118px 118px no-repeat,
-    url("/moonlit/cloud.svg")     72% 3% / 260px 118px no-repeat,
-    url("/moonlit/star.svg")      15% 20% / 18px 18px no-repeat,
-    url("/moonlit/star.svg")      33% 9% / 12px 12px no-repeat,
-    url("/moonlit/star.svg")      52% 24% / 15px 15px no-repeat,
-    url("/moonlit/star.svg")      88% 30% / 13px 13px no-repeat,
-    url("/moonlit/star.svg")      64% 60% / 16px 16px no-repeat,
-    url("/moonlit/star.svg")      26% 72% / 12px 12px no-repeat,
-    url("/moonlit/star-dot.svg")  10% 44% / 7px 7px no-repeat,
-    url("/moonlit/star-dot.svg")  44% 52% / 6px 6px no-repeat,
-    url("/moonlit/star-dot.svg")  78% 14% / 7px 7px no-repeat,
-    url("/moonlit/star-dot.svg")  94% 66% / 6px 6px no-repeat,
-    url("/moonlit/star-dot.svg")  58% 88% / 6px 6px no-repeat,
-    url("/moonlit/star-dot.svg")  36% 34% / 5px 5px no-repeat,
-    url("/moonlit/star-dot.svg")  82% 82% / 6px 6px no-repeat,
-    url("/moonlit/star-dot.svg")  20% 92% / 5px 5px no-repeat,
-    radial-gradient(640px 460px at 3% -6%, rgba(230, 199, 122, 0.18), transparent 58%),
-    radial-gradient(460px 320px at 100% 6%, rgba(157, 192, 214, 0.09), transparent 60%);
+    url("/moonlit/crescent.svg")  15% 21% / 124px 124px no-repeat,
+    url("/moonlit/cloud.svg")     32% 48% / 280px 128px no-repeat,
+    url("/moonlit/cloud.svg")      7% 76% / 230px 104px no-repeat,
+    url("/moonlit/star.svg")       9% 34% / 18px 18px no-repeat,
+    url("/moonlit/star.svg")      24% 16% / 13px 13px no-repeat,
+    url("/moonlit/star.svg")      40% 30% / 15px 15px no-repeat,
+    url("/moonlit/star.svg")      20% 58% / 14px 14px no-repeat,
+    url("/moonlit/star.svg")      44% 70% / 13px 13px no-repeat,
+    url("/moonlit/star.svg")      33% 88% / 12px 12px no-repeat,
+    url("/moonlit/star-dot.svg")   6% 48% / 7px 7px no-repeat,
+    url("/moonlit/star-dot.svg")  30% 24% / 6px 6px no-repeat,
+    url("/moonlit/star-dot.svg")  16% 44% / 6px 6px no-repeat,
+    url("/moonlit/star-dot.svg")  46% 52% / 6px 6px no-repeat,
+    url("/moonlit/star-dot.svg")  12% 68% / 5px 5px no-repeat,
+    url("/moonlit/star-dot.svg")  38% 40% / 5px 5px no-repeat,
+    url("/moonlit/star-dot.svg")  26% 82% / 6px 6px no-repeat,
+    url("/moonlit/star-dot.svg")  50% 92% / 5px 5px no-repeat,
+    radial-gradient(700px 520px at 13% 16%, rgba(230, 199, 122, 0.24), transparent 60%),
+    radial-gradient(520px 380px at 46% 84%, rgba(157, 192, 214, 0.10), transparent 62%);
 }
 
 /* cloth ribbon bookmark — top-end corner of the page (mirrors with the book) */

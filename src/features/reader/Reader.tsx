@@ -239,6 +239,13 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       if (progressTimer.current) clearTimeout(progressTimer.current);
       if (styleRafRef.current) cancelAnimationFrame(styleRafRef.current); // RAWY-82: drop a pending live-apply frame
       ctrlRef.current?.dispose();
+      // RAWY-155: read-aloud is a per-reading-session activity — leaving the book (Back to Library,
+      // opening a different book, the error screen — every exit unmounts the Reader or changes
+      // `initial.id`) must STOP it completely. `useTts.stop()` halts both engines' playback + the
+      // WebAudio context, cancels the synth queue (gen++ so no late sentence fires) and the karaoke
+      // RAF, stops the Piper sidecar, and resets the pill/store. Without this the module-level engine
+      // (which lives outside the component tree) keeps playing into the Library and the next book.
+      useTts.getState().stop();
       // The photo-card basket is a per-reading-session collection (RAWY-60) — clear it on exit.
       usePhotoBasket.getState().clear();
       // Restore the LIBRARY theme to the chrome on exit (RAWY-40/48) — the book theme was only

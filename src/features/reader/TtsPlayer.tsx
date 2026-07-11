@@ -17,7 +17,10 @@ import { TtsVoicePicker } from "./TtsVoicePicker";
 const CHEV_UP = "m6 14 6-6 6 6";
 const CHEV_DOWN = "m6 10 6 6 6-6";
 
-export function TtsPlayer() {
+// `panelLeft`/`panelRight` are the physical Contents/Search (left) + Notes (right) open flags — the
+// same booleans that drive the pill's `--reading-shift`. The minimized kashida stroke uses them to
+// flip clear of an open side panel (RAWY-158).
+export function TtsPlayer({ panelLeft = false, panelRight = false }: { panelLeft?: boolean; panelRight?: boolean }) {
   const { active, status, engine, voice, index, total, speed, progress, chapterLabel, error, notice, toggle, skip, setSpeed, setEngine, retry, stop } = useTts();
   const { t, lang, dir } = useI18n();
   const [expanded, setExpanded] = useState(true);
@@ -58,7 +61,7 @@ export function TtsPlayer() {
   return (
     <>
       {minimized ? (
-        <TtsMini onExpand={() => setMinimized(false)} />
+        <TtsMini onExpand={() => setMinimized(false)} panelLeft={panelLeft} panelRight={panelRight} />
       ) : (
       <>
       {picking && <TtsVoicePicker onClose={() => setPicking(false)} />}

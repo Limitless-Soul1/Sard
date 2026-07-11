@@ -953,40 +953,62 @@ html, body, #root {
 .tts-menu-check { flex: none; width: 16px; height: 16px; margin-inline-start: auto; color: var(--accent); }
 
 /* ============================================================================
-   RAWY-156/157 — MINIMIZED TTS PLAYER = the RIBBON. A silk bookmark that hangs from the
-   TOP EDGE of the viewport (independent of the auto-hiding top bar) and stands in for the
-   pill while audio plays. Accent = var(--accent) (the pill's token — gold in Moonlit,
-   terracotta elsewhere), so it never recolours. JS sets its horizontal `left`; it drags
-   left⇄right ALONG THE TOP only (vertical fixed). The owner picked the ribbon over three
-   other shapes (RAWY-157) — the others + the temp switcher were removed.
+   RAWY-158 — MINIMIZED TTS PLAYER = the KASHIDA STROKE (كشيدة). A tapered calligraphic
+   elongation line in the BOTTOM MARGIN, below the text, anchored at the LEADING corner
+   (right RTL / left LTR); its fill = playback progress, the bead at the leading end =
+   play/pause, tapping the body stretches it back to the full pill. Accent = var(--accent)
+   (the pill's token — gold in Moonlit, terracotta elsewhere), so it never recolours. It is
+   NOT draggable; it FLIPS to the trailing corner to clear an open leading-side panel (reusing
+   the pill's panel-clear booleans). Replaces the RAWY-157 ribbon (owner chose the kashida).
    ============================================================================ */
 .tts-pill-right { display: flex; align-items: center; gap: 1px; }
 
-/* the ribbon container — pinned to the top edge; isolated from selection/scroll (handlers in JS) */
-.tts-mini { position: fixed; top: 0; z-index: 27; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; font-family: var(--ui-font); }
-.tts-mini:active { cursor: grabbing; }
-.tts-mini-play { position: absolute; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; padding: 0; cursor: pointer; }
-.tts-mini-play svg { width: 46%; height: 46%; }
-.tts-mini-cue { position: absolute; color: var(--accent); display: flex; }
+/* shared minimized-player bits — fixed, isolated from selection/scroll (handlers in JS). NOT draggable. */
+.tts-mini { position: fixed; z-index: 27; touch-action: none; user-select: none; -webkit-user-select: none; font-family: var(--ui-font); }
+.tts-mini-play { position: relative; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; padding: 0; cursor: pointer; }
+.tts-mini-play svg { position: relative; width: 42%; height: 42%; }
+.tts-mini-cue { color: var(--accent); display: flex; opacity: 0.7; }
+.tts-mini-cue svg { width: 15px; height: 15px; }
 
-/* ribbon (رِباط) — the two hit-areas are unambiguous: the round SEAL toggles play/pause; the
-   body + the ⌄ cue EXPAND back to the full pill (bigger + clearer than RAWY-156 per owner). */
-.tts-rib { position: absolute; top: 0; left: 8px; width: 40px; height: 150px; transform-origin: top center; }
-.tts-mini--ribbon.playing .tts-rib { animation: tts-sway 4.6s ease-in-out infinite; }
-.tts-rib-body {
-  position: absolute; inset: 0; clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 84%, 0 100%);
-  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 76%, white 24%), var(--accent) 60%, color-mix(in srgb, var(--accent) 82%, black 18%));
-  box-shadow: 0 12px 24px rgba(40, 28, 14, 0.3);
+/* ② كشيدة — a tapered calligraphic elongation stroke in the BOTTOM MARGIN, below the text, anchored
+   at the LEADING corner. Bead (leading end) = play/pause; fill = progress; tapping the body stretches
+   it back to the full pill. Flips to the trailing corner to clear a leading-side panel. */
+.tts-mini--kashida {
+  bottom: 22px; inset-inline-start: 30px; z-index: 27;
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 12px; border-radius: 15px; cursor: pointer;
+  background: color-mix(in srgb, var(--chrome-bg) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--chrome-border) 70%, transparent);
+  backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px);
+  box-shadow: 0 8px 22px rgba(40, 28, 14, 0.22);
+  transition: inset-inline-start 0.24s cubic-bezier(0.22, 1, 0.36, 1), inset-inline-end 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.tts-rib-sheen { position: absolute; top: 8px; left: 8px; width: 5px; height: 104px; border-radius: 3px; background: rgba(255, 255, 255, 0.5); opacity: 0; }
-.tts-mini--ribbon.playing .tts-rib-sheen { animation: tts-sheen 3.7s ease-in-out infinite; }
-.tts-rib-seal { top: 38px; left: 11px; width: 34px; height: 34px; background: var(--paper-bg); color: var(--accent); box-shadow: 0 3px 9px rgba(40, 28, 14, 0.34); }
-.tts-rib-seal:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent), 0 3px 9px rgba(40, 28, 14, 0.34); }
-.tts-mini--ribbon .tts-mini-cue { top: 106px; left: 17px; }
-.tts-mini--ribbon .tts-mini-cue svg { width: 22px; height: 22px; filter: drop-shadow(0 1px 1px rgba(40, 28, 14, 0.3)); }
+:root[data-dark="true"] .tts-mini--kashida { box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45); }
+.tts-mini--kashida.flip { inset-inline-start: auto; inset-inline-end: 30px; }
+.tts-mini--kashida.center { inset-inline: auto; left: 50%; transform: translateX(-50%); }
 
-@keyframes tts-sway { 0%, 100% { transform: rotate(-2deg); } 50% { transform: rotate(2deg); } }
-@keyframes tts-sheen { 0% { transform: translateY(-26px); opacity: 0; } 45% { opacity: 0.55; } 100% { transform: translateY(120px); opacity: 0; } }
+/* the bead — solid accent disc with a pulsing halo while playing */
+.tts-kash-bead { width: 30px; height: 30px; background: var(--accent); color: var(--paper-bg); box-shadow: 0 3px 9px rgba(40, 28, 14, 0.3); }
+.tts-kash-bead:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent), 0 3px 9px rgba(40, 28, 14, 0.3); }
+.tts-kash-halo { position: absolute; inset: 0; border-radius: 50%; background: color-mix(in srgb, var(--accent) 40%, transparent); opacity: 0; }
+.tts-mini--kashida.playing .tts-kash-halo { animation: tts-halo 2.2s ease-out infinite; }
+
+/* the tapered stroke: a faint track + an accent fill (progress), both clipped to a calligraphic
+   taper (thick at the leading end). Fill anchors at the LEADING end (inline-start) and grows along it. */
+.tts-kash-stroke { position: relative; width: 152px; height: 9px; }
+.tts-mini--kashida.center .tts-kash-stroke { width: 96px; }
+.tts-kash-track, .tts-kash-fill { position: absolute; top: 0; height: 9px; border-radius: 5px; clip-path: polygon(0 42%, 100% 18%, 100% 82%, 0 58%); }
+.tts-kash-track { inset-inline: 0; background: color-mix(in srgb, var(--text) 16%, transparent); }
+.tts-kash-fill { inset-inline-start: 0; min-width: 7px; background: var(--accent); transition: width 0.3s ease; }
+.tts-mini--kashida.playing .tts-kash-fill { animation: tts-kash-glow 2.6s ease-in-out infinite; }
+
+/* the taper is authored LEADING-RIGHT for the default RTL UI; mirror it (and the cue) for an LTR UI */
+.tts-mini--kashida[dir="ltr"] .tts-kash-track,
+.tts-mini--kashida[dir="ltr"] .tts-kash-fill { clip-path: polygon(0 18%, 100% 42%, 100% 58%, 0 82%); }
+.tts-mini--kashida[dir="ltr"] .tts-mini-cue svg { transform: scaleX(-1); }
+
+@keyframes tts-halo { 0% { opacity: 0.5; transform: scale(1); } 100% { opacity: 0; transform: scale(1.9); } }
+@keyframes tts-kash-glow { 0%, 100% { filter: none; } 50% { filter: brightness(1.16); } }
 @media (prefers-reduced-motion: reduce) {
   .tts-mini * { animation: none !important; }
 }

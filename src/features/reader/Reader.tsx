@@ -1018,7 +1018,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       {!isPdf && <AnnotationLayer ctrlRef={ctrlRef} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} onListen={startListenFromSelection} />}
 
       {/* RAWY-105: read-aloud player (EPUB-only) — floats above the reading area while listening. */}
-      {!isPdf && <TtsPlayer />}
+      {!isPdf && <TtsPlayer panelLeft={chaptersOpen || searchOpen} panelRight={annoOpen} />}
 
       {/* RAWY-86: transient PDF feedback (find result / copied). */}
       {pdfMsg && <div className="pdf-toast">{pdfMsg}</div>}

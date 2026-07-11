@@ -138,6 +138,18 @@ let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 let gen = 0; // bumped by stop/skip/start to invalidate in-flight async work
 let lastStart: StartOpts | null = null; // for retry() after a download/synth failure
 
+// RAWY-159 (crash-proof chain): the advance to the next sentence must never depend on a single
+// segment behaving. A watchdog (polled on the AudioContext clock, so it FREEZES while paused) force-
+// advances if a source's `onended` never fires; `failStreak` counts CONSECUTIVE unspeakable/failed
+// segments so an isolated bad one is skipped silently while a genuine run of failures (e.g. offline +
+// no Piper) still surfaces the retryable error.
+let watchdog: ReturnType<typeof setInterval> | null = null;
+let failStreak = 0;
+const FAIL_LIMIT = 3; // consecutive failures that turn "skip the bad segment" into "surface a dead end"
+const clearWatchdog = () => {
+  if (watchdog) { clearInterval(watchdog); watchdog = null; }
+};
+
 // Show a transient notice in the pill for a few seconds (RAWY-111: e.g. "Edge unavailable — Piper").
 function flashNotice(msg: string) {
   useTts.setState({ notice: msg });
@@ -234,6 +246,7 @@ function reanchorKaraoke(newRate: number) {
 }
 
 const stopSource = () => {
+  clearWatchdog(); // RAWY-159: a new/stopped source must not leave a stale advance timer running
   if (source) {
     try {
       source.onended = null;
@@ -254,16 +267,34 @@ async function playFrom(i: number, myGen: number) {
   }
   const idx = Math.max(0, i);
   set({ index: idx, status: "playing" });
+
+  // RAWY-159: skip the current sentence and continue — one bad segment must NEVER halt the queue. A
+  // genuine dead end (a RUN of FAIL_LIMIT consecutive failures, e.g. offline + no Piper) still surfaces
+  // the retryable error instead of silently racing to the end.
+  const skipSegment = (deadEndError: string): void => {
+    if (myGen !== gen) return;
+    if (++failStreak >= FAIL_LIMIT) { set({ status: "error", error: deadEndError }); return; }
+    void playFrom(idx + 1, myGen);
+  };
+
   let synthd: Synthesized;
   try {
     synthd = await synth(idx); // Edge failures self-heal per-sentence inside synth() (RAWY-113)
   } catch (e) {
-    // reached only if BOTH the chosen engine AND the Piper fallback failed (e.g. offline + the Piper
-    // voice isn't downloaded) — a genuine dead end, shown as a retryable error.
-    if (myGen === gen) set({ status: "error", error: String(e) });
+    // This segment couldn't be synthesized (an unspeakable "…"/"..." that yields empty audio the
+    // decoder rejects, a Piper exit with no WAV, both engines down, …). Skip it and keep reading.
+    cache.delete(idx); // don't keep a rejected promise cached (a later skip-back would re-throw)
+    skipSegment(String(e));
     return;
   }
   if (myGen !== gen) return; // superseded by stop/skip
+  // Empty/zero-length audio (some engines still RETURN a valid-but-silent buffer for punctuation-only
+  // text) → there is nothing to play and `onended` timing is unreliable, so skip rather than stall.
+  if (!synthd.buffer || synthd.buffer.length === 0 || synthd.buffer.duration === 0) {
+    skipSegment(TTS_EMPTY);
+    return;
+  }
+  failStreak = 0; // a real, speakable sentence played → reset the dead-end counter
   if (idx + 1 < sentences.length) void synth(idx + 1).catch(() => {}); // prefetch next
   const c = audioCtx();
   if (c.state === "suspended") await c.resume();
@@ -273,11 +304,27 @@ async function playFrom(i: number, myGen: number) {
   s.buffer = synthd.buffer;
   s.playbackRate.value = useTts.getState().speed;
   s.connect(c.destination);
-  s.onended = () => {
-    if (myGen === gen) void playFrom(idx + 1, myGen);
+  // RAWY-159: advance exactly ONCE, whether the source ends normally OR the watchdog fires. The
+  // watchdog is the safety net for a source whose `onended` never arrives (an edge-case empty/stuck
+  // buffer) — it advances only after the audio COULD have finished even at the slowest speed, and it
+  // polls the AudioContext clock (which freezes while paused), so a long pause never trips it.
+  let advanced = false;
+  const advance = () => {
+    if (advanced || myGen !== gen) return;
+    advanced = true;
+    clearWatchdog();
+    void playFrom(idx + 1, myGen);
   };
+  s.onended = advance;
   source = s;
   s.start();
+  const startedAt = c.currentTime;
+  const maxCtxSeconds = synthd.buffer.duration / TTS_MIN_SPEED + 2; // slowest-case play time + margin
+  clearWatchdog();
+  watchdog = setInterval(() => {
+    if (myGen !== gen) { clearWatchdog(); return; }
+    if (c.currentTime - startedAt > maxCtxSeconds) advance();
+  }, 500);
   // RAWY-127: schedule the karaoke pill against this buffer's clock (empty words → sentence-level only).
   startKaraoke(synthd.words, c.currentTime, myGen);
 }
@@ -330,6 +377,7 @@ export const useTts = create<TtsState>((set, get) => ({
     stopSource();
     stopKaraoke(); // RAWY-127
     cache = new Map();
+    failStreak = 0; // RAWY-159: a fresh Listen starts the dead-end counter clean
     sentences = sen.map((s) => s.trim()).filter(Boolean);
     curLang = lang;
     const saved = Number(await settingsGet("tts_speed").catch(() => null));
@@ -366,6 +414,7 @@ export const useTts = create<TtsState>((set, get) => ({
     const myGen = ++gen;
     stopSource();
     stopKaraoke(); // RAWY-127: drop the old sentence's pill; playFrom restarts karaoke for the new one
+    failStreak = 0; // RAWY-159: a user skip is a fresh attempt — don't count it toward a dead end
     set({ wordIndex: -1 });
     void playFrom(Math.max(0, Math.min(sentences.length - 1, st.index + delta)), myGen);
   },
@@ -387,6 +436,7 @@ export const useTts = create<TtsState>((set, get) => ({
     curEngine = engine;
     curVoice = id;
     cache = new Map(); // new voice → invalidate cached audio
+    failStreak = 0; // RAWY-159: a new engine/voice is a fresh attempt at the current sentence
     const myGen = ++gen;
     stopSource();
     stopKaraoke(); // RAWY-127: switching engine (e.g. Edge→Piper) drops any pill; playFrom re-decides

@@ -276,6 +276,14 @@ const IN_BODY_HEADING_MAX_LEN = 120;
 const MAX_HEADING_NUMBER_PREFIX = 20;
 const MAX_LEADING_HEADING_ELEMENTS = 5;
 
+// RAWY-159: a "speakable" TTS unit must carry at least one letter or number. A segment that is only
+// punctuation/symbols/whitespace — e.g. a standalone ellipsis "…" / "..." or a lone "—" that
+// Intl.Segmenter emits as its OWN sentence (a pause line, common in Arabic prose) — has no speech
+// value. Dropping it here, from the shared {text, range} unit list, keeps the spoken queue and the
+// spotlight/karaoke ranges index-aligned (both lose the same index together) while making read-aloud
+// skip it. lib/tts.ts carries the matching chain-resilience guard so no bad segment can ever stall.
+const hasSpeech = (s: string): boolean => /[\p{L}\p{N}]/u.test(s);
+
 // RAWY-143: a fold key for comparing a leading line to the section's TOC chapter TITLE. Reuses
 // normalizeForSearch (NFKC + strip tashkīl/tatweel + fold alef/ya/teh-marbuta + lowercase + drop
 // whitespace) and additionally drops every non-letter/number char (quotes, colons, dots, brackets),
@@ -1183,11 +1191,11 @@ export class FoliateController {
       // No visible leaf held text (text sits directly in <body>, or inline-only, or all-hidden) —
       // read the whole body so a full chapter is never empty, but WITHOUT ranges (honest no-highlight).
       const whole = norm(doc.body.textContent ?? "");
-      if (whole) {
+      if (hasSpeech(whole)) {
         if (seg) {
           for (const part of seg.segment(whole)) {
             const t = norm(part.segment);
-            if (t) units.push({ text: t, range: null });
+            if (hasSpeech(t)) units.push({ text: t, range: null });
           }
         } else {
           units.push({ text: whole, range: null });
@@ -1237,7 +1245,7 @@ export class FoliateController {
     };
     if (!seg) {
       const t = norm(full);
-      if (t) out.push({ text: t, range: makeRange(0, 0, nodes.length - 1, strs[nodes.length - 1].length) });
+      if (hasSpeech(t)) out.push({ text: t, range: makeRange(0, 0, nodes.length - 1, strs[nodes.length - 1].length) });
       return;
     }
     // Walk segments in order; `sum`/`strIndex` advance monotonically over the concatenated nodes so
@@ -1253,7 +1261,7 @@ export class FoliateController {
       const endIndex = strIndex;
       const endOffset = end - (sum - strs[strIndex].length) + 1;
       const t = norm(segment);
-      if (t) out.push({ text: t, range: makeRange(startIndex, startOffset, endIndex, endOffset) });
+      if (hasSpeech(t)) out.push({ text: t, range: makeRange(startIndex, startOffset, endIndex, endOffset) });
     }
   }
 

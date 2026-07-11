@@ -92,6 +92,11 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const [annoTab, setAnnoTab] = useState<import("./AnnotationsPanel").AnnoTab>("notes");
   const progressTimer = useRef<number | undefined>(undefined);
   const styleTimer = useRef<number | undefined>(undefined);
+  // RAWY-162 (TTS resume): a saved last-spoken cursor offered on Listen (a SEPARATE cursor from the
+  // reading CFI); timers for the debounced per-book save of the last-spoken sentence.
+  const [resumeHint, setResumeHint] = useState<{ cfi?: string; sec?: number; idx: number; snip?: string } | null>(null);
+  const ttsSaveTimer = useRef<number | undefined>(undefined);
+  const ttsLastSave = useRef(0);
   // RAWY-82 (#15): rAF-batch the live style apply during a slider drag — hold the latest style and
   // apply it at most once per frame (persistence stays on the 500ms debounce below).
   const styleRafRef = useRef<number | null>(null);
@@ -237,6 +242,13 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       // of running applyTheme/ctrl.open/set() against the disposed controller + null stage.
       openEpoch.current++;
       if (progressTimer.current) clearTimeout(progressTimer.current);
+      if (ttsSaveTimer.current) clearTimeout(ttsSaveTimer.current);
+      // RAWY-162: persist the last-spoken sentence for THIS book BEFORE stop()+dispose() (RAWY-155
+      // stops audio on exit; this remembers where to offer a resume next time). Guarded by `active`.
+      if (useTts.getState().active) {
+        const cur = ctrlRef.current?.getTtsCursor(useTts.getState().index);
+        if (cur) settingsSet(`tts_position:${initial.id}`, JSON.stringify(cur)).catch(() => {});
+      }
       if (styleRafRef.current) cancelAnimationFrame(styleRafRef.current); // RAWY-82: drop a pending live-apply frame
       ctrlRef.current?.dispose();
       // RAWY-155: read-aloud is a per-reading-session activity — leaving the book (Back to Library,
@@ -362,6 +374,37 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     if (!ttsActive) return;
     ctrlRef.current?.showReadingWord(ttsWordIndex);
   }, [ttsActive, ttsWordIndex]);
+
+  // RAWY-162: persist the last-spoken sentence for this book (a cursor separate from the reading CFI).
+  // Throttled to ~1 write / 2s during continuous playback (never per-word), with a trailing save so the
+  // final position lands; a pause flushes immediately; the stop-on-exit save is in the open cleanup.
+  useEffect(() => {
+    if (!ttsActive) {
+      if (ttsSaveTimer.current) clearTimeout(ttsSaveTimer.current);
+      return;
+    }
+    const save = () => {
+      ttsLastSave.current = performance.now();
+      const cur = ctrlRef.current?.getTtsCursor(useTts.getState().index);
+      if (cur) settingsSet(`tts_position:${initial.id}`, JSON.stringify(cur)).catch(() => {});
+    };
+    if (ttsSaveTimer.current) clearTimeout(ttsSaveTimer.current);
+    if (ttsStatus === "paused") { save(); return; } // flush the paused position now
+    const since = performance.now() - ttsLastSave.current;
+    if (since >= 2000) save();
+    else ttsSaveTimer.current = window.setTimeout(save, 2000 - since);
+    return () => { if (ttsSaveTimer.current) clearTimeout(ttsSaveTimer.current); };
+  }, [ttsActive, ttsIndex, ttsStatus, initial.id]);
+
+  // RAWY-162: the resume hint auto-dismisses after a while and whenever read-aloud stops.
+  useEffect(() => {
+    if (!resumeHint) return;
+    const t = window.setTimeout(() => setResumeHint(null), 12000);
+    return () => clearTimeout(t);
+  }, [resumeHint]);
+  useEffect(() => {
+    if (!ttsActive) setResumeHint(null);
+  }, [ttsActive]);
 
 
   // Chapters panel is OPEN BY DEFAULT (RAWY-22); the user's choice persists per `chapters_open`.
@@ -788,14 +831,44 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
 
   // RAWY-105: start read-aloud from the current chapter (Stage 1 entry; Stage 2 adds
   // listen-from-selection). Voice defaults by the BOOK's direction (Arabic book → Arabic voice).
-  const startListen = () => {
+  const startListen = async () => {
     const ctrl = ctrlRef.current;
     if (!ctrl) return;
     const bookLang = isRtlBook ? "ar" : "en"; // RAWY-111: the store resolves the per-language voice
+    // RAWY-162: read the saved TTS cursor BEFORE playback starts (playback overwrites it via the save
+    // effect), so we can offer a resume. A stale/absent value → no prompt (behaves exactly as before).
+    let saved: { cfi?: string; sec?: number; idx: number; snip?: string } | null = null;
+    try {
+      const raw = await settingsGet(`tts_position:${initial.id}`);
+      if (raw) saved = JSON.parse(raw);
+    } catch { saved = null; }
     useTts.getState().start({
       sentences: ctrl.getCurrentChapterSentences(bookLang),
       lang: bookLang,
       startIndex: 0,
+      chapterLabel: chapter,
+    });
+    // Offer to resume — unless the saved spot is just the start of the chapter already on screen.
+    if (saved && typeof saved.idx === "number" && !(saved.sec === ctrl.currentSectionIndex() && saved.idx <= 0)) {
+      setResumeHint(saved);
+    } else {
+      setResumeHint(null);
+    }
+  };
+  // RAWY-162: the user chose "resume" on the hint — map the saved cursor to a live sentence (navigating
+  // to its chapter if needed) and restart playback there (spotlight 126 + karaoke 127 re-align).
+  const doResume = async () => {
+    const cursor = resumeHint;
+    setResumeHint(null);
+    const ctrl = ctrlRef.current;
+    if (!ctrl || !cursor) return;
+    const bookLang = isRtlBook ? "ar" : "en";
+    const idx = await ctrl.prepareTtsResume(cursor, bookLang);
+    if (idx < 0) return; // couldn't map the cursor → leave the normal playback running
+    useTts.getState().start({
+      sentences: ctrl.getCurrentChapterSentences(bookLang),
+      lang: bookLang,
+      startIndex: idx,
       chapterLabel: chapter,
     });
   };
@@ -1019,6 +1092,19 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
 
       {/* RAWY-105: read-aloud player (EPUB-only) — floats above the reading area while listening. */}
       {!isPdf && <TtsPlayer panelLeft={chaptersOpen || searchOpen} panelRight={annoOpen} />}
+
+      {/* RAWY-162: a tasteful, non-intrusive hint to resume the last-spoken sentence — appears on Listen
+          when a saved TTS cursor exists; ignoring it keeps normal playback. */}
+      {!isPdf && resumeHint && (
+        <div className="tts-resume" dir={dir} role="status">
+          <svg className="tts-resume-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 8v4l3 2M3.5 9A9 9 0 1 1 3 12" /><path d="M3 4v5h5" /></svg>
+          <span className="tts-resume-msg">{t("tts.resumePrompt")}</span>
+          <button className="tts-resume-go" onClick={doResume}>{t("tts.resume")}</button>
+          <button className="tts-resume-x" onClick={() => setResumeHint(null)} aria-label={t("tts.dismiss")} title={t("tts.dismiss")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </div>
+      )}
 
       {/* RAWY-86: transient PDF feedback (find result / copied). */}
       {pdfMsg && <div className="pdf-toast">{pdfMsg}</div>}

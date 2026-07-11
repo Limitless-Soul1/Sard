@@ -1137,6 +1137,54 @@ export class FoliateController {
     return this.getChapterUnits(lang).map((u) => u.text);
   }
 
+  /** RAWY-162 (TTS resume): the section index of the currently-loaded chapter (foliate spine index),
+   *  or -1. Used to decide whether a saved TTS cursor is in the chapter already on screen. */
+  currentSectionIndex(): number {
+    return this.view?.renderer?.getContents?.()?.[0]?.index ?? -1;
+  }
+
+  /** RAWY-162: a DURABLE cursor for the sentence currently being spoken (`i` into the retained units).
+   *  `cfi` (from the sentence's live start range) survives app restarts and encodes the section, so a
+   *  resume can navigate to it even from a different chapter; `sec`/`idx` are the fast same-section
+   *  path; `snip` re-locates the sentence if re-segmentation shifted the index. Null if the units are
+   *  stale (a chapter change) or `i` is out of range. Independent of the reading CFI/visual position. */
+  getTtsCursor(i: number): { cfi: string; sec: number; idx: number; snip: string } | null {
+    const content = this.view?.renderer?.getContents?.()?.[0];
+    if (!content || content.index !== this.ttsUnitsIndex) return null;
+    const unit = this.ttsUnits[i];
+    if (!unit) return null;
+    let cfi = "";
+    if (unit.range) {
+      try {
+        cfi = (this.view as unknown as { getCFI(index: number, range: Range): string }).getCFI(this.ttsUnitsIndex, unit.range) || "";
+      } catch {
+        cfi = ""; // an un-CFI-able range degrades to a same-section-only cursor (sec/idx/snip)
+      }
+    }
+    return { cfi, sec: this.ttsUnitsIndex, idx: i, snip: unit.text.slice(0, 60) };
+  }
+
+  /** RAWY-162: map a saved TTS cursor back to a live sentence index to resume from. If it's in a
+   *  DIFFERENT section, navigate there first (via the sentence CFI) so re-segmentation reads the right
+   *  chapter; then resolve the index — prefer the saved `idx` when its text still matches `snip`, else
+   *  search the units for `snip`, else clamp. Returns -1 if the chapter has no speakable units. */
+  async prepareTtsResume(cursor: { cfi?: string; sec?: number; idx: number; snip?: string }, lang?: string): Promise<number> {
+    if (cursor.cfi && cursor.sec !== this.currentSectionIndex()) {
+      try { await this.goToLocator(cursor.cfi); } catch { /* bad/foreign cfi → fall through to same-section resolve */ }
+    }
+    const units = this.getChapterUnits(lang);
+    if (units.length === 0) return -1;
+    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+    const key = norm(cursor.snip ?? "").slice(0, 24);
+    const at = cursor.idx;
+    if (key && units[at] && norm(units[at].text).startsWith(key)) return at;
+    if (key) {
+      const k = units.findIndex((u) => norm(u.text).includes(key));
+      if (k >= 0) return k;
+    }
+    return Math.min(Math.max(0, at), units.length - 1);
+  }
+
   /** RAWY-126: the current chapter walked into `{text, range}` UNITS — the reading-indicator's
    *  lockstep source. The queue speaks `units[i].text`; the spotlight highlights `units[i].range`.
    *  The list is built + RETAINED here (with the section index it belongs to) so `showReadingHighlight`

@@ -474,6 +474,9 @@ export const en = {
   "tts.collapse": "Collapse",
   "tts.minimize": "Minimize", // RAWY-156
   "tts.swapSide": "Swap side", // RAWY-160: flip the minimized kashida to the other margin
+  "tts.resumePrompt": "Resume from where you left off?", // RAWY-162
+  "tts.resume": "Resume", // RAWY-162
+  "tts.dismiss": "Dismiss", // RAWY-162
   // RAWY-111/113 — engine + voice picker (Piper + Edge engines)
   "tts.voices": "Voices",
   "tts.voice": "Voice",

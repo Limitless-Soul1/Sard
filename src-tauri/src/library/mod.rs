@@ -288,9 +288,10 @@ pub fn revert_cover(conn: &Connection, id: &str) -> Result<Option<BookRow>, Stri
 /// The DB work runs in one transaction. Most child tables carry `FOREIGN KEY(book_id) REFERENCES
 /// books(id) ON DELETE CASCADE` (metadata_overrides, book_collections, reading_progress, highlights,
 /// notes, bookmarks, book_index) and `foreign_keys=ON` (db::open_database), so `DELETE FROM books`
-/// removes them automatically. Two things have NO FK and are deleted explicitly: `photo_cards`
-/// (book_id is a plain nullable column — a saved card would otherwise dangle) and the per-book style
-/// row in `settings` (`book_style:<id>`, RAWY-19/40). Files removed best-effort AFTER the commit: the
+/// removes them automatically. Three things have NO FK and are deleted explicitly: `photo_cards`
+/// (book_id is a plain nullable column — a saved card would otherwise dangle) and the per-book
+/// `settings` rows `book_style:<id>` (RAWY-19/40) + `tts_position:<id>` (RAWY-162, last-spoken
+/// sentence). Files removed best-effort AFTER the commit: the
 /// managed `.epub`, the extracted cover, a replaced-cover file (the 'cover' override), and each
 /// saved photo-card PNG. `false` = no such book.
 pub fn delete_book(conn: &Connection, app_data_dir: &Path, id: &str) -> Result<bool, String> {
@@ -314,6 +315,9 @@ pub fn delete_book(conn: &Connection, app_data_dir: &Path, id: &str) -> Result<b
     // No FK on these two — delete explicitly.
     tx.execute("DELETE FROM photo_cards WHERE book_id = ?1", [id]).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM settings WHERE key = ?1", [format!("book_style:{id}")])
+        .map_err(|e| e.to_string())?;
+    // RAWY-162: the per-book last-spoken TTS sentence is another FK-less `settings` row — delete it too.
+    tx.execute("DELETE FROM settings WHERE key = ?1", [format!("tts_position:{id}")])
         .map_err(|e| e.to_string())?;
     // The book row + all FK-cascade children (overrides, shelf membership, progress, highlights,
     // notes, bookmarks, index) in one shot.

@@ -29,6 +29,19 @@ export const settingsGet = (key: string): Promise<string | null> =>
 export const settingsSet = (key: string, value: string): Promise<boolean> =>
   invoke<boolean>("settings_set", { key, value });
 
+// ---- In-app update CHECK (RAWY-168, updater Phase 1 — notify only, no download/install) ----
+export interface UpdateCheck {
+  current: string; // the running app version (from Cargo.toml / RAWY-167)
+  latest: string; // the manifest's version ("" when not configured)
+  isNewer: boolean; // manifest version > current (semver compare)
+  url: string; // the release/download page to open externally ("" when not configured)
+  notes: string; // optional "what's new" text
+  configured: boolean; // false when the manifest URL is the empty placeholder (private repo, no feed yet)
+}
+/** Fetch the update manifest (Rust-side) + compare versions. Rejects on network/parse failure; the UI
+ *  shows a quiet "couldn't check" for both a rejection and `configured: false`. Never downloads. */
+export const checkForUpdate = (): Promise<UpdateCheck> => invoke<UpdateCheck>("check_for_update");
+
 // ---- TTS (RAWY-105): bundled piper sidecar + on-demand voice download ----
 /** Is the voice model present on disk (both .onnx + .onnx.json)? */
 export const ttsVoicePresent = (id: string): Promise<boolean> =>

@@ -2371,6 +2371,46 @@ html, body, #root {
 .gs-about-name { font: 700 1.125rem "Literata", "SardUIArabic", serif; color: var(--text); }
 .gs-about-tag { font: 400 0.8125rem var(--ui-font); color: var(--muted); margin-top: 2px; }
 .gs-about-ver { font: 500 0.75rem var(--ui-font); color: color-mix(in srgb, var(--muted) 80%, var(--paper-bg)); margin-top: 6px; }
+
+/* RAWY-168: in-app update CHECK (Phase 1) — a quiet, on-brand row under the version; per-theme accent,
+   RTL via the panel's dir, light + Moonlit. */
+.gs-update { margin-top: 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 9px; }
+.gs-update-btn {
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+  padding: 7px 14px; border-radius: 11px; font: 600 0.8rem var(--ui-font);
+  color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
+}
+.gs-update-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.gs-update-btn:disabled { cursor: default; opacity: 0.7; }
+.gs-update-btn svg { width: 15px; height: 15px; }
+.gs-update-spin { animation: tts-spin 0.9s linear infinite; }
+.gs-update-msg { font: 500 0.78rem var(--ui-font); color: var(--text); }
+.gs-update-quiet { color: var(--muted); }
+.gs-update-card {
+  width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 8px;
+  padding: 12px 14px; border-radius: 13px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--paper-bg));
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--chrome-border));
+}
+.gs-update-avail { font: 600 0.85rem var(--ui-font); color: var(--text); }
+.gs-update-notes-toggle {
+  align-self: flex-start; cursor: pointer; border: 0; background: transparent; padding: 0;
+  font: 500 0.75rem var(--ui-font); color: var(--accent); text-decoration: underline;
+}
+.gs-update-notes { font: 400 0.75rem/1.5 var(--ui-font); color: var(--muted); white-space: pre-wrap; }
+.gs-update-actions { display: flex; gap: 8px; margin-top: 2px; }
+.gs-update-go {
+  cursor: pointer; border: 0; border-radius: 9px; padding: 6px 14px;
+  font: 600 0.78rem var(--ui-font); background: var(--accent); color: var(--paper-bg);
+}
+.gs-update-go:hover { background: color-mix(in srgb, var(--accent) 88%, black); }
+.gs-update-later {
+  cursor: pointer; border: 1px solid var(--chrome-border); border-radius: 9px; padding: 6px 13px;
+  font: 500 0.78rem var(--ui-font); background: transparent; color: var(--muted);
+}
+.gs-update-later:hover { color: var(--text); background: color-mix(in srgb, var(--text) 6%, transparent); }
+
 /* two-level distinction card */
 .gs-twolevel { display: flex; gap: 14px; margin-top: 4px; }
 .gs-tl-card { flex: 1; background: color-mix(in srgb, var(--accent) 5%, transparent); border: 1px solid var(--chrome-border); border-radius: 10px; padding: 16px 18px; }

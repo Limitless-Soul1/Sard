@@ -9,8 +9,10 @@ import { useEffect, useState, type ChangeEvent, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
 import type { TKey } from "../../i18n/locales/en";
+import { openUrl } from "@tauri-apps/plugin-opener";
+
 import { Hoopoe } from "../library/Hoopoe";
-import { settingsGet, settingsSet } from "../../lib/ipc";
+import { checkForUpdate, settingsGet, settingsSet } from "../../lib/ipc";
 import { FONT_CATALOGUE, UI_SCALE_MAX, UI_SCALE_MIN, useFonts } from "../../lib/fonts";
 import { BOOKMARK_COLORS, BOOKMARK_SHAPES, BOOKMARK_SIZE_MAX, BOOKMARK_SIZE_MIN, useBookmarkStyle } from "../../lib/bookmarkStyle";
 import { BookmarkShape } from "../reader/BookmarkShape";
@@ -577,8 +579,32 @@ function LanguageSection() {
   );
 }
 
+// RAWY-168: in-app update CHECK (updater Phase 1) — manual/opt-in; the network call is Rust-side, and
+// a newer version only OPENS the release page in the OS browser (no in-app download/install). Fails
+// quietly (a network error OR the not-yet-configured manifest URL both show a calm "couldn't check").
+type UpdState =
+  | { k: "idle" }
+  | { k: "checking" }
+  | { k: "uptodate"; ver: string }
+  | { k: "available"; ver: string; url: string; notes: string }
+  | { k: "unavailable" };
+
 function AboutSection() {
   const { t } = useI18n();
+  const [upd, setUpd] = useState<UpdState>({ k: "idle" });
+  const [showNotes, setShowNotes] = useState(false);
+  const check = async () => {
+    setUpd({ k: "checking" });
+    setShowNotes(false);
+    try {
+      const r = await checkForUpdate();
+      if (!r.configured) setUpd({ k: "unavailable" }); // no public feed yet (placeholder URL)
+      else if (r.isNewer) setUpd({ k: "available", ver: r.latest, url: r.url, notes: r.notes });
+      else setUpd({ k: "uptodate", ver: r.current });
+    } catch {
+      setUpd({ k: "unavailable" }); // offline / unreachable / bad manifest → quiet
+    }
+  };
   return (
     <>
       <SecHead>{t("gs.about")}</SecHead>
@@ -589,6 +615,29 @@ function AboutSection() {
           <div className="gs-about-tag">{t("gs.about.tagline")}</div>
           <div className="gs-about-ver">{t("gs.about.version")} 0.5.0</div>
         </div>
+      </div>
+      <div className="gs-update">
+        <button className="gs-update-btn" onClick={check} disabled={upd.k === "checking"}>
+          <svg className={upd.k === "checking" ? "gs-update-spin" : ""} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 11a8 8 0 1 0-.6 3M20 4v6h-6" /></svg>
+          <span>{upd.k === "checking" ? t("gs.update.checking") : t("gs.update.check")}</span>
+        </button>
+        {upd.k === "uptodate" && <div className="gs-update-msg">{t("gs.update.uptodate", { v: upd.ver })}</div>}
+        {upd.k === "unavailable" && <div className="gs-update-msg gs-update-quiet">{t("gs.update.failed")}</div>}
+        {upd.k === "available" && (
+          <div className="gs-update-card">
+            <div className="gs-update-avail">{t("gs.update.available", { v: upd.ver })}</div>
+            {upd.notes && (
+              <>
+                <button className="gs-update-notes-toggle" onClick={() => setShowNotes((s) => !s)}>{t("gs.update.notes")}</button>
+                {showNotes && <div className="gs-update-notes">{upd.notes}</div>}
+              </>
+            )}
+            <div className="gs-update-actions">
+              <button className="gs-update-go" onClick={() => upd.url && openUrl(upd.url).catch(() => {})}>{t("gs.update.get")}</button>
+              <button className="gs-update-later" onClick={() => setUpd({ k: "idle" })}>{t("gs.update.later")}</button>
+            </div>
+          </div>
+        )}
       </div>
       <TwoLevelCard />
     </>

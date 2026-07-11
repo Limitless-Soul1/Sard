@@ -159,11 +159,13 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
 
       // RAWY-40/43: per-book → effective = GLOBAL defaults with THIS book's PARTIAL override on
       // top, theme = override theme else global. UNIFIED → the GLOBAL style/theme, IGNORING (never
-      // deleting) the override so switching back to per-book restores it. Per-script defaults
-      // still back-fill anything the global row lacks (RTL books get the Arabic baseline).
+      // deleting) the override so switching back to per-book restores it. RAWY-176 (AUD-6): the
+      // saved global row loads OVER this book's DIRECTION baseline (loadGlobalStyle(target.dir)), so
+      // any field the row lacks falls back to the Arabic baseline for an RTL book — on a fresh
+      // install (no row) an Arabic book now opens at zoom 1.15 / line-height 1.9 / start, not Latin.
       const ts = useTheme.getState();
       const unified = useStyleScope.getState().scope === "unified";
-      const global = await loadGlobalStyle();
+      const global = await loadGlobalStyle(target.dir ?? undefined);
       if (stale()) return;
       const override = await loadBookOverride(target.id);
       // Guards the block below — the ref writes, module-level applyTheme, and ctrl.open (which would

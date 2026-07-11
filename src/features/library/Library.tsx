@@ -250,11 +250,12 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     runImportRef.current = (paths) => void runImport(paths);
   }, [runImport]);
 
-  // "Browse files…" → native file picker (EPUB only), then import the chosen files.
+  // "Browse files…" → native file picker (EPUB + PDF — RAWY-176/AUD-5; was EPUB-only, so a PDF could
+  // only be added by drag-drop), then import the chosen files.
   const addBooks = useCallback(async () => {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const sel = await open({ multiple: true, filters: [{ name: "EPUB", extensions: ["epub"] }] });
+      const sel = await open({ multiple: true, filters: [{ name: "Books", extensions: ["epub", "pdf"] }] });
       if (!sel) return;
       runImport(Array.isArray(sel) ? sel : [sel]);
     } catch (e) {
@@ -262,9 +263,10 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     }
   }, [runImport, flashToast]);
 
-  // "Import a folder" → native DIRECTORY picker, then import every EPUB inside it (RAWY-80,
-  // audit #7 — this button used to open the same file picker as "Browse files"). Same pipeline
-  // (dedup, format-detect, managed copy); an empty folder just reports "no books added".
+  // "Import a folder" → native DIRECTORY picker, then import every EPUB and PDF inside it (RAWY-80,
+  // audit #7 — this button used to open the same file picker as "Browse files"; RAWY-176/AUD-5 adds
+  // PDF so a folder import matches drag-drop). Same pipeline (dedup, format-detect, managed copy); an
+  // empty folder just reports "no books added".
   const addFolder = useCallback(async () => {
     if (importing) return;
     try {

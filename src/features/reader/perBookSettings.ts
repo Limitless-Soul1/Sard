@@ -7,7 +7,7 @@
 // row → the book follows global entirely.
 
 import { settingsGet, settingsSet } from "../../lib/ipc";
-import { LATIN_DEFAULTS, type ReadingStyle } from "../../reader-engine/injectedCss";
+import { defaultsForDir, type ReadingStyle } from "../../reader-engine/injectedCss";
 import type { ThemeId } from "../../theme";
 
 const GLOBAL_KEY = "reading_style";
@@ -18,19 +18,27 @@ export interface BookOverride {
   themeId?: ThemeId; // per-book paper + ink (RAWY-40)
 }
 
-/** The GLOBAL reading defaults (RAWY-39) — the baseline a book uses with no override. */
-export async function loadGlobalStyle(): Promise<ReadingStyle> {
+/** The GLOBAL reading defaults (RAWY-39) — the baseline a book uses with no override. RAWY-176
+ * (AUD-6): the per-script fallback is DIRECTION-AWARE. Pass the book's `dir` so any field the saved
+ * global row lacks falls back to the Arabic baseline for an RTL book (zoom 1.15 / line-height 1.9 /
+ * text-align start) instead of the Latin one — otherwise a fresh install (no row yet) opened every
+ * Arabic book at the Latin baseline. With no `dir` (or an LTR book) the base is LATIN_DEFAULTS,
+ * exactly as before (`defaultsForDir(undefined) === LATIN_DEFAULTS`). Global Settings always writes
+ * a FULL row, so on any machine that has a row every field is masked and existing users see no
+ * change — the direction baseline only shows through when there is no row. */
+export async function loadGlobalStyle(dir?: string): Promise<ReadingStyle> {
+  const base = defaultsForDir(dir);
   const raw = await settingsGet(GLOBAL_KEY).catch(() => null);
-  if (!raw) return { ...LATIN_DEFAULTS };
+  if (!raw) return { ...base };
   try {
     const s = JSON.parse(raw) as Partial<ReadingStyle>;
     // RAWY-23 migration: pageWidth used to be an absolute px (480..1040) → a 0..1 fraction.
     if (typeof s.pageWidth === "number" && s.pageWidth > 1.5) {
       s.pageWidth = Math.max(0, Math.min(1, (s.pageWidth - 480) / 560));
     }
-    return { ...LATIN_DEFAULTS, ...s };
+    return { ...base, ...s };
   } catch {
-    return { ...LATIN_DEFAULTS };
+    return { ...base };
   }
 }
 

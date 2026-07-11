@@ -770,20 +770,23 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const toggleSearch = useCallback(() => {
     setLeftPanel((p) => (p === "search" ? null : "search")); // opening Search closes Contents
   }, []);
-  const onToggleSpoiler = () => {
+  // RAWY-175 (AUD-3): STABLE (useCallback) so the memoized SearchPanel/ResultRow can skip re-rendering
+  // when only unrelated Reader state changed — the reference doesn't churn every render.
+  const onToggleSpoiler = useCallback(() => {
     setRevealAhead(false);
     setSpoilerSafe((v) => {
       const next = !v;
       settingsSet(`spoiler_safe:${initial.id}`, next ? "1" : "0").catch(() => {});
       return next;
     });
-  };
-  const onJumpHit = (hit: SearchHit) => {
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const onJumpHit = useCallback((hit: SearchHit) => {
     setActiveHitCfi(hit.cfi);
     // RAWY-139: pass the split excerpt so goToSearchHit can re-find the hit's exact text in the rendered
     // doc (the search CFI is unreliable there — the rendered structure differs from the search doc).
     ctrlRef.current?.goToSearchHit(hit.cfi, { pre: hit.pre, match: hit.match, post: hit.post });
-  };
+  }, []);
   // the reader's position label for the toggle + "you are here" (current chapter, else a percent)
   const searchPositionLabel = chapterLabel || t("reader.percentRead", { p: localeNum(Math.round(fraction * 100), lang) });
 
@@ -957,8 +960,14 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     ctrlRef.current?.scrollByWheel(e.deltaY);
   };
 
-  const jumpHref = (href: string) => ctrlRef.current?.goToHref(href);
-  const jumpCfi = (cfi: string) => ctrlRef.current?.goToLocator(cfi);
+  // RAWY-175 (AUD-3): STABLE callbacks so the memoized ChaptersPanel skips re-rendering the ~1,300-row
+  // TOC on unrelated Reader re-renders (a search batch, a TTS word tick). Behaviour identical.
+  const jumpHref = useCallback((href: string) => ctrlRef.current?.goToHref(href), []);
+  const jumpCfi = useCallback((cfi: string) => ctrlRef.current?.goToLocator(cfi), []);
+  const closeContents = useCallback(() => setLeftPanel((p) => (p === "contents" ? null : p)), []);
+  const closeSearch = useCallback(() => setLeftPanel((p) => (p === "search" ? null : p)), []);
+  const onToggleHideTitles = useCallback(() => setHideTitles(!hideChapterTitles), [hideChapterTitles, setHideTitles]);
+  const onToggleHideFirstLine = useCallback(() => setHideFirstLine(!hideFirstLine), [hideFirstLine, setHideFirstLine]);
 
   // RAWY-34: Text / Theme / Layout each select a distinct TAB of the ONE settings drawer
   // (Text · Page · Theme — the design's band I), reusing the RAWY-24 controls. Pressing the
@@ -1045,13 +1054,13 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
 
       <ChaptersPanel
         open={chaptersOpen}
-        onClose={() => setLeftPanel((p) => (p === "contents" ? null : p))}
+        onClose={closeContents}
         toc={toc}
         currentHref={chapterHref}
         hideTitles={hideChapterTitles}
-        onToggleHideTitles={() => setHideTitles(!hideChapterTitles)}
+        onToggleHideTitles={onToggleHideTitles}
         hideFirstLine={hideFirstLine}
-        onToggleHideFirstLine={() => setHideFirstLine(!hideFirstLine)}
+        onToggleHideFirstLine={onToggleHideFirstLine}
         onJump={jumpHref}
         fraction={fraction}
         isPdf={isPdf}
@@ -1060,7 +1069,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       {!isPdf && (
         <SearchPanel
           open={searchOpen}
-          onClose={() => setLeftPanel((p) => (p === "search" ? null : p))}
+          onClose={closeSearch}
           bookTitle={bookTitle}
           positionLabel={searchPositionLabel}
           bookDir={isRtlBook ? "rtl" : "ltr"}

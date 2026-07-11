@@ -6,7 +6,7 @@
 // snippet. The panel chrome is APP furniture (UI language + pinned side); the snippets are BOOK text
 // (they follow the book's own face + direction), exactly like the page.
 
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 
 import { useI18n } from "../../i18n";
 import { localeNum } from "../../lib/format";
@@ -31,15 +31,19 @@ interface Props {
   onJump: (hit: SearchHit) => void;
 }
 
-// One result row: chapter · location badge, then the snippet with the match in gold.
-function ResultRow({
+// One result row: chapter · location badge, then the snippet with the match in gold. RAWY-175 (AUD-3):
+// MEMOIZED so a streaming batch (~every 90 ms) only renders the NEW rows, not every existing one — the
+// row skips when its props are unchanged. `onJump` takes the hit and MUST be a stable reference (the
+// panel passes the parent's memoized handler), so `active` (the only per-row flag that flips on a jump)
+// is what triggers a re-render. Snippet, badge, highlight, RTL, click-to-navigate — all identical.
+const ResultRow = memo(function ResultRow({
   hit, active, ahead, onJump, bookDir, lang, aheadLabel,
 }: {
-  hit: SearchHit; active: boolean; ahead: boolean; onJump: () => void;
+  hit: SearchHit; active: boolean; ahead: boolean; onJump: (hit: SearchHit) => void;
   bookDir: "rtl" | "ltr"; lang: string; aheadLabel: string;
 }) {
   return (
-    <button className={`sr-row${active ? " active" : ""}${ahead ? " ahead" : ""}`} onClick={onJump}>
+    <button className={`sr-row${active ? " active" : ""}${ahead ? " ahead" : ""}`} onClick={() => onJump(hit)}>
       <span className="sr-meta">
         <span className="sr-chapter" dir="auto">{hit.chapterLabel}</span>
         {ahead && <span className="sr-ahead-tag">{aheadLabel}</span>}
@@ -52,7 +56,7 @@ function ResultRow({
       </span>
     </button>
   );
-}
+});
 
 export function SearchPanel({
   open, onClose, bookTitle, positionLabel, bookDir,
@@ -72,6 +76,26 @@ export function SearchPanel({
   const ahead = hits.filter((h) => h.ahead);
   const reveal = !spoilerSafe || revealAhead; // show the ahead snippets?
   const q = query.trim();
+
+  // RAWY-175 (AUD-3): render only the first `renderLimit` result rows and grow the window as the user
+  // scrolls toward the bottom. A common token yields thousands of hits; rendering them all made every
+  // ~90 ms streaming batch re-reconcile the whole (growing) list — PERF-01's ~26 ms/commit. Every hit
+  // stays in `hits` and becomes visible by scrolling (nothing dropped); the count / boundary / sealed
+  // card below still use the FULL arrays, so the numbers are unchanged. Reset when the query changes.
+  const RENDER_STEP = 60;
+  const [renderLimit, setRenderLimit] = useState(RENDER_STEP);
+  useEffect(() => { setRenderLimit(RENDER_STEP); }, [query]);
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const onResultsScroll = () => {
+    const el = resultsRef.current;
+    if (el && el.scrollTop + el.clientHeight >= el.scrollHeight - 500) setRenderLimit((l) => l + RENDER_STEP);
+  };
+  const shownUpTo = upTo.slice(0, renderLimit);
+  const allUpToShown = shownUpTo.length >= upTo.length;
+  const shownAhead = allUpToShown && reveal ? ahead.slice(0, Math.max(0, renderLimit - upTo.length)) : [];
+  // every result row is on screen → the footer chrome (sealed card / hide-again / tashkīl note) sits at
+  // the true bottom (for small searches this is true immediately, so behaviour is unchanged).
+  const allShown = allUpToShown && (!reveal || shownAhead.length >= ahead.length);
 
   return (
     <aside className={`reader-panel rp-lead search-panel${open ? " show" : ""}`} dir={dir} aria-hidden={!open}>
@@ -113,7 +137,7 @@ export function SearchPanel({
         <span className={`rp-switch${spoilerSafe ? " on" : ""}`} aria-hidden><span className="rp-knob" /></span>
       </button>
 
-      <div className="rp-scroll sp-results">
+      <div className="rp-scroll sp-results" ref={resultsRef} onScroll={onResultsScroll}>
         {/* before typing */}
         {!q && (
           <div className="sp-hint">
@@ -161,16 +185,17 @@ export function SearchPanel({
               <div className="sp-nothing-before" dir="auto">{t("search.nothingBefore", { pos: positionLabel })}</div>
             )}
 
-            {/* up-to-position results (always real snippets) — stream in live */}
-            {upTo.map((h) => (
+            {/* up-to-position results (always real snippets) — stream in live. RAWY-175: only the first
+                `renderLimit` render; the rest load as you scroll (all still reachable). */}
+            {shownUpTo.map((h) => (
               <ResultRow
                 key={h.cfi} hit={h} active={h.cfi === activeCfi} ahead={false}
-                onJump={() => onJump(h)} bookDir={bookDir} lang={lang} aheadLabel={t("search.ahead")}
+                onJump={onJump} bookDir={bookDir} lang={lang} aheadLabel={t("search.ahead")}
               />
             ))}
 
-            {/* the "you are here" boundary — final only */}
-            {!searching && ahead.length > 0 && (
+            {/* the "you are here" boundary — final only, once all up-to rows are on screen (RAWY-175) */}
+            {!searching && allUpToShown && ahead.length > 0 && (
               <div className="sp-here" dir="auto">
                 <span className="sp-here-line" />
                 <span className="sp-here-label">{t("search.youAreHere", { pos: positionLabel })}</span>
@@ -178,19 +203,20 @@ export function SearchPanel({
               </div>
             )}
 
-            {/* ahead matches when revealed (spoiler off / show-anyway) — stream too when spoiler is off */}
-            {reveal && ahead.map((h) => (
+            {/* ahead matches when revealed (spoiler off / show-anyway) — windowed like the up-to rows */}
+            {shownAhead.map((h) => (
               <ResultRow
                 key={h.cfi} hit={h} active={h.cfi === activeCfi} ahead
-                onJump={() => onJump(h)} bookDir={bookDir} lang={lang} aheadLabel={t("search.ahead")}
+                onJump={onJump} bookDir={bookDir} lang={lang} aheadLabel={t("search.ahead")}
               />
             ))}
-            {!searching && reveal && spoilerSafe && revealAhead && (
+            {!searching && allShown && reveal && spoilerSafe && revealAhead && (
               <button className="sp-hide-again" onClick={() => onRevealAhead(false)}>{t("search.hideAgain")}</button>
             )}
 
-            {/* the sealed card — final only, spoiler-safe on with ahead matches */}
-            {!searching && !reveal && ahead.length > 0 && (
+            {/* the sealed card — final only, spoiler-safe on with ahead matches (RAWY-175: once all the
+                up-to rows are on screen, so it sits at the true bottom — as it always did) */}
+            {!searching && allShown && !reveal && ahead.length > 0 && (
               <div className="sp-sealed">
                 <div className="sp-sealed-count">{t("search.hidden", { n: localeNum(ahead.length, lang) })}</div>
                 <div className="sp-sealed-body">{t("search.hiddenBody")}</div>
@@ -199,7 +225,7 @@ export function SearchPanel({
             )}
 
             {/* Arabic-first: a quiet reminder that matching ignores tashkīl (design's Arabic panel note) */}
-            {!searching && bookDir === "rtl" && <div className="sp-tashkil-note">{t("search.tashkilNote")}</div>}
+            {!searching && allShown && bookDir === "rtl" && <div className="sp-tashkil-note">{t("search.tashkilNote")}</div>}
           </>
         )}
       </div>

@@ -6,11 +6,56 @@
 // edge, the same side as the toolbar "contents" button. Book-derived chapter titles use
 // dir="auto" so Arabic titles still render RTL inside an LTR UI (and vice-versa).
 
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 
 import { useI18n } from "../../i18n";
 import { extractChapterNumber, localeNum } from "../../lib/format";
 import type { TocEntry } from "../../reader-engine/FoliateController";
+
+// RAWY-175 (AUD-3): one TOC row, MEMOIZED. On a chapter change only the two rows whose `active` flips
+// re-render — the other ~1,300 rows are skipped (their props are unchanged) instead of re-reconciling
+// the whole list on every parent re-render. Renders + navigates + highlights EXACTLY as before; the
+// per-row `extractChapterNumber`/`localeNum` now run only when a row actually renders. `onJump` must be
+// a stable reference (the parent passes a memoized fn) for the skip to hold.
+const TocRow = memo(function TocRow({
+  entry,
+  index,
+  active,
+  hideTitles,
+  onJump,
+}: {
+  entry: TocEntry;
+  index: number;
+  active: boolean;
+  hideTitles: boolean;
+  onJump: (href: string) => void;
+}) {
+  const { t, lang } = useI18n();
+  const realNum = extractChapterNumber(entry.label);
+  const badgeNum = realNum ?? index + 1;
+  const chapterLabel = t("panel.chapter", { n: localeNum(badgeNum, lang) });
+  const label = hideTitles ? null : entry.label || chapterLabel;
+  return (
+    <button
+      className={`rp-row toc-row${active ? " active" : ""}`}
+      style={{ paddingInlineStart: 11 + entry.level * 14 }}
+      onClick={() => entry.href && onJump(entry.href)}
+      disabled={!entry.href}
+    >
+      {hideTitles ? (
+        <span className="toc-num big" dir="auto">{chapterLabel}</span>
+      ) : (
+        <span className="toc-num">{localeNum(badgeNum, lang)}</span>
+      )}
+      {label && (
+        <span className="toc-label" dir="auto">
+          {label}
+        </span>
+      )}
+      <span className={`toc-dot${active ? " current" : ""}`} />
+    </button>
+  );
+});
 
 interface Props {
   open: boolean;
@@ -28,7 +73,12 @@ interface Props {
   isPdf?: boolean; // RAWY-85: hide the EPUB-only anti-spoiler toggles for a PDF
 }
 
-export function ChaptersPanel({
+// RAWY-175 (AUD-3): MEMOIZED so an unrelated Reader re-render (a search-results batch ~every 90 ms, a
+// TTS word tick) does NOT re-reconcile the ~1,300-row list. It re-renders only when its own props
+// change (toc, currentHref, hideTitles, fraction, …) — which requires the parent to pass STABLE
+// callback references (Reader wraps them in useCallback). Behaviour is identical; only the wasted
+// re-renders are removed (PERF-01: this was ~5 ms of every search commit).
+function ChaptersPanelInner({
   open,
   onClose,
   toc,
@@ -108,47 +158,24 @@ export function ChaptersPanel({
 
       <div className="rp-scroll" ref={scrollRef}>
         {toc.length === 0 && <div className="rp-empty">{t("panel.noChapters")}</div>}
-        {toc.map((c, i) => {
-          const active = !!c.href && c.href === currentHref;
-          // RAWY-67: show the book's OWN chapter number (parsed from its real TOC label — e.g. a
-          // single-volume import that starts at "الفصل 200" correctly shows 200, not the imposed
-          // list position 1) — never fabricated; a book/entry with no extractable number falls
-          // back to the position, same as before.
-          const realNum = extractChapterNumber(c.label);
-          const badgeNum = realNum ?? i + 1;
-          // RAWY-70: when titles are hidden, the row reads "الفصل N" / "Chapter N" (localized) once
-          // — not a bare "N" (RAWY-69) and not the number twice (RAWY-68's double-numbering it
-          // replaced). It's the single, enlarged, readable identifier for the row; the book's own
-          // title text is withheld (that's the anti-spoiler point). With titles SHOWN, the row is
-          // the book's own title (falling back to "Chapter N" only when that TOC entry has none).
-          const chapterLabel = t("panel.chapter", { n: localeNum(badgeNum, lang) });
-          const label = hideTitles ? null : c.label || chapterLabel;
-          return (
-            <button
-              key={`${c.href ?? "x"}-${i}`}
-              className={`rp-row toc-row${active ? " active" : ""}`}
-              style={{ paddingInlineStart: 11 + c.level * 14 }}
-              onClick={() => c.href && onJump(c.href)}
-              disabled={!c.href}
-            >
-              {/* RAWY-69/70: when titles are hidden the row's sole content is the enlarged
-                  "الفصل N" / "Chapter N" (readable on its own — no small/muted secondary index,
-                  no title text). When shown, the small numeric badge sits beside the title. */}
-              {hideTitles ? (
-                <span className="toc-num big" dir="auto">{chapterLabel}</span>
-              ) : (
-                <span className="toc-num">{localeNum(badgeNum, lang)}</span>
-              )}
-              {label && (
-                <span className="toc-label" dir="auto">
-                  {label}
-                </span>
-              )}
-              <span className={`toc-dot${active ? " current" : ""}`} />
-            </button>
-          );
-        })}
+        {/* RAWY-175: each row is a memoized <TocRow> (see top of file). The book's OWN chapter number
+            (RAWY-67), the "الفصل N"/"Chapter N" hidden-titles label (RAWY-69/70), the active highlight,
+            paddingInlineStart-by-level, and the click-to-navigate all live in TocRow — unchanged; only
+            unchanged rows now skip re-rendering. All rows stay in the DOM, so RAWY-103 scroll-to-active
+            and click-to-any-chapter work identically. */}
+        {toc.map((c, i) => (
+          <TocRow
+            key={`${c.href ?? "x"}-${i}`}
+            entry={c}
+            index={i}
+            active={!!c.href && c.href === currentHref}
+            hideTitles={hideTitles}
+            onJump={onJump}
+          />
+        ))}
       </div>
     </aside>
   );
 }
+
+export const ChaptersPanel = memo(ChaptersPanelInner);

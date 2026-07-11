@@ -480,9 +480,9 @@ fn piper_synthesize(
     framed(bytes, &[])
 }
 
-/// Stop + drop both engines' warm connections (called when the user closes the player).
-#[tauri::command]
-pub fn tts_stop(engine: State<'_, TtsEngine>) {
+/// Kill the warm Piper child + drop the Edge socket. Shared by the `tts_stop` command (the user closes
+/// the player) and the app-exit handler (RAWY-173, AUD-10) so closing the window never orphans piper.exe.
+pub fn shutdown(engine: &TtsEngine) {
     if let Ok(mut guard) = engine.inner.lock() {
         if let Some(mut r) = guard.take() {
             let _ = r.child.kill(); // Piper process
@@ -491,4 +491,10 @@ pub fn tts_stop(engine: State<'_, TtsEngine>) {
     if let Ok(mut guard) = engine.edge.lock() {
         *guard = None; // Edge WebSocket (dropped → closed)
     }
+}
+
+/// Stop + drop both engines' warm connections (called when the user closes the player).
+#[tauri::command]
+pub fn tts_stop(engine: State<'_, TtsEngine>) {
+    shutdown(&engine);
 }

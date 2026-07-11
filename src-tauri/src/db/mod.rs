@@ -21,8 +21,13 @@ pub struct AppState {
 /// (`foreign_keys=ON`, `journal_mode=WAL`).
 pub fn open_database(path: &Path) -> rusqlite::Result<Connection> {
     let conn = Connection::open(path)?;
-    // execute_batch ignores result rows (journal_mode returns the new mode).
-    conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;")?;
+    // execute_batch ignores result rows (journal_mode/busy_timeout return the new value).
+    // RAWY-173 (AUD-9): busy_timeout makes brief write contention RETRY (up to 3 s) instead of throwing
+    // SQLITE_BUSY — a backstop for WAL checkpoint contention (and any second connection the
+    // single-instance guard doesn't catch), so a routinely-swallowed save isn't silently dropped.
+    conn.execute_batch(
+        "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 3000;",
+    )?;
     Ok(conn)
 }
 
@@ -53,4 +58,30 @@ pub fn list_tables(conn: &Connection) -> rusqlite::Result<Vec<String>> {
     )?;
     let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
     rows.collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // RAWY-173 (AUD-9): `open_database` applies the contention backstop (busy_timeout) + WAL + FK on the
+    // exact connection every command uses — proven here by reading the pragmas back from a real connection.
+    #[test]
+    fn open_database_sets_busy_timeout_wal_and_fk() {
+        let dir = std::env::temp_dir().join("sard_rawy173_db");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("t.db");
+        let _ = std::fs::remove_file(&path);
+
+        let conn = open_database(&path).unwrap();
+        let busy: i64 = conn.query_row("PRAGMA busy_timeout", [], |r| r.get(0)).unwrap();
+        assert_eq!(busy, 3000, "busy_timeout must be 3000 ms (contention retries, not SQLITE_BUSY)");
+        let mode: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
+        assert_eq!(mode.to_lowercase(), "wal", "journal_mode must be WAL");
+        let fk: i64 = conn.query_row("PRAGMA foreign_keys", [], |r| r.get(0)).unwrap();
+        assert_eq!(fk, 1, "foreign_keys must be ON");
+
+        drop(conn);
+        let _ = std::fs::remove_file(&path);
+    }
 }

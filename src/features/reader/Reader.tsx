@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { FoliateController, type SearchHit, type SelectionInfo, type TocEntry } from "../../reader-engine/FoliateController";
 import { PhotoComposer } from "../photo/PhotoComposer";
@@ -267,6 +268,40 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     // Open the book the Library handed us; re-open if the selection changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initial.id]);
+
+  // RAWY-173 (AUD-10): the reading position is saved on a 500 ms debounce and the TTS resume cursor on a
+  // ~2 s throttle; React cleanup does NOT run when the OS window is closed, so closing mid-read would lose
+  // the last position tick + the last-spoken sentence. On the window's close-requested, FLUSH both
+  // (the SAME values the debounced saves compute) before the app tears down: prevent the close, write,
+  // then destroy — raced against a short ceiling so the close never visibly hangs.
+  useEffect(() => {
+    const win = getCurrentWindow();
+    let unlisten: (() => void) | undefined;
+    const targetIsPdf = (initial.format ?? "").toLowerCase() === "pdf";
+    win
+      .onCloseRequested(async (event) => {
+        event.preventDefault();
+        const flush = async () => {
+          const st = useReader.getState();
+          // progress: same rule as the debounced save (a PDF persists by fraction with an empty cfi)
+          if (st.cfi || targetIsPdf) await progressSave(bookRef.current, st.cfi ?? "", st.fraction).catch(() => {});
+          // the last-spoken TTS sentence: the same cursor the throttled save + stop-on-exit write
+          if (useTts.getState().active) {
+            const cur = ctrlRef.current?.getTtsCursor(useTts.getState().index);
+            if (cur) await settingsSet(`tts_position:${initial.id}`, JSON.stringify(cur)).catch(() => {});
+          }
+        };
+        try {
+          await Promise.race([flush(), new Promise((r) => setTimeout(r, 1500))]);
+        } finally {
+          await win.destroy();
+        }
+      })
+      .then((u) => { unlisten = u; })
+      .catch(() => {});
+    return () => unlisten?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // GLOBAL flags (override-book-colour, hide-chapter-title, hide-first-line) → re-inject the book
   // at its PER-BOOK theme (RAWY-40). Theme itself is per-book and handled by setBookTheme, not here.

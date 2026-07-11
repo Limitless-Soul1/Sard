@@ -72,6 +72,17 @@ pub fn run() {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     tauri::Builder::default()
+        // RAWY-173 (AUD-9): registered FIRST so a SECOND launch is intercepted before it opens a window
+        // or attaches the same WAL DB. The callback runs in the ALREADY-RUNNING instance — focus its
+        // window instead of starting a rival that would fight over the DB + per-session state. (A file
+        // arg could be routed here later; for now, just surface the existing window.)
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
@@ -151,6 +162,15 @@ pub fn run() {
             updater::check_for_update,
             window_chrome::set_titlebar_theme,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Sard");
+        .build(tauri::generate_context!())
+        .expect("error while building Sard")
+        // RAWY-173 (AUD-10): on app exit, kill the warm Piper child (belt-and-braces — piper --json-input
+        // should self-exit on stdin EOF when the parent drops, but this guarantees no orphaned piper.exe).
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                if let Some(engine) = app_handle.try_state::<tts::TtsEngine>() {
+                    tts::shutdown(&engine);
+                }
+            }
+        });
 }

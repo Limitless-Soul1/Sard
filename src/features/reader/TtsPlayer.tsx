@@ -95,11 +95,12 @@ export function TtsPlayer({ panelLeft = false, panelRight = false }: { panelLeft
             </button>
           </div>
           <div className="tts-pill-right">
-            {/* RAWY-160: minimize the pill to the kashida stroke (audio keeps playing). The stroke docks
-                in the BOTTOM margin, so this is a clear "collapse DOWN to the bottom bar" icon (an arrow
-                dropping onto a baseline) — distinct from the ✕ close and the ⌄ rows-collapse chevron. */}
+            {/* RAWY-161: minimize the pill to the kashida stroke (audio keeps playing). Made obviously
+                discoverable — this is the ONE accent-tinted CHIP in the row (a rounded pill, not a bare
+                ghost circle), clearly set apart from the muted ✕ close and ⌄ rows-collapse. The icon is a
+                "collapse DOWN onto a baseline" arrow (→ the bottom kashida stroke). */}
             <button className="tts-ghost tts-minimize" onClick={() => setMinimized(true)} aria-label={t("tts.minimize")} title={t("tts.minimize")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M12 4v9m0 0 3.5-3.5M12 13l-3.5-3.5M5 19h14" /></svg>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 4v9m0 0 3.5-3.5M12 13l-3.5-3.5M5 19h14" /></svg>
             </button>
             <button className="tts-ghost tts-x" onClick={stop} aria-label={t("tts.close")} title={t("tts.close")}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>

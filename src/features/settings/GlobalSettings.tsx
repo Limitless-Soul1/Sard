@@ -12,7 +12,8 @@ import type { TKey } from "../../i18n/locales/en";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 import { Hoopoe } from "../library/Hoopoe";
-import { checkForUpdate, settingsGet, settingsSet } from "../../lib/ipc";
+import { settingsGet, settingsSet } from "../../lib/ipc";
+import { runUpdateCheck, type UpdResult } from "../../lib/updater";
 import { FONT_CATALOGUE, UI_SCALE_MAX, UI_SCALE_MIN, useFonts } from "../../lib/fonts";
 import { BOOKMARK_COLORS, BOOKMARK_SHAPES, BOOKMARK_SIZE_MAX, BOOKMARK_SIZE_MIN, useBookmarkStyle } from "../../lib/bookmarkStyle";
 import { BookmarkShape } from "../reader/BookmarkShape";
@@ -582,12 +583,9 @@ function LanguageSection() {
 // RAWY-168: in-app update CHECK (updater Phase 1) — manual/opt-in; the network call is Rust-side, and
 // a newer version only OPENS the release page in the OS browser (no in-app download/install). Fails
 // quietly (a network error OR the not-yet-configured manifest URL both show a calm "couldn't check").
-type UpdState =
-  | { k: "idle" }
-  | { k: "checking" }
-  | { k: "uptodate"; ver: string }
-  | { k: "available"; ver: string; url: string; notes: string }
-  | { k: "unavailable" };
+// RAWY-170: the check itself now lives in the shared `runUpdateCheck` (also used by the Library
+// rosette). This row keeps its own idle/checking chrome and reuses that terminal result.
+type UpdState = { k: "idle" } | { k: "checking" } | UpdResult;
 
 function AboutSection() {
   const { t } = useI18n();
@@ -596,14 +594,7 @@ function AboutSection() {
   const check = async () => {
     setUpd({ k: "checking" });
     setShowNotes(false);
-    try {
-      const r = await checkForUpdate();
-      if (!r.configured) setUpd({ k: "unavailable" }); // no public feed yet (placeholder URL)
-      else if (r.isNewer) setUpd({ k: "available", ver: r.latest, url: r.url, notes: r.notes });
-      else setUpd({ k: "uptodate", ver: r.current });
-    } catch {
-      setUpd({ k: "unavailable" }); // offline / unreachable / bad manifest → quiet
-    }
+    setUpd(await runUpdateCheck()); // uptodate / available / unavailable (never throws)
   };
   return (
     <>

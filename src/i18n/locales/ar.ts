@@ -424,6 +424,10 @@ export const ar: Record<TKey, string> = {
   "gs.update.get": "تنزيل",
   "gs.update.later": "لاحقاً",
   "gs.update.failed": "تعذّر التحقّق الآن",
+  // RAWY-170: the Library update rosette (tooltip/state labels)
+  "updater.check": "التحقّق من التحديثات",
+  "updater.checking": "جارٍ التحقّق من التحديثات…",
+  "updater.available": "يتوفّر تحديث",
   "gs.twoLevel.title": "مستويان من الإعدادات",
   "gs.twoLevel.global": "عام · من المكتبة",
   "gs.twoLevel.globalDesc": "يغيّر التطبيق كله: خط الواجهة، السمة والوضع الافتراضيان، اللغة، والإعدادات التي تبدأ بها الكتب الجديدة.",

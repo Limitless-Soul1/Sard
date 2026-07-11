@@ -28,6 +28,7 @@ import {
 } from "../../lib/ipc";
 import { AutoCover } from "./AutoCover";
 import { GlobalSettings } from "../settings/GlobalSettings";
+import { UpdateRosette } from "../updater/UpdateRosette";
 import { Hoopoe } from "./Hoopoe";
 import { Inbox } from "./Inbox";
 import { PhotoGallery } from "../photo/PhotoGallery";
@@ -713,6 +714,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
       )}
       {toast && <div className="lib-toast">{toast}</div>}
       <GlobalSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <UpdateRosette />
     </div>
   );
 }

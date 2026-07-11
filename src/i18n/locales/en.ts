@@ -426,6 +426,10 @@ export const en = {
   "gs.update.get": "Download",
   "gs.update.later": "Later",
   "gs.update.failed": "Couldn't check right now",
+  // RAWY-170: the Library update rosette (tooltip/state labels)
+  "updater.check": "Check for updates",
+  "updater.checking": "Checking for updates…",
+  "updater.available": "An update is available",
   "gs.twoLevel.title": "Two levels of settings",
   "gs.twoLevel.global": "Global · from the Library",
   "gs.twoLevel.globalDesc": "Changes the whole app: interface font, default theme & mode, language, and the defaults new books start from.",

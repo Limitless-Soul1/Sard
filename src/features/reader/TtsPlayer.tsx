@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
 import { TTS_EMPTY, TTS_MAX_SPEED, TTS_MIN_SPEED, TTS_SPEED_STEP, useTts, voiceLabel } from "../../lib/tts";
-import { MINI_SHAPES, TtsMini, type MiniShape } from "./TtsMini";
+import { TtsMini } from "./TtsMini";
 import { TtsVoicePicker } from "./TtsVoicePicker";
 
 const CHEV_UP = "m6 14 6-6 6 6";
@@ -22,10 +22,9 @@ export function TtsPlayer() {
   const { t, lang, dir } = useI18n();
   const [expanded, setExpanded] = useState(true);
   const [picking, setPicking] = useState(false);
-  // RAWY-156: minimize the pill to a small draggable shape while audio keeps playing. UI-only state —
-  // never persisted to the settings DB. `shape` is chosen by the TEMPORARY switcher below.
+  // RAWY-156/157: minimize the pill to the RIBBON (a top-edge silk bookmark) while audio keeps
+  // playing. UI-only state — never persisted to the settings DB.
   const [minimized, setMinimized] = useState(false);
-  const [shape, setShape] = useState<MiniShape>("ribbon"); // RAWY-156 TEMP — switcher-driven
   // A fresh Listen (active flips true) should start on the full pill, not a stale minimized state.
   useEffect(() => {
     if (!active) {
@@ -58,16 +57,8 @@ export function TtsPlayer() {
 
   return (
     <>
-      {/* TEMP shape switcher (RAWY-156) — pick the winning minimized shape live; DELETE this whole
-          block in a later task once one is chosen. Intentionally NOT part of the real Settings tabs. */}
-      <div className="tts-mini-switch" role="group" aria-label="Minimized shape (temporary)">
-        <span className="tts-mini-switch-lbl">shape · temp</span>
-        {MINI_SHAPES.map((sh) => (
-          <button key={sh} className={`tts-mini-switch-btn${shape === sh ? " on" : ""}`} onClick={() => setShape(sh)}>{sh}</button>
-        ))}
-      </div>
       {minimized ? (
-        <TtsMini shape={shape} onExpand={() => setMinimized(false)} />
+        <TtsMini onExpand={() => setMinimized(false)} />
       ) : (
       <>
       {picking && <TtsVoicePicker onClose={() => setPicking(false)} />}
@@ -101,9 +92,10 @@ export function TtsPlayer() {
             </button>
           </div>
           <div className="tts-pill-right">
-            {/* RAWY-156: minimize to the selected draggable shape (audio keeps playing). */}
-            <button className="tts-ghost" onClick={() => setMinimized(true)} aria-label={t("tts.minimize")} title={t("tts.minimize")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M9 9 4 4M4 9V4h5M15 15l5 5M20 15v5h-5" /></svg>
+            {/* RAWY-157: minimize to the ribbon (audio keeps playing) — a clear "send up to the top
+                edge" icon, distinct from the ⌄ collapse chevron, with a labelled tooltip. */}
+            <button className="tts-ghost tts-minimize" onClick={() => setMinimized(true)} aria-label={t("tts.minimize")} title={t("tts.minimize")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M5 5h14M12 19v-9M8.5 13.5 12 10l3.5 3.5" /></svg>
             </button>
             <button className="tts-ghost tts-x" onClick={stop} aria-label={t("tts.close")} title={t("tts.close")}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>

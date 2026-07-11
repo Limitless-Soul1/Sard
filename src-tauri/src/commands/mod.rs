@@ -255,10 +255,14 @@ pub fn book_set_cover(
     library::set_cover(&conn, &app_data_dir, &id, &image_path)
 }
 
-/// RAWY-85 — set a PDF's page-1 cover from raw PNG bytes (extracted by the reader on first open).
+/// RAWY-85 — set a PDF's page-1 cover from PNG bytes (extracted by the reader on first open).
+/// RAWY-177 (AUD-4): the bytes arrive as a STAGED temp file (`stage_png`), not a JSON number-array
+/// on the UI thread; we read the temp file, apply it, then delete it.
 #[tauri::command]
-pub fn book_set_cover_png(id: String, data: Vec<u8>, state: State<AppState>) -> Result<bool, String> {
+pub fn book_set_cover_png(id: String, png_path: String, state: State<AppState>) -> Result<bool, String> {
     safe_id(&id)?;
+    let data = std::fs::read(&png_path).map_err(err)?;
+    let _ = std::fs::remove_file(&png_path);
     let app_data_dir = state.app_data_dir.clone();
     let conn = state.db.lock().map_err(err)?;
     library::set_cover_bytes(&conn, &app_data_dir, &id, &data)?;
@@ -430,10 +434,35 @@ pub fn font_remove(id: String, state: State<AppState>) -> Result<bool, String> {
 
 // ---- Photo Mode (RAWY-49): write a rendered photo-card PNG to a user-chosen path. ----
 // The frontend rasterises the card DOM to PNG bytes (html-to-image) and picks a path via the
-// dialog plugin; this just writes the bytes. Kept in Rust so no extra JS fs plugin is needed.
+// dialog plugin; RAWY-177 (AUD-4) stages those bytes to a temp file first (raw ipc body, no JSON
+// number-array on the UI thread), so this just moves the staged file onto the chosen destination.
 #[tauri::command]
-pub fn save_photo_card(path: String, data: Vec<u8>) -> Result<(), String> {
-    std::fs::write(&path, &data).map_err(err)
+pub fn save_photo_card(path: String, src_path: String) -> Result<(), String> {
+    // Copy (not rename) so a cross-volume destination — temp on C:, library on M: — still works,
+    // then drop the temp. The output bytes are identical to the staged PNG.
+    std::fs::copy(&src_path, &path).map_err(err)?;
+    let _ = std::fs::remove_file(&src_path);
+    Ok(())
+}
+
+// RAWY-177 (AUD-4): receive PNG bytes as a RAW ipc body (octet-stream) — not `Array.from` + a JSON
+// number-array serialised on the main thread — and spill them to a temp file, returning its path.
+// The photo-card / cover commands then take that path instead of a multi-MB `Vec<u8>` argument, so a
+// 2–4 MB image never crosses the bridge as JSON and Save/Export no longer hitches.
+#[tauri::command]
+pub fn stage_png(request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let bytes = match request.body() {
+        tauri::ipc::InvokeBody::Raw(b) => b,
+        _ => return Err("stage_png expects raw bytes".into()),
+    };
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let mut path = std::env::temp_dir();
+    path.push(format!("sard-stage-{}-{}.png", std::process::id(), nanos));
+    std::fs::write(&path, bytes).map_err(err)?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 // ---- Saved photo cards + gallery (RAWY-52, Photo Mode part 2a). ----
@@ -452,10 +481,12 @@ pub fn photocard_save(
     passages: Option<String>,
     quote_font: Option<String>,
     created_at: i64,
-    data: Vec<u8>,
+    png_path: String, // RAWY-177 (AUD-4): a staged temp file, not a JSON number-array of the bytes
     state: State<AppState>,
 ) -> Result<photocards::PhotoCard, String> {
     safe_id(&id)?;
+    let data = std::fs::read(&png_path).map_err(err)?;
+    let _ = std::fs::remove_file(&png_path);
     let app_data_dir = state.app_data_dir.clone();
     let conn = state.db.lock().map_err(err)?;
     let meta = photocards::SaveMeta {

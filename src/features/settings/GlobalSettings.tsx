@@ -10,6 +10,7 @@ import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
 import type { TKey } from "../../i18n/locales/en";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import { getVersion } from "@tauri-apps/api/app";
 
 import { Hoopoe } from "../library/Hoopoe";
 import { settingsGet, settingsSet } from "../../lib/ipc";
@@ -591,6 +592,10 @@ function AboutSection() {
   const { t } = useI18n();
   const [upd, setUpd] = useState<UpdState>({ k: "idle" });
   const [showNotes, setShowNotes] = useState(false);
+  // RAWY-177 (AUD-15): read the REAL version from the bundled config (D41 bumps it each checkpoint)
+  // rather than a hardcoded literal, so About can never drift from the shipped binary.
+  const [ver, setVer] = useState("");
+  useEffect(() => { getVersion().then(setVer).catch(() => {}); }, []);
   const check = async () => {
     setUpd({ k: "checking" });
     setShowNotes(false);
@@ -604,7 +609,7 @@ function AboutSection() {
         <div>
           <div className="gs-about-name">Sard · سَرْد</div>
           <div className="gs-about-tag">{t("gs.about.tagline")}</div>
-          <div className="gs-about-ver">{t("gs.about.version")} 0.5.0</div>
+          <div className="gs-about-ver">{t("gs.about.version")} {ver}</div>
         </div>
       </div>
       <div className="gs-update">

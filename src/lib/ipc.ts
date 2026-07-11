@@ -244,9 +244,23 @@ export const bookSetCover = (id: string, imagePath: string): Promise<BookRow | n
 export const bookRevertCover = (id: string): Promise<BookRow | null> =>
   invoke<BookRow | null>("book_revert_cover", { id });
 
+/** RAWY-177 (AUD-4): hand PNG bytes to Rust as a RAW ipc body (octet-stream) instead of a JSON
+ * number-array serialised on the UI thread — Rust spills them to a temp file and returns its path,
+ * which the photo-card / cover commands then consume. A 2–4 MB PNG no longer hitches Save/Export. */
+export const stagePng = (bytes: ArrayBuffer): Promise<string> =>
+  invoke<string>("stage_png", bytes);
+
+/** RAWY-49 — write a rendered photo-card PNG to a user-chosen path (bytes staged, not JSON'd). */
+export const savePhotoCardFile = async (path: string, bytes: ArrayBuffer): Promise<void> => {
+  const srcPath = await stagePng(bytes);
+  await invoke("save_photo_card", { path, srcPath });
+};
+
 /** RAWY-85 — set a PDF's page-1 cover from PNG bytes (the reader extracts it on first open). */
-export const bookSetCoverPng = (id: string, data: number[]): Promise<boolean> =>
-  invoke<boolean>("book_set_cover_png", { id, data });
+export const bookSetCoverPng = async (id: string, bytes: ArrayBuffer): Promise<boolean> => {
+  const pngPath = await stagePng(bytes);
+  return invoke<boolean>("book_set_cover_png", { id, pngPath });
+};
 
 /** RAWY-76 — delete a book and cascade ALL related rows + files (zero orphans). `true` if it existed. */
 export const bookDelete = (id: string): Promise<boolean> => invoke<boolean>("book_delete", { id });
@@ -360,7 +374,7 @@ export interface PhotoCardRow {
   image_path: string; // absolute path to the stored PNG (load via convertFileSrc)
 }
 
-export const photocardSave = (args: {
+export const photocardSave = async (args: {
   id: string;
   bookId?: string | null;
   bookTitle?: string | null;
@@ -373,9 +387,10 @@ export const photocardSave = (args: {
   passages?: string | null;
   quoteFont?: string | null;
   createdAt: number;
-  data: number[];
-}): Promise<PhotoCardRow> =>
-  invoke<PhotoCardRow>("photocard_save", {
+  png: ArrayBuffer; // RAWY-177 (AUD-4): the card PNG, staged as a raw ipc body (not a JSON array)
+}): Promise<PhotoCardRow> => {
+  const pngPath = await stagePng(args.png);
+  return invoke<PhotoCardRow>("photocard_save", {
     id: args.id,
     bookId: args.bookId ?? null,
     bookTitle: args.bookTitle ?? null,
@@ -388,8 +403,9 @@ export const photocardSave = (args: {
     passages: args.passages ?? null,
     quoteFont: args.quoteFont ?? null,
     createdAt: args.createdAt,
-    data: args.data,
+    pngPath,
   });
+};
 
 export const photocardsList = (): Promise<PhotoCardRow[]> => invoke<PhotoCardRow[]>("photocards_list");
 export const photocardDelete = (id: string): Promise<boolean> => invoke<boolean>("photocard_delete", { id });

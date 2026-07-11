@@ -221,7 +221,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
           const t = ctrl.title;
           if (t && t.trim()) await bookUpdate(target.id, { title: t, author: ctrl.author }).catch(console.error);
           const bytes = await ctrl.getCoverBytes();
-          if (bytes && bytes.length) await bookSetCoverPng(target.id, bytes).catch(console.error);
+          if (bytes && bytes.byteLength) await bookSetCoverPng(target.id, bytes).catch(console.error);
           await settingsSet(`pdf_meta:${target.id}`, "1").catch(() => {});
         }
       }

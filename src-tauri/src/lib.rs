@@ -150,6 +150,7 @@ pub fn run() {
             commands::bookmark_delete,
             commands::bookmarks_for_book,
             commands::bookmarks_all,
+            commands::stage_png,
             commands::save_photo_card,
             commands::photocard_save,
             commands::photocards_list,

@@ -54,9 +54,12 @@ export function TtsVoicePicker({ onClose }: { onClose: () => void }) {
       <div className="tts-menu-head">{t("tts.voices")}</div>
       <div className="tts-menu-scroll">
         {voices === null ? (
+          // still loading (the async fetch hasn't resolved yet)
           <div className="tts-menu-empty">{t("tts.loadingVoices")}</div>
         ) : items.length === 0 ? (
-          <div className="tts-menu-empty">{t("tts.loadingVoices")}</div>
+          // RAWY-177 (AUD-17): loaded but empty — Edge returns no voices when offline. Show a clear
+          // "no voices / offline" message instead of an eternal "loading…" spinner.
+          <div className="tts-menu-empty">{t("tts.noVoices")}</div>
         ) : (
           items.map((v) => {
             const on = v.id === voice && v.engine === engine;

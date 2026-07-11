@@ -14,9 +14,8 @@
 import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toBlob } from "html-to-image";
 import { save } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
 
-import { photocardSave } from "../../lib/ipc";
+import { photocardSave, savePhotoCardFile } from "../../lib/ipc";
 import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
 import { useFonts } from "../../lib/fonts";
@@ -598,8 +597,7 @@ export function PhotoComposer({
       const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const path = await save({ defaultPath: `sard-quote-${stamp}.png`, filters: [{ name: "PNG image", extensions: ["png"] }] });
       if (path) {
-        const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
-        await invoke("save_photo_card", { path, data: bytes });
+        await savePhotoCardFile(path, await blob.arrayBuffer());
         flash(t("photo.saved"));
       }
     } catch (e) {
@@ -632,7 +630,6 @@ export function PhotoComposer({
     setBusy(true);
     try {
       const blob = await rasterize();
-      const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
       // Edit (RAWY-57): re-save over the same id (upsert), keeping the original save time; a
       // fresh card gets a new id + now.
       await photocardSave({
@@ -650,7 +647,7 @@ export function PhotoComposer({
         passages: data.passages && data.passages.length > 1 ? JSON.stringify(data.passages) : null,
         quoteFont, // RAWY-81 (#1): persist the chosen quote font so Edit restores it
         createdAt: editId ? Math.floor(data.date.getTime() / 1000) : Math.floor(Date.now() / 1000),
-        data: bytes,
+        png: await blob.arrayBuffer(),
       });
       flash(editId ? t("photo.updatedInApp") : t("photo.savedInApp"));
     } catch (e) {

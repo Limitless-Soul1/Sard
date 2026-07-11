@@ -503,4 +503,5 @@ export const ar: Record<TKey, string> = {
   "tts.fellBack": "إيدج غير متاح — نستخدم بايبر",
   "tts.edgeHiccup": "تعثّر إيدج مؤقتًا — بايبر الآن",
   "tts.loadingVoices": "جارٍ تحميل الأصوات…",
+  "tts.noVoices": "لا تتوفّر أصوات — تحتاج أصوات Edge إلى اتصال بالإنترنت.",
 };

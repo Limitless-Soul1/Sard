@@ -1833,12 +1833,13 @@ export class FoliateController {
   get isFixedLayout(): boolean {
     return this.view?.book?.rendition?.layout === "pre-paginated";
   }
-  /** RAWY-85: the page-1 cover as PNG bytes (PDF adapter's getCover), for library enrichment. */
-  async getCoverBytes(): Promise<number[] | null> {
+  /** RAWY-85: the page-1 cover as PNG bytes (PDF adapter's getCover), for library enrichment.
+   *  RAWY-177 (AUD-4): return the raw ArrayBuffer — the ipc layer stages it, so no per-byte JS array. */
+  async getCoverBytes(): Promise<ArrayBuffer | null> {
     try {
       const blob: Blob | undefined = await this.view?.book?.getCover?.();
       if (!blob) return null;
-      return Array.from(new Uint8Array(await blob.arrayBuffer()));
+      return await blob.arrayBuffer();
     } catch {
       return null;
     }

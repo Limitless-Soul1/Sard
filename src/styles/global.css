@@ -353,8 +353,12 @@ html, body, #root {
   inset-inline: 0;
   display: flex;
   align-items: center;
-  background: color-mix(in srgb, var(--chrome-bg) 88%, transparent);
-  backdrop-filter: blur(8px);
+  /* RAWY-177 (AUD-11): the bars span the FULL window over scrolled reading text, so a wide
+     backdrop-blur re-blurred the whole column on every scroll (the RAWY-169 compositor cost, the pill
+     already fixed). A more-opaque ground (88% → 96%) + a small blur (8px → 4px) keeps the frosted feel
+     for a fraction of the GPU work. */
+  background: color-mix(in srgb, var(--chrome-bg) 96%, transparent);
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
   transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
   /* PINNED (RAWY-32/D21): force LTR so nav stays physical-LEFT and the control cluster stays
      physical-RIGHT — the chrome does NOT flip with the UI language. Only labels translate; the
@@ -948,7 +952,9 @@ html, body, #root {
   width: min(380px, calc(100vw - 28px)); max-height: min(42vh, 340px); /* RAWY-115: match the wider pill */
   display: flex; flex-direction: column; border-radius: 14px; border: 1px solid var(--chrome-border);
   background: color-mix(in srgb, var(--chrome-bg) 98%, transparent);
-  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  /* RAWY-177 (AUD-11): the ground is 98% opaque, so blur(16px) barely showed yet cost a heavy re-blur;
+     a small blur keeps the frost for far less GPU work (the RAWY-169 recipe). */
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
   box-shadow: 0 16px 40px rgba(40, 28, 14, 0.24); font-family: var(--ui-font); overflow: hidden;
 }
 :root[data-dark="true"] .tts-menu { box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5); }
@@ -1059,7 +1065,8 @@ html, body, #root {
   background: color-mix(in srgb, var(--chrome-bg) 92%, var(--accent) 8%);
   border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--chrome-border));
   box-shadow: 0 12px 30px rgba(40, 28, 14, 0.26);
-  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  /* RAWY-177 (AUD-11): ground already ~92% opaque — trim blur(14px) → a small blur (RAWY-169 recipe). */
+  backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
   animation: tts-resume-in 0.24s ease;
 }
 :root[data-dark="true"] .tts-resume { box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5); }

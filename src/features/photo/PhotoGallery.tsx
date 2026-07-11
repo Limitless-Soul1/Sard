@@ -4,13 +4,13 @@
 // and re-export (Save image / Copy image) or delete it. Empty state when there are none.
 
 import { useEffect, useState } from "react";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 
 import { useI18n } from "../../i18n";
 import { localeNum } from "../../lib/format";
 import { THEMES, useTheme, type ThemeId } from "../../theme";
-import { photocardDelete, photocardsList, type PhotoCardRow } from "../../lib/ipc";
+import { photocardDelete, photocardsList, savePhotoCardFile, type PhotoCardRow } from "../../lib/ipc";
 import { PhotoComposer } from "./PhotoComposer";
 import { DEFAULT_META, FORMATS, type CardData, type CardFormat, type CardPassage } from "./photo";
 
@@ -128,8 +128,7 @@ export function PhotoGallery() {
       const stamp = new Date(card.created_at * 1000).toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const path = await save({ defaultPath: `sard-quote-${stamp}.png`, filters: [{ name: "PNG image", extensions: ["png"] }] });
       if (path) {
-        const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
-        await invoke("save_photo_card", { path, data: bytes });
+        await savePhotoCardFile(path, await blob.arrayBuffer());
         flash(t("photo.saved"));
       }
     } catch (e) {

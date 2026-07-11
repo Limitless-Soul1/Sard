@@ -505,6 +505,7 @@ export const en = {
   "tts.fellBack": "Edge unavailable — using Piper",
   "tts.edgeHiccup": "Edge hiccup — Piper for now",
   "tts.loadingVoices": "loading voices…",
+  "tts.noVoices": "No voices available — Edge voices need an internet connection.",
 } as const;
 
 export type TKey = keyof typeof en;

@@ -70,7 +70,14 @@ export const useUpdater = create<UpdaterStore>((set, get) => ({
   manual: async () => {
     if (get().state === "checking") return;
     set({ state: "checking" });
-    const r = await runUpdateCheck();
+    // RAWY-171: hold the spin a beat. With the empty placeholder URL the check resolves in ~1 ms (no
+    // network), so without this the spin was imperceptible and a tap looked like it did NOTHING —
+    // exactly the "dead click" the owner saw (the handler DID fire). A brief floor makes every tap
+    // visibly respond, whatever the feed returns.
+    const [r] = await Promise.all([
+      runUpdateCheck(),
+      new Promise((resolve) => setTimeout(resolve, 650)),
+    ]);
     settingsSet(LAST_CHECK_KEY, String(Date.now())).catch(() => {});
     if (r.k === "available") set({ state: "available", ver: r.ver, url: r.url, notes: r.notes });
     else if (r.k === "uptodate") set({ state: "uptodate", ver: r.ver });

@@ -84,7 +84,7 @@ export function UpdateRosette() {
           </div>
         </div>
       )}
-      <button className="upd-rosette-btn" onClick={onTap} aria-label={label} title={label}>
+      <button type="button" className="upd-rosette-btn" onClick={onTap} aria-label={label} title={label}>
         <svg className="upd-svg" viewBox="0 0 48 48" aria-hidden>
           <circle className="upd-orbit" cx="24" cy="24" r="20.5" fill="none" stroke="currentColor" strokeWidth="1" />
           <g className="upd-petals" fill="currentColor">

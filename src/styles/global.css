@@ -1769,6 +1769,11 @@ html, body, #root {
 .upd-rosette-btn {
   position: relative; display: grid; place-items: center; width: 54px; height: 54px; padding: 0; cursor: pointer;
   border-radius: 15px;
+  /* RAWY-171: a <button> RESETS `color` to the UA default (black) instead of inheriting, so the SVG's
+     `currentColor` (petals/core/check) rendered black in every theme. Set the accent HERE, on the
+     button, so `currentColor` is the theme accent (var(--accent) inherits to the button as a custom
+     property regardless of the color reset). */
+  color: var(--accent);
   border: 1px solid color-mix(in srgb, var(--chrome-border) 78%, transparent);
   background: color-mix(in srgb, var(--chrome-bg) 82%, var(--paper-bg));
   box-shadow: 0 6px 18px rgba(40, 28, 14, 0.16);

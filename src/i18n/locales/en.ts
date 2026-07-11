@@ -471,8 +471,8 @@ export const en = {
   "tts.speed": "Speed",
   "tts.close": "Stop",
   "tts.expand": "Expand",
-  "tts.collapse": "Collapse",
-  "tts.minimize": "Minimize", // RAWY-156
+  "tts.collapseRows": "Collapse rows", // RAWY-164: the shrink button's FULL-state action (single chevron)
+  "tts.minimize": "Minimize", // RAWY-156; RAWY-164: the shrink button's COLLAPSED-state action (double chevron → stroke)
   "tts.swapSide": "Swap side", // RAWY-160: flip the minimized kashida to the other margin
   "tts.resumePrompt": "Resume from where you left off?", // RAWY-162
   "tts.resume": "Resume", // RAWY-162

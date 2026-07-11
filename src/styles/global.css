@@ -853,13 +853,15 @@ html, body, #root {
 }
 .tts-ghost:hover { background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); }
 .tts-ghost svg { width: 14px; height: 14px; }
-/* RAWY-161: MINIMIZE (pill → the bottom kashida stroke) must be obviously discoverable — the ✕ close
-   and ⌄ rows-collapse stay plain muted-grey ghost circles, so make minimize the ONE accent-tinted
-   CHIP: a rounded pill (a different SHAPE), the TTS accent as tint + border + icon colour, a bigger
-   icon, and real breathing room from ✕ (see `.tts-pill-right` gap). Distinct shape + colour + size. */
-.tts-minimize { width: auto; height: 28px; padding: 0 10px; border-radius: 14px; color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent); }
-.tts-minimize:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 24%, transparent); }
-.tts-minimize svg { width: 17px; height: 17px; }
+/* RAWY-164: the ONE progressive shrink button (replaces the old row-collapse chevron + the download-
+   looking minimize chip). FULL = a plain ghost circle with a SINGLE down-chevron; COLLAPSED = `.step2`
+   with a DOUBLE down-chevron + the TTS accent tint (its next press minimizes to the kashida stroke).
+   Bigger than the bare ghost so the chevron reads clearly; hover glows accent. */
+.tts-shrink { width: 30px; height: 30px; }
+.tts-shrink svg { width: 18px; height: 18px; }
+.tts-shrink:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+.tts-shrink.step2 { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent); }
+.tts-shrink.step2:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 .tts-play {
   flex: none; width: 44px; height: 44px; border-radius: 50%; border: 0; cursor: pointer;
   background: var(--accent); color: var(--paper-bg); display: flex; align-items: center; justify-content: center;
@@ -969,7 +971,7 @@ html, body, #root {
    NOT draggable; it FLIPS to the trailing corner to clear an open leading-side panel (reusing
    the pill's panel-clear booleans). Replaces the RAWY-157 ribbon (owner chose the kashida).
    ============================================================================ */
-.tts-pill-right { display: flex; align-items: center; gap: 7px; } /* RAWY-161: separate minimize from ✕ */
+.tts-pill-right { display: flex; align-items: center; } /* RAWY-164: only ✕ now (minimize chip removed) */
 
 /* shared minimized-player bits — fixed, isolated from selection/scroll (handlers in JS). NOT draggable. */
 .tts-mini { position: fixed; z-index: 27; touch-action: none; user-select: none; -webkit-user-select: none; font-family: var(--ui-font); }

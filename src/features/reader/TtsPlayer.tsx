@@ -23,17 +23,17 @@ const CHEV_DOWN = "m6 10 6 6 6-6";
 export function TtsPlayer({ panelLeft = false, panelRight = false }: { panelLeft?: boolean; panelRight?: boolean }) {
   const { active, status, engine, voice, index, total, speed, progress, chapterLabel, error, notice, toggle, skip, setSpeed, setEngine, retry, stop } = useTts();
   const { t, lang, dir } = useI18n();
-  const [expanded, setExpanded] = useState(true);
   const [picking, setPicking] = useState(false);
-  // RAWY-156/157: minimize the pill to the RIBBON (a top-edge silk bookmark) while audio keeps
-  // playing. UI-only state — never persisted to the settings DB.
-  const [minimized, setMinimized] = useState(false);
+  // RAWY-164: ONE progressive size state replaces the old two confusable controls (the row-collapse
+  // chevron + the download-looking minimize). The single shrink button steps full → collapsed →
+  // kashida; tapping the kashida stroke returns straight to full. UI-only — never persisted.
+  const [size, setSize] = useState<"full" | "collapsed" | "kashida">("full");
+  const expanded = size === "full"; // the engine/voices/speed rows show only when full
+  const minimized = size === "kashida";
+  const shrink = () => setSize((s) => (s === "full" ? "collapsed" : "kashida")); // one step down
   // A fresh Listen (active flips true) should start on the full pill, not a stale minimized state.
   useEffect(() => {
-    if (!active) {
-      setMinimized(false);
-      setExpanded(true);
-    }
+    if (!active) setSize("full");
   }, [active]);
   if (!active) return null;
 
@@ -61,15 +61,28 @@ export function TtsPlayer({ panelLeft = false, panelRight = false }: { panelLeft
   return (
     <>
       {minimized ? (
-        <TtsMini onExpand={() => setMinimized(false)} panelLeft={panelLeft} panelRight={panelRight} />
+        <TtsMini onExpand={() => setSize("full")} panelLeft={panelLeft} panelRight={panelRight} />
       ) : (
       <>
       {picking && <TtsVoicePicker onClose={() => setPicking(false)} />}
       <div className={`tts-pill${expanded ? " expanded" : ""}${errored ? " errored" : ""}`} dir={dir} role="group" aria-label={t("tts.player")}>
         {/* row 1 — transport */}
         <div className="tts-pill-transport">
-          <button className="tts-ghost" onClick={() => setExpanded((e) => !e)} aria-label={expanded ? t("tts.collapse") : t("tts.expand")} title={expanded ? t("tts.collapse") : t("tts.expand")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d={expanded ? CHEV_DOWN : CHEV_UP} /></svg>
+          {/* RAWY-164: the ONE progressive shrink button. Its icon tells the next step: FULL → a single
+              down-chevron (press collapses the extra rows); COLLAPSED → a `.step2` double down-chevron +
+              the accent tint (press minimizes to the kashida stroke). Replaces the old row-collapse
+              chevron AND the download-looking minimize button; ✕ + transport stay separate. */}
+          <button
+            className={`tts-ghost tts-shrink${size === "collapsed" ? " step2" : ""}`}
+            onClick={shrink}
+            aria-label={size === "full" ? t("tts.collapseRows") : t("tts.minimize")}
+            title={size === "full" ? t("tts.collapseRows") : t("tts.minimize")}
+          >
+            {size === "full" ? (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 9 6 6 6-6" /></svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m6 6 6 6 6-6" /><path d="m6 13 6 6 6-6" /></svg>
+            )}
           </button>
           <div className="tts-transport-mid">
             <button className="tts-skip" onClick={() => skip(-1)} disabled={busy || errored} aria-label={t("tts.skipBack")} title={t("tts.skipBack")}>
@@ -95,13 +108,7 @@ export function TtsPlayer({ panelLeft = false, panelRight = false }: { panelLeft
             </button>
           </div>
           <div className="tts-pill-right">
-            {/* RAWY-161: minimize the pill to the kashida stroke (audio keeps playing). Made obviously
-                discoverable — this is the ONE accent-tinted CHIP in the row (a rounded pill, not a bare
-                ghost circle), clearly set apart from the muted ✕ close and ⌄ rows-collapse. The icon is a
-                "collapse DOWN onto a baseline" arrow (→ the bottom kashida stroke). */}
-            <button className="tts-ghost tts-minimize" onClick={() => setMinimized(true)} aria-label={t("tts.minimize")} title={t("tts.minimize")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 4v9m0 0 3.5-3.5M12 13l-3.5-3.5M5 19h14" /></svg>
-            </button>
+            {/* ✕ fully stops read-aloud — it is NOT part of the shrink cycle (RAWY-164). */}
             <button className="tts-ghost tts-x" onClick={stop} aria-label={t("tts.close")} title={t("tts.close")}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
             </button>

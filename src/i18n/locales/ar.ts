@@ -471,6 +471,7 @@ export const ar: Record<TKey, string> = {
   "tts.expand": "توسيع",
   "tts.collapse": "طيّ",
   "tts.minimize": "تصغير", // RAWY-156
+  "tts.swapSide": "تبديل الجهة", // RAWY-160: نقل الكشيدة المصغّرة إلى الهامش الآخر
   // RAWY-111/113 — المحرّك ومنتقي الأصوات (بايبر وإيدج)
   "tts.voices": "الأصوات",
   "tts.voice": "الصوت",

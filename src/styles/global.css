@@ -210,8 +210,9 @@ html, body, #root {
   opacity: 0.55; /* whisper-subtle */
   background:
     url("/moonlit/crescent.svg")     95% 12% / 96px 96px no-repeat,
-    url("/moonlit/cloud-gilded.svg") 99% 46% / 232px 106px no-repeat,
-    url("/moonlit/cloud-wisp.svg")    1% 70% / 210px 84px no-repeat,
+    /* RAWY-160: soft PNG clouds — gold-rimmed (lit) up near the crescent, wispy-dark down low. */
+    url("/moonlit/moonlit-cloud-gold-rim.png") 99% 46% / 232px 106px no-repeat,
+    url("/moonlit/wispy-dark-cloud.png")        1% 70% / 210px 84px no-repeat,
     url("/moonlit/star.svg")      90% 27% / 15px 15px no-repeat,
     url("/moonlit/star.svg")      96% 56% / 13px 13px no-repeat,
     url("/moonlit/star.svg")      85% 75% / 12px 12px no-repeat,
@@ -244,12 +245,12 @@ html, body, #root {
   pointer-events: none;
   opacity: 0.85;
   background:
-    /* cradle cloud (style 7) listed BEFORE the crescent so it passes IN FRONT of the moon's lower
-       half (cradling it) — centred under the crescent (crescent bg-pos 15% 21%, 124px). */
-    url("/moonlit/cloud-cradle.svg") 13% 27% / 190px 71px no-repeat,
-    url("/moonlit/crescent.svg")     15% 21% / 124px 124px no-repeat,
-    url("/moonlit/cloud-gilded.svg") 64% 40% / 252px 116px no-repeat,
-    url("/moonlit/cloud-wisp.svg")    5% 82% / 230px 92px no-repeat,
+    /* RAWY-160: soft PNG clouds. The gold-rimmed (lit) cloud cradles the crescent — listed BEFORE it
+       so it passes IN FRONT of the moon's lower half — centred under the crescent (bg-pos 15% 21%). */
+    url("/moonlit/moonlit-cloud-gold-rim.png") 13% 27% / 190px 71px no-repeat,
+    url("/moonlit/crescent.svg")               15% 21% / 124px 124px no-repeat,
+    url("/moonlit/moonlit-cloud-gold-rim.png") 64% 40% / 252px 116px no-repeat,
+    url("/moonlit/wispy-dark-cloud.png")        5% 82% / 230px 92px no-repeat,
     /* RAWY-149: stars distributed across the FULL width so the night sky fills the library evenly —
        left-centre + a right-side field in the open area BELOW the top-right cover grid (covers stay
        clear, opaque on top). */
@@ -967,45 +968,63 @@ html, body, #root {
 .tts-mini { position: fixed; z-index: 27; touch-action: none; user-select: none; -webkit-user-select: none; font-family: var(--ui-font); }
 .tts-mini-play { position: relative; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; padding: 0; cursor: pointer; }
 .tts-mini-play svg { position: relative; width: 42%; height: 42%; }
-.tts-mini-cue { color: var(--accent); display: flex; opacity: 0.7; }
-.tts-mini-cue svg { width: 15px; height: 15px; }
 
-/* ② كشيدة — a tapered calligraphic elongation stroke in the BOTTOM MARGIN, below the text, anchored
-   at the LEADING corner. Bead (leading end) = play/pause; fill = progress; tapping the body stretches
-   it back to the full pill. Flips to the trailing corner to clear a leading-side panel. */
+/* ② كشيدة — a tapered calligraphic elongation stroke in the BOTTOM MARGIN, below the text. Bead
+   (leading end) = play/pause; fill = progress; body tap = expand; the swap button flips the side.
+   RAWY-160: noticeably bigger, and forced physical `direction:ltr` so left/right + the mirror are
+   dir-independent — the WHOLE shape mirrors (taper + bead position + fill) via `.orient-*`. */
 .tts-mini--kashida {
-  bottom: 22px; inset-inline-start: 30px; z-index: 27;
-  display: flex; align-items: center; gap: 10px;
-  padding: 7px 12px; border-radius: 15px; cursor: pointer;
+  direction: ltr; /* physical layout; the side + mirror are computed in JS and styled by left/right */
+  bottom: 24px; z-index: 27;
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 15px; border-radius: 18px; cursor: pointer;
   background: color-mix(in srgb, var(--chrome-bg) 82%, transparent);
   border: 1px solid color-mix(in srgb, var(--chrome-border) 70%, transparent);
   backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px);
   box-shadow: 0 8px 22px rgba(40, 28, 14, 0.22);
-  transition: inset-inline-start 0.24s cubic-bezier(0.22, 1, 0.36, 1), inset-inline-end 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
 :root[data-dark="true"] .tts-mini--kashida { box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45); }
-.tts-mini--kashida.flip { inset-inline-start: auto; inset-inline-end: 30px; }
-.tts-mini--kashida.center { inset-inline: auto; left: 50%; transform: translateX(-50%); }
 
-/* the bead — solid accent disc with a pulsing halo while playing */
-.tts-kash-bead { width: 30px; height: 30px; background: var(--accent); color: var(--paper-bg); box-shadow: 0 3px 9px rgba(40, 28, 14, 0.3); }
-.tts-kash-bead:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent), 0 3px 9px rgba(40, 28, 14, 0.3); }
+/* WHERE it sits (panel-clear result) */
+.tts-mini--kashida.side-right { right: 34px; left: auto; }
+.tts-mini--kashida.side-left { left: 34px; right: auto; }
+.tts-mini--kashida.side-center { left: 50%; right: auto; transform: translateX(-50%); }
+
+/* WHICH WAY it mirrors — bead at the outer corner (row-reverse puts it at the right end) */
+.tts-mini--kashida.orient-right { flex-direction: row-reverse; }
+.tts-mini--kashida.orient-left { flex-direction: row; }
+
+/* the bead — solid accent disc with a pulsing halo while playing (bigger + easier to hit) */
+.tts-kash-bead { width: 38px; height: 38px; background: var(--accent); color: var(--paper-bg); box-shadow: 0 3px 10px rgba(40, 28, 14, 0.32); }
+.tts-kash-bead:hover { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent), 0 3px 10px rgba(40, 28, 14, 0.32); }
 .tts-kash-halo { position: absolute; inset: 0; border-radius: 50%; background: color-mix(in srgb, var(--accent) 40%, transparent); opacity: 0; }
 .tts-mini--kashida.playing .tts-kash-halo { animation: tts-halo 2.2s ease-out infinite; }
 
-/* the tapered stroke: a faint track + an accent fill (progress), both clipped to a calligraphic
-   taper (thick at the leading end). Fill anchors at the LEADING end (inline-start) and grows along it. */
-.tts-kash-stroke { position: relative; width: 152px; height: 9px; }
-.tts-mini--kashida.center .tts-kash-stroke { width: 96px; }
-.tts-kash-track, .tts-kash-fill { position: absolute; top: 0; height: 9px; border-radius: 5px; clip-path: polygon(0 42%, 100% 18%, 100% 82%, 0 58%); }
-.tts-kash-track { inset-inline: 0; background: color-mix(in srgb, var(--text) 16%, transparent); }
-.tts-kash-fill { inset-inline-start: 0; min-width: 7px; background: var(--accent); transition: width 0.3s ease; }
+/* the tapered stroke: a faint track + an accent fill (progress), clipped to a calligraphic taper
+   (thick at the bead end). Bigger: longer + thicker + a more legible fill. */
+.tts-kash-stroke { position: relative; width: 190px; height: 13px; }
+.tts-mini--kashida.side-center .tts-kash-stroke { width: 120px; }
+.tts-kash-track, .tts-kash-fill { position: absolute; top: 0; height: 13px; border-radius: 7px; }
+.tts-kash-track { left: 0; right: 0; background: color-mix(in srgb, var(--text) 16%, transparent); }
+.tts-kash-fill { min-width: 9px; background: var(--accent); transition: width 0.3s ease; }
 .tts-mini--kashida.playing .tts-kash-fill { animation: tts-kash-glow 2.6s ease-in-out infinite; }
+/* the taper direction + the fill anchor follow the ORIENTATION so both sides read as true mirrors */
+.tts-mini--kashida.orient-right .tts-kash-track,
+.tts-mini--kashida.orient-right .tts-kash-fill { clip-path: polygon(0 40%, 100% 12%, 100% 88%, 0 60%); }
+.tts-mini--kashida.orient-left .tts-kash-track,
+.tts-mini--kashida.orient-left .tts-kash-fill { clip-path: polygon(0 12%, 100% 40%, 100% 60%, 0 88%); }
+.tts-mini--kashida.orient-right .tts-kash-fill { right: 0; left: auto; }
+.tts-mini--kashida.orient-left .tts-kash-fill { left: 0; right: auto; }
 
-/* the taper is authored LEADING-RIGHT for the default RTL UI; mirror it (and the cue) for an LTR UI */
-.tts-mini--kashida[dir="ltr"] .tts-kash-track,
-.tts-mini--kashida[dir="ltr"] .tts-kash-fill { clip-path: polygon(0 18%, 100% 42%, 100% 58%, 0 82%); }
-.tts-mini--kashida[dir="ltr"] .tts-mini-cue svg { transform: scaleX(-1); }
+/* the swap button — a small, clear side-toggle; ghost accent, visually distinct from the bead */
+.tts-kash-swap {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; border-radius: 50%; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent);
+}
+.tts-kash-swap svg { width: 17px; height: 17px; }
+.tts-kash-swap:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 
 @keyframes tts-halo { 0% { opacity: 0.5; transform: scale(1); } 100% { opacity: 0; transform: scale(1.9); } }
 @keyframes tts-kash-glow { 0%, 100% { filter: none; } 50% { filter: brightness(1.16); } }

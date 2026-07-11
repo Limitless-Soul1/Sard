@@ -473,6 +473,7 @@ export const en = {
   "tts.expand": "Expand",
   "tts.collapse": "Collapse",
   "tts.minimize": "Minimize", // RAWY-156
+  "tts.swapSide": "Swap side", // RAWY-160: flip the minimized kashida to the other margin
   // RAWY-111/113 — engine + voice picker (Piper + Edge engines)
   "tts.voices": "Voices",
   "tts.voice": "Voice",

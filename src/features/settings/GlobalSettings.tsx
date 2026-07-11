@@ -587,7 +587,7 @@ function AboutSection() {
         <div>
           <div className="gs-about-name">Sard · سَرْد</div>
           <div className="gs-about-tag">{t("gs.about.tagline")}</div>
-          <div className="gs-about-ver">{t("gs.about.version")} 0.1.0</div>
+          <div className="gs-about-ver">{t("gs.about.version")} 0.5.0</div>
         </div>
       </div>
       <TwoLevelCard />

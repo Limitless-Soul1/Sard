@@ -840,7 +840,10 @@ html, body, #root {
   display: flex; flex-direction: column; gap: 4px;
   padding: 8px 10px 10px; border-radius: 16px; border: 1px solid var(--chrome-border);
   background: color-mix(in srgb, var(--chrome-bg) 96%, transparent);
-  backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  /* RAWY-169: the ground is 96% opaque, so a heavy blur barely showed yet cost the compositor a full
+     re-blur of the reading area on every size toggle (a source of the switch jank). A small blur keeps
+     the same frosted feel for far less GPU work. */
+  backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px);
   box-shadow: 0 16px 42px rgba(40, 28, 14, 0.24); font-family: var(--ui-font);
 }
 :root[data-dark="true"] .tts-pill { box-shadow: 0 16px 42px rgba(0, 0, 0, 0.5); }
@@ -984,12 +987,15 @@ html, body, #root {
    dir-independent — the WHOLE shape mirrors (taper + bead position + fill) via `.orient-*`. */
 .tts-mini--kashida {
   direction: ltr; /* physical layout; the side + mirror are computed in JS and styled by left/right */
-  bottom: 24px; z-index: 27;
+  bottom: 24px; z-index: 31; /* RAWY-169: ABOVE the reader panels (z 30) so an explicit swap onto a
+                                paneled side stays visible instead of hiding behind the panel */
   display: flex; align-items: center; gap: 12px;
   padding: 9px 15px; border-radius: 18px; cursor: pointer;
-  background: color-mix(in srgb, var(--chrome-bg) 82%, transparent);
+  /* RAWY-169: a MORE OPAQUE ground + a SMALL blur (was blur(9px)) — the frosted look is kept but the
+     compositor re-blurs far less area on each size toggle, so switching sizes no longer hitches. */
+  background: color-mix(in srgb, var(--chrome-bg) 90%, transparent);
   border: 1px solid color-mix(in srgb, var(--chrome-border) 70%, transparent);
-  backdrop-filter: blur(9px); -webkit-backdrop-filter: blur(9px);
+  backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
   box-shadow: 0 8px 22px rgba(40, 28, 14, 0.22);
 }
 :root[data-dark="true"] .tts-mini--kashida { box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45); }

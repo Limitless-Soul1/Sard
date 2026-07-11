@@ -14,10 +14,14 @@
 // SIDE + MIRROR (RAWY-160): the stroke sits on a physical side (right/left). The default is the UI's
 // LEADING side (RTL → right, LTR → left); the swap button flips the *desired* side. The whole shape
 // then HORIZONTALLY MIRRORS to match its side — the tapered end, the bead position and the progress
-// fill all flip (a true mirror image, via `.orient-right`/`.orient-left`), never reversed. PANEL-CLEAR
-// still applies: a panel on the target side pushes it to the other corner (and it mirrors to match);
-// both sides blocked → centre + shorten. `panelLeft`/`panelRight` are the same physical Contents/
-// Search (left) + Notes (right) booleans that drive the pill's `--reading-shift`.
+// fill all flip (a true mirror image, via `.orient-right`/`.orient-left`), never reversed.
+// PANEL-CLEAR (RAWY-169): the explicit SWAP always wins — a tap moves the stroke to the other side even
+// when a panel is open there, because the kashida is stacked above the panels (z-index) so it stays
+// visible. Panel-clear only auto-nudges the UNSWAPPED default off an open panel (so a fresh minimize
+// lands clear) and centres+shortens when both sides are blocked with no explicit swap. `panelLeft`/
+// `panelRight` are the same physical Contents/Search (left) + Notes (right) booleans that drive the
+// pill's `--reading-shift`. (Before, panel-clear gated the swap too, so with Contents open by default
+// one side was always blocked and the swap looked dead.)
 //
 // EVENT ISOLATION (LESSON #1): the reader auto-hides its chrome on window `pointerdown`→wake. A tap on
 // the stroke must NOT wake the chrome or select book text, so onPointerDown stopPropagation()s (its
@@ -48,18 +52,25 @@ export function TtsMini({
   const pct = total > 1 ? Math.max(0, Math.min(100, (index / (total - 1)) * 100)) : 0;
 
   // Which physical side the stroke sits on (right/left/center) and which way it mirrors.
-  const [swapped, setSwapped] = useState(false);
+  // `sideOverride` is the user's explicit swap choice (null until they tap swap).
+  const [sideOverride, setSideOverride] = useState<"right" | "left" | null>(null);
   const rtl = dir === "rtl";
   const leadingSide: "right" | "left" = rtl ? "right" : "left";
-  const desiredSide: "right" | "left" = swapped ? (leadingSide === "right" ? "left" : "right") : leadingSide;
-  // panel-clear by PHYSICAL side: Notes (right) + Contents/Search (left)
-  let side: "right" | "left" | "center";
-  if (panelRight && panelLeft) side = "center";
-  else if (desiredSide === "right" && panelRight) side = "left";
-  else if (desiredSide === "left" && panelLeft) side = "right";
-  else side = desiredSide;
+  // The AUTO default (used until the user swaps): the leading side, panel-cleared — a panel on that side
+  // nudges it to the other corner; both sides blocked → centre + shorten.
+  let autoSide: "right" | "left" | "center";
+  if (panelRight && panelLeft) autoSide = "center";
+  else if (leadingSide === "right" && panelRight) autoSide = "left";
+  else if (leadingSide === "left" && panelLeft) autoSide = "right";
+  else autoSide = leadingSide;
+  // RAWY-169: an explicit swap WINS and simply flips the currently-shown side, so a tap always moves the
+  // stroke to the other margin — regardless of dir or which panels are open. The kashida is stacked
+  // ABOVE the panels (see its z-index), so a swapped side stays visible instead of hiding behind a
+  // panel. (Before, the panel-clear rule also gated the swap: with Contents open by default one side was
+  // always blocked, so both swap states collapsed to the one clear side and the swap looked dead.)
+  const side: "right" | "left" | "center" = sideOverride ?? autoSide;
   // Mirror to match the side it ACTUALLY sits on (so a panel-forced move never looks reversed).
-  const orient: "right" | "left" = side === "center" ? desiredSide : side;
+  const orient: "right" | "left" = side === "center" ? leadingSide : side;
 
   const stopP = (e: React.SyntheticEvent) => e.stopPropagation();
   const onBody = (e: React.MouseEvent) => {
@@ -72,7 +83,11 @@ export function TtsMini({
   };
   const onSwap = (e: React.MouseEvent) => {
     e.stopPropagation(); // the swap button flips the side WITHOUT expanding
-    setSwapped((s) => !s);
+    // Flip whatever side is currently shown (the auto default, or a prior override) to the other side.
+    setSideOverride((prev) => {
+      const cur = prev ?? autoSide;
+      return (cur === "center" ? leadingSide : cur) === "right" ? "left" : "right";
+    });
   };
   const playLabel = playing ? t("tts.pause") : t("tts.play");
 

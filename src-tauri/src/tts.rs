@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
-use msedge_tts::tts::client::{connect, MSEdgeTTSClient};
+use msedge_tts::tts::client::{connect, MSEdgeTTSClient, SynthesizedAudio};
 use msedge_tts::tts::SpeechConfig;
 use msedge_tts::voice::{get_voices_list, Voice};
 use tauri::{AppHandle, Manager, State};
@@ -318,6 +318,40 @@ pub fn tts_edge_voices(engines: State<'_, TtsEngine>) -> Result<Vec<EdgeVoiceInf
     Ok(out)
 }
 
+/// RAWY-172 (AUD-2): a single Edge synth may block at most this long before we treat the socket as
+/// stalled and give up (the frontend then skips the sentence). A real synth is a second or two; 20 s is a
+/// ceiling that never false-trips a slow-but-live link.
+const EDGE_SYNTH_TIMEOUT_SECS: u64 = 20;
+
+/// The outcome of one bounded Edge synth (RAWY-172). `Ok`/`Failed` hand the warm client BACK (for reuse,
+/// or its config to reconnect); `Stalled` means the worker is still blocked and OWNS the client — it
+/// drops when the OS finally times the socket out — so the caller must reconnect next time.
+enum EdgeSynth {
+    Ok(SynthesizedAudio, EdgeRunning),
+    Failed(EdgeRunning, String),
+    Stalled,
+}
+
+/// Run ONE blocking Edge synth on a worker thread, bounded by `EDGE_SYNTH_TIMEOUT_SECS`, so a stalled
+/// socket can't block the caller's mutex forever. msedge-tts 0.4 exposes no socket-timeout hook (the
+/// client's inner WebSocket is `pub(crate)` and `connect()` builds the `TcpStream` internally), so a
+/// worker + `recv_timeout` is the way to put a ceiling on it. The warm client is moved to the worker and
+/// returned with the result; on timeout the worker is abandoned — its client drops when synthesize finally
+/// returns, closing the socket. `MSEdgeTTSClient<TcpStream>` + `SpeechConfig` are Send, so the move is sound.
+fn edge_synth_once(mut running: EdgeRunning, text: &str) -> EdgeSynth {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let text = text.to_string();
+    std::thread::spawn(move || {
+        let res = running.client.synthesize(&text, &running.config);
+        let _ = tx.send((running, res)); // if we already timed out, this send fails and drops the client
+    });
+    match rx.recv_timeout(std::time::Duration::from_secs(EDGE_SYNTH_TIMEOUT_SECS)) {
+        Ok((running, Ok(audio))) => EdgeSynth::Ok(audio, running),
+        Ok((running, Err(e))) => EdgeSynth::Failed(running, format!("{e:?}")),
+        Err(_) => EdgeSynth::Stalled,
+    }
+}
+
 /// Synthesize one sentence → MP3 bytes over the free Edge Read-Aloud WebSocket. Reuses a warm client
 /// per voice; a dropped socket reconnects once. Online-required — an unreachable endpoint surfaces a
 /// clear error, and the frontend then falls back to Piper.
@@ -342,18 +376,32 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String) -> Result<taur
         let client = connect().map_err(|e| format!("edge connect: {e:?}"))?;
         *guard = Some(EdgeRunning { voice_id: id.clone(), config, client });
     }
-    let r = guard.as_mut().unwrap();
-    let audio = match r.client.synthesize(&text, &r.config) {
-        Ok(a) => a,
-        Err(_) => {
-            // the socket likely dropped (idle / flaky network) — reconnect once and retry
-            let mut client = connect().map_err(|e| format!("edge reconnect: {e:?}"))?;
-            let a = client
-                .synthesize(&text, &r.config)
-                .map_err(|e| format!("edge synth: {e:?}"))?;
-            r.client = client;
-            a
+    // RAWY-172 (AUD-2): bound the blocking synth with a timeout so a stalled socket can't hold this mutex
+    // forever. We run synthesize on a worker thread and wait with a ceiling — still HOLDING the guard
+    // across the wait, so callers serialize exactly as before (no second connection): the warm client is
+    // moved out and put back. On a stall we surface an error and leave the slot empty (the abandoned client
+    // drops when its synthesize finally returns), so the next call reconnects; the frontend's own timeout
+    // (RAWY-172) has already advanced playback by then.
+    let running = guard.take().unwrap();
+    let audio = match edge_synth_once(running, &text) {
+        EdgeSynth::Ok(audio, running) => {
+            *guard = Some(running);
+            audio
         }
+        EdgeSynth::Failed(running, _) => {
+            // the socket dropped cleanly (idle / a brief blip) — reconnect once and retry (RAWY-113)
+            let config = running.config.clone();
+            let client = connect().map_err(|e| format!("edge reconnect: {e:?}"))?;
+            match edge_synth_once(EdgeRunning { voice_id: id.clone(), config, client }, &text) {
+                EdgeSynth::Ok(audio, running) => {
+                    *guard = Some(running);
+                    audio
+                }
+                EdgeSynth::Failed(_, e) => return Err(format!("edge synth: {e}")),
+                EdgeSynth::Stalled => return Err("edge synth timed out".into()),
+            }
+        }
+        EdgeSynth::Stalled => return Err("edge synth timed out".into()),
     };
     // RAWY-127: keep the per-word timing Edge already sends (it was discarded before). The crate
     // requests `wordBoundaryEnabled` and parses each `audio.metadata` into `AudioMetadata`; take only

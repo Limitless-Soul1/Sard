@@ -146,6 +146,14 @@ let lastStart: StartOpts | null = null; // for retry() after a download/synth fa
 let watchdog: ReturnType<typeof setInterval> | null = null;
 let failStreak = 0;
 const FAIL_LIMIT = 3; // consecutive failures that turn "skip the bad segment" into "surface a dead end"
+// RAWY-172 (AUD-2): a synth that never resolves (a stalled Edge socket — Wi-Fi dropped without an RST, a
+// captive portal, a sleeping router) must not freeze read-aloud. Every synth is raced against this
+// ceiling; on timeout the sentence is SKIPPED (the same RAWY-159 recovery), so playback always advances.
+// Well above a normal synth (a second or two), so a slow-but-live link never false-trips it.
+const SYNTH_TIMEOUT_MS = 20000;
+// RAWY-172 (AUD-1): how many already-played sentences to keep decoded (besides the current +
+// prefetched-next), so a one-sentence skip-back stays instant while memory stays bounded.
+const CACHE_KEEP_BEHIND = 1;
 const clearWatchdog = () => {
   if (watchdog) { clearInterval(watchdog); watchdog = null; }
 };
@@ -258,6 +266,29 @@ const stopSource = () => {
   }
 };
 
+// RAWY-172 (AUD-1): drop decoded audio for sentences we've moved past, keeping only a small window
+// (previous · current · prefetched-next). A decoded sentence retains ~0.19 MB/s of PCM, so keeping a
+// whole chapter grew memory ~650 MB/hour of continuous listening; this bounds it regardless of chapter
+// length. A skip-back below the window simply re-synthesizes (synth() re-runs on a cache miss — skip()
+// never resets the cache), so nothing depends on retaining the old buffers.
+function evictAudioBelow(idx: number): void {
+  const floor = idx - CACHE_KEEP_BEHIND;
+  for (const k of cache.keys()) if (k < floor) cache.delete(k);
+}
+
+// RAWY-172 (AUD-2): resolve `p`, or reject after `ms` if it stalls — so a never-resolving synth can't
+// hang the queue. Engine-agnostic (covers Piper + Edge). The underlying promise is left to settle into
+// nothing; the caller drops it from the cache so a later revisit re-synthesizes cleanly.
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const id = setTimeout(() => reject(new Error("tts.synthTimeout")), ms);
+    p.then(
+      (v) => { clearTimeout(id); resolve(v); },
+      (e) => { clearTimeout(id); reject(e); },
+    );
+  });
+}
+
 async function playFrom(i: number, myGen: number) {
   const set = useTts.setState;
   if (i >= sentences.length) {
@@ -267,6 +298,7 @@ async function playFrom(i: number, myGen: number) {
   }
   const idx = Math.max(0, i);
   set({ index: idx, status: "playing" });
+  evictAudioBelow(idx); // RAWY-172 (AUD-1): free the buffers we've moved past — bounded memory
 
   // RAWY-159: skip the current sentence and continue — one bad segment must NEVER halt the queue. A
   // genuine dead end (a RUN of FAIL_LIMIT consecutive failures, e.g. offline + no Piper) still surfaces
@@ -279,7 +311,9 @@ async function playFrom(i: number, myGen: number) {
 
   let synthd: Synthesized;
   try {
-    synthd = await synth(idx); // Edge failures self-heal per-sentence inside synth() (RAWY-113)
+    // RAWY-172 (AUD-2): bound the synth so a stalled socket advances instead of freezing. Edge failures
+    // still self-heal per-sentence inside synth() (RAWY-113); a genuine stall rejects here → skipSegment.
+    synthd = await withTimeout(synth(idx), SYNTH_TIMEOUT_MS);
   } catch (e) {
     // This segment couldn't be synthesized (an unspeakable "…"/"..." that yields empty audio the
     // decoder rejects, a Piper exit with no WAV, both engines down, …). Skip it and keep reading.

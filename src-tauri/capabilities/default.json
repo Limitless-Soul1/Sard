@@ -8,6 +8,7 @@
     "opener:default",
     "dialog:default",
     "core:window:allow-set-fullscreen",
-    "core:window:allow-is-fullscreen"
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-destroy"
   ]
 }

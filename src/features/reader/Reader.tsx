@@ -272,29 +272,42 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // RAWY-173 (AUD-10): the reading position is saved on a 500 ms debounce and the TTS resume cursor on a
   // ~2 s throttle; React cleanup does NOT run when the OS window is closed, so closing mid-read would lose
   // the last position tick + the last-spoken sentence. On the window's close-requested, FLUSH both
-  // (the SAME values the debounced saves compute) before the app tears down: prevent the close, write,
-  // then destroy — raced against a short ceiling so the close never visibly hangs.
+  // (the SAME values the debounced saves compute) before the app tears down, then close.
+  //
+  // RAWY-174 (regression fix): registering an onCloseRequested handler makes the window's close depend on
+  // a JS `destroy()` (the @tauri-apps/api handler auto-destroys when NOT prevented; we preventDefault to
+  // flush first, so WE must destroy). `destroy()` needs `core:window:allow-destroy` — which was NOT
+  // granted, so it rejected and, since preventDefault had already blocked the native close, the ✕ did
+  // NOTHING inside a book (the Library, with no handler, still closed natively). The permission is now
+  // granted (capabilities/default.json), and this handler ALWAYS reaches the close on success/timeout/
+  // error (try/finally + a bounded flush), so ✕ closes promptly every time.
   useEffect(() => {
     const win = getCurrentWindow();
     let unlisten: (() => void) | undefined;
+    let closing = false; // flush + close exactly once; a second ✕ during the flush is left to the first
     const targetIsPdf = (initial.format ?? "").toLowerCase() === "pdf";
+    const flush = async () => {
+      const st = useReader.getState();
+      // progress: same rule as the debounced save (a PDF persists by fraction with an empty cfi)
+      if (st.cfi || targetIsPdf) await progressSave(bookRef.current, st.cfi ?? "", st.fraction).catch(() => {});
+      // the last-spoken TTS sentence: the same cursor the throttled save + stop-on-exit write
+      if (useTts.getState().active) {
+        const cur = ctrlRef.current?.getTtsCursor(useTts.getState().index);
+        if (cur) await settingsSet(`tts_position:${initial.id}`, JSON.stringify(cur)).catch(() => {});
+      }
+    };
     win
       .onCloseRequested(async (event) => {
-        event.preventDefault();
-        const flush = async () => {
-          const st = useReader.getState();
-          // progress: same rule as the debounced save (a PDF persists by fraction with an empty cfi)
-          if (st.cfi || targetIsPdf) await progressSave(bookRef.current, st.cfi ?? "", st.fraction).catch(() => {});
-          // the last-spoken TTS sentence: the same cursor the throttled save + stop-on-exit write
-          if (useTts.getState().active) {
-            const cur = ctrlRef.current?.getTtsCursor(useTts.getState().index);
-            if (cur) await settingsSet(`tts_position:${initial.id}`, JSON.stringify(cur)).catch(() => {});
-          }
-        };
+        event.preventDefault(); // hold the native close so we can flush; WE own the destroy below
+        if (closing) return; // a second ✕ while still flushing — the first invocation will close it
+        closing = true;
         try {
+          // flush the last progress + TTS cursor, but NEVER let a slow/failed flush block the close
           await Promise.race([flush(), new Promise((r) => setTimeout(r, 1500))]);
         } finally {
-          await win.destroy();
+          // ALWAYS close now — destroy() bypasses this handler (no re-fire loop). It needs
+          // core:window:allow-destroy (granted, RAWY-174); wrapped so nothing can leave the ✕ dead.
+          try { await win.destroy(); } catch { /* no other JS path can force the close */ }
         }
       })
       .then((u) => { unlisten = u; })

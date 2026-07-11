@@ -472,6 +472,7 @@ export const en = {
   "tts.close": "Stop",
   "tts.expand": "Expand",
   "tts.collapse": "Collapse",
+  "tts.minimize": "Minimize", // RAWY-156
   // RAWY-111/113 — engine + voice picker (Piper + Edge engines)
   "tts.voices": "Voices",
   "tts.voice": "Voice",

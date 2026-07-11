@@ -470,6 +470,7 @@ export const ar: Record<TKey, string> = {
   "tts.close": "إيقاف",
   "tts.expand": "توسيع",
   "tts.collapse": "طيّ",
+  "tts.minimize": "تصغير", // RAWY-156
   // RAWY-111/113 — المحرّك ومنتقي الأصوات (بايبر وإيدج)
   "tts.voices": "الأصوات",
   "tts.voice": "الصوت",

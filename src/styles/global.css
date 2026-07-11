@@ -952,6 +952,98 @@ html, body, #root {
 .tts-voice-meta { flex: 1; min-width: 0; font: 400 0.6875rem var(--ui-font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: start; }
 .tts-menu-check { flex: none; width: 16px; height: 16px; margin-inline-start: auto; color: var(--accent); }
 
+/* ============================================================================
+   RAWY-156 — MINIMIZED TTS PLAYER: four draggable shapes (ribbon / hoopoe / reed /
+   dog-ear) that stand in for the pill while audio plays, chosen live by a TEMPORARY
+   switcher. All accents = var(--accent) (the pill token — gold in Moonlit, terracotta
+   elsewhere), so nothing recolours. Positioned by JS in viewport-fixed coords.
+   ============================================================================ */
+.tts-pill-right { display: flex; align-items: center; gap: 1px; }
+
+/* TEMP switcher — DELETE once a shape is chosen (not part of the real Settings). */
+.tts-mini-switch {
+  position: fixed; z-index: 40; top: 8px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 5px; padding: 4px 6px; border-radius: 11px;
+  background: color-mix(in srgb, var(--chrome-bg) 94%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--accent) 55%, var(--chrome-border));
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); box-shadow: 0 6px 18px rgba(20, 14, 6, 0.2);
+}
+.tts-mini-switch-lbl { font: 700 0.5625rem var(--ui-font); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); padding-inline: 3px; }
+.tts-mini-switch-btn {
+  border: 1px solid var(--chrome-border); background: transparent; color: var(--muted);
+  font: 600 0.625rem var(--ui-font); padding: 4px 8px; border-radius: 7px; cursor: pointer; text-transform: capitalize;
+}
+.tts-mini-switch-btn:hover { color: var(--text); }
+.tts-mini-switch-btn.on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* the shape container — placed by JS (left/top); isolated from selection/scroll (handlers in JS) */
+.tts-mini { position: fixed; z-index: 26; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; font-family: var(--ui-font); }
+.tts-mini:active { cursor: grabbing; }
+.tts-mini-play { position: absolute; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; padding: 0; cursor: pointer; }
+.tts-mini-play svg { width: 46%; height: 46%; }
+.tts-mini-cue { position: absolute; color: var(--accent); opacity: 0.65; display: flex; }
+.tts-mini-cue svg { width: 13px; height: 13px; }
+
+/* ---- ① ribbon (رِباط) — silk bookmark hanging from the top edge ---- */
+.tts-rib { position: absolute; top: 0; left: 5px; width: 30px; height: 116px; transform-origin: top center; }
+.tts-mini--ribbon.playing .tts-rib { animation: tts-sway 4.5s ease-in-out infinite; }
+.tts-rib-body {
+  position: absolute; inset: 0; clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 80%, 0 100%);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 76%, white 24%), var(--accent) 62%, color-mix(in srgb, var(--accent) 82%, black 18%));
+  box-shadow: 0 10px 18px rgba(40, 28, 14, 0.22);
+}
+.tts-rib-sheen { position: absolute; top: 6px; left: 6px; width: 4px; height: 82px; border-radius: 3px; background: rgba(255, 255, 255, 0.5); opacity: 0; }
+.tts-mini--ribbon.playing .tts-rib-sheen { animation: tts-sheen 3.6s ease-in-out infinite; }
+.tts-rib-seal { top: 26px; left: 7px; width: 26px; height: 26px; background: var(--paper-bg); color: var(--accent); box-shadow: 0 2px 7px rgba(40, 28, 14, 0.3); }
+.tts-mini--ribbon .tts-mini-cue { top: 119px; left: 13px; }
+
+/* ---- ② hoopoe (هدهد) — mascot in the corner, song-notes while playing ---- */
+.tts-hp-bird-wrap { position: absolute; inset: 3px 4px 7px; }
+.tts-mini--hoopoe[dir="rtl"] .tts-hp-bird-wrap { transform: scaleX(-1); }
+.tts-hp-bird { width: 100%; height: 100%; object-fit: contain; filter: drop-shadow(0 6px 9px rgba(40, 28, 14, 0.28)); }
+.tts-mini--hoopoe.playing .tts-hp-bird { animation: tts-bob 3.2s ease-in-out infinite; }
+.tts-hp-shadow { position: absolute; left: 26px; right: 26px; bottom: 2px; height: 10px; border-radius: 50%; background: radial-gradient(color-mix(in srgb, var(--text) 24%, transparent), transparent 70%); filter: blur(3px); }
+.tts-hp-song { position: absolute; top: 12px; }
+.tts-mini--hoopoe[dir="rtl"] .tts-hp-song { left: 8px; }
+.tts-mini--hoopoe[dir="ltr"] .tts-hp-song { right: 8px; transform: scaleX(-1); }
+.tts-hp-song svg { position: absolute; width: 13px; height: 13px; color: var(--accent); opacity: 0; }
+.tts-mini--hoopoe.playing .tts-hp-song svg { animation: tts-song 2.4s ease-out infinite; }
+.tts-mini--hoopoe.playing .tts-hp-song svg:nth-child(2) { animation-delay: 0.8s; }
+.tts-mini--hoopoe.playing .tts-hp-song svg:nth-child(3) { animation-delay: 1.6s; }
+.tts-hp-play { bottom: 4px; width: 28px; height: 28px; background: var(--accent); color: var(--paper-bg); box-shadow: 0 3px 9px rgba(40, 28, 14, 0.3); }
+.tts-mini--hoopoe[dir="rtl"] .tts-hp-play { right: 2px; }
+.tts-mini--hoopoe[dir="ltr"] .tts-hp-play { left: 2px; }
+
+/* ---- ③ reed (مِسطرة) — margin rule with a glowing bead at the sentence ---- */
+.tts-reed-rule { position: absolute; top: 4px; bottom: 4px; left: 50%; transform: translateX(-50%); width: 2px; border-radius: 2px; background: color-mix(in srgb, var(--text) 16%, transparent); }
+.tts-reed-read { position: absolute; top: 0; left: 0; width: 100%; background: var(--accent); border-radius: 2px; }
+.tts-reed-bead { position: absolute; left: 50%; transform: translate(-50%, -50%); width: 22px; height: 22px; }
+.tts-reed-halo { position: absolute; inset: 0; border-radius: 50%; background: color-mix(in srgb, var(--accent) 45%, transparent); opacity: 0; }
+.tts-mini--reed.playing .tts-reed-halo { animation: tts-halo 2s ease-out infinite; }
+.tts-reed-btn { inset: 0; width: 100%; height: 100%; background: var(--accent); color: var(--paper-bg); box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 50%, transparent); }
+
+/* ---- ④ dog-ear (ثنية) — folded page corner that breathes ---- */
+.tts-dog-fold {
+  position: absolute; inset: 0; clip-path: polygon(100% 0, 100% 100%, 0 100%);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 80%, white 20%), var(--accent));
+  box-shadow: inset 7px -7px 12px color-mix(in srgb, var(--accent) 55%, black 45%); border-radius: 0 0 12px 0; transform-origin: bottom right;
+}
+.tts-mini--dogear[dir="ltr"] .tts-dog-fold { clip-path: polygon(0 0, 0 100%, 100% 100%); box-shadow: inset -7px -7px 12px color-mix(in srgb, var(--accent) 55%, black 45%); border-radius: 0 0 0 12px; transform-origin: bottom left; }
+.tts-mini--dogear.playing .tts-dog-fold { animation: tts-curl 4s ease-in-out infinite; }
+.tts-dog-hi { position: absolute; top: 2px; left: 2px; width: 92%; height: 92%; clip-path: inherit; background: linear-gradient(135deg, rgba(255, 255, 255, 0.4), transparent 45%); }
+.tts-dog-btn { right: 8px; bottom: 8px; width: 24px; height: 24px; background: var(--paper-bg); color: var(--accent); box-shadow: 0 2px 6px rgba(40, 28, 14, 0.28); }
+.tts-mini--dogear[dir="ltr"] .tts-dog-btn { left: 8px; right: auto; }
+
+@keyframes tts-sway { 0%, 100% { transform: rotate(-2.5deg); } 50% { transform: rotate(2.5deg); } }
+@keyframes tts-sheen { 0% { transform: translateY(-24px); opacity: 0; } 45% { opacity: 0.55; } 100% { transform: translateY(104px); opacity: 0; } }
+@keyframes tts-song { 0% { opacity: 0; transform: translate(0, 0) scale(0.5); } 30% { opacity: 0.85; } 100% { opacity: 0; transform: translate(-12px, -16px) scale(1); } }
+@keyframes tts-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+@keyframes tts-halo { 0% { transform: scale(0.85); opacity: 0.5; } 100% { transform: scale(2.2); opacity: 0; } }
+@keyframes tts-curl { 0%, 100% { transform: rotate(0) translateY(0); } 50% { transform: rotate(-3.5deg) translateY(-1.5px); } }
+@media (prefers-reduced-motion: reduce) {
+  .tts-mini * { animation: none !important; }
+}
+
 /* anti-spoiler toggle in the Contents header (RAWY-36 — a clear LABELLED switch, replaces the
    emoji button): a label + the shared pill switch, sits under the header above the chapter list */
 .rp-spoiler {

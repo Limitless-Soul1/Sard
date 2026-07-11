@@ -6,11 +6,12 @@
 // default, both synth paths, the voices picker, per-language persistence, the non-destructive
 // per-sentence fallback); this is the pill's markup/CSS, re-binding the same controls. Mirrors RTL.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
 import { TTS_EMPTY, TTS_MAX_SPEED, TTS_MIN_SPEED, TTS_SPEED_STEP, useTts, voiceLabel } from "../../lib/tts";
+import { MINI_SHAPES, TtsMini, type MiniShape } from "./TtsMini";
 import { TtsVoicePicker } from "./TtsVoicePicker";
 
 const CHEV_UP = "m6 14 6-6 6 6";
@@ -21,6 +22,17 @@ export function TtsPlayer() {
   const { t, lang, dir } = useI18n();
   const [expanded, setExpanded] = useState(true);
   const [picking, setPicking] = useState(false);
+  // RAWY-156: minimize the pill to a small draggable shape while audio keeps playing. UI-only state —
+  // never persisted to the settings DB. `shape` is chosen by the TEMPORARY switcher below.
+  const [minimized, setMinimized] = useState(false);
+  const [shape, setShape] = useState<MiniShape>("ribbon"); // RAWY-156 TEMP — switcher-driven
+  // A fresh Listen (active flips true) should start on the full pill, not a stale minimized state.
+  useEffect(() => {
+    if (!active) {
+      setMinimized(false);
+      setExpanded(true);
+    }
+  }, [active]);
   if (!active) return null;
 
   const playing = status === "playing";
@@ -46,6 +58,18 @@ export function TtsPlayer() {
 
   return (
     <>
+      {/* TEMP shape switcher (RAWY-156) — pick the winning minimized shape live; DELETE this whole
+          block in a later task once one is chosen. Intentionally NOT part of the real Settings tabs. */}
+      <div className="tts-mini-switch" role="group" aria-label="Minimized shape (temporary)">
+        <span className="tts-mini-switch-lbl">shape · temp</span>
+        {MINI_SHAPES.map((sh) => (
+          <button key={sh} className={`tts-mini-switch-btn${shape === sh ? " on" : ""}`} onClick={() => setShape(sh)}>{sh}</button>
+        ))}
+      </div>
+      {minimized ? (
+        <TtsMini shape={shape} onExpand={() => setMinimized(false)} />
+      ) : (
+      <>
       {picking && <TtsVoicePicker onClose={() => setPicking(false)} />}
       <div className={`tts-pill${expanded ? " expanded" : ""}${errored ? " errored" : ""}`} dir={dir} role="group" aria-label={t("tts.player")}>
         {/* row 1 — transport */}
@@ -76,9 +100,15 @@ export function TtsPlayer() {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M6 6l8 6-8 6M18 5v14" /></svg>
             </button>
           </div>
-          <button className="tts-ghost tts-x" onClick={stop} aria-label={t("tts.close")} title={t("tts.close")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
-          </button>
+          <div className="tts-pill-right">
+            {/* RAWY-156: minimize to the selected draggable shape (audio keeps playing). */}
+            <button className="tts-ghost" onClick={() => setMinimized(true)} aria-label={t("tts.minimize")} title={t("tts.minimize")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M9 9 4 4M4 9V4h5M15 15l5 5M20 15v5h-5" /></svg>
+            </button>
+            <button className="tts-ghost tts-x" onClick={stop} aria-label={t("tts.close")} title={t("tts.close")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>
+          </div>
         </div>
 
         {/* progress hairline + position dot, then a compact meta line for status/chapter */}
@@ -120,6 +150,8 @@ export function TtsPlayer() {
           </div>
         )}
       </div>
+      </>
+      )}
     </>
   );
 }

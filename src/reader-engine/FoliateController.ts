@@ -1193,6 +1193,16 @@ export class FoliateController {
     return this.view?.renderer?.getContents?.()?.[0]?.index ?? -1;
   }
 
+  /** RAWY-186: is the chapter the TTS SESSION is reading the one currently ON SCREEN? `ttsUnitsIndex`
+   *  is the section the playing sentences were built from; it only changes when a new chapter is
+   *  spoken (never when the reader merely navigates away — RAWY-129 decouples audio from the view). So
+   *  once the user navigates to a DIFFERENT section while a session plays, this returns false, and the
+   *  Play gesture can read the CURRENT chapter instead of resuming the old one (the 184-A regression).
+   *  True when there is no session section yet (-1) so ordinary pause/resume is unaffected. */
+  isTtsChapterOnScreen(): boolean {
+    return this.ttsUnitsIndex < 0 || this.currentSectionIndex() === this.ttsUnitsIndex;
+  }
+
   /** RAWY-162: a DURABLE cursor for the sentence currently being spoken (`i` into the retained units).
    *  `cfi` (from the sentence's live start range) survives app restarts and encodes the section, so a
    *  resume can navigate to it even from a different chapter; `sec`/`idx` are the fast same-section

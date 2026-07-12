@@ -154,9 +154,16 @@ let lastStart: StartOpts | null = null; // for retry() after a download/synth fa
 // so this is about WHEN the landing synth is queued, not a UI block). An ISOLATED (non-rapid) skip
 // still synths IMMEDIATELY via the leading edge, so a single skip feels exactly as before.
 const SKIP_SETTLE_MS = 220;
+// RAWY-186 (Part B): two consecutive skips less than this apart are the SAME skipping session (one held
+// arrow key, or fast repeated taps). This spans the OS key-REPEAT DELAY (~250–500 ms) between the first
+// keydown and the auto-repeats — without it, that gap let the settle fire mid-hold, so each repeat burst
+// re-fired the "leading" synth, piling wasted cold synths onto the serialized engine ahead of the
+// landing. Now the leading synth fires ONCE per session; the rest only move the index until it settles.
+const SKIP_CONTINUE_MS = 600;
 let skipSettleTimer: ReturnType<typeof setTimeout> | null = null;
-let skipLeadTarget = -1; // the index the leading (immediate) skip of the current burst synthesized
+let skipLeadTarget = -1; // the index the leading (immediate) skip of the current session synthesized
 let skipLastTarget = -1; // the most recent skip's target — moved ONLY by skip(), never by auto-advance
+let lastSkipAt = 0; // performance.now() of the previous skip — detects a continuing skipping session
 const clearSkipSettle = () => {
   if (skipSettleTimer) { clearTimeout(skipSettleTimer); skipSettleTimer = null; }
 };
@@ -357,7 +364,18 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-async function playFrom(i: number, myGen: number) {
+// RAWY-181 (BUG 3) / RAWY-186 (Part B): warm a WINDOW of upcoming sentences so the next buffers are
+// decoded before they're needed. synth() dedupes via the cache (already-fetched = no-op) and
+// evictAudioBelow bounds memory. Kept separate so a skip's LANDING can prefetch without the wasted
+// leading also prefetching (that backlog on the serialized engine is what delayed a long skip's audio).
+function prefetchFrom(idx: number): void {
+  for (let k = 1; k <= PREFETCH_AHEAD; k++) {
+    const j = idx + k;
+    if (j >= 0 && j < sentences.length) void synth(j).catch(() => {});
+  }
+}
+
+async function playFrom(i: number, myGen: number, prefetch = true) {
   const set = useTts.setState;
   if (i >= sentences.length) {
     // RAWY-184 (Part B): reached the LAST sentence — STOP and enter the "chapter-end" state (the owner
@@ -370,15 +388,13 @@ async function playFrom(i: number, myGen: number) {
   set({ index: idx, status: "playing" });
   evictAudioBelow(idx); // RAWY-172 (AUD-1): free the buffers we've moved past — bounded memory
 
-  // RAWY-181 (BUG 3): request the CURRENT sentence first (most urgent), then kick off a WINDOW of
-  // upcoming synths so the next sentences are decoded before they're needed — this covers Edge's
-  // per-sentence network latency across short sentences (was 1 ahead, only after the current played).
-  // synth() dedupes via the cache, so already-fetched entries are no-ops; evictAudioBelow bounds memory.
+  // RAWY-181 (BUG 3): request the CURRENT sentence first (most urgent), then warm a WINDOW of upcoming
+  // synths so the next buffers are ready before they're needed (covers Edge's per-sentence network
+  // latency across short sentences). RAWY-186 (Part B): a SPECULATIVE leading skip passes prefetch=false
+  // so a flown-past sentence doesn't also enqueue 3 wasted synths ahead of the real landing on the
+  // serialized engine — the landing (and normal advance) prefetch as usual.
   const current = synth(idx);
-  for (let k = 1; k <= PREFETCH_AHEAD; k++) {
-    const j = idx + k;
-    if (j < sentences.length) void synth(j).catch(() => {});
-  }
+  if (prefetch) prefetchFrom(idx);
 
   // RAWY-159: skip the current sentence and continue — one bad segment must NEVER halt the queue. A
   // genuine dead end (a RUN of FAIL_LIMIT consecutive failures, e.g. offline + no Piper) still surfaces
@@ -494,6 +510,7 @@ export const useTts = create<TtsState>((set, get) => ({
     clearSkipSettle(); // RAWY-185: a fresh Listen cancels any pending rapid-skip landing synth
     skipLeadTarget = -1;
     skipLastTarget = -1;
+    lastSkipAt = 0; // RAWY-186: the first skip of a new session must lead (not read as a continuation)
     cache = new Map();
     failStreak = 0; // RAWY-159: a fresh Listen starts the dead-end counter clean
     sentences = sen.map((s) => s.trim()).filter(Boolean);
@@ -545,24 +562,29 @@ export const useTts = create<TtsState>((set, get) => ({
     // rapid skipping tracks on screen even though the landing sentence's audio is deferred below.
     set({ wordIndex: -1, index: target, status: "playing" });
 
-    // RAWY-185: debounce the SYNTH. A skip arriving while a prior skip's settle window is still open is
-    // part of a rapid burst → do NOT synth this fly-by sentence (that backlog on the serialized engine is
-    // exactly what delayed the landing synth). An ISOLATED skip (window closed) synths immediately via the
-    // leading edge, so a single skip is as responsive as before.
+    // RAWY-185/186: debounce the SYNTH. Only the FIRST skip of a skipping session synthesizes immediately
+    // (the leading edge → a single skip is instant); every skip within SKIP_CONTINUE_MS of the previous is
+    // a CONTINUATION (a held arrow key or fast repeats — crucially this spans the OS key-repeat DELAY, so a
+    // hold fires the leading ONCE, not once per repeat burst) and only moves the index. When skipping
+    // settles, the LANDING sentence synthesizes once. This keeps flown-past + re-leading cold synths off
+    // the serialized engine so the landing's audio isn't stuck behind them (the long-skip lag).
     skipLastTarget = target;
-    const inBurst = skipSettleTimer !== null;
-    if (!inBurst) {
+    const now = performance.now();
+    const continuing = now - lastSkipAt < SKIP_CONTINUE_MS;
+    lastSkipAt = now;
+    if (!continuing) {
       skipLeadTarget = target;
-      void playFrom(target, myGen);
+      void playFrom(target, myGen, false); // leading: play it, but DON'T prefetch a window it may fly past
     }
-    // (Re)arm the settle window. When skipping has been idle ~SKIP_SETTLE_MS, synth the LANDING sentence
-    // once — but only if a burst actually moved past the leading play (skipLastTarget !== skipLeadTarget),
-    // so an isolated skip whose short leading sentence has since auto-advanced is never wrongly restarted.
+    // (Re)arm the settle. When skipping has been idle ~SKIP_SETTLE_MS: if it moved past the leading play,
+    // synth the LANDING (with its prefetch window); otherwise it was a lone skip already playing — just
+    // warm the next few so continuation stays gapless (the leading deliberately skipped its prefetch).
     clearSkipSettle();
     skipSettleTimer = setTimeout(() => {
       skipSettleTimer = null;
       if (!get().active) return; // stopped during the window (stop() also clears this timer)
-      if (skipLastTarget !== skipLeadTarget) void playFrom(skipLastTarget, ++gen);
+      if (skipLastTarget !== skipLeadTarget) void playFrom(skipLastTarget, ++gen, true);
+      else prefetchFrom(skipLeadTarget);
     }, SKIP_SETTLE_MS);
   },
 
@@ -625,6 +647,7 @@ export const useTts = create<TtsState>((set, get) => ({
     clearSkipSettle(); // RAWY-185: cancel any deferred rapid-skip landing synth
     skipLeadTarget = -1;
     skipLastTarget = -1;
+    lastSkipAt = 0; // RAWY-186
     cache = new Map();
     sentences = [];
     if (noticeTimer) { clearTimeout(noticeTimer); noticeTimer = null; }

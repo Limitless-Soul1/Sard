@@ -26,23 +26,29 @@ export function TtsPlayer({
   panelRight = false,
   hasNextChapter = false,
   onNextChapter,
+  onPlayPause,
 }: {
   panelLeft?: boolean;
   panelRight?: boolean;
   hasNextChapter?: boolean; // RAWY-184 (Part B): is there a chapter after the one just finished?
   onNextChapter?: () => void; // RAWY-184 (Part B): go to the next chapter + read from its top
+  onPlayPause?: () => boolean; // RAWY-186 (Part A): Play reads the CURRENT chapter after navigating away
 }) {
   // RAWY-181 (BUG 2): subscribe ONLY to the fields the pill uses (via useShallow), NOT the whole store.
   // Previously `useTts()` re-rendered the pill on EVERY store change — including the karaoke `words`/
   // `wordIndex` ticks (several/sec on Edge) it doesn't even read — which made size toggles feel heavy and
   // could swallow a click landing mid-re-render. Actions are stable Zustand refs, so they never re-render.
-  const { active, status, engine, voice, index, total, speed, volume, progress, chapterLabel, error, notice, toggle, skip, setSpeed, setVolume, setEngine, retry, stop } = useTts(
+  const { active, status, engine, voice, index, total, speed, volume, progress, chapterLabel, error, notice, skip, setSpeed, setVolume, setEngine, retry, stop } = useTts(
     useShallow((s) => ({
       active: s.active, status: s.status, engine: s.engine, voice: s.voice, index: s.index, total: s.total,
       speed: s.speed, volume: s.volume, progress: s.progress, chapterLabel: s.chapterLabel, error: s.error, notice: s.notice,
-      toggle: s.toggle, skip: s.skip, setSpeed: s.setSpeed, setVolume: s.setVolume, setEngine: s.setEngine, retry: s.retry, stop: s.stop,
+      skip: s.skip, setSpeed: s.setSpeed, setVolume: s.setVolume, setEngine: s.setEngine, retry: s.retry, stop: s.stop,
     })),
   );
+  // RAWY-186 (Part A): the play/pause action. The Reader supplies `onPlayPause` (which reads the CURRENT
+  // chapter when you've navigated away, else pauses/resumes in place); fall back to the plain store toggle
+  // if it isn't wired. Used by BOTH the pill Play button and the window-level Space shortcut, so they agree.
+  const doPlayPause = (): boolean => (onPlayPause ? onPlayPause() : toggleTtsPlayback());
   const { t, lang, dir } = useI18n();
   const [picking, setPicking] = useState(false);
   // RAWY-164: ONE progressive size state replaces the old two confusable controls (the row-collapse
@@ -77,12 +83,12 @@ export function TtsPlayer({
       ) {
         return; // let inputs / buttons / the search box keep their own keys
       }
-      if (isSpace) { if (toggleTtsPlayback()) e.preventDefault(); }
+      if (isSpace) { if (doPlayPause()) e.preventDefault(); }
       else if (skipSentenceForArrow(e.key, dir === "rtl" ? "rtl" : "ltr")) e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [dir]);
+  }, [dir, onPlayPause]); // RAWY-186: re-bind so Space uses the latest play handler (fresh chapter)
   if (!active) return null;
 
   const playing = status === "playing";
@@ -162,7 +168,7 @@ export function TtsPlayer({
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 11a8 8 0 1 1-2.3-5.6M20 4v6h-6" /></svg>
               </button>
             ) : (
-              <button className="tts-play" onClick={toggle} disabled={busy} aria-label={playing ? t("tts.pause") : t("tts.play")}>
+              <button className="tts-play" onClick={() => doPlayPause()} disabled={busy} aria-label={playing ? t("tts.pause") : t("tts.play")}>
                 {busy ? (
                   <span className="tts-spin" aria-hidden />
                 ) : playing ? (

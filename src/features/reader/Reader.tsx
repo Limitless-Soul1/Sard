@@ -41,7 +41,7 @@ import { MARKER_WINDOW, useBookmarks } from "./bookmarksStore";
 import { ReaderChrome, type SettingsSection } from "./ReaderChrome";
 import { SettingsPanel } from "./SettingsPanel";
 import { TtsPlayer } from "./TtsPlayer";
-import { skipSentenceForArrow, toggleTtsPlayback, useTts } from "../../lib/tts";
+import { skipSentenceForArrow, useTts } from "../../lib/tts";
 import { useChromeOnIntent } from "./useChromeOnIntent";
 
 // The book to open: id (for progress) + absolute file path (for the asset protocol).
@@ -102,6 +102,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const [resumeHint, setResumeHint] = useState<{ cfi?: string; sec?: number; idx: number; snip?: string } | null>(null);
   const ttsSaveTimer = useRef<number | undefined>(undefined);
   const ttsLastSave = useRef(0);
+  // RAWY-186: the LATEST play/pause handler, so the once-registered reading-frame Space callback always
+  // calls the current closure (fresh chapter/lang) — no stale capture. Assigned each render below.
+  const playRef = useRef<() => boolean>(() => false);
   // RAWY-82 (#15): rAF-batch the live style apply during a slider drag — hold the latest style and
   // apply it at most once per frame (persistence stays on the 500ms debounce below).
   const styleRafRef = useRef<number | null>(null);
@@ -383,7 +386,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     ctrl?.onActivity((x, y) => signalMove(x, y));
     // RAWY-180 (Part B): Space with focus inside the reading frame toggles read-aloud when a session is
     // active (returns true → the frame swallows the key); otherwise Space keeps scrolling/paging.
-    ctrl?.onSpace(() => toggleTtsPlayback());
+    // RAWY-186: routed through `playRef` so, after navigating to a different chapter, Space (like the pill
+    // Play) reads the CURRENT chapter instead of resuming the old one. The ref always holds the latest closure.
+    ctrl?.onSpace(() => playRef.current());
     // RAWY-184 (Part C): Left/Right arrow with focus inside the reading frame skips the prev/next SENTENCE
     // while read-aloud is active (RTL-aware via the UI direction, matching the ⏮/⏭); otherwise the arrows
     // keep their normal page-turn.
@@ -937,6 +942,26 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       setResumeHint(null);
     }
   };
+  // RAWY-186 (Part A): the Play/Pause gesture (pill button AND Space). Read-aloud audio is decoupled from
+  // the view (RAWY-129: you can browse while listening), so pressing Play after navigating to a DIFFERENT
+  // chapter used to RESUME the old chapter. Now: PAUSE always pauses in place; PLAY (from paused) reads the
+  // chapter you're CURRENTLY viewing if you've navigated away (restart at its top — startListen; the 184-A
+  // gate then offers a same-chapter resume only when the saved cursor belongs here), else resumes normally.
+  // The top-bar Listen already restarts the current chapter, so this makes every Play consistent. Returns
+  // whether it acted, so Space is only swallowed when it did. `startListen` reads the live current section.
+  const playOrRelisten = (): boolean => {
+    const st = useTts.getState();
+    const ctrl = ctrlRef.current;
+    if (!st.active) return false;
+    if (st.status === "playing") { st.toggle(); return true; } // pause in place
+    if (st.status === "paused") {
+      if (ctrl && !ctrl.isTtsChapterOnScreen()) { void startListen(); return true; } // navigated away → current chapter
+      st.toggle(); // same chapter → resume where it paused
+      return true;
+    }
+    return false; // preparing / downloading / error / chapter-end — Play does nothing here
+  };
+  playRef.current = playOrRelisten;
   // RAWY-162: the user chose "resume" on the hint — map the saved cursor to a live sentence (navigating
   // to its chapter if needed) and restart playback there (spotlight 126 + karaoke 127 re-align).
   const doResume = async () => {
@@ -1200,6 +1225,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
           panelRight={annoOpen}
           hasNextChapter={ttsStatus === "chapter-end" && (ctrlRef.current?.hasNextSection() ?? false)}
           onNextChapter={nextChapter}
+          onPlayPause={playOrRelisten}
         />
       )}
 

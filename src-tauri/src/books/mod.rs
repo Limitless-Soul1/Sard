@@ -121,9 +121,10 @@ fn import_pdf(conn: &Connection, app_data_dir: &Path, name: &str, bytes: &[u8]) 
     }
     let size = bytes.len() as i64;
     let res = conn.execute(
+        // RAWY-178 (AUD-12): title_fold via afold() so the library search folds Arabic consistently.
         "INSERT INTO books(id, file_path, file_hash, format, title, author, language, dir, \
-                           cover_path, size_bytes, added_at, last_opened_at) \
-         VALUES(?1,?2,?3,'pdf',?4,NULL,NULL,NULL,NULL,?5,?6,NULL)",
+                           cover_path, size_bytes, added_at, last_opened_at, title_fold, author_fold) \
+         VALUES(?1,?2,?3,'pdf',?4,NULL,NULL,NULL,NULL,?5,?6,NULL, afold(?4), NULL)",
         rusqlite::params![id, managed.to_string_lossy(), id, title, size, now_unix()],
     );
     match res {
@@ -188,9 +189,11 @@ fn import_one(conn: &Connection, app_data_dir: &Path, src: &str) -> ImportResult
 
     let size = bytes.len() as i64;
     let res = conn.execute(
+        // RAWY-178 (AUD-12): title_fold/author_fold via afold() so the library search folds Arabic
+        // consistently with the in-book search (كتاب ⇒ كِتاب, أحمد ⇔ احمد).
         "INSERT INTO books(id, file_path, file_hash, format, title, author, language, dir, \
-                           cover_path, size_bytes, added_at, last_opened_at) \
-         VALUES(?1,?2,?3,'epub',?4,?5,?6,?7,?8,?9,?10,NULL)",
+                           cover_path, size_bytes, added_at, last_opened_at, title_fold, author_fold) \
+         VALUES(?1,?2,?3,'epub',?4,?5,?6,?7,?8,?9,?10,NULL, afold(?4), afold(?5))",
         rusqlite::params![
             id,
             managed.to_string_lossy(),

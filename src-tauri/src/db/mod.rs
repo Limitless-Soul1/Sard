@@ -28,7 +28,27 @@ pub fn open_database(path: &Path) -> rusqlite::Result<Connection> {
     conn.execute_batch(
         "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 3000;",
     )?;
+    register_functions(&conn)?;
     Ok(conn)
+}
+
+/// RAWY-178 (AUD-12): register `afold(text)` — the Arabic search-folding used by the library search's
+/// `title_fold`/`author_fold` shadow columns (import INSERTs, the edit refresh, and the migration
+/// backfill). Registered on EVERY connection BEFORE migrations run so migration 0007's backfill can
+/// call it. Deterministic + pure, so SQLite may cache it. NULL in → NULL out.
+/// Idempotent — safe to call twice (SQLite replaces the function), so BOTH `open_database` (runtime
+/// search) and `migrations::run` (so a migration works on ANY connection, e.g. in tests) register it.
+pub(crate) fn register_functions(conn: &Connection) -> rusqlite::Result<()> {
+    use rusqlite::functions::FunctionFlags;
+    conn.create_scalar_function(
+        "afold",
+        1,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let arg: Option<String> = ctx.get(0)?;
+            Ok(arg.map(|s| crate::library::fold_search(&s)))
+        },
+    )
 }
 
 /// Current schema version = highest applied migration (0 on a brand-new DB).

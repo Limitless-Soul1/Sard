@@ -516,6 +516,21 @@ function normalizeForSearch(s: string): string {
     .replace(/\s+/g, ""); // drop all whitespace (rescues one-glyph-per-item text layers)
 }
 
+// RAWY-178 (AUD-13): findMatchRange normalises the rendered chapter ONE CHARACTER AT A TIME, so a big
+// chapter ran normalizeForSearch (NFKC + 5 regex + lowercase) hundreds of thousands of times per hit-
+// jump — a visible hitch. A book uses only a few hundred DISTINCT characters, so memoise the per-char
+// result: the heavy normalisation runs once per distinct char instead of once per occurrence. The loop
+// keeps its exact per-source-char index→(node,offset) mapping, so the computed Range is IDENTICAL.
+const NORM_CHAR_CACHE = new Map<string, string>();
+function normChar(ch: string): string {
+  let v = NORM_CHAR_CACHE.get(ch);
+  if (v === undefined) {
+    v = normalizeForSearch(ch);
+    NORM_CHAR_CACHE.set(ch, v);
+  }
+  return v;
+}
+
 // RAWY-139: locate a search hit's TEXT in the RENDERED section doc and return a Range on it. A search
 // CFI is computed on foliate's raw `createDocument()`, but the rendered doc's structure differs (the
 // RAWY-70 hide-first-line placeholder is inserted, etc.), so the CFI's element/offset can point at the
@@ -544,7 +559,7 @@ function findMatchRange(doc: Document, pre: string, match: string, post: string)
       const t = n as Text;
       const s = t.data;
       for (let i = 0; i < s.length; i++) {
-        const nc = normalizeForSearch(s[i]); // 0 chars (whitespace/tashkil), 1, or (rarely) more
+        const nc = normChar(s[i]); // memoised (RAWY-178/AUD-13); 0 chars (whitespace/tashkil), 1, or more
         for (let k = 0; k < nc.length; k++) { norm += nc[k]; nodes.push(t); offs.push(i); }
       }
     }
@@ -1641,10 +1656,20 @@ export class FoliateController {
       opts.onProgress?.(scanFrac);
       opts.onBatch?.(hits.slice());
     };
+    // PERF (RAWY-178, follow-up to RAWY-175): foliate scans each section SYNCHRONOUSLY; once the render
+    // is cheap (RAWY-175) these back-to-back scans monopolise the thread in one microtask sweep (the
+    // longtasks PERF-01 saw). Yield a MACROtask periodically so the browser can paint / handle input
+    // between sections. Every item is still consumed IN ORDER, so results / order / counts are unchanged.
+    let lastYield = performance.now();
     try {
       for await (const r of view.search({ query: q, draw: () => {} })) {
         if (opts.signal?.aborted) break;
         if (r === "done") break;
+        const now = performance.now();
+        if (now - lastYield > 30) {
+          await new Promise<void>((res) => setTimeout(res, 0));
+          lastYield = performance.now();
+        }
         if (typeof (r as any).progress === "number") {
           scanFrac = (r as any).progress;
           curIndex = Math.max(0, Math.round(scanFrac * n) - 1);

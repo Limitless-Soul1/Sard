@@ -77,6 +77,46 @@ pub struct BookRow {
 const OV_TITLE: &str = "COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='title'), b.title)";
 const OV_AUTHOR: &str = "COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='author'), b.author)";
 
+// RAWY-178 (AUD-12): Arabic-aware search folding for the LIBRARY search, mirroring the in-book
+// search's `normalizeForSearch` (FoliateController.ts) so both fold consistently — an unvocalized
+// query finds a vocalized title (كتاب ⇒ كِتاب) and hamza/alef variants match (أحمد ⇔ احمد). Applied
+// to a precomputed `title_fold`/`author_fold` shadow (import + edit + a migration backfill), and to
+// the query term, so the LIKE compares folded-to-folded. NOTE: this omits `normalizeForSearch`'s
+// leading NFKC pass (Rust has no NFKC without a new crate) — for normal (NFC) titles that's a no-op;
+// the tashkīl/tatweel strip + alef/ya/teh folding + lowercase + whitespace-drop below cover the
+// Arabic-first cases the audit names. Both sides use THIS function, so the library is self-consistent.
+pub fn fold_search(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        let mapped = match ch {
+            '\u{0622}' | '\u{0623}' | '\u{0625}' | '\u{0671}' => 'ا', // آ أ إ ٱ → ا
+            '\u{0649}' => 'ي',                                        // ى → ي
+            '\u{0629}' => 'ه',                                        // ة → ه
+            // tashkīl + tatweel → drop (matches TASHKIL_TATWEEL in normalizeForSearch)
+            '\u{0640}' | '\u{064B}'..='\u{0652}' | '\u{0670}' | '\u{06D6}'..='\u{06ED}' => continue,
+            c if c.is_whitespace() => continue, // drop all whitespace (\s+ → "")
+            c => c,
+        };
+        for lc in mapped.to_lowercase() {
+            out.push(lc);
+        }
+    }
+    out
+}
+
+/// Escape the LIKE metacharacters `\` `%` `_` so a user's query is matched LITERALLY (RAWY-178/AUD-12:
+/// previously `%`/`_` in a library query acted as unescaped wildcards). Pair with `ESCAPE '\'`.
+fn escape_like(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if c == '\\' || c == '%' || c == '_' {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// The SELECT column list yielding EFFECTIVE book fields, in BookRow order.
 fn book_select() -> String {
     format!(
@@ -139,8 +179,10 @@ pub fn list_books(
         args.push(Box::new(c.to_string()));
     }
     if let Some(s) = search.filter(|s| !s.is_empty()) {
-        clauses.push(format!("({OV_TITLE} LIKE ? OR {OV_AUTHOR} LIKE ?)"));
-        let like = format!("%{s}%");
+        // RAWY-178 (AUD-12): match against the precomputed Arabic-FOLDED shadow columns with a folded,
+        // LIKE-escaped query — so كتاب finds كِتاب, أحمد finds احمد, and %/_ are literal (not wildcards).
+        clauses.push("(b.title_fold LIKE ? ESCAPE '\\' OR b.author_fold LIKE ? ESCAPE '\\')".to_string());
+        let like = format!("%{}%", escape_like(&fold_search(s)));
         args.push(Box::new(like.clone()));
         args.push(Box::new(like));
     }
@@ -239,6 +281,15 @@ pub fn update_book(
         Some(_) => clear_override(conn, id, "cover_fit")?,
         None => {}
     }
+    // RAWY-178 (AUD-12): a title/author edit changes the EFFECTIVE value, so refresh the folded search
+    // shadow from the effective (override-or-base) value — whether the override was set OR cleared.
+    conn.execute(
+        "UPDATE books SET \
+            title_fold  = afold(COALESCE((SELECT value FROM metadata_overrides WHERE book_id=books.id AND field='title'),  title)), \
+            author_fold = afold(COALESCE((SELECT value FROM metadata_overrides WHERE book_id=books.id AND field='author'), author)) \
+         WHERE id = ?1",
+        [id],
+    )?;
     get_book(conn, id)
 }
 
@@ -766,4 +817,38 @@ pub fn annotations_all(conn: &Connection) -> rusqlite::Result<Vec<AnnoItem>> {
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], anno_item)?;
     rows.collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{escape_like, fold_search};
+
+    // RAWY-178 (AUD-12): the library fold matches the in-book search intent — an unvocalized query
+    // folds to the same string as the vocalized/variant title, so LIKE compares folded-to-folded.
+    #[test]
+    fn fold_search_folds_tashkil_and_variants() {
+        // tashkīl stripped: كِتاب ⇒ كتاب
+        assert_eq!(fold_search("كِتاب"), fold_search("كتاب"));
+        // hamza/alef variants: أحمد ⇔ احمد ⇔ إحمد ⇔ آحمد
+        assert_eq!(fold_search("أحمد"), fold_search("احمد"));
+        assert_eq!(fold_search("إحمد"), fold_search("احمد"));
+        assert_eq!(fold_search("آحمد"), fold_search("احمد"));
+        // alef maqsura ى ⇒ ya ي ; teh marbuta ة ⇒ ه
+        assert_eq!(fold_search("مصطفى"), fold_search("مصطفي"));
+        assert_eq!(fold_search("مكتبة"), fold_search("مكتبه"));
+        // tatweel + whitespace dropped, Latin lowercased
+        assert_eq!(fold_search("كـتـاب"), fold_search("كتاب"));
+        assert_eq!(fold_search("The Book"), "thebook");
+        // a plain query is unchanged apart from case/space
+        assert_eq!(fold_search("Alice"), "alice");
+    }
+
+    // RAWY-178 (AUD-12): %/_/\ become literal so a query with them isn't a wildcard.
+    #[test]
+    fn escape_like_escapes_metachars() {
+        assert_eq!(escape_like("50%"), "50\\%");
+        assert_eq!(escape_like("a_b"), "a\\_b");
+        assert_eq!(escape_like("x\\y"), "x\\\\y");
+        assert_eq!(escape_like("plain"), "plain");
+    }
 }

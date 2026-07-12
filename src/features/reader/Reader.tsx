@@ -41,7 +41,7 @@ import { MARKER_WINDOW, useBookmarks } from "./bookmarksStore";
 import { ReaderChrome, type SettingsSection } from "./ReaderChrome";
 import { SettingsPanel } from "./SettingsPanel";
 import { TtsPlayer } from "./TtsPlayer";
-import { useTts } from "../../lib/tts";
+import { toggleTtsPlayback, useTts } from "../../lib/tts";
 import { useChromeOnIntent } from "./useChromeOnIntent";
 
 // The book to open: id (for progress) + absolute file path (for the asset protocol).
@@ -377,6 +377,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   useEffect(() => {
     const ctrl = ctrlRef.current;
     ctrl?.onActivity((x, y) => signalMove(x, y));
+    // RAWY-180 (Part B): Space with focus inside the reading frame toggles read-aloud when a session is
+    // active (returns true → the frame swallows the key); otherwise Space keeps scrolling/paging.
+    ctrl?.onSpace(() => toggleTtsPlayback());
     // RAWY-73/130: scroll-down hides the bars, scroll-up shows them — the SAME during TTS now (RAWY-129
     // gated this off to dodge a reflow hitch; RAWY-130 removes the gate and instead pins the reading area
     // full-height during TTS via `.reader-root.tts-playing .page-host` (global.css), so the bars hide/show

@@ -13,7 +13,10 @@ import { settingsGet, settingsSet } from "./ipc";
 export type StyleScope = "unified" | "perbook";
 
 const KEY = "style_scope";
-const DEFAULT: StyleScope = "perbook"; // current behaviour — no surprise for existing users
+// RAWY-180 (Part C): the DEFAULT (used only when the user has NOT chosen) is UNIFIED — one shared book
+// style is the friendlier default. An explicit stored choice is still respected: `style_scope` is
+// written only by `setScope`, so a persisted "perbook" wins (see initStyleScope).
+const DEFAULT: StyleScope = "unified";
 
 interface StyleScopeState {
   scope: StyleScope;
@@ -28,8 +31,9 @@ export const useStyleScope = create<StyleScopeState>((set) => ({
   },
 }));
 
-/** Load the persisted scope. Call once at startup. */
+/** Load the persisted scope. Call once at startup. RAWY-180: an explicit stored "perbook" is honoured;
+ *  anything else (including no stored value) uses the UNIFIED default. */
 export async function initStyleScope(): Promise<void> {
   const v = await settingsGet(KEY).catch(() => null);
-  useStyleScope.setState({ scope: v === "unified" ? "unified" : "perbook" });
+  useStyleScope.setState({ scope: v === "perbook" ? "perbook" : "unified" });
 }

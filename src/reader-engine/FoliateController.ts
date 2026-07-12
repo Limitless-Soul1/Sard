@@ -617,6 +617,11 @@ export class FoliateController {
   // parent-window listener) so the chrome-on-intent hook can wake the auto-hiding bar. Coords are
   // translated to parent-viewport space so the hook's jitter dedup shares one coordinate system.
   private activityCb: ((x: number, y: number, isTap: boolean) => void) | null = null;
+  // RAWY-180 (Part B): Space inside the reading frame — if a read-aloud session is active this toggles
+  // play/pause (the cb returns true → we swallow the key); otherwise Space keeps its normal behaviour
+  // (scroll the EPUB / page the PDF). The content frame's keydown never reaches the parent window, so
+  // this callback is how the parent's TTS toggle runs from reading-area focus.
+  private spaceCb: (() => boolean) | null = null;
   // RAWY-73: scroll intent (scrolled mode) — accumulate wheel delta and fire a debounced direction
   // so a small jitter doesn't toggle the bar. down = scroll down (hide), up = scroll up (show).
   private scrollIntentCb: ((down: boolean) => void) | null = null;
@@ -721,7 +726,9 @@ export class FoliateController {
         this.pdfPageDoc = doc;
         doc.addEventListener("keydown", (ev: KeyboardEvent) => {
           if (ev.key === "ArrowLeft" || ev.key === "ArrowUp" || ev.key === "PageUp") this.view?.prev?.();
-          else if (ev.key === "ArrowRight" || ev.key === "ArrowDown" || ev.key === "PageDown" || ev.key === " ") this.view?.next?.();
+          // RAWY-180 (Part B): Space toggles read-aloud when active; else it pages the PDF (as before).
+          else if (ev.key === " ") { if (this.spaceCb?.()) ev.preventDefault(); else this.view?.next?.(); }
+          else if (ev.key === "ArrowRight" || ev.key === "ArrowDown" || ev.key === "PageDown") this.view?.next?.();
         });
         // RAWY-87 (#2): a wheel over the PDF PAGE fires INSIDE this iframe, so it never reaches the
         // reader-desk's onWheel (the frame boundary) — that's why wheeling the page did nothing while
@@ -751,6 +758,9 @@ export class FoliateController {
       doc.addEventListener("keydown", (ev: KeyboardEvent) => {
         if (ev.key === "ArrowLeft") this.next();
         else if (ev.key === "ArrowRight") this.prev();
+        // RAWY-180 (Part B): Space toggles read-aloud when a session is active; otherwise it keeps its
+        // normal behaviour (scrolling the content). Only swallow the key when the toggle actually fired.
+        else if (ev.key === " ") { if (this.spaceCb?.()) ev.preventDefault(); }
         // RAWY-122: Esc while reading dismisses a just-made selection + its popover, and clears the
         // real text selection so it can't re-fire (the reading frame has focus, so its own Esc is here).
         else if (ev.key === "Escape") {
@@ -1006,6 +1016,12 @@ export class FoliateController {
    *  show on scroll-up. `down` = the reader scrolled toward later content. */
   onScrollIntent(cb: (down: boolean) => void): void {
     this.scrollIntentCb = cb;
+  }
+  /** RAWY-180 (Part B): handle Space pressed with focus INSIDE the reading frame. `cb` returns true if
+   *  it consumed the key (a TTS session was active → toggled play/pause), in which case we preventDefault
+   *  so Space doesn't also scroll/page; false leaves Space's normal reading behaviour intact. */
+  onSpace(cb: () => boolean): void {
+    this.spaceCb = cb;
   }
   /** RAWY-74/75: scroll the book by a wheel delta coming from OUTSIDE the content iframe — i.e. the
    *  reading-area side MARGINS, where the native wheel can't reach foliate's scroller (it lives in

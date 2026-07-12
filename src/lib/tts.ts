@@ -102,6 +102,7 @@ interface TtsState {
   voice: string; // voice id within the engine
   lang: TtsLang; // current book language (which voice pref applies)
   speed: number;
+  volume: number; // RAWY-180: read-aloud output volume 0..1 (persisted as `tts_volume`)
   index: number; // current sentence
   total: number;
   words: TtsWord[]; // RAWY-127: the current sentence's Edge word timings ([] = sentence-level only)
@@ -114,6 +115,7 @@ interface TtsState {
   toggle: () => void;
   skip: (delta: number) => void;
   setSpeed: (s: number) => void;
+  setVolume: (v: number) => void; // RAWY-180 (Part A): read-aloud output volume 0..1 (persisted)
   setVoice: (engine: TtsEngineKind, id: string, lang: TtsLang) => void;
   setEngine: (engine: TtsEngineKind) => void;
   retry: () => void;
@@ -130,6 +132,12 @@ interface Synthesized { buffer: AudioBuffer; words: TtsWord[] }
 let ctx: AudioContext | null = null;
 let sentences: string[] = [];
 let source: AudioBufferSourceNode | null = null;
+// RAWY-180 (Part A): read-aloud VOLUME. Every sentence source connects through ONE shared GainNode
+// before the destination, so the slider's 0..1 gain governs BOTH engines (Piper AND Edge) identically —
+// they both play decoded buffers via the same `createBufferSource` path. Persisted as `tts_volume`.
+let gainNode: GainNode | null = null;
+let curVolume = 1; // 0..1, applied to the shared output gain (mirrors useTts.volume)
+let volSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let cache = new Map<number, Promise<Synthesized>>();
 let curEngine: TtsEngineKind = "piper";
 let curVoice = "";
@@ -169,6 +177,28 @@ const audioCtx = (): AudioContext => {
   if (!ctx || ctx.state === "closed") ctx = new AudioContext();
   return ctx;
 };
+
+// RAWY-180 (Part A): the shared output GainNode — every source connects HERE (not straight to the
+// destination), so the volume applies to Piper + Edge alike. Recreated if the AudioContext was replaced.
+const outputNode = (c: AudioContext): GainNode => {
+  if (!gainNode || gainNode.context !== c) {
+    gainNode = c.createGain();
+    gainNode.gain.value = curVolume;
+    gainNode.connect(c.destination);
+  }
+  return gainNode;
+};
+
+/** RAWY-180 (Part B): toggle read-aloud play/pause IF a session is active. Returns whether it acted, so
+ *  the caller only swallows the key (preventDefault) when it actually toggled. */
+export function toggleTtsPlayback(): boolean {
+  const st = useTts.getState();
+  if (st.active && (st.status === "playing" || st.status === "paused")) {
+    st.toggle();
+    return true;
+  }
+  return false;
+}
 
 // RAWY-127: the Rust response is FRAMED — `[u32 BE json_len][json words][audio bytes]` — so the audio
 // stays raw (no base64) while carrying its per-word timing. Split the header off; `words` is `[]` for
@@ -337,7 +367,7 @@ async function playFrom(i: number, myGen: number) {
   const s = c.createBufferSource();
   s.buffer = synthd.buffer;
   s.playbackRate.value = useTts.getState().speed;
-  s.connect(c.destination);
+  s.connect(outputNode(c)); // RAWY-180: through the shared volume gain (both engines)
   // RAWY-159: advance exactly ONCE, whether the source ends normally OR the watchdog fires. The
   // watchdog is the safety net for a source whose `onended` never arrives (an edge-case empty/stuck
   // buffer) — it advances only after the audio COULD have finished even at the slowest speed, and it
@@ -394,6 +424,7 @@ export const useTts = create<TtsState>((set, get) => ({
   voice: "",
   lang: "en",
   speed: 1,
+  volume: 1, // RAWY-180: full volume until the user lowers it (or a saved level loads on start)
   index: 0,
   total: 0,
   words: [],
@@ -416,7 +447,14 @@ export const useTts = create<TtsState>((set, get) => ({
     curLang = lang;
     const saved = Number(await settingsGet("tts_speed").catch(() => null));
     const speed = saved >= TTS_MIN_SPEED && saved <= TTS_MAX_SPEED ? saved : get().speed;
-    set({ active: true, status: "preparing", lang, speed, index: startIndex, total: sentences.length, progress: 0, chapterLabel, error: null, notice: null, words: [], wordIndex: -1 });
+    // RAWY-180: restore the saved volume (0..1). An UNSET key must not read as 0 (muted), so treat only
+    // an in-range stored value as valid; otherwise keep the current (default full) level.
+    const volStr = await settingsGet("tts_volume").catch(() => null);
+    const volNum = volStr == null ? NaN : Number(volStr);
+    const volume = volNum >= 0 && volNum <= 1 ? volNum : get().volume;
+    curVolume = volume;
+    if (gainNode) gainNode.gain.value = volume;
+    set({ active: true, status: "preparing", lang, speed, volume, index: startIndex, total: sentences.length, progress: 0, chapterLabel, error: null, notice: null, words: [], wordIndex: -1 });
     if (sentences.length === 0) {
       set({ status: "error", error: TTS_EMPTY });
       return;
@@ -459,6 +497,18 @@ export const useTts = create<TtsState>((set, get) => ({
     reanchorKaraoke(sp); // RAWY-127: keep the karaoke audio-time continuous across the rate change
     set({ speed: sp });
     void settingsSet("tts_speed", String(sp)).catch(() => {});
+  },
+
+  // RAWY-180 (Part A): set the read-aloud volume (0..1) on the shared gain — live for both engines — and
+  // persist it debounced (the slider fires many events per drag). Applies even before a source connects
+  // (curVolume seeds the gain node when it's created).
+  setVolume: (v) => {
+    const vol = Math.max(0, Math.min(1, v));
+    curVolume = vol;
+    if (gainNode) gainNode.gain.value = vol;
+    set({ volume: vol });
+    if (volSaveTimer) clearTimeout(volSaveTimer);
+    volSaveTimer = setTimeout(() => void settingsSet("tts_volume", String(vol)).catch(() => {}), 250);
   },
 
   // Pick an engine+voice for a language (RAWY-111). Always persists the choice; if it's for the

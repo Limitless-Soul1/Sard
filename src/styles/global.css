@@ -936,6 +936,40 @@ html, body, #root {
 }
 .tts-speed-chip:hover { background: color-mix(in srgb, var(--text) 9%, transparent); }
 
+/* RAWY-180 (Part A): the inline VOLUME slider row (design "approach B") — a hairline row under
+   Voice/Speed. Themed via the shared tokens (--accent / --text / --chrome-border), so light + Moonlit
+   follow automatically; the "adjusting" accent border is :focus-within. The native range auto-mirrors
+   in RTL (RAWY-65); the accent FILL gradient is flipped for dir=rtl so the fill sits on the start side. */
+.tts-volume {
+  display: flex; align-items: center; gap: 9px; margin-top: 1px;
+  padding: 5px 12px; border-radius: 11px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  border: 1px solid var(--chrome-border);
+  transition: border-color 0.15s ease;
+}
+.tts-volume:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, var(--chrome-border)); }
+.tts-vol-ico { flex: none; width: 18px; height: 18px; color: var(--accent); display: flex; }
+.tts-vol-ico svg { width: 18px; height: 18px; }
+.tts-vol-ico.muted { color: var(--muted); }
+.tts-vol-range {
+  flex: 1; min-width: 0; height: 20px; margin: 0; cursor: pointer;
+  -webkit-appearance: none; appearance: none; background: transparent;
+}
+.tts-vol-range::-webkit-slider-runnable-track {
+  height: 4px; border-radius: 3px;
+  background: linear-gradient(to right, var(--accent) var(--vol, 100%), color-mix(in srgb, var(--text) 14%, transparent) var(--vol, 100%));
+}
+.tts-pill[dir="rtl"] .tts-vol-range::-webkit-slider-runnable-track {
+  background: linear-gradient(to left, var(--accent) var(--vol, 100%), color-mix(in srgb, var(--text) 14%, transparent) var(--vol, 100%));
+}
+.tts-vol-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; margin-top: -5px;
+  width: 14px; height: 14px; border-radius: 50%; background: var(--accent); border: 0;
+  box-shadow: 0 0 0 3px var(--chrome-bg), 0 1px 3px rgba(0, 0, 0, 0.25);
+}
+.tts-vol-range:focus { outline: none; }
+.tts-vol-pct { flex: none; min-width: 34px; text-align: end; font: 700 0.75rem var(--ui-font); color: var(--accent); }
+
 .tts-spin {
   width: 16px; height: 16px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--paper-bg) 45%, transparent);
   border-top-color: var(--paper-bg); animation: tts-spin 0.7s linear infinite;

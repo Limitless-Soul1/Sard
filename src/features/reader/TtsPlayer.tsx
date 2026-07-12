@@ -6,11 +6,11 @@
 // default, both synth paths, the voices picker, per-language persistence, the non-destructive
 // per-sentence fallback); this is the pill's markup/CSS, re-binding the same controls. Mirrors RTL.
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
-import { TTS_EMPTY, TTS_MAX_SPEED, TTS_MIN_SPEED, TTS_SPEED_STEP, useTts, voiceLabel } from "../../lib/tts";
+import { TTS_EMPTY, TTS_MAX_SPEED, TTS_MIN_SPEED, TTS_SPEED_STEP, toggleTtsPlayback, useTts, voiceLabel } from "../../lib/tts";
 import { TtsMini } from "./TtsMini";
 import { TtsVoicePicker } from "./TtsVoicePicker";
 
@@ -21,7 +21,7 @@ const CHEV_DOWN = "m6 10 6 6 6-6";
 // same booleans that drive the pill's `--reading-shift`. The minimized kashida stroke uses them to
 // flip clear of an open side panel (RAWY-158).
 export function TtsPlayer({ panelLeft = false, panelRight = false }: { panelLeft?: boolean; panelRight?: boolean }) {
-  const { active, status, engine, voice, index, total, speed, progress, chapterLabel, error, notice, toggle, skip, setSpeed, setEngine, retry, stop } = useTts();
+  const { active, status, engine, voice, index, total, speed, volume, progress, chapterLabel, error, notice, toggle, skip, setSpeed, setVolume, setEngine, retry, stop } = useTts();
   const { t, lang, dir } = useI18n();
   const [picking, setPicking] = useState(false);
   // RAWY-164: ONE progressive size state replaces the old two confusable controls (the row-collapse
@@ -35,6 +35,27 @@ export function TtsPlayer({ panelLeft = false, panelRight = false }: { panelLeft
   useEffect(() => {
     if (!active) setSize("full");
   }, [active]);
+  // RAWY-180 (Part B): Space toggles read-aloud play/pause when a session is active (from PARENT focus —
+  // the reading-frame case is handled by FoliateController.onSpace). Self-gates via `toggleTtsPlayback`
+  // (a no-op when inactive), and ignores typing / interactive targets so it never hijacks Space in the
+  // search box or a focused control. Registered once; `toggleTtsPlayback` reads the live store.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key !== " " && e.code !== "Space") || e.repeat) return;
+      const el = e.target as HTMLElement | null;
+      if (
+        el &&
+        (/^(INPUT|TEXTAREA|SELECT|BUTTON|A)$/.test(el.tagName) ||
+          el.isContentEditable ||
+          el.closest?.("[role='button'],[role='slider'],[contenteditable='true']"))
+      ) {
+        return; // let inputs / buttons / the search box keep their own Space behaviour
+      }
+      if (toggleTtsPlayback()) e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   if (!active) return null;
 
   const playing = status === "playing";
@@ -48,6 +69,7 @@ export function TtsPlayer({ panelLeft = false, panelRight = false }: { panelLeft
     const next = speed + TTS_SPEED_STEP;
     setSpeed(next > TTS_MAX_SPEED ? TTS_MIN_SPEED : next);
   };
+  const volPct = Math.round(volume * 100); // RAWY-180 (Part A): inline volume slider 0–100%
   const noticeText = notice === "tts.edgeHiccup" ? t("tts.edgeHiccup") : notice;
   const sub =
     errored ? ` · ${t("tts.error")}` :
@@ -150,6 +172,32 @@ export function TtsPlayer({ panelLeft = false, panelRight = false }: { panelLeft
               <button className="tts-speed-chip" onClick={cycleSpeed} aria-label={t("tts.speed")} title={t("tts.speed")}>
                 {localeDigits(speed.toFixed(2).replace(/0$/, "").replace(/\.$/, ""), lang)}×
               </button>
+            </div>
+            {/* RAWY-180 (Part A): the inline VOLUME slider — a hairline row under Voice/Speed (design
+                "approach B"). Speaker glyph (accent; a muted glyph at 0) + a thin accent-fill track +
+                round knob + a bold accent %; the "adjusting" accent border is :focus-within (CSS). This
+                is the ONLY control taken from the design file — the RAWY-164 shrink button and every
+                other pill control are unchanged. A native range → keyboard + drag + RTL auto-mirror. */}
+            <div className="tts-volume">
+              <span className={`tts-vol-ico${volume === 0 ? " muted" : ""}`} aria-hidden>
+                {volume === 0 ? (
+                  <svg viewBox="0 0 24 24" fill="none"><path d="M11 5 7 8.5H4v7h3l4 3.5z" fill="currentColor" /><path d="m16 9 5 6M21 9l-5 6" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" /></svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" fill="none"><path d="M11 5 7 8.5H4v7h3l4 3.5z" fill="currentColor" /><path d="M15.5 9a4 4 0 0 1 0 6" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" /><path d="M18 6.5a8 8 0 0 1 0 11" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" /></svg>
+                )}
+              </span>
+              <input
+                className="tts-vol-range"
+                type="range"
+                min={0}
+                max={100}
+                value={volPct}
+                onChange={(e) => setVolume(Number(e.target.value) / 100)}
+                aria-label={t("tts.volume")}
+                title={t("tts.volume")}
+                style={{ "--vol": `${volPct}%` } as CSSProperties}
+              />
+              <span className="tts-vol-pct">{localeNum(volPct, lang)}{lang === "ar" ? "٪" : "%"}</span>
             </div>
           </div>
         )}

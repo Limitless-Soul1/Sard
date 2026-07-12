@@ -7,6 +7,7 @@
 // per-sentence fallback); this is the pill's markup/CSS, re-binding the same controls. Mirrors RTL.
 
 import { useEffect, useState, type CSSProperties } from "react";
+import { useShallow } from "zustand/react/shallow";
 
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
@@ -21,7 +22,17 @@ const CHEV_DOWN = "m6 10 6 6 6-6";
 // same booleans that drive the pill's `--reading-shift`. The minimized kashida stroke uses them to
 // flip clear of an open side panel (RAWY-158).
 export function TtsPlayer({ panelLeft = false, panelRight = false }: { panelLeft?: boolean; panelRight?: boolean }) {
-  const { active, status, engine, voice, index, total, speed, volume, progress, chapterLabel, error, notice, toggle, skip, setSpeed, setVolume, setEngine, retry, stop } = useTts();
+  // RAWY-181 (BUG 2): subscribe ONLY to the fields the pill uses (via useShallow), NOT the whole store.
+  // Previously `useTts()` re-rendered the pill on EVERY store change — including the karaoke `words`/
+  // `wordIndex` ticks (several/sec on Edge) it doesn't even read — which made size toggles feel heavy and
+  // could swallow a click landing mid-re-render. Actions are stable Zustand refs, so they never re-render.
+  const { active, status, engine, voice, index, total, speed, volume, progress, chapterLabel, error, notice, toggle, skip, setSpeed, setVolume, setEngine, retry, stop } = useTts(
+    useShallow((s) => ({
+      active: s.active, status: s.status, engine: s.engine, voice: s.voice, index: s.index, total: s.total,
+      speed: s.speed, volume: s.volume, progress: s.progress, chapterLabel: s.chapterLabel, error: s.error, notice: s.notice,
+      toggle: s.toggle, skip: s.skip, setSpeed: s.setSpeed, setVolume: s.setVolume, setEngine: s.setEngine, retry: s.retry, stop: s.stop,
+    })),
+  );
   const { t, lang, dir } = useI18n();
   const [picking, setPicking] = useState(false);
   // RAWY-164: ONE progressive size state replaces the old two confusable controls (the row-collapse

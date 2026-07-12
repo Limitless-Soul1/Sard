@@ -162,6 +162,13 @@ const SYNTH_TIMEOUT_MS = 20000;
 // RAWY-172 (AUD-1): how many already-played sentences to keep decoded (besides the current +
 // prefetched-next), so a one-sentence skip-back stays instant while memory stays bounded.
 const CACHE_KEEP_BEHIND = 1;
+// RAWY-181 (BUG 3): how many UPCOMING sentences to synthesize ahead of need. Was effectively 1 (and
+// only kicked off AFTER the current started playing), which left silence when a short sentence ended
+// before Edge's network synth of the next finished. Prefetching a small WINDOW (started as soon as a
+// sentence begins) keeps the pipeline 2–3 ahead so the next buffer is ready when the current ends.
+// Memory stays bounded/O(1): eviction keeps only [idx-CACHE_KEEP_BEHIND … idx+PREFETCH_AHEAD] decoded
+// (≈5 sentences), not the whole chapter.
+const PREFETCH_AHEAD = 3;
 const clearWatchdog = () => {
   if (watchdog) { clearInterval(watchdog); watchdog = null; }
 };
@@ -330,6 +337,16 @@ async function playFrom(i: number, myGen: number) {
   set({ index: idx, status: "playing" });
   evictAudioBelow(idx); // RAWY-172 (AUD-1): free the buffers we've moved past — bounded memory
 
+  // RAWY-181 (BUG 3): request the CURRENT sentence first (most urgent), then kick off a WINDOW of
+  // upcoming synths so the next sentences are decoded before they're needed — this covers Edge's
+  // per-sentence network latency across short sentences (was 1 ahead, only after the current played).
+  // synth() dedupes via the cache, so already-fetched entries are no-ops; evictAudioBelow bounds memory.
+  const current = synth(idx);
+  for (let k = 1; k <= PREFETCH_AHEAD; k++) {
+    const j = idx + k;
+    if (j < sentences.length) void synth(j).catch(() => {});
+  }
+
   // RAWY-159: skip the current sentence and continue — one bad segment must NEVER halt the queue. A
   // genuine dead end (a RUN of FAIL_LIMIT consecutive failures, e.g. offline + no Piper) still surfaces
   // the retryable error instead of silently racing to the end.
@@ -343,7 +360,7 @@ async function playFrom(i: number, myGen: number) {
   try {
     // RAWY-172 (AUD-2): bound the synth so a stalled socket advances instead of freezing. Edge failures
     // still self-heal per-sentence inside synth() (RAWY-113); a genuine stall rejects here → skipSegment.
-    synthd = await withTimeout(synth(idx), SYNTH_TIMEOUT_MS);
+    synthd = await withTimeout(current, SYNTH_TIMEOUT_MS);
   } catch (e) {
     // This segment couldn't be synthesized (an unspeakable "…"/"..." that yields empty audio the
     // decoder rejects, a Piper exit with no WAV, both engines down, …). Skip it and keep reading.
@@ -359,7 +376,7 @@ async function playFrom(i: number, myGen: number) {
     return;
   }
   failStreak = 0; // a real, speakable sentence played → reset the dead-end counter
-  if (idx + 1 < sentences.length) void synth(idx + 1).catch(() => {}); // prefetch next
+  // (RAWY-181: the upcoming window was already prefetched at the top of playFrom.)
   const c = audioCtx();
   if (c.state === "suspended") await c.resume();
   if (myGen !== gen) return;

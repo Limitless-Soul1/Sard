@@ -844,10 +844,10 @@ html, body, #root {
   display: flex; flex-direction: column; gap: 4px;
   padding: 8px 10px 10px; border-radius: 16px; border: 1px solid var(--chrome-border);
   background: color-mix(in srgb, var(--chrome-bg) 96%, transparent);
-  /* RAWY-169: the ground is 96% opaque, so a heavy blur barely showed yet cost the compositor a full
-     re-blur of the reading area on every size toggle (a source of the switch jank). A small blur keeps
-     the same frosted feel for far less GPU work. */
-  backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px);
+  /* RAWY-169/181: the ground is 96% opaque, so a heavy blur barely showed yet cost the compositor a full
+     re-blur of the reading area on every size toggle AND on every reading-area repaint behind it during
+     playback (BUG 2). Trimmed 7px → 4px (matching the RAWY-177 bars) — same frosted feel, far less GPU. */
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
   box-shadow: 0 16px 42px rgba(40, 28, 14, 0.24); font-family: var(--ui-font);
 }
 :root[data-dark="true"] .tts-pill { box-shadow: 0 16px 42px rgba(0, 0, 0, 0.5); }

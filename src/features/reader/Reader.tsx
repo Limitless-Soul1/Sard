@@ -55,6 +55,10 @@ export interface OpenTarget {
 
 const SAVE_DEBOUNCE_MS = 500;
 
+// RAWY-181 (BUG 1): resolve AFTER the browser has painted (the 2nd rAF runs after the 1st's paint), so a
+// synchronous task queued right after runs UNDER the freshly-painted UI instead of blocking a blank frame.
+const nextPaint = () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+
 export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: () => void }) {
   // `uiDir` is the UI LANGUAGE direction (distinct from the book's `dir` below) — RAWY-71 uses it
   // to lay the localized placeholder/reveal widget out in the right direction.
@@ -891,6 +895,12 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     const ctrl = ctrlRef.current;
     if (!ctrl) return;
     const bookLang = isRtlBook ? "ar" : "en"; // RAWY-111: the store resolves the per-language voice
+    // RAWY-181 (BUG 1): the first Listen used to FREEZE the window — `getCurrentChapterSentences()` is a
+    // SYNCHRONOUS chapter DOM walk (segment into units + build ranges) that ran BEFORE any UI feedback,
+    // and `new AudioContext()` inits on first play. Show the loading pill FIRST (instant feedback), let
+    // it paint, THEN do the walk + start playback — so the work happens UNDER the visible "preparing"
+    // state instead of a dead frozen frame. (The sidecar spawn / Edge connect / synth were already async.)
+    useTts.setState({ active: true, status: "preparing", chapterLabel: chapter, error: null, notice: null });
     // RAWY-162: read the saved TTS cursor BEFORE playback starts (playback overwrites it via the save
     // effect), so we can offer a resume. A stale/absent value → no prompt (behaves exactly as before).
     let saved: { cfi?: string; sec?: number; idx: number; snip?: string } | null = null;
@@ -898,6 +908,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       const raw = await settingsGet(`tts_position:${initial.id}`);
       if (raw) saved = JSON.parse(raw);
     } catch { saved = null; }
+    await nextPaint(); // let the "preparing" pill paint before the synchronous chapter walk blocks
     useTts.getState().start({
       sentences: ctrl.getCurrentChapterSentences(bookLang),
       lang: bookLang,
@@ -932,10 +943,14 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // built). Read the chapter's blocks, find the one the selection begins in (whitespace-normalised
   // substring match), and start read-aloud from there — flowing forward. Falls back to the chapter
   // start if the block can't be located, so Listen always speaks.
-  const startListenFromSelection = (sel: SelectionInfo) => {
+  const startListenFromSelection = async (sel: SelectionInfo) => {
     const ctrl = ctrlRef.current;
     if (!ctrl) return;
     const bookLang = isRtlBook ? "ar" : "en";
+    // RAWY-181 (BUG 1): same freeze-avoidance as startListen — show the loading pill + paint before the
+    // synchronous chapter walk.
+    useTts.setState({ active: true, status: "preparing", chapterLabel: chapter, error: null, notice: null });
+    await nextPaint();
     const sentences = ctrl.getCurrentChapterSentences(bookLang);
     if (sentences.length === 0) return;
     const norm = (s: string) => s.replace(/\s+/g, " ").trim();

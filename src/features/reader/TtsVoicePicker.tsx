@@ -8,6 +8,23 @@ import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "../../i18n";
 import { loadPickerVoices, type PickerVoice, useTts } from "../../lib/tts";
 
+// RAWY-187 (Part A): the picker is grouped into language SECTIONS in this fixed order. Multilingual heads
+// the list because those Edge voices can speak ANY language (incl. Arabic), so they're useful for every
+// book; then Arabic (the app is Arabic-first), English, then the rest. Sections with no voice are omitted.
+const SECTION_ORDER = ["multilingual", "arabic", "english", "other"] as const;
+type SectionKey = (typeof SECTION_ORDER)[number];
+// Detect a section for one voice. Edge multilingual voices carry "Multilingual" in their short_name/`id`
+// (a stable Microsoft naming convention, e.g. `en-US-AvaMultilingualNeural`) — that wins over the locale
+// so they head the list. A voice NOT matched here still falls through to its locale section, so grouping
+// can never drop a voice. Otherwise classify by LOCALE prefix (`ar-`/`en-`), everything else is "other".
+function sectionOf(v: PickerVoice): SectionKey {
+  if (v.id.includes("Multilingual")) return "multilingual";
+  const loc = v.locale.toLowerCase();
+  if (loc.startsWith("ar")) return "arabic";
+  if (loc.startsWith("en")) return "english";
+  return "other";
+}
+
 export function TtsVoicePicker({ onClose }: { onClose: () => void }) {
   const { t, lang: uiLang, dir } = useI18n();
   const engine = useTts((s) => s.engine);
@@ -36,11 +53,33 @@ export function TtsVoicePicker({ onClose }: { onClose: () => void }) {
     }
   }, [uiLang]);
 
-  // Scope to the CURRENT engine + language (the engine is chosen on the Engine chip).
+  // RAWY-187 (Part A): scope to the CURRENT ENGINE only (the Engine chip picks Piper vs Edge). The former
+  // book-language filter is GONE — every book's picker now lists all of the engine's voices, grouped by
+  // language section below, so a Multilingual/English voice can be chosen even for an Arabic book. Selection
+  // still persists per the current book language (`setVoice(…, curLang)` unchanged), so playback is identical.
   const items = useMemo(
-    () => (voices ?? []).filter((v) => v.engine === engine && v.lang === curLang),
-    [voices, engine, curLang],
+    () => (voices ?? []).filter((v) => v.engine === engine),
+    [voices, engine],
   );
+
+  // Group into the 4 fixed sections, alphabetical by display name within each, empty sections omitted.
+  const groups = useMemo(() => {
+    const by: Record<SectionKey, PickerVoice[]> = { multilingual: [], arabic: [], english: [], other: [] };
+    for (const v of items) by[sectionOf(v)].push(v);
+    const header: Record<SectionKey, string> = {
+      multilingual: t("tts.secMultilingual"),
+      arabic: t("tts.lang.ar"),
+      english: t("tts.lang.en"),
+      other: t("tts.secOther"),
+    };
+    return SECTION_ORDER
+      .map((k) => ({
+        key: k,
+        header: header[k],
+        voices: by[k].sort((a, b) => a.label.localeCompare(b.label, uiLang, { sensitivity: "base" })),
+      }))
+      .filter((g) => g.voices.length > 0);
+  }, [items, t, uiLang]);
 
   const meta = (v: PickerVoice): string => {
     if (v.engine !== "edge") return t("tts.offline");
@@ -61,27 +100,33 @@ export function TtsVoicePicker({ onClose }: { onClose: () => void }) {
           // "no voices / offline" message instead of an eternal "loading…" spinner.
           <div className="tts-menu-empty">{t("tts.noVoices")}</div>
         ) : (
-          items.map((v) => {
-            const on = v.id === voice && v.engine === engine;
-            return (
-              <button
-                key={v.engine + v.id}
-                className={`tts-menu-row${on ? " on" : ""}`}
-                role="menuitemradio"
-                aria-checked={on}
-                onClick={() => {
-                  setVoice(v.engine, v.id, curLang);
-                  onClose();
-                }}
-              >
-                <span className="tts-menu-name">{v.label}</span>
-                <span className="tts-voice-meta">{meta(v)}</span>
-                {on && (
-                  <svg className="tts-menu-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6 9 17l-5-5" /></svg>
-                )}
-              </button>
-            );
-          })
+          // RAWY-187 (Part A): render each non-empty section with a small sticky header, then its voices.
+          groups.map((g) => (
+            <div key={g.key} className="tts-menu-group" role="group" aria-label={g.header}>
+              <div className="tts-menu-section">{g.header}</div>
+              {g.voices.map((v) => {
+                const on = v.id === voice && v.engine === engine;
+                return (
+                  <button
+                    key={v.engine + v.id}
+                    className={`tts-menu-row${on ? " on" : ""}`}
+                    role="menuitemradio"
+                    aria-checked={on}
+                    onClick={() => {
+                      setVoice(v.engine, v.id, curLang);
+                      onClose();
+                    }}
+                  >
+                    <span className="tts-menu-name">{v.label}</span>
+                    <span className="tts-voice-meta">{meta(v)}</span>
+                    {on && (
+                      <svg className="tts-menu-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6 9 17l-5-5" /></svg>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          ))
         )}
       </div>
     </div>

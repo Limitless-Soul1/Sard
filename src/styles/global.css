@@ -1010,6 +1010,16 @@ html, body, #root {
 .tts-menu-head { padding: 12px 14px 6px; font: 700 0.75rem var(--ui-font); letter-spacing: 0.02em; color: var(--muted); }
 .tts-menu-scroll { overflow-y: auto; padding: 0 8px 10px; }
 .tts-menu-empty { padding: 18px; text-align: center; color: var(--muted); font: 400 0.8125rem var(--ui-font); }
+/* RAWY-187 (Part A): language-section header inside the voice list. Sticky so it stays visible while
+   scrolling a long section; accent-tinted + per-theme (uses --accent/--chrome-bg); RTL via text-align:start. */
+.tts-menu-section {
+  position: sticky; top: 0; z-index: 1; text-align: start;
+  padding: 8px 8px 4px; margin-top: 6px;
+  font: 800 0.6875rem var(--ui-font); letter-spacing: 0.04em; color: var(--accent);
+  background: color-mix(in srgb, var(--chrome-bg) 96%, transparent);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.tts-menu-group:first-child .tts-menu-section { margin-top: 0; }
 .tts-menu-row {
   width: 100%; display: flex; align-items: center; gap: 10px; text-align: start;
   padding: 10px; border: 0; border-radius: 10px; background: transparent; cursor: pointer; color: var(--text); font-family: var(--ui-font);

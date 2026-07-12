@@ -908,9 +908,12 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       const raw = await settingsGet(`tts_position:${initial.id}`);
       if (raw) saved = JSON.parse(raw);
     } catch { saved = null; }
-    await nextPaint(); // let the "preparing" pill paint before the synchronous chapter walk blocks
+    await nextPaint(); // let the "preparing" pill paint before the chapter walk
+    // RAWY-182: the walk is now async + CHUNKED (non-blocking), so the pill + shrink button stay
+    // responsive throughout preparation instead of the thread being hogged until audio starts.
+    const sentences = await ctrl.getCurrentChapterSentences(bookLang);
     useTts.getState().start({
-      sentences: ctrl.getCurrentChapterSentences(bookLang),
+      sentences,
       lang: bookLang,
       startIndex: 0,
       chapterLabel: chapter,
@@ -932,8 +935,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     const bookLang = isRtlBook ? "ar" : "en";
     const idx = await ctrl.prepareTtsResume(cursor, bookLang);
     if (idx < 0) return; // couldn't map the cursor → leave the normal playback running
+    const sentences = await ctrl.getCurrentChapterSentences(bookLang);
     useTts.getState().start({
-      sentences: ctrl.getCurrentChapterSentences(bookLang),
+      sentences,
       lang: bookLang,
       startIndex: idx,
       chapterLabel: chapter,
@@ -951,12 +955,13 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     // synchronous chapter walk.
     useTts.setState({ active: true, status: "preparing", chapterLabel: chapter, error: null, notice: null });
     await nextPaint();
-    const sentences = ctrl.getCurrentChapterSentences(bookLang);
-    if (sentences.length === 0) return;
+    const sentences = await ctrl.getCurrentChapterSentences(bookLang); // RAWY-182: async + chunked (non-blocking)
     const norm = (s: string) => s.replace(/\s+/g, " ").trim();
     const needle = norm(sel.text).slice(0, 24);
     let startIndex = needle ? sentences.findIndex((s) => norm(s).includes(needle)) : -1;
     if (startIndex < 0) startIndex = 0;
+    // RAWY-182: call start() even when empty (it surfaces the empty-chapter state), so the "preparing"
+    // pill shown above never gets stuck — consistent with startListen.
     useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: chapter });
   };
 

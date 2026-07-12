@@ -582,6 +582,12 @@ function findMatchRange(doc: Document, pre: string, match: string, post: string)
   }
 }
 
+// RAWY-182: process the chapter walk in CHUNKS of this many containers, yielding to the event loop
+// between chunks so queued input (e.g. the TTS shrink-button click) is handled and no single task hogs
+// the main thread. `breathe()` yields a macrotask so a pending click runs before the next chunk.
+const UNITS_CHUNK = 24;
+const breathe = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
 export class FoliateController {
   private view: any | null = null;
   private style: ReadingStyle | null = null;
@@ -863,8 +869,8 @@ export class FoliateController {
       // (re)created, rebuild its units against the FRESH doc and ask the Reader to redraw at the current
       // sentence — so returning to a still-playing chapter restores the track wherever the audio now is.
       if (this.ttsLang != null && this.ttsUnitsIndex >= 0 && e.detail?.index === this.ttsUnitsIndex) {
-        this.getChapterUnits(this.ttsLang); // fresh ranges for the reloaded doc (same order → still aligned)
-        this.readingRedrawCb?.();
+        // RAWY-182: the rebuild is now async/chunked (non-blocking); redraw once the fresh ranges are ready.
+        void this.getChapterUnits(this.ttsLang).then(() => this.readingRedrawCb?.());
       }
     });
 
@@ -1164,8 +1170,8 @@ export class FoliateController {
    *  reading text, walked as LEAF blocks and segmented with Intl.Segmenter (Arabic-aware). Thin
    *  wrapper over `getChapterUnits` (RAWY-126) so the spoken sentences and the highlight ranges come
    *  from ONE walk and stay index-aligned. */
-  getCurrentChapterSentences(lang?: string): string[] {
-    return this.getChapterUnits(lang).map((u) => u.text);
+  async getCurrentChapterSentences(lang?: string): Promise<string[]> {
+    return (await this.getChapterUnits(lang)).map((u) => u.text);
   }
 
   /** RAWY-162 (TTS resume): the section index of the currently-loaded chapter (foliate spine index),
@@ -1203,7 +1209,7 @@ export class FoliateController {
     if (cursor.cfi && cursor.sec !== this.currentSectionIndex()) {
       try { await this.goToLocator(cursor.cfi); } catch { /* bad/foreign cfi → fall through to same-section resolve */ }
     }
-    const units = this.getChapterUnits(lang);
+    const units = await this.getChapterUnits(lang);
     if (units.length === 0) return -1;
     const norm = (s: string) => s.replace(/\s+/g, " ").trim();
     const key = norm(cursor.snip ?? "").slice(0, 24);
@@ -1228,7 +1234,7 @@ export class FoliateController {
    *  no nested block-ish container), the hidden chapter-title / first-line are skipped, and if NO
    *  visible leaf holds text the whole body is read as a fallback (so a visibly-full chapter is never
    *  reported empty) — but that fallback yields `range: null` (no highlight; honest degrade). */
-  getChapterUnits(lang?: string): { text: string; range: Range | null }[] {
+  async getChapterUnits(lang?: string): Promise<{ text: string; range: Range | null }[]> {
     const content = this.view?.renderer?.getContents?.()?.[0];
     const doc: Document | undefined = content?.doc;
     if (!doc?.body || this.isFixedLayout) {
@@ -1247,13 +1253,6 @@ export class FoliateController {
       const cs = win?.getComputedStyle(el);
       return !!cs && (cs.visibility === "hidden" || cs.display === "none");
     };
-    // Visible leaf blocks, in document order.
-    const leaves: Element[] = [];
-    doc.body.querySelectorAll(CONTAINER).forEach((el) => {
-      if (el.querySelector(CONTAINER)) return; // leaf containers only (no double-count)
-      if (isHidden(el) || el.closest(".sard-title-ph")) return; // skip hidden title / first-line
-      if ((el.textContent ?? "").trim()) leaves.push(el);
-    });
 
     // Intl.Segmenter is present in WebView2/Chromium but not always in the TS lib — type it locally.
     type SegPart = { index: number; segment: string };
@@ -1263,10 +1262,30 @@ export class FoliateController {
     }).Segmenter;
     const seg: Segmenter | null = Seg ? new Seg(lang || "en", { granularity: "sentence" }) : null;
 
+    // RAWY-182 (first-play non-block): the walk (per-container `querySelector` + `getComputedStyle` +
+    // `Intl.Segmenter` + Range build) used to run in ONE synchronous pass that froze the thread on a big
+    // chapter — the RAWY-181 "preparing" pill showed but the shrink button couldn't respond until audio
+    // started. Now iterate the containers in CHUNKS and yield to the event loop between them, so queued
+    // input is handled and the thread breathes. The order (document order), the leaf filter, the per-leaf
+    // `segmentBlock`, and the whole-body fallback are UNCHANGED, so the produced units are IDENTICAL
+    // (spotlight 126 / karaoke 127 / resume 162 alignment is unaffected).
+    const all = doc.body.querySelectorAll(CONTAINER);
     const units: { text: string; range: Range | null }[] = [];
-    if (leaves.length > 0) {
-      for (const el of leaves) this.segmentBlock(el, doc, seg, norm, units);
-    } else {
+    let anyLeaf = false;
+    for (let i = 0; i < all.length; i++) {
+      const el = all[i];
+      if (
+        !el.querySelector(CONTAINER) && // leaf containers only (no double-count)
+        !isHidden(el) &&
+        !el.closest(".sard-title-ph") && // skip hidden title / first-line
+        (el.textContent ?? "").trim()
+      ) {
+        anyLeaf = true;
+        this.segmentBlock(el, doc, seg, norm, units);
+      }
+      if ((i + 1) % UNITS_CHUNK === 0 && i + 1 < all.length) await breathe();
+    }
+    if (!anyLeaf) {
       // No visible leaf held text (text sits directly in <body>, or inline-only, or all-hidden) —
       // read the whole body so a full chapter is never empty, but WITHOUT ranges (honest no-highlight).
       const whole = norm(doc.body.textContent ?? "");

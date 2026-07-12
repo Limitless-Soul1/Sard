@@ -289,12 +289,79 @@ fn edge_label(short_name: &str, v: &Voice) -> String {
     }
 }
 
+// RAWY-179: Sard is Arabic-first, but Microsoft's read-aloud voice-list endpoint (a fixed global URL)
+// is served region-varied by their CDN — some users get a set that OMITS ar-* voices (the tester saw
+// English but NO Arabic; the owner, in an Arabic region, sees all 32). The list being region-filtered
+// does NOT stop the SYNTHESIS endpoint from speaking a valid Arabic voice by name, so we ALWAYS include
+// the full ar-* set: `merge_arabic_fallback` appends any missing Arabic voice to the fetched list
+// (deduped by short_name). Because both the picker (`tts_edge_voices`) and synthesis (`edge_synthesize`)
+// read the SAME `engines.edge_voices` cache, this makes Arabic BOTH offered AND playable, for everyone —
+// and it's a no-op where the fetch already returned Arabic (the owner's list is unchanged).
+//
+// (`Name` mirrors the endpoint's exact format so `SpeechConfig::from` builds the right SSML voice name;
+// all are GA + 24 kHz MP3. Piper's bundled Kareem remains the offline anchor when the fetch fails.)
+const AR_FALLBACK: &[(&str, &str, &str)] = &[
+    ("ar-AE", "FatimaNeural", "Female"), ("ar-AE", "HamdanNeural", "Male"),
+    ("ar-BH", "AliNeural", "Male"),      ("ar-BH", "LailaNeural", "Female"),
+    ("ar-DZ", "AminaNeural", "Female"),  ("ar-DZ", "IsmaelNeural", "Male"),
+    ("ar-EG", "SalmaNeural", "Female"),  ("ar-EG", "ShakirNeural", "Male"),
+    ("ar-IQ", "BasselNeural", "Male"),   ("ar-IQ", "RanaNeural", "Female"),
+    ("ar-JO", "SanaNeural", "Female"),   ("ar-JO", "TaimNeural", "Male"),
+    ("ar-KW", "FahedNeural", "Male"),    ("ar-KW", "NouraNeural", "Female"),
+    ("ar-LB", "LaylaNeural", "Female"),  ("ar-LB", "RamiNeural", "Male"),
+    ("ar-LY", "ImanNeural", "Female"),   ("ar-LY", "OmarNeural", "Male"),
+    ("ar-MA", "JamalNeural", "Male"),    ("ar-MA", "MounaNeural", "Female"),
+    ("ar-OM", "AbdullahNeural", "Male"), ("ar-OM", "AyshaNeural", "Female"),
+    ("ar-QA", "AmalNeural", "Female"),   ("ar-QA", "MoazNeural", "Male"),
+    ("ar-SA", "HamedNeural", "Male"),    ("ar-SA", "ZariyahNeural", "Female"),
+    ("ar-SY", "AmanyNeural", "Female"),  ("ar-SY", "LaithNeural", "Male"),
+    ("ar-TN", "HediNeural", "Male"),     ("ar-TN", "ReemNeural", "Female"),
+    ("ar-YE", "MaryamNeural", "Female"), ("ar-YE", "SalehNeural", "Male"),
+];
+
+fn arabic_fallback_voices() -> Vec<Voice> {
+    AR_FALLBACK
+        .iter()
+        .map(|(locale, suffix, gender)| Voice {
+            name: format!("Microsoft Server Speech Text to Speech Voice ({locale}, {suffix})"),
+            short_name: Some(format!("{locale}-{suffix}")),
+            gender: Some((*gender).to_string()),
+            locale: Some((*locale).to_string()),
+            suggested_codec: Some("audio-24khz-48kbitrate-mono-mp3".to_string()),
+            friendly_name: None,
+            status: Some("GA".to_string()),
+            voice_tag: None,
+        })
+        .collect()
+}
+
+/// Append any ar-* fallback voice not already present (by short_name) to the fetched list.
+fn merge_arabic_fallback(mut fetched: Vec<Voice>) -> Vec<Voice> {
+    let have: std::collections::HashSet<String> =
+        fetched.iter().filter_map(|v| v.short_name.clone()).collect();
+    for fb in arabic_fallback_voices() {
+        let present = fb.short_name.as_deref().map(|sn| have.contains(sn)).unwrap_or(true);
+        if !present {
+            fetched.push(fb);
+        }
+    }
+    fetched
+}
+
+/// Fetch the Edge voice list and guarantee the Arabic set is present (RAWY-179). Fails only when the
+/// fetch itself fails (offline) — the frontend then shows the RAWY-177 "no voices" state; the fallback
+/// is merged ONLY on a successful (online) fetch, so we never offer an Edge voice that can't synthesize.
+fn load_edge_voices() -> Result<Vec<Voice>, String> {
+    let fetched = get_voices_list().map_err(|e| format!("edge voices: {e:?}"))?;
+    Ok(merge_arabic_fallback(fetched))
+}
+
 /// List the Edge voices for the picker — Arabic + English only, cached after the first fetch.
 #[tauri::command]
 pub fn tts_edge_voices(engines: State<'_, TtsEngine>) -> Result<Vec<EdgeVoiceInfo>, String> {
     let mut cache = engines.edge_voices.lock().map_err(|e| e.to_string())?;
     if cache.is_none() {
-        *cache = Some(get_voices_list().map_err(|e| format!("edge voices: {e:?}"))?);
+        *cache = Some(load_edge_voices()?);
     }
     let out = cache
         .as_ref()
@@ -362,7 +429,8 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String) -> Result<taur
         // build the voice's config from the (cached) voice list, then open a warm connection
         let mut vcache = engines.edge_voices.lock().map_err(|e| e.to_string())?;
         if vcache.is_none() {
-            *vcache = Some(get_voices_list().map_err(|e| format!("edge voices: {e:?}"))?);
+            // RAWY-179: same merged list as the picker, so a fallback Arabic voice is synthesizable.
+            *vcache = Some(load_edge_voices()?);
         }
         let voice = vcache
             .as_ref()
@@ -497,4 +565,53 @@ pub fn shutdown(engine: &TtsEngine) {
 #[tauri::command]
 pub fn tts_stop(engine: State<'_, TtsEngine>) {
     shutdown(&engine);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{arabic_fallback_voices, merge_arabic_fallback, Voice};
+
+    fn mk(short: &str, locale: &str) -> Voice {
+        Voice {
+            name: format!("Microsoft Server Speech Text to Speech Voice ({short})"),
+            short_name: Some(short.to_string()),
+            gender: Some("Female".to_string()),
+            locale: Some(locale.to_string()),
+            suggested_codec: None,
+            friendly_name: None,
+            status: Some("GA".to_string()),
+            voice_tag: None,
+        }
+    }
+
+    // RAWY-179: the tester's region returns English voices but NO Arabic. The merge must restore the
+    // full ar-* set (so Arabic is offered + playable), preserve the English voices, and NOT duplicate
+    // an Arabic voice the fetch DID include.
+    #[test]
+    fn arabic_fallback_restores_missing_voices() {
+        // simulate the region-filtered fetch: 2 English + 1 Arabic that happened to be present.
+        let fetched = vec![
+            mk("en-US-AriaNeural", "en-US"),
+            mk("en-GB-SoniaNeural", "en-GB"),
+            mk("ar-EG-SalmaNeural", "ar-EG"),
+        ];
+        let merged = merge_arabic_fallback(fetched);
+        let shorts: Vec<&str> = merged.iter().filter_map(|v| v.short_name.as_deref()).collect();
+
+        // English preserved
+        assert!(shorts.contains(&"en-US-AriaNeural"));
+        assert!(shorts.contains(&"en-GB-SoniaNeural"));
+        // every fallback Arabic voice is now present (spot-check the key ones + the full count)
+        for want in ["ar-SA-HamedNeural", "ar-SA-ZariyahNeural", "ar-EG-ShakirNeural", "ar-AE-FatimaNeural", "ar-MA-MounaNeural"] {
+            assert!(shorts.contains(&want), "missing Arabic voice {want}");
+        }
+        assert_eq!(arabic_fallback_voices().len(), 32, "the full ar-* set");
+        // the already-present Arabic voice is NOT duplicated
+        assert_eq!(shorts.iter().filter(|s| **s == "ar-EG-SalmaNeural").count(), 1);
+        // 2 English + 32 Arabic (Salma dedup'd) = 34
+        assert_eq!(merged.len(), 2 + 32);
+        // the fallback carries a valid full Name (SpeechConfig::from uses it for the SSML voice name)
+        let salma = merged.iter().find(|v| v.short_name.as_deref() == Some("ar-SA-HamedNeural")).unwrap();
+        assert_eq!(salma.name, "Microsoft Server Speech Text to Speech Voice (ar-SA, HamedNeural)");
+    }
 }

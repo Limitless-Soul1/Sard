@@ -94,9 +94,10 @@ pub fn run() {
             // Preserve data from the former "eRawy" identity (one-time, copy-verify).
             migrate_legacy_appdata(&app_data_dir, &db_path)?;
 
-            // Open DB, apply pragmas, run migrations (idempotent).
+            // Open DB, apply pragmas, run migrations (idempotent). RAWY-189: pass app_data_dir so the
+            // content-based direction backfill (migration 8) can read the imported EPUBs off disk.
             let conn = db::open_database(&db_path)?;
-            db::migrations::run(&conn)?;
+            db::migrations::run(&conn, Some(&app_data_dir))?;
             let version = db::schema_version(&conn)?;
 
             println!("[Sard] app_data_dir  = {}", app_data_dir.display());

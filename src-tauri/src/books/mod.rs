@@ -9,7 +9,7 @@
 //! branch — RAWY-85); other formats are rejected gracefully. Nothing in here panics on a bad file
 //! — every failure becomes a per-file `ImportResult` so one broken book never sinks a multi-file drop.
 
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -170,8 +170,18 @@ fn import_one(conn: &Connection, app_data_dir: &Path, src: &str) -> ImportResult
     let meta = parse_epub(&mut zip).unwrap_or_default();
     let title = meta.title.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| name.clone());
     let author = meta.author.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "Unknown".into());
-    let language = meta.language.clone().filter(|s| !s.trim().is_empty());
-    let dir = book_direction(&meta.ppd, language.as_deref());
+    // RAWY-189: metadata can lie — an Arabic-script book may declare `en` (or no language) with no spine
+    // page-progression, which would store `ltr` and open the book left-to-right. When the metadata gives
+    // no reliable RTL signal, sniff the content; a predominantly Arabic-script body is stored `dir='rtl'`
+    // so it reads/pages/speaks like any Arabic book (`dir` is the operational pivot — AUDIT-LANG). The
+    // language field is left as the file declared it, except a *missing* one is filled with `ar` since we
+    // just proved the script; the user can still edit both.
+    let mut language = meta.language.clone().filter(|s| !s.trim().is_empty());
+    let flip = should_flip_to_rtl(&mut zip, &meta);
+    let dir = if flip { "rtl".to_string() } else { book_direction(&meta.ppd, language.as_deref()) };
+    if flip && language.is_none() {
+        language = Some("ar".to_string());
+    }
 
     // Copy into managed storage; the library references this copy, not the source.
     let library_dir = app_data_dir.join("library");
@@ -228,9 +238,10 @@ struct EpubMeta {
     ppd: Option<String>,            // spine page-progression-direction
     cover_path_in_zip: Option<String>,
     cover_media: Option<String>,
+    spine_docs: Vec<String>,        // RAWY-189: content-document zip paths, in reading order
 }
 
-fn parse_epub(zip: &mut zip::ZipArchive<Cursor<&[u8]>>) -> Option<EpubMeta> {
+fn parse_epub<R: Read + Seek>(zip: &mut zip::ZipArchive<R>) -> Option<EpubMeta> {
     let container = read_entry_string(zip, "META-INF/container.xml")?;
     let opf_path = find_opf_path(&container)?;
     let opf = read_entry_string(zip, &opf_path)?;
@@ -261,6 +272,8 @@ fn parse_opf(opf_xml: &str, opf_dir: &str) -> EpubMeta {
     let mut cover_meta_id: Option<String> = None;
     // manifest items: id -> (href, media-type, properties)
     let mut items: Vec<(String, String, String, String)> = Vec::new();
+    // spine itemrefs in reading order: (idref, linear) — RAWY-189 (content-script detection).
+    let mut spine_refs: Vec<(String, String)> = Vec::new();
     let mut cur: Option<&'static str> = None;
 
     let mut r = quick_xml::Reader::from_str(opf_xml);
@@ -272,6 +285,10 @@ fn parse_opf(opf_xml: &str, opf_dir: &str) -> EpubMeta {
                     b"creator" => cur = Some("creator"),
                     b"language" => cur = Some("language"),
                     b"spine" => m.ppd = attr(&e, b"page-progression-direction"),
+                    b"itemref" => spine_refs.push((
+                        attr(&e, b"idref").unwrap_or_default(),
+                        attr(&e, b"linear").unwrap_or_default(),
+                    )),
                     _ => {}
                 }
             }
@@ -287,6 +304,10 @@ fn parse_opf(opf_xml: &str, opf_dir: &str) -> EpubMeta {
                     attr(&e, b"href").unwrap_or_default(),
                     attr(&e, b"media-type").unwrap_or_default(),
                     attr(&e, b"properties").unwrap_or_default(),
+                )),
+                b"itemref" => spine_refs.push((
+                    attr(&e, b"idref").unwrap_or_default(),
+                    attr(&e, b"linear").unwrap_or_default(),
                 )),
                 _ => {}
             },
@@ -326,11 +347,34 @@ fn parse_opf(opf_xml: &str, opf_dir: &str) -> EpubMeta {
             m.cover_media = Some(media.clone());
         }
     }
+
+    // RAWY-189: resolve the spine into ordered content-document zip paths for content sniffing.
+    // Skip `linear="no"` refs — that's how covers / nav / other non-linear matter are marked — and
+    // keep only (X)HTML content docs, so a Latin cover or nav page can't skew the script sample.
+    for (idref, linear) in &spine_refs {
+        if linear.eq_ignore_ascii_case("no") {
+            continue;
+        }
+        if let Some((_, href, media, _)) = items.iter().find(|(id, _, _, _)| id == idref) {
+            if href.is_empty() {
+                continue;
+            }
+            let ml = media.to_ascii_lowercase();
+            let hl = href.to_ascii_lowercase();
+            let is_doc = ml.contains("html")
+                || hl.ends_with(".xhtml")
+                || hl.ends_with(".html")
+                || hl.ends_with(".htm");
+            if is_doc {
+                m.spine_docs.push(zip_join(opf_dir, &percent_decode(href)));
+            }
+        }
+    }
     m
 }
 
-fn extract_cover(
-    zip: &mut zip::ZipArchive<Cursor<&[u8]>>,
+fn extract_cover<R: Read + Seek>(
+    zip: &mut zip::ZipArchive<R>,
     meta: &EpubMeta,
     covers_dir: &Path,
     id: &str,
@@ -349,7 +393,7 @@ fn extract_cover(
 
 // ---- small helpers --------------------------------------------------------
 
-fn read_entry_string(zip: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Option<String> {
+fn read_entry_string<R: Read + Seek>(zip: &mut zip::ZipArchive<R>, name: &str) -> Option<String> {
     let mut f = zip.by_name(name).ok()?;
     let mut s = String::new();
     f.read_to_string(&mut s).ok()?;
@@ -386,6 +430,174 @@ fn book_direction(ppd: &Option<String>, language: Option<&str>) -> String {
         .map(|l| ["ar", "fa", "he", "ur", "ps", "sd"].iter().any(|p| l.starts_with(p)))
         .unwrap_or(false);
     if rtl_lang { "rtl".into() } else { "ltr".into() }
+}
+
+// ---------------------------------------------------------------------------
+// RAWY-189: content-script direction detection
+//
+// The metadata (`dc:language`, spine `page-progression-direction`) is trusted first; when it gives
+// no RTL signal, we sample the actual body text and flip an Arabic-script book to `dir='rtl'`. `dir`
+// is the operational pivot (layout, paging, TTS voice + segmenter, typography) — AUDIT-LANG. The same
+// `detect_arabic_script`/`should_flip_to_rtl` runs both at import and in the one-time backfill.
+// ---------------------------------------------------------------------------
+
+const AR_SAMPLES: usize = 6; // documents sampled across the spine
+const AR_SCAN_CAP: usize = 50_000; // stop after this many arabic+latin letters total
+const AR_PERDOC_CAP: usize = 40_000; // cap stripped chars scanned per document
+const AR_MIN: usize = 200; // absolute floor of arabic letters before a flip is allowed
+const AR_PCT: usize = 60; // arabic must be >= this % of (arabic+latin) letters
+
+/// An Arabic-script *letter* (Arabic, Supplement, Extended-A, Presentation Forms A/B). `is_alphabetic`
+/// excludes Arabic-Indic digits and Arabic punctuation, so only real letters count.
+fn is_arabic_letter(c: char) -> bool {
+    c.is_alphabetic()
+        && matches!(c as u32,
+            0x0600..=0x06FF | 0x0750..=0x077F | 0x08A0..=0x08FF | 0xFB50..=0xFDFF | 0xFE70..=0xFEFF)
+}
+
+/// Sample indices spread across the spine (~15/29/43/57/72/86 %), never doc 0 for a real book — front
+/// matter (cover/title/copyright/TOC) clusters at the start and the colophon at the end, so a middle
+/// spread + summing keeps a Latin cover or a stray English chapter from skewing the script sample.
+fn spread_indices(n: usize) -> Vec<usize> {
+    if n == 0 {
+        return Vec::new();
+    }
+    if n <= AR_SAMPLES {
+        return (0..n).collect();
+    }
+    let mut idx = Vec::new();
+    for i in 1..=AR_SAMPLES {
+        let j = (n * i / (AR_SAMPLES + 1)).min(n - 1);
+        if !idx.contains(&j) {
+            idx.push(j);
+        }
+    }
+    idx
+}
+
+/// Strip HTML markup (tags plus the bodies of `<style>`/`<script>`) so only visible text is counted.
+/// Bounded: stops after `cap` kept chars. Only the leading tag name is inspected (enough for style/script).
+fn strip_markup(s: &str, cap: usize) -> String {
+    let mut out = String::new();
+    let mut kept = 0usize;
+    let mut in_tag = false;
+    let mut in_skip = false;
+    let mut tag = String::new();
+    for c in s.chars() {
+        if in_tag {
+            if c == '>' {
+                in_tag = false;
+                let closing = tag.starts_with('/');
+                let name: String = tag
+                    .trim_start_matches('/')
+                    .chars()
+                    .take_while(|c| c.is_ascii_alphanumeric())
+                    .map(|c| c.to_ascii_lowercase())
+                    .collect();
+                if name == "style" || name == "script" {
+                    in_skip = !closing;
+                }
+                tag.clear();
+            } else if tag.len() < 32 {
+                tag.push(c);
+            }
+        } else if c == '<' {
+            in_tag = true;
+            tag.clear();
+        } else if !in_skip {
+            out.push(c);
+            kept += 1;
+            if kept >= cap {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// Sum Arabic-letter vs Latin-letter (ASCII alpha) counts across the sampled spine documents.
+fn sample_script_counts<R: Read + Seek>(zip: &mut zip::ZipArchive<R>, spine_docs: &[String]) -> (usize, usize) {
+    let mut arabic = 0usize;
+    let mut latin = 0usize;
+    for &i in &spread_indices(spine_docs.len()) {
+        let Some(raw) = read_entry_string(zip, &spine_docs[i]) else {
+            continue;
+        };
+        for c in strip_markup(&raw, AR_PERDOC_CAP).chars() {
+            if is_arabic_letter(c) {
+                arabic += 1;
+            } else if c.is_ascii_alphabetic() {
+                latin += 1;
+            }
+        }
+        if arabic + latin >= AR_SCAN_CAP {
+            break;
+        }
+    }
+    (arabic, latin)
+}
+
+/// True iff the sampled content is *predominantly* Arabic script: a minimum absolute amount AND a clear
+/// majority of letters — so an English book that merely quotes Arabic is never flipped.
+fn detect_arabic_script<R: Read + Seek>(zip: &mut zip::ZipArchive<R>, spine_docs: &[String]) -> bool {
+    let (arabic, latin) = sample_script_counts(zip, spine_docs);
+    arabic >= AR_MIN && arabic * 100 >= (arabic + latin) * AR_PCT
+}
+
+/// Shared trigger for both import and backfill: flip to RTL only when the metadata gives no RTL signal
+/// (no explicit spine direction of any value, and no RTL `dc:language`) AND the content is Arabic. An
+/// explicit `page-progression-direction` (either value) or an RTL language always wins over content.
+fn should_flip_to_rtl<R: Read + Seek>(zip: &mut zip::ZipArchive<R>, meta: &EpubMeta) -> bool {
+    meta.ppd.is_none()
+        && book_direction(&meta.ppd, meta.language.as_deref()) == "ltr"
+        && detect_arabic_script(zip, &meta.spine_docs)
+}
+
+/// Backfill helper: re-derive whether one already-imported EPUB should read RTL. Best-effort — a
+/// missing/unreadable file or unparseable OPF returns `false` (skip the row), so startup never fails.
+/// Opens the file *seekably* (BufReader, not a whole-file read) so only the zip central directory and
+/// the handful of sampled chapters are read — keeping the one-time backfill cheap on large books.
+fn content_says_rtl(app_data_dir: &Path, id: &str) -> bool {
+    let path = app_data_dir.join("library").join(format!("{id}.epub"));
+    let Ok(file) = std::fs::File::open(&path) else {
+        return false;
+    };
+    let Ok(mut zip) = zip::ZipArchive::new(std::io::BufReader::new(file)) else {
+        return false;
+    };
+    let Some(meta) = parse_epub(&mut zip) else {
+        return false;
+    };
+    should_flip_to_rtl(&mut zip, &meta)
+}
+
+/// RAWY-189 backfill (schema migration 8). Correct the BASE `books.dir` for already-imported EPUBs whose
+/// metadata mis-declared direction (Arabic content tagged `en`/untagged, no spine ppd). Guards:
+///   * only `format='epub' AND dir='ltr'` rows — never PDFs, never already-`rtl` rows;
+///   * `metadata_overrides` is NEVER touched, so an explicit user direction keeps winning via COALESCE;
+///   * a missing/unreadable EPUB is skipped silently (best-effort) — the app launches even if the whole
+///     `library/` folder is gone (then it simply flips nothing);
+///   * the UPDATE is scoped `dir='ltr'`, so re-running is a no-op — idempotent independent of the marker.
+/// Returns how many rows were flipped. `reading_progress`/`settings`/other tables are untouched.
+pub fn backfill_arabic_dir(conn: &Connection, app_data_dir: &Path) -> rusqlite::Result<usize> {
+    let ids: Vec<String> = {
+        let mut stmt = conn.prepare("SELECT id FROM books WHERE format = 'epub' AND dir = 'ltr'")?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        rows.filter_map(|r| r.ok()).collect()
+    };
+    let tx = conn.unchecked_transaction()?;
+    let mut flipped = 0usize;
+    for id in &ids {
+        if content_says_rtl(app_data_dir, id) {
+            tx.execute(
+                "UPDATE books SET dir = 'rtl' WHERE id = ?1 AND format = 'epub' AND dir = 'ltr'",
+                [id],
+            )?;
+            flipped += 1;
+        }
+    }
+    tx.commit()?;
+    Ok(flipped)
 }
 
 fn parent_dir(path: &str) -> String {
@@ -489,6 +701,241 @@ mod tests {
             !out.iter().any(|p| p.ends_with(".txt") || p.ends_with(".jpg")),
             "must skip non-book files"
         );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // ---- RAWY-189: content-script direction detection -----------------------
+
+    use std::io::Write as _;
+
+    /// Build a minimal in-memory EPUB. `docs` = (id, href, body, linear-attr). An empty linear string
+    /// omits the attribute. Returns the zip bytes (a real `application/epub+zip`).
+    fn build_epub(docs: &[(&str, &str, &str, &str)], lang: Option<&str>, ppd: Option<&str>) -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let w = Cursor::new(&mut buf);
+            let mut zw = zip::ZipWriter::new(w);
+            let stored = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            let opts = zip::write::SimpleFileOptions::default();
+            zw.start_file("mimetype", stored).unwrap();
+            zw.write_all(b"application/epub+zip").unwrap();
+            zw.start_file("META-INF/container.xml", opts).unwrap();
+            zw.write_all(br#"<?xml version="1.0"?><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#).unwrap();
+            for (_, href, body, _) in docs {
+                zw.start_file(*href, opts).unwrap();
+                zw.write_all(format!("<html><body><p>{body}</p></body></html>").as_bytes()).unwrap();
+            }
+            let manifest: String = docs.iter().map(|(id, href, _, _)| {
+                format!(r#"<item id="{id}" href="{href}" media-type="application/xhtml+xml"/>"#)
+            }).collect();
+            let spine: String = docs.iter().map(|(id, _, _, lin)| {
+                if lin.is_empty() { format!(r#"<itemref idref="{id}"/>"#) }
+                else { format!(r#"<itemref idref="{id}" linear="{lin}"/>"#) }
+            }).collect();
+            let langtag = lang.map(|l| format!("<dc:language>{l}</dc:language>")).unwrap_or_default();
+            let spineattr = ppd.map(|p| format!(r#" page-progression-direction="{p}""#)).unwrap_or_default();
+            let opf = format!(
+                r#"<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/"><metadata>{langtag}</metadata><manifest>{manifest}</manifest><spine{spineattr}>{spine}</spine></package>"#
+            );
+            zw.start_file("content.opf", opts).unwrap();
+            zw.write_all(opf.as_bytes()).unwrap();
+            zw.finish().unwrap();
+        }
+        buf
+    }
+
+    const AR: &str = "السلام عليكم ورحمة الله وبركاته هذا نص عربي طويل يكفي لتجاوز الحد الأدنى للكشف ";
+    const EN: &str = "The quick brown fox jumps over the lazy dog and keeps on running all day long ";
+
+    fn ar_body(reps: usize) -> String { AR.repeat(reps) }
+    fn en_body(reps: usize) -> String { EN.repeat(reps) }
+
+    fn flips(bytes: &[u8]) -> bool {
+        let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let meta = parse_epub(&mut zip).unwrap();
+        should_flip_to_rtl(&mut zip, &meta)
+    }
+
+    // The spread never samples doc 0, so a heavy-Latin cover at the front can't suppress an Arabic body.
+    #[test]
+    fn spread_skips_front_matter() {
+        assert_eq!(spread_indices(3), vec![0, 1, 2], "few docs → sample all");
+        let big = spread_indices(1433);
+        assert_eq!(big.len(), 6);
+        assert!(!big.contains(&0), "must never sample doc 0 for a real book");
+        assert!(big.iter().all(|&i| i < 1433));
+    }
+
+    #[test]
+    fn arabic_letters_and_markup() {
+        assert!(is_arabic_letter('ع'));
+        assert!(!is_arabic_letter('٧'), "Arabic-Indic digit is not a letter");
+        assert!(!is_arabic_letter('،'), "Arabic comma is punctuation, not a letter");
+        assert!(!is_arabic_letter('a'));
+        let t = strip_markup("<style>.a{color:red}</style><p class=\"x\">مرحبا</p><script>var a=1</script>", 1000);
+        assert!(t.contains("مرحبا"));
+        assert!(!t.contains("color") && !t.contains("var"), "style/script bodies stripped");
+    }
+
+    // A predominantly-Arabic body flips even behind a big Latin cover; genuine English never flips;
+    // an explicit spine direction (either value) and an RTL language both win over content.
+    #[test]
+    fn detection_flips_only_real_arabic() {
+        // 20 docs: doc0 a heavy Latin cover (linear defaulted), docs 1..19 Arabic. lang="en", no ppd.
+        let mut docs: Vec<(String, String, String, String)> = Vec::new();
+        docs.push(("c0".into(), "cover.xhtml".into(), en_body(40), String::new()));
+        for i in 1..20 {
+            docs.push((format!("c{i}"), format!("ch{i}.xhtml"), ar_body(8), String::new()));
+        }
+        let refs: Vec<(&str, &str, &str, &str)> =
+            docs.iter().map(|(a, b, c, d)| (a.as_str(), b.as_str(), c.as_str(), d.as_str())).collect();
+        assert!(flips(&build_epub(&refs, Some("en"), None)), "Arabic body behind a Latin cover must flip");
+
+        // All-English → never flip.
+        let eng: Vec<(String, String, String, String)> = (0..8)
+            .map(|i| (format!("e{i}"), format!("e{i}.xhtml"), en_body(2), String::new()))
+            .collect();
+        let eng_refs: Vec<(&str, &str, &str, &str)> =
+            eng.iter().map(|(a, b, c, d)| (a.as_str(), b.as_str(), c.as_str(), d.as_str())).collect();
+        assert!(!flips(&build_epub(&eng_refs, Some("en"), None)), "genuine English must not flip");
+
+        // Explicit ppd (even ltr) wins over content.
+        assert!(!flips(&build_epub(&refs, Some("en"), Some("ltr"))), "explicit ppd=ltr is respected");
+        // An RTL language already yields rtl → should_flip is false (nothing to add).
+        assert!(!flips(&build_epub(&refs, Some("ar"), None)), "declared ar needs no content flip");
+    }
+
+    // The backfill flips ONLY ltr epub rows that sniff Arabic, leaves a user dir override untouched
+    // (COALESCE still wins), never touches PDFs or genuine-English rows, and is idempotent.
+    #[test]
+    fn backfill_guards_and_idempotence() {
+        let base = std::env::temp_dir().join("sard_rawy189_backfill");
+        let _ = std::fs::remove_dir_all(&base);
+        let lib = base.join("library");
+        std::fs::create_dir_all(&lib).unwrap();
+
+        // Arabic body, tagged en, no ppd → a real mis-tag. Two copies: one plain, one with an override.
+        let ar_docs: Vec<(String, String, String, String)> = (0..10)
+            .map(|i| (format!("a{i}"), format!("a{i}.xhtml"), ar_body(8), String::new()))
+            .collect();
+        let ar_refs: Vec<(&str, &str, &str, &str)> =
+            ar_docs.iter().map(|(a, b, c, d)| (a.as_str(), b.as_str(), c.as_str(), d.as_str())).collect();
+        let ar_bytes = build_epub(&ar_refs, Some("en"), None);
+        let en_docs: Vec<(String, String, String, String)> = (0..10)
+            .map(|i| (format!("e{i}"), format!("e{i}.xhtml"), en_body(2), String::new()))
+            .collect();
+        let en_refs: Vec<(&str, &str, &str, &str)> =
+            en_docs.iter().map(|(a, b, c, d)| (a.as_str(), b.as_str(), c.as_str(), d.as_str())).collect();
+        let en_bytes = build_epub(&en_refs, Some("en"), None);
+        std::fs::write(lib.join("mis.epub"), &ar_bytes).unwrap(); // mis-tagged, no override → flips
+        std::fs::write(lib.join("ovr.epub"), &ar_bytes).unwrap(); // mis-tagged, has override → base flips
+        std::fs::write(lib.join("eng.epub"), &en_bytes).unwrap(); // genuine English → stays
+        // "rtl" and "pdf" rows have no file needed (filtered out before any read).
+
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations::run(&conn, None).unwrap(); // SQL schema only
+        let ins = |id: &str, fmt: &str, lang: &str, dir: Option<&str>| {
+            conn.execute(
+                "INSERT INTO books(id, file_path, format, title, language, dir, added_at) \
+                 VALUES(?1, ?2, ?3, ?4, ?5, ?6, 0)",
+                rusqlite::params![id, format!("{id}.{fmt}"), fmt, id, lang, dir],
+            )
+            .unwrap();
+        };
+        ins("mis", "epub", "en", Some("ltr"));
+        ins("ovr", "epub", "en", Some("ltr"));
+        ins("eng", "epub", "en", Some("ltr"));
+        ins("art", "epub", "ar", Some("rtl")); // already rtl → never reconsidered
+        ins("pdf", "pdf", "", None); // pdf → out of scope
+        conn.execute(
+            "INSERT INTO metadata_overrides(book_id, field, value) VALUES('ovr','dir','rtl')",
+            [],
+        )
+        .unwrap();
+
+        let flipped = backfill_arabic_dir(&conn, &base).unwrap();
+        assert_eq!(flipped, 2, "only the two mis-tagged Arabic epub rows flip");
+
+        let dir = |id: &str| -> Option<String> {
+            conn.query_row("SELECT dir FROM books WHERE id=?1", [id], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(dir("mis").as_deref(), Some("rtl"), "mis-tagged base corrected");
+        assert_eq!(dir("ovr").as_deref(), Some("rtl"), "override row base corrected too");
+        assert_eq!(dir("eng").as_deref(), Some("ltr"), "genuine English untouched");
+        assert_eq!(dir("art").as_deref(), Some("rtl"), "already-rtl untouched");
+        assert_eq!(dir("pdf"), None, "pdf dir stays NULL");
+
+        // The user override survives byte-for-byte (never touched).
+        let ov: String = conn
+            .query_row("SELECT value FROM metadata_overrides WHERE book_id='ovr' AND field='dir'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ov, "rtl", "metadata_overrides row preserved");
+
+        // Idempotent: a second run flips nothing.
+        assert_eq!(backfill_arabic_dir(&conn, &base).unwrap(), 0, "re-run is a no-op");
+
+        // Missing library folder → safe no-op (app must launch even if every file is gone).
+        std::fs::remove_dir_all(&lib).unwrap();
+        conn.execute("UPDATE books SET dir='ltr' WHERE id='mis'", []).unwrap(); // pretend un-flipped
+        assert_eq!(backfill_arabic_dir(&conn, &base).unwrap(), 0, "missing files → flips nothing, no error");
+
+        let ic: String = conn.query_row("PRAGMA integrity_check", [], |r| r.get(0)).unwrap();
+        assert_eq!(ic, "ok");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    // PART A end-to-end through the real `import_books` entrypoint: a mis-tagged Arabic EPUB is stored
+    // `dir='rtl'` at import; a declared `en` is preserved but a *missing* language is filled with `ar`;
+    // a genuine English book stays `ltr`.
+    #[test]
+    fn import_tags_mistagged_arabic_rtl() {
+        let base = std::env::temp_dir().join("sard_rawy189_import");
+        let _ = std::fs::remove_dir_all(&base);
+        let app = base.join("appdata");
+        let src = base.join("src");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::create_dir_all(&src).unwrap();
+
+        let ar_docs: Vec<(String, String, String, String)> = (0..10)
+            .map(|i| (format!("a{i}"), format!("a{i}.xhtml"), ar_body(8), String::new()))
+            .collect();
+        let ar_refs: Vec<(&str, &str, &str, &str)> =
+            ar_docs.iter().map(|(a, b, c, d)| (a.as_str(), b.as_str(), c.as_str(), d.as_str())).collect();
+        let en_docs: Vec<(String, String, String, String)> = (0..10)
+            .map(|i| (format!("e{i}"), format!("e{i}.xhtml"), en_body(2), String::new()))
+            .collect();
+        let en_refs: Vec<(&str, &str, &str, &str)> =
+            en_docs.iter().map(|(a, b, c, d)| (a.as_str(), b.as_str(), c.as_str(), d.as_str())).collect();
+
+        let write = |name: &str, bytes: &[u8]| -> String {
+            let p = src.join(name);
+            std::fs::write(&p, bytes).unwrap();
+            p.to_string_lossy().into_owned()
+        };
+        let p_en_ar = write("mistagged_en.epub", &build_epub(&ar_refs, Some("en"), None)); // arabic body, lang en
+        let p_none = write("mistagged_none.epub", &build_epub(&ar_refs, None, None)); // arabic body, no lang
+        let p_eng = write("english.epub", &build_epub(&en_refs, Some("en"), None)); // genuine english
+
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations::run(&conn, None).unwrap();
+        let res = import_books(&conn, &app, &[p_en_ar, p_none, p_eng]);
+        assert!(res.iter().all(|r| r.status == "imported"), "all three import: {:?}",
+            res.iter().map(|r| (&r.title, &r.status)).collect::<Vec<_>>());
+
+        let row = |id: &str| -> (Option<String>, Option<String>) {
+            conn.query_row("SELECT dir, language FROM books WHERE id=?1", [id],
+                |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+        };
+        let (d0, l0) = row(&res[0].id);
+        assert_eq!(d0.as_deref(), Some("rtl"), "mis-tagged Arabic (lang=en) stored rtl at import");
+        assert_eq!(l0.as_deref(), Some("en"), "declared en is preserved, not overwritten");
+        let (d1, l1) = row(&res[1].id);
+        assert_eq!(d1.as_deref(), Some("rtl"), "mis-tagged Arabic (no lang) stored rtl at import");
+        assert_eq!(l1.as_deref(), Some("ar"), "a missing language is filled with ar");
+        let (d2, _l2) = row(&res[2].id);
+        assert_eq!(d2.as_deref(), Some("ltr"), "genuine English stays ltr");
 
         let _ = std::fs::remove_dir_all(&base);
     }

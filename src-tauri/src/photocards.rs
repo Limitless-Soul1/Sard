@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn quote_font_round_trips() {
         let conn = Connection::open_in_memory().unwrap();
-        migrations::run(&conn).unwrap();
+        migrations::run(&conn, None).unwrap();
         let tmp = std::env::temp_dir().join("sard_rawy81_cards");
         let _ = fs::remove_dir_all(&tmp);
 

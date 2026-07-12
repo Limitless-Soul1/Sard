@@ -5,6 +5,7 @@
 //! apply only migrations whose version is greater than the current one, each in its own
 //! transaction. Never edit an already-shipped migration — append a new one instead.
 
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
@@ -49,7 +50,10 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
 ];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.
-pub fn run(conn: &Connection) -> rusqlite::Result<()> {
+///
+/// `app_data_dir` is needed only by the code migration below (it reads imported EPUBs off disk); pass
+/// `None` for schema-only setups (e.g. tests) to skip it — the SQL migrations run either way.
+pub fn run(conn: &Connection, app_data_dir: Option<&Path>) -> rusqlite::Result<()> {
     // RAWY-178 (AUD-12): migration 0007's backfill calls `afold()`, so ensure it's registered on this
     // connection regardless of how it was opened (idempotent with open_database's registration).
     crate::db::register_functions(conn)?;
@@ -78,6 +82,62 @@ pub fn run(conn: &Connection) -> rusqlite::Result<()> {
             tx.commit()?;
         }
     }
+
+    // RAWY-189: migration 8 — the first *code* migration. It lives here rather than in a `.sql` file
+    // because it must read the imported EPUBs off disk to sniff their script and correct a mis-declared
+    // `books.dir`. Ordered after the SQL migrations and recorded in `schema_migrations` like any other
+    // (so the NEXT migration — SQL or code — must be >= 9). Skipped when `app_data_dir` is None.
+    if let Some(dir) = app_data_dir {
+        run_arabic_dir_backfill(conn, dir);
+    }
+    Ok(())
+}
+
+/// Migration 8 (RAWY-189): content-based Arabic direction backfill, wrapped so it can NEVER prevent the
+/// app from launching. A missing/unreadable file, corrupt zip/OPF, or even a parse panic is caught and
+/// logged; the app continues. If the whole `library/` folder is gone, the scan simply flips nothing.
+///
+/// Durability: the marker is written only on success, so a successful run never repeats. The single
+/// UPDATE is scoped `dir='ltr'`, so even a failed-marker re-scan flips nothing new (no forever loop of
+/// changes). A deferred (Err/panic) run leaves the marker unset and retries next launch — near-
+/// unreachable, since the per-row reads are best-effort and can't fail the transaction.
+fn run_arabic_dir_backfill(conn: &Connection, app_data_dir: &Path) {
+    match conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 8)",
+        [],
+        |r| r.get::<_, bool>(0),
+    ) {
+        Ok(true) => return, // already applied — second launch is a true no-op (no file scan)
+        Ok(false) => {}
+        Err(e) => {
+            eprintln!("[Sard] migration 8 check failed, skipping this launch: {e}");
+            return;
+        }
+    }
+
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::books::backfill_arabic_dir(conn, app_data_dir)
+    }));
+    match outcome {
+        Ok(Ok(n)) => match record_migration_8(conn) {
+            Ok(()) => {
+                if n > 0 {
+                    println!("[Sard] migration 8 (arabic_dir_backfill): corrected {n} book(s) dir->rtl by content");
+                }
+            }
+            Err(e) => eprintln!("[Sard] migration 8 applied ({n} flipped) but marker write failed, will re-scan: {e}"),
+        },
+        Ok(Err(e)) => eprintln!("[Sard] migration 8 (arabic_dir_backfill) deferred, will retry next launch: {e}"),
+        Err(_) => eprintln!("[Sard] migration 8 (arabic_dir_backfill) panicked; skipped, app continues"),
+    }
+}
+
+fn record_migration_8(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO schema_migrations(version, name, applied_at) VALUES(8, 'arabic_dir_backfill', ?1)",
+        rusqlite::params![now_unix()],
+    )?;
+    conn.pragma_update(None, "user_version", 8i64)?;
     Ok(())
 }
 

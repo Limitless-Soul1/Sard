@@ -91,7 +91,7 @@ async function resolveVoicePref(lang: TtsLang): Promise<TtsVoiceRef> {
   return defaultVoiceForLang(lang);
 }
 
-type Status = "idle" | "preparing" | "downloading" | "playing" | "paused" | "error";
+type Status = "idle" | "preparing" | "downloading" | "playing" | "paused" | "error" | "chapter-end";
 
 interface StartOpts { sentences: string[]; lang: TtsLang; startIndex?: number; chapterLabel: string }
 
@@ -205,6 +205,22 @@ export function toggleTtsPlayback(): boolean {
     return true;
   }
   return false;
+}
+
+/** RAWY-184 (Part C): Left/Right arrow → skip to the previous/next SENTENCE (the ⏮/⏭ transport) IF a
+ *  read-aloud session is active. RTL-aware to match the on-screen buttons: in RTL, Right = previous /
+ *  Left = next (mirror for LTR). Returns whether it acted, so the caller preventDefault()s ONLY then —
+ *  otherwise arrows keep their normal reader behaviour (page/scroll) when TTS is off. */
+export function skipSentenceForArrow(key: string, dir: "rtl" | "ltr"): boolean {
+  const st = useTts.getState();
+  if (!st.active || (st.status !== "playing" && st.status !== "paused")) return false;
+  const isRight = key === "ArrowRight";
+  const isLeft = key === "ArrowLeft";
+  if (!isRight && !isLeft) return false;
+  // RTL: Right = previous (-1), Left = next (+1); LTR mirrors — matches the ⏮/⏭ that mirror with the pill.
+  const delta = isRight ? (dir === "rtl" ? -1 : 1) : dir === "rtl" ? 1 : -1;
+  st.skip(delta);
+  return true;
 }
 
 // RAWY-127: the Rust response is FRAMED — `[u32 BE json_len][json words][audio bytes]` — so the audio
@@ -329,8 +345,10 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 async function playFrom(i: number, myGen: number) {
   const set = useTts.setState;
   if (i >= sentences.length) {
-    // reached the end of the chapter (Stage 2: auto-advance to the next chapter)
-    set({ status: "paused", index: Math.max(0, sentences.length - 1) });
+    // RAWY-184 (Part B): reached the LAST sentence — STOP and enter the "chapter-end" state (the owner
+    // chose a "next chapter" button over auto-advance). The pill then offers Next chapter (if one exists)
+    // or a gentle end-of-book state; playing/paused-gated shortcuts (Space, arrows) no-op here.
+    set({ status: "chapter-end", index: Math.max(0, sentences.length - 1) });
     return;
   }
   const idx = Math.max(0, i);

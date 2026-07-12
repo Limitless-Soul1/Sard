@@ -970,6 +970,21 @@ html, body, #root {
 .tts-vol-range:focus { outline: none; }
 .tts-vol-pct { flex: none; min-width: 34px; text-align: end; font: 700 0.75rem var(--ui-font); color: var(--accent); }
 
+/* RAWY-184 (Part B): end-of-chapter pill view — a "chapter finished" message + a "next chapter" button
+   (or a gentle end-of-book state with no button). Themed via the shared tokens (light + Moonlit); the
+   pill is dir-aware, so the row + the chevron mirror in RTL. */
+.tts-pill-end { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 4px 4px 8px; }
+.tts-end-msg { font: 600 0.8125rem var(--ui-font); color: var(--text); }
+.tts-end-actions { display: flex; align-items: center; gap: 6px; }
+.tts-end-next {
+  display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; cursor: pointer;
+  border-radius: 10px; border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--chrome-border));
+  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent);
+  font: 600 0.78125rem var(--ui-font); white-space: nowrap;
+}
+.tts-end-next:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+.tts-end-next svg { flex: none; width: 15px; height: 15px; }
+
 .tts-spin {
   width: 16px; height: 16px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--paper-bg) 45%, transparent);
   border-top-color: var(--paper-bg); animation: tts-spin 0.7s linear infinite;

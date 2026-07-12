@@ -11,7 +11,7 @@ import { useShallow } from "zustand/react/shallow";
 
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
-import { TTS_EMPTY, TTS_MAX_SPEED, TTS_MIN_SPEED, TTS_SPEED_STEP, toggleTtsPlayback, useTts, voiceLabel } from "../../lib/tts";
+import { TTS_EMPTY, TTS_MAX_SPEED, TTS_MIN_SPEED, TTS_SPEED_STEP, skipSentenceForArrow, toggleTtsPlayback, useTts, voiceLabel } from "../../lib/tts";
 import { TtsMini } from "./TtsMini";
 import { TtsVoicePicker } from "./TtsVoicePicker";
 
@@ -21,7 +21,17 @@ const CHEV_DOWN = "m6 10 6 6 6-6";
 // `panelLeft`/`panelRight` are the physical Contents/Search (left) + Notes (right) open flags — the
 // same booleans that drive the pill's `--reading-shift`. The minimized kashida stroke uses them to
 // flip clear of an open side panel (RAWY-158).
-export function TtsPlayer({ panelLeft = false, panelRight = false }: { panelLeft?: boolean; panelRight?: boolean }) {
+export function TtsPlayer({
+  panelLeft = false,
+  panelRight = false,
+  hasNextChapter = false,
+  onNextChapter,
+}: {
+  panelLeft?: boolean;
+  panelRight?: boolean;
+  hasNextChapter?: boolean; // RAWY-184 (Part B): is there a chapter after the one just finished?
+  onNextChapter?: () => void; // RAWY-184 (Part B): go to the next chapter + read from its top
+}) {
   // RAWY-181 (BUG 2): subscribe ONLY to the fields the pill uses (via useShallow), NOT the whole store.
   // Previously `useTts()` re-rendered the pill on EVERY store change — including the karaoke `words`/
   // `wordIndex` ticks (several/sec on Edge) it doesn't even read — which made size toggles feel heavy and
@@ -50,9 +60,14 @@ export function TtsPlayer({ panelLeft = false, panelRight = false }: { panelLeft
   // the reading-frame case is handled by FoliateController.onSpace). Self-gates via `toggleTtsPlayback`
   // (a no-op when inactive), and ignores typing / interactive targets so it never hijacks Space in the
   // search box or a focused control. Registered once; `toggleTtsPlayback` reads the live store.
+  // RAWY-184 (Part C): Left/Right arrow (from PARENT focus) skips the prev/next sentence while active —
+  // the reading-frame case is FoliateController.onArrow. Same self-gating + interactive-target skip as Space.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.key !== " " && e.code !== "Space") || e.repeat) return;
+      if (e.repeat) return;
+      const isSpace = e.key === " " || e.code === "Space";
+      const isArrow = e.key === "ArrowLeft" || e.key === "ArrowRight";
+      if (!isSpace && !isArrow) return;
       const el = e.target as HTMLElement | null;
       if (
         el &&
@@ -60,19 +75,21 @@ export function TtsPlayer({ panelLeft = false, panelRight = false }: { panelLeft
           el.isContentEditable ||
           el.closest?.("[role='button'],[role='slider'],[contenteditable='true']"))
       ) {
-        return; // let inputs / buttons / the search box keep their own Space behaviour
+        return; // let inputs / buttons / the search box keep their own keys
       }
-      if (toggleTtsPlayback()) e.preventDefault();
+      if (isSpace) { if (toggleTtsPlayback()) e.preventDefault(); }
+      else if (skipSentenceForArrow(e.key, dir === "rtl" ? "rtl" : "ltr")) e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [dir]);
   if (!active) return null;
 
   const playing = status === "playing";
   const downloading = status === "downloading";
   const preparing = status === "preparing";
   const errored = status === "error";
+  const chapterEnd = status === "chapter-end"; // RAWY-184 (Part B): reached the last sentence
   const busy = preparing || downloading;
   const dlPct = Math.round(progress * 100);
   const trackPct = downloading ? progress * 100 : total > 1 ? (index / (total - 1)) * 100 : 0;
@@ -98,7 +115,26 @@ export function TtsPlayer({ panelLeft = false, panelRight = false }: { panelLeft
       ) : (
       <>
       {picking && <TtsVoicePicker onClose={() => setPicking(false)} />}
-      <div className={`tts-pill${expanded ? " expanded" : ""}${errored ? " errored" : ""}`} dir={dir} role="group" aria-label={t("tts.player")}>
+      <div className={`tts-pill${expanded ? " expanded" : ""}${errored ? " errored" : ""}${chapterEnd ? " chapter-end" : ""}`} dir={dir} role="group" aria-label={t("tts.player")}>
+        {chapterEnd ? (
+          /* RAWY-184 (Part B): end-of-chapter — STOP + a tasteful "next chapter" affordance (or a gentle
+             end-of-book state with no button). On-brand, per-theme, mirrors in RTL like the rest of the pill. */
+          <div className="tts-pill-end">
+            <span className="tts-end-msg">{hasNextChapter ? t("tts.chapterDone") : t("tts.bookEnd")}</span>
+            <div className="tts-end-actions">
+              {hasNextChapter && (
+                <button className="tts-end-next" onClick={() => onNextChapter?.()}>
+                  <span>{t("tts.nextChapter")}</span>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="m9 6 6 6-6 6" /></svg>
+                </button>
+              )}
+              <button className="tts-ghost tts-x" onClick={stop} aria-label={t("tts.close")} title={t("tts.close")}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              </button>
+            </div>
+          </div>
+        ) : (
+        <>
         {/* row 1 — transport */}
         <div className="tts-pill-transport">
           {/* RAWY-164: the ONE progressive shrink button. Its icon tells the next step: FULL → a single
@@ -211,6 +247,8 @@ export function TtsPlayer({ panelLeft = false, panelRight = false }: { panelLeft
               <span className="tts-vol-pct">{localeNum(volPct, lang)}{lang === "ar" ? "٪" : "%"}</span>
             </div>
           </div>
+        )}
+        </>
         )}
       </div>
       </>

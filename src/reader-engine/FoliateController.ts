@@ -628,6 +628,11 @@ export class FoliateController {
   // (scroll the EPUB / page the PDF). The content frame's keydown never reaches the parent window, so
   // this callback is how the parent's TTS toggle runs from reading-area focus.
   private spaceCb: (() => boolean) | null = null;
+  // RAWY-184 (Part C): Left/Right arrow inside the reading frame — if a read-aloud session is active this
+  // skips the previous/next SENTENCE (the cb returns true → swallow the key); otherwise arrows keep their
+  // normal reader behaviour (page turn). Same reasoning as `spaceCb`: the content frame's keydown never
+  // reaches the parent window, so this callback runs the parent's sentence-skip from reading-area focus.
+  private arrowCb: ((key: string) => boolean) | null = null;
   // RAWY-73: scroll intent (scrolled mode) — accumulate wheel delta and fire a debounced direction
   // so a small jitter doesn't toggle the bar. down = scroll down (hide), up = scroll up (show).
   private scrollIntentCb: ((down: boolean) => void) | null = null;
@@ -762,8 +767,10 @@ export class FoliateController {
       // doc with a fresh idle placeholder.
       doc.addEventListener("click", (ev: Event) => this.onRevealClick(ev));
       doc.addEventListener("keydown", (ev: KeyboardEvent) => {
-        if (ev.key === "ArrowLeft") this.next();
-        else if (ev.key === "ArrowRight") this.prev();
+        // RAWY-184 (Part C): while read-aloud is active, arrows skip the prev/next SENTENCE (the cb
+        // returns true → swallow); otherwise they keep the normal page-turn (next/prev).
+        if (ev.key === "ArrowLeft") { if (this.arrowCb?.("ArrowLeft")) ev.preventDefault(); else this.next(); }
+        else if (ev.key === "ArrowRight") { if (this.arrowCb?.("ArrowRight")) ev.preventDefault(); else this.prev(); }
         // RAWY-180 (Part B): Space toggles read-aloud when a session is active; otherwise it keeps its
         // normal behaviour (scrolling the content). Only swallow the key when the toggle actually fired.
         else if (ev.key === " ") { if (this.spaceCb?.()) ev.preventDefault(); }
@@ -1028,6 +1035,12 @@ export class FoliateController {
    *  so Space doesn't also scroll/page; false leaves Space's normal reading behaviour intact. */
   onSpace(cb: () => boolean): void {
     this.spaceCb = cb;
+  }
+  /** RAWY-184 (Part C): handle Left/Right arrow with focus INSIDE the reading frame. `cb(key)` returns
+   *  true if it consumed the key (a TTS session was active → skipped a sentence), so we preventDefault;
+   *  false leaves the arrow's normal page-turn intact. */
+  onArrow(cb: (key: string) => boolean): void {
+    this.arrowCb = cb;
   }
   /** RAWY-74/75: scroll the book by a wheel delta coming from OUTSIDE the content iframe — i.e. the
    *  reading-area side MARGINS, where the native wheel can't reach foliate's scroller (it lives in
@@ -1581,6 +1594,27 @@ export class FoliateController {
   }
   prev(): void {
     this.view?.goRight();
+  }
+
+  /** RAWY-184 (Part B): is there a chapter AFTER the one on screen? (for the end-of-chapter "next" control). */
+  hasNextSection(): boolean {
+    const cur = this.currentSectionIndex();
+    const n = this.view?.book?.sections?.length ?? 0;
+    return cur >= 0 && cur + 1 < n;
+  }
+  /** RAWY-184 (Part B): advance to the NEXT chapter (spine section) and await it, so the caller can then
+   *  read it from the top. From the chapter end, foliate's forward step lands on the next section. */
+  async goToNextChapter(): Promise<void> {
+    const n = this.view?.book?.sections?.length ?? 0;
+    const next = this.currentSectionIndex() + 1;
+    if (next <= 0 || next >= n) return;
+    // foliate's `view.goTo(number)` resolves a bare spine INDEX (resolveNavigation: number → {index}) and
+    // awaits the render — more reliable than a page-step when the reading position isn't exactly at the edge.
+    try {
+      await this.view?.goTo?.(next);
+    } catch {
+      this.view?.goLeft?.(); // fallback: a forward step (from the chapter end this reaches the next section)
+    }
   }
 
   // RAWY-86: PDF (fixed-layout) paging by wheel — one page per gesture, throttled. Uses LOGICAL

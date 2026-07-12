@@ -505,4 +505,7 @@ export const ar: Record<TKey, string> = {
   "tts.loadingVoices": "جارٍ تحميل الأصوات…",
   "tts.noVoices": "لا تتوفّر أصوات — تحتاج أصوات Edge إلى اتصال بالإنترنت.",
   "tts.volume": "مستوى الصوت",
+  "tts.chapterDone": "انتهى الفصل",
+  "tts.nextChapter": "الفصل التالي",
+  "tts.bookEnd": "نهاية الكتاب",
 };

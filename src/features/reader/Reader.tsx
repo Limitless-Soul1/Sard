@@ -41,7 +41,7 @@ import { MARKER_WINDOW, useBookmarks } from "./bookmarksStore";
 import { ReaderChrome, type SettingsSection } from "./ReaderChrome";
 import { SettingsPanel } from "./SettingsPanel";
 import { TtsPlayer } from "./TtsPlayer";
-import { toggleTtsPlayback, useTts } from "../../lib/tts";
+import { skipSentenceForArrow, toggleTtsPlayback, useTts } from "../../lib/tts";
 import { useChromeOnIntent } from "./useChromeOnIntent";
 
 // The book to open: id (for progress) + absolute file path (for the asset protocol).
@@ -384,6 +384,10 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     // RAWY-180 (Part B): Space with focus inside the reading frame toggles read-aloud when a session is
     // active (returns true → the frame swallows the key); otherwise Space keeps scrolling/paging.
     ctrl?.onSpace(() => toggleTtsPlayback());
+    // RAWY-184 (Part C): Left/Right arrow with focus inside the reading frame skips the prev/next SENTENCE
+    // while read-aloud is active (RTL-aware via the UI direction, matching the ⏮/⏭); otherwise the arrows
+    // keep their normal page-turn.
+    ctrl?.onArrow((key) => skipSentenceForArrow(key, uiDir));
     // RAWY-73/130: scroll-down hides the bars, scroll-up shows them — the SAME during TTS now (RAWY-129
     // gated this off to dodge a reflow hitch; RAWY-130 removes the gate and instead pins the reading area
     // full-height during TTS via `.reader-root.tts-playing .page-host` (global.css), so the bars hide/show
@@ -398,7 +402,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       ctrl.setReadingWords(st.index, st.words);
       ctrl.showReadingWord(st.wordIndex);
     });
-  }, [signalMove, signalScroll]);
+  }, [signalMove, signalScroll, uiDir]);
 
   // When the basket empties (Clear, or removing the last passage) the top-bar button hides, so
   // close the now-orphaned tray too (RAWY-60).
@@ -462,6 +466,11 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   useEffect(() => {
     if (!ttsActive) setResumeHint(null);
   }, [ttsActive]);
+  // RAWY-184 (Part A): navigating to a DIFFERENT chapter drops any resume hint, so a stale same-chapter
+  // offer can never jump back once the reader has moved on (belt-and-braces with the same-chapter gate).
+  useEffect(() => {
+    setResumeHint(null);
+  }, [chapterHref]);
 
 
   // Chapters panel is OPEN BY DEFAULT (RAWY-22); the user's choice persists per `chapters_open`.
@@ -918,8 +927,11 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       startIndex: 0,
       chapterLabel: chapter,
     });
-    // Offer to resume — unless the saved spot is just the start of the chapter already on screen.
-    if (saved && typeof saved.idx === "number" && !(saved.sec === ctrl.currentSectionIndex() && saved.idx <= 0)) {
+    // RAWY-184 (Part A): only offer resume when the saved cursor belongs to the CURRENT chapter (and is
+    // past its start). Pressing Play always reads the CURRENT chapter from the top; if the saved cursor
+    // is in a DIFFERENT chapter, there is NO prompt and NO jump-back — so an ignored hint from an earlier
+    // chapter can never later start the wrong (saved) chapter. (Same-chapter resume still prompts + jumps.)
+    if (saved && typeof saved.idx === "number" && saved.sec === ctrl.currentSectionIndex() && saved.idx > 0) {
       setResumeHint(saved);
     } else {
       setResumeHint(null);
@@ -942,6 +954,15 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       startIndex: idx,
       chapterLabel: chapter,
     });
+  };
+  // RAWY-184 (Part B): the end-of-chapter "next chapter" control — navigate to the next spine section and
+  // read it from the top. startListen reads the now-current chapter; the saved cursor is a different
+  // section, so the Part A same-chapter gate shows no resume prompt.
+  const nextChapter = async () => {
+    const ctrl = ctrlRef.current;
+    if (!ctrl) return;
+    await ctrl.goToNextChapter();
+    await startListen();
   };
   // RAWY-124: listen from the SELECTION (the "Stage 2" that was planned in the comment above but never
   // built). Read the chapter's blocks, find the one the selection begins in (whitespace-normalised
@@ -1173,7 +1194,14 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       {!isPdf && <AnnotationLayer ctrlRef={ctrlRef} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} onListen={startListenFromSelection} />}
 
       {/* RAWY-105: read-aloud player (EPUB-only) — floats above the reading area while listening. */}
-      {!isPdf && <TtsPlayer panelLeft={chaptersOpen || searchOpen} panelRight={annoOpen} />}
+      {!isPdf && (
+        <TtsPlayer
+          panelLeft={chaptersOpen || searchOpen}
+          panelRight={annoOpen}
+          hasNextChapter={ttsStatus === "chapter-end" && (ctrlRef.current?.hasNextSection() ?? false)}
+          onNextChapter={nextChapter}
+        />
+      )}
 
       {/* RAWY-162: a tasteful, non-intrusive hint to resume the last-spoken sentence — appears on Listen
           when a saved TTS cursor exists; ignoring it keeps normal playback. */}

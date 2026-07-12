@@ -507,6 +507,9 @@ export const en = {
   "tts.loadingVoices": "loading voices…",
   "tts.noVoices": "No voices available — Edge voices need an internet connection.",
   "tts.volume": "Volume",
+  "tts.chapterDone": "Chapter finished",
+  "tts.nextChapter": "Next chapter",
+  "tts.bookEnd": "End of the book",
 } as const;
 
 export type TKey = keyof typeof en;

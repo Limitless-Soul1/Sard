@@ -146,6 +146,21 @@ let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 let gen = 0; // bumped by stop/skip/start to invalidate in-flight async work
 let lastStart: StartOpts | null = null; // for retry() after a download/synth failure
 
+// RAWY-185: DEBOUNCE synth during RAPID skipping. Each skip moves the index + sentence spotlight
+// instantly (responsive), but the SYNTH for the landing sentence is deferred until skipping has been
+// idle for `SKIP_SETTLE_MS`. Without this, every fly-by sentence kicked off a synth (+ its prefetch
+// window) onto the serialized engine, so the LANDING sentence's synth only STARTED once that wasted
+// backlog drained — a long wait to first audio after a fast skip (root: RAWY-183 made synth off-thread,
+// so this is about WHEN the landing synth is queued, not a UI block). An ISOLATED (non-rapid) skip
+// still synths IMMEDIATELY via the leading edge, so a single skip feels exactly as before.
+const SKIP_SETTLE_MS = 220;
+let skipSettleTimer: ReturnType<typeof setTimeout> | null = null;
+let skipLeadTarget = -1; // the index the leading (immediate) skip of the current burst synthesized
+let skipLastTarget = -1; // the most recent skip's target — moved ONLY by skip(), never by auto-advance
+const clearSkipSettle = () => {
+  if (skipSettleTimer) { clearTimeout(skipSettleTimer); skipSettleTimer = null; }
+};
+
 // RAWY-159 (crash-proof chain): the advance to the next sentence must never depend on a single
 // segment behaving. A watchdog (polled on the AudioContext clock, so it FREEZES while paused) force-
 // advances if a source's `onended` never fires; `failStreak` counts CONSECUTIVE unspeakable/failed
@@ -476,6 +491,9 @@ export const useTts = create<TtsState>((set, get) => ({
     const myGen = ++gen;
     stopSource();
     stopKaraoke(); // RAWY-127
+    clearSkipSettle(); // RAWY-185: a fresh Listen cancels any pending rapid-skip landing synth
+    skipLeadTarget = -1;
+    skipLastTarget = -1;
     cache = new Map();
     failStreak = 0; // RAWY-159: a fresh Listen starts the dead-end counter clean
     sentences = sen.map((s) => s.trim()).filter(Boolean);
@@ -518,12 +536,34 @@ export const useTts = create<TtsState>((set, get) => ({
   skip: (delta) => {
     const st = get();
     if (!st.active || st.status === "preparing") return;
+    const target = Math.max(0, Math.min(sentences.length - 1, st.index + delta));
     const myGen = ++gen;
     stopSource();
     stopKaraoke(); // RAWY-127: drop the old sentence's pill; playFrom restarts karaoke for the new one
     failStreak = 0; // RAWY-159: a user skip is a fresh attempt — don't count it toward a dead end
-    set({ wordIndex: -1 });
-    void playFrom(Math.max(0, Math.min(sentences.length - 1, st.index + delta)), myGen);
+    // Move the index + sentence spotlight INSTANTLY (the RAWY-126/127 reader effects follow `index`), so
+    // rapid skipping tracks on screen even though the landing sentence's audio is deferred below.
+    set({ wordIndex: -1, index: target, status: "playing" });
+
+    // RAWY-185: debounce the SYNTH. A skip arriving while a prior skip's settle window is still open is
+    // part of a rapid burst → do NOT synth this fly-by sentence (that backlog on the serialized engine is
+    // exactly what delayed the landing synth). An ISOLATED skip (window closed) synths immediately via the
+    // leading edge, so a single skip is as responsive as before.
+    skipLastTarget = target;
+    const inBurst = skipSettleTimer !== null;
+    if (!inBurst) {
+      skipLeadTarget = target;
+      void playFrom(target, myGen);
+    }
+    // (Re)arm the settle window. When skipping has been idle ~SKIP_SETTLE_MS, synth the LANDING sentence
+    // once — but only if a burst actually moved past the leading play (skipLastTarget !== skipLeadTarget),
+    // so an isolated skip whose short leading sentence has since auto-advanced is never wrongly restarted.
+    clearSkipSettle();
+    skipSettleTimer = setTimeout(() => {
+      skipSettleTimer = null;
+      if (!get().active) return; // stopped during the window (stop() also clears this timer)
+      if (skipLastTarget !== skipLeadTarget) void playFrom(skipLastTarget, ++gen);
+    }, SKIP_SETTLE_MS);
   },
 
   setSpeed: (s) => {
@@ -559,6 +599,7 @@ export const useTts = create<TtsState>((set, get) => ({
     const myGen = ++gen;
     stopSource();
     stopKaraoke(); // RAWY-127: switching engine (e.g. Edge→Piper) drops any pill; playFrom re-decides
+    clearSkipSettle(); // RAWY-185: a live voice/engine switch supersedes a pending rapid-skip landing synth
     set({ engine, voice: id, status: "preparing", error: null, notice: null, wordIndex: -1 });
     void ensureAndPlay(engine, id, st.index, myGen);
   },
@@ -581,6 +622,9 @@ export const useTts = create<TtsState>((set, get) => ({
     gen++;
     stopSource();
     stopKaraoke(); // RAWY-127
+    clearSkipSettle(); // RAWY-185: cancel any deferred rapid-skip landing synth
+    skipLeadTarget = -1;
+    skipLastTarget = -1;
     cache = new Map();
     sentences = [];
     if (noticeTimer) { clearTimeout(noticeTimer); noticeTimer = null; }

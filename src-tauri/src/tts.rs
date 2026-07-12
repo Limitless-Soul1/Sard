@@ -259,8 +259,16 @@ fn framed(audio: Vec<u8>, words: &[WordTiming]) -> Result<tauri::ipc::Response, 
 /// from the free Edge Read-Aloud API. Everything downstream (the WebAudio queue, play/pause/skip/speed)
 /// is engine-agnostic — WebAudio decodes both. RAWY-127: the response is now `framed` so it also carries
 /// Edge's per-word timing (Piper's is empty).
+// RAWY-183: this is `async` on PURPOSE. A synthesis is BLOCKING (Piper's first call spawns the sidecar
+// + loads the ~60 MB model — measured ~3.3 s; Edge does a WebSocket round-trip). A SYNC Tauri command
+// runs on the MAIN thread, so that block froze the WHOLE window — input couldn't reach the WebView, so
+// the pill/shrink button was unresponsive for the synth's duration (the RAWY-181/182 "first-play block"
+// that the loading-order + chunked walk didn't explain: measurement showed the ~3.3 s was HERE and the
+// JS thread was idle). An async command is dispatched to the runtime's worker pool, so the blocking
+// synth runs OFF the main thread and the UI stays responsive throughout. The body has no `.await` (the
+// engine work is synchronous under its mutex), so nothing non-Send crosses an await point.
 #[tauri::command]
-pub fn tts_synthesize(
+pub async fn tts_synthesize(
     app: AppHandle,
     state: State<'_, AppState>,
     engines: State<'_, TtsEngine>,

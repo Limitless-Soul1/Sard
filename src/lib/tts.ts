@@ -93,7 +93,10 @@ async function resolveVoicePref(lang: TtsLang): Promise<TtsVoiceRef> {
 
 type Status = "idle" | "preparing" | "downloading" | "playing" | "paused" | "error" | "chapter-end";
 
-interface StartOpts { sentences: string[]; lang: TtsLang; startIndex?: number; chapterLabel: string }
+// RAWY-188: `deferPrefetch` — start the FIRST sentence only (no prefetch window). Used for the chapter-TOP
+// start when a same-chapter resume is being offered: if the user then resumes, only ONE cold synth was
+// spent on the top (not four) so the resume target isn't stuck behind them on the serialized engine.
+interface StartOpts { sentences: string[]; lang: TtsLang; startIndex?: number; chapterLabel: string; deferPrefetch?: boolean }
 
 interface TtsState {
   active: boolean; // player pill visible
@@ -462,7 +465,7 @@ async function playFrom(i: number, myGen: number, prefetch = true) {
 // Ensure the chosen voice is usable, then play from `fromIndex`. Only PIPER voices fetch on demand
 // (~60 MB) with a REAL progress bar (RAWY-106); Edge synthesizes over the network with no local
 // model, so it skips straight to playback. Shared by start / setVoice / the Edge→Piper fallback.
-async function ensureAndPlay(engine: TtsEngineKind, voice: string, fromIndex: number, myGen: number) {
+async function ensureAndPlay(engine: TtsEngineKind, voice: string, fromIndex: number, myGen: number, prefetch = true) {
   const set = useTts.setState;
   if (engine === "piper") {
     try {
@@ -480,7 +483,7 @@ async function ensureAndPlay(engine: TtsEngineKind, voice: string, fromIndex: nu
     }
   }
   if (myGen !== gen) return;
-  void playFrom(fromIndex, myGen);
+  void playFrom(fromIndex, myGen, prefetch);
 }
 
 export const useTts = create<TtsState>((set, get) => ({
@@ -502,7 +505,7 @@ export const useTts = create<TtsState>((set, get) => ({
 
   start: async (opts) => {
     lastStart = opts;
-    const { sentences: sen, lang, startIndex = 0, chapterLabel } = opts;
+    const { sentences: sen, lang, startIndex = 0, chapterLabel, deferPrefetch = false } = opts;
     audioCtx(); // create within the user gesture so autoplay policy unlocks it
     const myGen = ++gen;
     stopSource();
@@ -535,7 +538,7 @@ export const useTts = create<TtsState>((set, get) => ({
     curEngine = engine;
     curVoice = id;
     set({ engine, voice: id });
-    void ensureAndPlay(engine, id, Math.min(startIndex, sentences.length - 1), myGen);
+    void ensureAndPlay(engine, id, Math.min(startIndex, sentences.length - 1), myGen, !deferPrefetch);
   },
 
   toggle: () => {

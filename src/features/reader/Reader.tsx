@@ -926,21 +926,22 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     // RAWY-182: the walk is now async + CHUNKED (non-blocking), so the pill + shrink button stay
     // responsive throughout preparation instead of the thread being hogged until audio starts.
     const sentences = await ctrl.getCurrentChapterSentences(bookLang);
+    // RAWY-184 (Part A): only offer resume when the saved cursor belongs to the CURRENT chapter (and is
+    // past its start). Pressing Play always reads the CURRENT chapter from the top; if the saved cursor
+    // is in a DIFFERENT chapter, there is NO prompt and NO jump-back — so an ignored hint from an earlier
+    // chapter can never later start the wrong (saved) chapter. (Same-chapter resume still prompts + jumps.)
+    const canResume = !!(saved && typeof saved.idx === "number" && saved.sec === ctrl.currentSectionIndex() && saved.idx > 0);
     useTts.getState().start({
       sentences,
       lang: bookLang,
       startIndex: 0,
       chapterLabel: chapter,
+      // RAWY-188: when a resume is being offered, prepare ONLY the chapter-top sentence (no prefetch
+      // window). If the user resumes before audio starts, at most one cold synth was spent on the top,
+      // so the resume target isn't stuck behind four of them on the serialized engine (the measured stall).
+      deferPrefetch: canResume,
     });
-    // RAWY-184 (Part A): only offer resume when the saved cursor belongs to the CURRENT chapter (and is
-    // past its start). Pressing Play always reads the CURRENT chapter from the top; if the saved cursor
-    // is in a DIFFERENT chapter, there is NO prompt and NO jump-back — so an ignored hint from an earlier
-    // chapter can never later start the wrong (saved) chapter. (Same-chapter resume still prompts + jumps.)
-    if (saved && typeof saved.idx === "number" && saved.sec === ctrl.currentSectionIndex() && saved.idx > 0) {
-      setResumeHint(saved);
-    } else {
-      setResumeHint(null);
-    }
+    setResumeHint(canResume ? saved : null);
   };
   // RAWY-186 (Part A): the Play/Pause gesture (pill button AND Space). Read-aloud audio is decoupled from
   // the view (RAWY-129: you can browse while listening), so pressing Play after navigating to a DIFFERENT

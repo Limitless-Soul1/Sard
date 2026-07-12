@@ -570,9 +570,19 @@ pub fn shutdown(engine: &TtsEngine) {
 }
 
 /// Stop + drop both engines' warm connections (called when the user closes the player).
+///
+/// RAWY-188: this is `async` on PURPOSE (the RAWY-183 lesson). `shutdown` must lock `engine.inner` /
+/// `engine.edge` to take the Piper child + Edge socket, but a synth in flight HOLDS that mutex for its
+/// full duration (a cold Piper spawn or an Edge round-trip — measured ~6 s of contention). A SYNC command
+/// runs on the app's MAIN thread, so that mutex wait froze the whole window (input couldn't reach the
+/// WebView; the taskbar icon reverted to the default while Windows judged the app unresponsive). An async
+/// command is dispatched to the runtime worker pool, so the (still-serialized) teardown runs OFF the main
+/// thread and the UI stays responsive. The body has no `.await` (the lock + kill are synchronous), so
+/// nothing non-Send crosses an await point.
 #[tauri::command]
-pub fn tts_stop(engine: State<'_, TtsEngine>) {
+pub async fn tts_stop(engine: State<'_, TtsEngine>) -> Result<(), String> {
     shutdown(&engine);
+    Ok(())
 }
 
 #[cfg(test)]

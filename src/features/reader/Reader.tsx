@@ -41,7 +41,7 @@ import { MARKER_WINDOW, useBookmarks } from "./bookmarksStore";
 import { ReaderChrome, type SettingsSection } from "./ReaderChrome";
 import { SettingsPanel } from "./SettingsPanel";
 import { TtsPlayer } from "./TtsPlayer";
-import { skipSentenceForArrow, useTts } from "../../lib/tts";
+import { prewarmEdge, skipSentenceForArrow, useTts } from "../../lib/tts";
 import { useChromeOnIntent } from "./useChromeOnIntent";
 
 // The book to open: id (for progress) + absolute file path (for the asset protocol).
@@ -937,6 +937,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     const ctrl = ctrlRef.current;
     if (!ctrl) return;
     const bookLang = isRtlBook ? "ar" : "en"; // RAWY-111: the store resolves the per-language voice
+    // RAWY-191 (#3): warm the Edge WebSocket NOW (fire-and-forget) so its ~2.7 s cold setup overlaps the
+    // segmentation walk + resume read below instead of being paid by the first sentence. No-op unless Edge.
+    void prewarmEdge(bookLang);
     // RAWY-181 (BUG 1): the first Listen used to FREEZE the window — `getCurrentChapterSentences()` is a
     // SYNCHRONOUS chapter DOM walk (segment into units + build ranges) that ran BEFORE any UI feedback,
     // and `new AudioContext()` inits on first play. Show the loading pill FIRST (instant feedback), let

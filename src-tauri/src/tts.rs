@@ -12,7 +12,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 use msedge_tts::tts::client::{connect, MSEdgeTTSClient, SynthesizedAudio};
 use msedge_tts::tts::SpeechConfig;
@@ -41,12 +41,56 @@ fn voice_def(id: &str) -> Option<&'static VoiceDef> {
     VOICES.iter().find(|v| v.id == id)
 }
 
-/// Managed state: the persistent Piper process + the warm Edge WebSocket + the cached Edge voices.
-#[derive(Default)]
+/// RAWY-191: how many Edge synths may run CONCURRENTLY. The prefetch warms a 3-sentence window (RAWY-181),
+/// so 3 lets the whole window refill AT ONCE instead of serially — the fix for the sentence-boundary stall
+/// (a slow, network-variable Edge round-trip no longer blocks the refills queued behind it on one mutex).
+/// Kept modest so we never open a burst of connections the free Edge endpoint might rate-limit. Piper is
+/// untouched — it stays strictly serialized on `inner`.
+const EDGE_MAX_CONCURRENCY: usize = 3;
+
+/// A tiny counting semaphore (std `Condvar`) capping concurrent Edge synths at `EDGE_MAX_CONCURRENCY`.
+struct EdgeSem {
+    avail: Mutex<usize>,
+    cv: Condvar,
+}
+impl EdgeSem {
+    fn acquire(&self) -> EdgePermit<'_> {
+        let mut g = self.avail.lock().unwrap();
+        while *g == 0 {
+            g = self.cv.wait(g).unwrap();
+        }
+        *g -= 1;
+        EdgePermit(self)
+    }
+}
+/// Releases the concurrency slot on drop (RAII), so an early `return`/`?` never leaks a permit.
+struct EdgePermit<'a>(&'a EdgeSem);
+impl Drop for EdgePermit<'_> {
+    fn drop(&mut self) {
+        let mut g = self.0.avail.lock().unwrap();
+        *g += 1;
+        self.0.cv.notify_one();
+    }
+}
+
+/// Managed state: the persistent Piper process (SERIALIZED on `inner`) + a POOL of warm Edge WebSocket
+/// clients (RAWY-191 — parallelized so the prefetch window refills concurrently, and kept warm across stop
+/// so the next Listen doesn't pay the cold WS setup) + the cached Edge voices.
 pub struct TtsEngine {
-    inner: Mutex<Option<Running>>,          // Piper (engine #1) — one warm process per voice
-    edge: Mutex<Option<EdgeRunning>>,       // Edge (engine #2) — one warm WS client per voice
+    inner: Mutex<Option<Running>>,          // Piper (engine #1) — one warm process per voice (SERIALIZED)
+    edge_pool: Mutex<Vec<EdgeRunning>>,     // Edge (engine #2) — pool of warm WS clients, reused across sentences AND across stop (RAWY-191)
+    edge_sem: EdgeSem,                      // Edge concurrency cap (RAWY-191)
     edge_voices: Mutex<Option<Vec<Voice>>>, // cached get_voices_list() (fetched once, for the picker)
+}
+impl Default for TtsEngine {
+    fn default() -> Self {
+        Self {
+            inner: Mutex::new(None),
+            edge_pool: Mutex::new(Vec::new()),
+            edge_sem: EdgeSem { avail: Mutex::new(EDGE_MAX_CONCURRENCY), cv: Condvar::new() },
+            edge_voices: Mutex::new(None),
+        }
+    }
 }
 
 /// Edge (engine #2, RAWY-111): a warm WebSocket client bound to one voice's SpeechConfig, reused
@@ -427,41 +471,53 @@ fn edge_synth_once(mut running: EdgeRunning, text: &str) -> EdgeSynth {
     }
 }
 
-/// Synthesize one sentence → MP3 bytes over the free Edge Read-Aloud WebSocket. Reuses a warm client
-/// per voice; a dropped socket reconnects once. Online-required — an unreachable endpoint surfaces a
-/// clear error, and the frontend then falls back to Piper.
-fn edge_synthesize(engines: &TtsEngine, id: String, text: String) -> Result<tauri::ipc::Response, String> {
-    let mut guard = engines.edge.lock().map_err(|e| e.to_string())?;
-    let need_new = guard.as_ref().map(|r| r.voice_id != id).unwrap_or(true);
-    if need_new {
-        // build the voice's config from the (cached) voice list, then open a warm connection
-        let mut vcache = engines.edge_voices.lock().map_err(|e| e.to_string())?;
-        if vcache.is_none() {
-            // RAWY-179: same merged list as the picker, so a fallback Arabic voice is synthesizable.
-            *vcache = Some(load_edge_voices()?);
-        }
-        let voice = vcache
-            .as_ref()
-            .unwrap()
-            .iter()
-            .find(|v| v.short_name.as_deref() == Some(id.as_str()))
-            .ok_or_else(|| format!("unknown edge voice: {id}"))?;
-        let mut config = SpeechConfig::from(voice);
-        config.audio_format = "audio-24khz-48kbitrate-mono-mp3".to_string(); // force MP3 for WebAudio
-        drop(vcache);
-        let client = connect().map_err(|e| format!("edge connect: {e:?}"))?;
-        *guard = Some(EdgeRunning { voice_id: id.clone(), config, client });
+/// RAWY-191: build ONE warm Edge client for `id` (load the voice list once, force MP3, open the WS). Used
+/// by both the synth path (on a pool miss) and the pre-warm command. Pure of the pool — the caller pools it.
+fn edge_connect_running(engines: &TtsEngine, id: &str) -> Result<EdgeRunning, String> {
+    let mut vcache = engines.edge_voices.lock().map_err(|e| e.to_string())?;
+    if vcache.is_none() {
+        // RAWY-179: same merged list as the picker, so a fallback Arabic voice is synthesizable.
+        *vcache = Some(load_edge_voices()?);
     }
-    // RAWY-172 (AUD-2): bound the blocking synth with a timeout so a stalled socket can't hold this mutex
-    // forever. We run synthesize on a worker thread and wait with a ceiling — still HOLDING the guard
-    // across the wait, so callers serialize exactly as before (no second connection): the warm client is
-    // moved out and put back. On a stall we surface an error and leave the slot empty (the abandoned client
-    // drops when its synthesize finally returns), so the next call reconnects; the frontend's own timeout
-    // (RAWY-172) has already advanced playback by then.
-    let running = guard.take().unwrap();
+    let voice = vcache
+        .as_ref()
+        .unwrap()
+        .iter()
+        .find(|v| v.short_name.as_deref() == Some(id))
+        .ok_or_else(|| format!("unknown edge voice: {id}"))?;
+    let mut config = SpeechConfig::from(voice);
+    config.audio_format = "audio-24khz-48kbitrate-mono-mp3".to_string(); // force MP3 for WebAudio
+    drop(vcache);
+    let client = connect().map_err(|e| format!("edge connect: {e:?}"))?;
+    Ok(EdgeRunning { voice_id: id.to_string(), config, client })
+}
+
+/// Synthesize one sentence → MP3 bytes over the free Edge Read-Aloud WebSocket.
+///
+/// RAWY-191: parallelized. Instead of one warm client behind one mutex (which serialized every synth, so a
+/// slow network round-trip blocked the prefetch refills queued behind it → the sentence-boundary stall),
+/// up to `EDGE_MAX_CONCURRENCY` synths run AT ONCE, each taking a warm client from a POOL. The pool lock is
+/// held only to grab/return a client — NEVER across the round-trip — so the window refills concurrently. A
+/// dropped socket reconnects once; a stale-voice pooled client is dropped and a fresh one connected. The
+/// pool is kept warm across stop (`shutdown` no longer drops it), so the next Listen reuses it.
+fn edge_synthesize(engines: &TtsEngine, id: String, text: String) -> Result<tauri::ipc::Response, String> {
+    let _permit = engines.edge_sem.acquire(); // cap concurrency (RAII: released on every return path)
+    // Take a warm client for THIS voice from the pool (dropping any stale-voice idle clients we pass), else
+    // connect a fresh one. Only the pop/connect touches the pool lock — the synth below runs lock-free.
+    let running = loop {
+        let popped = engines.edge_pool.lock().ok().and_then(|mut p| p.pop());
+        match popped {
+            Some(r) if r.voice_id == id => break r,
+            Some(_) => continue, // idle client for a different voice → drop it, keep looking
+            None => break edge_connect_running(engines, &id)?,
+        }
+    };
+    // RAWY-172 (AUD-2): bound the blocking synth with a timeout so a stalled socket can't hang the queue.
     let audio = match edge_synth_once(running, &text) {
         EdgeSynth::Ok(audio, running) => {
-            *guard = Some(running);
+            if let Ok(mut p) = engines.edge_pool.lock() {
+                p.push(running); // return the warm client for reuse
+            }
             audio
         }
         EdgeSynth::Failed(running, _) => {
@@ -470,7 +526,9 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String) -> Result<taur
             let client = connect().map_err(|e| format!("edge reconnect: {e:?}"))?;
             match edge_synth_once(EdgeRunning { voice_id: id.clone(), config, client }, &text) {
                 EdgeSynth::Ok(audio, running) => {
-                    *guard = Some(running);
+                    if let Ok(mut p) = engines.edge_pool.lock() {
+                        p.push(running);
+                    }
                     audio
                 }
                 EdgeSynth::Failed(_, e) => return Err(format!("edge synth: {e}")),
@@ -495,6 +553,28 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String) -> Result<taur
         })
         .collect();
     framed(audio.audio_bytes, &words)
+}
+
+/// RAWY-191 (#3): pre-warm ONE Edge connection for `id` so the FIRST sentence of a Listen doesn't pay the
+/// ~2.7 s cold WebSocket setup. Fired from the frontend on Listen (Edge only), in parallel with chapter
+/// segmentation. It does NOT synthesize — no audio, no cost if TTS is never used. A no-op if a warm client
+/// for this voice is already pooled (a prior Listen left one — the pool survives stop). Errors are ignored
+/// (the synth path reconnects); an idle warm connection that later goes stale reconnects on first use.
+#[tauri::command]
+pub async fn tts_edge_prewarm(engines: State<'_, TtsEngine>, id: String) -> Result<(), String> {
+    let already = engines
+        .edge_pool
+        .lock()
+        .map(|p| p.iter().any(|r| r.voice_id == id))
+        .unwrap_or(false);
+    if already {
+        return Ok(());
+    }
+    let running = edge_connect_running(&engines, &id)?;
+    if let Ok(mut p) = engines.edge_pool.lock() {
+        p.push(running);
+    }
+    Ok(())
 }
 
 /// Piper (engine #1): reuse the persistent warm process; respawn only if the voice changed or died.
@@ -561,12 +641,14 @@ fn piper_synthesize(
 pub fn shutdown(engine: &TtsEngine) {
     if let Ok(mut guard) = engine.inner.lock() {
         if let Some(mut r) = guard.take() {
-            let _ = r.child.kill(); // Piper process
+            let _ = r.child.kill(); // Piper process (unchanged — killed on stop/exit so it never orphans)
         }
     }
-    if let Ok(mut guard) = engine.edge.lock() {
-        *guard = None; // Edge WebSocket (dropped → closed)
-    }
+    // RAWY-191: the Edge WS pool is KEPT warm across stop, so the next Listen reuses it instead of paying the
+    // ~2.7 s cold reconnect (the start-of-Listen silence). Idle sockets close when the process exits; a stale
+    // one reconnects on first use. Nothing to tear down here — no shared mutex a synth-in-flight could block
+    // (the RAWY-188 contention was the single edge mutex, now gone), and superseded audio is dropped by the
+    // frontend's generation guard.
 }
 
 /// Stop + drop both engines' warm connections (called when the user closes the player).

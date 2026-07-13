@@ -91,6 +91,15 @@ async function resolveVoicePref(lang: TtsLang): Promise<TtsVoiceRef> {
   return defaultVoiceForLang(lang);
 }
 
+// RAWY-191 (#3): pre-warm the Edge WebSocket for this book's voice on Listen — BEFORE chapter segmentation —
+// so the first sentence doesn't pay the ~2.7 s cold WS setup. Fire-and-forget; Edge only (no-op otherwise);
+// no cost if TTS is never used. The pool also survives stop (Rust side), so a later Listen reuses the warm
+// client without reconnecting. Safe to over-call — the command is a no-op if a warm client already exists.
+export async function prewarmEdge(lang: TtsLang): Promise<void> {
+  const { engine, id } = await resolveVoicePref(lang);
+  if (engine === "edge") await invoke("tts_edge_prewarm", { id }).catch(() => {});
+}
+
 type Status = "idle" | "preparing" | "downloading" | "playing" | "paused" | "error" | "chapter-end";
 
 // RAWY-188: `deferPrefetch` — start the FIRST sentence only (no prefetch window). Used for the chapter-TOP

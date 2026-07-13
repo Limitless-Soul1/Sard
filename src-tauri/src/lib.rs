@@ -161,7 +161,6 @@ pub fn run() {
             tts::tts_synthesize,
             tts::tts_edge_voices,
             tts::tts_stop,
-            tts::tts_edge_prewarm,
             updater::check_for_update,
             window_chrome::set_titlebar_theme,
         ])

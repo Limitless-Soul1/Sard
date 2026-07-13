@@ -105,6 +105,16 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // RAWY-186: the LATEST play/pause handler, so the once-registered reading-frame Space callback always
   // calls the current closure (fresh chapter/lang) — no stale capture. Assigned each render below.
   const playRef = useRef<() => boolean>(() => false);
+  // The last spine section index seen by onRelocate. Used to detect a MANUAL chapter change while a
+  // read-aloud session sits in the "chapter-end" state (audio finished, the pill/Kashida offered a
+  // "next chapter" button) — navigating away in that window must clear the stale offer so the button
+  // never points at a chapter the user already left (and a later Play reads the current chapter).
+  const lastSectionRef = useRef<number>(-1);
+  // RAWY-190: set right before the "next chapter" control navigates, so the resulting onRelocate knows
+  // this section change is the EXPECTED outcome of that button (not a manual browse) and does NOT stop
+  // read-aloud. Without it, the relocate from the next-chapter advance would trip the chapter-end clear
+  // (above) and kill the session before startListen() can begin reading the new chapter.
+  const nextChapterArmedRef = useRef(false);
   // RAWY-82 (#15): rAF-batch the live style apply during a slider drag — hold the latest style and
   // apply it at most once per frame (persistence stays on the 500ms debounce below).
   const styleRafRef = useRef<number | null>(null);
@@ -190,6 +200,24 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       const ctrl = ctrlRef.current!;
       ctrl.onRelocate(({ cfi, fraction, chapterLabel, chapterHref }) => {
         set({ cfi, fraction, chapterLabel, chapterHref });
+        // RAWY-190: if read-aloud finished a chapter (status "chapter-end") and the user navigated to a
+        // DIFFERENT section, the stale "next chapter" offer no longer applies (its button would advance
+        // from the chapter on screen, which is now the one the user moved to — not the finished one). Stop
+        // the session cleanly so the pill AND the kashida drop the offer; a later Play restarts on the
+        // current chapter. EXCEPTION: the "next chapter" control's OWN advance also relocates here — it
+        // arms `nextChapterArmedRef` first so we consume the flag and DON'T stop the session it's handing
+        // to startListen (without this, the legit advance would kill its own session — the WIP race).
+        const curSec = ctrl.currentSectionIndex();
+        const tts = useTts.getState();
+        if (nextChapterArmedRef.current) {
+          nextChapterArmedRef.current = false;
+        } else if (tts.active && tts.status === "chapter-end" && lastSectionRef.current !== -1 && curSec !== lastSectionRef.current) {
+          // RAWY-190: hide the stale "next chapter" offer but KEEP the player (dismissEnd, not stop) — the
+          // bead/transport stays and a later Play reads the CURRENT chapter (scenario B). A full stop would
+          // remove the kashida bead entirely, leaving no way to play from the minimized state.
+          tts.dismissEnd();
+        }
+        lastSectionRef.current = curSec;
         if (progressTimer.current) clearTimeout(progressTimer.current);
         progressTimer.current = window.setTimeout(() => {
           // RAWY-85: a PDF has no CFI — persist it by fraction (empty cfi) so it still resumes.
@@ -960,7 +988,11 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       st.toggle(); // same chapter → resume where it paused
       return true;
     }
-    return false; // preparing / downloading / error / chapter-end — Play does nothing here
+    // RAWY-190 (chapter-end): a chapter finished (or the user navigated to a fresh chapter after one
+    // finished) — Play reads the CURRENT chapter from its top, so the button is never dead. Shared by the
+    // pill Play, Space, and the kashida bead (all route through onPlayPause), so every state agrees.
+    if (st.status === "chapter-end") { void startListen(); return true; }
+    return false; // preparing / downloading / error — Play does nothing here
   };
   playRef.current = playOrRelisten;
   // RAWY-162: the user chose "resume" on the hint — map the saved cursor to a live sentence (navigating
@@ -987,6 +1019,9 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const nextChapter = async () => {
     const ctrl = ctrlRef.current;
     if (!ctrl) return;
+    // RAWY-190: arm the flag so the relocate this navigation triggers isn't mistaken for a manual browse
+    // and does NOT stop the chapter-end session before startListen() can read the new chapter (onRelocate).
+    nextChapterArmedRef.current = true;
     await ctrl.goToNextChapter();
     await startListen();
   };

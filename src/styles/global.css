@@ -1106,6 +1106,11 @@ html, body, #root {
 .tts-kash-swap svg { width: 17px; height: 17px; }
 .tts-kash-swap:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 
+/* RAWY-190: chapter-end "next chapter" continue in the kashida. It reuses `.tts-end-next` wholesale (same
+   typography + theme tokens + hover as the full/collapsed pill's control — no new colours or motion); this
+   only makes it not-stretch and sit at the bead's height in place of the progress stroke. */
+.tts-kash-next { flex: none; height: 34px; }
+
 @keyframes tts-halo { 0% { opacity: 0.5; transform: scale(1); } 100% { opacity: 0; transform: scale(1.9); } }
 @keyframes tts-kash-glow { 0%, 100% { filter: none; } 50% { filter: brightness(1.16); } }
 @media (prefers-reduced-motion: reduce) {

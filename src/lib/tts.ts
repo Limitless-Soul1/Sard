@@ -101,6 +101,10 @@ interface StartOpts { sentences: string[]; lang: TtsLang; startIndex?: number; c
 interface TtsState {
   active: boolean; // player pill visible
   status: Status;
+  // RAWY-190: at "chapter-end" the pill/kashida offer a "next chapter" continue control. If the user
+  // instead navigates the view off the finished chapter, that offer is stale — this hides it WITHOUT
+  // stopping read-aloud, so the player (bead/transport) stays and a later Play reads the CURRENT chapter.
+  endDismissed: boolean;
   engine: TtsEngineKind;
   voice: string; // voice id within the engine
   lang: TtsLang; // current book language (which voice pref applies)
@@ -116,6 +120,7 @@ interface TtsState {
   notice: string | null; // transient message (e.g. fell back to Piper); auto-clears
   start: (o: StartOpts) => Promise<void>;
   toggle: () => void;
+  dismissEnd: () => void; // RAWY-190: hide the stale chapter-end "next chapter" offer (keeps the player)
   skip: (delta: number) => void;
   setSpeed: (s: number) => void;
   setVolume: (v: number) => void; // RAWY-180 (Part A): read-aloud output volume 0..1 (persisted)
@@ -384,7 +389,7 @@ async function playFrom(i: number, myGen: number, prefetch = true) {
     // RAWY-184 (Part B): reached the LAST sentence — STOP and enter the "chapter-end" state (the owner
     // chose a "next chapter" button over auto-advance). The pill then offers Next chapter (if one exists)
     // or a gentle end-of-book state; playing/paused-gated shortcuts (Space, arrows) no-op here.
-    set({ status: "chapter-end", index: Math.max(0, sentences.length - 1) });
+    set({ status: "chapter-end", endDismissed: false, index: Math.max(0, sentences.length - 1) });
     return;
   }
   const idx = Math.max(0, i);
@@ -489,6 +494,7 @@ async function ensureAndPlay(engine: TtsEngineKind, voice: string, fromIndex: nu
 export const useTts = create<TtsState>((set, get) => ({
   active: false,
   status: "idle",
+  endDismissed: false,
   engine: "piper",
   voice: "",
   lang: "en",
@@ -527,7 +533,7 @@ export const useTts = create<TtsState>((set, get) => ({
     const volume = volNum >= 0 && volNum <= 1 ? volNum : get().volume;
     curVolume = volume;
     if (gainNode) gainNode.gain.value = volume;
-    set({ active: true, status: "preparing", lang, speed, volume, index: startIndex, total: sentences.length, progress: 0, chapterLabel, error: null, notice: null, words: [], wordIndex: -1 });
+    set({ active: true, status: "preparing", endDismissed: false, lang, speed, volume, index: startIndex, total: sentences.length, progress: 0, chapterLabel, error: null, notice: null, words: [], wordIndex: -1 });
     if (sentences.length === 0) {
       set({ status: "error", error: TTS_EMPTY });
       return;
@@ -551,6 +557,13 @@ export const useTts = create<TtsState>((set, get) => ({
       void audioCtx().resume();
       set({ status: "playing" });
     }
+  },
+
+  // RAWY-190: the view moved off the finished chapter, so the "next chapter" offer is stale. Hide it but
+  // KEEP the player active (status stays "chapter-end", so Play still reads the CURRENT chapter via
+  // playOrRelisten) — a full stop() would remove the bead and leave no way to play from the kashida.
+  dismissEnd: () => {
+    if (get().status === "chapter-end" && !get().endDismissed) set({ endDismissed: true });
   },
 
   skip: (delta) => {

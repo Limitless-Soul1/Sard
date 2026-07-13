@@ -37,13 +37,20 @@ export function TtsMini({
   onExpand,
   panelLeft = false,
   panelRight = false,
+  onPlayPause,
+  hasNextChapter = false,
+  onNextChapter,
 }: {
   onExpand: () => void;
   panelLeft?: boolean;
   panelRight?: boolean;
+  onPlayPause?: () => boolean; // RAWY-190: the RAWY-186 Play rule (after navigating away, read the CURRENT chapter)
+  hasNextChapter?: boolean; // RAWY-190: is there a chapter after the finished one? (drives the continue button)
+  onNextChapter?: () => void; // RAWY-190: advance to the next chapter + read it from the top
 }) {
   const { t, dir } = useI18n();
   const status = useTts((s) => s.status);
+  const endDismissed = useTts((s) => s.endDismissed); // RAWY-190: hides the stale chapter-end offer after a manual nav
   const toggle = useTts((s) => s.toggle);
   const index = useTts((s) => s.index);
   const total = useTts((s) => s.total);
@@ -79,7 +86,22 @@ export function TtsMini({
   };
   const onPlay = (e: React.MouseEvent) => {
     e.stopPropagation(); // the bead toggles playback WITHOUT expanding
-    toggle();
+    // RAWY-190: route through the Reader's play handler (playOrRelisten) so the bead obeys the RAWY-186
+    // rule in the kashida exactly as the full pill does — Play after navigating to another chapter reads
+    // the CURRENT one, and Play at chapter-end re-reads it. Falls back to the plain store toggle only if
+    // the handler isn't wired (which no-ops at chapter-end — the very dead end this task removes).
+    if (onPlayPause) onPlayPause(); else toggle();
+  };
+  // RAWY-190: at chapter-end the kashida shows a LABELLED "next chapter" continue control (never at
+  // book-end). Its target is resolved LIVE at press (onNextChapter → goToNextChapter = current section +1),
+  // so it can never jump to the chapter-after-next; it disappears when the chapter-end state clears — played,
+  // stopped, or (via `endDismissed`) when the user navigates the view off the finished chapter. On that
+  // navigate the bead STAYS (Reader calls dismissEnd, not stop), so pressing it reads the current chapter.
+  const chapterEnd = status === "chapter-end";
+  const showContinue = chapterEnd && !endDismissed && hasNextChapter;
+  const onContinue = (e: React.MouseEvent) => {
+    e.stopPropagation(); // advance to the next chapter WITHOUT expanding
+    onNextChapter?.();
   };
   const onSwap = (e: React.MouseEvent) => {
     e.stopPropagation(); // the swap button flips the side WITHOUT expanding
@@ -110,17 +132,30 @@ export function TtsMini({
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13a1 1 0 0 0 1.54.84l10-6.5a1 1 0 0 0 0-1.68l-10-6.5A1 1 0 0 0 8 5.5z" /></svg>
         )}
       </button>
-      {/* the tapered elongation stroke — a faint track with an accent fill = progress (tap = expand) */}
-      <div className="tts-kash-stroke" aria-hidden>
-        <div className="tts-kash-track" />
-        <div className="tts-kash-fill" style={{ width: `${pct}%` }} />
-      </div>
-      {/* the swap button = flip the stroke to the other side (mirrored). Does NOT expand or play. */}
-      <button className="tts-kash-swap" onClick={onSwap} aria-label={t("tts.swapSide")} title={t("tts.swapSide")}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-          <path d="M4 9h16l-3.5-3.5M20 15H4l3.5 3.5" />
-        </svg>
-      </button>
+      {showContinue ? (
+        /* RAWY-190: chapter-end — the SAME labelled continue control the full/collapsed pill shows (same
+           `tts.nextChapter` key + `.tts-end-next` tokens), replacing the now-meaningless progress stroke,
+           so the kashida is never a dead end. Its own `dir` keeps text+chevron correct inside the kashida's
+           forced-ltr layout. */
+        <button className="tts-end-next tts-kash-next" dir={dir} onClick={onContinue}>
+          <span>{t("tts.nextChapter")}</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="m9 6 6 6-6 6" /></svg>
+        </button>
+      ) : (
+        <>
+          {/* the tapered elongation stroke — a faint track with an accent fill = progress (tap = expand) */}
+          <div className="tts-kash-stroke" aria-hidden>
+            <div className="tts-kash-track" />
+            <div className="tts-kash-fill" style={{ width: `${pct}%` }} />
+          </div>
+          {/* the swap button = flip the stroke to the other side (mirrored). Does NOT expand or play. */}
+          <button className="tts-kash-swap" onClick={onSwap} aria-label={t("tts.swapSide")} title={t("tts.swapSide")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M4 9h16l-3.5-3.5M20 15H4l3.5 3.5" />
+            </svg>
+          </button>
+        </>
+      )}
     </div>
   );
 }

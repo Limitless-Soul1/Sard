@@ -38,9 +38,9 @@ export function TtsPlayer({
   // Previously `useTts()` re-rendered the pill on EVERY store change — including the karaoke `words`/
   // `wordIndex` ticks (several/sec on Edge) it doesn't even read — which made size toggles feel heavy and
   // could swallow a click landing mid-re-render. Actions are stable Zustand refs, so they never re-render.
-  const { active, status, engine, voice, index, total, speed, volume, progress, chapterLabel, error, notice, skip, setSpeed, setVolume, setEngine, retry, stop } = useTts(
+  const { active, status, endDismissed, engine, voice, index, total, speed, volume, progress, chapterLabel, error, notice, skip, setSpeed, setVolume, setEngine, retry, stop } = useTts(
     useShallow((s) => ({
-      active: s.active, status: s.status, engine: s.engine, voice: s.voice, index: s.index, total: s.total,
+      active: s.active, status: s.status, endDismissed: s.endDismissed, engine: s.engine, voice: s.voice, index: s.index, total: s.total,
       speed: s.speed, volume: s.volume, progress: s.progress, chapterLabel: s.chapterLabel, error: s.error, notice: s.notice,
       skip: s.skip, setSpeed: s.setSpeed, setVolume: s.setVolume, setEngine: s.setEngine, retry: s.retry, stop: s.stop,
     })),
@@ -95,7 +95,10 @@ export function TtsPlayer({
   const downloading = status === "downloading";
   const preparing = status === "preparing";
   const errored = status === "error";
-  const chapterEnd = status === "chapter-end"; // RAWY-184 (Part B): reached the last sentence
+  // RAWY-184 (Part B): reached the last sentence. RAWY-190: once the user navigates the view off the
+  // finished chapter, `endDismissed` hides the stale continue offer (the pill returns to its normal
+  // transport) while the session stays alive so Play still reads the current chapter.
+  const chapterEnd = status === "chapter-end" && !endDismissed;
   const busy = preparing || downloading;
   const dlPct = Math.round(progress * 100);
   const trackPct = downloading ? progress * 100 : total > 1 ? (index / (total - 1)) * 100 : 0;
@@ -117,7 +120,17 @@ export function TtsPlayer({
   return (
     <>
       {minimized ? (
-        <TtsMini onExpand={() => setSize("full")} panelLeft={panelLeft} panelRight={panelRight} />
+        // RAWY-190: the kashida is a FULLY usable state — the bead plays via `onPlayPause` (the RAWY-186
+        // rule: Play after navigating away reads the CURRENT chapter), and at chapter-end it shows the
+        // same labelled "next chapter" continue control the full/collapsed pill does. No dead end.
+        <TtsMini
+          onExpand={() => setSize("full")}
+          panelLeft={panelLeft}
+          panelRight={panelRight}
+          onPlayPause={onPlayPause}
+          hasNextChapter={hasNextChapter}
+          onNextChapter={onNextChapter}
+        />
       ) : (
       <>
       {picking && <TtsVoicePicker onClose={() => setPicking(false)} />}

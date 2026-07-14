@@ -12,7 +12,15 @@
 // a newer open() has superseded it — so a StrictMode double-invoke / remount can't race
 // two views (RAWY-10 hardening).
 
-import { buildReadingCss, buildDynamicCss, type BookThemeFlags, type ReadingStyle, type RevealLabels } from "./injectedCss";
+import {
+  buildReadingCss,
+  buildDynamicCss,
+  ALIGN_GATE_CLASS,
+  BOOK_ALIGN_CLASS,
+  type BookThemeFlags,
+  type ReadingStyle,
+  type RevealLabels,
+} from "./injectedCss";
 import type { Theme } from "../theme/tokens";
 import { extractChapterNumber, toWesternDigits } from "../lib/format";
 
@@ -444,6 +452,60 @@ function markInBodyHeading(doc: Document, tocLabel: string | null): void {
 // lines to the book direction so they align RIGHT with the surrounding text. Strong-typed lines (Arabic
 // OR Latin) keep their own inferred direction; text-align is left untouched, so an intentionally centered
 // or otherwise book-aligned break is preserved — only the default-neutral case is corrected.
+// RAWY-195: find the blocks the BOOK deliberately aligns, and tag them so the reader's forced
+// alignment / paragraph spacing / indent spare them. Without this, hardening text-align (which is what
+// makes the control work at all on a book with its own CSS) would also flatten every centred poem,
+// scene break, figure and title page to the user's body-text alignment.
+//
+// The measurement has to happen BEFORE our own alignment rule can apply, or we would just read our own
+// value back. That's what the `.sard-al` gate is for: buildReadingCss scopes the forced alignment to
+// `:root:root.sard-al`, this pass runs while <html> still lacks the class (so what computes is the
+// book's own alignment, inherited exactly as the book intended), and the class goes on at the end.
+// It runs inside foliate's `afterLoad`, before the section is rendered — so there is no flash.
+//
+// DIRECTION-AWARE (the subtlety that makes it safe): `text-align: right` is NOT a deliberate flourish
+// in an RTL book — it is just the start edge, and Lord of the Mysteries declares it on nearly every
+// block (`.calibre4{text-align:right}`, plus `body{text-align:right!important}`). Treating that as "the
+// book meant it" would exempt the whole book and the alignment control would go on doing nothing. So
+// only CENTRE, and the edge OPPOSITE the reading direction, count as intent. `start` (the initial value
+// — i.e. nothing was ever said) and `justify` never do.
+//
+// SCOPE TODAY: Sard does not currently apply an EPUB's external stylesheet at all (RAWY-195 measured
+// this; see OPEN.md), so a book's centring declared in a .css file cannot reach here yet. What this
+// pass DOES catch today is centring that does not go through a stylesheet — an inline
+// `style="text-align:center"` and the `[align=center]`/`<center>` presentational hints. It is also the
+// guard that keeps the book's centred poetry intact the day that stylesheet defect is fixed, at which
+// point the hardened !important alignment above would otherwise flatten every centred block.
+function markBookAlignedBlocks(doc: Document, dir?: string): void {
+  const root = doc.documentElement;
+  if (!root) return;
+  try {
+    const win = doc.defaultView;
+    if (!win) return;
+    const rtl = dir === "rtl";
+    const opposite = rtl ? "left" : "right"; // the edge away from where the text starts
+    // foliate measures with the frame briefly displayed (a display:none iframe can't be trusted for
+    // computed style in every engine); do the same so this pass can't silently read nothing.
+    const frame = win.frameElement as HTMLElement | null;
+    const hidden = frame?.style.display === "none";
+    if (frame && hidden) frame.style.display = "block";
+    // Two passes: read EVERY computed value first, tag second. Adding a class invalidates style for
+    // that subtree, so interleaving the two would force a fresh style resolve on each read.
+    const blocks = doc.querySelectorAll<HTMLElement>("p, li, blockquote, div, td, th, dd, dt");
+    const keep: HTMLElement[] = [];
+    for (const el of blocks) {
+      const ta = win.getComputedStyle(el).textAlign;
+      if (ta === "center" || ta === "-webkit-center" || ta === "end" || ta === opposite) keep.push(el);
+    }
+    if (frame && hidden) frame.style.display = "none";
+    for (const el of keep) el.classList.add(BOOK_ALIGN_CLASS);
+  } finally {
+    // Always open the gate — a book that somehow threw above must still get the user's alignment,
+    // rather than silently losing the control altogether.
+    root.classList.add(ALIGN_GATE_CLASS);
+  }
+}
+
 function alignNeutralLines(doc: Document, dir?: string): void {
   if (dir !== "rtl") return; // LTR books: a neutral line falling to the left is already correct
   const STRONG = /\p{L}/u; // any letter → a strong-directional line; leave it to the bidi algorithm
@@ -760,6 +822,10 @@ export class FoliateController {
       wrapTashkil(doc); // enable the diacritics toggle for this section
       this.writeDynamic(doc); // RAWY-140: this section's in-place PAINT sheet (colour/tashkīl skip re-inject)
       markInBodyHeading(doc, sectionTocLabel(view, index)); // RAWY-67: hide-titles catches this too
+      // RAWY-195: measure the book's OWN alignment and open the alignment gate. Must run before
+      // anything paints, and before alignNeutralLines (which sets dir=, not text-align, but keep the
+      // pristine document for the measurement anyway).
+      markBookAlignedBlocks(doc, this.dir);
       alignNeutralLines(doc, this.dir); // RAWY-134 (A): "…"-only scene breaks follow the book's RTL side
       // RAWY-70: the two-step reveal for the hide-first-line placeholder. Handled from the parent
       // frame (the content iframe runs no scripts, RAWY-64) via cross-frame DOM access, like the

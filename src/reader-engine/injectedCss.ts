@@ -57,6 +57,14 @@ export const PAGE_WIDTH_PX_MAX = 1400;
 export const pageWidthPx = (t: number): number =>
   PAGE_WIDTH_PX_MIN + Math.max(0, Math.min(1, t)) * (PAGE_WIDTH_PX_MAX - PAGE_WIDTH_PX_MIN);
 
+// RAWY-195: paragraph spacing now ALWAYS emits a rule, so `0` means a real zero — tighter than the
+// book. That makes the old default of 0 wrong: it would have jammed every book's paragraphs together
+// out of the box. The default is the gap a typical EPUB sets for itself (`p{margin:1em 0}` at a 16px
+// base = 16px), so a freshly-opened book still looks like it always did — the difference is that the
+// user can now go BELOW it. DB migration 9 lifts an already-stored 0 (which meant "book default") to
+// this value, so existing books keep their current look and don't silently collapse.
+export const PARAGRAPH_SPACING_DEFAULT = 16;
+
 interface FontDef {
   regular: string;
   bold?: string; // a separate static bold file (Amiri)
@@ -124,7 +132,7 @@ export const ARABIC_DEFAULTS: ReadingStyle = {
   pageWidth: PAGE_WIDTH_DEFAULT,
   pageFitWindow: false,
   fontWeight: 400,
-  paragraphSpacing: 0,
+  paragraphSpacing: PARAGRAPH_SPACING_DEFAULT,
   firstLineIndent: false,
   letterSpacing: 0,
   textColor: null,
@@ -141,7 +149,7 @@ export const LATIN_DEFAULTS: ReadingStyle = {
   pageWidth: PAGE_WIDTH_DEFAULT,
   pageFitWindow: false,
   fontWeight: 400,
-  paragraphSpacing: 0,
+  paragraphSpacing: PARAGRAPH_SPACING_DEFAULT,
   firstLineIndent: false,
   letterSpacing: 0,
   textColor: null,
@@ -211,8 +219,47 @@ const cssString = (s: string): string => `"${s.replace(/\\/g, "\\\\").replace(/"
 // selectors): `visibility:hidden` + a collapsed box, never `display:none` — see the RAWY-22 note
 // where a fully-removed heading (no layout box) broke CFI navigation to a chapter whose TOC anchor
 // pointed at it.
-const HIDE_BOX_RULE = (selector: string): string => `
-  ${selector} {
+// RAWY-195: a never-matching id guard raises a rule into the ID column WITHOUT changing what it
+// matches (RAWY-38). `NEVER` is the one the forced typography rules use; `NEVER2` is a SECOND guard
+// used only by HIDE_BOX_RULE below, so a hidden box always outranks them (see there).
+const NEVER = ":not(#__sard_never__)";
+const NEVER2 = ":not(#__sard_never2__)";
+
+// RAWY-195: the class FoliateController tags onto a block the BOOK deliberately centres (or aligns to
+// the edge opposite the reading direction) — a poem, a scene break, a centred figure, a title page.
+// Every user rule that would flatten that intent (alignment, paragraph spacing, first-line indent)
+// excludes it, so the book's own typography survives the override. Leading (line-height) is NOT
+// excluded: it is unambiguously the reader's control and a poem should follow the user's leading.
+export const BOOK_ALIGN_CLASS = "sard-book-align";
+// The gate class FoliateController adds to <html> AFTER that measurement. The forced alignment rule
+// is scoped to it, so during the measurement pass the book's OWN text-align is what computes — see
+// markBookAlignedBlocks(). Everything else is ungated (it doesn't disturb the measurement).
+export const ALIGN_GATE_CLASS = "sard-al";
+const KEEP = `:not(.${BOOK_ALIGN_CLASS})`;
+
+// Prefix each selector of a list with `:root:root` (+ the id guard) — the RAWY-38 hardening, applied
+// per selector. Takes an ARRAY, never a comma string: a leaf-div selector carries commas INSIDE its
+// own `:has(…)`, which a naive split on "," would shatter.
+const hardList = (sels: string[], prefix = ":root:root", suffix = NEVER): string =>
+  sels.map((s) => `${prefix} ${s}${suffix}`).join(",\n    ");
+
+// The book's own paragraph-ish blocks. TEXT_BLOCKS = every leaf text element the reader's leading and
+// alignment apply to — headings are deliberately ABSENT so the book's heading typography survives.
+// PARA_BLOCKS (spacing + indent) is narrower: <p> plus a "leaf" text div — some EPUBs use <div>, not
+// <p>, for paragraphs — but only one with no block child (`:not(:has(<block>))`), so layout/container
+// divs are spared and the page isn't stretched apart. <li> is excluded: margins there blow lists apart.
+const LEAF_DIV =
+  "body div:not(:has(p, div, ul, ol, table, section, article, aside, figure, blockquote, h1, h2, h3, h4, h5, h6, hr))";
+const TEXT_BLOCKS = ["p", "li", "blockquote", "div"];
+const PARA_BLOCKS = ["p", LEAF_DIV];
+
+// RAWY-195: the hide-box rule carries a SECOND id guard so it outranks the forced typography rules
+// above (which sit at one ID column). Without it, the hardened `margin-block` would beat this rule's
+// `margin: 0` on a hidden first line and re-open a phantom gap where the title used to be — and the
+// hardened line-height would beat its `line-height: 0`. It also, as a bonus, now beats a book's own
+// `h1.chapter{margin:2em!important}` (0,1,1), which the old element-level rule (0,0,1) lost to.
+const HIDE_BOX_RULE = (selectors: string[]): string => `
+  ${selectors.map((s) => `:root:root ${s}${NEVER}${NEVER2}`).join(",\n  ")} {
     visibility: hidden !important;
     font-size: 0 !important; line-height: 0 !important;
     height: 0 !important; min-height: 0 !important; max-height: 0 !important;
@@ -239,7 +286,7 @@ function themeBlock(
   const forceBg = (flags?.overrideBookColor ?? false) || theme.dark;
   const forceInk = forceBg || !!textColor;
   // A never-matching id (no element is `id="__sard_never__"`) used purely to raise specificity.
-  const ID = ":not(#__sard_never__)";
+  const ID = NEVER;
   const inkRules = `:root:root body${ID}, :root:root body${ID} *:not(a) { color: ${ink} !important; }
            :root:root body${ID} a, :root:root body${ID} a * { color: ${c.accent} !important; }`;
   return `
@@ -268,7 +315,7 @@ function themeBlock(
              is deliberately NOT included here (RAWY-69 split it into its own independent toggle
              below) — a heading-tag element never gets that class in the first place (see
              `markInBodyHeading`), so the two rules can never fight over the same element. */
-          HIDE_BOX_RULE("h1, h2, h3, h4, h5, h6")
+          HIDE_BOX_RULE(["h1", "h2", "h3", "h4", "h5", "h6"])
         : ""
     }
     ${
@@ -286,7 +333,7 @@ function themeBlock(
              accidental tap can never instantly spoil. A revealed instance carries
              `.sard-revealed`, so it is excluded from the hide here (per-instance; a fresh section
              loads a fresh idle placeholder). */
-          `${HIDE_BOX_RULE(".sard-chapter-heading:not(.sard-revealed)")}
+          `${HIDE_BOX_RULE([".sard-chapter-heading:not(.sard-revealed)"])}
            /* the placeholder takes the hidden line's place — quiet, in the book's theme */
            .sard-title-ph {
              display: inline-flex; align-items: baseline; gap: .4em; flex-wrap: wrap;
@@ -378,27 +425,42 @@ export function buildReadingCss(
   // Letter-spacing is LATIN-ONLY — it inserts gaps that break Arabic cursive joining.
   const latinText = bookDir !== "rtl";
   const extras = `
+    ${/* font-weight is deliberately NOT hardened (RAWY-195 audit): a book marks whole-block emphasis
+          with a class (`.calibre5{font-weight:bold}`), which out-specifies this element rule and so
+          still wins — that is the book's EMPHASIS surviving, exactly as the invariant requires.
+          Forcing it would flatten a bold paragraph to the reader's body weight. */ ""}
     p, li, blockquote, div, td, th, dd, dt {
       font-weight: ${style.fontWeight};
     }
-    ${/* Paragraph spacing. RAWY-37: !important + `:root:root` so it beats the book's own class
-          margins (e.g. `.calibre4{margin:1em 0}`). RAWY-38 hardening: (a) a never-matching id guard
-          `:not(#__sard_never__)` raises specificity into the ID column so it also beats `#x{margin}`;
-          (b) ALSO target <div> paragraphs — some EPUBs use <div> not <p> for paragraphs — but ONLY
-          a "leaf" text div (`:not(:has(<block>))`), so layout/container divs (which wrap headings,
-          paragraphs, lists, figures…) are spared and the page isn't stretched apart. `:has()` is
-          supported in the bundled evergreen WebView2 (Chromium). */ ""}
-    ${
-      style.paragraphSpacing > 0
-        ? `:root:root p:not(#__sard_never__),
-           :root:root body div:not(#__sard_never__):not(:has(p, div, ul, ol, table, section, article, aside, figure, blockquote, h1, h2, h3, h4, h5, h6, hr))
-           { margin-block: ${style.paragraphSpacing}px !important; }`
-        : ""
-    }
-    ${style.firstLineIndent ? `p { text-indent: 1.5em; }` : ""}
+    ${/* Paragraph spacing — ALWAYS emitted (RAWY-195). THIS is the bug the user actually hit, and it was
+          reproduced on the pre-fix build: the rule was gated on `> 0`, so at the MINIMUM it emitted
+          nothing at all and the paragraph fell back to the UA default (`p{margin:1em 0}` = 16px). The
+          user could drag the slider to zero and the gap never budged — they could never set spacing
+          TIGHTER than the default. A control whose minimum emits NO rule hands the value straight back
+          to whatever else is in the cascade. The minimum now emits a real `margin-block: 0`, and the
+          default moved to PARAGRAPH_SPACING_DEFAULT so a freshly-opened book keeps the same paragraph
+          rhythm it has today (migration 9 lifts an already-stored 0 to it — that 0 meant "leave it
+          alone", not "collapse it"). `KEEP` spares deliberately-centred blocks: a poem's lines would
+          otherwise be prised apart by the reader's paragraph spacing. */ ""}
+    ${hardList(PARA_BLOCKS, ":root:root", `${KEEP}${NEVER}`)}
+      { margin-block: ${style.paragraphSpacing}px !important; }
+    ${/* First-line indent — ALSO always emitted, and hardened (RAWY-195). Same shape of defect: OFF
+          emitted nothing, so the indent was whatever the rest of the cascade said rather than an
+          explicit zero, and ON would lose to any book class that zeroes the indent the moment book CSS
+          applies. OFF is now an explicit `text-indent: 0`. Centred blocks are spared (they must not be
+          indented). KNOWN LIMIT: with indent ON, a book's left-aligned VERSE lines (Alice's `p.poem`)
+          are <p> too, so they take the indent — acceptable for an off-by-default, opt-in control. */ ""}
+    ${hardList(PARA_BLOCKS, ":root:root", `${KEEP}${NEVER}`)}
+      { text-indent: ${style.firstLineIndent ? "1.5em" : "0"} !important; }
+    ${/* Tracking stays LATIN-ONLY and stays gated on `> 0` (RAWY-195 audit — a deliberate exception to
+          the always-emit rule): its "minimum" IS the CSS initial value (`normal`), and forcing that on
+          every paragraph would strip the book's own decorative tracking (Alice's `p.asterism` scene
+          break) for no user gain. It IS hardened now, so when the user does ask for tracking the
+          control actually wins on a class-styled book. */ ""}
     ${
       latinText && style.letterSpacing > 0
-        ? `p, li, blockquote, div, td, th { letter-spacing: ${style.letterSpacing}px; }`
+        ? `${hardList(["p", "li", "blockquote", "div", "td", "th"], ":root:root", `${KEEP}${NEVER}`)}
+      { letter-spacing: ${style.letterSpacing}px !important; }`
         : ""
     }`;
 
@@ -460,9 +522,31 @@ export function buildReadingCss(
     html, body, p, li, blockquote, div, span, h1, h2, h3, h4, h5, h6, td, th, a {
       font-family: 'SardArabic', 'SardLatin', serif !important;
     }
-    p, li, blockquote, div {
-      line-height: ${style.lineHeight};
-      text-align: ${style.align};
+    ${/* RAWY-195. These two were the last PLAIN rules in the funnel: an element selector at specificity
+          (0,0,1), no !important — while text COLOUR (themeBlock) and paragraph spacing had carried the
+          RAWY-38 hardening for years. MEASURED TRUTH (don't repeat the earlier misdiagnosis): they were
+          not actually losing to book CSS, because Sard does not currently apply an EPUB's external
+          stylesheet AT ALL — proven live on both test books via properties Sard never sets
+          (`p.poem{margin-left:10%}` computes 0px, `{font-size:90%}` computes 16px). With no book rules
+          in the cascade, a plain `p{…}` rule had nothing to lose to, and alignment/leading DID apply.
+          That book-stylesheet defect is a separate, larger bug (see OPEN.md) — and the day it is fixed,
+          a book's `.calibre4{text-align:right}` (0,1,0) would instantly out-specify these element
+          rules and the controls WOULD silently die. So harden them by construction, now: `:root:root`
+          (0,2,0 — beats a class !important) + a never-matching id guard (→ the ID column — beats
+          `#wrap{…!important}`), plus !important. Headings are NOT in TEXT_BLOCKS: the book's heading
+          typography must survive untouched.
+          ALIGNMENT additionally: (a) is scoped to the `.sard-al` gate class, which FoliateController
+          adds to <html> only AFTER it has measured each block's own alignment (with this rule therefore
+          inert), and (b) spares `.sard-book-align` — the blocks that measurement found are deliberately
+          centred (or aligned to the edge opposite the reading direction): poems, scene breaks, centred
+          figures, title pages. Today that measurement still catches an inline `style="text-align:center"`
+          and an `[align=center]` attribute (both of which DO apply — they are not stylesheet rules), and
+          it is what will keep the book's centred poetry intact once its stylesheet loads. */ ""}
+    ${hardList(TEXT_BLOCKS)} {
+      line-height: ${style.lineHeight} !important;
+    }
+    ${hardList(TEXT_BLOCKS, `:root:root.${ALIGN_GATE_CLASS}`, `${KEEP}${NEVER}`)} {
+      text-align: ${style.align} !important;
     }
     /* keep the book's intentional alignment for headings etc. */
     [align="center"], center { text-align: center; }

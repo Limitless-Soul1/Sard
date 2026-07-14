@@ -47,6 +47,12 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "book_search_fold",
         include_str!("migrations_sql/0007_book_search_fold.sql"),
     ),
+    // 8 is the RAWY-189 *code* migration (run_arabic_dir_backfill, below) — not a SQL file.
+    (
+        9,
+        "paragraph_spacing_default",
+        include_str!("migrations_sql/0009_paragraph_spacing_default.sql"),
+    ),
 ];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.

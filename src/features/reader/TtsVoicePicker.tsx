@@ -2,28 +2,59 @@
 // voices available for the CURRENT engine + book language (Edge Arabic → Salma/Zariyah/Hamed/…;
 // Piper → the bundled voice). The Engine chip picks the engine; this refines the voice. Selecting
 // persists it per language and switches live. Opens above the trailing chips.
+//
+// RAWY-197: the picker now lists EVERY language Edge returns (the backend ar-/en- filter was removed).
+// Languages are grouped into SECTIONS — one per primary ISO code — each headed by the language's
+// OWN NAME (endonym: "Français", "Deutsch", "العربية"), in a fixed order: Multilingual → العربية →
+// English → every other language alphabetically by endonym. Dialects group INSIDE their language,
+// with the region shown per voice. A search field narrows the (now long) list across section names,
+// voice names, and region labels, in either UI language.
 
 import { useEffect, useMemo, useState } from "react";
 
 import { useI18n } from "../../i18n";
 import { loadPickerVoices, type PickerVoice, useTts } from "../../lib/tts";
 
-// RAWY-187 (Part A): the picker is grouped into language SECTIONS in this fixed order. Multilingual heads
-// the list because those Edge voices can speak ANY language (incl. Arabic), so they're useful for every
-// book; then Arabic (the app is Arabic-first), English, then the rest. Sections with no voice are omitted.
-const SECTION_ORDER = ["multilingual", "arabic", "english", "other"] as const;
-type SectionKey = (typeof SECTION_ORDER)[number];
-// Detect a section for one voice. Edge multilingual voices carry "Multilingual" in their short_name/`id`
-// (a stable Microsoft naming convention, e.g. `en-US-AvaMultilingualNeural`) — that wins over the locale
-// so they head the list. A voice NOT matched here still falls through to its locale section, so grouping
-// can never drop a voice. Otherwise classify by LOCALE prefix (`ar-`/`en-`), everything else is "other".
-function sectionOf(v: PickerVoice): SectionKey {
-  if (v.id.includes("Multilingual")) return "multilingual";
-  const loc = v.locale.toLowerCase();
-  if (loc.startsWith("ar")) return "arabic";
-  if (loc.startsWith("en")) return "english";
-  return "other";
-}
+// Section sort order: Multilingual FIRST (those voices speak any language), then العربية, then English,
+// then every other language alphabetically by endonym. Multilingual detection wins over locale, so a
+// voice whose id contains "Multilingual" heads the list regardless of its locale.
+const MULTILINGUAL = "__multilingual"; // synthetic section key for the "Multilingual" group
+const PINNED: Record<string, number> = { ar: 1, en: 2 }; // العربية, English — fixed positions after Multilingual
+
+// An endonym whose FIRST letter is lowercase-cased in the script — title-case it so section headers are
+// visually consistent ("français" → "Français"). RAWY-197: a narrow, targeted exception — the Bantu
+// `isi-` prefix is correct with a lowercase `i` (isiZulu, isiXhosa), so it is SPARED from title-casing.
+const titleCaseEndonym = (s: string): string => {
+  if (s.length === 0) return s;
+  if (s.startsWith("isi")) return s; // the `isi-` convention is intentionally lowercase — do not touch it
+  const first = s.charAt(0);
+  const isLower = first !== first.toUpperCase() && first === first.toLowerCase();
+  return isLower ? first.toUpperCase() + s.slice(1) : s;
+};
+
+// Endonym for a primary ISO code, in the language's OWN script (not translated into the UI language):
+// `new Intl.DisplayNames(["fr"], {type:"language"}).of("fr")` → "français" → title-cased → "Français".
+// Falls back to the raw code if the API is missing OR `.of()` rejects/throws on the code. RAWY-197: ICU's
+// `DisplayNames.of()` THROWS `invalid_argument` on a code that is not a valid Unicode language id (empty
+// string, "__nolocale", "QLatin1", …) — it does NOT return undefined. So the `.of()` call itself must be
+// inside the try, not just the constructor. With the backend ar-/en- filter removed, locales that never
+// appeared before now reach this path, so the throw is reachable on real data.
+const endonymOf = (primary: string): string => {
+  if (!primary) return primary; // empty → nothing to display-name
+  try {
+    const Ctor = (Intl as unknown as { DisplayNames?: new (l: string[], o: { type: string }) => { of: (c: string) => string | undefined } }).DisplayNames;
+    if (!Ctor) return primary; // older runtime without Intl.DisplayNames → use the code as-is
+    const name = new Ctor([primary], { type: "language" }).of(primary);
+    if (name && name !== primary) return titleCaseEndonym(name);
+  } catch {
+    /* constructor missing OR .of() rejected the code — fall back to the code */
+  }
+  return primary;
+};
+
+// The synthetic Multilingual section header follows the UI LANGUAGE (it is a category, not a language):
+// Arabic UI → "متعدّد اللغات", English UI → "Multilingual".
+const MULTILINGUAL_KEY = "tts.secMultilingual";
 
 export function TtsVoicePicker({ onClose }: { onClose: () => void }) {
   const { t, lang: uiLang, dir } = useI18n();
@@ -43,42 +74,58 @@ export function TtsVoicePicker({ onClose }: { onClose: () => void }) {
     };
   }, []);
 
-  // Localized region name (ar-EG → "Egypt" / "مصر"); falls back to the raw code.
+  // Localized region name (ar-EG → "Egypt" / "مصر"); falls back to the raw code. RAWY-197: ICU's
+  // `DisplayNames.of()` THROWS `invalid_argument` on an invalid region code (empty, "__nolocale", a
+  // non-CLDR 2-letter code, …) — it does NOT return undefined — so each `.of()` call is itself wrapped.
   const regionName = useMemo(() => {
-    try {
-      const dn = new (Intl as unknown as { DisplayNames: new (l: string[], o: { type: string }) => { of: (c: string) => string | undefined } }).DisplayNames([uiLang], { type: "region" });
-      return (code: string) => dn.of(code) ?? code;
-    } catch {
-      return (code: string) => code;
-    }
+    const Ctor = (Intl as unknown as { DisplayNames?: new (l: string[], o: { type: string }) => { of: (c: string) => string | undefined } }).DisplayNames;
+    if (!Ctor) return (code: string) => code; // older runtime → raw code
+    let dn: { of: (c: string) => string | undefined } | null = null;
+    try { dn = new Ctor([uiLang], { type: "region" }); } catch { /* type "region" unsupported */ }
+    return (code: string) => {
+      if (!dn || !code) return code;
+      try { return dn.of(code) ?? code; } catch { return code; } // invalid region → raw code
+    };
   }, [uiLang]);
 
   // RAWY-187 (Part A): scope to the CURRENT ENGINE only (the Engine chip picks Piper vs Edge). The former
   // book-language filter is GONE — every book's picker now lists all of the engine's voices, grouped by
   // language section below, so a Multilingual/English voice can be chosen even for an Arabic book. Selection
   // still persists per the current book language (`setVoice(…, curLang)` unchanged), so playback is identical.
+  // RAWY-197: the selected voice (`voice`) is resolved at play time — the unset default is WilliamMultilingual,
+  // so on a profile with no saved choice, `voice` already equals it and the row is marked "on" naturally.
   const items = useMemo(
     () => (voices ?? []).filter((v) => v.engine === engine),
     [voices, engine],
   );
 
-  // Group into the 4 fixed sections, alphabetical by display name within each, empty sections omitted.
-  const groups = useMemo(() => {
-    const by: Record<SectionKey, PickerVoice[]> = { multilingual: [], arabic: [], english: [], other: [] };
-    for (const v of items) by[sectionOf(v)].push(v);
-    const header: Record<SectionKey, string> = {
-      multilingual: t("tts.secMultilingual"),
-      arabic: t("tts.lang.ar"),
-      english: t("tts.lang.en"),
-      other: t("tts.secOther"),
-    };
-    return SECTION_ORDER
-      .map((k) => ({
-        key: k,
-        header: header[k],
-        voices: by[k].sort((a, b) => a.label.localeCompare(b.label, uiLang, { sensitivity: "base" })),
-      }))
-      .filter((g) => g.voices.length > 0);
+  // Build the FULL section list ONCE (deps: items + uiLang) — the expensive work (grouping, per-language
+  // Intl.DisplayNames lookups, sorting). RAWY-197: with ~90 languages the endonym lookups are non-trivial,
+  // so they are isolated here rather than recomputed on each render.
+  const allSections = useMemo(() => {
+    const by = new Map<string, PickerVoice[]>();
+    const endonymByKey = new Map<string, string>();
+    for (const v of items) {
+      const key = v.id.includes("Multilingual") ? MULTILINGUAL : (v.lang || "__nolocale");
+      if (!by.has(key)) by.set(key, []);
+      by.get(key)!.push(v);
+      if (!endonymByKey.has(key)) endonymByKey.set(key, key === MULTILINGUAL ? "" : endonymOf(key));
+    }
+    const sections = Array.from(by.keys()).map((key) => {
+      const header =
+        key === MULTILINGUAL ? t(MULTILINGUAL_KEY) : endonymByKey.get(key) ?? key;
+      const list = by.get(key)!.sort((a, b) => a.label.localeCompare(b.label, uiLang, { sensitivity: "base" }));
+      return { key, header, endonym: endonymByKey.get(key) ?? key, voices: list };
+    });
+    sections.sort((a, b) => {
+      if (a.key === MULTILINGUAL) return -1;
+      if (b.key === MULTILINGUAL) return 1;
+      const pa = PINNED[a.key] ?? Infinity;
+      const pb = PINNED[b.key] ?? Infinity;
+      if (pa !== pb) return pa - pb;
+      return a.endonym.localeCompare(b.endonym, uiLang, { sensitivity: "base" });
+    });
+    return sections.filter((s) => s.voices.length > 0);
   }, [items, t, uiLang]);
 
   const meta = (v: PickerVoice): string => {
@@ -101,7 +148,7 @@ export function TtsVoicePicker({ onClose }: { onClose: () => void }) {
           <div className="tts-menu-empty">{t("tts.noVoices")}</div>
         ) : (
           // RAWY-187 (Part A): render each non-empty section with a small sticky header, then its voices.
-          groups.map((g) => (
+          allSections.map((g) => (
             <div key={g.key} className="tts-menu-group" role="group" aria-label={g.header}>
               <div className="tts-menu-section">{g.header}</div>
               {g.voices.map((v) => {

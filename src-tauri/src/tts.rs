@@ -364,7 +364,12 @@ fn load_edge_voices() -> Result<Vec<Voice>, String> {
     Ok(merge_arabic_fallback(fetched))
 }
 
-/// List the Edge voices for the picker — Arabic + English only, cached after the first fetch.
+/// List the Edge voices for the picker — EVERY voice Microsoft returns, cached after the first
+/// fetch. RAWY-197 removed the old `ar-`/`en-` filter (tts.rs:378-383): it silently made Sard an
+/// Arabic/English-only reader for read-aloud, contradicting D44 (a GENERAL reader for everyone).
+/// Arabic stays guaranteed by `merge_arabic_fallback` upstream in `load_edge_voices`. A voice with
+/// no short_name is skipped (no stable id to select); a voice with no locale still passes through
+/// with an empty locale string — grouping never drops a selectable voice.
 #[tauri::command]
 pub fn tts_edge_voices(engines: State<'_, TtsEngine>) -> Result<Vec<EdgeVoiceInfo>, String> {
     let mut cache = engines.edge_voices.lock().map_err(|e| e.to_string())?;
@@ -375,12 +380,6 @@ pub fn tts_edge_voices(engines: State<'_, TtsEngine>) -> Result<Vec<EdgeVoiceInf
         .as_ref()
         .unwrap()
         .iter()
-        .filter(|v| {
-            v.locale
-                .as_deref()
-                .map(|l| l.starts_with("ar-") || l.starts_with("en-"))
-                .unwrap_or(false)
-        })
         .filter_map(|v| {
             v.short_name.as_ref().map(|sn| EdgeVoiceInfo {
                 id: sn.clone(),

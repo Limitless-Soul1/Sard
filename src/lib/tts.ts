@@ -30,23 +30,29 @@ export const TTS_EDGE_DOWN = "edge-unavailable";
 // A voice is identified by its ENGINE + id (RAWY-110). "piper" = offline; "edge" = online neural.
 export type TtsEngineKind = "piper" | "edge";
 export interface TtsVoiceRef { engine: TtsEngineKind; id: string }
-export type TtsLang = "ar" | "en";
+// RAWY-197: a book language is now ANY primary ISO code ("ar", "en", "fr", "zh", …), not a two-value
+// union. A previously saved `tts_voice:<lang>` key is READ AND RESPECTED byte-identical regardless of
+// what code it holds — see resolveVoicePref. Only PIPER is still bound to two bundled voices (below).
+export type TtsLang = string;
 
-// The bundled Piper voices (one per language) — the OFFLINE anchor, always available (the engine the user
-// gets when they explicitly Switch to Piper from the Edge-unavailable state, RAWY-193).
-export const PIPER_VOICE: Record<TtsLang, string> = {
+// The bundled Piper voices — the OFFLINE anchor (the engine the user gets when they explicitly Switch
+// to Piper from the Edge-unavailable state, RAWY-193). Only Arabic + English are bundled today, so
+// Piper is offered only for those; for any other language there is no offline voice (Edge is the path).
+export const PIPER_VOICE: Record<string, string> = {
   ar: "ar_JO-kareem-medium",
   en: "en_US-lessac-medium",
 };
-export const piperVoiceRef = (lang: TtsLang): TtsVoiceRef => ({ engine: "piper", id: PIPER_VOICE[lang] });
+export const piperVoiceRef = (lang: TtsLang): TtsVoiceRef => ({ engine: "piper", id: PIPER_VOICE[lang] ?? PIPER_VOICE.en });
 
-// RAWY-113: Edge (neural) is the DEFAULT engine per design 6. First-use with no saved pref = Edge;
-// if offline, playback PAUSES in the explicit "Edge unavailable" state (RAWY-193) — never a silent Piper swap.
-export const EDGE_DEFAULT: Record<TtsLang, string> = {
-  ar: "ar-EG-SalmaNeural",
-  en: "en-US-AriaNeural",
-};
-export const defaultVoiceForLang = (lang: TtsLang): TtsVoiceRef => ({ engine: "edge", id: EDGE_DEFAULT[lang] });
+// RAWY-197: the UNSET-default Edge voice for EVERY language. WilliamMultilingual speaks any language,
+// so it is sane for every book. This id was read from the live Edge voice list (confirmed in the
+// owner's real DB as their saved choice). It sits alphabetically in the Multilingual section with NO
+// badge/label — it is simply pre-selected when nothing is saved. An explicitly saved key always wins.
+// FALLBACK: Microsoft's CDN serves region-varied lists (RAWY-179), so WilliamMultilingual may be
+// absent for some users; `resolveEdgeDefault` then falls back to the first available Multilingual
+// voice, else the first voice in the list — the app never breaks or falls silent on an unset choice.
+export const EDGE_UNSET_DEFAULT = "en-AU-WilliamMultilingualNeural";
+export const defaultVoiceForLang = (): TtsVoiceRef => ({ engine: "edge", id: EDGE_UNSET_DEFAULT });
 
 // Friendly display name for the player's VOICE CHIP (RAWY-112 — the design's labelled chip, not a
 // bare icon). Piper: the two bundled names; Edge: the short_name's voice part ("ar-EG-SalmaNeural" → "Salma").
@@ -56,7 +62,9 @@ export function voiceLabel(engine: TtsEngineKind, id: string): string {
   return tail.replace(/Neural$/, "") || id; // "Salma"
 }
 
-// A row in the voice picker (RAWY-111) — Piper (2, offline) + every Edge neural voice for ar/en.
+// A row in the voice picker (RAWY-111) — Piper (2, offline) + every Edge neural voice Microsoft returns.
+// RAWY-197: `lang` is now the REAL primary ISO code parsed from the locale (was hard-cast to "ar"/"en"),
+// and the Edge list is no longer filtered by the backend to ar-/en- — every language appears.
 export interface PickerVoice { engine: TtsEngineKind; id: string; lang: TtsLang; locale: string; label: string; gender: string }
 const PIPER_PICKER: PickerVoice[] = [
   { engine: "piper", id: PIPER_VOICE.ar, lang: "ar", locale: "ar", label: "Kareem", gender: "" },
@@ -64,19 +72,24 @@ const PIPER_PICKER: PickerVoice[] = [
 ];
 let edgeVoicesCache: PickerVoice[] | null = null;
 /** Piper (offline) + Edge (online neural) voices for the picker. Edge list is fetched once + cached;
- *  a failure (offline) yields Piper-only rather than throwing. */
+ *  a failure (offline) yields Piper-only rather than throwing. RAWY-197: `lang` is the real primary code
+ *  parsed from the locale (`fr-FR` → `fr`); a voice with no locale gets `lang=""` but is still listed. */
 export async function loadPickerVoices(): Promise<PickerVoice[]> {
   if (!edgeVoicesCache) {
     try {
       const list = await ttsEdgeVoices();
-      edgeVoicesCache = list.map((v) => ({
-        engine: "edge" as const,
-        id: v.id,
-        lang: (v.lang.toLowerCase().startsWith("ar") ? "ar" : "en") as TtsLang,
-        locale: v.lang,
-        label: v.label,
-        gender: v.gender,
-      }));
+      edgeVoicesCache = list.map((v) => {
+        const loc = v.lang.toLowerCase();
+        const primary = loc.includes("-") ? loc.split("-")[0] : loc; // "fr-fr" → "fr", "en" → "en"
+        return {
+          engine: "edge" as const,
+          id: v.id,
+          lang: primary,
+          locale: v.lang,
+          label: v.label,
+          gender: v.gender,
+        };
+      });
     } catch {
       edgeVoicesCache = []; // offline / endpoint down → Piper-only picker
     }
@@ -84,7 +97,22 @@ export async function loadPickerVoices(): Promise<PickerVoice[]> {
   return [...PIPER_PICKER, ...edgeVoicesCache];
 }
 
-// Resolve the saved engine+voice for a language (persisted as "engine:id"); default = Edge (design 6).
+// RAWY-197: the Edge voice to PRE-SELECT in the picker when no choice is saved — the unset default.
+// Prefers the WilliamMultilingual id; if it is absent from THIS region's list (Microsoft's CDN varies
+// by geography, RAWY-179), falls back to the first available Multilingual voice, else the first Edge
+// voice. Returns null only when there is no Edge voice at all (offline → Piper-only picker).
+export function resolveEdgeDefault(edgeVoices: PickerVoice[]): string | null {
+  if (edgeVoices.length === 0) return null;
+  const wm = edgeVoices.find((v) => v.id === EDGE_UNSET_DEFAULT);
+  if (wm) return wm.id;
+  const firstMulti = edgeVoices.find((v) => v.id.includes("Multilingual"));
+  return (firstMulti ?? edgeVoices[0]).id;
+}
+
+// Resolve the saved engine+voice for a language (persisted as "engine:id"); default = Edge WilliamMultilingual.
+// RAWY-197: ANY previously saved `tts_voice:<lang>` key is READ AND RESPECTED byte-identical — the value is
+// parsed only by the `engine:id` shape, never reinterpreted by language. A saved key always wins over the
+// unset default. `lang` is now an arbitrary primary ISO code, so the key namespace is open (`tts_voice:fr`, …).
 async function resolveVoicePref(lang: TtsLang): Promise<TtsVoiceRef> {
   const saved = await settingsGet(`tts_voice:${lang}`).catch(() => null);
   if (saved) {
@@ -93,7 +121,7 @@ async function resolveVoicePref(lang: TtsLang): Promise<TtsVoiceRef> {
     const id = saved.slice(i + 1);
     if ((engine === "piper" || engine === "edge") && id) return { engine, id };
   }
-  return defaultVoiceForLang(lang);
+  return defaultVoiceForLang();
 }
 
 type Status = "idle" | "preparing" | "downloading" | "playing" | "paused" | "error" | "chapter-end" | "edge-error";
@@ -676,10 +704,13 @@ export const useTts = create<TtsState>((set, get) => ({
   },
 
   // RAWY-113 (design 6): the Engine chip switches engine, keeping the current language. It picks that
-  // engine's default voice for the language (the Voices chip then refines the specific voice).
+  // engine's default voice for the language (the Voices chip then refines the specific voice). RAWY-197:
+  // Edge's default is the UNSET WilliamMultilingual (any language); Piper's default is the bundled voice
+  // for the language if one exists, else the English Lessac model (the offline anchor) — Piper is only
+  // bundled for ar/en, so a non-ar/non-en book switching to Piper lands on Lessac.
   setEngine: (engine) => {
     const lang = get().lang;
-    const id = engine === "edge" ? EDGE_DEFAULT[lang] : PIPER_VOICE[lang];
+    const id = engine === "edge" ? EDGE_UNSET_DEFAULT : (PIPER_VOICE[lang] ?? PIPER_VOICE.en);
     get().setVoice(engine, id, lang);
   },
 

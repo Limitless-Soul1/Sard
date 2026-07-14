@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-// Chrome-on-intent (RAWY-14, band C; hardened RAWY-72): the reading chrome is shown while there is
-// pointer/keyboard activity and auto-hides after a quiet period, for immersive reading. It fades/
-// slides via CSS (see `.reader-chrome` transitions), so this hook only decides show vs hide.
+// Chrome-on-intent (RAWY-14, band C; hardened RAWY-72; RAWY-194): the reading chrome is shown on a
+// DELIBERATE intent (pointer reach to the top edge, scroll-up, an opened panel, or keyboard focus entering
+// the toolbar) and auto-hides after a quiet period, for immersive reading. RAWY-194 removed the old
+// wake-on-ANY-keydown (it revealed the bar on every keystroke, incl. TTS transport keys). It fades/slides
+// via CSS (see `.reader-chrome` transitions), so this hook only decides show vs hide.
 //
 // RAWY-72 makes the auto-hide RELIABLE and the wake COMPLETE:
 //  • Reliable HIDE — a plain `mousemove → wake` reset the timer on EVERY move event, including the
@@ -145,12 +147,15 @@ export function useChromeOnIntent(): {
     const onTap = () => wake();
     window.addEventListener("mousemove", onMove, { passive: true });
     window.addEventListener("pointerdown", onTap, { passive: true });
-    window.addEventListener("keydown", onTap);
+    // RAWY-194 (C): NO `keydown → wake`. Waking on ANY window keydown revealed the reading chrome on every
+    // keystroke — a stray key, Tab, Escape, a modifier, and (the report) Space/arrows, which are TTS
+    // transport, not a "show the toolbar" intent. No bare keystroke is a genuine reveal intent; the chrome
+    // is revealed by DELIBERATE acts only — a pointer reach to the top edge, scroll-up, an opened panel
+    // (setHold), and keyboard FOCUS entering the toolbar (the reader reveals+pins it on chrome focusin).
     arm(); // start the initial auto-hide countdown
     return () => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("pointerdown", onTap);
-      window.removeEventListener("keydown", onTap);
       if (timer.current) clearTimeout(timer.current);
     };
   }, [signalMove, wake]);

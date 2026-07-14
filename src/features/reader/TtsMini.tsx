@@ -31,7 +31,7 @@
 import { useState } from "react";
 
 import { useI18n } from "../../i18n";
-import { useTts } from "../../lib/tts";
+import { releaseButtonFocusAfterPointerClick, useTts } from "../../lib/tts";
 
 export function TtsMini({
   onExpand,
@@ -120,6 +120,7 @@ export function TtsMini({
       aria-label={t("tts.player")}
       title={t("tts.expand")}
       onPointerDown={stopP} // don't wake the reader chrome / start a text selection
+      onClickCapture={releaseButtonFocusAfterPointerClick} // RAWY-194 (A/B): a mouse-clicked bead/swap/next must not keep keyboard focus (capture phase — its buttons stopPropagation)
       onClick={onBody} // tapping the body expands back to the pill
       onWheel={stopP} // no scroll-through to the book
     >

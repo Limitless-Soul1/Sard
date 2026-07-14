@@ -249,6 +249,19 @@ export function skipSentenceForArrow(key: string): boolean {
   return true;
 }
 
+// RAWY-194 (A/B): a MOUSE click leaves the <button> focused, and a focused <button> then swallows Space (it
+// activates ITSELF) and ignores arrow keys entirely — so a click silently CAPTURES the keyboard from the
+// global transport handler until the user clicks the page. After a POINTER activation ONLY (`detail > 0`),
+// release focus so the next Space/arrow reaches the transport handler on the FIRST press. A KEYBOARD
+// activation (Enter/Space on a Tab-focused button → `detail === 0`) KEEPS focus, so Tab users never lose
+// their place (accessibility). Wire on a pill container's `onClickCapture` so it fires even for buttons that
+// stopPropagation (the kashida). Only <button>s are released — the volume <input range> keeps its arrow keys.
+export function releaseButtonFocusAfterPointerClick(e: { detail: number; target: EventTarget | null }): void {
+  // `Element`, not `HTMLElement`: a click usually lands on the button's inner <svg>/<path> icon, which is an
+  // SVGElement — an `instanceof HTMLElement` guard silently skipped the blur (caught live, RAWY-194 STEP 3).
+  if (e.detail > 0 && e.target instanceof Element) e.target.closest("button")?.blur();
+}
+
 // RAWY-127: the Rust response is FRAMED — `[u32 BE json_len][json words][audio bytes]` — so the audio
 // stays raw (no base64) while carrying its per-word timing. Split the header off; `words` is `[]` for
 // Piper, which keeps that sentence at the Phase-1 sentence level.

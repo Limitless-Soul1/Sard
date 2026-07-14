@@ -11,7 +11,7 @@ import { useShallow } from "zustand/react/shallow";
 
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
-import { TTS_EMPTY, TTS_MAX_SPEED, TTS_MIN_SPEED, TTS_SPEED_STEP, skipSentenceForArrow, toggleTtsPlayback, useTts, voiceLabel } from "../../lib/tts";
+import { TTS_EMPTY, TTS_MAX_SPEED, TTS_MIN_SPEED, TTS_SPEED_STEP, releaseButtonFocusAfterPointerClick, skipSentenceForArrow, toggleTtsPlayback, useTts, voiceLabel } from "../../lib/tts";
 import { TtsMini } from "./TtsMini";
 import { TtsVoicePicker } from "./TtsVoicePicker";
 
@@ -143,7 +143,7 @@ export function TtsPlayer({
       ) : (
       <>
       {picking && <TtsVoicePicker onClose={() => setPicking(false)} />}
-      <div className={`tts-pill${expanded ? " expanded" : ""}${errored || edgeErrored ? " errored" : ""}${chapterEnd ? " chapter-end" : ""}`} dir={dir} role="group" aria-label={t("tts.player")}>
+      <div className={`tts-pill${expanded ? " expanded" : ""}${errored || edgeErrored ? " errored" : ""}${chapterEnd ? " chapter-end" : ""}`} dir={dir} role="group" aria-label={t("tts.player")} onClickCapture={releaseButtonFocusAfterPointerClick}>
         {edgeErrored ? (
           /* RAWY-193: the Edge engine failed (and the one bounded retry failed) — an EXPLICIT, actionable
              PAUSE. Nothing plays in a voice the user didn't choose: they either Retry Edge or make an explicit

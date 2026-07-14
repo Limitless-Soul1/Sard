@@ -149,6 +149,12 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // colour + hide-chapter-titles stay GLOBAL flags (set in Global Settings / chapters panel).
   const { overrideBookColor, hideChapterTitles, hideFirstLine, setHideTitles, setHideFirstLine } = useTheme();
   const { visible: chromeVisible, signalMove, signalScroll, setHold } = useChromeOnIntent();
+  // RAWY-194 (C): the chrome no longer wakes on bare keystrokes. A keyboard user still reaches it: when Tab
+  // moves focus INTO the chrome (its controls stay in the tab order), reveal + PIN it — the genuine "I want
+  // the toolbar" intent — and release when focus leaves. This also stops focus landing on an aria-hidden
+  // control (ReaderChrome sets aria-hidden while the bar is hidden). The pill is a sibling of the chrome, so
+  // focusing a transport button never trips this.
+  const [chromeFocused, setChromeFocused] = useState(false);
 
   const openBook = useCallback(async (target: OpenTarget) => {
     const set = useReader.getState().set;
@@ -395,9 +401,21 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // the bar to it meant the bar never auto-hid for the owner. Contents now leaves the bar free to
   // auto-hide on idle/scroll (the panel itself stays open; it just doesn't force the bar shown).
   useEffect(
-    () => setHold(settingsOpen || annoOpen || basketOpen || searchOpen),
-    [settingsOpen, annoOpen, basketOpen, searchOpen, setHold],
+    () => setHold(settingsOpen || annoOpen || basketOpen || searchOpen || chromeFocused),
+    [settingsOpen, annoOpen, basketOpen, searchOpen, chromeFocused, setHold],
   );
+  // RAWY-194 (C): track whether keyboard focus is inside the chrome, so Tab-into-the-toolbar reveals+pins it
+  // (via the setHold above) and Tab-away releases it. `focusout.relatedTarget` is where focus is going.
+  useEffect(() => {
+    const inChrome = (n: EventTarget | null) => n instanceof HTMLElement && !!n.closest(".reader-chrome");
+    // Only KEYBOARD focus reveals the chrome (`:focus-visible`), so a MOUSE click on a chrome control (e.g.
+    // Listen) does NOT pin the bar open and break the immersive auto-hide (caught live, RAWY-194 STEP 3).
+    const onIn = (e: FocusEvent) => { if (inChrome(e.target) && (e.target as HTMLElement).matches(":focus-visible")) setChromeFocused(true); };
+    const onOut = (e: FocusEvent) => { if (inChrome(e.target) && !inChrome(e.relatedTarget)) setChromeFocused(false); };
+    document.addEventListener("focusin", onIn);
+    document.addEventListener("focusout", onOut);
+    return () => { document.removeEventListener("focusin", onIn); document.removeEventListener("focusout", onOut); };
+  }, []);
 
   // RAWY-72: keep the auto-hiding chrome awake on pointer activity inside the content iframe (which never
   // reaches a window listener). RAWY-133: a tap/click on the reading CONTENT is for reading or selecting

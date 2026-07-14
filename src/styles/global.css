@@ -892,6 +892,14 @@ html, body, #root {
    control, not reading direction). The old `.tts-pill[dir="rtl"] .tts-skip svg { transform: scaleX(-1) }`
    mirrored them, which read as wrong to users expecting the standard media convention. */
 
+/* RAWY-194 (accessibility, Amendment 2): a clear keyboard focus ring for the read-aloud controls — there was
+   NONE, so the only "selected" look was the UA default. `:focus-visible` shows it for KEYBOARD focus only, so
+   a mouse click shows no ring (and the click also releases focus, RAWY-194 A/B). The outline follows each
+   button's own border-radius, so it rings the round transport/bead buttons cleanly. Covers every pill state
+   (full / collapsed / kashida) + the error / chapter-end actions. */
+.tts-pill button:focus-visible,
+.tts-mini button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .tts-pill-progress { display: flex; flex-direction: column; gap: 5px; margin: 3px 3px 2px; }
 .tts-pill-track { position: relative; height: 3px; border-radius: 3px; background: color-mix(in srgb, var(--text) 12%, transparent); }
 .tts-pill-fill { position: absolute; inset-inline-start: 0; top: 0; height: 3px; border-radius: 3px; background: var(--accent); }

@@ -497,7 +497,7 @@ export const ar: Record<TKey, string> = {
   "tts.lang.ar": "العربية",
   "tts.lang.en": "الإنجليزية",
   "tts.secMultilingual": "متعدّد اللغات", // RAWY-187: قسم في منتقي الأصوات (أصوات Edge التي تنطق بأي لغة)
-  "tts.secOther": "لغات أخرى", // RAWY-187: قسم في منتقي الأصوات (لغات غير العربية/الإنجليزية)
+  "tts.secUnknownLang": "لغة غير محدَّدة", // RAWY-199: قسم لأصوات بلا locale (كانت تُعرض بالمفتاح الخام "__nolocale")
   "tts.piperBadge": "بايبر · دون اتصال",
   "tts.edgeBadge": "إيدج · متصل",
   "tts.male": "ذكر",

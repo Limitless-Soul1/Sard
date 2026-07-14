@@ -7,8 +7,8 @@
 // Languages are grouped into SECTIONS — one per primary ISO code — each headed by the language's
 // OWN NAME (endonym: "Français", "Deutsch", "العربية"), in a fixed order: Multilingual → العربية →
 // English → every other language alphabetically by endonym. Dialects group INSIDE their language,
-// with the region shown per voice. A search field narrows the (now long) list across section names,
-// voice names, and region labels, in either UI language.
+// with the region shown per voice. The long list is navigated by section + scroll: a search field was
+// built and then REMOVED at the owner's request (RAWY-197) — do not re-add it without asking.
 
 import { useEffect, useMemo, useState } from "react";
 
@@ -19,6 +19,11 @@ import { loadPickerVoices, type PickerVoice, useTts } from "../../lib/tts";
 // then every other language alphabetically by endonym. Multilingual detection wins over locale, so a
 // voice whose id contains "Multilingual" heads the list regardless of its locale.
 const MULTILINGUAL = "__multilingual"; // synthetic section key for the "Multilingual" group
+// RAWY-199: a voice whose locale is empty (the backend sends "" when Microsoft omits it) still has to be
+// SELECTABLE — dropping it would lose a voice. It used to land in a section literally headed "__nolocale",
+// because that raw key was passed to `endonymOf`, which throws on it and falls back to echoing the code.
+// Give it a real, localized header instead, and sort it LAST.
+const UNKNOWN_LANG = "__unknown"; // synthetic section key for voices with no usable locale
 const PINNED: Record<string, number> = { ar: 1, en: 2 }; // العربية, English — fixed positions after Multilingual
 
 // An endonym whose FIRST letter is lowercase-cased in the script — title-case it so section headers are
@@ -55,6 +60,9 @@ const endonymOf = (primary: string): string => {
 // The synthetic Multilingual section header follows the UI LANGUAGE (it is a category, not a language):
 // Arabic UI → "متعدّد اللغات", English UI → "Multilingual".
 const MULTILINGUAL_KEY = "tts.secMultilingual";
+// RAWY-199: header for voices Microsoft returns with no locale — a real, localized label instead of the
+// raw "__nolocale" placeholder that used to be rendered verbatim.
+const UNKNOWN_LANG_KEY = "tts.secUnknownLang";
 
 export function TtsVoicePicker({ onClose }: { onClose: () => void }) {
   const { t, lang: uiLang, dir } = useI18n();
@@ -106,20 +114,28 @@ export function TtsVoicePicker({ onClose }: { onClose: () => void }) {
     const by = new Map<string, PickerVoice[]>();
     const endonymByKey = new Map<string, string>();
     for (const v of items) {
-      const key = v.id.includes("Multilingual") ? MULTILINGUAL : (v.lang || "__nolocale");
+      // RAWY-199: `v.lang` is "" when the voice carries no locale — bucket it under a real section key
+      // rather than passing the raw placeholder to `endonymOf` (which throws on it). The voice is still
+      // listed and selectable; only its heading changes.
+      const key = v.id.includes("Multilingual") ? MULTILINGUAL : (v.lang || UNKNOWN_LANG);
       if (!by.has(key)) by.set(key, []);
       by.get(key)!.push(v);
-      if (!endonymByKey.has(key)) endonymByKey.set(key, key === MULTILINGUAL ? "" : endonymOf(key));
+      const synthetic = key === MULTILINGUAL || key === UNKNOWN_LANG;
+      if (!endonymByKey.has(key)) endonymByKey.set(key, synthetic ? "" : endonymOf(key));
     }
     const sections = Array.from(by.keys()).map((key) => {
       const header =
-        key === MULTILINGUAL ? t(MULTILINGUAL_KEY) : endonymByKey.get(key) ?? key;
+        key === MULTILINGUAL ? t(MULTILINGUAL_KEY)
+        : key === UNKNOWN_LANG ? t(UNKNOWN_LANG_KEY)
+        : endonymByKey.get(key) ?? key;
       const list = by.get(key)!.sort((a, b) => a.label.localeCompare(b.label, uiLang, { sensitivity: "base" }));
       return { key, header, endonym: endonymByKey.get(key) ?? key, voices: list };
     });
     sections.sort((a, b) => {
-      if (a.key === MULTILINGUAL) return -1;
+      if (a.key === MULTILINGUAL) return -1; // Multilingual always heads the list
       if (b.key === MULTILINGUAL) return 1;
+      if (a.key === UNKNOWN_LANG) return 1; // …and the no-locale bucket always tails it
+      if (b.key === UNKNOWN_LANG) return -1;
       const pa = PINNED[a.key] ?? Infinity;
       const pb = PINNED[b.key] ?? Infinity;
       if (pa !== pb) return pa - pb;

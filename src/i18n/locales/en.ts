@@ -499,7 +499,7 @@ export const en = {
   "tts.lang.ar": "Arabic",
   "tts.lang.en": "English",
   "tts.secMultilingual": "Multilingual", // RAWY-187: voice-picker section (Edge voices that speak any language)
-  "tts.secOther": "Other languages", // RAWY-187: voice-picker section (locales other than ar/en)
+  "tts.secUnknownLang": "Unspecified language", // RAWY-199: section for voices with no locale (was rendered as the raw "__nolocale" key)
   "tts.piperBadge": "Piper · offline",
   "tts.edgeBadge": "Edge · online",
   "tts.male": "Male",

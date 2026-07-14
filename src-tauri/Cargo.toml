@@ -44,3 +44,11 @@ msedge-tts = "0.4"
 # connect). We install aws-lc-rs as the explicit process default at startup to disambiguate.
 rustls = { version = "0.23", features = ["aws_lc_rs"] }
 
+# RAWY-196: reach WebView2's own settings to strip the browser chrome (find bar, reload, print,
+# context menu). Tauri exposes none of these, so they are set through `with_webview` -> the WebView2
+# controller. Both crates are ALREADY in the tree via tauri/wry — pinned to those exact versions so
+# cargo dedupes to one copy and the COM interfaces stay ABI-identical to the ones wry hands us.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows = "0.61"
+

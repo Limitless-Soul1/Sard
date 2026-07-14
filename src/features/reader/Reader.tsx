@@ -860,12 +860,17 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   const searchPositionLabel = chapterLabel || t("reader.percentRead", { p: localeNum(Math.round(fraction * 100), lang) });
 
   // RAWY-88: ⌘F / Ctrl-F / "/" opens search even in immersive mode (design §1). Ignored while typing.
+  // RAWY-196: test `e.code` (the PHYSICAL key), never `e.key` (what the LAYOUT produces). The old
+  // `e.key === "f"` test was silently dead for the owner: on an Arabic keyboard that key yields "ب",
+  // so Ctrl+F could never match — and the unhandled key fell through to WebView2's own find bar. The
+  // "/" shortcut had the same defect (that key is "ظ" on an Arabic layout). FoliateController forwards
+  // both from the reading iframe, which is where a reader's focus actually is.
   useEffect(() => {
     if (isPdf) return;
     const onKey = (e: KeyboardEvent) => {
       const typing = /^(INPUT|TEXTAREA)$/.test((e.target as HTMLElement)?.tagName ?? "");
-      const cmdF = (e.metaKey || e.ctrlKey) && (e.key === "f" || e.key === "F");
-      const slash = e.key === "/" && !typing;
+      const cmdF = (e.metaKey || e.ctrlKey) && e.code === "KeyF";
+      const slash = e.code === "Slash" && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && !typing;
       if (cmdF || slash) {
         e.preventDefault();
         setLeftPanel("search");

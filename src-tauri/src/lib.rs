@@ -16,6 +16,7 @@ pub mod settings; // key/value settings persistence
 pub mod sync; // FUTURE seam: backend trait only (placeholder)
 pub mod tts; // RAWY-105: bundled piper sidecar (persistent process) + on-demand voice download
 pub mod updater; // RAWY-168: in-app update CHECK (Phase 1 — notify only, no download/install)
+pub mod webview_chrome; // RAWY-196: strip WebView2's browser chrome + accelerators (find bar, reload, print)
 pub mod window_chrome; // RAWY-118: theme the native title bar to match the app theme (DWM, Windows)
 
 use std::path::Path;
@@ -103,6 +104,13 @@ pub fn run() {
             println!("[Sard] app_data_dir  = {}", app_data_dir.display());
             println!("[Sard] db_path       = {}", db_path.display());
             println!("[Sard] schema_version = {version}");
+
+            // RAWY-196: Sard owns its keyboard + pointer surface. Strip WebView2's browser chrome
+            // (find bar, reload, print, the right-click Back/Refresh/Save/Print menu) before the user
+            // can reach any of it. Release only — a debug build keeps devtools (see webview_chrome).
+            if let Some(win) = app.get_webview_window("main") {
+                webview_chrome::harden(&win);
+            }
 
             app.manage(db::AppState {
                 db: std::sync::Mutex::new(conn),

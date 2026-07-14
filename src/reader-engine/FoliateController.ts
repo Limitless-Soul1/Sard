@@ -856,6 +856,25 @@ export class FoliateController {
           ev.preventDefault();
           window.dispatchEvent(new KeyboardEvent("keydown", { key: "F11" }));
         }
+        // RAWY-196: Ctrl/Cmd+F (and "/") must reach SARD's in-book search — never the WebView2 find
+        // bar. Exactly the RAWY-136 problem above, and its cause: Reader.tsx DOES bind Ctrl+F (RAWY-88)
+        // but it listens on the PARENT window, while a reader's focus is inside this content iframe —
+        // so the key never reached Sard, nothing called preventDefault, and Chromium opened its own
+        // find bar over the book. Forward it like F11.
+        //
+        // Match on `ev.code`, NEVER `ev.key`: `code` is the PHYSICAL key, `key` is what the layout
+        // produces. On the owner's ARABIC keyboard the F key yields "ب", so the old `key === "f"` test
+        // could never fire — Ctrl+F was doubly broken for him (RAWY-196 audit). Same for "/" (that key
+        // is "ظ" on an Arabic layout), hence `code === "Slash"`.
+        else if ((ev.ctrlKey || ev.metaKey) && ev.code === "KeyF") {
+          ev.preventDefault();
+          window.dispatchEvent(
+            new KeyboardEvent("keydown", { key: "f", code: "KeyF", ctrlKey: true }),
+          );
+        } else if (ev.code === "Slash" && !ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey) {
+          ev.preventDefault();
+          window.dispatchEvent(new KeyboardEvent("keydown", { key: "/", code: "Slash" }));
+        }
       });
       // Scrolled mode: the chapter-boundary "new gesture to advance" handler (RAWY-25).
       if (this.scrolledMode)

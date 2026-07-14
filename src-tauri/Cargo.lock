@@ -3274,6 +3274,8 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "ureq",
+ "webview2-com",
+ "windows",
  "zip",
 ]
 

@@ -201,9 +201,11 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
 
   useEffect(() => {
     if (!import.meta.env.DEV) return;
+    // RAWY-196: `e.code` (physical key), not `e.key` — on a non-Latin layout `e.key` is the Arabic
+    // letter, so these dev aids never fired on the owner's keyboard. Dev-only, but same defect class.
     const onKey = (e: KeyboardEvent) => {
-      if (e.shiftKey && e.key === "D") setDrag((d) => (d ? null : { count: 3 }));
-      if (e.shiftKey && e.key === "E") setForceEmpty((v) => !v);
+      if (e.shiftKey && e.code === "KeyD") setDrag((d) => (d ? null : { count: 3 }));
+      if (e.shiftKey && e.code === "KeyE") setForceEmpty((v) => !v);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

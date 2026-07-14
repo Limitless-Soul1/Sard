@@ -93,11 +93,12 @@ export function TtsPlayer({
         return; // let inputs / buttons / the search box keep their own keys
       }
       if (isSpace) { if (doPlayPause()) e.preventDefault(); }
-      else if (skipSentenceForArrow(e.key, dir === "rtl" ? "rtl" : "ltr")) e.preventDefault();
+      else if (skipSentenceForArrow(e.key)) e.preventDefault();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [dir, onPlayPause]); // RAWY-186: re-bind so Space uses the latest play handler (fresh chapter)
+  }, [onPlayPause]); // RAWY-186: re-bind so Space uses the latest play handler (fresh chapter). PART D: the
+  // arrow skip no longer depends on `dir` (the transport isn't mirrored), so `dir` left the dep list.
   if (!active) return null;
 
   const playing = status === "playing";

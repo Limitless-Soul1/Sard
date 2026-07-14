@@ -853,7 +853,11 @@ html, body, #root {
 :root[data-dark="true"] .tts-pill { box-shadow: 0 16px 42px rgba(0, 0, 0, 0.5); }
 
 .tts-pill-transport { display: flex; align-items: center; justify-content: space-between; }
-.tts-transport-mid { display: flex; align-items: center; gap: 12px; }
+/* PART D: the ⏮/⏭ transport is a MEDIA control (it represents TIME, not reading direction), so it is NOT
+   mirrored in RTL — ⏮ previous stays physically LEFT, ⏭ next stays physically RIGHT, in every locale (the
+   universal YouTube/Spotify convention). Pinning `direction: ltr` keeps DOM order = physical order regardless
+   of the pill's RTL. (Reading page-turn chevrons DO mirror — those are elsewhere and untouched.) */
+.tts-transport-mid { display: flex; align-items: center; gap: 12px; direction: ltr; }
 .tts-ghost {
   flex: none; width: 26px; height: 26px; border-radius: 50%; border: 0; cursor: pointer; background: transparent;
   color: var(--muted); display: flex; align-items: center; justify-content: center;
@@ -884,7 +888,9 @@ html, body, #root {
 .tts-skip:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 10%, transparent); }
 .tts-skip svg { width: 15px; height: 15px; }
 .tts-skip:disabled { opacity: 0.4; cursor: default; }
-.tts-pill[dir="rtl"] .tts-skip svg { transform: scaleX(-1); }
+/* PART D: NO RTL glyph flip on the transport arrows — ⏮ always points left, ⏭ always right (a media
+   control, not reading direction). The old `.tts-pill[dir="rtl"] .tts-skip svg { transform: scaleX(-1) }`
+   mirrored them, which read as wrong to users expecting the standard media convention. */
 
 .tts-pill-progress { display: flex; flex-direction: column; gap: 5px; margin: 3px 3px 2px; }
 .tts-pill-track { position: relative; height: 3px; border-radius: 3px; background: color-mix(in srgb, var(--text) 12%, transparent); }

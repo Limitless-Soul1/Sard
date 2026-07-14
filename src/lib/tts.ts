@@ -233,19 +233,19 @@ export function toggleTtsPlayback(): boolean {
   return false;
 }
 
-/** RAWY-184 (Part C): Left/Right arrow → skip to the previous/next SENTENCE (the ⏮/⏭ transport) IF a
- *  read-aloud session is active. RTL-aware to match the on-screen buttons: in RTL, Right = previous /
- *  Left = next (mirror for LTR). Returns whether it acted, so the caller preventDefault()s ONLY then —
- *  otherwise arrows keep their normal reader behaviour (page/scroll) when TTS is off. */
-export function skipSentenceForArrow(key: string, dir: "rtl" | "ltr"): boolean {
+/** RAWY-184 (Part C) / PART D: Right/Left arrow → skip to the next/previous SENTENCE (the ⏭/⏮ transport) IF
+ *  a read-aloud session is active. The transport is a MEDIA control (it represents TIME, not reading
+ *  direction), so it is NOT mirrored in RTL: Right = next / Left = previous in EVERY locale — matching the
+ *  un-mirrored ⏭/⏮ buttons and the universal media convention (YouTube/Spotify seek). Returns whether it
+ *  acted, so the caller preventDefault()s ONLY then; otherwise the arrows keep their normal reader behaviour
+ *  (page-turn — which DOES mirror in RTL — / scroll) when TTS is off. */
+export function skipSentenceForArrow(key: string): boolean {
   const st = useTts.getState();
   if (!st.active || (st.status !== "playing" && st.status !== "paused")) return false;
   const isRight = key === "ArrowRight";
   const isLeft = key === "ArrowLeft";
   if (!isRight && !isLeft) return false;
-  // RTL: Right = previous (-1), Left = next (+1); LTR mirrors — matches the ⏮/⏭ that mirror with the pill.
-  const delta = isRight ? (dir === "rtl" ? -1 : 1) : dir === "rtl" ? 1 : -1;
-  st.skip(delta);
+  st.skip(isRight ? 1 : -1); // Right = next (+1), Left = previous (-1) — media convention, NOT mirrored in RTL
   return true;
 }
 

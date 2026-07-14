@@ -417,10 +417,10 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     // RAWY-186: routed through `playRef` so, after navigating to a different chapter, Space (like the pill
     // Play) reads the CURRENT chapter instead of resuming the old one. The ref always holds the latest closure.
     ctrl?.onSpace(() => playRef.current());
-    // RAWY-184 (Part C): Left/Right arrow with focus inside the reading frame skips the prev/next SENTENCE
-    // while read-aloud is active (RTL-aware via the UI direction, matching the ⏮/⏭); otherwise the arrows
-    // keep their normal page-turn.
-    ctrl?.onArrow((key) => skipSentenceForArrow(key, uiDir));
+    // RAWY-184 (Part C) / PART D: Right/Left arrow with focus inside the reading frame skips the next/prev
+    // SENTENCE while read-aloud is active — NOT mirrored in RTL (the transport is a media/time control, not
+    // reading direction); otherwise the arrows keep their normal page-turn (which DOES mirror in RTL).
+    ctrl?.onArrow((key) => skipSentenceForArrow(key));
     // RAWY-73/130: scroll-down hides the bars, scroll-up shows them — the SAME during TTS now (RAWY-129
     // gated this off to dodge a reflow hitch; RAWY-130 removes the gate and instead pins the reading area
     // full-height during TTS via `.reader-root.tts-playing .page-host` (global.css), so the bars hide/show
@@ -435,7 +435,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
       ctrl.setReadingWords(st.index, st.words);
       ctrl.showReadingWord(st.wordIndex);
     });
-  }, [signalMove, signalScroll, uiDir]);
+  }, [signalMove, signalScroll]);
 
   // When the basket empties (Clear, or removing the last passage) the top-bar button hides, so
   // close the now-orphaned tray too (RAWY-60).

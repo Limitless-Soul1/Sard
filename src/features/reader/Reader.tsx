@@ -942,7 +942,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     // and `new AudioContext()` inits on first play. Show the loading pill FIRST (instant feedback), let
     // it paint, THEN do the walk + start playback — so the work happens UNDER the visible "preparing"
     // state instead of a dead frozen frame. (The sidecar spawn / Edge connect / synth were already async.)
-    useTts.setState({ active: true, status: "preparing", chapterLabel: chapter, error: null, notice: null });
+    useTts.setState({ active: true, status: "preparing", chapterLabel: chapter, error: null });
     // RAWY-162: read the saved TTS cursor BEFORE playback starts (playback overwrites it via the save
     // effect), so we can offer a resume. A stale/absent value → no prompt (behaves exactly as before).
     let saved: { cfi?: string; sec?: number; idx: number; snip?: string } | null = null;
@@ -992,7 +992,8 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     // finished) — Play reads the CURRENT chapter from its top, so the button is never dead. Shared by the
     // pill Play, Space, and the kashida bead (all route through onPlayPause), so every state agrees.
     if (st.status === "chapter-end") { void startListen(); return true; }
-    return false; // preparing / downloading / error — Play does nothing here
+    return false; // preparing / downloading / error / edge-error (RAWY-193) — Play/Space do nothing; the
+                  // Edge-unavailable state is acted on only via its explicit Retry / Switch-to-Piper buttons
   };
   playRef.current = playOrRelisten;
   // RAWY-162: the user chose "resume" on the hint — map the saved cursor to a live sentence (navigating
@@ -1035,7 +1036,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     const bookLang = isRtlBook ? "ar" : "en";
     // RAWY-181 (BUG 1): same freeze-avoidance as startListen — show the loading pill + paint before the
     // synchronous chapter walk.
-    useTts.setState({ active: true, status: "preparing", chapterLabel: chapter, error: null, notice: null });
+    useTts.setState({ active: true, status: "preparing", chapterLabel: chapter, error: null });
     await nextPaint();
     const sentences = await ctrl.getCurrentChapterSentences(bookLang); // RAWY-182: async + chunked (non-blocking)
     const norm = (s: string) => s.replace(/\s+/g, " ").trim();

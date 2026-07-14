@@ -985,6 +985,17 @@ html, body, #root {
 .tts-end-next:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .tts-end-next svg { flex: none; width: 15px; height: 15px; }
 
+/* RAWY-193: the explicit "Edge unavailable" PAUSE state. Reuses the chapter-end block wholesale; the message
+   reads as an alert (the RAWY-190 errored ink), and "Switch to Piper" is a NEUTRAL secondary beside the accent
+   Retry so the primary recovery (stay on the chosen Edge voice) reads first. Theme-aware; mirrors in RTL. */
+.tts-pill-edge-error .tts-end-msg { color: color-mix(in srgb, #b05220 78%, var(--text)); }
+.tts-switch-piper {
+  border-color: var(--chrome-border);
+  background: transparent;
+  color: color-mix(in srgb, var(--text) 62%, transparent);
+}
+.tts-switch-piper:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+
 .tts-spin {
   width: 16px; height: 16px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--paper-bg) 45%, transparent);
   border-top-color: var(--paper-bg); animation: tts-spin 0.7s linear infinite;

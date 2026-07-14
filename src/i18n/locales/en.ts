@@ -504,8 +504,8 @@ export const en = {
   "tts.edgeBadge": "Edge · online",
   "tts.male": "Male",
   "tts.female": "Female",
-  "tts.fellBack": "Edge unavailable — using Piper",
-  "tts.edgeHiccup": "Edge hiccup — Piper for now",
+  "tts.edgeUnavailable": "Edge unavailable", // RAWY-193: explicit pause state — the Edge voice couldn't be reached
+  "tts.switchToPiper": "Switch to Piper", // RAWY-193: explicit engine switch from the Edge-unavailable state
   "tts.loadingVoices": "loading voices…",
   "tts.noVoices": "No voices available — Edge voices need an internet connection.",
   "tts.volume": "Volume",

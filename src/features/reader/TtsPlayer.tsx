@@ -3,8 +3,8 @@
 // panel; RAWY-113). Two calm rows: transport + a progress hairline with a position dot; then a
 // segmented Engine toggle (Piper | Edge, Edge carrying the teal online dot) + a Voices chip (current
 // voice) + a tap-to-cycle Speed chip. Logic is reused from RAWY-105–113 (engine dispatch, Edge
-// default, both synth paths, the voices picker, per-language persistence, the non-destructive
-// per-sentence fallback); this is the pill's markup/CSS, re-binding the same controls. Mirrors RTL.
+// default, both synth paths, the voices picker, per-language persistence, and the RAWY-193 explicit
+// "Edge unavailable" pause state); this is the pill's markup/CSS, re-binding the same controls. Mirrors RTL.
 
 import { useEffect, useState, type CSSProperties } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -38,11 +38,11 @@ export function TtsPlayer({
   // Previously `useTts()` re-rendered the pill on EVERY store change — including the karaoke `words`/
   // `wordIndex` ticks (several/sec on Edge) it doesn't even read — which made size toggles feel heavy and
   // could swallow a click landing mid-re-render. Actions are stable Zustand refs, so they never re-render.
-  const { active, status, endDismissed, engine, voice, index, total, speed, volume, progress, chapterLabel, error, notice, skip, setSpeed, setVolume, setEngine, retry, stop } = useTts(
+  const { active, status, endDismissed, engine, voice, index, total, speed, volume, progress, chapterLabel, error, skip, setSpeed, setVolume, setEngine, retry, resumeEdge, stop } = useTts(
     useShallow((s) => ({
       active: s.active, status: s.status, endDismissed: s.endDismissed, engine: s.engine, voice: s.voice, index: s.index, total: s.total,
-      speed: s.speed, volume: s.volume, progress: s.progress, chapterLabel: s.chapterLabel, error: s.error, notice: s.notice,
-      skip: s.skip, setSpeed: s.setSpeed, setVolume: s.setVolume, setEngine: s.setEngine, retry: s.retry, stop: s.stop,
+      speed: s.speed, volume: s.volume, progress: s.progress, chapterLabel: s.chapterLabel, error: s.error,
+      skip: s.skip, setSpeed: s.setSpeed, setVolume: s.setVolume, setEngine: s.setEngine, retry: s.retry, resumeEdge: s.resumeEdge, stop: s.stop,
     })),
   );
   // RAWY-186 (Part A): the play/pause action. The Reader supplies `onPlayPause` (which reads the CURRENT
@@ -56,12 +56,21 @@ export function TtsPlayer({
   // kashida; tapping the kashida stroke returns straight to full. UI-only — never persisted.
   const [size, setSize] = useState<"full" | "collapsed" | "kashida">("full");
   const expanded = size === "full"; // the engine/voices/speed rows show only when full
-  const minimized = size === "kashida";
+  // RAWY-193 (HARD CONDITION 1): the Edge-unavailable error is shown + actionable in EVERY pill state, so it
+  // must NEVER render as the bare kashida bead (which has no error UI). Treat "edge-error" as un-minimized
+  // regardless of `size` (no one-frame bead flash), and the effect below pulls `size` back to full.
+  const minimized = size === "kashida" && status !== "edge-error";
   const shrink = () => setSize((s) => (s === "full" ? "collapsed" : "kashida")); // one step down
   // A fresh Listen (active flips true) should start on the full pill, not a stale minimized state.
   useEffect(() => {
     if (!active) setSize("full");
   }, [active]);
+  // RAWY-193 (HARD CONDITION 1): a genuine Edge error is exactly when interrupting the reader is correct —
+  // pull the pill out of the minimized kashida into the full state so the Retry / Switch-to-Piper choice is
+  // unmistakable. Fires only on the error status; normal minimized listening is untouched.
+  useEffect(() => {
+    if (status === "edge-error") setSize("full");
+  }, [status]);
   // RAWY-180 (Part B): Space toggles read-aloud play/pause when a session is active (from PARENT focus —
   // the reading-frame case is handled by FoliateController.onSpace). Self-gates via `toggleTtsPlayback`
   // (a no-op when inactive), and ignores typing / interactive targets so it never hijacks Space in the
@@ -99,6 +108,7 @@ export function TtsPlayer({
   // finished chapter, `endDismissed` hides the stale continue offer (the pill returns to its normal
   // transport) while the session stays alive so Play still reads the current chapter.
   const chapterEnd = status === "chapter-end" && !endDismissed;
+  const edgeErrored = status === "edge-error"; // RAWY-193: explicit "Edge unavailable" pause + choice
   const busy = preparing || downloading;
   const dlPct = Math.round(progress * 100);
   const trackPct = downloading ? progress * 100 : total > 1 ? (index / (total - 1)) * 100 : 0;
@@ -107,10 +117,8 @@ export function TtsPlayer({
     setSpeed(next > TTS_MAX_SPEED ? TTS_MIN_SPEED : next);
   };
   const volPct = Math.round(volume * 100); // RAWY-180 (Part A): inline volume slider 0–100%
-  const noticeText = notice === "tts.edgeHiccup" ? t("tts.edgeHiccup") : notice;
   const sub =
     errored ? ` · ${t("tts.error")}` :
-    noticeText ? ` · ${noticeText}` :
     downloading ? ` · ${t("tts.downloading", { pct: localeNum(dlPct, lang) })}` :
     preparing ? ` · ${t("tts.preparing")}` :
     status === "paused" ? ` · ${t("tts.paused")}` : "";
@@ -134,8 +142,28 @@ export function TtsPlayer({
       ) : (
       <>
       {picking && <TtsVoicePicker onClose={() => setPicking(false)} />}
-      <div className={`tts-pill${expanded ? " expanded" : ""}${errored ? " errored" : ""}${chapterEnd ? " chapter-end" : ""}`} dir={dir} role="group" aria-label={t("tts.player")}>
-        {chapterEnd ? (
+      <div className={`tts-pill${expanded ? " expanded" : ""}${errored || edgeErrored ? " errored" : ""}${chapterEnd ? " chapter-end" : ""}`} dir={dir} role="group" aria-label={t("tts.player")}>
+        {edgeErrored ? (
+          /* RAWY-193: the Edge engine failed (and the one bounded retry failed) — an EXPLICIT, actionable
+             PAUSE. Nothing plays in a voice the user didn't choose: they either Retry Edge or make an explicit
+             Switch to Piper (a normal, persisted engine switch — no hidden "temporary" mode). Rendered in
+             EVERY pill state (the kashida force-expands to full on this status), and announced via role=alert. */
+          <div className="tts-pill-end tts-pill-edge-error" role="alert">
+            <span className="tts-end-msg">{t("tts.edgeUnavailable")}</span>
+            <div className="tts-end-actions">
+              <button className="tts-end-next" onClick={() => resumeEdge()}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 11a8 8 0 1 1-2.3-5.6M20 4v6h-6" /></svg>
+                <span>{t("tts.retry")}</span>
+              </button>
+              <button className="tts-end-next tts-switch-piper" onClick={() => setEngine("piper")}>
+                <span>{t("tts.switchToPiper")}</span>
+              </button>
+              <button className="tts-ghost tts-x" onClick={stop} aria-label={t("tts.close")} title={t("tts.close")}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              </button>
+            </div>
+          </div>
+        ) : chapterEnd ? (
           /* RAWY-184 (Part B): end-of-chapter — STOP + a tasteful "next chapter" affordance (or a gentle
              end-of-book state with no button). On-brand, per-theme, mirrors in RTL like the rest of the pill. */
           <div className="tts-pill-end">

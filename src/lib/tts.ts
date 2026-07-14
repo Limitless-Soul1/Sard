@@ -6,9 +6,10 @@
 // RAWY-110/111 (engine abstraction): a voice is {engine, id}; `synth` calls the dispatching
 // `tts_synthesize(engine, id, text)`. Engine-agnostic — WebAudio decodes both Piper's WAV and Edge's
 // MP3, so play/pause/skip/speed work the same. The chosen engine+voice persists PER LANGUAGE
-// (`tts_voice:ar`/`tts_voice:en`), defaulting to EDGE (neural, design 6). Edge is online-required — a
-// transient failure falls back to Piper PER SENTENCE (RAWY-113) without changing the user's chosen
-// engine, and auto-recovers to Edge on the next sentence.
+// (`tts_voice:ar`/`tts_voice:en`), defaulting to EDGE (neural, design 6). Edge is online-required — RAWY-193:
+// a synth failure is retried ONCE on Edge (a transient blip, invisible), then, if still failing, playback
+// PAUSES in an explicit "Edge unavailable" state (Retry / Switch to Piper). The engine/voice NEVER changes on
+// its own — the old silent per-sentence Edge→Piper fallback (D37/RAWY-113) was removed as a correctness bug.
 
 import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
@@ -21,14 +22,18 @@ export const TTS_SPEED_STEP = 0.25;
 // Sentinel error the player localizes (RAWY-107) — distinct from a raw engine/download error, which
 // the pill shows verbatim (RAWY-106). Set when a section genuinely has no readable text.
 export const TTS_EMPTY = "empty-chapter";
+// RAWY-193: sentinel meaning "Edge synthesis failed and the ONE bounded retry also failed." The player then
+// enters the explicit "Edge unavailable" PAUSE state (Retry / Switch to Piper) — it NEVER silently swaps the
+// voice to Piper (the deleted D37 anti-pattern). A synth stall (`tts.synthTimeout`) on Edge is treated the same.
+export const TTS_EDGE_DOWN = "edge-unavailable";
 
 // A voice is identified by its ENGINE + id (RAWY-110). "piper" = offline; "edge" = online neural.
 export type TtsEngineKind = "piper" | "edge";
 export interface TtsVoiceRef { engine: TtsEngineKind; id: string }
 export type TtsLang = "ar" | "en";
 
-// The bundled Piper voices (one per language) — the OFFLINE anchor, always available (also the
-// per-sentence fallback when Edge hiccups, RAWY-113).
+// The bundled Piper voices (one per language) — the OFFLINE anchor, always available (the engine the user
+// gets when they explicitly Switch to Piper from the Edge-unavailable state, RAWY-193).
 export const PIPER_VOICE: Record<TtsLang, string> = {
   ar: "ar_JO-kareem-medium",
   en: "en_US-lessac-medium",
@@ -36,7 +41,7 @@ export const PIPER_VOICE: Record<TtsLang, string> = {
 export const piperVoiceRef = (lang: TtsLang): TtsVoiceRef => ({ engine: "piper", id: PIPER_VOICE[lang] });
 
 // RAWY-113: Edge (neural) is the DEFAULT engine per design 6. First-use with no saved pref = Edge;
-// if offline, playback falls back to Piper PER SENTENCE (non-destructive) until Edge resumes.
+// if offline, playback PAUSES in the explicit "Edge unavailable" state (RAWY-193) — never a silent Piper swap.
 export const EDGE_DEFAULT: Record<TtsLang, string> = {
   ar: "ar-EG-SalmaNeural",
   en: "en-US-AriaNeural",
@@ -91,7 +96,7 @@ async function resolveVoicePref(lang: TtsLang): Promise<TtsVoiceRef> {
   return defaultVoiceForLang(lang);
 }
 
-type Status = "idle" | "preparing" | "downloading" | "playing" | "paused" | "error" | "chapter-end";
+type Status = "idle" | "preparing" | "downloading" | "playing" | "paused" | "error" | "chapter-end" | "edge-error";
 
 // RAWY-188: `deferPrefetch` — start the FIRST sentence only (no prefetch window). Used for the chapter-TOP
 // start when a same-chapter resume is being offered: if the user then resumes, only ONE cold synth was
@@ -117,7 +122,6 @@ interface TtsState {
   progress: number; // voice-download fraction 0–1 (only meaningful while status === "downloading")
   chapterLabel: string;
   error: string | null;
-  notice: string | null; // transient message (e.g. fell back to Piper); auto-clears
   start: (o: StartOpts) => Promise<void>;
   toggle: () => void;
   dismissEnd: () => void; // RAWY-190: hide the stale chapter-end "next chapter" offer (keeps the player)
@@ -127,6 +131,7 @@ interface TtsState {
   setVoice: (engine: TtsEngineKind, id: string, lang: TtsLang) => void;
   setEngine: (engine: TtsEngineKind) => void;
   retry: () => void;
+  resumeEdge: () => void; // RAWY-193: the "Edge unavailable" state's Retry — re-attempt Edge from the current sentence
   stop: () => void;
 }
 
@@ -149,8 +154,6 @@ let volSaveTimer: ReturnType<typeof setTimeout> | null = null;
 let cache = new Map<number, Promise<Synthesized>>();
 let curEngine: TtsEngineKind = "piper";
 let curVoice = "";
-let curLang: TtsLang = "en";
-let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 let gen = 0; // bumped by stop/skip/start to invalidate in-flight async work
 let lastStart: StartOpts | null = null; // for retry() after a download/synth failure
 
@@ -203,13 +206,6 @@ const clearWatchdog = () => {
   if (watchdog) { clearInterval(watchdog); watchdog = null; }
 };
 
-// Show a transient notice in the pill for a few seconds (RAWY-111: e.g. "Edge unavailable — Piper").
-function flashNotice(msg: string) {
-  useTts.setState({ notice: msg });
-  if (noticeTimer) clearTimeout(noticeTimer);
-  noticeTimer = setTimeout(() => useTts.setState({ notice: null }), 5000);
-}
-
 const audioCtx = (): AudioContext => {
   if (!ctx || ctx.state === "closed") ctx = new AudioContext();
   return ctx;
@@ -255,7 +251,7 @@ export function skipSentenceForArrow(key: string, dir: "rtl" | "ltr"): boolean {
 
 // RAWY-127: the Rust response is FRAMED — `[u32 BE json_len][json words][audio bytes]` — so the audio
 // stays raw (no base64) while carrying its per-word timing. Split the header off; `words` is `[]` for
-// Piper (and the Edge→Piper fallback), which keeps that sentence at the Phase-1 sentence level.
+// Piper, which keeps that sentence at the Phase-1 sentence level.
 function parseFramed(raw: ArrayBuffer): { words: TtsWord[]; audio: ArrayBuffer } {
   const dv = new DataView(raw);
   const jlen = dv.getUint32(0); // big-endian, matches Rust `to_be_bytes`
@@ -271,21 +267,39 @@ const synth = (i: number): Promise<Synthesized> => {
       try {
         raw = await invoke<ArrayBuffer>("tts_synthesize", { engine: curEngine, id: curVoice, text: sentences[i] });
       } catch (e) {
-        // RAWY-113 (bug #14 fix): a transient Edge failure (dropped warm socket / net blip) falls back
-        // to Piper for THIS SENTENCE ONLY — it does NOT change the user's chosen engine or the persisted
-        // pref, so the NEXT sentence retries Edge and playback auto-recovers when connectivity resumes.
-        // RAWY-127: the Piper fallback returns an empty word list, so this sentence degrades to
-        // sentence-level (no pill) and the next Edge sentence resumes karaoke — seamless.
+        // RAWY-193: NO silent engine fallback — the deleted D37 swapped the voice to Piper mid-paragraph
+        // without asking (a correctness violation). For Edge, ONE bounded retry absorbs a transient blip (a
+        // stale/dropped warm socket the Rust one-shot reconnect didn't catch) WITHOUT changing the voice and
+        // WITHOUT any notice — a micro-blip must be invisible, and the healthy path never reaches here. NO
+        // backoff: the cold WS reconnect (~2.7 s, measured RAWY-191) is itself the delay, so a cascade would
+        // only pile up silence — a sustained failure is handed to the USER, not retried forever. If the retry
+        // also fails, reject with TTS_EDGE_DOWN → playFrom pauses and shows the explicit "Edge unavailable"
+        // choice, never a silent Piper swap. A non-Edge (Piper) failure keeps its RAWY-159 skip behaviour.
         if (curEngine !== "edge") throw e;
-        flashNotice("tts.edgeHiccup");
-        raw = await invoke<ArrayBuffer>("tts_synthesize", { engine: "piper", id: PIPER_VOICE[curLang], text: sentences[i] });
+        try {
+          raw = await invoke<ArrayBuffer>("tts_synthesize", { engine: "edge", id: curVoice, text: sentences[i] });
+        } catch {
+          throw new Error(TTS_EDGE_DOWN);
+        }
       }
       const { words, audio } = parseFramed(raw);
       return { buffer: await audioCtx().decodeAudioData(audio), words };
     })();
     cache.set(i, p);
+    // RAWY-193: never RETAIN a rejected synth — evict it so a later revisit (esp. after the user hits Retry,
+    // or a prefetch that failed during a blip) re-attempts cleanly instead of instantly re-failing on a stale
+    // cached rejection. playFrom also deletes the awaited index; this generalises it to prefetched ones.
+    void p.catch(() => { if (cache.get(i) === p) cache.delete(i); });
   }
   return p;
+};
+
+// RAWY-193: does this synth failure mean the Edge SERVICE is down (→ pause + prompt), vs a skippable bad
+// segment? True for the bounded-retry sentinel, or a synth stall (the RAWY-172 timeout) — the caller gates
+// this on `curEngine === "edge"`, so a Piper stall / an unspeakable Edge sentence still skips (RAWY-159).
+const isEdgeDown = (e: unknown): boolean => {
+  const s = String(e);
+  return s.includes(TTS_EDGE_DOWN) || s.includes("synthTimeout");
 };
 
 // ---- RAWY-127: word-level karaoke scheduling (Edge only) ----
@@ -308,7 +322,7 @@ function stopKaraoke() {
 function startKaraoke(words: TtsWord[], t0: number, myGen: number) {
   stopKaraoke();
   useTts.setState({ words, wordIndex: -1 });
-  if (!words.length) return; // Piper / fallback / no timing → sentence-level only (no pill)
+  if (!words.length) return; // Piper / no timing → sentence-level only (no pill)
   karaokeWords = words;
   karaokeAnchor = { wall: t0, audio: 0, rate: useTts.getState().speed };
   const c = audioCtx();
@@ -415,13 +429,21 @@ async function playFrom(i: number, myGen: number, prefetch = true) {
 
   let synthd: Synthesized;
   try {
-    // RAWY-172 (AUD-2): bound the synth so a stalled socket advances instead of freezing. Edge failures
-    // still self-heal per-sentence inside synth() (RAWY-113); a genuine stall rejects here → skipSegment.
+    // RAWY-172 (AUD-2): bound the synth so a stalled socket can't freeze the queue. RAWY-193: on Edge a
+    // failure/stall is NOT skipped — the catch routes it to the explicit "Edge unavailable" pause (isEdgeDown);
+    // a non-Edge (Piper) failure still skips per RAWY-159.
     synthd = await withTimeout(current, SYNTH_TIMEOUT_MS);
   } catch (e) {
-    // This segment couldn't be synthesized (an unspeakable "…"/"..." that yields empty audio the
-    // decoder rejects, a Piper exit with no WAV, both engines down, …). Skip it and keep reading.
     cache.delete(idx); // don't keep a rejected promise cached (a later skip-back would re-throw)
+    // RAWY-193: an Edge-SERVICE failure (the bounded retry failed) or an Edge stall must NOT silently skip
+    // or swap the voice — PAUSE and surface the explicit "Edge unavailable" choice (Retry / Switch to Piper),
+    // visible in EVERY pill state (the player force-expands out of the kashida on this status). A non-Edge
+    // failure (unspeakable "…"/"..." that yields empty audio, a Piper exit with no WAV) keeps RAWY-159 skip.
+    if (curEngine === "edge" && isEdgeDown(e)) {
+      stopSource();
+      set({ status: "edge-error" });
+      return;
+    }
     skipSegment(String(e));
     return;
   }
@@ -469,7 +491,7 @@ async function playFrom(i: number, myGen: number, prefetch = true) {
 
 // Ensure the chosen voice is usable, then play from `fromIndex`. Only PIPER voices fetch on demand
 // (~60 MB) with a REAL progress bar (RAWY-106); Edge synthesizes over the network with no local
-// model, so it skips straight to playback. Shared by start / setVoice / the Edge→Piper fallback.
+// model, so it skips straight to playback. Shared by start / setVoice / resumeEdge (RAWY-193).
 async function ensureAndPlay(engine: TtsEngineKind, voice: string, fromIndex: number, myGen: number, prefetch = true) {
   const set = useTts.setState;
   if (engine === "piper") {
@@ -507,7 +529,6 @@ export const useTts = create<TtsState>((set, get) => ({
   progress: 0,
   chapterLabel: "",
   error: null,
-  notice: null,
 
   start: async (opts) => {
     lastStart = opts;
@@ -523,7 +544,6 @@ export const useTts = create<TtsState>((set, get) => ({
     cache = new Map();
     failStreak = 0; // RAWY-159: a fresh Listen starts the dead-end counter clean
     sentences = sen.map((s) => s.trim()).filter(Boolean);
-    curLang = lang;
     const saved = Number(await settingsGet("tts_speed").catch(() => null));
     const speed = saved >= TTS_MIN_SPEED && saved <= TTS_MAX_SPEED ? saved : get().speed;
     // RAWY-180: restore the saved volume (0..1). An UNSET key must not read as 0 (muted), so treat only
@@ -533,7 +553,7 @@ export const useTts = create<TtsState>((set, get) => ({
     const volume = volNum >= 0 && volNum <= 1 ? volNum : get().volume;
     curVolume = volume;
     if (gainNode) gainNode.gain.value = volume;
-    set({ active: true, status: "preparing", endDismissed: false, lang, speed, volume, index: startIndex, total: sentences.length, progress: 0, chapterLabel, error: null, notice: null, words: [], wordIndex: -1 });
+    set({ active: true, status: "preparing", endDismissed: false, lang, speed, volume, index: startIndex, total: sentences.length, progress: 0, chapterLabel, error: null, words: [], wordIndex: -1 });
     if (sentences.length === 0) {
       set({ status: "error", error: TTS_EMPTY });
       return;
@@ -638,7 +658,7 @@ export const useTts = create<TtsState>((set, get) => ({
     stopSource();
     stopKaraoke(); // RAWY-127: switching engine (e.g. Edge→Piper) drops any pill; playFrom re-decides
     clearSkipSettle(); // RAWY-185: a live voice/engine switch supersedes a pending rapid-skip landing synth
-    set({ engine, voice: id, status: "preparing", error: null, notice: null, wordIndex: -1 });
+    set({ engine, voice: id, status: "preparing", error: null, wordIndex: -1 });
     void ensureAndPlay(engine, id, st.index, myGen);
   },
 
@@ -656,6 +676,22 @@ export const useTts = create<TtsState>((set, get) => ({
     if (lastStart) void get().start(lastStart);
   },
 
+  // RAWY-193: the "Edge unavailable" state's Retry — re-attempt the CURRENT sentence on the SAME engine
+  // (still Edge; the voice was never changed). Clears the cache so a stale failed synth from the outage can't
+  // instantly re-trip the error, and resumes from the current index. ("Switch to Piper" in the pill is the
+  // normal `setEngine("piper")` — an explicit, persisted engine switch, NOT a hidden temporary Piper mode.)
+  resumeEdge: () => {
+    const st = get();
+    if (!st.active) return;
+    cache = new Map();
+    failStreak = 0;
+    const myGen = ++gen;
+    stopSource();
+    stopKaraoke();
+    set({ status: "preparing", error: null });
+    void ensureAndPlay(curEngine, curVoice, st.index, myGen);
+  },
+
   stop: () => {
     gen++;
     stopSource();
@@ -666,9 +702,8 @@ export const useTts = create<TtsState>((set, get) => ({
     lastSkipAt = 0; // RAWY-186
     cache = new Map();
     sentences = [];
-    if (noticeTimer) { clearTimeout(noticeTimer); noticeTimer = null; }
     if (ctx && ctx.state !== "closed") void ctx.suspend().catch(() => {});
     void ttsStop().catch(() => {});
-    set({ active: false, status: "idle", index: 0, total: 0, progress: 0, error: null, notice: null, words: [], wordIndex: -1 });
+    set({ active: false, status: "idle", index: 0, total: 0, progress: 0, error: null, words: [], wordIndex: -1 });
   },
 }));

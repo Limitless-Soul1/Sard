@@ -502,8 +502,8 @@ export const ar: Record<TKey, string> = {
   "tts.edgeBadge": "إيدج · متصل",
   "tts.male": "ذكر",
   "tts.female": "أنثى",
-  "tts.fellBack": "إيدج غير متاح — نستخدم بايبر",
-  "tts.edgeHiccup": "تعثّر إيدج مؤقتًا — بايبر الآن",
+  "tts.edgeUnavailable": "إيدج غير متاح", // RAWY-193
+  "tts.switchToPiper": "التبديل إلى بايبر", // RAWY-193
   "tts.loadingVoices": "جارٍ تحميل الأصوات…",
   "tts.noVoices": "لا تتوفّر أصوات — تحتاج أصوات Edge إلى اتصال بالإنترنت.",
   "tts.volume": "مستوى الصوت",

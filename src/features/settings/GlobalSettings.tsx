@@ -18,6 +18,7 @@ import { runUpdateCheck, type UpdResult } from "../../lib/updater";
 import { FONT_CATALOGUE, UI_SCALE_MAX, UI_SCALE_MIN, useFonts } from "../../lib/fonts";
 import { BOOKMARK_COLORS, BOOKMARK_SHAPES, BOOKMARK_SIZE_MAX, BOOKMARK_SIZE_MIN, useBookmarkStyle } from "../../lib/bookmarkStyle";
 import { BookmarkShape } from "../reader/BookmarkShape";
+import { TtsTrackingControls } from "../reader/TtsTrackingControls"; // RAWY-200
 import { useStyleScope } from "../../lib/styleScope";
 import {
   ARABIC_FONTS,
@@ -421,6 +422,11 @@ function FontsSection() {
 function ReadingDefaultsSection() {
   const { t, lang } = useI18n();
   const { scope, setScope } = useStyleScope();
+  const { bookThemeId } = useTheme();
+  // The tracking preview + contrast guard use the shared BOOK theme (D29) — the one a new book opens in
+  // — so the swatches show the real per-theme terracotta and warn against the real paper. Theme choice
+  // does NOT affect what is persisted (the track values are theme-independent); it is preview only.
+  const gTheme = THEMES[bookThemeId];
   const [style, setStyle] = useState<ReadingStyle | null>(null);
 
   useEffect(() => {
@@ -477,6 +483,18 @@ function ReadingDefaultsSection() {
           onChange={(e) => patch({ lineHeight: Math.round(Number(e.target.value) * 100) / 100 })} />
       </div>
       <div className="gs-note">{t("gs.reading.fontsHint")}</div>
+
+      {/* RAWY-200: read-aloud tracking defaults — the same six controls as the in-book panel, writing
+          the GLOBAL reading_style row (the per-book panel writes book_style:<id>). */}
+      <div className="gs-sec">
+        <TtsTrackingControls
+          style={style}
+          update={patch}
+          dark={gTheme.dark}
+          paperBg={gTheme.colors.paperBg}
+          themeInk={gTheme.colors.text}
+        />
+      </div>
     </>
   );
 }

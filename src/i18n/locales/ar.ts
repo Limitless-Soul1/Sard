@@ -369,6 +369,14 @@ export const ar: Record<TKey, string> = {
   "color.within": "ضمن سمة {theme}",
   "color.default": "لون السمة الافتراضي",
   "color.custom": "لون مخصص",
+  // RAWY-200: عناصر تحكّم تتبّع القراءة الصوتية
+  "track.heading": "تتبّع القراءة الصوتية",
+  "track.spotlight": "إبراز الجملة",
+  "track.baselineRule": "خطّ سفليّ",
+  "track.karaoke": "إبراز الكلمة",
+  "track.karaokeEdgeOnly": "يظهر مع صوت Edge",
+  "track.opacity": "الشفافية",
+  "track.contrastWarn": "قد يجعل هذا الإبراز النصّ صعب القراءة.",
   "color.contrastOk": "التباين جيّد. يُنبّه سَرْد إلى الألوان الباهتة التي يصعب قراءتها على هذه الورقة.",
   "color.contrastWarn": "باهت على سمة {theme} — اختر لونًا أغمق أو غيّر الورقة.",
 

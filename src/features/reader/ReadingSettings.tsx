@@ -25,6 +25,7 @@ import {
 import type { TKey } from "../../i18n/locales/en";
 import { DEFAULT_DARK, DEFAULT_LIGHT, THEMES, THEME_ORDER, useTheme, type ThemeId } from "../../theme";
 import { contrastIsReadable } from "../../lib/contrast";
+import { TtsTrackingControls } from "./TtsTrackingControls"; // RAWY-200
 import { useFonts } from "../../lib/fonts";
 
 interface Props {
@@ -321,6 +322,17 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
         <span aria-hidden>{readable ? "✓" : "⚠"}</span>
         <span>{readable ? t("color.contrastOk") : t("color.contrastWarn", { theme: theme.name })}</span>
       </div>
+
+      <div className="rs-divider" />
+
+      {/* ---- READ-ALOUD TRACKING (RAWY-200) — spotlight + karaoke colour/opacity/on-off, per-book ---- */}
+      <TtsTrackingControls
+        style={style}
+        update={update}
+        dark={dark}
+        paperBg={paper}
+        themeInk={theme.colors.text}
+      />
 
       </>
       )}

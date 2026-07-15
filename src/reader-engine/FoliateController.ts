@@ -21,6 +21,7 @@ import {
   type ReadingStyle,
   type RevealLabels,
 } from "./injectedCss";
+import { resolveSpotlight, resolvePill } from "./ttsTrack"; // RAWY-200: pure per-theme track resolution
 import type { Theme } from "../theme/tokens";
 import { extractChapterNumber, toWesternDigits } from "../lib/format";
 
@@ -45,6 +46,20 @@ const GEOMETRY_STYLE_KEYS: (keyof ReadingStyle)[] = [
   "firstLineIndent",
   "letterSpacing",
   "flowMode",
+];
+// RAWY-200: the TTS text-tracking fields. These touch NEITHER the injected CSS nor the dynamic paint
+// sheet — the spotlight/karaoke are SVG in foliate's overlayer. A change to any of them must ONLY
+// redraw the overlay at the current sentence (via the Reader's onReadingRedraw), never re-inject the
+// stylesheet or re-run expand() (which would reflow the whole chapter — RAWY-140). Kept separate from
+// GEOMETRY/PAINT precisely so a colour tweak while reading does not move the text under the user.
+const TRACK_STYLE_KEYS: (keyof ReadingStyle)[] = [
+  "ttsSpotlightOn",
+  "ttsSpotlightColor",
+  "ttsSpotlightOpacity",
+  "ttsSpotlightRule",
+  "ttsKaraokeOn",
+  "ttsKaraokeColor",
+  "ttsKaraokeOpacity",
 ];
 
 export interface RelocateInfo {
@@ -137,14 +152,10 @@ function drawHighlight(rects: Iterable<DOMRect>, options: { color?: string; dark
 // The overlay key is RESERVED (READING_KEY) and the draw goes straight to the section overlayer —
 // it never enters the persisted annotations map or the DB.
 const READING_KEY = "sard-reading";
-const READING_SPOTLIGHT = {
-  light: { fill: "rgb(156,90,60)", band: 0.1, rule: 0.3 }, // #9C5A3C — the brand terracotta
-  dark: { fill: "rgb(201,138,94)", band: 0.16, rule: 0.44 }, // #C98A5E — a lighter warm for dark paper
-};
-function drawReadingSpotlight(rects: Iterable<DOMRect>, options: { dark?: boolean } = {}): SVGGElement {
+function drawReadingSpotlight(rects: Iterable<DOMRect>, options: { dark?: boolean; style?: ReadingStyle } = {}): SVGGElement {
   const NS = "http://www.w3.org/2000/svg";
   const g = document.createElementNS(NS, "g");
-  const p = options.dark ? READING_SPOTLIGHT.dark : READING_SPOTLIGHT.light;
+  const p = resolveSpotlight(options.style, options.dark ?? false);
   for (const r of rects) {
     if (!(r.width > 0) || !(r.height > 0)) continue; // skip zero-width fragments (e.g. hyphen columns)
     const radius = Math.min(6, r.height * 0.2); // design ~.3em rounded ends, per line fragment
@@ -159,7 +170,10 @@ function drawReadingSpotlight(rects: Iterable<DOMRect>, options: { dark?: boolea
     band.setAttribute("fill", p.fill);
     band.setAttribute("fill-opacity", String(p.band));
     g.append(band);
-    // thin baseline rule the eye follows
+    // RAWY-200: the thin baseline rule the eye follows — its own on/off control. OFF skips the <rect>
+    // entirely (no zero-opacity leftover); the band above still draws. Default (true/undefined) keeps
+    // today's look. Read straight off the style so the flag lives with the other track fields.
+    if (options.style?.ttsSpotlightRule === false) continue;
     const rule = document.createElementNS(NS, "rect");
     rule.setAttribute("x", String(r.left));
     rule.setAttribute("y", String(r.bottom - ruleH));
@@ -181,14 +195,10 @@ function drawReadingSpotlight(rects: Iterable<DOMRect>, options: { dark?: boolea
 // glyphs stay legible (black text × terracotta ≈ dark on terracotta). A SECOND reserved key
 // (WORD_KEY), added AFTER the band so it paints on top; transient, never the annotations map/DB.
 const WORD_KEY = "sard-reading-word";
-const READING_PILL = {
-  light: { fill: "rgb(156,90,60)", op: 0.9, blend: "multiply" }, // #9C5A3C on paper → rich terracotta
-  dark: { fill: "rgb(201,138,94)", op: 0.9, blend: "screen" }, // #C98A5E lifts off dark paper
-};
-function drawReadingPill(rects: Iterable<DOMRect>, options: { dark?: boolean } = {}): SVGGElement {
+function drawReadingPill(rects: Iterable<DOMRect>, options: { dark?: boolean; style?: ReadingStyle } = {}): SVGGElement {
   const NS = "http://www.w3.org/2000/svg";
   const g = document.createElementNS(NS, "g");
-  const p = options.dark ? READING_PILL.dark : READING_PILL.light;
+  const p = resolvePill(options.style, options.dark ?? false);
   g.setAttribute("fill", p.fill);
   g.style.opacity = String(p.op);
   g.style.mixBlendMode = p.blend;
@@ -1050,8 +1060,14 @@ export class FoliateController {
     }
     const geom = GEOMETRY_STYLE_KEYS.some((k) => prev[k] !== style[k]);
     const paint = PAINT_STYLE_KEYS.some((k) => prev[k] !== style[k]);
+    const track = TRACK_STYLE_KEYS.some((k) => prev[k] !== style[k]);
     if (geom) this.reinject(); // inherent reflow — buildReadingCss also re-emits the fresh ink
     if (geom || paint) this.applyDynamic(); // colour/tashkīl in place (no @font-face, no expand)
+    // RAWY-200: a tracking-only change redraws the overlay at the current sentence with the new colour/
+    // opacity/on-off — no CSS re-inject, no reflow. `readingRedrawCb` (wired by Reader) calls back into
+    // showReadingHighlight (+ the pill), so an OFF flips the effect away immediately, an ON restores it,
+    // and a colour change repaints in place. Guarded so it fires only while a TTS session is on-screen.
+    if (track && !geom && this.ttsUnitsIndex >= 0) this.readingRedrawCb?.();
   }
 
   /** Update theme colours + book flags (override-colour, hide-titles). */
@@ -1501,10 +1517,14 @@ export class FoliateController {
     } catch {
       /* not present — fine */
     }
+    // RAWY-200: spotlight OFF genuinely removes it — we already removed the old key above and simply
+    // skip the add, so NO SVG is drawn (no invisible-but-computed overlay, no DOM cost, no layout
+    // shift). Tracking LOGIC is untouched: ttsUnits/index still advance; only the draw is suppressed.
+    if (this.style && this.style.ttsSpotlightOn === false) return;
     const range = this.ttsUnits[i]?.range;
     if (!range) return; // out of range / whole-body fallback → no highlight (honest)
     try {
-      overlayer.add(READING_KEY, range, drawReadingSpotlight, { dark: this.theme?.dark ?? false });
+      overlayer.add(READING_KEY, range, drawReadingSpotlight, { dark: this.theme?.dark ?? false, style: this.style });
     } catch {
       /* stale/detached range (chapter navigated mid-play) — skip silently */
     }
@@ -1578,10 +1598,14 @@ export class FoliateController {
       /* not present — fine */
     }
     if (!content || content.index !== this.ttsUnitsIndex) return;
+    // RAWY-200: karaoke OFF removes the pill (we removed WORD_KEY above) and skips the add — the sentence
+    // band still shows if spotlight is on. Independent of the spotlight, as required. Logic untouched:
+    // wordIndex still advances; only the draw is suppressed.
+    if (this.style && this.style.ttsKaraokeOn === false) return;
     const range = w >= 0 ? this.wordRanges[w] : null;
     if (!range) return; // no word / unmapped → no pill (the sentence band still shows)
     try {
-      overlayer.add(WORD_KEY, range, drawReadingPill, { dark: this.theme?.dark ?? false });
+      overlayer.add(WORD_KEY, range, drawReadingPill, { dark: this.theme?.dark ?? false, style: this.style });
     } catch {
       /* stale/detached range — skip */
     }

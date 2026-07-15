@@ -40,6 +40,23 @@ export interface ReadingStyle {
   // boundary-stop) or "paged" (foliate columns/pages). Drives the renderer's flow attribute,
   // not injected CSS — but the deterministic paged section box (overflow:hidden) is paged-only.
   flowMode: FlowMode;
+  // TTS text-tracking (RAWY-200): user control over the two read-aloud indicators — the SENTENCE
+  // spotlight (RAWY-126) and the WORD karaoke pill (RAWY-127). These are NOT injected CSS; they are
+  // SVG drawn into foliate's own overlayer (FoliateController drawReadingSpotlight/drawReadingPill), so
+  // there is no cascade and no book-CSS competition — the values flow straight into those draws.
+  //
+  // The colour/opacity fields default to `null`, and `null` is load-bearing: it means "use the built-in
+  // PER-THEME constant" (light vs dark differ — see READING_SPOTLIGHT / READING_PILL). A stored number
+  // could not express that; it would freeze light's value onto dark and silently regress the dark theme
+  // for every fresh profile. So the untouched default reproduces today's look byte-identically in BOTH
+  // themes precisely because it stores nothing. (Same design as `textColor` above.)
+  ttsSpotlightOn: boolean; // default true — the sentence band (+ rule, unless disabled below)
+  ttsSpotlightColor: string | null; // null = the per-theme terracotta
+  ttsSpotlightOpacity: number | null; // null = the per-theme band opacity; the baseline rule scales by the theme ratio
+  ttsSpotlightRule: boolean; // default true — draw the thin baseline UNDERLINE under the band (RAWY-200). false = band only
+  ttsKaraokeOn: boolean; // default true — the word pill (Edge only; Piper has no word timings)
+  ttsKaraokeColor: string | null; // null = the per-theme terracotta
+  ttsKaraokeOpacity: number | null; // null = the per-theme pill opacity (0.9)
 }
 
 // Page-width fraction (0 = Narrow, 1 = Wide). Default ~comfortable. The CSS clamp bounds the
@@ -120,6 +137,24 @@ const ARABIC_RANGE =
   "U+0600-06FF, U+0750-077F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF, U+200C-200F";
 const LATIN_RANGE = "U+0000-024F, U+2000-206F, U+2070-209F, U+20A0-20BF";
 
+// RAWY-200: the TTS-tracking defaults, shared by BOTH per-script default sets so they can never drift.
+// Both effects ON; colour + opacity `null` so the built-in per-theme constants are used verbatim — the
+// untouched default is byte-identical to the pre-RAWY-200 look, in light AND dark, because it stores no
+// number. `Pick<>` keeps this in lockstep with the interface (a renamed field fails to compile here).
+export const TTS_TRACKING_DEFAULTS: Pick<
+  ReadingStyle,
+  | "ttsSpotlightOn" | "ttsSpotlightColor" | "ttsSpotlightOpacity" | "ttsSpotlightRule"
+  | "ttsKaraokeOn" | "ttsKaraokeColor" | "ttsKaraokeOpacity"
+> = {
+  ttsSpotlightOn: true,
+  ttsSpotlightColor: null,
+  ttsSpotlightOpacity: null,
+  ttsSpotlightRule: true, // the baseline underline is drawn today → default true keeps the look identical
+  ttsKaraokeOn: true,
+  ttsKaraokeColor: null,
+  ttsKaraokeOpacity: null,
+};
+
 // Per-script sensible defaults — beautiful before the user touches a control.
 export const ARABIC_DEFAULTS: ReadingStyle = {
   zoom: 1.15,
@@ -137,6 +172,7 @@ export const ARABIC_DEFAULTS: ReadingStyle = {
   letterSpacing: 0,
   textColor: null,
   flowMode: "scrolled",
+  ...TTS_TRACKING_DEFAULTS,
 };
 export const LATIN_DEFAULTS: ReadingStyle = {
   zoom: 1.0,
@@ -154,6 +190,7 @@ export const LATIN_DEFAULTS: ReadingStyle = {
   letterSpacing: 0,
   textColor: null,
   flowMode: "scrolled",
+  ...TTS_TRACKING_DEFAULTS,
 };
 
 export const defaultsForDir = (dir?: string): ReadingStyle =>

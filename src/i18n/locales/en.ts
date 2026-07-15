@@ -371,6 +371,14 @@ export const en = {
   "color.within": "within the {theme} theme",
   "color.default": "Theme default",
   "color.custom": "Custom colour",
+  // RAWY-200: read-aloud text-tracking controls
+  "track.heading": "Read-aloud tracking",
+  "track.spotlight": "Sentence highlight",
+  "track.baselineRule": "Underline",
+  "track.karaoke": "Word highlight",
+  "track.karaokeEdgeOnly": "Shows with the Edge voice",
+  "track.opacity": "Opacity",
+  "track.contrastWarn": "This highlight may make the text hard to read.",
   "color.contrastOk": "Contrast looks good. Sard flags colours too faint to read on this paper.",
   "color.contrastWarn": "Too faint on {theme} — pick a darker shade or change the paper.",
 

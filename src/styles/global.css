@@ -675,6 +675,14 @@ html, body, #root {
 .rs-toggle-text { display: flex; flex-direction: column; gap: 2px; }
 .rs-toggle-label { font: 500 0.8125rem var(--ui-font); color: var(--text); }
 .rs-toggle-hint { font: 400 0.6875rem var(--ui-font); color: var(--muted); }
+/* RAWY-200: read-aloud tracking — layout only; the controls inside reuse rs-ink/rs-slider/rs-toggle. */
+.rs-track { display: flex; flex-direction: column; gap: 10px; }
+.rs-track-effect { display: flex; flex-direction: column; gap: 8px; }
+.rs-track-effect + .rs-track-effect { margin-top: 4px; }
+.rs-track-opacity { gap: 8px; }
+/* the baseline-rule sub-toggle sits under the spotlight's own controls — a hair inset + lighter label */
+.rs-track-subtoggle { padding-inline-start: 2px; }
+.rs-track-subtoggle .rs-toggle-label { font-weight: 400; color: var(--muted); }
 .rs-switch {
   flex: 0 0 auto; width: 40px; height: 23px; border-radius: 23px; position: relative;
   background: color-mix(in srgb, var(--text) 18%, transparent); transition: background 0.18s ease;

@@ -369,6 +369,8 @@ export const en = {
   "gs.scope.perbookHint": "Each book keeps its own style — changes while reading affect only that book.",
   "color.text": "Text colour",
   "color.within": "within the {theme} theme",
+  "color.page": "Page colour", // RAWY-201: the reading surface
+  "color.background": "Background colour", // RAWY-201: the area behind the page
   "color.default": "Theme default",
   "color.custom": "Custom colour",
   // RAWY-200: read-aloud text-tracking controls

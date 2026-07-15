@@ -90,7 +90,9 @@ html, body, #root {
    anchors — Contents + Search then overlapped and crowded. The panels' own CONTENT direction is set
    per-element (the panel roots carry `dir`, the reading text is foliate-isolated), so nothing that
    should mirror is affected — only the physical box placement is made direction-agnostic. */
-.reader-root { position: fixed; inset: 0; background: var(--app-bg); overflow: hidden; direction: ltr; }
+/* RAWY-201: --reader-bg is the per-book custom BACKGROUND (the area behind the page), reader-scoped so
+   it never touches the global --app-bg (used by library/toast/inbox chrome). Unset → --app-bg = today. */
+.reader-root { position: fixed; inset: 0; background: var(--reader-bg, var(--app-bg)); overflow: hidden; direction: ltr; }
 
 /* the desk: the surface the page sheet rests on */
 .reader-desk {
@@ -98,7 +100,7 @@ html, body, #root {
   inset: 0;
   display: flex;
   justify-content: center;
-  background: var(--app-bg);
+  background: var(--reader-bg, var(--app-bg)); /* RAWY-201: reader-scoped custom bg, else the theme */
   /* shifts to make room for an open edge panel (RAWY-22) so it never crowds the page */
   transition: padding 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
@@ -127,7 +129,12 @@ html, body, #root {
      past the middle). RAWY-21's single-column patch makes this the MEASURE. */
   inline-size: min(100%, var(--page-pref, 720px));
   block-size: 100%;
-  background: var(--paper-bg);
+  /* RAWY-201: the per-book custom PAGE colour, if set, wins here — but through a READER-SCOPED var, not
+     the global --paper-bg (90+ chrome consumers would bleed). Falls back to --paper-bg = today's theme
+     value when unset, so an untouched book is byte-identical. This is the .page-sheet MARGIN surface; the
+     book iframe's own html/body background is set to the SAME value via injectedCss (themeBlock /
+     buildDynamicCss) so there is no seam between the text surface and the margin. */
+  background: var(--reader-page, var(--paper-bg));
   box-shadow: 0 0 30px rgba(60, 40, 16, 0.1), -1px 0 0 rgba(43, 37, 33, 0.05), 1px 0 0 rgba(43, 37, 33, 0.05);
   overflow: hidden;
   transition: inline-size 0.18s ease;
@@ -201,6 +208,10 @@ html, body, #root {
    left shows when Contents is closed), 2 side clouds added, and the glow is stronger. Still behind the
    opaque centred page sheet → the text column is never touched. */
 :root[data-theme="moonlit"] .reader-desk { isolation: isolate; }
+/* RAWY-201 (D50): a custom BACKGROUND colour REPLACES the decorations — a plain colour under the clouds
+   would clash. When the reader-desk carries `.custom-bg` (set only when backgroundColor is a real value),
+   the decoration layer is not drawn, so the custom colour reads as intentional, not orphaned clouds. */
+:root[data-theme="moonlit"] .reader-desk.custom-bg::before { content: none; }
 :root[data-theme="moonlit"] .reader-desk::before {
   content: "";
   position: absolute;

@@ -34,7 +34,11 @@ const DYN_ATTR = "data-sard-dyn";
 // dynamic sheet with NO reflow. Every other field that appears in buildReadingCss (fonts, size/zoom,
 // line-height, alignment, weight, spacing, flow) is GEOMETRY → a real re-inject. Fields absent from
 // both lists (marginPx, pageWidth, pageFitWindow) are chrome-side (RAWY-36) — they touch neither.
-const PAINT_STYLE_KEYS: (keyof ReadingStyle)[] = ["textColor", "diacritics"];
+// RAWY-201: pageColor joins the PAINT keys — its background rule is emitted in buildDynamicCss, so a
+// change repaints via the in-place dynamic sheet with NO reflow (RAWY-140), exactly like textColor.
+// backgroundColor is NOT here: it never touches the iframe (it's a reader-scoped chrome var applied by
+// React), so it needs neither a re-inject nor a dynamic-sheet rewrite.
+const PAINT_STYLE_KEYS: (keyof ReadingStyle)[] = ["textColor", "diacritics", "pageColor"];
 const GEOMETRY_STYLE_KEYS: (keyof ReadingStyle)[] = [
   "zoom",
   "arabicFont",

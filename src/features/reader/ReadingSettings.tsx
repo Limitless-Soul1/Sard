@@ -45,6 +45,12 @@ interface Props {
 // (null → follow the theme ink); the rest are calm inks that read well on the paper.
 const INK_PRESETS_LIGHT = ["#4A4036", "#5A4632", "#3A4048", "#5B4B6E"];
 const INK_PRESETS_DARK = ["#E4DED2", "#B8B0A0", "#C9BFA8", "#AFC1D6"];
+// RAWY-201: per-book PAGE (paper) and BACKGROUND (behind the page) presets, keyed by polarity. Calm
+// paper tones + deep desk tones; the "Default" swatch (null) follows the active theme's own value.
+const PAGE_PRESETS_LIGHT = ["#F5EEDD", "#EAE3CF", "#F0F2E8", "#FBF1F1"];
+const PAGE_PRESETS_DARK = ["#222A31", "#1B2130", "#121A2E", "#1C1C1E"];
+const BG_PRESETS_LIGHT = ["#E6DEC8", "#D9D0B8", "#DCE0D2", "#E7DADA"];
+const BG_PRESETS_DARK = ["#0B1021", "#0E1526", "#14100E", "#101418"];
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 const r2 = (v: number) => Math.round(v * 100) / 100;
@@ -54,6 +60,60 @@ const DIA: { key: DiacriticsMode; label: TKey }[] = [
   { key: "hide", label: "diacritics.hide" },
 ];
 const WEIGHT_KEY: Record<number, TKey> = { 400: "weight.normal", 500: "weight.medium", 700: "weight.bold" };
+
+// RAWY-201: a per-book colour row (Default + presets + native picker), reusing the exact rs-ink swatch
+// markup the text-colour control uses — NO new design. `value` is the stored override (null = follow the
+// theme); the Default swatch shows the theme's own value and clears the override.
+function ColorRow({
+  label,
+  value,
+  themeValue,
+  presets,
+  onPick,
+  t,
+}: {
+  label: string;
+  value: string | null;
+  themeValue: string;
+  presets: string[];
+  onPick: (v: string | null) => void;
+  t: (k: TKey) => string;
+}) {
+  return (
+    <>
+      <div className="rs-sec-head">
+        <span className="rs-label">{label}</span>
+      </div>
+      <div className="rs-inks">
+        <button
+          className={`rs-ink${value == null ? " on" : ""}`}
+          style={{ background: themeValue }}
+          onClick={() => onPick(null)}
+          title={t("color.default")}
+          aria-label={t("color.default")}
+        />
+        {presets.map((hex) => (
+          <button
+            key={hex}
+            className={`rs-ink${value?.toLowerCase() === hex.toLowerCase() ? " on" : ""}`}
+            style={{ background: hex }}
+            onClick={() => onPick(hex)}
+            title={hex}
+            aria-label={hex}
+          />
+        ))}
+        <label className="rs-ink rs-ink-custom" title={t("color.custom")}>
+          <span className="rs-ink-plus" aria-hidden>+</span>
+          <input
+            type="color"
+            value={/^#[0-9a-fA-F]{6}$/.test(value ?? "") ? (value as string) : themeValue}
+            onChange={(e) => onPick(e.target.value)}
+          />
+        </label>
+      </div>
+    </>
+  );
+}
 
 // ---- small, reusable, theme-tokened controls ----
 function Section({ label, value, children }: { label: string; value?: ReactNode; children: ReactNode }) {
@@ -185,7 +245,10 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
   const customFonts = useFonts((s) => s.custom); // RAWY-44 — imported fonts for the book pickers
   const theme = THEMES[bookThemeId];
   const dark = theme.dark;
-  const paper = theme.colors.paperBg;
+  // RAWY-201: the EFFECTIVE page colour (custom, else the theme's) — the contrast guard checks the ink
+  // against the surface the text ACTUALLY sits on, so a custom page colour is what an unreadable pair is
+  // measured against (not the theme paper it may have replaced).
+  const paper = style.pageColor ?? theme.colors.paperBg;
   // Effective ink for the contrast check + which preset is "active".
   const ink = style.textColor ?? theme.colors.text;
   const presets = dark ? INK_PRESETS_DARK : INK_PRESETS_LIGHT;
@@ -322,6 +385,26 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
         <span aria-hidden>{readable ? "✓" : "⚠"}</span>
         <span>{readable ? t("color.contrastOk") : t("color.contrastWarn", { theme: theme.name })}</span>
       </div>
+
+      {/* ---- PAGE COLOUR (RAWY-201) — the reading surface, per-book; null = the theme's own paper ---- */}
+      <ColorRow
+        label={t("color.page")}
+        value={style.pageColor}
+        themeValue={theme.colors.paperBg}
+        presets={dark ? PAGE_PRESETS_DARK : PAGE_PRESETS_LIGHT}
+        onPick={(v) => update({ pageColor: v })}
+        t={t}
+      />
+
+      {/* ---- BACKGROUND COLOUR (RAWY-201) — behind the page (replaces Moonlit decorations); null = theme ---- */}
+      <ColorRow
+        label={t("color.background")}
+        value={style.backgroundColor}
+        themeValue={theme.colors.surfaceBg}
+        presets={dark ? BG_PRESETS_DARK : BG_PRESETS_LIGHT}
+        onPick={(v) => update({ backgroundColor: v })}
+        t={t}
+      />
 
       <div className="rs-divider" />
 

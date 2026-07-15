@@ -367,6 +367,8 @@ export const ar: Record<TKey, string> = {
   "gs.scope.perbookHint": "كل كتاب يحتفظ بنمطه — التغييرات أثناء القراءة تؤثّر في ذلك الكتاب وحده.",
   "color.text": "لون النص",
   "color.within": "ضمن سمة {theme}",
+  "color.page": "لون الصفحة", // RAWY-201: سطح القراءة
+  "color.background": "لون الخلفية", // RAWY-201: المنطقة خلف الصفحة
   "color.default": "لون السمة الافتراضي",
   "color.custom": "لون مخصص",
   // RAWY-200: عناصر تحكّم تتبّع القراءة الصوتية

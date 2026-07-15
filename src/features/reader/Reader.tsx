@@ -1139,7 +1139,16 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
 
   // RAWY-114: centre the floating read-aloud pill over the READING AREA (not the raw viewport), so an
   // open Contents/Notes panel shifts it clear of the panel — the compact pill reads this var.
-  const rootVars = { "--reading-shift": `${(leftPad - rightPad) / 2}px` } as CSSProperties;
+  // RAWY-201: the per-book custom PAGE + BACKGROUND colours ride READER-SCOPED vars set here on
+  // .reader-root (never the global --paper-bg/--app-bg → no chrome/accent bleed). Set ONLY when a real
+  // colour is stored; when null the var is absent and the CSS falls back to the theme value — so an
+  // untouched book is byte-identical. `--reader-page` feeds the .page-sheet margin (the iframe surface
+  // gets the same value via injectedCss → no seam); `--reader-bg` feeds .reader-root + .reader-desk.
+  const rootVars = {
+    "--reading-shift": `${(leftPad - rightPad) / 2}px`,
+    ...(style?.pageColor ? { "--reader-page": style.pageColor } : {}),
+    ...(style?.backgroundColor ? { "--reader-bg": style.backgroundColor } : {}),
+  } as CSSProperties;
 
   return (
     // RAWY-117: `chrome-hidden` propagates the auto-hide state to the LAYOUT — the reading area
@@ -1151,7 +1160,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
     // the same full-height pin RAWY-130 used for TTS, now unified for all scrolled reading (global.css).
     <div className={`reader-root${chromeShown ? "" : " chrome-hidden"}${ttsActive ? " tts-playing" : ""}${!isPaged && !isPdf ? " flow-scrolled" : ""}`} style={rootVars}>
       {/* desk + centered page sheet (the book) + page-turn affordances */}
-      <div className={`reader-desk${isPdf && pdfInvert ? " pdf-invert" : ""}`} style={deskStyle} onWheel={onDeskWheel}>
+      <div className={`reader-desk${isPdf && pdfInvert ? " pdf-invert" : ""}${style?.backgroundColor ? " custom-bg" : ""}`} style={deskStyle} onWheel={onDeskWheel}>
         {showChevrons && (
           <button
             className="page-chevron page-chevron-left"

@@ -36,6 +36,16 @@ export interface ReadingStyle {
   // theme's own text colour. A set colour is forced through the same `:root:root` mechanism the
   // override uses (RAWY-38), so it wins over the book's own CSS. Contrast is guarded in the UI.
   textColor: string | null;
+  // Per-book PAGE + BACKGROUND colour (RAWY-201): the reading SURFACE (`pageColor`, the paper the text
+  // sits on) and the AREA BEHIND the page (`backgroundColor`, the desk where Moonlit draws its clouds).
+  // Both `null` = follow the active theme's `paperBg` / `surfaceBg` — the null sentinel means "resolve
+  // the per-theme value", so an untouched book is byte-identical to today in EVERY theme (light + dark).
+  // pageColor is forced into the book iframe the same hardened way as textColor AND drives a reader-scoped
+  // `--reader-page` var so the .page-sheet margin matches the iframe surface (no seam). backgroundColor
+  // drives a reader-scoped `--reader-bg` var and, when set, REPLACES the Moonlit decorations (D50). Neither
+  // touches the global `--paper-bg`/`--app-bg` vars (90+ chrome consumers) → accent/chrome never shift.
+  pageColor: string | null;
+  backgroundColor: string | null;
   // Reading flow (RAWY-25): "scrolled" (default — continuous vertical scroll per chapter,
   // boundary-stop) or "paged" (foliate columns/pages). Drives the renderer's flow attribute,
   // not injected CSS — but the deterministic paged section box (overflow:hidden) is paged-only.
@@ -171,6 +181,8 @@ export const ARABIC_DEFAULTS: ReadingStyle = {
   firstLineIndent: false,
   letterSpacing: 0,
   textColor: null,
+  pageColor: null,
+  backgroundColor: null,
   flowMode: "scrolled",
   ...TTS_TRACKING_DEFAULTS,
 };
@@ -189,6 +201,8 @@ export const LATIN_DEFAULTS: ReadingStyle = {
   firstLineIndent: false,
   letterSpacing: 0,
   textColor: null,
+  pageColor: null,
+  backgroundColor: null,
   flowMode: "scrolled",
   ...TTS_TRACKING_DEFAULTS,
 };
@@ -308,6 +322,7 @@ function themeBlock(
   theme: Theme | undefined,
   flags: BookThemeFlags | undefined,
   textColor?: string | null,
+  pageColor?: string | null,
 ): string {
   if (!theme) return "";
   const c = theme.colors;
@@ -317,6 +332,9 @@ function themeBlock(
   const G = ":root:root .sard-title-ph:not(#__sard_never__)";
   // The ink: a per-book TEXT COLOUR (RAWY-40) wins over the theme's own text colour when set.
   const ink = textColor || c.text;
+  // RAWY-201: the PAGE colour — a per-book paper colour wins over the theme's own paperBg. `null` →
+  // the theme value verbatim (byte-identical default). Same forced/hardened treatment as textColor.
+  const page = pageColor || c.paperBg;
   // Background + container neutralisation are forced when override is on OR the theme is dark
   // (a light-inked book on a dark page must be re-inked). The INK is also forced whenever a
   // custom text colour is set — an explicit per-book choice that must win over the book's CSS.
@@ -327,11 +345,11 @@ function themeBlock(
   const inkRules = `:root:root body${ID}, :root:root body${ID} *:not(a) { color: ${ink} !important; }
            :root:root body${ID} a, :root:root body${ID} a * { color: ${c.accent} !important; }`;
   return `
-    html, body { background: ${c.paperBg} !important; }
+    html, body { background: ${page} !important; }
     ::selection { background: ${c.selection}; }
     ${
       forceBg
-        ? `:root:root, :root:root body${ID} { background-color: ${c.paperBg} !important; }
+        ? `:root:root, :root:root body${ID} { background-color: ${page} !important; }
            /* neutralise the book's own container backgrounds so the themed paper shows through */
            :root:root body${ID} * { background-color: transparent !important; }
            /* re-ink every text element (incl. <body> itself) to the theme; links take the accent */
@@ -591,7 +609,7 @@ export function buildReadingCss(
 
     ${extras}
     ${diacriticsRule}
-    ${themeBlock(theme, flags, style.textColor)}
+    ${themeBlock(theme, flags, style.textColor, style.pageColor)}
   `;
 }
 
@@ -613,6 +631,7 @@ export function buildDynamicCss(style: ReadingStyle, theme?: Theme, flags?: Book
         ? ".sard-tashkil { font-size: 0 !important; }"
         : "";
   let inkCss = "";
+  let pageCss = "";
   if (theme) {
     const c = theme.colors;
     const ink = style.textColor || c.text;
@@ -624,10 +643,25 @@ export function buildDynamicCss(style: ReadingStyle, theme?: Theme, flags?: Book
     // Matches themeBlock: forceInk → hard re-ink (the G-guarded placeholder colours in the geometry
     // sheet still beat this by specificity); otherwise a plain base colour the book's own CSS wins over.
     inkCss = forceInk ? inkRules : `html, body { color: ${ink}; }`;
+    // RAWY-201: emit the PAGE background here too, so a per-book page-colour change repaints via this
+    // dynamic sheet with NO reflow (RAWY-140) — this <style> is appended AFTER foliate's own sheet, so
+    // its `html, body background` wins over themeBlock's at equal specificity (writeDynamic ordering).
+    // ALWAYS emit it (custom colour OR the theme's own paperBg), exactly like the ink above: if we only
+    // emitted it when custom, then CLEARING a custom colour on a book that OPENED with one would leave
+    // the geometry sheet's stale value (that sheet isn't rewritten on a paint-only change). Emitting the
+    // theme value when unset is byte-identical (same computed colour as themeBlock's rule). The forced
+    // variant matches themeBlock's hardened rule so a custom page colour also wins under a dark/override
+    // theme.
+    const page = style.pageColor || c.paperBg;
+    pageCss = forceBg
+      ? `html, body { background: ${page} !important; }
+         :root:root, :root:root body${ID} { background-color: ${page} !important; }`
+      : `html, body { background: ${page} !important; }`;
   }
   return `
     html, body { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, ${scrollInk} 30%, transparent) transparent; }
     ${diacriticsRule}
     ${inkCss}
+    ${pageCss}
   `;
 }

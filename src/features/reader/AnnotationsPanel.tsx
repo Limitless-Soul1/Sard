@@ -7,7 +7,7 @@
 // direction (RAWY-30) — the trailing edge, same side as the toolbar annotations button;
 // book-derived text (chapter labels, excerpts, note bodies) uses dir="auto".
 
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 import { useI18n } from "../../i18n";
 import { THEMES, useTheme } from "../../theme";
@@ -40,8 +40,11 @@ export function AnnotationsPanel({ open, onClose, onJump, initialTab = "notes" }
   const [tab, setTab] = useState<AnnoTab>(initialTab);
   useEffect(() => setTab(initialTab), [initialTab]);
   const highlights = useAnnotations((s) => s.highlights);
-  const notes = useAnnotations((s) => s.notes);
+  const allNotes = useAnnotations((s) => s.notes);
   const bookmarks = useBookmarks((s) => s.bookmarks);
+  // RAWY-205: an empty-body note is a pure tag ANCHOR for a body-less tagged highlight — not a note the
+  // user wrote — so it is hidden from this list AND its count (the passage itself lives under Highlights).
+  const notes = useMemo(() => allNotes.filter((n) => (n.body ?? "").trim() !== ""), [allNotes]);
 
   return (
     <aside className={`reader-panel rp-trail${open ? " show" : ""}`} dir={dir} aria-hidden={!open}>

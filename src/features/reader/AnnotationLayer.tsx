@@ -432,9 +432,11 @@ export function AnnotationLayer({
   };
   const saveNote = async (body: string, tagIds: string[]) => {
     if (activeHi) {
-      // Save the note first (it returns the row, so we have the note id), THEN set its tags. An empty
-      // body deletes/skips the note (returns null) — nothing to tag (RAWY-203).
-      const saved = await store().saveNoteForHighlight(activeHi, body);
+      // Save the note first (it returns the row, so we have the note id), THEN set its tags.
+      // RAWY-205: a TAG ALONE is enough — with tags but no body we still get a row back (an empty-body
+      // anchor note), so the tag persists on a body-less highlight. Only when body AND tags are both
+      // empty is there no note (and nothing to tag): the row goes and its links cascade away.
+      const saved = await store().saveNoteForHighlight(activeHi, body, tagIds.length > 0);
       if (saved) await noteTagsSet(saved.id, tagIds);
     }
     setActive(null);

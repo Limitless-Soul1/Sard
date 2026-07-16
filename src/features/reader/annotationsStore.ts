@@ -44,7 +44,8 @@ interface AnnoState {
   removeHighlight: (id: string) => Promise<void>;
   // RAWY-203: returns the saved note (so the caller can attach tags), or null when the body was empty
   // (which deletes/skips the note — nothing to tag).
-  saveNoteForHighlight: (hi: HighlightRow, body: string) => Promise<NoteRow | null>;
+  // RAWY-205: `keepForTags` keeps an EMPTY-body note alive as a pure tag anchor (see the impl).
+  saveNoteForHighlight: (hi: HighlightRow, body: string, keepForTags?: boolean) => Promise<NoteRow | null>;
   addMarginNote: (cfi: string, color: HighlightColor, body: string, chapterLabel: string | null) => Promise<NoteRow | null>;
   updateNote: (id: string, body: string, color?: string | null) => Promise<void>;
   deleteNote: (id: string) => Promise<void>;
@@ -142,13 +143,20 @@ export const useAnnotations = create<AnnoState>((set, get) => ({
     });
   },
 
-  // Upsert the single note attached to a highlight; an empty body removes it.
-  saveNoteForHighlight: async (hi, rawBody) => {
+  // Upsert the single note attached to a highlight; an empty body removes it — UNLESS the highlight is
+  // being TAGGED (`keepForTags`), in which case an empty-body note is created/kept as a pure tag ANCHOR.
+  // RAWY-205: note_tags anchors to notes.id, so a body-less highlight has nothing to hang a tag on — the
+  // tag was silently dropped (the RAWY-203 latent bug). A tag alone is now enough to persist; a body is
+  // never required. Body AND tags both empty still removes the note (its links cascade away).
+  // An anchor note is not a note the user wrote: it is hidden from the reader's Notes tab + count, and it
+  // never surfaces in the Inbox (annotations_all folds a highlight's note into the highlight row, and its
+  // note branch is `highlight_id IS NULL`).
+  saveNoteForHighlight: async (hi, rawBody, keepForTags = false) => {
     const { bookId } = get();
     if (!bookId) return null;
     const body = rawBody.trim();
     const existing = get().notes.find((n) => n.highlight_id === hi.id);
-    if (!body) {
+    if (!body && !keepForTags) {
       if (existing) {
         // Apply-on-success: only drop it from the panel if the DB delete resolves.
         try {

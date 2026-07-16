@@ -105,6 +105,7 @@ export const ar: Record<TKey, string> = {
   // Library (RAWY-15)
   "lib.nav.library": "المكتبة",
   "lib.nav.highlights": "التظليلات والملاحظات",
+  "lib.nav.bookmarks": "الإشارات المرجعية", // RAWY-202: رفّ الإشارات عبر كل الكتب
   "lib.nav.readingNow": "أقرأ الآن",
   "lib.shelves": "الأرفف",
   "lib.newShelf": "+ رفّ جديد",
@@ -336,6 +337,10 @@ export const ar: Record<TKey, string> = {
   "inbox.all": "الكل",
   "inbox.custom": "لون مخصص",
   "inbox.allBooks": "كل الكتب",
+  // RAWY-202: رفّ الإشارات المرجعية
+  "bm.percent": "{p}٪ مقروء",
+  "bm.empty.title": "لا إشارات مرجعية بعد",
+  "bm.empty.sub": "ضع إشارة مرجعية على صفحة أثناء القراءة وستظهر هنا.",
   "inbox.empty.title": "لا تظليلات أو ملاحظات بعد",
   "inbox.empty.sub": "ظلّل مقطعًا أو أضف ملاحظة أثناء القراءة لتظهر هنا.",
   "inbox.empty.none": "لا نتائج مطابقة",

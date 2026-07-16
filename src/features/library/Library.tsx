@@ -31,6 +31,7 @@ import { GlobalSettings } from "../settings/GlobalSettings";
 import { UpdateRosette } from "../updater/UpdateRosette";
 import { Hoopoe } from "./Hoopoe";
 import { Inbox } from "./Inbox";
+import { BookmarksShelf } from "./BookmarksShelf";
 import { PhotoGallery } from "../photo/PhotoGallery";
 
 // Detect Arabic from the TITLE TEXT itself, so a caption renders in Amiri even when the
@@ -77,7 +78,7 @@ function summarize(results: ImportResult[], t: TFn, lang: string): string {
 export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const { t, lang } = useI18n();
 
-  const [section, setSection] = useState<"library" | "inbox" | "cards">("library");
+  const [section, setSection] = useState<"library" | "inbox" | "cards" | "bookmarks">("library");
   const [settingsOpen, setSettingsOpen] = useState(false); // RAWY-39 global settings
   const [books, setBooks] = useState<BookRow[]>([]);
   const [editing, setEditing] = useState<BookRow | null>(null);
@@ -383,6 +384,13 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
             {t("lib.nav.highlights")}
           </button>
           <button
+            className={`lib-nav-item${section === "bookmarks" ? " active" : ""}`}
+            onClick={() => setSection("bookmarks")}
+          >
+            <span className="lib-nav-ico lib-ico-bookmarks" />
+            {t("lib.nav.bookmarks")}
+          </button>
+          <button
             className={`lib-nav-item${section === "cards" ? " active" : ""}`}
             onClick={() => setSection("cards")}
           >
@@ -490,6 +498,8 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
           <PhotoGallery />
         ) : section === "inbox" ? (
           <Inbox onOpen={onOpen} />
+        ) : section === "bookmarks" ? (
+          <BookmarksShelf onOpen={onOpen} />
         ) : isEmpty ? (
           <EmptyState onBrowse={addBooks} onFolder={addFolder} />
         ) : (

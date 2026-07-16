@@ -106,6 +106,7 @@ export const en = {
   // Library (RAWY-15)
   "lib.nav.library": "Library",
   "lib.nav.highlights": "Highlights & Notes",
+  "lib.nav.bookmarks": "Bookmarks", // RAWY-202: the cross-book bookmarks shelf
   "lib.nav.readingNow": "Reading now",
   "lib.shelves": "Shelves",
   "lib.newShelf": "+ New shelf",
@@ -338,6 +339,10 @@ export const en = {
   "inbox.all": "All",
   "inbox.custom": "Custom colour",
   "inbox.allBooks": "All books",
+  // RAWY-202: bookmarks shelf
+  "bm.percent": "{p}% read",
+  "bm.empty.title": "No bookmarks yet",
+  "bm.empty.sub": "Bookmark a page while reading and it will appear here.",
   "inbox.empty.title": "No highlights or notes yet",
   "inbox.empty.sub": "Highlight a passage or add a note while reading — it shows up here.",
   "inbox.empty.none": "Nothing matches",

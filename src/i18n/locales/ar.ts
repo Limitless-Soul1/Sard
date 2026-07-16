@@ -307,6 +307,10 @@ export const ar: Record<TKey, string> = {
   "panel.noHighlights": "لا تظليلات بعد — حدّد نصًّا في الكتاب لتظليله.",
   "panel.addMarginNote": "علِّق على هذا الموضع",
   "panel.marginNote": "ملاحظة هامشية",
+  // RAWY-206: مُرشِّح المصدر في لوحة الملاحظات
+  "panel.src.current": "هذا الكتاب",
+  "panel.src.all": "كل الكتب",
+  "panel.src.readonly": "من كتبك الأخرى — افتح العنصر لقراءته أو تعديله في كتابه.",
   "note.edit": "تعديل",
   "note.delete": "حذف",
   "note.cancel": "إلغاء",

@@ -309,6 +309,10 @@ export const en = {
   "panel.noHighlights": "No highlights yet — select text in the book to highlight it.",
   "panel.addMarginNote": "Note this spot",
   "panel.marginNote": "Margin note",
+  // RAWY-206: the Notes panel's source filter
+  "panel.src.current": "This book",
+  "panel.src.all": "All books",
+  "panel.src.readonly": "From your other books — open one to read or edit it there.",
   "note.edit": "Edit",
   "note.delete": "Delete",
   "note.cancel": "Cancel",

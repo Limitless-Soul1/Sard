@@ -59,7 +59,17 @@ const SAVE_DEBOUNCE_MS = 500;
 // synchronous task queued right after runs UNDER the freshly-painted UI instead of blocking a blank frame.
 const nextPaint = () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
 
-export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: () => void }) {
+export function Reader({
+  book: initial,
+  onExit,
+  onOpenBook,
+}: {
+  book: OpenTarget;
+  onExit: () => void;
+  /** RAWY-206: open a DIFFERENT book at a locator (the Notes panel's cross-book rows). Goes up to App's
+   *  `setOpen` — the same path the Library uses — so the `[initial.id]` effect re-opens at `cfi`. */
+  onOpenBook?: (t: OpenTarget) => void;
+}) {
   // `uiDir` is the UI LANGUAGE direction (distinct from the book's `dir` below) — RAWY-71 uses it
   // to lay the localized placeholder/reveal widget out in the right direction.
   const { t, lang, dir: uiDir } = useI18n();
@@ -1120,14 +1130,20 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
   // UI language. Physical paddingLeft/Right match those fixed sides regardless of <html dir>.
   // The three right-edge drawers (Settings 384 / Notes 300) are mutually exclusive; Contents
   // (left) coexists. Shift the desk by whichever right drawer is open so the page recenters.
-  const PANEL = 300;
+  // ⚠ These MUST match the panels' CSS widths (`.reader-panel` / `.rp-trail` in global.css). The width
+  // lives in two places — here it drives the desk padding + `--reading-shift` (the TTS pill, the kashida
+  // and the resume hint all read it), so changing only the CSS silently de-centres the page and slides
+  // those off-target. RAWY-206 widened the NOTES panel (trailing) to 340 for its book+chapter labels;
+  // Contents/Search (leading) stay 300.
+  const PANEL_LEAD = 300;
+  const PANEL_TRAIL = 340;
   // Contents + Search both live on the physical-left and are mutually exclusive — either shifts the desk.
-  const leftPad = chaptersOpen || searchOpen ? PANEL : 0;
+  const leftPad = chaptersOpen || searchOpen ? PANEL_LEAD : 0;
   // The Notes drawer pushes the desk so the page sits beside it. The SETTINGS drawer does NOT
   // (RAWY-36): it overlays the page's edge, so the page keeps its full width and the Page-width
   // control shows its real effect live while you adjust it (pushing the desk capped the sheet to
   // the narrowed space → "page width does nothing"). The top cluster stays clickable above both.
-  const rightPad = annoOpen ? PANEL : 0;
+  const rightPad = annoOpen ? PANEL_TRAIL : 0;
   const deskStyle = {
     "--page-pref": `${pageWidthPx(pageFraction)}px`,
     // Page margin insets the foliate host within the sheet (RAWY-36) — reliable across flow modes
@@ -1231,6 +1247,7 @@ export function Reader({ book: initial, onExit }: { book: OpenTarget; onExit: ()
         open={annoOpen}
         onClose={() => setAnnoOpen(false)}
         onJump={jumpCfi}
+        onOpenBook={onOpenBook}
         initialTab={annoTab}
       />
 

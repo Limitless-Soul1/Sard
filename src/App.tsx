@@ -34,7 +34,13 @@ function Root() {
 
   if (!i18nReady || !themeReady) return null; // brief: settings loading (avoids theme flash)
   if (!hasLang) return <LanguagePicker />;
-  return open ? <Reader book={open} onExit={() => setOpen(null)} /> : <Library onOpen={setOpen} />;
+  // RAWY-206: `onOpenBook` is the SAME `setOpen` the Library hands a book to — the reader's Notes panel
+  // uses it to open another book at a note's locator, so there is one open path, not two.
+  return open ? (
+    <Reader book={open} onExit={() => setOpen(null)} onOpenBook={setOpen} />
+  ) : (
+    <Library onOpen={setOpen} />
+  );
 }
 
 function App() {

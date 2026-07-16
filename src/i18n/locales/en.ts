@@ -341,10 +341,9 @@ export const en = {
   "inbox.allBooks": "All books",
   // RAWY-203: note tags
   "inbox.allTags": "All tags",
-  "tag.button": "＋ Tags",
   "tag.new": "New tag…",
-  "tag.add": "Add",
-  "tag.remove": "Remove tag",
+  "tag.add": "Add tag",
+  "tag.toggle": "Apply / remove tag on this note",
   "tag.delete": "Delete tag everywhere",
   // RAWY-202: bookmarks shelf
   "bm.percent": "{p}% read",
@@ -353,7 +352,7 @@ export const en = {
   "inbox.empty.title": "No highlights or notes yet",
   "inbox.empty.sub": "Highlight a passage or add a note while reading — it shows up here.",
   "inbox.empty.none": "Nothing matches",
-  "inbox.empty.noneSub": "Try a different colour, book, type, or search.",
+  "inbox.empty.noneSub": "Try a different colour, book, tag, type, or search.",
 
   // Bookmarks (RAWY-41, Band J)
   "panel.bookmarks": "Bookmarks",

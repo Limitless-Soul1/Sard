@@ -1,8 +1,13 @@
 // RAWY-203: pick/add tags for the note being written. Tags are SHARED across all books and unique by
 // name — adding a name that exists reuses it. Lives in the note popover (HighlightPopover), matching the
 // card's button palette (no new design language). Controlled: the parent holds the selected tag ids and
-// persists them (note_tags_set) when the note is saved; this component only manages the SELECTION and the
+// persists them (note_tags_set) when the note is saved; this component manages the SELECTION and the
 // shared tag list (create / delete). Deleting a tag removes it everywhere but never deletes a note.
+//
+// RAWY-204 (PART B): tightened to TWO calm rows within the existing palette — a single chip CLOUD of all
+// tags (click a chip to apply/unapply it to this note; applied = filled; a quiet ✕ that reveals on hover
+// deletes the tag globally) and one add-field whose inline + IS the action (Enter also adds). No toggle
+// button, no separate menu, no disconnected "Add" button — adding a tag is one gesture.
 
 import { useEffect, useRef, useState } from "react";
 
@@ -18,7 +23,6 @@ export function TagPicker({
 }) {
   const { t } = useI18n();
   const [tags, setTags] = useState<Tag[]>([]);
-  const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -49,47 +53,32 @@ export function TagPicker({
     if (selectedSet.has(id)) onChange(selected.filter((x) => x !== id));
   };
 
-  const selectedTags = tags.filter((x) => selectedSet.has(x.id));
-
   return (
     <div className="tag-picker">
-      <div className="tag-row">
-        {selectedTags.map((tg) => (
-          <button key={tg.id} className="tag-chip on" onClick={() => toggle(tg.id)} title={t("tag.remove")}>
-            {tg.name}
-          </button>
-        ))}
-        <button className="tag-add-btn" onClick={() => setOpen((o) => !o)}>
-          {t("tag.button")}
-        </button>
-      </div>
-
-      {open && (
-        <div className="tag-menu">
-          {tags.length > 0 && (
-            <div className="tag-menu-list">
-              {tags.map((tg) => (
-                <span key={tg.id} className={`tag-chip${selectedSet.has(tg.id) ? " on" : ""}`}>
-                  <button className="tag-chip-name" onClick={() => toggle(tg.id)}>{tg.name}</button>
-                  <button className="tag-del" onClick={() => remove(tg.id)} title={t("tag.delete")} aria-label={t("tag.delete")}>×</button>
-                </span>
-              ))}
-            </div>
-          )}
-          <div className="tag-add-row">
-            <input
-              ref={inputRef}
-              className="tag-input"
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void addNew(); } }}
-              placeholder={t("tag.new")}
-              dir="auto"
-            />
-            <button className="tag-add-confirm" onClick={() => void addNew()} disabled={!draft.trim()}>{t("tag.add")}</button>
-          </div>
+      {tags.length > 0 && (
+        <div className="tag-cloud">
+          {tags.map((tg) => (
+            <span key={tg.id} className={`tag-chip${selectedSet.has(tg.id) ? " on" : ""}`}>
+              <button className="tag-chip-name" onClick={() => toggle(tg.id)} title={t("tag.toggle")}>
+                {tg.name}
+              </button>
+              <button className="tag-del" onClick={() => remove(tg.id)} title={t("tag.delete")} aria-label={t("tag.delete")}>×</button>
+            </span>
+          ))}
         </div>
       )}
+      <div className="tag-add">
+        <input
+          ref={inputRef}
+          className="tag-add-input"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void addNew(); } }}
+          placeholder={t("tag.new")}
+          dir="auto"
+        />
+        <button className="tag-add-plus" onClick={() => void addNew()} disabled={!draft.trim()} title={t("tag.add")} aria-label={t("tag.add")}>+</button>
+      </div>
     </div>
   );
 }

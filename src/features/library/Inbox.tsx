@@ -10,7 +10,7 @@ import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
 import { THEMES, useTheme } from "../../theme";
 import { colorValue, HIGHLIGHT_SLOTS, isHex } from "../reader/highlightColors";
-import { annotationsAll, type AnnoItem } from "../../lib/ipc";
+import { annotationsAll, tagsList, type AnnoItem } from "../../lib/ipc";
 import type { OpenTarget } from "./Library";
 
 const ARABIC = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
@@ -39,12 +39,17 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const [bookMenu, setBookMenu] = useState(false);
   const [tag, setTag] = useState<string | null>(null); // RAWY-203: filter by a tag name
   const [tagMenu, setTagMenu] = useState(false);
+  const [tagNames, setTagNames] = useState<string[]>([]); // RAWY-204: ALL tags (the tags table)
 
   useEffect(() => {
     annotationsAll()
       .then((rows) => setItems(rows))
       .catch(console.error)
       .finally(() => setLoaded(true));
+    // RAWY-204: the tag-filter options come from the tags TABLE (every tag the user made), not from the
+    // tags on loaded notes — otherwise a tag with zero current note links (e.g. one just re-created after a
+    // delete) is invisible in the filter though it exists. Selecting such a tag simply yields an empty list.
+    tagsList().then((ts) => setTagNames(ts.map((x) => x.name))).catch(console.error);
   }, []);
 
   // Distinct books present (for the "All books" filter).
@@ -54,12 +59,14 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     return [...m].map(([id, title]) => ({ id, title }));
   }, [items]);
 
-  // RAWY-203: distinct tag names present across the loaded items (for the tag filter).
+  // RAWY-204: the tag-filter options = every tag in the tags table (union'd with any tag seen on a loaded
+  // item, so nothing is ever missed even before `tagsList` resolves). Previously this was ONLY the tags on
+  // loaded notes, which hid a valid tag that had no current links (a re-created tag) — the reported bug.
   const allTags = useMemo(() => {
-    const s = new Set<string>();
+    const s = new Set<string>(tagNames);
     for (const it of items) for (const tg of it.tags) s.add(tg);
     return [...s].sort((a, b) => a.localeCompare(b, lang, { sensitivity: "base" }));
-  }, [items, lang]);
+  }, [items, tagNames, lang]);
 
   const matchColor = (c: string | null) =>
     !color || (color === "custom" ? isHex(c) : c === color);

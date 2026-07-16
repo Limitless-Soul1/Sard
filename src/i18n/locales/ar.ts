@@ -339,10 +339,9 @@ export const ar: Record<TKey, string> = {
   "inbox.allBooks": "كل الكتب",
   // RAWY-203: وسوم الملاحظات
   "inbox.allTags": "كل الوسوم",
-  "tag.button": "＋ وسوم",
   "tag.new": "وسم جديد…",
-  "tag.add": "إضافة",
-  "tag.remove": "إزالة الوسم",
+  "tag.add": "إضافة وسم",
+  "tag.toggle": "تطبيق / إزالة الوسم على هذه الملاحظة",
   "tag.delete": "حذف الوسم من كل مكان",
   // RAWY-202: رفّ الإشارات المرجعية
   "bm.percent": "{p}٪ مقروء",
@@ -351,7 +350,7 @@ export const ar: Record<TKey, string> = {
   "inbox.empty.title": "لا تظليلات أو ملاحظات بعد",
   "inbox.empty.sub": "ظلّل مقطعًا أو أضف ملاحظة أثناء القراءة لتظهر هنا.",
   "inbox.empty.none": "لا نتائج مطابقة",
-  "inbox.empty.noneSub": "جرّب لونًا أو كتابًا أو نوعًا أو بحثًا مختلفًا.",
+  "inbox.empty.noneSub": "جرّب لونًا أو كتابًا أو وسمًا أو نوعًا أو بحثًا مختلفًا.",
 
   // الفواصل (RAWY-41، نطاق J)
   "panel.bookmarks": "الفواصل",

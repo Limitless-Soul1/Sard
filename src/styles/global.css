@@ -2297,37 +2297,45 @@ html, body, #root {
 .hl-card-foot { display: flex; justify-content: flex-end; }
 .hl-save { border: none; background: var(--accent); color: var(--paper-bg); font: 600 0.75rem var(--ui-font); padding: 7px 16px; border-radius: 7px; cursor: pointer; }
 
-/* RAWY-203: tag picker inside the note popover — matches the card's paper-bg-on-dark palette. */
-.tag-picker { display: flex; flex-direction: column; gap: 7px; }
-.tag-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* RAWY-203/204: tag picker inside the note popover — two calm rows, the card's paper-bg-on-dark palette.
+   Row 1: a chip CLOUD of all tags (click to apply; applied = filled; a ✕ that reveals on hover deletes
+   globally). Row 2: an add-field whose inline + is the action. No toggle button, no separate menu/button. */
+.tag-picker { display: flex; flex-direction: column; gap: 6px; }
+.tag-cloud { display: flex; flex-wrap: wrap; gap: 5px; max-height: 88px; overflow-y: auto; }
 .tag-chip {
-  display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
-  border: 1px solid color-mix(in srgb, var(--paper-bg) 26%, transparent);
-  background: color-mix(in srgb, var(--paper-bg) 10%, transparent);
-  color: color-mix(in srgb, var(--paper-bg) 82%, transparent);
-  font: 500 0.6875rem var(--ui-font); padding: 3px 9px; border-radius: 20px;
+  display: inline-flex; align-items: center; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--paper-bg) 24%, transparent);
+  background: color-mix(in srgb, var(--paper-bg) 9%, transparent);
+  color: color-mix(in srgb, var(--paper-bg) 80%, transparent);
+  font: 500 0.6875rem var(--ui-font); border-radius: 20px; overflow: hidden;
 }
 .tag-chip.on { background: var(--accent); color: var(--paper-bg); border-color: var(--accent); }
-.tag-chip-name { border: 0; background: none; color: inherit; font: inherit; cursor: pointer; padding: 0; }
-.tag-del { border: 0; background: none; color: inherit; cursor: pointer; padding: 0 0 0 2px; font-size: 0.9rem; line-height: 1; opacity: 0.7; }
-.tag-del:hover { opacity: 1; }
-.tag-add-btn {
-  border: 1px dashed color-mix(in srgb, var(--paper-bg) 34%, transparent); background: none;
-  color: color-mix(in srgb, var(--paper-bg) 72%, transparent);
-  font: 500 0.6875rem var(--ui-font); padding: 3px 10px; border-radius: 20px; cursor: pointer;
+.tag-chip-name { border: 0; background: none; color: inherit; font: inherit; cursor: pointer; padding: 3px 4px 3px 10px; }
+/* quiet remove: collapsed by default, reveals on chip hover so the row stays uncrowded */
+.tag-del {
+  border: 0; background: none; color: inherit; cursor: pointer; line-height: 1; font-size: 0.85rem;
+  width: 0; padding: 0; opacity: 0; overflow: hidden; transition: width 0.12s ease, opacity 0.12s ease;
 }
-.tag-menu { display: flex; flex-direction: column; gap: 8px; padding-top: 2px; }
-.tag-menu-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 96px; overflow-y: auto; }
-.tag-add-row { display: flex; gap: 6px; }
-.tag-input {
-  flex: 1; min-width: 0; box-sizing: border-box;
-  background: color-mix(in srgb, var(--paper-bg) 12%, transparent); color: var(--paper-bg);
-  border: 1px solid color-mix(in srgb, var(--paper-bg) 22%, transparent); border-radius: 7px;
-  padding: 5px 9px; font: 400 0.75rem var(--ui-font); outline: none;
+.tag-chip:hover .tag-del, .tag-chip:focus-within .tag-del { width: 15px; padding-right: 7px; opacity: 0.65; }
+.tag-del:hover { opacity: 1 !important; }
+/* the add-field: input + inline + read as ONE unit (shared frame) */
+.tag-add {
+  display: flex; align-items: stretch; border-radius: 7px;
+  border: 1px solid color-mix(in srgb, var(--paper-bg) 20%, transparent);
+  background: color-mix(in srgb, var(--paper-bg) 10%, transparent);
 }
-.tag-input::placeholder { color: color-mix(in srgb, var(--paper-bg) 50%, transparent); }
-.tag-add-confirm { border: 0; background: color-mix(in srgb, var(--paper-bg) 18%, transparent); color: var(--paper-bg); font: 600 0.6875rem var(--ui-font); padding: 5px 12px; border-radius: 7px; cursor: pointer; }
-.tag-add-confirm:disabled { opacity: 0.5; cursor: default; }
+.tag-add:focus-within { border-color: color-mix(in srgb, var(--paper-bg) 40%, transparent); }
+.tag-add-input {
+  flex: 1; min-width: 0; box-sizing: border-box; background: none; color: var(--paper-bg);
+  border: 0; padding: 5px 9px; font: 400 0.75rem var(--ui-font); outline: none;
+}
+.tag-add-input::placeholder { color: color-mix(in srgb, var(--paper-bg) 45%, transparent); }
+.tag-add-plus {
+  flex: none; border: 0; background: none; cursor: pointer;
+  color: color-mix(in srgb, var(--paper-bg) 78%, transparent);
+  font: 400 1rem var(--ui-font); line-height: 1; padding: 0 10px;
+}
+.tag-add-plus:disabled { opacity: 0.35; cursor: default; }
 
 /* RAWY-203: tag chips on an inbox card (light surface — theme muted/accent tones). */
 .inbox-card-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }

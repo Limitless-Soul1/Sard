@@ -12,7 +12,8 @@ import { THEMES, useTheme } from "../../theme";
 import type { AnchorRect, AnnotationHit, FoliateController, SelectionInfo } from "../../reader-engine/FoliateController";
 import { useAnnotations } from "./annotationsStore";
 import { HIGHLIGHT_SLOTS, isHex } from "./highlightColors";
-import type { HighlightColor, HighlightRow, NoteRow } from "../../lib/ipc";
+import { TagPicker } from "./TagPicker";
+import { noteTagsFor, noteTagsSet, type HighlightColor, type HighlightRow, type NoteRow } from "../../lib/ipc";
 
 function useHl() {
   const id = useTheme((s) => s.themeId);
@@ -282,12 +283,19 @@ function HighlightPopover({
   hi: HighlightRow;
   note: NoteRow | undefined;
   onColor: (c: HighlightColor) => void;
-  onSaveNote: (body: string) => void;
+  onSaveNote: (body: string, tagIds: string[]) => void;
   onRemove: () => void;
 }) {
   const { t } = useI18n();
   const [body, setBody] = useState(note?.body ?? "");
-  useEffect(() => setBody(note?.body ?? ""), [note?.id, hi.id]);
+  // RAWY-203: the tags to attach to this note. Loaded from the note's current tags when the popover
+  // opens on an existing note; persisted (with the body) on Save.
+  const [tagIds, setTagIds] = useState<string[]>([]);
+  useEffect(() => {
+    setBody(note?.body ?? "");
+    if (note?.id) noteTagsFor(note.id).then((ts) => setTagIds(ts.map((x) => x.id))).catch(() => setTagIds([]));
+    else setTagIds([]);
+  }, [note?.id, hi.id]);
   const below = hit.rect.top < 150;
   return (
     <div
@@ -307,8 +315,9 @@ function HighlightPopover({
         dir="auto"
         rows={3}
       />
+      <TagPicker selected={tagIds} onChange={setTagIds} />
       <div className="hl-card-foot">
-        <button className="hl-save" onClick={() => onSaveNote(body)}>{t("hl.save")}</button>
+        <button className="hl-save" onClick={() => onSaveNote(body, tagIds)}>{t("hl.save")}</button>
       </div>
     </div>
   );
@@ -421,8 +430,13 @@ export function AnnotationLayer({
   const changeColor = (c: HighlightColor) => {
     if (activeHi) store().setColor(activeHi.id, c);
   };
-  const saveNote = async (body: string) => {
-    if (activeHi) await store().saveNoteForHighlight(activeHi, body);
+  const saveNote = async (body: string, tagIds: string[]) => {
+    if (activeHi) {
+      // Save the note first (it returns the row, so we have the note id), THEN set its tags. An empty
+      // body deletes/skips the note (returns null) — nothing to tag (RAWY-203).
+      const saved = await store().saveNoteForHighlight(activeHi, body);
+      if (saved) await noteTagsSet(saved.id, tagIds);
+    }
     setActive(null);
   };
   const removeHighlight = async () => {

@@ -337,6 +337,13 @@ export const ar: Record<TKey, string> = {
   "inbox.all": "الكل",
   "inbox.custom": "لون مخصص",
   "inbox.allBooks": "كل الكتب",
+  // RAWY-203: وسوم الملاحظات
+  "inbox.allTags": "كل الوسوم",
+  "tag.button": "＋ وسوم",
+  "tag.new": "وسم جديد…",
+  "tag.add": "إضافة",
+  "tag.remove": "إزالة الوسم",
+  "tag.delete": "حذف الوسم من كل مكان",
   // RAWY-202: رفّ الإشارات المرجعية
   "bm.percent": "{p}٪ مقروء",
   "bm.empty.title": "لا إشارات مرجعية بعد",

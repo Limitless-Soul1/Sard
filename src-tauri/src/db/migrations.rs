@@ -53,6 +53,11 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "paragraph_spacing_default",
         include_str!("migrations_sql/0009_paragraph_spacing_default.sql"),
     ),
+    (
+        10,
+        "note_tags",
+        include_str!("migrations_sql/0010_note_tags.sql"),
+    ),
 ];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.

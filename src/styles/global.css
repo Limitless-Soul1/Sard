@@ -2297,6 +2297,48 @@ html, body, #root {
 .hl-card-foot { display: flex; justify-content: flex-end; }
 .hl-save { border: none; background: var(--accent); color: var(--paper-bg); font: 600 0.75rem var(--ui-font); padding: 7px 16px; border-radius: 7px; cursor: pointer; }
 
+/* RAWY-203: tag picker inside the note popover — matches the card's paper-bg-on-dark palette. */
+.tag-picker { display: flex; flex-direction: column; gap: 7px; }
+.tag-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tag-chip {
+  display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
+  border: 1px solid color-mix(in srgb, var(--paper-bg) 26%, transparent);
+  background: color-mix(in srgb, var(--paper-bg) 10%, transparent);
+  color: color-mix(in srgb, var(--paper-bg) 82%, transparent);
+  font: 500 0.6875rem var(--ui-font); padding: 3px 9px; border-radius: 20px;
+}
+.tag-chip.on { background: var(--accent); color: var(--paper-bg); border-color: var(--accent); }
+.tag-chip-name { border: 0; background: none; color: inherit; font: inherit; cursor: pointer; padding: 0; }
+.tag-del { border: 0; background: none; color: inherit; cursor: pointer; padding: 0 0 0 2px; font-size: 0.9rem; line-height: 1; opacity: 0.7; }
+.tag-del:hover { opacity: 1; }
+.tag-add-btn {
+  border: 1px dashed color-mix(in srgb, var(--paper-bg) 34%, transparent); background: none;
+  color: color-mix(in srgb, var(--paper-bg) 72%, transparent);
+  font: 500 0.6875rem var(--ui-font); padding: 3px 10px; border-radius: 20px; cursor: pointer;
+}
+.tag-menu { display: flex; flex-direction: column; gap: 8px; padding-top: 2px; }
+.tag-menu-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 96px; overflow-y: auto; }
+.tag-add-row { display: flex; gap: 6px; }
+.tag-input {
+  flex: 1; min-width: 0; box-sizing: border-box;
+  background: color-mix(in srgb, var(--paper-bg) 12%, transparent); color: var(--paper-bg);
+  border: 1px solid color-mix(in srgb, var(--paper-bg) 22%, transparent); border-radius: 7px;
+  padding: 5px 9px; font: 400 0.75rem var(--ui-font); outline: none;
+}
+.tag-input::placeholder { color: color-mix(in srgb, var(--paper-bg) 50%, transparent); }
+.tag-add-confirm { border: 0; background: color-mix(in srgb, var(--paper-bg) 18%, transparent); color: var(--paper-bg); font: 600 0.6875rem var(--ui-font); padding: 5px 12px; border-radius: 7px; cursor: pointer; }
+.tag-add-confirm:disabled { opacity: 0.5; cursor: default; }
+
+/* RAWY-203: tag chips on an inbox card (light surface — theme muted/accent tones). */
+.inbox-card-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+.inbox-tag {
+  font: 500 0.6875rem var(--ui-font);
+  color: color-mix(in srgb, var(--accent) 88%, var(--text));
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  padding: 1.5px 8px; border-radius: 20px;
+}
+
 /* ---- Cross-book Highlights & Notes inbox (RAWY-27, design band D) ---- */
 .inbox { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 .inbox-head { padding: 28px 36px 8px; display: flex; flex-direction: column; gap: 18px; }

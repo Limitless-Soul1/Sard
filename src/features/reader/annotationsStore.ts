@@ -42,7 +42,9 @@ interface AnnoState {
   createHighlight: (cfi: string, color: HighlightColor, text: string) => Promise<HighlightRow | null>;
   setColor: (id: string, color: HighlightColor) => Promise<void>;
   removeHighlight: (id: string) => Promise<void>;
-  saveNoteForHighlight: (hi: HighlightRow, body: string) => Promise<void>;
+  // RAWY-203: returns the saved note (so the caller can attach tags), or null when the body was empty
+  // (which deletes/skips the note — nothing to tag).
+  saveNoteForHighlight: (hi: HighlightRow, body: string) => Promise<NoteRow | null>;
   addMarginNote: (cfi: string, color: HighlightColor, body: string, chapterLabel: string | null) => Promise<NoteRow | null>;
   updateNote: (id: string, body: string, color?: string | null) => Promise<void>;
   deleteNote: (id: string) => Promise<void>;
@@ -143,7 +145,7 @@ export const useAnnotations = create<AnnoState>((set, get) => ({
   // Upsert the single note attached to a highlight; an empty body removes it.
   saveNoteForHighlight: async (hi, rawBody) => {
     const { bookId } = get();
-    if (!bookId) return;
+    if (!bookId) return null;
     const body = rawBody.trim();
     const existing = get().notes.find((n) => n.highlight_id === hi.id);
     if (!body) {
@@ -156,10 +158,11 @@ export const useAnnotations = create<AnnoState>((set, get) => ({
           console.error(e);
         }
       }
-      return;
+      return null;
     }
     const note = await noteCreate({ bookId, highlightId: hi.id, color: hi.color, body, chapterLabel: hi.chapter_label });
     if (note) set({ notes: upsert(get().notes, note) });
+    return note ?? null;
   },
 
   // A standalone "margin" note at a location (no highlight) — the affordance deferred from RAWY-20.

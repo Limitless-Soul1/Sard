@@ -374,6 +374,39 @@ pub fn note_delete(id: String, state: State<AppState>) -> Result<bool, String> {
     Ok(true)
 }
 
+// ---- Note tags (RAWY-203): user-defined categories, shared across books, many-to-many. ----
+#[tauri::command]
+pub fn tags_list(state: State<AppState>) -> Result<Vec<library::Tag>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::tags_list(&conn).map_err(err)
+}
+
+#[tauri::command]
+pub fn tag_create(name: String, state: State<AppState>) -> Result<Option<library::Tag>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::tag_create(&conn, &name).map_err(err)
+}
+
+#[tauri::command]
+pub fn tag_delete(id: String, state: State<AppState>) -> Result<bool, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::tag_delete(&conn, &id).map_err(err)?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn note_tags_for(note_id: String, state: State<AppState>) -> Result<Vec<library::Tag>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::note_tags_for(&conn, &note_id).map_err(err)
+}
+
+#[tauri::command]
+pub fn note_tags_set(note_id: String, tag_ids: Vec<String>, state: State<AppState>) -> Result<bool, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::note_tags_set(&conn, &note_id, &tag_ids).map_err(err)?;
+    Ok(true)
+}
+
 // ---- Bookmarks (RAWY-41): a saved CFI location, toggled at the current spot. ----
 
 #[tauri::command]

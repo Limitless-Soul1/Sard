@@ -339,6 +339,13 @@ export const en = {
   "inbox.all": "All",
   "inbox.custom": "Custom colour",
   "inbox.allBooks": "All books",
+  // RAWY-203: note tags
+  "inbox.allTags": "All tags",
+  "tag.button": "＋ Tags",
+  "tag.new": "New tag…",
+  "tag.add": "Add",
+  "tag.remove": "Remove tag",
+  "tag.delete": "Delete tag everywhere",
   // RAWY-202: bookmarks shelf
   "bm.percent": "{p}% read",
   "bm.empty.title": "No bookmarks yet",

@@ -311,10 +311,25 @@ export interface AnnoItem {
   note: string | null; // a highlight's attached note body (if any)
   cfi: string | null; // jump target
   created_at: number | null;
+  note_id: string | null; // RAWY-203: the underlying note's id (null for a note-less highlight)
+  tags: string[]; // RAWY-203: the note's tag names (empty when untagged / no note)
 }
 
 /** Every highlight + standalone note across all books, newest first. */
 export const annotationsAll = (): Promise<AnnoItem[]> => invoke<AnnoItem[]>("annotations_all");
+
+// Note tags (RAWY-203): user-defined categories, shared across books, many-to-many.
+export interface Tag {
+  id: string;
+  name: string;
+  created_at: number | null;
+}
+export const tagsList = (): Promise<Tag[]> => invoke<Tag[]>("tags_list");
+export const tagCreate = (name: string): Promise<Tag | null> => invoke<Tag | null>("tag_create", { name });
+export const tagDelete = (id: string): Promise<boolean> => invoke<boolean>("tag_delete", { id });
+export const noteTagsFor = (noteId: string): Promise<Tag[]> => invoke<Tag[]>("note_tags_for", { noteId });
+export const noteTagsSet = (noteId: string, tagIds: string[]): Promise<boolean> =>
+  invoke<boolean>("note_tags_set", { noteId, tagIds });
 
 export const highlightCreate = (
   bookId: string,

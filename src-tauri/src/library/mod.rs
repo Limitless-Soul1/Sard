@@ -754,8 +754,74 @@ pub fn note_update(conn: &Connection, id: &str, body: &str, color: Option<&str>)
 }
 
 pub fn note_delete(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    // FK note_tags.note_id -> notes(id) ON DELETE CASCADE removes this note's tag links (no orphans).
     conn.execute("DELETE FROM notes WHERE id = ?1", [id])?;
     Ok(())
+}
+
+// ---- Custom note TAGS (RAWY-203): many-to-many, shared across all books ----
+#[derive(Serialize)]
+pub struct Tag {
+    pub id: String,
+    pub name: String,
+    pub created_at: Option<i64>,
+}
+
+fn tag_row(r: &rusqlite::Row) -> rusqlite::Result<Tag> {
+    Ok(Tag { id: r.get(0)?, name: r.get(1)?, created_at: r.get(2)? })
+}
+
+/// Every tag, alphabetical (case-insensitive) — the user's shared tag list.
+pub fn tags_list(conn: &Connection) -> rusqlite::Result<Vec<Tag>> {
+    let mut stmt = conn.prepare("SELECT id, name, created_at FROM tags ORDER BY name COLLATE NOCASE")?;
+    let rows = stmt.query_map([], tag_row)?;
+    rows.collect()
+}
+
+/// Create a tag by name, or REUSE the existing one — names are UNIQUE and shared, so adding a name that
+/// already exists returns the existing tag (no duplicate). Trims; an empty/whitespace name is a no-op.
+pub fn tag_create(conn: &Connection, name: &str) -> rusqlite::Result<Option<Tag>> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Ok(None);
+    }
+    let id = gen_id(&format!("tag:{name}"));
+    conn.execute(
+        "INSERT INTO tags(id, name, created_at) VALUES(?1,?2,?3) ON CONFLICT(name) DO NOTHING",
+        rusqlite::params![id, name, now_unix()],
+    )?;
+    conn.query_row("SELECT id, name, created_at FROM tags WHERE name = ?1", [name], tag_row)
+        .optional()
+}
+
+/// Delete a tag. ON DELETE CASCADE clears its `note_tags` links; the `notes` table has NO FK to tags,
+/// so the notes themselves are never touched — deleting a tag only unlinks it, never deletes a note.
+pub fn tag_delete(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM tags WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+/// The tags currently on one note (to populate the note editor).
+pub fn note_tags_for(conn: &Connection, note_id: &str) -> rusqlite::Result<Vec<Tag>> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.name, t.created_at FROM note_tags nt JOIN tags t ON t.id = nt.tag_id \
+         WHERE nt.note_id = ?1 ORDER BY t.name COLLATE NOCASE",
+    )?;
+    let rows = stmt.query_map([note_id], tag_row)?;
+    rows.collect()
+}
+
+/// Replace a note's tag set with exactly `tag_ids` (the editor sends the full selection). Atomic.
+pub fn note_tags_set(conn: &Connection, note_id: &str, tag_ids: &[String]) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM note_tags WHERE note_id = ?1", [note_id])?;
+    for tid in tag_ids {
+        tx.execute(
+            "INSERT OR IGNORE INTO note_tags(note_id, tag_id) VALUES(?1,?2)",
+            rusqlite::params![note_id, tid],
+        )?;
+    }
+    tx.commit()
 }
 
 // ---- Cross-book Highlights & Notes inbox (RAWY-27) ----
@@ -778,9 +844,20 @@ pub struct AnnoItem {
     pub note: Option<String>, // for a highlight that HAS a note: the note body (else null)
     pub cfi: Option<String>,  // jump target
     pub created_at: Option<i64>,
+    // RAWY-203: the item's underlying NOTE id (a standalone note, or the note attached to a highlight),
+    // so the UI knows which note to tag; null for a highlight with no note (nothing to tag). And the
+    // note's tag NAMES, so the Inbox can filter by tag. Empty for an untagged/note-less item.
+    pub note_id: Option<String>,
+    pub tags: Vec<String>,
 }
 
 fn anno_item(r: &rusqlite::Row) -> rusqlite::Result<AnnoItem> {
+    // GROUP_CONCAT joins the tag names with a newline (a tag name is a single-line string, so it never
+    // contains one) — split back into a list; NULL (no tags) -> empty.
+    let tag_str: Option<String> = r.get(13)?;
+    let tags = tag_str
+        .map(|s| s.split('\n').filter(|t| !t.is_empty()).map(str::to_string).collect())
+        .unwrap_or_default();
     Ok(AnnoItem {
         id: r.get(0)?,
         kind: r.get(1)?,
@@ -794,22 +871,29 @@ fn anno_item(r: &rusqlite::Row) -> rusqlite::Result<AnnoItem> {
         note: r.get(9)?,
         cfi: r.get(10)?,
         created_at: r.get(11)?,
+        note_id: r.get(12)?,
+        tags,
     })
 }
 
 /// All highlights + standalone notes across every book, newest first. Notes attached to a
 /// highlight ride INSIDE that highlight's row (`note`), not as separate items.
 pub fn annotations_all(conn: &Connection) -> rusqlite::Result<Vec<AnnoItem>> {
+    // RAWY-203: EXTENDED, not replaced — two columns appended to each branch (the underlying note id +
+    // its GROUP_CONCAT'd tag names). `created_at` stays column 12, so `ORDER BY created_at` is unchanged
+    // and every existing field an item carried before is still returned in the same position.
+    let tags_sub = "(SELECT GROUP_CONCAT(tg.name, char(10)) FROM note_tags nt \
+                     JOIN tags tg ON tg.id = nt.tag_id WHERE nt.note_id = n.id)";
     let sql = format!(
         "SELECT h.id, 'highlight', h.book_id, {OV_TITLE}, b.file_path, \
             COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='dir'), b.dir), \
-            h.chapter_label, h.color, h.text_excerpt, n.body, h.start_cfi, h.created_at \
+            h.chapter_label, h.color, h.text_excerpt, n.body, h.start_cfi, h.created_at, n.id, {tags_sub} \
          FROM highlights h JOIN books b ON b.id = h.book_id \
          LEFT JOIN notes n ON n.highlight_id = h.id \
          UNION ALL \
          SELECT n.id, 'note', n.book_id, {OV_TITLE}, b.file_path, \
             COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='dir'), b.dir), \
-            n.chapter_label, n.color, n.body, NULL, n.locator_cfi, n.created_at \
+            n.chapter_label, n.color, n.body, NULL, n.locator_cfi, n.created_at, n.id, {tags_sub} \
          FROM notes n JOIN books b ON b.id = n.book_id \
          WHERE n.highlight_id IS NULL \
          ORDER BY created_at DESC"

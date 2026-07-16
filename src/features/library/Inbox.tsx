@@ -37,6 +37,8 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const [book, setBook] = useState<string | null>(null);
   const [type, setType] = useState<TypeFilter>("all");
   const [bookMenu, setBookMenu] = useState(false);
+  const [tag, setTag] = useState<string | null>(null); // RAWY-203: filter by a tag name
+  const [tagMenu, setTagMenu] = useState(false);
 
   useEffect(() => {
     annotationsAll()
@@ -52,15 +54,23 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     return [...m].map(([id, title]) => ({ id, title }));
   }, [items]);
 
+  // RAWY-203: distinct tag names present across the loaded items (for the tag filter).
+  const allTags = useMemo(() => {
+    const s = new Set<string>();
+    for (const it of items) for (const tg of it.tags) s.add(tg);
+    return [...s].sort((a, b) => a.localeCompare(b, lang, { sensitivity: "base" }));
+  }, [items, lang]);
+
   const matchColor = (c: string | null) =>
     !color || (color === "custom" ? isHex(c) : c === color);
   const q = search.trim().toLowerCase();
   const filtered = items.filter((it) => {
     if (type !== "all" && it.kind !== type) return false;
     if (book && it.book_id !== book) return false;
+    if (tag && !it.tags.includes(tag)) return false; // RAWY-203: an item shows under each of its tags
     if (!matchColor(it.color)) return false;
     if (q) {
-      const hay = `${it.text ?? ""} ${it.note ?? ""} ${it.book_title ?? ""} ${it.chapter_label ?? ""}`.toLowerCase();
+      const hay = `${it.text ?? ""} ${it.note ?? ""} ${it.book_title ?? ""} ${it.chapter_label ?? ""} ${it.tags.join(" ")}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -140,6 +150,35 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
             )}
           </div>
 
+          {/* RAWY-203: filter by tag — same dropdown pattern as the book filter. Only shown once tags exist. */}
+          {allTags.length > 0 && (
+            <div className="inbox-ctl-wrap">
+              <button className="inbox-ctl" onClick={() => setTagMenu((o) => !o)}>
+                {tag ?? t("inbox.allTags")} ▾
+              </button>
+              {tagMenu && (
+                <>
+                  <div className="lib-clickaway" onClick={() => setTagMenu(false)} />
+                  <div className="lib-menu inbox-menu">
+                    <button className={tag === null ? "active" : ""} onClick={() => { setTag(null); setTagMenu(false); }}>
+                      {t("inbox.allTags")}
+                    </button>
+                    {allTags.map((tg) => (
+                      <button
+                        key={tg}
+                        className={tag === tg ? "active" : ""}
+                        dir={ARABIC.test(tg) ? "rtl" : "ltr"}
+                        onClick={() => { setTag(tg); setTagMenu(false); }}
+                      >
+                        {tg}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
           <div className="inbox-seg">
             {(["all", "highlight", "note"] as TypeFilter[]).map((k) => (
               <button key={k} className={type === k ? "on" : ""} onClick={() => setType(k)}>
@@ -180,6 +219,11 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
                     <span className="inbox-card-note">
                       <span className="inbox-card-note-label">{t("hl.note")} · </span>
                       {it.note}
+                    </span>
+                  )}
+                  {it.tags.length > 0 && (
+                    <span className="inbox-card-tags">
+                      {it.tags.map((tg) => <span key={tg} className="inbox-tag">{tg}</span>)}
                     </span>
                   )}
                 </span>

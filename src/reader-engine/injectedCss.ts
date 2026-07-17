@@ -6,7 +6,11 @@
 import type { Theme } from "../theme/tokens";
 
 export type DiacriticsMode = "show" | "dim" | "hide";
-export type Align = "justify" | "start";
+// LOGICAL, not physical (RAWY-207): `start`/`end` follow the book's direction, so one stored value
+// reads correctly in both an RTL and an LTR book — in Arabic `start` IS the right edge. Physical
+// left/right would freeze one direction into the setting. These flow straight into `text-align`
+// (all four are valid CSS keywords), so no value needs special-casing in the funnel below.
+export type Align = "justify" | "start" | "center" | "end";
 export type FlowMode = "scrolled" | "paged";
 export type ArabicFont = "amiri" | "notoNaskh" | "arefRuqaa" | "plexArabic";
 export type LatinFont = "literata" | "sourceSerif" | "inter" | "plexLatin";

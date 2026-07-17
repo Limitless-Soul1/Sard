@@ -79,6 +79,8 @@ export const ar: Record<TKey, string> = {
   "type.align": "المحاذاة",
   "type.alignJustify": "ضبط",
   "type.alignStart": "بداية",
+  "type.alignCenter": "وسط",
+  "type.alignEnd": "نهاية",
   "type.diacritics": "التشكيل",
   "diacritics.show": "إظهار",
   "diacritics.dim": "تعتيم",

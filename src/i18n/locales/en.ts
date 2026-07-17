@@ -80,6 +80,8 @@ export const en = {
   "type.align": "Alignment",
   "type.alignJustify": "Justify",
   "type.alignStart": "Start",
+  "type.alignCenter": "Center",
+  "type.alignEnd": "End",
   "type.diacritics": "Diacritics",
   "diacritics.show": "Show",
   "diacritics.dim": "Dim",

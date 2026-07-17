@@ -307,6 +307,8 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
           options={[
             { key: "justify", label: t("type.alignJustify") },
             { key: "start", label: t("type.alignStart") },
+            { key: "center", label: t("type.alignCenter") },
+            { key: "end", label: t("type.alignEnd") },
           ]}
         />
       </Section>

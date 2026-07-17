@@ -48,18 +48,28 @@ const TOP_REVEAL_PX = 64;
 
 export function useChromeOnIntent(): {
   visible: boolean;
+  // RAWY-211: TRUE only while the chrome is hidden by a DELIBERATE scroll-DOWN — never by the ordinary
+  // idle auto-hide. Immersive mode (RAWY-210) hides the TTS pill + scrollbar on THIS, not on `visible`,
+  // so an idle-hide of the toolbar no longer drags the transport to pointer-events:none (the RAWY-211 bug:
+  // ~2.6s after enabling immersive the pill went dead while the user did nothing). Cleared on every wake.
+  scrolledAway: boolean;
   wake: () => void;
   signalMove: (x: number, y: number) => void;
   signalScroll: (down: boolean) => void;
   setHold: (v: boolean) => void;
 } {
   const [visible, setVisible] = useState(true); // visible on entry, then settles
+  // RAWY-211: the intent flag above. Set true ONLY in signalScroll(down); cleared whenever the chrome
+  // becomes visible again (folded into setVis, so every wake path — scroll-up, top-edge reveal, tap wake,
+  // panel hold — clears it by construction).
+  const [scrolledAway, setScrolledAway] = useState(false);
   // RAWY-118: a ref mirror of `visible` so the move handler can branch on it synchronously (React
   // state is stale inside the stable callback). `setVis` keeps the two in lock-step.
   const visibleRef = useRef(true);
   const setVis = useCallback((v: boolean) => {
     visibleRef.current = v;
     setVisible(v);
+    if (v) setScrolledAway(false); // RAWY-211: any path that SHOWS the chrome un-scrolls-away
   }, []);
   const holdRef = useRef(false);
   const timer = useRef<number | undefined>(undefined);
@@ -124,6 +134,7 @@ export function useChromeOnIntent(): {
         if (timer.current) clearTimeout(timer.current);
         anchor.current = lastPos.current;
         setVis(false);
+        setScrolledAway(true); // RAWY-211: a DELIBERATE scroll-down — this (not idle) hides the pill/scrollbar
       } else {
         anchor.current = lastPos.current;
         setVis(true);
@@ -160,5 +171,5 @@ export function useChromeOnIntent(): {
     };
   }, [signalMove, wake]);
 
-  return { visible, wake, signalMove, signalScroll, setHold };
+  return { visible, scrolledAway, wake, signalMove, signalScroll, setHold };
 }

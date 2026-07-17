@@ -79,6 +79,8 @@ export const en = {
   "type.margins": "Margins",
   "type.immersive": "Immersive scrolling",
   "type.immersiveHint": "Scrolling down hides the toolbar, read-aloud controls, and scrollbar — leaving only the page. They return when you scroll up or reach the top. While listening, the highlight keeps following the words.",
+  "type.immHidePill": "Hide read-aloud controls",
+  "type.immHideScrollbar": "Hide scrollbar",
   "type.align": "Alignment",
   "type.alignJustify": "Justify",
   "type.alignStart": "Start",

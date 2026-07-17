@@ -694,6 +694,9 @@ html, body, #root {
 /* the baseline-rule sub-toggle sits under the spotlight's own controls — a hair inset + lighter label */
 .rs-track-subtoggle { padding-inline-start: 2px; }
 .rs-track-subtoggle .rs-toggle-label { font-weight: 400; color: var(--muted); }
+/* RAWY-212: a sub-toggle whose master is OFF is dimmed + inert (native <button disabled>), so its dependence
+   on the master is visible rather than silently doing nothing. Matches the existing disabled-opacity pattern. */
+.rs-toggle-row:disabled { opacity: 0.42; cursor: default; }
 .rs-switch {
   flex: 0 0 auto; width: 40px; height: 23px; border-radius: 23px; position: relative;
   background: color-mix(in srgb, var(--text) 18%, transparent); transition: background 0.18s ease;
@@ -800,15 +803,24 @@ html, body, #root {
    nothing — the transport went dead ~2.6s after enabling immersive (the RAWY-211 bug). `.scrolled-away` is set
    ONLY by a deliberate scroll-down and cleared on any wake, so an idle-hide of the toolbar now leaves the pill
    fully live (transport works while listening), while a scroll-down still hides it (the RAWY-210 feature). */
+/* RAWY-212: each hide now ALSO requires its per-element gate class (`im-hide-pill` / `im-hide-scrollbar`),
+   which Reader sets from the EFFECTIVE per-book sub-flags (D43: unified default + per-book override). The
+   master `immersive` and the deliberate-scroll `scrolled-away` still gate the group, but each element is now
+   opt-out independently. Defaults (IMMERSIVE_DEFAULTS) keep pill + scrollbar on, so an existing immersive
+   profile is byte-identical to RAWY-210/211. Master ON + both gate classes absent = a valid no-op
+   (scrolled-away is set but nothing matches). The `.tts-resume` chapter-end hint is NEVER hidden by immersive
+   (owner revision — it must appear ALONE over the clean page when a chapter ends while scrolled away, with the
+   pill + scrollbar staying hidden); the D49 overlayer highlight is likewise never classed and always tracks.
+   The transition stays on `.immersive` so both fade directions animate. */
 .reader-root.immersive .tts-pill,
 .reader-root.immersive .tts-mini { transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1); }
-.reader-root.immersive.scrolled-away .tts-pill,
-.reader-root.immersive.scrolled-away .tts-mini { opacity: 0; pointer-events: none; }
+.reader-root.immersive.scrolled-away.im-hide-pill .tts-pill,
+.reader-root.immersive.scrolled-away.im-hide-pill .tts-mini { opacity: 0; pointer-events: none; }
 /* The reading scrollbar lives in foliate's CLOSED shadow root; `scrollbar-color` is INHERITED and crosses
    that boundary (the same mechanism that tints the thumb from :root — see the scrollbar note up top). A
    transparent value here hides the bar without reaching into the shadow DOM, and reverts the instant
-   `.scrolled-away` drops. */
-.reader-root.immersive.scrolled-away { scrollbar-color: transparent transparent; }
+   `.scrolled-away` (or the gate class) drops. */
+.reader-root.immersive.scrolled-away.im-hide-scrollbar { scrollbar-color: transparent transparent; }
 /* FIXED physical sides (RAWY-32 — supersedes the RAWY-30/D20 follow-direction model): chapters
    is PINNED to the physical LEFT, annotations to the physical RIGHT, and they DO NOT move when
    the UI language flips. Physical `left`/`right` (not logical) ignore the panel's `dir` attr, so

@@ -71,6 +71,16 @@ export interface ReadingStyle {
   ttsKaraokeOn: boolean; // default true — the word pill (Edge only; Piper has no word timings)
   ttsKaraokeColor: string | null; // null = the per-theme terracotta
   ttsKaraokeOpacity: number | null; // null = the per-theme pill opacity (0.9)
+  // RAWY-212: immersive-mode PER-ELEMENT hide sub-toggles. The MASTER (`immersive`, global — theme store)
+  // stays a single on/off; these TWO decide, per D43 (unified default + per-book override), WHICH elements
+  // fade on a deliberate scroll-away while immersive is on. They only bite when the master is on AND the user
+  // scrolled down (`.reader-root.immersive.scrolled-away`); each gates only its own element. Defaults preserve
+  // RAWY-210/211 exactly: pill + scrollbar hide. The `.tts-resume` chapter-end hint is NEVER hidden by
+  // immersive (owner revision — it must show ALONE over the clean page when a chapter ends while scrolled
+  // away), and the D49 overlayer highlight is never bound either — both always show/track. Both OFF (with the
+  // master on) is a valid no-op.
+  immHidePill: boolean; // default true — hide the read-aloud control pill + kashida bead on scroll-away
+  immHideScrollbar: boolean; // default true — hide the reading scrollbar on scroll-away
 }
 
 // Page-width fraction (0 = Narrow, 1 = Wide). Default ~comfortable. The CSS clamp bounds the
@@ -169,6 +179,16 @@ export const TTS_TRACKING_DEFAULTS: Pick<
   ttsKaraokeOpacity: null,
 };
 
+// RAWY-212: immersive per-element hide defaults, shared by BOTH per-script default sets so they can never
+// drift. These reproduce RAWY-210/211 exactly for an existing `immersive_scroll=1` profile — pill + scrollbar
+// hide on scroll-away (the resume hint was never hidden, and still isn't) — so nobody sees a behaviour change.
+// A stored `reading_style` row that predates these fields inherits them via loadGlobalStyle's `{...base, ...s}`,
+// so no migration.
+export const IMMERSIVE_DEFAULTS: Pick<ReadingStyle, "immHidePill" | "immHideScrollbar"> = {
+  immHidePill: true,
+  immHideScrollbar: true,
+};
+
 // Per-script sensible defaults — beautiful before the user touches a control.
 export const ARABIC_DEFAULTS: ReadingStyle = {
   zoom: 1.15,
@@ -189,6 +209,7 @@ export const ARABIC_DEFAULTS: ReadingStyle = {
   backgroundColor: null,
   flowMode: "scrolled",
   ...TTS_TRACKING_DEFAULTS,
+  ...IMMERSIVE_DEFAULTS,
 };
 export const LATIN_DEFAULTS: ReadingStyle = {
   zoom: 1.0,
@@ -209,6 +230,7 @@ export const LATIN_DEFAULTS: ReadingStyle = {
   backgroundColor: null,
   flowMode: "scrolled",
   ...TTS_TRACKING_DEFAULTS,
+  ...IMMERSIVE_DEFAULTS,
 };
 
 export const defaultsForDir = (dir?: string): ReadingStyle =>

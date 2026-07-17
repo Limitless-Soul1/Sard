@@ -195,9 +195,11 @@ function Segmented<T extends string | number>({
   );
 }
 
-function ToggleRow({ label, hint, on, onToggle }: { label: string; hint?: string; on: boolean; onToggle: () => void }) {
+// RAWY-212: `sub` = the inset/muted sub-toggle style (reused from RAWY-200's `rs-track-subtoggle`);
+// `disabled` dims it and blocks interaction (native <button disabled>) when its master is off.
+function ToggleRow({ label, hint, on, onToggle, sub, disabled }: { label: string; hint?: string; on: boolean; onToggle: () => void; sub?: boolean; disabled?: boolean }) {
   return (
-    <button className="rs-toggle-row" onClick={onToggle} aria-pressed={on}>
+    <button className={`rs-toggle-row${sub ? " rs-track-subtoggle" : ""}`} onClick={onToggle} aria-pressed={on} disabled={disabled}>
       <span className="rs-toggle-text">
         <span className="rs-toggle-label">{label}</span>
         {hint && <span className="rs-toggle-hint">{hint}</span>}
@@ -457,9 +459,15 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
         <Slider value={style.marginPx} min={0} max={160} step={8} onInput={(v) => update({ marginPx: clamp(v, 0, 160) })} />
       </Section>
 
-      {/* RAWY-210: immersive hide-on-scroll — a GLOBAL reading-behaviour flag (via useTheme, like the
+      {/* RAWY-210: immersive hide-on-scroll MASTER — a GLOBAL reading-behaviour flag (via useTheme, like the
           hide-title toggles), not per-book typography, so it is NOT wired through `update`. */}
       <ToggleRow label={t("type.immersive")} hint={t("type.immersiveHint")} on={immersive} onToggle={() => setImmersive(!immersive)} />
+      {/* RAWY-212: two PER-BOOK sub-toggles (D43 — written via `update`, so unified writes the global default
+          and per-book writes this book's override). They gate each element's hide-on-scroll-away independently;
+          dimmed + inert while the master is off. The resume hint is intentionally NOT a toggle — it always
+          shows in immersive mode (owner revision). */}
+      <ToggleRow sub disabled={!immersive} label={t("type.immHidePill")} on={style.immHidePill} onToggle={() => update({ immHidePill: !style.immHidePill })} />
+      <ToggleRow sub disabled={!immersive} label={t("type.immHideScrollbar")} on={style.immHideScrollbar} onToggle={() => update({ immHideScrollbar: !style.immHideScrollbar })} />
 
       </>
       )}

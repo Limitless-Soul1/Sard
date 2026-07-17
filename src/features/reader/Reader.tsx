@@ -157,7 +157,7 @@ export function Reader({
   const activeBm = bookmarks.find((b) => b.fraction != null && Math.abs(b.fraction - fraction) <= MARKER_WINDOW) ?? null;
   // THEME is per-book (RAWY-40) — read from `bookThemeId`, not the global store. Override-book-
   // colour + hide-chapter-titles stay GLOBAL flags (set in Global Settings / chapters panel).
-  const { overrideBookColor, hideChapterTitles, hideFirstLine, setHideTitles, setHideFirstLine } = useTheme();
+  const { overrideBookColor, hideChapterTitles, hideFirstLine, immersive, setHideTitles, setHideFirstLine } = useTheme();
   const { visible: chromeVisible, signalMove, signalScroll, setHold } = useChromeOnIntent();
   // RAWY-194 (C): the chrome no longer wakes on bare keystrokes. A keyboard user still reaches it: when Tab
   // moves focus INTO the chrome (its controls stay in the tab order), reveal + PIN it — the genuine "I want
@@ -1174,7 +1174,7 @@ export function Reader({
     // RAWY-142: `flow-scrolled` (scrolled EPUB, not paged/PDF) pins the reading area full-height so a
     // bar-hide composites over a STATIONARY area instead of shifting the chapter up ~70px (the jump) —
     // the same full-height pin RAWY-130 used for TTS, now unified for all scrolled reading (global.css).
-    <div className={`reader-root${chromeShown ? "" : " chrome-hidden"}${ttsActive ? " tts-playing" : ""}${!isPaged && !isPdf ? " flow-scrolled" : ""}`} style={rootVars}>
+    <div className={`reader-root${chromeShown ? "" : " chrome-hidden"}${ttsActive ? " tts-playing" : ""}${!isPaged && !isPdf ? " flow-scrolled" : ""}${immersive ? " immersive" : ""}`} style={rootVars}>
       {/* desk + centered page sheet (the book) + page-turn affordances */}
       <div className={`reader-desk${isPdf && pdfInvert ? " pdf-invert" : ""}${style?.backgroundColor ? " custom-bg" : ""}`} style={deskStyle} onWheel={onDeskWheel}>
         {showChevrons && (

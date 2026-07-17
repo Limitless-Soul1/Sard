@@ -76,6 +76,8 @@ export const ar: Record<TKey, string> = {
   "type.fontAllBooksHint": "أنماط الكتب موحَّدة — هذا يغيّر الخط لكل الكتب.",
   "type.lineSpacing": "تباعد الأسطر",
   "type.margins": "الهوامش",
+  "type.immersive": "تصفّح غامر",
+  "type.immersiveHint": "التمرير للأسفل يخفي الشريط وأدوات القراءة الصوتية وشريط التمرير — فلا يبقى إلا الصفحة. تعود عند التمرير للأعلى أو الوصول إلى الأعلى. أثناء الاستماع يبقى التظليل يتابع الكلمات.",
   "type.align": "المحاذاة",
   "type.alignJustify": "ضبط",
   "type.alignStart": "بداية",

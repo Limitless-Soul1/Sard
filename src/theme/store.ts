@@ -16,6 +16,12 @@ const K_HIDE = "hide_chapter_titles";
 // RAWY-69: independent from K_HIDE — hides the section's detected leading "first line" (RAWY-68)
 // without touching the semantic chapter heading. Either, both, or neither can be on.
 const K_HIDE_FIRST_LINE = "hide_first_line";
+// RAWY-210: immersive hide-on-scroll. When ON, scrolling down hides not just the toolbar (the
+// existing RAWY-73 behaviour) but ALSO the floating TTS control pill / kashida bead and the reading
+// scrollbar — everything returns together on scroll-up / top-edge reach. The TTS overlayer highlight
+// (spotlight/karaoke, D49) is deliberately NOT bound to this and keeps tracking. A GLOBAL flag (like
+// hide-first-line): one reading-behaviour preference, not per-book typography.
+const K_IMMERSIVE = "immersive_scroll";
 const K_MODE = "theme_mode"; // "manual" | "auto" (RAWY-39 — Follow OS)
 
 /** Band-H MODE control value: derived from the active theme + auto flag. */
@@ -33,6 +39,7 @@ interface ThemeState {
   overrideBookColor: boolean;
   hideChapterTitles: boolean;
   hideFirstLine: boolean;
+  immersive: boolean; // RAWY-210: immersive hide-on-scroll (hide pill + scrollbar with the bars)
   ready: boolean;
   /** Apply a specific LIBRARY theme. An explicit theme choice exits Follow-OS mode. */
   setTheme: (id: ThemeId) => void;
@@ -45,6 +52,7 @@ interface ThemeState {
   setOverride: (v: boolean) => void;
   setHideTitles: (v: boolean) => void;
   setHideFirstLine: (v: boolean) => void;
+  setImmersive: (v: boolean) => void; // RAWY-210
 }
 
 // Apply + persist a theme id WITHOUT touching the auto flag (used by Follow-OS too).
@@ -64,6 +72,9 @@ export const useTheme = create<ThemeState>((set, get) => ({
   overrideBookColor: true,
   hideChapterTitles: false,
   hideFirstLine: false,
+  // RAWY-210: default OFF — an untouched profile keeps today's exact behaviour (the TTS pill floats
+  // visible while the chrome is auto-hidden). The owner decides live whether to flip the default ON.
+  immersive: false,
   ready: false,
   setTheme: (id) => {
     if (get().autoMode) {
@@ -106,6 +117,10 @@ export const useTheme = create<ThemeState>((set, get) => ({
     set({ hideFirstLine: v });
     settingsSet(K_HIDE_FIRST_LINE, v ? "1" : "0").catch(console.error);
   },
+  setImmersive: (v) => {
+    set({ immersive: v });
+    settingsSet(K_IMMERSIVE, v ? "1" : "0").catch(console.error);
+  },
 }));
 
 /** The Band-H MODE value for the current state. */
@@ -116,12 +131,13 @@ export function currentMode(s: Pick<ThemeState, "autoMode" | "themeId">): ThemeM
 
 /** Load persisted theme settings and apply them. Call once at startup. */
 export async function initTheme(): Promise<void> {
-  const [tid, btid, ov, ht, hfl, mode] = await Promise.all([
+  const [tid, btid, ov, ht, hfl, imm, mode] = await Promise.all([
     settingsGet(K_THEME).catch(() => null),
     settingsGet(K_BOOK_THEME).catch(() => null),
     settingsGet(K_OVERRIDE).catch(() => null),
     settingsGet(K_HIDE).catch(() => null),
     settingsGet(K_HIDE_FIRST_LINE).catch(() => null),
+    settingsGet(K_IMMERSIVE).catch(() => null),
     settingsGet(K_MODE).catch(() => null),
   ]);
   const auto = mode === "auto";
@@ -141,6 +157,7 @@ export async function initTheme(): Promise<void> {
     overrideBookColor: ov !== "0",
     hideChapterTitles: ht === "1",
     hideFirstLine: hfl === "1",
+    immersive: imm === "1", // RAWY-210: default OFF unless explicitly turned on
     ready: true,
   });
   // Track the OS scheme while in Follow-OS mode (RAWY-39).

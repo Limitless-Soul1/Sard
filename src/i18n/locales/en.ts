@@ -77,6 +77,8 @@ export const en = {
   "type.fontAllBooksHint": "Book styles are unified — this changes the font for every book.",
   "type.lineSpacing": "Line spacing",
   "type.margins": "Margins",
+  "type.immersive": "Immersive scrolling",
+  "type.immersiveHint": "Scrolling down hides the toolbar, read-aloud controls, and scrollbar — leaving only the page. They return when you scroll up or reach the top. While listening, the highlight keeps following the words.",
   "type.align": "Alignment",
   "type.alignJustify": "Justify",
   "type.alignStart": "Start",

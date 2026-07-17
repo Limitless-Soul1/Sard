@@ -241,7 +241,7 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
   const { t, lang } = useI18n();
   // Override-book-colour + hide-chapter-title + hide-first-line stay GLOBAL flags (RAWY-40); the
   // THEME is per-book. RAWY-69 split hide-chapter-title/hide-first-line into two independent flags.
-  const { overrideBookColor, hideChapterTitles, hideFirstLine, setOverride, setHideTitles, setHideFirstLine } = useTheme();
+  const { overrideBookColor, hideChapterTitles, hideFirstLine, immersive, setOverride, setHideTitles, setHideFirstLine, setImmersive } = useTheme();
   const customFonts = useFonts((s) => s.custom); // RAWY-44 — imported fonts for the book pickers
   const theme = THEMES[bookThemeId];
   const dark = theme.dark;
@@ -456,6 +456,10 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
       <Section label={t("type.margins")} value={localeDigits(`${style.marginPx}px`, lang)}>
         <Slider value={style.marginPx} min={0} max={160} step={8} onInput={(v) => update({ marginPx: clamp(v, 0, 160) })} />
       </Section>
+
+      {/* RAWY-210: immersive hide-on-scroll — a GLOBAL reading-behaviour flag (via useTheme, like the
+          hide-title toggles), not per-book typography, so it is NOT wired through `update`. */}
+      <ToggleRow label={t("type.immersive")} hint={t("type.immersiveHint")} on={immersive} onToggle={() => setImmersive(!immersive)} />
 
       </>
       )}

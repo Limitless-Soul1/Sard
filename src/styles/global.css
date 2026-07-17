@@ -785,6 +785,25 @@ html, body, #root {
    above the panel (RAWY-33); the pill floats centred and is shifted clear of the panel (RAWY-114), so
    they don't overlap. Applies to Contents/Notes/Search alike (all `.reader-panel`). */
 .reader-root.tts-playing .reader-panel { bottom: 0; }
+
+/* RAWY-210: immersive hide-on-scroll. When the mode is ON (`.immersive`, a global toggle) AND the chrome
+   is auto-hidden (`.chrome-hidden`, i.e. the user scrolled down — RAWY-73), the floating TTS control pill
+   and its minimized kashida bead fade out WITH the bars, and the reading scrollbar disappears — leaving
+   only the page. Everything returns together when the chrome comes back (scroll-up / top-edge reach drops
+   `.chrome-hidden`). The TTS overlayer highlight (spotlight/karaoke, D49) lives in foliate's OWN closed
+   shadow root over the text — a sibling subtree of the chrome — and is deliberately NOT bound here, so it
+   stays visible and keeps tracking the spoken word. OFF (no `.immersive`) = today's exact behaviour: the
+   pill floats visible during chrome-hide. The transition is scoped to `.immersive` so both the fade-out
+   and the fade-back animate only in this mode and there is zero effect when the toggle is off. */
+.reader-root.immersive .tts-pill,
+.reader-root.immersive .tts-mini { transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1); }
+.reader-root.immersive.chrome-hidden .tts-pill,
+.reader-root.immersive.chrome-hidden .tts-mini { opacity: 0; pointer-events: none; }
+/* The reading scrollbar lives in foliate's CLOSED shadow root; `scrollbar-color` is INHERITED and crosses
+   that boundary (the same mechanism that tints the thumb from :root — see the scrollbar note up top). A
+   transparent value here hides the bar without reaching into the shadow DOM, and reverts the instant
+   `.chrome-hidden` drops. */
+.reader-root.immersive.chrome-hidden { scrollbar-color: transparent transparent; }
 /* FIXED physical sides (RAWY-32 — supersedes the RAWY-30/D20 follow-direction model): chapters
    is PINNED to the physical LEFT, annotations to the physical RIGHT, and they DO NOT move when
    the UI language flips. Physical `left`/`right` (not logical) ignore the panel's `dir` attr, so

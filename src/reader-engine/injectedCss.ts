@@ -434,14 +434,6 @@ export function buildReadingCss(
   // wins, then the theme's own) so it stays visible on dark paper — `currentColor` on the iframe's
   // <html> is the default black under a forced-background theme, which would vanish on a dark page.
   const scrollInk = style.textColor || theme?.colors?.text || "currentColor";
-  // Resolve each slot to a source URL. Built-in → its bundled file; imported → its asset URL
-  // (RAWY-44; falls back to the built-in default if the imported font is missing/unloaded).
-  const latBuiltin = isBuiltinLatin(style.latinFont) ? LATIN_FONTS[style.latinFont] : undefined;
-  const arBuiltin = isBuiltinArabic(style.arabicFont) ? ARABIC_FONTS[style.arabicFont] : undefined;
-  const latSrc = absFontUrl(latBuiltin?.regular ?? importedFontUrl(style.latinFont) ?? LATIN_FONTS.literata.regular);
-  const arSrc = absFontUrl(arBuiltin?.regular ?? importedFontUrl(style.arabicFont) ?? ARABIC_FONTS.amiri.regular);
-  const latImported = !latBuiltin;
-  const arImported = !arBuiltin;
 
   const diacriticsRule =
     style.diacritics === "dim"
@@ -449,36 +441,6 @@ export function buildReadingCss(
       : style.diacritics === "hide"
         ? ".sard-tashkil { font-size: 0 !important; }"
         : "";
-
-  // Per-script @font-face injected INTO the foliate content. Variable built-ins (Literata, Noto
-  // Naskh) declare a weight RANGE so the weight control drives the real axis; Amiri ships two
-  // static files (regular + a real Bold). IMPORTED fonts (RAWY-44) omit the format() hint (so any
-  // ttf/otf/woff loads) and the weight descriptor (→ normal; bolder weights synth-bold), and carry
-  // the same unicode-range as their slot so script routing still works (an imported Arabic font in
-  // the Arabic slot renders Arabic).
-  const fontFaces = `
-    @font-face {
-      font-family: 'SardArabic';
-      src: url('${arSrc}')${arImported ? "" : " format('truetype')"};
-      ${arImported ? "" : `font-weight: ${arBuiltin!.variable ? "100 900" : "normal"};`}
-      unicode-range: ${ARABIC_RANGE};
-    }
-    ${
-      arBuiltin?.bold && !arBuiltin.variable
-        ? `@font-face {
-      font-family: 'SardArabic';
-      src: url('${absFontUrl(arBuiltin.bold)}') format('truetype');
-      font-weight: bold;
-      unicode-range: ${ARABIC_RANGE};
-    }`
-        : ""
-    }
-    @font-face {
-      font-family: 'SardLatin';
-      src: url('${latSrc}')${latImported ? "" : " format('truetype')"};
-      ${latImported ? "" : `font-weight: ${latBuiltin!.variable ? "200 700" : "normal"};`}
-      unicode-range: ${LATIN_RANGE};
-    }`;
 
   // Typography extras (RAWY-23). Weight applies to body text (not headings → keep hierarchy).
   // Letter-spacing is LATIN-ONLY — it inserts gaps that break Arabic cursive joining.
@@ -524,7 +486,12 @@ export function buildReadingCss(
     }`;
 
   return `
-    ${fontFaces}
+    /* RAWY-208: @font-face is NOT here — it lives in its own stable sheet (buildFontFaceCss), written
+       only when the FONT itself changes. This sheet is replaced wholesale by foliate's setStyles on
+       every geometry change (alignment, weight, leading, zoom …); re-declaring the faces here made the
+       engine drop and re-fetch them each time, so the text repainted in a FALLBACK face for ~35-45ms
+       and re-wrapped — the flash/line-jump the owner reported. Measured: an alignment or weight change
+       triggered 2 font re-fetches although the font never changed. */
 
     /* size via zoom (D6 — scales even absolute-CSS books). Zoom the column CONTENT (body),
        NOT the column container (:root/html, where foliate sets column-width): that way the
@@ -615,6 +582,60 @@ export function buildReadingCss(
     ${diacriticsRule}
     ${themeBlock(theme, flags, style.textColor, style.pageColor)}
   `;
+}
+
+// RAWY-208: the @font-face slice, split OUT of buildReadingCss into its own sheet.
+//
+// WHY: buildReadingCss's output is what foliate's setStyles REPLACES on every geometry change
+// (alignment, weight, leading, spacing, zoom, flow). While the faces were declared inside it, each of
+// those changes re-declared them, the engine dropped and re-fetched the font files, and the text
+// painted in a FALLBACK face until they came back — measured at ~35-45ms, long enough to read as a
+// flash AND to re-wrap the lines (a fallback has different metrics). The faces were being re-declared
+// even when the font had not changed at all: an alignment click cost 2 font re-fetches.
+//
+// This sheet therefore depends ONLY on the two font slots. FoliateController writes it into a
+// dedicated <style data-sard-fonts> and rewrites it ONLY when arabicFont/latinFont actually change
+// (FONT_STYLE_KEYS) — the same in-place discipline as the RAWY-140 paint sheet. A real font change
+// still re-declares (and must: the src is new), which is the one case where a re-fetch is correct.
+//
+// Per-script @font-face injected INTO the foliate content. Variable built-ins (Literata, Noto Naskh)
+// declare a weight RANGE so the weight control drives the real axis; Amiri ships two static files
+// (regular + a real Bold). IMPORTED fonts (RAWY-44) omit the format() hint (so any ttf/otf/woff loads)
+// and the weight descriptor (→ normal; bolder weights synth-bold), and carry the same unicode-range as
+// their slot so script routing still works (an imported Arabic font in the Arabic slot renders Arabic).
+export function buildFontFaceCss(style: ReadingStyle): string {
+  // Resolve each slot to a source URL. Built-in → its bundled file; imported → its asset URL
+  // (RAWY-44; falls back to the built-in default if the imported font is missing/unloaded).
+  const latBuiltin = isBuiltinLatin(style.latinFont) ? LATIN_FONTS[style.latinFont] : undefined;
+  const arBuiltin = isBuiltinArabic(style.arabicFont) ? ARABIC_FONTS[style.arabicFont] : undefined;
+  const latSrc = absFontUrl(latBuiltin?.regular ?? importedFontUrl(style.latinFont) ?? LATIN_FONTS.literata.regular);
+  const arSrc = absFontUrl(arBuiltin?.regular ?? importedFontUrl(style.arabicFont) ?? ARABIC_FONTS.amiri.regular);
+  const latImported = !latBuiltin;
+  const arImported = !arBuiltin;
+
+  return `
+    @font-face {
+      font-family: 'SardArabic';
+      src: url('${arSrc}')${arImported ? "" : " format('truetype')"};
+      ${arImported ? "" : `font-weight: ${arBuiltin!.variable ? "100 900" : "normal"};`}
+      unicode-range: ${ARABIC_RANGE};
+    }
+    ${
+      arBuiltin?.bold && !arBuiltin.variable
+        ? `@font-face {
+      font-family: 'SardArabic';
+      src: url('${absFontUrl(arBuiltin.bold)}') format('truetype');
+      font-weight: bold;
+      unicode-range: ${ARABIC_RANGE};
+    }`
+        : ""
+    }
+    @font-face {
+      font-family: 'SardLatin';
+      src: url('${latSrc}')${latImported ? "" : " format('truetype')"};
+      ${latImported ? "" : `font-weight: ${latBuiltin!.variable ? "200 700" : "normal"};`}
+      unicode-range: ${LATIN_RANGE};
+    }`;
 }
 
 // RAWY-140: the PAINT-only slice of the reading CSS — the ink (per-book text colour / theme ink),

@@ -15,6 +15,7 @@
 import {
   buildReadingCss,
   buildDynamicCss,
+  buildFontFaceCss, // RAWY-208: the @font-face sheet, isolated from the geometry sheet
   ALIGN_GATE_CLASS,
   BOOK_ALIGN_CLASS,
   type BookThemeFlags,
@@ -30,6 +31,14 @@ import { extractChapterNumber, toWesternDigits } from "../lib/format";
 // place (a repaint) instead of re-injecting the whole sheet (foliate's setStyles → @font-face
 // re-declare + expand() → the flash/jump).
 const DYN_ATTR = "data-sard-dyn";
+// RAWY-208: the per-doc @font-face sheet marker. The faces used to ride inside buildReadingCss, which
+// foliate's setStyles replaces wholesale on EVERY geometry change — so each alignment/weight/leading
+// change re-declared them, the engine dropped and re-fetched the files, and the text painted in a
+// FALLBACK face for ~35-45ms before snapping back (the flash + the line re-wrap). They now live in
+// their own <style data-sard-fonts>, rewritten ONLY when a font slot actually changes.
+const FONT_ATTR = "data-sard-fonts";
+// The ONLY fields the @font-face sheet depends on. A change to anything else must never touch it.
+const FONT_STYLE_KEYS: (keyof ReadingStyle)[] = ["arabicFont", "latinFont"];
 // Reading-style fields that only affect PAINT (ink colour, tashkīl visibility) — applied via the
 // dynamic sheet with NO reflow. Every other field that appears in buildReadingCss (fonts, size/zoom,
 // line-height, alignment, weight, spacing, flow) is GEOMETRY → a real re-inject. Fields absent from
@@ -834,6 +843,7 @@ export class FoliateController {
       }
       this.contentDoc = doc; // RAWY-122: kept so clearSelection() can drop a lingering text selection
       wrapTashkil(doc); // enable the diacritics toggle for this section
+      this.writeFonts(doc); // RAWY-208: this section's @font-face sheet — survives every setStyles
       this.writeDynamic(doc); // RAWY-140: this section's in-place PAINT sheet (colour/tashkīl skip re-inject)
       markInBodyHeading(doc, sectionTocLabel(view, index)); // RAWY-67: hide-titles catches this too
       // RAWY-195: measure the book's OWN alignment and open the alignment gate. Must run before
@@ -1017,6 +1027,32 @@ export class FoliateController {
     el.textContent = buildDynamicCss(this.style, this.theme, this.flags);
   }
 
+  // RAWY-208: (re)write the @font-face sheet for one content doc. Written ONCE per doc at section load
+  // and thereafter only on a real font change — never on a geometry change, which is the whole point:
+  // the faces must survive setStyles untouched so the engine keeps them and never falls back.
+  // Order in <head> is irrelevant here (@font-face declares a face, it does not compete in the cascade),
+  // but it is PREPENDED so the faces are declared before foliate's sheet references them.
+  private writeFonts(doc: Document | undefined): void {
+    if (!this.style || !doc?.head) return;
+    let el = doc.head.querySelector<HTMLStyleElement>(`style[${FONT_ATTR}]`);
+    if (!el) {
+      el = doc.createElement("style");
+      el.setAttribute(FONT_ATTR, "");
+      doc.head.prepend(el);
+    }
+    const next = buildFontFaceCss(this.style);
+    // Never rewrite identical text: assigning textContent re-parses the sheet, which would drop and
+    // re-fetch the faces — exactly the bug this split exists to remove.
+    if (el.textContent !== next) el.textContent = next;
+  }
+
+  /** RAWY-208: push the @font-face sheet to every loaded content doc (only on a real font change). */
+  private applyFonts(): void {
+    const contents = this.view?.renderer?.getContents?.() as { doc?: Document }[] | undefined;
+    if (!contents) return;
+    for (const c of contents) this.writeFonts(c?.doc);
+  }
+
   /** RAWY-140: push the current PAINT sheet to every loaded content doc, in place (no reflow). */
   private applyDynamic(): void {
     const contents = this.view?.renderer?.getContents?.() as { doc?: Document }[] | undefined;
@@ -1059,12 +1095,19 @@ export class FoliateController {
     this.style = style;
     if (!prev) {
       this.reinject();
+      this.applyFonts();
       this.applyDynamic();
       return;
     }
     const geom = GEOMETRY_STYLE_KEYS.some((k) => prev[k] !== style[k]);
     const paint = PAINT_STYLE_KEYS.some((k) => prev[k] !== style[k]);
     const track = TRACK_STYLE_KEYS.some((k) => prev[k] !== style[k]);
+    // RAWY-208: the @font-face sheet is rewritten ONLY when a font slot really changed. A geometry
+    // change (alignment/weight/leading/zoom) must leave it byte-identical, so the engine keeps the
+    // loaded faces and the text never falls back mid-change. A font change DOES re-declare — that
+    // re-fetch is correct, and it reflows anyway (both fonts are in GEOMETRY_STYLE_KEYS too).
+    const fonts = FONT_STYLE_KEYS.some((k) => prev[k] !== style[k]);
+    if (fonts) this.applyFonts();
     if (geom) this.reinject(); // inherent reflow — buildReadingCss also re-emits the fresh ink
     if (geom || paint) this.applyDynamic(); // colour/tashkīl in place (no @font-face, no expand)
     // RAWY-200: a tracking-only change redraws the overlay at the current sentence with the new colour/

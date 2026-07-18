@@ -821,8 +821,17 @@ html, body, #root {
    and the D49 overlayer stay untouched (no chrome wake, scrollbar stays hidden). During NORMAL playback the
    class is absent, so the pill still hides on scroll-away exactly as RAWY-210/212. Was RAWY-212's silent gap:
    the prompt lives INSIDE the pill, so hiding the pill hid the only way to continue a chapter while immersed. */
-.reader-root.immersive.scrolled-away.im-hide-pill:not(.tts-chapter-end) .tts-pill,
-.reader-root.immersive.scrolled-away.im-hide-pill:not(.tts-chapter-end) .tts-mini { opacity: 0; pointer-events: none; }
+/* RAWY-214: `:not(.tts-edge-error)` is the SECOND exemption, same shape as the chapter-end one. When Edge
+   fails, TtsPlayer swaps the transport for the "Edge unavailable / Retry / Switch to Piper" prompt
+   (`.tts-pill-edge-error`) — RAWY-193 requires that pause state VISIBLE and ACTIONABLE in every state, but it
+   lives inside the pill, so `im-hide-pill` was hiding it: on a flaky network the audio just stopped with no
+   message and no way to switch engine while immersed — a silent failure, the exact thing D37's removal and
+   RAWY-193 exist to prevent. Exempting it shows ONLY the error prompt (the transport is swapped out), alone
+   over the clean page and clickable. Both exemptions are keyed off `ttsStatus`, so they are transient: the
+   moment the error clears (retry succeeds / user switches to Piper) the class drops and the pill hides again
+   while still scrolled-away. `im-hide-scrollbar` is a separate rule and stays in effect throughout. */
+.reader-root.immersive.scrolled-away.im-hide-pill:not(.tts-chapter-end):not(.tts-edge-error) .tts-pill,
+.reader-root.immersive.scrolled-away.im-hide-pill:not(.tts-chapter-end):not(.tts-edge-error) .tts-mini { opacity: 0; pointer-events: none; }
 /* The reading scrollbar lives in foliate's CLOSED shadow root; `scrollbar-color` is INHERITED and crosses
    that boundary (the same mechanism that tints the thumb from :root — see the scrollbar note up top). A
    transparent value here hides the bar without reaching into the shadow DOM, and reverts the instant

@@ -55,10 +55,14 @@ export function SettingsPanel({
   onPdfCopy,
 }: Props) {
   const { t } = useI18n();
+  // RAWY-216: five CONCEPT tabs (was Text/Page/Theme, which mixed typography with colour and read-aloud).
+  // The bar wraps to a second row when five labels don't fit the 384px drawer — same pill styling.
   const tabs: { key: SettingsSection; label: string }[] = [
-    { key: "text", label: t("reader.text") },
-    { key: "page", label: t("settings.page") },
-    { key: "theme", label: t("theme.label") },
+    { key: "typography", label: t("reader.typography") },
+    { key: "layout", label: t("reader.layout") },
+    { key: "colour", label: t("settings.colour") },
+    { key: "readaloud", label: t("settings.readaloud") },
+    { key: "allbooks", label: t("settings.allbooks") },
   ];
   // RAWY-85/86/141: a PDF is read-only — the drawer states the honest limits, then offers only what
   // genuinely works on a fixed-layout PDF: an INVERT appearance (approximate night mode, NOT real
@@ -104,11 +108,15 @@ export function SettingsPanel({
         <button className="rc-icon" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
       </div>
       {/* Scope banner (RAWY-40/43) — reflects the active book-style model. Per-book: "applies to
-          this book · won't change others" + Reset. Unified: "applies to all books". */}
+          this book · won't change others" + Reset. Unified: "applies to all books". RAWY-216: the
+          title is now composed from the SHARED scope noun rather than its own sentence, so the banner
+          and every in-panel scope suffix say the same words. */}
       <div className={`sp-scope${unified ? " unified" : ""}`}>
         <span className="sp-scope-ico" aria-hidden>{unified ? "⊞" : "▤"}</span>
         <span className="sp-scope-text">
-          <span className="sp-scope-title">{unified ? t("perbook.scopeAll") : t("perbook.scope")}</span>
+          <span className="sp-scope-title">
+            {t("perbook.appliesTo")} {unified ? t("scope.allBooks") : t("scope.thisBook")}
+          </span>
           <span className="sp-scope-sub" dir="auto">
             {unified ? t("perbook.scopeAllSub") : (bookTitle ? `${bookTitle} · ` : "") + t("perbook.scopeSub")}
           </span>

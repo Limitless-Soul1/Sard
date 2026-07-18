@@ -13,12 +13,27 @@ export const en = {
   "reader.back": "Library",
   "reader.contents": "Contents",
   "reader.typography": "Typography",
-  "reader.text": "Text",
   "reader.layout": "Layout",
   "reader.notes": "Notes",
   "reader.bookmark": "Bookmark",
-  "settings.page": "Page",
   "reader.settings": "Settings",
+  // RAWY-216: the five concept tabs. `reader.typography` / `reader.layout` above are reused as tab labels.
+  "settings.colour": "Colour",
+  "settings.readaloud": "Read-aloud",
+  "settings.allbooks": "All books",
+  // RAWY-216: ONE scope vocabulary. The drawer used to say the same thing three ways ("Applies to this
+  // book", "for this book only", "Applies to all books" as a section heading). These two nouns are now
+  // the ONLY words for scope: the banner reads `perbook.appliesTo` + the noun, a section heading appends
+  // the noun after an em dash. Change the noun once and every scope statement follows.
+  "scope.thisBook": "this book",
+  "scope.allBooks": "all books",
+  "settings.allbooksSub": "These always apply to every book, not just this one.",
+  "settings.voiceNote": "Voice, engine and speed are in the player while listening.",
+  // RAWY-216: one muted reason line under a control that is inert right now.
+  "inert.matchWindow": "Match window is on.",
+  "inert.immersiveOff": "Immersive scrolling is off.",
+  "inert.arabicOnly": "Arabic text only.",
+  "inert.latinOnly": "Latin text only.",
   "reader.chapterFallback": "Reading",
   "reader.untitledBook": "Untitled",
   "reader.percentRead": "{p}%",
@@ -71,10 +86,6 @@ export const en = {
 
   "type.size": "Text size",
   "type.font": "Font",
-  "type.fontThisBook": "Font for this book",
-  "type.fontAllBooks": "Book text font · all books",
-  "type.fontThisBookHint": "Overrides the default book font — this book only.",
-  "type.fontAllBooksHint": "Book styles are unified — this changes the font for every book.",
   "type.lineSpacing": "Line spacing",
   "type.margins": "Margins",
   "type.immersive": "Immersive scrolling",
@@ -95,12 +106,10 @@ export const en = {
   "book.arabicSample": "Arabic book",
   "book.englishSample": "English book",
 
-  "theme.label": "Theme",
   "theme.dayNight": "Day / Night",
-  // RAWY-80 (#8): these three toggles are GLOBAL, so they sit under an explicit "all books" header
-  // (the drawer's banner otherwise reads "applies to this book").
-  "theme.globalGroup": "Applies to all books",
-  "theme.globalGroupHint": "These are app-wide, not just this book.",
+  // RAWY-80 (#8) put these three GLOBAL toggles under an explicit "all books" header inside the Theme
+  // tab. RAWY-216 moved them to their own "All books" tab, so the tab IS the scope signal and the
+  // header is gone.
   "theme.override": "Override book colour",
   "theme.hideTitles": "Hide chapter title",
 
@@ -333,7 +342,6 @@ export const en = {
   "type.paraSpacing": "Paragraph space",
   "type.indent": "First-line indent",
   "type.tracking": "Tracking",
-  "type.latinOnly": "Latin only",
   "type.latin": "Latin",
   "type.arabic": "Arabic",
   "type.paper": "Paper",
@@ -377,10 +385,10 @@ export const en = {
   "gs.bookmark.position": "POSITION ON THE EDGE",
   "gs.bookmark.posHint": "Fixed — doesn't flip with language. You can also drag the marker on the page.",
 
-  // Per-book reading settings + text colour (RAWY-40, Band I)
-  "perbook.scope": "Applies to this book",
+  // Per-book reading settings + text colour (RAWY-40, Band I). RAWY-216: the two scope TITLES are gone —
+  // the banner is now `perbook.appliesTo` + the shared `scope.*` noun, so scope is worded in one place.
+  "perbook.appliesTo": "Applies to",
   "perbook.scopeSub": "won't change other books",
-  "perbook.scopeAll": "Applies to all books",
   "perbook.scopeAllSub": "book styles are unified — changing here changes every book",
   "perbook.reset": "Reset",
   "gs.scope": "BOOK STYLES",

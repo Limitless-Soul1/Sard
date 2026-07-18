@@ -197,11 +197,12 @@ function Segmented<T extends string | number>({
 
 // RAWY-212: `sub` = the inset/muted sub-toggle style (reused from RAWY-200's `rs-track-subtoggle`);
 // `disabled` dims it and blocks interaction (native <button disabled>) when its master is off.
-function ToggleRow({ label, hint, on, onToggle, sub, disabled }: { label: string; hint?: string; on: boolean; onToggle: () => void; sub?: boolean; disabled?: boolean }) {
+// RAWY-216: `scope` appends the shared scope suffix for the ONE row whose scope differs from its tab.
+function ToggleRow({ label, scope, hint, on, onToggle, sub, disabled }: { label: string; scope?: string; hint?: string; on: boolean; onToggle: () => void; sub?: boolean; disabled?: boolean }) {
   return (
     <button className={`rs-toggle-row${sub ? " rs-track-subtoggle" : ""}`} onClick={onToggle} aria-pressed={on} disabled={disabled}>
       <span className="rs-toggle-text">
-        <span className="rs-toggle-label">{label}</span>
+        <span className="rs-toggle-label">{label}{scope && <> <span className="rs-scope">{scope}</span></>}</span>
         {hint && <span className="rs-toggle-hint">{hint}</span>}
       </span>
       <span className={`rs-switch${on ? " on" : ""}`} aria-hidden>
@@ -239,8 +240,16 @@ function SelectRow<T extends string>({
   );
 }
 
-export function ReadingSettings({ style, update, isRtlBook, section = "text", bookThemeId, onPickTheme, unified }: Props) {
+export function ReadingSettings({ style, update, isRtlBook, section = "typography", bookThemeId, onPickTheme, unified }: Props) {
   const { t, lang } = useI18n();
+  // RAWY-216: ONE scope wording for the whole drawer. Three phrasings used to say the same thing; the
+  // scope NOUN now lives in a single pair of keys, shared with the panel's banner, and a section
+  // heading appends it after an em dash. The noun is chosen by the ACTIVE book-style model (D43):
+  // unified writes the global row, per-book writes this book's override.
+  const scopeSuffix = `— ${unified ? t("scope.allBooks") : t("scope.thisBook")}`;
+  // The one row whose scope differs from its tab's (see the immersive master in Layout) states it
+  // explicitly, using the same noun rather than a fourth phrasing.
+  const scopeAllSuffix = `— ${t("scope.allBooks")}`;
   // Override-book-colour + hide-chapter-title + hide-first-line stay GLOBAL flags (RAWY-40); the
   // THEME is per-book. RAWY-69 split hide-chapter-title/hide-first-line into two independent flags.
   const { overrideBookColor, hideChapterTitles, hideFirstLine, immersive, setOverride, setHideTitles, setHideFirstLine, setImmersive } = useTheme();
@@ -260,9 +269,10 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
   // so the chrome's Text/Layout/Theme buttons each land on a DISTINCT view (not one scrolled panel).
   return (
     <div className="rs">
-      {section === "text" && (
+      {section === "typography" && (
       <>
-      {/* ---- TEXT ---- */}
+      {/* ---- TYPOGRAPHY (RAWY-216): letterforms + spacing only. Colour moved to the Colour tab and the
+           read-aloud highlights to the Read-aloud tab — this tab used to carry all three. ---- */}
       <Section label={t("type.size")} value={localeDigits(`${Math.round(style.zoom * 100)}%`, lang)}>
         <Slider
           value={style.zoom}
@@ -287,11 +297,17 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
         <Slider value={style.lineHeight} min={1.2} max={2.6} step={0.05} onInput={(v) => update({ lineHeight: r2(v) })} />
       </Section>
 
-      <Section label={t("type.paraSpacing")} value={localeDigits(`${style.paragraphSpacing}px`, lang)}>
+      {/* RAWY-216: a SPACE before the unit. Arabic-Indic zero (U+0660) is a dot-shaped glyph, so at this
+          readout's size "0px" localised to "٠px" fused into something the owner read as "-px" — the value
+          looked like a dash instead of a number. Separating the unit keeps the digit its own token. */}
+      <Section label={t("type.paraSpacing")} value={localeDigits(`${style.paragraphSpacing} px`, lang)}>
         <Slider value={style.paragraphSpacing} min={0} max={28} step={2} onInput={(v) => update({ paragraphSpacing: v })} />
       </Section>
 
-      <Section label={t("type.tracking")} value={isRtlBook ? <span className="rs-na">{t("type.latinOnly")}</span> : localeDigits(String(style.letterSpacing), lang)}>
+      {/* RAWY-216: this used to be the odd one out — an "N/A" chip in the value slot, which said WHAT but
+          never WHY, and only on this one control. It now uses the drawer's single inert-reason line, the
+          same treatment every other greyed control gets. */}
+      <Section label={t("type.tracking")} value={isRtlBook ? undefined : localeDigits(String(style.letterSpacing), lang)}>
         <Slider
           value={style.letterSpacing}
           min={0}
@@ -301,6 +317,7 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
           onInput={(v) => update({ letterSpacing: r2(v) })}
         />
       </Section>
+      {isRtlBook && <div className="rs-inert">{t("inert.latinOnly")}</div>}
 
       <Section label={t("type.align")}>
         <Segmented<Align>
@@ -319,9 +336,9 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
 
       <div className="rs-divider" />
 
-      {/* ---- BOOK TEXT FONT — scoped to THIS book (RAWY-45); imported fonts listed too (RAWY-44) ---- */}
-      <div className="rs-sec-title">{unified ? t("type.fontAllBooks") : t("type.fontThisBook")}</div>
-      <div className="rs-sec-hint">{unified ? t("type.fontAllBooksHint") : t("type.fontThisBookHint")}</div>
+      {/* ---- BOOK TEXT FONT (RAWY-45); imported fonts listed too (RAWY-44). RAWY-216: the heading no
+           longer rewords itself by scope — it is one stable title plus the shared scope suffix. ---- */}
+      <div className="rs-sec-title">{t("type.font")} <span className="rs-scope">{scopeSuffix}</span></div>
       <SelectRow<string>
         label={t("type.latin")}
         value={style.latinFont}
@@ -341,6 +358,9 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
         ]}
       />
 
+      {/* RAWY-216: diacritics are Arabic vowel marks — on a Latin-direction book the control still works
+           and still saves, but there is nothing on the page for it to affect. Say so instead of leaving it
+           silently inert (it stays operable; the line is a reason, not a disable). */}
       <Section label={t("type.diacritics")}>
         <Segmented<DiacriticsMode>
           value={style.diacritics}
@@ -348,6 +368,39 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
           options={DIA.map((d) => ({ key: d.key, label: t(d.label) }))}
         />
       </Section>
+      {!isRtlBook && <div className="rs-inert">{t("inert.arabicOnly")}</div>}
+
+      </>
+      )}
+
+      {section === "colour" && (
+      <>
+      {/* ---- COLOUR (RAWY-216): the theme AND the three per-book colour overrides it feeds, together.
+           They used to be two tabs apart (theme here, ink/page/background in the old Text tab). ---- */}
+      <div className="rs-sec-head">
+        <span className="rs-label">{t("type.paper")}</span>
+        {/* Day/Night = an explicit light↔dark switch for THIS book. "Day" selects the default
+            light theme, "Night" the default dark; clicking the active side is a no-op. */}
+        <Segmented
+          value={dark ? "night" : "day"}
+          onPick={(k) => {
+            if (k === "night" && !dark) onPickTheme(DEFAULT_DARK);
+            else if (k === "day" && dark) onPickTheme(DEFAULT_LIGHT);
+          }}
+          options={[
+            { key: "day", label: t("theme.day") },
+            { key: "night", label: t("theme.night") },
+          ]}
+        />
+      </div>
+      <div className="rs-swatches">
+        {THEME_ORDER.map((id) => (
+          <button key={id} className="rs-swatch-cell" onClick={() => onPickTheme(id)}>
+            <span className={`rs-swatch${bookThemeId === id ? " on" : ""}`} style={{ background: THEMES[id].colors.paperBg }} />
+            <span className="rs-swatch-name">{THEMES[id].name}</span>
+          </button>
+        ))}
+      </div>
 
       <div className="rs-divider" />
 
@@ -410,9 +463,15 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
         t={t}
       />
 
-      <div className="rs-divider" />
+      </>
+      )}
 
-      {/* ---- READ-ALOUD TRACKING (RAWY-200) — spotlight + karaoke colour/opacity/on-off, per-book ---- */}
+      {section === "readaloud" && (
+      <>
+      {/* ---- READ-ALOUD (RAWY-216): the tracking highlights get their own tab. Voice/engine/speed are
+           NOT here — they live in the floating player while listening; the note says so plainly rather
+           than leaving the reader hunting for them (RAWY-200 controls are unchanged). ---- */}
+      <div className="rs-sec-hint">{t("settings.voiceNote")}</div>
       <TtsTrackingControls
         style={style}
         update={update}
@@ -424,9 +483,9 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
       </>
       )}
 
-      {section === "page" && (
+      {section === "layout" && (
       <>
-      {/* ---- PAGE ---- */}
+      {/* ---- LAYOUT (RAWY-216) ---- */}
       <Section label={t("mode.label")}>
         <Segmented<FlowMode>
           value={style.flowMode}
@@ -438,10 +497,11 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
         />
       </Section>
 
-      <Section
-        label={t("type.pageWidth")}
-        value={style.pageFitWindow ? <span className="rs-na">{t("type.matchWindow")}</span> : undefined}
-      >
+      {/* RAWY-216: the MASTER now precedes the control it disables (page width used to come first, so the
+          slider greyed out for a reason stated below it). */}
+      <ToggleRow label={t("type.matchWindow")} on={style.pageFitWindow} onToggle={() => update({ pageFitWindow: !style.pageFitWindow })} />
+
+      <Section label={t("type.pageWidth")}>
         <Slider
           value={style.pageWidth}
           min={PAGE_WIDTH_MIN}
@@ -453,59 +513,47 @@ export function ReadingSettings({ style, update, isRtlBook, section = "text", bo
           trail={<span className="rs-tiny">{t("type.wide")}</span>}
         />
       </Section>
-      <ToggleRow label={t("type.matchWindow")} on={style.pageFitWindow} onToggle={() => update({ pageFitWindow: !style.pageFitWindow })} />
+      {style.pageFitWindow && <div className="rs-inert">{t("inert.matchWindow")}</div>}
 
-      <Section label={t("type.margins")} value={localeDigits(`${style.marginPx}px`, lang)}>
+      {/* RAWY-216: see the paragraph-spacing note — this is the row that actually showed "-px" live, because
+          the owner's saved margin is 0. */}
+      <Section label={t("type.margins")} value={localeDigits(`${style.marginPx} px`, lang)}>
         <Slider value={style.marginPx} min={0} max={160} step={8} onInput={(v) => update({ marginPx: clamp(v, 0, 160) })} />
       </Section>
 
+      <div className="rs-divider" />
+
       {/* RAWY-210: immersive hide-on-scroll MASTER — a GLOBAL reading-behaviour flag (via useTheme, like the
-          hide-title toggles), not per-book typography, so it is NOT wired through `update`. */}
-      <ToggleRow label={t("type.immersive")} hint={t("type.immersiveHint")} on={immersive} onToggle={() => setImmersive(!immersive)} />
+          hide-title toggles), not per-book typography, so it is NOT wired through `update`. RAWY-216: it is the
+          ONE deliberate exception to "scope is structural" — it stays in Layout because its two children are
+          per-book and functionally inseparable from it, so it carries the quiet "all books" suffix instead. */}
+      <ToggleRow
+        label={t("type.immersive")}
+        scope={scopeAllSuffix}
+        hint={t("type.immersiveHint")}
+        on={immersive}
+        onToggle={() => setImmersive(!immersive)}
+      />
       {/* RAWY-212: two PER-BOOK sub-toggles (D43 — written via `update`, so unified writes the global default
           and per-book writes this book's override). They gate each element's hide-on-scroll-away independently;
           dimmed + inert while the master is off. The resume hint is intentionally NOT a toggle — it always
           shows in immersive mode (owner revision). */}
       <ToggleRow sub disabled={!immersive} label={t("type.immHidePill")} on={style.immHidePill} onToggle={() => update({ immHidePill: !style.immHidePill })} />
       <ToggleRow sub disabled={!immersive} label={t("type.immHideScrollbar")} on={style.immHideScrollbar} onToggle={() => update({ immHideScrollbar: !style.immHideScrollbar })} />
+      {!immersive && <div className="rs-inert">{t("inert.immersiveOff")}</div>}
 
       </>
       )}
 
-      {section === "theme" && (
+      {section === "allbooks" && (
       <>
-      {/* ---- PAPER / THEME (RAWY-40: PER-BOOK — onPickTheme affects only this book) ---- */}
-      <div className="rs-sec-head">
-        <span className="rs-label">{t("type.paper")}</span>
-        {/* Day/Night = an explicit light↔dark switch for THIS book. "Day" selects the default
-            light theme, "Night" the default dark; clicking the active side is a no-op. */}
-        <Segmented
-          value={dark ? "night" : "day"}
-          onPick={(k) => {
-            if (k === "night" && !dark) onPickTheme(DEFAULT_DARK);
-            else if (k === "day" && dark) onPickTheme(DEFAULT_LIGHT);
-          }}
-          options={[
-            { key: "day", label: t("theme.day") },
-            { key: "night", label: t("theme.night") },
-          ]}
-        />
-      </div>
-      <div className="rs-swatches">
-        {THEME_ORDER.map((id) => (
-          <button key={id} className="rs-swatch-cell" onClick={() => onPickTheme(id)}>
-            <span className={`rs-swatch${bookThemeId === id ? " on" : ""}`} style={{ background: THEMES[id].colors.paperBg }} />
-            <span className="rs-swatch-name">{THEMES[id].name}</span>
-          </button>
-        ))}
-      </div>
-      {/* Paper/theme + text colour above are PER-BOOK (RAWY-40). These three are GLOBAL flags
-          (RAWY-40/69) — so they're pulled below a divider under an explicit "applies to all books"
-          header, correcting the drawer's per-book banner (RAWY-80, audit #8: a reader who'd just
-          read "this book only" could flip one and silently change EVERY book). */}
-      <div className="rs-divider" />
-      <div className="rs-sec-title">{t("theme.globalGroup")}</div>
-      <div className="rs-sec-hint">{t("theme.globalGroupHint")}</div>
+      {/* ---- ALL BOOKS (RAWY-216) — the three GLOBAL flags (RAWY-40/69) that ignore the per-book/unified
+           scope. They used to sit at the bottom of the Theme tab under an "applies to all books" heading,
+           inside a drawer whose banner said "this book" (RAWY-80, audit #8). Now the TAB is the scope
+           signal, so a reader cannot flip one while reading "this book only" and silently change every
+           book. Hide chapter title / Hide first line ALSO lived in the Contents panel — that duplicate is
+           removed, and this is now their single home. ---- */}
+      <div className="rs-sec-hint">{t("settings.allbooksSub")}</div>
       <ToggleRow label={t("theme.override")} on={overrideBookColor} onToggle={() => setOverride(!overrideBookColor)} />
       <ToggleRow label={t("theme.hideTitles")} on={hideChapterTitles} onToggle={() => setHideTitles(!hideChapterTitles)} />
       <ToggleRow

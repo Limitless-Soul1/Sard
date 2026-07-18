@@ -14,12 +14,25 @@ export const ar: Record<TKey, string> = {
   "reader.back": "المكتبة",
   "reader.contents": "المحتويات",
   "reader.typography": "الطباعة",
-  "reader.text": "الخط",
   "reader.layout": "التخطيط",
   "reader.notes": "ملاحظات",
   "reader.bookmark": "علامة مرجعية",
-  "settings.page": "الصفحة",
   "reader.settings": "الإعدادات",
+  // RAWY-216: تبويبات المفاهيم الخمسة — «الطباعة» و«التخطيط» أعلاه تُستخدم كعناوين تبويبات.
+  "settings.colour": "الألوان",
+  "settings.readaloud": "القراءة الصوتية",
+  "settings.allbooks": "كل الكتب",
+  // RAWY-216: مفردات نطاق واحدة بدل ثلاث صياغات. اللافتة = perbook.appliesTo + الاسم، وعنوان القسم
+  // يُلحق الاسم بعد شَرْطة. تُغيَّر الكلمة مرة واحدة فتتبعها كل مواضع النطاق.
+  "scope.thisBook": "هذا الكتاب",
+  "scope.allBooks": "كل الكتب",
+  "settings.allbooksSub": "هذه تسري على كل الكتب، لا على هذا الكتاب وحده.",
+  "settings.voiceNote": "الصوت والمحرّك والسرعة في المشغّل أثناء الاستماع.",
+  // RAWY-216: سطر سبب واحد خافت تحت أي عنصر معطّل الأثر الآن.
+  "inert.matchWindow": "ملء النافذة مفعَّل.",
+  "inert.immersiveOff": "التصفّح الغامر متوقّف.",
+  "inert.arabicOnly": "للنص العربي فقط.",
+  "inert.latinOnly": "للنص اللاتيني فقط.",
   "reader.chapterFallback": "القراءة",
   "reader.untitledBook": "بدون عنوان",
   "reader.percentRead": "٪{p}",
@@ -70,10 +83,6 @@ export const ar: Record<TKey, string> = {
 
   "type.size": "حجم النص",
   "type.font": "الخط",
-  "type.fontThisBook": "خط هذا الكتاب",
-  "type.fontAllBooks": "خط نصوص الكتب · كل الكتب",
-  "type.fontThisBookHint": "يتجاوز الخط الافتراضي لهذا الكتاب وحده.",
-  "type.fontAllBooksHint": "أنماط الكتب موحَّدة — هذا يغيّر الخط لكل الكتب.",
   "type.lineSpacing": "تباعد الأسطر",
   "type.margins": "الهوامش",
   "type.immersive": "تصفّح غامر",
@@ -94,12 +103,9 @@ export const ar: Record<TKey, string> = {
   "book.arabicSample": "كتاب عربي",
   "book.englishSample": "كتاب إنجليزي",
 
-  "theme.label": "السمة",
   "theme.dayNight": "نهار / ليل",
-  // RAWY-80 (#8): هذه المفاتيح الثلاثة عامّة، فتوضع تحت ترويسة صريحة «كل الكتب» (لافتة اللوحة
-  // تقول بخلاف ذلك «يسري على هذا الكتاب»).
-  "theme.globalGroup": "يسري على كل الكتب",
-  "theme.globalGroupHint": "هذه تسري على التطبيق كله، لا على هذا الكتاب وحده.",
+  // RAWY-80 (#8) كان يضع المفاتيح الثلاثة العامّة تحت ترويسة صريحة داخل تبويب السمة. RAWY-216 نقلها
+  // إلى تبويب «كل الكتب»، فصار التبويب نفسه هو إشارة النطاق ولم تعد الترويسة لازمة.
   "theme.override": "تجاوز ألوان الكتاب",
   "theme.hideTitles": "إخفاء عنوان الفصل",
 
@@ -331,7 +337,6 @@ export const ar: Record<TKey, string> = {
   "type.paraSpacing": "تباعد الفقرات",
   "type.indent": "إزاحة أول سطر",
   "type.tracking": "تباعد الأحرف",
-  "type.latinOnly": "لاتيني فقط",
   "type.latin": "لاتيني",
   "type.arabic": "عربي",
   "type.paper": "الورق",
@@ -375,10 +380,10 @@ export const ar: Record<TKey, string> = {
   "gs.bookmark.position": "الموضع على الحافة",
   "gs.bookmark.posHint": "ثابت — لا ينقلب مع اللغة. ويمكنك أيضًا سحب الفاصل على الصفحة.",
 
-  // إعدادات القراءة لكل كتاب + لون النص (RAWY-40، نطاق I)
-  "perbook.scope": "يُطبَّق على هذا الكتاب",
+  // إعدادات القراءة لكل كتاب + لون النص (RAWY-40، نطاق I). RAWY-216: حُذف عنوانا النطاق، فاللافتة
+  // صارت perbook.appliesTo + اسم النطاق المشترك، فتُصاغ عبارة النطاق في موضع واحد.
+  "perbook.appliesTo": "يُطبَّق على",
   "perbook.scopeSub": "لا يؤثّر في الكتب الأخرى",
-  "perbook.scopeAll": "يُطبَّق على كل الكتب",
   "perbook.scopeAllSub": "أنماط الكتب موحَّدة — أي تغيير هنا يغيّر كل الكتب",
   "perbook.reset": "إعادة",
   "gs.scope": "أنماط الكتب",

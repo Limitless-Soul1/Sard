@@ -95,7 +95,7 @@ export function Reader({
   // does for its own view, lifted one layer up to the whole open sequence.
   const openEpoch = useRef(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>("text");
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("typography");
   // RAWY-89: Contents + Search share the physical-left, so only ONE is open at a time — a single
   // source of truth makes that structural (no two-setter races; the persisted-open effect can't
   // re-open Contents over a Search the user just opened). `chaptersOpen`/`searchOpen` are derived.
@@ -156,8 +156,9 @@ export function Reader({
   const bookmarks = useBookmarks((s) => s.bookmarks);
   const activeBm = bookmarks.find((b) => b.fraction != null && Math.abs(b.fraction - fraction) <= MARKER_WINDOW) ?? null;
   // THEME is per-book (RAWY-40) — read from `bookThemeId`, not the global store. Override-book-
-  // colour + hide-chapter-titles stay GLOBAL flags (set in Global Settings / chapters panel).
-  const { overrideBookColor, hideChapterTitles, hideFirstLine, immersive, setHideTitles, setHideFirstLine } = useTheme();
+  // colour + hide-chapter-titles stay GLOBAL flags. RAWY-216: Reader only READS them now (to inject
+  // the CSS); the setters live where the controls do — the drawer's "All books" tab / Global Settings.
+  const { overrideBookColor, hideChapterTitles, hideFirstLine, immersive } = useTheme();
   const { visible: chromeVisible, scrolledAway, signalMove, signalScroll, setHold } = useChromeOnIntent();
   // RAWY-194 (C): the chrome no longer wakes on bare keystrokes. A keyboard user still reaches it: when Tab
   // moves focus INTO the chrome (its controls stay in the tab order), reveal + PIN it — the genuine "I want
@@ -1107,8 +1108,8 @@ export function Reader({
   const jumpCfi = useCallback((cfi: string) => ctrlRef.current?.goToLocator(cfi), []);
   const closeContents = useCallback(() => setLeftPanel((p) => (p === "contents" ? null : p)), []);
   const closeSearch = useCallback(() => setLeftPanel((p) => (p === "search" ? null : p)), []);
-  const onToggleHideTitles = useCallback(() => setHideTitles(!hideChapterTitles), [hideChapterTitles, setHideTitles]);
-  const onToggleHideFirstLine = useCallback(() => setHideFirstLine(!hideFirstLine), [hideFirstLine, setHideFirstLine]);
+  // (RAWY-216 removed the two anti-spoiler toggle callbacks: the Contents panel no longer duplicates
+  // those controls, so their only home is the drawer's "All books" tab, which reads useTheme directly.)
 
   // RAWY-34: Text / Theme / Layout each select a distinct TAB of the ONE settings drawer
   // (Text · Page · Theme — the design's band I), reusing the RAWY-24 controls. Pressing the
@@ -1214,12 +1215,8 @@ export function Reader({
         toc={toc}
         currentHref={chapterHref}
         hideTitles={hideChapterTitles}
-        onToggleHideTitles={onToggleHideTitles}
-        hideFirstLine={hideFirstLine}
-        onToggleHideFirstLine={onToggleHideFirstLine}
         onJump={jumpHref}
         fraction={fraction}
-        isPdf={isPdf}
       />
 
       {!isPdf && (
@@ -1262,9 +1259,9 @@ export function Reader({
         searchOpen={searchOpen}
         onListen={startListen}
         ttsActive={ttsActive}
-        onText={() => openSettings("text")}
-        onTheme={() => openSettings("theme")}
-        onLayout={() => openSettings("page")}
+        onText={() => openSettings("typography")}
+        onTheme={() => openSettings("colour")}
+        onLayout={() => openSettings("layout")}
         onAnnotations={() => { setAnnoOpen((v) => !v); setSettingsOpen(false); }}
         onBookmark={onBookmark}
         bookmarked={!!activeBm}

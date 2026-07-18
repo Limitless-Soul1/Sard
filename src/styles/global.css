@@ -630,13 +630,18 @@ html, body, #root {
   border-color: color-mix(in srgb, #b05220 35%, transparent); color: color-mix(in srgb, #b05220 80%, var(--text));
 }
 
+/* RAWY-216: five concept tabs instead of three. Five labels cannot share one row in a 384px drawer
+   (and "Read-aloud" / "القراءة الصوتية" are the long ones), so the bar WRAPS: a ~30% basis puts three
+   on the first row and lets the remaining two grow to fill the second. Same pill styling as before —
+   only the wrap and a slightly tighter label are new. */
 .sp-tabs {
-  display: flex; gap: 3px; margin: 0 16px 4px; padding: 3px; border-radius: 9px;
+  display: flex; flex-wrap: wrap; gap: 3px; margin: 0 16px 4px; padding: 3px; border-radius: 9px;
   background: color-mix(in srgb, var(--text) 8%, transparent);
 }
 .sp-tab {
-  flex: 1; border: 0; background: transparent; cursor: pointer; padding: 8px 0; border-radius: 6px;
-  font: 500 0.8125rem var(--ui-font); color: var(--muted);
+  flex: 1 1 30%; min-width: 0; border: 0; background: transparent; cursor: pointer;
+  padding: 7px 4px; border-radius: 6px;
+  font: 500 0.78125rem var(--ui-font); color: var(--muted);
   transition: background 0.15s ease, color 0.15s ease;
 }
 .sp-tab.on {
@@ -659,6 +664,21 @@ html, body, #root {
 .rs-sec-hint { font: 400 0.6875rem/1.45 var(--ui-font); color: color-mix(in srgb, var(--muted) 85%, var(--paper-bg)); margin: 2px 0 2px; }
 .rs-value { font: 500 0.75rem var(--ui-font); color: var(--accent); }
 .rs-na { font: 500 0.6875rem var(--ui-font); color: var(--muted); font-style: italic; }
+/* RAWY-216: the scope suffix appended to a section title ("— this book" / "— all books"). It sits
+   INSIDE an uppercase, letter-spaced title, so it opts back out of both — the scope is a quiet
+   qualifier, not part of the heading's shout. */
+.rs-scope {
+  font: 400 0.6875rem var(--ui-font); letter-spacing: 0; text-transform: none;
+  color: color-mix(in srgb, var(--muted) 85%, var(--paper-bg));
+}
+/* RAWY-216: ONE muted reason line, placed directly under whatever is inert right now, so a greyed
+   control always states WHY instead of leaving the reader to guess (the old "N/A" chips said what,
+   never why, and only on some controls). */
+.rs-inert {
+  font: 400 0.6875rem/1.45 var(--ui-font);
+  color: color-mix(in srgb, var(--muted) 85%, var(--paper-bg));
+  margin: -6px 0 0;
+}
 .rs-divider { height: 1px; background: var(--chrome-border); margin: 3px 0; }
 
 /* slider */

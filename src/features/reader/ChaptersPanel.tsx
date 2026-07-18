@@ -62,15 +62,11 @@ interface Props {
   onClose: () => void;
   toc: TocEntry[];
   currentHref: string | null;
+  // Still needed here AFTER RAWY-216 removed this panel's toggle: the TOC rows render the
+  // "الفصل N"/"Chapter N" placeholder instead of the real title while it is on (RAWY-69/70).
   hideTitles: boolean;
-  onToggleHideTitles: () => void;
-  // RAWY-69: independent from hideTitles — hides the section's leading in-body "first line"
-  // (often a repeated/spoiler title) without touching the app's own chapter-title display.
-  hideFirstLine: boolean;
-  onToggleHideFirstLine: () => void;
   onJump: (href: string) => void;
   fraction: number;
-  isPdf?: boolean; // RAWY-85: hide the EPUB-only anti-spoiler toggles for a PDF
 }
 
 // RAWY-175 (AUD-3): MEMOIZED so an unrelated Reader re-render (a search-results batch ~every 90 ms, a
@@ -84,12 +80,8 @@ function ChaptersPanelInner({
   toc,
   currentHref,
   hideTitles,
-  onToggleHideTitles,
-  hideFirstLine,
-  onToggleHideFirstLine,
   onJump,
   fraction,
-  isPdf,
 }: Props) {
   const { t, lang, dir } = useI18n();
   const pct = Math.round(fraction * 100);
@@ -132,29 +124,10 @@ function ChaptersPanelInner({
         </div>
       </div>
 
-      {/* anti-spoiler controls — TWO independent toggles (RAWY-69, split from one): the app's own
-          chapter-title display vs. an in-body leading "first line" that's often a repeated title
-          and can itself carry spoilers (RAWY-68's markInBodyHeading). Either, both, or neither.
-          RAWY-85: these are EPUB-only — hidden for a fixed-layout PDF (it just lists the outline). */}
-      {!isPdf && (
-        <>
-          <button className="rp-spoiler" onClick={onToggleHideTitles} aria-pressed={hideTitles}>
-            <span className="rp-spoiler-label">{t("theme.hideTitles")}</span>
-            <span className={`rp-switch${hideTitles ? " on" : ""}`} aria-hidden>
-              <span className="rp-knob" />
-            </span>
-          </button>
-          <button className="rp-toggle" onClick={onToggleHideFirstLine} aria-pressed={hideFirstLine}>
-            <span className="rp-toggle-text">
-              <span className="rp-toggle-label">{t("panel.hideFirstLine")}</span>
-              <span className="rp-toggle-hint">{t("panel.hideFirstLineHint")}</span>
-            </span>
-            <span className={`rp-switch${hideFirstLine ? " on" : ""}`} aria-hidden>
-              <span className="rp-knob" />
-            </span>
-          </button>
-        </>
-      )}
+      {/* RAWY-216: the two anti-spoiler toggles (RAWY-69) used to be duplicated HERE and in the settings
+          drawer — the same two global flags, same state, two places, worded differently. They now live
+          ONLY in the drawer's "All books" tab, which is also their honest scope label. `hideTitles` is
+          still a PROP because the TOC rows below render the "الفصل N"/"Chapter N" placeholder from it. */}
 
       <div className="rp-scroll" ref={scrollRef}>
         {toc.length === 0 && <div className="rp-empty">{t("panel.noChapters")}</div>}

@@ -3,7 +3,10 @@ import { useRef, useState } from "react";
 import { useI18n } from "../../i18n";
 import { localeNum } from "../../lib/format";
 
-export type SettingsSection = "text" | "page" | "theme";
+// RAWY-216: the settings drawer is grouped by CONCEPT, not by which tab got built first. Five tabs;
+// the toolbar's three shortcut buttons (Aa / theme / layout) still land on the three most-used ones,
+// and the drawer's tab bar reaches all five (Read-aloud + All books included).
+export type SettingsSection = "typography" | "layout" | "colour" | "readaloud" | "allbooks";
 
 interface Props {
   visible: boolean;
@@ -163,27 +166,27 @@ export function ReaderChrome({
           {/* Typography + theme are EPUB-only — hidden for a fixed-layout PDF (RAWY-85). */}
           {!isPdf && (
             <button
-              className={`rc-btn${settingsOpen && settingsSection === "text" ? " on" : ""}`}
+              className={`rc-btn${settingsOpen && settingsSection === "typography" ? " on" : ""}`}
               onClick={onText}
-              title={t("reader.text")}
+              title={t("reader.typography")}
             >
               <span className="rc-btn-ico ico-aa">A<span>a</span></span>
-              <span className="rc-btn-label">{t("reader.text")}</span>
+              <span className="rc-btn-label">{t("reader.typography")}</span>
             </button>
           )}
           {!isPdf && (
             <button
-              className={`rc-btn${settingsOpen && settingsSection === "theme" ? " on" : ""}`}
+              className={`rc-btn${settingsOpen && settingsSection === "colour" ? " on" : ""}`}
               onClick={onTheme}
-              title={t("theme.label")}
+              title={t("settings.colour")}
             >
               <span className="rc-btn-ico"><span className="ico-half" /></span>
-              <span className="rc-btn-label">{t("theme.label")}</span>
+              <span className="rc-btn-label">{t("settings.colour")}</span>
             </button>
           )}
           {/* For a PDF this opens the "read-only" panel (reading direction + honest limits). */}
           <button
-            className={`rc-btn${settingsOpen && settingsSection === "page" ? " on" : ""}`}
+            className={`rc-btn${settingsOpen && settingsSection === "layout" ? " on" : ""}`}
             onClick={onLayout}
             title={isPdf ? t("pdf.options") : t("reader.layout")}
           >

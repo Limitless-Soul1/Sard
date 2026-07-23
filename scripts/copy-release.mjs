@@ -22,7 +22,12 @@ const dest = resolve(outDir, "Sard.exe");
 // the installer lays it beside the installed exe. The standalone exe alone can't find it, so
 // read-aloud failed in the test-build ("piper engine not found at …\test-build\piper\piper.exe").
 // Copy the engine next to the exe so the portable test-build matches the installer layout.
-const engineSrc = resolve(root, "src-tauri/target/release/piper");
+// RAWY-TOOLING: prefer the build output (target/release/piper); if a `--no-bundle` test build didn't lay
+// it down there, fall back to the SOURCE resources (src-tauri/resources/piper). Either way it is the SAME
+// bundled engine (version-static), so read-aloud works in the test-build without the installer bundle.
+const engineOut = resolve(root, "src-tauri/target/release/piper");
+const engineSrcRes = resolve(root, "src-tauri/resources/piper");
+const engineSrc = existsSync(resolve(engineOut, "piper.exe")) ? engineOut : engineSrcRes;
 const engineDest = resolve(outDir, "piper");
 
 if (!existsSync(src)) {

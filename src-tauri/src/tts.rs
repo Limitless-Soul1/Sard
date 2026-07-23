@@ -392,10 +392,16 @@ pub fn tts_edge_voices(engines: State<'_, TtsEngine>) -> Result<Vec<EdgeVoiceInf
     Ok(out)
 }
 
-/// RAWY-172 (AUD-2): a single Edge synth may block at most this long before we treat the socket as
-/// stalled and give up (the frontend then skips the sentence). A real synth is a second or two; 20 s is a
-/// ceiling that never false-trips a slow-but-live link.
-const EDGE_SYNTH_TIMEOUT_SECS: u64 = 20;
+/// RAWY-172 (AUD-2): a single Edge synth may block at most this long before we treat the socket as stalled,
+/// drop it, and free this mutex so the next sentence can be synthesized (the frontend surfaces the explicit
+/// "Edge unavailable" pause). RAWY-231 (invariant D): lowered 20 s → 8 s so a genuine stall surfaces a CHOICE
+/// in ~8 s instead of ~20 s of silence. BASIS: the worst live synth measured to date is ~2.7 s (a cold WS
+/// connect, RAWY-191); a normal synth ~0.6 s; a 236-char sentence in 632 ms — so 8 s keeps ~3x margin over
+/// the worst measured and never false-trips a slow-but-live link. Kept just BELOW the frontend
+/// SYNTH_TIMEOUT_MS (9 s) so the specific Rust reason ("edge synth timed out") reaches the user, not the
+/// generic JS timeout. PROVISIONAL — if the owner's Phase-0 slow-synth capture shows synths above ~5 s on his
+/// real network, raise both (a false timeout is a visible, actionable edge-error, not silence).
+const EDGE_SYNTH_TIMEOUT_SECS: u64 = 8;
 
 /// The outcome of one bounded Edge synth (RAWY-172). `Ok`/`Failed` hand the warm client BACK (for reuse,
 /// or its config to reconnect); `Stalled` means the worker is still blocked and OWNS the client — it

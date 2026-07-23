@@ -15,6 +15,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 
 import { settingsGet, settingsSet, ttsDownloadVoice, ttsEdgeVoices, ttsStop, ttsVoicePresent } from "./ipc";
+import { SynthScheduler } from "./ttsScheduler";
 
 export const TTS_MIN_SPEED = 0.75;
 export const TTS_MAX_SPEED = 2.0;
@@ -155,12 +156,16 @@ async function resolveVoicePref(lang: TtsLang): Promise<TtsVoiceRef> {
   return { engine: "edge", id: await edgeUnsetDefault() };
 }
 
-type Status = "idle" | "preparing" | "downloading" | "playing" | "paused" | "error" | "chapter-end" | "edge-error";
+// RAWY-231 (invariant A/D): "buffering" is a VISIBLE mid-playback wait — playback moved to a sentence whose
+// audio isn't ready yet (an underrun) or the chapter-start/seek "keep-one-ahead" lead is still synthesizing.
+// It is transient (it resolves to "playing" the moment the audio is ready, or escalates to "edge-error" on a
+// timeout), so it is never a silent gap. Distinct from "preparing" so skipping still works during a buffer.
+type Status = "idle" | "preparing" | "downloading" | "playing" | "paused" | "error" | "chapter-end" | "edge-error" | "buffering";
 
-// RAWY-188: `deferPrefetch` — start the FIRST sentence only (no prefetch window). Used for the chapter-TOP
-// start when a same-chapter resume is being offered: if the user then resumes, only ONE cold synth was
-// spent on the top (not four) so the resume target isn't stuck behind them on the serialized engine.
-interface StartOpts { sentences: string[]; lang: TtsLang; startIndex?: number; chapterLabel: string; deferPrefetch?: boolean }
+// RAWY-231: `deferPrefetch` (RAWY-188) is REMOVED — it had no callers (the RAWY-227 resume-prompt removal
+// left it dead), and the scheduler now prioritizes the current+lead sentence over look-ahead by construction,
+// so the old "start only the first sentence" hack is obsolete.
+interface StartOpts { sentences: string[]; lang: TtsLang; startIndex?: number; chapterLabel: string }
 
 interface TtsState {
   active: boolean; // player pill visible
@@ -181,6 +186,12 @@ interface TtsState {
   progress: number; // voice-download fraction 0–1 (only meaningful while status === "downloading")
   chapterLabel: string;
   error: string | null;
+  // RAWY-231 (invariant E, recurrence guard): LOCAL counters the owner can SEE (not just feel) — no
+  // telemetry leaves the machine. `underruns` = times playback had to WAIT on synthesis (a stall);
+  // `abandoned` = syntheses discarded because the cursor moved. Reset per session (on stop). Surfaced via
+  // the pill's tiny debug readout when `localStorage.sardTtsDebug` is set, and via `window.__sardTtsStats()`.
+  underruns: number;
+  abandoned: number;
   start: (o: StartOpts) => Promise<void>;
   toggle: () => void;
   dismissEnd: () => void; // RAWY-190: hide the stale chapter-end "next chapter" offer (keeps the player)
@@ -210,7 +221,9 @@ let source: AudioBufferSourceNode | null = null;
 let gainNode: GainNode | null = null;
 let curVolume = 1; // 0..1, applied to the shared output gain (mirrors useTts.volume)
 let volSaveTimer: ReturnType<typeof setTimeout> | null = null;
-let cache = new Map<number, Promise<Synthesized>>();
+// RAWY-231: the per-sentence synth cache now lives INSIDE the SynthScheduler (see `scheduler` below), which
+// serializes + prioritizes dispatch (current > next > look-ahead) and drops stale work on a cursor move.
+let ttsUnderruns = 0; // RAWY-231 (E): times playback had to WAIT on synthesis this session (a stall)
 let curEngine: TtsEngineKind = "piper";
 let curVoice = "";
 let gen = 0; // bumped by stop/skip/start to invalidate in-flight async work
@@ -247,23 +260,88 @@ let watchdog: ReturnType<typeof setInterval> | null = null;
 let failStreak = 0;
 const FAIL_LIMIT = 3; // consecutive failures that turn "skip the bad segment" into "surface a dead end"
 // RAWY-172 (AUD-2): a synth that never resolves (a stalled Edge socket — Wi-Fi dropped without an RST, a
-// captive portal, a sleeping router) must not freeze read-aloud. Every synth is raced against this
-// ceiling; on timeout the sentence is SKIPPED (the same RAWY-159 recovery), so playback always advances.
-// Well above a normal synth (a second or two), so a slow-but-live link never false-trips it.
-const SYNTH_TIMEOUT_MS = 20000;
+// captive portal, a sleeping router) must not freeze read-aloud. Every synth is raced against this ceiling;
+// on timeout playback surfaces the explicit "Edge unavailable" pause (invariant D — fail loudly, never a
+// silent gap). RAWY-231 lowered it 20 s → 9 s so a stall surfaces a CHOICE in ~8-9 s, not ~20 s of silence.
+// BASIS: the worst live synth measured to date is ~2.7 s (a cold WS connect, RAWY-191); a normal synth is
+// ~0.6 s; a 236-char sentence synthesised in 632 ms — so ~8-9 s keeps ~3× margin over the worst measured and
+// never false-trips a slow-but-live link. PROVISIONAL: if the owner's Phase-0 slow-synth capture on his real
+// network shows synths above ~5 s, RAISE this (a false timeout is a visible edge-error, not silence, so
+// erring short is the safe direction). Coordinated with the Rust EDGE_SYNTH_TIMEOUT_SECS (8 s), which frees
+// the engine mutex at its ceiling; this JS value is ~1 s longer so the specific Rust-reported reason wins.
+const SYNTH_TIMEOUT_MS = 9000;
 // RAWY-172 (AUD-1): how many already-played sentences to keep decoded (besides the current +
 // prefetched-next), so a one-sentence skip-back stays instant while memory stays bounded.
 const CACHE_KEEP_BEHIND = 1;
-// RAWY-181 (BUG 3): how many UPCOMING sentences to synthesize ahead of need. Was effectively 1 (and
-// only kicked off AFTER the current started playing), which left silence when a short sentence ended
-// before Edge's network synth of the next finished. Prefetching a small WINDOW (started as soon as a
-// sentence begins) keeps the pipeline 2–3 ahead so the next buffer is ready when the current ends.
-// Memory stays bounded/O(1): eviction keeps only [idx-CACHE_KEEP_BEHIND … idx+PREFETCH_AHEAD] decoded
-// (≈5 sentences), not the whole chapter.
+// RAWY-181 (BUG 3): how many UPCOMING sentences to synthesize ahead of need. RAWY-231: the GUARANTEE is a
+// lead of exactly ONE sentence (invariant A); anything up to PREFETCH_AHEAD is OPTIONAL look-ahead the
+// scheduler dispatches only after the current + lead, and drops on a cursor move. The scheduler's window
+// keeps [idx-CACHE_KEEP_BEHIND … idx+PREFETCH_AHEAD] decoded (≈5 sentences) and evicts the rest, so memory
+// stays bounded/O(1) regardless of chapter length (RAWY-172).
 const PREFETCH_AHEAD = 3;
 const clearWatchdog = () => {
   if (watchdog) { clearInterval(watchdog); watchdog = null; }
 };
+
+// RAWY-231: ONE tts_synthesize call for sentence `i` — the invoke plus the RAWY-193 single bounded retry for
+// a stale/dropped warm Edge socket. A retry is only worth it for a FAST failure (a dropped socket errors in
+// ~ms); a genuine STALL (the Rust side reported a timeout) is surfaced immediately rather than burning
+// another synth window on it (that would only pile up silence — RAWY-191 lesson). The engine/voice is NEVER
+// changed here (D37): a sustained failure rejects with TTS_EDGE_DOWN so playFrom raises the explicit
+// "Edge unavailable" pause; a non-Edge (Piper) failure keeps its RAWY-159 skip behaviour.
+async function synthInvoke(i: number): Promise<ArrayBuffer> {
+  try {
+    return await invoke<ArrayBuffer>("tts_synthesize", { engine: curEngine, id: curVoice, text: sentences[i] });
+  } catch (e) {
+    if (curEngine !== "edge") throw e;
+    if (String(e).includes("timed out")) throw new Error(TTS_EDGE_DOWN); // a stall — surface it, don't retry
+    try {
+      return await invoke<ArrayBuffer>("tts_synthesize", { engine: "edge", id: curVoice, text: sentences[i] });
+    } catch {
+      throw new Error(TTS_EDGE_DOWN);
+    }
+  }
+}
+
+// RAWY-231: the scheduler's dispatch — invoke (bounded so a stalled socket frees the single-flight slot) →
+// parse the framed word timings → decode to an AudioBuffer. Engine-agnostic (WebAudio decodes Piper WAV +
+// Edge MP3 alike). This is the ONLY thing the scheduler runs; ordering/priority/eviction are the scheduler's.
+async function synthDispatch(i: number): Promise<Synthesized> {
+  const raw = await withTimeout(synthInvoke(i), SYNTH_TIMEOUT_MS);
+  const { words, audio } = parseFramed(raw);
+  return { buffer: await audioCtx().decodeAudioData(audio), words };
+}
+
+// The one serialized, priority-ordered, drop-on-move synth scheduler (invariants B + C live here).
+const scheduler = new SynthScheduler<Synthesized>(synthDispatch, {
+  behind: CACHE_KEEP_BEHIND,
+  ahead: PREFETCH_AHEAD,
+  onAbandon: () => useTts.setState({ abandoned: scheduler.abandoned }),
+});
+// The promise playback awaits for sentence `i` (registers the want + kicks the scheduler's pump).
+const synth = (i: number): Promise<Synthesized> => scheduler.request(i);
+
+// RAWY-231 (E): mirror the recurrence counters into the store (for the pill's debug readout) and, when the
+// owner has opted in via `localStorage.sardTtsDebug`, log each stall so he can SEE them, not only feel them.
+const logStall = (kind: string, idx: number): void => {
+  useTts.setState({ underruns: ttsUnderruns, abandoned: scheduler.abandoned });
+  try {
+    if (typeof localStorage !== "undefined" && localStorage.getItem("sardTtsDebug")) {
+      // eslint-disable-next-line no-console
+      console.debug(`[sard/tts] ${kind} @${idx} · underruns=${ttsUnderruns} abandoned=${scheduler.abandoned} inFlight=${scheduler.inFlight}`);
+    }
+  } catch { /* localStorage may be unavailable */ }
+};
+// A dev/debug surface reachable from DevTools without shipping any UI (invariant E).
+if (typeof window !== "undefined") {
+  (window as unknown as { __sardTtsStats?: () => unknown }).__sardTtsStats = () => ({
+    underruns: ttsUnderruns,
+    abandoned: scheduler.abandoned,
+    inFlight: scheduler.inFlight,
+    cached: scheduler.size,
+    priority: scheduler.priority,
+  });
+}
 
 const audioCtx = (): AudioContext => {
   if (!ctx || ctx.state === "closed") ctx = new AudioContext();
@@ -300,7 +378,9 @@ export function toggleTtsPlayback(): boolean {
  *  (page-turn — which DOES mirror in RTL — / scroll) when TTS is off. */
 export function skipSentenceForArrow(key: string): boolean {
   const st = useTts.getState();
-  if (!st.active || (st.status !== "playing" && st.status !== "paused")) return false;
+  // RAWY-231: "buffering" is an active-playback state (a transient synth wait) — arrows must still skip out
+  // of it, so it joins playing/paused here (skip() itself already permits it; only "preparing" blocks).
+  if (!st.active || (st.status !== "playing" && st.status !== "paused" && st.status !== "buffering")) return false;
   const isRight = key === "ArrowRight";
   const isLeft = key === "ArrowLeft";
   if (!isRight && !isLeft) return false;
@@ -330,41 +410,6 @@ function parseFramed(raw: ArrayBuffer): { words: TtsWord[]; audio: ArrayBuffer }
   const words: TtsWord[] = jlen ? JSON.parse(new TextDecoder().decode(new Uint8Array(raw, 4, jlen))) : [];
   return { words, audio: raw.slice(4 + jlen) };
 }
-
-const synth = (i: number): Promise<Synthesized> => {
-  let p = cache.get(i);
-  if (!p) {
-    p = (async () => {
-      let raw: ArrayBuffer;
-      try {
-        raw = await invoke<ArrayBuffer>("tts_synthesize", { engine: curEngine, id: curVoice, text: sentences[i] });
-      } catch (e) {
-        // RAWY-193: NO silent engine fallback — the deleted D37 swapped the voice to Piper mid-paragraph
-        // without asking (a correctness violation). For Edge, ONE bounded retry absorbs a transient blip (a
-        // stale/dropped warm socket the Rust one-shot reconnect didn't catch) WITHOUT changing the voice and
-        // WITHOUT any notice — a micro-blip must be invisible, and the healthy path never reaches here. NO
-        // backoff: the cold WS reconnect (~2.7 s, measured RAWY-191) is itself the delay, so a cascade would
-        // only pile up silence — a sustained failure is handed to the USER, not retried forever. If the retry
-        // also fails, reject with TTS_EDGE_DOWN → playFrom pauses and shows the explicit "Edge unavailable"
-        // choice, never a silent Piper swap. A non-Edge (Piper) failure keeps its RAWY-159 skip behaviour.
-        if (curEngine !== "edge") throw e;
-        try {
-          raw = await invoke<ArrayBuffer>("tts_synthesize", { engine: "edge", id: curVoice, text: sentences[i] });
-        } catch {
-          throw new Error(TTS_EDGE_DOWN);
-        }
-      }
-      const { words, audio } = parseFramed(raw);
-      return { buffer: await audioCtx().decodeAudioData(audio), words };
-    })();
-    cache.set(i, p);
-    // RAWY-193: never RETAIN a rejected synth — evict it so a later revisit (esp. after the user hits Retry,
-    // or a prefetch that failed during a blip) re-attempts cleanly instead of instantly re-failing on a stale
-    // cached rejection. playFrom also deletes the awaited index; this generalises it to prefetched ones.
-    void p.catch(() => { if (cache.get(i) === p) cache.delete(i); });
-  }
-  return p;
-};
 
 // RAWY-193: does this synth failure mean the Edge SERVICE is down (→ pause + prompt), vs a skippable bad
 // segment? True for the bounded-retry sentinel, or a synth stall (the RAWY-172 timeout) — the caller gates
@@ -435,19 +480,15 @@ const stopSource = () => {
   }
 };
 
-// RAWY-172 (AUD-1): drop decoded audio for sentences we've moved past, keeping only a small window
-// (previous · current · prefetched-next). A decoded sentence retains ~0.19 MB/s of PCM, so keeping a
-// whole chapter grew memory ~650 MB/hour of continuous listening; this bounds it regardless of chapter
-// length. A skip-back below the window simply re-synthesizes (synth() re-runs on a cache miss — skip()
-// never resets the cache), so nothing depends on retaining the old buffers.
-function evictAudioBelow(idx: number): void {
-  const floor = idx - CACHE_KEEP_BEHIND;
-  for (const k of cache.keys()) if (k < floor) cache.delete(k);
-}
+// RAWY-172 (AUD-1) / RAWY-231: bounded memory is now the scheduler's job — `reprioritize(idx)` trims the
+// decoded-audio cache to the window [idx-CACHE_KEEP_BEHIND … idx+PREFETCH_AHEAD] on every advance/seek
+// (~5 buffers), so a decoded sentence's ~0.19 MB/s of PCM can't accumulate the ~650 MB/hour it once did. A
+// skip-back below the window simply re-synthesizes (a cache miss re-requests), so nothing depends on
+// retaining old buffers.
 
 // RAWY-172 (AUD-2): resolve `p`, or reject after `ms` if it stalls — so a never-resolving synth can't
-// hang the queue. Engine-agnostic (covers Piper + Edge). The underlying promise is left to settle into
-// nothing; the caller drops it from the cache so a later revisit re-synthesizes cleanly.
+// hang the queue. Engine-agnostic (covers Piper + Edge). The scheduler drops a rejected index from its
+// cache so a later revisit re-synthesizes cleanly.
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const id = setTimeout(() => reject(new Error("tts.synthTimeout")), ms);
@@ -458,10 +499,9 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-// RAWY-181 (BUG 3) / RAWY-186 (Part B): warm a WINDOW of upcoming sentences so the next buffers are
-// decoded before they're needed. synth() dedupes via the cache (already-fetched = no-op) and
-// evictAudioBelow bounds memory. Kept separate so a skip's LANDING can prefetch without the wasted
-// leading also prefetching (that backlog on the serialized engine is what delayed a long skip's audio).
+// RAWY-231: optional LOOK-AHEAD beyond the one-sentence lead. The scheduler dispatches these only AFTER the
+// current + lead sentence and drops them on a cursor move, so requesting the whole window is safe — nothing
+// here can occupy the engine ahead of the sentence the user is waiting for (invariant B).
 function prefetchFrom(idx: number): void {
   for (let k = 1; k <= PREFETCH_AHEAD; k++) {
     const j = idx + k;
@@ -469,7 +509,12 @@ function prefetchFrom(idx: number): void {
   }
 }
 
-async function playFrom(i: number, myGen: number, prefetch = true) {
+// RAWY-231: `establishLead` = this is an ENTRY into playback (a chapter start, a seek/skip LANDING, a
+// voice/engine switch, an Edge retry) — do NOT begin until the current sentence AND its one-ahead lead are
+// both ready (invariant A), so the second sentence never underruns. A NORMAL advance (onended → next) passes
+// false: the lead was already maintained while the previous sentence played, so we don't re-wait — but if it
+// underran anyway we show a visible buffering state and count it (invariant E), never a silent gap.
+async function playFrom(i: number, myGen: number, establishLead = false) {
   const set = useTts.setState;
   if (i >= sentences.length) {
     // RAWY-184 (Part B): reached the LAST sentence — STOP and enter the "chapter-end" state (the owner
@@ -479,16 +524,20 @@ async function playFrom(i: number, myGen: number, prefetch = true) {
     return;
   }
   const idx = Math.max(0, i);
-  set({ index: idx, status: "playing" });
-  evictAudioBelow(idx); // RAWY-172 (AUD-1): free the buffers we've moved past — bounded memory
+  // RAWY-231: re-point the scheduler at this sentence NOW — it becomes top priority and stale look-ahead for
+  // the old position is dropped (and the decoded-audio cache is trimmed to the window). So the CURRENT
+  // sentence is the engine's next work, never stuck behind speculative look-ahead (invariants B + C).
+  scheduler.reprioritize(idx);
+  const current = synth(idx);                                       // top priority
+  const lead = idx + 1 < sentences.length ? synth(idx + 1) : null;  // the one-ahead lead (invariant A)
+  prefetchFrom(idx);                                                // optional deeper look-ahead (yields)
 
-  // RAWY-181 (BUG 3): request the CURRENT sentence first (most urgent), then warm a WINDOW of upcoming
-  // synths so the next buffers are ready before they're needed (covers Edge's per-sentence network
-  // latency across short sentences). RAWY-186 (Part B): a SPECULATIVE leading skip passes prefetch=false
-  // so a flown-past sentence doesn't also enqueue 3 wasted synths ahead of the real landing on the
-  // serialized engine — the landing (and normal advance) prefetch as usual.
-  const current = synth(idx);
-  if (prefetch) prefetchFrom(idx);
+  // RAWY-231 (invariant A/E): if the current sentence isn't decoded yet, playback must WAIT. On a NORMAL
+  // advance that is an UNDERRUN (the lead failed to keep up) — count it + log it. On an ENTRY it's the
+  // expected initial synth, not an underrun. Either way, show a VISIBLE buffering state, never silence.
+  const ready = scheduler.isReady(idx);
+  set({ index: idx, status: ready ? "playing" : "buffering" });
+  if (!ready && !establishLead) { ttsUnderruns++; logStall("underrun", idx); }
 
   // RAWY-159: skip the current sentence and continue — one bad segment must NEVER halt the queue. A
   // genuine dead end (a RUN of FAIL_LIMIT consecutive failures, e.g. offline + no Piper) still surfaces
@@ -506,7 +555,7 @@ async function playFrom(i: number, myGen: number, prefetch = true) {
     // a non-Edge (Piper) failure still skips per RAWY-159.
     synthd = await withTimeout(current, SYNTH_TIMEOUT_MS);
   } catch (e) {
-    cache.delete(idx); // don't keep a rejected promise cached (a later skip-back would re-throw)
+    if (myGen !== gen) return; // superseded — the scheduler already dropped the rejected index
     // RAWY-193: an Edge-SERVICE failure (the bounded retry failed) or an Edge stall must NOT silently skip
     // or swap the voice — PAUSE and surface the explicit "Edge unavailable" choice (Retry / Switch to Piper),
     // visible in EVERY pill state (the player force-expands out of the kashida on this status). A non-Edge
@@ -520,14 +569,26 @@ async function playFrom(i: number, myGen: number, prefetch = true) {
     return;
   }
   if (myGen !== gen) return; // superseded by stop/skip
-  // Empty/zero-length audio (some engines still RETURN a valid-but-silent buffer for punctuation-only
-  // text) → there is nothing to play and `onended` timing is unreliable, so skip rather than stall.
+  // RAWY-231 (invariant D): empty/zero-length audio. On EDGE this is the throttled-TRUNCATION symptom
+  // (§ open defect) — a REAL failure, so surface the explicit "Edge unavailable" pause rather than skipping
+  // it silently. On Piper an empty buffer is legitimate punctuation-only text, so keep the RAWY-159 skip.
   if (!synthd.buffer || synthd.buffer.length === 0 || synthd.buffer.duration === 0) {
+    if (curEngine === "edge") { stopSource(); logStall("empty-edge", idx); set({ status: "edge-error" }); return; }
     skipSegment(TTS_EMPTY);
     return;
   }
   failStreak = 0; // a real, speakable sentence played → reset the dead-end counter
-  // (RAWY-181: the upcoming window was already prefetched at the top of playFrom.)
+
+  // RAWY-231 (invariant A, ENTRY): don't BEGIN until the one-ahead lead is also ready, so the very next
+  // sentence can't underrun. Best-effort + bounded — a slow/failed lead must not hang the start (it surfaces
+  // on its own turn); only entries wait (a normal advance already had the lead maintained).
+  if (establishLead && lead && !scheduler.isReady(idx + 1)) {
+    if (myGen === gen) set({ status: "buffering" });
+    try { await withTimeout(lead, SYNTH_TIMEOUT_MS); } catch { /* surfaces when playback reaches it */ }
+    if (myGen !== gen) return;
+  }
+  if (myGen === gen) set({ status: "playing" });
+
   const c = audioCtx();
   if (c.state === "suspended") await c.resume();
   if (myGen !== gen) return;
@@ -564,7 +625,7 @@ async function playFrom(i: number, myGen: number, prefetch = true) {
 // Ensure the chosen voice is usable, then play from `fromIndex`. Only PIPER voices fetch on demand
 // (~60 MB) with a REAL progress bar (RAWY-106); Edge synthesizes over the network with no local
 // model, so it skips straight to playback. Shared by start / setVoice / resumeEdge (RAWY-193).
-async function ensureAndPlay(engine: TtsEngineKind, voice: string, fromIndex: number, myGen: number, prefetch = true) {
+async function ensureAndPlay(engine: TtsEngineKind, voice: string, fromIndex: number, myGen: number) {
   const set = useTts.setState;
   if (engine === "piper") {
     try {
@@ -582,7 +643,9 @@ async function ensureAndPlay(engine: TtsEngineKind, voice: string, fromIndex: nu
     }
   }
   if (myGen !== gen) return;
-  void playFrom(fromIndex, myGen, prefetch);
+  // RAWY-231: an ENTRY into playback — establish the one-ahead lead before beginning (invariant A), so the
+  // second sentence of a chapter/landing never underruns.
+  void playFrom(fromIndex, myGen, true);
 }
 
 export const useTts = create<TtsState>((set, get) => ({
@@ -601,10 +664,12 @@ export const useTts = create<TtsState>((set, get) => ({
   progress: 0,
   chapterLabel: "",
   error: null,
+  underruns: 0,
+  abandoned: 0,
 
   start: async (opts) => {
     lastStart = opts;
-    const { sentences: sen, lang, startIndex = 0, chapterLabel, deferPrefetch = false } = opts;
+    const { sentences: sen, lang, startIndex = 0, chapterLabel } = opts;
     audioCtx(); // create within the user gesture so autoplay policy unlocks it
     const myGen = ++gen;
     stopSource();
@@ -613,7 +678,7 @@ export const useTts = create<TtsState>((set, get) => ({
     skipLeadTarget = -1;
     skipLastTarget = -1;
     lastSkipAt = 0; // RAWY-186: the first skip of a new session must lead (not read as a continuation)
-    cache = new Map();
+    scheduler.clearCache(); // RAWY-231: fresh chapter — drop cached audio (keeps the session's E counters)
     failStreak = 0; // RAWY-159: a fresh Listen starts the dead-end counter clean
     sentences = sen.map((s) => s.trim()).filter(Boolean);
     const saved = Number(await settingsGet("tts_speed").catch(() => null));
@@ -636,7 +701,7 @@ export const useTts = create<TtsState>((set, get) => ({
     curEngine = engine;
     curVoice = id;
     set({ engine, voice: id });
-    void ensureAndPlay(engine, id, Math.min(startIndex, sentences.length - 1), myGen, !deferPrefetch);
+    void ensureAndPlay(engine, id, Math.min(startIndex, sentences.length - 1), myGen);
   },
 
   toggle: () => {
@@ -666,32 +731,34 @@ export const useTts = create<TtsState>((set, get) => ({
     stopSource();
     stopKaraoke(); // RAWY-127: drop the old sentence's pill; playFrom restarts karaoke for the new one
     failStreak = 0; // RAWY-159: a user skip is a fresh attempt — don't count it toward a dead end
+    // RAWY-231: re-point the scheduler at the landing IMMEDIATELY (invariants B + C). This drops stale
+    // look-ahead for the old position and makes the landing the engine's next work, so a fast skip never
+    // wastes synths on flown-past sentences and the landing waits behind at most the one in-flight synth.
+    scheduler.reprioritize(target);
     // Move the index + sentence spotlight INSTANTLY (the RAWY-126/127 reader effects follow `index`), so
     // rapid skipping tracks on screen even though the landing sentence's audio is deferred below.
     set({ wordIndex: -1, index: target, status: "playing" });
 
-    // RAWY-185/186: debounce the SYNTH. Only the FIRST skip of a skipping session synthesizes immediately
+    // RAWY-185/186: debounce the audio SOURCE. Only the FIRST skip of a skipping session plays immediately
     // (the leading edge → a single skip is instant); every skip within SKIP_CONTINUE_MS of the previous is
-    // a CONTINUATION (a held arrow key or fast repeats — crucially this spans the OS key-repeat DELAY, so a
-    // hold fires the leading ONCE, not once per repeat burst) and only moves the index. When skipping
-    // settles, the LANDING sentence synthesizes once. This keeps flown-past + re-leading cold synths off
-    // the serialized engine so the landing's audio isn't stuck behind them (the long-skip lag).
+    // a CONTINUATION (a held arrow key or fast repeats — this spans the OS key-repeat DELAY, so a hold plays
+    // the leading ONCE, not once per repeat burst) and only moves the index + priority. When skipping
+    // settles, the LANDING plays once, establishing its one-ahead lead first (invariant A).
     skipLastTarget = target;
     const now = performance.now();
     const continuing = now - lastSkipAt < SKIP_CONTINUE_MS;
     lastSkipAt = now;
     if (!continuing) {
       skipLeadTarget = target;
-      void playFrom(target, myGen, false); // leading: play it, but DON'T prefetch a window it may fly past
+      void playFrom(target, myGen, false); // leading: play it now (responsive); scheduler prioritizes it
     }
-    // (Re)arm the settle. When skipping has been idle ~SKIP_SETTLE_MS: if it moved past the leading play,
-    // synth the LANDING (with its prefetch window); otherwise it was a lone skip already playing — just
-    // warm the next few so continuation stays gapless (the leading deliberately skipped its prefetch).
+    // (Re)arm the settle. If skipping moved past the leading play, play the LANDING with its lead
+    // established; otherwise it was a lone skip already playing — just warm the look-ahead window.
     clearSkipSettle();
     skipSettleTimer = setTimeout(() => {
       skipSettleTimer = null;
       if (!get().active) return; // stopped during the window (stop() also clears this timer)
-      if (skipLastTarget !== skipLeadTarget) void playFrom(skipLastTarget, ++gen, true);
+      if (skipLastTarget !== skipLeadTarget) void playFrom(skipLastTarget, ++gen, true); // establishLead
       else prefetchFrom(skipLeadTarget);
     }, SKIP_SETTLE_MS);
   },
@@ -724,7 +791,7 @@ export const useTts = create<TtsState>((set, get) => ({
     if (!st.active || st.lang !== lang) return; // saved; applies next time that language is read
     curEngine = engine;
     curVoice = id;
-    cache = new Map(); // new voice → invalidate cached audio
+    scheduler.clearCache(); // RAWY-231: new voice → invalidate cached audio (keeps the session's E counters)
     failStreak = 0; // RAWY-159: a new engine/voice is a fresh attempt at the current sentence
     const myGen = ++gen;
     stopSource();
@@ -766,7 +833,7 @@ export const useTts = create<TtsState>((set, get) => ({
   resumeEdge: () => {
     const st = get();
     if (!st.active) return;
-    cache = new Map();
+    scheduler.clearCache(); // RAWY-231: drop the outage's stale rejected synths so Retry re-attempts cleanly
     failStreak = 0;
     const myGen = ++gen;
     stopSource();
@@ -783,10 +850,11 @@ export const useTts = create<TtsState>((set, get) => ({
     skipLeadTarget = -1;
     skipLastTarget = -1;
     lastSkipAt = 0; // RAWY-186
-    cache = new Map();
+    scheduler.reset(); // RAWY-231: session over — drop the cache AND zero the recurrence counters (E)
+    ttsUnderruns = 0;
     sentences = [];
     if (ctx && ctx.state !== "closed") void ctx.suspend().catch(() => {});
     void ttsStop().catch(() => {});
-    set({ active: false, status: "idle", index: 0, total: 0, progress: 0, error: null, words: [], wordIndex: -1 });
+    set({ active: false, status: "idle", index: 0, total: 0, progress: 0, error: null, words: [], wordIndex: -1, underruns: 0, abandoned: 0 });
   },
 }));

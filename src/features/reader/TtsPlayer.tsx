@@ -38,10 +38,10 @@ export function TtsPlayer({
   // Previously `useTts()` re-rendered the pill on EVERY store change — including the karaoke `words`/
   // `wordIndex` ticks (several/sec on Edge) it doesn't even read — which made size toggles feel heavy and
   // could swallow a click landing mid-re-render. Actions are stable Zustand refs, so they never re-render.
-  const { active, status, endDismissed, engine, voice, index, total, speed, volume, progress, chapterLabel, error, skip, setSpeed, setVolume, setEngine, retry, resumeEdge, stop } = useTts(
+  const { active, status, endDismissed, engine, voice, index, total, speed, volume, progress, chapterLabel, error, underruns, abandoned, skip, setSpeed, setVolume, setEngine, retry, resumeEdge, stop } = useTts(
     useShallow((s) => ({
       active: s.active, status: s.status, endDismissed: s.endDismissed, engine: s.engine, voice: s.voice, index: s.index, total: s.total,
-      speed: s.speed, volume: s.volume, progress: s.progress, chapterLabel: s.chapterLabel, error: s.error,
+      speed: s.speed, volume: s.volume, progress: s.progress, chapterLabel: s.chapterLabel, error: s.error, underruns: s.underruns, abandoned: s.abandoned,
       skip: s.skip, setSpeed: s.setSpeed, setVolume: s.setVolume, setEngine: s.setEngine, retry: s.retry, resumeEdge: s.resumeEdge, stop: s.stop,
     })),
   );
@@ -104,6 +104,7 @@ export function TtsPlayer({
   const playing = status === "playing";
   const downloading = status === "downloading";
   const preparing = status === "preparing";
+  const buffering = status === "buffering"; // RAWY-231: a transient mid-playback synth wait (visible, not silent)
   const errored = status === "error";
   // RAWY-184 (Part B): reached the last sentence. RAWY-190: once the user navigates the view off the
   // finished chapter, `endDismissed` hides the stale continue offer (the pill returns to its normal
@@ -122,7 +123,11 @@ export function TtsPlayer({
     errored ? ` · ${t("tts.error")}` :
     downloading ? ` · ${t("tts.downloading", { pct: localeNum(dlPct, lang) })}` :
     preparing ? ` · ${t("tts.preparing")}` :
+    buffering ? ` · ${t("tts.buffering")}` : // RAWY-231: visible mid-playback synth wait
     status === "paused" ? ` · ${t("tts.paused")}` : "";
+  // RAWY-231 (invariant E): a tiny debug readout the owner can enable with
+  // `localStorage.setItem("sardTtsDebug","1")` — see stalls, not just feel them. Off by default (zero cost).
+  const ttsDebug = typeof localStorage !== "undefined" && !!localStorage.getItem("sardTtsDebug");
   const errText = error === TTS_EMPTY ? t("tts.emptyChapter") : (error || t("tts.error"));
   const metaText = errored ? errText : `${chapterLabel || t("panel.contents")}${sub}`;
 
@@ -211,7 +216,7 @@ export function TtsPlayer({
               </button>
             ) : (
               <button className="tts-play" onClick={() => doPlayPause()} disabled={busy} aria-label={playing ? t("tts.pause") : t("tts.play")}>
-                {busy ? (
+                {busy || buffering ? (
                   <span className="tts-spin" aria-hidden />
                 ) : playing ? (
                   <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4.4" height="16" rx="1.4" /><rect x="13.6" y="4" width="4.4" height="16" rx="1.4" /></svg>
@@ -240,6 +245,8 @@ export function TtsPlayer({
           </div>
           <div className="tts-pill-meta">
             <span className="tts-pill-chapter" title={errored ? errText : undefined}>{metaText}</span>
+            {/* RAWY-231 (E): opt-in recurrence readout — stalls this session (underruns · abandoned). */}
+            {ttsDebug && <span className="tts-pill-pos" title="RAWY-231 underruns · abandoned">⏱ {localeNum(underruns, lang)}·{localeNum(abandoned, lang)}</span>}
             <span className="tts-pill-pos">{errored || downloading ? "" : t("tts.pos", { n: localeNum(index + 1, lang), m: localeNum(total, lang) })}</span>
           </div>
         </div>

@@ -513,6 +513,7 @@ export const en = {
   "tts.pause": "Pause",
   "tts.paused": "paused",
   "tts.preparing": "preparing…",
+  "tts.buffering": "buffering…",
   "tts.downloading": "downloading voice… {pct}%",
   "tts.error": "couldn’t play",
   "tts.emptyChapter": "no readable text here",

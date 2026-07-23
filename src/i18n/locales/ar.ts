@@ -512,6 +512,7 @@ export const ar: Record<TKey, string> = {
   "tts.pause": "إيقاف مؤقت",
   "tts.paused": "متوقف",
   "tts.preparing": "جارٍ التحضير…",
+  "tts.buffering": "جارٍ التحميل…",
   "tts.downloading": "جارٍ تنزيل الصوت… {pct}٪",
   "tts.error": "تعذّر التشغيل",
   "tts.emptyChapter": "لا يوجد نص قابل للقراءة هنا",

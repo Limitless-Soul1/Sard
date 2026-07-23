@@ -37,7 +37,7 @@ import { ChaptersPanel } from "./ChaptersPanel";
 import { SearchPanel } from "./SearchPanel";
 import { PageBookmark } from "./PageBookmark";
 import { useAnnotations } from "./annotationsStore";
-import { MARKER_WINDOW, useBookmarks } from "./bookmarksStore";
+import { useBookmarks } from "./bookmarksStore";
 import { ReaderChrome, type SettingsSection } from "./ReaderChrome";
 import { SettingsPanel } from "./SettingsPanel";
 import { TtsPlayer } from "./TtsPlayer";
@@ -148,13 +148,17 @@ export function Reader({
   const ttsWords = useTts((s) => s.words); // RAWY-127: the sentence's Edge word timings ([] = Piper)
   const ttsWordIndex = useTts((s) => s.wordIndex); // RAWY-127: active word (drives the karaoke pill)
 
-  const { status, dir, fraction, chapterLabel, chapterHref, error, style, bookTitle } = useReader();
+  const { status, dir, cfi, fraction, chapterLabel, chapterHref, error, style, bookTitle } = useReader();
   // RAWY-43: unified (all books share one style) vs per-book. Drives where changes are written
   // and how a book's effective style/theme is resolved.
   const scope = useStyleScope((s) => s.scope);
-  // RAWY-41: the current book's bookmarks; the marker shows ONLY when one is at the visible spot.
+  // RAWY-41: the current book's bookmarks; the marker shows ONLY in the bookmark's chapter.
+  // RAWY-229 (corrected): a bookmark is a per-CHAPTER mark — its marker shows anywhere in that chapter, at
+  // any scroll position (top to bottom), and hides only when the reader LEAVES the chapter. `bookmarkVisible`
+  // compares SECTION identity (not the visible range, not a whole-book fraction window — which lit the
+  // marker in every chapter of a long book). `cfi` changes on each relocate, so this recomputes as we move.
   const bookmarks = useBookmarks((s) => s.bookmarks);
-  const activeBm = bookmarks.find((b) => b.fraction != null && Math.abs(b.fraction - fraction) <= MARKER_WINDOW) ?? null;
+  const activeBm = bookmarks.find((b) => ctrlRef.current?.bookmarkVisible(b.cfi, cfi)) ?? null;
   // THEME is per-book (RAWY-40) — read from `bookThemeId`, not the global store. Override-book-
   // colour + hide-chapter-titles stay GLOBAL flags. RAWY-216: Reader only READS them now (to inject
   // the CSS); the setters live where the controls do — the drawer's "All books" tab / Global Settings.
@@ -718,10 +722,18 @@ export function Reader({
 
   // RAWY-41: toggle a bookmark at the CURRENT reading location (CFI + fraction + chapter). If the
   // visible spot is already bookmarked, remove it; else add. The button reflects bookmarked state.
+  // RAWY-229 (corrected): a CHAPTER-SCOPED toggle. Find THIS chapter's bookmark (section identity — the same
+  // test the marker uses) and remove it; else add one — so pressing never creates a second bookmark in a
+  // chapter that already has one, even when the existing one is scrolled out of view. Resolved at click time
+  // from the live cfi (not the render-time marker), so it is correct at any scroll position. If a chapter
+  // somehow holds >1 bookmark (legacy data), `find` removes the first one only — no silent bulk delete.
   const onBookmark = () => {
     const st = useReader.getState();
-    if (!st.cfi) return;
-    useBookmarks.getState().toggle(st.cfi, st.chapterLabel, st.fraction);
+    const ctrl = ctrlRef.current;
+    if (!st.cfi || !ctrl) return;
+    const existing = useBookmarks.getState().bookmarks.find((b) => ctrl.bookmarkVisible(b.cfi, st.cfi));
+    if (existing) useBookmarks.getState().remove(existing.id);
+    else useBookmarks.getState().add(st.cfi, st.chapterLabel, st.fraction);
   };
 
   // RAWY-85: PDF Phase 0 is READ-ONLY. `isPdf` gates the EPUB-only affordances (themes/fonts/

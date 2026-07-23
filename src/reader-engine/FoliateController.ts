@@ -1345,6 +1345,30 @@ export class FoliateController {
     return this.view?.renderer?.getContents?.()?.[0]?.index ?? -1;
   }
 
+  /** RAWY-229 (corrected): does a bookmark belong to the chapter currently ON SCREEN? A bookmark is a
+   *  per-CHAPTER mark — its marker shows anywhere in that chapter (top to bottom, any scroll position) and
+   *  hides ONLY when the reader leaves it. So this compares SECTION IDENTITY: the spine section of the
+   *  bookmark's CFI vs the reader position's CFI. Both are foliate CFIs, so their spine steps are identical
+   *  for the same chapter (foliate emits the same spine step for a section). NOT the visible range (that
+   *  made the marker vanish mid-chapter and let the button add a 2nd bookmark) and NOT the whole-book
+   *  fraction window (that lit the marker in every chapter of a long book — the original FEEDBACK 1.6 bug). */
+  bookmarkVisible(bookmarkCfi: string | null | undefined, currentCfi: string | null | undefined): boolean {
+    const a = this.cfiSection(bookmarkCfi);
+    const b = this.cfiSection(currentCfi);
+    return a != null && a === b;
+  }
+
+  /** RAWY-229: the SPINE SECTION of a foliate CFI — the step before `!` (or the whole inner CFI at a
+   *  section boundary, which has no `!`), with any `[assertion]` stripped. Two CFIs in the same chapter
+   *  share it exactly, so string equality is "same chapter". Pure; no engine call. */
+  private cfiSection(cfi: string | null | undefined): string | null {
+    if (!cfi) return null;
+    const m = /^epubcfi\((.*)\)$/.exec(cfi.trim());
+    const inner = m ? m[1] : cfi.trim();
+    const spine = inner.split("!")[0].replace(/\[[^\]]*\]/g, "").trim();
+    return spine || null;
+  }
+
   /** RAWY-186: is the chapter the TTS SESSION is reading the one currently ON SCREEN? `ttsUnitsIndex`
    *  is the section the playing sentences were built from; it only changes when a new chapter is
    *  spoken (never when the reader merely navigates away — RAWY-129 decouples audio from the view). So

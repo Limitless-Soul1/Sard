@@ -114,6 +114,10 @@ export interface SelectionInfo {
   cfi: string;
   text: string;
   rect: AnchorRect;
+  // RAWY-227: a SNAPSHOT of the selection's DOM range (cloned at capture, so clearing the live selection
+  // in the toolbar doesn't invalidate it). Lets listen-from-selection map to the exact TTS unit by DOM
+  // position instead of a brittle text match. Optional — a text-match fallback covers its absence.
+  range?: Range;
 }
 export interface AnnotationHit {
   cfi: string;
@@ -953,7 +957,7 @@ export class FoliateController {
         } catch {
           return;
         }
-        this.selectionCb?.({ cfi, text, rect: this.rectInParent(range.getBoundingClientRect(), doc) });
+        this.selectionCb?.({ cfi, text, rect: this.rectInParent(range.getBoundingClientRect(), doc), range: range.cloneRange() });
       });
     });
 
@@ -1372,25 +1376,32 @@ export class FoliateController {
     return { cfi, sec: this.ttsUnitsIndex, idx: i, snip: unit.text.slice(0, 60) };
   }
 
-  /** RAWY-162: map a saved TTS cursor back to a live sentence index to resume from. If it's in a
-   *  DIFFERENT section, navigate there first (via the sentence CFI) so re-segmentation reads the right
-   *  chapter; then resolve the index — prefer the saved `idx` when its text still matches `snip`, else
-   *  search the units for `snip`, else clamp. Returns -1 if the chapter has no speakable units. */
-  async prepareTtsResume(cursor: { cfi?: string; sec?: number; idx: number; snip?: string }, lang?: string): Promise<number> {
-    if (cursor.cfi && cursor.sec !== this.currentSectionIndex()) {
-      try { await this.goToLocator(cursor.cfi); } catch { /* bad/foreign cfi → fall through to same-section resolve */ }
+  /** RAWY-227 (listen-from-selection): map a captured selection RANGE to the current chapter's TTS unit
+   *  index — the unit whose range starts at/before the selection start (DOM order, exact). Replaces the
+   *  brittle first-24-char text match, which returned -1 (→ chapter TOP) whenever the selection didn't
+   *  begin a segmented sentence or Arabic `Intl.Segmenter` split it differently. The units must already be
+   *  built for the section on screen (getCurrentChapterSentences did so); returns -1 if the range isn't in
+   *  that section (caller then falls back to a text match, then to index 0). */
+  ttsUnitIndexForRange(range: Range | null | undefined): number {
+    if (!range) return -1;
+    const content = this.view?.renderer?.getContents?.()?.[0];
+    if (!content || content.index !== this.ttsUnitsIndex) return -1;
+    let best = -1;
+    for (let i = 0; i < this.ttsUnits.length; i++) {
+      const r = this.ttsUnits[i].range;
+      if (!r) continue;
+      let cmp: number;
+      try {
+        // START_TO_START: is unit `r` at/before the selection start? (both ranges are in the same content
+        // doc, so this is a valid DOM comparison). Units are in document order, so break once we pass it.
+        cmp = r.compareBoundaryPoints(Range.START_TO_START, range);
+      } catch {
+        return -1; // wrong-document / detached → let the caller fall back
+      }
+      if (cmp <= 0) best = i;
+      else break;
     }
-    const units = await this.getChapterUnits(lang);
-    if (units.length === 0) return -1;
-    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
-    const key = norm(cursor.snip ?? "").slice(0, 24);
-    const at = cursor.idx;
-    if (key && units[at] && norm(units[at].text).startsWith(key)) return at;
-    if (key) {
-      const k = units.findIndex((u) => norm(u.text).includes(key));
-      if (k >= 0) return k;
-    }
-    return Math.min(Math.max(0, at), units.length - 1);
+    return best;
   }
 
   /** RAWY-126: the current chapter walked into `{text, range}` UNITS — the reading-indicator's
@@ -1762,17 +1773,28 @@ export class FoliateController {
     this.view?.goRight();
   }
 
-  /** RAWY-184 (Part B): is there a chapter AFTER the one on screen? (for the end-of-chapter "next" control). */
+  /** RAWY-227: the chapter the end-of-chapter "next chapter" control advances FROM. It MUST be the chapter
+   *  the TTS session just finished (`ttsUnitsIndex`, the section the spoken sentences were built from), NOT
+   *  the DISPLAYED section: RAWY-129 decouples audio from the view, so the reader may have manually moved
+   *  the display ahead of (or behind) the audio. Anchoring on `currentSectionIndex()` then overshot — view
+   *  on ch2 while ch1 finished → `+1` = ch3 (the double-jump). Falls back to the displayed section only
+   *  when no session owns the units (`ttsUnitsIndex < 0`); the chapter-end control never fires without one. */
+  private ttsAnchorSection(): number {
+    return this.ttsUnitsIndex >= 0 ? this.ttsUnitsIndex : this.currentSectionIndex();
+  }
+  /** RAWY-184 (Part B): is there a chapter AFTER the one that just finished? (for the end-of-chapter "next"
+   *  control). RAWY-227: anchored on the TTS chapter, not the displayed section. */
   hasNextSection(): boolean {
-    const cur = this.currentSectionIndex();
+    const cur = this.ttsAnchorSection();
     const n = this.view?.book?.sections?.length ?? 0;
     return cur >= 0 && cur + 1 < n;
   }
   /** RAWY-184 (Part B): advance to the NEXT chapter (spine section) and await it, so the caller can then
-   *  read it from the top. From the chapter end, foliate's forward step lands on the next section. */
+   *  read it from the top. RAWY-227: "next" is relative to the TTS chapter (`ttsAnchorSection`), so a
+   *  manual display move while listening no longer makes it overshoot the finished chapter. */
   async goToNextChapter(): Promise<void> {
     const n = this.view?.book?.sections?.length ?? 0;
-    const next = this.currentSectionIndex() + 1;
+    const next = this.ttsAnchorSection() + 1;
     if (next <= 0 || next >= n) return;
     // foliate's `view.goTo(number)` resolves a bare spine INDEX (resolveNavigation: number → {index}) and
     // awaits the render — more reliable than a page-step when the reading position isn't exactly at the edge.

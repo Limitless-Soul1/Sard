@@ -107,9 +107,9 @@ export function Reader({
   const [annoTab, setAnnoTab] = useState<import("./AnnotationsPanel").AnnoTab>("notes");
   const progressTimer = useRef<number | undefined>(undefined);
   const styleTimer = useRef<number | undefined>(undefined);
-  // RAWY-162 (TTS resume): a saved last-spoken cursor offered on Listen (a SEPARATE cursor from the
-  // reading CFI); timers for the debounced per-book save of the last-spoken sentence.
-  const [resumeHint, setResumeHint] = useState<{ cfi?: string; sec?: number; idx: number; snip?: string } | null>(null);
+  // RAWY-162 / RAWY-227: timers for the debounced per-book save of the last-spoken sentence (the resume
+  // cursor — a SEPARATE position from the reading CFI). Listen/Play now CONTINUE from that cursor by
+  // default (RAWY-227) rather than offering a dismissible 12s prompt.
   const ttsSaveTimer = useRef<number | undefined>(undefined);
   const ttsLastSave = useRef(0);
   // RAWY-186: the LATEST play/pause handler, so the once-registered reading-frame Space callback always
@@ -518,22 +518,6 @@ export function Reader({
     else ttsSaveTimer.current = window.setTimeout(save, 2000 - since);
     return () => { if (ttsSaveTimer.current) clearTimeout(ttsSaveTimer.current); };
   }, [ttsActive, ttsIndex, ttsStatus, initial.id]);
-
-  // RAWY-162: the resume hint auto-dismisses after a while and whenever read-aloud stops.
-  useEffect(() => {
-    if (!resumeHint) return;
-    const t = window.setTimeout(() => setResumeHint(null), 12000);
-    return () => clearTimeout(t);
-  }, [resumeHint]);
-  useEffect(() => {
-    if (!ttsActive) setResumeHint(null);
-  }, [ttsActive]);
-  // RAWY-184 (Part A): navigating to a DIFFERENT chapter drops any resume hint, so a stale same-chapter
-  // offer can never jump back once the reader has moved on (belt-and-braces with the same-chapter gate).
-  useEffect(() => {
-    setResumeHint(null);
-  }, [chapterHref]);
-
 
   // Chapters panel is OPEN BY DEFAULT (RAWY-22); the user's choice persists per `chapters_open`.
   useEffect(() => {
@@ -965,11 +949,21 @@ export function Reader({
     ? t("panel.chapter", { n: localeNum(realChapterNum ?? (tocIndex >= 0 ? tocIndex : 0) + 1, lang) })
     : chapterLabel || t("reader.chapterFallback");
 
-  // RAWY-105: start read-aloud from the current chapter (Stage 1 entry; Stage 2 adds
-  // listen-from-selection). Voice defaults by the BOOK's direction (Arabic book → Arabic voice).
+  // RAWY-105: start read-aloud from the current chapter (top-bar Listen). Voice defaults by the BOOK's
+  // direction (Arabic book → Arabic voice). RAWY-227: if a session is already reading THIS chapter, resume
+  // it in place instead of restarting at the top; and when a saved cursor belongs to this chapter, CONTINUE
+  // from it by default (no dismissible prompt).
   const startListen = async () => {
     const ctrl = ctrlRef.current;
     if (!ctrl) return;
+    // RAWY-227: a live session whose chapter is ON SCREEN must NOT be torn down and restarted at the top by
+    // Listen — if it's paused, resume in place; if playing, it's already reading this chapter (no-op). A
+    // session on a DIFFERENT chapter (navigated away) falls through and reads the current chapter fresh.
+    const live = useTts.getState();
+    if (live.active && ctrl.isTtsChapterOnScreen() && (live.status === "paused" || live.status === "playing")) {
+      if (live.status === "paused") live.toggle();
+      return;
+    }
     const bookLang = isRtlBook ? "ar" : "en"; // RAWY-111: the store resolves the per-language voice
     // RAWY-181 (BUG 1): the first Listen used to FREEZE the window — `getCurrentChapterSentences()` is a
     // SYNCHRONOUS chapter DOM walk (segment into units + build ranges) that ran BEFORE any UI feedback,
@@ -978,7 +972,7 @@ export function Reader({
     // state instead of a dead frozen frame. (The sidecar spawn / Edge connect / synth were already async.)
     useTts.setState({ active: true, status: "preparing", chapterLabel: chapter, error: null });
     // RAWY-162: read the saved TTS cursor BEFORE playback starts (playback overwrites it via the save
-    // effect), so we can offer a resume. A stale/absent value → no prompt (behaves exactly as before).
+    // effect). RAWY-227: it is now the DEFAULT continue point, not a prompt. A stale/absent value → top.
     let saved: { cfi?: string; sec?: number; idx: number; snip?: string } | null = null;
     try {
       const raw = await settingsGet(`tts_position:${initial.id}`);
@@ -988,22 +982,23 @@ export function Reader({
     // RAWY-182: the walk is now async + CHUNKED (non-blocking), so the pill + shrink button stay
     // responsive throughout preparation instead of the thread being hogged until audio starts.
     const sentences = await ctrl.getCurrentChapterSentences(bookLang);
-    // RAWY-184 (Part A): only offer resume when the saved cursor belongs to the CURRENT chapter (and is
-    // past its start). Pressing Play always reads the CURRENT chapter from the top; if the saved cursor
-    // is in a DIFFERENT chapter, there is NO prompt and NO jump-back — so an ignored hint from an earlier
-    // chapter can never later start the wrong (saved) chapter. (Same-chapter resume still prompts + jumps.)
-    const canResume = !!(saved && typeof saved.idx === "number" && saved.sec === ctrl.currentSectionIndex() && saved.idx > 0);
-    useTts.getState().start({
-      sentences,
-      lang: bookLang,
-      startIndex: 0,
-      chapterLabel: chapter,
-      // RAWY-188: when a resume is being offered, prepare ONLY the chapter-top sentence (no prefetch
-      // window). If the user resumes before audio starts, at most one cold synth was spent on the top,
-      // so the resume target isn't stuck behind four of them on the serialized engine (the measured stall).
-      deferPrefetch: canResume,
-    });
-    setResumeHint(canResume ? saved : null);
+    // RAWY-227: CONTINUE from the saved position by DEFAULT — but ONLY when the saved cursor belongs to the
+    // chapter being started (same section). This is the interaction gate with FIX A: a next-chapter arrival
+    // (goToNextChapter → startListen) has a saved cursor from the OLD section, so it correctly reads the NEW
+    // chapter from its TOP. Resolution mirrors the old resume mapping (prefer the saved idx when its text
+    // still matches `snip`, else search the sentences for `snip`, else clamp) so re-segmentation can't land
+    // on the wrong sentence.
+    const sameChapter = !!(saved && typeof saved.idx === "number" && saved.sec === ctrl.currentSectionIndex() && saved.idx > 0);
+    let startIndex = 0;
+    if (sameChapter && saved) {
+      const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+      const key = norm(saved.snip ?? "").slice(0, 24);
+      const at = saved.idx;
+      if (key && sentences[at] && norm(sentences[at]).startsWith(key)) startIndex = at;
+      else if (key) { const k = sentences.findIndex((s) => norm(s).includes(key)); startIndex = k >= 0 ? k : Math.min(Math.max(0, at), sentences.length - 1); }
+      else startIndex = Math.min(Math.max(0, at), sentences.length - 1);
+    }
+    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: chapter });
   };
   // RAWY-186 (Part A): the Play/Pause gesture (pill button AND Space). Read-aloud audio is decoupled from
   // the view (RAWY-129: you can browse while listening), so pressing Play after navigating to a DIFFERENT
@@ -1030,24 +1025,6 @@ export function Reader({
                   // Edge-unavailable state is acted on only via its explicit Retry / Switch-to-Piper buttons
   };
   playRef.current = playOrRelisten;
-  // RAWY-162: the user chose "resume" on the hint — map the saved cursor to a live sentence (navigating
-  // to its chapter if needed) and restart playback there (spotlight 126 + karaoke 127 re-align).
-  const doResume = async () => {
-    const cursor = resumeHint;
-    setResumeHint(null);
-    const ctrl = ctrlRef.current;
-    if (!ctrl || !cursor) return;
-    const bookLang = isRtlBook ? "ar" : "en";
-    const idx = await ctrl.prepareTtsResume(cursor, bookLang);
-    if (idx < 0) return; // couldn't map the cursor → leave the normal playback running
-    const sentences = await ctrl.getCurrentChapterSentences(bookLang);
-    useTts.getState().start({
-      sentences,
-      lang: bookLang,
-      startIndex: idx,
-      chapterLabel: chapter,
-    });
-  };
   // RAWY-184 (Part B): the end-of-chapter "next chapter" control — navigate to the next spine section and
   // read it from the top. startListen reads the now-current chapter; the saved cursor is a different
   // section, so the Part A same-chapter gate shows no resume prompt.
@@ -1060,10 +1037,10 @@ export function Reader({
     await ctrl.goToNextChapter();
     await startListen();
   };
-  // RAWY-124: listen from the SELECTION (the "Stage 2" that was planned in the comment above but never
-  // built). Read the chapter's blocks, find the one the selection begins in (whitespace-normalised
-  // substring match), and start read-aloud from there — flowing forward. Falls back to the chapter
-  // start if the block can't be located, so Listen always speaks.
+  // RAWY-124: listen from the SELECTION — read from the sentence the selection begins in, flowing forward.
+  // RAWY-227: locate that sentence by the selection's captured DOM RANGE (exact), falling back to the
+  // whitespace-normalised 24-char text match, then to the chapter top — so Listen starts at the selected
+  // line, not index 0, even for Arabic (where Intl.Segmenter boundaries broke the text-only match).
   const startListenFromSelection = async (sel: SelectionInfo) => {
     const ctrl = ctrlRef.current;
     if (!ctrl) return;
@@ -1073,9 +1050,14 @@ export function Reader({
     useTts.setState({ active: true, status: "preparing", chapterLabel: chapter, error: null });
     await nextPaint();
     const sentences = await ctrl.getCurrentChapterSentences(bookLang); // RAWY-182: async + chunked (non-blocking)
-    const norm = (s: string) => s.replace(/\s+/g, " ").trim();
-    const needle = norm(sel.text).slice(0, 24);
-    let startIndex = needle ? sentences.findIndex((s) => norm(s).includes(needle)) : -1;
+    // RAWY-227: exact range → unit mapping first (units were just built for this on-screen chapter); the
+    // 24-char normalised text match is only a FALLBACK, and the chapter top is the last resort.
+    let startIndex = ctrl.ttsUnitIndexForRange(sel.range);
+    if (startIndex < 0) {
+      const norm = (s: string) => s.replace(/\s+/g, " ").trim();
+      const needle = norm(sel.text).slice(0, 24);
+      startIndex = needle ? sentences.findIndex((s) => norm(s).includes(needle)) : -1;
+    }
     if (startIndex < 0) startIndex = 0;
     // RAWY-182: call start() even when empty (it surfaces the empty-chapter state), so the "preparing"
     // pill shown above never gets stuck — consistent with startListen.
@@ -1310,19 +1292,6 @@ export function Reader({
           onNextChapter={nextChapter}
           onPlayPause={playOrRelisten}
         />
-      )}
-
-      {/* RAWY-162: a tasteful, non-intrusive hint to resume the last-spoken sentence — appears on Listen
-          when a saved TTS cursor exists; ignoring it keeps normal playback. */}
-      {!isPdf && resumeHint && (
-        <div className="tts-resume" dir={dir} role="status">
-          <svg className="tts-resume-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 8v4l3 2M3.5 9A9 9 0 1 1 3 12" /><path d="M3 4v5h5" /></svg>
-          <span className="tts-resume-msg">{t("tts.resumePrompt")}</span>
-          <button className="tts-resume-go" onClick={doResume}>{t("tts.resume")}</button>
-          <button className="tts-resume-x" onClick={() => setResumeHint(null)} aria-label={t("tts.dismiss")} title={t("tts.dismiss")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><path d="M6 6l12 12M18 6L6 18" /></svg>
-          </button>
-        </div>
       )}
 
       {/* RAWY-86: transient PDF feedback (find result / copied). */}

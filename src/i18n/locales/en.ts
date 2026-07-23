@@ -526,9 +526,8 @@ export const en = {
   "tts.collapseRows": "Collapse rows", // RAWY-164: the shrink button's FULL-state action (single chevron)
   "tts.minimize": "Minimize", // RAWY-156; RAWY-164: the shrink button's COLLAPSED-state action (double chevron → stroke)
   "tts.swapSide": "Swap side", // RAWY-160: flip the minimized kashida to the other margin
-  "tts.resumePrompt": "Resume from where you left off?", // RAWY-162
-  "tts.resume": "Resume", // RAWY-162
-  "tts.dismiss": "Dismiss", // RAWY-162
+  // (RAWY-227 removed tts.resumePrompt / tts.resume / tts.dismiss — the 12s resume prompt is gone; Listen/Play
+  //  now CONTINUE from the last position by default, so there is no prompt to label.)
   // RAWY-111/113 — engine + voice picker (Piper + Edge engines)
   "tts.voices": "Voices",
   "tts.voice": "Voice",

@@ -38,10 +38,10 @@ export function TtsPlayer({
   // Previously `useTts()` re-rendered the pill on EVERY store change — including the karaoke `words`/
   // `wordIndex` ticks (several/sec on Edge) it doesn't even read — which made size toggles feel heavy and
   // could swallow a click landing mid-re-render. Actions are stable Zustand refs, so they never re-render.
-  const { active, status, endDismissed, engine, voice, index, total, speed, volume, progress, chapterLabel, error, underruns, abandoned, skip, setSpeed, setVolume, setEngine, retry, resumeEdge, stop } = useTts(
+  const { active, status, endDismissed, engine, voice, index, total, speed, volume, progress, chapterLabel, error, underruns, abandoned, lastFailure, skip, setSpeed, setVolume, setEngine, retry, resumeEdge, stop } = useTts(
     useShallow((s) => ({
       active: s.active, status: s.status, endDismissed: s.endDismissed, engine: s.engine, voice: s.voice, index: s.index, total: s.total,
-      speed: s.speed, volume: s.volume, progress: s.progress, chapterLabel: s.chapterLabel, error: s.error, underruns: s.underruns, abandoned: s.abandoned,
+      speed: s.speed, volume: s.volume, progress: s.progress, chapterLabel: s.chapterLabel, error: s.error, underruns: s.underruns, abandoned: s.abandoned, lastFailure: s.lastFailure,
       skip: s.skip, setSpeed: s.setSpeed, setVolume: s.setVolume, setEngine: s.setEngine, retry: s.retry, resumeEdge: s.resumeEdge, stop: s.stop,
     })),
   );
@@ -247,6 +247,8 @@ export function TtsPlayer({
             <span className="tts-pill-chapter" title={errored ? errText : undefined}>{metaText}</span>
             {/* RAWY-231 (E): opt-in recurrence readout — stalls this session (underruns · abandoned). */}
             {ttsDebug && <span className="tts-pill-pos" title="RAWY-231 underruns · abandoned">⏱ {localeNum(underruns, lang)}·{localeNum(abandoned, lang)}</span>}
+            {/* RAWY-247 (Part 3): opt-in LAST-FAILURE readout — the failing unit's length + classification (+ bytes). */}
+            {ttsDebug && lastFailure && <span className="tts-pill-pos" title="RAWY-247 last synth failure">✖ {lastFailure}</span>}
             <span className="tts-pill-pos">{errored || downloading ? "" : t("tts.pos", { n: localeNum(index + 1, lang), m: localeNum(total, lang) })}</span>
           </div>
         </div>

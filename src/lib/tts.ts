@@ -192,6 +192,9 @@ interface TtsState {
   // the pill's tiny debug readout when `localStorage.sardTtsDebug` is set, and via `window.__sardTtsStats()`.
   underruns: number;
   abandoned: number;
+  // RAWY-247 (Part 3): a short human-readable summary of the LAST synth failure (unit length + classification
+  // + non-audio bytes), so the owner's live Edge test surfaces WHY it failed. null = none this session.
+  lastFailure: string | null;
   start: (o: StartOpts) => Promise<void>;
   toggle: () => void;
   dismissEnd: () => void; // RAWY-190: hide the stale chapter-end "next chapter" offer (keeps the player)
@@ -294,14 +297,21 @@ async function synthInvoke(i: number): Promise<ArrayBuffer> {
     return await invoke<ArrayBuffer>("tts_synthesize", { engine: curEngine, id: curVoice, text: sentences[i] });
   } catch (e) {
     if (curEngine !== "edge") throw e;
-    if (String(e).includes("timed out")) throw new Error(TTS_EDGE_DOWN); // a stall — surface it, don't retry
+    // RAWY-247: KEEP the underlying Rust reason (a WS close / connect error / "edge synth timed out") in the
+    // thrown message so the failure diagnostic can classify it. `isEdgeDown` still matches on TTS_EDGE_DOWN.
+    if (String(e).includes("timed out")) throw new Error(`${TTS_EDGE_DOWN}: ${e}`); // a stall — surface it, don't retry
     try {
       return await invoke<ArrayBuffer>("tts_synthesize", { engine: "edge", id: curVoice, text: sentences[i] });
-    } catch {
-      throw new Error(TTS_EDGE_DOWN);
+    } catch (e2) {
+      throw new Error(`${TTS_EDGE_DOWN}: ${e2}`);
     }
   }
 }
+
+// RAWY-247: when `decodeAudioData` fails, this holds what we FAILED to decode (Defect C / §1.5), read by
+// `noteFailure`. There is no per-message content-type on the Edge WebSocket, so the first bytes are the
+// sniff: `3c` ("<") = HTML/XML error page, `7b` ("{") = JSON, `00 00` = empty/garbage, `49 44 33`/`ff fb` = MP3.
+let pendingDecodeInfo: { bytes: number; head: string } | null = null;
 
 // RAWY-231: the scheduler's dispatch — invoke (bounded so a stalled socket frees the single-flight slot) →
 // parse the framed word timings → decode to an AudioBuffer. Engine-agnostic (WebAudio decodes Piper WAV +
@@ -309,7 +319,17 @@ async function synthInvoke(i: number): Promise<ArrayBuffer> {
 async function synthDispatch(i: number): Promise<Synthesized> {
   const raw = await withTimeout(synthInvoke(i), SYNTH_TIMEOUT_MS);
   const { words, audio } = parseFramed(raw);
-  return { buffer: await audioCtx().decodeAudioData(audio), words };
+  try {
+    return { buffer: await audioCtx().decodeAudioData(audio), words };
+  } catch (e) {
+    // RAWY-247 (Part 3): capture the byte length + first 16 bytes (hex + ASCII sniff) of the non-audio
+    // payload, so the owner can read WHY a decode failed without devtools (Defect C / §1.5 / feeds RAWY-248).
+    const u8 = new Uint8Array(audio);
+    const hex = [...u8.slice(0, 16)].map((b) => b.toString(16).padStart(2, "0")).join(" ");
+    const ascii = new TextDecoder("latin1").decode(u8.slice(0, 24)).replace(/[^\x20-\x7e]/g, ".");
+    pendingDecodeInfo = { bytes: audio.byteLength, head: `${hex} "${ascii}"` };
+    throw e;
+  }
 }
 
 // The one serialized, priority-ordered, drop-on-move synth scheduler (invariants B + C live here).
@@ -332,6 +352,41 @@ const logStall = (kind: string, idx: number): void => {
     }
   } catch { /* localStorage may be unavailable */ }
 };
+// RAWY-247 (Part 3): the LAST synthesis failure, so the owner's live Edge test yields the measurement
+// RAWY-235 could not capture. `kind` classifies WHICH failure; `len` is the failing unit's character count
+// (a long unit → the RAWY-247 segmentation lead); decode failures also carry the payload's bytes/first-bytes.
+let lastFail: { unit: number; len: number; kind: string; detail: string; bytes?: number; head?: string } | null = null;
+
+// Classify an Edge/synth error into a readable failure kind (which timeout / WS / HTTP / non-audio / decode).
+function classifyFailure(err: unknown): string {
+  const s = String(err);
+  if (s.includes("tts.synthTimeout")) return "timeout-js-9s";
+  if (s.includes("timed out")) return "timeout-rust-8s";
+  if (s.includes("EncodingError") || s.includes("decode")) return "decode/non-audio";
+  if (s.includes("edge connect") || s.includes("edge reconnect")) return "ws-connect";
+  if (/\b(4\d\d|5\d\d)\b/.test(s)) return "http-error";
+  if (s.includes("edge synth")) return "ws-synth";
+  if (s.includes(TTS_EDGE_DOWN)) return "edge-down";
+  return "other";
+}
+
+// Record a synthesis failure into the debug surface (invariant E extended). Off by default; nothing leaves
+// the device. The owner reads it from the pill's `sardTtsDebug` readout or `window.__sardTtsStats()`.
+function noteFailure(unit: number, err: unknown): void {
+  const kind = classifyFailure(err);
+  const len = sentences[unit]?.length ?? -1;
+  lastFail = { unit, len, kind, detail: String(err).slice(0, 140), ...(pendingDecodeInfo ?? {}) };
+  pendingDecodeInfo = null;
+  const summary = `len=${len} ${kind}${lastFail.bytes != null ? ` ${lastFail.bytes}B ${lastFail.head}` : ""}`;
+  useTts.setState({ lastFailure: summary });
+  try {
+    if (typeof localStorage !== "undefined" && localStorage.getItem("sardTtsDebug")) {
+      // eslint-disable-next-line no-console
+      console.debug(`[sard/tts] FAIL @${unit} ${summary} · ${lastFail.detail}`);
+    }
+  } catch { /* localStorage may be unavailable */ }
+}
+
 // A dev/debug surface reachable from DevTools without shipping any UI (invariant E).
 if (typeof window !== "undefined") {
   (window as unknown as { __sardTtsStats?: () => unknown }).__sardTtsStats = () => ({
@@ -340,6 +395,7 @@ if (typeof window !== "undefined") {
     inFlight: scheduler.inFlight,
     cached: scheduler.size,
     priority: scheduler.priority,
+    lastFailure: lastFail,
   });
 }
 
@@ -561,10 +617,12 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
     // visible in EVERY pill state (the player force-expands out of the kashida on this status). A non-Edge
     // failure (unspeakable "…"/"..." that yields empty audio, a Piper exit with no WAV) keeps RAWY-159 skip.
     if (curEngine === "edge" && isEdgeDown(e)) {
+      noteFailure(idx, e); // RAWY-247: record the failing unit's length + classification for the owner
       stopSource();
       set({ status: "edge-error" });
       return;
     }
+    noteFailure(idx, e); // RAWY-247: also capture a decode/non-audio failure (Defect C / §1.5) before skipping
     skipSegment(String(e));
     return;
   }
@@ -573,7 +631,7 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
   // (§ open defect) — a REAL failure, so surface the explicit "Edge unavailable" pause rather than skipping
   // it silently. On Piper an empty buffer is legitimate punctuation-only text, so keep the RAWY-159 skip.
   if (!synthd.buffer || synthd.buffer.length === 0 || synthd.buffer.duration === 0) {
-    if (curEngine === "edge") { stopSource(); logStall("empty-edge", idx); set({ status: "edge-error" }); return; }
+    if (curEngine === "edge") { noteFailure(idx, new Error("empty-audio (0-length buffer)")); stopSource(); logStall("empty-edge", idx); set({ status: "edge-error" }); return; }
     skipSegment(TTS_EMPTY);
     return;
   }
@@ -666,6 +724,7 @@ export const useTts = create<TtsState>((set, get) => ({
   error: null,
   underruns: 0,
   abandoned: 0,
+  lastFailure: null,
 
   start: async (opts) => {
     lastStart = opts;
@@ -852,9 +911,11 @@ export const useTts = create<TtsState>((set, get) => ({
     lastSkipAt = 0; // RAWY-186
     scheduler.reset(); // RAWY-231: session over — drop the cache AND zero the recurrence counters (E)
     ttsUnderruns = 0;
+    lastFail = null; // RAWY-247: clear the last-failure diagnostic for the new session
+    pendingDecodeInfo = null;
     sentences = [];
     if (ctx && ctx.state !== "closed") void ctx.suspend().catch(() => {});
     void ttsStop().catch(() => {});
-    set({ active: false, status: "idle", index: 0, total: 0, progress: 0, error: null, words: [], wordIndex: -1, underruns: 0, abandoned: 0 });
+    set({ active: false, status: "idle", index: 0, total: 0, progress: 0, error: null, words: [], wordIndex: -1, underruns: 0, abandoned: 0, lastFailure: null });
   },
 }));

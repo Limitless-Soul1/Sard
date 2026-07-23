@@ -319,6 +319,54 @@ const MAX_LEADING_HEADING_ELEMENTS = 5;
 // skip it. lib/tts.ts carries the matching chain-resilience guard so no bad segment can ever stall.
 const hasSpeech = (s: string): boolean => /[\p{L}\p{N}]/u.test(s);
 
+// RAWY-247: cap on a spoken UNIT's normalized length. `Intl.Segmenter` sentence granularity breaks only on
+// «.»/«؟» (and «!»); it does NOT treat «…»(U+2026) or the Arabic comma «،» as terminators, so an Arabic
+// paragraph whose long clauses are joined only by «،»/«…» becomes ONE enormous unit (RAWY-235 measured a
+// 318-char unit that failed Edge synthesis 100% of the time). MEASURED across 5 books (749k units): the
+// median unit is ~58 chars and the p99 of every WELL-FORMED book is 147–207; 250 sits above all of them and
+// below the failing 318, so normal sentences are untouched (Alice +0.00%, الخالد +0.01%, LotM +0.34%,
+// Reverend Insanity +0.17% units) and only the long-tail outliers split. Tunable once RAWY-247's live failure
+// capture reveals the real Edge threshold.
+const MAX_TTS_UNIT_CHARS = 250;
+const normLen = (s: string): number => s.replace(/\s+/g, " ").trim().length;
+// RAWY-247: closing quotes / sentence-ender set for the "closing quote following a terminator" split rule.
+const CLOSE_QUOTE = new Set(["”", "’", "»"]); // ” ’ »
+const SENT_END = new Set([".", "؟", "…"]); // . ؟ …
+
+// RAWY-247: choose ONE split BOUNDARY (the char offset AFTER a punctuation) strictly inside (a,b), by
+// precedence, nearest the span midpoint. Precedence (WHAT, never mid-word/clause): 1) «…»/«؛»/«;» (pauses);
+// 2) «:» or a closing quote right after a sentence-ender; 3) LAST RESORT a comma «،»/«,». Returns -1 if none.
+function pickSplit(full: string, a: number, b: number): number {
+  const mid = (a + b) / 2;
+  const scan = (test: (c: string, i: number) => boolean): number => {
+    let best = -1;
+    let bd = Infinity;
+    for (let i = a; i < b - 1; i++) {
+      if (!test(full[i], i)) continue;
+      const bpos = i + 1;
+      if (bpos <= a || bpos >= b) continue;
+      const d = Math.abs(bpos - mid);
+      if (d < bd) { bd = d; best = bpos; }
+    }
+    return best;
+  };
+  let p = scan((c) => c === "…" || c === "؛" || c === ";");
+  if (p >= 0) return p;
+  p = scan((c, i) => c === ":" || (CLOSE_QUOTE.has(c) && i > a && SENT_END.has(full[i - 1])));
+  if (p >= 0) return p;
+  return scan((c) => c === "،" || c === ",");
+}
+
+// RAWY-247: subdivide [a,b) into contiguous (tiling) sub-spans each ≤ MAX_TTS_UNIT_CHARS where the
+// precedence allows; a span with no safe boundary is left whole (never split mid-word). Recursion stops as
+// soon as every piece is under the cap. Under-cap spans return unchanged, so normal prose is untouched.
+function splitLongSpan(full: string, a: number, b: number): [number, number][] {
+  if (normLen(full.slice(a, b)) <= MAX_TTS_UNIT_CHARS) return [[a, b]];
+  const p = pickSplit(full, a, b);
+  if (p < 0) return [[a, b]];
+  return [...splitLongSpan(full, a, p), ...splitLongSpan(full, p, b)];
+}
+
 // RAWY-143: a fold key for comparing a leading line to the section's TOC chapter TITLE. Reuses
 // normalizeForSearch (NFKC + strip tashkīl/tatweel + fold alef/ya/teh-marbuta + lowercase + drop
 // whitespace) and additionally drops every non-letter/number char (quotes, colons, dots, brackets),
@@ -1574,20 +1622,39 @@ export class FoliateController {
       if (hasSpeech(t)) out.push({ text: t, range: makeRange(0, 0, nodes.length - 1, strs[nodes.length - 1].length) });
       return;
     }
-    // Walk segments in order; `sum`/`strIndex` advance monotonically over the concatenated nodes so
-    // each sentence's char offsets resolve to the right node + offset (foliate tts.js technique).
-    let strIndex = -1;
-    let sum = 0;
+    // RAWY-247: random-access char-offset → (node, offset) mapping. `prefix[i]` is the cumulative length of
+    // nodes before node i, so `locate(off)` finds the node holding `off` in O(nodes). This REPLACES the old
+    // monotonic running-sum (needed because splitting an over-long unit maps offsets that no longer advance
+    // in order) and is PROVEN byte-identical to it (129/129 segments in the RAWY-247 offline check).
+    const prefix: number[] = [0];
+    for (const s of strs) prefix.push(prefix[prefix.length - 1] + s.length);
+    const locate = (off: number): [number, number] => {
+      let i = 0;
+      while (i + 1 < prefix.length && prefix[i + 1] <= off) i++;
+      return [i, off - prefix[i]];
+    };
+    // Build a DOM Range for the char span [a,b) of the concatenated text — same inclusive-end math the old
+    // code used (`end = b-1`, `endOffset = eoInc + 1`).
+    const rangeFor = (a: number, b: number): Range | null => {
+      const [si, so] = locate(a);
+      const [ei, eoInc] = locate(b - 1);
+      return makeRange(si, so, ei, eoInc + 1);
+    };
     for (const { index, segment } of seg.segment(full)) {
-      while (sum <= index) sum += strs[++strIndex].length;
-      const startIndex = strIndex;
-      const startOffset = index - (sum - strs[strIndex].length);
-      const end = index + segment.length - 1;
-      if (end < full.length) while (sum <= end) sum += strs[++strIndex].length;
-      const endIndex = strIndex;
-      const endOffset = end - (sum - strs[strIndex].length) + 1;
       const t = norm(segment);
-      if (hasSpeech(t)) out.push({ text: t, range: makeRange(startIndex, startOffset, endIndex, endOffset) });
+      if (!hasSpeech(t)) continue;
+      // RAWY-247: normal (under-cap) units are UNCHANGED — one unit per ICU sentence, its range unchanged.
+      if (t.length <= MAX_TTS_UNIT_CHARS) {
+        out.push({ text: t, range: rangeFor(index, index + segment.length) });
+        continue;
+      }
+      // Over-long unit (an Arabic clause-chain joined only by «،»/«…», etc.) → subdivide at safe pause
+      // boundaries so Edge can synthesize each piece; each sub-span gets its own tiling range so the
+      // spotlight/karaoke stay aligned (RAWY-230), and punctuation-only pieces still drop (index-aligned).
+      for (const [a, b] of splitLongSpan(full, index, index + segment.length)) {
+        const st = norm(full.slice(a, b));
+        if (hasSpeech(st)) out.push({ text: st, range: rangeFor(a, b) });
+      }
     }
   }
 

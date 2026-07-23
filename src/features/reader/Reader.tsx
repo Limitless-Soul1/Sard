@@ -499,8 +499,25 @@ export function Reader({
   // -1 / no timing (Piper / fallback) → no pill, the Phase-1 sentence spotlight stands alone.
   useEffect(() => {
     if (!ttsActive) return;
+    // RAWY-230 (§2a): `ttsStatus` is a dep so the PAUSE transition re-runs this AFTER the sentence-highlight
+    // effect above removed WORD_KEY — otherwise the karaoke clock freezes on pause, `ttsWordIndex` never
+    // changes, this effect never re-fires, and the word pill is dropped and never restored. Keeps the pill
+    // visible while paused (the sentence band already survives via showReadingHighlight).
     ctrlRef.current?.showReadingWord(ttsWordIndex);
-  }, [ttsActive, ttsWordIndex]);
+  }, [ttsActive, ttsWordIndex, ttsStatus]);
+
+  // RAWY-230 (§4): when the LAST panel closes, if focus was dropped to <body> (a chrome button blurred by
+  // releaseButtonFocusAfterPointerClick, or the panel's own control unmounted), return focus to the reading
+  // frame so SPACE/arrows reach the reading shortcuts immediately. Gated on <body> so a keyboard user's
+  // :focus-visible on a chrome control is never stolen.
+  const anyPanelOpen = settingsOpen || annoOpen || basketOpen || searchOpen || chaptersOpen;
+  const prevAnyPanelRef = useRef(false);
+  useEffect(() => {
+    if (prevAnyPanelRef.current && !anyPanelOpen && document.activeElement === document.body) {
+      ctrlRef.current?.focusReadingView();
+    }
+    prevAnyPanelRef.current = anyPanelOpen;
+  }, [anyPanelOpen]);
 
   // RAWY-162: persist the last-spoken sentence for this book (a cursor separate from the reading CFI).
   // Throttled to ~1 write / 2s during continuous playback (never per-word), with a trailing save so the

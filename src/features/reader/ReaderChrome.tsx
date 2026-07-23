@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 
 import { useI18n } from "../../i18n";
 import { localeNum } from "../../lib/format";
+import { releaseButtonFocusAfterPointerClick } from "../../lib/tts";
 
 // RAWY-216: the settings drawer is grouped by CONCEPT, not by which tab got built first. Five tabs;
 // the toolbar's three shortcut buttons (Aa / theme / layout) still land on the three most-used ones,
@@ -138,8 +139,11 @@ export function ReaderChrome({
           </div>
         </div>
 
-        {/* right controls: bordered, labelled buttons (pinned to the right) */}
-        <div className="rc-btns">
+        {/* right controls: bordered, labelled buttons (pinned to the right).
+            RAWY-230 (§4): blur a button after a POINTER click (RAWY-194's helper, detail>0 only) so it
+            doesn't keep DOM focus and swallow the next SPACE/arrow (which would re-activate the button /
+            re-open its panel). Keyboard focus (:focus-visible / Tab) is preserved — blur skips detail===0. */}
+        <div className="rc-btns" onClickCapture={releaseButtonFocusAfterPointerClick}>
           <button className={`rc-btn${chaptersOpen ? " on" : ""}`} onClick={onContents} title={t("reader.contents")}>
             <span className="rc-btn-ico"><span className="ico-lines"><span /><span /><span /></span></span>
             <span className="rc-btn-label">{t("reader.contents")}</span>

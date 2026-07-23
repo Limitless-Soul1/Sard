@@ -975,8 +975,16 @@ export class FoliateController {
       // a lingering selection that re-fires the toolbar. Treat a tap on a reading overlay like a tap on
       // plain text: dismiss the popover + clear the real selection, never emit an annotation hit.
       if (typeof value === "string" && value.startsWith("sard-reading")) {
-        this.clearSelection();
-        this.selectionCb?.(null);
+        // RAWY-230 (§2b): the reading band covers the SPOKEN sentence, so a click ending on it must NOT wipe
+        // a real drag-selection — that is why selecting the tracked text was impossible. Only dismiss a STRAY
+        // COLLAPSED selection (preserving RAWY-132's tap-dismiss); a live NON-COLLAPSED selection is left
+        // intact so the toolbar raises as it does over plain text (the pointerup handler already raised it,
+        // and already collapsed a plain click-inside-a-lingering-selection).
+        const sel = this.contentDoc?.getSelection?.();
+        if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+          this.clearSelection();
+          this.selectionCb?.(null);
+        }
         return;
       }
       this.showCb?.({ cfi: value, rect: this.rangeRectInParent(index, range) });
@@ -1153,6 +1161,20 @@ export class FoliateController {
   onSelection(cb: (sel: SelectionInfo | null) => void): void {
     this.selectionCb = cb;
   }
+  /** RAWY-230 (§4): return keyboard focus to the reading frame — so SPACE/arrows reach the reading shortcuts
+   *  (onSpace/onArrow) instead of a chrome button that kept focus. Focuses the content iframe element (where a
+   *  page click puts focus), falling back to the foliate-view host. */
+  focusReadingView(): void {
+    try {
+      const win = this.view?.renderer?.getContents?.()?.[0]?.doc?.defaultView;
+      const frame = (win?.frameElement as HTMLElement | null | undefined) ?? null;
+      if (frame?.focus) frame.focus();
+      else (this.view as unknown as HTMLElement | undefined)?.focus?.();
+    } catch {
+      /* torn-down / cross-doc frame — ignore (the window key handler still works from <body>) */
+    }
+  }
+
   /** RAWY-122: drop any live text selection (content frame + parent). Dismissing the selection popover
    *  used to only HIDE it — the browser selection lingered, so a later pointerup re-fired the toolbar
    *  and the text stayed visibly selected. Callers clear it on Esc / click-away so a select-to-read is

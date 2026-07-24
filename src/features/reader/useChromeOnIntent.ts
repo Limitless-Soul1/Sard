@@ -57,6 +57,8 @@ export function useChromeOnIntent(): {
   signalMove: (x: number, y: number) => void;
   signalScroll: (down: boolean) => void;
   setHold: (v: boolean) => void;
+  // RAWY-249 (PART 2): hide the toolbar on a chapter entry that landed at the top (opening under the bar).
+  hideChrome: () => void;
 } {
   const [visible, setVisible] = useState(true); // visible on entry, then settles
   // RAWY-211: the intent flag above. Set true ONLY in signalScroll(down); cleared whenever the chrome
@@ -153,6 +155,21 @@ export function useChromeOnIntent(): {
     [arm, setVis],
   );
 
+  // RAWY-249 (PART 2): hide the toolbar the way the IDLE timer does — `visible=false`, but `scrolledAway`
+  // LEFT UNCHANGED (so the immersive TTS pill/scrollbar, which key off scrolled-away, are untouched, unlike
+  // signalScroll(down)). The Reader calls this on a chapter entry that landed at its top, so the opening
+  // isn't left under the 70px bar. In SCROLLED flow the page-host inset stays 0 whether the bar shows or
+  // hides (RAWY-142), so this only fades the bar OVER stationary text — no content jump. Respects a panel
+  // pin (an open drawer keeps the bar). Transient: any wake (top-edge reach, scroll-up, tap, keyboard
+  // focus) brings the bar back. Anchors the jitter box on the resting cursor so the induced same-position
+  // move a fade fires under a stationary pointer is absorbed, not treated as a reveal (RAWY-117).
+  const hideChrome = useCallback(() => {
+    if (holdRef.current) return; // a pinned panel/drawer keeps the bar
+    if (timer.current) clearTimeout(timer.current);
+    anchor.current = lastPos.current;
+    setVis(false);
+  }, [setVis]);
+
   useEffect(() => {
     const onMove = (e: MouseEvent) => signalMove(e.clientX, e.clientY);
     const onTap = () => wake();
@@ -171,5 +188,5 @@ export function useChromeOnIntent(): {
     };
   }, [signalMove, wake]);
 
-  return { visible, scrolledAway, wake, signalMove, signalScroll, setHold };
+  return { visible, scrolledAway, wake, signalMove, signalScroll, setHold, hideChrome };
 }

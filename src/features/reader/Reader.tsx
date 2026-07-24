@@ -41,7 +41,7 @@ import { useBookmarks } from "./bookmarksStore";
 import { ReaderChrome, type SettingsSection } from "./ReaderChrome";
 import { SettingsPanel } from "./SettingsPanel";
 import { TtsPlayer } from "./TtsPlayer";
-import { skipSentenceForArrow, useTts } from "../../lib/tts";
+import { releaseButtonFocusAfterPointerClick, skipSentenceForArrow, useTts } from "../../lib/tts";
 import { useChromeOnIntent } from "./useChromeOnIntent";
 
 // The book to open: id (for progress) + absolute file path (for the asset protocol).
@@ -115,6 +115,9 @@ export function Reader({
   // RAWY-186: the LATEST play/pause handler, so the once-registered reading-frame Space callback always
   // calls the current closure (fresh chapter/lang) — no stale capture. Assigned each render below.
   const playRef = useRef<() => boolean>(() => false);
+  // RAWY-249 (PART 2): latest hideChrome, so the once-registered onRelocate closure (openBook, [] deps) always
+  // calls the current hook callback — same stale-capture guard as playRef.
+  const hideChromeRef = useRef<() => void>(() => {});
   // The last spine section index seen by onRelocate. Used to detect a MANUAL chapter change while a
   // read-aloud session sits in the "chapter-end" state (audio finished, the pill/Kashida offered a
   // "next chapter" button) — navigating away in that window must clear the stale offer so the button
@@ -163,7 +166,7 @@ export function Reader({
   // colour + hide-chapter-titles stay GLOBAL flags. RAWY-216: Reader only READS them now (to inject
   // the CSS); the setters live where the controls do — the drawer's "All books" tab / Global Settings.
   const { overrideBookColor, hideChapterTitles, hideFirstLine, immersive } = useTheme();
-  const { visible: chromeVisible, scrolledAway, signalMove, signalScroll, setHold } = useChromeOnIntent();
+  const { visible: chromeVisible, scrolledAway, signalMove, signalScroll, setHold, hideChrome } = useChromeOnIntent();
   // RAWY-194 (C): the chrome no longer wakes on bare keystrokes. A keyboard user still reaches it: when Tab
   // moves focus INTO the chrome (its controls stay in the tab order), reveal + PIN it — the genuine "I want
   // the toolbar" intent — and release when focus leaves. This also stops focus landing on an aria-hidden
@@ -229,16 +232,24 @@ export function Reader({
         // arms `nextChapterArmedRef` first so we consume the flag and DON'T stop the session it's handing
         // to startListen (without this, the legit advance would kill its own session — the WIP race).
         const curSec = ctrl.currentSectionIndex();
+        const prevSec = lastSectionRef.current;
         const tts = useTts.getState();
         if (nextChapterArmedRef.current) {
           nextChapterArmedRef.current = false;
-        } else if (tts.active && tts.status === "chapter-end" && lastSectionRef.current !== -1 && curSec !== lastSectionRef.current) {
+        } else if (tts.active && tts.status === "chapter-end" && prevSec !== -1 && curSec !== prevSec) {
           // RAWY-190: hide the stale "next chapter" offer but KEEP the player (dismissEnd, not stop) — the
           // bead/transport stays and a later Play reads the CURRENT chapter (scenario B). A full stop would
           // remove the kashida bead entirely, leaving no way to play from the minimized state.
           tts.dismissEnd();
         }
         lastSectionRef.current = curSec;
+        // RAWY-249 (PART 2): a NEW chapter that landed at/near its TOP leaves the opening under the 70px bar
+        // (scrolled flow pins page-host inset 0 — RAWY-142, so we can NOT scroll it clear: nothing sits above
+        // a section top). Hide the bar so the opening is fully visible — a fade over stationary text (inset
+        // untouched → no RAWY-142 jump), no overshoot (we don't scroll past the opening). Correct whether the
+        // bar was shown (→ hides) or already hidden (→ no-op). Gated on a real section CHANGE + near-top, so
+        // mid-chapter scrolls, resumes and fragment-jumps (which land below the bar) are untouched.
+        if (prevSec !== -1 && curSec !== prevSec && ctrl.openingUnderTopBar()) hideChromeRef.current();
         if (progressTimer.current) clearTimeout(progressTimer.current);
         progressTimer.current = window.setTimeout(() => {
           // RAWY-85: a PDF has no CFI — persist it by fraction (empty cfi) so it still resumes.
@@ -506,15 +517,21 @@ export function Reader({
     ctrlRef.current?.showReadingWord(ttsWordIndex);
   }, [ttsActive, ttsWordIndex, ttsStatus]);
 
-  // RAWY-230 (§4): when the LAST panel closes, if focus was dropped to <body> (a chrome button blurred by
-  // releaseButtonFocusAfterPointerClick, or the panel's own control unmounted), return focus to the reading
-  // frame so SPACE/arrows reach the reading shortcuts immediately. Gated on <body> so a keyboard user's
-  // :focus-visible on a chrome control is never stolen.
+  // RAWY-230 (§4) / RAWY-249 (PART 3D): when the LAST panel/drawer closes, return focus to the reading frame
+  // so SPACE/arrows reach the reading shortcuts immediately — the owner must never have to click the book to
+  // restore the keys, for ANY close (×, toolbar re-toggle, Escape). Previously gated on `activeElement===body`,
+  // which the panels-stay-mounted design defeats: closing the settings drawer with its × leaves focus ON the ×
+  // <button> (it doesn't unmount), so the guard failed and focus stuck → SPACE dead (the owner's report). Now
+  // return focus on the close transition UNLESS a KEYBOARD user is focused in the TOOLBAR (Tab + :focus-visible),
+  // whose place we must not steal (RAWY-194). The root-level release below already drops POINTER focus to <body>;
+  // this covers keyboard/Escape closes and puts focus back IN the frame so page-turn arrows (TTS off) work too.
   const anyPanelOpen = settingsOpen || annoOpen || basketOpen || searchOpen || chaptersOpen;
   const prevAnyPanelRef = useRef(false);
   useEffect(() => {
-    if (prevAnyPanelRef.current && !anyPanelOpen && document.activeElement === document.body) {
-      ctrlRef.current?.focusReadingView();
+    if (prevAnyPanelRef.current && !anyPanelOpen) {
+      const ae = document.activeElement as HTMLElement | null;
+      const keyboardInChrome = !!(ae && ae.closest?.(".reader-chrome") && ae.matches?.(":focus-visible"));
+      if (!keyboardInChrome) ctrlRef.current?.focusReadingView();
     }
     prevAnyPanelRef.current = anyPanelOpen;
   }, [anyPanelOpen]);
@@ -1054,6 +1071,7 @@ export function Reader({
                   // Edge-unavailable state is acted on only via its explicit Retry / Switch-to-Piper buttons
   };
   playRef.current = playOrRelisten;
+  hideChromeRef.current = hideChrome;
   // RAWY-184 (Part B): the end-of-chapter "next chapter" control — navigate to the next spine section and
   // read it from the top. startListen reads the now-current chapter; the saved cursor is a different
   // section, so the Part A same-chapter gate shows no resume prompt.
@@ -1186,7 +1204,11 @@ export function Reader({
     // RAWY-142: `flow-scrolled` (scrolled EPUB, not paged/PDF) pins the reading area full-height so a
     // bar-hide composites over a STATIONARY area instead of shifting the chapter up ~70px (the jump) —
     // the same full-height pin RAWY-130 used for TTS, now unified for all scrolled reading (global.css).
-    <div className={`reader-root${chromeShown ? "" : " chrome-hidden"}${ttsActive ? " tts-playing" : ""}${!isPaged && !isPdf ? " flow-scrolled" : ""}${immersive ? " immersive" : ""}${scrolledAway && !chromeShown ? " scrolled-away" : ""}${style?.immHidePill ? " im-hide-pill" : ""}${style?.immHideScrollbar ? " im-hide-scrollbar" : ""}${ttsStatus === "chapter-end" ? " tts-chapter-end" : ""}${ttsStatus === "edge-error" ? " tts-edge-error" : ""}`} style={rootVars}>
+    // RAWY-249 (PART 3B): ONE focus-release mechanism for the WHOLE reader surface. Every panel, drawer, pill
+    // and the selection menu is a descendant of .reader-root (no portals), so a single capture-phase click
+    // handler releases focus from any POINTER-clicked keys-swallower (button / [role=button] / link) before it
+    // can capture SPACE/arrows — superseding the per-container onClickCapture the toolbar/pills still carry.
+    <div className={`reader-root${chromeShown ? "" : " chrome-hidden"}${ttsActive ? " tts-playing" : ""}${!isPaged && !isPdf ? " flow-scrolled" : ""}${immersive ? " immersive" : ""}${scrolledAway && !chromeShown ? " scrolled-away" : ""}${style?.immHidePill ? " im-hide-pill" : ""}${style?.immHideScrollbar ? " im-hide-scrollbar" : ""}${ttsStatus === "chapter-end" ? " tts-chapter-end" : ""}${ttsStatus === "edge-error" ? " tts-edge-error" : ""}`} style={rootVars} onClickCapture={releaseButtonFocusAfterPointerClick}>
       {/* desk + centered page sheet (the book) + page-turn affordances */}
       <div className={`reader-desk${isPdf && pdfInvert ? " pdf-invert" : ""}${style?.backgroundColor ? " custom-bg" : ""}`} style={deskStyle} onWheel={onDeskWheel}>
         {showChevrons && (

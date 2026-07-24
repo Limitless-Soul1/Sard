@@ -449,12 +449,23 @@ export function skipSentenceForArrow(key: string): boolean {
 // global transport handler until the user clicks the page. After a POINTER activation ONLY (`detail > 0`),
 // release focus so the next Space/arrow reaches the transport handler on the FIRST press. A KEYBOARD
 // activation (Enter/Space on a Tab-focused button → `detail === 0`) KEEPS focus, so Tab users never lose
-// their place (accessibility). Wire on a pill container's `onClickCapture` so it fires even for buttons that
-// stopPropagation (the kashida). Only <button>s are released — the volume <input range> keeps its arrow keys.
+// their place (accessibility). Wire on a container's `onClickCapture` so it fires even for buttons that
+// stopPropagation (the kashida).
+// RAWY-249: BROADENED from `closest("button")` to the full set of controls the global transport handler
+// bails on — `button, [role="button"], a[href]` — because the leak recurred from THREE control kinds:
+// RAWY-230 fixed `.rc-btns` <button>s only; the settings-drawer × button (also a <button>, but not under a
+// covered container) and the search/annotation JUMP ROWS (which are `<span role="button" tabIndex=0>`, so
+// `closest("button")` never matched them) both kept focus and killed SPACE/arrows. This helper is now wired
+// ONCE at `.reader-root` (Reader.tsx), so every focusable "keys-swallower" in the reader is covered by one
+// mechanism. Deliberately NOT released: INPUT/TEXTAREA/SELECT/[role="slider"]/[contenteditable] — the user
+// needs their keys (typing, slider arrows), and the transport handler already skips those targets too.
 export function releaseButtonFocusAfterPointerClick(e: { detail: number; target: EventTarget | null }): void {
   // `Element`, not `HTMLElement`: a click usually lands on the button's inner <svg>/<path> icon, which is an
   // SVGElement — an `instanceof HTMLElement` guard silently skipped the blur (caught live, RAWY-194 STEP 3).
-  if (e.detail > 0 && e.target instanceof Element) e.target.closest("button")?.blur();
+  if (e.detail > 0 && e.target instanceof Element) {
+    const el = e.target.closest("button, [role='button'], a[href]");
+    if (el instanceof HTMLElement) el.blur();
+  }
 }
 
 // RAWY-127: the Rust response is FRAMED — `[u32 BE json_len][json words][audio bytes]` — so the audio

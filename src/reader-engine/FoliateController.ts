@@ -1338,6 +1338,50 @@ export class FoliateController {
     return this.scrolledMode;
   }
 
+  /** RAWY-249 (PART 2): the reading scroll position along the scroll axis (scrolled flow). ~0 at a section
+   *  top. Lets the Reader detect a chapter entry that landed at the top — its opening under the top bar. */
+  get readingScrollTop(): number {
+    const s = (this.view?.renderer as { start?: number } | undefined)?.start;
+    return typeof s === "number" ? s : 0;
+  }
+
+  /** RAWY-249 (PART 2): true when a scrolled-flow chapter landed at/near its TOP, so its opening sits within
+   *  the top-bar band and would be occluded while the bar is SHOWN. The bar height is read from its REAL
+   *  rendered element (`.reader-chrome .rc-top`) — the single source (global.css) — never a 2nd hardcoded 70.
+   *  At a section top the scroll can't push the opening down (nothing above it) without changing the layout
+   *  inset (forbidden — RAWY-142), so the Reader instead hides the bar; this decides WHEN. */
+  openingUnderTopBar(): boolean {
+    if (!this.scrolledMode) return false;
+    const bar = document.querySelector(".reader-chrome .rc-top");
+    const barH = bar instanceof HTMLElement ? bar.getBoundingClientRect().height : 70;
+    return this.readingScrollTop < barH;
+  }
+
+  /** RAWY-249 (PART 1): scroll so `range` sits at the VERTICAL CENTRE of the reading viewport, instead of
+   *  foliate's default top-align (goToSearchHit → renderer.scrollToAnchor → #scrollToRect, which lands the
+   *  rect at the container top — the owner's "result appears at the top, not the middle"). SCROLLED flow only:
+   *  it is a vertical nudge, so RTL/LTR-agnostic (RAWY-232). Reuses the measured `scrollByDelta` path the TTS
+   *  follow uses (RAWY-75/128) — a plain container scroll the browser clamps to the real limits, so near a
+   *  section edge (little content above/below) it lands the hit as close to centre as the content allows.
+   *  Paged flow is page-indexed with NO in-page centring (DECISIONS D63) — left at foliate's landing. */
+  private centerRangeInView(index: number, range: Range): void {
+    if (!this.scrolledMode) return;
+    const r = this.view?.renderer;
+    const contents = r?.getContents?.() as { index: number; doc?: Document }[] | undefined;
+    const content = contents?.find((x) => x.index === index) ?? contents?.[0];
+    const doc = content?.doc;
+    if (!r || !doc) return;
+    const raw = range.getBoundingClientRect();
+    if (!(raw.width > 0) && !(raw.height > 0)) return; // not laid out yet
+    const pr = this.rectInParent(raw, doc); // hit rect in PARENT-viewport coords
+    const rv = (r as Element).getBoundingClientRect?.(); // the visible reading box
+    if (!rv || !(rv.height > 0)) return;
+    // >0 scrolls down (content up); <0 scrolls up (content down) — same convention as followReadingSentence.
+    const delta = pr.top - (rv.top + rv.height / 2 - pr.height / 2);
+    const rd = r as { scrollByDelta?: (d: number) => void };
+    if (typeof rd.scrollByDelta === "function") rd.scrollByDelta(delta);
+  }
+
   // Chapter-boundary scroll gesture (RAWY-25). Scrolling is continuous WITHIN a chapter
   // (native). At the chapter edge we preventDefault so a single gesture STOPS at the boundary
   // (never chains into the next chapter); a NEW gesture (after BOUNDARY_PAUSE_MS) that BEGINS
@@ -2142,6 +2186,12 @@ export class FoliateController {
     } catch {
       /* settle is best-effort */
     }
+    if (gen !== this.searchNavGen) return;
+    // RAWY-249 (PART 1): centre the hit in the viewport — foliate's scrollToAnchor above LANDS IT AT THE TOP
+    // (#scrollToRect: offset = rectLeft − #margin), which the owner reported as "the result shows at the top,
+    // not the middle." Done AFTER the font settle so it centres the FINAL geometry, and before the flash so
+    // the flash lands on the centred rect. Scrolled flow only (paged is page-indexed — DECISIONS D63).
+    if (range) this.centerRangeInView(nav?.index ?? -1, range);
     if (gen !== this.searchNavGen) return;
     // 4) DRAW the flash on the resolved range, DIRECTLY on the section's overlayer (the same overlayer.add
     // `view.addAnnotation` reaches, minus the throwing CFI re-resolution), so it ALWAYS appears. Only fall

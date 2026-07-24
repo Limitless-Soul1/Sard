@@ -18,6 +18,9 @@ import {
   buildFontFaceCss, // RAWY-208: the @font-face sheet, isolated from the geometry sheet
   ALIGN_GATE_CLASS,
   BOOK_ALIGN_CLASS,
+  FORCE_RTL_CLASS, // RAWY-253 (root A): the dir-correction marker class
+  EMPTY_P_CLASS, // RAWY-253 (root B): the empty-paragraph collapse marker class
+  LTR_ALIGN_CLASS, // RAWY-253 (addendum): align a kept-LTR paragraph to the book's margin
   type BookThemeFlags,
   type ReadingStyle,
   type RevealLabels,
@@ -499,6 +502,70 @@ function buildTitlePlaceholder(doc: Document): HTMLElement {
   return ph;
 }
 
+// RAWY-253 (root A): STRONG DIRECTIONAL letters only — a letter (\p{L}) of the given script. Excludes
+// Arabic punctuation (،؛؟ = neutral), Arabic-Indic DIGITS (weak), and tashkil MARKS (\p{Mn}, not letters) —
+// all sit in the Arabic block but are NOT strong-RTL and would wrongly tip the count (a poker line
+// "2 ♠، 9 ♥، K ♠." has TWO Arabic commas but ZERO Arabic letters — it must stay LTR). Measured across the
+// whole library this cleanly separates every dir="ltr" paragraph (195 pure-Arabic flips in لورد الغوامض,
+// 1 in الخالد; 0 near-ties), so the tie-break below never fires in practice but is stated explicitly anyway.
+const RE_LETTER = /\p{L}/u;
+const RE_ARABIC_SC = /\p{Script=Arabic}/u;
+const RE_LATIN_SC = /\p{Script=Latin}/u;
+function strongScriptCounts(text: string): { ar: number; lat: number } {
+  let ar = 0;
+  let lat = 0;
+  for (const ch of text) {
+    if (!RE_LETTER.test(ch)) continue; // only LETTERS are strong-directional
+    if (RE_ARABIC_SC.test(ch)) ar++;
+    else if (RE_LATIN_SC.test(ch)) lat++;
+  }
+  return { ar, lat };
+}
+
+// RAWY-253 (root A): in an RTL book, re-assert RTL on paragraphs a conversion tool hardcoded `dir="ltr"`
+// although they are overwhelmingly ARABIC (it inferred direction from the first STRONG char — a Latin word
+// after a neutral quote — so a 95%-Arabic paragraph was mislabeled LTR, and the attribute overrode Sard's
+// injected direction). Add a CLASS (attribute-only → CFI-safe; the DOM is never wrapped/inserted/removed)
+// when strong ARABIC letters STRICTLY EXCEED strong Latin letters. TIE-BREAK IS EXPLICIT: equal counts —
+// including an empty paragraph (0 == 0) — are LEFT as LTR, so a genuinely-Latin or empty paragraph keeps its
+// direction. English/LTR books are a COMPLETE NO-OP (the `dir !== "rtl"` gate). Never touches وMI9/الـMI9
+// (that is inside the text, and this only sets a class + CSS direction — it changes no characters).
+// RAWY-253 (addendum, owner live-test): DIRECTION and ALIGNMENT are decided SEPARATELY for these paragraphs
+// and the split is deliberate — do NOT merge them. A paragraph LEFT as LTR keeps its LTR reading order (or the
+// period in “MI9”. moves to the wrong side), but is additionally tagged LTR_ALIGN_CLASS so CSS pulls it onto
+// the BOOK's margin — otherwise it aligns to its own LTR start edge and floats to the far side of an
+// otherwise right-aligned Arabic page (the owner's screenshot). Empty paragraphs are not tagged (nothing to align).
+function markParagraphDirection(doc: Document, dir?: string): void {
+  if (dir !== "rtl") return;
+  for (const p of Array.from(doc.querySelectorAll<HTMLElement>('p[dir="ltr" i]'))) {
+    const text = p.textContent ?? "";
+    const { ar, lat } = strongScriptCounts(text);
+    if (ar > lat) {
+      p.classList.add(FORCE_RTL_CLASS); // Arabic-dominant → flip the base direction back to RTL
+      continue;
+    }
+    // ar <= lat (incl. tie / empty) → KEEP direction:ltr; align visible content to the book's margin.
+    if (text.trim()) p.classList.add(LTR_ALIGN_CLASS);
+  }
+}
+
+// RAWY-253 (root B): scraped/converted EPUBs pad the text with EMPTY (whitespace-only) <p>, each of which
+// still takes the reader's per-paragraph margin + line-height × zoom and becomes a large vertical gap
+// (لورد الغوامض 55% empty, الخالد 21%). Mark whitespace-only <p> with a CLASS; CSS collapses its box. Skips a
+// <p> carrying replaced/embedded content (img/media/hr/table) — that is not padding. Attribute-only →
+// CFI-safe; the node is NEVER removed (deletion would shift foliate CFI child-step indices and break stored
+// bookmarks/resume). KNOWN LIMIT (owner's live call): a lone blank <p> used DELIBERATELY as a scene break
+// collapses too — run length does not distinguish artifact from intent (RAWY-253 measured), only book-level
+// density flags it. RTL books only — matches root A's scope and keeps English books completely untouched.
+function markEmptyParagraphs(doc: Document, dir?: string): void {
+  if (dir !== "rtl") return;
+  for (const p of Array.from(doc.querySelectorAll<HTMLElement>("p"))) {
+    if ((p.textContent ?? "").trim()) continue; // has text → not empty
+    if (p.querySelector("img, svg, picture, video, audio, iframe, object, canvas, hr, input, table")) continue; // replaced content → keep
+    p.classList.add(EMPTY_P_CLASS);
+  }
+}
+
 function markInBodyHeading(doc: Document, tocLabel: string | null): void {
   const body = doc.body;
   if (!body || body.dataset?.sardHeadingScanned === "1") return;
@@ -903,6 +970,8 @@ export class FoliateController {
       // pristine document for the measurement anyway).
       markBookAlignedBlocks(doc, this.dir);
       alignNeutralLines(doc, this.dir); // RAWY-134 (A): "…"-only scene breaks follow the book's RTL side
+      markParagraphDirection(doc, this.dir); // RAWY-253 (root A): RTL-correct paragraphs mislabeled dir="ltr"
+      markEmptyParagraphs(doc, this.dir); // RAWY-253 (root B): collapse scrape-padding empty <p>
       // RAWY-70: the two-step reveal for the hide-first-line placeholder. Handled from the parent
       // frame (the content iframe runs no scripts, RAWY-64) via cross-frame DOM access, like the
       // handlers below. Per-instance + reset-on-navigation is automatic: each section is a fresh

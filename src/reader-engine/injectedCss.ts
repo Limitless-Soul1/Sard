@@ -314,6 +314,29 @@ export const BOOK_ALIGN_CLASS = "sard-book-align";
 export const ALIGN_GATE_CLASS = "sard-al";
 const KEEP = `:not(.${BOOK_ALIGN_CLASS})`;
 
+// RAWY-253 (root A): FoliateController.markParagraphDirection tags a <p dir="ltr"> whose strong ARABIC
+// letters exceed its Latin letters, in an RTL book — the conversion-tool artifact where an overwhelmingly
+// Arabic paragraph is mislabeled LTR from its first strong (Latin) char. CSS below forces the base
+// direction back to RTL; the paragraph keeps the UA `unicode-bidi: isolate` from its dir attribute, so its
+// embedded Latin still reads LTR and the Arabic punctuation lands on the RTL edge. Attribute-only → CFI-safe.
+export const FORCE_RTL_CLASS = "sard-force-rtl";
+// RAWY-253 (root B): FoliateController.markEmptyParagraphs tags a whitespace-only <p> (scrape padding); the
+// rule below zeroes its margin + line-height so it stops becoming a large vertical gap. Node is NEVER
+// removed (CFI-safe) — only its box collapses.
+export const EMPTY_P_CLASS = "sard-empty-p";
+// RAWY-253 (addendum, owner live-test): a <p dir="ltr"> that rule (b) deliberately LEFT as LTR — a genuinely
+// Latin standalone line like “MI9”. — still has to sit on the SAME margin as the Arabic around it, or it
+// floats to the opposite edge and reads as broken. **DIRECTION AND ALIGNMENT ARE DECIDED SEPARATELY, and that
+// separation is deliberate — do NOT "simplify" them into one rule.** DIRECTION must stay LTR here: flipping it
+// would move the sentence period to the wrong side (."MI9" instead of "MI9".) — that is precisely why rule (a)
+// was rejected. ALIGNMENT is independent: it must follow the BOOK. The catch is that `text-align: start`
+// resolves against the PARAGRAPH's own direction (= left for an LTR paragraph), which IS the defect, so the
+// user's LOGICAL align is resolved to a PHYSICAL edge against the BOOK's direction instead.
+export const LTR_ALIGN_CLASS = "sard-ltr-align";
+// Resolve a logical Align to the physical edge it means in an RTL BOOK: start/justify = the right margin
+// (where the Arabic sits), end = left, center = center. Only ever used for RTL books.
+const alignForRtlBook = (a: Align): string => (a === "center" ? "center" : a === "end" ? "left" : "right");
+
 // Prefix each selector of a list with `:root:root` (+ the id guard) — the RAWY-38 hardening, applied
 // per selector. Takes an ARRAY, never a comma string: a leaf-div selector carries commas INSIDE its
 // own `:has(…)`, which a naive split on "," would shatter.
@@ -538,6 +561,26 @@ export function buildReadingCss(
        foliate cannot override and which works identically in both flow modes. */
     /* a corrected reading direction (RAWY-19 override) flows + aligns the text accordingly */
     ${bookDir ? `html, body { direction: ${bookDir}; }` : ""}
+    /* RAWY-253 (root A): re-assert RTL on paragraphs a converted EPUB hardcoded dir=ltr although they are
+       overwhelmingly Arabic (FoliateController tags them, RTL books only). The dir attribute's own
+       unicode-bidi:isolate stays, so the paragraph becomes an ISOLATED RTL block — Arabic reads RTL,
+       embedded Latin still reads LTR, punctuation on the RTL edge. The important flag + the id-guard beat
+       the UA [dir=ltr] presentational rule and any inherited direction. Never touches وMI9/الـMI9. */
+    :root:root .${FORCE_RTL_CLASS}${NEVER} { direction: rtl !important; }
+    /* RAWY-253 (root B): collapse whitespace-only <p> (scrape padding) so it stops taking the reader's
+       per-paragraph margin + line-height × zoom as a gap. DOUBLE id-guard (like HIDE_BOX_RULE) so it
+       out-ranks the hardened paragraph-spacing + line-height rules below. The node is NEVER removed. */
+    :root:root .${EMPTY_P_CLASS}${NEVER}${NEVER2} { margin-block: 0 !important; line-height: 0 !important; }
+    /* RAWY-253 (addendum): the paragraphs rule (b) LEFT as direction:ltr keep their LTR reading order (so
+       “MI9”. still reads “MI9”. and the period stays put) but must align to the BOOK's margin, not their own
+       LTR start edge. Emitted for RTL books only; the user's logical align is resolved to the physical edge
+       the Arabic around it uses. Spares .sard-book-align (RAWY-195: never flatten the book's own centring).
+       Double id-guard so it out-ranks the hardened text-align rule further down. */
+    ${
+      bookDir === "rtl"
+        ? `:root:root .${LTR_ALIGN_CLASS}${KEEP}${NEVER}${NEVER2} { text-align: ${alignForRtlBook(style.align)} !important; }`
+        : ""
+    }
     /* highlight ink (RAWY-22): a clearly-visible "wick" — multiply blend on light paper,
        screen on dark. Opacity = the theme's own highlightAlpha when set (RAWY-29 themes.json:
        light = 1, dark ≈ 0.32–0.36), else the original RAWY-22 intensities (0.62 / 0.5) so the

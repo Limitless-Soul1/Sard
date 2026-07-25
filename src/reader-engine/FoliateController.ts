@@ -1430,6 +1430,29 @@ export class FoliateController {
     return this.readingScrollTop < barH;
   }
 
+  /** RAWY-256: map every TOC href to its spine SECTION index, in ONE pass. Built from `book.sections[i].id`
+   *  — the SAME primitive `sectionTocLabel` uses (RAWY-229's section-identity family), so there is no new
+   *  notion of "which chapter". Deliberately NOT `resolveNavigation` per entry: the owner's largest book has
+   *  1432 TOC rows, and this costs one walk of the sections plus one of the TOC instead of 1432 resolutions.
+   *  A TOC href may carry a fragment (`file.html#anchor`), so both the raw href and its pre-`#` part are
+   *  keyed. The Reader calls this ONCE per book (when the TOC loads) and reuses the result for every render. */
+  tocHrefSectionMap(): Map<string, number> {
+    const out = new Map<string, number>();
+    const sections = this.view?.book?.sections as { id?: string }[] | undefined;
+    if (!sections) return out;
+    const byId = new Map<string, number>();
+    sections.forEach((s, i) => {
+      if (s?.id) byId.set(s.id, i);
+    });
+    for (const t of this.getToc()) {
+      const href = t.href;
+      if (!href) continue;
+      const i = byId.get(href) ?? byId.get(href.split("#")[0]);
+      if (typeof i === "number") out.set(href, i);
+    }
+    return out;
+  }
+
   /** RAWY-250 (addendum 6): the spine SECTION a jump target (CFI or TOC href) resolves to, WITHOUT
    *  navigating — foliate's own `resolveNavigation`, the same resolver `goTo` uses internally, so the answer
    *  is by construction the section the jump will land in. This makes jump-driven section changes detectable

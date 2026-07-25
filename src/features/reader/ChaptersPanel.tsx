@@ -9,6 +9,7 @@
 import { memo, useEffect, useRef } from "react";
 
 import { useI18n } from "../../i18n";
+import type { ReadMarkerKey } from "../../lib/readMarkerStyle"; // RAWY-256
 import { extractChapterNumber, localeNum } from "../../lib/format";
 import type { TocEntry } from "../../reader-engine/FoliateController";
 
@@ -21,12 +22,16 @@ const TocRow = memo(function TocRow({
   entry,
   index,
   active,
+  read,
   hideTitles,
   onJump,
 }: {
   entry: TocEntry;
   index: number;
   active: boolean;
+  /** RAWY-256: chapter read to the end (completion rule + storage are RAWY-250 / D66 — consumed, not
+   *  recomputed). Drives the `.read` class; the six variants are pure CSS on this row, no extra DOM. */
+  read: boolean;
   hideTitles: boolean;
   onJump: (href: string) => void;
 }) {
@@ -37,7 +42,7 @@ const TocRow = memo(function TocRow({
   const label = hideTitles ? null : entry.label || chapterLabel;
   return (
     <button
-      className={`rp-row toc-row${active ? " active" : ""}`}
+      className={`rp-row toc-row${active ? " active" : ""}${read ? " read" : ""}`}
       style={{ paddingInlineStart: 11 + entry.level * 14 }}
       onClick={() => entry.href && onJump(entry.href)}
       disabled={!entry.href}
@@ -62,6 +67,10 @@ interface Props {
   onClose: () => void;
   toc: TocEntry[];
   currentHref: string | null;
+  /** RAWY-256: TOC hrefs whose chapter is read — a STABLE Set (memoised in Reader), never rebuilt per row. */
+  readHrefs: Set<string>;
+  /** RAWY-256: the global variant choice; scopes the CSS for all six on the list container. */
+  readMarker: ReadMarkerKey;
   // Still needed here AFTER RAWY-216 removed this panel's toggle: the TOC rows render the
   // "الفصل N"/"Chapter N" placeholder instead of the real title while it is on (RAWY-69/70).
   hideTitles: boolean;
@@ -79,6 +88,8 @@ function ChaptersPanelInner({
   onClose,
   toc,
   currentHref,
+  readHrefs,
+  readMarker,
   hideTitles,
   onJump,
   fraction,
@@ -129,7 +140,9 @@ function ChaptersPanelInner({
           ONLY in the drawer's "All books" tab, which is also their honest scope label. `hideTitles` is
           still a PROP because the TOC rows below render the "الفصل N"/"Chapter N" placeholder from it. */}
 
-      <div className="rp-scroll" ref={scrollRef}>
+      {/* RAWY-256: the chosen variant scopes the marker CSS for the whole list (one class, not per row),
+          so switching variants costs a single attribute change even on a 1432-row panel. */}
+      <div className={`rp-scroll rm-${readMarker}`} ref={scrollRef}>
         {toc.length === 0 && <div className="rp-empty">{t("panel.noChapters")}</div>}
         {/* RAWY-175: each row is a memoized <TocRow> (see top of file). The book's OWN chapter number
             (RAWY-67), the "الفصل N"/"Chapter N" hidden-titles label (RAWY-69/70), the active highlight,
@@ -142,6 +155,7 @@ function ChaptersPanelInner({
             entry={c}
             index={i}
             active={!!c.href && c.href === currentHref}
+            read={!!c.href && readHrefs.has(c.href)}
             hideTitles={hideTitles}
             onJump={onJump}
           />

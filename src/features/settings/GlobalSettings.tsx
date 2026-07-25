@@ -18,6 +18,7 @@ import { runUpdateCheck, type UpdResult } from "../../lib/updater";
 import { FONT_CATALOGUE, UI_SCALE_MAX, UI_SCALE_MIN, useFonts } from "../../lib/fonts";
 import { BOOKMARK_COLORS, BOOKMARK_SHAPES, BOOKMARK_SIZE_MAX, BOOKMARK_SIZE_MIN, useBookmarkStyle } from "../../lib/bookmarkStyle";
 import { BookmarkShape } from "../reader/BookmarkShape";
+import { READ_MARKERS, useReadMarkerStyle } from "../../lib/readMarkerStyle"; // RAWY-256
 import { TtsTrackingControls } from "../reader/TtsTrackingControls"; // RAWY-200
 import { useStyleScope } from "../../lib/styleScope";
 import {
@@ -502,6 +503,8 @@ function ReadingDefaultsSection() {
 function BookmarkSection() {
   const { t, lang } = useI18n();
   const { shape, color, pos, size, setShape, setColor, setPos, setSize } = useBookmarkStyle();
+  const marker = useReadMarkerStyle((st) => st.marker); // RAWY-256
+  const setMarker = useReadMarkerStyle((st) => st.setMarker);
   return (
     <>
       <SecHead>{t("gs.bookmark")}</SecHead>
@@ -519,6 +522,36 @@ function BookmarkSection() {
               aria-label={s.label}
             >
               <BookmarkShape shape={s.key} color={color} h={30} />
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* RAWY-256: the chapter READ-MARKER chooser. Placed HERE — beside the bookmark SHAPE — because it is
+          the same KIND of setting: a global appearance choice about how a place in a book is marked, which
+          FEEDBACK §6.5 keeps in main settings rather than per book (re-picking it for every book in a
+          library of hundreds would be absurd). It reuses this section's existing `gs-bm-grid` / `gs-bm-cell`
+          pattern verbatim — no new settings chrome (D19). NOTE for RAWY-244: this control lives in Global
+          Settings → Bookmark, NOT in the RAWY-216 reader drawer (the bookmark controls were never in it);
+          keep the two together if that ticket moves either. Each cell previews the REAL variant CSS, so what
+          the owner sees in the picker is exactly what the Contents panel renders. */}
+      <div className="gs-sec">
+        <Label>{t("gs.readMarker")}</Label>
+        <div className="gs-note gs-note-tight">{t("gs.readMarker.subtitle")}</div>
+        <div className="gs-bm-grid">
+          {READ_MARKERS.map((m) => (
+            <button
+              key={m.key}
+              className={`gs-bm-cell${marker === m.key ? " on" : ""}`}
+              onClick={() => setMarker(m.key)}
+              title={t(m.label)}
+              aria-label={t(m.label)}
+            >
+              <span className={`gs-rm-prev rm-${m.key}`} aria-hidden="true">
+                <span className="toc-row read" />
+                <span className="toc-row read" />
+                <span className="toc-row active" />
+              </span>
             </button>
           ))}
         </div>

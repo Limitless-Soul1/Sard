@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles/global.css";
 import { I18nProvider, useI18n } from "./i18n";
 import { initBookmarkStyle } from "./lib/bookmarkStyle";
+import { initReadMarkerStyle } from "./lib/readMarkerStyle"; // RAWY-256: persisted read-marker variant
 import { initFonts } from "./lib/fonts";
 import { initStyleScope } from "./lib/styleScope";
 import { initTheme, reapplyTitlebarTheme, useTheme } from "./theme";
@@ -48,6 +49,7 @@ function App() {
     initTheme(); // load + apply persisted theme/override/hide-titles/mode (RAWY-39)
     initFonts(); // load + apply persisted UI font + register imported @font-faces (RAWY-39)
     initBookmarkStyle(); // load persisted bookmark shape/colour/position (RAWY-41)
+    initReadMarkerStyle(); // RAWY-256: persisted chapter read-marker variant (global, like bookmark shape)
     initStyleScope(); // load unified-vs-per-book book-style scope (RAWY-43)
   }, []);
 

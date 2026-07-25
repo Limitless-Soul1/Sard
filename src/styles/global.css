@@ -1384,6 +1384,86 @@ html, body, #root {
 .toc-num.big { flex: 1; font: 700 1rem/1.3 var(--ui-font); color: var(--text); }
 .toc-label { flex: 1; font: 400 0.875rem/1.35 var(--ui-font); color: color-mix(in srgb, var(--text) 86%, transparent); }
 .toc-row.active .toc-label { font-weight: 600; color: var(--text); }
+/* ── RAWY-256: chapter READ markers in the Contents panel ────────────────────────────────────────────
+   SIX variants from docs/design/read-indicator-selected-theme.html, implemented EXACTLY as the file
+   describes them and scoped by a single class on the scroll container (`.rm-<variant>`), so switching
+   costs one attribute change on a 1432-row panel. THREE distinct states: unread (no class) · CURRENT
+   (`.toc-row.active`, Sard's existing leading bar + tinted ground — untouched) · read (`.toc-row.read`).
+   Every marker is a PSEUDO-ELEMENT on the existing row — NO new DOM nodes, so a long panel costs nothing
+   extra to build. Colour is always `--read-marker` / `--read-marker-quiet`: the computed, contrast-floored
+   tokens (applyTheme, D67) — never raw `--accent`, which measures 2.79:1 on Parchment.
+   NO new specificity layer (OPEN's escalation note): these are plain class selectors at (0,2,1)/(0,3,1)
+   with no `!important` and no id-guard — they style properties the existing rules never set.
+   RTL: every edge is expressed with LOGICAL properties (inset-inline-*), so "trailing" resolves to the
+   correct physical side in Arabic and Latin books by construction — no transform, no double-mirror. */
+.toc-row { position: relative; } /* the marker pseudo-elements anchor to the row */
+
+/* ① Reading Trail (QUIET) — a continuous settled-clay rule threading every finished chapter, with a live
+   head resting on the one in progress. Quiet = lower visual WEIGHT (1.5px, softer hue), never lower
+   contrast: it uses the floored quiet token. */
+.rm-readingTrail .toc-row.read::before,
+.rm-accentTrail .toc-row.read::before {
+  content: ""; position: absolute; inset-block: 0; inset-inline-start: 3px;
+  inline-size: 1.5px; background: var(--read-marker-quiet);
+}
+.rm-readingTrail .toc-row.active::before {
+  content: ""; position: absolute; inset-block-start: 50%; inset-inline-start: 0.5px;
+  inline-size: 6.5px; block-size: 6.5px; margin-block-start: -3.25px;
+  border-radius: 50%; background: var(--read-marker-quiet);
+}
+/* ② Accent Trail (DEFAULT) — the same continuous rule promoted to the full marker colour: one
+   uninterrupted warm line saying "everything up to here is read", still only a 2.5px thread. */
+.rm-accentTrail .toc-row.read::before { inline-size: 2.5px; background: var(--read-marker); inset-inline-start: 2.5px; }
+.rm-accentTrail .toc-row.active::before {
+  content: ""; position: absolute; inset-block-start: 50%; inset-inline-start: 0;
+  inline-size: 7.5px; block-size: 7.5px; margin-block-start: -3.75px;
+  border-radius: 50%; background: var(--read-marker);
+}
+/* ③ Trailing Bar — a 3px bar on the TRAILING edge of each finished row. Pairs with Sard's native leading
+   bar on the reading row: leading = "where you are", trailing = "what you're done with". */
+.rm-trailingBar .toc-row.read::after {
+  content: ""; position: absolute; inset-block: 4px; inset-inline-end: 0;
+  inline-size: 3px; border-radius: 2px; background: var(--read-marker);
+}
+/* ④ Title Underline — a 2px rule beneath the chapter title, where the eye already rests. No added shape. */
+.rm-titleUnderline .toc-row.read .toc-label,
+.rm-titleUnderline .toc-row.read .toc-num.big {
+  box-shadow: inset 0 -2px 0 -1px var(--read-marker);
+}
+/* ⑤ Silk Ribbon — a forked bookmark ribbon hanging from the row's top edge: the sewn-in ribbon of a real
+   bound book. Discrete per chapter, where the trails are continuous. */
+.rm-silkRibbon .toc-row.read::after {
+  content: ""; position: absolute; inset-block-start: 0; inset-inline-end: 10px;
+  inline-size: 7px; block-size: 13px; background: var(--read-marker);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 72%, 0 100%);
+}
+/* ⑥ Wax Seal — a small pressed, rimmed disc in the trailing margin: "closed and sealed", the most ornate
+   of the six; a finished chapter rather than a ticked-off task. */
+.rm-waxSeal .toc-row.read::after {
+  content: ""; position: absolute; inset-block-start: 50%; inset-inline-end: 9px;
+  inline-size: 9px; block-size: 9px; margin-block-start: -4.5px; border-radius: 50%;
+  background: color-mix(in srgb, var(--read-marker) 55%, transparent);
+  box-shadow: inset 0 0 0 1.5px var(--read-marker);
+}
+/* The dot column already signals the CURRENT row; on a read row it would double up with the trail/seal,
+   so it softens (never disappears — unread rows keep their own dot for rhythm). */
+/* The chooser's preview cell (Global Settings → Bookmark). Three stacked stand-in rows reusing the REAL
+   `.toc-row.read/.active` selectors above, so the picker shows exactly what the panel will render — no
+   second drawing of the six shapes to drift out of sync. */
+.gs-rm-prev { display: flex; flex-direction: column; gap: 3px; inline-size: 46px; }
+.gs-rm-prev .toc-row {
+  position: relative; display: block; block-size: 7px; inline-size: 100%;
+  border: 0; padding: 0; border-radius: 2px;
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+}
+.gs-rm-prev .toc-row.active { background: color-mix(in srgb, var(--read-marker) 16%, transparent); }
+.gs-rm-prev .toc-label, .gs-rm-prev .toc-num.big { display: none; }
+.gs-note-tight { margin-block: -2px 6px; }
+
+.toc-row.read .toc-dot { background: color-mix(in srgb, var(--read-marker) 30%, transparent); }
+.toc-row.read .toc-label { color: color-mix(in srgb, var(--text) 72%, transparent); }
+.toc-row.read.active .toc-label { color: var(--text); }
+
 .toc-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: color-mix(in srgb, var(--text) 18%, transparent); }
 .toc-dot.current { background: transparent; border: 1.5px solid var(--accent); }
 

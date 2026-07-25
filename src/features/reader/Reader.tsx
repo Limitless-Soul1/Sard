@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, useMemo } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
@@ -40,6 +40,7 @@ import { useAnnotations } from "./annotationsStore";
 import { useBookmarks } from "./bookmarksStore";
 import { ReaderChrome, type SettingsSection } from "./ReaderChrome";
 import { SettingsPanel } from "./SettingsPanel";
+import { useReadMarkerStyle } from "../../lib/readMarkerStyle"; // RAWY-256: the global read-marker variant
 import { ReturnPill } from "./ReturnPill"; // RAWY-250: the return-to-reading-position pill
 import { TtsPlayer } from "./TtsPlayer";
 import { releaseButtonFocusAfterPointerClick, skipSentenceForArrow, useTts } from "../../lib/tts";
@@ -120,7 +121,13 @@ export function Reader({
   const chaptersOpen = leftPanel === "contents";
   const searchOpen = leftPanel === "search";
   const [annoOpen, setAnnoOpen] = useState(false);
+  const readMarker = useReadMarkerStyle((s2) => s2.marker); // RAWY-256: global choice, applied to the panel
   const [toc, setToc] = useState<TocEntry[]>([]);
+  // RAWY-256: href -> spine section index, built ONCE per book (not per row, not per render) from
+  // book.sections ids. Feeds the Contents read markers.
+  const [tocSecMap, setTocSecMap] = useState<Map<string, number>>(new Map());
+  // Bumped whenever a chapter is newly marked read, so the memoised read-href Set recomputes exactly then.
+  const [readVersion, setReadVersion] = useState(0);
   const [annoTab, setAnnoTab] = useState<import("./AnnotationsPanel").AnnoTab>("notes");
   const progressTimer = useRef<number | undefined>(undefined);
   const styleTimer = useRef<number | undefined>(undefined);
@@ -139,6 +146,7 @@ export function Reader({
   // [] deps), so it must reach the CURRENT thaw / mark-read closures through refs.
   const thawRef = useRef<() => void>(() => {});
   const markChapterReadRef = useRef<(sec: number) => void>(() => {});
+  const markSeenStartRef = useRef<(sec: number) => void>(() => {}); // RAWY-256 (addendum): same stale-capture guard
   // The last spine section index seen by onRelocate. Used to detect a MANUAL chapter change while a
   // read-aloud session sits in the "chapter-end" state (audio finished, the pill/Kashida offered a
   // "next chapter" button) — navigating away in that window must clear the stale offer so the button
@@ -163,6 +171,15 @@ export function Reader({
   // was already true when we landed (a chapter shorter than one screen) — that one completes only when the
   // reader LEAVES IT FORWARD, never on arrival; `ended` de-dupes repeated relocates at the end.
   const chapTrackRef = useRef<{ sec: number; atStart: boolean }>({ sec: -1, atStart: false });
+  // RAWY-256 (addendum): "I have seen this chapter's BEGINNING" is a fact about the CHAPTER, not about the
+  // current visit, so it cannot live in the single-slot tracker above — `beginJump` pre-arms that tracker to
+  // the jump target with `atStart: false`, which DESTROYED the fact for the chapter being left. The owner hit
+  // exactly that: read N from its start → jumped to a highlight → Returned to N near its end → read on →
+  // advanced out, and N was never marked. A per-SESSION SET of section indices whose start has been seen
+  // survives any excursion away and back, by ANY route (the Return button, a fresh jump, ordinary
+  // navigation), while still excluding a chapter whose beginning was never seen (case 4). Session-scoped
+  // deliberately: persisting it across a restart (case 6) is the owner's pending decision, NOT implemented.
+  const seenStartRef = useRef<Set<number>>(new Set());
   // RAWY-250 (addendum 5): timestamp of the last JUMP navigation. A thaw may ONLY be caused by a
   // READING-DRIVEN forward advance (page turn / scroll / TTS advancing into the next chapter). A section
   // change caused by a JUMP is NEVER a thaw, in EITHER direction — the previous rule tested only
@@ -325,10 +342,20 @@ export function Reader({
             const jumpDriven = performance.now() - jumpNavAtRef.current < JUMP_NAV_WINDOW_MS;
             jumpNavAtRef.current = 0; // consumed by the section change it caused
             if (!jumpDriven && track.sec >= 0 && curSec > track.sec) {
-              if (track.atStart) markChapterReadRef.current(track.sec);
+              // RAWY-256 (addendum): consult the DURABLE per-book set, not the transient tracker. The
+              // tracker is a single slot that `beginJump` overwrites with `atStart:false` when the reader
+              // jumps away, so a chapter entered at its start and returned to (case 2) or re-entered
+              // mid-way (case 3) had lost the fact and could never be marked. The set still EXCLUDES a
+              // chapter whose beginning was never seen (case 4) — that exclusion is the point.
+              if (seenStartRef.current.has(track.sec)) markChapterReadRef.current(track.sec);
               thawRef.current();
             }
-            chapTrackRef.current = { sec: curSec, atStart: ctrl.atChapterStart() };
+            // Record "I have seen this chapter's beginning" whenever a section change LANDS at a start —
+            // by ordinary advance, a TOC click, or a resume that lands at the top. Durable for the book
+            // (case 6), so closing the app mid-chapter does not forfeit a chapter genuinely read.
+            const landedAtStart = ctrl.atChapterStart();
+            if (landedAtStart) markSeenStartRef.current(curSec);
+            chapTrackRef.current = { sec: curSec, atStart: landedAtStart };
           }
         }
         if (progressTimer.current) clearTimeout(progressTimer.current);
@@ -364,6 +391,7 @@ export function Reader({
       set({ status: "ready", dir: ctrl.dir ?? "?", style: initialStyle, bookTitle: ctrl.title ?? null });
       if (targetIsPdf) setPdfPageCount(ctrl.pdfPageCount); // RAWY-87: total pages for the position readout
       setToc(ctrl.getToc()); // chapters panel (RAWY-21)
+      setTocSecMap(ctrl.tocHrefSectionMap()); // RAWY-256: one pass, reused by every marker render
 
       // RAWY-85: enrich a PDF's real title/author (PDF.js getMetadata) + a page-1 cover (getCover)
       // ONCE — import stored only the filename + no cover. The library reflects it on next visit.
@@ -384,11 +412,24 @@ export function Reader({
       useBookmarks.getState().load(target.id); // RAWY-41 — this book's saved locations
       // RAWY-250 (PART 4): this book's read chapters (settings key/value — additive, no migration; an absent
       // key simply means "nothing read yet", so an existing library is unaffected).
-      const readRaw = await settingsGet(`chapters_read:${target.id}`).catch(() => null);
+      // RAWY-256 (addendum, case 6): …and the per-book "beginning seen" set, loaded the same way, so the
+      // fact survives a restart (a long book is read across many sessions).
+      const [readRaw, seenRaw] = await Promise.all([
+        settingsGet(`chapters_read:${target.id}`).catch(() => null),
+        settingsGet(`seen_start:${target.id}`).catch(() => null),
+      ]);
       if (!stale()) {
-        let secs: number[] = [];
-        try { const p = readRaw ? JSON.parse(readRaw) : []; if (Array.isArray(p)) secs = p.filter((n) => typeof n === "number"); } catch { /* corrupt/legacy value → start empty */ }
-        readChaptersRef.current = new Set(secs);
+        const parseSecs = (raw: string | null): number[] => {
+          try {
+            const p = raw ? JSON.parse(raw) : [];
+            return Array.isArray(p) ? p.filter((n) => typeof n === "number") : [];
+          } catch {
+            return []; // corrupt/legacy value → start empty rather than throw
+          }
+        };
+        readChaptersRef.current = new Set(parseSecs(readRaw));
+        seenStartRef.current = new Set(parseSecs(seenRaw));
+        setReadVersion((v) => v + 1); // RAWY-256: publish the loaded set to the panel
       }
     } catch (e) {
       // A SUPERSEDED open's error (e.g. ctrl.open on a null stage after unmount) must NOT flip the
@@ -1284,9 +1325,22 @@ export function Reader({
     ctrlRef.current?.goToLocator(a.cfi);
   }, []);
   // RAWY-250 (PART 4): record a chapter as READ (idempotent) and persist the set for this book.
+  // RAWY-256 (addendum, case 6 — owner's decision): remember that this chapter's BEGINNING has been seen,
+  // and PERSIST it per book. A 1432-chapter book is read across many sessions; if the fact died with the
+  // session, closing the app mid-chapter would forfeit a chapter the owner genuinely read — making the
+  // marker useless in exactly the books it exists for. Same settings key/value pattern as `chapters_read`
+  // (`seen_start:<bookId>`, JSON array of section indices) ⇒ no schema change, no migration.
+  const markSeenStart = useCallback((sec: number) => {
+    if (sec < 0 || seenStartRef.current.has(sec)) return;
+    seenStartRef.current.add(sec);
+    settingsSet(`seen_start:${bookRef.current}`, JSON.stringify([...seenStartRef.current].sort((x, y) => x - y))).catch(() => {});
+  }, []);
+  markSeenStartRef.current = markSeenStart;
+
   const markChapterRead = useCallback((sec: number) => {
     if (sec < 0 || readChaptersRef.current.has(sec)) return;
-    readChaptersRef.current.add(sec); // in-memory only while the gate below is closed
+    readChaptersRef.current.add(sec);
+    setReadVersion((v) => v + 1); // RAWY-256: recompute the read-href Set exactly once per newly-read chapter
     // RAWY-250 (addendum 3): DATA COLLECTION IS OFF pending the owner's decision — no read history may accrue
     // from a rule he has not yet confirmed live. The completion rule above is fully wired; only the WRITE is
     // gated. Flip this to `true` once he confirms, and the set persists from then on. (Anything already
@@ -1300,6 +1354,17 @@ export function Reader({
   // RAWY-250 (PART 1): every programmatic jump path freezes first, then navigates. These are exactly the
   // paths RAWY-232 measured as overwriting the reading position: TOC click, highlight/note, search hit
   // (below), and the in-reader bookmark list (which also routes through jumpCfi).
+  // RAWY-256: the set of TOC hrefs whose chapter is READ — a STABLE reference, recomputed only when the
+  // book loads or a chapter is newly marked (readVersion), never per render and never per row. The rows are
+  // memo-ised (RAWY-175), so a chapter change re-renders 2 rows, not 1432.
+  const readHrefs = useMemo(() => {
+    const out = new Set<string>();
+    if (!readChaptersRef.current.size || !tocSecMap.size) return out;
+    for (const [href, sec] of tocSecMap) if (readChaptersRef.current.has(sec)) out.add(href);
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tocSecMap, readVersion]);
+
   // RAWY-250 (addendum 3): the Contents panel is ORDINARY NAVIGATION, NOT a jump — clicking a chapter targets
   // a PLACE the reader intends to read FROM, not a piece of content he wants to look at. It therefore does NOT
   // freeze and shows no pill; progress saves normally. (RAWY-232's path table measured which paths WRITE
@@ -1420,6 +1485,8 @@ export function Reader({
         currentHref={chapterHref}
         hideTitles={hideChapterTitles}
         onJump={jumpHref}
+        readHrefs={readHrefs}
+        readMarker={readMarker}
         fraction={fraction}
       />
 

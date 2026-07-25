@@ -40,6 +40,7 @@ import { useAnnotations } from "./annotationsStore";
 import { useBookmarks } from "./bookmarksStore";
 import { ReaderChrome, type SettingsSection } from "./ReaderChrome";
 import { SettingsPanel } from "./SettingsPanel";
+import { ReturnPill } from "./ReturnPill"; // RAWY-250: the return-to-reading-position pill
 import { TtsPlayer } from "./TtsPlayer";
 import { releaseButtonFocusAfterPointerClick, skipSentenceForArrow, useTts } from "../../lib/tts";
 import { useChromeOnIntent } from "./useChromeOnIntent";
@@ -54,6 +55,22 @@ export interface OpenTarget {
 }
 
 const SAVE_DEBOUNCE_MS = 500;
+
+// RAWY-250: the position the owner was reading before a programmatic jump, plus the chapter label the return
+// pill shows ("العودة إلى … · <chapter>") and the section it lived in. A CFI is cross-section, so the anchor
+// survives chapter changes for free.
+type ReadAnchor = { cfi: string; label: string | null; sec: number };
+
+// RAWY-250: read-chapter history accrues from here on (owner's go-ahead), so RAWY-256's Contents indicator
+// has real data the day it lands. The completion rule is "advanced FORWARD out of the chapter" (D66 §4) plus
+// "entered at/near its beginning" for the marker (§5). If the rule ever proves wrong, clearing the history is
+// a single key delete per book: `chapters_read:<bookId>` (see OPEN).
+const RECORD_READ_CHAPTERS = true;
+
+// RAWY-250 (addendum 5): how long after a jump its resulting relocate still counts as JUMP-DRIVEN. foliate
+// lands and emits within a frame or two; 1.5 s is far above that and far below any real reading pace, so it
+// cannot swallow a genuine page-turn advance.
+const JUMP_NAV_WINDOW_MS = 1500;
 
 // RAWY-181 (BUG 1): resolve AFTER the browser has painted (the 2nd rAF runs after the 1st's paint), so a
 // synchronous task queued right after runs UNDER the freshly-painted UI instead of blocking a blank frame.
@@ -118,6 +135,10 @@ export function Reader({
   // RAWY-249 (PART 2): latest hideChrome, so the once-registered onRelocate closure (openBook, [] deps) always
   // calls the current hook callback — same stale-capture guard as playRef.
   const hideChromeRef = useRef<() => void>(() => {});
+  // RAWY-250: same stale-capture guard as playRef/hideChromeRef — onRelocate is registered ONCE (openBook,
+  // [] deps), so it must reach the CURRENT thaw / mark-read closures through refs.
+  const thawRef = useRef<() => void>(() => {});
+  const markChapterReadRef = useRef<(sec: number) => void>(() => {});
   // The last spine section index seen by onRelocate. Used to detect a MANUAL chapter change while a
   // read-aloud session sits in the "chapter-end" state (audio finished, the pill/Kashida offered a
   // "next chapter" button) — navigating away in that window must clear the stale offer so the button
@@ -128,6 +149,38 @@ export function Reader({
   // read-aloud. Without it, the relocate from the next-chapter advance would trip the chapter-end clear
   // (above) and kill the session before startListen() can begin reading the new chapter.
   const nextChapterArmedRef = useRef(false);
+  // RAWY-250: THE READING ANCHOR. A programmatic jump (search hit / highlight / note / TOC / bookmark)
+  // captures where the owner was ACTUALLY reading and FREEZES `reading_progress` — foliate fires `relocate`
+  // on every view move and nothing else distinguishes "I read here" from "I glanced here" (RAWY-232), so
+  // without this a single search costs him his place. ONE-DEEP by the owner's choice: a second jump does NOT
+  // overwrite the anchor, it still points at the original reading position. The anchor IS the freeze (one
+  // piece of state, so the pill and the freeze can never disagree). `anchorRef` is what the once-registered
+  // onRelocate closure reads; `anchorUi` mirrors it for rendering.
+  const anchorRef = useRef<ReadAnchor | null>(null);
+  const [anchorUi, setAnchorUi] = useState<ReadAnchor | null>(null);
+  // RAWY-250 (PART 0.4 / D66): per-chapter tracking for the SHARED end-signal. `atStart` = the chapter was
+  // entered at its beginning (a mid-chapter jump must never mark it read); `endOnArrival` = its end-condition
+  // was already true when we landed (a chapter shorter than one screen) — that one completes only when the
+  // reader LEAVES IT FORWARD, never on arrival; `ended` de-dupes repeated relocates at the end.
+  const chapTrackRef = useRef<{ sec: number; atStart: boolean }>({ sec: -1, atStart: false });
+  // RAWY-250 (addendum 5): timestamp of the last JUMP navigation. A thaw may ONLY be caused by a
+  // READING-DRIVEN forward advance (page turn / scroll / TTS advancing into the next chapter). A section
+  // change caused by a JUMP is NEVER a thaw, in EITHER direction — the previous rule tested only
+  // `curSec > track.sec`, so a FORWARD jump (the owner's 140 → 397) self-thawed: it cleared the anchor (pill
+  // vanished), wrote progress at the jumped position, and a later jump then installed a fresh anchor there
+  // (pill reappeared pointing at the wrong chapter). A timestamp rather than a bare flag so that a jump
+  // landing INSIDE the same chapter (no section change, nothing to consume it) cannot poison a genuine
+  // advance minutes later.
+  const jumpNavAtRef = useRef(0);
+  // RAWY-250 (addendum 3): `atStart` is the ONLY geometry still needed — the completion MOMENT is now the
+  // forward section change, so `atChapterEnd()` is gone; `atChapterStart()` survives because the read-marker
+  // still requires the chapter to have been entered at/near its beginning.
+  // RAWY-250 (PART 4): the set of chapters (spine section indices) read to the end, per book. Persisted in the
+  // existing settings key/value table (`chapters_read:<bookId>`) — additive, no schema migration (D66).
+  // NOTE (RAWY-250 PART 4, half 2): the read-chapter SET is recorded and persisted from this session on, so
+  // the history exists by the time the Contents indicator lands; the indicator UI itself (6 variants +
+  // chooser) is NOT built yet — see OPEN. Nothing here renders it, so there is no half-built control.
+  const readChaptersRef = useRef<Set<number>>(new Set());
   // RAWY-82 (#15): rAF-batch the live style apply during a slider drag — hold the latest style and
   // apply it at most once per frame (persistence stays on the 500ms debounce below).
   const styleRafRef = useRef<number | null>(null);
@@ -250,7 +303,39 @@ export function Reader({
         // bar was shown (→ hides) or already hidden (→ no-op). Gated on a real section CHANGE + near-top, so
         // mid-chapter scrolls, resumes and fragment-jumps (which land below the bar) are untouched.
         if (prevSec !== -1 && curSec !== prevSec && ctrl.openingUnderTopBar()) hideChromeRef.current();
+        // RAWY-250 (PART 0.4 / PART 2 / PART 4, D66): ONE end-signal, TWO different questions. THAW asks
+        // "is he reading HERE now?"; the READ MARKER asks "has he consumed this chapter's WHOLE content?".
+        // A mid-chapter jump then read-to-the-end answers YES to the first and NO to the second, so the
+        // marker carries one EXTRA condition (entered at the beginning) and is therefore always a SUBSET of
+        // thaw — which is why a chapter can never be marked read while progress says he never got there.
+        if (!targetIsPdf) {
+          const track = chapTrackRef.current;
+          if (curSec !== track.sec) {
+            // COMPLETION = ADVANCING FORWARD OUT OF A CHAPTER (owner's definition, addendum 3) — arrival is
+            // never completion, so there is no longer a short-chapter special case and no end-geometry test.
+            // ONE rule, two questions: advancing forward THAWS (he is reading here), and additionally MARKS
+            // READ only if the chapter was also ENTERED AT ITS BEGINNING — entered mid-way by a jump then
+            // advanced out of thaws but is NOT read (he never saw the first half), so marker ⊂ thaw holds.
+            // Going BACKWARD or jumping sideways out of a chapter completes nothing. A TTS chapter advance is
+            // the same forward section change — one signal, no separate notion.
+            // RAWY-250 (addendum 5): ONLY a READING-DRIVEN advance completes a chapter. A jump-driven
+            // section change (search / highlight / note / bookmark) is never a thaw and never a completion,
+            // in EITHER direction — otherwise a forward jump self-thaws, destroying the anchor AND writing
+            // progress at the jumped position.
+            const jumpDriven = performance.now() - jumpNavAtRef.current < JUMP_NAV_WINDOW_MS;
+            jumpNavAtRef.current = 0; // consumed by the section change it caused
+            if (!jumpDriven && track.sec >= 0 && curSec > track.sec) {
+              if (track.atStart) markChapterReadRef.current(track.sec);
+              thawRef.current();
+            }
+            chapTrackRef.current = { sec: curSec, atStart: ctrl.atChapterStart() };
+          }
+        }
         if (progressTimer.current) clearTimeout(progressTimer.current);
+        // RAWY-250 (PART 1): while the anchor holds (a jump is being previewed), the reader's REAL position
+        // must stay untouched in the row — so resume-on-open still lands where he was actually reading.
+        // Every other write path is unchanged; the freeze ends via the pill's × or the end-signal above.
+        if (anchorRef.current) return;
         progressTimer.current = window.setTimeout(() => {
           // RAWY-85: a PDF has no CFI — persist it by fraction (empty cfi) so it still resumes.
           if (cfi || targetIsPdf) progressSave(bookRef.current, cfi ?? "", fraction).catch(console.error);
@@ -297,6 +382,14 @@ export function Reader({
       await useAnnotations.getState().load();
       if (stale()) return;
       useBookmarks.getState().load(target.id); // RAWY-41 — this book's saved locations
+      // RAWY-250 (PART 4): this book's read chapters (settings key/value — additive, no migration; an absent
+      // key simply means "nothing read yet", so an existing library is unaffected).
+      const readRaw = await settingsGet(`chapters_read:${target.id}`).catch(() => null);
+      if (!stale()) {
+        let secs: number[] = [];
+        try { const p = readRaw ? JSON.parse(readRaw) : []; if (Array.isArray(p)) secs = p.filter((n) => typeof n === "number"); } catch { /* corrupt/legacy value → start empty */ }
+        readChaptersRef.current = new Set(secs);
+      }
     } catch (e) {
       // A SUPERSEDED open's error (e.g. ctrl.open on a null stage after unmount) must NOT flip the
       // current book into the error overlay — only report a failure that belongs to the live open.
@@ -357,8 +450,16 @@ export function Reader({
     const targetIsPdf = (initial.format ?? "").toLowerCase() === "pdf";
     const flush = async () => {
       const st = useReader.getState();
+      // RAWY-250 (addendum 4, DEFECT 1): the freeze must hold at EVERY writer, not just the debounced one.
+      // `reading_progress` has TWO writers (RAWY-232) — the onRelocate save AND this close flush — and the
+      // guard was originally placed only on the first, so closing the app while parked on a jumped-to
+      // position persisted THAT position and destroyed the real one (owner: jumped to a highlight in ch140,
+      // closed, reopened at ch140). While an anchor is active NOTHING may write the row. The freeze STATE
+      // deliberately does NOT survive the restart — no persistent anchor is stored; the row is simply left
+      // untouched, so the next open resumes at the real reading position with no pill and no trace of the
+      // visit. The TTS cursor flush below is unaffected (separate storage, not reading_progress).
       // progress: same rule as the debounced save (a PDF persists by fraction with an empty cfi)
-      if (st.cfi || targetIsPdf) await progressSave(bookRef.current, st.cfi ?? "", st.fraction).catch(() => {});
+      if (!anchorRef.current && (st.cfi || targetIsPdf)) await progressSave(bookRef.current, st.cfi ?? "", st.fraction).catch(() => {});
       // the last-spoken TTS sentence: the same cursor the throttled save + stop-on-exit write
       if (useTts.getState().active) {
         const cur = ctrlRef.current?.getTtsCursor(useTts.getState().index);
@@ -516,6 +617,10 @@ export function Reader({
     // visible while paused (the sentence band already survives via showReadingHighlight).
     ctrlRef.current?.showReadingWord(ttsWordIndex);
   }, [ttsActive, ttsWordIndex, ttsStatus]);
+
+  // RAWY-250 (addendum 3): read-aloud needs NO separate handling — when TTS advances to the next chapter it
+  // produces the SAME forward section change as reading on, which the onRelocate rule above already treats as
+  // completion. One signal, no fourth notion of "finished".
 
   // RAWY-230 (§4) / RAWY-249 (PART 3D): when the LAST panel/drawer closes, return focus to the reading frame
   // so SPACE/arrows reach the reading shortcuts immediately — the owner must never have to click the book to
@@ -891,8 +996,34 @@ export function Reader({
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // RAWY-250 (PART 1): capture the REAL reading position and freeze progress, immediately BEFORE a
+  // programmatic jump navigates. ONE-DEEP (the owner's choice): if an anchor already exists, a further jump
+  // keeps pointing at the ORIGINAL reading position rather than at the previous jump's landing.
+  // `target` = the CFI/href the jump is about to navigate to, so the landing section can be pre-armed.
+  const beginJump = useCallback((target?: string) => {
+    // RAWY-250 (addendum 6): DETERMINISTIC jump suppression. Resolve the section the jump will land in and
+    // pre-arm the chapter tracker with it, so the landing relocate is NOT a section change and therefore can
+    // never reach the thaw rule — regardless of how long the load takes, how busy the machine is, or how many
+    // relocates the engine emits for one jump (an `onExpand` re-anchor emits another). `atStart: false` is
+    // exactly right here too: a chapter ENTERED BY A JUMP must never be markable as read (the reader never
+    // saw its first half), so this one assignment encodes both rules.
+    const targetSec = target ? (ctrlRef.current?.targetSectionIndex(target) ?? null) : null;
+    if (targetSec !== null) chapTrackRef.current = { sec: targetSec, atStart: false };
+    // RAWY-250 (addendum 5): the TIMING fallback, used ONLY when the target could not be resolved (a
+    // malformed/out-of-bounds CFI). Stamped for EVERY jump — including one that keeps the existing anchor —
+    // so a 2nd/3rd jump is never left unstamped (the owner's failing case).
+    jumpNavAtRef.current = targetSec === null ? performance.now() : 0;
+    if (anchorRef.current) return; // already frozen — keep the ORIGINAL anchor (one-deep, never replaced)
+    const st = useReader.getState();
+    if (!st.cfi) return; // nothing real to return to yet (a PDF, or before the first relocate)
+    const a: ReadAnchor = { cfi: st.cfi, label: st.chapterLabel, sec: ctrlRef.current?.currentSectionIndex() ?? -1 };
+    anchorRef.current = a;
+    setAnchorUi(a);
+  }, []);
+
   const onJumpHit = useCallback((hit: SearchHit) => {
     setActiveHitCfi(hit.cfi);
+    beginJump(hit.cfi); // RAWY-250: freeze the real position + pre-arm the landing section (§6.2)
     // RAWY-139: pass the split excerpt so goToSearchHit can re-find the hit's exact text in the rendered
     // doc (the search CFI is unreliable there — the rendered structure differs from the search doc).
     ctrlRef.current?.goToSearchHit(hit.cfi, { pre: hit.pre, match: hit.match, post: hit.post });
@@ -1133,8 +1264,48 @@ export function Reader({
 
   // RAWY-175 (AUD-3): STABLE callbacks so the memoized ChaptersPanel skips re-rendering the ~1,300-row
   // TOC on unrelated Reader re-renders (a search batch, a TTS word tick). Behaviour identical.
+  // RAWY-250 (PART 2): THAW — the freeze ends and the CURRENT position is written at once, so "I am reading
+  // here now" takes effect immediately rather than waiting for the next relocate. Used by the pill's × and by
+  // the end-signal (reaching the end of the chapter he landed in, incl. TTS reading it to the end).
+  const thawAnchor = useCallback(() => {
+    if (!anchorRef.current) return;
+    anchorRef.current = null;
+    setAnchorUi(null);
+    const st = useReader.getState();
+    if (st.cfi) progressSave(bookRef.current, st.cfi, st.fraction).catch(() => {});
+  }, []);
+  // RAWY-250 (PART 3): RETURN — go back to the frozen position and drop the anchor. Nothing to thaw: the
+  // reader IS the frozen position again, so ordinary saving simply resumes from it.
+  const returnToAnchor = useCallback(() => {
+    const a = anchorRef.current;
+    if (!a) return;
+    anchorRef.current = null;
+    setAnchorUi(null);
+    ctrlRef.current?.goToLocator(a.cfi);
+  }, []);
+  // RAWY-250 (PART 4): record a chapter as READ (idempotent) and persist the set for this book.
+  const markChapterRead = useCallback((sec: number) => {
+    if (sec < 0 || readChaptersRef.current.has(sec)) return;
+    readChaptersRef.current.add(sec); // in-memory only while the gate below is closed
+    // RAWY-250 (addendum 3): DATA COLLECTION IS OFF pending the owner's decision — no read history may accrue
+    // from a rule he has not yet confirmed live. The completion rule above is fully wired; only the WRITE is
+    // gated. Flip this to `true` once he confirms, and the set persists from then on. (Anything already
+    // written by the previous build is one key delete per book: `chapters_read:<bookId>`.)
+    if (!RECORD_READ_CHAPTERS) return;
+    settingsSet(`chapters_read:${bookRef.current}`, JSON.stringify([...readChaptersRef.current].sort((x, y) => x - y))).catch(() => {});
+  }, []);
+  thawRef.current = thawAnchor;
+  markChapterReadRef.current = markChapterRead;
+
+  // RAWY-250 (PART 1): every programmatic jump path freezes first, then navigates. These are exactly the
+  // paths RAWY-232 measured as overwriting the reading position: TOC click, highlight/note, search hit
+  // (below), and the in-reader bookmark list (which also routes through jumpCfi).
+  // RAWY-250 (addendum 3): the Contents panel is ORDINARY NAVIGATION, NOT a jump — clicking a chapter targets
+  // a PLACE the reader intends to read FROM, not a piece of content he wants to look at. It therefore does NOT
+  // freeze and shows no pill; progress saves normally. (RAWY-232's path table measured which paths WRITE
+  // progress — it was never a ruling on which are jumps.)
   const jumpHref = useCallback((href: string) => ctrlRef.current?.goToHref(href), []);
-  const jumpCfi = useCallback((cfi: string) => ctrlRef.current?.goToLocator(cfi), []);
+  const jumpCfi = useCallback((cfi: string) => { beginJump(cfi); return ctrlRef.current?.goToLocator(cfi); }, [beginJump]);
   const closeContents = useCallback(() => setLeftPanel((p) => (p === "contents" ? null : p)), []);
   const closeSearch = useCallback(() => setLeftPanel((p) => (p === "search" ? null : p)), []);
   // (RAWY-216 removed the two anti-spoiler toggle callbacks: the Contents panel no longer duplicates
@@ -1342,6 +1513,17 @@ export function Reader({
           hasNextChapter={ttsStatus === "chapter-end" && (ctrlRef.current?.hasNextSection() ?? false)}
           onNextChapter={nextChapter}
           onPlayPause={playOrRelisten}
+        />
+      )}
+
+      {/* RAWY-250 (PART 3): the return pill — shown only while an anchor holds (i.e. while progress is
+          frozen after a jump), so the freeze is never invisible. EPUB only (a PDF has no CFI anchor). */}
+      {!isPdf && anchorUi && (
+        <ReturnPill
+          label={anchorUi.label}
+          chromeShown={chromeShown}
+          onReturn={returnToAnchor}
+          onDismiss={thawAnchor}
         />
       )}
 

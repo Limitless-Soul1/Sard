@@ -954,6 +954,48 @@ html, body, #root {
 :root { --tts-teal: #4E8A7B; --tts-teal-dot: #5EA88F; }
 :root[data-dark="true"] { --tts-teal: #8FC7B4; }
 
+/* RAWY-250 — the RETURN pill (top of the reader). Reuses the .tts-pill vocabulary verbatim (same ground,
+   border, radius, blur, shadow, motion) per D19: Sard already has a pill language and this is it, not a new
+   visual idea. Deliberately at the TOP, far from the read-aloud pill at the bottom, so BOTH can show at once
+   with no overlap. `position: fixed` = a pure overlay with ZERO layout impact, so it cannot reintroduce the
+   RAWY-142 content jump; only its top OFFSET changes with the bar (`below-chrome` clears the 70px .rc-top
+   while it is shown, 18px when it is hidden). Centred over the READING AREA via --reading-shift, exactly like
+   the TTS pill, so an open side panel never pushes it off-centre. NOT hidden by immersive mode (D66) — it is
+   absent from the `im-hide-pill` selectors by construction, like the chapter-end / Edge-error prompts. */
+.return-pill {
+  position: fixed; z-index: 26; left: 50%; top: 18px;
+  transform: translateX(calc(-50% + var(--reading-shift, 0px)));
+  transition: top 0.22s cubic-bezier(0.22, 0.61, 0.36, 1), transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  max-width: min(420px, calc(100vw - 28px));
+  display: flex; align-items: center; gap: 2px;
+  padding: 4px 4px 4px 6px; border-radius: 14px; border: 1px solid var(--chrome-border);
+  background: color-mix(in srgb, var(--chrome-bg) 96%, transparent);
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  box-shadow: 0 16px 42px rgba(40, 28, 14, 0.24); font-family: var(--ui-font);
+}
+:root[data-dark="true"] .return-pill { box-shadow: 0 16px 42px rgba(0, 0, 0, 0.5); }
+/* clear the 70px top bar while it is SHOWN (RAWY-66 height); a hidden bar frees the space again */
+.return-pill.below-chrome { top: 78px; }
+@media (prefers-reduced-motion: reduce) { .return-pill { transition: none; } }
+.return-pill-main {
+  display: flex; align-items: center; gap: 7px; min-width: 0;
+  padding: 5px 8px; border: 0; border-radius: 10px; background: transparent;
+  color: var(--text); font: 600 0.8125rem var(--ui-font); cursor: pointer;
+}
+.return-pill-main:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.return-pill-arrow { color: var(--accent); font-size: 1.05rem; line-height: 1; }
+.return-pill-text { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.return-pill-lead { color: color-mix(in srgb, var(--text) 68%, transparent); white-space: nowrap; }
+/* the chapter name is the long part — it truncates, never the label */
+.return-pill-chapter { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.return-pill-x {
+  flex: 0 0 auto; width: 28px; height: 28px; border: 0; border-radius: 9px; background: transparent;
+  color: color-mix(in srgb, var(--text) 62%, transparent); font-size: 0.8125rem; cursor: pointer;
+}
+.return-pill-x:hover { background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); }
+.return-pill-main:focus-visible,
+.return-pill-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .tts-pill {
   position: fixed; z-index: 25; left: 50%; bottom: 26px;
   transform: translateX(calc(-50% + var(--reading-shift, 0px)));

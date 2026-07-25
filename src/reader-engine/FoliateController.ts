@@ -684,6 +684,10 @@ async function ensureFoliateDefined(): Promise<void> {
 // still blocked, but a deliberate second flick advances more readily (lighter).
 const BOUNDARY_PAUSE_MS = 140;
 const BOUNDARY_EDGE_PX = 4;
+// RAWY-250: how close to a section's top still counts as "entered at the beginning" (scrolled flow). A
+// natural advance / TOC click / resume-at-top lands at exactly 0; a mid-chapter jump lands hundreds of px in.
+// Deliberately small — this gate exists to keep a mid-chapter jump from marking a chapter read.
+const CHAPTER_START_SLACK_PX = 24;
 // RAWY-73/75: wheel travel (accumulated px) that constitutes a deliberate scroll intent — now
 // ASYMMETRIC (RAWY-75). Hiding on scroll-down stays near-immediate (any real notch ≈ 100–120px
 // clears 24). Showing on scroll-up needs a CLEAR, deliberate gesture: one notch is a light nudge
@@ -1424,6 +1428,35 @@ export class FoliateController {
     const bar = document.querySelector(".reader-chrome .rc-top");
     const barH = bar instanceof HTMLElement ? bar.getBoundingClientRect().height : 70;
     return this.readingScrollTop < barH;
+  }
+
+  /** RAWY-250 (addendum 6): the spine SECTION a jump target (CFI or TOC href) resolves to, WITHOUT
+   *  navigating — foliate's own `resolveNavigation`, the same resolver `goTo` uses internally, so the answer
+   *  is by construction the section the jump will land in. This makes jump-driven section changes detectable
+   *  by IDENTITY instead of by timing: the Reader pre-arms its chapter tracker with this index, so the
+   *  landing relocate is not a section CHANGE at all and can never be mistaken for reading on — however late
+   *  it arrives, and however many relocates the engine emits for one jump (an `onExpand` re-anchor emits
+   *  another). Returns null if the target cannot be resolved, so the caller can fall back. */
+  targetSectionIndex(target: string): number | null {
+    const v = this.view as unknown as { resolveNavigation?: (t: string) => { index?: number } | undefined } | null;
+    try {
+      const i = v?.resolveNavigation?.(target)?.index;
+      return typeof i === "number" && i >= 0 ? i : null;
+    } catch {
+      return null; // an out-of-bounds / malformed target — the caller keeps its timing fallback
+    }
+  }
+
+  /** RAWY-250 (PART 0.4 case 2): did the view land at/near the START of the current chapter? The read-marker
+   *  requires the chapter to have been ENTERED at its beginning (a natural advance, a TOC click, or a resume
+   *  that lands at the top) — a mid-chapter jump must NOT mark it read, because the reader never saw the
+   *  first half (a FALSE "read" is worse than a missing one: it makes the owner skip what he never read).
+   *  Purely GEOMETRIC, so it needs NO new persistent state, no arming, and never touches a CFI. */
+  atChapterStart(): boolean {
+    const r = this.view?.renderer as { page?: number; size?: number } | undefined;
+    if (!r || this.isFixedLayout) return false;
+    if (this.scrolledMode) return this.readingScrollTop <= CHAPTER_START_SLACK_PX;
+    return (r.page ?? 0) <= 1; // first text page of the section
   }
 
   /** RAWY-249 (PART 1): scroll so `range` sits at the VERTICAL CENTRE of the reading viewport, instead of

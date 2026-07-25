@@ -375,6 +375,10 @@ export const en = {
   // Bookmarks (RAWY-41, Band J)
   "panel.bookmarks": "Bookmarks",
   "panel.noBookmarks": "No bookmarks yet — press the Bookmark button to save your spot.",
+  // RAWY-250: the return-to-reading-position pill shown after a jump (search / highlight / TOC / bookmark).
+  "anchor.return": "Back to",
+  "anchor.returnAria": "Back to where I was reading",
+  "anchor.dismiss": "Read from here",
   "bookmark.here": "Bookmarked",
   "bookmark.add": "Bookmark this spot",
   "bookmark.remove": "Remove bookmark",

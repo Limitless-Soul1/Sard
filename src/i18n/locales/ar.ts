@@ -374,6 +374,10 @@ export const ar: Record<TKey, string> = {
   // الفواصل (RAWY-41، نطاق J)
   "panel.bookmarks": "الفواصل",
   "panel.noBookmarks": "لا فواصل بعد — اضغط زر الفاصل لحفظ موضعك.",
+  // RAWY-250: شريط العودة إلى موضع القراءة بعد قفزة (بحث / تظليل / محتويات / فاصل).
+  "anchor.return": "العودة إلى",
+  "anchor.returnAria": "العودة إلى موضع القراءة",
+  "anchor.dismiss": "أقرأ من هنا",
   "bookmark.here": "محفوظ",
   "bookmark.add": "ضع فاصلًا هنا",
   "bookmark.remove": "أزل الفاصل",

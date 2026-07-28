@@ -28,6 +28,15 @@ import {
 import { resolveSpotlight, resolvePill } from "./ttsTrack"; // RAWY-200: pure per-theme track resolution
 import type { Theme } from "../theme/tokens";
 import { extractChapterNumber, toWesternDigits } from "../lib/format";
+// RAWY-259: the ONE ink resolution, shared with the Notes editor preview so both surfaces cannot drift.
+import {
+  resolveHighlightInk,
+  INK_PAD_X_EM,
+  INK_PAD_TOP_EM,
+  INK_PAD_BOTTOM_EM,
+  INK_RADIUS_EM,
+  INK_EDGE_EM,
+} from "../lib/highlightInk";
 
 // RAWY-140: the per-doc PAINT sheet marker. buildDynamicCss's ink/tashkīl/scrollbar rules live in a
 // <style data-sard-dyn> appended AFTER foliate's own sheet, so colour/tashkīl changes update it in
@@ -142,26 +151,215 @@ const HL_FALLBACK: Record<string, string> = {
 // Our own highlight draw function (so we never import from /public): an SVG <g> of
 // translucent rects over the selection — the "inked" highlighter look. Elements are
 // created in the parent document and adopted when foliate's overlayer appends them.
-function drawHighlight(rects: Iterable<DOMRect>, options: { color?: string; dark?: boolean } = {}): SVGGElement {
+// RAWY-258 (PART A1) — WORD-SHAPED highlight geometry.
+// ROOT (measured): `Range.getClientRects()` returns one rect per LINE BOX, and a line-box rect spans the
+// full inline extent — trailing whitespace included — while consecutive line rects tile across the leading
+// between them. That is the rectangular block the owner photographed: nothing was adding padding.
+// FIX: measure the range WORD BY WORD instead. For each text node inside the range we build EPHEMERAL
+// sub-Ranges over the non-whitespace runs and take their client rects. A `Range` is a plain JS object —
+// it mutates NOTHING — so every stored CFI (bookmarks RAWY-229, resume RAWY-227, TTS ranges D49, RAWY-247
+// units) is untouched. The primitive is already proven twice here: `findMatchRange` and `setReadingWords`.
+const WORD_SPLIT = /\S+/g;
+function wordRectsFor(range: Range): DOMRect[] {
+  const out: DOMRect[] = [];
+  const doc = range.startContainer.ownerDocument;
+  if (!doc) return out;
+  try {
+    const walker = doc.createTreeWalker(range.commonAncestorContainer, NodeFilter.SHOW_TEXT);
+    let n: Node | null;
+    while ((n = walker.nextNode())) {
+      const t = n as Text;
+      if (!range.intersectsNode(t)) continue;
+      // Clip this text node to the part actually inside the range (the first/last nodes are partial).
+      const from = t === range.startContainer ? range.startOffset : 0;
+      const to = t === range.endContainer ? range.endOffset : t.data.length;
+      if (to <= from) continue;
+      const slice = t.data.slice(from, to);
+      WORD_SPLIT.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = WORD_SPLIT.exec(slice))) {
+        const r = doc.createRange();
+        try {
+          r.setStart(t, from + m.index);
+          r.setEnd(t, from + m.index + m[0].length);
+        } catch {
+          continue; // offsets shifted under us — skip this word rather than throw mid-paint
+        }
+        for (const rect of Array.from(r.getClientRects())) {
+          if (rect.width > 0 && rect.height > 0) out.push(rect); // a word can wrap → more than one rect
+        }
+      }
+    }
+  } catch {
+    /* fall through — an empty result makes the caller fall back to the line-box rects */
+  }
+  return out;
+}
+
+// RAWY-258: a RANGE-LIKE PROXY handed to foliate's overlayer in place of the real range, so ONLY the
+// highlight path gets word geometry. `Overlayer.add()`/`redraw()` call `getClientRects()` on whatever they
+// are given, so recomputing here keeps the mark correct across reflow (font load, resize, zoom) exactly like
+// a real range. The TTS spotlight keeps the REAL range (line-box rects — its band + baseline rule must stay
+// continuous, D49) and the word pill is already word-scoped (RAWY-127): three consumers, separate paths, no
+// vendored-engine patch. Falls back to the real rects if word measurement yields nothing.
+function wordRectRange(range: Range): { getClientRects: () => DOMRect[]; toString: () => string } {
+  return {
+    getClientRects: () => {
+      const w = mergeIntoStrokes(wordRectsFor(range));
+      return w.length ? w : Array.from(range.getClientRects());
+    },
+    toString: () => range.toString(),
+  };
+}
+
+// RAWY-258 (owner's visual review): word rects alone were geometrically right and visually WRONG — the eye
+// saw "a box per word" before it saw the text. A real highlighter does not stop and restart between words:
+// it lays ONE stroke along the line. So the word rects are MERGED back into a single run per line, breaking
+// only where a gap is genuinely large (a line end, a wide indent) — which is exactly what the design mockup
+// does, since its `.hl` is an inline background with `box-decoration-break: clone`: continuous across each
+// line fragment, ending at the last GLYPH rather than running out to the line box. What that kills is the
+// real defect — trailing line whitespace, the leading tiled between lines, and empty paragraphs — while an
+// ordinary inter-word space stays painted, as it must for the stroke to read as one gesture.
+// A gap wider than this many multiples of the line height BREAKS the stroke (a normal space is ~0.25em).
+const STROKE_JOIN_RATIO = 0.75;
+function mergeIntoStrokes(rects: DOMRect[]): DOMRect[] {
+  if (rects.length < 2) return rects;
+  // Group by LINE: rects sharing most of their vertical extent belong to the same line fragment.
+  const lines: DOMRect[][] = [];
+  for (const r of rects) {
+    const line = lines.find((l) => {
+      const a = l[0];
+      const overlap = Math.min(a.bottom, r.bottom) - Math.max(a.top, r.top);
+      return overlap > Math.min(a.height, r.height) * 0.5;
+    });
+    if (line) line.push(r);
+    else lines.push([r]);
+  }
+  const out: DOMRect[] = [];
+  for (const line of lines) {
+    line.sort((a, b) => a.left - b.left);
+    let cur = line[0];
+    for (let i = 1; i < line.length; i++) {
+      const r = line[i];
+      const gap = r.left - cur.right;
+      if (gap <= cur.height * STROKE_JOIN_RATIO) {
+        // same stroke — extend it over the space between the two words
+        const left = Math.min(cur.left, r.left);
+        const top = Math.min(cur.top, r.top);
+        const right = Math.max(cur.right, r.right);
+        const bottom = Math.max(cur.bottom, r.bottom);
+        cur = new DOMRect(left, top, right - left, bottom - top);
+      } else {
+        out.push(cur); // a real break (line end / wide indent) — start a new stroke
+        cur = r;
+      }
+    }
+    out.push(cur);
+  }
+  return out;
+}
+
+// RAWY-258 — THE INK SWATCH (docs/design/Sard Highlight Ink Swatch (standalone).html).
+// This is the single source of truth for a USER highlight, everywhere one is drawn: saved marks, freshly
+// created ones, and the search-hit flash. The TTS tracking overlays (drawReadingSpotlight / drawReadingPill)
+// are a DIFFERENT thing serving a different purpose and are deliberately NOT touched by this — see below.
+//
+// The design is a CSS inline background, and the file states its geometry as "identical everywhere":
+//     padding: .05em .2em .09em · margin: 0 -.12em · border-radius: .12em
+//     box-decoration-break: clone · mask: 90deg fade, .24em each end
+// with two paper treatments:
+//     LIGHT — "background: the ink at full value; mix-blend-mode: multiply; colour: page text, unchanged.
+//              Pigment sits on the sheet, paper grain shows through."
+//     DARK  — "background: ink mixed into the paper, opaque, to a fixed lightness target; no blend mode ·
+//              no translucency. A deeper mix of the same ink — never a fainter one."
+//
+// Sard cannot USE that CSS: it would mean wrapping the highlighted words in a <span>, and inserting elements
+// shifts foliate's CFI child-step indices, breaking every stored bookmark (RAWY-229), resume position
+// (RAWY-227), TTS range (D49) and RAWY-247 unit. So the recipe is reproduced geometrically in the existing
+// SVG overlayer, which mutates nothing. `box-decoration-break: clone` — one painted box per line fragment,
+// ending at the last glyph rather than running out to the line box — is exactly what the merged word-runs
+// from `mergeIntoStrokes` produce, so the wrapped/multi-line case matches the design by construction.
+const INK_EM = 1.15; // a text run's client rect is ~1.15em tall (ascent+descent) — the em basis for the spec
+function drawHighlight(
+  rects: Iterable<DOMRect>,
+  options: { color?: string; dark?: boolean; paper?: string; alpha?: number | null } = {},
+): SVGGElement {
   const NS = "http://www.w3.org/2000/svg";
   const g = document.createElementNS(NS, "g");
-  g.setAttribute("fill", options.color ?? "#E8C36A");
-  // Intensity + "wick into the paper" blend, applied DIRECTLY (RAWY-22) rather than via an
-  // inherited CSS var — the SVG <g> is created in the parent doc and adopted into foliate's
-  // overlayer, and the var didn't reliably reach it (it fell back to multiply → invisible on
-  // black). Light paper: multiply; dark paper: screen so the ink lifts off the page.
-  g.style.opacity = options.dark ? "0.7" : "0.62";
-  g.style.mixBlendMode = options.dark ? "screen" : "multiply";
+  const ink = options.color ?? "#E8C36A";
+  // RAWY-259: colour, blend and opacity ALL come from the shared resolver (`lib/highlightInk.ts`), which the
+  // Notes editor's passage preview calls too — so the mark on the page and the mark in the editor are the
+  // same ink BY CONSTRUCTION rather than two styles kept in step by hand. Everything below is unchanged in
+  // behaviour; it is the same computation, moved somewhere both surfaces can reach it.
+  const resolved = resolveHighlightInk({
+    ink,
+    dark: options.dark ?? false,
+    paper: options.paper,
+    alpha: options.alpha,
+  });
+  const fill = resolved.fill;
+  // ⚠️ THE ONE THING THAT MATTERS MOST HERE: READABILITY. The design's ink is a CSS `background` — it paints
+  // BEHIND the glyphs, so the file can say "opaque, no translucency" and the text still reads at full
+  // contrast on top of it. SARD'S MARK IS NOT BEHIND THE TEXT: foliate's overlayer is an SVG layer ABOVE the
+  // content, so the identical values there paint OVER the words and bury them. Copying the file's opacity
+  // instruction literally is therefore WRONG in this layer, and the blend mode is what converts an
+  // over-the-text overlay back into something that behaves like pigment under it:
+  //   LIGHT paper — MULTIPLY. It can only darken, never lighten, so dark glyphs stay dark (black × ink =
+  //     black): the text keeps its contrast while the paper around it takes the colour.
+  //   DARK paper — SCREEN. It can only lighten, so the light glyphs on a dark page stay light. `normal` here
+  //     (which the file's "no blend mode" line literally asks for) paints an opaque slab over the words —
+  //     that was the regression: on a dark theme the text was genuinely hidden.
+  // The design's INTENT — emphasise the passage, never compete with it — outranks its literal opacity value
+  // whenever the two conflict, because in this layer they do.
+  g.style.mixBlendMode = resolved.blend;
+  g.style.opacity = String(resolved.opacity);
+  // The 90deg mask: the run fades in over its first .24em and out over its last .24em, so a stroke begins
+  // and ends the way a marker lifts, with no hard vertical edge. Reproduced as alpha stops on the fill
+  // (identical result to masking a solid fill, one element instead of two).
+  const gradId = `sard-hl-${(hlGradSeq = (hlGradSeq + 1) % 1e6)}`;
+  const defs = document.createElementNS(NS, "defs");
+  const grad = document.createElementNS(NS, "linearGradient");
+  grad.setAttribute("id", gradId);
+  grad.setAttribute("x1", "0");
+  grad.setAttribute("y1", "0");
+  grad.setAttribute("x2", "1");
+  grad.setAttribute("y2", "0"); // 90deg — horizontal, per the spec
+  defs.append(grad);
+  g.append(defs);
+  let stopsFor = 0; // the fade is a fixed .24em, so its FRACTION depends on each run's width
   for (const r of rects) {
+    if (!(r.width > 0) || !(r.height > 0)) continue; // skip zero-size fragments (hyphen columns etc.)
+    const em = r.height / INK_EM;
+    // The painted box is the text box grown by the SHARED padding constants — the same figures the Notes
+    // editor's preview applies as CSS, so the two shapes cannot drift.
+    const x = r.left - em * INK_PAD_X_EM;
+    const w = r.width + em * INK_PAD_X_EM * 2;
+    const y = r.top - em * INK_PAD_TOP_EM;
+    const h = r.height + em * (INK_PAD_TOP_EM + INK_PAD_BOTTOM_EM);
     const rect = document.createElementNS(NS, "rect");
-    rect.setAttribute("x", String(r.left));
-    rect.setAttribute("y", String(r.top));
-    rect.setAttribute("height", String(r.height));
-    rect.setAttribute("width", String(r.width));
+    rect.setAttribute("x", String(x));
+    rect.setAttribute("y", String(y));
+    rect.setAttribute("width", String(w));
+    rect.setAttribute("height", String(h));
+    rect.setAttribute("rx", String(em * INK_RADIUS_EM));
+    rect.setAttribute("fill", `url(#${gradId})`);
     g.append(rect);
+    if (!stopsFor) stopsFor = Math.max(0.04, Math.min(0.5, (em * INK_EDGE_EM) / w));
+  }
+  // Alpha stops: 0 → opaque at .24em → opaque until .24em from the end → 0.
+  const edge = stopsFor || 0.12;
+  for (const [offset, op] of [[0, 0], [edge, 1], [1 - edge, 1], [1, 0]] as const) {
+    const stop = document.createElementNS(NS, "stop");
+    stop.setAttribute("offset", String(offset));
+    stop.setAttribute("stop-color", fill);
+    stop.setAttribute("stop-opacity", String(op));
+    grad.append(stop);
   }
   return g;
 }
+// A per-group gradient id (an SVG gradient is referenced by id, and several highlights coexist in one
+// overlayer). Module-scoped counter — no DOM lookup, no collision across sections.
+let hlGradSeq = 0;
 
 // RAWY-126 (TTS reading indicator, Phase 1 — design 1b "Spotlight"): the currently-SPOKEN sentence
 // gets a SOFT WARM TRACK — a low-opacity terracotta band + a thin baseline rule the eye follows.
@@ -806,6 +1004,10 @@ export class FoliateController {
   private relocateCb: ((info: RelocateInfo) => void) | null = null;
   // Highlights (RAWY-20): cfi → semantic colour slot; re-applied per section render.
   private annotations = new Map<string, string>();
+  // RAWY-259: each highlight’s OWN ink density, keyed by the same CFI as `annotations`. Absent = follow
+  // the theme default (every highlight made before the feature), so the map stays empty until a reader
+  // actually sets a density and nothing about the untouched case changes.
+  private hlAlpha = new Map<string, number>();
   // RAWY-126 (TTS reading indicator): the current chapter walked ONCE into {text, range} units — the
   // SAME order + SAME hidden-skip that feeds the TTS queue, so queue-index N ↔ range N stay aligned.
   // `ttsUnitsIndex` is the section index these were built for (a chapter change invalidates them).
@@ -1084,8 +1286,34 @@ export class FoliateController {
 
     // Highlights: draw on (re)render, re-apply per section, surface clicks (RAWY-20).
     view.addEventListener("draw-annotation", (e: any) => {
-      const { draw, annotation } = e.detail;
-      draw(drawHighlight, { color: this.resolveColor(annotation.color), dark: this.theme?.dark ?? false });
+      const { draw, annotation, doc: aDoc, range } = e.detail;
+      // RAWY-259: this mark's OWN ink density, if the reader set one; otherwise undefined so drawHighlight
+      // falls back to the theme default and an untouched highlight renders exactly as it always has.
+      const opts = {
+        color: this.resolveColor(annotation.color),
+        dark: this.theme?.dark ?? false,
+        paper: this.inkPaper,
+        alpha: this.hlAlpha.get(annotation.value),
+      };
+      // RAWY-258 (PART A1): draw the mark from WORD rects, not the line-box rects foliate's own `draw`
+      // helper would produce. `draw` closes over the real range, so we bypass it and call the SAME
+      // `overlayer.add` it would have called, handing over the range-PROXY instead (view.js already gives
+      // us `range` + `doc` in the event detail, and Sard already adds to the overlayer directly in
+      // `goToSearchHit` — so this is an existing path, not a new one, and the engine is NOT patched).
+      // Any failure falls back to foliate's own `draw`, so a highlight can never silently vanish.
+      const overlayer = aDoc
+        ? (this.view?.renderer?.getContents?.() as { doc?: Document; overlayer?: { add?: (k: string, r: unknown, d: unknown, o: unknown) => void } }[] | undefined)
+            ?.find((x) => x.doc === aDoc)?.overlayer
+        : undefined;
+      if (range && overlayer?.add) {
+        try {
+          overlayer.add(annotation.value, wordRectRange(range as Range), drawHighlight, opts);
+          return;
+        } catch {
+          /* fall through to foliate's own draw */
+        }
+      }
+      draw(drawHighlight, opts);
     });
     view.addEventListener("show-annotation", (e: any) => {
       const { value, index, range } = e.detail;
@@ -1386,24 +1614,45 @@ export class FoliateController {
     }
   }
   /** Add/redraw a highlight for a range CFI; returns the section's chapter label. */
-  async addHighlight(cfi: string, color: string): Promise<string | null> {
+  async addHighlight(cfi: string, color: string, alpha?: number | null): Promise<string | null> {
     this.annotations.set(cfi, color);
+    if (alpha == null) this.hlAlpha.delete(cfi);
+    else this.hlAlpha.set(cfi, alpha);
     const res = await this.view?.addAnnotation({ value: cfi, color });
     return res?.label ?? null;
   }
   removeHighlight(cfi: string): void {
     this.annotations.delete(cfi);
+    this.hlAlpha.delete(cfi);
     this.view?.deleteAnnotation({ value: cfi });
+  }
+  /** RAWY-259: set this highlight’s ink density and redraw it alone; null = theme default. */
+  setHighlightAlpha(cfi: string, alpha: number | null): void {
+    if (alpha == null) this.hlAlpha.delete(cfi);
+    else this.hlAlpha.set(cfi, alpha);
+    const color = this.annotations.get(cfi);
+    if (color) this.view?.addAnnotation({ value: cfi, color }); // re-add → redraw this one mark only
   }
   setHighlightColor(cfi: string, color: string): void {
     this.annotations.set(cfi, color);
     this.view?.addAnnotation({ value: cfi, color }); // re-add → redraw new colour
   }
-  async loadHighlights(list: { cfi: string; color: string }[]): Promise<void> {
+  async loadHighlights(list: { cfi: string; color: string; alpha?: number | null }[]): Promise<void> {
     for (const h of list) {
       this.annotations.set(h.cfi, h.color);
+      // RAWY-259: seed the density map BEFORE the draw, so the first paint already carries the reader's
+      // saved value instead of flashing the theme default and correcting itself later.
+      if (h.alpha == null) this.hlAlpha.delete(h.cfi);
+      else this.hlAlpha.set(h.cfi, h.alpha);
       await this.view?.addAnnotation({ value: h.cfi, color: h.color });
     }
+  }
+
+  /** RAWY-258: the paper the ink is mixed INTO on a dark theme — the per-book custom page colour (RAWY-201)
+   *  when the reader has set one, else the theme's own paper. Keeps the Ink Swatch correct on every theme
+   *  AND on a book the reader has recoloured, instead of assuming a fixed page. */
+  private get inkPaper(): string {
+    return this.style?.pageColor || this.theme?.colors?.paperBg || "#000000";
   }
 
   /** Is the reader currently in scrolled mode? */
@@ -2325,7 +2574,7 @@ export class FoliateController {
       const ct = nav ? v.renderer?.getContents?.().find((x) => x.index === nav.index && x.overlayer) : undefined;
       if (range && ct?.overlayer?.add) {
         const overlayer = ct.overlayer;
-        overlayer.add?.(cfi, range, drawHighlight, { color: this.resolveColor("#E8C36A"), dark: this.theme?.dark ?? false });
+        overlayer.add?.(cfi, wordRectRange(range) as unknown as Range, drawHighlight, { color: this.resolveColor("#E8C36A"), dark: this.theme?.dark ?? false, paper: this.inkPaper }); // RAWY-258: same geometry + ink as a saved highlight
         this.flashRemove = () => { try { overlayer.remove?.(cfi); } catch { /* ignore */ } };
       } else {
         const item = { value: cfi, color: "#E8C36A" }; // gold ink (design) — resolveColor passes hex through

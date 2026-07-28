@@ -565,3 +565,33 @@ pub fn photocard_delete(id: String, state: State<AppState>) -> Result<bool, Stri
     photocards::delete(&conn, &app_data_dir, &id)?;
     Ok(true)
 }
+
+// RAWY-260 — REFERENCES: a note bound to a phrase, scoped to one book.
+
+/// Every reference for a book — loaded once on open and held in memory for per-section matching.
+#[tauri::command]
+pub fn refs_for_book(book_id: String, state: State<AppState>) -> Result<Vec<library::RefRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::refs_for_book(&conn, &book_id).map_err(err)
+}
+
+/// Create OR update — the dialog uses one path for both, so referencing a phrase twice edits it.
+#[tauri::command]
+pub fn ref_save(
+    book_id: String,
+    phrase: String,
+    phrase_fold: String,
+    word_count: i64,
+    note: String,
+    state: State<AppState>,
+) -> Result<Option<library::RefRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::ref_save(&conn, &book_id, &phrase, &phrase_fold, word_count, &note).map_err(err)
+}
+
+#[tauri::command]
+pub fn ref_delete(id: String, state: State<AppState>) -> Result<bool, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::ref_delete(&conn, &id).map_err(err)?;
+    Ok(true)
+}

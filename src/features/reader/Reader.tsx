@@ -37,6 +37,7 @@ import { ChaptersPanel } from "./ChaptersPanel";
 import { SearchPanel } from "./SearchPanel";
 import { PageBookmark } from "./PageBookmark";
 import { useAnnotations } from "./annotationsStore";
+import { useReferences } from "./referencesStore"; // RAWY-260: phrase-bound references, per book
 import { useBookmarks } from "./bookmarksStore";
 import { ReaderChrome, type SettingsSection } from "./ReaderChrome";
 import { SettingsPanel } from "./SettingsPanel";
@@ -410,6 +411,10 @@ export function Reader({
       await useAnnotations.getState().load();
       if (stale()) return;
       useBookmarks.getState().load(target.id); // RAWY-41 — this book's saved locations
+      // RAWY-260: this book's references, loaded ONCE here and held in memory. The controller re-marks each
+      // section from that set as it renders — no per-section query, and the book is never rescanned.
+      useReferences.getState().bind(ctrl, target.id);
+      await useReferences.getState().load();
       // RAWY-250 (PART 4): this book's read chapters (settings key/value — additive, no migration; an absent
       // key simply means "nothing read yet", so an existing library is unaffected).
       // RAWY-256 (addendum, case 6): …and the per-book "beginning seen" set, loaded the same way, so the

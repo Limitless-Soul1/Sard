@@ -16,6 +16,7 @@ import {
   buildReadingCss,
   buildDynamicCss,
   buildFontFaceCss, // RAWY-208: the @font-face sheet, isolated from the geometry sheet
+  REF_HIGHLIGHT_NAME, // RAWY-260: the Custom Highlight registry name for reference marks
   ALIGN_GATE_CLASS,
   BOOK_ALIGN_CLASS,
   FORCE_RTL_CLASS, // RAWY-253 (root A): the dir-correction marker class
@@ -37,6 +38,9 @@ import {
   INK_RADIUS_EM,
   INK_EDGE_EM,
 } from "../lib/highlightInk";
+// RAWY-260: the reference matching engine — folding + whole-phrase scanning, kept out of this file so the
+// rules stay testable and identical between the create path and the render path.
+import { foldChar, findPhraseHits, type RefLite } from "../lib/references";
 
 // RAWY-140: the per-doc PAINT sheet marker. buildDynamicCss's ink/tashkīl/scrollbar rules live in a
 // <style data-sard-dyn> appended AFTER foliate's own sheet, so colour/tashkīl changes update it in
@@ -1178,11 +1182,22 @@ export class FoliateController {
       alignNeutralLines(doc, this.dir); // RAWY-134 (A): "…"-only scene breaks follow the book's RTL side
       markParagraphDirection(doc, this.dir); // RAWY-253 (root A): RTL-correct paragraphs mislabeled dir="ltr"
       markEmptyParagraphs(doc, this.dir); // RAWY-253 (root B): collapse scrape-padding empty <p>
+      // RAWY-260: mark this section's reference occurrences. Runs ONCE per section render, over this
+      // section's own text — the book is never rescanned, so the cost is independent of its length.
+      this.applyReferences(doc, index);
       // RAWY-70: the two-step reveal for the hide-first-line placeholder. Handled from the parent
       // frame (the content iframe runs no scripts, RAWY-64) via cross-frame DOM access, like the
       // handlers below. Per-instance + reset-on-navigation is automatic: each section is a fresh
       // doc with a fresh idle placeholder.
       doc.addEventListener("click", (ev: Event) => this.onRevealClick(ev));
+      // RAWY-260: a tap on a marked phrase opens its reference. Hit-tests the ranges already stored for
+      // this section, so it costs a few rect comparisons — never a re-scan — and ignores taps elsewhere.
+      doc.addEventListener("click", (ev: Event) => {
+        const e = ev as MouseEvent;
+        const off = frameOffset(doc);
+        const hit = this.referenceAtPoint(doc, e.clientX + off.x, e.clientY + off.y);
+        if (hit) this.referenceCb?.(hit);
+      });
       doc.addEventListener("keydown", (ev: KeyboardEvent) => {
         // RAWY-184 (Part C): while read-aloud is active, arrows skip the prev/next SENTENCE (the cb
         // returns true → swallow); otherwise they keep the normal page-turn (next/prev).
@@ -2647,6 +2662,119 @@ export class FoliateController {
     if (Array.isArray(a)) return a.map(one).filter(Boolean).join("، ") || undefined;
     return one(a);
   }
+
+
+  // ---------------------------------------------------------------------------
+  // RAWY-260 — REFERENCES: mark every occurrence of a referenced phrase, per section.
+  // ---------------------------------------------------------------------------
+
+  /** The book's references, loaded once on open. Small (tens per book), so kept in memory and re-used for
+   *  every section instead of re-queried. */
+  private refs: RefLite[] = [];
+  /** Per rendered section: the Ranges we marked and which reference each belongs to — the click hit-test
+   *  reads this, so a tap can resolve to a reference without re-scanning any text. Keyed by section index
+   *  and dropped when that section unloads with the document. */
+  private refRanges = new Map<number, { range: Range; refId: string }[]>();
+
+  /** Replace the reference set and re-mark every section currently rendered (a save/delete is immediate —
+   *  a deleted reference's marks must vanish at once, and they do because nothing was ever written into
+   *  the document: dropping the range from the registry IS the removal). */
+  setReferences(list: RefLite[]): void {
+    this.refs = list;
+    const contents = this.view?.renderer?.getContents?.() as { index: number; doc?: Document }[] | undefined;
+    for (const c of contents ?? []) {
+      if (c?.doc) this.applyReferences(c.doc, c.index);
+    }
+  }
+
+  /**
+   * Mark this section's occurrences. Walks the section's text nodes ONCE, building the folded haystack and
+   * a per-character map back to (node, offset) — the same technique `findMatchRange` uses for search hits —
+   * then asks the matching engine for whole-phrase hits and registers them as one CSS Custom Highlight.
+   *
+   * PERFORMANCE: this is per SECTION, on load. The whole book is never rescanned, so a 1400-chapter EPUB
+   * costs exactly what the chapter on screen costs; and because the folded text is built in one pass, the
+   * work is linear in the section's length regardless of how many references exist.
+   */
+  private applyReferences(doc: Document, index: number): void {
+    const win = doc.defaultView as (Window & { CSS?: { highlights?: Map<string, unknown> }; Highlight?: new (...r: Range[]) => unknown }) | null;
+    // The API is Chromium 105+; WebView2 here is far past that. If it is ever missing, references simply
+    // do not paint — the notes are still stored and the popup still works from a click, so the feature
+    // degrades quietly instead of throwing inside a section render.
+    if (!win?.CSS?.highlights || typeof win.Highlight !== "function") return;
+    this.refRanges.delete(index);
+    if (!this.refs.length) {
+      try { win.CSS.highlights.delete(REF_HIGHLIGHT_NAME); } catch { /* ignore */ }
+      return;
+    }
+    // ONE pass over the text: fold per character (memoised, RAWY-178) and remember where each folded char
+    // came from, so a hit's [start,end) maps straight back to a DOM Range with no second walk.
+    let hay = "";
+    const nodes: Text[] = [];
+    const offs: number[] = [];
+    try {
+      const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+      let n: Node | null;
+      while ((n = walker.nextNode())) {
+        const t = n as Text;
+        const s = t.data;
+        for (let i = 0; i < s.length; i++) {
+          const fc = foldChar(s[i]);
+          for (let k = 0; k < fc.length; k++) { hay += fc[k]; nodes.push(t); offs.push(i); }
+        }
+      }
+    } catch {
+      return; // a torn-down section — nothing to mark
+    }
+    const hits = findPhraseHits(hay, this.refs);
+    if (!hits.length) {
+      try { win.CSS.highlights.delete(REF_HIGHLIGHT_NAME); } catch { /* ignore */ }
+      return;
+    }
+    const marked: { range: Range; refId: string }[] = [];
+    for (const h of hits) {
+      if (h.start >= nodes.length) continue;
+      try {
+        const r = doc.createRange();
+        r.setStart(nodes[h.start], offs[h.start]);
+        if (h.end < nodes.length) r.setEnd(nodes[h.end], offs[h.end]);
+        else { const last = nodes[nodes.length - 1]; r.setEnd(last, last.data.length); }
+        if (!r.collapsed) marked.push({ range: r, refId: h.refId });
+      } catch {
+        /* offsets shifted under us — skip this occurrence rather than fail the whole section */
+      }
+    }
+    this.refRanges.set(index, marked);
+    try {
+      const HighlightCtor = win.Highlight as new (...r: Range[]) => unknown;
+      win.CSS.highlights.set(REF_HIGHLIGHT_NAME, new HighlightCtor(...marked.map((m) => m.range)));
+    } catch {
+      /* registry rejected the ranges — leave the section unmarked rather than throw mid-render */
+    }
+  }
+
+  /** RAWY-260: which reference (if any) sits under this point in the CURRENT section? Hit-tests the ranges
+   *  we already stored, so a tap costs a few rect comparisons and never a text scan. Returns the reference
+   *  id plus the occurrence's rect in PARENT-viewport coords, which is what positions the popup. */
+  referenceAtPoint(doc: Document, x: number, y: number): { refId: string; rect: AnchorRect } | null {
+    const idx = this.currentSectionIndex();
+    const marked = this.refRanges.get(idx);
+    if (!marked?.length) return null;
+    for (const m of marked) {
+      for (const raw of Array.from(m.range.getClientRects())) {
+        if (x >= raw.left && x <= raw.right && y >= raw.top && y <= raw.bottom) {
+          return { refId: m.refId, rect: this.rectInParent(raw, doc) };
+        }
+      }
+    }
+    return null;
+  }
+
+  /** Fired when the reader taps a marked phrase — the Reader opens the popup on it. */
+  onReferenceHit(cb: (hit: { refId: string; rect: AnchorRect }) => void): void {
+    this.referenceCb = cb;
+  }
+  private referenceCb: ((hit: { refId: string; rect: AnchorRect }) => void) | null = null;
 
   /** RAWY-85: a fixed-layout book (a PDF) — read-only, no injected typography/theme. */
   get isFixedLayout(): boolean {

@@ -12,6 +12,8 @@ import { THEMES, useTheme } from "../../theme";
 import type { AnchorRect, AnnotationHit, FoliateController, SelectionInfo } from "../../reader-engine/FoliateController";
 import { useAnnotations } from "./annotationsStore";
 import { useReader } from "../../reader-engine/store"; // RAWY-259: the book title for the metadata block
+import { useReferences } from "./referencesStore"; // RAWY-260
+import { ReferenceDialog, ReferencePopup } from "./ReferenceDialog"; // RAWY-260
 import { HIGHLIGHT_SLOTS, isHex } from "./highlightColors";
 import { TagPicker } from "./TagPicker";
 import { localeNum } from "../../lib/format";
@@ -27,7 +29,7 @@ import {
   INK_RADIUS_EM,
   INK_EDGE_EM,
 } from "../../lib/highlightInk";
-import { noteTagsFor, noteTagsSet, type HighlightColor, type HighlightRow, type NoteRow } from "../../lib/ipc";
+import { noteTagsFor, noteTagsSet, type HighlightColor, type HighlightRow, type NoteRow, type RefRow } from "../../lib/ipc";
 
 function useHl() {
   const id = useTheme((s) => s.themeId);
@@ -38,6 +40,13 @@ function useHl() {
 const PlusGlyph = () => (
   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden>
     <path d="M12 5.5v13M5.5 12h13" />
+  </svg>
+);
+// RAWY-260: the reference action glyph — a small bookmark/tag mark drawn in the same stroke language as
+// the toolbar's other icons, so the row still reads as one set rather than a bolted-on extra.
+const RefIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M6 4h12v16l-6-4-6 4z" />
   </svg>
 );
 const BackChevron = () => (
@@ -237,6 +246,7 @@ function SelectionToolbar({
   sel,
   onColor,
   onListen,
+  onReference,
   onNote,
   onCopy,
   onAddToCard,
@@ -245,6 +255,7 @@ function SelectionToolbar({
   sel: SelectionInfo;
   onColor: (c: HighlightColor) => void;
   onListen: () => void;
+  onReference: () => void;
   onNote: () => void;
   onCopy: () => void;
   onAddToCard: () => void;
@@ -283,6 +294,9 @@ function SelectionToolbar({
           <div className="hl-pop-actions">
             <button className="hl-pop-act" onClick={onListen}><ListenIcon />{t("tts.listen")}</button>
             <button className="hl-pop-act" onClick={onNote}><PenIcon />{t("hl.note")}</button>
+            {/* RAWY-260: ONE new action added to the existing toolbar — the toolbar itself is untouched,
+                and RAWY-124's warning still holds: never drop one of the other five. */}
+            <button className="hl-pop-act" onClick={onReference}><RefIcon />{t("ref.add")}</button>
             <button className="hl-pop-act" onClick={onCopy}><CopyIcon />{t("hl.copy")}</button>
             <button className="hl-pop-act" onClick={onAddToCard}><AddCardIcon />{t("photo.addToCard")}</button>
             <button className="hl-pop-act primary" onClick={onPhotoCard}><PhotoIcon />{t("photo.card")}</button>
@@ -637,13 +651,57 @@ export function AnnotationLayer({
     setActive(null);
   };
 
+  // RAWY-260 — REFERENCES. Two surfaces: the dialog (create AND edit, one path) and the popup shown when
+  // the reader taps a marked phrase. A tap on the popup opens the dialog on that reference, which is the
+  // edit path — no extra button, and the note is immediately editable.
+  const refs = useReferences();
+  const [refDialog, setRefDialog] = useState<{ phrase: string; existing: RefRow | null } | null>(null);
+  const [refPopup, setRefPopup] = useState<{ row: RefRow; rect: AnchorRect } | null>(null);
+  useEffect(() => {
+    ctrlRef.current?.onReferenceHit((hit) => {
+      const row = useReferences.getState().byId(hit.refId);
+      if (row) setRefPopup({ row, rect: hit.rect });
+    });
+  }, [ctrlRef]);
+  const onReference = () => {
+    const s = selection;
+    if (!s) return;
+    const phrase = s.text.trim();
+    setSelection(null);
+    clearSel();
+    // Referencing a phrase that already has one EDITS it rather than creating a duplicate.
+    setRefDialog({ phrase, existing: useReferences.getState().byPhrase(phrase) ?? null });
+  };
+
   return (
     <>
+      {/* RAWY-260: the reference popup — display only, per the design. Any tap outside closes it; a tap
+          ON it opens the dialog for editing. */}
+      {refPopup && (
+        <>
+          <div className="ref-popup-scrim" onPointerDown={() => setRefPopup(null)} />
+          <ReferencePopup
+            row={refPopup.row}
+            rect={refPopup.rect}
+            onOpen={() => { setRefDialog({ phrase: refPopup.row.phrase, existing: refPopup.row }); setRefPopup(null); }}
+          />
+        </>
+      )}
+      {refDialog && (
+        <ReferenceDialog
+          phrase={refDialog.phrase}
+          existing={refDialog.existing}
+          onSave={async (note) => { await refs.save(refDialog.phrase, note); setRefDialog(null); }}
+          onDelete={async () => { if (refDialog.existing) await refs.remove(refDialog.existing.id); setRefDialog(null); }}
+          onClose={() => setRefDialog(null)}
+        />
+      )}
       {selection && (
         <SelectionToolbar
           sel={selection}
           onColor={onPickColor}
           onListen={onListenSel}
+          onReference={onReference}
           onNote={onNote}
           onCopy={onCopy}
           onAddToCard={onAdd}

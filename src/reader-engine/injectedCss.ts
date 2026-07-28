@@ -319,6 +319,10 @@ const KEEP = `:not(.${BOOK_ALIGN_CLASS})`;
 // Arabic paragraph is mislabeled LTR from its first strong (Latin) char. CSS below forces the base
 // direction back to RTL; the paragraph keeps the UA `unicode-bidi: isolate` from its dir attribute, so its
 // embedded Latin still reads LTR and the Arabic punctuation lands on the RTL edge. Attribute-only → CFI-safe.
+// RAWY-260: the CSS Custom Highlight registry name for reference marks. Shared by the stylesheet that
+// styles it and the controller that registers the ranges, so the two can never disagree on the name.
+export const REF_HIGHLIGHT_NAME = "sard-ref";
+
 export const FORCE_RTL_CLASS = "sard-force-rtl";
 // RAWY-253 (root B): FoliateController.markEmptyParagraphs tags a whitespace-only <p> (scrape padding); the
 // rule below zeroes its margin + line-height so it stops becoming a large vertical gap. Node is NEVER
@@ -559,6 +563,19 @@ export function buildReadingCss(
        html padding-inline here (inline styles always beat a stylesheet rule). So the page
        margin now insets the foliate host within the sheet (--page-margin -> .page-host), which
        foliate cannot override and which works identically in both flow modes. */
+    /* RAWY-260 — REFERENCES. The mark for a referenced word/phrase, drawn by the CSS Custom Highlight API
+       over Ranges the controller registers: NOTHING is written into the book — no <span>, no injected
+       characters, no text change — so foliate's CFI child-step indices are untouched and every stored
+       bookmark, resume position, highlight and TTS range keeps resolving. The treatment is the design's
+       own: a hairline terracotta underline at half strength, offset off the baseline so Arabic descenders
+       stay clear. Quiet by intent — it says "you attached something here" and nothing more: no fill, no
+       colour change to the glyphs, no animation. */
+    ::highlight(${REF_HIGHLIGHT_NAME}) {
+      text-decoration: underline;
+      text-decoration-color: color-mix(in srgb, ${theme?.colors?.accent ?? "#9C5A3C"} 50%, transparent);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 0.22em;
+    }
     /* a corrected reading direction (RAWY-19 override) flows + aligns the text accordingly */
     ${bookDir ? `html, body { direction: ${bookDir}; }` : ""}
     /* RAWY-253 (root A): re-assert RTL on paragraphs a converted EPUB hardcoded dir=ltr although they are

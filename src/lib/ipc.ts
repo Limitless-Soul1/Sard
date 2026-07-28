@@ -431,3 +431,35 @@ export const photocardSave = async (args: {
 
 export const photocardsList = (): Promise<PhotoCardRow[]> => invoke<PhotoCardRow[]>("photocards_list");
 export const photocardDelete = (id: string): Promise<boolean> => invoke<boolean>("photocard_delete", { id });
+
+// RAWY-260 — REFERENCES: a note bound to a PHRASE (word or short phrase), scoped to one book.
+// Not a highlight/note/bookmark: there is no CFI, because a reference belongs to the term itself and
+// marks EVERY occurrence of it in the book — including passages read long after it was created.
+export interface RefRow {
+  id: string;
+  book_id: string;
+  /** Exactly as the reader selected it — shown verbatim in the dialog and popup (tashkīl preserved). */
+  phrase: string;
+  /** The folded MATCHING key (see foldPhrase) — never displayed. */
+  phrase_fold: string;
+  /** Token count, so section matching can skip the multi-token scan for single-word references. */
+  word_count: number;
+  note: string;
+  created_at: number | null;
+  updated_at: number | null;
+}
+
+export const refsForBook = (bookId: string): Promise<RefRow[]> =>
+  invoke<RefRow[]>("refs_for_book", { bookId });
+
+/** Create OR update in one call — the dialog uses a single path for both, so re-referencing edits. */
+export const refSave = (
+  bookId: string,
+  phrase: string,
+  phraseFold: string,
+  wordCount: number,
+  note: string,
+): Promise<RefRow | null> =>
+  invoke<RefRow | null>("ref_save", { bookId, phrase, phraseFold, wordCount, note });
+
+export const refDelete = (id: string): Promise<boolean> => invoke<boolean>("ref_delete", { id });

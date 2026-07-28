@@ -3360,3 +3360,89 @@ html, body, #root {
 .nec-tags .tag-add-plus { color: color-mix(in srgb, var(--text) 78%, transparent); }
 .nec-tags .tag-add-plus:hover { color: var(--accent); }
 
+/* RAWY-260 — REFERENCES (docs/design/Sard References_Design (standalone).html).
+   The reading MARK itself is not here: it is drawn by the CSS Custom Highlight API from the injected
+   reading stylesheet (::highlight), because nothing may be written into the book. These are the two chrome
+   surfaces — the add/edit dialog and the reference popup. */
+
+/* ---- the add / edit dialog (372px in the design) ---- */
+.ref-scrim {
+  position: fixed; inset: 0; z-index: 62;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+  background: rgba(40, 28, 14, 0.26);
+}
+:root[data-dark="true"] .ref-scrim { background: rgba(0, 0, 0, 0.5); }
+.ref-dialog {
+  width: min(24rem, 100%);
+  background: var(--chrome-bg); color: var(--text);
+  border: 1px solid var(--chrome-border); border-radius: 12px;
+  box-shadow: 0 26px 60px rgba(40, 28, 14, 0.34);
+  padding: 1.5rem 1.6rem 1.4rem; font-family: var(--ui-font);
+  animation: ref-in 0.18s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+:root[data-dark="true"] .ref-dialog { box-shadow: 0 26px 60px rgba(0, 0, 0, 0.55); }
+@keyframes ref-in { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .ref-dialog { animation: none; } }
+/* the design's uppercase terracotta eyebrow */
+.ref-eyebrow {
+  font: 600 0.625rem var(--ui-font); letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--accent); margin-bottom: 0.6rem;
+}
+.ref-field-label { font: 500 0.72rem var(--ui-font); color: var(--muted); margin-bottom: 0.45rem; }
+.ref-note-label { margin-top: 1.1rem; }
+/* the selected phrase — READ-ONLY by design: a reference is bound to this exact text */
+.ref-phrase {
+  background: var(--paper-bg); border: 1px solid var(--chrome-border); border-radius: 7px;
+  padding: 0.7rem 0.9rem; font: 700 1.3rem/1.3 var(--ui-font); color: var(--text);
+  overflow-wrap: anywhere;
+}
+.ref-note {
+  width: 100%; resize: none; background: var(--paper-bg);
+  border: 1px solid color-mix(in srgb, var(--text) 16%, transparent); border-radius: 7px;
+  padding: 0.7rem 0.9rem; font: 400 1.05rem/1.7 var(--ui-font); color: var(--text);
+}
+.ref-note:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.ref-actions { display: flex; align-items: center; justify-content: flex-end; gap: 0.55rem; margin-top: 1.25rem; }
+/* Delete sits ALONE on the opposite side, and only exists for a reference that already exists */
+.ref-del {
+  margin-inline-end: auto;
+  padding: 0.55rem 0.95rem; border: 0; border-radius: 8px; background: transparent; cursor: pointer;
+  font: 500 0.85rem var(--ui-font); color: #A2503C;
+}
+:root[data-dark="true"] .ref-del { color: #E08585; }
+.ref-del:hover { background: color-mix(in srgb, #A2503C 12%, transparent); }
+.ref-cancel {
+  padding: 0.55rem 1.05rem; border: 0; border-radius: 8px; background: transparent; cursor: pointer;
+  font: 500 0.85rem var(--ui-font); color: var(--muted);
+}
+.ref-cancel:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.ref-save {
+  padding: 0.55rem 1.35rem; border: 0; border-radius: 8px; background: var(--accent); cursor: pointer;
+  font: 600 0.85rem var(--ui-font); color: var(--paper-bg);
+}
+.ref-save:disabled { opacity: 0.45; cursor: default; } /* the design disables Save on an empty note */
+.ref-save:not(:disabled):hover { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
+.ref-save:focus-visible, .ref-cancel:focus-visible, .ref-del:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---- the reference popup: label · phrase · note. No buttons; a tap outside closes it ---- */
+.ref-popup-scrim { position: fixed; inset: 0; z-index: 61; }
+.ref-popup {
+  position: fixed; z-index: 62; transform: translate(-50%, -100%);
+  min-width: 11rem; max-width: 16rem;
+  background: var(--chrome-bg); border: 1px solid var(--chrome-border); border-radius: 9px;
+  box-shadow: 0 14px 34px rgba(40, 28, 14, 0.22);
+  padding: 0.8rem 1rem 0.85rem; font-family: var(--ui-font); cursor: pointer;
+  animation: ref-in 0.16s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+/* placed BELOW the word when there is no room above, so it never covers the line just tapped */
+.ref-popup.below { transform: translate(-50%, 0); }
+:root[data-dark="true"] .ref-popup { box-shadow: 0 14px 34px rgba(0, 0, 0, 0.45); }
+.ref-popup-head { display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.5rem; }
+.ref-popup-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+.ref-popup-label {
+  font: 600 0.6rem var(--ui-font); letter-spacing: 0.16em; text-transform: uppercase; color: var(--accent);
+}
+.ref-popup-phrase { font: 700 1.15rem/1.4 var(--ui-font); color: var(--text); overflow-wrap: anywhere; }
+.ref-popup-rule { height: 1px; background: color-mix(in srgb, var(--text) 8%, transparent); margin: 0.55rem 0 0.5rem; }
+.ref-popup-note { font: 400 1rem/1.6 var(--ui-font); color: var(--muted); overflow-wrap: anywhere; }
+

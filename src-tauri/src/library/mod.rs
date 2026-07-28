@@ -955,3 +955,90 @@ mod tests {
         assert_eq!(escape_like("plain"), "plain");
     }
 }
+
+// ---------------------------------------------------------------------------
+// RAWY-260 — REFERENCES: a note bound to a PHRASE, per book (see 0012_references.sql).
+// ---------------------------------------------------------------------------
+
+/// One reference. `phrase` is what the reader selected (shown verbatim); `phrase_fold` is the folded
+/// MATCHING key the frontend computes; `word_count` lets section matching skip the multi-token scan when
+/// every reference in a book is a single word.
+#[derive(Serialize)]
+pub struct RefRow {
+    pub id: String,
+    pub book_id: String,
+    pub phrase: String,
+    pub phrase_fold: String,
+    pub word_count: i64,
+    pub note: String,
+    pub created_at: Option<i64>,
+    pub updated_at: Option<i64>,
+}
+
+fn ref_row(r: &rusqlite::Row) -> rusqlite::Result<RefRow> {
+    Ok(RefRow {
+        id: r.get(0)?,
+        book_id: r.get(1)?,
+        phrase: r.get(2)?,
+        phrase_fold: r.get(3)?,
+        word_count: r.get(4)?,
+        note: r.get(5)?,
+        created_at: r.get(6)?,
+        updated_at: r.get(7)?,
+    })
+}
+
+const REF_COLS: &str = "id, book_id, phrase, phrase_fold, word_count, note, created_at, updated_at";
+
+/// Every reference for one book — the whole set, loaded once when the book opens and then held in memory
+/// for per-section matching. A book's references are counted in tens, not thousands, so this is one small
+/// query per open rather than a lookup per section (let alone per word).
+pub fn refs_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<RefRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {REF_COLS} FROM refs WHERE book_id = ?1 ORDER BY word_count DESC, created_at"
+    ))?;
+    let rows = stmt.query_map([book_id], ref_row)?;
+    rows.collect()
+}
+
+
+/// Create or UPDATE the reference for a phrase in a book — one call serves both the create and the edit
+/// flow, which is exactly how the dialog behaves (same dialog, note pre-filled when it already exists).
+/// Idempotent per (book, folded phrase): referencing the same term twice edits the note instead of leaving
+/// a second row that would mark the same words twice.
+pub fn ref_save(
+    conn: &Connection,
+    book_id: &str,
+    phrase: &str,
+    phrase_fold: &str,
+    word_count: i64,
+    note: &str,
+) -> rusqlite::Result<Option<RefRow>> {
+    let id = gen_id(&format!("ref:{book_id}:{phrase_fold}"));
+    let now = now_unix();
+    conn.execute(
+        "INSERT INTO refs(id, book_id, phrase, phrase_fold, word_count, note, created_at, updated_at) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?7) \
+         ON CONFLICT(book_id, phrase_fold) DO UPDATE SET \
+            phrase=excluded.phrase, word_count=excluded.word_count, note=excluded.note, \
+            updated_at=excluded.updated_at",
+        rusqlite::params![id, book_id, phrase, phrase_fold, word_count, note, now],
+    )?;
+    // The conflict target is (book_id, phrase_fold), not the id, so on an edit the row keeps its ORIGINAL
+    // id — re-derive it from the unique key rather than assuming the id we just generated.
+    conn.query_row(
+        &format!("SELECT {REF_COLS} FROM refs WHERE book_id = ?1 AND phrase_fold = ?2"),
+        rusqlite::params![book_id, phrase_fold],
+        ref_row,
+    )
+    .optional()
+}
+
+/// Delete one reference. Its marks disappear from every occurrence in the book the moment the frontend
+/// drops it from the match set — there is nothing in the document to clean up, because nothing was ever
+/// written into it.
+pub fn ref_delete(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM refs WHERE id = ?1", [id])?;
+    Ok(())
+}
+

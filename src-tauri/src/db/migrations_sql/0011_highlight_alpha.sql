@@ -1,0 +1,14 @@
+-- RAWY-259: a highlight carries its OWN ink density (opacity), set per highlight from the Notes editor's
+-- «كثافة الحبر» control. Until now opacity was a per-THEME constant (`highlightAlpha`), so it was impossible
+-- to make one passage heavier than another — every mark in the book moved together.
+--
+-- ADDITIVE AND BACKWARD-COMPATIBLE BY CONSTRUCTION:
+--   * a new nullable column only — no table rewrite, no data touched, nothing dropped or renamed;
+--   * NULL is the sentinel for "follow the theme's default", which is EXACTLY what every existing
+--     highlight does today, so all pre-existing rows keep rendering byte-identically without a backfill;
+--   * an older build reading this database simply ignores the column and still renders every highlight
+--     (the value only ever refines an alpha it would otherwise take from the theme).
+-- Deliberately NOT defaulted to a number: writing a captured constant here would freeze one theme's value
+-- into every old highlight and silently regress the other themes (the RAWY-200 sentinel lesson — a
+-- "reproduce today's look" default must store NULL when the current value is per-theme, not a snapshot).
+ALTER TABLE highlights ADD COLUMN alpha REAL;

@@ -607,7 +607,7 @@ html, body, #root {
 /* Per-book TEXT COLOUR inks + contrast guard (RAWY-40, Band I). */
 .rs-inks { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .rs-ink {
-  width: 32px; height: 32px; border-radius: 9px; border: 0; cursor: pointer; padding: 0;
+  width: 2.35rem; height: 2.35rem; border-radius: 9px; border: 0; cursor: pointer; padding: 0;
   box-shadow: inset 0 0 0 1px rgba(43, 37, 33, 0.12);
 }
 .rs-ink.on { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -1533,7 +1533,7 @@ html, body, #root {
 .sp-searching { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 16px 14px 12px; font: 500 0.78125rem var(--ui-font); color: var(--muted); }
 .sp-searching-text { text-align: center; }
 .sp-spinner {
-  width: 20px; height: 20px; border-radius: 50%;
+  width: 1.5rem; height: 1.5rem; border-radius: 50%;
   border: 2.5px solid color-mix(in srgb, var(--accent) 22%, transparent);
   border-top-color: var(--accent);
   animation: sp-spin 0.7s linear infinite;
@@ -1667,7 +1667,7 @@ html, body, #root {
 .tbar button.on { background: var(--accent); color: var(--paper-bg); border-color: var(--accent); }
 /* theme swatch buttons */
 .tbar .swatch {
-  width: 22px; height: 22px; padding: 0; border-radius: 50%;
+  width: 1.65rem; height: 1.65rem; padding: 0; border-radius: 50%;
   border: 1px solid var(--chrome-border); cursor: pointer;
 }
 .tbar .swatch.on { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -1925,7 +1925,7 @@ html, body, #root {
   box-shadow: 0 14px 34px rgba(40, 28, 14, 0.24);
 }
 .lib-swatch {
-  width: 22px; height: 22px; flex: none; border-radius: 50%; cursor: pointer;
+  width: 1.65rem; height: 1.65rem; flex: none; border-radius: 50%; cursor: pointer;
   border: 1.5px solid; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.06);
 }
 .lib-swatch.active { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -2465,7 +2465,7 @@ html, body, #root {
   background: linear-gradient(to right, hsl(0 62% 78%), hsl(45 62% 78%), hsl(90 58% 76%), hsl(150 52% 74%), hsl(200 56% 76%), hsl(260 52% 78%), hsl(320 58% 80%), hsl(360 62% 78%));
 }
 .hl-cpick-thumb {
-  position: absolute; top: 50%; transform: translate(-50%, -50%); width: 20px; height: 20px; border-radius: 50%;
+  position: absolute; top: 50%; transform: translate(-50%, -50%); width: 1.5rem; height: 1.5rem; border-radius: 50%;
   background: #fff; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; pointer-events: none;
 }
 .hl-cpick-thumb-dot { width: 12px; height: 12px; border-radius: 50%; }
@@ -2474,7 +2474,7 @@ html, body, #root {
   margin-top: 13px; padding-top: 13px; border-top: 1px solid color-mix(in srgb, currentColor 16%, transparent);
 }
 .hl-cpick-preview { display: flex; align-items: center; gap: 8px; }
-.hl-cpick-dot { width: 22px; height: 22px; border-radius: 7px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.14); }
+.hl-cpick-dot { width: 1.65rem; height: 1.65rem; border-radius: 7px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.14); }
 .hl-cpick-hex { font: 600 0.6875rem var(--ui-font); letter-spacing: 0.03em; opacity: 0.8; }
 .hl-cpick-apply {
   border: 0; cursor: pointer; padding: 8px 17px; border-radius: 9px; font: 600 0.75rem var(--ui-font);
@@ -2673,7 +2673,7 @@ html, body, #root {
   padding-inline-end: 10px; border-bottom: 1px solid var(--chrome-border);
 }
 .gs-x {
-  width: 32px; height: 32px; border: none; background: transparent; color: var(--muted);
+  width: 2.35rem; height: 2.35rem; border: none; background: transparent; color: var(--muted);
   font-size: 0.9375rem; cursor: pointer; border-radius: 7px;
 }
 .gs-x:hover { background: var(--lib-hover); color: var(--text); }
@@ -3021,7 +3021,7 @@ html, body, #root {
 .pbt-text { font: 400 0.78125rem/1.45 "Literata", "SardUIArabic", serif; color: var(--text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .pbt-chapter { font: 600 0.59375rem var(--ui-font); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
 .pc-basket-tray[dir="rtl"] .pbt-chapter { letter-spacing: 0; text-transform: none; }
-.pbt-remove { flex: none; border: none; background: transparent; color: var(--muted); font: 300 1.0625rem var(--ui-font); cursor: pointer; width: 22px; height: 22px; border-radius: 6px; }
+.pbt-remove { flex: none; border: none; background: transparent; color: var(--muted); font: 300 1.0625rem var(--ui-font); cursor: pointer; width: 1.65rem; height: 1.65rem; border-radius: 6px; }
 .pbt-remove:hover { background: color-mix(in srgb, #b24a4a 18%, transparent); color: #d06868; }
 .pbt-foot { display: flex; align-items: center; gap: 8px; padding: 11px 13px; border-top: 1px solid var(--chrome-border); }
 .pbt-create { flex: 1; border: none; border-radius: 9px; padding: 10px 12px; background: var(--accent); color: var(--paper-bg); font: 600 0.78125rem var(--ui-font); cursor: pointer; }
@@ -3204,3 +3204,159 @@ html, body, #root {
 .toc-label, .toc-num, .toc-num.big,
 .ll-author, .ll-read, .lib-shelfrow-name,
 .sp-spoiler-label, .sp-spoiler-sub, .sr-chapter { font-weight: var(--ui-weight, 400); }
+
+/* RAWY-259 — NOTES EDITOR, COMPACT (docs/design/Note Editor Compact (standalone).html).
+   Authoritative UI. Replaces the earlier 928×664 layout entirely — no element of it survives here.
+   CENTRED BY CONSTRUCTION: a fixed full-viewport scrim flex-centres the sheet, so it is centred on open, at
+   any size and after a resize, with nothing measured and no position ever stored. */
+.nec-scrim {
+  position: fixed; inset: 0; z-index: 60;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+  background: rgba(20, 14, 6, 0.42); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+}
+:root[data-dark="true"] .nec-scrim { background: rgba(0, 0, 0, 0.55); }
+/* the design's sheet: 704×480, 1fr + a 254px rail, 16px radius */
+.nec {
+  width: min(50rem, 100%); height: min(34rem, 100%);
+  display: grid; grid-template-columns: 1fr 17.5rem;
+  background: var(--chrome-bg); color: var(--text);
+  border: 1px solid var(--chrome-border); border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(40, 28, 14, 0.08), 0 8px 22px rgba(40, 28, 14, 0.12), 0 30px 60px rgba(40, 28, 14, 0.18);
+  overflow: hidden; font-family: var(--ui-font);
+  animation: nec-in 0.18s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+:root[data-dark="true"] .nec { box-shadow: 0 30px 60px rgba(0, 0, 0, 0.5); }
+@keyframes nec-in { from { opacity: 0; transform: translateY(4px) scale(0.98); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .nec { animation: none; } }
+/* the design's own breakpoint: the rail drops under the paper */
+@media (max-width: 760px) {
+  .nec { grid-template-columns: 1fr; height: auto; max-height: 100%; }
+  .nec-rail { border-inline-start: 0; border-top: 1px solid var(--chrome-border); }
+  .nec-paper { min-height: 300px; }
+}
+
+/* PAPER */
+.nec-paper { position: relative; background: var(--paper-bg); display: flex; flex-direction: column; padding: 1.25rem 1.6rem 0.9rem; min-width: 0; min-height: 0; }
+.nec-grain {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0.035; mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+.nec-quote-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.nec-eyebrow { font: 500 0.75rem/1.4 var(--ui-font); color: color-mix(in srgb, var(--muted) 80%, transparent); }
+.nec-quote-toggle { border: 0; background: transparent; padding: 0; font: 500 0.75rem/1.4 var(--ui-font); color: var(--accent); cursor: pointer; }
+.nec-quote { border-inline-start: 2px solid color-mix(in srgb, var(--accent) 22%, transparent); padding-inline-start: 11px; margin-bottom: 12px; }
+/* collapsed to two lines by default (the design's clamp), expanded by the toggle */
+.nec-quote p {
+  margin: 0; font: 400 1.0625rem/1.85 var(--ui-font); color: color-mix(in srgb, var(--text) 90%, transparent);
+  display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; -webkit-line-clamp: 2;
+}
+.nec-quote p.open { -webkit-line-clamp: 12; overflow: auto; max-height: 34%; }
+/* GEOMETRY comes INLINE from the shared constants (lib/highlightInk.ts) — padding, radius and the fade
+   width — exactly as the page renderer uses them. Only the mask MECHANISM lives here. Do not re-declare
+   padding, border-radius, colour, blend or opacity in this rule: that is how a preview drifts. */
+.nec-mark {
+  box-decoration-break: clone; -webkit-box-decoration-break: clone;
+  -webkit-mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0) 0, #000 var(--nec-edge, 0.24em), #000 calc(100% - var(--nec-edge, 0.24em)), rgba(0, 0, 0, 0) 100%);
+  mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0) 0, #000 var(--nec-edge, 0.24em), #000 calc(100% - var(--nec-edge, 0.24em)), rgba(0, 0, 0, 0) 100%);
+}
+.nec-rule-row { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; }
+.nec-rule { height: 1px; flex: 1; background: var(--chrome-border); }
+.nec-note {
+  flex: 1; min-height: 9rem; width: 100%; border: 0; background: transparent; resize: none;
+  font: 400 1.1875rem/1.9 var(--ui-font); color: var(--text); text-align: start;
+}
+.nec-note:focus { outline: none; }
+/* character counter only — the design's markdown badge is deliberately not implemented */
+.nec-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 8px; border-top: 1px solid var(--chrome-border); font: 500 0.75rem/1.4 var(--ui-font); color: color-mix(in srgb, var(--muted) 80%, transparent); }
+
+/* RAIL */
+.nec-rail { background: var(--chrome-bg); border-inline-start: 1px solid var(--chrome-border); display: flex; flex-direction: column; padding: 0.95rem 1rem; gap: 0.85rem; overflow-y: auto; min-width: 0; min-height: 0; }
+.nec-rail-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.nec-rail-title { font: 600 0.875rem/1 var(--ui-font); color: var(--text); }
+.nec-x { width: 1.65rem; height: 1.65rem; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: 400 0.9375rem/1 var(--ui-font); padding: 0; cursor: pointer; }
+.nec-x:hover { background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
+.nec-group { display: flex; flex-direction: column; gap: 7px; }
+.nec-group-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.nec-label { font: 600 0.8125rem/1.3 var(--ui-font); color: var(--muted); }
+.nec-value { font: 400 0.75rem/1.3 var(--ui-font); color: color-mix(in srgb, var(--muted) 78%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* the design's 20px swatches, applied to the existing ColorRow so its picker behaviour is untouched */
+.nec-colors .hl-dots { display: flex; flex-wrap: wrap; gap: 6px; }
+.nec-colors .hl-dots button { width: 1.5rem; height: 1.5rem; }
+.nec-colors .hl-custom-plus svg { width: 9px; height: 9px; }
+/* density: an inline row — label · bars · percentage */
+.nec-density { display: flex; align-items: center; gap: 9px; }
+.nec-density .nec-label { flex: none; }
+.nec-bars {
+  flex: 1; min-width: 0; display: flex; align-items: flex-end; gap: 3px; height: 2rem; padding: 0.3rem 0.45rem;
+  background: color-mix(in srgb, var(--text) 4%, transparent); border: 1px solid var(--chrome-border);
+  border-radius: 9px; touch-action: none; cursor: ew-resize;
+}
+.nec-bars:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nec-bar { flex: 1; border-radius: 2px; background: color-mix(in srgb, var(--text) 12%, transparent); transition: background 0.16s, height 0.18s cubic-bezier(0.32, 0.72, 0, 1); }
+.nec-pct { flex: none; font-variant-numeric: tabular-nums; }
+/* metadata — the design's two-column grid; only fields Sard actually stores */
+.nec-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 10px; padding-top: 9px; border-top: 1px solid var(--chrome-border); margin-top: auto; }
+.nec-meta-wide { grid-column: 1 / -1; }
+.nec-meta-k { font: 400 0.6875rem/1.3 var(--ui-font); color: color-mix(in srgb, var(--muted) 76%, transparent); }
+.nec-meta-v { font: 500 0.75rem/1.35 var(--ui-font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* actions — save · cancel · delete, on one row */
+.nec-actions { display: flex; align-items: center; gap: 6px; padding-top: 9px; border-top: 1px solid var(--chrome-border); }
+.nec-save { flex: 1; height: 2.35rem; border: 0; border-radius: 9px; background: var(--accent); color: var(--paper-bg); font: 600 0.875rem/1 var(--ui-font); cursor: pointer; }
+.nec-cancel { flex: none; height: 2.35rem; padding: 0 0.8rem; border: 1px solid var(--chrome-border); border-radius: 9px; background: transparent; color: var(--muted); font: 500 0.8125rem/1 var(--ui-font); cursor: pointer; }
+.nec-del { flex: none; width: 2.35rem; height: 2.35rem; border: 1px solid transparent; border-radius: 9px; background: transparent; color: #B23A3A; font: 500 13px/1 var(--ui-font); padding: 0; cursor: pointer; }
+:root[data-dark="true"] .nec-del { color: #E08585; }
+.nec-cancel:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.nec-del:hover { border-color: #B23A3A; }
+.nec-save:focus-visible, .nec-cancel:focus-visible, .nec-del:focus-visible, .nec-x:focus-visible, .nec-quote-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* RAWY-259 (owner review): the TAG PICKER inside the Notes editor.
+   TWO problems, one cause. `.tag-chip` was written for a surface where `--paper-bg` READS AS INK — its
+   text, border and background are all mixes of `--paper-bg`. On a DARK theme `--paper-bg` is itself dark
+   (True-Black is #000), and the editor's rail is `--chrome-bg`, also dark: dark ink on a dark ground, so the
+   chips all but vanished. Here they are re-based on `--text` and `--accent`, which are legible against the
+   rail in EVERY theme, and the states (hover / focus / selected) are made explicit rather than implied.
+   The sizes also come up to the approved compact design: a bigger hit area and a taller list, without
+   giving up the compact rail. Scoped to `.nec-tags`, so any other TagPicker host keeps its own styling. */
+.nec-tags .tag-picker { gap: 8px; }
+/* a taller list — the design shows several rows of tags at once, not one cramped line */
+.nec-tags .tag-cloud { gap: 6px; max-height: 132px; padding: 1px; }
+.nec-tags .tag-chip {
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--text) 26%, transparent);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: color-mix(in srgb, var(--text) 92%, transparent);
+  font: 500 11.5px/1.5 var(--ui-font);
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+/* comfortable target: the design's chip padding, not the old dense one */
+.nec-tags .tag-chip-name { padding: 4px 6px 4px 11px; }
+.nec-tags .tag-chip:hover {
+  background: color-mix(in srgb, var(--text) 15%, transparent);
+  border-color: color-mix(in srgb, var(--text) 42%, transparent);
+  color: var(--text);
+}
+.nec-tags .tag-chip:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
+/* SELECTED is unmistakable: the accent fill, with text taken from the chrome so it reads on both polarities */
+.nec-tags .tag-chip.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--paper-bg);
+}
+.nec-tags .tag-chip.on:hover { background: color-mix(in srgb, var(--accent) 88%, var(--text)); color: var(--paper-bg); }
+/* the remove ✕ inherits the chip's colour, so it is legible in both states */
+.nec-tags .tag-chip:hover .tag-del, .nec-tags .tag-chip:focus-within .tag-del { width: 17px; padding-right: 8px; opacity: 0.85; }
+/* the add/search field — same re-basing, and a roomier target */
+.nec-tags .tag-add {
+  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--text) 24%, transparent);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+.nec-tags .tag-add:focus-within { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 24%, transparent); }
+.nec-tags .tag-add-input {
+  color: var(--text);
+  padding: 7px 11px;
+  font: 400 12px/1.4 var(--ui-font);
+}
+.nec-tags .tag-add-input::placeholder { color: color-mix(in srgb, var(--text) 48%, transparent); }
+.nec-tags .tag-add-plus { color: color-mix(in srgb, var(--text) 78%, transparent); }
+.nec-tags .tag-add-plus:hover { color: var(--accent); }
+

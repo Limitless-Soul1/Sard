@@ -147,6 +147,7 @@ pub fn run() {
             commands::annotations_all,
             commands::highlight_create,
             commands::highlight_set_color,
+            commands::highlight_set_alpha, // RAWY-259: per-highlight ink density
             commands::highlight_delete,
             commands::notes_for_book,
             commands::note_create,

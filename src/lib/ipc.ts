@@ -279,6 +279,9 @@ export interface HighlightRow {
   text_excerpt: string | null;
   chapter_label: string | null;
   created_at: number | null;
+  // RAWY-259: this highlight's OWN ink density (the editor's «كثافة الحبر»). `null` = follow the theme's
+  // default, which is what every highlight created before the feature does — so old marks are unchanged.
+  alpha: number | null;
 }
 
 export interface NoteRow {
@@ -342,6 +345,10 @@ export const highlightCreate = (
 
 export const highlightSetColor = (id: string, color: HighlightColor): Promise<HighlightRow | null> =>
   invoke<HighlightRow | null>("highlight_set_color", { id, color });
+
+/** RAWY-259: set this highlight's own ink density; `null` restores "follow the theme default". */
+export const highlightSetAlpha = (id: string, alpha: number | null): Promise<HighlightRow | null> =>
+  invoke<HighlightRow | null>("highlight_set_alpha", { id, alpha });
 
 export const highlightDelete = (id: string): Promise<boolean> =>
   invoke<boolean>("highlight_delete", { id });

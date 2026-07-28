@@ -324,6 +324,17 @@ pub fn highlight_set_color(id: String, color: String, state: State<AppState>) ->
     library::highlight_set_color(&conn, &id, &color).map_err(err)
 }
 
+/// RAWY-259: per-highlight ink density. `alpha: None` clears the override (back to the theme default).
+#[tauri::command]
+pub fn highlight_set_alpha(
+    id: String,
+    alpha: Option<f64>,
+    state: State<AppState>,
+) -> Result<Option<library::HighlightRow>, String> {
+    let conn = state.db.lock().map_err(err)?;
+    library::highlight_set_alpha(&conn, &id, alpha).map_err(err)
+}
+
 #[tauri::command]
 pub fn highlight_delete(id: String, state: State<AppState>) -> Result<bool, String> {
     let conn = state.db.lock().map_err(err)?;

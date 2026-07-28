@@ -516,6 +516,9 @@ pub struct HighlightRow {
     pub text_excerpt: Option<String>,
     pub chapter_label: Option<String>,
     pub created_at: Option<i64>,
+    /// RAWY-259: this highlight's OWN ink density. `None` = follow the theme's default, which is what
+    /// every pre-existing highlight does — so the column needs no backfill and old rows are unchanged.
+    pub alpha: Option<f64>,
 }
 
 fn highlight_row(r: &rusqlite::Row) -> rusqlite::Result<HighlightRow> {
@@ -527,10 +530,11 @@ fn highlight_row(r: &rusqlite::Row) -> rusqlite::Result<HighlightRow> {
         text_excerpt: r.get(4)?,
         chapter_label: r.get(5)?,
         created_at: r.get(6)?,
+        alpha: r.get(7)?,
     })
 }
 
-const HL_COLS: &str = "id, book_id, start_cfi, color, text_excerpt, chapter_label, created_at";
+const HL_COLS: &str = "id, book_id, start_cfi, color, text_excerpt, chapter_label, created_at, alpha";
 
 pub fn highlights_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<HighlightRow>> {
     let mut stmt = conn.prepare(&format!(
@@ -567,6 +571,21 @@ pub fn highlight_create(
 
 pub fn highlight_set_color(conn: &Connection, id: &str, color: &str) -> rusqlite::Result<Option<HighlightRow>> {
     conn.execute("UPDATE highlights SET color = ?2 WHERE id = ?1", rusqlite::params![id, color])?;
+    get_highlight(conn, id)
+}
+
+/// RAWY-259: set (or clear) a highlight's OWN ink density. `None` restores "follow the theme default",
+/// so the control can always be returned to the state every highlight had before this feature existed.
+/// Touches one row by id — editing one highlight can never move another.
+pub fn highlight_set_alpha(
+    conn: &Connection,
+    id: &str,
+    alpha: Option<f64>,
+) -> rusqlite::Result<Option<HighlightRow>> {
+    // Clamp defensively: the value comes from a UI control, and a stored out-of-range alpha would make a
+    // highlight invisible (0) or opaque enough to bury the text (>1) with no way back except this control.
+    let a = alpha.map(|v| v.clamp(0.05, 1.0));
+    conn.execute("UPDATE highlights SET alpha = ?2 WHERE id = ?1", rusqlite::params![id, a])?;
     get_highlight(conn, id)
 }
 

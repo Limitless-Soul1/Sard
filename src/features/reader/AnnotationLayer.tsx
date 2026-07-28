@@ -11,8 +11,22 @@ import { useI18n } from "../../i18n";
 import { THEMES, useTheme } from "../../theme";
 import type { AnchorRect, AnnotationHit, FoliateController, SelectionInfo } from "../../reader-engine/FoliateController";
 import { useAnnotations } from "./annotationsStore";
+import { useReader } from "../../reader-engine/store"; // RAWY-259: the book title for the metadata block
 import { HIGHLIGHT_SLOTS, isHex } from "./highlightColors";
 import { TagPicker } from "./TagPicker";
+import { localeNum } from "../../lib/format";
+// RAWY-259: the ONE ink resolution — the same function the page renderer uses, so the editor preview and
+// the mark on the page can never drift apart.
+import {
+  resolveHighlightInk,
+  DEFAULT_INK,
+  INK_MIN,
+  INK_PAD_X_EM,
+  INK_PAD_TOP_EM,
+  INK_PAD_BOTTOM_EM,
+  INK_RADIUS_EM,
+  INK_EDGE_EM,
+} from "../../lib/highlightInk";
 import { noteTagsFor, noteTagsSet, type HighlightColor, type HighlightRow, type NoteRow } from "../../lib/ipc";
 
 function useHl() {
@@ -139,6 +153,14 @@ function CustomColorPicker({
 // The 8 slot dots + a custom-colour swatch. RAWY-123: the "+" opens the hybrid custom-colour picker
 // (in place of the dots); picking a colour recolours the highlight and returns to the dots. `active`
 // is the currently-applied colour (a slot name or a #hex) so the right dot is ringed.
+// RAWY-259: the ink-density control. NINE bars per the design; the floor stops a mark ever becoming
+// invisible, and DEFAULT_INK is what an untouched highlight (alpha NULL = follow the theme) shows in the
+// control, so opening the editor on an old highlight never silently changes it.
+const INK_BARS = 9; // the design draws the density as nine bars
+// Metadata timestamps: day + month is enough for a note, and it localises without a date library.
+const fmtStamp = (unix: number, lang: string): string =>
+  new Date(unix * 1000).toLocaleDateString(lang === "ar" ? "ar" : "en", { day: "numeric", month: "long" });
+
 export function ColorRow({ active, onPick }: { active?: string | null; onPick: (c: HighlightColor) => void }) {
   const hl = useHl();
   const custom = isHex(active);
@@ -271,53 +293,222 @@ function SelectionToolbar({
   );
 }
 
-function HighlightPopover({
-  hit,
+// RAWY-259 — THE NOTES EDITOR, compact layout.
+// Source of truth: docs/design/Note Editor Compact (standalone).html — 704×480, `grid-template-columns:
+// 1fr 254px`, paper section + 254px rail. It REPLACES the earlier 928×664 design entirely; nothing from
+// that layout is carried over. The backend it drives (per-highlight alpha, its migration, IPC, Rust
+// command, store action and the shared ink renderer) is untouched — this is the UI it connects to.
+//
+// CENTRED BY CONSTRUCTION: a fixed full-viewport scrim flex-centres the sheet, so it is centred on open, at
+// any window size and after a resize, with nothing measured and no position ever remembered.
+// The «يدعم ماركداون» badge in the design is deliberately NOT implemented — Sard has no markdown renderer
+// and the UI must not advertise a feature that does not exist (owner's instruction).
+function NoteEditorModal({
   hi,
   note,
   onColor,
+  onAlpha,
   onSaveNote,
   onRemove,
+  onClose,
 }: {
-  hit: AnnotationHit;
   hi: HighlightRow;
   note: NoteRow | undefined;
   onColor: (c: HighlightColor) => void;
+  onAlpha: (a: number) => void;
   onSaveNote: (body: string, tagIds: string[]) => void;
   onRemove: () => void;
+  onClose: () => void;
 }) {
-  const { t } = useI18n();
+  const { t, lang, dir } = useI18n();
   const [body, setBody] = useState(note?.body ?? "");
-  // RAWY-203: the tags to attach to this note. Loaded from the note's current tags when the popover
-  // opens on an existing note; persisted (with the body) on Save.
   const [tagIds, setTagIds] = useState<string[]>([]);
+  const [alpha, setAlpha] = useState<number>(hi.alpha ?? DEFAULT_INK);
+  // The design's quote is collapsible (`qClamp` / `quoteToggleLabel`) — compact by default, expandable when
+  // the reader wants the whole passage. Two lines collapsed, per the design's clamp.
+  const [quoteOpen, setQuoteOpen] = useState(false);
+  const barsRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     setBody(note?.body ?? "");
+    setAlpha(hi.alpha ?? DEFAULT_INK);
     if (note?.id) noteTagsFor(note.id).then((ts) => setTagIds(ts.map((x) => x.id))).catch(() => setTagIds([]));
     else setTagIds([]);
-  }, [note?.id, hi.id]);
-  const below = hit.rect.top < 150;
+  }, [note?.id, hi.id, hi.alpha]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+
+  const hl = useHl();
+  const themeId = useTheme((s) => s.themeId);
+  const themeDark = THEMES[themeId].dark;
+  const themePaper = THEMES[themeId].colors.paperBg;
+  const inkHex = isHex(hi.color) ? hi.color : (hl[hi.color as keyof typeof hl] ?? hi.color);
+  // The preview ink comes from the SHARED resolver the page renderer uses, with the density being dragged —
+  // so this is the mark itself, not a representation of it.
+  const previewInk = resolveHighlightInk({ ink: inkHex, dark: themeDark, paper: themePaper, alpha });
+  const filled = Math.round(alpha * INK_BARS);
+  const created = hi.created_at ? fmtStamp(hi.created_at, lang) : null;
+  const edited = note?.updated_at ? fmtStamp(note.updated_at, lang) : null;
+  const bookTitle = useReader.getState().bookTitle;
+
+  // The density strip: drag or arrow-key, read from the strip's START edge in the current direction.
+  const applyFromPointer = (clientX: number) => {
+    const el = barsRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const raw = dir === "rtl" ? (r.right - clientX) / r.width : (clientX - r.left) / r.width;
+    const v = Math.max(INK_MIN, Math.min(1, raw));
+    setAlpha(v);
+    onAlpha(v); // live redraw of THIS mark only
+  };
+
   return (
-    <div
-      className={`hl-card${below ? " below" : ""}`}
-      style={anchorStyle(hit.rect, below)}
-      onPointerDown={(e) => e.stopPropagation()}
-    >
-      <div className="hl-card-top">
-        <ColorRow active={hi.color} onPick={onColor} />
-        <button className="hl-remove" onClick={onRemove}>{t("hl.remove")}</button>
-      </div>
-      <textarea
-        className="hl-note"
-        value={body}
-        onChange={(e) => setBody(e.target.value)}
-        placeholder={t("hl.addNote")}
-        dir="auto"
-        rows={3}
-      />
-      <TagPicker selected={tagIds} onChange={setTagIds} />
-      <div className="hl-card-foot">
-        <button className="hl-save" onClick={() => onSaveNote(body, tagIds)}>{t("hl.save")}</button>
+    <div className="nec-scrim" onPointerDown={onClose}>
+      <div
+        className="nec"
+        // The design's root is `dir="rtl"`, so `1fr 254px` puts the paper on the RIGHT and the rail on the
+        // LEFT. This modal renders inside `.reader-root`, which pins `direction: ltr`, so the direction is
+        // set explicitly here from the UI language — otherwise the whole layout comes out mirrored.
+        dir={dir}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("ne.title")}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        {/* PAPER */}
+        <section className="nec-paper">
+          <div className="nec-grain" aria-hidden />
+          <div className="nec-quote-head">
+            <span className="nec-eyebrow">{t("ne.passage")}</span>
+            <button type="button" className="nec-quote-toggle" onClick={() => setQuoteOpen((v) => !v)} aria-expanded={quoteOpen}>
+              {quoteOpen ? t("ne.less") : t("ne.more")}
+            </button>
+          </div>
+          <div className="nec-quote">
+            <p dir="auto" className={quoteOpen ? "open" : undefined}>
+              {/* RAWY-259: the preview is the SAME mark, not a likeness of it. Colour, blend and opacity
+                  come from the shared resolver; padding, radius and the .24em end-fade come from the SAME
+                  geometry constants the page renderer grows its rects by — so shape, padding, rendering
+                  style and density all match what the reader sees in the book. */}
+              <span
+                className="nec-mark"
+                style={{
+                  background: previewInk.fill,
+                  mixBlendMode: previewInk.blend,
+                  opacity: previewInk.opacity,
+                  padding: `${INK_PAD_TOP_EM}em ${INK_PAD_X_EM}em ${INK_PAD_BOTTOM_EM}em`,
+                  borderRadius: `${INK_RADIUS_EM}em`,
+                  ["--nec-edge" as string]: `${INK_EDGE_EM}em`,
+                }}
+              >
+                {hi.text_excerpt ?? ""}
+              </span>
+            </p>
+          </div>
+          <div className="nec-rule-row">
+            <span className="nec-eyebrow">{t("ne.myNote")}</span>
+            <span className="nec-rule" />
+          </div>
+          <textarea
+            className="nec-note"
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            placeholder={t("ne.placeholder")}
+            aria-label={t("ne.myNote")}
+            // RAWY-259: NOT dir="auto" — with an EMPTY field auto resolves to LTR, so in an Arabic UI the
+            // caret started on the left. Following the UI direction puts it on the correct side from the
+            // first keystroke; text-align:start then keeps the text on that side as it is typed.
+            dir={dir}
+            autoFocus
+          />
+          {/* Character counter only — the design's markdown badge is deliberately omitted. */}
+          <div className="nec-foot">
+            <span aria-live="polite">{t("ne.chars", { n: localeNum(body.length, lang) })}</span>
+          </div>
+        </section>
+
+        {/* RAIL */}
+        <aside className="nec-rail">
+          <div className="nec-rail-head">
+            <span className="nec-rail-title">{t("ne.title")}</span>
+            <button type="button" className="nec-x" onClick={onClose} aria-label={t("ne.close")} title={t("ne.close")}>✕</button>
+          </div>
+
+          <div className="nec-group">
+            <div className="nec-group-head">
+              <span className="nec-label">{t("ne.colour")}</span>
+              <span className="nec-value" dir="auto">{isHex(hi.color) ? hi.color.toUpperCase() : hi.color}</span>
+            </div>
+            {/* ColorRow carries the 8 slots AND the custom hue/hex picker; the compact sizing is applied by
+                `.nec-colors` so the controls match the design without re-implementing their behaviour. */}
+            <div className="nec-colors">
+              <ColorRow active={hi.color} onPick={onColor} />
+            </div>
+          </div>
+
+          <div className="nec-density">
+            <span className="nec-label">{t("ne.density")}</span>
+            <div
+              className="nec-bars"
+              ref={barsRef}
+              onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); applyFromPointer(e.clientX); }}
+              onPointerMove={(e) => { if (e.buttons) applyFromPointer(e.clientX); }}
+              onKeyDown={(e) => {
+                const step = e.key === "ArrowLeft" ? -0.05 : e.key === "ArrowRight" ? 0.05 : 0;
+                if (!step) return;
+                e.preventDefault();
+                const v = Math.max(INK_MIN, Math.min(1, alpha + step));
+                setAlpha(v);
+                onAlpha(v);
+              }}
+              role="slider"
+              tabIndex={0}
+              aria-label={t("ne.density")}
+              aria-valuemin={Math.round(INK_MIN * 100)}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(alpha * 100)}
+            >
+              {Array.from({ length: INK_BARS }, (_, i) => (
+                <span
+                  key={i}
+                  className="nec-bar"
+                  style={{ height: `${38 + i * 6}%`, background: i < filled ? inkHex : undefined }}
+                />
+              ))}
+            </div>
+            <span className="nec-value nec-pct">{localeNum(Math.round(alpha * 100), lang)}٪</span>
+          </div>
+
+          <div className="nec-group">
+            <span className="nec-label">{t("ne.tags")}</span>
+            {/* TagPicker provides search, multi-select, create and remove — the tag behaviour the design
+                shows, kept intact; `.nec-tags` applies the compact chip sizing. */}
+            <div className="nec-tags">
+              <TagPicker selected={tagIds} onChange={setTagIds} />
+            </div>
+          </div>
+
+          {/* Metadata — the design's two-column grid, with ONLY fields Sard actually stores. The design's
+              «الموضع» (page · %) has no stored counterpart and is omitted rather than invented. */}
+          <div className="nec-meta">
+            {bookTitle && (
+              <div><div className="nec-meta-k">{t("ne.book")}</div><div className="nec-meta-v" dir="auto">{bookTitle}</div></div>
+            )}
+            {created && <div><div className="nec-meta-k">{t("ne.created")}</div><div className="nec-meta-v">{created}</div></div>}
+            {hi.chapter_label && (
+              <div className="nec-meta-wide"><div className="nec-meta-k">{t("ne.chapter")}</div><div className="nec-meta-v" dir="auto">{hi.chapter_label}</div></div>
+            )}
+            {edited && <div><div className="nec-meta-k">{t("ne.updated")}</div><div className="nec-meta-v">{edited}</div></div>}
+          </div>
+
+          <div className="nec-actions">
+            <button type="button" className="nec-save" onClick={() => onSaveNote(body, tagIds)}>{t("hl.save")}</button>
+            <button type="button" className="nec-cancel" onClick={onClose}>{t("ne.cancel")}</button>
+            <button type="button" className="nec-del" onClick={onRemove} aria-label={t("ne.delete")} title={t("ne.delete")}>🗑</button>
+          </div>
+        </aside>
       </div>
     </div>
   );
@@ -465,13 +656,14 @@ export function AnnotationLayer({
         />
       )}
       {active && activeHi && (
-        <HighlightPopover
-          hit={active}
+        <NoteEditorModal
           hi={activeHi}
           note={activeNote}
           onColor={changeColor}
+          onAlpha={(a) => store().setAlpha(activeHi.id, a)}
           onSaveNote={saveNote}
           onRemove={removeHighlight}
+          onClose={() => setActive(null)}
         />
       )}
     </>

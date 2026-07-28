@@ -12,6 +12,7 @@ import {
   highlightCreate,
   highlightDelete,
   highlightSetColor,
+  highlightSetAlpha, // RAWY-259: per-highlight ink density
   highlightsForBook,
   noteCreate,
   noteDelete,
@@ -41,6 +42,8 @@ interface AnnoState {
   noteForHighlight: (highlightId: string) => NoteRow | undefined;
   createHighlight: (cfi: string, color: HighlightColor, text: string) => Promise<HighlightRow | null>;
   setColor: (id: string, color: HighlightColor) => Promise<void>;
+  /** RAWY-259: this highlight’s own ink density; null = follow the theme default. */
+  setAlpha: (id: string, alpha: number | null) => Promise<void>;
   removeHighlight: (id: string) => Promise<void>;
   // RAWY-203: returns the saved note (so the caller can attach tags), or null when the body was empty
   // (which deletes/skips the note — nothing to tag).
@@ -67,7 +70,9 @@ export const useAnnotations = create<AnnoState>((set, get) => ({
     }
     const [highlights, notes] = await Promise.all([highlightsForBook(bookId), notesForBook(bookId)]);
     set({ highlights, notes });
-    await ctrl?.loadHighlights(highlights.map((h) => ({ cfi: h.cfi, color: h.color })));
+    // RAWY-259: carry each mark's saved ink density through, so a reopened book renders the densities the
+    // reader set rather than falling back to the theme default until the highlight is next edited.
+    await ctrl?.loadHighlights(highlights.map((h) => ({ cfi: h.cfi, color: h.color, alpha: h.alpha })));
   },
 
   highlightByCfi: (cfi) => get().highlights.find((h) => h.cfi === cfi),
@@ -108,6 +113,25 @@ export const useAnnotations = create<AnnoState>((set, get) => ({
     } catch (e) {
       console.error(e);
       get().ctrl?.setHighlightColor(hi.cfi, prevColor); // failed write → restore the on-page colour
+    }
+  },
+
+  // RAWY-259: set THIS highlight's ink density. Mirrors `setColor` exactly — optimistic redraw of the one
+  // mark, then the DB write, with a restore on failure — so the page and the row can never disagree. Only
+  // the row with this id is touched, so editing one highlight can never move another. `null` clears the
+  // override and returns the mark to the theme default.
+  setAlpha: async (id, alpha) => {
+    const hi = get().highlights.find((h) => h.id === id);
+    if (!hi) return;
+    const prev = hi.alpha ?? null;
+    get().ctrl?.setHighlightAlpha(hi.cfi, alpha); // optimistic (local, instant)
+    try {
+      const updated = await highlightSetAlpha(id, alpha);
+      if (updated) set({ highlights: upsert(get().highlights, updated) });
+      else get().ctrl?.setHighlightAlpha(hi.cfi, prev); // no DB row → restore the on-page density
+    } catch (e) {
+      console.error(e);
+      get().ctrl?.setHighlightAlpha(hi.cfi, prev); // failed write → restore the on-page density
     }
   },
 

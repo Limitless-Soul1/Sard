@@ -58,6 +58,11 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "note_tags",
         include_str!("migrations_sql/0010_note_tags.sql"),
     ),
+    (
+        11,
+        "highlight_alpha",
+        include_str!("migrations_sql/0011_highlight_alpha.sql"),
+    ),
 ];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.

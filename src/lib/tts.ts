@@ -813,7 +813,23 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
   // advance that is an UNDERRUN (the lead failed to keep up) — count it + log it. On an ENTRY it's the
   // expected initial synth, not an underrun. Either way, show a VISIBLE buffering state, never silence.
   const ready = scheduler.isReady(idx);
-  set({ index: idx, status: ready ? "playing" : "buffering" });
+  // RAWY-257 3C-1 (C7): retire the OLD sentence's karaoke state in the SAME publish that announces the new
+  // index. `words`/`wordIndex` describe the sentence that just finished; the moment `index` moves they are
+  // stale, and `stopKaraoke()` clears only its module-local copies — the STORE kept the old values until
+  // `startKaraoke` runs, which is at the very END of this function, after the synth await.
+  //
+  // On an AUTO-ADVANCE that underruns, that window is the whole wait, and Reader's two effects then paint a
+  // wrong pill inside it: the first rebuilds the word sub-ranges for the NEW sentence out of the PREVIOUS
+  // sentence's word list, and the `playing → buffering` status flip re-runs the second with the stale
+  // `wordIndex`, so a pill is drawn on the new sentence while nothing is being spoken. MEASURED: 12/12
+  // samples across a buffering window carried a pill; the same window reached by `skip()` — which already
+  // resets `wordIndex` — carried none in 10/10, which is what localises the fix here.
+  //
+  // Publishing empty values is sufficient and needs NO Reader change: `setReadingWords` returns early on an
+  // empty list (leaving `wordRanges` empty) and `showReadingWord(-1)` removes the pill and draws nothing —
+  // the correct state while nothing is being spoken. `startKaraoke` republishes the real values when the
+  // audio actually starts, so timing and audio-clock anchoring are untouched.
+  set({ index: idx, status: ready ? "playing" : "buffering", words: [], wordIndex: -1 });
   if (!ready && !establishLead) { ttsUnderruns++; logStall("underrun", idx); }
 
   // RAWY-159: skip the current sentence and continue — one bad segment must NEVER halt the queue. A

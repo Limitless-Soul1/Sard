@@ -67,6 +67,13 @@ export function seriesSummary(s: LatencySeries): { n: number; avg: number; min: 
   return { n: s.n, avg: Math.round(s.sum / s.n), min: Math.round(s.min), max: Math.round(s.max), last: Math.round(s.last), p50: at(0.5), p95: at(0.95) };
 }
 
+// RAWY-257 4A (A3): the rejection reason a DROPPED entry carries — an index removed from the cache before it
+// was ever dispatched. Deliberately NOT exported and deliberately digit-free: it must not collide with any
+// substring the frontend's `classifyFailure` / `isEdgeDown` key on, because a dropped entry is a scheduling
+// event, not a synthesis failure. Today no consumer inspects it — `playFrom`'s catch checks `myGen !== gen`
+// FIRST, and every far cursor move that can drop an awaited entry has already bumped `gen`.
+const DROPPED = "tts.dropped";
+
 interface Entry<T> {
   promise: Promise<T>;
   resolve: (v: T) => void;
@@ -146,6 +153,10 @@ export class SynthScheduler<T> {
    *  the epoch so a synth still in flight for the old chapter can't clobber the new scheduler state. */
   clearCache(): void {
     this.epoch++;
+    // RAWY-257 4A (A3): settle awaiters BEFORE dropping them. `cache.clear()` alone left any queued,
+    // awaited entry permanently pending (measured). `drop()` deletes as it goes; the `clear()` below is
+    // kept so the "cache is empty afterwards" guarantee is unconditional.
+    for (const [idx, e] of this.cache) this.drop(idx, e);
     this.cache.clear();
     this.prio = 0;
     this.inflight = -1;
@@ -166,7 +177,32 @@ export class SynthScheduler<T> {
   private mkEntry(): Entry<T> {
     let resolve!: (v: T) => void, reject!: (e: unknown) => void;
     const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
+    // RAWY-257 4A: a no-op handler so an entry can NEVER surface as an unhandled rejection. Required by the
+    // repair, not decoration: `drop()` below now REJECTS entries that were previously discarded silently, and
+    // whether a given entry has a consumer-side handler is a subtle coupling — e.g. `playFrom`'s `lead` is
+    // assigned but only awaited on an ENTRY, and is saved from being unhandled solely because `prefetchFrom`
+    // requests the SAME promise object with its own `.catch`. This makes rejection safe without depending on
+    // that. It changes nothing for real consumers: the original promise still rejects, so `await` still throws.
+    promise.catch(() => {});
     return { promise, resolve, reject, settled: false, started: false };
+  }
+
+  /** RAWY-257 4A (A3): remove an entry AND settle any awaiter, so a dropped index can never leave a caller
+   *  permanently pending. MEASURED before the fix: a queued, awaited entry dropped by `trim()` never settled
+   *  and was never re-dispatched; `clearCache()` and `reset()` orphan identically. Reachable at a cursor
+   *  distance of only 2 (the `behind` bound), which two rapid skips produce — so the roadmap's "latent and
+   *  unreachable" no longer held.
+   *
+   *  A STARTED entry is left alone: its own dispatch handler settles it, which is exactly how an in-flight
+   *  entry already survives `clearCache()` (measured). Only a never-dispatched entry can be orphaned.
+   *
+   *  The rejection reason is deliberately a bare token with NO digits and none of the substrings the
+   *  frontend's failure classifiers key on ("synthTimeout", "timed out", "decode", "edge connect/synth",
+   *  a 4xx/5xx number, or the edge-unavailable sentinel) — a dropped entry is not a synthesis failure and
+   *  must never be reported as one. */
+  private drop(idx: number, e: Entry<T>): void {
+    this.cache.delete(idx);
+    if (!e.started) e.reject(new Error(DROPPED));
   }
 
   private inWindow(idx: number): boolean {
@@ -175,9 +211,9 @@ export class SynthScheduler<T> {
   }
 
   private trim(): void {
-    for (const [idx] of this.cache) {
+    for (const [idx, e] of this.cache) {
       if (idx === this.inflight) continue; // never drop the one in flight (its result is awaited)
-      if (!this.inWindow(idx)) this.cache.delete(idx);
+      if (!this.inWindow(idx)) this.drop(idx, e); // RAWY-257 4A: settle-before-drop, never orphan an awaiter
     }
   }
 

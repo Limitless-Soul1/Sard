@@ -1234,7 +1234,13 @@ export function Reader({
     const st = useTts.getState();
     const ctrl = ctrlRef.current;
     if (!st.active) return false;
-    if (st.status === "playing") { st.toggle(); return true; } // pause in place
+    // RAWY-257 3B (C6 — blocker 1): `buffering` joins `playing` here. This gate is where EVERY pause gesture
+    // converges — the pill button, the kashida bead, Space from the app, and Space from inside the reading
+    // frame (FoliateController.onSpace → playRef) — so while `buffering` fell through to the `return false`
+    // below, a pause was silently discarded at the moment the user most wanted it: mid-stall. Measured live:
+    // the button was enabled, showed a spinner, the click dispatched, and the status stayed `buffering` for
+    // 10 s of sampling, then played anyway. `toggle()` in tts.ts is the actuator (C6 blocker 2).
+    if (st.status === "playing" || st.status === "buffering") { st.toggle(); return true; } // pause in place
     if (st.status === "paused") {
       if (ctrl && !ctrl.isTtsChapterOnScreen()) { void startListen(); return true; } // navigated away → current chapter
       st.toggle(); // same chapter → resume where it paused

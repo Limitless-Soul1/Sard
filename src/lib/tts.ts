@@ -889,10 +889,27 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
     try { await withTimeout(lead, SYNTH_TIMEOUT_MS); } catch { /* surfaces when playback reaches it */ }
     if (myGen !== gen) return;
   }
-  if (myGen === gen) set({ status: "playing" });
+  // RAWY-257 3B (C6 — blocker 2): the user may have PAUSED while this sentence was buffering. Two things
+  // must then NOT happen here: the status must not be forced back to "playing", and the context must not be
+  // resumed — either one silently cancels the pause that was just granted. This blocker is INVISIBLE before
+  // the fix, because Reader's gate stopped the pause from ever registering; fixing only one of the two
+  // produces an incomplete repair.
+  //
+  // The sentence is still armed below against the SUSPENDED context: `start()` schedules it at the frozen
+  // `currentTime`, so it makes no sound until the user resumes — which is exactly how the pre-existing
+  // pause/resume already behaves. Synthesis and the 2B retry ladder are untouched by any of this and keep
+  // running while paused; only the START of audio is withheld.
+  const pausedByUser = useTts.getState().status === "paused";
+  if (myGen === gen && !pausedByUser) set({ status: "playing" });
 
   const c = audioCtx();
-  if (c.state === "suspended") await c.resume();
+  if (pausedByUser) {
+    // `toggle()` fires `suspend()` WITHOUT awaiting it, so the context can still be running for a moment
+    // after the pause is granted. Awaiting it here guarantees the source armed below cannot be audible.
+    if (c.state !== "suspended") await c.suspend();
+  } else if (c.state === "suspended") {
+    await c.resume();
+  }
   if (myGen !== gen) return;
   stopSource();
   const s = c.createBufferSource();
@@ -1038,7 +1055,12 @@ export const useTts = create<TtsState>((set, get) => ({
   toggle: () => {
     const st = get();
     if (!st.active) return;
-    if (st.status === "playing") {
+    // RAWY-257 3B (C6): `buffering` is pausable. It is an ACTIVE playback state — playback is waiting on a
+    // synth (an underrun, an entry, or since 2B a retry backoff) — so refusing the pause left the user with
+    // a live-looking transport that ignored them and then started speaking. Suspending the context here is
+    // also what makes the suppression in `playFrom` safe: the pending sentence is armed against an already
+    // suspended context and cannot make a sound until the user resumes.
+    if (st.status === "playing" || st.status === "buffering") {
       void audioCtx().suspend();
       set({ status: "paused" });
     } else if (st.status === "paused") {

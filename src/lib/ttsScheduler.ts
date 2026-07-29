@@ -196,7 +196,23 @@ export class SynthScheduler<T> {
   }
 
   private pump(): void {
-    if (this.inflight >= 0) return; // single-flight — the engine is serialized
+    // RAWY-257 package 2C (C4 — THE FIX): gate on `live`, the count of dispatches ACTUALLY OUTSTANDING, not
+    // on `inflight`.
+    //
+    // `clearCache()` sets `inflight = -1` SYNCHRONOUSLY (new chapter / new voice / Edge retry) while the
+    // underlying `tts_synthesize` is still executing in Rust. Gating on `inflight` therefore handed the slot
+    // out while the engine was still busy, and the next request issued a SECOND concurrent invoke. Both then
+    // contended for the same `engines.edge` mutex, so the new sentence queued behind work whose result was
+    // already being thrown away — the exact opposite of D60 invariant C, and reproduced both headless and
+    // live (`maxConcurrent = 2`, `abandonedEpoch = 1`).
+    //
+    // `live` is the honest count: incremented at dispatch, decremented only when the call really settles, and
+    // deliberately NOT reset by `clearCache()`/`reset()`. Gating on it makes D60's single-flight invariant
+    // TRUE ACROSS AN EPOCH CHANGE, which is the one case it never held.
+    //
+    // Nothing else changes: `inflight` keeps its existing roles (trim protection, diagnostics), `clearCache`
+    // is untouched, and priority/drop-on-move/window logic is untouched.
+    if (this.live > 0) return; // single-flight — the engine is serialized
     const i = this.pick();
     if (i < 0) return;
     const e = this.cache.get(i)!;
@@ -232,7 +248,13 @@ export class SynthScheduler<T> {
       // a dispatch abandoned by an epoch change still consumed the engine, and hiding that is the C10 defect.
       recordSeries(this.dispatchLatency, performance.now() - t0);
       this.live--;
-      if (myEpoch === this.epoch) { this.inflight = -1; this.pump(); }
+      if (myEpoch === this.epoch) this.inflight = -1;
+      // RAWY-257 2C (C4): pump UNCONDITIONALLY. This is REQUIRED by the `live` gate above — previously the
+      // pump was skipped when the epoch had changed, which was harmless only because the slot had already
+      // been handed out early (the defect). Now that the slot is held until the call really settles, skipping
+      // the pump here would leave the NEW epoch's queue STARVED until some unrelated event kicked it. The
+      // engine is free the instant this settles, whichever epoch owns the queue — so pump it.
+      this.pump();
     });
   }
 }

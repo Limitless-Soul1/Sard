@@ -554,6 +554,9 @@ export const ar: Record<TKey, string> = {
   "tts.paused": "متوقف",
   "tts.preparing": "جارٍ التحضير…",
   "tts.buffering": "جارٍ التحميل…",
+  // RAWY-257 (Phase 1) / RAWY-255: مفتاح تشخيص القراءة الصوتية — أداة استكشاف أخطاء، لا ميزة قراءة.
+  "tts.diagnostics": "تشخيص القراءة الصوتية",
+  "tts.diagnosticsHint": "يعرض تفاصيل التوقيت والأعطال على المشغّل. اتركه مطفأً للقراءة المعتادة.",
   "tts.downloading": "جارٍ تنزيل الصوت… {pct}٪",
   "tts.error": "تعذّر التشغيل",
   "tts.emptyChapter": "لا يوجد نص قابل للقراءة هنا",

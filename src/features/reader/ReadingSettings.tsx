@@ -26,6 +26,7 @@ import type { TKey } from "../../i18n/locales/en";
 import { DEFAULT_DARK, DEFAULT_LIGHT, THEMES, THEME_ORDER, useTheme, type ThemeId } from "../../theme";
 import { contrastIsReadable } from "../../lib/contrast";
 import { TtsTrackingControls } from "./TtsTrackingControls"; // RAWY-200
+import { useTts } from "../../lib/tts"; // RAWY-257 (Phase 1 / RAWY-255): the read-aloud diagnostic toggle
 import { useFonts } from "../../lib/fonts";
 
 interface Props {
@@ -210,6 +211,24 @@ function ToggleRow({ label, scope, hint, on, onToggle, sub, disabled }: { label:
       </span>
     </button>
   );
+}
+
+/** RAWY-257 (Phase 1, item 1) / RAWY-255 — the read-aloud DIAGNOSTIC toggle.
+ *
+ *  WHY THIS EXISTS: D62 (RAWY-247) built a synth-failure classifier and recorded it as "readable without
+ *  devtools" via the pill readout — but that readout is gated on `localStorage.sardTtsDebug`, NOTHING in the
+ *  app ever WROTE that key, and DevTools is off in release builds. So the one instrument built for this exact
+ *  class of bug could not be switched on by the owner at all, and that was discovered at the worst possible
+ *  moment: the first real read-aloud regression (RAWY-254), with him waiting. An instrument is part of the
+ *  feature, not a note about it.
+ *
+ *  It is its OWN component so the hook lives here — toggling the diagnostic must not re-render the whole
+ *  settings panel, and the rest of ReadingSettings stays untouched. It writes `localStorage`, NOT the DB: this
+ *  is a diagnostic switch, not a reading preference, so it is deliberately not a `ReadingStyle` field (D43). */
+function TtsDebugRow({ label, hint }: { label: string; hint: string }) {
+  const on = useTts((s) => s.debug);
+  const setDebug = useTts((s) => s.setDebug);
+  return <ToggleRow label={label} hint={hint} on={on} onToggle={() => setDebug(!on)} />;
 }
 
 function SelectRow<T extends string>({
@@ -479,6 +498,11 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
         paperBg={paper}
         themeInk={theme.colors.text}
       />
+
+      {/* RAWY-257 (Phase 1) / RAWY-255: the diagnostic switch. Last in the tab, under a divider — it is a
+          troubleshooting aid, not a reading control, and must not compete with the tracking highlights above. */}
+      <div className="rs-divider" />
+      <TtsDebugRow label={t("tts.diagnostics")} hint={t("tts.diagnosticsHint")} />
 
       </>
       )}

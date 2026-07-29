@@ -25,8 +25,46 @@ export interface SchedulerConfig {
   behind: number;
   /** Optional look-ahead depth beyond the current sentence (includes the one-ahead lead). */
   ahead: number;
-  /** RAWY-231 (E): called when an in-flight synth's result is discarded because the cursor moved away. */
+  /** RAWY-231 (E): called when an in-flight synth's result is discarded (cursor moved away OR epoch changed). */
   onAbandon?: () => void;
+}
+
+// ---- RAWY-257 Phase 1: latency instrumentation ----
+// A bounded numeric series. Phase 1 needs TWO of these kept SEPARATE (roadmap §6 Phase 1, work item 3):
+//   • DISPATCH→SETTLE — how long the engine actually took (the real network cost). Owned by the scheduler,
+//     the only thing that knows when a synth was handed to the engine.
+//   • AWAIT→SETTLE — how long PLAYBACK waited for that sentence. Owned by tts.ts `playFrom`.
+// Their DIFFERENCE is QUEUE WAIT, and that difference is the empirical proof of C2: `playFrom`'s timeout is
+// applied to the AWAIT series, so it can fire for time the engine never spent working. One merged series
+// would hide exactly the quantity this phase exists to measure.
+// The ring is bounded (SERIES_KEEP) so it cannot grow — RAWY-172's memory invariant applies here too.
+const SERIES_KEEP = 100;
+export interface LatencySeries { n: number; sum: number; min: number; max: number; last: number; samples: number[] }
+export const newSeries = (): LatencySeries => ({ n: 0, sum: 0, min: Infinity, max: 0, last: 0, samples: [] });
+export function recordSeries(s: LatencySeries, ms: number): void {
+  s.n++;
+  s.sum += ms;
+  s.last = ms;
+  if (ms < s.min) s.min = ms;
+  if (ms > s.max) s.max = ms;
+  s.samples.push(Math.round(ms));
+  if (s.samples.length > SERIES_KEEP) s.samples.shift();
+}
+export function resetSeries(s: LatencySeries): void {
+  s.n = 0;
+  s.sum = 0;
+  s.min = Infinity;
+  s.max = 0;
+  s.last = 0;
+  s.samples.length = 0;
+}
+/** Readable summary incl. percentiles over the retained ring — this is the "measured distribution" D70
+ *  requires before the 8 s / 9 s ceiling may stop being PROVISIONAL. `null` when nothing was sampled. */
+export function seriesSummary(s: LatencySeries): { n: number; avg: number; min: number; max: number; last: number; p50: number; p95: number } | null {
+  if (s.n === 0) return null;
+  const sorted = [...s.samples].sort((a, b) => a - b);
+  const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.max(0, Math.round(q * (sorted.length - 1))))];
+  return { n: s.n, avg: Math.round(s.sum / s.n), min: Math.round(s.min), max: Math.round(s.max), last: Math.round(s.last), p50: at(0.5), p95: at(0.95) };
 }
 
 interface Entry<T> {
@@ -43,8 +81,22 @@ export class SynthScheduler<T> {
   private inflight = -1;
   // A stale in-flight completion (after reset/clearCache) must not touch scheduler state — guard on this.
   private epoch = 0;
-  /** RAWY-231 (E): cumulative count of syntheses whose result was discarded because the cursor moved. */
+  /** RAWY-231 (E): cumulative count of syntheses whose result was DISCARDED — the cursor moved past the
+   *  window, OR the epoch changed under it (clearCache: new chapter / new voice / Edge retry).
+   *  RAWY-257 (C10): the epoch case was previously UNCOUNTED — the epoch guard short-circuited before the
+   *  increment — so the largest source of wasted work (C4's duplicate generation) was invisible to the very
+   *  counter built to detect it. Both causes now count; `abandonedEpoch` isolates the C4-attributable share. */
   abandoned = 0;
+  /** RAWY-257 (C10): the subset of `abandoned` caused by an epoch change (clearCache) rather than a cursor
+   *  move. A NON-ZERO value is direct evidence of C4 — work dispatched, paid for, and thrown away. */
+  abandonedEpoch = 0;
+  /** RAWY-257 (Phase 1, item 3): DISPATCH→SETTLE latency — the engine's real cost, excluding queue wait. */
+  readonly dispatchLatency: LatencySeries = newSeries();
+  /** RAWY-257 (Phase 1): peak concurrent dispatches observed. The D60 single-flight invariant says this must
+   *  never exceed 1; C4 predicts it CAN, because clearCache() frees the slot while a synth is still live in
+   *  Rust. This counter is what turns that prediction into a measurement. */
+  maxConcurrent = 0;
+  private live = 0; // dispatches actually outstanding right now (NOT the same as `inflight`, which clearCache resets)
 
   constructor(
     private readonly dispatch: (idx: number) => Promise<T>,
@@ -56,6 +108,15 @@ export class SynthScheduler<T> {
   /** Diagnostics (invariant E / tests). */
   get inFlight(): number { return this.inflight; }
   get size(): number { return this.cache.size; }
+  /** RAWY-257 (Phase 1): dispatches genuinely outstanding right now. Diverges from `inFlight` exactly when
+   *  C4 fires — `clearCache()` sets `inflight = -1` while the underlying `tts_synthesize` is still running. */
+  get liveDispatches(): number { return this.live; }
+  /** RAWY-257 (Phase 1): entries requested but not yet handed to the engine — the queue C2 mis-times as synthesis. */
+  get queueDepth(): number {
+    let n = 0;
+    for (const [, e] of this.cache) if (!e.started) n++;
+    return n;
+  }
 
   /** Is sentence `i` already synthesized and ready to play (not merely requested)? A rejected synth is
    *  evicted, so a cache miss reads as "not ready" and a later `request` re-attempts cleanly. */
@@ -90,10 +151,16 @@ export class SynthScheduler<T> {
     this.inflight = -1;
   }
 
-  /** Full reset — new session (the player closed). Also zeroes the recurrence counters. */
+  /** Full reset — new session (the player closed). Also zeroes the recurrence counters.
+   *  RAWY-257: `live` is deliberately NOT reset — a dispatch still running in Rust is still running, and
+   *  zeroing it here would forge the very single-flight evidence Phase 1 exists to collect. It decrements
+   *  itself when the real call settles. */
   reset(): void {
     this.clearCache();
     this.abandoned = 0;
+    this.abandonedEpoch = 0;
+    this.maxConcurrent = 0;
+    resetSeries(this.dispatchLatency);
   }
 
   private mkEntry(): Entry<T> {
@@ -136,11 +203,23 @@ export class SynthScheduler<T> {
     e.started = true;
     this.inflight = i;
     const myEpoch = this.epoch;
+    // RAWY-257 (Phase 1): time the DISPATCH, and track how many dispatches are genuinely outstanding.
+    // `live` is deliberately NOT `inflight`: clearCache() resets `inflight` while the underlying call is
+    // still running, which is precisely the C4 defect — so only `live`/`maxConcurrent` can observe it.
+    const t0 = performance.now();
+    this.live++;
+    if (this.live > this.maxConcurrent) this.maxConcurrent = this.live;
     void this.dispatch(i).then(
       (v) => {
         if (myEpoch === this.epoch) {
           if (Math.abs(i - this.prio) > this.cfg.ahead) { this.abandoned++; this.cfg.onAbandon?.(); }
           e.settled = true;
+        } else {
+          // RAWY-257 (C10): the epoch moved under this dispatch (clearCache — new chapter / voice / retry),
+          // so its result is thrown away. Previously uncounted; it is the C4-attributable waste.
+          this.abandoned++;
+          this.abandonedEpoch++;
+          this.cfg.onAbandon?.();
         }
         e.resolve(v);
       },
@@ -149,6 +228,10 @@ export class SynthScheduler<T> {
         e.reject(err);
       },
     ).finally(() => {
+      // RAWY-257 (Phase 1): record the ENGINE's cost and release the live count. Both are unconditional —
+      // a dispatch abandoned by an epoch change still consumed the engine, and hiding that is the C10 defect.
+      recordSeries(this.dispatchLatency, performance.now() - t0);
+      this.live--;
       if (myEpoch === this.epoch) { this.inflight = -1; this.pump(); }
     });
   }

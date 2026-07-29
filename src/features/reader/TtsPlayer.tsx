@@ -11,7 +11,7 @@ import { useShallow } from "zustand/react/shallow";
 
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
-import { TTS_EMPTY, TTS_MAX_SPEED, TTS_MIN_SPEED, TTS_SPEED_STEP, releaseButtonFocusAfterPointerClick, skipSentenceForArrow, toggleTtsPlayback, useTts, voiceLabel } from "../../lib/tts";
+import { TTS_EMPTY, TTS_MAX_SPEED, TTS_MIN_SPEED, TTS_SPEED_STEP, releaseButtonFocusAfterPointerClick, skipSentenceForArrow, toggleTtsPlayback, ttsStats, useTts, voiceLabel } from "../../lib/tts";
 import { TtsMini } from "./TtsMini";
 import { TtsVoicePicker } from "./TtsVoicePicker";
 
@@ -38,10 +38,11 @@ export function TtsPlayer({
   // Previously `useTts()` re-rendered the pill on EVERY store change — including the karaoke `words`/
   // `wordIndex` ticks (several/sec on Edge) it doesn't even read — which made size toggles feel heavy and
   // could swallow a click landing mid-re-render. Actions are stable Zustand refs, so they never re-render.
-  const { active, status, endDismissed, engine, voice, index, total, speed, volume, progress, chapterLabel, error, underruns, abandoned, lastFailure, skip, setSpeed, setVolume, setEngine, retry, resumeEdge, stop } = useTts(
+  const { active, status, endDismissed, engine, voice, index, total, speed, volume, progress, chapterLabel, error, underruns, abandoned, lastFailure, debug, skip, setSpeed, setVolume, setEngine, retry, resumeEdge, stop } = useTts(
     useShallow((s) => ({
       active: s.active, status: s.status, endDismissed: s.endDismissed, engine: s.engine, voice: s.voice, index: s.index, total: s.total,
       speed: s.speed, volume: s.volume, progress: s.progress, chapterLabel: s.chapterLabel, error: s.error, underruns: s.underruns, abandoned: s.abandoned, lastFailure: s.lastFailure,
+      debug: s.debug, // RAWY-257/255: reactive, so toggling the setting shows/hides the readout immediately
       skip: s.skip, setSpeed: s.setSpeed, setVolume: s.setVolume, setEngine: s.setEngine, retry: s.retry, resumeEdge: s.resumeEdge, stop: s.stop,
     })),
   );
@@ -125,9 +126,14 @@ export function TtsPlayer({
     preparing ? ` · ${t("tts.preparing")}` :
     buffering ? ` · ${t("tts.buffering")}` : // RAWY-231: visible mid-playback synth wait
     status === "paused" ? ` · ${t("tts.paused")}` : "";
-  // RAWY-231 (invariant E): a tiny debug readout the owner can enable with
-  // `localStorage.setItem("sardTtsDebug","1")` — see stalls, not just feel them. Off by default (zero cost).
-  const ttsDebug = typeof localStorage !== "undefined" && !!localStorage.getItem("sardTtsDebug");
+  // RAWY-231 (invariant E): a tiny debug readout for seeing stalls, not just feeling them. Off by default.
+  // RAWY-257 (Phase 1 / RAWY-255): now driven by the STORE flag, which the Read-aloud settings toggle writes —
+  // it used to read `localStorage` directly with nothing in the app able to WRITE that key, and DevTools is off
+  // in release, so the instrument was unreachable exactly when the first regression needed it (RAWY-254).
+  const ttsDebug = debug;
+  // Snapshot the Phase-1 measurements at render (only when the readout is on — zero cost otherwise). Read from
+  // the same `ttsStats()` the console surface uses, so the pill can never disagree with `__sardTtsStats()`.
+  const diag = ttsDebug ? ttsStats() : null;
   const errText = error === TTS_EMPTY ? t("tts.emptyChapter") : (error || t("tts.error"));
   const metaText = errored ? errText : `${chapterLabel || t("panel.contents")}${sub}`;
 
@@ -246,7 +252,32 @@ export function TtsPlayer({
           <div className="tts-pill-meta">
             <span className="tts-pill-chapter" title={errored ? errText : undefined}>{metaText}</span>
             {/* RAWY-231 (E): opt-in recurrence readout — stalls this session (underruns · abandoned). */}
-            {ttsDebug && <span className="tts-pill-pos" title="RAWY-231 underruns · abandoned">⏱ {localeNum(underruns, lang)}·{localeNum(abandoned, lang)}</span>}
+            {ttsDebug && <span className="tts-pill-pos" title="RAWY-231 underruns · abandoned (RAWY-257: of which epoch-abandoned)">⏱ {localeNum(underruns, lang)}·{localeNum(abandoned, lang)}{diag && diag.abandonedEpoch > 0 ? `(${localeNum(diag.abandonedEpoch, lang)})` : ""}</span>}
+            {/* RAWY-257 (Phase 1, item 3): the C2 measurement, on the pill. LEFT = median DISPATCH→SETTLE (what
+                the engine actually cost); RIGHT = median AWAIT→SETTLE (what playback waited, and what the 9 s
+                SYNTH_TIMEOUT_MS is applied to). A right value much larger than the left IS queue wait being
+                charged to the network. No unit glyph touches a digit — RAWY-216's "-px" fusion trap. */}
+            {diag?.dispatchMs && (
+              <span
+                className="tts-pill-pos"
+                // The VISIBLE text stays two numbers so the pill keeps its shape at the owner's 0.85 UI scale;
+                // the full DISTRIBUTION lives in the tooltip, because in a RELEASE build there is no console
+                // and this readout is the only surface D70's "measured distribution" can arrive through.
+                title={
+                  `RAWY-257 latency (ms)\n` +
+                  `dispatch→settle  n=${diag.dispatchMs.n} min=${diag.dispatchMs.min} p50=${diag.dispatchMs.p50} p95=${diag.dispatchMs.p95} max=${diag.dispatchMs.max}\n` +
+                  (diag.awaitMs
+                    ? `await→settle     n=${diag.awaitMs.n} min=${diag.awaitMs.min} p50=${diag.awaitMs.p50} p95=${diag.awaitMs.p95} max=${diag.awaitMs.max}\n`
+                    : `await→settle     (no samples yet)\n`) +
+                  `await ≫ dispatch = queue wait being charged to the network (C2)`
+                }
+              >
+                ⧗ {localeNum(diag.dispatchMs.p50, lang)}·{localeNum(diag.awaitMs?.p50 ?? 0, lang)}
+              </span>
+            )}
+            {/* RAWY-257: D60 says at most ONE synth is ever in flight. Shown ONLY when that is violated, so the
+                readout stays quiet unless it has caught C4 (clearCache freeing the slot mid-call) in the field. */}
+            {diag && diag.maxConcurrent > 1 && <span className="tts-pill-pos" title="RAWY-257 C4: peak concurrent dispatches — D60 single-flight says this must never exceed 1">⚑ {localeNum(diag.maxConcurrent, lang)}</span>}
             {/* RAWY-247 (Part 3): opt-in LAST-FAILURE readout — the failing unit's length + classification (+ bytes). */}
             {ttsDebug && lastFailure && <span className="tts-pill-pos" title="RAWY-247 last synth failure">✖ {lastFailure}</span>}
             <span className="tts-pill-pos">{errored || downloading ? "" : t("tts.pos", { n: localeNum(index + 1, lang), m: localeNum(total, lang) })}</span>

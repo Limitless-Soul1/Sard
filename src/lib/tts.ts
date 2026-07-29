@@ -15,7 +15,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 
 import { settingsGet, settingsSet, ttsDownloadVoice, ttsEdgeVoices, ttsStop, ttsVoicePresent } from "./ipc";
-import { SynthScheduler } from "./ttsScheduler";
+import { LatencySeries, newSeries, recordSeries, resetSeries, seriesSummary, SynthScheduler } from "./ttsScheduler";
 
 export const TTS_MIN_SPEED = 0.75;
 export const TTS_MAX_SPEED = 2.0;
@@ -195,6 +195,13 @@ interface TtsState {
   // RAWY-247 (Part 3): a short human-readable summary of the LAST synth failure (unit length + classification
   // + non-audio bytes), so the owner's live Edge test surfaces WHY it failed. null = none this session.
   lastFailure: string | null;
+  // RAWY-257 (Phase 1) / RAWY-255: is the read-aloud DIAGNOSTIC readout on? Mirrors `localStorage.sardTtsDebug`
+  // so the pill re-renders the instant the setting is toggled. OPEN.md recorded the defect this closes: the
+  // D62 instrument had NO in-app setter and DevTools is off in release, so the one tool built for this class
+  // of bug could not be switched on by the owner at all — it was discovered at the worst possible moment,
+  // during the first real read-aloud regression (RAWY-254). An instrument is part of the feature, not a note.
+  debug: boolean;
+  setDebug: (on: boolean) => void;
   start: (o: StartOpts) => Promise<void>;
   toggle: () => void;
   dismissEnd: () => void; // RAWY-190: hide the stale chapter-end "next chapter" offer (keeps the player)
@@ -292,16 +299,80 @@ const clearWatchdog = () => {
 // another synth window on it (that would only pile up silence — RAWY-191 lesson). The engine/voice is NEVER
 // changed here (D37): a sustained failure rejects with TTS_EDGE_DOWN so playFrom raises the explicit
 // "Edge unavailable" pause; a non-Edge (Piper) failure keeps its RAWY-159 skip behaviour.
+// ---- RAWY-257 (Phase 1, item 4): the FAULT-INJECTION SEAM — DEV BUILDS ONLY ----
+// LESSONS: "a concurrency/performance fix validated only on a FAST network is NOT validated", and (RAWY-205)
+// "the harness must be proven to FAIL on the unfixed build before its pass means anything". Neither is
+// possible while the only way to see a failure is to wait for the owner's network to misbehave. This seam
+// makes each failure CLASS reproducible on demand.
+//
+// It sits at the `invoke` boundary ON PURPOSE, so BOTH the first attempt and RAWY-193's retry pass through
+// it — that is what lets 2A/2B measure the C3 behaviour (~4 connect attempts inside ~200 ms) and later prove
+// the backoff ladder actually waits.
+//
+// INERT unless explicitly armed, and `import.meta.env.DEV`-gated so a release build can never arm it.
+// Phase 1 must not change playback behaviour: with no fault armed, `rawSynth` is exactly the old `invoke`.
+type FaultMode = "off" | "fail-fast" | "stall" | "empty" | "truncated";
+let fault: { mode: FaultMode; ms: number; times: number } = { mode: "off", ms: 0, times: 0 };
+const faultArmed = (): boolean => import.meta.env.DEV && fault.mode !== "off" && fault.times > 0;
+
+/** Build a framed `[u32 BE json_len][json][audio]` body (the RAWY-127 wire shape) with a chosen audio body,
+ *  so an injected fault is indistinguishable downstream from a real Edge response of that shape. */
+function framedFault(audio: Uint8Array): ArrayBuffer {
+  const json = new TextEncoder().encode("[]"); // no word timings, like Piper
+  const out = new Uint8Array(4 + json.length + audio.length);
+  new DataView(out.buffer).setUint32(0, json.length);
+  out.set(json, 4);
+  out.set(audio, 4 + json.length);
+  return out.buffer;
+}
+
+/** ONE `tts_synthesize` call, with the dev fault seam in front of it. Unarmed → a bare `invoke`. */
+async function rawSynth(engine: TtsEngineKind, id: string, text: string): Promise<ArrayBuffer> {
+  if (faultArmed()) {
+    fault.times--;
+    const mode = fault.mode;
+    if (mode === "fail-fast") {
+      // A REFUSED connection — returns in milliseconds. This is the C3 case: the RAWY-193 retry assumes the
+      // reconnect is "itself the delay", which is false here, so both attempts burn inside one bad instant.
+      throw new Error("edge connect: injected fail-fast (RAWY-257 fault)");
+    }
+    if (mode === "stall") {
+      // ms <= 0 → never resolves (a hung socket). ms > 0 → SLOW BUT SUCCESSFUL: delay, then do the real call.
+      // The graded form is what G-2A needs to show a timeout fires only above the ceiling.
+      if (fault.ms <= 0) return await new Promise<ArrayBuffer>(() => {});
+      await new Promise((r) => setTimeout(r, fault.ms));
+    } else if (mode === "empty") {
+      // An EMPTY audio payload (a framed response carrying zero audio bytes).
+      // HONEST LIMIT — do not mis-cite this: this reaches the DECODE-FAILURE path (`decodeAudioData` rejects
+      // on 0 bytes → D62 `decode/non-audio`), NOT the `synthd.buffer.length === 0` branch that RAWY-231
+      // invariant D / C9 actually guards. That branch needs decode to SUCCEED and yield a 0-length buffer —
+      // i.e. a valid MP3 container with no audio frames — which cannot be fabricated at this seam
+      // (`createBuffer` rejects length 0, and injecting below decode would bypass the code under test).
+      // Both paths feed the SAME policy decision in Phase 2B (provider junk ⇒ transient ⇒ ladder), so the
+      // policy is exercised; the specific zero-length PREDICATE is not. If 2B's gate needs that predicate
+      // covered, embed a real silent-MP3 fixture then — flagged now, not discovered at the gate.
+      return framedFault(new Uint8Array(0));
+    } else if (mode === "truncated") {
+      // A short, non-decodable byte run beginning with a real MP3 sync word — what a throttled Edge endpoint
+      // returns (OPEN.md: "SHORT / garbled audio with NO error"). Also reaches `decode/non-audio`, and D62
+      // records the byte length + first-16-byte sniff for it, so the two modes are distinguishable in the
+      // captured `lastFailure` string even though they share a branch.
+      return framedFault(new Uint8Array([0xff, 0xfb, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00]));
+    }
+  }
+  return await invoke<ArrayBuffer>("tts_synthesize", { engine, id, text });
+}
+
 async function synthInvoke(i: number): Promise<ArrayBuffer> {
   try {
-    return await invoke<ArrayBuffer>("tts_synthesize", { engine: curEngine, id: curVoice, text: sentences[i] });
+    return await rawSynth(curEngine, curVoice, sentences[i]);
   } catch (e) {
     if (curEngine !== "edge") throw e;
     // RAWY-247: KEEP the underlying Rust reason (a WS close / connect error / "edge synth timed out") in the
     // thrown message so the failure diagnostic can classify it. `isEdgeDown` still matches on TTS_EDGE_DOWN.
     if (String(e).includes("timed out")) throw new Error(`${TTS_EDGE_DOWN}: ${e}`); // a stall — surface it, don't retry
     try {
-      return await invoke<ArrayBuffer>("tts_synthesize", { engine: "edge", id: curVoice, text: sentences[i] });
+      return await rawSynth("edge", curVoice, sentences[i]);
     } catch (e2) {
       throw new Error(`${TTS_EDGE_DOWN}: ${e2}`);
     }
@@ -319,16 +390,28 @@ let pendingDecodeInfo: { bytes: number; head: string } | null = null;
 async function synthDispatch(i: number): Promise<Synthesized> {
   const raw = await withTimeout(synthInvoke(i), SYNTH_TIMEOUT_MS);
   const { words, audio } = parseFramed(raw);
+  // RAWY-257 (Phase 1 — CONFIRMED DEFECT, found by the fault harness on its first real use):
+  // `decodeAudioData` DETACHES the ArrayBuffer it is given. The RAWY-247 capture below used to read `audio`
+  // INSIDE the catch — i.e. AFTER detachment — so it threw
+  //   "TypeError: Cannot perform Construct on a detached ArrayBuffer"
+  // and that TypeError REPLACED the real decode error. Consequences, all measured live:
+  //   • D62 classified every decode failure as `other` instead of `decode/non-audio`;
+  //   • the byte-length + first-16-byte sniff — the whole point of Part 3 — was NEVER captured;
+  //   • the substituted TypeError does not match `isEdgeDown`, so the failure took the RAWY-159 skip path.
+  // OPEN.md recorded this instrument as "UNVALIDATED in the field — the FIRST real synth failure is its
+  // first real test." This was that test, and it failed. The fix is to sniff BEFORE decoding (a 16/24-byte
+  // read per sentence — negligible, and far cheaper than copying the whole payload to keep it alive).
+  const u8 = new Uint8Array(audio);
+  const hex = [...u8.slice(0, 16)].map((b) => b.toString(16).padStart(2, "0")).join(" ");
+  const ascii = new TextDecoder("latin1").decode(u8.slice(0, 24)).replace(/[^\x20-\x7e]/g, ".");
+  const sniff = { bytes: audio.byteLength, head: `${hex} "${ascii}"` };
   try {
     return { buffer: await audioCtx().decodeAudioData(audio), words };
   } catch (e) {
-    // RAWY-247 (Part 3): capture the byte length + first 16 bytes (hex + ASCII sniff) of the non-audio
-    // payload, so the owner can read WHY a decode failed without devtools (Defect C / §1.5 / feeds RAWY-248).
-    const u8 = new Uint8Array(audio);
-    const hex = [...u8.slice(0, 16)].map((b) => b.toString(16).padStart(2, "0")).join(" ");
-    const ascii = new TextDecoder("latin1").decode(u8.slice(0, 24)).replace(/[^\x20-\x7e]/g, ".");
-    pendingDecodeInfo = { bytes: audio.byteLength, head: `${hex} "${ascii}"` };
-    throw e;
+    // RAWY-247 (Part 3): the byte length + first 16 bytes (hex + ASCII sniff) of the non-audio payload, so
+    // the owner can read WHY a decode failed without devtools (Defect C / §1.5 / feeds RAWY-248).
+    pendingDecodeInfo = sniff;
+    throw e; // the ORIGINAL decode error now propagates, so `classifyFailure` sees the real thing
   }
 }
 
@@ -338,6 +421,20 @@ const scheduler = new SynthScheduler<Synthesized>(synthDispatch, {
   ahead: PREFETCH_AHEAD,
   onAbandon: () => useTts.setState({ abandoned: scheduler.abandoned }),
 });
+
+// RAWY-257 (Phase 1, item 3): AWAIT→SETTLE — how long PLAYBACK waited for a sentence. The scheduler owns the
+// DISPATCH→SETTLE half; this is the other. `playFrom`'s SYNTH_TIMEOUT_MS is applied to THIS series, so
+// (await − dispatch) is the queue wait that timeout wrongly charges to the network. That gap is C2, measured.
+const awaitLatency: LatencySeries = newSeries();
+
+// RAWY-257 (Phase 1, item 1 / RAWY-255): the diagnostic flag, mirrored in a module variable so the hot paths
+// (`logStall`, `noteFailure`) never touch localStorage per event, and in the store so the pill re-renders the
+// moment the setting is toggled. localStorage remains the SOURCE OF TRUTH (it survives a reload and is not a
+// DB key — this is a diagnostic, not a reading preference, so it is deliberately NOT a `ReadingStyle` field).
+let ttsDebugOn = false;
+try {
+  ttsDebugOn = typeof localStorage !== "undefined" && !!localStorage.getItem("sardTtsDebug");
+} catch { /* localStorage may be unavailable */ }
 // The promise playback awaits for sentence `i` (registers the want + kicks the scheduler's pump).
 const synth = (i: number): Promise<Synthesized> => scheduler.request(i);
 
@@ -345,12 +442,10 @@ const synth = (i: number): Promise<Synthesized> => scheduler.request(i);
 // owner has opted in via `localStorage.sardTtsDebug`, log each stall so he can SEE them, not only feel them.
 const logStall = (kind: string, idx: number): void => {
   useTts.setState({ underruns: ttsUnderruns, abandoned: scheduler.abandoned });
-  try {
-    if (typeof localStorage !== "undefined" && localStorage.getItem("sardTtsDebug")) {
-      // eslint-disable-next-line no-console
-      console.debug(`[sard/tts] ${kind} @${idx} · underruns=${ttsUnderruns} abandoned=${scheduler.abandoned} inFlight=${scheduler.inFlight}`);
-    }
-  } catch { /* localStorage may be unavailable */ }
+  if (ttsDebugOn) {
+    // eslint-disable-next-line no-console
+    console.debug(`[sard/tts] ${kind} @${idx} · underruns=${ttsUnderruns} abandoned=${scheduler.abandoned}(${scheduler.abandonedEpoch} epoch) live=${scheduler.liveDispatches} queued=${scheduler.queueDepth} maxConc=${scheduler.maxConcurrent}`);
+  }
 };
 // RAWY-247 (Part 3): the LAST synthesis failure, so the owner's live Edge test yields the measurement
 // RAWY-235 could not capture. `kind` classifies WHICH failure; `len` is the failing unit's character count
@@ -379,24 +474,56 @@ function noteFailure(unit: number, err: unknown): void {
   pendingDecodeInfo = null;
   const summary = `len=${len} ${kind}${lastFail.bytes != null ? ` ${lastFail.bytes}B ${lastFail.head}` : ""}`;
   useTts.setState({ lastFailure: summary });
-  try {
-    if (typeof localStorage !== "undefined" && localStorage.getItem("sardTtsDebug")) {
-      // eslint-disable-next-line no-console
-      console.debug(`[sard/tts] FAIL @${unit} ${summary} · ${lastFail.detail}`);
-    }
-  } catch { /* localStorage may be unavailable */ }
+  if (ttsDebugOn) {
+    // eslint-disable-next-line no-console
+    console.debug(`[sard/tts] FAIL @${unit} ${summary} · ${lastFail.detail}`);
+  }
 }
 
 // A dev/debug surface reachable from DevTools without shipping any UI (invariant E).
-if (typeof window !== "undefined") {
-  (window as unknown as { __sardTtsStats?: () => unknown }).__sardTtsStats = () => ({
+/** RAWY-257 (Phase 1): the single diagnostic snapshot. Exported so the PILL readout and the console surface
+ *  (`window.__sardTtsStats`) read the SAME numbers — RAWY-197's scar was a guard that existed in prose but
+ *  had no call site, so the instrument and the thing it describes must not be two separate implementations. */
+export function ttsStats() {
+  return {
     underruns: ttsUnderruns,
     abandoned: scheduler.abandoned,
+    // RAWY-257 (C10): the epoch-abandoned SUBSET — non-zero is direct evidence of C4 (work dispatched, paid
+    // for on the one serialized socket, then thrown away by clearCache).
+    abandonedEpoch: scheduler.abandonedEpoch,
     inFlight: scheduler.inFlight,
+    // RAWY-257 (Phase 1): D60 says single-flight, so `maxConcurrent` must never exceed 1. If it does, C4 is
+    // confirmed in the field, not just by inspection.
+    liveDispatches: scheduler.liveDispatches,
+    maxConcurrent: scheduler.maxConcurrent,
+    queueDepth: scheduler.queueDepth,
     cached: scheduler.size,
     priority: scheduler.priority,
+    // RAWY-257 (Phase 1, item 3): the TWO series, kept apart. `dispatch` is the engine's real cost (the
+    // distribution D70 needs before the 8 s/9 s ceiling stops being PROVISIONAL); `await` is what playback
+    // waited, which is what SYNTH_TIMEOUT_MS is actually applied to. await.max ≫ dispatch.max = C2, measured.
+    dispatchMs: seriesSummary(scheduler.dispatchLatency),
+    awaitMs: seriesSummary(awaitLatency),
     lastFailure: lastFail,
-  });
+    debug: ttsDebugOn,
+  };
+}
+
+if (typeof window !== "undefined") {
+  (window as unknown as { __sardTtsStats?: () => unknown }).__sardTtsStats = ttsStats;
+  // RAWY-257 (Phase 1, item 4): arm the fault seam — DEV ONLY, and only ever from a console.
+  //   __sardTtsFault("fail-fast")            → next synth attempt fails instantly (the C3 case)
+  //   __sardTtsFault("fail-fast", { times: 6 }) → six attempts fail (3 ladder rounds × first+retry)
+  //   __sardTtsFault("stall", { ms: 6000 })  → slow BUT SUCCESSFUL: 6 s, then the real call (G-2A grading)
+  //   __sardTtsFault("stall")                → never resolves (a hung socket)
+  //   __sardTtsFault("empty") / ("truncated") → the C9 / decode-non-audio payloads
+  //   __sardTtsFault("off")                  → disarm
+  if (import.meta.env.DEV) {
+    (window as unknown as { __sardTtsFault?: (m: FaultMode, o?: { ms?: number; times?: number }) => unknown }).__sardTtsFault = (m, o) => {
+      fault = { mode: m, ms: o?.ms ?? 0, times: m === "off" ? 0 : (o?.times ?? 1) };
+      return { ...fault };
+    };
+  }
 }
 
 const audioCtx = (): AudioContext => {
@@ -616,12 +743,19 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
   };
 
   let synthd: Synthesized;
+  // RAWY-257 (Phase 1, item 3): start the AWAIT clock HERE — the same instant `SYNTH_TIMEOUT_MS` below starts
+  // counting. Because the scheduler is single-flight, `current` may not have been DISPATCHED yet, so this
+  // interval can contain pure queue wait. Comparing it against the scheduler's dispatch series is the
+  // measurement that decides C2. Phase 1 only MEASURES; it changes nothing about the timeout.
+  const tAwait = performance.now();
   try {
     // RAWY-172 (AUD-2): bound the synth so a stalled socket can't freeze the queue. RAWY-193: on Edge a
     // failure/stall is NOT skipped — the catch routes it to the explicit "Edge unavailable" pause (isEdgeDown);
     // a non-Edge (Piper) failure still skips per RAWY-159.
     synthd = await withTimeout(current, SYNTH_TIMEOUT_MS);
+    recordSeries(awaitLatency, performance.now() - tAwait);
   } catch (e) {
+    recordSeries(awaitLatency, performance.now() - tAwait); // a failed wait is still a wait — measure it
     if (myGen !== gen) return; // superseded — the scheduler already dropped the rejected index
     // RAWY-193: an Edge-SERVICE failure (the bounded retry failed) or an Edge stall must NOT silently skip
     // or swap the voice — PAUSE and surface the explicit "Edge unavailable" choice (Retry / Switch to Piper),
@@ -736,6 +870,21 @@ export const useTts = create<TtsState>((set, get) => ({
   underruns: 0,
   abandoned: 0,
   lastFailure: null,
+  debug: ttsDebugOn,
+
+  // RAWY-257 (Phase 1) / RAWY-255: the in-app setter the D62 diagnostic never had. Writes localStorage (the
+  // source of truth, survives a reload), the module mirror (so the hot paths don't re-read it per event), and
+  // the store (so the pill readout appears/disappears immediately). Purely additive — it cannot affect playback.
+  setDebug: (on) => {
+    ttsDebugOn = on;
+    try {
+      if (typeof localStorage !== "undefined") {
+        if (on) localStorage.setItem("sardTtsDebug", "1");
+        else localStorage.removeItem("sardTtsDebug");
+      }
+    } catch { /* localStorage may be unavailable */ }
+    set({ debug: on });
+  },
 
   start: async (opts) => {
     lastStart = opts;
@@ -921,6 +1070,7 @@ export const useTts = create<TtsState>((set, get) => ({
     skipLastTarget = -1;
     lastSkipAt = 0; // RAWY-186
     scheduler.reset(); // RAWY-231: session over — drop the cache AND zero the recurrence counters (E)
+    resetSeries(awaitLatency); // RAWY-257: the latency series are per-SESSION, like the counters beside them
     ttsUnderruns = 0;
     lastFail = null; // RAWY-247: clear the last-failure diagnostic for the new session
     pendingDecodeInfo = null;

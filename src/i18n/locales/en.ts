@@ -555,6 +555,10 @@ export const en = {
   "tts.paused": "paused",
   "tts.preparing": "preparing…",
   "tts.buffering": "buffering…",
+  // RAWY-257 (Phase 1) / RAWY-255: the read-aloud diagnostic switch. Deliberately plain — it is a
+  // troubleshooting aid the owner may be asked to turn on, not a feature to advertise.
+  "tts.diagnostics": "Read-aloud diagnostics",
+  "tts.diagnosticsHint": "Shows timing and failure details on the player. Leave off for normal reading.",
   "tts.downloading": "downloading voice… {pct}%",
   "tts.error": "couldn’t play",
   "tts.emptyChapter": "no readable text here",

@@ -999,7 +999,11 @@ export const useTts = create<TtsState>((set, get) => ({
     lastSkipAt = 0; // RAWY-186: the first skip of a new session must lead (not read as a continuation)
     scheduler.clearCache(); // RAWY-231: fresh chapter — drop cached audio (keeps the session's E counters)
     failStreak = 0; // RAWY-159: a fresh Listen starts the dead-end counter clean
-    sentences = sen.map((s) => s.trim()).filter(Boolean);
+    // RAWY-257 package 3A (C5): capture the units in a LOCAL. `sentences` is module state that `stop()`
+    // empties, so reading it back after the awaits below is reading whatever the LAST caller left there —
+    // which is how closing the player mid-preparation produced a false "empty chapter".
+    const units = sen.map((s) => s.trim()).filter(Boolean);
+    sentences = units;
     const saved = Number(await settingsGet("tts_speed").catch(() => null));
     const speed = saved >= TTS_MIN_SPEED && saved <= TTS_MAX_SPEED ? saved : get().speed;
     // RAWY-180: restore the saved volume (0..1). An UNSET key must not read as 0 (muted), so treat only
@@ -1009,8 +1013,16 @@ export const useTts = create<TtsState>((set, get) => ({
     const volume = volNum >= 0 && volNum <= 1 ? volNum : get().volume;
     curVolume = volume;
     if (gainNode) gainNode.gain.value = volume;
-    set({ active: true, status: "preparing", endDismissed: false, lang, speed, volume, index: startIndex, total: sentences.length, progress: 0, chapterLabel, error: null, words: [], wordIndex: -1 });
-    if (sentences.length === 0) {
+    // RAWY-257 3A (C5 — THE FIX): the FIRST generation check now precedes the first `set`. It used to sit
+    // three awaits later, after this `set` had already run, so pressing ✕ during preparation was UNDONE by
+    // the very call the user had just cancelled: `stop()` set `active: false` and emptied `sentences`, then
+    // `start()` resumed, re-asserted `active: true`, read the emptied array and reported the chapter as
+    // EMPTY. The pill the reader had just closed came back claiming a chapter full of text had none.
+    // Reachable because the pill and its ✕ are rendered by the Reader BEFORE `start()` is called, so the
+    // control is live for the whole (chunked, multi-second) chapter walk.
+    if (myGen !== gen) return; // superseded by stop()/another start() — do not resurrect the player
+    set({ active: true, status: "preparing", endDismissed: false, lang, speed, volume, index: startIndex, total: units.length, progress: 0, chapterLabel, error: null, words: [], wordIndex: -1 });
+    if (units.length === 0) {
       set({ status: "error", error: TTS_EMPTY });
       return;
     }
@@ -1020,7 +1032,7 @@ export const useTts = create<TtsState>((set, get) => ({
     curEngine = engine;
     curVoice = id;
     set({ engine, voice: id });
-    void ensureAndPlay(engine, id, Math.min(startIndex, sentences.length - 1), myGen);
+    void ensureAndPlay(engine, id, Math.min(startIndex, units.length - 1), myGen);
   },
 
   toggle: () => {
@@ -1044,7 +1056,16 @@ export const useTts = create<TtsState>((set, get) => ({
 
   skip: (delta) => {
     const st = get();
-    if (!st.active || st.status === "preparing") return;
+    // RAWY-257 3A (SM1): `error` and `edge-error` are DEAD ENDS — they are exited by their own explicit
+    // controls (Retry / Switch to Piper), never by a transport move. The guard used to block only
+    // "preparing", so a skip from either state would have written `status: "playing"` and resurrected
+    // playback from a state the user has not resolved.
+    // HONEST NOTE (measured, not assumed): this is currently UNREACHABLE — the two ⏭/⏮ buttons are
+    // `disabled={busy || errored}`, the transport is not rendered at all at `edge-error`, and both arrow-key
+    // paths go through `skipSentenceForArrow`, which admits only playing/paused/buffering. Those three are
+    // the complete set of callers. This closes the hole at the STORE, where the invariant belongs, so a
+    // future control cannot reopen it — it is not fixing a live symptom.
+    if (!st.active || st.status === "preparing" || st.status === "error" || st.status === "edge-error") return;
     const target = Math.max(0, Math.min(sentences.length - 1, st.index + delta));
     const myGen = ++gen;
     stopSource();

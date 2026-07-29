@@ -202,6 +202,10 @@ interface TtsState {
   // during the first real read-aloud regression (RAWY-254). An instrument is part of the feature, not a note.
   debug: boolean;
   setDebug: (on: boolean) => void;
+  // RAWY-257 2B (D68): which RETRY attempt is currently waiting/running (0 = not retrying). Playback is
+  // already in `buffering` while it awaits the sentence; this turns that silence into visible progress, which
+  // is the condition under which a longer wait is acceptable at all.
+  retryAttempt: number;
   start: (o: StartOpts) => Promise<void>;
   toggle: () => void;
   dismissEnd: () => void; // RAWY-190: hide the stale chapter-end "next chapter" offer (keeps the player)
@@ -311,7 +315,10 @@ const clearWatchdog = () => {
 //
 // INERT unless explicitly armed, and `import.meta.env.DEV`-gated so a release build can never arm it.
 // Phase 1 must not change playback behaviour: with no fault armed, `rawSynth` is exactly the old `invoke`.
-type FaultMode = "off" | "fail-fast" | "stall" | "empty" | "truncated";
+// RAWY-257 2B: `permanent` is ADDED to the dev harness because G-2B requires proving that a permanent
+// failure does NOT enter the backoff ladder, and no existing mode can produce one. Permitted under the
+// freeze rule — it does not alter any behaviour G-P1 validated, and G-P1 is re-run to prove that.
+type FaultMode = "off" | "fail-fast" | "stall" | "empty" | "truncated" | "permanent";
 let fault: { mode: FaultMode; ms: number; times: number } = { mode: "off", ms: 0, times: 0 };
 const faultArmed = (): boolean => import.meta.env.DEV && fault.mode !== "off" && fault.times > 0;
 
@@ -331,6 +338,11 @@ async function rawSynth(engine: TtsEngineKind, id: string, text: string): Promis
   if (faultArmed()) {
     fault.times--;
     const mode = fault.mode;
+    if (mode === "permanent") {
+      // A 4xx — the class that cannot succeed on a later attempt (a retired voice, a rejected request).
+      // `isPermanentFailure` matches the status code, so this must never enter the ladder.
+      throw new Error("edge synth: HTTP 403 Forbidden (RAWY-257 fault)");
+    }
     if (mode === "fail-fast") {
       // A REFUSED connection — returns in milliseconds. This is the C3 case: the RAWY-193 retry assumes the
       // reconnect is "itself the delay", which is false here, so both attempts burn inside one bad instant.
@@ -363,21 +375,39 @@ async function rawSynth(engine: TtsEngineKind, id: string, text: string): Promis
   return await invoke<ArrayBuffer>("tts_synthesize", { engine, id, text });
 }
 
+// RAWY-257 package 2B (C3): ONE attempt. The retry that used to live here is gone — it fired in the SAME
+// TICK, and RAWY-193's commit states the premise verbatim: "NO backoff: the cold WS reconnect (~2.7 s,
+// measured RAWY-191) is itself the delay." That premise is FALSE whenever the connection is REFUSED rather
+// than slow: a refused connect returns in milliseconds, so this retry plus Rust's own internal one burned
+// ~4 attempts inside ~50–200 ms against the same bad instant. Retry ownership now belongs solely to the
+// ladder in `synthDispatch`.
 async function synthInvoke(i: number): Promise<ArrayBuffer> {
-  try {
-    return await rawSynth(curEngine, curVoice, sentences[i]);
-  } catch (e) {
-    if (curEngine !== "edge") throw e;
-    // RAWY-247: KEEP the underlying Rust reason (a WS close / connect error / "edge synth timed out") in the
-    // thrown message so the failure diagnostic can classify it. `isEdgeDown` still matches on TTS_EDGE_DOWN.
-    if (String(e).includes("timed out")) throw new Error(`${TTS_EDGE_DOWN}: ${e}`); // a stall — surface it, don't retry
-    try {
-      return await rawSynth("edge", curVoice, sentences[i]);
-    } catch (e2) {
-      throw new Error(`${TTS_EDGE_DOWN}: ${e2}`);
-    }
-  }
+  return await rawSynth(curEngine, curVoice, sentences[i]);
 }
+
+// RAWY-257 2B (C3/D68): the approved backoff ladder — one initial attempt, then a retry after each delay.
+// THREE delays means FOUR dispatches at most; "3 attempts at 500/1500/4500" reads as three RETRY attempts,
+// and it is the only reading under which all three delays are observable (a G-2B criterion measures them).
+const RETRY_BACKOFF_MS = [500, 1500, 4500] as const;
+/** How many RETRY attempts follow the initial one — the pill reads this so the indicator and the ladder can
+ *  never disagree (the RAWY-206 "a dimension written twice desyncs" trap). */
+export const TTS_MAX_RETRIES = RETRY_BACKOFF_MS.length;
+
+// RAWY-257 2B (C3): a PERMANENT failure must never enter the ladder — retrying it only delays the dialog the
+// user has to act on anyway. Deliberately NARROW: only failures that cannot succeed on a later attempt.
+// A 5xx is NOT here (a server-side blip is exactly what the ladder is for).
+const isPermanentFailure = (e: unknown): boolean => {
+  const s = String(e);
+  return s.includes("unknown edge voice") || /\b4\d\d\b/.test(s);
+};
+
+// RAWY-257 2B: a STALL is not retried either — RAWY-193 established that burning another synth window on a
+// socket that already went quiet "would only pile up silence", and the ladder would turn one 9 s stall into
+// ~40 s before the user is offered a choice. Preserving that invariant, not changing it.
+const isStallFailure = (e: unknown): boolean => {
+  const s = String(e);
+  return s.includes("synthTimeout") || s.includes("timed out");
+};
 
 // RAWY-247: when `decodeAudioData` fails, this holds what we FAILED to decode (Defect C / §1.5), read by
 // `noteFailure`. There is no per-message content-type on the Edge WebSocket, so the first bytes are the
@@ -387,7 +417,7 @@ let pendingDecodeInfo: { bytes: number; head: string } | null = null;
 // RAWY-231: the scheduler's dispatch — invoke (bounded so a stalled socket frees the single-flight slot) →
 // parse the framed word timings → decode to an AudioBuffer. Engine-agnostic (WebAudio decodes Piper WAV +
 // Edge MP3 alike). This is the ONLY thing the scheduler runs; ordering/priority/eviction are the scheduler's.
-async function synthDispatch(i: number): Promise<Synthesized> {
+async function attemptSynth(i: number): Promise<Synthesized> {
   const raw = await withTimeout(synthInvoke(i), SYNTH_TIMEOUT_MS);
   const { words, audio } = parseFramed(raw);
   // RAWY-257 (Phase 1 — CONFIRMED DEFECT, found by the fault harness on its first real use):
@@ -405,14 +435,67 @@ async function synthDispatch(i: number): Promise<Synthesized> {
   const hex = [...u8.slice(0, 16)].map((b) => b.toString(16).padStart(2, "0")).join(" ");
   const ascii = new TextDecoder("latin1").decode(u8.slice(0, 24)).replace(/[^\x20-\x7e]/g, ".");
   const sniff = { bytes: audio.byteLength, head: `${hex} "${ascii}"` };
+  let buffer: AudioBuffer;
   try {
-    return { buffer: await audioCtx().decodeAudioData(audio), words };
+    buffer = await audioCtx().decodeAudioData(audio);
   } catch (e) {
     // RAWY-247 (Part 3): the byte length + first 16 bytes (hex + ASCII sniff) of the non-audio payload, so
     // the owner can read WHY a decode failed without devtools (Defect C / §1.5 / feeds RAWY-248).
     pendingDecodeInfo = sniff;
     throw e; // the ORIGINAL decode error now propagates, so `classifyFailure` sees the real thing
   }
+  // RAWY-257 2B (C9 / D69): EMPTY or zero-length EDGE audio is raised HERE, inside the attempt, so the ladder
+  // can retry it. RAWY-231 made it an immediate hard stop; `OPEN.md` documents that a throttled Edge endpoint
+  // "returns SHORT / garbled audio with NO error", so that turned a RECURRING PROVIDER BEHAVIOUR into a
+  // stopped chapter. Detection is KEPT — it is never silently skipped; it now reaches the same explicit pause
+  // only after the ladder is exhausted.
+  // PIPER IS UNTOUCHED: an empty Piper buffer is legitimate punctuation-only text, so it is returned as-is and
+  // `playFrom` keeps its RAWY-159 skip for it.
+  if (curEngine === "edge" && (!buffer || buffer.length === 0 || buffer.duration === 0)) {
+    pendingDecodeInfo = sniff;
+    throw new Error("empty-audio (0-length buffer)");
+  }
+  return { buffer, words };
+}
+
+// RAWY-257 2B (C3 + A1): THE ONE RETRY AUTHORITY. Rust's internal reconnect-and-retry is gone and
+// `synthInvoke` no longer retries, so every retry decision is made exactly here.
+//
+// WHY THE LADDER LIVES INSIDE THE DISPATCH, not in `playFrom`: the scheduler is single-flight, and a ladder
+// outside it would RELEASE the engine slot between attempts — other work would interleave and the retry
+// would queue behind it. Keeping it here means the whole ladder is ONE logical dispatch, which also means
+// this package does not touch the scheduler at all (that is package 2C's exclusive territory).
+//
+// A1: this ladder IS the Edge tolerance band the path never had. A RECOVERED fault never reaches a dialog;
+// only EXHAUSTION does. `failStreak` (the Piper-side model) is left to `playFrom` exactly as it was.
+async function synthDispatch(i: number): Promise<Synthesized> {
+  pendingDecodeInfo = null; // don't let a recovered attempt's sniff be attributed to a later, different failure
+  let lastErr: unknown = new Error("no attempt made");
+  for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt++) {
+    if (attempt > 0) {
+      // D68: the wait is VISIBLE. Playback is already showing `buffering` while it awaits this sentence;
+      // the attempt number turns "the player is dead" into "the player is working". Without this the ladder
+      // would just be a longer silence, which is the reason RAWY-231 shortened the timeout in the first place.
+      useTts.setState({ retryAttempt: attempt });
+      await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS[attempt - 1]));
+    }
+    try {
+      const out = await attemptSynth(i);
+      if (attempt > 0) useTts.setState({ retryAttempt: 0 });
+      return out;
+    } catch (e) {
+      lastErr = e;
+      if (curEngine !== "edge") break;      // Piper: unchanged, one attempt then RAWY-159 skip
+      if (isPermanentFailure(e)) break;     // C3: a permanent failure must NOT enter the ladder
+      if (isStallFailure(e)) break;         // RAWY-193 invariant: a stall is surfaced, never retried
+    }
+  }
+  useTts.setState({ retryAttempt: 0 });
+  // RAWY-193 unchanged: a sustained EDGE failure rejects with the sentinel so `playFrom` raises the explicit
+  // "Edge unavailable" pause. The engine/voice is NEVER changed here (D37) — the only path to Piper remains
+  // the user pressing it.
+  if (curEngine === "edge") throw new Error(`${TTS_EDGE_DOWN}: ${lastErr}`);
+  throw lastErr;
 }
 
 // The one serialized, priority-ordered, drop-on-move synth scheduler (invariants B + C live here).
@@ -752,7 +835,23 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
     // RAWY-172 (AUD-2): bound the synth so a stalled socket can't freeze the queue. RAWY-193: on Edge a
     // failure/stall is NOT skipped — the catch routes it to the explicit "Edge unavailable" pause (isEdgeDown);
     // a non-Edge (Piper) failure still skips per RAWY-159.
-    synthd = await withTimeout(current, SYNTH_TIMEOUT_MS);
+    // RAWY-257 package 2A (C2 — THE FIX): this await is NO LONGER wrapped in a timeout.
+    //
+    // It used to be `withTimeout(current, SYNTH_TIMEOUT_MS)`, which timed the WRONG OPERATION. Because the
+    // RAWY-231 scheduler is SINGLE-FLIGHT, a requested sentence can sit UNDISPATCHED behind another synth,
+    // so this interval is QUEUE WAIT + synthesis — and the rejection it produced (`tts.synthTimeout`) is
+    // matched by `isEdgeDown`, so pure queue congestion surfaced as "Edge unavailable" ON A HEALTHY NETWORK.
+    // A timeout could therefore fire BEFORE generation had even started. Pre-RAWY-231 there was ONE 20 s
+    // timer and NO queue, so it measured synthesis alone; the queue and the halved budget arrived in the same
+    // commit and the semantic change went unnoticed.
+    //
+    // The network is still bounded — `synthDispatch` wraps the actual `invoke` in `withTimeout` starting at
+    // DISPATCH, which is the only place that can measure the engine honestly. A genuinely hung socket still
+    // rejects with `tts.synthTimeout` from there and still reaches the RAWY-193 pause below, so no failure
+    // mode is lost; only the false ones are. If the entry is dropped from the scheduler's window while we
+    // await it, this promise simply never settles — correct, because a NEWER `playFrom` owns playback by then
+    // (and the unreferenced pending promise is collectible). Removing the orphan case entirely is A3 / 4A.
+    synthd = await current;
     recordSeries(awaitLatency, performance.now() - tAwait);
   } catch (e) {
     recordSeries(awaitLatency, performance.now() - tAwait); // a failed wait is still a wait — measure it
@@ -871,6 +970,7 @@ export const useTts = create<TtsState>((set, get) => ({
   abandoned: 0,
   lastFailure: null,
   debug: ttsDebugOn,
+  retryAttempt: 0,
 
   // RAWY-257 (Phase 1) / RAWY-255: the in-app setter the D62 diagnostic never had. Writes localStorage (the
   // source of truth, survives a reload), the module mirror (so the hot paths don't re-read it per event), and
@@ -1077,6 +1177,6 @@ export const useTts = create<TtsState>((set, get) => ({
     sentences = [];
     if (ctx && ctx.state !== "closed") void ctx.suspend().catch(() => {});
     void ttsStop().catch(() => {});
-    set({ active: false, status: "idle", index: 0, total: 0, progress: 0, error: null, words: [], wordIndex: -1, underruns: 0, abandoned: 0, lastFailure: null });
+    set({ active: false, status: "idle", index: 0, total: 0, progress: 0, error: null, words: [], wordIndex: -1, underruns: 0, abandoned: 0, lastFailure: null, retryAttempt: 0 });
   },
 }));

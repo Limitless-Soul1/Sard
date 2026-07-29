@@ -401,7 +401,63 @@ pub fn tts_edge_voices(engines: State<'_, TtsEngine>) -> Result<Vec<EdgeVoiceInf
 /// SYNTH_TIMEOUT_MS (9 s) so the specific Rust reason ("edge synth timed out") reaches the user, not the
 /// generic JS timeout. PROVISIONAL — if the owner's Phase-0 slow-synth capture shows synths above ~5 s on his
 /// real network, raise both (a false timeout is a visible, actionable edge-error, not silence).
+/// RAWY-257 package 2A (C1): this is now the **TOTAL** budget for ONE `tts_synthesize` call — every step
+/// (voice fetch, connect, synth, reconnect, retry) draws from it — NOT a per-attempt ceiling.
+///
+/// WHY IT CHANGED MEANING. The doc above claims this is kept "just BELOW the frontend SYNTH_TIMEOUT_MS (9 s)
+/// so the specific Rust reason reaches the user". That was only ever true of a SINGLE attempt. `edge_synthesize`
+/// can run TWO bounded synths in series, and `connect()` / `get_voices_list()` had NO bound at all (msedge-tts
+/// 0.4 exposes no socket-timeout hook — see `edge_synth_once`), so the real worst case was ~16 s PLUS unbounded
+/// network I/O — roughly 2x the JS ceiling, and unbounded in the bad cases. The frontend therefore gave up
+/// while this call was still working, the worker kept HOLDING the engine mutex, and the next sentence queued
+/// behind it and timed out too: a CASCADE of false failures on a healthy link.
+///
+/// Making it a TOTAL deadline makes the documented invariant TRUE for the first time: the Rust command now
+/// returns within ~8 s, the JS ceiling sits 1 s above it, and the specific Rust reason wins the race.
+///
+/// The VALUE is deliberately UNCHANGED at 8. D70/S3 says the ceiling is re-derived from the RAWY-257 Phase-1
+/// measured distribution — and that capture was never run, so the evidence-led action is NO CHANGE. Note the
+/// retry now shares this budget rather than getting a fresh one; in practice that is MORE headroom than
+/// before, because the 9 s JS ceiling used to kill the retry almost as soon as it began.
 const EDGE_SYNTH_TIMEOUT_SECS: u64 = 8;
+
+/// Time left before `deadline`, or the timeout error once it has passed. Every bounded step below goes
+/// through this, so no combination of steps can exceed the total budget.
+fn remaining(deadline: std::time::Instant) -> Result<std::time::Duration, String> {
+    match deadline.checked_duration_since(std::time::Instant::now()) {
+        Some(d) if !d.is_zero() => Ok(d),
+        _ => Err("edge synth timed out".into()),
+    }
+}
+
+/// RAWY-257 (C8-lite): `connect()` bounded on a worker thread. It opens a TCP + TLS + WebSocket connection
+/// with NO timeout of its own, and it was called while `engines.edge` was HELD — so on a black-holed route it
+/// could pin the engine mutex for the OS connect timeout (tens of seconds), far past any ceiling the app
+/// believed it had. Same worker + `recv_timeout` shape as `edge_synth_once`; an abandoned worker finishes on
+/// its own and drops its socket. The socket LIFECYCLE is untouched (ENGINE CAUTION) — only the wait is bounded.
+fn connect_bounded(budget: std::time::Duration) -> Result<MSEdgeTTSClient<TcpStream>, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(connect().map_err(|e| format!("edge connect: {e:?}")));
+    });
+    match rx.recv_timeout(budget) {
+        Ok(r) => r,
+        Err(_) => Err("edge connect timed out".into()),
+    }
+}
+
+/// RAWY-257 (C8-lite): the voice-list fetch, bounded the same way. It is a blocking HTTP call made INSIDE the
+/// engine mutex on the voice-change path, and it was equally unbounded.
+fn load_edge_voices_bounded(budget: std::time::Duration) -> Result<Vec<Voice>, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(load_edge_voices());
+    });
+    match rx.recv_timeout(budget) {
+        Ok(r) => r,
+        Err(_) => Err("edge voices fetch timed out".into()),
+    }
+}
 
 /// The outcome of one bounded Edge synth (RAWY-172). `Ok`/`Failed` hand the warm client BACK (for reuse,
 /// or its config to reconnect); `Stalled` means the worker is still blocked and OWNS the client — it
@@ -418,14 +474,15 @@ enum EdgeSynth {
 /// worker + `recv_timeout` is the way to put a ceiling on it. The warm client is moved to the worker and
 /// returned with the result; on timeout the worker is abandoned — its client drops when synthesize finally
 /// returns, closing the socket. `MSEdgeTTSClient<TcpStream>` + `SpeechConfig` are Send, so the move is sound.
-fn edge_synth_once(mut running: EdgeRunning, text: &str) -> EdgeSynth {
+/// RAWY-257 (C1): `budget` is what is LEFT of the call's total deadline, not a fresh per-attempt ceiling.
+fn edge_synth_once(mut running: EdgeRunning, text: &str, budget: std::time::Duration) -> EdgeSynth {
     let (tx, rx) = std::sync::mpsc::channel();
     let text = text.to_string();
     std::thread::spawn(move || {
         let res = running.client.synthesize(&text, &running.config);
         let _ = tx.send((running, res)); // if we already timed out, this send fails and drops the client
     });
-    match rx.recv_timeout(std::time::Duration::from_secs(EDGE_SYNTH_TIMEOUT_SECS)) {
+    match rx.recv_timeout(budget) {
         Ok((running, Ok(audio))) => EdgeSynth::Ok(audio, running),
         Ok((running, Err(e))) => EdgeSynth::Failed(running, format!("{e:?}")),
         Err(_) => EdgeSynth::Stalled,
@@ -436,6 +493,9 @@ fn edge_synth_once(mut running: EdgeRunning, text: &str) -> EdgeSynth {
 /// per voice; a dropped socket reconnects once. Online-required — an unreachable endpoint surfaces a
 /// clear error, and the frontend then falls back to Piper.
 fn edge_synthesize(engines: &TtsEngine, id: String, text: String) -> Result<tauri::ipc::Response, String> {
+    // RAWY-257 (C1): ONE deadline for the WHOLE call. Every bounded step below draws from what is left, so
+    // the command cannot outlive the budget the frontend was told to expect — however many steps it takes.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(EDGE_SYNTH_TIMEOUT_SECS);
     let mut guard = engines.edge.lock().map_err(|e| e.to_string())?;
     let need_new = guard.as_ref().map(|r| r.voice_id != id).unwrap_or(true);
     if need_new {
@@ -443,7 +503,7 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String) -> Result<taur
         let mut vcache = engines.edge_voices.lock().map_err(|e| e.to_string())?;
         if vcache.is_none() {
             // RAWY-179: same merged list as the picker, so a fallback Arabic voice is synthesizable.
-            *vcache = Some(load_edge_voices()?);
+            *vcache = Some(load_edge_voices_bounded(remaining(deadline)?)?);
         }
         let voice = vcache
             .as_ref()
@@ -454,7 +514,7 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String) -> Result<taur
         let mut config = SpeechConfig::from(voice);
         config.audio_format = "audio-24khz-48kbitrate-mono-mp3".to_string(); // force MP3 for WebAudio
         drop(vcache);
-        let client = connect().map_err(|e| format!("edge connect: {e:?}"))?;
+        let client = connect_bounded(remaining(deadline)?)?;
         *guard = Some(EdgeRunning { voice_id: id.clone(), config, client });
     }
     // RAWY-172 (AUD-2): bound the blocking synth with a timeout so a stalled socket can't hold this mutex
@@ -464,23 +524,22 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String) -> Result<taur
     // drops when its synthesize finally returns), so the next call reconnects; the frontend's own timeout
     // (RAWY-172) has already advanced playback by then.
     let running = guard.take().unwrap();
-    let audio = match edge_synth_once(running, &text) {
+    let audio = match edge_synth_once(running, &text, remaining(deadline)?) {
         EdgeSynth::Ok(audio, running) => {
             *guard = Some(running);
             audio
         }
-        EdgeSynth::Failed(running, _) => {
-            // the socket dropped cleanly (idle / a brief blip) — reconnect once and retry (RAWY-113)
-            let config = running.config.clone();
-            let client = connect().map_err(|e| format!("edge reconnect: {e:?}"))?;
-            match edge_synth_once(EdgeRunning { voice_id: id.clone(), config, client }, &text) {
-                EdgeSynth::Ok(audio, running) => {
-                    *guard = Some(running);
-                    audio
-                }
-                EdgeSynth::Failed(_, e) => return Err(format!("edge synth: {e}")),
-                EdgeSynth::Stalled => return Err("edge synth timed out".into()),
-            }
+        EdgeSynth::Failed(_running, e) => {
+            // RAWY-257 package 2B (C1 completion — the G-2A pre-declared handoff): the reconnect-and-retry
+            // that lived here is REMOVED, so there is exactly ONE retry authority in the system — the JS
+            // backoff ladder in `synthDispatch`. Two independent retry layers were what turned a single
+            // refused connection into ~4 attempts inside ~50–200 ms with no delay between any of them.
+            //
+            // `_running` is deliberately DROPPED rather than stored: the socket that just failed is dead, and
+            // leaving the slot empty is what makes the NEXT ladder attempt take the `need_new` branch and
+            // open a FRESH connection. That is how "each retry forces a fresh connection" is honoured without
+            // touching the socket lifecycle ENGINE CAUTION protects.
+            return Err(format!("edge synth: {e}"));
         }
         EdgeSynth::Stalled => return Err("edge synth timed out".into()),
     };

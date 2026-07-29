@@ -11,7 +11,7 @@ import { useShallow } from "zustand/react/shallow";
 
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
-import { TTS_EMPTY, TTS_MAX_SPEED, TTS_MIN_SPEED, TTS_SPEED_STEP, releaseButtonFocusAfterPointerClick, skipSentenceForArrow, toggleTtsPlayback, ttsStats, useTts, voiceLabel } from "../../lib/tts";
+import { TTS_EMPTY, TTS_MAX_RETRIES, TTS_MAX_SPEED, TTS_MIN_SPEED, TTS_SPEED_STEP, releaseButtonFocusAfterPointerClick, skipSentenceForArrow, toggleTtsPlayback, ttsStats, useTts, voiceLabel } from "../../lib/tts";
 import { TtsMini } from "./TtsMini";
 import { TtsVoicePicker } from "./TtsVoicePicker";
 
@@ -38,11 +38,12 @@ export function TtsPlayer({
   // Previously `useTts()` re-rendered the pill on EVERY store change — including the karaoke `words`/
   // `wordIndex` ticks (several/sec on Edge) it doesn't even read — which made size toggles feel heavy and
   // could swallow a click landing mid-re-render. Actions are stable Zustand refs, so they never re-render.
-  const { active, status, endDismissed, engine, voice, index, total, speed, volume, progress, chapterLabel, error, underruns, abandoned, lastFailure, debug, skip, setSpeed, setVolume, setEngine, retry, resumeEdge, stop } = useTts(
+  const { active, status, endDismissed, engine, voice, index, total, speed, volume, progress, chapterLabel, error, underruns, abandoned, lastFailure, debug, retryAttempt, skip, setSpeed, setVolume, setEngine, retry, resumeEdge, stop } = useTts(
     useShallow((s) => ({
       active: s.active, status: s.status, endDismissed: s.endDismissed, engine: s.engine, voice: s.voice, index: s.index, total: s.total,
       speed: s.speed, volume: s.volume, progress: s.progress, chapterLabel: s.chapterLabel, error: s.error, underruns: s.underruns, abandoned: s.abandoned, lastFailure: s.lastFailure,
       debug: s.debug, // RAWY-257/255: reactive, so toggling the setting shows/hides the readout immediately
+      retryAttempt: s.retryAttempt, // RAWY-257 2B (D68): which backoff attempt is in flight (0 = none)
       skip: s.skip, setSpeed: s.setSpeed, setVolume: s.setVolume, setEngine: s.setEngine, retry: s.retry, resumeEdge: s.resumeEdge, stop: s.stop,
     })),
   );
@@ -124,6 +125,9 @@ export function TtsPlayer({
     errored ? ` · ${t("tts.error")}` :
     downloading ? ` · ${t("tts.downloading", { pct: localeNum(dlPct, lang) })}` :
     preparing ? ` · ${t("tts.preparing")}` :
+    // RAWY-257 2B (D68): a retry is VISIBLE waiting, not a dead player. It takes precedence over the plain
+    // "buffering" wording because it says something the user can act on: it is still trying, and how far in.
+    retryAttempt > 0 ? ` · ${t("tts.retrying", { n: localeNum(retryAttempt, lang), of: localeNum(TTS_MAX_RETRIES, lang) })}` :
     buffering ? ` · ${t("tts.buffering")}` : // RAWY-231: visible mid-playback synth wait
     status === "paused" ? ` · ${t("tts.paused")}` : "";
   // RAWY-231 (invariant E): a tiny debug readout for seeing stalls, not just feeling them. Off by default.

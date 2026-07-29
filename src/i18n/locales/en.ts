@@ -557,6 +557,8 @@ export const en = {
   "tts.buffering": "buffering…",
   // RAWY-257 (Phase 1) / RAWY-255: the read-aloud diagnostic switch. Deliberately plain — it is a
   // troubleshooting aid the owner may be asked to turn on, not a feature to advertise.
+  // RAWY-257 2B (D68): the retry ladder's visible waiting state. A blip must not read as a dead player.
+  "tts.retrying": "retrying {n}/{of}…",
   "tts.diagnostics": "Read-aloud diagnostics",
   "tts.diagnosticsHint": "Shows timing and failure details on the player. Leave off for normal reading.",
   "tts.downloading": "downloading voice… {pct}%",

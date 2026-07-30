@@ -339,7 +339,11 @@ const clearWatchdog = () => {
 // failure does NOT enter the backoff ladder, and no existing mode can produce one. Permitted under the
 // freeze rule — it does not alter any behaviour G-P1 validated, and G-P1 is re-run to prove that.
 type FaultMode = "off" | "fail-fast" | "stall" | "empty" | "truncated" | "permanent";
-let fault: { mode: FaultMode; ms: number; times: number } = { mode: "off", ms: 0, times: 0 };
+// RAWY-257 (C1): `msg` lets a DEV harness inject the EXACT error text the Rust side produces, so the C1 fix
+// can be proven on the real strings instead of on a paraphrase. Same justification 2B recorded when it added
+// the `permanent` mode: a gate needs a failure class no existing mode can produce. Unset → the message is
+// byte-identical to before, so no armed behaviour changes.
+let fault: { mode: FaultMode; ms: number; times: number; msg?: string } = { mode: "off", ms: 0, times: 0 };
 const faultArmed = (): boolean => import.meta.env.DEV && fault.mode !== "off" && fault.times > 0;
 
 /** Build a framed `[u32 BE json_len][json][audio]` body (the RAWY-127 wire shape) with a chosen audio body,
@@ -366,7 +370,8 @@ async function rawSynth(engine: TtsEngineKind, id: string, text: string): Promis
     if (mode === "fail-fast") {
       // A REFUSED connection — returns in milliseconds. This is the C3 case: the RAWY-193 retry assumes the
       // reconnect is "itself the delay", which is false here, so both attempts burn inside one bad instant.
-      throw new Error("edge connect: injected fail-fast (RAWY-257 fault)");
+      // RAWY-257 (C1): `msg` substitutes the exact Rust wording under test; unset keeps the original string.
+      throw new Error(fault.msg || "edge connect: injected fail-fast (RAWY-257 fault)");
     }
     if (mode === "stall") {
       // ms <= 0 → never resolves (a hung socket). ms > 0 → SLOW BUT SUCCESSFUL: delay, then do the real call.
@@ -418,7 +423,14 @@ export const TTS_MAX_RETRIES = RETRY_BACKOFF_MS.length;
 // A 5xx is NOT here (a server-side blip is exactly what the ladder is for).
 const isPermanentFailure = (e: unknown): boolean => {
   const s = String(e);
-  return s.includes("unknown edge voice") || /\b4\d\d\b/.test(s);
+  if (s.includes("unknown edge voice")) return true;
+  // RAWY-257 (C1 — regression fix): 429 "Too Many Requests" is a RATE LIMIT, not a rejection. It is the one
+  // 4xx that CAN succeed on a later attempt, and a spaced retry is the canonical response to it — so the
+  // blanket 4xx rule was swallowing exactly the failure the D68 ladder exists to absorb. MEASURED: a
+  // handshake carrying 429 classified `permanent`, skipped the ladder, and reached the user as a hard stop
+  // with no retry indicator at all. Stripping the token before the test keeps every OTHER 4xx permanent,
+  // including a string that carries both (e.g. a 403 alongside a 429 in the same debug text).
+  return /\b4\d\d\b/.test(s.replace(/\b429\b/g, ""));
 };
 
 // RAWY-257 2B: a STALL is not retried either — RAWY-193 established that burning another synth window on a
@@ -426,7 +438,23 @@ const isPermanentFailure = (e: unknown): boolean => {
 // ~40 s before the user is offered a choice. Preserving that invariant, not changing it.
 const isStallFailure = (e: unknown): boolean => {
   const s = String(e);
-  return s.includes("synthTimeout") || s.includes("timed out");
+  // RAWY-257 (C1 — regression fix). This used to test the bare substring `"timed out"`, which is not a
+  // property of a stall at all — it is a property of Rust's WORDING. Three CONNECTION failures carry that
+  // phrase and were therefore suppressed as if the socket had gone quiet mid-synthesis:
+  //   • "edge connect timed out"        — `connect_bounded` exhausted the call's deadline
+  //   • "edge voices fetch timed out"   — the voice-list HTTP fetch exhausted it
+  //   • "edge connect: Io(Custom { kind: TimedOut … })" — an OS-level connect timeout inside the debug text
+  // None of these is a stalled synthesis: in every one of them THERE IS NO SOCKET YET. D68's justification
+  // for suppressing a retry — "burning another synth window on a socket that already went quiet would only
+  // pile up silence" (RAWY-193) — cannot apply to a connection that was never established, and these are
+  // precisely the transient faults C3 built the backoff ladder for.
+  //
+  // The test is now the two SENTINELS that genuinely mean "synthesis stalled", matched as whole phrases:
+  //   • `tts.synthTimeout`     — the JS dispatch ceiling (9 s)
+  //   • `edge synth timed out` — Rust's stall sentinel, from `EdgeSynth::Stalled` AND from `remaining()`
+  //                              once the total 8 s budget is gone
+  // Suppression for those two is UNCHANGED, deliberately: that is the RAWY-193 invariant, not the defect.
+  return s.includes("synthTimeout") || s.includes("edge synth timed out");
 };
 
 // RAWY-247: when `decodeAudioData` fails, this holds what we FAILED to decode (Defect C / §1.5), read by
@@ -639,8 +667,8 @@ if (typeof window !== "undefined") {
   //   __sardTtsFault("empty") / ("truncated") → the C9 / decode-non-audio payloads
   //   __sardTtsFault("off")                  → disarm
   if (import.meta.env.DEV) {
-    (window as unknown as { __sardTtsFault?: (m: FaultMode, o?: { ms?: number; times?: number }) => unknown }).__sardTtsFault = (m, o) => {
-      fault = { mode: m, ms: o?.ms ?? 0, times: m === "off" ? 0 : (o?.times ?? 1) };
+    (window as unknown as { __sardTtsFault?: (m: FaultMode, o?: { ms?: number; times?: number; msg?: string }) => unknown }).__sardTtsFault = (m, o) => {
+      fault = { mode: m, ms: o?.ms ?? 0, times: m === "off" ? 0 : (o?.times ?? 1), msg: o?.msg };
       return { ...fault };
     };
   }

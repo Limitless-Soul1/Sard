@@ -566,6 +566,8 @@ export const ar: Record<TKey, string> = {
   "outcomes.continuity": "استمرّ دون انقطاع",
   "outcomes.interruptions": "الانقطاعات في الساعة · الثواني في الساعة",
   "outcomes.longest": "أطول انقطاع منفرد",
+  "outcomes.expected": "بطلبك (إيقاف مؤقت، تنقُّل، فصل)",
+  "outcomes.unclassified": "غير مصنَّف بعد",
   "outcomes.firstAudio": "الزمن حتى أول كلمة (الوسيط)",
   "outcomes.userAction": "احتاج تدخّلك · انتهى بسؤالك",
   "outcomes.productionEvents": "عدد مرات إظهار المشغّل أنه يعمل",

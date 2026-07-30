@@ -568,6 +568,8 @@ export const en = {
   "outcomes.continuity": "Played without a gap",
   "outcomes.interruptions": "Gaps per hour · seconds per hour",
   "outcomes.longest": "Longest single gap",
+  "outcomes.expected": "You asked for these (pause, seek, chapter)",
+  "outcomes.unclassified": "Not yet classified",
   "outcomes.firstAudio": "Time to first word (median)",
   "outcomes.userAction": "Needed your help · ended asking",
   "outcomes.productionEvents": "Times the player showed it was working",

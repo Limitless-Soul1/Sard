@@ -251,8 +251,10 @@ function TtsOutcomesRow() {
     ? [
         [t("outcomes.sessions"), `${sum.sessions} · ${sum.listeningHours} h`],
         [t("outcomes.continuity"), n(sum.continuityPct, "%")],
-        [t("outcomes.interruptions"), `${n(sum.interruptionsPerHour)} /h · ${n(sum.interruptionSecPerHour, " s")} /h`],
-        [t("outcomes.longest"), sum.longestInterruptionMs === null ? "—" : `${(sum.longestInterruptionMs / 1000).toFixed(1)} s`],
+        [t("outcomes.interruptions"), `${n(sum.failuresPerHour)} /h · ${n(sum.failureSecPerHour, " s")} /h`],
+        [t("outcomes.longest"), sum.longestFailureMs === null ? "—" : `${(sum.longestFailureMs / 1000).toFixed(1)} s`],
+        [t("outcomes.expected"), `${sum.expected.count} · ${sum.expected.sec} s`],
+        [t("outcomes.unclassified"), `${sum.unclassified.count} · ${sum.unclassified.sec} s`],
         [t("outcomes.firstAudio"), `${n(sum.firstAudioP50Ms, " ms")} · max ${n(sum.firstAudioMaxMs, " ms")}`],
         [t("outcomes.userAction"), `${n(sum.neededActionPer100, "%")} · ${n(sum.endedAcknowledgedPer100, "%")}`],
         [t("outcomes.productionEvents"), n(sum.productionEventsPerHour, " /h")],

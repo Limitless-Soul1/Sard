@@ -1,96 +1,113 @@
 // RAWY-263 (Layer 1 §6): the LOCAL, DURABLE OUTCOME RECORDER.
 //
-// This exists for one reason: LISTENING-OUTCOMES.md §6 requires a real-listening baseline before any
-// proposal can be judged, and no baseline exists today because `stop()` zeroes every counter when a session
-// ends. It is the one deliberate exception to §7 rule 1 — it improves no Layer 1 outcome by itself; it is
-// what makes the others measurable.
+// It exists because LISTENING-OUTCOMES.md §6 requires a real-listening baseline before any proposal can be
+// judged, and none existed: `stop()` zeroes every counter when a session ends.
 //
-// IT MUST OBSERVE REALITY, NOT INFLUENCE IT. Four guarantees, in order of how badly a breach would matter:
+// IT MUST OBSERVE REALITY, NOT INFLUENCE IT. Four guarantees, worst-consequence first:
+//   1. NO WRITE WHILE AUDIO IS SOUNDING. `settings_set` is a SYNC `#[tauri::command]`, and a sync command
+//      blocks the whole native window (RAWY-183/188). Persistence happens only when nothing is sounding.
+//      A hard kill mid-playback loses that session — a stated limit, not a periodic write.
+//   2. NO TIMER. Accounting is transition-driven arithmetic. No interval, no rAF.
+//   3. NO STORE WRITES. This module only reads. `tts.ts` and `ttsScheduler.ts` are untouched.
+//   4. FAULTS ISOLATED BUT COUNTED. Silent swallowing is what made the first version undebuggable.
 //
-//   1. NO WRITE WHILE AUDIO IS PLAYING. `settings_set` is a SYNC `#[tauri::command]`, and OPEN.md's
-//      RAWY-183/188 lesson is that a sync command blocks the ENTIRE native window. Persistence therefore
-//      happens only when nothing is sounding: on session end, on pause, and on page hide. A hard kill in the
-//      middle of playback loses that session — accepted, and recorded here as a known limit rather than
-//      papered over with a periodic write.
-//   2. NO TIMER. Accounting is purely transition-driven: every interval is closed by arithmetic on the
-//      previous transition's timestamp. There is no interval, no rAF, and no recurring cost of any kind.
-//   3. NO STORE WRITES. This module never calls `setState`. It only reads. It cannot alter playback.
-//   4. TOTAL FAULT ISOLATION. Every entry point is wrapped, so a defect in the recorder can never propagate
-//      into the reader. If this module throws, listening continues and only the measurement is lost.
+// ---- WHY GAPS ARE CLASSIFIED THE WAY THEY ARE (the v1 lesson) ----
+// v1 guessed intent from cursor movement. Real listening proved that wrong: chapter changes appeared as
+// 5–7 s "gaps" at unit 0, and one record spanned four chapters because pressing Next never clears `active`.
+// Guessing was the wrong instrument. The app already publishes two UNAMBIGUOUS signals, and v2 uses those:
 //
-// It also deliberately does NOT decide contested classifications. §5 says to record raw durations and
-// classify later; so interruptions are stored with their attribution evidence attached, and the summary
-// reports both a raw and a filtered figure rather than silently choosing one.
+//   • `underruns` increments in EXACTLY one place — `playFrom` finding the sentence not ready on a natural
+//     advance (`!ready && !establishLead`). That is the app's own definition of an UNEXPECTED wait.
+//   • `status === "preparing"` is set by only four call sites: start(), setVoice(), resumeEdge(), and the
+//     Piper voice download. They are told apart by what else changed, so a new chapter, a voice change and
+//     a user-driven recovery are each identified rather than inferred.
+//
+// A gap is therefore a FAILURE only when the app itself says playback had to wait, or when it ended in a
+// state the listener had to acknowledge. Everything the listener asked for — pause, seek, chapter change,
+// voice change, stop — is recorded as EXPECTED and kept out of the failure metrics. Anything that fits
+// neither is recorded as UNCLASSIFIED and counted separately: §5 forbids resolving an ambiguity silently.
 import { useTts } from "./tts";
 import { settingsGet, settingsSet } from "./ipc";
 
-const KEY = "listening_outcomes_v1";
-/** Retention bound. An implementation bound, NOT a Layer 1 target — the document forbids target constants,
- *  not engineering limits. Sized so the record stays small enough to write in one go while nothing plays. */
+const KEY = "listening_outcomes_v2";
+// v2 is a NEW key on purpose: v1 records have a different shape (chapter changes counted as gaps, engine
+// captured before it was resolved), and mixing two instruments' output in one statistic would be worse than
+// starting clean. The v1 record stays on disk under its own key for reference.
+/** Retention bound — an engineering limit, not a Layer 1 target. */
 const KEEP_SESSIONS = 300;
 
-// ---- the record shapes -------------------------------------------------------------------------------
+// ---- record shapes -----------------------------------------------------------------------------------
 
-/** One period of active listening in which nothing was sounding. Attribution evidence travels WITH it,
- *  because §5 forbids baking a classification into the measurement. */
-export interface Interruption {
-  /** ms since session start */
-  at: number;
+export type GapKind = "failure" | "expected" | "unclassified";
+export type GapCause = "underrun" | "error" | "recovery" | "chapterChange" | "voiceChange" | "seek" | "unknown";
+
+/** A period of active listening in which nothing was sounding. */
+export interface Gap {
+  at: number;            // ms since session start
   ms: number;
-  /** the sentence index the listener was on */
   index: number;
-  /** did the cursor move within a moment before this gap? A listener-requested move makes the gap
-   *  expected (§5 excludes it); a natural advance does not. */
-  afterCursorMove: boolean;
-  /** how far the cursor moved. +1 is ambiguous (a natural advance and a single skip look alike from
-   *  outside), anything else is unambiguously listener-requested. Stored so the ambiguity stays visible. */
+  kind: GapKind;
+  cause: GapCause;
+  /** how many unexpected waits the ENGINE itself counted during this gap — the decisive discriminator */
+  underrunsDelta: number;
   cursorDelta: number;
-  /** was a recovery visibly in progress during this gap? */
+  afterCursorMove: boolean;
   duringRecovery: boolean;
 }
 
+/** A synthesis failure as the app classified it. Recorded so a later analysis does not have to guess which
+ *  kind of failure produced a gap — the single most important thing v1 could not answer. */
+export interface FailureEvent {
+  at: number;
+  kind: string;
+  detail: string;
+  unit: number;
+  len: number;
+}
+
+export type EndReason = "closed" | "chapterChange" | "hidden" | "open";
+
 export interface SessionRecord {
-  /** wall-clock start, so sessions can be ordered and aged out */
   startedAt: number;
-  /** O5 — ms from the listener's activation to the first audio. null if audio never started. */
+  endReason: EndReason;
+  /** O5 — from the listener's activation to first audio. null if audio never started. */
   timeToFirstAudioMs: number | null;
-  /** active listening time: sounding + silent-but-waiting, after first audio (§5) */
+  /** active listening: sounding + silent-while-waiting, after first audio. Excludes paused, preparing,
+   *  chapter transitions and acknowledged states (§5). */
   activeMs: number;
-  /** of which was actually sounding */
   soundingMs: number;
-  interruptions: Interruption[];
-  /** O6 — the listener had to act to continue (only a user action can leave an error state) */
+  gaps: Gap[];
+  failures: FailureEvent[];
+  /** furthest the visible retry indicator got */
+  maxRetryAttempt: number;
+  /** O6 — the listener had to act to continue */
   neededUserAction: boolean;
-  /** O7 — the session ended in a state the listener had to acknowledge */
+  /** O7 — ended in a state the listener had to acknowledge */
   endedAcknowledged: boolean;
-  /** O8 (partial) — state changes that CAUSE a production indicator to be shown.
-   *  HONEST LIMIT: whether one was actually DISPLAYED depends on the player's size, which is component-local
-   *  state this module cannot see. In the minimised player nothing is shown. So this counts the events, and
-   *  is an UPPER BOUND on what the listener perceived. Do not report it as "perceived" without that caveat. */
+  /** O8 — state changes that WOULD show a production indicator. UPPER BOUND: whether one was displayed
+   *  depends on player size, which is component-local state this module cannot see. */
   productionStateEvents: number;
-  /** context, without which an outcome change cannot be attributed (§5) */
+  // context (§5) — captured when audio actually starts, not at activation, so it reflects the real session
   engine: string;
   voice: string;
   speed: number;
   chapter: string;
   units: number;
   unitsAdvanced: number;
-  /** derived content profile: mean audio-seconds per spoken unit */
   meanUnitSeconds: number | null;
-  /** how the audio source was performing, from the existing instrument */
   sourceMs: { n: number; p50: number; p95: number; max: number } | null;
-  /** the engine's own counters at session end */
   underruns: number;
   abandoned: number;
-  /** the observer began mid-session, so its start time is unknown — EXCLUDED from O5 */
+  /** false until audio started; context fields are provisional until then */
+  metaCaptured: boolean;
+  /** observation began mid-session — EXCLUDED from O5 */
   joinedLate: boolean;
-  /** true when the record was written while the session was still open (a pause/hide flush) */
   partial: boolean;
 }
 
-// ---- in-flight session state -------------------------------------------------------------------------
+// ---- in-flight state ---------------------------------------------------------------------------------
 
-type Phase = "idle" | "starting" | "sounding" | "silent" | "paused" | "acknowledged";
+type Phase = "idle" | "preparing" | "starting" | "sounding" | "silent" | "paused" | "acknowledged";
 
 let history: SessionRecord[] = [];
 let loaded = false;
@@ -98,18 +115,36 @@ let cur: SessionRecord | null = null;
 let phase: Phase = "idle";
 let phaseSince = 0;
 let sessionT0 = 0;
-let firstIndex = -1;
-let lastIndex = -1;
+let firstIndex = 0;
+let lastIndex = 0;
 let lastCursorMoveAt = -1;
 let lastCursorDelta = 0;
+let underrunsAtGapStart = 0;
+let retryDuringGap = false;
 let dirty = false;
 
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
-/** A cursor move is "recent" if it plausibly caused the gap we are now measuring. */
 const CURSOR_WINDOW_MS = 1200;
 
-/** Take a reading of how the audio source is performing, from the existing instrument. Kept out of `finish()`
- *  because the session's own counters are reset before this observer learns the session ended. */
+interface Snap {
+  active: boolean; status: string; index: number; total: number;
+  engine: string; voice: string; speed: number; chapterLabel: string;
+  retryAttempt: number; underruns: number; abandoned: number;
+  /** The STORE holds a formatted SUMMARY STRING (`len=N kind …`) — it is what the pill renders. The
+   *  structured record (kind / detail / unit / len) lives only behind `ttsStats()`. So the string is used to
+   *  DETECT a new failure and the structured one is read at that moment. Measured: assuming the store held
+   *  the object produced `detail: "undefined"` for every failure. */
+  lastFailure: string | null;
+}
+
+/** The structured failure record, read at the moment the store's summary string changes. */
+function structuredFailure(): { unit: number; len: number; kind: string; detail: string } | null {
+  try {
+    const st = (window as unknown as { __sardTtsStats?: () => { lastFailure?: { unit: number; len: number; kind: string; detail: string } | null } }).__sardTtsStats?.();
+    return st?.lastFailure ?? null;
+  } catch { return null; }
+}
+
 function sourceSnapshot(): void {
   if (!cur) return;
   try {
@@ -119,58 +154,62 @@ function sourceSnapshot(): void {
   } catch { /* context is optional; the outcome is not */ }
 }
 
-function closePhase(t: number, opts: { retrying: boolean }): void {
+/** Close the current phase, attributing its time and — if it was silent — classifying the gap. */
+function closePhase(t: number, s: Snap, endingBecause: GapCause | null): void {
   if (!cur) return;
   const d = Math.max(0, t - phaseSince);
   if (phase === "sounding") { cur.soundingMs += d; cur.activeMs += d; }
   else if (phase === "silent") {
+    const underrunsDelta = s.underruns - underrunsAtGapStart;
+    // A chapter change ends the SESSION; the silence it produces belongs to no session and is discarded
+    // outright rather than recorded as an expected gap. This is what polluted the first dataset.
+    if (endingBecause === "chapterChange") { phaseSince = t; return; }
+    let kind: GapKind;
+    let cause: GapCause;
+    if (endingBecause === "error") { kind = "failure"; cause = "error"; }
+    else if (underrunsDelta > 0) { kind = "failure"; cause = "underrun"; }
+    else if (retryDuringGap) { kind = "failure"; cause = "recovery"; }
+    else if (endingBecause === "voiceChange") { kind = "expected"; cause = "voiceChange"; }
+    else if (lastCursorMoveAt >= 0 && phaseSince - lastCursorMoveAt <= CURSOR_WINDOW_MS && lastCursorDelta !== 1) {
+      kind = "expected"; cause = "seek";
+    } else { kind = "unclassified"; cause = "unknown"; }
     cur.activeMs += d;
-    cur.interruptions.push({
-      at: Math.round(phaseSince - sessionT0),
-      ms: Math.round(d),
-      index: lastIndex,
+    cur.gaps.push({
+      at: Math.round(phaseSince - sessionT0), ms: Math.round(d), index: lastIndex,
+      kind, cause, underrunsDelta, cursorDelta: lastCursorDelta,
       afterCursorMove: lastCursorMoveAt >= 0 && phaseSince - lastCursorMoveAt <= CURSOR_WINDOW_MS,
-      cursorDelta: lastCursorDelta,
-      duringRecovery: opts.retrying,
+      duringRecovery: retryDuringGap,
     });
   }
   phaseSince = t;
 }
 
-// ---- persistence (never while sounding) ---------------------------------------------------------------
+// ---- persistence -------------------------------------------------------------------------------------
 
 async function load(): Promise<void> {
   if (loaded) return;
   loaded = true;
   try {
     const raw = await settingsGet(KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) history = parsed as SessionRecord[];
-    }
-  } catch { /* a missing or unparseable record must never break the reader */ }
+    if (raw) { const parsed = JSON.parse(raw); if (Array.isArray(parsed)) history = parsed as SessionRecord[]; }
+  } catch { /* a missing or unreadable record must never break the reader */ }
 }
 
-/** Every flush ATTEMPT, with the phase it was made in and whether it actually wrote. This exists so
- *  guarantee 1 is TESTABLE rather than asserted: an external check can prove no write ever landed while
- *  audio was sounding. Bounded, and the only thing in this module that exists for the benefit of a test. */
 const journal: { at: number; phase: Phase; wrote: boolean; bytes: number }[] = [];
 const JOURNAL_KEEP = 200;
 
-/** Persist. Refuses to write while audio is sounding — guarantee 1. */
 async function flush(force = false): Promise<void> {
+  // Capture synchronously: `finish()` nulls `cur` right after calling this, and reading it after the first
+  // await would silently drop the finalised session. Measured — that is exactly what happened in v1.
+  const rec = cur;
+  const recPartial = phase !== "idle";
   const note = (wrote: boolean, bytes = 0) => {
     journal.push({ at: Math.round(now()), phase, wrote, bytes });
     if (journal.length > JOURNAL_KEEP) journal.shift();
   };
-  // Capture the in-flight record SYNCHRONOUSLY, before the first await. `finish()` nulls `cur` immediately
-  // after calling this, so reading `cur` after `await load()` would see null and silently drop the finalised
-  // session — leaving only an earlier partial write in the history. Measured: that is exactly what happened.
-  const rec = cur;
-  const recPartial = phase !== "idle" && phase !== "acknowledged";
   try {
     if (!dirty && !force) { note(false); return; }
-    if (phase === "sounding") { note(false); return; } // never block the main thread while audio is sounding
+    if (phase === "sounding") { note(false); return; } // guarantee 1
     await load();
     const out = rec ? [...history.filter((h) => h.startedAt !== rec.startedAt), { ...rec, partial: recPartial }] : history;
     out.sort((a, b) => a.startedAt - b.startedAt);
@@ -182,133 +221,37 @@ async function flush(force = false): Promise<void> {
   } catch { /* measurement is never worth a user-visible failure */ }
 }
 
-/** Read-only view of the write journal, for verifying guarantee 1 from outside. */
 export function listeningJournal(): { at: number; phase: string; wrote: boolean; bytes: number }[] {
   return journal.map((j) => ({ ...j }));
 }
 
-// ---- the observer ------------------------------------------------------------------------------------
+// ---- session lifecycle -------------------------------------------------------------------------------
 
-interface Snap {
-  active: boolean;
-  status: string;
-  index: number;
-  total: number;
-  engine: string;
-  voice: string;
-  speed: number;
-  chapterLabel: string;
-  retryAttempt: number;
-  underruns: number;
-  abandoned: number;
+function startSession(t: number, s: Snap, joinedLate: boolean): void {
+  sessionT0 = t;
+  phaseSince = t;
+  firstIndex = s.index;
+  lastIndex = s.index;
+  lastCursorMoveAt = -1;
+  lastCursorDelta = 0;
+  underrunsAtGapStart = s.underruns;
+  retryDuringGap = false;
+  cur = {
+    startedAt: Date.now(), endReason: "open",
+    timeToFirstAudioMs: null, activeMs: 0, soundingMs: 0, gaps: [], failures: [],
+    maxRetryAttempt: 0, neededUserAction: false, endedAcknowledged: false, productionStateEvents: 0,
+    engine: s.engine, voice: s.voice, speed: s.speed, chapter: s.chapterLabel,
+    units: s.total, unitsAdvanced: 0, meanUnitSeconds: null, sourceMs: null,
+    underruns: 0, abandoned: 0, metaCaptured: false, joinedLate, partial: true,
+  };
+  phase = joinedLate ? (s.status === "playing" ? "sounding" : s.status === "paused" ? "paused" : "silent") : "preparing";
+  dirty = true;
 }
 
-function onChange(s: Snap, p: Snap): void {
-  const t = now();
-
-  // ---- session start ----
-  // Created on the RISING EDGE of `active`, but ALSO lazily whenever a session is active and we have no
-  // record for it. Without the lazy case the observer goes permanently blind after anything that clears
-  // `cur` mid-session — a diagnostic reset, or registration happening late (dev hot-reload does this) — and
-  // blindness is indistinguishable from "nothing happened", which is the worst failure mode a measurement
-  // can have. A session joined late is FLAGGED so it cannot pollute O5, which needs the true start.
-  const joinedLate = s.active && !cur && !(s.active && !p.active);
-  if (s.active && (!p.active || !cur)) {
-    sessionT0 = t;
-    phaseSince = t;
-    phase = "starting";
-    firstIndex = s.index;
-    lastIndex = s.index;
-    lastCursorMoveAt = -1;
-    lastCursorDelta = 0;
-    cur = {
-      startedAt: Date.now(),
-      timeToFirstAudioMs: null,
-      activeMs: 0, soundingMs: 0, interruptions: [],
-      neededUserAction: false, endedAcknowledged: false, productionStateEvents: 0,
-      engine: s.engine, voice: s.voice, speed: s.speed, chapter: s.chapterLabel,
-      units: s.total, unitsAdvanced: 0, meanUnitSeconds: null, sourceMs: null,
-      underruns: 0, abandoned: 0, partial: true, joinedLate,
-    };
-    // A session joined in progress already has audio sounding, so seed the phase from reality rather than
-    // pretending it is starting — otherwise the first interval would be misattributed.
-    if (joinedLate) {
-      phase = s.status === "playing" ? "sounding" : s.status === "paused" ? "paused" : "silent";
-      cur.timeToFirstAudioMs = null; // unknowable from here; excluded from O5 by `joinedLate`
-    }
-    dirty = true;
-  }
-  if (!cur) return;
-
-  // ---- cursor movement (context for attributing a gap) ----
-  if (s.index !== p.index) {
-    lastCursorDelta = s.index - p.index;
-    lastCursorMoveAt = t;
-    lastIndex = s.index;
-    cur.unitsAdvanced = Math.max(cur.unitsAdvanced, s.index - firstIndex);
-    // Snapshot how the audio source is performing WHILE THE SESSION IS ALIVE. Reading it at session end is
-    // too late: `stop()` resets the latency series before this observer sees `active: false`, so the value
-    // read there is always empty. Measured — the field came back null every time. Once per sentence is
-    // frequent enough for context and keeps the observation path trivial.
-    sourceSnapshot();
-  }
-
-  // ---- a production indicator became displayable ----
-  const enteredWait = s.status === "buffering" && p.status !== "buffering";
-  const enteredRetry = s.retryAttempt > 0 && p.retryAttempt === 0;
-  if (enteredWait || enteredRetry) cur.productionStateEvents++;
-
-  // ---- phase transitions ----
-  const sounding = s.status === "playing";
-  const waiting = s.status === "buffering";
-  const paused = s.status === "paused";
-  const acknowledged = s.status === "error" || s.status === "edge-error";
-  const ended = s.status === "chapter-end" || !s.active;
-
-  // O5: the first time audio actually sounds
-  if (sounding && cur.timeToFirstAudioMs === null) {
-    cur.timeToFirstAudioMs = Math.round(t - sessionT0);
-  }
-
-  // A listener can only leave an acknowledged state by acting (Retry / Switch / Play), so a transition OUT
-  // of one is proof they had to. That is O6, inferred without any hook into the playback path.
-  if ((p.status === "error" || p.status === "edge-error") && !acknowledged && s.active) {
-    cur.neededUserAction = true;
-  }
-
-  let next: Phase = phase;
-  if (!s.active) next = "idle";
-  else if (acknowledged) next = "acknowledged";
-  else if (paused) next = "paused";
-  else if (sounding) next = "sounding";
-  else if (waiting) next = cur.timeToFirstAudioMs === null ? "starting" : "silent";
-  else if (ended) next = "paused"; // chapter end is not an interruption (§5)
-  else next = cur.timeToFirstAudioMs === null ? "starting" : "paused";
-
-  if (next !== phase) {
-    closePhase(t, { retrying: p.retryAttempt > 0 || s.retryAttempt > 0 });
-    phase = next;
-    dirty = true;
-  }
-
-  cur.underruns = s.underruns;
-  cur.abandoned = s.abandoned;
-
-  // ---- session end ----
-  if (!s.active && p.active) {
-    cur.endedAcknowledged = p.status === "error" || p.status === "edge-error";
-    finish();
-  } else if (acknowledged && !(p.status === "error" || p.status === "edge-error")) {
-    cur.endedAcknowledged = true;
-    void flush(true); // nothing is sounding in an acknowledged state, so writing here is safe
-  } else if (paused && !(p.status === "paused")) {
-    void flush(true); // a pause is the natural safe point to persist
-  }
-}
-
-function finish(): void {
+function finish(reason: EndReason): void {
   if (!cur) return;
   try {
+    cur.endReason = reason;
     const ss = cur.soundingMs / 1000;
     cur.meanUnitSeconds = cur.unitsAdvanced > 0 ? Math.round(((ss * cur.speed) / cur.unitsAdvanced) * 100) / 100 : null;
     cur.partial = false;
@@ -319,29 +262,128 @@ function finish(): void {
   cur = null;
 }
 
-// ---- summary (the owner-facing projection) ------------------------------------------------------------
+// ---- the observer ------------------------------------------------------------------------------------
+
+function onChange(s: Snap, p: Snap): void {
+  const t = now();
+
+  // A session BOUNDARY. `preparing` is only ever set by start(), setVoice(), resumeEdge() or a Piper voice
+  // download, and those are told apart by what else changed:
+  //   • after an error state          → resumeEdge: the listener recovering. SAME session.
+  //   • engine or voice changed       → setVoice: an intentional switch. SAME session.
+  //   • after "downloading"           → the Piper model fetch. SAME session.
+  //   • otherwise                     → start(): a NEW chapter. New session.
+  const enteredPreparing = s.status === "preparing" && p.status !== "preparing";
+  if (enteredPreparing && cur && s.active) {
+    const recovery = p.status === "error" || p.status === "edge-error";
+    const voiceChange = s.engine !== p.engine || s.voice !== p.voice;
+    const download = p.status === "downloading";
+    if (recovery) { cur.neededUserAction = true; retryDuringGap = true; }
+    if (!recovery && !voiceChange && !download) {
+      closePhase(t, s, "chapterChange");   // the silence of a chapter change is discarded, not recorded
+      finish("chapterChange");
+      startSession(t, s, false);
+      return;
+    }
+    if (voiceChange) closePhase(t, s, "voiceChange");
+  }
+
+  if (s.active && !cur) startSession(t, s, !(s.active && !p.active));
+  if (!cur) return;
+
+  // ---- cursor movement ----
+  if (s.index !== p.index) {
+    lastCursorDelta = s.index - p.index;
+    lastCursorMoveAt = t;
+    lastIndex = s.index;
+    cur.unitsAdvanced = Math.max(cur.unitsAdvanced, s.index - firstIndex);
+    // Read the source instrument WHILE the session is alive: `stop()` resets it before this observer learns
+    // the session ended, so reading it at the end always returned empty. Measured.
+    sourceSnapshot();
+  }
+
+  // ---- failures, as the app itself classified them ----
+  if (s.lastFailure && s.lastFailure !== p.lastFailure) {
+    const f = structuredFailure();
+    cur.failures.push({
+      at: Math.round(t - sessionT0),
+      kind: f?.kind ?? "unknown",
+      detail: String(f?.detail ?? s.lastFailure).slice(0, 160),
+      unit: f?.unit ?? lastIndex,
+      len: f?.len ?? -1,
+    });
+  }
+  if (s.retryAttempt > 0) { retryDuringGap = true; cur.maxRetryAttempt = Math.max(cur.maxRetryAttempt, s.retryAttempt); }
+
+  // ---- production indicators ----
+  if ((s.status === "buffering" && p.status !== "buffering") || (s.retryAttempt > 0 && p.retryAttempt === 0)) {
+    cur.productionStateEvents++;
+  }
+
+  const sounding = s.status === "playing";
+  const acknowledged = s.status === "error" || s.status === "edge-error";
+
+  // O5 and the context that describes the session, captured when audio ACTUALLY starts — at activation the
+  // engine and voice are not yet resolved and `total` may be stale, which is why v1 recorded engine=piper
+  // and units=0 for Edge sessions.
+  if (sounding && !cur.metaCaptured) {
+    if (cur.timeToFirstAudioMs === null && !cur.joinedLate) cur.timeToFirstAudioMs = Math.round(t - sessionT0);
+    cur.engine = s.engine; cur.voice = s.voice; cur.speed = s.speed;
+    cur.chapter = s.chapterLabel; cur.units = s.total;
+    cur.metaCaptured = true;
+  }
+
+  // Leaving an acknowledged state can only happen because the listener acted.
+  if ((p.status === "error" || p.status === "edge-error") && !acknowledged && s.active) cur.neededUserAction = true;
+
+  let next: Phase;
+  if (!s.active) next = "idle";
+  else if (acknowledged) next = "acknowledged";
+  else if (s.status === "paused") next = "paused";
+  else if (sounding) next = "sounding";
+  else if (s.status === "buffering") next = cur.metaCaptured ? "silent" : "preparing";
+  else if (s.status === "preparing" || s.status === "downloading") next = "preparing";
+  else next = "paused"; // chapter-end and idle-ish states are not interruptions (§5)
+
+  if (next !== phase) {
+    closePhase(t, s, acknowledged ? "error" : null);
+    if (next === "silent") { underrunsAtGapStart = s.underruns; retryDuringGap = s.retryAttempt > 0; }
+    phase = next;
+    dirty = true;
+  }
+
+  cur.underruns = s.underruns;
+  cur.abandoned = s.abandoned;
+
+  if (!s.active && p.active) {
+    cur.endedAcknowledged = p.status === "error" || p.status === "edge-error";
+    finish("closed");
+  } else if (acknowledged && !(p.status === "error" || p.status === "edge-error")) {
+    cur.endedAcknowledged = true;
+    void flush(true);
+  } else if (s.status === "paused" && p.status !== "paused") {
+    void flush(true);
+  }
+}
+
+// ---- summary -----------------------------------------------------------------------------------------
 
 export interface OutcomeSummary {
   sessions: number;
   listeningHours: number;
-  /** O1 */
   continuityPct: number | null;
-  /** O2 */
-  interruptionSecPerHour: number | null;
-  /** O3 */
-  interruptionsPerHour: number | null;
-  /** O4 */
-  longestInterruptionMs: number | null;
-  /** O5 */
+  /** O2/O3/O4 — FAILURE gaps only. Expected gaps are reported separately and never mixed in. */
+  failureSecPerHour: number | null;
+  failuresPerHour: number | null;
+  longestFailureMs: number | null;
+  expected: { count: number; sec: number };
+  unclassified: { count: number; sec: number };
   firstAudioP50Ms: number | null;
   firstAudioMaxMs: number | null;
-  /** O6 / O7, per 100 sessions */
   neededActionPer100: number | null;
   endedAcknowledgedPer100: number | null;
-  /** O8, upper bound — see SessionRecord.productionStateEvents */
   productionEventsPerHour: number | null;
-  /** the same figures counting ONLY gaps not attributable to a listener-requested move */
-  filtered: { interruptionSecPerHour: number | null; interruptionsPerHour: number | null; longestMs: number | null };
+  failureKinds: { kind: string; n: number }[];
   contentProfiles: { meanUnitSeconds: number; sessions: number }[];
 }
 
@@ -352,60 +394,58 @@ export function summarise(rows: SessionRecord[] = history): OutcomeSummary {
   const activeMs = done.reduce((a, r) => a + r.activeMs, 0);
   const hours = activeMs / 3_600_000;
   const sounding = done.reduce((a, r) => a + r.soundingMs, 0);
-  const all = done.flatMap((r) => r.interruptions);
-  // §5: a gap the listener asked for (an unambiguous cursor move) is not an interruption. A +1 move is
-  // ambiguous from outside, so it is counted in the RAW figure and excluded from the FILTERED one.
-  const real = all.filter((i) => !(i.afterCursorMove && i.cursorDelta !== 1));
-  const filt = all.filter((i) => !i.afterCursorMove);
+  const gaps = done.flatMap((r) => r.gaps ?? []);
+  const fail = gaps.filter((g) => g.kind === "failure");
+  const exp = gaps.filter((g) => g.kind === "expected");
+  const unc = gaps.filter((g) => g.kind === "unclassified");
   const per = (n: number) => (hours > 0 ? Math.round((n / hours) * 10) / 10 : null);
+  const ttfa = done.filter((r) => !r.joinedLate).map((r) => r.timeToFirstAudioMs).filter((x): x is number => x !== null);
+  const kinds = new Map<string, number>();
+  for (const r of done) for (const f of r.failures ?? []) kinds.set(f.kind, (kinds.get(f.kind) ?? 0) + 1);
   const profiles = new Map<number, number>();
-  for (const r of done) if (r.meanUnitSeconds) {
-    const bucket = Math.round(r.meanUnitSeconds);
-    profiles.set(bucket, (profiles.get(bucket) ?? 0) + 1);
-  }
+  for (const r of done) if (r.meanUnitSeconds) { const b = Math.round(r.meanUnitSeconds); profiles.set(b, (profiles.get(b) ?? 0) + 1); }
   return {
     sessions: done.length,
     listeningHours: Math.round(hours * 100) / 100,
     continuityPct: activeMs > 0 ? Math.round((sounding / activeMs) * 1000) / 10 : null,
-    interruptionSecPerHour: per(real.reduce((a, i) => a + i.ms, 0) / 1000),
-    interruptionsPerHour: per(real.length),
-    longestInterruptionMs: real.length ? Math.max(...real.map((i) => i.ms)) : null,
-    firstAudioP50Ms: med(done.filter((r) => !r.joinedLate).map((r) => r.timeToFirstAudioMs).filter((x): x is number => x !== null)),
-    firstAudioMaxMs: (() => { const v = done.filter((r) => !r.joinedLate).map((r) => r.timeToFirstAudioMs).filter((x): x is number => x !== null); return v.length ? Math.max(...v) : null; })(),
+    failureSecPerHour: per(fail.reduce((a, g) => a + g.ms, 0) / 1000),
+    failuresPerHour: per(fail.length),
+    longestFailureMs: fail.length ? Math.max(...fail.map((g) => g.ms)) : null,
+    expected: { count: exp.length, sec: Math.round(exp.reduce((a, g) => a + g.ms, 0) / 100) / 10 },
+    unclassified: { count: unc.length, sec: Math.round(unc.reduce((a, g) => a + g.ms, 0) / 100) / 10 },
+    firstAudioP50Ms: med(ttfa),
+    firstAudioMaxMs: ttfa.length ? Math.max(...ttfa) : null,
     neededActionPer100: done.length ? Math.round((done.filter((r) => r.neededUserAction).length / done.length) * 1000) / 10 : null,
     endedAcknowledgedPer100: done.length ? Math.round((done.filter((r) => r.endedAcknowledged).length / done.length) * 1000) / 10 : null,
     productionEventsPerHour: per(done.reduce((a, r) => a + r.productionStateEvents, 0)),
-    filtered: {
-      interruptionSecPerHour: per(filt.reduce((a, i) => a + i.ms, 0) / 1000),
-      interruptionsPerHour: per(filt.length),
-      longestMs: filt.length ? Math.max(...filt.map((i) => i.ms)) : null,
-    },
+    failureKinds: [...kinds.entries()].sort((a, b) => b[1] - a[1]).map(([kind, n]) => ({ kind, n })),
     contentProfiles: [...profiles.entries()].sort((a, b) => a[0] - b[0]).map(([meanUnitSeconds, sessions]) => ({ meanUnitSeconds, sessions })),
   };
 }
 
-/** The owner-facing read path. Loads lazily so nothing is read during playback. */
-export async function listeningOutcomes(): Promise<{ summary: OutcomeSummary; sessions: SessionRecord[] }> {
-  await load();
-  return { summary: summarise(), sessions: history };
+/** History PLUS the session currently in flight. The in-flight one is never persisted while audio is
+ *  sounding (guarantee 1), so without this it is invisible — to a test and to the owner's own readout.
+ *  This is a pure read: nothing is written, and the live record is a copy.
+ *  Its time only counts phases already CLOSED, so it lags reality by the phase in progress. */
+function snapshotSessions(): SessionRecord[] {
+  if (!cur) return history;
+  return [...history.filter((h) => h.startedAt !== cur!.startedAt), { ...cur, partial: true }];
 }
 
-/** Discard the record — used to start a clean baseline before an A/B. */
+export async function listeningOutcomes(): Promise<{ summary: OutcomeSummary; sessions: SessionRecord[] }> {
+  await load();
+  const rows = snapshotSessions();
+  return { summary: summarise(rows), sessions: rows };
+}
+
 export async function resetListeningOutcomes(): Promise<void> {
-  history = [];
-  loaded = true;
-  // `cur = null` is safe now: onChange re-creates a record lazily for an in-progress session.
-  cur = null;
-  phase = "idle";
+  history = []; loaded = true; cur = null; phase = "idle";
   try { await settingsSet(KEY, "[]"); } catch { /* nothing to do */ }
 }
 
 // ---- registration ------------------------------------------------------------------------------------
 
 let registered = false;
-/** Observability of the observer: how many store changes were seen, and whether any were dropped by
- *  guarantee 4. Without these, a silent fault in this module is indistinguishable from "nothing happened" —
- *  which is exactly the trap the first version of this file fell into. */
 let events = 0;
 let faults = 0;
 let lastFault: string | null = null;
@@ -421,25 +461,24 @@ export function registerOutcomeRecorder(): void {
       active: s.active, status: s.status, index: s.index, total: s.total,
       engine: s.engine, voice: s.voice, speed: s.speed, chapterLabel: s.chapterLabel,
       retryAttempt: s.retryAttempt, underruns: s.underruns, abandoned: s.abandoned,
+      lastFailure: s.lastFailure ?? null,
     });
     let prev = pick(useTts.getState());
     useTts.subscribe((state) => {
       events++;
       const next = pick(state);
-      // Guarantee 4 keeps a recorder fault out of the reader — but swallowing silently also makes the
-      // recorder undebuggable, so the fault is RECORDED even though it is not rethrown.
       try { onChange(next, prev); } catch (e) { faults++; lastFault = String(e); }
       prev = next;
     });
-    // Flush when the window goes away — the last safe point at which a record can be saved.
-    const onHide = () => { if (phase !== "sounding") void flush(true); };
+    const onHide = () => { if (phase !== "sounding") { if (cur) cur.endReason = "hidden"; void flush(true); } };
     window.addEventListener("pagehide", onHide);
     document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") onHide(); });
-    (window as unknown as { __sardListening?: unknown }).__sardListening = listeningOutcomes;
-    (window as unknown as { __sardListeningReset?: unknown }).__sardListeningReset = resetListeningOutcomes;
-    (window as unknown as { __sardListeningJournal?: unknown }).__sardListeningJournal = listeningJournal;
-    (window as unknown as { __sardListeningPhase?: unknown }).__sardListeningPhase = () => phase;
-    (window as unknown as { __sardListeningHealth?: unknown }).__sardListeningHealth = listeningHealth;
+    const w = window as unknown as Record<string, unknown>;
+    w.__sardListening = listeningOutcomes;
+    w.__sardListeningReset = resetListeningOutcomes;
+    w.__sardListeningJournal = listeningJournal;
+    w.__sardListeningPhase = () => phase;
+    w.__sardListeningHealth = listeningHealth;
     void load();
   } catch { /* the reader must work whether or not measurement does */ }
 }

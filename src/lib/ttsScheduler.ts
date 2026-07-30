@@ -20,11 +20,28 @@
 // The class is PURE — no Tauri, WebAudio, or DOM — so the invariants can be exercised headless with
 // injected latencies (RAWY-231 STEP 2 did so before wiring): a structural property, not a timing accident.
 
-export interface SchedulerConfig {
+export interface SchedulerConfig<T = unknown> {
   /** Keep this many already-played sentences resolvable (a one-step skip-back stays instant). */
   behind: number;
-  /** Optional look-ahead depth beyond the current sentence (includes the one-ahead lead). */
+  /** Look-ahead depth beyond the current sentence (includes the one-ahead lead).
+   *  RAWY-257 4B (A2): with `targetSeconds` set this is no longer the policy — it is the HARD UNIT CAP that
+   *  keeps the window O(1) when units are pathologically short. SECONDS govern; this only stops them from
+   *  buying an unbounded NUMBER of entries. */
   ahead: number;
+  /** RAWY-257 4B (A2): seconds of DECODED audio to keep ahead of the cursor. Unset / 0 keeps the pre-4B
+   *  pure-unit behaviour exactly, which is what the headless A/B compares against. */
+  targetSeconds?: number;
+  /** RAWY-257 4B: the level below which the lead is considered at risk. REPORTED ONLY — deliberately NOT a
+   *  refill gate; see `wantedAhead()` for why a hysteresis trigger would make cover WORSE here. */
+  lowWaterSeconds?: number;
+  /** RAWY-257 4B (A2): how to read a decoded entry's duration in seconds. INJECTED so the class stays PURE —
+   *  it must not learn what an `AudioBuffer` is, because being WebAudio-free is what makes it gateable
+   *  headless with injected latencies. */
+  durationOf?: (v: T) => number;
+  /** RAWY-257 4B (A2): a dispatch settled, so the DECODED lead just changed and the owner may now be able to
+   *  justify exactly ONE more index. The scheduler cannot request it itself — it does not know how long the
+   *  chapter is. Fired before the pump so the new want can be dispatched in the same release. */
+  onSettled?: () => void;
   /** RAWY-231 (E): called when an in-flight synth's result is discarded (cursor moved away OR epoch changed). */
   onAbandon?: () => void;
 }
@@ -80,6 +97,9 @@ interface Entry<T> {
   reject: (e: unknown) => void;
   settled: boolean; // resolved OK (a rejected entry is deleted, so "in cache + settled" == ready)
   started: boolean; // dispatched to the engine (must not be trimmed — its result may be awaited)
+  /** RAWY-257 4B (A2): the resolved value, kept so `durationOf` can be applied without awaiting the promise.
+   *  This retains NOTHING new — the promise already holds a reference to exactly this object. */
+  value?: T;
 }
 
 export class SynthScheduler<T> {
@@ -97,7 +117,16 @@ export class SynthScheduler<T> {
   /** RAWY-257 (C10): the subset of `abandoned` caused by an epoch change (clearCache) rather than a cursor
    *  move. A NON-ZERO value is direct evidence of C4 — work dispatched, paid for, and thrown away. */
   abandonedEpoch = 0;
-  /** RAWY-257 (Phase 1, item 3): DISPATCH→SETTLE latency — the engine's real cost, excluding queue wait. */
+  /** RAWY-257 (Phase 1, item 3): DISPATCH→SETTLE latency — excludes queue wait, which is the whole point of
+   *  keeping it separate from `tts.ts`'s AWAIT→SETTLE series.
+   *
+   *  ⚠ SEMANTICS CHANGED IN 2B — recorded as doc debt there, reconciled here by 4B, which owns this file.
+   *  2B put the retry ladder INSIDE the dispatch (deliberately: a ladder outside it would release the
+   *  single-flight slot between attempts). So ONE SAMPLE IS THE WHOLE LADDER for that sentence — every
+   *  attempt plus every backoff wait — not one engine round-trip. A sentence that succeeds first time is
+   *  unchanged and still pure engine cost; a FAILING one reads up to ~6.5 s high.
+   *  DO NOT compare a failing post-2B sample against Phase-1 values, and derive D70's ceiling from
+   *  SUCCESSFUL samples only. */
   readonly dispatchLatency: LatencySeries = newSeries();
   /** RAWY-257 (Phase 1): peak concurrent dispatches observed. The D60 single-flight invariant says this must
    *  never exceed 1; C4 predicts it CAN, because clearCache() frees the slot while a synth is still live in
@@ -107,7 +136,7 @@ export class SynthScheduler<T> {
 
   constructor(
     private readonly dispatch: (idx: number) => Promise<T>,
-    private readonly cfg: SchedulerConfig,
+    private readonly cfg: SchedulerConfig<T>,
   ) {}
 
   /** The playback cursor the scheduler prioritizes around. */
@@ -205,25 +234,101 @@ export class SynthScheduler<T> {
     if (!e.started) e.reject(new Error(DROPPED));
   }
 
-  private inWindow(idx: number): boolean {
+  /** RAWY-257 4B (A2): is the duration model active at all? An unset target / missing accessor keeps the
+   *  pre-4B pure-unit behaviour EXACTLY, which is what the headless A/B compares against. */
+  private byDuration(): boolean {
+    return !!this.cfg.durationOf && !!this.cfg.targetSeconds && this.cfg.targetSeconds > 0;
+  }
+
+  /** RAWY-257 4B (A2) — RETENTION limit in units, derived from SECONDS of decoded audio: the smallest `k`
+   *  whose decoded seconds over [prio+1 … prio+k] reach `targetSeconds`, else the unit cap.
+   *
+   *  It deliberately does NOT stop at an undecoded gap. An entry still in flight contributes zero seconds
+   *  but the scan continues past it, so already-decoded work further out is never evicted merely because
+   *  something nearer has not landed yet — stopping at the gap would discard audio already paid for on the
+   *  one serialized socket.
+   *
+   *  Always ≥ 1, so D60-A's one-ahead lead is inside the window at every target value. */
+  private retainAhead(): number {
+    if (!this.byDuration()) return this.cfg.ahead;
+    const durationOf = this.cfg.durationOf!;
+    const target = this.cfg.targetSeconds!;
+    let secs = 0;
+    for (let k = 1; k <= this.cfg.ahead; k++) {
+      const e = this.cache.get(this.prio + k);
+      if (e && e.settled && e.value !== undefined) {
+        secs += durationOf(e.value);
+        if (secs >= target) return k;
+      }
+    }
+    return this.cfg.ahead;
+  }
+
+  /** RAWY-257 4B (A2) — the FILL frontier: how many indices ahead the owner should have requested. Walks
+   *  forward over DECODED entries accumulating seconds and stops at the first index that is missing or not
+   *  yet decoded — that index is the next, and only, thing worth requesting.
+   *
+   *  THIS IS WHAT MAKES THE REFILL STRICTLY ONE AT A TIME (D71), without the scheduler needing to know how
+   *  long the chapter is: you cannot know the seconds of audio you have not decoded, so the window grows by
+   *  exactly one each time a synth lands.
+   *
+   *  WHY THERE IS NO LOW-WATER GATE. D71 describes 5 s as a refill TRIGGER — which belongs to a design that
+   *  fills to a target, STOPS, and waits to fall below the mark before resuming. Here the window slides with
+   *  the cursor and the engine is single-flight, so refill is ALREADY continuous and there is nothing to
+   *  restart. Adding hysteresis could only mean deliberately letting the lead run down to 5 s before acting,
+   *  which REDUCES cover. `lowWaterSeconds` is therefore carried as a REPORTED threshold, never a gate. */
+  wantedAhead(): number {
+    if (!this.byDuration()) return this.cfg.ahead;
+    const durationOf = this.cfg.durationOf!;
+    const target = this.cfg.targetSeconds!;
+    let secs = 0;
+    for (let k = 1; k <= this.cfg.ahead; k++) {
+      const e = this.cache.get(this.prio + k);
+      if (!e || !e.settled || e.value === undefined) return k;
+      secs += durationOf(e.value);
+      if (secs >= target) return k;
+    }
+    return this.cfg.ahead;
+  }
+
+  /** RAWY-257 4B (A2) — the quantity a fixed-unit window could never express: CONTIGUOUS decoded seconds
+   *  ahead of the cursor. Contiguous on purpose — a decoded buffer sitting beyond an undecoded gap is not
+   *  cover, because playback reaches the gap first. */
+  bufferedSecondsAhead(): number {
+    const durationOf = this.cfg.durationOf;
+    if (!durationOf) return 0;
+    let secs = 0;
+    for (let k = 1; k <= this.cfg.ahead; k++) {
+      const e = this.cache.get(this.prio + k);
+      if (!e || !e.settled || e.value === undefined) break;
+      secs += durationOf(e.value);
+    }
+    return secs;
+  }
+
+  /** `aheadLimit` is passed in so `trim()` / `pick()` run the duration scan ONCE per pass rather than once
+   *  per cached entry. */
+  private inWindow(idx: number, aheadLimit: number): boolean {
     const d = idx - this.prio;
-    return d >= -this.cfg.behind && d <= this.cfg.ahead;
+    return d >= -this.cfg.behind && d <= aheadLimit;
   }
 
   private trim(): void {
+    const limit = this.retainAhead();
     for (const [idx, e] of this.cache) {
       if (idx === this.inflight) continue; // never drop the one in flight (its result is awaited)
-      if (!this.inWindow(idx)) this.drop(idx, e); // RAWY-257 4A: settle-before-drop, never orphan an awaiter
+      if (!this.inWindow(idx, limit)) this.drop(idx, e); // RAWY-257 4A: settle-before-drop, never orphan an awaiter
     }
   }
 
   /** Highest-priority index still needing synthesis: current (distance 0) first, then next (1), then
    *  ascending look-ahead; anything behind the cursor is lowest priority. */
   private pick(): number {
+    const limit = this.retainAhead();
     let best = -1;
     let bestRank = Infinity;
     for (const [idx, e] of this.cache) {
-      if (e.started || !this.inWindow(idx)) continue;
+      if (e.started || !this.inWindow(idx, limit)) continue;
       const d = idx - this.prio;
       const rank = d < 0 ? 1000 - d : d;
       if (rank < bestRank) { bestRank = rank; best = idx; }
@@ -265,6 +370,9 @@ export class SynthScheduler<T> {
       (v) => {
         if (myEpoch === this.epoch) {
           if (Math.abs(i - this.prio) > this.cfg.ahead) { this.abandoned++; this.cfg.onAbandon?.(); }
+          // RAWY-257 4B (A2): keep the decoded value so `durationOf` can measure the lead WITHOUT awaiting.
+          // Retains nothing new — `e.promise` already holds a reference to exactly this object.
+          e.value = v;
           e.settled = true;
         } else {
           // RAWY-257 (C10): the epoch moved under this dispatch (clearCache — new chapter / voice / retry),
@@ -285,6 +393,12 @@ export class SynthScheduler<T> {
       recordSeries(this.dispatchLatency, performance.now() - t0);
       this.live--;
       if (myEpoch === this.epoch) this.inflight = -1;
+      // RAWY-257 4B (A2): the DECODED lead just changed, so the owner may now be able to justify exactly one
+      // more index. Fired BEFORE the pump so that new want is dispatched in this same release rather than
+      // idling the engine until the next advance.
+      // GUARDED ON PURPOSE: a throw from a listener must NEVER skip the pump below — that would starve the
+      // queue, which is precisely the failure 2C's unconditional pump exists to prevent.
+      try { this.cfg.onSettled?.(); } catch { /* a listener must not be able to stall the engine */ }
       // RAWY-257 2C (C4): pump UNCONDITIONALLY. This is REQUIRED by the `live` gate above — previously the
       // pump was skipped when the epoch had changed, which was harmless only because the slot had already
       // been handed out early (the defect). Now that the slot is held until the call really settles, skipping

@@ -288,11 +288,31 @@ const SYNTH_TIMEOUT_MS = 9000;
 // prefetched-next), so a one-sentence skip-back stays instant while memory stays bounded.
 const CACHE_KEEP_BEHIND = 1;
 // RAWY-181 (BUG 3): how many UPCOMING sentences to synthesize ahead of need. RAWY-231: the GUARANTEE is a
-// lead of exactly ONE sentence (invariant A); anything up to PREFETCH_AHEAD is OPTIONAL look-ahead the
-// scheduler dispatches only after the current + lead, and drops on a cursor move. The scheduler's window
-// keeps [idx-CACHE_KEEP_BEHIND … idx+PREFETCH_AHEAD] decoded (≈5 sentences) and evicts the rest, so memory
-// stays bounded/O(1) regardless of chapter length (RAWY-172).
-const PREFETCH_AHEAD = 3;
+// lead of exactly ONE sentence (invariant A); anything beyond that is OPTIONAL look-ahead the scheduler
+// dispatches only after the current + lead, and drops on a cursor move.
+//
+// ---- RAWY-257 package 4B (A2 / D71, reduced) — THE LEAD IS NOW MEASURED IN SECONDS ----
+// `PREFETCH_AHEAD = 3` was a UNIT count, and the 4B investigation measured what that is worth in TIME:
+//   • Arabic (p50 unit 6.13 s): 3 units ≈ 16.5 s of decoded cover
+//   • English (p50 unit 2.75 s): 3 units ≈  6.5 s of decoded cover
+// The SAME window, a 2.5× spread, inside one library — that is A2, and it is why a unit count cannot be the
+// policy. Worse, on English a p95 dispatch (2620 ms) already exceeds the wall playback one median unit
+// provides (2200 ms at the owner's 1.25×), so the thin side of that spread is the side under load.
+//
+// SECONDS now govern; the unit number survives only as a HARD CAP that keeps the window O(1) if units are
+// pathologically short. 15 s ÷ 12 = 1.25 s/unit, which is BELOW the shortest unit measured anywhere in the
+// investigation (1.75 s over 93 units) — so on measured content the cap never binds and seconds decide,
+// while on degenerate content the cap holds memory to ~15 s of audio (≈2.9 MB at 48 kHz float32 mono) and
+// RAWY-172 survives absolutely.
+//
+// D60-A IS UNTOUCHED: `playFrom` still refuses to BEGIN until the current sentence and its one-ahead lead
+// are both decoded. S4 (fast start) was closed as NOT REQUIRED and is not implemented in any form.
+const PREFETCH_MAX_AHEAD = 12;
+// D71: TARGET 15 s of decoded audio ahead of the cursor.
+const LEAD_TARGET_SECONDS = 15;
+// D71: LOW WATER 5 s. Carried as a REPORTED threshold only — see `wantedAhead()` in ttsScheduler.ts for why a
+// hysteresis refill trigger would reduce cover under a sliding window on a single-flight engine.
+const LEAD_LOW_WATER_SECONDS = 5;
 const clearWatchdog = () => {
   if (watchdog) { clearInterval(watchdog); watchdog = null; }
 };
@@ -501,7 +521,17 @@ async function synthDispatch(i: number): Promise<Synthesized> {
 // The one serialized, priority-ordered, drop-on-move synth scheduler (invariants B + C live here).
 const scheduler = new SynthScheduler<Synthesized>(synthDispatch, {
   behind: CACHE_KEEP_BEHIND,
-  ahead: PREFETCH_AHEAD,
+  ahead: PREFETCH_MAX_AHEAD,
+  // RAWY-257 4B (A2): seconds govern the window; `ahead` above is only the O(1) safety cap.
+  targetSeconds: LEAD_TARGET_SECONDS,
+  lowWaterSeconds: LEAD_LOW_WATER_SECONDS,
+  // The scheduler must stay PURE, so it is told HOW to read a duration rather than learning what an
+  // AudioBuffer is. A Piper punctuation-only unit legitimately decodes to 0 s — that contributes nothing to
+  // the lead, which is correct: it is no cover.
+  durationOf: (s) => s.buffer?.duration ?? 0,
+  // RAWY-257 4B (A2): a synth landed, so the decoded lead changed and ONE more index may now be justified.
+  // The scheduler cannot request it itself — only this module knows how long the chapter is.
+  onSettled: () => { if (useTts.getState().active) prefetchFrom(scheduler.priority); },
   onAbandon: () => useTts.setState({ abandoned: scheduler.abandoned }),
 });
 
@@ -582,6 +612,13 @@ export function ttsStats() {
     queueDepth: scheduler.queueDepth,
     cached: scheduler.size,
     priority: scheduler.priority,
+    // RAWY-257 4B (A2): the quantity the fixed-unit window could not express — CONTIGUOUS decoded seconds
+    // ahead of the cursor. This is what G-4B measures on both content profiles; `lowWater` is the reported
+    // threshold it is measured against, NOT a refill gate.
+    bufferedSeconds: Math.round(scheduler.bufferedSecondsAhead() * 100) / 100,
+    wantedAhead: scheduler.wantedAhead(),
+    leadTarget: LEAD_TARGET_SECONDS,
+    leadLowWater: LEAD_LOW_WATER_SECONDS,
     // RAWY-257 (Phase 1, item 3): the TWO series, kept apart. `dispatch` is the engine's real cost (the
     // distribution D70 needs before the 8 s/9 s ceiling stops being PROVISIONAL); `await` is what playback
     // waited, which is what SYNTH_TIMEOUT_MS is actually applied to. await.max ≫ dispatch.max = C2, measured.
@@ -757,10 +794,12 @@ const stopSource = () => {
   }
 };
 
-// RAWY-172 (AUD-1) / RAWY-231: bounded memory is now the scheduler's job — `reprioritize(idx)` trims the
-// decoded-audio cache to the window [idx-CACHE_KEEP_BEHIND … idx+PREFETCH_AHEAD] on every advance/seek
-// (~5 buffers), so a decoded sentence's ~0.19 MB/s of PCM can't accumulate the ~650 MB/hour it once did. A
-// skip-back below the window simply re-synthesizes (a cache miss re-requests), so nothing depends on
+// RAWY-172 (AUD-1) / RAWY-231: bounded memory is the scheduler's job — `reprioritize(idx)` trims the
+// decoded-audio cache on every advance/seek, so a decoded sentence's ~0.19 MB/s of PCM can't accumulate the
+// ~650 MB/hour it once did. RAWY-257 4B (A2): the trim bound is now [idx-CACHE_KEEP_BEHIND … the point at
+// which LEAD_TARGET_SECONDS of decoded audio is reached], hard-capped at PREFETCH_MAX_AHEAD units — so the
+// bound is ~15 s of audio (≈2.9 MB) rather than a unit count whose size in MB varied 2.5× with content.
+// A skip-back below the window simply re-synthesizes (a cache miss re-requests), so nothing depends on
 // retaining old buffers.
 
 // RAWY-172 (AUD-2): resolve `p`, or reject after `ms` if it stalls — so a never-resolving synth can't
@@ -779,8 +818,12 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 // RAWY-231: optional LOOK-AHEAD beyond the one-sentence lead. The scheduler dispatches these only AFTER the
 // current + lead sentence and drops them on a cursor move, so requesting the whole window is safe — nothing
 // here can occupy the engine ahead of the sentence the user is waiting for (invariant B).
+// RAWY-257 4B (A2): the depth is no longer a constant — the scheduler reports how many indices ahead the
+// DECODED lead justifies, and it grows by exactly ONE per landed synth (D71's "one request at a time").
+// Re-requesting the indices already held is free: `request()` returns the existing entry.
 function prefetchFrom(idx: number): void {
-  for (let k = 1; k <= PREFETCH_AHEAD; k++) {
+  const want = scheduler.wantedAhead();
+  for (let k = 1; k <= want; k++) {
     const j = idx + k;
     if (j >= 0 && j < sentences.length) void synth(j).catch(() => {});
   }

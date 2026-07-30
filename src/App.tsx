@@ -6,6 +6,7 @@ import { initBookmarkStyle } from "./lib/bookmarkStyle";
 import { initReadMarkerStyle } from "./lib/readMarkerStyle"; // RAWY-256: persisted read-marker variant
 import { initFonts } from "./lib/fonts";
 import { initStyleScope } from "./lib/styleScope";
+import { registerOutcomeRecorder } from "./lib/listeningOutcomes"; // RAWY-263: the local outcome baseline
 import { initTheme, reapplyTitlebarTheme, useTheme } from "./theme";
 import { LanguagePicker } from "./features/onboarding/LanguagePicker";
 import { Library, type OpenTarget } from "./features/library/Library";
@@ -51,6 +52,7 @@ function App() {
     initBookmarkStyle(); // load persisted bookmark shape/colour/position (RAWY-41)
     initReadMarkerStyle(); // RAWY-256: persisted chapter read-marker variant (global, like bookmark shape)
     initStyleScope(); // load unified-vs-per-book book-style scope (RAWY-43)
+    registerOutcomeRecorder(); // RAWY-263: observe listening outcomes locally. Read-only; never writes while audio plays.
   }, []);
 
   // RAWY-118: WebView2 re-themes the native title-bar caption during its own startup, AFTER our first

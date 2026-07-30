@@ -4,10 +4,11 @@
 // chrome → inherits the UI direction and uses theme tokens. Replaces the old cramped
 // TypographyBar wall-of-buttons; the dev page-turn / book-switcher / status controls are gone.
 
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
+import { listeningOutcomes, type OutcomeSummary } from "../../lib/listeningOutcomes"; // RAWY-263
 import type { SettingsSection } from "./ReaderChrome";
 import {
   ARABIC_FONTS,
@@ -229,6 +230,52 @@ function TtsDebugRow({ label, hint }: { label: string; hint: string }) {
   const on = useTts((s) => s.debug);
   const setDebug = useTts((s) => s.setDebug);
   return <ToggleRow label={label} hint={hint} on={on} onToggle={() => setDebug(!on)} />;
+}
+
+// RAWY-263 (Layer 1 §6): the owner-facing projection of the local listening record. READ-ONLY, loaded on
+// mount only (never during playback — the panel is not open while listening), and gated behind the existing
+// diagnostics toggle so it costs nothing in normal reading.
+function TtsOutcomesRow() {
+  const { t } = useI18n();
+  const on = useTts((s) => s.debug);
+  const [sum, setSum] = useState<OutcomeSummary | null>(null);
+  useEffect(() => {
+    if (!on) return;
+    let alive = true;
+    void listeningOutcomes().then((r) => { if (alive) setSum(r.summary); }).catch(() => {});
+    return () => { alive = false; };
+  }, [on]);
+  if (!on) return null;
+  const n = (v: number | null, suffix = "") => (v === null ? "—" : `${v}${suffix}`);
+  const rows: [string, string][] = sum
+    ? [
+        [t("outcomes.sessions"), `${sum.sessions} · ${sum.listeningHours} h`],
+        [t("outcomes.continuity"), n(sum.continuityPct, "%")],
+        [t("outcomes.interruptions"), `${n(sum.interruptionsPerHour)} /h · ${n(sum.interruptionSecPerHour, " s")} /h`],
+        [t("outcomes.longest"), sum.longestInterruptionMs === null ? "—" : `${(sum.longestInterruptionMs / 1000).toFixed(1)} s`],
+        [t("outcomes.firstAudio"), `${n(sum.firstAudioP50Ms, " ms")} · max ${n(sum.firstAudioMaxMs, " ms")}`],
+        [t("outcomes.userAction"), `${n(sum.neededActionPer100, "%")} · ${n(sum.endedAcknowledgedPer100, "%")}`],
+        [t("outcomes.productionEvents"), n(sum.productionEventsPerHour, " /h")],
+      ]
+    : [];
+  return (
+    <div className="rs-outcomes">
+      <div className="rs-outcomes-title">{t("outcomes.title")}</div>
+      {!sum || sum.sessions === 0 ? (
+        <div className="rs-outcomes-empty">{t("outcomes.empty")}</div>
+      ) : (
+        <>
+          {rows.map(([k, v]) => (
+            <div className="rs-outcomes-row" key={k}>
+              <span className="rs-outcomes-k">{k}</span>
+              <span className="rs-outcomes-v">{v}</span>
+            </div>
+          ))}
+          <div className="rs-outcomes-note">{t("outcomes.note")}</div>
+        </>
+      )}
+    </div>
+  );
 }
 
 function SelectRow<T extends string>({
@@ -503,6 +550,10 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
           troubleshooting aid, not a reading control, and must not compete with the tracking highlights above. */}
       <div className="rs-divider" />
       <TtsDebugRow label={t("tts.diagnostics")} hint={t("tts.diagnosticsHint")} />
+      {/* RAWY-263 (Layer 1 §6): the outcome record must be readable in a NORMAL build — a diagnostic that
+          needs developer tooling is not an instrument (the RAWY-255 lesson). Shown only when diagnostics are
+          on, so it adds no surface for ordinary reading. */}
+      <TtsOutcomesRow />
 
       </>
       )}

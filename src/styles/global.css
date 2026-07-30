@@ -681,6 +681,16 @@ html, body, #root {
 }
 .rs-divider { height: 1px; background: var(--chrome-border); margin: 3px 0; }
 
+/* RAWY-263: the local listening record. A read-only projection shown only when diagnostics are on, so it
+   inherits the panel's tokens and adds no control surface. Logical properties throughout (RTL-safe). */
+.rs-outcomes { display: flex; flex-direction: column; gap: 4px; padding: 8px 2px 2px; }
+.rs-outcomes-title { color: var(--muted); font-size: 0.82em; letter-spacing: 0.02em; }
+.rs-outcomes-empty { color: var(--muted); font-size: 0.82em; opacity: 0.85; }
+.rs-outcomes-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 0.82em; }
+.rs-outcomes-k { color: var(--muted); flex: 1 1 auto; min-width: 0; }
+.rs-outcomes-v { color: var(--text); font-variant-numeric: tabular-nums; flex: 0 0 auto; text-align: end; }
+.rs-outcomes-note { color: var(--muted); font-size: 0.75em; opacity: 0.8; margin-block-start: 4px; }
+
 /* slider */
 .rs-slider-row { display: flex; align-items: center; gap: 12px; }
 .rs-slider-cap { color: var(--muted); font-family: "Literata", serif; line-height: 1; flex: 0 0 auto; }

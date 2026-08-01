@@ -4,8 +4,8 @@
 // skip ±sentence, speed.
 //
 // RAWY-110/111 (engine abstraction): a voice is {engine, id}; `synth` calls the dispatching
-// `tts_synthesize(engine, id, text)`. Engine-agnostic — WebAudio decodes both Piper's WAV and Edge's
-// MP3, so play/pause/skip/speed work the same. The chosen engine+voice persists PER LANGUAGE
+// `tts_synthesize(engine, id, text)`. Engine-agnostic — the media element plays both Piper's WAV and
+// Edge's MP3, so play/pause/skip/speed work the same. The chosen engine+voice persists PER LANGUAGE
 // (`tts_voice:ar`/`tts_voice:en`), defaulting to EDGE (neural, design 6). Edge is online-required — RAWY-193:
 // a synth failure is retried ONCE on Edge (a transient blip, invisible), then, if still failing, playback
 // PAUSES in an explicit "Edge unavailable" state (Retry / Switch to Piper). The engine/voice NEVER changes on
@@ -223,15 +223,128 @@ interface TtsState {
 // ticks from the START of THIS sentence's audio (each sentence is its own buffer, so they're clean to
 // schedule against playback). EDGE emits them; Piper emits an empty list → sentence-level only.
 export interface TtsWord { text: string; offset: number; duration: number }
-interface Synthesized { buffer: AudioBuffer; words: TtsWord[] }
+// RAWY-264: a synthesized sentence is now its ENCODED bytes plus the duration decoding proved it has.
+// The decoded PCM is deliberately NOT retained: it existed only to be played, and playback no longer uses
+// it (see the media-element section below). Decoding still happens — it is what validates the payload
+// (RAWY-247 decode classification, RAWY-257 2B/C9 zero-length) and where the duration comes from — but the
+// AudioBuffer is released immediately afterwards. That turns ~1.67 MB per sentence into ~53 KB, a ~32x
+// reduction in the cache RAWY-172 (AUD-1) was written to bound.
+interface Synthesized { bytes: ArrayBuffer; durationSec: number; words: TtsWord[] }
 
 // ---- imperative playback engine (WebAudio), kept outside the reactive store ----
 let ctx: AudioContext | null = null;
 let sentences: string[] = [];
-let source: AudioBufferSourceNode | null = null;
+
+// ---- RAWY-264: the playback substrate — HTMLMediaElement, not AudioBufferSourceNode -----------------
+//
+// WHY. Playback speed used to be produced by `AudioBufferSourceNode.playbackRate`, which RESAMPLES: pitch
+// and duration move together, so the narrator became a different person (+3.86 semitones at 1.25x, a full
+// octave at 2.00x — measured). Generating the audio at the listener's speed instead fixed the voice but made
+// speed a property of the AUDIO, which meant every speed change invalidated buffered sentences and forced
+// re-synthesis. A media element with `preservesPitch` TIME-STRETCHES in Chromium's own pipeline: measured
+// spectral shift 0.00 semitones at every supported speed, so speed goes back to being a property of
+// PLAYBACK. The cache is rate-independent again, a speed change costs one property assignment, and it works
+// for both engines (Piper's `--length_scale` saturates, so it could never have been served the other way).
+//
+// CSP. The element is fed a `blob:` URL built from the bytes already in memory, so `media-src blob:` is
+// REQUIRED in tauri.conf.json (JSON takes no comments, which is why the rationale lives here). Without it
+// Chromium refuses the load with `MEDIA_ELEMENT_ERROR: Media load rejected by URL safety check` and a
+// `media-src` violation — measured, not assumed.
+//
+// It is deliberately `blob:` ALONE, not `'self' blob:`. This pool is the only media element in the app and
+// it never loads anything but a blob, and no media assets are bundled, so `'self'` would grant reach nobody
+// uses. The directive also does not widen script execution in any way: WebAssembly instantiation and
+// blob:/data: AudioWorklet loading remain BLOCKED by the untouched `script-src` — re-verified by the final
+// gate, precisely so this entry cannot be mistaken for the far broader `script-src 'wasm-unsafe-eval'` that
+// a WASM time-stretcher would have required. The alternatives (a `data:` URL, or the asset protocol) need
+// an equivalent relaxation and add a copy or a disk round-trip.
+//
+// LIFECYCLE. `createMediaElementSource` may be called ONCE per element and its node cannot be recreated, so
+// the two elements are created once per AudioContext and REUSED, never recreated. Everything the pool owns
+// is released deliberately: a slot's blob URL is revoked when that slot is reused, and `releaseMedia()`
+// tears the whole pool down on session stop.
+const MEDIA_POOL_SIZE = 2; // one sounding, one free to take the next sentence
+let mediaEls: HTMLAudioElement[] = [];
+let mediaNodes: MediaElementAudioSourceNode[] = [];
+let mediaUrls: (string | null)[] = [];
+let mediaCtx: AudioContext | null = null; // the context the pool's source nodes are bound to
+let mediaSlot = 0;
+let mediaEl: HTMLAudioElement | null = null; // the element currently sounding
+let blobsCreated = 0;
+let blobsRevoked = 0;
+let playRejections = 0;
+
+// AUDIO↔TEXT DRIFT (RAWY-264): the karaoke pill's DERIVED clock minus the media pipeline's OWN position.
+// `el.currentTime` is ground truth — Edge's word offsets are expressed in exactly that timeline — so this is
+// the real misalignment between the highlighted word and the spoken one, not a proxy for it. Kept because a
+// CONSTANT offset and a GROWING one are different defects: regressing drift against position WITHIN the
+// sentence separates them, and the slope is what proves synchronisation cannot degrade over a long sentence.
+// Measured at adoption: mean +22 ms, max 40 ms, slope 0.02–0.13 ms per second of speech.
+let driftN = 0, driftSum = 0, driftMin = 0, driftMax = 0;
+let regX = 0, regY = 0, regXY = 0, regXX = 0;
+const noteDrift = (ms: number, posSec: number) => {
+  driftN++; driftSum += ms;
+  if (driftN === 1 || ms < driftMin) driftMin = ms;
+  if (driftN === 1 || ms > driftMax) driftMax = ms;
+  regX += posSec; regY += ms; regXY += posSec * ms; regXX += posSec * posSec;
+};
+const driftSlope = (): number | null => {
+  const d = driftN * regXX - regX * regX;
+  return driftN > 50 && Math.abs(d) > 1e-9 ? (driftN * regXY - regX * regY) / d : null;
+};
+const resetDrift = () => {
+  driftN = 0; driftSum = 0; driftMin = 0; driftMax = 0;
+  regX = 0; regY = 0; regXY = 0; regXX = 0;
+};
+
+/** The pool, bound to `c`. Rebuilt only if the AudioContext was replaced (`audioCtx()` remakes a closed one). */
+function mediaPool(c: AudioContext): HTMLAudioElement[] {
+  if (mediaCtx === c && mediaEls.length === MEDIA_POOL_SIZE) return mediaEls;
+  releaseMedia(); // a context swap orphans the old nodes — tear them down rather than leak them
+  for (let k = 0; k < MEDIA_POOL_SIZE; k++) {
+    const el = new Audio();
+    el.preload = "auto";
+    // The whole point of the substrate. Measured to survive later `src` and `playbackRate` assignment, so it
+    // is set once here rather than re-asserted per sentence.
+    el.preservesPitch = true;
+    mediaEls.push(el);
+    mediaUrls.push(null);
+    // RAWY-180: through the SHARED volume gain, never straight to the destination, so the volume slider
+    // governs read-aloud exactly as it did for the buffer path.
+    const node = c.createMediaElementSource(el);
+    node.connect(outputNode(c));
+    mediaNodes.push(node);
+  }
+  mediaCtx = c;
+  return mediaEls;
+}
+
+/** Release a slot's blob URL. Called when the slot is reused and when the pool is torn down. */
+const revokeSlot = (slot: number) => {
+  const u = mediaUrls[slot];
+  if (u) { URL.revokeObjectURL(u); blobsRevoked++; mediaUrls[slot] = null; }
+};
+
+/** Full teardown: stop every element, drop its media, release every URL, disconnect every node. */
+function releaseMedia() {
+  for (let k = 0; k < mediaEls.length; k++) {
+    const el = mediaEls[k];
+    try {
+      el.onended = null;
+      el.pause();
+      // Dropping the src is what makes the element let go of the decoded media; revoking the URL alone
+      // would not, because the element still holds its own reference to the resource it loaded.
+      el.removeAttribute("src");
+      el.load();
+    } catch { /* element already torn down */ }
+    revokeSlot(k);
+  }
+  for (const n of mediaNodes) { try { n.disconnect(); } catch { /* already disconnected */ } }
+  mediaEls = []; mediaNodes = []; mediaUrls = []; mediaCtx = null; mediaSlot = 0; mediaEl = null;
+}
 // RAWY-180 (Part A): read-aloud VOLUME. Every sentence source connects through ONE shared GainNode
 // before the destination, so the slider's 0..1 gain governs BOTH engines (Piper AND Edge) identically —
-// they both play decoded buffers via the same `createBufferSource` path. Persisted as `tts_volume`.
+// they both play through the same media-element pool (RAWY-264). Persisted as `tts_volume`.
 let gainNode: GainNode | null = null;
 let curVolume = 1; // 0..1, applied to the shared output gain (mirrors useTts.volume)
 let volSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -397,6 +510,8 @@ async function rawSynth(engine: TtsEngineKind, id: string, text: string): Promis
       return framedFault(new Uint8Array([0xff, 0xfb, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00]));
     }
   }
+  // RAWY-264: synthesis is ALWAYS at the voice's natural rate. Speed is applied at playback, so the same
+  // bytes serve every speed and a speed change never invalidates them.
   return await invoke<ArrayBuffer>("tts_synthesize", { engine, id, text });
 }
 
@@ -483,6 +598,10 @@ async function attemptSynth(i: number): Promise<Synthesized> {
   const hex = [...u8.slice(0, 16)].map((b) => b.toString(16).padStart(2, "0")).join(" ");
   const ascii = new TextDecoder("latin1").decode(u8.slice(0, 24)).replace(/[^\x20-\x7e]/g, ".");
   const sniff = { bytes: audio.byteLength, head: `${hex} "${ascii}"` };
+  // RAWY-264: playback needs the ENCODED bytes, and the decode below DETACHES them (the Phase 1 defect
+  // above), so the copy must be taken first. This copy is what is cached and played; the AudioBuffer that
+  // decoding produces is used only to validate the payload and read its duration, then released.
+  const bytes = audio.slice(0);
   let buffer: AudioBuffer;
   try {
     buffer = await audioCtx().decodeAudioData(audio);
@@ -503,7 +622,10 @@ async function attemptSynth(i: number): Promise<Synthesized> {
     pendingDecodeInfo = sniff;
     throw new Error("empty-audio (0-length buffer)");
   }
-  return { buffer, words };
+  // RAWY-264: the decoded PCM has now done its two jobs — proving the payload is real audio and yielding
+  // its duration — and playback does not use it. Keeping only `durationSec` is what drops the cached cost
+  // of a sentence from ~1.67 MB to ~53 KB; `buffer` goes out of scope here and is collectable.
+  return { bytes, durationSec: buffer.duration, words };
 }
 
 // RAWY-257 2B (C3 + A1): THE ONE RETRY AUTHORITY. Rust's internal reconnect-and-retry is gone and
@@ -556,7 +678,7 @@ const scheduler = new SynthScheduler<Synthesized>(synthDispatch, {
   // The scheduler must stay PURE, so it is told HOW to read a duration rather than learning what an
   // AudioBuffer is. A Piper punctuation-only unit legitimately decodes to 0 s — that contributes nothing to
   // the lead, which is correct: it is no cover.
-  durationOf: (s) => s.buffer?.duration ?? 0,
+  durationOf: (s) => s.durationSec, // RAWY-264: the duration decoding measured, kept without the PCM
   // RAWY-257 4B (A2): a synth landed, so the decoded lead changed and ONE more index may now be justified.
   // The scheduler cannot request it itself — only this module knows how long the chapter is.
   onSettled: () => { if (useTts.getState().active) prefetchFrom(scheduler.priority); },
@@ -654,6 +776,35 @@ export function ttsStats() {
     awaitMs: seriesSummary(awaitLatency),
     lastFailure: lastFail,
     debug: ttsDebugOn,
+    // ---- RAWY-264: playback-substrate health ----
+    // AUDIO↔TEXT drift in ms: the pill's derived clock minus the media pipeline's own position.
+    // Positive = the pill runs AHEAD of the voice. `slopeMsPerSec` is the one that matters — a fixed offset
+    // is imperceptible, a growing one would desynchronise a long sentence.
+    drift: driftN
+      ? {
+          n: driftN,
+          meanMs: +(driftSum / driftN).toFixed(2),
+          minMs: +driftMin.toFixed(2),
+          maxMs: +driftMax.toFixed(2),
+          slopeMsPerSec: driftSlope() === null ? null : +(driftSlope() as number).toFixed(3),
+        }
+      : null,
+    // Blob-URL accounting. `live` is bounded by the pool size by construction; if it ever exceeds it, a slot
+    // was reused without being revoked. The pool elements are NOT in the DOM (`new Audio()`), so this is the
+    // only way to observe the live element — a `querySelectorAll('audio')` probe silently matches nothing.
+    blobs: { created: blobsCreated, revoked: blobsRevoked, live: mediaUrls.filter(Boolean).length },
+    playRejections,
+    media: mediaEl
+      ? {
+          rate: mediaEl.playbackRate,
+          preservesPitch: mediaEl.preservesPitch,
+          currentTime: +mediaEl.currentTime.toFixed(3),
+          paused: mediaEl.paused,
+          isBlob: String(mediaEl.currentSrc || mediaEl.src).startsWith("blob:"),
+          poolSize: mediaEls.length,
+          readyState: mediaEl.readyState,
+        }
+      : null,
   };
 }
 
@@ -777,17 +928,28 @@ function stopKaraoke() {
   karaokeLastIdx = -2;
 }
 
-// Schedule (or clear) the pill for the sentence that just started playing at ctx time `t0`.
-function startKaraoke(words: TtsWord[], t0: number, myGen: number) {
+/** Schedule (or clear) the pill for the sentence that just started playing at ctx time `t0`.
+ *  `audio0` is the position the element had ALREADY reached when the anchor was taken — `play()` resolves
+ *  after audio has begun, so anchoring at 0 would bake that offset in as permanent drift (RAWY-264). */
+function startKaraoke(words: TtsWord[], t0: number, myGen: number, audio0 = 0) {
   stopKaraoke();
   useTts.setState({ words, wordIndex: -1 });
   if (!words.length) return; // Piper / no timing → sentence-level only (no pill)
   karaokeWords = words;
-  karaokeAnchor = { wall: t0, audio: 0, rate: useTts.getState().speed };
+  // RAWY-264: the anchor advances audio-time per wall-second, so its rate is simply the listener's speed —
+  // word offsets are always on the natural (1.0) timeline now, and the element consumes that timeline
+  // `speed` times faster. One rule for both engines, with no per-engine special case.
+  karaokeAnchor = { wall: t0, audio: audio0, rate: useTts.getState().speed };
   const c = audioCtx();
   const tick = () => {
     if (myGen !== gen || !useTts.getState().active) { karaokeRaf = 0; return; }
     const audioTime = karaokeAnchor.audio + (c.currentTime - karaokeAnchor.wall) * karaokeAnchor.rate;
+    // RAWY-264 (measurement, not behaviour): the media pipeline exposes its OWN position in the same
+    // timeline the word offsets use, so the pill's derived clock is compared against ground truth every
+    // frame. Sampled only while sound is actually being produced.
+    if (mediaEl && !mediaEl.paused && mediaEl.currentTime > 0) {
+      noteDrift((audioTime - mediaEl.currentTime) * 1000, mediaEl.currentTime);
+    }
     let k = -1;
     for (let j = 0; j < karaokeWords.length; j++) {
       if (karaokeWords[j].offset / 1e7 <= audioTime) k = j; // 100-ns ticks → seconds; offsets ascend
@@ -809,16 +971,21 @@ function reanchorKaraoke(newRate: number) {
   karaokeAnchor.rate = newRate;
 }
 
+// RAWY-264: the element IS the source, so it obeys the same contract the AudioBufferSourceNode did —
+// silent immediately, and its `ended` handler detached so a stopped sentence can never advance the queue.
+// The slot's blob URL is NOT revoked here: `stopSource` runs at every sentence transition, and the URL is
+// released when its slot is next reused (or by `releaseMedia` at session end). That is what bounds live
+// blob URLs to the pool size instead of the session length.
 const stopSource = () => {
   clearWatchdog(); // RAWY-159: a new/stopped source must not leave a stale advance timer running
-  if (source) {
+  if (mediaEl) {
     try {
-      source.onended = null;
-      source.stop();
+      mediaEl.onended = null;
+      mediaEl.pause();
     } catch {
       /* already stopped */
     }
-    source = null;
+    mediaEl = null;
   }
 };
 
@@ -961,7 +1128,9 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
   // RAWY-231 (invariant D): empty/zero-length audio. On EDGE this is the throttled-TRUNCATION symptom
   // (§ open defect) — a REAL failure, so surface the explicit "Edge unavailable" pause rather than skipping
   // it silently. On Piper an empty buffer is legitimate punctuation-only text, so keep the RAWY-159 skip.
-  if (!synthd.buffer || synthd.buffer.length === 0 || synthd.buffer.duration === 0) {
+  // RAWY-264: the same condition, now read off the duration decoding measured (and the byte length) rather
+  // than a retained AudioBuffer — zero-length audio is still detected exactly where it always was.
+  if (!synthd.bytes || synthd.bytes.byteLength === 0 || synthd.durationSec === 0) {
     if (curEngine === "edge") { noteFailure(idx, new Error("empty-audio (0-length buffer)")); stopSource(); logStall("empty-edge", idx); set({ status: "edge-error" }); return; }
     skipSegment(TTS_EMPTY);
     return;
@@ -999,14 +1168,7 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
   }
   if (myGen !== gen) return;
   stopSource();
-  const s = c.createBufferSource();
-  s.buffer = synthd.buffer;
-  s.playbackRate.value = useTts.getState().speed;
-  s.connect(outputNode(c)); // RAWY-180: through the shared volume gain (both engines)
-  // RAWY-159: advance exactly ONCE, whether the source ends normally OR the watchdog fires. The
-  // watchdog is the safety net for a source whose `onended` never arrives (an edge-case empty/stuck
-  // buffer) — it advances only after the audio COULD have finished even at the slowest speed, and it
-  // polls the AudioContext clock (which freezes while paused), so a long pause never trips it.
+  // RAWY-159: advance exactly ONCE, whether the sentence ends normally OR the watchdog fires.
   let advanced = false;
   const advance = () => {
     if (advanced || myGen !== gen) return;
@@ -1014,18 +1176,50 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
     clearWatchdog();
     void playFrom(idx + 1, myGen);
   };
-  s.onended = advance;
-  source = s;
-  s.start();
+
+  // RAWY-264: hand the sentence to the next element in the pool. Alternating slots is what lets the element
+  // that just finished be torn down while the new one is already loading, and it bounds live blob URLs to
+  // the pool size. `media-src 'self' blob:` in tauri.conf.json exists for exactly this `createObjectURL`.
+  const pool = mediaPool(c);
+  mediaSlot = (mediaSlot + 1) % pool.length;
+  const el = pool[mediaSlot];
+  revokeSlot(mediaSlot); // whatever this slot played last is now unreachable
+  const head = new Uint8Array(synthd.bytes, 0, 4);
+  const isWav = head[0] === 0x52 && head[1] === 0x49 && head[2] === 0x46 && head[3] === 0x46; // "RIFF" = Piper WAV
+  const url = URL.createObjectURL(new Blob([synthd.bytes], { type: isWav ? "audio/wav" : "audio/mpeg" }));
+  blobsCreated++;
+  mediaUrls[mediaSlot] = url;
+  el.src = url;
+  el.playbackRate = useTts.getState().speed; // TIME-STRETCHED, not resampled — the voice is preserved
+  el.onended = advance;
+  mediaEl = el;
   const startedAt = c.currentTime;
-  const maxCtxSeconds = synthd.buffer.duration / TTS_MIN_SPEED + 2; // slowest-case play time + margin
+  try {
+    await el.play();
+  } catch {
+    // A rejected play() would strand playback in silence with no visible cause, so it is treated as a failed
+    // sentence and takes the SAME route a synth failure takes (RAWY-159 skip, dead-end counting).
+    playRejections++;
+    if (myGen !== gen) return;
+    skipSegment("tts.playRejected");
+    return;
+  }
+  // `play()` is awaited, so a stop/skip may have landed while it resolved — that generation check is the
+  // difference between a stopped sentence going silent and it speaking over its replacement.
+  if (myGen !== gen) { try { el.pause(); } catch { /* raced with stopSource */ } return; }
+  // The watchdog is the safety net for a sentence whose `ended` never arrives (an edge-case stuck element)
+  // — it advances only after the audio COULD have finished even at the slowest speed, and it polls the
+  // AudioContext clock (which freezes while paused), so a long pause never trips it.
+  const maxCtxSeconds = synthd.durationSec / TTS_MIN_SPEED + 2; // slowest-case play time + margin
   clearWatchdog();
   watchdog = setInterval(() => {
     if (myGen !== gen) { clearWatchdog(); return; }
     if (c.currentTime - startedAt > maxCtxSeconds) advance();
   }, 500);
-  // RAWY-127: schedule the karaoke pill against this buffer's clock (empty words → sentence-level only).
-  startKaraoke(synthd.words, c.currentTime, myGen);
+  // RAWY-127: schedule the karaoke pill against the AudioContext clock (empty words → sentence-level only).
+  // RAWY-264: anchored on the element's OWN position, because `play()` resolved after audio had already
+  // begun — anchoring at 0 would bake that head start in as a permanent offset.
+  startKaraoke(synthd.words, c.currentTime, myGen, el.currentTime);
 }
 
 // Ensure the chosen voice is usable, then play from `fromIndex`. Only PIPER voices fetch on demand
@@ -1212,9 +1406,16 @@ export const useTts = create<TtsState>((set, get) => ({
     }, SKIP_SETTLE_MS);
   },
 
+  // RAWY-264: speed is a property of PLAYBACK again. The element time-stretches, so the sentence in flight
+  // changes speed WITHOUT changing voice and without restarting, and every buffered sentence stays valid at
+  // the new speed. No cache clear, no generation bump, no re-synthesis, no network round trip.
+  //
+  // This RESTORES D71 ("no buffer clear on a speed change"), which the speed-at-synthesis implementation
+  // had to break: with the rate baked into the audio, cached sentences carried the OLD rate and had to be
+  // discarded. That discard was the direct cause of the G-264B boundary underrun, which cannot occur now.
   setSpeed: (s) => {
     const sp = Math.max(TTS_MIN_SPEED, Math.min(TTS_MAX_SPEED, Math.round(s / TTS_SPEED_STEP) * TTS_SPEED_STEP));
-    if (source) source.playbackRate.value = sp;
+    if (mediaEl) mediaEl.playbackRate = sp;
     reanchorKaraoke(sp); // RAWY-127: keep the karaoke audio-time continuous across the rate change
     set({ speed: sp });
     void settingsSet("tts_speed", String(sp)).catch(() => {});
@@ -1305,6 +1506,12 @@ export const useTts = create<TtsState>((set, get) => ({
     lastFail = null; // RAWY-247: clear the last-failure diagnostic for the new session
     pendingDecodeInfo = null;
     sentences = [];
+    // RAWY-264: the session is over, so everything the playback substrate owns goes with it — elements
+    // stopped and detached from their media, blob URLs revoked, source nodes disconnected. A blob URL is a
+    // document-lifetime reference, so this is the point at which they would otherwise accumulate across
+    // sessions. The next session rebuilds the pool on first use.
+    releaseMedia();
+    resetDrift(); // per-session, like the counters above it
     if (ctx && ctx.state !== "closed") void ctx.suspend().catch(() => {});
     void ttsStop().catch(() => {});
     set({ active: false, status: "idle", index: 0, total: 0, progress: 0, error: null, words: [], wordIndex: -1, underruns: 0, abandoned: 0, lastFailure: null, retryAttempt: 0 });

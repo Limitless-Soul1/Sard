@@ -1071,6 +1071,11 @@ export class FoliateController {
     const v = this.view;
     this.view = null;
     this.annotations.clear();
+    // RAWY-276: the reference registry holds DOM Ranges into section documents, so it must be released
+    // with the view — otherwise closing a book leaves its chapter documents pinned for as long as the
+    // controller lives, which is the whole Library session. Pruning alone cannot cover this: after
+    // dispose there is no rendered set and no further `applyReferences` call to prune from.
+    this.refRanges.clear();
     if (v) {
       try {
         v.close?.();
@@ -2696,8 +2701,52 @@ export class FoliateController {
    * costs exactly what the chapter on screen costs; and because the folded text is built in one pass, the
    * work is linear in the section's length regardless of how many references exist.
    */
+  /**
+   * RAWY-276: drop registry entries for sections that are no longer laid out.
+   *
+   * `refRanges`'s own declaration says entries are "dropped when that section unloads with the
+   * document" — NO SUCH CODE EXISTED. The only removal was `delete(index)` for the index being
+   * re-marked, and `dispose()` did not clear the map either, so it grew by one entry per section that
+   * ever matched a reference and never shrank. Each entry holds DOM `Range`s, and a Range keeps its
+   * `Text` nodes — and therefore their ancestor chain and owner `Document` — alive, while foliate
+   * destroys a section's iframe document as soon as you navigate away. The result is one DETACHED
+   * DOCUMENT pinned per matching section, for the life of the reading session.
+   *
+   * MEASURED on the owner's real library: 1 reference exists, in 1 book of 10, and it is a 15-word
+   * phrase matching exactly 1 of that book's 1315 sections — so today's exposure is ONE detached
+   * document (~18.5 KB, the book's average section HTML). The reason to fix it is the realistic worst
+   * case, measured on that same book: a single-word reference — which `refs.word_count` exists
+   * specifically to support — matches 32 sections for a character name and 765 for a common word, i.e.
+   * up to 765 retained chapter documents (~13.8 MB of HTML source; the DOM multiplier on top of that
+   * is an ESTIMATE, not measured).
+   *
+   * PRUNING IS PROVABLY LOSSLESS. `referenceAtPoint` resolves its index from `currentSectionIndex()`
+   * = `getContents()[0].index`, so the only entry it can ever read belongs to a currently-rendered
+   * section. Keeping the whole rendered set is therefore a SUPERSET of what is readable. `keep` is
+   * forced in because this runs from the `load` handler and must not evict the section it is in the
+   * middle of marking, whether or not the renderer has published it yet.
+   */
+  private pruneRefRanges(keep: number): void {
+    const contents = this.view?.renderer?.getContents?.() as { index?: number }[] | undefined;
+    // CONSERVATIVE BY CHOICE: if the renderer reports nothing, prune NOTHING. This runs from the `load`
+    // handler, and whether the renderer has published its contents at that instant is not something this
+    // was able to verify. Paged flow lays out more than one section at a time, so pruning against an
+    // empty list would drop a SIBLING rendered section's entry and its marks would stop answering clicks
+    // until it re-rendered. Skipping is free — the next section render prunes with a full list, and the
+    // leak this fixes is measured in sections visited, not in one deferred pass.
+    if (!contents?.length) return;
+    const live = new Set<number>([keep]);
+    for (const c of contents) if (typeof c?.index === "number") live.add(c.index);
+    for (const idx of Array.from(this.refRanges.keys())) {
+      if (!live.has(idx)) this.refRanges.delete(idx);
+    }
+  }
+
   private applyReferences(doc: Document, index: number): void {
     const win = doc.defaultView as (Window & { CSS?: { highlights?: Map<string, unknown> }; Highlight?: new (...r: Range[]) => unknown }) | null;
+    // RAWY-276: prune BEFORE the API guard, so a runtime without the Custom Highlight API still
+    // releases the ranges of sections that have unloaded.
+    this.pruneRefRanges(index);
     // The API is Chromium 105+; WebView2 here is far past that. If it is ever missing, references simply
     // do not paint — the notes are still stored and the popup still works from a click, so the feature
     // degrades quietly instead of throwing inside a section render.

@@ -415,18 +415,34 @@ pub fn tts_edge_voices(engines: State<'_, TtsEngine>) -> Result<Vec<EdgeVoiceInf
 /// Making it a TOTAL deadline makes the documented invariant TRUE for the first time: the Rust command now
 /// returns within ~8 s, the JS ceiling sits 1 s above it, and the specific Rust reason wins the race.
 ///
-/// The VALUE is deliberately UNCHANGED at 8. D70/S3 says the ceiling is re-derived from the RAWY-257 Phase-1
-/// measured distribution — and that capture was never run, so the evidence-led action is NO CHANGE. Note the
-/// retry now shares this budget rather than getting a fresh one; in practice that is MORE headroom than
-/// before, because the 9 s JS ceiling used to kill the retry almost as soon as it began.
-const EDGE_SYNTH_TIMEOUT_SECS: u64 = 8;
+/// RAWY-266 (stage 2): 8 -> 12. D70/S3 said this value must be re-derived from a measured distribution and
+/// not guessed; RAWY-265 finally ran that capture, with an ISOLATED probe on the same crate and voice and
+/// NO deadline at all, over 105 requests of real sentences from the owner's own book:
+///
+///   * 105/105 completed. ZERO hung. The premise that a timeout means a dead socket is not what happens.
+///   * synthesis time tracks output audio almost linearly (~0.37-0.45x the audio duration), so it is
+///     SENTENCE LENGTH that decides whether 8 s is enough: a 236-char sentence (19 s of audio) exceeded 8 s
+///     in 59% of samples, while the book's median sentence (56 chars) synthesises in ~2 s.
+///   * at 8 s, 22.0% of warm requests fail; at 12 s, 1.1%. Of everything that passes 8 s, 95% is finished
+///     by 12 s.
+///
+/// 12 is therefore where the recovery curve flattens, not a round number. The JS ceiling moves with it
+/// (SYNTH_TIMEOUT_MS 9 -> 13 s): leaving it at 9 would fire FIRST and this budget would never be reachable.
+const EDGE_SYNTH_TIMEOUT_SECS: u64 = 12;
 
 /// Time left before `deadline`, or the timeout error once it has passed. Every bounded step below goes
 /// through this, so no combination of steps can exceed the total budget.
-fn remaining(deadline: std::time::Instant) -> Result<std::time::Duration, String> {
+///
+/// RAWY-266 (stage 1): the error now names the PHASE that ran out. Before this, all three call sites and
+/// `EdgeSynth::Stalled` returned the single string "edge synth timed out", so four different conditions were
+/// indistinguishable in the failure record — and the frontend's `isStallFailure` suppressed retries for all
+/// of them alike. That is precisely the case RAWY-257's C1 fix was meant to end for connection faults: it
+/// narrowed the JS predicate to whole phrases, but the Rust side still emitted the synth phrase when the
+/// budget expired during CONNECT, so a connection fault was still being read as a stalled synthesis.
+fn remaining(deadline: std::time::Instant, phase: &str) -> Result<std::time::Duration, String> {
     match deadline.checked_duration_since(std::time::Instant::now()) {
         Some(d) if !d.is_zero() => Ok(d),
-        _ => Err("edge synth timed out".into()),
+        _ => Err(format!("edge {phase} timed out")),
     }
 }
 
@@ -503,7 +519,7 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String) -> Result<taur
         let mut vcache = engines.edge_voices.lock().map_err(|e| e.to_string())?;
         if vcache.is_none() {
             // RAWY-179: same merged list as the picker, so a fallback Arabic voice is synthesizable.
-            *vcache = Some(load_edge_voices_bounded(remaining(deadline)?)?);
+            *vcache = Some(load_edge_voices_bounded(remaining(deadline, "voices")?)?);
         }
         let voice = vcache
             .as_ref()
@@ -514,7 +530,7 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String) -> Result<taur
         let mut config = SpeechConfig::from(voice);
         config.audio_format = "audio-24khz-48kbitrate-mono-mp3".to_string(); // force MP3 for WebAudio
         drop(vcache);
-        let client = connect_bounded(remaining(deadline)?)?;
+        let client = connect_bounded(remaining(deadline, "connect")?)?;
         *guard = Some(EdgeRunning { voice_id: id.clone(), config, client });
     }
     // RAWY-172 (AUD-2): bound the blocking synth with a timeout so a stalled socket can't hold this mutex
@@ -524,7 +540,7 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String) -> Result<taur
     // drops when its synthesize finally returns), so the next call reconnects; the frontend's own timeout
     // (RAWY-172) has already advanced playback by then.
     let running = guard.take().unwrap();
-    let audio = match edge_synth_once(running, &text, remaining(deadline)?) {
+    let audio = match edge_synth_once(running, &text, remaining(deadline, "synth")?) {
         EdgeSynth::Ok(audio, running) => {
             *guard = Some(running);
             audio
@@ -541,7 +557,13 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String) -> Result<taur
             // touching the socket lifecycle ENGINE CAUTION protects.
             return Err(format!("edge synth: {e}"));
         }
-        EdgeSynth::Stalled => return Err("edge synth timed out".into()),
+                // RAWY-266 (stage 1): DISTINCT from "edge synth timed out". That phrase now means the budget was
+        // already gone before synthesis could start (voices/connect consumed it); THIS means synthesis
+        // actually ran and did not finish inside its slice. Only this one carries RAWY-193s premise that
+        // "the socket went quiet" - and RAWY-265 measured 0 hangs in 105 unbounded requests, so a first
+        // occurrence is treated as slow-but-alive and retried once on a fresh socket. A stall that RECURS
+        // on that fresh socket is what now counts as a genuine stall.
+        EdgeSynth::Stalled => return Err("edge synth stalled".into()),
     };
     // RAWY-127: keep the per-word timing Edge already sends (it was discarded before). The crate
     // requests `wordBoundaryEnabled` and parses each `audio.metadata` into `AudioMetadata`; take only

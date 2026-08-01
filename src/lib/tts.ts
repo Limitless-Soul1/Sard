@@ -390,13 +390,28 @@ const FAIL_LIMIT = 3; // consecutive failures that turn "skip the bad segment" i
 // captive portal, a sleeping router) must not freeze read-aloud. Every synth is raced against this ceiling;
 // on timeout playback surfaces the explicit "Edge unavailable" pause (invariant D — fail loudly, never a
 // silent gap). RAWY-231 lowered it 20 s → 9 s so a stall surfaces a CHOICE in ~8-9 s, not ~20 s of silence.
-// BASIS: the worst live synth measured to date is ~2.7 s (a cold WS connect, RAWY-191); a normal synth is
-// ~0.6 s; a 236-char sentence synthesised in 632 ms — so ~8-9 s keeps ~3× margin over the worst measured and
-// never false-trips a slow-but-live link. PROVISIONAL: if the owner's Phase-0 slow-synth capture on his real
-// network shows synths above ~5 s, RAISE this (a false timeout is a visible edge-error, not silence, so
-// erring short is the safe direction). Coordinated with the Rust EDGE_SYNTH_TIMEOUT_SECS (8 s), which frees
-// the engine mutex at its ceiling; this JS value is ~1 s longer so the specific Rust-reported reason wins.
-const SYNTH_TIMEOUT_MS = 9000;
+// RAWY-266 (stage 2): 9 s -> 13 s, moved TOGETHER with the Rust budget (8 -> 12). These two ceilings are
+// COUPLED and must never be set independently: this one wraps every single attempt, so had it stayed at 9 s
+// the Rust budget would have been unreachable — the JS wrapper would fire first, the extra 4 s would never
+// be used, and the failure would merely be RELABELLED from a Rust reason to `tts.synthTimeout`.
+// The 1 s margin over Rust is preserved (13 vs 12, as 9 vs 8) so the specific Rust-reported PHASE still wins.
+//
+// The old basis for 9 s ("a 236-char sentence synthesised in 632 ms") was a single cached-response sample.
+// RAWY-265 re-measured it properly on unique text: the same length takes 6.9-11.8 s, and a repeat of
+// identical text returns in ~490 ms because the service caches — which is exactly how 632 ms was obtained.
+const SYNTH_TIMEOUT_MS = 13000;
+// RAWY-266 (stage 3): the ladder's TOTAL wall-clock ceiling, so a listener is never left in silence
+// indefinitely. Sized from the measured recovery curve to afford exactly TWO full attempts
+// (13 000 + 500 backoff + 13 000 = 26 500):
+//   * attempt 1 at 12 s already covers 98.9% of requests;
+//   * the residual is service-side variance, not length (the same 235-char sentence ranged 8.8-13.4 s), so a
+//     second attempt on a FRESH socket clears ~86% of what is left (cold >=12 s was 14%);
+//   * expected residual after two ~0.15% of dispatches, i.e. ~0.2 per 133-unit chapter instead of ~1.5;
+//   * a third attempt would move 0.15% -> 0.02% for another 13 s. The curve has flattened; stop at two.
+// This bound only ever applies to the ~1.1% tail, it is VISIBLE (D68 `retryAttempt`), and it replaces a
+// measured 49-103 s of dead time in which the listener had to notice the stall and press Retry themselves.
+const MAX_DISPATCH_MS = 27000;
+const STALL_RETRY_LIMIT = 1; // a stall that RECURS on a fresh socket is what counts as genuine
 // RAWY-172 (AUD-1): how many already-played sentences to keep decoded (besides the current +
 // prefetched-next), so a one-sentence skip-back stays instant while memory stays bounded.
 const CACHE_KEEP_BEHIND = 1;
@@ -548,29 +563,34 @@ const isPermanentFailure = (e: unknown): boolean => {
   return /\b4\d\d\b/.test(s.replace(/\b429\b/g, ""));
 };
 
-// RAWY-257 2B: a STALL is not retried either — RAWY-193 established that burning another synth window on a
-// socket that already went quiet "would only pile up silence", and the ladder would turn one 9 s stall into
-// ~40 s before the user is offered a choice. Preserving that invariant, not changing it.
-const isStallFailure = (e: unknown): boolean => {
+// RAWY-266 (stage 3): the retry decision, now made on the PHASE rather than on one ambiguous phrase.
+//
+// WHAT CHANGED AND WHY. RAWY-193 suppressed every retry after a timeout on the premise that the socket had
+// gone quiet, so retrying would only pile up silence. RAWY-265 tested that premise directly with an isolated
+// probe on the same crate, same voice, real sentences from the owner's own book, and NO deadline at all:
+// 105 requests, 105 completed, ZERO hung. The requests Sard was abandoning were alive and still working.
+// The premise does not hold for a budget timeout, so the suppression it justified is narrowed to the single
+// case that can still mean a dead socket: a stall that RECURS on a fresh connection.
+
+/** Budget ran out BEFORE this phase could do its work — no socket was even established for it, so there is
+ *  nothing gone-quiet to burn a window on. Exactly the class RAWY-257 C1 identified as wrongly suppressed:
+ *  C1 fixed the JS predicate, but Rust still emitted the SYNTH phrase when the budget expired during
+ *  connect, so the hole stayed open until stage 1 separated the phases. Always retryable. */
+const isTransientTimeout = (e: unknown): boolean => {
   const s = String(e);
-  // RAWY-257 (C1 — regression fix). This used to test the bare substring `"timed out"`, which is not a
-  // property of a stall at all — it is a property of Rust's WORDING. Three CONNECTION failures carry that
-  // phrase and were therefore suppressed as if the socket had gone quiet mid-synthesis:
-  //   • "edge connect timed out"        — `connect_bounded` exhausted the call's deadline
-  //   • "edge voices fetch timed out"   — the voice-list HTTP fetch exhausted it
-  //   • "edge connect: Io(Custom { kind: TimedOut … })" — an OS-level connect timeout inside the debug text
-  // None of these is a stalled synthesis: in every one of them THERE IS NO SOCKET YET. D68's justification
-  // for suppressing a retry — "burning another synth window on a socket that already went quiet would only
-  // pile up silence" (RAWY-193) — cannot apply to a connection that was never established, and these are
-  // precisely the transient faults C3 built the backoff ladder for.
-  //
-  // The test is now the two SENTINELS that genuinely mean "synthesis stalled", matched as whole phrases:
-  //   • `tts.synthTimeout`     — the JS dispatch ceiling (9 s)
-  //   • `edge synth timed out` — Rust's stall sentinel, from `EdgeSynth::Stalled` AND from `remaining()`
-  //                              once the total 8 s budget is gone
-  // Suppression for those two is UNCHANGED, deliberately: that is the RAWY-193 invariant, not the defect.
-  return s.includes("synthTimeout") || s.includes("edge synth timed out");
+  return s.includes("edge voices timed out") || s.includes("edge connect timed out") || s.includes("edge synth timed out");
 };
+
+/** Synthesis RAN and did not finish inside its slice — the shape of every failure the owner actually hit.
+ *  Measured slow-but-alive, so it is retried ONCE, and that retry necessarily runs on a FRESH socket because
+ *  a stall leaves Rust's warm-client slot empty. A second stall on the fresh socket is the operational
+ *  definition of a genuine stall, and is surfaced. The JS ceiling sentinel is included: at 13 s over Rust's
+ *  12 s it should never fire, and if it does the IPC itself is stuck, which a retry may still clear. */
+const isSynthStall = (e: unknown): boolean => {
+  const s = String(e);
+  return s.includes("edge synth stalled") || s.includes("synthTimeout");
+};
+
 
 // RAWY-247: when `decodeAudioData` fails, this holds what we FAILED to decode (Defect C / §1.5), read by
 // `noteFailure`. There is no per-message content-type on the Edge WebSocket, so the first bytes are the
@@ -638,8 +658,21 @@ async function attemptSynth(i: number): Promise<Synthesized> {
 //
 // A1: this ladder IS the Edge tolerance band the path never had. A RECOVERED fault never reaches a dialog;
 // only EXHAUSTION does. `failStreak` (the Piper-side model) is left to `playFrom` exactly as it was.
+/** RAWY-266 (stage 3): is index `i` still inside the window the scheduler would keep it in? This MIRRORS
+ *  the scheduler's own [priority − behind, priority + ahead] bound instead of reaching into it, so the ladder
+ *  still reads and mutates no scheduler state — the property that keeps retry policy out of the scheduler's
+ *  territory. A `function` (not a `const`) so it hoists above `synthDispatch`, which the scheduler below is
+ *  constructed with. */
+function stillWanted(i: number): boolean {
+  const p = scheduler.priority;
+  return i >= p - CACHE_KEEP_BEHIND && i <= p + PREFETCH_MAX_AHEAD;
+}
+
 async function synthDispatch(i: number): Promise<Synthesized> {
   pendingDecodeInfo = null; // don't let a recovered attempt's sniff be attributed to a later, different failure
+  const t0 = performance.now();
+  const startGen = gen; // RAWY-266: the chapter/voice this ladder belongs to
+  let stallRetries = 0;
   let lastErr: unknown = new Error("no attempt made");
   for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt++) {
     if (attempt > 0) {
@@ -657,7 +690,33 @@ async function synthDispatch(i: number): Promise<Synthesized> {
       lastErr = e;
       if (curEngine !== "edge") break;      // Piper: unchanged, one attempt then RAWY-159 skip
       if (isPermanentFailure(e)) break;     // C3: a permanent failure must NOT enter the ladder
-      if (isStallFailure(e)) break;         // RAWY-193 invariant: a stall is surfaced, never retried
+      // RAWY-266 (stage 3): the policy, stated at the point of decision.
+      //   stall     — synthesis ran and did not finish. Retried ONCE, necessarily on a fresh socket (the
+      //               stall empties Rust's warm slot). A recurrence there is the genuine stall RAWY-193 was
+      //               written for, and is surfaced.
+      //   transient — the budget expired before voices/connect/synth could even begin. No socket existed to
+      //               have gone quiet, so it takes the full backoff ladder. This is the behaviour C1
+      //               intended and could not reach until stage 1 stopped Rust labelling it as a synth stall.
+      //   other     — decode faults and the like: unchanged, they keep the ladder they already had.
+      const retryClass = isSynthStall(e) ? "stall" : isTransientTimeout(e) ? "transient" : "other";
+      if (retryClass === "stall") {
+        if (stallRetries >= STALL_RETRY_LIMIT) break;
+        stallRetries++;
+      }
+      if (ttsDebugOn) logStall(`retry:${retryClass}:${classifyFailure(e)}`, i);
+
+      // ---- RAWY-266 (stage 3): three guards, all BEFORE committing to another attempt ----
+      // 1. SUPERSEDED. A chapter change, voice change or stop bumps `gen`. Without this the ladder would go
+      //    on occupying the single-flight engine for work whose result is already guaranteed to be discarded.
+      if (gen !== startGen) break;
+      // 2. ABANDONED. The listener skipped away, so this index is outside the window the scheduler is still
+      //    willing to keep. Checked against the scheduler's own cursor rather than by reaching into it, so
+      //    the ladder still touches no scheduler state (the property that keeps this out of 2C's territory).
+      if (!stillWanted(i)) break;
+      // 3. TOTAL CEILING. Only start another attempt if a WHOLE one can finish inside the ladder's budget;
+      //    testing elapsed alone would let a final attempt overrun to ~40 s. With 27 000 / 13 000 this
+      //    permits exactly two attempts, which is where the measured recovery curve flattens.
+      if (performance.now() - t0 + SYNTH_TIMEOUT_MS > MAX_DISPATCH_MS) break;
     }
   }
   useTts.setState({ retryAttempt: 0 });
@@ -718,8 +777,15 @@ let lastFail: { unit: number; len: number; kind: string; detail: string; bytes?:
 // Classify an Edge/synth error into a readable failure kind (which timeout / WS / HTTP / non-audio / decode).
 function classifyFailure(err: unknown): string {
   const s = String(err);
-  if (s.includes("tts.synthTimeout")) return "timeout-js-9s";
-  if (s.includes("timed out")) return "timeout-rust-8s";
+  // RAWY-266 (stage 1): ONE KIND PER PHASE. These four used to be a single indistinguishable
+  // `timeout-rust-8s`, which is why RAWY-265 could say only "three identical timeouts" and could not say
+  // whether the budget went on fetching voices, opening a socket, or synthesising. Checked before the
+  // looser `edge connect` / `edge synth` matches below, which stay for non-timeout faults.
+  if (s.includes("tts.synthTimeout")) return "timeout-js";
+  if (s.includes("edge voices timed out")) return "timeout-voices";
+  if (s.includes("edge connect timed out")) return "timeout-connect";
+  if (s.includes("edge synth stalled")) return "stall-synth";
+  if (s.includes("edge synth timed out")) return "timeout-synth";
   if (s.includes("EncodingError") || s.includes("decode")) return "decode/non-audio";
   if (s.includes("edge connect") || s.includes("edge reconnect")) return "ws-connect";
   if (/\b(4\d\d|5\d\d)\b/.test(s)) return "http-error";

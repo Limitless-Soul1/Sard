@@ -989,11 +989,40 @@ let karaokeWords: TtsWord[] = [];
 let karaokeLastIdx = -2;
 // audio-time anchor: at wall-clock `wall` (ctx.currentTime) this sentence had played `audio` seconds at `rate`.
 let karaokeAnchor = { wall: 0, audio: 0, rate: 1 };
+// RAWY-FINAL: the live tick, kept so a PARKED loop (see below) can be restarted without rebuilding the
+// anchor. null whenever no sentence has karaoke scheduled.
+let karaokeTick: (() => void) | null = null;
+
+// RAWY-FINAL: the loop runs only while sound is being produced or awaited.
+//
+// THE DEFECT. `tick` re-requested a frame unless `gen` moved or the session went inactive — neither of
+// which happens on a PAUSE or at CHAPTER-END. So:
+//   • paused — the context is suspended, `ctx.currentTime` is frozen, `k` never changes and no state is
+//     published: a pure ~60 Hz spin for as long as the listener stays paused;
+//   • chapter-end — `playFrom`'s `i >= sentences.length` branch returns after `set({status:"chapter-end"})`
+//     without calling `stopSource()` or `stopKaraoke()` and without bumping `gen`, so the LAST sentence's
+//     loop kept requesting frames INDEFINITELY;
+//   • error / edge-error — same shape (`stopSource()` runs, `stopKaraoke()` does not).
+// A continuously scheduled rAF keeps the compositor from idling, which is a battery cost in exactly the
+// states a reader sits in longest. Edge-only, because Piper emits no word timings and `startKaraoke`
+// returns before scheduling anything.
+//
+// PARKING, NOT STOPPING. The loop releases its frame but `karaokeWords` / `karaokeAnchor` / the STORE's
+// `words`+`wordIndex` are left untouched, so the pill stays exactly where it was — RAWY-230 §2a (the pill
+// survives a pause) holds by construction, and the Reader's `ttsStatus`-dependent effect still redraws it.
+// The anchor stays valid across a pause because a SUSPENDED AudioContext does not advance `currentTime`.
+const karaokeShouldRun = (s: Status): boolean => s === "playing" || s === "buffering";
+
+/** Restart a parked loop. Called on resume; a no-op if the loop is already running or nothing is scheduled. */
+function resumeKaraoke() {
+  if (!karaokeRaf && karaokeTick && karaokeWords.length) karaokeRaf = requestAnimationFrame(karaokeTick);
+}
 
 function stopKaraoke() {
   if (karaokeRaf) { cancelAnimationFrame(karaokeRaf); karaokeRaf = 0; }
   karaokeWords = [];
   karaokeLastIdx = -2;
+  karaokeTick = null;
 }
 
 /** Schedule (or clear) the pill for the sentence that just started playing at ctx time `t0`.
@@ -1010,7 +1039,12 @@ function startKaraoke(words: TtsWord[], t0: number, myGen: number, audio0 = 0) {
   karaokeAnchor = { wall: t0, audio: audio0, rate: useTts.getState().speed };
   const c = audioCtx();
   const tick = () => {
-    if (myGen !== gen || !useTts.getState().active) { karaokeRaf = 0; return; }
+    const st = useTts.getState();
+    if (myGen !== gen || !st.active) { karaokeRaf = 0; karaokeTick = null; return; }
+    // RAWY-FINAL: PARK (release the frame, keep the state) whenever nothing is sounding or being awaited.
+    // `resumeKaraoke()` restarts it; every other exit from these states bumps `gen`, which the check above
+    // then turns into a real stop.
+    if (!karaokeShouldRun(st.status)) { karaokeRaf = 0; return; }
     const audioTime = karaokeAnchor.audio + (c.currentTime - karaokeAnchor.wall) * karaokeAnchor.rate;
     // RAWY-264 (measurement, not behaviour): the media pipeline exposes its OWN position in the same
     // timeline the word offsets use, so the pill's derived clock is compared against ground truth every
@@ -1026,6 +1060,7 @@ function startKaraoke(words: TtsWord[], t0: number, myGen: number, audio0 = 0) {
     if (k !== karaokeLastIdx) { karaokeLastIdx = k; useTts.setState({ wordIndex: k }); }
     karaokeRaf = requestAnimationFrame(tick);
   };
+  karaokeTick = tick;
   karaokeRaf = requestAnimationFrame(tick);
 }
 
@@ -1415,6 +1450,7 @@ export const useTts = create<TtsState>((set, get) => ({
     } else if (st.status === "paused") {
       void audioCtx().resume();
       set({ status: "playing" });
+      resumeKaraoke(); // RAWY-FINAL: the loop parked itself on pause — hand the frame back
     }
   },
 

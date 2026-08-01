@@ -41,6 +41,21 @@ fn voice_def(id: &str) -> Option<&'static VoiceDef> {
     VOICES.iter().find(|v| v.id == id)
 }
 
+/// RAWY-FINAL: lock, RECOVERING from poisoning rather than failing (or, worse, silently skipping)
+/// forever. Same reasoning as `AppState::conn` — a `std::sync::Mutex` poisons permanently on the
+/// first panic under it, and the release profile unwinds. Before this:
+///   * `edge` / `edge_voices` / `inner` mapped the poison to an error string, so ONE panic under any
+///     of them ended read-aloud for the rest of the process with a message no user could act on;
+///   * `shutdown` used `if let Ok(..)`, so a poisoned `inner` made it SKIP killing the warm Piper
+///     child — leaving an orphaned `piper.exe` behind on exit, which is exactly what RAWY-173
+///     (AUD-10) added that handler to prevent.
+/// The guarded values are a child process handle, a WebSocket client and a voice list; none has an
+/// invariant a panic could half-update in a way that recovery makes worse, and every consumer
+/// re-establishes its own state (`spawn_piper` respawns, `need_new` reconnects).
+fn lock_recover<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Managed state: the persistent Piper process + the warm Edge WebSocket + the cached Edge voices.
 #[derive(Default)]
 pub struct TtsEngine {
@@ -372,13 +387,15 @@ fn load_edge_voices() -> Result<Vec<Voice>, String> {
 /// with an empty locale string — grouping never drops a selectable voice.
 #[tauri::command]
 pub fn tts_edge_voices(engines: State<'_, TtsEngine>) -> Result<Vec<EdgeVoiceInfo>, String> {
-    let mut cache = engines.edge_voices.lock().map_err(|e| e.to_string())?;
+    let mut cache = lock_recover(&engines.edge_voices);
     if cache.is_none() {
         *cache = Some(load_edge_voices()?);
     }
+    // RAWY-FINAL: `as_deref().unwrap_or(&[])` rather than `unwrap()`. The branch above makes `Some`
+    // provable today, but a panic HERE happens while `edge_voices` is held and would poison it.
     let out = cache
-        .as_ref()
-        .unwrap()
+        .as_deref()
+        .unwrap_or(&[])
         .iter()
         .filter_map(|v| {
             v.short_name.as_ref().map(|sn| EdgeVoiceInfo {
@@ -512,18 +529,21 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String) -> Result<taur
     // RAWY-257 (C1): ONE deadline for the WHOLE call. Every bounded step below draws from what is left, so
     // the command cannot outlive the budget the frontend was told to expect — however many steps it takes.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(EDGE_SYNTH_TIMEOUT_SECS);
-    let mut guard = engines.edge.lock().map_err(|e| e.to_string())?;
+    let mut guard = lock_recover(&engines.edge);
     let need_new = guard.as_ref().map(|r| r.voice_id != id).unwrap_or(true);
     if need_new {
         // build the voice's config from the (cached) voice list, then open a warm connection
-        let mut vcache = engines.edge_voices.lock().map_err(|e| e.to_string())?;
+        let mut vcache = lock_recover(&engines.edge_voices);
         if vcache.is_none() {
             // RAWY-179: same merged list as the picker, so a fallback Arabic voice is synthesizable.
             *vcache = Some(load_edge_voices_bounded(remaining(deadline, "voices")?)?);
         }
+        // RAWY-FINAL: no `unwrap()` — a panic here runs while BOTH `edge` and `edge_voices` are held
+        // and would poison both, killing read-aloud for the rest of the process. An empty list falls
+        // through to the existing "unknown edge voice" error, which the frontend already handles.
         let voice = vcache
-            .as_ref()
-            .unwrap()
+            .as_deref()
+            .unwrap_or(&[])
             .iter()
             .find(|v| v.short_name.as_deref() == Some(id.as_str()))
             .ok_or_else(|| format!("unknown edge voice: {id}"))?;
@@ -539,7 +559,13 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String) -> Result<taur
     // moved out and put back. On a stall we surface an error and leave the slot empty (the abandoned client
     // drops when its synthesize finally returns), so the next call reconnects; the frontend's own timeout
     // (RAWY-172) has already advanced playback by then.
-    let running = guard.take().unwrap();
+    // RAWY-FINAL: `let Some(..) else` rather than `.unwrap()`. The `need_new` branch above makes this
+    // provably `Some` today, but this line runs while `engines.edge` is HELD — the one place a panic
+    // would poison the read-aloud engine mutex permanently. The fallback is the existing connect
+    // error string, which `classifyFailure` already maps to `ws-connect` and the 2B ladder retries.
+    let Some(running) = guard.take() else {
+        return Err("edge connect: no warm client".into());
+    };
     let audio = match edge_synth_once(running, &text, remaining(deadline, "synth")?) {
         EdgeSynth::Ok(audio, running) => {
             *guard = Some(running);
@@ -592,7 +618,7 @@ fn piper_synthesize(
     text: String,
 ) -> Result<tauri::ipc::Response, String> {
     let v = voice_def(&id).ok_or("unknown voice")?;
-    let mut guard = engines.inner.lock().map_err(|e| e.to_string())?;
+    let mut guard = lock_recover(&engines.inner);
 
     let reuse = if let Some(r) = guard.as_mut() {
         r.voice_id == id && r.child.try_wait().map(|s| s.is_none()).unwrap_or(false)
@@ -605,7 +631,13 @@ fn piper_synthesize(
         }
         *guard = Some(spawn_piper(app, state, v)?);
     }
-    let r = guard.as_mut().unwrap();
+    // RAWY-FINAL: `let Some(..) else` rather than `.unwrap()`. Provably `Some` today (the branch
+    // above either reused an entry or replaced it), but this runs while `engines.inner` is HELD, so
+    // a panic here would poison the Piper mutex and — before the `shutdown` fix above — orphan the
+    // child process on exit as well.
+    let Some(r) = guard.as_mut() else {
+        return Err("piper engine unavailable".into());
+    };
 
     // request: one JSON line on stdin
     let line = serde_json::json!({ "text": text }).to_string();
@@ -645,14 +677,12 @@ fn piper_synthesize(
 /// Kill the warm Piper child + drop the Edge socket. Shared by the `tts_stop` command (the user closes
 /// the player) and the app-exit handler (RAWY-173, AUD-10) so closing the window never orphans piper.exe.
 pub fn shutdown(engine: &TtsEngine) {
-    if let Ok(mut guard) = engine.inner.lock() {
-        if let Some(mut r) = guard.take() {
-            let _ = r.child.kill(); // Piper process
-        }
+    // RAWY-FINAL: `lock_recover`, not `if let Ok(..)`. A poisoned mutex used to make this a NO-OP,
+    // which would orphan the very `piper.exe` this function exists to reap.
+    if let Some(mut r) = lock_recover(&engine.inner).take() {
+        let _ = r.child.kill(); // Piper process
     }
-    if let Ok(mut guard) = engine.edge.lock() {
-        *guard = None; // Edge WebSocket (dropped → closed)
-    }
+    *lock_recover(&engine.edge) = None; // Edge WebSocket (dropped → closed)
 }
 
 /// Stop + drop both engines' warm connections (called when the user closes the player).

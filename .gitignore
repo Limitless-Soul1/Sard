@@ -27,6 +27,14 @@ dist-ssr
 /PROJECT.md
 /docs/
 
+# Private — REAL user data. Each `.db-snapshot-*` directory is a byte copy of the live
+# %APPDATA%/com.sard.app/sard.db (+ its -wal/-shm), taken before a risky task. They hold the
+# owner's library paths, reading positions, highlights, notes, bookmarks, tags and listening
+# records. They were NOT matched by any rule above, so a `git add -A` before the repo goes public
+# would publish all of it irreversibly. NEVER pushed.
+/.db-snapshot-*/
+/.zcode/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

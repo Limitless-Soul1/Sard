@@ -189,10 +189,38 @@ pub fn collections_for_book(book_id: String, state: State<AppState>) -> Result<V
 /// RAWY-17 — import EPUB files into the library (copy-in, hash/dedup, extract metadata +
 /// cover). Returns one result per path so the UI can summarise imported/duplicate/
 /// unsupported/error. The only Rust↔JS path for adding books.
+///
+/// ---- RAWY-274: `async` ON PURPOSE, and the reason is the same one tts.rs and backgrounds/mod.rs
+/// already carry ----
+///
+/// This is the heaviest command in the app. Per file it does a whole-file `fs::read`, a SHA-256 over
+/// every byte, a ZIP open + OPF parse, a cover extraction + write, and a whole-file `fs::write` into
+/// managed storage. MEASURED on the owner's real 10-book / 43.79 MB library: **~150 ms warm, 309 ms
+/// cold** — about 290 MB/s. `import_folder` exists for BULK import, where that scales: ~7 s for a 2 GB
+/// Calibre-sized folder, ~35 s for 10 GB (extrapolated from the measured rate, and labelled as such).
+///
+/// A SYNC `#[tauri::command]` runs on the MAIN thread, so all of that ran there and froze the whole
+/// native window for its duration. That behaviour is not re-measured here — it is CONFIRMED BY PRIOR
+/// MEASUREMENT in this project (RAWY-183 and RAWY-188 measured the symptom directly: input not
+/// reaching the WebView, the taskbar icon reverting while Windows judged the app unresponsive) and it
+/// is a hard rule in LESSONS.md. `async` dispatches the body to the runtime's worker pool instead.
+///
+/// The body has NO `.await`, matching `tts_synthesize` and `background_choose`, so the non-`Send`
+/// `MutexGuard` never crosses an await point.
+///
+/// ---- WHAT WAS DELIBERATELY *NOT* CHANGED, and why ----
+///
+/// The guard is still taken ONCE for the whole batch. Moving to a per-FILE lock was proposed and then
+/// REFUTED BY MEASUREMENT: with a contending thread doing a small DB write every 2 ms, the worst wait
+/// over three runs of the real library was 285/142/129 ms batch versus 73/139/116 ms per-file — an
+/// improvement in one run of three and none in the other two. The cause is that Windows'
+/// `std::sync::Mutex` is an unfair SRWLOCK: this loop releases and re-acquires within microseconds, so
+/// a waiting thread essentially never wins the handover and per-file locking buys nothing reliable.
+/// Under the engineering contract a change with no measured benefit is rejected, so it was dropped.
 #[tauri::command]
-pub fn import_books(
+pub async fn import_books(
     paths: Vec<String>,
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Result<Vec<books::ImportResult>, String> {
     let app_data_dir = state.app_data_dir.clone();
     let conn = state.conn();
@@ -201,10 +229,13 @@ pub fn import_books(
 
 /// RAWY-80 (audit #7) — import every EPUB inside a chosen folder (recursive), through the
 /// same pipeline as `import_books`. One `ImportResult` per EPUB found.
+///
+/// RAWY-274: `async` for the reason given on `import_books` above — and more so here, because this is
+/// the BULK path where the measured ~290 MB/s turns a large folder into seconds of work.
 #[tauri::command]
-pub fn import_folder(
+pub async fn import_folder(
     dir: String,
-    state: State<AppState>,
+    state: State<'_, AppState>,
 ) -> Result<Vec<books::ImportResult>, String> {
     let app_data_dir = state.app_data_dir.clone();
     let conn = state.conn();

@@ -8,7 +8,7 @@
 
 import { settingsGet, settingsSet } from "../../lib/ipc";
 import { defaultsForDir, type ReadingStyle } from "../../reader-engine/injectedCss";
-import type { ThemeId } from "../../theme";
+import { isThemeId, type ThemeId } from "../../theme";
 
 const GLOBAL_KEY = "reading_style";
 const bookKey = (bookId: string) => `book_style:${bookId}`;
@@ -52,7 +52,20 @@ export async function loadBookOverride(bookId: string): Promise<BookOverride> {
   if (!raw) return {};
   try {
     const o = JSON.parse(raw) as BookOverride;
-    return o && typeof o === "object" ? o : {};
+    if (!o || typeof o !== "object") return {};
+    // RAWY-FINAL: validate the persisted theme id, exactly as `initTheme` already does for the app
+    // theme (`isThemeId(tid) ? tid : DEFAULT_LIGHT`). The guard existed in ONE loader and not the
+    // other. Reader does `applyTheme(THEMES[override.themeId ?? bookDefault])`, so an id that is not
+    // a key of THEMES passes `undefined` into `applyTheme`, which dereferences `theme.colors` and
+    // throws. `openBook`'s catch turns that into the reader error overlay — whose only actions are
+    // Retry (which repeats the failure) and Back — and because the bad value is PERSISTED, that book
+    // could never be opened again, with no in-app way to clear the override.
+    //
+    // Not reachable on today's build (all 16 ids are stable and the only writer is the in-app
+    // picker); it becomes reachable the first time a theme is renamed or retired in an update, which
+    // is an ordinary thing for a shipping app to do. Dropping an unknown id makes the book fall back
+    // to the shared book theme — the same thing "Reset to app default" produces.
+    return isThemeId(o.themeId) ? o : { ...o, themeId: undefined };
   } catch {
     return {};
   }

@@ -827,6 +827,8 @@ export function ttsStats() {
     maxConcurrent: scheduler.maxConcurrent,
     queueDepth: scheduler.queueDepth,
     cached: scheduler.size,
+    // RAWY-267: indices retained after a rejected dispatch instead of being deleted and re-dispatched.
+    failedRetained: scheduler.failedCount,
     priority: scheduler.priority,
     // RAWY-257 4B (A2): the quantity the fixed-unit window could not express — CONTIGUOUS decoded seconds
     // ahead of the cursor. This is what G-4B measures on both content profiles; `lowWater` is the reported

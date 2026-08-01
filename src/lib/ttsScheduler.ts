@@ -95,8 +95,11 @@ interface Entry<T> {
   promise: Promise<T>;
   resolve: (v: T) => void;
   reject: (e: unknown) => void;
-  settled: boolean; // resolved OK (a rejected entry is deleted, so "in cache + settled" == ready)
+  settled: boolean; // resolved OK ("in cache + settled" == ready)
   started: boolean; // dispatched to the engine (must not be trimmed — its result may be awaited)
+  /** RAWY-267: the rejection this index's dispatch ended with. Its PRESENCE is what stops the index being
+   *  dispatched again; the value itself is only for diagnostics. See the rejection handler in `pump`. */
+  failed?: unknown;
   /** RAWY-257 4B (A2): the resolved value, kept so `durationOf` can be applied without awaiting the promise.
    *  This retains NOTHING new — the promise already holds a reference to exactly this object. */
   value?: T;
@@ -147,6 +150,14 @@ export class SynthScheduler<T> {
   /** RAWY-257 (Phase 1): dispatches genuinely outstanding right now. Diverges from `inFlight` exactly when
    *  C4 fires — `clearCache()` sets `inflight = -1` while the underlying `tts_synthesize` is still running. */
   get liveDispatches(): number { return this.live; }
+  /** RAWY-267: indices whose dispatch was rejected and which are being RETAINED rather than re-dispatched.
+   *  A non-zero value is the storm's absence made visible: before the fix these entries were deleted and
+   *  immediately re-created, so this count could never rise above zero however hard the engine was spinning. */
+  get failedCount(): number {
+    let n = 0;
+    for (const [, e] of this.cache) if (e.failed !== undefined) n++;
+    return n;
+  }
   /** RAWY-257 (Phase 1): entries requested but not yet handed to the engine — the queue C2 mis-times as synthesis. */
   get queueDepth(): number {
     let n = 0;
@@ -384,7 +395,34 @@ export class SynthScheduler<T> {
         e.resolve(v);
       },
       (err) => {
-        if (myEpoch === this.epoch) this.cache.delete(i); // never retain a rejected synth (RAWY-193)
+        // RAWY-267 — THE FIX. This used to `cache.delete(i)`, on the RAWY-193 reasoning that a rejected
+        // synth must never be retained as if it were ready. It achieved that, but deleting also erased the
+        // ONLY record that this index had just failed: `request()` then saw a cache MISS, treated it as
+        // never-requested, created a fresh entry and pumped, and `pick()` re-dispatched it immediately.
+        //
+        // With no backoff anywhere in that cycle it is an unbounded storm. Measured on the real app with a
+        // permanently-failing index: ~84 dispatches/second with a network round trip in the loop, and
+        // 5,000,009 in 30 s (~166,000/s) once the failure is raised before the IPC — enough to stop the
+        // renderer answering at all. It runs on LOOK-AHEAD indices while the current sentence still plays
+        // from cache, so playback never surfaces it; and `onSettled -> prefetchFrom` is gated only on
+        // `active`, which stays true in the edge-error state, so it continued while Retry was on screen.
+        //
+        // The entry is now RETAINED, carrying its rejection. No new state machine is needed because the two
+        // flags already say everything: `started: true, settled: false` is exactly "attempted, not ready",
+        // which `pick()` already skips and `isReady()` already reports as not-ready, and `request()` returns
+        // this same rejected promise instead of creating a fresh entry. Retention therefore removes
+        // dispatches and can never add one.
+        //
+        // Retaining is also what the layering already implies: since RAWY-257 2B moved the retry ladder
+        // INSIDE the dispatch, a rejection arriving here means every retry has ALREADY been exhausted.
+        // Re-dispatching it was never a retry policy — it was a side effect of the delete.
+        //
+        // The three ways back are the ones that already existed, so nothing new has to expire this:
+        //   • `trim()`/`reprioritize()` drop it once the cursor moves it out of the window, so a genuine
+        //     revisit re-attempts cleanly — the property RAWY-193's comment actually wanted;
+        //   • `clearCache()` drops it on a new chapter or voice;
+        //   • the listener's Retry goes through `resumeEdge`, which already calls `clearCache()`.
+        if (myEpoch === this.epoch) e.failed = err;
         e.reject(err);
       },
     ).finally(() => {

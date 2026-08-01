@@ -5,6 +5,8 @@
 //! the planned architecture (PROJECT.md §5) visible. All frontend↔core traffic goes
 //! through `commands`.
 
+#[cfg(target_os = "windows")]
+pub mod audio_identity; // RAWY-270A: name + icon Sard's WebView2 audio session in the Volume Mixer
 pub mod commands; // IPC seam: #[tauri::command] handlers (the only frontend↔core boundary)
 pub mod db; // SQLite connection, pragmas, migration runner, AppState
 pub mod library; // repositories: books, shelves, highlights, notes, bookmarks, progress (placeholder)
@@ -111,6 +113,14 @@ pub fn run() {
             if let Some(win) = app.get_webview_window("main") {
                 webview_chrome::harden(&win);
             }
+
+            // RAWY-270A: read-aloud is Web Audio inside the WebView, so the WASAPI session belongs to
+            // a WebView2 process and the Volume Mixer falls back to Microsoft's icon and name. Stamp
+            // Sard's name and icon onto it. METADATA ONLY — no audio is produced, routed or touched
+            // here. Returns immediately; all work is on its own thread, which then blocks on a
+            // Windows event and costs nothing until a session or a device actually changes.
+            #[cfg(target_os = "windows")]
+            audio_identity::start();
 
             app.manage(db::AppState {
                 db: std::sync::Mutex::new(conn),

@@ -50,5 +50,21 @@ rustls = { version = "0.23", features = ["aws_lc_rs"] }
 # cargo dedupes to one copy and the COM interfaces stay ABI-identical to the ones wry hands us.
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"
-windows = "0.61"
+# RAWY-270A adds the Core Audio features. `Win32_Foundation`, `Win32_System_Com` and
+# `Win32_System_Variant` already arrive through webview2-com, but they are named here too: feature
+# unification makes them present either way, and depending on another crate's feature list silently
+# is how a build breaks when that crate is bumped.
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_Media_Audio",                    # IMMDeviceEnumerator, IAudioSessionControl2, the notifications
+    "Win32_System_Diagnostics_ToolHelp",    # the process snapshot the ancestry filter walks
+    "Win32_System_Threading",               # the event the worker blocks on, GetCurrentProcessId
+    "Win32_Security",                       # SECURITY_ATTRIBUTES, which gates CreateEventW
+] }
+# The `#[implement]` macro expands to `windows_core::` paths resolved at the CRATE root, so the crate
+# has to be nameable here even though we reach the same types through `windows::core`. Pinned to the
+# version `windows 0.61` re-exports (and the one webview2-com already declares) so there is exactly
+# one copy and the COM vtables stay ABI-identical.
+windows-core = "0.61"
 

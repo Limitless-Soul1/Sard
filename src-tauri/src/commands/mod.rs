@@ -42,7 +42,7 @@ fn safe_id(id: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn app_info(state: State<AppState>) -> Result<AppInfo, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     let schema_version = db::schema_version(&conn).map_err(err)?;
     Ok(AppInfo {
         app_data_dir: state.app_data_dir.display().to_string(),
@@ -53,7 +53,7 @@ pub fn app_info(state: State<AppState>) -> Result<AppInfo, String> {
 
 #[tauri::command]
 pub fn db_health(state: State<AppState>) -> Result<DbHealth, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     let schema_version = db::schema_version(&conn).map_err(err)?;
     let tables = db::list_tables(&conn).map_err(err)?;
     Ok(DbHealth {
@@ -65,13 +65,13 @@ pub fn db_health(state: State<AppState>) -> Result<DbHealth, String> {
 
 #[tauri::command]
 pub fn settings_get(key: String, state: State<AppState>) -> Result<Option<String>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     settings::get(&conn, &key).map_err(err)
 }
 
 #[tauri::command]
 pub fn settings_set(key: String, value: String, state: State<AppState>) -> Result<bool, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     settings::set(&conn, &key, &value).map_err(err)?;
     Ok(true)
 }
@@ -83,7 +83,7 @@ pub fn book_register(
     file_path: String,
     state: State<AppState>,
 ) -> Result<bool, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     books::ensure(&conn, &book_id, &file_path).map_err(err)?;
     Ok(true)
 }
@@ -95,7 +95,7 @@ pub fn progress_save(
     fraction: f64,
     state: State<AppState>,
 ) -> Result<bool, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::progress_save(&conn, &book_id, &cfi, fraction).map_err(err)?;
     Ok(true)
 }
@@ -105,7 +105,7 @@ pub fn progress_get(
     book_id: String,
     state: State<AppState>,
 ) -> Result<Option<library::Progress>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::progress_get(&conn, &book_id).map_err(err)
 }
 
@@ -119,7 +119,7 @@ pub fn library_list_books(
     search: Option<String>,
     state: State<AppState>,
 ) -> Result<Vec<library::BookRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::list_books(
         &conn,
         &sort,
@@ -134,7 +134,7 @@ pub fn library_list_books(
 /// RAWY-15 — shelves (collections) with live book counts, for the sidebar.
 #[tauri::command]
 pub fn collections_list(state: State<AppState>) -> Result<Vec<library::CollectionRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::collections_list(&conn).map_err(err)
 }
 
@@ -143,19 +143,19 @@ pub fn collections_list(state: State<AppState>) -> Result<Vec<library::Collectio
 
 #[tauri::command]
 pub fn collection_create(name: String, state: State<AppState>) -> Result<Vec<library::CollectionRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::collection_create(&conn, &name).map_err(err)
 }
 
 #[tauri::command]
 pub fn collection_rename(id: String, name: String, state: State<AppState>) -> Result<Vec<library::CollectionRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::collection_rename(&conn, &id, &name).map_err(err)
 }
 
 #[tauri::command]
 pub fn collection_delete(id: String, state: State<AppState>) -> Result<Vec<library::CollectionRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::collection_delete(&conn, &id).map_err(err)
 }
 
@@ -165,7 +165,7 @@ pub fn collection_add_book(
     book_id: String,
     state: State<AppState>,
 ) -> Result<Vec<library::CollectionRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::collection_add_book(&conn, &collection_id, &book_id).map_err(err)
 }
 
@@ -175,14 +175,14 @@ pub fn collection_remove_book(
     book_id: String,
     state: State<AppState>,
 ) -> Result<Vec<library::CollectionRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::collection_remove_book(&conn, &collection_id, &book_id).map_err(err)
 }
 
 /// The shelf ids a book belongs to (for the edit-dialog chips).
 #[tauri::command]
 pub fn collections_for_book(book_id: String, state: State<AppState>) -> Result<Vec<String>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::collections_for_book(&conn, &book_id).map_err(err)
 }
 
@@ -195,7 +195,7 @@ pub fn import_books(
     state: State<AppState>,
 ) -> Result<Vec<books::ImportResult>, String> {
     let app_data_dir = state.app_data_dir.clone();
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     Ok(books::import_books(&conn, &app_data_dir, &paths))
 }
 
@@ -207,7 +207,7 @@ pub fn import_folder(
     state: State<AppState>,
 ) -> Result<Vec<books::ImportResult>, String> {
     let app_data_dir = state.app_data_dir.clone();
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     Ok(books::import_folder(&conn, &app_data_dir, &dir))
 }
 
@@ -229,7 +229,7 @@ pub fn book_update(
     patch: BookPatch,
     state: State<AppState>,
 ) -> Result<Option<library::BookRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::update_book(
         &conn,
         &id,
@@ -251,7 +251,7 @@ pub fn book_set_cover(
 ) -> Result<Option<library::BookRow>, String> {
     safe_id(&id)?;
     let app_data_dir = state.app_data_dir.clone();
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::set_cover(&conn, &app_data_dir, &id, &image_path)
 }
 
@@ -264,7 +264,7 @@ pub fn book_set_cover_png(id: String, png_path: String, state: State<AppState>) 
     let data = std::fs::read(&png_path).map_err(err)?;
     let _ = std::fs::remove_file(&png_path);
     let app_data_dir = state.app_data_dir.clone();
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::set_cover_bytes(&conn, &app_data_dir, &id, &data)?;
     Ok(true)
 }
@@ -275,7 +275,7 @@ pub fn book_revert_cover(
     id: String,
     state: State<AppState>,
 ) -> Result<Option<library::BookRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::revert_cover(&conn, &id)
 }
 
@@ -285,7 +285,7 @@ pub fn book_revert_cover(
 pub fn book_delete(id: String, state: State<AppState>) -> Result<bool, String> {
     safe_id(&id)?;
     let app_data_dir = state.app_data_dir.clone();
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::delete_book(&conn, &app_data_dir, &id)
 }
 
@@ -293,14 +293,14 @@ pub fn book_delete(id: String, state: State<AppState>) -> Result<bool, String> {
 
 #[tauri::command]
 pub fn highlights_for_book(book_id: String, state: State<AppState>) -> Result<Vec<library::HighlightRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::highlights_for_book(&conn, &book_id).map_err(err)
 }
 
 /// Cross-book inbox (RAWY-27): every highlight + standalone note across all books.
 #[tauri::command]
 pub fn annotations_all(state: State<AppState>) -> Result<Vec<library::AnnoItem>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::annotations_all(&conn).map_err(err)
 }
 
@@ -313,14 +313,14 @@ pub fn highlight_create(
     chapter_label: Option<String>,
     state: State<AppState>,
 ) -> Result<Option<library::HighlightRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::highlight_create(&conn, &book_id, &cfi, &color, excerpt.as_deref(), chapter_label.as_deref())
         .map_err(err)
 }
 
 #[tauri::command]
 pub fn highlight_set_color(id: String, color: String, state: State<AppState>) -> Result<Option<library::HighlightRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::highlight_set_color(&conn, &id, &color).map_err(err)
 }
 
@@ -331,20 +331,20 @@ pub fn highlight_set_alpha(
     alpha: Option<f64>,
     state: State<AppState>,
 ) -> Result<Option<library::HighlightRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::highlight_set_alpha(&conn, &id, alpha).map_err(err)
 }
 
 #[tauri::command]
 pub fn highlight_delete(id: String, state: State<AppState>) -> Result<bool, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::highlight_delete(&conn, &id).map_err(err)?;
     Ok(true)
 }
 
 #[tauri::command]
 pub fn notes_for_book(book_id: String, state: State<AppState>) -> Result<Vec<library::NoteRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::notes_for_book(&conn, &book_id).map_err(err)
 }
 
@@ -359,7 +359,7 @@ pub fn note_create(
     chapter_label: Option<String>,
     state: State<AppState>,
 ) -> Result<Option<library::NoteRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::note_create(
         &conn,
         &book_id,
@@ -374,13 +374,13 @@ pub fn note_create(
 
 #[tauri::command]
 pub fn note_update(id: String, body: String, color: Option<String>, state: State<AppState>) -> Result<Option<library::NoteRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::note_update(&conn, &id, &body, color.as_deref()).map_err(err)
 }
 
 #[tauri::command]
 pub fn note_delete(id: String, state: State<AppState>) -> Result<bool, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::note_delete(&conn, &id).map_err(err)?;
     Ok(true)
 }
@@ -388,32 +388,32 @@ pub fn note_delete(id: String, state: State<AppState>) -> Result<bool, String> {
 // ---- Note tags (RAWY-203): user-defined categories, shared across books, many-to-many. ----
 #[tauri::command]
 pub fn tags_list(state: State<AppState>) -> Result<Vec<library::Tag>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::tags_list(&conn).map_err(err)
 }
 
 #[tauri::command]
 pub fn tag_create(name: String, state: State<AppState>) -> Result<Option<library::Tag>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::tag_create(&conn, &name).map_err(err)
 }
 
 #[tauri::command]
 pub fn tag_delete(id: String, state: State<AppState>) -> Result<bool, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::tag_delete(&conn, &id).map_err(err)?;
     Ok(true)
 }
 
 #[tauri::command]
 pub fn note_tags_for(note_id: String, state: State<AppState>) -> Result<Vec<library::Tag>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::note_tags_for(&conn, &note_id).map_err(err)
 }
 
 #[tauri::command]
 pub fn note_tags_set(note_id: String, tag_ids: Vec<String>, state: State<AppState>) -> Result<bool, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::note_tags_set(&conn, &note_id, &tag_ids).map_err(err)?;
     Ok(true)
 }
@@ -429,27 +429,27 @@ pub fn bookmark_create(
     label: Option<String>,
     state: State<AppState>,
 ) -> Result<Option<library::BookmarkRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::bookmark_create(&conn, &book_id, &cfi, chapter_label.as_deref(), fraction, label.as_deref())
         .map_err(err)
 }
 
 #[tauri::command]
 pub fn bookmark_delete(id: String, state: State<AppState>) -> Result<bool, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::bookmark_delete(&conn, &id).map_err(err)?;
     Ok(true)
 }
 
 #[tauri::command]
 pub fn bookmarks_for_book(book_id: String, state: State<AppState>) -> Result<Vec<library::BookmarkRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::bookmarks_for_book(&conn, &book_id).map_err(err)
 }
 
 #[tauri::command]
 pub fn bookmarks_all(state: State<AppState>) -> Result<Vec<library::BookmarkItem>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::bookmarks_all(&conn).map_err(err)
 }
 
@@ -458,20 +458,20 @@ pub fn bookmarks_all(state: State<AppState>) -> Result<Vec<library::BookmarkItem
 #[tauri::command]
 pub fn font_import(path: String, state: State<AppState>) -> Result<fonts::CustomFont, String> {
     let app_data_dir = state.app_data_dir.clone();
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     fonts::import(&conn, &app_data_dir, &path)
 }
 
 #[tauri::command]
 pub fn fonts_list(state: State<AppState>) -> Result<Vec<fonts::CustomFont>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     fonts::list(&conn)
 }
 
 #[tauri::command]
 pub fn font_remove(id: String, state: State<AppState>) -> Result<bool, String> {
     let app_data_dir = state.app_data_dir.clone();
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     fonts::remove(&conn, &app_data_dir, &id)?;
     Ok(true)
 }
@@ -532,7 +532,7 @@ pub fn photocard_save(
     let data = std::fs::read(&png_path).map_err(err)?;
     let _ = std::fs::remove_file(&png_path);
     let app_data_dir = state.app_data_dir.clone();
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     let meta = photocards::SaveMeta {
         id,
         book_id,
@@ -553,7 +553,7 @@ pub fn photocard_save(
 #[tauri::command]
 pub fn photocards_list(state: State<AppState>) -> Result<Vec<photocards::PhotoCard>, String> {
     let app_data_dir = state.app_data_dir.clone();
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     photocards::list(&conn, &app_data_dir)
 }
 
@@ -561,7 +561,7 @@ pub fn photocards_list(state: State<AppState>) -> Result<Vec<photocards::PhotoCa
 pub fn photocard_delete(id: String, state: State<AppState>) -> Result<bool, String> {
     safe_id(&id)?;
     let app_data_dir = state.app_data_dir.clone();
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     photocards::delete(&conn, &app_data_dir, &id)?;
     Ok(true)
 }
@@ -571,7 +571,7 @@ pub fn photocard_delete(id: String, state: State<AppState>) -> Result<bool, Stri
 /// Every reference for a book — loaded once on open and held in memory for per-section matching.
 #[tauri::command]
 pub fn refs_for_book(book_id: String, state: State<AppState>) -> Result<Vec<library::RefRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::refs_for_book(&conn, &book_id).map_err(err)
 }
 
@@ -585,13 +585,13 @@ pub fn ref_save(
     note: String,
     state: State<AppState>,
 ) -> Result<Option<library::RefRow>, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::ref_save(&conn, &book_id, &phrase, &phrase_fold, word_count, &note).map_err(err)
 }
 
 #[tauri::command]
 pub fn ref_delete(id: String, state: State<AppState>) -> Result<bool, String> {
-    let conn = state.db.lock().map_err(err)?;
+    let conn = state.conn();
     library::ref_delete(&conn, &id).map_err(err)?;
     Ok(true)
 }

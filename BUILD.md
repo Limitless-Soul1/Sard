@@ -56,3 +56,58 @@ preflight (`scripts/kill-sard.mjs`) covers all three names so a running copy can
 ## Frontend-only check (no Rust)
 `npm run build` (`tsc && vite build`) type-checks and bundles the UI into `dist\`. The test build embeds
 `dist\`, so this is a quick way to validate a UI-only change before a full `build:test`.
+
+## Cutting a release (and the updater's signing key)
+
+Releases are built by GitHub Actions, not by hand. Push a `v*` tag and
+`.github/workflows/release.yml` builds the app, signs the updater artifacts, generates
+`latest.json`, creates the GitHub Release and uploads everything the in-app updater needs.
+
+```
+# bump the version in package.json, src-tauri/tauri.conf.json and src-tauri/Cargo.toml first
+git tag v1.2.0
+git push origin v1.2.0
+```
+
+A **manual** run (Actions → Release → Run workflow) builds a **draft** release instead, so the
+pipeline can be exercised without publishing anything.
+
+### The signing key
+
+The updater will not install anything whose minisign signature does not match the public key
+compiled into the app (`plugins.updater.pubkey` in `tauri.conf.json`). The private half lives in two
+places and **must not** enter this repository:
+
+- the owner's own offline backup, and
+- two GitHub Actions secrets: `TAURI_SIGNING_PRIVATE_KEY` and
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+
+> ⚠ **If that key is lost, no existing install can ever be updated again.** It cannot be
+> regenerated — only replaced, and replacing it strands everyone already running Sard on the version
+> they have. Back it up before doing anything else.
+
+To build a signed release locally (rarely needed — the workflow is the supported path):
+
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY = "<path to the key file>"
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "<its password>"
+npm run tauri build
+```
+
+Without those variables the bundler still produces installers, but **no `.sig` files** — and a
+release without signatures is one the updater will refuse.
+
+### Why NSIS is the update payload
+
+The bundler emits both an NSIS `-setup.exe` and a WiX `.msi`. The workflow sets
+`updaterJsonPreferNsis: true` because the action's default is `false` "for legacy reasons", which
+would put the MSI in `latest.json`. The NSIS path is the tested one: the updater runs it with
+`/UPDATE`, which installs per-user without an elevation prompt and restarts the app itself. The MSI
+remains a release asset for anyone who wants it; it is simply not what the updater downloads.
+
+### What an update does NOT touch
+
+The NSIS uninstaller can delete `%APPDATA%\com.sard.app`, but only when **both** a checkbox on the
+uninstall confirmation page is ticked **and** `/UPDATE` was not passed. An update always passes
+`/UPDATE`, so that branch is unreachable during one — the library, database, notes, highlights,
+backgrounds and downloaded voices survive by construction, not by convention.

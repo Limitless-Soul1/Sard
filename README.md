@@ -259,6 +259,22 @@ The installers are not code-signed yet, so Windows SmartScreen will warn on firs
 *More info → Run anyway*. If you would rather not, [build from source](#build); it takes a couple
 of minutes.
 
+### Updates
+
+From **v1.1.0** onward Sard updates itself. Click the flower in the Library's corner and it checks
+GitHub Releases; if there is something newer it shows you the version and the release notes and asks
+before doing anything. Accepting downloads the installer, verifies it against Sard's signing key,
+installs it and restarts the app.
+
+**Your data is never touched by an update.** The installer replaces only the program files under
+`%LOCALAPPDATA%`; your library, reading positions, notes, highlights, references, bookmarks, photo
+cards, backgrounds, settings and downloaded voices all live under `%APPDATA%\com.sard.app` and are
+left exactly as they are. Deleting that data is possible only through an explicit checkbox on the
+*uninstaller*, which an update never reaches.
+
+*v1.0.0 predates the updater and cannot update itself — install v1.1.0 by hand once, and it will
+keep itself current from then on.*
+
 ## Build
 
 Prerequisites:
@@ -313,7 +329,7 @@ Conventions worth knowing before a first patch:
 
 ## Roadmap
 
-- Tagged releases with signed installers and in-app update
+- Code-signed installers, so Windows stops warning on first run
 - macOS and Linux builds
 - A wider EPUB conformance pass — footnotes, media overlays, complex fixed-layout
 - Deeper PDF support: annotation on the page, text reflow where the document allows it

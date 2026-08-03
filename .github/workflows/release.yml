@@ -56,6 +56,29 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # The release notes come from the ANNOTATED TAG's message. They end up in two places that
+      # matter: the GitHub release page, and the `notes` field of latest.json — which is the text
+      # the in-app update dialog shows the reader. Writing them at `git tag -a` time is what keeps
+      # those two in step without anyone editing a manifest afterwards.
+      - name: Read release notes from the tag
+        id: notes
+        shell: bash
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            git fetch --force origin "refs/tags/${{ github.ref_name }}:refs/tags/${{ github.ref_name }}" || true
+            BODY="$(git tag -l --format='%(contents:body)' "${{ github.ref_name }}")"
+            [ -z "$(printf '%s' "$BODY" | tr -d '[:space:]')" ] && \
+              BODY="$(git tag -l --format='%(contents)' "${{ github.ref_name }}")"
+          fi
+          # A tag with no annotation still has to produce something honest rather than an empty box.
+          [ -z "$(printf '%s' "$BODY" | tr -d '[:space:]')" ] && \
+            BODY="Download the installer below. See the repository for what changed."
+          {
+            echo "body<<SARD_NOTES_EOF"
+            printf '%s\n' "$BODY"
+            echo "SARD_NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build, sign, and publish
         uses: tauri-apps/tauri-action@v0
         env:
@@ -65,7 +88,7 @@ jobs:
         with:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
           releaseName: "Sard v__VERSION__"
-          releaseBody: "See the assets below to download and install this version."
+          releaseBody: ${{ steps.notes.outputs.body }}
           # A manual run publishes a draft so it can be inspected and discarded; a tag publishes.
           releaseDraft: ${{ github.ref_type != 'tag' }}
           prerelease: false

@@ -246,10 +246,18 @@ colour too faint to read on the paper you have chosen.
 
 ## Installation
 
-> Sard has not cut a tagged release yet. Until then, build from source — see below.
+Download the latest installer from the [**Releases**](https://github.com/Limitless-Soul1/Sard/releases)
+page:
 
-Requirements: **Windows 10 or 11**. The WebView2 runtime is preinstalled on current Windows; on
-older builds the installer will prompt for it.
+- **`Sard_1.0.0_x64-setup.exe`** — NSIS installer, the usual choice
+- **`Sard_1.0.0_x64_en-US.msi`** — MSI, for deployment tooling
+
+Requirements: **Windows 10 or 11 (x64)**. The WebView2 runtime is preinstalled on current Windows;
+on older builds the installer will prompt for it.
+
+The installers are not code-signed yet, so Windows SmartScreen will warn on first run —
+*More info → Run anyway*. If you would rather not, [build from source](#build); it takes a couple
+of minutes.
 
 ## Build
 

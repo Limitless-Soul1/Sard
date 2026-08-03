@@ -78,6 +78,18 @@ const JUMP_NAV_WINDOW_MS = 1500;
 // synchronous task queued right after runs UNDER the freshly-painted UI instead of blocking a blank frame.
 const nextPaint = () => new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
 
+// RAWY-285: a persisted set of spine-section indices (`chapters_read:<id>` / `seen_start:<id>`). Lifted to
+// module scope because `openBook` now reads BOTH sets before the view exists (see the load ordering there),
+// and the parse must be identical for both. A corrupt/legacy value means "nothing recorded yet", never a throw.
+const parseSecs = (raw: string | null): number[] => {
+  try {
+    const p = raw ? JSON.parse(raw) : [];
+    return Array.isArray(p) ? p.filter((n) => typeof n === "number") : [];
+  } catch {
+    return [];
+  }
+};
+
 export function Reader({
   book: initial,
   onExit,
@@ -140,6 +152,10 @@ export function Reader({
   // RAWY-186: the LATEST play/pause handler, so the once-registered reading-frame Space callback always
   // calls the current closure (fresh chapter/lang) — no stale capture. Assigned each render below.
   const playRef = useRef<() => boolean>(() => false);
+  // RAWY-285: is the book CURRENTLY open a PDF? Same stale-capture guard as `playRef`. The window
+  // close-requested handler registers ONCE ([] deps) but must describe the book on screen NOW, not the one
+  // this Reader happened to mount with — the Reader is REUSED across books (RAWY-206 cross-book follow).
+  const isPdfRef = useRef(false);
   // RAWY-249 (PART 2): latest hideChrome, so the once-registered onRelocate closure (openBook, [] deps) always
   // calls the current hook callback — same stale-capture guard as playRef.
   const hideChromeRef = useRef<() => void>(() => {});
@@ -256,6 +272,31 @@ export function Reader({
       bookRef.current = target.id;
       set({ status: "loading", bookId: target.id });
 
+      // RAWY-285: THIS FUNCTION IS THE SINGLE OWNER OF PER-BOOK SESSION STATE.
+      //
+      // The Reader instance is REUSED across books: App holds one `<Reader>` and a cross-book follow
+      // (RAWY-206, the Notes/Bookmarks rows) only changes `initial.id`, so React re-runs this open
+      // WITHOUT remounting — deliberately, because the Notes panel must survive the follow (see
+      // AnnotationsPanel's `currentBookId` snap-back). That makes every ref below a per-book fact living
+      // on a component that outlives the book, and anything not cleared here LEAKS into the next book.
+      //
+      // Measured, not theorised (real release build + real DB): a cross-book follow wrote book A's
+      // read-chapter set under book B's key — 96 recorded chapters replaced by A's five — because
+      // `chapTrackRef`/`seenStartRef`/`readChaptersRef` still described A when B's first relocate
+      // arrived; and A's return-anchor stayed live, freezing B's `reading_progress` entirely.
+      // One reset, listed in one place, is what stops a future per-book field being forgotten again.
+      lastSectionRef.current = -1;      // "no previous section yet" — re-arms the prevSec !== -1 guards
+      chapTrackRef.current = { sec: -1, atStart: false }; // sec < 0 ⇒ the completion rule cannot fire
+      seenStartRef.current = new Set(); // replaced by THIS book's persisted set below, before the view exists
+      readChaptersRef.current = new Set();
+      jumpNavAtRef.current = 0;
+      nextChapterArmedRef.current = false;
+      anchorRef.current = null;         // RAWY-250: an anchor belongs to the book it was taken in
+      setAnchorUi(null);
+      setSearchQuery("");               // book A's hits are meaningless CFIs in book B
+      setActiveHitCfi(null);
+      setPdfPageCount(0);
+
       const url = convertFileSrc(target.filePath);
 
       await bookRegister(target.id, target.filePath);
@@ -265,6 +306,7 @@ export function Reader({
       // RAWY-85: a PDF is fixed-layout — it has a page index, not a CFI. It resumes by FRACTION and
       // gets none of the EPUB typography/annotation machinery.
       const targetIsPdf = (target.format ?? "").toLowerCase() === "pdf";
+      isPdfRef.current = targetIsPdf; // RAWY-285: the close flush reads this, not its mount-time capture
       // RAWY-27: an inbox item passes a jump CFI that wins over the saved reading position.
       const resumeCfi = target.cfi ?? (targetIsPdf ? null : saved?.cfi) ?? null;
       const resumeFraction = targetIsPdf ? (saved?.fraction ?? null) : null;
@@ -286,6 +328,37 @@ export function Reader({
       libraryThemeRef.current = ts.themeId; // restore this to the chrome on exit
       globalStyleRef.current = global;
       overrideRef.current = override;
+
+      // RAWY-285: EVERY per-book persisted value is loaded HERE — before `onRelocate` is registered and
+      // before `ctrl.open()`, which is the first moment the engine can emit a position.
+      //
+      // ORDERING IS THE WHOLE FIX. These four reads used to sit AFTER `ctrl.open()` (and after three more
+      // awaits), while the relocate handler that CONSUMES and RE-PERSISTS the two sets was already live.
+      // `markSeenStart`/`markChapterRead` write the WHOLE in-memory set, so a relocate landing in that
+      // window persisted an EMPTY set over the stored one. Measured on the real build, three times: a
+      // seeded `[1..9]`, `[7,8,9]` and `[3..9]` each came back as a single-element set after ONE open —
+      // and the same call site, exercised once loading had finished, correctly merged (`[1]` → `[1,6]`).
+      // Nothing here depends on the view, so the reads simply belong before it. No flag, no guard, no
+      // deferral of the handler: the data is just present before anything can read it.
+      const [readRaw, seenRaw, spoilerRaw, invertRaw] = await Promise.all([
+        settingsGet(`chapters_read:${target.id}`).catch(() => null),
+        settingsGet(`seen_start:${target.id}`).catch(() => null),
+        settingsGet(`spoiler_safe:${target.id}`).catch(() => null),
+        settingsGet(`pdf_invert:${target.id}`).catch(() => null),
+      ]);
+      if (stale()) return;
+      // RAWY-250 (PART 4) / RAWY-256 (addendum, case 6): the read-chapter set and the "beginning seen" set,
+      // both per book, both plain settings rows (additive, no migration). An absent key = nothing recorded.
+      readChaptersRef.current = new Set(parseSecs(readRaw));
+      seenStartRef.current = new Set(parseSecs(seenRaw));
+      setReadVersion((v) => v + 1); // RAWY-256: publish the loaded set to the Contents markers
+      // RAWY-285: the two per-book PREFERENCES that used to be read by their own `[]`-dep effects. Those
+      // effects ran once per Reader MOUNT, so a cross-book follow silently kept the previous book's answer
+      // (measured: a book whose spoiler-safe was stored OFF opened with it ON via the cross-book route and
+      // OFF via the Library route — same book, same stored value). Loading them on the same path as every
+      // other per-book value removes the second lifecycle rather than adding a second reset.
+      setSpoilerSafe(spoilerRaw !== "0"); // default ON (design §5)
+      setPdfInvert(invertRaw === "1");
       // The book's theme comes from the shared BOOK theme (D29), NOT the Library theme:
       // unified → the shared book theme; per-book → this book's override, else the shared book theme.
       const bookDefault = ts.bookThemeId;
@@ -415,27 +488,9 @@ export function Reader({
       // section from that set as it renders — no per-section query, and the book is never rescanned.
       useReferences.getState().bind(ctrl, target.id);
       await useReferences.getState().load();
-      // RAWY-250 (PART 4): this book's read chapters (settings key/value — additive, no migration; an absent
-      // key simply means "nothing read yet", so an existing library is unaffected).
-      // RAWY-256 (addendum, case 6): …and the per-book "beginning seen" set, loaded the same way, so the
-      // fact survives a restart (a long book is read across many sessions).
-      const [readRaw, seenRaw] = await Promise.all([
-        settingsGet(`chapters_read:${target.id}`).catch(() => null),
-        settingsGet(`seen_start:${target.id}`).catch(() => null),
-      ]);
-      if (!stale()) {
-        const parseSecs = (raw: string | null): number[] => {
-          try {
-            const p = raw ? JSON.parse(raw) : [];
-            return Array.isArray(p) ? p.filter((n) => typeof n === "number") : [];
-          } catch {
-            return []; // corrupt/legacy value → start empty rather than throw
-          }
-        };
-        readChaptersRef.current = new Set(parseSecs(readRaw));
-        seenStartRef.current = new Set(parseSecs(seenRaw));
-        setReadVersion((v) => v + 1); // RAWY-256: publish the loaded set to the panel
-      }
+      // RAWY-285: the read-chapter / beginning-seen sets and the two per-book preferences used to be read
+      // HERE, after the view was already emitting relocates. They are now loaded before `ctrl.open()` —
+      // see the ordering note above. Nothing replaces them at this point.
     } catch (e) {
       // A SUPERSEDED open's error (e.g. ctrl.open on a null stage after unmount) must NOT flip the
       // current book into the error overlay — only report a failure that belongs to the live open.
@@ -493,7 +548,12 @@ export function Reader({
     const win = getCurrentWindow();
     let unlisten: (() => void) | undefined;
     let closing = false; // flush + close exactly once; a second ✕ during the flush is left to the first
-    const targetIsPdf = (initial.format ?? "").toLowerCase() === "pdf";
+    // RAWY-285: this handler registers ONCE, so it must read the book from the SAME live sources every
+    // other writer uses — `bookRef` / `isPdfRef`, both updated by `openBook` — never from the props this
+    // effect happened to close over. It used to capture `initial.id`/`initial.format` at MOUNT, so after a
+    // cross-book follow the ✕ wrote the book on screen's read-aloud cursor under the PREVIOUS book's key.
+    // Measured on the real build: closing while listening made `tts_position:<Alice>` byte-identical to
+    // Lord of Mysteries' cursor (sec 374, its CFI and its Arabic snippet), destroying Alice's own.
     const flush = async () => {
       const st = useReader.getState();
       // RAWY-250 (addendum 4, DEFECT 1): the freeze must hold at EVERY writer, not just the debounced one.
@@ -505,11 +565,11 @@ export function Reader({
       // untouched, so the next open resumes at the real reading position with no pill and no trace of the
       // visit. The TTS cursor flush below is unaffected (separate storage, not reading_progress).
       // progress: same rule as the debounced save (a PDF persists by fraction with an empty cfi)
-      if (!anchorRef.current && (st.cfi || targetIsPdf)) await progressSave(bookRef.current, st.cfi ?? "", st.fraction).catch(() => {});
+      if (!anchorRef.current && (st.cfi || isPdfRef.current)) await progressSave(bookRef.current, st.cfi ?? "", st.fraction).catch(() => {});
       // the last-spoken TTS sentence: the same cursor the throttled save + stop-on-exit write
       if (useTts.getState().active) {
         const cur = ctrlRef.current?.getTtsCursor(useTts.getState().index);
-        if (cur) await settingsSet(`tts_position:${initial.id}`, JSON.stringify(cur)).catch(() => {});
+        if (cur) await settingsSet(`tts_position:${bookRef.current}`, JSON.stringify(cur)).catch(() => {});
       }
     };
     win
@@ -937,11 +997,8 @@ export function Reader({
     if (pdfMsgTimer.current) clearTimeout(pdfMsgTimer.current);
     pdfMsgTimer.current = window.setTimeout(() => setPdfMsg(null), 2600);
   };
-  useEffect(() => {
-    if (!isPdf) return;
-    settingsGet(`pdf_invert:${initial.id}`).then((v) => setPdfInvert(v === "1")).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // RAWY-285: `pdf_invert` is loaded by `openBook` with every other per-book value (it was a mount-once
+  // effect, which a reused Reader silently never re-ran). The setter below is unchanged.
   const togglePdfInvert = () => {
     setPdfInvert((v) => {
       const next = !v;
@@ -989,12 +1046,9 @@ export function Reader({
   const searchDebounce = useRef<number | undefined>(undefined);
   const searchAbort = useRef<AbortController | null>(null);
 
-  // per-book spoiler-safe preference (default ON) — remembered per book (design §5)
-  useEffect(() => {
-    if (isPdf) return;
-    settingsGet(`spoiler_safe:${initial.id}`).then((v) => setSpoilerSafe(v !== "0")).catch(() => {});
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // RAWY-285: the per-book spoiler-safe preference (default ON, design §5) is loaded by `openBook`
+  // alongside every other per-book value — see the ordering note there. It was a mount-once effect, so a
+  // Reader reused across books kept the FIRST book's answer for the rest of the session.
 
   // debounced whole-book search; a newer query supersedes (epoch) + aborts the in-flight scan
   useEffect(() => {
@@ -1037,7 +1091,12 @@ export function Reader({
     setRevealAhead(false);
     setSpoilerSafe((v) => {
       const next = !v;
-      settingsSet(`spoiler_safe:${initial.id}`, next ? "1" : "0").catch(() => {});
+      // RAWY-285: `bookRef.current`, not `initial.id`. This callback is deliberately STABLE (empty deps,
+      // above) so the memoised SearchPanel does not churn — which means it closes over the FIRST render's
+      // props for the life of the Reader. Toggling spoiler-safe after a cross-book follow therefore wrote
+      // the new book's answer under the PREVIOUS book's key. Reading the live ref keeps the callback
+      // stable AND correct; the same ref every other per-book writer already uses.
+      settingsSet(`spoiler_safe:${bookRef.current}`, next ? "1" : "0").catch(() => {});
       return next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps

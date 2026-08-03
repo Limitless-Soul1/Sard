@@ -23,9 +23,13 @@ dist-ssr
 .env
 .env.*
 
-# Private — owner's local strategy/notes & internal screenshots. NEVER pushed.
+# Private — working notes that used to live here. They now live outside the repository and
+# must stay there; this rule remains as a backstop so a stray copy can never be committed.
 /PROJECT.md
-/docs/
+
+# NOTE: `/docs/` is deliberately NOT ignored. It is reserved for the published project site
+# (GitHub Pages serves from `docs/` on the default branch). Nothing else belongs in it —
+# design sources, screenshots and reports are not repository material.
 
 # Private — REAL user data. Each `.db-snapshot-*` directory is a byte copy of the live
 # %APPDATA%/com.sard.app/sard.db (+ its -wal/-shm), taken before a risky task. They hold the

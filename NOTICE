@@ -1,38 +1,110 @@
-Sard (سَرْد)   — formerly "eRawy"
+Sard (سَرْد)
 Copyright (C) 2026 Sard contributors
 
-This program is free software: you can redistribute it and/or modify it under the
-terms of the GNU Affero General Public License v3.0 (AGPL-3.0) — see the LICENSE file.
+Sard is free software: you can redistribute it and/or modify it under the terms of the
+GNU Affero General Public License, version 3, as published by the Free Software
+Foundation. The full text is in the LICENSE file at the root of this repository.
 
-Sard is AGPL-3.0 by the project's choice. Note that its bundled engine (foliate-js)
-is MIT-licensed and does NOT impose copyleft; AGPL is Sard's own decision.
+Sard is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+PURPOSE. See the GNU Affero General Public License for more details.
 
-================================================================================
-Third-party components bundled or planned
-================================================================================
-
-1) foliate-js  —  License: MIT
-   EPUB/ebook rendering & pagination engine (runs in the WebView).
-   Source:  https://github.com/johnfactotum/foliate-js
-   Vendored at commit: 78914aef4466eb960965702401634c2cb348e9b1 (2026-05-01)
-   Location: public/foliate-js/  (full MIT license at public/foliate-js/LICENSE)
-
-2) PDF.js  —  License: Apache-2.0
-   Source:  https://github.com/mozilla/pdf.js
-   NOTE: a copy of PDF.js ships *inside* the vendored foliate-js engine at
-   public/foliate-js/vendor/pdfjs/ (foliate-js uses it for PDF rendering). Its
-   bundled font/cmap licenses are under that directory (LICENSE_FOXIT,
-   LICENSE_LIBERATION, cmaps/LICENSE). Sard's own PDF feature work is a later phase.
-
-3) Bundled fonts  —  License: SIL Open Font License 1.1 (OFL)
-   - Amiri               (public/fonts/Amiri-Regular.ttf, Amiri-Bold.ttf;  OFL-Amiri.txt)
-   - Noto Naskh Arabic   (public/fonts/NotoNaskhArabic.ttf;                OFL-NotoNaskhArabic.txt)
-   - Literata            (public/fonts/Literata.ttf;                       OFL-Literata.txt)
-   - IBM Plex Sans Arabic (public/fonts/IBMPlexSansArabic-*.ttf;           OFL-IBMPlexSansArabic.txt) — Arabic UI font
-   - Inter                (public/fonts/Inter.ttf;                         OFL-Inter.txt) — Latin UI font
-   - Source Serif 4       (public/fonts/SourceSerif4.ttf;                  OFL-SourceSerif4.txt) — Latin reading (alt)
-   - Aref Ruqaa           (public/fonts/ArefRuqaa-*.ttf;                   OFL-ArefRuqaa.txt) — Arabic display/wordmark
-   Each family's full OFL text is in public/fonts/ alongside the font files.
+The name "Sard" / "سَرْد" and the hoopoe mark are not covered by the AGPL. They may be
+used to refer to this project, but not to brand a fork or a derived product.
 
 ================================================================================
-The full text of the AGPL-3.0 is in the LICENSE file at the repository root.
+WHY AGPL-3.0
+================================================================================
+
+Sard bundles eSpeak NG, which is GPL-3.0-or-later (see §2 below). Distributing that
+binary means the work it is conveyed with must be under a GPL-compatible licence and
+must not add restrictions of its own. AGPL-3.0 satisfies both: GPL-3.0 §13 and
+AGPL-3.0 §13 expressly permit the two to be combined.
+
+This is also a deliberate choice, not only a constraint. AGPL-3.0 keeps Sard and every
+derivative of it open — a fork cannot be closed and sold on — while leaving anyone free
+to use the program for any purpose, including commercially. That freedom is what makes
+it open source; a licence that withheld it would not be.
+
+================================================================================
+THIRD-PARTY COMPONENTS
+================================================================================
+
+1) READING ENGINE
+
+   foliate-js — MIT
+   EPUB parsing, pagination and rendering, running inside the WebView.
+   https://github.com/johnfactotum/foliate-js
+   Vendored at commit 78914aef4466eb960965702401634c2cb348e9b1 (2026-05-01).
+   Location: public/foliate-js/          Licence: public/foliate-js/LICENSE
+   Sard carries local modifications to this copy; see public/foliate-js/VENDOR.txt.
+
+   PDF.js — Apache-2.0
+   PDF rendering. Ships inside the vendored foliate-js engine, which uses it directly.
+   https://github.com/mozilla/pdf.js
+   Location: public/foliate-js/vendor/pdfjs/
+   Bundled font and CMap licences are under that directory: LICENSE_FOXIT,
+   LICENSE_LIBERATION, cmaps/LICENSE.
+
+2) READ-ALOUD ENGINE  (prebuilt binaries — not built from this repository)
+
+   Bundled at src-tauri/resources/piper/. Full terms and the GPL-3.0 text:
+   src-tauri/resources/piper/LICENSES/
+
+   Piper 1.2.0          — MIT              https://github.com/rhasspy/piper
+   piper-phonemize      — MIT              https://github.com/rhasspy/piper-phonemize
+   eSpeak NG 1.52.0     — GPL-3.0-or-later https://github.com/espeak-ng/espeak-ng
+   ONNX Runtime         — MIT              https://github.com/microsoft/onnxruntime
+   libtashkeel (model)  — MIT (library)    https://github.com/mush42/libtashkeel
+
+   Versions are read from the binaries themselves — "1.52.0" is the version string
+   embedded in espeak-ng.dll and "1.2.0" the one embedded in piper.exe.
+
+   eSpeak NG is conveyed in OBJECT FORM. GPL-3.0 §6 therefore requires an offer of the
+   corresponding source: it is eSpeak NG 1.52.0, at
+   https://github.com/espeak-ng/espeak-ng/releases/tag/1.52.0
+   If that location becomes unavailable, open an issue on the Sard repository and the
+   source will be provided by other means at no charge beyond the cost of delivery, for
+   as long as Sard distributes this binary. See LICENSES/README.md.
+
+   The full text of every licence above ships beside the binaries, as GPL-3.0 §4 requires:
+   src-tauri/resources/piper/LICENSES/{GPL-3.0,MIT-piper,MIT-piper-phonemize,
+   MIT-onnxruntime,MIT-libtashkeel}.txt
+
+   Piper VOICE MODELS are not bundled. They are downloaded on demand at the user's
+   request and carry their own licences, stated by each voice's upstream publisher.
+
+   The Microsoft Edge online voices Sard can also use are a network service, not a
+   bundled component. Nothing from that service is redistributed here.
+
+3) FONTS — all SIL Open Font License 1.1
+
+   The fonts remain under the OFL; the AGPL does not apply to them. Each family's full
+   licence sits beside it in public/fonts/.
+
+   Amiri                 Amiri-Regular.ttf, Amiri-Bold.ttf          OFL-Amiri.txt
+   Noto Naskh Arabic     NotoNaskhArabic.ttf                        OFL-NotoNaskhArabic.txt
+   Aref Ruqaa            ArefRuqaa-Regular.ttf, ArefRuqaa-Bold.ttf  OFL-ArefRuqaa.txt
+   IBM Plex Sans         IBMPlexSans-{Regular,Medium,Bold}.ttf      OFL-IBMPlexSans.txt
+   IBM Plex Sans Arabic  IBMPlexSansArabic-{Regular,SemiBold}.ttf   OFL-IBMPlexSansArabic.txt
+   Literata              Literata.ttf                               OFL-Literata.txt
+   Source Serif 4        SourceSerif4.ttf                           OFL-SourceSerif4.txt
+   Inter                 Inter.ttf                                  OFL-Inter.txt
+
+4) APPLICATION FRAMEWORK AND LIBRARIES
+
+   Rust crates and npm packages are resolved at build time and are not vendored here.
+   The direct dependencies are declared in src-tauri/Cargo.toml and package.json, and
+   the exact resolved versions in src-tauri/Cargo.lock and package-lock.json.
+
+   The principal ones: Tauri (MIT OR Apache-2.0), rusqlite with bundled SQLite
+   (MIT; SQLite itself is public domain), React (MIT), zustand (MIT),
+   html-to-image (MIT), image (MIT OR Apache-2.0), msedge-tts (MIT),
+   rustls (Apache-2.0 OR ISC OR MIT), ureq (MIT OR Apache-2.0),
+   zip (MIT), sha2 (MIT OR Apache-2.0), quick-xml (MIT), serde (MIT OR Apache-2.0).
+
+   All are permissive and compatible with AGPL-3.0. Apache-2.0 is one-way compatible
+   with GPL-3.0/AGPL-3.0, which is the direction required here.
+
+================================================================================
+The full AGPL-3.0 text is in the LICENSE file at the root of this repository.

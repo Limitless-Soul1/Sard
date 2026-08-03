@@ -29,6 +29,8 @@ import {
   type BookOverride,
 } from "./perBookSettings";
 import { useStyleScope } from "../../lib/styleScope";
+// RAWY-265 (Phase 3): the page-opacity gate + the desk scrim, both resolved in one place.
+import { currentDeskScrim, effectivePageOpacity, useBackground } from "../../lib/background";
 import { AnnotationLayer } from "./AnnotationLayer";
 import { AnnotationsPanel } from "./AnnotationsPanel";
 import { PhotoBasketTray } from "./PhotoBasketTray";
@@ -253,6 +255,11 @@ export function Reader({
   // colour + hide-chapter-titles stay GLOBAL flags. RAWY-216: Reader only READS them now (to inject
   // the CSS); the setters live where the controls do — the drawer's "All books" tab / Global Settings.
   const { overrideBookColor, hideChapterTitles, hideFirstLine, immersive } = useTheme();
+  // RAWY-265 (Phase 3): the effective page opacity + the desk scrim in force. Both ride the EXISTING
+  // applyTheme(theme, flags) channel rather than new plumbing, and both are 1 unless a reading
+  // background is genuinely showing — so an untouched profile passes exactly what it passed before.
+  const pageOpacity = useBackground((s) => effectivePageOpacity(s));
+  const deskScrim = useBackground((s) => currentDeskScrim(s));
   const { visible: chromeVisible, scrolledAway, signalMove, signalScroll, setHold, hideChrome } = useChromeOnIntent();
   // RAWY-194 (C): the chrome no longer wakes on bare keystrokes. A keyboard user still reaches it: when Tab
   // moves focus INTO the chrome (its controls stay in the tab order), reveal + PIN it — the genuine "I want
@@ -280,10 +287,10 @@ export function Reader({
       // AnnotationsPanel's `currentBookId` snap-back). That makes every ref below a per-book fact living
       // on a component that outlives the book, and anything not cleared here LEAKS into the next book.
       //
-      // Measured, not theorised (real release build + real DB): a cross-book follow wrote book A's
-      // read-chapter set under book B's key — 96 recorded chapters replaced by A's five — because
-      // `chapTrackRef`/`seenStartRef`/`readChaptersRef` still described A when B's first relocate
-      // arrived; and A's return-anchor stayed live, freezing B's `reading_progress` entirely.
+      // Measured, not theorised (RAWY-285 investigation, real release build + real DB): a cross-book
+      // follow wrote book A's read-chapter set under book B's key — 96 recorded chapters replaced by A's
+      // five — because `chapTrackRef`/`seenStartRef`/`readChaptersRef` still described A when B's first
+      // relocate arrived; and A's return-anchor stayed live, freezing B's `reading_progress` entirely.
       // One reset, listed in one place, is what stops a future per-book field being forgotten again.
       lastSectionRef.current = -1;      // "no previous section yet" — re-arms the prevSec !== -1 guards
       chapTrackRef.current = { sec: -1, atStart: false }; // sec < 0 ⇒ the completion rule cannot fire
@@ -451,7 +458,7 @@ export function Reader({
         resumeFraction, // RAWY-85: PDFs resume by page fraction
         style: initialStyle,
         theme: THEMES[effTheme],
-        flags: { overrideBookColor: ts.overrideBookColor, hideChapterTitles: ts.hideChapterTitles, hideFirstLine: ts.hideFirstLine },
+        flags: { overrideBookColor: ts.overrideBookColor, hideChapterTitles: ts.hideChapterTitles, hideFirstLine: ts.hideFirstLine, pageOpacity: effectivePageOpacity(), deskScrim: currentDeskScrim() },
         dir: target.dir ?? undefined, // RAWY-85: a PDF's manual RTL override lives in books.dir too
         flow: initialStyle.flowMode, // scrolled (default) or paged — RAWY-25
         revealLabels: makeRevealLabels(), // RAWY-70
@@ -599,11 +606,16 @@ export function Reader({
 
   // GLOBAL flags (override-book-colour, hide-chapter-title, hide-first-line) → re-inject the book
   // at its PER-BOOK theme (RAWY-40). Theme itself is per-book and handled by setBookTheme, not here.
+  // RAWY-265 (Phase 3): `pageOpacity` and `deskScrim` are in the DEPENDENCY LIST, not merely in the
+  // flags object. Passing a value the effect does not depend on is a silent no-op — the slider would
+  // move, the store would update, and the injected paper would keep its previous alpha until some
+  // unrelated flag happened to change. `applyTheme` refreshes the RAWY-140 dynamic paint sheet, so
+  // this repaints in place with no reflow.
   useEffect(() => {
     if (status !== "ready") return;
-    ctrlRef.current?.applyTheme(THEMES[bookThemeId], { overrideBookColor, hideChapterTitles, hideFirstLine });
+    ctrlRef.current?.applyTheme(THEMES[bookThemeId], { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [overrideBookColor, hideChapterTitles, hideFirstLine]);
+  }, [overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim]);
 
   // RAWY-70: keep the in-content placeholder/reveal strings in sync with the UI language — a plain
   // re-inject swaps the localized CSS `content` vars (the placeholder DOM itself is text-free).
@@ -628,7 +640,7 @@ export function Reader({
     setBookThemeId(effTheme);
     setHasOv(!unified && calcHasOverride(override));
     applyTheme(THEMES[effTheme]);
-    ctrlRef.current?.applyTheme(THEMES[effTheme], { overrideBookColor, hideChapterTitles, hideFirstLine });
+    ctrlRef.current?.applyTheme(THEMES[effTheme], { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
     ctrlRef.current?.applyStyle(effStyle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
@@ -944,7 +956,7 @@ export function Reader({
   const setBookTheme = (id: ThemeId) => {
     setBookThemeId(id);
     applyTheme(THEMES[id]);
-    ctrlRef.current?.applyTheme(THEMES[id], { overrideBookColor, hideChapterTitles, hideFirstLine });
+    ctrlRef.current?.applyTheme(THEMES[id], { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
     if (useStyleScope.getState().scope === "unified") {
       useTheme.getState().setBookTheme(id); // shared BOOK theme — persists book_theme_id, not the Library
     } else {
@@ -966,7 +978,7 @@ export function Reader({
     const bookDefault = useTheme.getState().bookThemeId;
     setBookThemeId(bookDefault);
     applyTheme(THEMES[bookDefault]);
-    ctrlRef.current?.applyTheme(THEMES[bookDefault], { overrideBookColor, hideChapterTitles, hideFirstLine });
+    ctrlRef.current?.applyTheme(THEMES[bookDefault], { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
     ctrlRef.current?.applyStyle(global);
   };
 
@@ -1234,18 +1246,19 @@ export function Reader({
   //
   // `chapterHref` is foliate's `tocItem.href` for the current position, and it is correct — but it is
   // `null` whenever the position lies in a spine document that the nav document does not list. That is
-  // ordinary, valid EPUB (a cover, a title page, an unlisted opening section). Matching hrefs alone
-  // therefore reported "no chapter" for a reader who was plainly inside the book, and the old chrome
-  // label then printed a confident, wrong "Chapter 1".
+  // ordinary, valid EPUB (a cover, a title page, an unlisted opening section), and BOTH reported books
+  // do it. Matching hrefs alone therefore reported "no chapter" for a reader who was plainly inside
+  // the book, and the old chrome label then printed a confident, wrong "Chapter 1".
   //
   // The general rule, which needs no per-book knowledge: you are inside the LAST TOC entry that begins
   // at or before your position in reading order. Resolution order:
   //   1. foliate's own `tocItem` — authoritative, and the only thing that can distinguish SEVERAL
-  //      entries inside ONE document (a Gutenberg front matter with three anchors in one file).
-  //   2. otherwise the nearest preceding entry by SPINE index, via the RAWY-256 `tocSecMap` already
-  //      built once per book. This is what makes an unlisted opening section resolve to something
-  //      honest instead of to nothing.
-  //   3. otherwise -1: genuinely before the first listed entry, and the chrome says so.
+  //      entries inside ONE document (Alice's three front-matter anchors).
+  //   2. otherwise the nearest preceding entry by SPINE index, via the RAWY-256 `tocSecMap` that is
+  //      already built once per book. This is what makes an unlisted opening section resolve to
+  //      something honest instead of to nothing.
+  //   3. otherwise -1: genuinely before the first listed entry. The chrome then says so rather than
+  //      inventing a number.
   const curSec = cfi ? (ctrlRef.current?.currentSectionIndex() ?? -1) : -1;
   const tocIndex = useMemo(() => {
     const direct = toc.findIndex((c) => c.href && c.href === chapterHref);
@@ -1456,10 +1469,12 @@ export function Reader({
     if (sec < 0 || readChaptersRef.current.has(sec)) return;
     readChaptersRef.current.add(sec);
     setReadVersion((v) => v + 1); // RAWY-256: recompute the read-href Set exactly once per newly-read chapter
-    // RAWY-250 (addendum 3): DATA COLLECTION IS OFF pending the owner's decision — no read history may accrue
-    // from a rule he has not yet confirmed live. The completion rule above is fully wired; only the WRITE is
-    // gated. Flip this to `true` once he confirms, and the set persists from then on. (Anything already
-    // written by the previous build is one key delete per book: `chapters_read:<bookId>`.)
+    // RAWY-250 (addendum 3): the WRITE is gated on `RECORD_READ_CHAPTERS`, which RAWY-250 flipped to
+    // `true` once the owner confirmed the completion rule live — so read history DOES accrue, and
+    // RAWY-256's Contents indicators read it. (Clearing it is one key delete per book:
+    // `chapters_read:<bookId>`.) RAWY-FINAL: this comment previously still said "DATA COLLECTION IS
+    // OFF", i.e. it described the exact opposite of the constant three lines above it. Comment only —
+    // no behaviour was changed here.
     if (!RECORD_READ_CHAPTERS) return;
     settingsSet(`chapters_read:${bookRef.current}`, JSON.stringify([...readChaptersRef.current].sort((x, y) => x - y))).catch(() => {});
   }, []);
@@ -1687,7 +1702,6 @@ export function Reader({
       {/* RAWY-85: no in-context selection toolbar (highlight/note/Photo Mode) for PDFs — they're
           CFI-less in Phase 0, so the whole annotation layer is disabled rather than half-working. */}
       {!isPdf && <AnnotationLayer ctrlRef={ctrlRef} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} onListen={startListenFromSelection} />}
-
       {/* RAWY-105: read-aloud player (EPUB-only) — floats above the reading area while listening. */}
       {!isPdf && (
         <TtsPlayer

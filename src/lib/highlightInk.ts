@@ -53,6 +53,45 @@ export function mixInk(ink: string, paper: string, t: number): string {
   return `#${m.map((v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, "0")).join("")}`;
 }
 
+// RAWY-260: a mark drawn ON THE PAGE (not on chrome) must be legible against the paper in every theme.
+// `--accent` is not that colour: measured against each theme's paper it lands between 1.7:1 and 3.6:1 at
+// half strength, i.e. under the 3:1 non-text floor on 15 of 16 themes — which is precisely why the
+// reference underline read as "invisible unless you knew it was there". Same shape as the RAWY-256
+// read-marker rule: keep the source colour when it clears the floor, otherwise carry it toward `--text` in
+// small steps and stop at the first step that does. Blending rather than substituting keeps as much of
+// Sard's terracotta as each theme allows instead of turning the mark grey.
+const MARK_FLOOR = 3;
+const MARK_STEP = 0.05;
+const srgb = (c: string): [number, number, number] | null => {
+  const h = c.trim().replace(/^#/, "");
+  if (!/^[0-9a-f]{3}$|^[0-9a-f]{6}$/i.test(h)) return null;
+  const f = h.length === 3 ? h.split("").map((x) => x + x).join("") : h;
+  return [0, 2, 4].map((i) => parseInt(f.slice(i, i + 2), 16)) as [number, number, number];
+};
+const relLum = (v: [number, number, number]): number => {
+  const ch = v.map((x) => { const s = x / 255; return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4); });
+  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+};
+const contrast = (a: [number, number, number], b: [number, number, number]): number => {
+  const x = relLum(a);
+  const y = relLum(b);
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+};
+/** Resolve a mark colour that is guaranteed legible against `ground`, keeping as much of `ink` as it can. */
+export function resolveMarkOnGround(ink: string, ground: string, text: string): string {
+  const a = srgb(ink);
+  const g = srgb(ground);
+  const t = srgb(text);
+  if (!a || !g || !t) return ink; // a themed var / non-hex — never blank the mark out
+  for (let k = 0; k <= 1.0001; k += MARK_STEP) {
+    const c = a.map((v, i) => Math.round(v * (1 - k) + t[i] * k)) as [number, number, number];
+    if (contrast(c, g) >= MARK_FLOOR) {
+      return `#${c.map((v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, "0")).join("")}`;
+    }
+  }
+  return text; // the ground is so close to both that only the ink colour reaches the floor
+}
+
 export interface ResolvedInk {
   /** The colour actually painted (already carried into the paper on a dark theme). */
   fill: string;

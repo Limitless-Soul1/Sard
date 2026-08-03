@@ -26,13 +26,37 @@
 // state the listener had to acknowledge. Everything the listener asked for — pause, seek, chapter change,
 // voice change, stop — is recorded as EXPECTED and kept out of the failure metrics. Anything that fits
 // neither is recorded as UNCLASSIFIED and counted separately: §5 forbids resolving an ambiguity silently.
+//
+// ---- WHAT v3 REPAIRED (validated against Baseline 2, LISTENING-BASELINE.md) ----
+// Baseline 2 proved v2 reflects real listening: it found the owner's 1118 ms sentence-boundary hesitation
+// and agreed with his account on every point. It also exposed four defects that BOUNDED what its numbers
+// could be used to claim. All four were in the OBSERVER, none in playback, and v3 fixes them there:
+//
+//   1. SESSIONS WERE LEFT OPEN. A chapter that simply played to its end was never finalised — the record
+//      stayed `partial` with `endReason: "open"` until `active` went false. Chapter 4 of Baseline 2 was lost
+//      that way (1 s of 11 minutes). v3 finalises at "chapter-end", where nothing is sounding and the write
+//      is therefore already allowed by guarantee 1.
+//   2. PER-SESSION FIELDS WERE NOT PER-SESSION. `unitsAdvanced` was `index - firstIndex`, and on a chapter
+//      change `firstIndex` was the OUTGOING chapter's high index, so the incoming chapter's lower index gave
+//      22, then 0, then 0. v3 counts natural +1 advances inside the session instead of differencing an index
+//      against a baseline that belongs to another chapter.
+//   3. THE CHAPTER LABEL WAS STALE. `useTts.chapterLabel` is written ONCE, in `start()`, from what the
+//      Reader knew BEFORE it relocated — so pressing Next recorded the chapter just left (Baseline 2 has
+//      الفصل 541 twice). v3 takes the identity from the reader's own live store at first audio, which is by
+//      construction the chapter whose text is being read. The player's value is kept beside it as a
+//      diagnostic; the player is NOT changed, because that string is what the pill renders.
+//   4. COUNTERS WERE CUMULATIVE. `underruns`/`abandoned` are reset by `stop()` only, so they survive a
+//      chapter change: all four Baseline 2 records showed `1`, which was ONE underrun carried forward, not
+//      four. v3 stores the per-session DELTA under the same name and the running total separately.
 import { useTts } from "./tts";
+import { useReader } from "../reader-engine/store";
 import { settingsGet, settingsSet } from "./ipc";
 
-const KEY = "listening_outcomes_v2";
-// v2 is a NEW key on purpose: v1 records have a different shape (chapter changes counted as gaps, engine
-// captured before it was resolved), and mixing two instruments' output in one statistic would be worse than
-// starting clean. The v1 record stays on disk under its own key for reference.
+const KEY = "listening_outcomes_v3";
+// A NEW KEY, for the third time and for the same reason (§6, baseline-preserving): v3 changes what
+// `unitsAdvanced`, `chapter` and `underruns` MEAN. Mixing records from two instruments in one statistic
+// would be worse than starting clean — it is exactly the mistake v2 was created to avoid. v1 and v2 stay on
+// disk under their own keys; Baseline 2 remains readable and remains valid for the outcomes it did measure.
 /** Retention bound — an engineering limit, not a Layer 1 target. */
 const KEEP_SESSIONS = 300;
 
@@ -65,7 +89,9 @@ export interface FailureEvent {
   len: number;
 }
 
-export type EndReason = "closed" | "chapterChange" | "hidden" | "open";
+/** How the session ENDED. `open` now means only "still running"; a persisted record should never carry it
+ *  except for the one session in flight at the moment of the read. */
+export type EndReason = "closed" | "chapterChange" | "chapterEnd" | "hidden" | "open";
 
 export interface SessionRecord {
   startedAt: number;
@@ -91,13 +117,25 @@ export interface SessionRecord {
   engine: string;
   voice: string;
   speed: number;
+  /** The chapter ACTUALLY read, taken from the reader's own live store at first audio (v3 defect 3). */
   chapter: string;
+  /** What the PLAYER believed it was reading. Diagnostic only: it is written once in `start()` from the
+   *  Reader's pre-relocate label, so on a Next press it names the chapter just left. Kept so the lag stays
+   *  visible in the data instead of being silently corrected away. */
+  chapterFromPlayer: string;
   units: number;
+  /** Natural +1 advances observed INSIDE this session — never an index difference across a chapter
+   *  boundary (v3 defect 2). This is the denominator of the §5 content profile. */
   unitsAdvanced: number;
   meanUnitSeconds: number | null;
   sourceMs: { n: number; p50: number; p95: number; max: number } | null;
+  /** PER-SESSION deltas (v3 defect 4). The engine's own counters are reset only by `stop()`, so the raw
+   *  values survive a chapter change and must never be recorded as if they belonged to one session. */
   underruns: number;
   abandoned: number;
+  /** The engine's running totals at the end of this session — the cumulative view, kept separately. */
+  underrunsCumulative: number;
+  abandonedCumulative: number;
   /** false until audio started; context fields are provisional until then */
   metaCaptured: boolean;
   /** observation began mid-session — EXCLUDED from O5 */
@@ -115,13 +153,20 @@ let cur: SessionRecord | null = null;
 let phase: Phase = "idle";
 let phaseSince = 0;
 let sessionT0 = 0;
-let firstIndex = 0;
 let lastIndex = 0;
 let lastCursorMoveAt = -1;
 let lastCursorDelta = 0;
 let underrunsAtGapStart = 0;
 let retryDuringGap = false;
 let dirty = false;
+/** Per-session bases for the engine's cumulative counters (v3 defect 4). */
+let underrunsAtSessionStart = 0;
+let abandonedAtSessionStart = 0;
+/** A session was finalised at "chapter-end" while the player is STILL active, so no new session may be
+ *  opened until the listener acts again (v3 defect 1). Without this the observer would immediately reopen a
+ *  session on the very next store change and measure the listener's idle time at the chapter-end prompt as
+ *  that session's time-to-first-audio. */
+let suspended = false;
 
 const now = () => (typeof performance !== "undefined" ? performance.now() : Date.now());
 const CURSOR_WINDOW_MS = 1200;
@@ -136,6 +181,14 @@ interface Snap {
    *  the object produced `detail: "undefined"` for every failure. */
   lastFailure: string | null;
 }
+
+/** The most recent snapshot, kept because the teardown handler runs outside the store subscription and must
+ *  close the final phase against real counters rather than guesses. */
+let lastSnap: Snap = {
+  active: false, status: "idle", index: 0, total: 0,
+  engine: "", voice: "", speed: 1, chapterLabel: "",
+  retryAttempt: 0, underruns: 0, abandoned: 0, lastFailure: null,
+};
 
 /** The structured failure record, read at the moment the store's summary string changes. */
 function structuredFailure(): { unit: number; len: number; kind: string; detail: string } | null {
@@ -227,22 +280,32 @@ export function listeningJournal(): { at: number; phase: string; wrote: boolean;
 
 // ---- session lifecycle -------------------------------------------------------------------------------
 
+/** The chapter the reader is ACTUALLY showing. A pure read of another store — the observer never writes it
+ *  (guarantee 3). At first audio this is by construction the chapter whose text was just walked and handed
+ *  to the engine, which is why it is the authoritative identity and the player's own label is not. */
+function liveChapter(): string {
+  try { return useReader.getState().chapterLabel ?? ""; } catch { return ""; }
+}
+
 function startSession(t: number, s: Snap, joinedLate: boolean): void {
   sessionT0 = t;
   phaseSince = t;
-  firstIndex = s.index;
   lastIndex = s.index;
   lastCursorMoveAt = -1;
   lastCursorDelta = 0;
   underrunsAtGapStart = s.underruns;
+  underrunsAtSessionStart = s.underruns;
+  abandonedAtSessionStart = s.abandoned;
   retryDuringGap = false;
   cur = {
     startedAt: Date.now(), endReason: "open",
     timeToFirstAudioMs: null, activeMs: 0, soundingMs: 0, gaps: [], failures: [],
     maxRetryAttempt: 0, neededUserAction: false, endedAcknowledged: false, productionStateEvents: 0,
-    engine: s.engine, voice: s.voice, speed: s.speed, chapter: s.chapterLabel,
+    engine: s.engine, voice: s.voice, speed: s.speed,
+    chapter: liveChapter(), chapterFromPlayer: s.chapterLabel,
     units: s.total, unitsAdvanced: 0, meanUnitSeconds: null, sourceMs: null,
-    underruns: 0, abandoned: 0, metaCaptured: false, joinedLate, partial: true,
+    underruns: 0, abandoned: 0, underrunsCumulative: s.underruns, abandonedCumulative: s.abandoned,
+    metaCaptured: false, joinedLate, partial: true,
   };
   phase = joinedLate ? (s.status === "playing" ? "sounding" : s.status === "paused" ? "paused" : "silent") : "preparing";
   dirty = true;
@@ -288,7 +351,15 @@ function onChange(s: Snap, p: Snap): void {
     if (voiceChange) closePhase(t, s, "voiceChange");
   }
 
-  if (s.active && !cur) startSession(t, s, !(s.active && !p.active));
+  // The listener acted after a chapter played out: pressing Next (or Play again) enters `preparing` and
+  // opens the next session HERE, from the gesture — so O5 measures the wait the listener actually felt and
+  // not the idle time they spent at the chapter-end prompt.
+  if (suspended && s.active && !cur && enteredPreparing) {
+    suspended = false;
+    startSession(t, s, false);
+  }
+  if (!s.active) suspended = false;
+  if (s.active && !cur && !suspended) startSession(t, s, !(s.active && !p.active));
   if (!cur) return;
 
   // ---- cursor movement ----
@@ -296,7 +367,9 @@ function onChange(s: Snap, p: Snap): void {
     lastCursorDelta = s.index - p.index;
     lastCursorMoveAt = t;
     lastIndex = s.index;
-    cur.unitsAdvanced = Math.max(cur.unitsAdvanced, s.index - firstIndex);
+    // Count only NATURAL advances, inside this session. Differencing the index against a session-start
+    // baseline was defect 2: across a chapter change that baseline belongs to the chapter just left.
+    if (lastCursorDelta === 1) cur.unitsAdvanced++;
     // Read the source instrument WHILE the session is alive: `stop()` resets it before this observer learns
     // the session ended, so reading it at the end always returned empty. Measured.
     sourceSnapshot();
@@ -329,7 +402,13 @@ function onChange(s: Snap, p: Snap): void {
   if (sounding && !cur.metaCaptured) {
     if (cur.timeToFirstAudioMs === null && !cur.joinedLate) cur.timeToFirstAudioMs = Math.round(t - sessionT0);
     cur.engine = s.engine; cur.voice = s.voice; cur.speed = s.speed;
-    cur.chapter = s.chapterLabel; cur.units = s.total;
+    // Identity comes from the READER, not the player (defect 3). At this instant the chapter on screen is
+    // the one whose text was walked and handed to the engine. It is captured ONCE, here, and never
+    // refreshed: RAWY-186 lets the listener navigate away while audio keeps playing, so a later re-read
+    // would name a chapter that was never spoken.
+    cur.chapter = liveChapter();
+    cur.chapterFromPlayer = s.chapterLabel;
+    cur.units = s.total;
     cur.metaCaptured = true;
   }
 
@@ -352,12 +431,26 @@ function onChange(s: Snap, p: Snap): void {
     dirty = true;
   }
 
-  cur.underruns = s.underruns;
-  cur.abandoned = s.abandoned;
+  // PER-SESSION deltas (defect 4). `stop()` is the only thing that zeroes the engine's counters, so a
+  // rebase is needed if they ever drop under us — otherwise the delta would go negative.
+  if (s.underruns < underrunsAtSessionStart) underrunsAtSessionStart = 0;
+  if (s.abandoned < abandonedAtSessionStart) abandonedAtSessionStart = 0;
+  cur.underruns = Math.max(0, s.underruns - underrunsAtSessionStart);
+  cur.abandoned = Math.max(0, s.abandoned - abandonedAtSessionStart);
+  cur.underrunsCumulative = s.underruns;
+  cur.abandonedCumulative = s.abandoned;
 
   if (!s.active && p.active) {
     cur.endedAcknowledged = p.status === "error" || p.status === "edge-error";
     finish("closed");
+  } else if (s.status === "chapter-end" && p.status !== "chapter-end") {
+    // THE CHAPTER PLAYED OUT — the session is over even though the player stays active to offer the next
+    // chapter (defect 1). Finalising here is what stops a record being left `open` because the listener
+    // simply carried on reading, and it is SAFE under guarantee 1 by construction: "chapter-end" is set
+    // when the last sentence ends, so nothing is sounding at this instant.
+    closePhase(t, s, null);
+    finish("chapterEnd");
+    suspended = true;
   } else if (acknowledged && !(p.status === "error" || p.status === "edge-error")) {
     cur.endedAcknowledged = true;
     void flush(true);
@@ -439,7 +532,7 @@ export async function listeningOutcomes(): Promise<{ summary: OutcomeSummary; se
 }
 
 export async function resetListeningOutcomes(): Promise<void> {
-  history = []; loaded = true; cur = null; phase = "idle";
+  history = []; loaded = true; cur = null; phase = "idle"; suspended = false;
   try { await settingsSet(KEY, "[]"); } catch { /* nothing to do */ }
 }
 
@@ -464,15 +557,38 @@ export function registerOutcomeRecorder(): void {
       lastFailure: s.lastFailure ?? null,
     });
     let prev = pick(useTts.getState());
+    lastSnap = prev;
     useTts.subscribe((state) => {
       events++;
       const next = pick(state);
+      lastSnap = next; // the teardown handler runs outside the subscription and needs the latest counters
       try { onChange(next, prev); } catch (e) { faults++; lastFault = String(e); }
       prev = next;
     });
-    const onHide = () => { if (phase !== "sounding") { if (cur) cur.endReason = "hidden"; void flush(true); } };
-    window.addEventListener("pagehide", onHide);
-    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") onHide(); });
+    // TEARDOWN vs MERELY HIDDEN — deliberately different, because they are different events.
+    //
+    // `pagehide` is the document going away: the app is closing and audio is ending with it. The session
+    // must be FINALISED here or it is lost, which is exactly how Baseline 2 lost chapter 4 — the old handler
+    // refused to write while sounding (guarantee 1) and then there was no later chance. Guarantee 1 exists
+    // so a synchronous write cannot block the window WHILE AUDIO PLAYS; at teardown there is no playback
+    // left to protect, so the write is taken. It is still best-effort: the IPC is async and may lose the
+    // race with teardown, which is why finalising at "chapter-end" above is the primary repair and this is
+    // the backstop for a listener who quits mid-chapter.
+    //
+    // `visibilitychange` → hidden also fires on a MINIMISE, where playback continues. Finalising there would
+    // cut a live session in two, and writing there would block the window mid-audio. So it keeps the old,
+    // conservative behaviour: flush only, and only when nothing is sounding.
+    window.addEventListener("pagehide", () => {
+      if (!cur) { void flush(true); return; }
+      closePhase(now(), lastSnap, null);
+      finish("hidden");
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState !== "hidden") return;
+      if (phase === "sounding") return;
+      if (cur) cur.endReason = "hidden";
+      void flush(true);
+    });
     const w = window as unknown as Record<string, unknown>;
     w.__sardListening = listeningOutcomes;
     w.__sardListeningReset = resetListeningOutcomes;

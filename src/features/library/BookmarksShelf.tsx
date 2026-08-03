@@ -13,7 +13,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { useI18n } from "../../i18n";
-import { localeDigits } from "../../lib/format";
+import { localeDigits, uiDateTimeFormat, uiRelativeTimeFormat } from "../../lib/format";
 import { bookmarksAll, type BookmarkItem } from "../../lib/ipc";
 import type { OpenTarget } from "./Library";
 
@@ -22,12 +22,10 @@ const ARABIC = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
 function relTime(sec: number | null, lang: string): string {
   if (!sec) return "";
   const days = Math.round((Date.now() / 1000 - sec) / 86400);
-  const rtf = new Intl.RelativeTimeFormat(lang === "ar" ? "ar" : "en", { numeric: "auto" });
+  const rtf = uiRelativeTimeFormat(lang, { numeric: "auto" });
   if (Math.abs(days) < 1) return rtf.format(0, "day");
   if (Math.abs(days) < 30) return rtf.format(-days, "day");
-  return new Intl.DateTimeFormat(lang === "ar" ? "ar" : "en", { month: "short", day: "numeric", year: "numeric" }).format(
-    new Date(sec * 1000),
-  );
+  return uiDateTimeFormat(lang, { month: "short", day: "numeric", year: "numeric" }).format(new Date(sec * 1000));
 }
 
 export function BookmarksShelf({ onOpen }: { onOpen: (b: OpenTarget) => void }) {

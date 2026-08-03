@@ -4,6 +4,10 @@
 // token system (next task) can plug colors into the same string.
 
 import type { Theme } from "../theme/tokens";
+// RAWY-281: `resolveMarkOnGround` (RAWY-260) and `effectivePaper` (RAWY-265 Phase 3) were imported here for
+// ONE consumer — the reference underline's ground-resolved colour. That rule is gone (see the REFERENCES
+// note below): the design specifies the theme accent at 100%, and the mark is no longer CSS at all. Both
+// helpers keep their other callers (`highlightInk.ts` / the settings contrast guards) and are untouched.
 
 export type DiacriticsMode = "show" | "dim" | "hide";
 // LOGICAL, not physical (RAWY-207): `start`/`end` follow the book's direction, so one stored value
@@ -81,6 +85,19 @@ export interface ReadingStyle {
   // master on) is a valid no-op.
   immHidePill: boolean; // default true — hide the read-aloud control pill + kashida bead on scroll-away
   immHideScrollbar: boolean; // default true — hide the reading scrollbar on scroll-away
+  // RAWY-281: the REFERENCE TWIN RULE (docs/design/Sard Reference Twin Rule (standalone).html). Like the
+  // TTS tracking fields above, these are NOT injected CSS — the pair is SVG drawn into foliate's own
+  // overlayer (FoliateController drawRefRule), so there is no cascade and no book-CSS competition.
+  //
+  // All three default to `null`, and the null sentinel is load-bearing for the SAME reason it is above:
+  // the colour is the ACTIVE THEME's accent, which differs per theme (#9C5A3C ivory · #97582F sepia ·
+  // #C98A5E slate/true-black), and a stored hex would freeze one theme's accent onto all sixteen. The two
+  // sizes store nothing either, so an untouched book draws the design file's own geometry verbatim.
+  // A stored `reading_style` row that predates these fields inherits them via loadGlobalStyle's
+  // `{...base, ...s}` — the settings blob is JSON, so no migration.
+  refRuleColor: string | null; // null = the active theme's accent at 100% (the design's own rule)
+  refRuleWeight: number | null; // null = 1 — scales thickness AND gap together (REF_WEIGHT_MIN..MAX)
+  refRuleOffset: number | null; // null = 1 — scales the .30em clearance below the text (REF_OFFSET_MIN..MAX)
 }
 
 // Page-width fraction (0 = Narrow, 1 = Wide). Default ~comfortable. The CSS clamp bounds the
@@ -189,6 +206,16 @@ export const IMMERSIVE_DEFAULTS: Pick<ReadingStyle, "immHidePill" | "immHideScro
   immHideScrollbar: true,
 };
 
+// RAWY-281: the reference twin-rule defaults, shared by BOTH per-script default sets so they can never
+// drift. All `null` = "draw the design file exactly": the theme's own accent, the design's
+// clamp(1.5px,.10em,2.5px) thickness, its clamp(2px,.13em,4px) gap and its .30em clearance. Storing no
+// number is what makes the default follow the theme through all 16 accents instead of freezing one.
+export const REF_RULE_DEFAULTS: Pick<ReadingStyle, "refRuleColor" | "refRuleWeight" | "refRuleOffset"> = {
+  refRuleColor: null,
+  refRuleWeight: null,
+  refRuleOffset: null,
+};
+
 // Per-script sensible defaults — beautiful before the user touches a control.
 export const ARABIC_DEFAULTS: ReadingStyle = {
   zoom: 1.15,
@@ -210,6 +237,7 @@ export const ARABIC_DEFAULTS: ReadingStyle = {
   flowMode: "scrolled",
   ...TTS_TRACKING_DEFAULTS,
   ...IMMERSIVE_DEFAULTS,
+  ...REF_RULE_DEFAULTS,
 };
 export const LATIN_DEFAULTS: ReadingStyle = {
   zoom: 1.0,
@@ -231,6 +259,7 @@ export const LATIN_DEFAULTS: ReadingStyle = {
   flowMode: "scrolled",
   ...TTS_TRACKING_DEFAULTS,
   ...IMMERSIVE_DEFAULTS,
+  ...REF_RULE_DEFAULTS,
 };
 
 export const defaultsForDir = (dir?: string): ReadingStyle =>
@@ -238,6 +267,22 @@ export const defaultsForDir = (dir?: string): ReadingStyle =>
 
 export interface BookThemeFlags {
   overrideBookColor: boolean;
+  // RAWY-265 (Phase 3): the effective PAGE OPACITY, 0.84..1. Threaded through `flags` rather than added
+  // to `ReadingStyle` deliberately (spec §7.3): the background is app-wide, so putting it in the style
+  // would drag it into the per-book/unified scope machinery (D43), `book_style:<id>` overrides and a
+  // migration — for a value that is not per-book. `flags` already reaches BOTH builders on the same
+  // channel `applyTheme(theme, flags)` uses, so nothing new has to be plumbed.
+  //
+  // OPTIONAL, and absent means 1. Every existing caller therefore keeps today's behaviour with no edit,
+  // and every expression below is written so that 1 short-circuits to the exact pre-Phase-3 string.
+  pageOpacity?: number;
+  /** The DESK scrim alpha in force (0.62..1). Absent means 1 (a pure theme-coloured desk).
+   *  RAWY-281: its ONE reader was the reference underline's ground-resolved colour, and that rule is
+   *  gone — the twin rule takes the accent at 100% by design and is drawn in the overlayer, not in CSS.
+   *  The field is KEPT rather than removed: `applyTheme(theme, flags)` carries it from five call sites in
+   *  `Reader.tsx`, it is optional and free, and unpicking that plumbing is churn this ticket has no reason
+   *  to spend. It is currently UNREAD by both builders — do not treat its presence as evidence of use. */
+  deskScrim?: number;
   hideChapterTitles: boolean;
   // RAWY-69: independent from hideChapterTitles — hides the section's detected leading "first
   // line" (FoliateController's `.sard-chapter-heading`, RAWY-68) without touching the semantic
@@ -302,6 +347,28 @@ const cssString = (s: string): string => `"${s.replace(/\\/g, "\\\\").replace(/"
 const NEVER = ":not(#__sard_never__)";
 const NEVER2 = ":not(#__sard_never2__)";
 
+// RAWY-265 (Phase 3) — the PAPER as the book iframe must paint it.
+//
+// ⚠️ CONFIGURATION C — EXPERIMENTAL, pending the owner's approval of an I-4a amendment.
+//
+// At full opacity this returns the hex UNCHANGED, so the emitted stylesheet is byte-identical to the
+// pre-Phase-3 output. Below 1 it returns `transparent` — the iframe paints NO paper at all.
+//
+// WHY NOT `rgba(paper, α)` HERE, which is what the specification first assumed: MEASURED, the paper is
+// painted THREE times, not once. `.page-sheet` paints it, the book document paints it, and foliate's
+// paginator paints it a third time into `<div id="background" part="filter">` (paginator.js:556, set
+// from `getBackground()` at 635/696/1135). Three α=0.84 layers compose to 1−0.16³: on True-Black the
+// text area measured [0,0,0] — fully opaque — while the sheet margin measured [3,3,3]. Page opacity
+// appeared to work and did nothing where it mattered.
+//
+// Invariant I-4 says exactly ONE surface paints the paper. Making that true means the sheet paints it
+// and everything inside foliate paints nothing; measured, that is the only configuration with a seam of
+// ZERO (triple 3 → part-only 3 → single-paint 0).
+const paperWithOpacity = (hex: string, opacity?: number): string => {
+  if (opacity == null || !(opacity < 1)) return hex; // the byte-identical path
+  return "transparent";
+};
+
 // RAWY-195: the class FoliateController tags onto a block the BOOK deliberately centres (or aligns to
 // the edge opposite the reading direction) — a poem, a scene break, a centred figure, a title page.
 // Every user rule that would flatten that intent (alignment, paragraph spacing, first-line indent)
@@ -319,9 +386,11 @@ const KEEP = `:not(.${BOOK_ALIGN_CLASS})`;
 // Arabic paragraph is mislabeled LTR from its first strong (Latin) char. CSS below forces the base
 // direction back to RTL; the paragraph keeps the UA `unicode-bidi: isolate` from its dir attribute, so its
 // embedded Latin still reads LTR and the Arabic punctuation lands on the RTL edge. Attribute-only → CFI-safe.
-// RAWY-260: the CSS Custom Highlight registry name for reference marks. Shared by the stylesheet that
-// styles it and the controller that registers the ranges, so the two can never disagree on the name.
-export const REF_HIGHLIGHT_NAME = "sard-ref";
+// RAWY-281: `REF_HIGHLIGHT_NAME` ("sard-ref") lived here — the CSS Custom Highlight registry name shared
+// by the stylesheet and the controller. Both sides are gone: the twin rule is drawn in the overlayer, so
+// nothing registers a Highlight and nothing styles one. The name survives only as the overlayer key prefix
+// in `FoliateController` (`REF_KEY_PREFIX`), which is a different registry with a different owner — giving
+// it a shared constant would imply a relationship that no longer exists.
 
 export const FORCE_RTL_CLASS = "sard-force-rtl";
 // RAWY-253 (root B): FoliateController.markEmptyParagraphs tags a whitespace-only <p> (scrape padding); the
@@ -387,11 +456,27 @@ function themeBlock(
   const ink = textColor || c.text;
   // RAWY-201: the PAGE colour — a per-book paper colour wins over the theme's own paperBg. `null` →
   // the theme value verbatim (byte-identical default). Same forced/hardened treatment as textColor.
-  const page = pageColor || c.paperBg;
+  const pageBase = pageColor || c.paperBg;
+  const page = paperWithOpacity(pageBase, flags?.pageOpacity);
   // Background + container neutralisation are forced when override is on OR the theme is dark
   // (a light-inked book on a dark page must be re-inked). The INK is also forced whenever a
   // custom text colour is set — an explicit per-book choice that must win over the book's CSS.
+  //
   const forceBg = (flags?.overrideBookColor ?? false) || theme.dark;
+  // RAWY-265 (Phase 3) — THE `overrideBookColor` COUPLING (spec §4.3), and it is not optional.
+  // The neutraliser `body * { background-color: transparent }` is what stops a book's own opaque
+  // container <div> sitting on top of the translucent paper. With override OFF on a LIGHT theme
+  // `forceBg` is false, the neutraliser is not emitted, and page opacity would SILENTLY DO NOTHING on
+  // exactly those books — a control that appears to work and doesn't.
+  //
+  // SCOPED DELIBERATELY TO THE NEUTRALISER ALONE. Folding this into `forceBg` would have been one
+  // character shorter and WRONG: `forceBg` also drives `inkRules`, which repaints every text element to
+  // the theme ink. Coupling that to page opacity would flatten a book's own authored text colours the
+  // moment the reader nudged an unrelated slider — a silent behaviour change the specification does not
+  // ask for. The spec says "the container neutraliser is emitted regardless", and that is exactly and
+  // only what this does.
+  const translucent = (flags?.pageOpacity ?? 1) < 1;
+  const neutraliseContainers = forceBg || translucent;
   const forceInk = forceBg || !!textColor;
   // A never-matching id (no element is `id="__sard_never__"`) used purely to raise specificity.
   const ID = NEVER;
@@ -410,6 +495,15 @@ function themeBlock(
         : forceInk
           ? /* a custom ink with no bg-override: force just the ink (RAWY-40) */ inkRules
           : `html, body { color: ${ink}; }`
+    }
+    ${
+      /* RAWY-265 (Phase 3): the coupling. Emitted ONLY when the page is translucent AND `forceBg` did
+         not already cover it — so at full opacity, and on every profile that already forces the
+         background, this contributes NOTHING and the sheet is byte-identical. */
+      neutraliseContainers && !forceBg
+        ? `:root:root, :root:root body${ID} { background-color: ${page} !important; }
+           :root:root body${ID} * { background-color: transparent !important; }`
+        : ""
     }
     ${
       flags?.hideChapterTitles
@@ -563,19 +657,19 @@ export function buildReadingCss(
        html padding-inline here (inline styles always beat a stylesheet rule). So the page
        margin now insets the foliate host within the sheet (--page-margin -> .page-host), which
        foliate cannot override and which works identically in both flow modes. */
-    /* RAWY-260 — REFERENCES. The mark for a referenced word/phrase, drawn by the CSS Custom Highlight API
-       over Ranges the controller registers: NOTHING is written into the book — no <span>, no injected
-       characters, no text change — so foliate's CFI child-step indices are untouched and every stored
-       bookmark, resume position, highlight and TTS range keeps resolving. The treatment is the design's
-       own: a hairline terracotta underline at half strength, offset off the baseline so Arabic descenders
-       stay clear. Quiet by intent — it says "you attached something here" and nothing more: no fill, no
-       colour change to the glyphs, no animation. */
-    ::highlight(${REF_HIGHLIGHT_NAME}) {
-      text-decoration: underline;
-      text-decoration-color: color-mix(in srgb, ${theme?.colors?.accent ?? "#9C5A3C"} 50%, transparent);
-      text-decoration-thickness: 1px;
-      text-underline-offset: 0.22em;
-    }
+    /* RAWY-260 / RAWY-281 — REFERENCES. The mark for a referenced word or phrase is NOT drawn here any
+       more, and the reason is a hard capability limit rather than a preference. RAWY-260 drew it with the
+       CSS Custom Highlight API (::highlight(sard-ref)), whose styleable property set is text-only —
+       colour, background-colour, text-decoration, text-shadow. The accepted design
+       (docs/design/Sard Reference Twin Rule (standalone).html) is TWO DRAWN STROKES with rounded terminals,
+       an em-based gap and a clearance below the content box; the file's own closing note says exactly what
+       that rules out — "a browser's 'underline double' gives you two hairlines of identical weight,
+       square ends, a fixed sub-pixel gap you cannot control, and colour tied to the text". No
+       text-decoration can produce a rounded cap, so no value of this rule could have rendered the design.
+       The pair is therefore drawn as SVG in foliate's own overlayer (FoliateController drawRefRule) —
+       the SAME route RAWY-258 took for the highlight ink swatch, and for the same reason: it mutates
+       NOTHING in the book, so foliate's CFI child-step indices stay untouched and every stored bookmark,
+       resume position, highlight and TTS range keeps resolving. */
     /* a corrected reading direction (RAWY-19 override) flows + aligns the text accordingly */
     ${bookDir ? `html, body { direction: ${bookDir}; }` : ""}
     /* RAWY-253 (root A): re-assert RTL on paragraphs a converted EPUB hardcoded dir=ltr although they are
@@ -759,11 +853,21 @@ export function buildDynamicCss(style: ReadingStyle, theme?: Theme, flags?: Book
     // theme value when unset is byte-identical (same computed colour as themeBlock's rule). The forced
     // variant matches themeBlock's hardened rule so a custom page colour also wins under a dark/override
     // theme.
-    const page = style.pageColor || c.paperBg;
+    // RAWY-265 (Phase 3): the page rides THIS sheet, so dragging the opacity slider repaints in place
+    // with NO reflow — the same RAWY-140 route `pageColor` already uses. The container neutralisation
+    // must be emitted here too, or a translucent page would be correct on a fresh section and wrong
+    // the moment the reader moved the slider (this sheet shadows the geometry sheet until the next
+    // re-inject). Same scoping as `themeBlock`: the neutraliser only, never the ink.
+    const page = paperWithOpacity(style.pageColor || c.paperBg, flags?.pageOpacity);
+    const translucent = (flags?.pageOpacity ?? 1) < 1;
     pageCss = forceBg
       ? `html, body { background: ${page} !important; }
          :root:root, :root:root body${ID} { background-color: ${page} !important; }`
-      : `html, body { background: ${page} !important; }`;
+      : translucent
+        ? `html, body { background: ${page} !important; }
+           :root:root, :root:root body${ID} { background-color: ${page} !important; }
+           :root:root body${ID} * { background-color: transparent !important; }`
+        : `html, body { background: ${page} !important; }`;
   }
   return `
     html, body { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, ${scrollInk} 30%, transparent) transparent; }

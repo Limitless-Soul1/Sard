@@ -16,7 +16,7 @@ import { useReferences } from "./referencesStore"; // RAWY-260
 import { ReferenceDialog, ReferencePopup } from "./ReferenceDialog"; // RAWY-260
 import { HIGHLIGHT_SLOTS, isHex } from "./highlightColors";
 import { TagPicker } from "./TagPicker";
-import { localeNum } from "../../lib/format";
+import { localeNum, uiDateTimeFormat } from "../../lib/format";
 // RAWY-259: the ONE ink resolution — the same function the page renderer uses, so the editor preview and
 // the mark on the page can never drift apart.
 import {
@@ -168,7 +168,7 @@ function CustomColorPicker({
 const INK_BARS = 9; // the design draws the density as nine bars
 // Metadata timestamps: day + month is enough for a note, and it localises without a date library.
 const fmtStamp = (unix: number, lang: string): string =>
-  new Date(unix * 1000).toLocaleDateString(lang === "ar" ? "ar" : "en", { day: "numeric", month: "long" });
+  uiDateTimeFormat(lang, { day: "numeric", month: "long" }).format(new Date(unix * 1000));
 
 export function ColorRow({ active, onPick }: { active?: string | null; onPick: (c: HighlightColor) => void }) {
   const hl = useHl();
@@ -330,12 +330,13 @@ function NoteEditorModal({
   note: NoteRow | undefined;
   onColor: (c: HighlightColor) => void;
   onAlpha: (a: number) => void;
-  onSaveNote: (body: string, tagIds: string[]) => void;
+  onSaveNote: (body: string, tagIds: string[], title: string) => void; // RAWY-282: + title
   onRemove: () => void;
   onClose: () => void;
 }) {
   const { t, lang, dir } = useI18n();
   const [body, setBody] = useState(note?.body ?? "");
+  const [title, setTitle] = useState(note?.title ?? ""); // RAWY-282
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [alpha, setAlpha] = useState<number>(hi.alpha ?? DEFAULT_INK);
   // The design's quote is collapsible (`qClamp` / `quoteToggleLabel`) — compact by default, expandable when
@@ -344,6 +345,7 @@ function NoteEditorModal({
   const barsRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     setBody(note?.body ?? "");
+    setTitle(note?.title ?? ""); // RAWY-282: reset with the body, on the same note/highlight identity
     setAlpha(hi.alpha ?? DEFAULT_INK);
     if (note?.id) noteTagsFor(note.id).then((ts) => setTagIds(ts.map((x) => x.id))).catch(() => setTagIds([]));
     else setTagIds([]);
@@ -425,6 +427,19 @@ function NoteEditorModal({
             <span className="nec-eyebrow">{t("ne.myNote")}</span>
             <span className="nec-rule" />
           </div>
+          {/* RAWY-282: optional title, above the body and inside the same section, so the editor reads
+              "Title / Note" exactly as the panel's does. Single-line by design — a heading, not a
+              second body — and `dir={dir}` for the same reason the textarea uses it (RAWY-259: an empty
+              field under dir="auto" resolves LTR and puts the caret on the wrong side in an Arabic UI). */}
+          <input
+            className="nec-title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder={t("note.titlePlaceholder")}
+            aria-label={t("note.title")}
+            dir={dir}
+            maxLength={120}
+          />
           <textarea
             className="nec-note"
             value={body}
@@ -518,7 +533,7 @@ function NoteEditorModal({
           </div>
 
           <div className="nec-actions">
-            <button type="button" className="nec-save" onClick={() => onSaveNote(body, tagIds)}>{t("hl.save")}</button>
+            <button type="button" className="nec-save" onClick={() => onSaveNote(body, tagIds, title)}>{t("hl.save")}</button>
             <button type="button" className="nec-cancel" onClick={onClose}>{t("ne.cancel")}</button>
             <button type="button" className="nec-del" onClick={onRemove} aria-label={t("ne.delete")} title={t("ne.delete")}>🗑</button>
           </div>
@@ -635,13 +650,14 @@ export function AnnotationLayer({
   const changeColor = (c: HighlightColor) => {
     if (activeHi) store().setColor(activeHi.id, c);
   };
-  const saveNote = async (body: string, tagIds: string[]) => {
+  const saveNote = async (body: string, tagIds: string[], title = "") => {
     if (activeHi) {
       // Save the note first (it returns the row, so we have the note id), THEN set its tags.
       // RAWY-205: a TAG ALONE is enough — with tags but no body we still get a row back (an empty-body
       // anchor note), so the tag persists on a body-less highlight. Only when body AND tags are both
       // empty is there no note (and nothing to tag): the row goes and its links cascade away.
-      const saved = await store().saveNoteForHighlight(activeHi, body, tagIds.length > 0);
+      // RAWY-282: a TITLE alone is enough for the same reason — see `saveNoteForHighlight`.
+      const saved = await store().saveNoteForHighlight(activeHi, body, tagIds.length > 0, title);
       if (saved) await noteTagsSet(saved.id, tagIds);
     }
     setActive(null);

@@ -7,7 +7,8 @@
 
 import type { ReadingStyle } from "../../reader-engine/injectedCss";
 import { resolveSpotlight, resolvePill } from "../../reader-engine/ttsTrack";
-import { compositeOver, contrastIsReadable } from "../../lib/contrast";
+import { compositeOver, contrastIsReadable, effectivePaper } from "../../lib/contrast";
+import { currentDeskScrim, effectivePageOpacity, useBackground } from "../../lib/background"; // RAWY-265
 import { useI18n } from "../../i18n";
 
 // Calm terracotta-adjacent presets, per theme polarity (mirrors the text-colour presets' structure).
@@ -20,6 +21,9 @@ interface Props {
   dark: boolean; // the ACTIVE theme's polarity — drives which per-theme base + presets are shown
   paperBg: string; // the theme paper — the band composites over it for the contrast check
   themeInk: string; // the theme text ink — what the band must stay readable behind
+  // RAWY-265 (Phase 3): the DESK colour behind a translucent page. Passed rather than read from the
+  // DOM so the guard is a pure function of its inputs and testable headlessly.
+  deskBg: string;
 }
 
 // One effect's block: on/off toggle, a Default+presets+custom colour row, an opacity slider, and a
@@ -31,9 +35,16 @@ function EffectBlock({
   dark,
   paperBg,
   themeInk,
+  deskBg,
   hint,
 }: Props & { kind: "spotlight" | "karaoke"; hint?: string }) {
   const { t } = useI18n();
+  // RAWY-265 (Phase 3): read straight from the background store rather than adding two props. This
+  // component is rendered by BOTH settings surfaces (RAWY-200), and threading the same two values
+  // through both call sites is how the page mark and the editor preview drifted apart before
+  // `highlightInk.ts` existed. One source, no props to keep in step.
+  const pageOpacity = useBackground((s) => effectivePageOpacity(s));
+  const deskScrim = useBackground((s) => currentDeskScrim(s));
   const isSpot = kind === "spotlight";
   const on = isSpot ? style.ttsSpotlightOn : style.ttsKaraokeOn;
   const color = isSpot ? style.ttsSpotlightColor : style.ttsKaraokeColor;
@@ -51,7 +62,15 @@ function EffectBlock({
   // alpha-composite mis-reads it and false-warns on the shipping default (0.9). Warning on a value that
   // renders fine is its own small lie (RAWY-193), so we don't guard the pill. (Caught in RAWY-200 live
   // verification: the default karaoke opacity was tripping the warning.)
-  const composited = compositeOver(effColor, effOpacity, paperBg);
+  //
+  // RAWY-265 (Phase 3): the band composites over the PAPER, so once the paper can be translucent the
+  // guard has to composite over what the paper has actually become — paper-over-desk-over-image — or it
+  // is reporting a number about a surface that is not on screen (LESSONS: a guard must model how the
+  // pixel is ACTUALLY composited, or it lies). The image is per-pixel and unknowable, so
+  // `effectivePaper` returns the WORST of the two extremes: the guard errs toward warning, never toward
+  // silence. At full page opacity it returns `paperBg` unchanged and this line is exactly as it was.
+  const guardPaper = effectivePaper(paperBg, pageOpacity, deskBg, deskScrim, themeInk);
+  const composited = compositeOver(effColor, effOpacity, guardPaper);
   const readable = !isSpot || contrastIsReadable(themeInk, composited);
 
   const setOn = (v: boolean) => update(isSpot ? { ttsSpotlightOn: v } : { ttsKaraokeOn: v });

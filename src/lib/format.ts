@@ -1,27 +1,100 @@
-// Small formatting helpers. localeNum renders Western digits in Arabic-Indic when the UI
-// language is Arabic, so panel counts/percentages read natively (٤٢ قصيدة · ٩٪).
-const AR_DIGITS = ["٠", "١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩"];
+// ─────────────────────────────────────────────────────────────────────────────
+// THE UI NUMBERING POLICY (RAWY-261) — this file owns it, and nothing else does.
+//
+// Every number Sard's own INTERFACE generates renders in WESTERN (Latin) digits 0–9, in every
+// UI language, Arabic included. The Arabic UI stays fully Arabic — only the DIGITS are Latin:
+//   «الفصل 1023»   not  «الفصل ١٠٢٣»
+//   «3 من 18»       not  «٣ من ١٨»
+//
+// SCOPE — Sard's UI ONLY. It NEVER touches EPUB/PDF content. Book text (paragraphs, the book's
+// own chapter titles, footnotes, quotes, OCR, imported HTML) is rendered by foliate/PDF.js
+// straight from the author's document and never passes through this file, so an author who
+// wrote ١٢٣٤٥ still reads ١٢٣٤٥. The one place the two meet is a TOC row: the row's BADGE
+// number is ours (formatted here → Latin), the row's LABEL is the book's string (rendered
+// verbatim → untouched). Book-provided labels only ever travel the READ-ONLY direction below
+// (toWesternDigits / extractChapterNumber), which parses them and never rewrites what is shown.
+//
+// HOW IT PROPAGATES — a component inherits the policy automatically by doing any of:
+//   • localeNum(n, lang)                — a number → its UI string
+//   • localeDigits(s, lang)             — an already-composed string ("1.35", "42%", "160px")
+//   • uiDateTimeFormat / uiRelativeTimeFormat / uiLocale — dates, times, relative times
+//   • t("key", { n })                   — i18n interpolation is String(n): Latin by construction
+// A future component that does none of these still renders Latin digits, because that is what
+// JavaScript's own number→string conversion produces. Arabic-Indic digits can now only appear
+// in the UI by someone deliberately reintroducing a substitution table — there is none left.
+// ─────────────────────────────────────────────────────────────────────────────
 
+// The Unicode numbering system every UI formatter is pinned to. Stated EXPLICITLY rather than
+// left to the locale default: CLDR's default numbering system for `ar` has changed across ICU
+// versions (older ICU resolves `ar` → `arab`), and Sard runs on whatever ICU the installed
+// WebView2 ships. `-u-nu-latn` makes the result identical on every engine and every version.
+export const UI_NUMBERING_SYSTEM = "latn";
+
+/** The BCP-47 locale every UI-facing Intl formatter must be built with. Arabic keeps its Arabic
+ *  month names, weekdays, plural rules and word order — only the digits are pinned to Latin. */
+export function uiLocale(lang: string): string {
+  return lang === "ar" ? `ar-u-nu-${UI_NUMBERING_SYSTEM}` : "en";
+}
+
+// Intl formatter construction is the expensive part, so each distinct shape is built once.
+const integerFormats = new Map<string, Intl.NumberFormat>();
+
+function integerFormat(lang: string): Intl.NumberFormat {
+  const locale = uiLocale(lang);
+  let f = integerFormats.get(locale);
+  if (!f) {
+    // useGrouping:false — a chapter number is "1023", never "1,023"; this also keeps every
+    // existing readout byte-identical to the String(n) it replaced, apart from the digits.
+    f = new Intl.NumberFormat(locale, { useGrouping: false, maximumFractionDigits: 0 });
+    integerFormats.set(locale, f);
+  }
+  return f;
+}
+
+/** A UI-generated integer → its display string (counts, percentages, chapter numbers). */
 export function localeNum(n: number, lang: string): string {
-  const s = String(Math.round(n));
-  return lang === "ar" ? s.replace(/\d/g, (d) => AR_DIGITS[Number(d)]) : s;
+  const v = Math.round(n);
+  return integerFormat(lang).format(v === 0 ? 0 : v); // v===0 folds -0, which Intl prints as "-0"
 }
 
-// RAWY-65: remap the digits WITHIN an already-formatted string ("1.35", "42%", "160px" — any
-// decimal places, units, or separators the caller already produced) — unlike localeNum, this
-// never rounds, so it's the right helper wherever the display isn't a bare integer.
-export function localeDigits(s: string, lang: string): string {
-  return lang === "ar" ? s.replace(/\d/g, (d) => AR_DIGITS[Number(d)]) : s;
+/** A string the caller already composed ("1.35", "42%", "160px" — any decimals, units or
+ *  separators) → the same string under the UI numbering policy. Unlike localeNum it never
+ *  rounds, so it is the right helper wherever the display isn't a bare integer. Callers build
+ *  these from JS numbers, which are already Latin, so this is normally an identity; it stays
+ *  the named seam so the policy holds even if a caller is fed digits from elsewhere.
+ *  Pass only UI-generated text here — never a book-provided string. */
+export function localeDigits(s: string, _lang?: string): string {
+  return toWesternDigits(s);
 }
 
-// RAWY-67: the reverse direction — Arabic-Indic digits IN a book-provided string back to Western,
-// so a TOC label ("الفصل ١٠٢٢") can be parsed the same way as one already using Western digits
+/** A UI date/time formatter. Use INSTEAD OF `new Intl.DateTimeFormat(...)` so the numbering
+ *  policy can never be bypassed; pass whatever options the surface needs. */
+export function uiDateTimeFormat(lang: string, options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat(uiLocale(lang), options);
+}
+
+/** A UI relative-time formatter ("قبل 5 أيام"). Same rule as uiDateTimeFormat. */
+export function uiRelativeTimeFormat(lang: string, options: Intl.RelativeTimeFormatOptions): Intl.RelativeTimeFormat {
+  return new Intl.RelativeTimeFormat(uiLocale(lang), options);
+}
+
+// ── READ-ONLY direction: parsing what the BOOK wrote ─────────────────────────
+// RAWY-67: Arabic-Indic digits IN a book-provided string → Western, so a TOC label
+// ("الفصل ١٠٢٢") can be parsed the same way as one already using Western digits
 // ("Chapter 1022"). Only touches digit glyphs; everything else in the string is untouched.
+// This NEVER rewrites displayed book text — its callers use the result to compare/extract only.
+const AR_DIGITS = ["٠", "١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩"];
 const AR_TO_WESTERN: Record<string, string> = Object.fromEntries(AR_DIGITS.map((d, i) => [d, String(i)]));
 export function toWesternDigits(s: string): string {
   return s.replace(/[٠-٩]/g, (d) => AR_TO_WESTERN[d]);
 }
 
+// Extract the book's OWN chapter number from its TOC label ("الفصل 1022: عنوان" -> 1022,
+// "Chapter 1022" -> 1022) — the first run of digits, Western or Arabic-Indic. Never fabricates:
+// returns null if the label has no digits at all (e.g. "Prologue"/"المقدمة"), so callers can fall
+// back honestly instead of inventing a number the book doesn't provide. The returned NUMBER is
+// then re-rendered by localeNum, which is why a TOC badge reads 1023 even when the book's own
+// label says ١٠٢٣ — the badge is Sard's, the label beside it stays the author's.
 // RAWY-287 — a strict Roman numeral, anchored and well-formed. `[MDCLXVI]+` alone would accept
 // "MIX", "DID" and other real words, so the ordering rules are enforced rather than the alphabet.
 const ROMAN = /^(?=[MDCLXVI]+$)M{0,3}(?:CM|CD|D?C{0,3})(?:XC|XL|L?X{0,3})(?:IX|IV|V?I{0,3})$/i;

@@ -87,6 +87,37 @@ export const fontsList = (): Promise<CustomFont[]> => invoke<CustomFont[]>("font
 /** Remove an imported font (row + managed file). */
 export const fontRemove = (id: string): Promise<boolean> => invoke<boolean>("font_remove", { id });
 
+// ---- Backgrounds (RAWY-265): managed user background images. ----
+// Mirrors `backgrounds::Background`. `derivative_path` is null for the overwhelming majority of
+// images and means "render the original" — nothing was resampled. See `lib/background.ts` for which
+// of the two paths is actually loaded, and src-tauri/src/backgrounds/mod.rs for why a derivative
+// exists at all (render ceiling + EXIF baking), always losslessly.
+export interface BackgroundRow {
+  id: string;
+  original_path: string;
+  derivative_path: string | null;
+  source_name: string | null;
+  width: number;
+  height: number;
+  /** 0..1 mean relative luminance, sampled at import — drives the "arrive correct" first paint. */
+  mean_luma: number | null;
+  added_at: number;
+}
+
+/** Import an image AND bind it to a surface, atomically. Rejects with a `bg.err.*` code the UI
+ *  localises. NOT two calls: a bare import leaves the row unreferenced, and the GC that runs on any
+ *  surface bind would collect the image the user just chose (verified in `tests/backgrounds.rs`). */
+export const backgroundChoose = (surface: "library" | "reading", path: string): Promise<BackgroundRow> =>
+  invoke<BackgroundRow>("background_choose", { surface, path });
+
+export const backgroundsList = (): Promise<BackgroundRow[]> =>
+  invoke<BackgroundRow[]>("backgrounds_list");
+
+/** Bind a surface to a background id, or clear it with `null`. Orphan collection happens inside
+ *  this call (D31 — zero orphans is structural, not a follow-up the caller must remember). */
+export const backgroundSetSurface = (surface: "library" | "reading", id: string | null): Promise<boolean> =>
+  invoke<boolean>("background_set_surface", { surface, id });
+
 // ---- Bookmarks (RAWY-41): a saved CFI location, toggled at the current spot. ----
 export interface BookmarkRow {
   id: string;
@@ -294,6 +325,8 @@ export interface NoteRow {
   chapter_label: string | null;
   created_at: number | null;
   updated_at: number | null;
+  /** RAWY-282: optional heading, independent of `body`. `null` = no title (every pre-migration note). */
+  title: string | null;
 }
 
 export const highlightsForBook = (bookId: string): Promise<HighlightRow[]> =>
@@ -316,7 +349,27 @@ export interface AnnoItem {
   created_at: number | null;
   note_id: string | null; // RAWY-203: the underlying note's id (null for a note-less highlight)
   tags: string[]; // RAWY-203: the note's tag names (empty when untagged / no note)
+  note_title: string | null; // RAWY-282: the attached note's title (null when untitled / no note)
 }
+
+/**
+ * RAWY-282 — the SINGLE definition of "this row is a note", used by every surface that splits the two
+ * collections (the reader's Annotations panel and the library Inbox). Defined here, beside `AnnoItem`,
+ * so the two lists can never drift into disagreeing about what an item is.
+ *
+ * `kind` alone is not the answer, and that was the bug: `annotations_all` folds a highlight's note INTO
+ * the highlight row (its note branch is `highlight_id IS NULL`), so a highlighted passage that carries a
+ * note arrives as `kind: "highlight"` WITH a body. Classifying on `kind` therefore listed that one
+ * passage twice — once under Highlights and once under Notes.
+ *
+ * A row is a note if it IS a standalone note, or if it carries note content — body or title. Content,
+ * not the mere existence of a note row: a highlight can own an empty-body note that exists only to hold
+ * tags (RAWY-205), and that highlight must stay in Highlights rather than fall out of both lists.
+ * `annoIsHighlight` is its exact complement, so the two collections are complementary and total.
+ */
+export const annoIsNote = (it: AnnoItem): boolean =>
+  it.kind === "note" || (it.note ?? "").trim() !== "" || (it.note_title ?? "").trim() !== "";
+export const annoIsHighlight = (it: AnnoItem): boolean => it.kind === "highlight" && !annoIsNote(it);
 
 /** Every highlight + standalone note across all books, newest first. */
 export const annotationsAll = (): Promise<AnnoItem[]> => invoke<AnnoItem[]>("annotations_all");
@@ -363,6 +416,8 @@ export const noteCreate = (args: {
   color?: string | null;
   body: string;
   chapterLabel?: string | null;
+  /** RAWY-282. Omitted = untitled, which is what every existing caller means. */
+  title?: string | null;
 }): Promise<NoteRow | null> =>
   invoke<NoteRow | null>("note_create", {
     bookId: args.bookId,
@@ -371,10 +426,18 @@ export const noteCreate = (args: {
     color: args.color ?? null,
     body: args.body,
     chapterLabel: args.chapterLabel ?? null,
+    title: args.title ?? null,
   });
 
-export const noteUpdate = (id: string, body: string, color?: string | null): Promise<NoteRow | null> =>
-  invoke<NoteRow | null>("note_update", { id, body, color: color ?? null });
+/** RAWY-282: `title` is written unconditionally (see `note_update` in Rust) — passing `null` CLEARS it,
+ *  which is the only way an erased title can actually be erased. `color` still means "leave it alone". */
+export const noteUpdate = (
+  id: string,
+  body: string,
+  color?: string | null,
+  title?: string | null,
+): Promise<NoteRow | null> =>
+  invoke<NoteRow | null>("note_update", { id, body, color: color ?? null, title: title ?? null });
 
 export const noteDelete = (id: string): Promise<boolean> =>
   invoke<boolean>("note_delete", { id });

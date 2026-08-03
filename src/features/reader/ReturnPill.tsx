@@ -6,9 +6,11 @@ import { releaseButtonFocusAfterPointerClick } from "../../lib/tts";
 // explicit: RETURN (go back to the frozen position) and × (dismiss = "I am reading here now", which THAWS
 // the freeze). The freeze is never invisible — that is the whole point of showing it.
 //
-// VISUAL VOCABULARY (D19): this deliberately reuses Sard's OWN pill language — the same surface, border,
-// radius, blur and motion as `.tts-pill` / the chapter-end + Edge-error prompts (see global.css). Nothing is
-// imported from the reference image; that was a BEHAVIOUR reference, not a visual one.
+// VISUAL VOCABULARY: the SKIN comes from `docs/design/Sard Return Button.html` — the single source of truth
+// for the appearance (see the `.return-pill` block in global.css for the anatomy and the per-theme tokens).
+// It is still built entirely from parts Sard already owns: the accent fill and 7px corner of the dialog
+// primary action, the 1px toolbar divider, the UI font at the panel-label weight. NOTHING about the
+// behaviour changed with it — same two actions, same callbacks, same show/hide, no dwell timer.
 //
 // PLACEMENT: TOP of the reader, deliberately far from the read-aloud pill at the bottom, so both can show at
 // once without crowding. Like `.tts-pill` it is `position: fixed` — a pure overlay with ZERO layout impact —
@@ -38,8 +40,9 @@ export function ReturnPill({
   onDismiss: () => void;
 }) {
   const { t, dir } = useI18n();
-  // The arrow points "back along the reading direction": ‹ in LTR, › in RTL. Chosen, never transformed.
-  const arrow = dir === "rtl" ? "›" : "‹";
+  // The arrow points "back along the reading direction": left in LTR, right in RTL. The PATH is chosen, never
+  // transformed — so it can never be a double-mirror (the RAWY-194 transport scar).
+  const arrow = dir === "rtl" ? "M9 5l7 7-7 7" : "M15 5l-7 7 7 7";
   return (
     <div
       className={`return-pill${chromeShown ? " below-chrome" : ""}`}
@@ -48,7 +51,9 @@ export function ReturnPill({
       onClickCapture={releaseButtonFocusAfterPointerClick}
     >
       <button className="return-pill-main" onClick={onReturn} title={t("anchor.returnAria")} aria-label={t("anchor.returnAria")}>
-        <span className="return-pill-arrow" aria-hidden="true">{arrow}</span>
+        <span className="return-pill-arrow" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d={arrow} /></svg>
+        </span>
         <span className="return-pill-text">
           <span className="return-pill-lead">{t("anchor.return")}</span>
           {label && <span className="return-pill-chapter" dir="auto">{label}</span>}

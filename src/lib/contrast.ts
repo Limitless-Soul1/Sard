@@ -31,6 +31,49 @@ export function compositeOver(fg: string, alpha: number, bg: string): string {
   return `#${hex(mix(0))}${hex(mix(1))}${hex(mix(2))}`;
 }
 
+// RAWY-265 (Phase 3): THE EFFECTIVE PAPER — what a contrast guard must model once the page can be
+// translucent.
+//
+// With page opacity below 1 the reading paper is no longer the ground; the ground is
+//     paper·αp  +  (1−αp)·( desk·αs + (1−αs)·image )
+// and `image` is per-pixel and unknowable. Per invariant I-7 a guard that cannot be exact must be
+// CONSERVATIVE, never optimistic: both image extremes are evaluated and the one that lands CLOSEST to
+// `against` — i.e. the hardest to read — is returned. A guard built on an average would under-warn on
+// exactly the images that need warning about.
+//
+// At αp >= 1 this returns `paper` UNCHANGED, by an early return rather than by arithmetic that happens
+// to be identity. That is what keeps every guard byte-identical at 100% page opacity.
+export function effectivePaper(
+  paper: string,
+  pageAlpha: number,
+  desk: string,
+  scrimAlpha: number,
+  against: string,
+): string {
+  if (!(pageAlpha < 1)) return paper; // 100% opaque, or an unusable value → today's behaviour exactly
+  const p = parseColor(paper);
+  const d = parseColor(desk);
+  if (!p || !d) return paper;
+  const a = Math.max(0, Math.min(1, pageAlpha));
+  const s = Math.max(0, Math.min(1, scrimAlpha));
+  const hex = (n: number) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, "0");
+  let worst = paper;
+  let worstRatio = Infinity;
+  for (const img of [[0, 0, 0], [255, 255, 255]]) {
+    const ground = p.map((v, i) => {
+      const deskPx = d[i] * s + img[i] * (1 - s);
+      return v * a + deskPx * (1 - a);
+    });
+    const c = `#${hex(ground[0])}${hex(ground[1])}${hex(ground[2])}`;
+    const r = contrastRatio(against, c);
+    if (r < worstRatio) {
+      worstRatio = r;
+      worst = c;
+    }
+  }
+  return worst;
+}
+
 function relLuminance([r, g, b]: [number, number, number]): number {
   const f = (v: number) => {
     const s = v / 255;

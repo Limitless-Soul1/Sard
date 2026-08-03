@@ -11,8 +11,8 @@ import { useShallow } from "zustand/react/shallow";
 
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
-import { TTS_EMPTY, TTS_MAX_RETRIES, TTS_MAX_SPEED, TTS_MIN_SPEED, TTS_SPEED_STEP, releaseButtonFocusAfterPointerClick, skipSentenceForArrow, toggleTtsPlayback, ttsStats, useTts, voiceLabel } from "../../lib/tts";
-import { TtsMini } from "./TtsMini";
+import { TTS_EMPTY, TTS_MAX_RETRIES, TTS_SPEEDS, releaseButtonFocusAfterPointerClick, skipSentenceForArrow, toggleTtsPlayback, ttsStats, useTts, voiceLabel } from "../../lib/tts";
+import { NEXT_CHEVRON, TtsMini } from "./TtsMini";
 import { TtsVoicePicker } from "./TtsVoicePicker";
 
 const CHEV_UP = "m6 14 6-6 6 6";
@@ -116,9 +116,13 @@ export function TtsPlayer({
   const busy = preparing || downloading;
   const dlPct = Math.round(progress * 100);
   const trackPct = downloading ? progress * 100 : total > 1 ? (index / (total - 1)) * 100 : 0;
+  // RAWY-281: cycle the explicit speed LIST rather than adding a fixed step. Same gesture, same
+  // wrap-at-the-end behaviour, same order — it simply has one more stop (1.10x). `indexOf` cannot miss:
+  // `setSpeed` and the restore path both snap through `nearestSpeed`, so `speed` is always a member;
+  // the `< 0` guard is there so a hand-edited setting degrades to the first speed instead of NaN.
   const cycleSpeed = () => {
-    const next = speed + TTS_SPEED_STEP;
-    setSpeed(next > TTS_MAX_SPEED ? TTS_MIN_SPEED : next);
+    const i = TTS_SPEEDS.indexOf(speed as (typeof TTS_SPEEDS)[number]);
+    setSpeed(TTS_SPEEDS[i < 0 ? 0 : (i + 1) % TTS_SPEEDS.length]);
   };
   const volPct = Math.round(volume * 100); // RAWY-180 (Part A): inline volume slider 0–100%
   const sub =
@@ -186,9 +190,11 @@ export function TtsPlayer({
             <span className="tts-end-msg">{hasNextChapter ? t("tts.chapterDone") : t("tts.bookEnd")}</span>
             <div className="tts-end-actions">
               {hasNextChapter && (
-                <button className="tts-end-next" onClick={() => onNextChapter?.()}>
-                  <span>{t("tts.nextChapter")}</span>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="m9 6 6 6-6 6" /></svg>
+                <button className="tts-end-next tts-next-plate" onClick={() => onNextChapter?.()}>
+                  <span className="tts-next-label">{t("tts.nextChapter")}</span>
+                  <span className="tts-next-cap" aria-hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round"><path d={NEXT_CHEVRON[dir]} /></svg>
+                  </span>
                 </button>
               )}
               <button className="tts-ghost tts-x" onClick={stop} aria-label={t("tts.close")} title={t("tts.close")}>

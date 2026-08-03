@@ -8,7 +8,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 
 import { useI18n } from "../../i18n";
-import { localeNum } from "../../lib/format";
+import { localeNum, uiDateTimeFormat } from "../../lib/format";
 import { THEMES, useTheme, type ThemeId } from "../../theme";
 import { photocardDelete, photocardsList, savePhotoCardFile, type PhotoCardRow } from "../../lib/ipc";
 import { PhotoComposer } from "./PhotoComposer";
@@ -79,7 +79,7 @@ const IconEdit = () => (
 
 function whenLabel(sec: number, lang: string): string {
   try {
-    return new Intl.DateTimeFormat(lang === "ar" ? "ar" : "en", {
+    return uiDateTimeFormat(lang, {
       day: "numeric",
       month: "short",
       year: "numeric",

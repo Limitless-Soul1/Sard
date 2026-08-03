@@ -33,6 +33,13 @@ import { useState } from "react";
 import { useI18n } from "../../i18n";
 import { releaseButtonFocusAfterPointerClick, useTts } from "../../lib/tts";
 
+// The "next chapter" chevron in the 3c inked cap, shared with the full pill (TtsPlayer imports it from
+// here — the direction the module graph already runs). It points the way READING ADVANCES: left in Arabic,
+// right in English. The path is CHOSEN by direction, never mirrored by a transform (the RAWY-194
+// double-mirror scar). The cap needs no such rule — it is the last child, so the flex row already lands it
+// on the leading side in both directions, exactly as the concept sheet draws it.
+export const NEXT_CHEVRON = { rtl: "m15 6-6 6 6 6", ltr: "m9 6 6 6-6 6" } as const;
+
 export function TtsMini({
   onExpand,
   panelLeft = false,
@@ -138,9 +145,11 @@ export function TtsMini({
            `tts.nextChapter` key + `.tts-end-next` tokens), replacing the now-meaningless progress stroke,
            so the kashida is never a dead end. Its own `dir` keeps text+chevron correct inside the kashida's
            forced-ltr layout. */
-        <button className="tts-end-next tts-kash-next" dir={dir} onClick={onContinue}>
-          <span>{t("tts.nextChapter")}</span>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="m9 6 6 6-6 6" /></svg>
+        <button className="tts-end-next tts-next-plate tts-kash-next" dir={dir} onClick={onContinue}>
+          <span className="tts-next-label">{t("tts.nextChapter")}</span>
+          <span className="tts-next-cap" aria-hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round"><path d={NEXT_CHEVRON[dir]} /></svg>
+          </span>
         </button>
       ) : (
         <>

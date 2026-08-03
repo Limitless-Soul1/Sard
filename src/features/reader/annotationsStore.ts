@@ -48,9 +48,11 @@ interface AnnoState {
   // RAWY-203: returns the saved note (so the caller can attach tags), or null when the body was empty
   // (which deletes/skips the note — nothing to tag).
   // RAWY-205: `keepForTags` keeps an EMPTY-body note alive as a pure tag anchor (see the impl).
-  saveNoteForHighlight: (hi: HighlightRow, body: string, keepForTags?: boolean) => Promise<NoteRow | null>;
-  addMarginNote: (cfi: string, color: HighlightColor, body: string, chapterLabel: string | null) => Promise<NoteRow | null>;
-  updateNote: (id: string, body: string, color?: string | null) => Promise<void>;
+  // RAWY-282: `title` is optional everywhere. Omitting it means "untitled", which is what every caller
+  // written before this ticket means, so no call site had to change to keep working.
+  saveNoteForHighlight: (hi: HighlightRow, body: string, keepForTags?: boolean, title?: string) => Promise<NoteRow | null>;
+  addMarginNote: (cfi: string, color: HighlightColor, body: string, chapterLabel: string | null, title?: string) => Promise<NoteRow | null>;
+  updateNote: (id: string, body: string, color?: string | null, title?: string) => Promise<void>;
   deleteNote: (id: string) => Promise<void>;
 }
 
@@ -72,7 +74,13 @@ export const useAnnotations = create<AnnoState>((set, get) => ({
     set({ highlights, notes });
     // RAWY-259: carry each mark's saved ink density through, so a reopened book renders the densities the
     // reader set rather than falling back to the theme default until the highlight is next edited.
-    await ctrl?.loadHighlights(highlights.map((h) => ({ cfi: h.cfi, color: h.color, alpha: h.alpha })));
+    // RAWY-283: the STORE keeps newest-first (that is what both lists render), but the OVERLAY is fed a
+    // chronologically ascending COPY. `loadHighlights` calls `addAnnotation` once per item in array
+    // order, so array order is paint order: handing it the reversed list would change which of two
+    // OVERLAPPING marks ends up on top. Sorting a copy keeps the drawn page byte-identical to before
+    // while the panel gets the ordering the reader asked for. `slice()` so the store array is untouched.
+    const chronological = highlights.slice().sort((a, b) => (a.created_at ?? 0) - (b.created_at ?? 0));
+    await ctrl?.loadHighlights(chronological.map((h) => ({ cfi: h.cfi, color: h.color, alpha: h.alpha })));
   },
 
   highlightByCfi: (cfi) => get().highlights.find((h) => h.cfi === cfi),
@@ -175,12 +183,15 @@ export const useAnnotations = create<AnnoState>((set, get) => ({
   // An anchor note is not a note the user wrote: it is hidden from the reader's Notes tab + count, and it
   // never surfaces in the Inbox (annotations_all folds a highlight's note into the highlight row, and its
   // note branch is `highlight_id IS NULL`).
-  saveNoteForHighlight: async (hi, rawBody, keepForTags = false) => {
+  saveNoteForHighlight: async (hi, rawBody, keepForTags = false, rawTitle = "") => {
     const { bookId } = get();
     if (!bookId) return null;
     const body = rawBody.trim();
+    // RAWY-282: a TITLE alone keeps the note alive, exactly as RAWY-205 made a TAG alone keep it alive.
+    // Without this, typing only a title and saving would delete the note the reader just wrote.
+    const title = rawTitle.trim();
     const existing = get().notes.find((n) => n.highlight_id === hi.id);
-    if (!body && !keepForTags) {
+    if (!body && !title && !keepForTags) {
       if (existing) {
         // Apply-on-success: only drop it from the panel if the DB delete resolves.
         try {
@@ -192,27 +203,34 @@ export const useAnnotations = create<AnnoState>((set, get) => ({
       }
       return null;
     }
-    const note = await noteCreate({ bookId, highlightId: hi.id, color: hi.color, body, chapterLabel: hi.chapter_label });
+    const note = await noteCreate({ bookId, highlightId: hi.id, color: hi.color, body, chapterLabel: hi.chapter_label, title: title || null });
     if (note) set({ notes: upsert(get().notes, note) });
     return note ?? null;
   },
 
   // A standalone "margin" note at a location (no highlight) — the affordance deferred from RAWY-20.
-  addMarginNote: async (cfi, color, body, chapterLabel) => {
+  addMarginNote: async (cfi, color, body, chapterLabel, rawTitle = "") => {
     const { bookId } = get();
-    if (!bookId || !body.trim()) return null;
-    const note = await noteCreate({ bookId, cfi, color, body: body.trim(), chapterLabel });
+    const title = rawTitle.trim();
+    // RAWY-282: a title alone is a note worth keeping — see `saveNoteForHighlight`.
+    if (!bookId || (!body.trim() && !title)) return null;
+    const note = await noteCreate({ bookId, cfi, color, body: body.trim(), chapterLabel, title: title || null });
     if (note) set({ notes: upsert(get().notes, note) });
     return note;
   },
 
-  updateNote: async (id, body, color) => {
+  updateNote: async (id, body, color, rawTitle = "") => {
     const trimmed = body.trim();
-    if (!trimmed) {
+    const title = rawTitle.trim();
+    // RAWY-282: deletion now requires BOTH fields empty. Previously an empty body deleted the note; with
+    // titles that would silently destroy a note the reader had reduced to a heading.
+    if (!trimmed && !title) {
       await get().deleteNote(id);
       return;
     }
-    const updated = await noteUpdate(id, trimmed, color ?? null);
+    // `title || null` so an erased title is stored as NULL (absent), not as "" — the list branches on
+    // absence to decide whether to render the title line at all.
+    const updated = await noteUpdate(id, trimmed, color ?? null, title || null);
     if (updated) set({ notes: upsert(get().notes, updated) });
   },
 

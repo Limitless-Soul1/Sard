@@ -16,6 +16,8 @@ import { Hoopoe } from "../library/Hoopoe";
 import { settingsGet, settingsSet } from "../../lib/ipc";
 import { runUpdateCheck, type UpdResult } from "../../lib/updater";
 import { FONT_CATALOGUE, UI_SCALE_MAX, UI_SCALE_MIN, useFonts } from "../../lib/fonts";
+// RAWY-265: the Library background surface (measured constants + the apply layer live in the module).
+import { BG_BLUR_MAX, BG_PRESENCE_MAX, bgSrcUrl, useBackground } from "../../lib/background";
 import { BOOKMARK_COLORS, BOOKMARK_SHAPES, BOOKMARK_SIZE_MAX, BOOKMARK_SIZE_MIN, useBookmarkStyle } from "../../lib/bookmarkStyle";
 import { BookmarkShape } from "../reader/BookmarkShape";
 import { READ_MARKERS, useReadMarkerStyle } from "../../lib/readMarkerStyle"; // RAWY-256
@@ -160,8 +162,184 @@ function AppearanceSection() {
         </div>
       </div>
 
+      <LibraryBackgroundSection />
+
       <div className="gs-note">{t("gs.appearance.fontsMoved")}</div>
     </>
+  );
+}
+
+// ---- RAWY-265: the Library background ----
+//
+// PROGRESSIVE DISCLOSURE, and it is load-bearing rather than cosmetic. The settings inventory already
+// records that this app is at its practical control ceiling (33 settings; the in-book tab strip
+// wraps at five tabs and cannot be fixed by shortening labels — RAWY-217 measured that). A feature
+// that added six permanent rows would make that worse for every user, including the ones who never
+// want a background. So with no image chosen this contributes ONE row; the controls only exist once
+// there is something for them to control.
+function LibraryBackgroundSection() {
+  const { t, lang } = useI18n();
+  const themeId = useTheme((s) => s.themeId);
+  const theme = THEMES[themeId];
+  const { enabled, library, libraryParams, setEnabled, setParams, choose, clear, resetParams } = useBackground();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const pick = async () => {
+    setError(null);
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const picked = await open({
+      multiple: false,
+      filters: [{ name: "Image", extensions: ["jpg", "jpeg", "png", "webp"] }],
+    });
+    if (typeof picked !== "string") return;
+    setBusy(true);
+    try {
+      await choose("library", picked, theme.colors.paperBg);
+    } catch (e) {
+      // Rust returns a stable `bg.err.*` CODE, not a sentence, so the message is localised here and
+      // stays inside the i18n system (both locales, parity enforced). An unmapped code falls back to
+      // showing itself rather than an empty toast.
+      const code = String(e);
+      const known = code.startsWith("bg.err.");
+      setError(known ? t(code as TKey) : code);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="gs-sec">
+      <Label hint={t("gs.bgHint")}>{t("gs.bg")}</Label>
+
+      {!library ? (
+        <>
+          {/* RAWY-278: the button states the REAL in-flight state rather than only greying out. */}
+          <button className="gs-addfont" disabled={busy} aria-busy={busy} onClick={pick}>
+            {busy && <span className="bg-ctl-spin" aria-hidden />}
+            {busy ? t("gs.bg.preparing") : t("gs.bg.choose")}
+          </button>
+          <div className="gs-note">{busy ? t("gs.bg.preparingHint") : t("gs.bg.formats")}</div>
+        </>
+      ) : (
+        <>
+          <div className="bg-ctl-row">
+            <span
+              className="bg-ctl-thumb"
+              style={{
+                backgroundImage: `url("${bgSrcUrl(library)}")`,
+                transform: `scaleX(${libraryParams.flip ? -1 : 1})`,
+              }}
+              aria-hidden
+            />
+            <span className="bg-ctl-name" dir="auto">{library.source_name ?? ""}</span>
+            <button className="bg-ctl-act" disabled={busy} aria-busy={busy} onClick={pick}>
+              {busy && <span className="bg-ctl-spin" aria-hidden />}
+              {busy ? t("gs.bg.preparing") : t("gs.bg.replace")}
+            </button>
+            <button
+              className="bg-ctl-act danger"
+              disabled={busy}
+              onClick={() => { setError(null); clear("library").catch((e) => setError(String(e))); }}
+            >
+              {t("gs.bg.remove")}
+            </button>
+          </div>
+
+          {/* RAWY-278. While busy: what Sard is doing to the file. Otherwise, ONLY when a derivative
+              genuinely exists: that a display copy is what renders. Gated on `derivative_path`
+              because for an under-ceiling image no copy was made and the note would be false — the
+              original itself is what renders (the "never recompress" guarantee, spec §7.2). */}
+          {busy && <div className="gs-note">{t("gs.bg.preparingHint")}</div>}
+          {!busy && library.derivative_path && (
+            <div className="gs-note">{t("gs.bg.displayCopy")}</div>
+          )}
+
+          <div className="gs-slider-head">
+            <span>{t("gs.bg.presence")}</span>
+            <span className="gs-slider-val">{localeDigits(String(libraryParams.presence), lang)}</span>
+          </div>
+          <input
+            className="gs-slider" type="range" min={0} max={BG_PRESENCE_MAX} step={1}
+            value={libraryParams.presence}
+            onChange={(e) => setParams("library", { presence: Number(e.target.value) })}
+          />
+          {/* RAWY-279: the library cap stays at 100 — measured, AA 4.5:1 for `--text` over any image
+              holds only down to an overlay of 0.77 (Slate binding), so there is no headroom here.
+              Only the READING surface's range was extended. */}
+          <div className="gs-note">{t("gs.bg.presenceHint")}</div>
+
+          <div className="gs-slider-head">
+            <span>{t("gs.bg.blur")}</span>
+            <span className="gs-slider-val">{localeDigits(String(libraryParams.blur), lang)}</span>
+          </div>
+          <input
+            className="gs-slider" type="range" min={0} max={BG_BLUR_MAX} step={1}
+            value={libraryParams.blur}
+            onChange={(e) => setParams("library", { blur: Number(e.target.value) })}
+          />
+
+          {/* The focal point. `cover` always crops; this is what decides which part survives — the
+              answer to "it cut off the face". A click on the preview sets the centre directly. */}
+          <Label>{t("gs.bg.focal")}</Label>
+          <button
+            className="bg-ctl-focal"
+            style={{
+              backgroundImage: `url("${bgSrcUrl(library)}")`,
+              backgroundPosition: `${libraryParams.focalX}% ${libraryParams.focalY}%`,
+            }}
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setParams("library", {
+                focalX: Math.round(((e.clientX - r.left) / r.width) * 100),
+                focalY: Math.round(((e.clientY - r.top) / r.height) * 100),
+              });
+            }}
+          >
+            <span
+              className="bg-ctl-focal-dot"
+              style={{ left: `${libraryParams.focalX}%`, top: `${libraryParams.focalY}%` }}
+            />
+          </button>
+          <div className="gs-note">{t("gs.bg.focalHint")}</div>
+
+          <BgToggle
+            label={t("gs.bg.flip")}
+            on={libraryParams.flip}
+            onToggle={() => setParams("library", { flip: !libraryParams.flip })}
+          />
+
+          {libraryParams.presence === 0 && <div className="gs-note">{t("gs.bg.hidden")}</div>}
+          <button className="bg-ctl-act" onClick={() => resetParams("library", theme.colors.paperBg)}>
+            {t("gs.bg.reset")}
+          </button>
+        </>
+      )}
+
+      {/* The app-wide master. Deliberately shown even with no image: it governs BOTH surfaces, and a
+          reader who needs backgrounds gone (a migraine, a presentation, battery) should not have to
+          dismantle their configuration to get there. Turning it off keeps every setting on disk. */}
+      <BgToggle label={t("gs.bg.show")} hint={t("gs.bg.showHint")} on={enabled} onToggle={() => setEnabled(!enabled)} />
+      {error && <div className="gs-note bg-ctl-err">{error}</div>}
+    </div>
+  );
+}
+
+// The house toggle idiom, reused verbatim from the reading drawer (`rs-toggle-row` / `rs-switch` /
+// `rs-knob`) rather than a parallel `gs-*` set. Those classes already carry the RAWY-90 direction pin
+// that makes the knob slide from the same edge in Arabic and English — a fresh toggle would have to
+// re-earn that, and would drift from the one users already know.
+function BgToggle({ label, hint, on, onToggle }: { label: string; hint?: string; on: boolean; onToggle: () => void }) {
+  return (
+    <button className="rs-toggle-row" onClick={onToggle} aria-pressed={on}>
+      <span className="rs-toggle-text">
+        <span className="rs-toggle-label">{label}</span>
+        {hint && <span className="rs-toggle-hint">{hint}</span>}
+      </span>
+      <span className={`rs-switch${on ? " on" : ""}`} aria-hidden>
+        <span className="rs-knob" />
+      </span>
+    </button>
   );
 }
 
@@ -419,10 +597,64 @@ function FontsSection() {
   );
 }
 
-// ---- Reading defaults (for NEW books): the global reading_style baseline ----
+// ---- Book styles: the style MODE (unified vs per-book) and — in per-book ONLY — the global
+//      reading_style baseline a NEW book starts from ----
+//
+// RAWY-284: the reading-APPEARANCE controls (line spacing + the read-aloud tracking group) used to be
+// rendered here unconditionally, and in UNIFIED scope that was a pure duplicate of controls the reader
+// already has in the open book: line spacing is the Typography tab's `type.lineSpacing`, and the
+// tracking group is the SAME `TtsTrackingControls` component the Read-aloud tab renders (RAWY-200 made
+// it shared precisely so the two surfaces could not drift). Under unified, `Reader.update` writes the
+// GLOBAL row (Reader.tsx — `if (unified) globalStyleRef.current = next` → `saveGlobalStyle`), i.e. the
+// very row this section edits. So the duplicate was not merely redundant, it was the WORSE of the two
+// copies: identical destination, no live preview.
+//
+// It survives in PER-BOOK scope because there it is NOT a duplicate. The reader then writes
+// `book_style:<id>` instead, and this global row is the baseline a not-yet-opened book starts from —
+// which is also why it is the one place in the app where "you cannot preview it" is inherent rather
+// than a defect: the book it describes is not open. The heading says exactly that.
+//
+// The controls are a SEPARATE COMPONENT rather than a `scope === "perbook" &&` around the JSX so that
+// under unified they are not mounted at all: no `settingsGet` IPC, no style state, and none of the four
+// `useBackground` subscriptions the two EffectBlocks take. Gating inside the component would have kept
+// all of them alive to render nothing.
 function ReadingDefaultsSection() {
-  const { t, lang } = useI18n();
+  const { t } = useI18n();
   const { scope, setScope } = useStyleScope();
+  return (
+    <>
+      <SecHead>{t("gs.reading")}</SecHead>
+
+      {/* RAWY-43: choose whether all books share one style (unified) or each keeps its own.
+          RAWY-271: Unified is listed FIRST because it is the default (styleScope.ts) — the old order
+          read as if Per-book were the primary option. Order only; the stored value is untouched.
+          RAWY-284: this block is deliberately unchanged — it is app-level, needs no preview, and is
+          the setting that decides what the rest of this section means. */}
+      <div className="gs-sec">
+        <Label>{t("gs.scope")}</Label>
+        <Seg<"unified" | "perbook">
+          value={scope}
+          onPick={(s) => setScope(s)}
+          options={[
+            { key: "unified", label: t("gs.scope.unified") },
+            { key: "perbook", label: t("gs.scope.perbook") },
+          ]}
+        />
+        <div className="gs-note">{scope === "unified" ? t("gs.scope.unifiedHint") : t("gs.scope.perbookHint")}</div>
+      </div>
+
+      {/* RAWY-284: no disabled/greyed leftovers under unified — the controls are GONE, replaced by
+          where they actually are. Says the panel name a reader can act on, not just "in the reader". */}
+      {scope === "perbook" ? <NewBookDefaults /> : <div className="gs-banner">▤ {t("gs.reading.inReader")}</div>}
+    </>
+  );
+}
+
+// RAWY-284: mounted ONLY in per-book scope (see the note above). Everything inside is byte-for-byte the
+// pre-RAWY-284 markup and the same `patch` funnel writing the same `reading_style` key — the ticket
+// changes WHERE these are shown, never what they store.
+function NewBookDefaults() {
+  const { t, lang } = useI18n();
   const { bookThemeId } = useTheme();
   // The tracking preview + contrast guard use the shared BOOK theme (D29) — the one a new book opens in
   // — so the swatches show the real per-theme terracotta and warn against the real paper. Theme choice
@@ -454,25 +686,16 @@ function ReadingDefaultsSection() {
     });
   };
 
-  if (!style) return <SecHead>{t("gs.reading")}</SecHead>;
+  // RAWY-284: null, not a bare heading — the parent already rendered the section head and the style
+  // MODE switch, so the panel is never a blank frame while this one `settingsGet` is in flight (UI
+  // Rules: no blank frames, no visible rebuilding). Before this split the whole panel was one heading.
+  if (!style) return null;
   return (
     <>
-      <SecHead>{t("gs.reading")}</SecHead>
+      {/* RAWY-284: the banner moved BELOW the mode switch so it scopes the group it describes. Under
+          unified it said "the baseline for new books" about a row that is every book's LIVE style —
+          true only in per-book, which is now the only scope that renders it. */}
       <div className="gs-banner">↻ {t("gs.readingBanner")}</div>
-
-      {/* RAWY-43: choose whether all books share one style (unified) or each keeps its own. */}
-      <div className="gs-sec">
-        <Label>{t("gs.scope")}</Label>
-        <Seg<"unified" | "perbook">
-          value={scope}
-          onPick={(s) => setScope(s)}
-          options={[
-            { key: "perbook", label: t("gs.scope.perbook") },
-            { key: "unified", label: t("gs.scope.unified") },
-          ]}
-        />
-        <div className="gs-note">{scope === "unified" ? t("gs.scope.unifiedHint") : t("gs.scope.perbookHint")}</div>
-      </div>
 
       {/* Book font, weight & size now live in the Fonts panel (RAWY-91); line spacing stays here. */}
       <div className="gs-sec">
@@ -494,6 +717,7 @@ function ReadingDefaultsSection() {
           dark={gTheme.dark}
           paperBg={gTheme.colors.paperBg}
           themeInk={gTheme.colors.text}
+          deskBg={gTheme.colors.surfaceBg}
         />
       </div>
     </>

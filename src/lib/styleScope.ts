@@ -32,8 +32,11 @@ export const useStyleScope = create<StyleScopeState>((set) => ({
 }));
 
 /** Load the persisted scope. Call once at startup. RAWY-180: an explicit stored "perbook" is honoured;
- *  anything else (including no stored value) uses the UNIFIED default. */
+ *  anything else (including no stored value) uses the UNIFIED default. RAWY-271: the fallback now reads
+ *  `DEFAULT` instead of repeating the literal, so the default lives in exactly ONE place. The upgrade
+ *  contract is unchanged and is what makes this safe: `style_scope` is written ONLY by `setScope`, so a
+ *  row exists only where the user chose, and an existing "perbook" choice still wins here. */
 export async function initStyleScope(): Promise<void> {
   const v = await settingsGet(KEY).catch(() => null);
-  useStyleScope.setState({ scope: v === "perbook" ? "perbook" : "unified" });
+  useStyleScope.setState({ scope: v === "perbook" ? "perbook" : DEFAULT });
 }

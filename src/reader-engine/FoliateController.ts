@@ -16,7 +16,6 @@ import {
   buildReadingCss,
   buildDynamicCss,
   buildFontFaceCss, // RAWY-208: the @font-face sheet, isolated from the geometry sheet
-  REF_HIGHLIGHT_NAME, // RAWY-260: the Custom Highlight registry name for reference marks
   ALIGN_GATE_CLASS,
   BOOK_ALIGN_CLASS,
   FORCE_RTL_CLASS, // RAWY-253 (root A): the dir-correction marker class
@@ -41,6 +40,9 @@ import {
 // RAWY-260: the reference matching engine — folding + whole-phrase scanning, kept out of this file so the
 // rules stay testable and identical between the create path and the render path.
 import { foldChar, findPhraseHits, type RefLite } from "../lib/references";
+// RAWY-281: the reference twin rule's geometry resolver — shared with the settings panel, so the numbers
+// the reader adjusts and the numbers this file draws are one object.
+import { resolveRefRule, refRuleReach, refRuleBars } from "./refRule";
 
 // RAWY-140: the per-doc PAINT sheet marker. buildDynamicCss's ink/tashkīl/scrollbar rules live in a
 // <style data-sard-dyn> appended AFTER foliate's own sheet, so colour/tashkīl changes update it in
@@ -90,6 +92,11 @@ const TRACK_STYLE_KEYS: (keyof ReadingStyle)[] = [
   "ttsKaraokeColor",
   "ttsKaraokeOpacity",
 ];
+// RAWY-281: the reference twin-rule fields. Same shape as TRACK_STYLE_KEYS and for the same reason —
+// they touch neither the injected sheet nor the dynamic paint sheet, so a change is a pure overlayer
+// redraw with NO re-inject and NO reflow. That is what makes the settings panel update live: the reader
+// drags the slider, `applyStyle` sees only these keys move, and the pair repaints in place.
+const REF_STYLE_KEYS: (keyof ReadingStyle)[] = ["refRuleColor", "refRuleWeight", "refRuleOffset"];
 
 export interface RelocateInfo {
   cfi: string | null;
@@ -138,6 +145,33 @@ export interface SelectionInfo {
 export interface AnnotationHit {
   cfi: string;
   rect: AnchorRect;
+}
+
+/** What the overlayer actually stores for a mark. NOT `Range` — Sard hands `overlayer.add` the RAWY-258
+ *  `wordRectRange` proxy on the normal draw path, and foliate's own fallback `draw` hands it a real Range.
+ *  `getClientRects()` is the only thing BOTH provide, so it is the only thing this type promises: typing
+ *  this as `Range` is what let `getBoundingClientRect()` past the compiler and into a runtime TypeError. */
+type MarkGeometry = { getClientRects: () => ArrayLike<DOMRect> };
+
+/** Anything rect-shaped. `rectInParent` only reads these six numbers, and the union below produces a plain
+ *  object rather than a real DOMRect, so the parameter is structural instead of `DOMRect`. */
+type RectLike = { left: number; top: number; right: number; bottom: number; width: number; height: number };
+
+/** The union of a mark's painted rects — its bounding box, computed from the ONE accessor every mark
+ *  geometry supports. Zero-area rects are skipped (a collapsed range contributes nothing); null when the
+ *  mark paints nothing at all, so a caller reports "no anchor" honestly instead of an infinite box. */
+function unionRect(rects: ArrayLike<DOMRect>): RectLike | null {
+  let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+  for (let i = 0; i < rects.length; i++) {
+    const r = rects[i];
+    if (!(r.width > 0) || !(r.height > 0)) continue;
+    if (r.left < left) left = r.left;
+    if (r.top < top) top = r.top;
+    if (r.right > right) right = r.right;
+    if (r.bottom > bottom) bottom = r.bottom;
+  }
+  if (left === Infinity) return null;
+  return { left, top, right, bottom, width: right - left, height: bottom - top };
 }
 
 // Fallback highlight palette (used if a theme somehow lacks a slot — matches the design).
@@ -438,6 +472,155 @@ function drawReadingPill(rects: Iterable<DOMRect>, options: { dark?: boolean; st
   }
   return g;
 }
+
+// RAWY-281 — THE REFERENCE TWIN RULE (docs/design/Sard Reference Twin Rule (standalone).html, variation
+// 6a "Equal pair", the file's own recommendation).
+//
+// WHY THIS IS SVG AND NOT CSS. RAWY-260 drew the reference mark with the CSS Custom Highlight API, whose
+// styleable properties are text-only — there is no rounded cap, no second stroke and no controllable gap
+// anywhere in that set. The design is explicit that those three things are the point: "a browser's
+// `underline double` gives you two hairlines of identical weight, square ends, a fixed sub-pixel gap you
+// cannot control … Every variation here is a pair of drawn strokes: rounded terminals, a gap set in em,
+// independent weights." So the mark moves to foliate's overlayer, which is the route RAWY-258 already
+// established for the highlight ink swatch and for the same non-negotiable reason: an SVG layer mutates
+// NOTHING in the book, so foliate's CFI child-step indices are untouched and every stored bookmark,
+// resume position, highlight and TTS range keeps resolving. Wrapping the phrase in a <span> — which is
+// what the design file's own markup does — is forbidden here (RAWY-229 / RAWY-227 / D49).
+//
+// THE OVERLAYER SITS ABOVE THE TEXT, AND UNLIKE THE HIGHLIGHT THAT COSTS NOTHING HERE. RAWY-258 needed
+// mix-blend-mode because its ink paints OVER the glyphs; the twin rule is drawn entirely BELOW the content
+// box, in the leading, where there is nothing to bury. So the design's "colour is the theme accent at
+// 100% — no opacity anywhere" is reproduced literally: no blend, no alpha, no compromise. That instruction
+// is the whole point of the redesign ("no opacity, which is what kept the old hairline invisible"), and it
+// is the one thing the old ground-resolved half-strength colour got wrong.
+//
+// The run geometry comes from RAWY-258's merged word strokes, which end at the last GLYPH rather than
+// running out to the line box — so "both the full width of the word" is exact, and "on wrap, each
+// fragment carries the full pair" holds by construction. That step, and the design's own arithmetic,
+// live in `refRuleRange` below; this function only paints what it is handed.
+// ⚠️ THE RECTS HANDED TO THIS DRAW ARE THE STROKES THEMSELVES, NOT THE TEXT. The geometry is computed in
+// `refRuleRange` below, one step earlier than every other draw in this file does it, and that is a
+// deliberate correctness choice rather than a stylistic one — see the note there. Here it means the draw
+// is a pure translation: one rounded <rect> per incoming rect, cap radius half its height.
+function drawRefRule(rects: Iterable<DOMRect>, options: { color?: string } = {}): SVGGElement {
+  const NS = "http://www.w3.org/2000/svg";
+  const g = document.createElementNS(NS, "g");
+  g.setAttribute("fill", options.color ?? "#9C5A3C"); // the theme accent at 100% — no blend, no opacity
+  for (const r of rects) {
+    if (!(r.width > 0) || !(r.height > 0)) continue;
+    const rule = document.createElementNS(NS, "rect");
+    rule.setAttribute("x", String(r.left));
+    rule.setAttribute("y", String(r.top));
+    rule.setAttribute("width", String(r.width));
+    rule.setAttribute("height", String(r.height));
+    rule.setAttribute("rx", String(r.height / 2)); // "every terminal is a half-round"
+    g.append(rule);
+  }
+  return g;
+}
+
+/**
+ * RAWY-281: the text's REAL em, in the same pixel space the overlayer draws in, or `null` if it cannot
+ * be resolved. See the note at the top of `refRuleRange` for why the obvious `rect.height / INK_EM` is
+ * wrong here — measured, it over-reads by 31% on a real Arabic face.
+ *
+ * TWO conversions, both necessary and neither obvious:
+ *  1. `getComputedStyle().fontSize` is the value BEFORE `zoom`; the overlayer's rects are AFTER it. Sard's
+ *     reading-size control IS `zoom` (D6) and lands on the book's `body`, so it is always in this chain.
+ *  2. `zoom` MULTIPLIES down the tree, so the whole ancestor chain has to be walked, not just the element.
+ *     (`getComputedStyle().zoom` reports an element's OWN zoom, not the accumulated one.)
+ *
+ * Read off the range's START element: a reference phrase is a run of body text, so a mid-phrase font
+ * change would be pathological, and the fallback covers it safely rather than pretending to be exact.
+ */
+function emPxForRange(range: Range): number | null {
+  try {
+    const node = range.startContainer;
+    const el = (node.nodeType === 1 ? node : node.parentElement) as Element | null;
+    const win = el?.ownerDocument?.defaultView;
+    if (!el || !win) return null;
+    let px = parseFloat(win.getComputedStyle(el).fontSize);
+    if (!(px > 0)) return null;
+    for (let a: Element | null = el; a; a = a.parentElement) {
+      const z = parseFloat(win.getComputedStyle(a).zoom || "1");
+      if (z > 0 && z !== 1) px *= z;
+    }
+    return px > 0 ? px : null;
+  } catch {
+    return null; // a torn-down document — the caller falls back to the rect-height estimate
+  }
+}
+
+/**
+ * RAWY-281: the range-like PROXY handed to the overlayer for a reference mark — the same device RAWY-258
+ * introduced (`wordRectRange`), one step further along: it reports the TWO STROKES, not the text.
+ *
+ * ⚠️ WHY THE GEOMETRY LIVES HERE AND NOT IN THE DRAW. `Overlayer` stores whatever `getClientRects()`
+ * returns and uses it for BOTH re-drawing and HIT-TESTING. RAWY-262's double-click-to-edit-a-highlight
+ * resolves through `Overlayer.hitTest`, which returns only the TOPMOST overlay at a point and is then
+ * gated on `annotations`. Reference marks are added after the highlights, so if this proxy reported the
+ * WORD's rects — the obvious thing to do — then a word that is BOTH highlighted and referenced would
+ * return the reference key, fail the gate, and the highlight editor would stop opening on it. Reporting
+ * the strokes instead means the overlay's hit area is exactly the ink it paints, which sits BELOW the
+ * glyphs and therefore cannot shadow anything drawn on them. (Tapping a reference does not go through
+ * the overlayer at all — `referenceAtPoint` scans `refRanges` with its own reach-aware slack.)
+ *
+ * Recomputing from the live range on every call is what keeps the mark correct across reflow (font load,
+ * resize, zoom), exactly as a real Range would — the whole reason RAWY-258 used a proxy rather than a
+ * snapshot of rects.
+ */
+function refRuleRange(
+  range: Range,
+  style: ReadingStyle | null,
+  /** The overlayer's own <svg>. Read live (never cached) because paged mode re-sizes it on every
+   *  re-render, and a stale height would clamp against a page that no longer exists. */
+  svg: SVGSVGElement | null,
+): { getClientRects: () => DOMRect[]; toString: () => string } {
+  return {
+    getClientRects: () => {
+      // ⚠️ THE EM BASIS — MEASURED, NOT ASSUMED, AND THE FIRST DRAFT HAD IT WRONG. Every other overlayer
+      // draw derives its em as `rect.height / INK_EM` (1.15), i.e. "a text run's client rect is ~1.15em
+      // tall". That is a LATIN metric. Measured live in the real app on the owner's Arabic profile, this
+      // book's run is **1.507em** tall — so the derived em came out **31% too large**, and since every
+      // figure in the design is an em, the whole mark inflated with it (the .30em clearance drew at
+      // 12.26px where the design asks for 9.36px). It survived the headless suite because that suite
+      // feeds font sizes directly; only the running app has real font metrics.
+      //
+      // `em` is the FONT SIZE, so the font size is what we read. Two things make that non-obvious:
+      // `getComputedStyle().fontSize` is the PRE-zoom value (16px here) while the overlayer draws in
+      // post-zoom client space (31.19px here), and Sard's size control IS `zoom` (D6) applied on the
+      // book's body — so the zoom chain has to be multiplied back in. INK_EM stays the FALLBACK for the
+      // case where no element or no usable font size can be resolved, which keeps a mark on screen
+      // rather than dropping it.
+      const emPx = emPxForRange(range);
+      // RAWY-258's merged word strokes: one run per LINE FRAGMENT, ending at the last GLYPH rather than
+      // running out to the line box. That is precisely the design's "both the full width of the word",
+      // and it satisfies "on wrap, each fragment carries the full pair" by construction.
+      const words = mergeIntoStrokes(wordRectsFor(range));
+      const runs = words.length ? words : Array.from(range.getClientRects());
+      // The clip's bottom, expressed in the SAME space the rects are in. The overlayer's CTM is a pure
+      // TRANSLATION (verified live), so its user-space viewport is simply [0, clientHeight] — which makes
+      // the clip bottom the SVG's own height and needs no coordinate conversion. Scrolled mode makes this
+      // the whole chapter's height, so the clamp is inert there by construction.
+      const clipBottom = svg ? svg.getBoundingClientRect().height || undefined : undefined;
+      const out: DOMRect[] = [];
+      for (const r of runs) {
+        if (!(r.width > 0) || !(r.height > 0)) continue; // zero-size fragments (hyphen columns etc.)
+        // The accent is irrelevant here — this proxy answers only "where", never "what colour". The
+        // colour is resolved once per section in `drawReferences` and passed to the draw.
+        const d = resolveRefRule(style ?? undefined, "", emPx ?? r.height / INK_EM);
+        for (const b of refRuleBars(r, d, clipBottom)) out.push(new DOMRect(b.x, b.y, b.width, b.height));
+      }
+      return out;
+    },
+    toString: () => range.toString(),
+  };
+}
+// RAWY-281: the overlayer key each reference occurrence is drawn under. RESERVED and prefixed, exactly
+// like READING_KEY / WORD_KEY: `highlightAtPoint` resolves an overlayer hit against `this.annotations`
+// (the map of stored highlights), and a CFI can never collide with this prefix — so a reference mark can
+// never be mistaken for an editable highlight, and these keys never reach `addAnnotation` or the DB.
+const REF_KEY_PREFIX = "sard-ref:";
 
 interface OpenOptions {
   resumeCfi?: string | null;
@@ -890,6 +1073,10 @@ const BOUNDARY_EDGE_PX = 4;
 // natural advance / TOC click / resume-at-top lands at exactly 0; a mid-chapter jump lands hundreds of px in.
 // Deliberately small — this gate exists to keep a mid-chapter jump from marking a chapter read.
 const CHAPTER_START_SLACK_PX = 24;
+// RAWY-260: a few px of slack around a reference mark. The indicator is an underline drawn BELOW the
+// glyph box, so a tap aimed at the visible line can fall just outside the range rect; this makes the
+// target the word plus its underline without ever reaching a neighbouring line.
+const REF_HIT_SLACK_PX = 4;
 // RAWY-73/75: wheel travel (accumulated px) that constitutes a deliberate scroll intent — now
 // ASYMMETRIC (RAWY-75). Hiding on scroll-down stays near-immediate (any real notch ≈ 100–120px
 // clears 24). Showing on scroll-up needs a CLEAR, deliberate gesture: one notch is a light nudge
@@ -1071,11 +1258,19 @@ export class FoliateController {
     const v = this.view;
     this.view = null;
     this.annotations.clear();
-    // RAWY-276: the reference registry holds DOM Ranges into section documents, so it must be released
-    // with the view — otherwise closing a book leaves its chapter documents pinned for as long as the
-    // controller lives, which is the whole Library session. Pruning alone cannot cover this: after
-    // dispose there is no rendered set and no further `applyReferences` call to prune from.
+    // RAWY-FINAL: release everything that holds a reference INTO a section document, so closing a book
+    // (or switching one) cannot pin the outgoing book's DOM. `refRanges` holds Ranges; `contentDoc` /
+    // `pdfPageDoc` hold whole Documents. All three are re-established by the next `load` event.
+    //
+    // DELIBERATELY NOT CLEARED: `ttsUnits` / `ttsUnitsIndex` / `wordRanges`. `open()` calls `dispose()`
+    // first, and a FLOW-MODE change (Reader.tsx `update`) re-opens the same book while read-aloud may be
+    // playing — the `create-overlay` handler relies on `ttsUnitsIndex >= 0` surviving that re-open to
+    // rebuild the units and restore the reading spotlight (RAWY-129 A). Clearing them here would be a
+    // behaviour change, not a leak fix; they are bounded (one chapter) and replaced on the next build.
     this.refRanges.clear();
+    this.prevRefKeys.clear(); // RAWY-281: paint bookkeeping follows the ranges (strings only — never a leak)
+    this.contentDoc = null;
+    this.pdfPageDoc = null;
     if (v) {
       try {
         v.close?.();
@@ -1087,30 +1282,30 @@ export class FoliateController {
   }
 
   /**
-   * RAWY-286: FINAL teardown — `dispose()` plus the read-aloud ranges it deliberately leaves alone.
+   * RAWY-286: FINAL teardown — `dispose()` plus the read-aloud ranges it deliberately keeps.
    *
-   * WHY THIS IS SEPARATE FROM `dispose()`. `dispose()` has TWO callers with OPPOSITE requirements, and
-   * that is the whole reason the leak existed:
+   * WHY THIS IS SEPARATE FROM `dispose()`. `dispose()` is called from TWO places with OPPOSITE
+   * requirements, and that is the whole reason the leak existed:
    *   • `open()` calls it to swap the view. The RAWY-129 (A) `create-overlay` handler then relies on
    *     `ttsUnitsIndex >= 0` SURVIVING, so a flow-mode change that re-opens the SAME book while
    *     read-aloud plays can rebuild the units against the fresh doc and restore the spotlight.
-   *     Clearing there would be a behaviour regression, which is why `dispose()` leaves them.
-   *   • The Reader's unmount / book-change cleanup calls it to LEAVE the book. Nothing is coming back,
-   *     and keeping the ranges there is pure retention.
+   *     Clearing there would be a behaviour regression, which is why the fields are kept.
+   *   • The Reader's unmount / book-change cleanup calls it to LEAVE the book. Nothing is coming
+   *     back, and keeping the ranges here is pure retention.
    *
-   * MEASURED (real release build, heap snapshot with retainer paths): after leaving a book that had
-   * read-aloud running, one `Range` per retained unit still pointed into that chapter's document,
-   * giving the retainer chain
+   * MEASURED (RAWY-286, real release build, heap snapshot with retainer paths): after leaving a book
+   * that had read-aloud running, ONE `Range` per retained unit still pointed into that chapter's
+   * document, giving the retainer chain
    *     Range -> .range -> [i] -> elements -> `ttsUnits` -> FoliateController -> ctrlRef.current
-   * and the same shape via `wordRanges`. A `Range` keeps its `Text` node — and therefore its ancestors
-   * and its owner `Document` — alive, so each book listened to pinned one detached chapter document
+   * and the same shape via `wordRanges`. A `Range` keeps its `Text` node, therefore its ancestors and
+   * its owner `Document`, alive — so each book listened to pinned one detached chapter document
    * (~7,000 nodes, ~5 MB). Cycling open -> Listen -> back measured +2 Documents, +1 Frame, ~+7,000
    * Nodes and ~+6 MB PER CYCLE, with a natural control (a cycle whose Listen never started grew by
    * exactly zero) and two isolating runs (book switching alone: 0 drift; repeated read-aloud inside
    * ONE book: 0 drift). The cost appears only at the intersection, which is precisely this exit path.
    *
    * The controller instance itself is retained past unmount by other holders (the module-level
-   * annotations/references stores keep the `ctrl` they were bound to). That is a separate and far
+   * annotations/references stores keep the `ctrl` they were bound to). That is a separate, far
    * cheaper question — a bare object rather than a document — and is deliberately NOT addressed here.
    * Clearing the ranges releases the DOM whether or not the controller is collected.
    */
@@ -1234,9 +1429,47 @@ export class FoliateController {
       // this section, so it costs a few rect comparisons — never a re-scan — and ignores taps elsewhere.
       doc.addEventListener("click", (ev: Event) => {
         const e = ev as MouseEvent;
-        const off = frameOffset(doc);
-        const hit = this.referenceAtPoint(doc, e.clientX + off.x, e.clientY + off.y);
-        if (hit) this.referenceCb?.(hit);
+        // Pass the click in the CONTENT document's own coordinates — the space Range.getClientRects()
+        // reports in. (This previously added the frame offset first, which put the point in parent space
+        // and made the comparison meaningless; referenceAtPoint converts the MATCHED rect instead.)
+        const hit = this.referenceAtPoint(doc, e.clientX, e.clientY);
+        // A tap that lands on a reference is a request to see it, not a page interaction — don't let it
+        // also raise the selection toolbar or dismiss anything else.
+        if (hit) {
+          ev.stopPropagation();
+          this.referenceCb?.(hit);
+        }
+      });
+      // RAWY-262 (UX EXPERIMENT): a DOUBLE-click inside an existing highlight opens its editor.
+      // Same SHAPE as the reference hit-test above — hit-test a registry that already exists, in the
+      // content doc's own coordinate space, convert the matched rect to parent space at the END — but
+      // it reuses the overlayer's OWN hitTest rather than a second rect loop, because highlights (unlike
+      // references) already have a registry: the overlayer foliate draws them from. That is the same
+      // code path foliate's single click used, so the hit area is EXACTLY the painted mark, multi-line
+      // highlights hit per line fragment, and adjacent highlights stay distinct — for free, with no new
+      // state to keep in sync and nothing added to the EPUB DOM.
+      doc.addEventListener("dblclick", (ev: Event) => {
+        const e = ev as MouseEvent;
+        // The body is wrapped because an exception thrown from a DOM listener is swallowed silently by
+        // the page, and release builds have DevTools disabled — that is exactly how the original
+        // RAWY-262 defect hid. The guard is KEPT (a throw here must not abort the gesture pipeline);
+        // only the RAWY-FINAL-removed probe instrumentation is gone.
+        try {
+          const hit = this.highlightAtPoint(doc, e.clientX, e.clientY);
+          // Not on a highlight → the gesture is untouched, so double-click-to-select-a-word over plain
+          // text keeps working exactly as it does today. The editor gesture is claimed ONLY over a mark.
+          if (!hit) return;
+          // The second mousedown already word-selected under the cursor, and pointerup raised the
+          // selection toolbar for it. Inside a highlight this gesture belongs to EDITING, so retract both
+          // BEFORE surfacing the hit — otherwise the toolbar and the editor would be up at once.
+          ev.preventDefault();
+          ev.stopPropagation();
+          this.clearSelection();
+          this.selectionCb?.(null);
+          this.showCb?.(hit);
+        } catch {
+          /* a throw here must not break reading — the gesture is simply not claimed */
+        }
       });
       doc.addEventListener("keydown", (ev: KeyboardEvent) => {
         // RAWY-184 (Part C): while read-aloud is active, arrows skip the prev/next SENTENCE (the cb
@@ -1370,31 +1603,48 @@ export class FoliateController {
       }
       draw(drawHighlight, opts);
     });
-    view.addEventListener("show-annotation", (e: any) => {
-      const { value, index, range } = e.detail;
-      // RAWY-132: the TTS reading indicators (sard-reading / sard-reading-word) are transient overlays,
-      // NOT annotations — but the overlayer's geometric hitTest still emits show-annotation when a click
-      // lands within the reading band's rects (RAWY-126). Surfacing that as an annotation hit sets a
-      // bogus active with no popover AND skips clearSelection, so a click on the reading text could leave
-      // a lingering selection that re-fires the toolbar. Treat a tap on a reading overlay like a tap on
-      // plain text: dismiss the popover + clear the real selection, never emit an annotation hit.
-      if (typeof value === "string" && value.startsWith("sard-reading")) {
-        // RAWY-230 (§2b): the reading band covers the SPOKEN sentence, so a click ending on it must NOT wipe
-        // a real drag-selection — that is why selecting the tracked text was impossible. Only dismiss a STRAY
-        // COLLAPSED selection (preserving RAWY-132's tap-dismiss); a live NON-COLLAPSED selection is left
-        // intact so the toolbar raises as it does over plain text (the pointerup handler already raised it,
-        // and already collapsed a plain click-inside-a-lingering-selection).
-        const sel = this.contentDoc?.getSelection?.();
-        if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
-          this.clearSelection();
-          this.selectionCb?.(null);
-        }
-        return;
+    // RAWY-262 (UX EXPERIMENT): a SINGLE click is NEVER an edit. This event is foliate's own click
+    // hit-test, and forwarding it is what used to throw the editor open the instant a reader tapped a
+    // mark mid-reading — including on an accidental tap. The edit gesture moved to the dblclick handler
+    // above, so this no longer surfaces an annotation hit at all.
+    //
+    // Every key the overlayer can return now takes ONE path — real highlights, the transient TTS reading
+    // indicators (sard-reading / sard-reading-word, RAWY-126) and the RAWY-249 search flash alike — so
+    // nothing here has to tell them apart any more, and the RAWY-132 bogus-active bug it used to guard
+    // against is unreachable by construction rather than by a name check.
+    view.addEventListener("show-annotation", () => {
+      // RAWY-132 tap-dismiss, kept: a tap on a mark still clears a stray selection so a later pointerup
+      // can't re-raise the toolbar. RAWY-230 (§2b), kept: only a COLLAPSED/absent selection is dismissed —
+      // a live NON-collapsed selection survives, so a drag that ENDS on a highlight (or on the spoken
+      // sentence's band) raises the toolbar exactly as it does over plain text. Net effect: a single click
+      // on a highlight is now indistinguishable from a single click on ordinary text.
+      const sel = this.contentDoc?.getSelection?.();
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
+        this.clearSelection();
+        this.selectionCb?.(null);
       }
-      this.showCb?.({ cfi: value, rect: this.rangeRectInParent(index, range) });
     });
     view.addEventListener("create-overlay", (e: any) => {
       for (const [cfi, color] of this.annotations) view.addAnnotation({ value: cfi, color });
+      // RAWY-281: the FIRST paint of this section's reference marks. `applyReferences` already ran (from
+      // `load`) and stored the ranges, but the overlayer did not exist yet — foliate dispatches
+      // create-overlayer only after `await view.load()`. This is that second half; it is also what
+      // restores the marks when a section is re-rendered after navigating away and back.
+      //
+      // ⚠️ THE MICROTASK IS LOAD-BEARING, AND LEAVING IT OUT SHIPPED A REAL BUG THAT ONLY LIVE DRIVING
+      // FOUND. `create-overlay` is emitted from INSIDE `#createOverlayer` (view.js:418) and the overlayer
+      // it returns is attached to the view by the CALLER, on the next line — so during this handler
+      // `getContents()[…].overlayer` is still UNDEFINED and a synchronous draw silently finds nothing.
+      // Measured: the opening section painted (a later `applyTheme` redrew it by luck) and then EVERY
+      // section navigated to afterwards had ZERO marks — 0 groups across sections 850-857, in a book
+      // whose referenced word appears in all of them.
+      //
+      // Deferring by one microtask is exactly enough: `attach` runs synchronously right after the emit
+      // returns, so the stack unwinds with the overlayer in place. This is also WHY the neighbouring
+      // annotation redraw above never had the bug — `view.addAnnotation` is async and awaits its CFI
+      // resolution, which pushes it past the same boundary for free.
+      const idx = e.detail?.index;
+      if (typeof idx === "number") queueMicrotask(() => this.drawReferences(idx));
       // RAWY-129 (A): the reading track (spotlight/pill) is drawn from Range objects tied to a section's
       // doc; navigating away destroys that doc, so on RETURN the ranges are stale (0 client rects) and the
       // overlay never comes back on its own (nothing re-fires the draw). When the TTS chapter's overlay is
@@ -1518,6 +1768,7 @@ export class FoliateController {
     const geom = GEOMETRY_STYLE_KEYS.some((k) => prev[k] !== style[k]);
     const paint = PAINT_STYLE_KEYS.some((k) => prev[k] !== style[k]);
     const track = TRACK_STYLE_KEYS.some((k) => prev[k] !== style[k]);
+    const ref = REF_STYLE_KEYS.some((k) => prev[k] !== style[k]); // RAWY-281
     // RAWY-208: the @font-face sheet is rewritten ONLY when a font slot really changed. A geometry
     // change (alignment/weight/leading/zoom) must leave it byte-identical, so the engine keeps the
     // loaded faces and the text never falls back mid-change. A font change DOES re-declare — that
@@ -1531,6 +1782,13 @@ export class FoliateController {
     // showReadingHighlight (+ the pill), so an OFF flips the effect away immediately, an ON restores it,
     // and a colour change repaints in place. Guarded so it fires only while a TTS session is on-screen.
     if (track && !geom && this.ttsUnitsIndex >= 0) this.readingRedrawCb?.();
+    // RAWY-281: a twin-rule change repaints the reference marks in place — no re-inject, no reflow, the
+    // same no-cost route the tracking overlays take. NOT gated on `!geom`, and that is deliberate: the
+    // overlayer's own `redraw()` (which a reflow triggers) re-runs the STORED draw options, so after a
+    // geometry change the marks would otherwise come back with the PREVIOUS colour/size. Re-adding them
+    // is what replaces those options. Cheap either way — it is a handful of <rect>s on the rendered
+    // sections, and it no-ops entirely for a book with no references.
+    if (ref) this.drawReferences();
   }
 
   /** Update theme colours + book flags (override-colour, hide-titles). */
@@ -1541,6 +1799,11 @@ export class FoliateController {
     this.applyDynamic(); // RAWY-140: theme ink → refresh the in-book PAINT sheet to match
     // Highlights store a semantic slot → re-draw them in the new theme's colours.
     for (const [cfi, color] of this.annotations) this.view?.addAnnotation({ value: cfi, color });
+    // RAWY-281: the twin rule's DEFAULT colour is this theme's accent (#9C5A3C ivory · #97582F sepia ·
+    // #C98A5E slate + true-black — the four the design file names, and the other twelve besides), so a
+    // theme change moves it exactly as it moves a highlight. A book with an explicit `refRuleColor`
+    // redraws to the same colour it already had; nothing is lost either way.
+    this.drawReferences();
   }
 
   // ---- highlights / notes anchoring (RAWY-20) ----
@@ -1549,18 +1812,15 @@ export class FoliateController {
     const set = this.theme?.colors.highlight as Record<string, string> | undefined;
     return set?.[color] ?? HL_FALLBACK[color] ?? color;
   }
-  private rectInParent(rect: DOMRect, doc: Document): AnchorRect {
+  private rectInParent(rect: RectLike, doc: Document): AnchorRect {
     const fr = (doc.defaultView as Window & { frameElement?: Element })?.frameElement?.getBoundingClientRect();
     const ox = fr?.left ?? 0;
     const oy = fr?.top ?? 0;
     return { left: ox + rect.left, top: oy + rect.top, width: rect.width, height: rect.height, bottom: oy + rect.bottom };
   }
-  private rangeRectInParent(index: number, range: Range): AnchorRect {
-    const obj = this.view?.renderer?.getContents?.().find((x: any) => x.index === index);
-    const doc: Document | undefined = obj?.doc;
-    const rect = range.getBoundingClientRect();
-    return doc ? this.rectInParent(rect, doc) : { left: rect.left, top: rect.top, width: rect.width, height: rect.height, bottom: rect.bottom };
-  }
+  // RAWY-262: `rangeRectInParent(index, range)` lived here to anchor the editor from the show-annotation
+  // event, which carried a section INDEX rather than a doc. The dblclick path already has the clicked
+  // DOCUMENT in hand, so it calls rectInParent directly and the index-lookup wrapper had no callers left.
 
   onSelection(cb: (sel: SelectionInfo | null) => void): void {
     this.selectionCb = cb;
@@ -2516,23 +2776,25 @@ export class FoliateController {
       // try/catch — so it threw `TypeError: parameter 1 is not of type 'Node'` AND ABORTED THE LOOP.
       //
       // THE ABORT IS THE REAL BUG, and it is why this is one root cause rather than one cosmetic error:
-      // the overlayer is SHARED. Sard's highlights, the reference marks, the TTS reading spotlight
-      // (READING_KEY) and the karaoke word pill (WORD_KEY) all live in the SAME `#map` as the search
-      // hits. Whichever of them sit after the first poisoned entry in insertion order were never redrawn
-      // after any re-layout, keeping stale geometry from the previous layout.
+      // the overlayer is SHARED. Sard's highlights, the RAWY-281 reference twin rules, the TTS reading
+      // spotlight (READING_KEY) and the karaoke word pill (WORD_KEY) all live in the SAME `#map` as the
+      // search hits. Whichever of them sit after the first poisoned entry in insertion order were never
+      // redrawn after any re-layout, keeping stale geometry from the previous layout.
       // MEASURED: with search results present, ONE alignment change threw exactly ONE exception — one per
       // redraw, not one per poisoned entry, which is the signature of the loop aborting at the first.
       // Without a prior search the same churn threw ZERO.
       //
       // Re-layout is triggered by far more than alignment: font, line-height, letter/paragraph spacing,
-      // zoom, first-line indent, theme re-inject, immersive toggling, flow switching and window resize
-      // all reach `paginator.expand()` -> `Overlayer.redraw()`.
+      // zoom, first-line indent, theme re-inject, page-opacity/background, immersive toggling, flow
+      // switching and window resize all reach `paginator.expand()` -> `Overlayer.redraw()`.
       //
       // THE FIX IS AT THE VIOLATION, NOT THE SYMPTOM: return a real but EMPTY <g>. It satisfies the
       // contract, paints nothing (no children), and keeps the intent — the engine still draws no
       // per-match outline, because Sard does its own flash on jump. `createElementNS` from the top-level
       // document is exactly what foliate's own `createSVGElement` does, so the node is of the same kind
       // the Overlayer creates for every other entry.
+      // Sard's four real draw functions are all TYPED `: SVGGElement`, so the compiler already guarantees
+      // they return a node; this inline callback was the one untyped path and the only violator.
       const drawNothing = () => document.createElementNS("http://www.w3.org/2000/svg", "g");
       for await (const r of view.search({ query: q, draw: drawNothing })) {
         if (opts.signal?.aborted) break;
@@ -2766,58 +3028,42 @@ export class FoliateController {
    * work is linear in the section's length regardless of how many references exist.
    */
   /**
-   * RAWY-276: drop registry entries for sections that are no longer laid out.
+   * RAWY-FINAL (leak fix): drop registry entries for sections that are no longer laid out.
    *
-   * `refRanges`'s own declaration says entries are "dropped when that section unloads with the
-   * document" — NO SUCH CODE EXISTED. The only removal was `delete(index)` for the index being
-   * re-marked, and `dispose()` did not clear the map either, so it grew by one entry per section that
-   * ever matched a reference and never shrank. Each entry holds DOM `Range`s, and a Range keeps its
-   * `Text` nodes — and therefore their ancestor chain and owner `Document` — alive, while foliate
-   * destroys a section's iframe document as soon as you navigate away. The result is one DETACHED
-   * DOCUMENT pinned per matching section, for the life of the reading session.
+   * The field's own doc-comment claimed entries were "dropped when that section unloads with the
+   * document" — NO SUCH CODE EXISTED. The only delete was for the index being re-marked, so in a book
+   * with references the map grew by one entry per distinct section visited and was never reduced;
+   * `dispose()` did not clear it either. Each retained entry holds DOM `Range`s, and a Range keeps its
+   * start/end `Text` nodes — and therefore their ancestor chain and owner `Document` — alive. foliate
+   * destroys a section's iframe document when you navigate away, so the result was one DETACHED DOM
+   * TREE pinned per visited section, for the whole session. On a 1,400-chapter book that is unbounded.
    *
-   * MEASURED on the owner's real library: 1 reference exists, in 1 book of 10, and it is a 15-word
-   * phrase matching exactly 1 of that book's 1315 sections — so today's exposure is ONE detached
-   * document (~18.5 KB, the book's average section HTML). The reason to fix it is the realistic worst
-   * case, measured on that same book: a single-word reference — which `refs.word_count` exists
-   * specifically to support — matches 32 sections for a character name and 765 for a common word, i.e.
-   * up to 765 retained chapter documents (~13.8 MB of HTML source; the DOM multiplier on top of that
-   * is an ESTIMATE, not measured).
-   *
-   * PRUNING IS PROVABLY LOSSLESS. `referenceAtPoint` resolves its index from `currentSectionIndex()`
-   * = `getContents()[0].index`, so the only entry it can ever read belongs to a currently-rendered
-   * section. Keeping the whole rendered set is therefore a SUPERSET of what is readable. `keep` is
-   * forced in because this runs from the `load` handler and must not evict the section it is in the
-   * middle of marking, whether or not the renderer has published it yet.
+   * The live set is taken from the renderer's own `getContents()`, which is EXACTLY the set
+   * `referenceAtPoint` resolves an index from — so pruning to it cannot make a hit-test miss. `keep` is
+   * forced in because `applyReferences` runs from the `load` handler and must not evict the section it
+   * is in the middle of marking, whether or not the renderer has published it yet.
    */
   private pruneRefRanges(keep: number): void {
-    const contents = this.view?.renderer?.getContents?.() as { index?: number }[] | undefined;
-    // CONSERVATIVE BY CHOICE: if the renderer reports nothing, prune NOTHING. This runs from the `load`
-    // handler, and whether the renderer has published its contents at that instant is not something this
-    // was able to verify. Paged flow lays out more than one section at a time, so pruning against an
-    // empty list would drop a SIBLING rendered section's entry and its marks would stop answering clicks
-    // until it re-rendered. Skipping is free — the next section render prunes with a full list, and the
-    // leak this fixes is measured in sections visited, not in one deferred pass.
-    if (!contents?.length) return;
     const live = new Set<number>([keep]);
-    for (const c of contents) if (typeof c?.index === "number") live.add(c.index);
+    const contents = this.view?.renderer?.getContents?.() as { index?: number }[] | undefined;
+    for (const c of contents ?? []) if (typeof c?.index === "number") live.add(c.index);
     for (const idx of Array.from(this.refRanges.keys())) {
       if (!live.has(idx)) this.refRanges.delete(idx);
+    }
+    // RAWY-281: the paint bookkeeping follows the ranges exactly. A section that has unloaded took its
+    // overlayer with it, so its keys can never be removed and must not be remembered.
+    for (const idx of Array.from(this.prevRefKeys.keys())) {
+      if (!live.has(idx)) this.prevRefKeys.delete(idx);
     }
   }
 
   private applyReferences(doc: Document, index: number): void {
-    const win = doc.defaultView as (Window & { CSS?: { highlights?: Map<string, unknown> }; Highlight?: new (...r: Range[]) => unknown }) | null;
-    // RAWY-276: prune BEFORE the API guard, so a runtime without the Custom Highlight API still
-    // releases the ranges of sections that have unloaded.
+    // RAWY-276: prune FIRST, unconditionally, so the ranges of sections that have unloaded are released
+    // on every path out of this method — including the early returns below.
     this.pruneRefRanges(index);
-    // The API is Chromium 105+; WebView2 here is far past that. If it is ever missing, references simply
-    // do not paint — the notes are still stored and the popup still works from a click, so the feature
-    // degrades quietly instead of throwing inside a section render.
-    if (!win?.CSS?.highlights || typeof win.Highlight !== "function") return;
     this.refRanges.delete(index);
     if (!this.refs.length) {
-      try { win.CSS.highlights.delete(REF_HIGHLIGHT_NAME); } catch { /* ignore */ }
+      this.drawReferences(index);
       return;
     }
     // ONE pass over the text: fold per character (memoised, RAWY-178) and remember where each folded char
@@ -2841,7 +3087,7 @@ export class FoliateController {
     }
     const hits = findPhraseHits(hay, this.refs);
     if (!hits.length) {
-      try { win.CSS.highlights.delete(REF_HIGHLIGHT_NAME); } catch { /* ignore */ }
+      this.drawReferences(index);
       return;
     }
     const marked: { range: Range; refId: string }[] = [];
@@ -2858,24 +3104,160 @@ export class FoliateController {
       }
     }
     this.refRanges.set(index, marked);
-    try {
-      const HighlightCtor = win.Highlight as new (...r: Range[]) => unknown;
-      win.CSS.highlights.set(REF_HIGHLIGHT_NAME, new HighlightCtor(...marked.map((m) => m.range)));
-    } catch {
-      /* registry rejected the ranges — leave the section unmarked rather than throw mid-render */
+    this.drawReferences(index);
+  }
+
+  /**
+   * RAWY-281: paint the twin rule for every marked occurrence in the rendered sections.
+   *
+   * ⚠️ ORDERING — WHY THIS IS NOT SIMPLY DONE AT `load`. `applyReferences` runs from the `load` handler,
+   * and at that moment the section's overlayer DOES NOT EXIST YET: foliate's paginator awaits
+   * `view.load()` (which is what fires `load`) and only THEN dispatches `create-overlayer`
+   * (paginator.js:1011). So the draw is attempted from BOTH ends — here, for every case where the
+   * overlayer is already up (a reference saved or deleted while reading, a settings change, a theme
+   * change), and again from the `create-overlay` handler for the first paint of a freshly rendered
+   * section. A miss is harmless because there is no state to lose: the mark is derived entirely from
+   * `refRanges`, so whichever call finds an overlayer draws the same thing.
+   *
+   * `index` narrows the work to one section; omitted, every rendered section is repainted (paged mode
+   * lays out more than one at a time, so a colour change must reach all of them).
+   */
+  private drawReferences(index?: number): void {
+    const contents = this.view?.renderer?.getContents?.() as
+      | {
+          index?: number;
+          overlayer?: {
+            add?: (k: string, r: unknown, d: unknown, o: unknown) => void;
+            remove?: (k: string) => void;
+            element?: SVGSVGElement;
+          };
+        }[]
+      | undefined;
+    if (!contents?.length) return;
+    const accent = this.theme?.colors?.accent ?? "#9C5A3C";
+    // The design: "Colour is the theme accent at 100% — no opacity anywhere, since that is what made the
+    // old mark disappear." A per-book override replaces the accent outright; nothing dilutes either.
+    const color = this.style?.refRuleColor ?? accent;
+    for (const c of contents) {
+      const overlayer = c.overlayer;
+      if (!overlayer?.add || !overlayer.remove || typeof c.index !== "number") continue;
+      if (index != null && c.index !== index) continue;
+      const marked = this.refRanges.get(c.index) ?? [];
+      // Clear the PREVIOUS paint before re-adding. The count can shrink (a reference was deleted, or the
+      // reader edited the phrase so it matches fewer places), so removing exactly what is about to be
+      // re-added would strand the tail — `prevRefKeys` is what makes the clear complete rather than
+      // approximate. `Overlayer.remove` is a no-op for a key it does not hold, so this is safe blind.
+      for (const key of this.prevRefKeys.get(c.index) ?? []) {
+        try { overlayer.remove(key); } catch { /* the section is going away — nothing to clean */ }
+      }
+      const keys: string[] = [];
+      for (let i = 0; i < marked.length; i++) {
+        const key = `${REF_KEY_PREFIX}${c.index}:${i}`;
+        try {
+          // The PROXY, not the raw Range — it re-measures the strokes on every `Overlayer.redraw()`
+          // (font load, resize, zoom) exactly as a real Range would. Both the proxy's `style` and the
+          // draw's `color` are captured NOW, which is why a settings or theme change has to re-add rather
+          // than rely on the options the overlayer already holds.
+          overlayer.add(key, refRuleRange(marked[i].range, this.style, overlayer.element ?? null), drawRefRule, { color });
+          keys.push(key);
+        } catch {
+          /* a stale range in a section being torn down — skip this one, keep the rest */
+        }
+      }
+      if (keys.length) this.prevRefKeys.set(c.index, keys);
+      else this.prevRefKeys.delete(c.index);
     }
   }
+
+  /** The overlayer keys the last paint used, per section — see `drawReferences` for why the count cannot
+   *  be re-derived from `refRanges` at clear time. Pruned with `refRanges` and cleared on `dispose()`;
+   *  it holds only short strings, never a Range or a Node, so it can never pin a document (RAWY-276). */
+  private prevRefKeys = new Map<number, string[]>();
 
   /** RAWY-260: which reference (if any) sits under this point in the CURRENT section? Hit-tests the ranges
    *  we already stored, so a tap costs a few rect comparisons and never a text scan. Returns the reference
    *  id plus the occurrence's rect in PARENT-viewport coords, which is what positions the popup. */
+  /** RAWY-262 (UX EXPERIMENT): which STORED highlight, if any, is under this point? `x`/`y` must be in
+   *  the CONTENT document's own space (raw clientX/clientY of an event inside the reading iframe) — the
+   *  same coordinate rule referenceAtPoint documents below, and for the same reason: that is the space
+   *  the overlayer's rects are in. The parent-space conversion happens at the END, on the matched rect
+   *  only, because that is what anchors the editor in the chrome layer.
+   *
+   *  Delegates to the overlayer's OWN hitTest — the identical call foliate's single-click path made — so
+   *  the hit area is exactly the painted mark (RAWY-258 word rects included), a multi-line highlight is
+   *  hit on any of its line fragments, and two adjacent highlights resolve to different keys. No overlay
+   *  element is created and the EPUB DOM is not touched: the geometry is the overlayer's existing rects.
+   *
+   *  The overlayer also holds NON-highlight keys — the transient TTS reading band/pill (RAWY-126) and the
+   *  RAWY-249 search flash — so the result is gated on `annotations`, the map of highlights Sard actually
+   *  stores. That gate is what keeps this experiment scoped to highlights: references (Custom Highlight
+   *  API, not the overlayer), notes, bookmarks and search results can never satisfy it. */
+  highlightAtPoint(doc: Document, x: number, y: number): AnnotationHit | null {
+    const contents = this.view?.renderer?.getContents?.() as
+      | { doc?: Document; overlayer?: { hitTest?: (p: { x: number; y: number }) => [string?, MarkGeometry?] } }[]
+      | undefined;
+    // Looked up by the DOCUMENT that was clicked, not by currentSectionIndex(): in paged mode more than
+    // one section can be laid out at once, and the clicked doc is unambiguous (same rule as references).
+    const overlayer = contents?.find((c) => c.doc === doc)?.overlayer;
+    const [key, mark] = overlayer?.hitTest?.({ x, y }) ?? [];
+    if (!key || !mark) return null;
+    if (!this.annotations.has(key)) {
+      return null; // an overlay, not a stored highlight — not editable
+    }
+    // ⚠️ THE ORIGINAL DEFECT (RAWY-262). This line used to call `mark.getBoundingClientRect()`, which
+    // threw `TypeError: ... is not a function` on EVERY real highlight and aborted the listener before it
+    // could open anything. The overlayer stores whatever was handed to `add`, and on Sard's normal draw
+    // path that is RAWY-258's `wordRectRange` PROXY — `{ getClientRects, toString }`, deliberately not a
+    // Range (FoliateController.ts:209). Only foliate's own fallback `draw` (view.js:392) stores a real
+    // Range, so the ONE path that worked was the one that almost never runs.
+    // Deriving the box from `getClientRects()` is what both shapes support, so the anchor no longer
+    // depends on which draw path happened to run — and the union of the line rects IS the bounding box,
+    // so the editor anchors exactly where the single-click path used to put it.
+    const rect = unionRect(mark.getClientRects());
+    if (!rect) return null;
+    return { cfi: key, rect: this.rectInParent(rect, doc) };
+  }
+
   referenceAtPoint(doc: Document, x: number, y: number): { refId: string; rect: AnchorRect } | null {
-    const idx = this.currentSectionIndex();
+    // ⚠️ COORDINATE SPACE — the bug this method originally shipped with. `x`/`y` MUST be in the CONTENT
+    // document's own space (i.e. the raw clientX/clientY of a click inside the reading iframe), because
+    // that is the space `Range.getClientRects()` reports in. Converting the click to parent-viewport
+    // coords first — as the click handler used to — compares a point against rects from a different
+    // origin, offset by wherever the reading frame sits in the page (tens to hundreds of px), so a tap on
+    // a marked word tested a point far away from it and never matched. The PARENT-space conversion belongs
+    // at the END, on the matched rect only, because that is what positions the popup in the chrome layer.
+    //
+    // The ranges are looked up by the DOCUMENT that was clicked, not by `currentSectionIndex()`: in paged
+    // mode more than one section can be laid out at once, and the clicked doc is unambiguous.
+    const contents = this.view?.renderer?.getContents?.() as { index: number; doc?: Document }[] | undefined;
+    const idx = contents?.find((c) => c.doc === doc)?.index ?? this.currentSectionIndex();
     const marked = this.refRanges.get(idx);
     if (!marked?.length) return null;
     for (const m of marked) {
       for (const raw of Array.from(m.range.getClientRects())) {
-        if (x >= raw.left && x <= raw.right && y >= raw.top && y <= raw.bottom) {
+        if (!(raw.width > 0) || !(raw.height > 0)) continue;
+        // The mark is drawn BELOW the glyph box, so a tap aimed at the visible rules lands outside the
+        // range's own rect and the target has to be the word AND its rules. RAWY-281: the pair's reach is
+        // no longer a constant — it is the design's clearance plus both strokes plus the gap, and the
+        // reader can scale all of it — so the bottom slack is COMPUTED from the same resolver the draw
+        // uses rather than guessed. A fixed 4px was already short of the design's default pair (~7px at
+        // reading size) and would have missed the mark entirely at the top of the offset range.
+        // The SAME em basis the draw uses (`emPxForRange`, falling back to the rect estimate) — if these
+        // two ever diverge the tap target stops matching the painted mark, which is the exact class of
+        // bug that made this hit-test wrong in RAWY-260.
+        const reach = refRuleReach(
+          resolveRefRule(
+            this.style ?? undefined,
+            this.theme?.colors?.accent ?? "#9C5A3C",
+            emPxForRange(m.range) ?? raw.height / INK_EM,
+          ),
+        );
+        if (
+          x >= raw.left - REF_HIT_SLACK_PX &&
+          x <= raw.right + REF_HIT_SLACK_PX &&
+          y >= raw.top - REF_HIT_SLACK_PX &&
+          y <= raw.bottom + reach + REF_HIT_SLACK_PX
+        ) {
           return { refId: m.refId, rect: this.rectInParent(raw, doc) };
         }
       }

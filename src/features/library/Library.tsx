@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 
 import { useI18n } from "../../i18n";
-import { localeDigits, localeNum } from "../../lib/format";
+import { localeDigits, localeNum, uiDateTimeFormat } from "../../lib/format";
 import {
   bookDelete,
   bookRevertCover,
@@ -48,13 +48,14 @@ export interface OpenTarget {
 
 type View = "grid" | "list" | "rows";
 type CoverMode = "crop" | "fit";
+type Section = "library" | "inbox" | "cards" | "bookmarks";
 
 const SORTS: SortKey[] = ["title", "author", "format", "date_read", "date_added"];
 const SORT_KEY = { title: "lib.sort.title", author: "lib.sort.author", format: "lib.sort.format", date_read: "lib.sort.dateRead", date_added: "lib.sort.dateAdded" } as const;
 
-const AR_DIGITS = "٠١٢٣٤٥٦٧٨٩";
-const toArabic = (s: string) => s.replace(/[0-9]/g, (d) => AR_DIGITS[+d]);
-const num = (n: number, lang: string) => (lang === "ar" ? toArabic(String(n)) : String(n));
+// RAWY-261: shelf/section counts route through the ONE formatter in lib/format (they used to
+// carry a private Arabic-Indic substitution table — a second source of truth for UI digits).
+const num = localeNum;
 
 function sameDay(a: Date, b: Date) {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
@@ -63,6 +64,81 @@ function sameDay(a: Date, b: Date) {
 // RAWY-82 (#16): search input → book-list reload delay. Short enough to stay snappy, long enough
 // that a fast typist fires ONE query at the end rather than one per keystroke.
 const SEARCH_DEBOUNCE_MS = 250;
+
+// RAWY-269 (2) — the persisted library prefs, cached for the LIFE OF THE PROCESS.
+// `Library` gates its entire render on `hydrated` and re-mounts on every return from the reader, so
+// those five `settingsGet` round-trips used to render `null` — a genuinely EMPTY document — between
+// the book and the library. Measured on the release build: whole-window luminance 18.2 -> 5.99 ->
+// 39.4, i.e. ~37 ms of a near-black window, every single time.
+// The FIRST mount still awaits the IPC (there is nothing to read yet); every later mount seeds its
+// initial state from here SYNCHRONOUSLY, so `hydrated` starts true and no empty frame can exist.
+// The cache is written back by the same effects that persist each pref, so it never goes stale.
+interface LibPrefs {
+  view: View;
+  sort: SortKey;
+  order: SortOrder;
+  cover: CoverMode;
+  shelf: string | null;
+}
+let prefsCache: LibPrefs | null = null;
+
+// RAWY-269 (2) — the last library CONTENTS, cached for the same reason and with the same lifetime.
+// `books`/`shelves` used to start empty on every re-mount, so returning from the reader rendered the
+// library's own EMPTY STATE — "your library is waiting", with Browse/Import buttons — for ~190 ms
+// before the query landed. (That was always true; it was simply hidden behind the near-black frame
+// that fix (2) removed. Exposing it is not a regression, and it is not something to leave standing:
+// telling a reader their library is empty, twice a session, is the worst frame in the app.)
+// `booksCache === null` means NO query has completed in this process yet — which is what makes the
+// empty state honest on a genuinely empty library and impossible before the first answer arrives.
+let booksCache: BookRow[] | null = null;
+let shelvesCache: CollectionRow[] = [];
+// The rows view's equivalent, tagged with the query it came from — see `ShelfRows`.
+let rowsCache: { sig: string; reading: BookRow[]; books: Record<string, BookRow[]> } | null = null;
+
+// RAWY-269 (1) — the longest a section swap may wait for the incoming pane before it is shown
+// anyway. This is a SAFETY CAP, not a delay: a healthy section reports ready in 15-160 ms. Its only
+// job is to guarantee that a section which never becomes ready (an unreadable image, a failed
+// query) can never strand navigation.
+const SECTION_SWAP_MAX_MS = 700;
+
+// RAWY-269 (5) — the longest `warmCovers` may hold a book list back.
+const COVER_WARM_MAX_MS = 220;
+
+// RAWY-269 (1) — how many LIBRARY-pane data loads are in flight, counted across the flat views
+// (`loadBooks`) and the rows view (`ShelfRows`), which is why it is module-level rather than a ref.
+//
+// "The pane has content" is not enough to call the LIBRARY ready: clicking the Library nav also
+// clears the shelf filter, so the preloaded pane renders with the PREVIOUS shelf's books and only
+// then re-queries. Committing on content alone showed the library holding one book and repopulating
+// ~140 ms later (measured: pane luma 64.85 -> 25.01 -> 45.09), which is the same instability the
+// swap exists to remove, arriving one step later. The swap waits for this to reach zero.
+const libLoads = { inFlight: 0 };
+
+/**
+ * RAWY-269 (5) — decode a list's covers BEFORE the list is published to React.
+ *
+ * A shelf change replaces `books` wholesale, so every cover the new shelf does not share with the
+ * old one arrives as a brand-new `<img>` with no pixels yet. Measured pre-fix, the grid laid out
+ * first and the images landed 2-3 frames later: whole-window luminance 32.71 -> 24.09 (DARKER than
+ * either endpoint - the cover cells were empty) -> 62.50. Warming the decode first turns that into
+ * one atomic swap.
+ *
+ * Bounded and failure-tolerant by construction: a cover that cannot be decoded is simply not waited
+ * for, and the whole wait gives up at `COVER_WARM_MAX_MS`. A broken or slow image must never be able
+ * to hold the library back — that would trade a flash for a freeze.
+ */
+function warmCovers(rows: readonly BookRow[]): Promise<void> {
+  const urls = [...new Set(rows.map((r) => r.cover_path).filter((p): p is string => !!p))];
+  if (!urls.length) return Promise.resolve();
+  const all = Promise.all(
+    urls.map((p) => {
+      const img = new Image();
+      img.src = convertFileSrc(p);
+      return img.decode().catch(() => undefined);
+    }),
+  ).then(() => undefined);
+  return Promise.race([all, new Promise<void>((res) => window.setTimeout(res, COVER_WARM_MAX_MS))]);
+}
 
 function summarize(results: ImportResult[], t: TFn, lang: string): string {
   const c = { imported: 0, duplicate: 0, unsupported: 0, error: 0 };
@@ -78,17 +154,35 @@ function summarize(results: ImportResult[], t: TFn, lang: string): string {
 export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const { t, lang } = useI18n();
 
-  const [section, setSection] = useState<"library" | "inbox" | "cards" | "bookmarks">("library");
+  // RAWY-269 (1): `section` is the pane ON SCREEN; `wanted` is the one the user asked for that is
+  // still preparing off-screen. The sidebar highlights `wanted ?? section`, so the click still
+  // registers instantly — only the PANE waits, and it waits by staying on the old content rather
+  // than by going blank.
+  const [section, setSection] = useState<Section>("library");
+  const [wanted, setWanted] = useState<Section | null>(null);
+  const preloadRef = useRef<HTMLDivElement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false); // RAWY-39 global settings
-  const [books, setBooks] = useState<BookRow[]>([]);
+  // RAWY-269 (2): seeded from the process-lifetime caches, and every write goes back into them.
+  const [books, setBooksState] = useState<BookRow[]>(() => booksCache ?? []);
+  const [booksLoaded, setBooksLoaded] = useState(() => booksCache !== null);
+  const setBooks = useCallback((rows: BookRow[]) => {
+    booksCache = rows;
+    setBooksState(rows);
+    setBooksLoaded(true);
+  }, []);
   const [editing, setEditing] = useState<BookRow | null>(null);
-  const [shelves, setShelves] = useState<CollectionRow[]>([]);
-  const [view, setView] = useState<View>("grid");
-  const [coverMode, setCoverMode] = useState<CoverMode>("crop");
-  const [sort, setSort] = useState<SortKey>("date_read");
-  const [order, setOrder] = useState<SortOrder>("desc");
+  const [shelves, setShelvesState] = useState<CollectionRow[]>(() => shelvesCache);
+  const setShelves = useCallback((rows: CollectionRow[]) => {
+    shelvesCache = rows;
+    setShelvesState(rows);
+  }, []);
+  // RAWY-269 (2): seeded from the process-lifetime cache, so a re-mount is already correct.
+  const [view, setView] = useState<View>(() => prefsCache?.view ?? "grid");
+  const [coverMode, setCoverMode] = useState<CoverMode>(() => prefsCache?.cover ?? "crop");
+  const [sort, setSort] = useState<SortKey>(() => prefsCache?.sort ?? "date_read");
+  const [order, setOrder] = useState<SortOrder>(() => prefsCache?.order ?? "desc");
   const [format, setFormat] = useState<string | null>(null);
-  const [shelf, setShelf] = useState<string | null>(null);
+  const [shelf, setShelf] = useState<string | null>(() => prefsCache?.shelf ?? null);
   // Shelf management (RAWY-31): inline create + rename, driven from the sidebar.
   const [creating, setCreating] = useState(false);
   const [draftName, setDraftName] = useState("");
@@ -106,18 +200,28 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
 
   // Remember the reader's view/sort/cover/shelf choices across sessions (persisted via
   // the settings IPC). Gate the first paint on hydration so we don't flash defaults.
-  const [hydrated, setHydrated] = useState(false);
+  // RAWY-269 (2): only the FIRST mount of the process is ever un-hydrated — see `prefsCache`.
+  const [hydrated, setHydrated] = useState(() => prefsCache !== null);
   useEffect(() => {
     (async () => {
-      const [v, s, o, c, sh] = await Promise.all([
-        settingsGet("lib_view"), settingsGet("lib_sort"), settingsGet("lib_order"),
-        settingsGet("lib_cover"), settingsGet("lib_shelf"),
-      ]);
-      if (v === "list" || v === "grid" || v === "rows") setView(v);
-      if (s && (SORTS as string[]).includes(s)) setSort(s as SortKey);
-      if (o === "asc" || o === "desc") setOrder(o);
-      if (c === "crop" || c === "fit") setCoverMode(c);
-      if (sh) setShelf(sh);
+      if (!prefsCache) {
+        const [v, s, o, c, sh] = await Promise.all([
+          settingsGet("lib_view"), settingsGet("lib_sort"), settingsGet("lib_order"),
+          settingsGet("lib_cover"), settingsGet("lib_shelf"),
+        ]);
+        prefsCache = {
+          view: v === "list" || v === "grid" || v === "rows" ? v : "grid",
+          sort: s && (SORTS as string[]).includes(s) ? (s as SortKey) : "date_read",
+          order: o === "asc" || o === "desc" ? o : "desc",
+          cover: c === "crop" || c === "fit" ? c : "crop",
+          shelf: sh || null,
+        };
+        setView(prefsCache.view);
+        setSort(prefsCache.sort);
+        setOrder(prefsCache.order);
+        setCoverMode(prefsCache.cover);
+        setShelf(prefsCache.shelf);
+      }
       if (import.meta.env.DEV) {
         if ((await settingsGet("lib_force_empty")) === "1") setForceEmpty(true);
         if ((await settingsGet("lib_force_drop")) === "1") setDrag({ count: 3 });
@@ -126,25 +230,36 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
       setHydrated(true);
     })().catch(() => setHydrated(true));
   }, []);
-  useEffect(() => { if (hydrated) settingsSet("lib_view", view).catch(console.error); }, [view, hydrated]);
-  useEffect(() => { if (hydrated) settingsSet("lib_sort", sort).catch(console.error); }, [sort, hydrated]);
-  useEffect(() => { if (hydrated) settingsSet("lib_order", order).catch(console.error); }, [order, hydrated]);
-  useEffect(() => { if (hydrated) settingsSet("lib_cover", coverMode).catch(console.error); }, [coverMode, hydrated]);
-  useEffect(() => { if (hydrated) settingsSet("lib_shelf", shelf ?? "").catch(console.error); }, [shelf, hydrated]);
+  // Each pref is persisted AND written back into the cache, so the cache can never go stale.
+  useEffect(() => { if (hydrated) { if (prefsCache) prefsCache.view = view; settingsSet("lib_view", view).catch(console.error); } }, [view, hydrated]);
+  useEffect(() => { if (hydrated) { if (prefsCache) prefsCache.sort = sort; settingsSet("lib_sort", sort).catch(console.error); } }, [sort, hydrated]);
+  useEffect(() => { if (hydrated) { if (prefsCache) prefsCache.order = order; settingsSet("lib_order", order).catch(console.error); } }, [order, hydrated]);
+  useEffect(() => { if (hydrated) { if (prefsCache) prefsCache.cover = coverMode; settingsSet("lib_cover", coverMode).catch(console.error); } }, [coverMode, hydrated]);
+  useEffect(() => { if (hydrated) { if (prefsCache) prefsCache.shelf = shelf; settingsSet("lib_shelf", shelf ?? "").catch(console.error); } }, [shelf, hydrated]);
 
   // Shelves + books load on mount and re-load on import; books also re-query on sort/filter.
   const loadShelves = useCallback(() => {
     collectionsList().then(setShelves).catch(console.error);
-  }, []);
+  }, [setShelves]);
   // RAWY-82 (#16): every load is request-ordered — a monotonic seq means a slower, STALER response
   // (e.g. a shorter earlier query) can't overwrite a fresher one; the latest request always wins.
   const loadSeqRef = useRef(0);
   const loadBooks = useCallback(() => {
     const seq = ++loadSeqRef.current;
+    libLoads.inFlight++; // RAWY-269 (1)
     libraryListBooks({ sort, order, format, collection: shelf, search })
-      .then((rows) => { if (seq === loadSeqRef.current) setBooks(rows); })
-      .catch(console.error);
-  }, [sort, order, format, shelf, search]);
+      .then(async (rows) => {
+        // RAWY-269 (5): decode the incoming covers before publishing, so the swap is atomic.
+        // The seq guard is re-checked AFTER the await — the warm is another place a stale response
+        // could overtake a fresher one, and RAWY-82's "the latest request always wins" must hold
+        // across it too.
+        if (seq !== loadSeqRef.current) return;
+        await warmCovers(rows);
+        if (seq === loadSeqRef.current) setBooks(rows);
+      })
+      .catch(console.error)
+      .finally(() => { libLoads.inFlight--; });
+  }, [sort, order, format, shelf, search, setBooks]);
 
   // Pick a sort column with a sensible default order (RAWY-30): date columns default to
   // DESCENDING (newest first) so the most-recent book is the FIRST item — which the grid then
@@ -211,6 +326,71 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
+
+  // RAWY-269 (1) — SECTION NAVIGATION IS AN ATOMIC SWAP.
+  //
+  // The three section components each render nothing while their own IPC is in flight (`Inbox` and
+  // `BookmarksShelf` return `null`, `PhotoGallery` returns an empty shell), so `.lib-main` used to
+  // drop to ZERO children. On a library whose ground is the reader's own photograph that is not a
+  // neutral pause — you see straight through to the wallpaper. Measured pane luminance:
+  // Highlights 45.10 -> 22.69 (158 ms), Bookmarks 56.29 -> 22.69, Cards 29.76 -> 22.69 -> 12.59
+  // (~95 ms through TWO blank tones), Library 64.90 -> 25.04 (134 ms).
+  //
+  // Fix: mount the incoming section in `.lib-pane-preload` — `visibility:hidden`, which is
+  // LOAD-BEARING and not interchangeable with `display:none`: a `display:none` subtree is not laid
+  // out, so its images would never load and it could never become ready. Readiness is judged from
+  // the OUTSIDE (the pane has content, and every in-viewport image has decoded), which is why not
+  // one section component needed a new prop or a new contract.
+  const goSection = useCallback((s: Section) => {
+    setMenu(null);
+    setWanted((w) => (s === section ? null : s === w ? w : s));
+  }, [section]);
+
+  useEffect(() => {
+    if (!wanted) return;
+    let alive = true;
+    let raf = 0;
+    const started = performance.now();
+    const commit = () => {
+      if (!alive) return;
+      alive = false;
+      setSection(wanted);
+      setWanted(null);
+    };
+    // Only images that would actually be ON SCREEN can hold the swap: `loading="lazy"` thumbnails
+    // below the fold never load, and waiting on them would turn every visit to Cards into a
+    // `SECTION_SWAP_MAX_MS` stall.
+    const onScreen = (el: Element) => {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && r.top < window.innerHeight && r.bottom > 0;
+    };
+    const poll = () => {
+      if (!alive) return;
+      const node = preloadRef.current;
+      const late = performance.now() - started >= SECTION_SWAP_MAX_MS;
+      // `textContent`, never `innerText` — `innerText` is layout-aware and returns "" for a
+      // `visibility:hidden` subtree, so it would report every preloaded pane as empty forever.
+      const hasContent = !!node && (node.textContent!.trim().length > 0 || !!node.querySelector("img"));
+      // The library pane must also have no query in flight — see `libLoads`. The other three
+      // sections render nothing at all until their own load lands, so `hasContent` already says it.
+      const settled = wanted !== "library" || libLoads.inFlight === 0;
+      if (node && hasContent && settled) {
+        const imgs = [...node.querySelectorAll("img")].filter(onScreen);
+        if (late || imgs.every((i) => i.complete)) {
+          // Decode before committing, then let one frame pass, so the pane becomes visible on a
+          // subtree that is already rastered rather than one that still has to be.
+          void Promise.all(imgs.map((i) => i.decode().catch(() => undefined))).then(() =>
+            requestAnimationFrame(() => requestAnimationFrame(commit)),
+          );
+          return;
+        }
+      }
+      if (late) { commit(); return; }
+      raf = requestAnimationFrame(poll);
+    };
+    raf = requestAnimationFrame(poll);
+    return () => { alive = false; cancelAnimationFrame(raf); };
+  }, [wanted]);
 
   const flashToast = useCallback((msg: string) => {
     setToast(msg);
@@ -318,7 +498,9 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
 
   if (!hydrated) return null; // brief: settings loading (avoids a grid→list flash)
 
-  const isEmpty = forceEmpty || (books.length === 0 && !search && !format && !shelf);
+  // RAWY-269 (2): `booksLoaded` is what stops the empty state being shown before the first query has
+  // ever answered — "I have not looked yet" is not the same claim as "there is nothing here".
+  const isEmpty = forceEmpty || (booksLoaded && books.length === 0 && !search && !format && !shelf);
   const count = books.length;
 
   const pickShelf = (id: string | null) => {
@@ -350,6 +532,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     flashToast(t("lib.shelf.deleted", { name: s.name }));
   };
   const activeShelf = shelf ? shelves.find((s) => s.id === shelf) ?? null : null;
+  const navSection: Section = wanted ?? section;
 
   return (
     <div className="lib-root">
@@ -368,31 +551,33 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
           </span>
         </div>
 
+        {/* RAWY-269: the nav highlights `navSection` (= what was ASKED for), so the click reads as
+            instant even while the pane is still preparing off-screen. */}
         <nav className="lib-nav">
           <button
-            className={`lib-nav-item${section === "library" ? " active" : ""}`}
-            onClick={() => { setSection("library"); pickShelf(null); }}
+            className={`lib-nav-item${navSection === "library" ? " active" : ""}`}
+            onClick={() => { goSection("library"); pickShelf(null); }}
           >
             <span className="lib-nav-ico lib-ico-library" />
             {t("lib.nav.library")}
           </button>
           <button
-            className={`lib-nav-item${section === "inbox" ? " active" : ""}`}
-            onClick={() => setSection("inbox")}
+            className={`lib-nav-item${navSection === "inbox" ? " active" : ""}`}
+            onClick={() => goSection("inbox")}
           >
             <span className="lib-nav-ico lib-ico-highlights" />
             {t("lib.nav.highlights")}
           </button>
           <button
-            className={`lib-nav-item${section === "bookmarks" ? " active" : ""}`}
-            onClick={() => setSection("bookmarks")}
+            className={`lib-nav-item${navSection === "bookmarks" ? " active" : ""}`}
+            onClick={() => goSection("bookmarks")}
           >
             <span className="lib-nav-ico lib-ico-bookmarks" />
             {t("lib.nav.bookmarks")}
           </button>
           <button
-            className={`lib-nav-item${section === "cards" ? " active" : ""}`}
-            onClick={() => setSection("cards")}
+            className={`lib-nav-item${navSection === "cards" ? " active" : ""}`}
+            onClick={() => goSection("cards")}
           >
             <span className="lib-nav-ico lib-ico-cards" />
             {t("lib.nav.cards")}
@@ -427,34 +612,40 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
                 <button className="lib-shelf-main" onClick={() => pickShelf(shelf === s.id ? null : s.id)}>
                   <span className="lib-shelf-name" dir="auto">{s.name}</span>
                 </button>
-                <span className="lib-shelf-count">{num(s.count, lang)}</span>
-                <span className="lib-shelf-actions">
-                  <button
-                    className="lib-shelf-act"
-                    title={t("lib.shelf.rename")}
-                    aria-label={t("lib.shelf.rename")}
-                    onClick={() => { setRenaming(s.id); setDraftName(s.name); }}
-                  >
-                    ✎
-                  </button>
-                  {confirmShelf === s.id ? (
-                    <button
-                      className="lib-shelf-act danger"
-                      title={t("lib.shelf.deleteConfirm")}
-                      onClick={() => removeShelf(s)}
-                    >
-                      {t("lib.shelf.deleteYes")}
-                    </button>
-                  ) : (
+                {/* RAWY-269 (4): count and actions share ONE fixed trailing cell (a 1x1 grid), so
+                    revealing the actions on hover cannot resize the row. They used to swap
+                    `display`, which moved `.lib-shelf-main` 161px -> 125px on every row the pointer
+                    crossed — a 36px jolt per row, right where you aim to pick a shelf. */}
+                <span className={`lib-shelf-trail${confirmShelf === s.id ? " confirming" : ""}`}>
+                  <span className="lib-shelf-count">{num(s.count, lang)}</span>
+                  <span className="lib-shelf-actions">
                     <button
                       className="lib-shelf-act"
-                      title={t("lib.shelf.delete")}
-                      aria-label={t("lib.shelf.delete")}
-                      onClick={() => setConfirmShelf(s.id)}
+                      title={t("lib.shelf.rename")}
+                      aria-label={t("lib.shelf.rename")}
+                      onClick={() => { setRenaming(s.id); setDraftName(s.name); }}
                     >
-                      ✕
+                      ✎
                     </button>
-                  )}
+                    {confirmShelf === s.id ? (
+                      <button
+                        className="lib-shelf-act danger"
+                        title={t("lib.shelf.deleteConfirm")}
+                        onClick={() => removeShelf(s)}
+                      >
+                        {t("lib.shelf.deleteYes")}
+                      </button>
+                    ) : (
+                      <button
+                        className="lib-shelf-act"
+                        title={t("lib.shelf.delete")}
+                        aria-label={t("lib.shelf.delete")}
+                        onClick={() => setConfirmShelf(s.id)}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </span>
                 </span>
               </div>
             )
@@ -494,17 +685,67 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
       </aside>
 
       <main className="lib-main">
-        {section === "cards" ? (
-          <PhotoGallery />
-        ) : section === "inbox" ? (
-          <Inbox onOpen={onOpen} />
-        ) : section === "bookmarks" ? (
-          <BookmarksShelf onOpen={onOpen} />
-        ) : isEmpty ? (
-          <EmptyState onBrowse={addBooks} onFolder={addFolder} />
-        ) : (
-          <>
-            <header className="lib-head">
+        {/* RAWY-269 (1): the live panes, KEYED BY SECTION. The key is what makes this work at all:
+            on commit the list goes from [outgoing, incoming] to [incoming], and because the
+            incoming pane keeps its key React keeps its INSTANCE and its DOM — the swap is a class
+            change on an already-loaded, already-decoded subtree. Keyless (or in two different JSX
+            slots) React would tear the preloaded pane down and mount a fresh one, which is exactly
+            the blank frame this is here to remove: measured at that intermediate stage,
+            `.lib-main` still hit `kids:0 html:0` and the pane still flashed to 22.69 luma. */}
+        {(wanted && wanted !== section ? [section, wanted] : [section]).map((s) => (
+          <div
+            key={s}
+            className={s === section ? "lib-pane" : "lib-pane-preload"}
+            ref={s === wanted ? preloadRef : undefined}
+            aria-hidden={s === wanted ? true : undefined}
+          >
+            {paneFor(s)}
+          </div>
+        ))}
+        {drag && <DropOverlay count={drag.count} t={t} lang={lang} />}
+      </main>
+
+      {editing && (
+        <EditBook
+          book={editing}
+          shelves={shelves}
+          onShelves={(rows) => {
+            setShelves(rows);
+            loadBooks(); // a chip toggle can add/remove the open book from the active shelf filter
+          }}
+          onClose={() => setEditing(null)}
+          onSaved={(b) => {
+            loadBooks();
+            loadShelves();
+            if (b) setEditing(b); // keep open with refreshed cover after replace/revert
+          }}
+          onDeleted={() => {
+            const title = editing.title ?? "—"; // capture before we clear `editing`
+            setEditing(null); // RAWY-76: close the dialog and refresh the library + shelf counts
+            loadBooks();
+            loadShelves();
+            flashToast(t("lib.book.deleted", { title }));
+          }}
+        />
+      )}
+      {toast && <div className="lib-toast">{toast}</div>}
+      <GlobalSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <UpdateRosette />
+    </div>
+  );
+
+  // RAWY-269 (1): one pane per section, so the visible slot and the preload slot render through the
+  // SAME code path — a preloaded pane is byte-for-byte the pane that will be shown, never a
+  // lookalike. Declared after the return as a hoisted function so the JSX above stays in reading
+  // order; it closes over the render's own values, like the JSX does.
+  function paneFor(s: Section) {
+    if (s === "cards") return <PhotoGallery />;
+    if (s === "inbox") return <Inbox onOpen={onOpen} />;
+    if (s === "bookmarks") return <BookmarksShelf onOpen={onOpen} />;
+    if (isEmpty) return <EmptyState onBrowse={addBooks} onFolder={addFolder} />;
+    return (
+      <>
+        <header className="lib-head">
               <div className="lib-head-top">
                 <div className="lib-title-wrap">
                   <h1 className="lib-title" dir="auto">{activeShelf ? activeShelf.name : t("lib.title")}</h1>
@@ -704,40 +945,9 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
                 ))}
               </div>
             )}
-          </>
-        )}
-
-        {drag && <DropOverlay count={drag.count} t={t} lang={lang} />}
-      </main>
-
-      {editing && (
-        <EditBook
-          book={editing}
-          shelves={shelves}
-          onShelves={(rows) => {
-            setShelves(rows);
-            loadBooks(); // a chip toggle can add/remove the open book from the active shelf filter
-          }}
-          onClose={() => setEditing(null)}
-          onSaved={(b) => {
-            loadBooks();
-            loadShelves();
-            if (b) setEditing(b); // keep open with refreshed cover after replace/revert
-          }}
-          onDeleted={() => {
-            const title = editing.title ?? "—"; // capture before we clear `editing`
-            setEditing(null); // RAWY-76: close the dialog and refresh the library + shelf counts
-            loadBooks();
-            loadShelves();
-            flashToast(t("lib.book.deleted", { title }));
-          }}
-        />
-      )}
-      {toast && <div className="lib-toast">{toast}</div>}
-      <GlobalSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
-      <UpdateRosette />
-    </div>
-  );
+      </>
+    );
+  }
 }
 
 type TFn = ReturnType<typeof useI18n>["t"];
@@ -772,11 +982,19 @@ function ShelfRows({
   onSeeAll: (id: string) => void;
   onAddBooks: () => void;
 }) {
-  const [reading, setReading] = useState<BookRow[]>([]);
-  const [shelfBooks, setShelfBooks] = useState<Record<string, BookRow[]>>({});
+  // RAWY-269 (2): the rows view carries its OWN copy of the library, so it needs the same re-mount
+  // cache as the flat views — otherwise returning from the reader in rows view showed every shelf
+  // row as its dashed "this shelf is empty" box until the queries landed. The signature makes the
+  // cache safe to reuse: it is consulted only when the query it came from would be identical.
+  const sig = `${shelves.map((s) => s.id + ":" + s.count).join(",")}|${activeShelf}|${sort}|${order}`;
+  const [reading, setReading] = useState<BookRow[]>(() => (rowsCache?.sig === sig ? rowsCache.reading : []));
+  const [shelfBooks, setShelfBooks] = useState<Record<string, BookRow[]>>(() =>
+    rowsCache?.sig === sig ? rowsCache.books : {},
+  );
 
   useEffect(() => {
     let cancel = false;
+    libLoads.inFlight++; // RAWY-269 (1): the rows view is the OTHER library-pane loader
     (async () => {
       // "Currently Reading" is a DERIVED row (books with in-progress reading) — not a new shelf.
       const all = await libraryListBooks({ sort: "date_read", order: "desc" }).catch(() => [] as BookRow[]);
@@ -789,11 +1007,16 @@ function ShelfRows({
         targets.map((s) => libraryListBooks({ sort, order, collection: s.id }).catch(() => [] as BookRow[])),
       );
       if (cancel) return;
+      // RAWY-269 (5): same rule as the flat grid — the covers are decoded before the rows are
+      // published, so switching shelf in rows view is one atomic swap, not a layout that fills in.
+      await warmCovers([...inProgress, ...lists.flat()]);
+      if (cancel) return;
       setReading(inProgress);
       const map: Record<string, BookRow[]> = {};
       targets.forEach((s, i) => (map[s.id] = lists[i]));
       setShelfBooks(map);
-    })();
+      rowsCache = { sig, reading: inProgress, books: map }; // RAWY-269 (2)
+    })().finally(() => { libLoads.inFlight--; }); // RAWY-269 (1)
     return () => {
       cancel = true;
     };
@@ -926,7 +1149,9 @@ function BookCard({
     >
       <div className="lib-cover" data-mode={mode}>
         {showImg ? (
-          <img className="real" src={convertFileSrc(book.cover_path!)} alt="" onError={() => setFailed(true)} />
+          // RAWY-269 (5): `decoding="sync"` asks the frame that first shows the card to show its
+          // cover too, instead of presenting the plate and landing the image 2-3 frames later.
+          <img className="real" src={convertFileSrc(book.cover_path!)} alt="" decoding="sync" onError={() => setFailed(true)} />
         ) : (
           <AutoCover title={title} author={book.author} dir={book.dir} />
         )}
@@ -988,7 +1213,6 @@ function EditBook({
   const [title, setTitle] = useState(book.title ?? "");
   const [author, setAuthor] = useState(book.author ?? "");
   const [language, setLanguage] = useState(book.language ?? "");
-  const [dir, setDir] = useState<"ltr" | "rtl">(book.dir === "rtl" ? "rtl" : "ltr");
   const initialFit = book.cover_fit === "crop" || book.cover_fit === "fit" ? book.cover_fit : "";
   const [coverFit, setCoverFit] = useState<"" | "crop" | "fit">(initialFit);
   const [busy, setBusy] = useState(false);
@@ -1012,7 +1236,13 @@ function EditBook({
   const save = async () => {
     setBusy(true);
     try {
-      const updated = await bookUpdate(book.id, { title, author, language, dir, coverFit });
+      // RAWY-271: `dir` is deliberately ABSENT from the patch. Reading direction is decided
+      // automatically (books/mod.rs: the EPUB's page-progression, then the language, then a
+      // content sniff of the Arabic script — plus migration 8's backfill), so there is no user
+      // control for it any more. Omitting the field makes `update_book` leave the stored value
+      // untouched, which keeps the override an INTERNAL capability (`BookPatch.dir` still exists
+      // end-to-end) rather than exposing it as a preference.
+      const updated = await bookUpdate(book.id, { title, author, language, coverFit });
       onSaved(updated);
       onClose();
     } catch (e) {
@@ -1077,19 +1307,10 @@ function EditBook({
               <span>{t("edit.author")}</span>
               <input value={author} onChange={(e) => setAuthor(e.target.value)} />
             </label>
-            <div className="edit-row">
-              <label className="edit-field">
-                <span>{t("edit.language")}</span>
-                <input value={language} onChange={(e) => setLanguage(e.target.value)} placeholder="en · ar · …" />
-              </label>
-              <div className="edit-field">
-                <span>{t("edit.direction")}</span>
-                <div className="edit-seg">
-                  <button className={dir === "ltr" ? "active" : ""} onClick={() => setDir("ltr")}>{t("edit.ltr")}</button>
-                  <button className={dir === "rtl" ? "active" : ""} onClick={() => setDir("rtl")}>{t("edit.rtl")}</button>
-                </div>
-              </div>
-            </div>
+            <label className="edit-field">
+              <span>{t("edit.language")}</span>
+              <input value={language} onChange={(e) => setLanguage(e.target.value)} placeholder="en · ar · …" />
+            </label>
             <div className="edit-field">
               <span>{t("edit.coverFit")}</span>
               <div className="edit-seg">
@@ -1148,12 +1369,21 @@ function ListRow({ book, onOpen, lang, t }: { book: BookRow; onOpen: () => void;
     if (!book.read_at) return t("lib.date.none");
     const d = new Date(book.read_at * 1000);
     if (sameDay(d, new Date())) return t("lib.date.today");
-    return new Intl.DateTimeFormat(lang === "ar" ? "ar" : "en", { month: "short", day: "numeric" }).format(d);
+    return uiDateTimeFormat(lang, { month: "short", day: "numeric" }).format(d);
   })();
   return (
     <button className="lib-row" onClick={onOpen}>
+      {/* RAWY-280: List view now shows the REAL cover, same rule as the grid card and the edit dialog
+          — `cover_path` when the book has one, the generated AutoCover only as the fallback. It was
+          not a regression: this thumb has always rendered `variant="mini"`, which is a flat colour
+          swatch (`.ac-mini` is a bare div with a background), so a book with a perfectly good cover
+          still showed a plain rectangle here while the grid showed the artwork. */}
       <span className="ll-thumb">
-        <AutoCover title={book.title ?? "—"} dir={book.dir} variant="mini" />
+        {book.cover_path ? (
+          <img className="real" src={convertFileSrc(book.cover_path)} alt="" decoding="sync" />
+        ) : (
+          <AutoCover title={book.title ?? "—"} dir={book.dir} variant="mini" />
+        )}
       </span>
       {/* dir="auto" so a mixed AR title / Latin author each render + ellipsis-truncate on the
           correct side (design "Sard Library List Row"); block alignment follows the view direction. */}

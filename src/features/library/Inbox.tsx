@@ -7,10 +7,10 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 import { useI18n } from "../../i18n";
-import { localeDigits } from "../../lib/format";
+import { localeDigits, uiDateTimeFormat, uiRelativeTimeFormat } from "../../lib/format";
 import { THEMES, useTheme } from "../../theme";
 import { colorValue, HIGHLIGHT_SLOTS, isHex } from "../reader/highlightColors";
-import { annotationsAll, tagsList, type AnnoItem } from "../../lib/ipc";
+import { annoIsHighlight, annoIsNote, annotationsAll, tagsList, type AnnoItem } from "../../lib/ipc";
 import type { OpenTarget } from "./Library";
 
 const ARABIC = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
@@ -19,12 +19,10 @@ type TypeFilter = "all" | "highlight" | "note";
 function relTime(sec: number | null, lang: string): string {
   if (!sec) return "";
   const days = Math.round((Date.now() / 1000 - sec) / 86400);
-  const rtf = new Intl.RelativeTimeFormat(lang === "ar" ? "ar" : "en", { numeric: "auto" });
+  const rtf = uiRelativeTimeFormat(lang, { numeric: "auto" });
   if (Math.abs(days) < 1) return rtf.format(0, "day");
   if (Math.abs(days) < 30) return rtf.format(-days, "day");
-  return new Intl.DateTimeFormat(lang === "ar" ? "ar" : "en", { month: "short", day: "numeric", year: "numeric" }).format(
-    new Date(sec * 1000),
-  );
+  return uiDateTimeFormat(lang, { month: "short", day: "numeric", year: "numeric" }).format(new Date(sec * 1000));
 }
 
 export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
@@ -72,12 +70,17 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     !color || (color === "custom" ? isHex(c) : c === color);
   const q = search.trim().toLowerCase();
   const filtered = items.filter((it) => {
-    if (type !== "all" && it.kind !== type) return false;
+    // RAWY-282: classify by CONTENT, not by the raw `kind`. A highlight that carries a note arrives as
+    // `kind: "highlight"` with a body folded in, so filtering on `kind` put that one passage under
+    // Highlights and hid it from Notes — the same duplication the reader's panel had. Shared predicate.
+    if (type === "highlight" && !annoIsHighlight(it)) return false;
+    if (type === "note" && !annoIsNote(it)) return false;
     if (book && it.book_id !== book) return false;
     if (tag && !it.tags.includes(tag)) return false; // RAWY-203: an item shows under each of its tags
     if (!matchColor(it.color)) return false;
     if (q) {
-      const hay = `${it.text ?? ""} ${it.note ?? ""} ${it.book_title ?? ""} ${it.chapter_label ?? ""} ${it.tags.join(" ")}`.toLowerCase();
+      // RAWY-282: the title is searchable too — a reader who titled a note will look for that word first.
+      const hay = `${it.text ?? ""} ${it.note ?? ""} ${it.note_title ?? ""} ${it.book_title ?? ""} ${it.chapter_label ?? ""} ${it.tags.join(" ")}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;

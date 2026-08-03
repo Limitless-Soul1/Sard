@@ -192,9 +192,8 @@ export const en = {
   "edit.fieldTitle": "Title",
   "edit.author": "Author",
   "edit.language": "Language",
-  "edit.direction": "Direction",
-  "edit.ltr": "LTR",
-  "edit.rtl": "RTL",
+  // RAWY-271: "edit.direction" / "edit.ltr" / "edit.rtl" removed with the direction toggle —
+  // direction is detected automatically and is no longer a user-facing preference.
   "edit.replaceCover": "Replace cover",
   "edit.revertCover": "Revert to original",
   "edit.coverFit": "Cover fit",
@@ -334,6 +333,10 @@ export const en = {
   "panel.src.current": "This book",
   "panel.src.all": "All books",
   "panel.src.readonly": "From your other books — open one to read or edit it there.",
+  // RAWY-282: the note title. The placeholder says "optional" because it IS — a note with only a body
+  // is still a whole note, and the list renders it exactly as it always did.
+  "note.title": "Title",
+  "note.titlePlaceholder": "Title (optional)",
   "note.edit": "Edit",
   "note.delete": "Delete",
   "note.cancel": "Cancel",
@@ -350,6 +353,10 @@ export const en = {
   "type.tracking": "Tracking",
   "type.latin": "Latin",
   "type.arabic": "Arabic",
+  // RAWY-271: a quiet pointer under the two font lists — the only hint in the book that imported
+  // fonts exist and where they come from. Phrased like "gs.appearance.fontsMoved" (name the panel,
+  // no arrows), so it reads the same in both directions.
+  "type.fontsImportHint": "Want more fonts? Import your own from the Library’s settings, in the Fonts panel.",
   "type.paper": "Paper",
   "theme.day": "Day",
   "theme.night": "Night",
@@ -438,7 +445,9 @@ export const en = {
   "perbook.scopeSub": "won't change other books",
   "perbook.scopeAllSub": "book styles are unified — changing here changes every book",
   "perbook.reset": "Reset",
-  "gs.scope": "BOOK STYLES",
+  // RAWY-284: the group label is the MODE, because the section itself is now titled "Book styles" and a
+  // heading and a label reading the same words look like a bug. "Style mode" is the owner's own phrasing.
+  "gs.scope": "STYLE MODE",
   "gs.scope.unified": "Unified",
   "gs.scope.perbook": "Per-book",
   "gs.scope.unifiedHint": "All books share one style — changing font, theme, size or colour in any book applies to every book.",
@@ -449,6 +458,14 @@ export const en = {
   "color.background": "Background colour", // RAWY-201: the area behind the page
   "color.default": "Theme default",
   "color.custom": "Custom colour",
+  // RAWY-281: the reference indicator (the twin rule under a referenced word). The labels name the LINES
+  // rather than "the reference", because the reference itself — the note you attached — is not what these
+  // change. "Distance from text" is deliberately not "offset": it is the gap ABOVE the pair, and calling
+  // it offset invites confusion with the gap BETWEEN the two lines, which is not adjustable by design.
+  "ref.color": "Reference line colour",
+  "ref.thickness": "Reference line thickness",
+  "ref.offset": "Distance from text",
+  "ref.sample": "reference",
   // RAWY-200: read-aloud text-tracking controls
   "track.heading": "Read-aloud tracking",
   "track.spotlight": "Sentence highlight",
@@ -467,7 +484,7 @@ export const en = {
   "gs.appwideNote": "These apply everywhere. A book's own font & theme are set while reading.",
   "gs.nav.appearance": "Appearance",
   "gs.nav.fonts": "Fonts & library",
-  "gs.nav.reading": "Reading defaults",
+  "gs.nav.reading": "Book styles", // RAWY-284 — see "gs.reading"
   "gs.nav.bookmark": "Bookmark style",
   "gs.nav.language": "Language",
   "gs.nav.about": "About",
@@ -491,8 +508,15 @@ export const en = {
   "gs.fontsUsedBy": "Imported fonts become available as the interface font.",
   "gs.imported": "imported",
   "gs.remove": "Remove",
-  "gs.reading": "Reading defaults",
+  // RAWY-284: "Book styles", not "Reading defaults". In unified scope this section holds no defaults —
+  // the reading-appearance controls moved to the reader, where they preview — so the old title promised
+  // something that is not there. "Book styles" is true in BOTH scopes.
+  "gs.reading": "Book styles",
   "gs.readingBanner": "The baseline for new books — each book can override it while reading.",
+  // RAWY-284: shown INSTEAD of the appearance controls in unified scope. It names the panel a reader can
+  // act on rather than saying a vague "in the reader", and states the REASON they live there (the live
+  // preview), so the move reads as a benefit rather than as something taken away.
+  "gs.reading.inReader": "Line spacing and read-aloud emphasis are set while reading — open a book, then Settings. Every change previews live on the page.",
   "gs.defaultLatin": "Latin",
   "gs.defaultArabic": "Arabic",
   "gs.defaultSize": "Default size",
@@ -522,6 +546,62 @@ export const en = {
   "gs.twoLevel.inbook": "In-book · while reading",
   "gs.twoLevel.inbookDesc": "Overrides this book only: its font, size, spacing, theme. Nothing else in the app changes.",
   "gs.appearance.fontsMoved": "The interface font lives in the Fonts panel.",
+  // RAWY-265 — Library background. One row until an image is chosen (progressive disclosure), so an
+  // untouched profile sees a single line rather than six controls it has no use for.
+  "gs.bg": "LIBRARY BACKGROUND",
+  "gs.bgHint": "your own image, behind the Library — the theme still sets every colour",
+  // RAWY-265 Phase 2 — the reading DESK. Named for what it is in Sard's own vocabulary: the surface
+  // the page rests on. The page itself stays opaque, which is why the hint can promise that plainly.
+  "gs.bgReading": "READING DESK",
+  "gs.bgReadingHint": "Your own image around the page. The page itself stays solid, so the text is never over it.",
+  // RAWY-265 Phase 3. The floor is measured (AAA 7:1), so the slider cannot reach an unreadable value.
+  "gs.bg.pageOpacity": "Page opacity",
+  "gs.bg.pageOpacityHint": "Lower it to let the background show faintly through the page. The range stops where the text would stop being comfortable to read.",
+  "gs.bg.choose": "＋ Choose image…",
+  "gs.bg.replace": "Replace…",
+  "gs.bg.remove": "Remove",
+  "gs.bg.presence": "Presence",
+  // RAWY-279. Presence was the ONLY background control with no hint, which is a large part of why it
+  // did not read as "overlay strength". The two hints differ because the two surfaces genuinely do:
+  // the library cap is a measured WCAG AA floor (AA holds only to an overlay of 0.77), while the desk
+  // carries no bare text and was measured safe at overlay ZERO (6.23:1 worst case, 16 themes).
+  "gs.bg.presenceHint": "How much of your image shows through the theme colour. The range stops where library text would stop being legible.",
+  "gs.bg.presenceHintReading": "How much of your image shows through the theme colour. Past 100 the theme tint keeps fading, until the page is resting on almost the original image.",
+  "gs.bg.blur": "Blur",
+  "gs.bg.flip": "Flip horizontally",
+  "gs.bg.focal": "Focal point",
+  "gs.bg.focalHint": "Drag to choose what survives the crop.",
+  "gs.bg.reset": "↻ Reset adjustments",
+  "gs.bg.show": "Show backgrounds",
+  "gs.bg.showHint": "Turn off to hide every background without losing your settings.",
+  "gs.bg.hidden": "The image is set but currently hidden — raise Presence to see it.",
+  "gs.bg.flat": "This image is very close to the theme's own tone, so it may be hard to make out.",
+  "gs.bg.formats": "JPEG, PNG or WebP.",
+  // RAWY-278. A LOOK preference, and the copy must stay one: measured, turning it off changes no
+  // frame time at any blur radius, so it must never read as a performance setting. It names immersive
+  // mode and the scroll because that is the exact condition — the step is invisible until both hold.
+  "gs.bg.immBlur": "Extra blur in immersive mode",
+  "gs.bg.immBlurHint": "In immersive mode, the background blurs a little more once you scroll into the page. Turn this off to keep the blur exactly where you set it.",
+  // RAWY-278. Import is not instant on a large source — MEASURED 1.8 s for a 29 MP photo and 4.3 s
+  // for a 115.68 MP one — and until now the only feedback was a greyed button whose label did not
+  // change, which reads as a hang. These expose the REAL state only: "preparing" is the actual
+  // in-flight flag, never a simulated percentage, and `displayCopy` is shown only when a derivative
+  // was genuinely produced. The wording deliberately does NOT claim a memory saving: measured, the
+  // display copy costs the same to render as any other background. What it does is bound the work,
+  // and what the reader actually wants to know is that their own file was not altered.
+  "gs.bg.preparing": "Preparing…",
+  "gs.bg.preparingHint": "Sard is preparing an optimized display copy. Your original image is left untouched.",
+  "gs.bg.displayCopy": "This image is large, so Sard renders an optimized display copy. Your original file is untouched.",
+  // Errors mirror the `bg.err.*` codes Rust returns; the raw code is shown if one is ever unmapped.
+  "bg.err.io": "That file couldn't be read.",
+  "bg.err.fileTooLarge": "That file is too large to use as a background.",
+  "bg.err.tooManyPixels": "That image has too many pixels to use as a background.",
+  "bg.err.format": "That file isn't a supported image. Use JPEG, PNG or WebP.",
+  "bg.err.animated": "Animated images can't be used as a background. Use JPEG, PNG or WebP.",
+  "bg.err.heic": "HEIC photos aren't supported. Export the photo as JPEG first.",
+  "bg.err.vector": "SVG files can't be used as a background. Use JPEG, PNG or WebP.",
+  "bg.err.decode": "That image couldn't be read — it may be damaged.",
+  "bg.err.surface": "Unknown background surface.",
   "gs.reading.fontsHint": "Book font, weight & size are set in the Fonts panel.",
   // RAWY-91 — Fonts panel: App font (chrome) fully separate from Book font (reading text)
   "fonts.appwide": "Two separate fonts: one for the app interface, one for the text inside books.",

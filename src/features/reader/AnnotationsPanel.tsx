@@ -34,6 +34,8 @@ import { ColorRow } from "./AnnotationLayer";
 import { colorValue } from "./highlightColors";
 import { localeNum } from "../../lib/format";
 import {
+  annoIsHighlight,
+  annoIsNote,
   annotationsAll,
   bookmarksAll,
   type AnnoItem,
@@ -46,6 +48,11 @@ import {
 import type { OpenTarget } from "./Reader"; // type-only: erased, so no runtime import cycle
 
 export type AnnoTab = "notes" | "highlights" | "bookmarks";
+
+/** RAWY-282: a hard cap on the note title, enforced at the INPUT rather than by trimming on save, so a
+ *  reader never types text that is silently discarded. It is a heading, not a second body — the body is
+ *  the place for length — and it also bounds the widest single word the card has to wrap. */
+const NOTE_TITLE_MAX = 120;
 
 const ARABIC = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
 // "current" | "all" | a book id
@@ -75,7 +82,29 @@ export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, initialTab
   const currentBookId = useAnnotations((s) => s.bookId);
   // RAWY-205: an empty-body note is a pure tag ANCHOR for a body-less tagged highlight — not a note the
   // user wrote — so it is hidden from this list AND its count (the passage itself lives under Highlights).
-  const notes = useMemo(() => allNotes.filter((n) => (n.body ?? "").trim() !== ""), [allNotes]);
+  // RAWY-282: a note is REAL if it has a body OR a title. Previously body-only, which would now hide a
+  // note the reader had reduced to a heading. Empty-body notes still exist as pure TAG anchors
+  // (RAWY-205) and are still correctly excluded — they have neither.
+  const notes = useMemo(
+    () => allNotes.filter((n) => (n.body ?? "").trim() !== "" || (n.title ?? "").trim() !== ""),
+    [allNotes],
+  );
+  // RAWY-282 (classification): the Highlights tab lists STANDALONE highlights only — one passage is one
+  // logical item, so a highlight that carries a note belongs to Notes and must not be duplicated here.
+  // The anchor itself is untouched: the mark still renders in the book, because this filters the LIST,
+  // not the highlight.
+  // Keyed on the VISIBLE notes, deliberately, not on "has any note row". A highlight can carry an
+  // empty-body note that exists only to hold tags (RAWY-205); keying on row existence would hide such a
+  // highlight from Highlights while Notes also refuses to show it, and the item would vanish from both.
+  // Keying on the visible set makes the two lists exactly complementary — every item appears once.
+  const notedHighlightIds = useMemo(
+    () => new Set(notes.map((n) => n.highlight_id).filter(Boolean) as string[]),
+    [notes],
+  );
+  const standaloneHighlights = useMemo(
+    () => highlights.filter((h) => !notedHighlightIds.has(h.id)),
+    [highlights, notedHighlightIds],
+  );
 
   // RAWY-206: source filter. Resets to "current" every time the panel opens (no persistence).
   const [source, setSource] = useState<Source>("current");
@@ -114,12 +143,14 @@ export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, initialTab
   const xAll = useMemo(() => inSrc(xItems ?? []), [xItems, source]);
   // RAWY-205 holds here by construction: a tag-only highlight has no note body, so it can never render
   // as a blank note — it appears (correctly) under Highlights only.
-  const xNotes = useMemo(() => xAll.filter((it) => it.kind === "note" || (it.note ?? "").trim() !== ""), [xAll]);
-  const xHls = useMemo(() => xAll.filter((it) => it.kind === "highlight"), [xAll]);
+  // RAWY-282 (classification): `annoIsNote` / `annoIsHighlight` are defined once in `lib/ipc.ts` and
+  // shared with the library Inbox, so the two surfaces cannot disagree about what an item is.
+  const xNotes = useMemo(() => xAll.filter(annoIsNote), [xAll]);
+  const xHls = useMemo(() => xAll.filter(annoIsHighlight), [xAll]);
   const xMarks = useMemo(() => inSrc(xBms ?? []), [xBms, source]);
 
   const nNotes = cross ? xNotes.length : notes.length;
-  const nHls = cross ? xHls.length : highlights.length;
+  const nHls = cross ? xHls.length : standaloneHighlights.length;
   const nBms = cross ? xMarks.length : bookmarks.length;
 
   const srcLabel =
@@ -211,7 +242,7 @@ export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, initialTab
           tab === "notes" ? (
             <NotesTab highlights={highlights} notes={notes} onJump={onJump} />
           ) : tab === "highlights" ? (
-            <HighlightsTab highlights={highlights} onJump={onJump} />
+            <HighlightsTab highlights={standaloneHighlights} onJump={onJump} />
           ) : (
             <BookmarksTab bookmarks={bookmarks} onJump={onJump} />
           )
@@ -268,6 +299,11 @@ function CrossTab({
             <div className="rp-x-src" dir="auto">
               {[it.book_title || "—", it.chapter_label].filter(Boolean).join(" · ")}
             </div>
+            {/* RAWY-282: the title heads the card here too, so the cross-book list reads the same as
+                the in-book one. Absent title = exactly the previous rendering. */}
+            {(it.note_title ?? "").trim() !== "" && (
+              <div className="rp-note-title" dir="auto">{it.note_title}</div>
+            )}
             {/* `text` is the note BODY for a margin note, and the excerpt for a highlight. */}
             <div className="rp-x-text" dir="auto">{it.text}</div>
             {it.kind === "highlight" && (it.note ?? "").trim() !== "" && (
@@ -338,8 +374,10 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
   const addMarginNote = useAnnotations((s) => s.addMarginNote);
   const [editId, setEditId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [draftTitle, setDraftTitle] = useState(""); // RAWY-282
   const [composing, setComposing] = useState(false);
   const [marginDraft, setMarginDraft] = useState("");
+  const [marginTitle, setMarginTitle] = useState(""); // RAWY-282
   const [marginColor, setMarginColor] = useState<HighlightColor>("amber");
 
   const locate = (n: NoteRow): string | null =>
@@ -348,14 +386,17 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
   const addMargin = async () => {
     const cfi = useReader.getState().cfi;
     const chapter = useReader.getState().chapterLabel;
-    if (!cfi || !marginDraft.trim()) {
+    // RAWY-282: a title alone is enough to create the note, so the guard accepts either field.
+    if (!cfi || (!marginDraft.trim() && !marginTitle.trim())) {
       setComposing(false);
       setMarginDraft("");
+      setMarginTitle("");
       return;
     }
-    await addMarginNote(cfi, marginColor, marginDraft, chapter);
+    await addMarginNote(cfi, marginColor, marginDraft, chapter, marginTitle);
     setComposing(false);
     setMarginDraft("");
+    setMarginTitle("");
   };
 
   return (
@@ -363,6 +404,17 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
       <div className="rp-toolrow">
         {composing ? (
           <div className="rp-compose">
+            {/* RAWY-282: title first, optional. A plain single-line input, so Enter is free to submit
+                nothing and the field can never grow the card. */}
+            <input
+              className="rp-title-input"
+              value={marginTitle}
+              onChange={(e) => setMarginTitle(e.target.value)}
+              placeholder={t("note.titlePlaceholder")}
+              aria-label={t("note.title")}
+              dir="auto"
+              maxLength={NOTE_TITLE_MAX}
+            />
             <textarea
               className="rp-textarea"
               autoFocus
@@ -374,7 +426,7 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
             />
             <ColorRow active={marginColor} onPick={setMarginColor} />
             <div className="rp-compose-foot">
-              <button className="rp-mini" onClick={() => { setComposing(false); setMarginDraft(""); }}>{t("note.cancel")}</button>
+              <button className="rp-mini" onClick={() => { setComposing(false); setMarginDraft(""); setMarginTitle(""); }}>{t("note.cancel")}</button>
               <button className="rp-mini primary" onClick={addMargin}>{t("hl.save")}</button>
             </div>
           </div>
@@ -395,20 +447,38 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
                 {n.chapter_label || (n.highlight_id ? "" : t("panel.marginNote"))}
               </span>
               <div className="rp-item-actions">
-                <button className="rp-mini" onClick={() => { setEditId(n.id); setDraft(n.body ?? ""); }}>{t("note.edit")}</button>
+                <button className="rp-mini" onClick={() => { setEditId(n.id); setDraft(n.body ?? ""); setDraftTitle(n.title ?? ""); }}>{t("note.edit")}</button>
                 <button className="rp-mini danger" onClick={() => deleteNote(n.id)}>{t("note.delete")}</button>
               </div>
             </div>
             {editing ? (
               <div className="rp-compose">
+                <input
+                  className="rp-title-input"
+                  value={draftTitle}
+                  onChange={(e) => setDraftTitle(e.target.value)}
+                  placeholder={t("note.titlePlaceholder")}
+                  aria-label={t("note.title")}
+                  dir="auto"
+                  maxLength={NOTE_TITLE_MAX}
+                />
                 <textarea className="rp-textarea" autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} dir="auto" rows={3} />
                 <div className="rp-compose-foot">
                   <button className="rp-mini" onClick={() => setEditId(null)}>{t("note.cancel")}</button>
-                  <button className="rp-mini primary" onClick={async () => { await updateNote(n.id, draft, n.color); setEditId(null); }}>{t("hl.save")}</button>
+                  <button className="rp-mini primary" onClick={async () => { await updateNote(n.id, draft, n.color, draftTitle); setEditId(null); }}>{t("hl.save")}</button>
                 </div>
               </div>
             ) : (
-              <div className="rp-note-body" dir="auto" onClick={() => target && onJump(target)}>{n.body}</div>
+              // RAWY-282: title (emphasised) above the body preview. With no title this renders exactly
+              // what it always did — a single `.rp-note-body` — so untitled notes are unchanged.
+              <div className="rp-note-text" onClick={() => target && onJump(target)}>
+                {(n.title ?? "").trim() !== "" && (
+                  <div className="rp-note-title" dir="auto">{n.title}</div>
+                )}
+                {(n.body ?? "").trim() !== "" && (
+                  <div className="rp-note-body" dir="auto">{n.body}</div>
+                )}
+              </div>
             )}
           </div>
         );

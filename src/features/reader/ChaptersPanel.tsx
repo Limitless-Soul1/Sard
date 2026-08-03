@@ -77,9 +77,10 @@ interface Props {
   toc: TocEntry[];
   currentHref: string | null;
   /** RAWY-287: the TOC row the reader is currently inside, resolved by the Reader against EPUB
-   *  reading order (see `tocIndex` there). `-1` = genuinely outside every listed entry. Supersedes
-   *  matching `currentHref` here, which could not represent either of the two cases a valid EPUB
-   *  routinely produces: a spine document with NO nav entry, and several nav entries in ONE document. */
+   *  reading order (see `tocIndex` there). `-1` = genuinely outside every listed entry.
+   *  Supersedes matching `currentHref` here, which could not represent either of the two cases
+   *  a valid EPUB routinely produces: a spine document with NO nav entry, and several nav entries
+   *  inside ONE document. */
   activeIndex: number;
   /** RAWY-256: TOC hrefs whose chapter is read — a STABLE Set (memoised in Reader), never rebuilt per row. */
   readHrefs: Set<string>;

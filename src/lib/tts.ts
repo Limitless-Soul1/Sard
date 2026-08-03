@@ -17,9 +17,34 @@ import { create } from "zustand";
 import { settingsGet, settingsSet, ttsDownloadVoice, ttsEdgeVoices, ttsStop, ttsVoicePresent } from "./ipc";
 import { LatencySeries, newSeries, recordSeries, resetSeries, seriesSummary, SynthScheduler } from "./ttsScheduler";
 
-export const TTS_MIN_SPEED = 0.75;
-export const TTS_MAX_SPEED = 2.0;
-export const TTS_SPEED_STEP = 0.25;
+/**
+ * RAWY-281 — the selectable playback speeds, as an EXPLICIT ORDERED SET.
+ *
+ * This replaces a uniform grid (`MIN 0.75 / MAX 2.0 / STEP 0.25`) that produced the same six values
+ * implicitly. The grid was not merely silent about 1.10 — `setSpeed` QUANTISED to it
+ * (`Math.round(s / 0.25) * 0.25`), so 1.10 was actively snapped to 1.00 and was unreachable by any
+ * path. A uniform step cannot express {0.75, 1.00, 1.10, 1.25, …}: 1.10 is off the 0.25 grid, and the
+ * only steps containing it (0.05, 0.10) either bloat the cycle to 26 stops or drop 1.00 and 1.25.
+ *
+ * So the constraint is REMOVED rather than special-cased. The list states exactly what the grid was
+ * always trying to express — a fixed, ordered set the chip cycles and stored values snap to — and it
+ * can hold any value the product wants without arithmetic having to agree.
+ *
+ * **Every previously reachable speed is still here, unchanged and in the same order.** 1.10 is
+ * inserted in sorted position, so cycling order is preserved and only gains one stop.
+ * NOT an engine change: `mediaEl.playbackRate` is a float and time-stretches at 1.10 exactly as it
+ * does at 1.25 (RAWY-264). Nothing in scheduling, buffering, retry or the Edge pipeline reads these.
+ */
+export const TTS_SPEEDS = [0.75, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0] as const;
+/** Derived so they can never drift from the list. Both are consumed elsewhere — `TTS_MIN_SPEED`
+ *  also bounds the decode-context lifetime (`durationSec / TTS_MIN_SPEED`), which is why it stays. */
+export const TTS_MIN_SPEED = TTS_SPEEDS[0];
+export const TTS_MAX_SPEED = TTS_SPEEDS[TTS_SPEEDS.length - 1];
+/** Snap to the nearest SELECTABLE speed. Replaces the grid quantiser, and is deliberately the single
+ *  point where an arbitrary number becomes a valid one — used by both `setSpeed` and the restore path,
+ *  so "speed is always a member of TTS_SPEEDS" holds everywhere rather than at each call site. */
+export const nearestSpeed = (s: number): number =>
+  TTS_SPEEDS.reduce((best, v) => (Math.abs(v - s) < Math.abs(best - s) ? v : best), TTS_SPEEDS[0]);
 // Sentinel error the player localizes (RAWY-107) — distinct from a raw engine/download error, which
 // the pill shows verbatim (RAWY-106). Set when a section genuinely has no readable text.
 export const TTS_EMPTY = "empty-chapter";
@@ -1406,7 +1431,11 @@ export const useTts = create<TtsState>((set, get) => ({
     const units = sen.map((s) => s.trim()).filter(Boolean);
     sentences = units;
     const saved = Number(await settingsGet("tts_speed").catch(() => null));
-    const speed = saved >= TTS_MIN_SPEED && saved <= TTS_MAX_SPEED ? saved : get().speed;
+    // RAWY-281: an in-range stored value is SNAPPED to the nearest selectable speed, so the invariant
+    // "speed is always a member of TTS_SPEEDS" holds on the restore path too, not only through
+    // `setSpeed`. Lossless for every value that could have been stored — the old grid's six are all
+    // members, and 1.10 (which only the new list can produce) maps to itself.
+    const speed = saved >= TTS_MIN_SPEED && saved <= TTS_MAX_SPEED ? nearestSpeed(saved) : get().speed;
     // RAWY-180: restore the saved volume (0..1). An UNSET key must not read as 0 (muted), so treat only
     // an in-range stored value as valid; otherwise keep the current (default full) level.
     const volStr = await settingsGet("tts_volume").catch(() => null);
@@ -1518,7 +1547,10 @@ export const useTts = create<TtsState>((set, get) => ({
   // had to break: with the rate baked into the audio, cached sentences carried the OLD rate and had to be
   // discarded. That discard was the direct cause of the G-264B boundary underrun, which cannot occur now.
   setSpeed: (s) => {
-    const sp = Math.max(TTS_MIN_SPEED, Math.min(TTS_MAX_SPEED, Math.round(s / TTS_SPEED_STEP) * TTS_SPEED_STEP));
+    // RAWY-281: snap to the nearest SELECTABLE speed instead of to a 0.25 grid. For every value the
+    // old quantiser could produce the result is identical — the grid's six values are all in the list
+    // — so no existing behaviour changes; 1.10 simply stops being rounded away to 1.00.
+    const sp = nearestSpeed(s);
     if (mediaEl) mediaEl.playbackRate = sp;
     reanchorKaraoke(sp); // RAWY-127: keep the karaoke audio-time continuous across the rate change
     set({ speed: sp });

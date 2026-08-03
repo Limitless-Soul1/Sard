@@ -2,9 +2,14 @@
 //
 // One source of truth, mirroring `annotationsStore`'s shape so the two read the same way: every mutation
 // goes through here, writes to the DB, and hands the refreshed set to the controller — which re-marks every
-// rendered section. That is why a save or delete is visible immediately and needs no reload: the mark lives
-// in a CSS Custom Highlight registry, so replacing the set IS the redraw, and a deleted reference's marks
-// disappear because nothing was ever written into the book to clean up.
+// rendered section. That is why a save or delete is visible immediately and needs no reload: replacing the
+// set IS the redraw, and a deleted reference's marks disappear because nothing was ever written into the
+// book to clean up.
+//
+// RAWY-281: the mark used to be a CSS Custom Highlight; it is now SVG drawn into foliate's overlayer
+// (the Custom Highlight API cannot draw the accepted twin-rule design — no rounded caps, no second
+// stroke, no controllable gap). Nothing in THIS file changed: the controller still owns the drawing and
+// still re-marks from `setReferences`, which is exactly why the switch did not reach the store.
 
 import { create } from "zustand";
 

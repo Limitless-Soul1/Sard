@@ -4,6 +4,8 @@
 // book's script font (Amiri for Arabic, Literata for Latin), so it adapts across all 15 themes
 // and both directions with no per-theme code. Multi-passage collection + gallery come in part 2.
 
+import { uiDateTimeFormat } from "../../lib/format";
+
 export type CardFormat = "square" | "portrait" | "story" | "landscape";
 
 // EXPORT pixel size per format. The on-screen card renders at HALF these (its "natural" size)
@@ -127,7 +129,7 @@ export const cardSeparator = (themeId: string): string => SEPARATORS[themeId] ??
 // A localized "30 June 2026" style date for the card meta line.
 export function formatCardDate(d: Date, lang: string): string {
   try {
-    return new Intl.DateTimeFormat(lang === "ar" ? "ar" : "en", {
+    return uiDateTimeFormat(lang, {
       day: "numeric",
       month: "long",
       year: "numeric",
@@ -137,10 +139,11 @@ export function formatCardDate(d: Date, lang: string): string {
   }
 }
 
-// RAWY-150: a localized "7:42 PM" / "١٩:٤٢" style time for the card meta line (its own toggle).
+// RAWY-150: a localized "7:42 PM" / "7:42 م" style time for the card meta line (its own toggle).
+// RAWY-261: the meta line is Sard's, not the author's — Arabic keeps «م/ص», the digits are Latin.
 export function formatCardTime(d: Date, lang: string): string {
   try {
-    return new Intl.DateTimeFormat(lang === "ar" ? "ar" : "en", {
+    return uiDateTimeFormat(lang, {
       hour: "numeric",
       minute: "2-digit",
     }).format(d);

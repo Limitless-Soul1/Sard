@@ -4,7 +4,7 @@
 // chrome → inherits the UI direction and uses theme tokens. Replaces the old cramped
 // TypographyBar wall-of-buttons; the dev page-turn / book-switcher / status controls are gone.
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type CSSProperties, type ReactNode } from "react";
 
 import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
@@ -25,10 +25,31 @@ import {
 } from "../../reader-engine/injectedCss";
 import type { TKey } from "../../i18n/locales/en";
 import { DEFAULT_DARK, DEFAULT_LIGHT, THEMES, THEME_ORDER, useTheme, type ThemeId } from "../../theme";
-import { contrastIsReadable } from "../../lib/contrast";
+import { contrastIsReadable, effectivePaper } from "../../lib/contrast";
 import { TtsTrackingControls } from "./TtsTrackingControls"; // RAWY-200
+// RAWY-281: the reference twin rule's geometry — the SAME resolver FoliateController draws with, so the
+// panel's preview and the mark on the page are one computation rather than two matched sets of numbers.
+import {
+  resolveRefRule,
+  refRuleBars,
+  REF_WEIGHT_MIN,
+  REF_WEIGHT_MAX,
+  REF_OFFSET_MIN,
+  REF_OFFSET_MAX,
+} from "../../reader-engine/refRule";
 import { useTts } from "../../lib/tts"; // RAWY-257 (Phase 1 / RAWY-255): the read-aloud diagnostic toggle
 import { useFonts } from "../../lib/fonts";
+// RAWY-265 (Phase 2): the reading DESK background. Constants, store and the presence→scrim mapping
+// all live in the module and are shared with the library surface — only the markup differs here.
+import {
+  BG_BLUR_MAX,
+  presenceMaxFor,
+  PAGE_OPACITY_MIN,
+  bgSrcUrl,
+  currentDeskScrim,
+  effectivePageOpacity,
+  useBackground,
+} from "../../lib/background";
 
 interface Props {
   style: ReadingStyle;
@@ -113,6 +134,334 @@ function ColorRow({
           />
         </label>
       </div>
+    </>
+  );
+}
+
+// ---- RAWY-281: THE REFERENCE INDICATOR (the twin rule) ----
+//
+// Three per-book controls over the mark under a referenced word — colour, thickness, distance from the
+// text. They live in the COLOUR tab because that is where every other per-book override of a reading
+// SURFACE already is (ink · page · background), and because RAWY-217 measured five tabs as this width's
+// ceiling: a sixth for one mark is not available. The group deliberately adds no tab, no toggle and no
+// new visual language — it is the existing `ColorRow` plus two `rs-slider-row`s, the same two primitives
+// `TtsTrackingControls` uses for the same job.
+//
+// The presets are SARD'S OWN THEME ACCENTS rather than invented colours (ivory · sepia · ink · sage on
+// light; slate · espresso · dusk · forest-night on dark), so every preset is a colour the app already
+// ships and has already been judged against these papers.
+const REF_PRESETS_LIGHT = ["#9C5A3C", "#97582F", "#7A2E1E", "#5E7A52"];
+const REF_PRESETS_DARK = ["#C98A5E", "#D49A6A", "#8FA6D8", "#82B08C"];
+// The preview draws at a fixed 20px because that is the size the design file specifies its flagship case
+// at ("20PX · 2PX RULES · 3PX GAP"), so an untouched control previews the design's own reference figure.
+const REF_PREVIEW_PX = 20;
+
+// Both size controls are a MULTIPLE of the design value and are shown as a percentage, where 100% is the
+// design exactly. A percentage is the right unit for both: the underlying quantities are em-based (they
+// track the reader's zoom and the book's font), so there is no px number that would stay true — and
+// "100% = the design" is a claim the reader can act on, unlike "0.30em".
+const refPct = (v: number | null) => Math.round((v ?? 1) * 100);
+
+function RefRuleControls({
+  style,
+  update,
+  accent,
+  dark,
+  t,
+}: {
+  style: ReadingStyle;
+  update: (patch: Partial<ReadingStyle>) => void;
+  accent: string;
+  dark: boolean; // the active theme's polarity — which preset column to offer, as everywhere else here
+  t: (k: TKey) => string;
+}) {
+  // The SAME resolver the page draws with (`reader-engine/refRule`), at the preview's own font size — so
+  // the preview cannot drift from the mark. This is the RAWY-259 lesson applied ahead of time: two
+  // surfaces showing one mark must share the computation, not a pair of matched constants.
+  const d = resolveRefRule(style, accent, REF_PREVIEW_PX);
+  // …and the SAME bar geometry, run against a unit box. `refRuleBars` returns the strokes measured DOWN
+  // from the content box (the SVG convention the overlayer needs); CSS `bottom` measures UP, so the sign
+  // flips and nothing else does. Deriving the preview from the shared function rather than re-deriving
+  // `-offset` / `-(offset + thickness + gap)` here is the point: there is exactly one place where the
+  // design's geometry can be wrong.
+  const bars = refRuleBars({ left: 0, width: 0, bottom: 0 }, d);
+  const bar = (b: { y: number; height: number; rx: number }): CSSProperties => ({
+    position: "absolute",
+    insetInline: 0,
+    bottom: -(b.y + b.height), // SVG top-down → CSS bottom-up, on the stroke's BOTTOM edge
+    height: b.height,
+    borderRadius: b.rx,
+    background: d.color,
+  });
+
+  return (
+    <>
+      <ColorRow
+        label={t("ref.color")}
+        value={style.refRuleColor}
+        themeValue={accent}
+        presets={dark ? REF_PRESETS_DARK : REF_PRESETS_LIGHT}
+        onPick={(v) => update({ refRuleColor: v })}
+        t={t}
+      />
+
+      <div className="rs-slider-row">
+        <span className="rs-slider-cap" style={{ fontSize: 12 }}>{t("ref.thickness")}</span>
+        <input
+          className="rs-slider"
+          type="range"
+          min={REF_WEIGHT_MIN}
+          max={REF_WEIGHT_MAX}
+          step={0.05}
+          aria-label={t("ref.thickness")}
+          value={style.refRuleWeight ?? 1}
+          onChange={(e) => update({ refRuleWeight: r2(Number(e.target.value)) })}
+        />
+        <span className="rs-slider-cap" style={{ fontSize: 12, minWidth: "2.5em", textAlign: "end" }}>
+          {refPct(style.refRuleWeight)}%
+        </span>
+      </div>
+
+      <div className="rs-slider-row">
+        <span className="rs-slider-cap" style={{ fontSize: 12 }}>{t("ref.offset")}</span>
+        <input
+          className="rs-slider"
+          type="range"
+          min={REF_OFFSET_MIN}
+          max={REF_OFFSET_MAX}
+          step={0.05}
+          aria-label={t("ref.offset")}
+          value={style.refRuleOffset ?? 1}
+          onChange={(e) => update({ refRuleOffset: r2(Number(e.target.value)) })}
+        />
+        <span className="rs-slider-cap" style={{ fontSize: 12, minWidth: "2.5em", textAlign: "end" }}>
+          {refPct(style.refRuleOffset)}%
+        </span>
+      </div>
+
+      {/* A live sample. Without it the two sliders are unreadable from inside the panel — the marked word
+          is very often not on screen, and neither quantity has a familiar unit. It is drawn from the
+          resolver above, so it is the mark, not a picture of it. Extra bottom padding leaves room for the
+          pair at the top of the offset range. */}
+      <div className="rs-ref-preview" aria-hidden>
+        <span style={{ position: "relative", fontSize: REF_PREVIEW_PX }}>
+          {t("ref.sample")}
+          <span style={bar(bars[0])} />
+          <span style={bar(bars[1])} />
+        </span>
+      </div>
+    </>
+  );
+}
+
+// ---- RAWY-265 (Phase 2): the READING DESK background ----
+//
+// LIVES IN THE "ALL BOOKS" TAB, and that placement is the scope signal. The background is app-wide,
+// and this tab already opens with "These always apply to every book, not just this one" — so
+// constraint B2 (a reader must always be able to tell what a change affects) is satisfied BY
+// STRUCTURE rather than by adding a per-control suffix to a drawer whose banner says "this book".
+// It also avoids a sixth tab: RAWY-217 measured that five is the practical ceiling for this width.
+//
+// PROGRESSIVE DISCLOSURE, as in Global Settings: one row until an image exists.
+//
+// The measured constants, the store and the presence→scrim mapping all live in `lib/background.ts`
+// and are SHARED with the library surface — only the markup differs here, in the drawer's own visual
+// language (rs-*). Nothing that could drift is duplicated.
+function ReadingBackgroundSection() {
+  const { t, lang } = useI18n();
+  // The DESK's own colour is the theme's `surfaceBg` — that is what the scrim tints toward, so it is
+  // also the ground the "arrive correct" presence is solved against (a desk-coloured image can be
+  // shown boldly; one that fights the desk arrives restrained).
+  const bookThemeId = useTheme((s) => s.bookThemeId);
+  const deskGround = THEMES[bookThemeId].colors.surfaceBg;
+  // RAWY-278: the immersive blur step only exists while immersive mode is on, so its toggle follows
+  // the same disabled + inert-note treatment the other immersive sub-options already use.
+  const immersive = useTheme((s) => s.immersive);
+
+  // RAWY-278 (fix) — make the boost OBSERVABLE while it is being set.
+  // Opening this drawer clears `scrolledAway` (Reader.tsx:589 → setHold → setVis → setScrolledAway),
+  // and that is the only state the boost renders in — so the control looked dead. Raising this
+  // attribute while the row is hovered or focused reproduces the receded FILTER only; the scrim step
+  // and every transition are untouched, and the selector cannot match once the attribute is gone.
+  // The cleanup is not optional: the section unmounts when the drawer closes, and a leaked attribute
+  // would leave the desk previewing forever (Memory Rules — cleanup must always exist).
+  const previewImmersiveBlur = (on: boolean) => {
+    const r = document.documentElement;
+    if (on) r.dataset.bgImmPreview = "1";
+    else delete r.dataset.bgImmPreview;
+  };
+  useEffect(() => () => { delete document.documentElement.dataset.bgImmPreview; }, []);
+  const { reading, readingParams, setParams, choose, clear, resetParams } = useBackground();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const pick = async () => {
+    setError(null);
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const picked = await open({
+      multiple: false,
+      filters: [{ name: "Image", extensions: ["jpg", "jpeg", "png", "webp"] }],
+    });
+    if (typeof picked !== "string") return;
+    setBusy(true);
+    try {
+      await choose("reading", picked, deskGround);
+    } catch (e) {
+      // Rust returns a stable `bg.err.*` CODE, never a sentence, so user-facing copy stays inside
+      // the i18n system. An unmapped code shows itself rather than an empty message.
+      const code = String(e);
+      setError(code.startsWith("bg.err.") ? t(code as TKey) : code);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="rs-sec-head" style={{ marginTop: 14 }}>
+        <span className="rs-label">{t("gs.bgReading")}</span>
+      </div>
+      <div className="rs-sec-hint">{t("gs.bgReadingHint")}</div>
+
+      {!reading ? (
+        <>
+          {/* RAWY-278: the button states the REAL in-flight state rather than only greying out. */}
+          <button className="bg-ctl-act" disabled={busy} aria-busy={busy} onClick={pick}>
+            {busy && <span className="bg-ctl-spin" aria-hidden />}
+            {busy ? t("gs.bg.preparing") : t("gs.bg.choose")}
+          </button>
+          <div className="rs-sec-hint">{busy ? t("gs.bg.preparingHint") : t("gs.bg.formats")}</div>
+        </>
+      ) : (
+        <>
+          <div className="bg-ctl-row">
+            <span
+              className="bg-ctl-thumb"
+              style={{
+                backgroundImage: `url("${bgSrcUrl(reading)}")`,
+                transform: `scaleX(${readingParams.flip ? -1 : 1})`,
+              }}
+              aria-hidden
+            />
+            <span className="bg-ctl-name" dir="auto">{reading.source_name ?? ""}</span>
+            <button className="bg-ctl-act" disabled={busy} aria-busy={busy} onClick={pick}>
+              {busy && <span className="bg-ctl-spin" aria-hidden />}
+              {busy ? t("gs.bg.preparing") : t("gs.bg.replace")}
+            </button>
+            <button
+              className="bg-ctl-act danger"
+              disabled={busy}
+              onClick={() => { setError(null); clear("reading").catch((e) => setError(String(e))); }}
+            >
+              {t("gs.bg.remove")}
+            </button>
+          </div>
+
+          {/* RAWY-278 — see the library half in GlobalSettings.tsx. Gated on `derivative_path` so the
+              note is never shown for an under-ceiling image, where the original itself is rendered. */}
+          {busy && <div className="rs-sec-hint">{t("gs.bg.preparingHint")}</div>}
+          {!busy && reading.derivative_path && (
+            <div className="rs-sec-hint">{t("gs.bg.displayCopy")}</div>
+          )}
+
+          {/* RAWY-279: the READING presence may travel past 100, down to a fully transparent overlay.
+              The LIBRARY's may not — its scrim is a measured WCAG AA floor (see `presenceMaxFor`).
+              0..100 is unchanged on both surfaces, so every existing profile renders identically. */}
+          <Section label={t("gs.bg.presence")} value={localeDigits(String(readingParams.presence), lang)}>
+            <Slider
+              value={readingParams.presence}
+              min={0}
+              max={presenceMaxFor("reading")}
+              step={1}
+              onInput={(v) => setParams("reading", { presence: v })}
+            />
+          </Section>
+          <div className="rs-sec-hint">{t("gs.bg.presenceHintReading")}</div>
+
+          <Section label={t("gs.bg.blur")} value={localeDigits(String(readingParams.blur), lang)}>
+            <Slider
+              value={readingParams.blur}
+              min={0}
+              max={BG_BLUR_MAX}
+              step={1}
+              onInput={(v) => setParams("reading", { blur: v })}
+            />
+          </Section>
+
+          {/* RAWY-278 — the immersive blur STEP. Placed directly under the Blur slider because it
+              modifies that exact control; separating them would hide the relationship. Reading-only,
+              like `pageOpacity` — the library surface has no immersive mode, so this row is
+              deliberately absent from GlobalSettings.
+              `disabled` + the EXISTING `inert.immersiveOff` string reproduce the treatment the other
+              two immersive sub-options already use, so the row is honest about when it applies rather
+              than silently doing nothing. (Those siblings are equally inert in paged flow and in PDF,
+              where no scroll-intent is emitted; matching them is the consistent choice.) */}
+          <ToggleRow
+            label={t("gs.bg.immBlur")}
+            hint={t("gs.bg.immBlurHint")}
+            on={readingParams.immersiveBlur}
+            onToggle={() => setParams("reading", { immersiveBlur: !readingParams.immersiveBlur })}
+            disabled={!immersive}
+            onPreview={previewImmersiveBlur}
+          />
+          {!immersive && <div className="rs-inert">{t("inert.immersiveOff")}</div>}
+
+          {/* RAWY-265 (Phase 3) — PAGE OPACITY. The slider's MINIMUM is the measured AAA floor, not
+              zero: below PAGE_OPACITY_MIN body text would stop clearing 7:1 against the worst image
+              this desk can show. The range is therefore unreachable-into-unreadable BY CONSTRUCTION,
+              which is why no warning is needed here (unlike the colour guards, which a reader can
+              legitimately push into a low-contrast pair). 100% is the default and reproduces today's
+              solid paper exactly. */}
+          <Section
+            label={t("gs.bg.pageOpacity")}
+            value={localeDigits(String(Math.round(readingParams.pageOpacity * 100)), lang)}
+          >
+            <Slider
+              value={Math.round(readingParams.pageOpacity * 100)}
+              min={Math.round(PAGE_OPACITY_MIN * 100)}
+              max={100}
+              step={1}
+              onInput={(v) => setParams("reading", { pageOpacity: v / 100 })}
+            />
+          </Section>
+          <div className="rs-sec-hint">{t("gs.bg.pageOpacityHint")}</div>
+
+          {/* `cover` always crops; this chooses what survives. A click sets the centre directly. */}
+          <div className="rs-sec-head"><span className="rs-label">{t("gs.bg.focal")}</span></div>
+          <button
+            className="bg-ctl-focal"
+            style={{
+              backgroundImage: `url("${bgSrcUrl(reading)}")`,
+              backgroundPosition: `${readingParams.focalX}% ${readingParams.focalY}%`,
+            }}
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              setParams("reading", {
+                focalX: Math.round(((e.clientX - r.left) / r.width) * 100),
+                focalY: Math.round(((e.clientY - r.top) / r.height) * 100),
+              });
+            }}
+          >
+            <span
+              className="bg-ctl-focal-dot"
+              style={{ left: `${readingParams.focalX}%`, top: `${readingParams.focalY}%` }}
+            />
+          </button>
+          <div className="rs-sec-hint">{t("gs.bg.focalHint")}</div>
+
+          <ToggleRow
+            label={t("gs.bg.flip")}
+            on={readingParams.flip}
+            onToggle={() => setParams("reading", { flip: !readingParams.flip })}
+          />
+
+          {readingParams.presence === 0 && <div className="rs-sec-hint">{t("gs.bg.hidden")}</div>}
+          <button className="bg-ctl-act" onClick={() => resetParams("reading", deskGround)}>
+            {t("gs.bg.reset")}
+          </button>
+        </>
+      )}
+      {error && <div className="rs-sec-hint bg-ctl-err">{error}</div>}
     </>
   );
 }
@@ -222,9 +571,22 @@ function Segmented<T extends string | number>({
 // RAWY-212: `sub` = the inset/muted sub-toggle style (reused from RAWY-200's `rs-track-subtoggle`);
 // `disabled` dims it and blocks interaction (native <button disabled>) when its master is off.
 // RAWY-216: `scope` appends the shared scope suffix for the ONE row whose scope differs from its tab.
-function ToggleRow({ label, scope, hint, on, onToggle, sub, disabled }: { label: string; scope?: string; hint?: string; on: boolean; onToggle: () => void; sub?: boolean; disabled?: boolean }) {
+// RAWY-278 (fix): `onPreview` is OPTIONAL and only the immersive-boost row passes it. Where it is
+// undefined React attaches no handler at all, so every other ToggleRow in this file is byte-identical
+// to before — no listener, no cost. It exists because that one control governs an effect that is only
+// visible in a state the open drawer cancels (see the CSS note on `[data-bg-imm-preview]`).
+function ToggleRow({ label, scope, hint, on, onToggle, sub, disabled, onPreview }: { label: string; scope?: string; hint?: string; on: boolean; onToggle: () => void; sub?: boolean; disabled?: boolean; onPreview?: (v: boolean) => void }) {
   return (
-    <button className={`rs-toggle-row${sub ? " rs-track-subtoggle" : ""}`} onClick={onToggle} aria-pressed={on} disabled={disabled}>
+    <button
+      className={`rs-toggle-row${sub ? " rs-track-subtoggle" : ""}`}
+      onClick={onToggle}
+      aria-pressed={on}
+      disabled={disabled}
+      onPointerEnter={onPreview && (() => onPreview(true))}
+      onPointerLeave={onPreview && (() => onPreview(false))}
+      onFocus={onPreview && (() => onPreview(true))}
+      onBlur={onPreview && (() => onPreview(false))}
+    >
       <span className="rs-toggle-text">
         <span className="rs-toggle-label">{label}{scope && <> <span className="rs-scope">{scope}</span></>}</span>
         {hint && <span className="rs-toggle-hint">{hint}</span>}
@@ -353,7 +715,16 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
   // Effective ink for the contrast check + which preset is "active".
   const ink = style.textColor ?? theme.colors.text;
   const presets = dark ? INK_PRESETS_DARK : INK_PRESETS_LIGHT;
-  const readable = contrastIsReadable(ink, paper);
+  // RAWY-265 (Phase 3) — THE FIFTH AFFECTED GUARD, found during implementation and not in the spec's
+  // §6 list of four. It has exactly the same defect as the spotlight and reference-underline guards:
+  // it composites the ink against `paper`, and once the page can be translucent that is no longer the
+  // surface the text sits on. Left alone it would keep reporting a pair as readable using a ground
+  // that is not there. `effectivePaper` returns `paper` UNCHANGED at full opacity, so the default
+  // profile's warning behaviour is bit-for-bit what it was.
+  const pageOpacity = useBackground((s) => effectivePageOpacity(s));
+  const deskScrim = useBackground((s) => currentDeskScrim(s));
+  const groundForGuard = effectivePaper(paper, pageOpacity, theme.colors.surfaceBg, deskScrim, ink);
+  const readable = contrastIsReadable(ink, groundForGuard);
 
   // RAWY-34: render only the active tab's controls (Text · Page · Theme — the design's band I),
   // so the chrome's Text/Layout/Theme buttons each land on a DISTINCT view (not one scrolled panel).
@@ -447,6 +818,11 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
           ...customFonts.map((c) => ({ key: c.family_name, label: `${c.family_name} · ${t("gs.imported")}` })),
         ]}
       />
+      {/* RAWY-271: discoverability only. Imported fonts already appear in both lists above (RAWY-44),
+           but nothing in the book told the reader WHERE they come from. One muted line in the panel's
+           existing hint style — deliberately NOT a button and NOT a second import path, so the Fonts
+           panel stays the single place a font enters the app. */}
+      <div className="rs-sec-hint">{t("type.fontsImportHint")}</div>
 
       {/* RAWY-216: diacritics are Arabic vowel marks — on a Latin-direction book the control still works
            and still saves, but there is nothing on the page for it to affect. Say so instead of leaving it
@@ -553,6 +929,10 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
         t={t}
       />
 
+      {/* ---- REFERENCE INDICATOR (RAWY-281) — the twin rule under a referenced word ---- */}
+      <div className="rs-divider" />
+      <RefRuleControls style={style} update={update} accent={theme.colors.accent} dark={dark} t={t} />
+
       </>
       )}
 
@@ -568,6 +948,7 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
         dark={dark}
         paperBg={paper}
         themeInk={theme.colors.text}
+        deskBg={theme.colors.surfaceBg}
       />
 
       {/* RAWY-257 (Phase 1) / RAWY-255: the diagnostic switch. Last in the tab, under a divider — it is a
@@ -661,6 +1042,7 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
         on={hideFirstLine}
         onToggle={() => setHideFirstLine(!hideFirstLine)}
       />
+      <ReadingBackgroundSection />
       </>
       )}
     </div>

@@ -5,9 +5,10 @@ import { I18nProvider, useI18n } from "./i18n";
 import { initBookmarkStyle } from "./lib/bookmarkStyle";
 import { initReadMarkerStyle } from "./lib/readMarkerStyle"; // RAWY-256: persisted read-marker variant
 import { initFonts } from "./lib/fonts";
+import { applyBackgrounds, initBackground, useBackground } from "./lib/background"; // RAWY-265
 import { initStyleScope } from "./lib/styleScope";
 import { registerOutcomeRecorder } from "./lib/listeningOutcomes"; // RAWY-263: the local outcome baseline
-import { initTheme, reapplyTitlebarTheme, useTheme } from "./theme";
+import { initTheme, reapplyTitlebarTheme, useTheme, THEMES } from "./theme";
 import { LanguagePicker } from "./features/onboarding/LanguagePicker";
 import { Library, type OpenTarget } from "./features/library/Library";
 import { Reader } from "./features/reader/Reader";
@@ -52,8 +53,36 @@ function App() {
     initBookmarkStyle(); // load persisted bookmark shape/colour/position (RAWY-41)
     initReadMarkerStyle(); // RAWY-256: persisted chapter read-marker variant (global, like bookmark shape)
     initStyleScope(); // load unified-vs-per-book book-style scope (RAWY-43)
+    // RAWY-265: loaded in the SAME startup batch as the theme, so the first paint is already correct.
+    // Applying it later would paint the themed ground first and then swap — the RAWY-118 class of flash.
+    initBackground();
     registerOutcomeRecorder(); // RAWY-263: observe listening outcomes locally. Read-only; never writes while audio plays.
   }, []);
+
+  // RAWY-265 — the library background is re-derived whenever the LIBRARY theme or any of its own
+  // inputs change, because both the scrim tint and the re-grounded `--lib-faint` are computed FROM
+  // the theme's tokens: a theme change with a stale scrim would leave a warm image under a cold
+  // palette, and a stale faint colour would silently drop below its 3:1 floor.
+  //
+  // `themeId` is the right dependency and not merely a convenient one: the Reader applies a book
+  // theme by calling module-level `applyTheme` directly and restores the library theme on exit
+  // (Reader.tsx's `libraryThemeRef`), so the STORE's `themeId` stays the library's own throughout —
+  // exactly the value this surface is themed by (D29).
+  // Only the LIBRARY half depends on the theme: its `--lib-faint` re-grounding needs real colour
+  // numbers. The reading desk's scrim is resolved in CSS from `--app-bg`, so it follows the book
+  // theme the Reader applies to `:root` with no JS involvement — which is why `bgThemeId` being the
+  // LIBRARY theme (D29: the Reader restores it on exit via `libraryThemeRef`) is correct here and
+  // does not leave the desk stale.
+  const bgThemeId = useTheme((s) => s.themeId);
+  const bgReady = useBackground((s) => s.ready);
+  const bgEnabled = useBackground((s) => s.enabled);
+  const bgLibrary = useBackground((s) => s.library);
+  const bgLibParams = useBackground((s) => s.libraryParams);
+  const bgReading = useBackground((s) => s.reading);
+  const bgReadParams = useBackground((s) => s.readingParams);
+  useEffect(() => {
+    applyBackgrounds(THEMES[bgThemeId].colors);
+  }, [bgThemeId, bgReady, bgEnabled, bgLibrary, bgLibParams, bgReading, bgReadParams]);
 
   // RAWY-118: WebView2 re-themes the native title-bar caption during its own startup, AFTER our first
   // applyTheme, so the initial caption reverts to the system (black) even though we set it. Re-apply it

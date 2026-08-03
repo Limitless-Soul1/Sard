@@ -211,8 +211,19 @@ html, body, #root {
 /* RAWY-201 (D50): a custom BACKGROUND colour REPLACES the decorations — a plain colour under the clouds
    would clash. When the reader-desk carries `.custom-bg` (set only when backgroundColor is a real value),
    the decoration layer is not drawn, so the custom colour reads as intentional, not orphaned clouds. */
-:root[data-theme="moonlit"] .reader-desk.custom-bg::before { content: none; }
-:root[data-theme="moonlit"] .reader-desk::before {
+/* RAWY-280: scoped with `:not([data-bg-reading="on"])` so it can no longer outrank the WALLPAPER.
+   Its specificity (0,4,1) beat the image rule's (0,3,1), so on Moonlit a custom colour silently hid
+   a chosen wallpaper — the same defect as the D50 precedence rule below, reached by a second path.
+   With no wallpaper this is unchanged: a custom colour still replaces the decorations, as D50 says. */
+:root[data-theme="moonlit"]:not([data-bg-reading="on"]) .reader-desk.custom-bg::before { content: none; }
+/* RAWY-265 (Phase 2): a reading BACKGROUND IMAGE also replaces the decorations — the same D50 rule,
+   for the same reason (a crescent, a star field and a photograph competing for one strip of margin is
+   clutter). It is expressed by EXCLUDING the decoration from matching, not by `content: none`, because
+   the image layer needs THIS VERY pseudo-element: `.reader-desk::before` is where RAWY-146 put the
+   decoration, and `content: none` would kill the replacement along with the thing being replaced.
+   Scoping the decoration away frees the slot cleanly and keeps a single owner per pseudo-element —
+   no specificity race between two rules that both want to paint here. */
+:root[data-theme="moonlit"]:not([data-bg-reading="on"]) .reader-desk::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -698,6 +709,18 @@ html, body, #root {
 .rs-slider:disabled { opacity: 0.4; cursor: default; }
 .rs-tiny { font: 500 0.625rem var(--ui-font); color: var(--muted); flex: 0 0 auto; }
 
+/* RAWY-281: the reference twin-rule sample. Sits on the READING paper, not the panel chrome, because the
+   mark's whole point is how it reads against the page — a sample on a different ground is a different
+   picture. The rules are drawn INLINE from the shared resolver (ReadingSettings RefRuleControls); nothing
+   about their geometry lives here. The bottom padding is generous on purpose: it is the room the pair
+   needs at the top of the distance range, and without it the lower rule would clip against the box. */
+.rs-ref-preview {
+  display: flex; justify-content: center; align-items: center;
+  padding: 18px 14px 30px; margin-top: 12px; border-radius: 10px;
+  background: var(--reader-page, var(--paper-bg)); color: var(--text);
+  font-family: "Literata", serif; overflow: hidden;
+}
+
 /* segmented control */
 .rs-seg { display: flex; background: color-mix(in srgb, var(--text) 8%, transparent); border-radius: 8px; padding: 3px; }
 .rs-seg-item {
@@ -964,47 +987,248 @@ html, body, #root {
 :root { --tts-teal: #4E8A7B; --tts-teal-dot: #5EA88F; }
 :root[data-dark="true"] { --tts-teal: #8FC7B4; }
 
-/* RAWY-250 — the RETURN pill (top of the reader). Reuses the .tts-pill vocabulary verbatim (same ground,
-   border, radius, blur, shadow, motion) per D19: Sard already has a pill language and this is it, not a new
-   visual idea. Deliberately at the TOP, far from the read-aloud pill at the bottom, so BOTH can show at once
-   with no overlap. `position: fixed` = a pure overlay with ZERO layout impact, so it cannot reintroduce the
-   RAWY-142 content jump; only its top OFFSET changes with the bar (`below-chrome` clears the 70px .rc-top
-   while it is shown, 18px when it is hidden). Centred over the READING AREA via --reading-shift, exactly like
-   the TTS pill, so an open side panel never pushes it off-centre. NOT hidden by immersive mode (D66) — it is
-   absent from the `im-hide-pill` selectors by construction, like the chapter-end / Edge-error prompts. */
+/* RAWY-250 — the RETURN pill (top of the reader). Deliberately at the TOP, far from the read-aloud pill at
+   the bottom, so BOTH can show at once with no overlap. `position: fixed` = a pure overlay with ZERO layout
+   impact, so it cannot reintroduce the RAWY-142 content jump; only its top OFFSET changes with the bar
+   (`below-chrome` clears the 70px .rc-top while it is shown, 18px when it is hidden). Centred over the
+   READING AREA via --reading-shift, exactly like the TTS pill, so an open side panel never pushes it
+   off-centre. NOT hidden by immersive mode (D66) — it is absent from the `im-hide-pill` selectors by
+   construction, like the chapter-end / Edge-error prompts.
+
+   SKIN (docs/design/Sard Return Button.html — the single source of truth for the appearance): the pill is no
+   longer a translucent chrome ground holding two ghost controls. It is now the design's CONTROL: a 30px body
+   with a 7px corner (Sard's dialog-button corner), the theme accent as its field, a 1px inner top gloss and a
+   two-layer shadow tinted with the theme's OWN ink — never black — so the light comes from the same room as
+   the page. A leading chevron separated by the 1px toolbar rule gives it the anatomy of a button rather than
+   a line of type. Every colour is a per-theme token below; nothing is derived, because the design tunes each
+   paper individually (dark papers take a deep-ink label; True-Black and Ink swap shadow for a hairline;
+   Moonlit Sky is a night body with a gilt edge and gold label).
+
+   The DISMISS action is not in the design sheet (which shows the single-action specimen), so it is adapted
+   rather than invented: it wears the SAME body, corner and elevation as a 30px square beside the main action.
+   Behaviour is untouched — same two buttons, same callbacks, same show/hide, no dwell timer, no auto-exit. */
 .return-pill {
   position: fixed; z-index: 26; left: 50%; top: 18px;
   transform: translateX(calc(-50% + var(--reading-shift, 0px)));
   transition: top 0.22s cubic-bezier(0.22, 0.61, 0.36, 1), transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
-  max-width: min(420px, calc(100vw - 28px));
-  display: flex; align-items: center; gap: 2px;
-  padding: 4px 4px 4px 6px; border-radius: 14px; border: 1px solid var(--chrome-border);
-  background: color-mix(in srgb, var(--chrome-bg) 96%, transparent);
-  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
-  box-shadow: 0 16px 42px rgba(40, 28, 14, 0.24); font-family: var(--ui-font);
+  /* The cap is the ONLY thing that bounds the main action's width — the ✕ is a fixed 30px and the gap a
+     fixed 6px, so every pixel here lands in the label. 420 truncated ordinary chapter names and 540 was
+     still tight for real ARABIC titles, which run longer than the Latin ones; 640 is about as far as this
+     can go while staying inside the default 720px page measure. Short labels are unaffected: the button is
+     `flex: 0 1 auto`, so it only ever shrinks, never stretches to the cap — the cap is invisible until a
+     title is long enough to reach it. */
+  max-width: min(640px, calc(100vw - 28px));
+  /* PURE POSITIONING now — no ground, no border, no blur, no shadow of its own. */
+  display: flex; align-items: center; gap: 6px; font-family: var(--ui-font);
+  /* Entrance (design): 300ms, opacity 0→1, a 6px slide down from the top edge, 0.985→1 scale. It uses the
+     INDIVIDUAL `translate`/`scale` properties so the centring `transform` above is never disturbed, and runs
+     with no fill-mode so the resting state owns the element the moment it ends. */
+  animation: return-pill-in 0.3s cubic-bezier(0.32, 0.72, 0.32, 1);
 }
-:root[data-dark="true"] .return-pill { box-shadow: 0 16px 42px rgba(0, 0, 0, 0.5); }
+@keyframes return-pill-in {
+  from { opacity: 0; translate: 0 -6px; scale: 0.985; }
+  to { opacity: 1; translate: 0 0; scale: 1; }
+}
 /* clear the 70px top bar while it is SHOWN (RAWY-66 height); a hidden bar frees the space again */
 .return-pill.below-chrome { top: 78px; }
-@media (prefers-reduced-motion: reduce) { .return-pill { transition: none; } }
-.return-pill-main {
-  display: flex; align-items: center; gap: 7px; min-width: 0;
-  padding: 5px 8px; border: 0; border-radius: 10px; background: transparent;
-  color: var(--text); font: 600 0.8125rem var(--ui-font); cursor: pointer;
+
+/* ---- the body, worn by BOTH actions ---- */
+.return-pill-main,
+.return-pill-x {
+  flex: none; display: flex; align-items: center; height: 30px;
+  border: 0; border-radius: 7px; cursor: pointer;
+  background: var(--rp-btn); color: var(--rp-btn-fg);
+  box-shadow: var(--rp-sh), inset 0 1px 0 var(--rp-gloss);
+  translate: 0 0;
+  transition: background 0.16s linear, box-shadow 0.16s ease-out, color 0.16s linear,
+    translate 0.14s cubic-bezier(0.32, 0.72, 0.32, 1);
 }
-.return-pill-main:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-.return-pill-arrow { color: var(--accent); font-size: 1.05rem; line-height: 1; }
-.return-pill-text { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-.return-pill-lead { color: color-mix(in srgb, var(--text) 68%, transparent); white-space: nowrap; }
+/* 10px on the chevron side, 14px on the label side; 9px between chevron, rule and label */
+.return-pill-main {
+  flex: 0 1 auto; min-width: 0; gap: 9px; padding-inline: 10px 14px;
+  font: 600 0.78125rem/1 var(--ui-font);
+}
+.return-pill-x { justify-content: center; width: 30px; font: 400 0.75rem/1 var(--ui-font); }
+/* hover: accent deepens one step, the body rises 1px, the shadow doubles */
+.return-pill-main:hover,
+.return-pill-x:hover {
+  background: var(--rp-btn-h); translate: 0 -1px;
+  box-shadow: var(--rp-sh-h), inset 0 1px 0 var(--rp-gloss);
+}
+/* pressed: accent deepens two steps, the body drops 1px, the outer shadow becomes an inset seat */
+.return-pill-main:active,
+.return-pill-x:active { background: var(--rp-btn-p); translate: 0 1px; box-shadow: var(--rp-sh-p); }
+/* focus: a 2px gap of paper, then a 1.5px accent ring. Still a real outline, so it survives forced colours. */
+.return-pill-main:focus-visible,
+.return-pill-x:focus-visible { outline: 1.5px solid var(--rp-ring); outline-offset: 2px; }
+
+/* the chevron + the 1px × 13px toolbar rule that separates it from the label */
+.return-pill-arrow { flex: none; display: flex; align-items: center; gap: 9px; }
+.return-pill-arrow svg {
+  width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 2.4;
+  stroke-linecap: round; stroke-linejoin: round; opacity: 0.9; transition: opacity 0.16s linear;
+}
+.return-pill-arrow::after { content: ""; width: 1px; height: 13px; background: var(--rp-rule); }
+.return-pill-main:hover .return-pill-arrow svg { opacity: 1; }
+
+/* The design sheet specifies line-height 1 on the body — correct for its Latin specimen, WRONG here: the
+   chapter span must carry `overflow: hidden` for the ellipsis, and a 1.0 line box is exactly the em square,
+   so Arabic descenders (the tail of ع/ق/ى) fall outside it and get SLICED FLAT. The line box is widened to
+   contain them. This is invisible except that the glyphs are now whole: the button stays 30px (its height is
+   fixed and the text is flex-centred inside it), and the family, size, weight and colour are untouched. */
+.return-pill-text { display: flex; align-items: baseline; gap: 6px; min-width: 0; line-height: 1.6; }
+.return-pill-lead { opacity: 0.72; white-space: nowrap; }
 /* the chapter name is the long part — it truncates, never the label */
 .return-pill-chapter { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.return-pill-x {
-  flex: 0 0 auto; width: 28px; height: 28px; border: 0; border-radius: 9px; background: transparent;
-  color: color-mix(in srgb, var(--text) 62%, transparent); font-size: 0.8125rem; cursor: pointer;
+
+/* reduced motion (design): no entrance, no lift — colour transitions only */
+@media (prefers-reduced-motion: reduce) {
+  .return-pill { transition: none; animation: none; }
+  .return-pill-main,
+  .return-pill-x { transition: background 0.16s linear, color 0.16s linear; }
+  .return-pill-main:hover, .return-pill-x:hover,
+  .return-pill-main:active, .return-pill-x:active { translate: 0 0; }
 }
-.return-pill-x:hover { background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text); }
-.return-pill-main:focus-visible,
-.return-pill-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---- per-theme tokens (design sheet: each paper is tuned, never inverted) ---- */
+/* The base is a SAFETY NET, not a style: all 16 papers are tuned below, but a 17th arriving before its
+   tokens are written must still render a visible control on its own accent — an unfilled button would be
+   exactly the invisible state this feature exists to prevent. */
+:root {
+  --rp-gloss: rgba(255, 255, 255, 0.16); --rp-rule: rgba(255, 255, 255, 0.26);
+  --rp-btn: var(--accent); --rp-btn-h: var(--accent); --rp-btn-p: var(--accent); --rp-btn-fg: var(--paper-bg);
+  --rp-sh: 0 1px 2px rgba(0, 0, 0, 0.16), 0 3px 10px rgba(0, 0, 0, 0.13);
+  --rp-sh-h: 0 2px 4px rgba(0, 0, 0, 0.18), 0 6px 18px rgba(0, 0, 0, 0.18);
+  --rp-sh-p: inset 0 1px 3px rgba(0, 0, 0, 0.34);
+  --rp-ring: var(--accent);
+}
+/* light papers: accent body, paper-coloured ink, warm ink-tinted shadow */
+:root[data-theme="ivory"] {
+  --rp-btn: #9C5A3C; --rp-btn-h: #8A4E32; --rp-btn-p: #6E3A26; --rp-btn-fg: #FBF7EC;
+  --rp-sh: 0 1px 2px rgba(60, 40, 16, 0.16), 0 3px 10px rgba(60, 40, 16, 0.13);
+  --rp-sh-h: 0 2px 4px rgba(60, 40, 16, 0.18), 0 6px 18px rgba(60, 40, 16, 0.18);
+  --rp-sh-p: inset 0 1px 3px rgba(35, 20, 8, 0.34);
+  --rp-ring: rgba(156, 90, 60, 0.85);
+}
+:root[data-theme="sepia"] {
+  --rp-btn: #97582F; --rp-btn-h: #844A26; --rp-btn-p: #6B3B1D; --rp-btn-fg: #F7EFD9;
+  --rp-sh: 0 1px 2px rgba(58, 46, 24, 0.18), 0 3px 10px rgba(58, 46, 24, 0.15);
+  --rp-sh-h: 0 2px 4px rgba(58, 46, 24, 0.2), 0 6px 18px rgba(58, 46, 24, 0.2);
+  --rp-sh-p: inset 0 1px 3px rgba(40, 25, 10, 0.36);
+  --rp-ring: rgba(151, 88, 47, 0.85);
+}
+:root[data-theme="parchment"] {
+  --rp-btn: #8E6F33; --rp-btn-h: #7C6029; --rp-btn-p: #634B1E; --rp-btn-fg: #F8EFD5;
+  --rp-sh: 0 1px 2px rgba(58, 46, 24, 0.18), 0 3px 10px rgba(58, 46, 24, 0.16);
+  --rp-sh-h: 0 2px 4px rgba(58, 46, 24, 0.2), 0 6px 18px rgba(58, 46, 24, 0.2);
+  --rp-sh-p: inset 0 1px 3px rgba(40, 30, 8, 0.36);
+  --rp-ring: rgba(154, 123, 63, 0.85);
+}
+:root[data-theme="linen"] {
+  --rp-btn: #5E6B7A; --rp-btn-h: #4E5A67; --rp-btn-p: #3D4753; --rp-btn-fg: #F7F5EE;
+  --rp-sh: 0 1px 2px rgba(42, 41, 37, 0.14), 0 3px 10px rgba(42, 41, 37, 0.12);
+  --rp-sh-h: 0 2px 4px rgba(42, 41, 37, 0.16), 0 6px 18px rgba(42, 41, 37, 0.16);
+  --rp-sh-p: inset 0 1px 3px rgba(20, 24, 28, 0.32);
+  --rp-ring: rgba(94, 107, 122, 0.85);
+}
+:root[data-theme="sage"] {
+  --rp-btn: #5E7A52; --rp-btn-h: #4F6845; --rp-btn-p: #3F5537; --rp-btn-fg: #F4F6EE;
+  --rp-sh: 0 1px 2px rgba(46, 52, 43, 0.14), 0 3px 10px rgba(46, 52, 43, 0.13);
+  --rp-sh-h: 0 2px 4px rgba(46, 52, 43, 0.16), 0 6px 18px rgba(46, 52, 43, 0.17);
+  --rp-sh-p: inset 0 1px 3px rgba(22, 30, 20, 0.32);
+  --rp-ring: rgba(94, 122, 82, 0.85);
+}
+:root[data-theme="rosequartz"] {
+  --rp-btn: #A5636C; --rp-btn-h: #91545D; --rp-btn-p: #77424A; --rp-btn-fg: #FCF4F4;
+  --rp-sh: 0 1px 2px rgba(58, 47, 48, 0.14), 0 3px 10px rgba(58, 47, 48, 0.13);
+  --rp-sh-h: 0 2px 4px rgba(58, 47, 48, 0.16), 0 6px 18px rgba(58, 47, 48, 0.17);
+  --rp-sh-p: inset 0 1px 3px rgba(40, 25, 28, 0.32);
+  --rp-ring: rgba(181, 114, 123, 0.85);
+}
+/* Ink: the high-contrast contract — a 1px black edge instead of a soft shadow, and no gloss */
+:root[data-theme="ink"] {
+  --rp-btn: #7A2E1E; --rp-btn-h: #5F2215; --rp-btn-p: #45170E; --rp-btn-fg: #FFFFFF;
+  --rp-gloss: transparent; --rp-rule: rgba(255, 255, 255, 0.4);
+  --rp-sh: 0 0 0 1px #0E0D0A;
+  --rp-sh-h: 0 0 0 1.5px #0E0D0A;
+  --rp-sh-p: 0 0 0 1.5px #0E0D0A, inset 0 1px 3px rgba(0, 0, 0, 0.45);
+  --rp-ring: #0E0D0A;
+}
+/* dark papers: accent body, deep-ink label, shadow traded for a lit top edge */
+:root[data-theme="slate"] {
+  --rp-btn: #C98A5E; --rp-btn-h: #D89C70; --rp-btn-p: #A96F47; --rp-btn-fg: #171D22;
+  --rp-gloss: rgba(255, 255, 255, 0.22); --rp-rule: rgba(23, 29, 34, 0.28);
+  --rp-sh: 0 1px 2px rgba(0, 0, 0, 0.5), 0 4px 14px rgba(0, 0, 0, 0.34);
+  --rp-sh-h: 0 2px 5px rgba(0, 0, 0, 0.55), 0 8px 22px rgba(0, 0, 0, 0.4);
+  --rp-sh-p: inset 0 1px 3px rgba(0, 0, 0, 0.45);
+  --rp-ring: rgba(201, 138, 94, 0.9);
+}
+/* True-Black: a hairline instead of shadow (shadow is invisible there), accent held back 12% */
+:root[data-theme="trueblack"] {
+  --rp-btn: #B87A50; --rp-btn-h: #C98A5E; --rp-btn-p: #94603D; --rp-btn-fg: #0D0906;
+  --rp-gloss: rgba(255, 255, 255, 0.18); --rp-rule: rgba(13, 9, 6, 0.3);
+  --rp-sh: 0 0 0 1px rgba(255, 255, 255, 0.1);
+  --rp-sh-h: 0 0 0 1px rgba(255, 255, 255, 0.18);
+  --rp-sh-p: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+  --rp-ring: rgba(201, 138, 94, 0.9);
+}
+:root[data-theme="espresso"] {
+  --rp-btn: #D49A6A; --rp-btn-h: #E6AC79; --rp-btn-p: #B27B4E; --rp-btn-fg: #241A11;
+  --rp-gloss: rgba(255, 255, 255, 0.22); --rp-rule: rgba(36, 26, 17, 0.28);
+  --rp-sh: 0 1px 2px rgba(0, 0, 0, 0.55), 0 4px 14px rgba(0, 0, 0, 0.4);
+  --rp-sh-h: 0 2px 5px rgba(0, 0, 0, 0.6), 0 8px 22px rgba(0, 0, 0, 0.46);
+  --rp-sh-p: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+  --rp-ring: rgba(212, 154, 106, 0.9);
+}
+:root[data-theme="charcoal"] {
+  --rp-btn: #C98A5E; --rp-btn-h: #D89C70; --rp-btn-p: #A96F47; --rp-btn-fg: #16161A;
+  --rp-gloss: rgba(255, 255, 255, 0.2); --rp-rule: rgba(22, 22, 26, 0.28);
+  --rp-sh: 0 1px 2px rgba(0, 0, 0, 0.55), 0 4px 14px rgba(0, 0, 0, 0.38);
+  --rp-sh-h: 0 2px 5px rgba(0, 0, 0, 0.6), 0 8px 22px rgba(0, 0, 0, 0.44);
+  --rp-sh-p: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+  --rp-ring: rgba(201, 138, 94, 0.9);
+}
+:root[data-theme="dusk"] {
+  --rp-btn: #8FA6D8; --rp-btn-h: #A2B6E2; --rp-btn-p: #738ABC; --rp-btn-fg: #14192B;
+  --rp-gloss: rgba(255, 255, 255, 0.24); --rp-rule: rgba(20, 25, 43, 0.26);
+  --rp-sh: 0 1px 2px rgba(0, 0, 0, 0.5), 0 4px 14px rgba(0, 0, 0, 0.4);
+  --rp-sh-h: 0 2px 5px rgba(0, 0, 0, 0.55), 0 8px 22px rgba(0, 0, 0, 0.46);
+  --rp-sh-p: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+  --rp-ring: rgba(143, 166, 216, 0.9);
+}
+:root[data-theme="forestnight"] {
+  --rp-btn: #82B08C; --rp-btn-h: #95C09E; --rp-btn-p: #688F71; --rp-btn-fg: #111C15;
+  --rp-gloss: rgba(255, 255, 255, 0.22); --rp-rule: rgba(17, 28, 21, 0.26);
+  --rp-sh: 0 1px 2px rgba(0, 0, 0, 0.5), 0 4px 14px rgba(0, 0, 0, 0.4);
+  --rp-sh-h: 0 2px 5px rgba(0, 0, 0, 0.55), 0 8px 22px rgba(0, 0, 0, 0.46);
+  --rp-sh-p: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+  --rp-ring: rgba(130, 176, 140, 0.9);
+}
+:root[data-theme="mulberry"] {
+  --rp-btn: #C189B0; --rp-btn-h: #CF9BBE; --rp-btn-p: #9F6C90; --rp-btn-fg: #1E1219;
+  --rp-gloss: rgba(255, 255, 255, 0.22); --rp-rule: rgba(30, 18, 25, 0.26);
+  --rp-sh: 0 1px 2px rgba(0, 0, 0, 0.5), 0 4px 14px rgba(0, 0, 0, 0.42);
+  --rp-sh-h: 0 2px 5px rgba(0, 0, 0, 0.55), 0 8px 22px rgba(0, 0, 0, 0.48);
+  --rp-sh-p: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+  --rp-ring: rgba(193, 137, 176, 0.9);
+}
+:root[data-theme="nocturne"] {
+  --rp-btn: #5FA8A8; --rp-btn-h: #73B9B9; --rp-btn-p: #4B8888; --rp-btn-fg: #0E1B1D;
+  --rp-gloss: rgba(255, 255, 255, 0.22); --rp-rule: rgba(14, 27, 29, 0.26);
+  --rp-sh: 0 1px 2px rgba(0, 0, 0, 0.5), 0 4px 14px rgba(0, 0, 0, 0.4);
+  --rp-sh-h: 0 2px 5px rgba(0, 0, 0, 0.55), 0 8px 22px rgba(0, 0, 0, 0.46);
+  --rp-sh-p: inset 0 1px 3px rgba(0, 0, 0, 0.5);
+  --rp-ring: rgba(95, 168, 168, 0.9);
+}
+/* Moonlit Sky: its own decoration, not the accent-fill rule — a night body with a gilt edge and gold label */
+:root[data-theme="moonlit"] {
+  --rp-btn: #1B2A4A; --rp-btn-h: #243758; --rp-btn-p: #141F38; --rp-btn-fg: #F1DCA8;
+  --rp-gloss: rgba(230, 199, 122, 0.18); --rp-rule: rgba(230, 199, 122, 0.3);
+  --rp-sh: 0 0 0 1px rgba(230, 199, 122, 0.45), 0 4px 16px rgba(0, 0, 0, 0.5);
+  --rp-sh-h: 0 0 0 1px rgba(230, 199, 122, 0.75), 0 6px 20px rgba(0, 0, 0, 0.55);
+  --rp-sh-p: 0 0 0 1px rgba(230, 199, 122, 0.5), inset 0 1px 4px rgba(0, 0, 0, 0.6);
+  --rp-ring: rgba(230, 199, 122, 0.85);
+}
 
 .tts-pill {
   position: fixed; z-index: 25; left: 50%; bottom: 26px;
@@ -1169,6 +1393,265 @@ html, body, #root {
 .tts-end-next:hover { background: color-mix(in srgb, var(--accent) 18%, transparent); }
 .tts-end-next svg { flex: none; width: 15px; height: 15px; }
 
+/* ---- The NEXT-CHAPTER control — approved concept 3c "Inked Cap"
+   (docs/design/Next Chapter Button - Concepts (standalone).html, the visual source of truth).
+
+   A paper plate with the chevron field struck in solid ink — the only dark mark on the control, and it
+   points the way. 208 × 38 with a 2px corner and a 38px cap, exactly the concept's primitive. The plate is
+   the theme's PAPER, so it reads as a card laid on the pill's chrome rather than a coloured chip; the cap
+   carries the ink (light papers) or the accent (dark papers), which is why every theme is tuned by hand
+   below rather than derived from one block — the concept tunes each paper individually and inverting a
+   single recipe is exactly what it rejects.
+
+   SCOPED, NOT GLOBAL: `.tts-end-next` is shared with the RAWY-193 Edge-error actions (Retry / Switch to
+   Piper), which are NOT part of this concept and must keep their current look. The skin therefore hangs off
+   the added `.tts-next-plate` class, at (0,2,0) so it wins over the base rules above regardless of order,
+   and the Edge-error buttons are untouched by construction — they never carry that class.
+
+   Behaviour is unchanged in both hosts: same callbacks, same show/hide conditions, same close button, same
+   end-of-chapter message beside it, same bottom-centre position. */
+/* 196 × 38 when the plate stands ALONE (the kashida host, where it replaces the progress stroke beside the
+   38px bead). In the chapter-end state the plate is not a thing INSIDE a panel — the whole component IS the
+   plate, and the rules further down size it by its content instead. */
+.tts-end-next.tts-next-plate {
+  box-sizing: border-box; width: 196px; height: 38px; padding: 0; gap: 0; overflow: hidden;
+  display: inline-flex; align-items: stretch; white-space: nowrap;
+  border: 0; border-radius: 2px;
+  background: var(--nc-paper); color: var(--nc-ink);
+  box-shadow: inset 0 0 0 1px var(--nc-edge), 0 1px 1px var(--nc-shadow-soft);
+  transition: background-color 220ms cubic-bezier(0.2, 0.6, 0.25, 1),
+    box-shadow 220ms cubic-bezier(0.2, 0.6, 0.25, 1), color 200ms ease,
+    transform 140ms cubic-bezier(0.2, 0.6, 0.25, 1);
+}
+/* The label sits in the flexible field; the cap takes the fixed 38px at the leading edge. The concept sets
+   the label in the READING face — Amiri for Arabic, Literata for Latin — which is what makes the plate read
+   as a printed label rather than another piece of chrome. Line-height is 1.35, NOT the sheet's 1: the plate
+   must clip to its 2px corner (`overflow: hidden`), and a 1.0 line box is the em square, so Arabic
+   descenders would be sliced flat against it — the RAWY-263 scar. */
+.tts-next-plate .tts-next-label {
+  flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center;
+  font: 400 1.1875rem/1.35 "Amiri", serif; color: var(--nc-ink);
+}
+[dir="ltr"] .tts-next-plate .tts-next-label,
+.tts-next-plate[dir="ltr"] .tts-next-label { font: 400 0.9375rem/1.35 "Literata", serif; }
+.tts-next-plate .tts-next-cap {
+  flex: none; width: 38px; align-self: stretch;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--nc-cap); color: var(--nc-cap-ink);
+  transition: background-color 220ms cubic-bezier(0.2, 0.6, 0.25, 1);
+}
+/* thinner than the base chevron, matching the concept's light 300-weight glyph — and no larger */
+.tts-next-plate .tts-next-cap svg { flex: none; width: 16px; height: 16px; stroke-width: 1.6; }
+
+/* hover — the plate lifts off the paper a little; the cap deepens one step. "Touching paper", not a glow. */
+.tts-end-next.tts-next-plate:hover {
+  background: var(--nc-paper);
+  box-shadow: inset 0 0 0 1px var(--nc-edge), 0 2px 5px var(--nc-shadow);
+}
+.tts-next-plate:hover .tts-next-cap { background: var(--nc-cap-hover); }
+/* pressed — the plate sinks 1px and takes the shadow INSIDE, so it reads as pushed into the page */
+.tts-end-next.tts-next-plate:active {
+  transform: translateY(1px);
+  box-shadow: inset 0 0 0 1px var(--nc-edge), inset 0 2px 4px var(--nc-shadow);
+}
+.tts-next-plate:active .tts-next-cap { background: var(--nc-cap-press); }
+/* focus — the concept's ring: accent, clear of the plate by 3px. Ink takes 3px of ring for its contrast
+   contract. An outline is not clipped by the plate's own `overflow: hidden`. */
+.tts-end-next.tts-next-plate:focus-visible {
+  outline: var(--nc-ring-w, 2px) solid var(--accent); outline-offset: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tts-end-next.tts-next-plate,
+  .tts-next-plate .tts-next-cap { transition: background-color 220ms linear, color 200ms ease; }
+  .tts-end-next.tts-next-plate:active { transform: none; }
+}
+
+/* ---- 3c per-theme tokens, transcribed from the concept sheet's own tuned table ----
+   Light papers: an INK cap on paper, with a warm ink-tinted shadow. Dark papers: an ACCENT cap with a
+   deep-ink glyph and a black shadow, on lighter hairlines. True-Black drops the shadow entirely and works
+   on the hairline alone. Ink (high contrast) takes a much heavier rule and a 3px focus ring. */
+:root {
+  /* base = Ivory, so the very first paint before applyTheme runs is already right (the file's convention) */
+  --nc-paper: #F5EEDD; --nc-ink: #2B2521; --nc-edge: rgba(43, 37, 33, 0.34);
+  --nc-shadow: rgba(60, 40, 16, 0.16); --nc-shadow-soft: rgba(60, 40, 16, 0.1);
+  --nc-cap: #2B2521; --nc-cap-hover: #3A2F26; --nc-cap-press: #201B18; --nc-cap-ink: #F5EEDD;
+}
+:root[data-theme="sepia"] {
+  --nc-paper: #EBDDBE; --nc-ink: #45382A; --nc-edge: rgba(58, 46, 24, 0.36);
+  --nc-shadow: rgba(60, 40, 16, 0.18); --nc-shadow-soft: rgba(60, 40, 16, 0.11);
+  --nc-cap: #45382A; --nc-cap-hover: #56452F; --nc-cap-press: #362B20; --nc-cap-ink: #F3E9CF;
+}
+:root[data-theme="parchment"] {
+  --nc-paper: #F0E2BE; --nc-ink: #3A2E14; --nc-edge: rgba(58, 46, 24, 0.38);
+  --nc-shadow: rgba(58, 46, 24, 0.18); --nc-shadow-soft: rgba(58, 46, 24, 0.12);
+  --nc-cap: #3A2E14; --nc-cap-hover: #4A3B1D; --nc-cap-press: #2C2210; --nc-cap-ink: #F0E2BE;
+}
+:root[data-theme="linen"] {
+  --nc-paper: #F4F2EA; --nc-ink: #2A2925; --nc-edge: rgba(42, 41, 37, 0.32);
+  --nc-shadow: rgba(42, 41, 37, 0.13); --nc-shadow-soft: rgba(42, 41, 37, 0.08);
+  --nc-cap: #2A2925; --nc-cap-hover: #383731; --nc-cap-press: #201F1C; --nc-cap-ink: #F4F2EA;
+}
+:root[data-theme="sage"] {
+  --nc-paper: #F0F2E8; --nc-ink: #2E342B; --nc-edge: rgba(46, 52, 43, 0.34);
+  --nc-shadow: rgba(46, 52, 43, 0.14); --nc-shadow-soft: rgba(46, 52, 43, 0.09);
+  --nc-cap: #2E342B; --nc-cap-hover: #3C4536; --nc-cap-press: #232821; --nc-cap-ink: #F0F2E8;
+}
+:root[data-theme="rosequartz"] {
+  --nc-paper: #FBF1F1; --nc-ink: #3A2F30; --nc-edge: rgba(58, 47, 48, 0.32);
+  --nc-shadow: rgba(58, 47, 48, 0.13); --nc-shadow-soft: rgba(58, 47, 48, 0.08);
+  --nc-cap: #3A2F30; --nc-cap-hover: #4A3B3C; --nc-cap-press: #2E2526; --nc-cap-ink: #FBF1F1;
+}
+/* Ink: the high-contrast contract — a 0.70 rule instead of a hairline, and a 3px ring */
+:root[data-theme="ink"] {
+  --nc-paper: #FFFFFF; --nc-ink: #0E0D0A; --nc-edge: rgba(0, 0, 0, 0.7);
+  --nc-shadow: rgba(0, 0, 0, 0.18); --nc-shadow-soft: rgba(0, 0, 0, 0.12);
+  --nc-cap: #0E0D0A; --nc-cap-hover: #241F18; --nc-cap-press: #000000; --nc-cap-ink: #FFFFFF;
+  --nc-ring-w: 3px;
+}
+:root[data-theme="slate"] {
+  --nc-paper: #1B2228; --nc-ink: #E4DED2; --nc-edge: rgba(255, 255, 255, 0.28);
+  --nc-shadow: rgba(0, 0, 0, 0.45); --nc-shadow-soft: rgba(0, 0, 0, 0.3);
+  --nc-cap: #C98A5E; --nc-cap-hover: #D89B6E; --nc-cap-press: #B0764C; --nc-cap-ink: #1B2228;
+}
+/* True-Black: no shadow at all — it is invisible on #000, so the hairline carries the whole edge */
+:root[data-theme="trueblack"] {
+  --nc-paper: #000000; --nc-ink: #CFC8BA; --nc-edge: rgba(255, 255, 255, 0.34);
+  --nc-shadow: rgba(0, 0, 0, 0); --nc-shadow-soft: rgba(0, 0, 0, 0);
+  --nc-cap: #C98A5E; --nc-cap-hover: #DCA274; --nc-cap-press: #A96F45; --nc-cap-ink: #000000;
+}
+:root[data-theme="espresso"] {
+  --nc-paper: #221912; --nc-ink: #EADCC6; --nc-edge: rgba(255, 255, 255, 0.28);
+  --nc-shadow: rgba(0, 0, 0, 0.5); --nc-shadow-soft: rgba(0, 0, 0, 0.32);
+  --nc-cap: #D49A6A; --nc-cap-hover: #E4AC7C; --nc-cap-press: #B98455; --nc-cap-ink: #221912;
+}
+:root[data-theme="charcoal"] {
+  --nc-paper: #1C1C1E; --nc-ink: #DCD9D2; --nc-edge: rgba(255, 255, 255, 0.28);
+  --nc-shadow: rgba(0, 0, 0, 0.5); --nc-shadow-soft: rgba(0, 0, 0, 0.32);
+  --nc-cap: #C98A5E; --nc-cap-hover: #D99C71; --nc-cap-press: #AF764C; --nc-cap-ink: #1A1A1C;
+}
+:root[data-theme="dusk"] {
+  --nc-paper: #1B2130; --nc-ink: #D8DEEC; --nc-edge: rgba(255, 255, 255, 0.3);
+  --nc-shadow: rgba(0, 0, 0, 0.45); --nc-shadow-soft: rgba(0, 0, 0, 0.3);
+  --nc-cap: #8FA6D8; --nc-cap-hover: #A3B7E4; --nc-cap-press: #7B92C4; --nc-cap-ink: #141926;
+}
+:root[data-theme="forestnight"] {
+  --nc-paper: #15201A; --nc-ink: #D6E2D4; --nc-edge: rgba(255, 255, 255, 0.28);
+  --nc-shadow: rgba(0, 0, 0, 0.48); --nc-shadow-soft: rgba(0, 0, 0, 0.3);
+  --nc-cap: #82B08C; --nc-cap-hover: #96C39F; --nc-cap-press: #6E9A78; --nc-cap-ink: #121B15;
+}
+:root[data-theme="mulberry"] {
+  --nc-paper: #221620; --nc-ink: #E6D8E2; --nc-edge: rgba(255, 255, 255, 0.28);
+  --nc-shadow: rgba(0, 0, 0, 0.5); --nc-shadow-soft: rgba(0, 0, 0, 0.32);
+  --nc-cap: #C189B0; --nc-cap-hover: #D39CC1; --nc-cap-press: #A9749A; --nc-cap-ink: #1D1219;
+}
+:root[data-theme="nocturne"] {
+  --nc-paper: #122023; --nc-ink: #CFE0E0; --nc-edge: rgba(255, 255, 255, 0.28);
+  --nc-shadow: rgba(0, 0, 0, 0.5); --nc-shadow-soft: rgba(0, 0, 0, 0.32);
+  --nc-cap: #5FA8A8; --nc-cap-hover: #74BBBB; --nc-cap-press: #4F9191; --nc-cap-ink: #0F1C1E;
+}
+/* Moonlit Sky is the one paper the concept sheet does not cover (it predates the RAWY-145 theme), so it is
+   tuned HERE to the sheet's dark-paper rule — accent cap, deep-ink glyph, black shadow — with the one
+   Moonlit-specific departure the theme always makes: its rules are GILT, never white. */
+:root[data-theme="moonlit"] {
+  --nc-paper: #121A2E; --nc-ink: #F5E8C8; --nc-edge: rgba(230, 199, 122, 0.34);
+  --nc-shadow: rgba(0, 0, 0, 0.5); --nc-shadow-soft: rgba(0, 0, 0, 0.32);
+  --nc-cap: #E6C77A; --nc-cap-hover: #F0D592; --nc-cap-press: #C9A85F; --nc-cap-ink: #101828;
+  --nc-wash: rgba(230, 199, 122, 0.07);
+}
+/* the paper WASH — the faintest touch-of-paper tint, used for hover inside the plate (concept `--wash`) */
+:root { --nc-wash: rgba(43, 37, 33, 0.045); }
+:root[data-theme="sepia"] { --nc-wash: rgba(69, 56, 42, 0.05); }
+:root[data-theme="parchment"] { --nc-wash: rgba(58, 46, 24, 0.05); }
+:root[data-theme="linen"] { --nc-wash: rgba(42, 41, 37, 0.04); }
+:root[data-theme="sage"] { --nc-wash: rgba(46, 52, 43, 0.045); }
+:root[data-theme="rosequartz"] { --nc-wash: rgba(58, 47, 48, 0.04); }
+:root[data-theme="ink"] { --nc-wash: rgba(0, 0, 0, 0.05); }
+:root[data-theme="slate"] { --nc-wash: rgba(255, 255, 255, 0.05); }
+:root[data-theme="trueblack"] { --nc-wash: rgba(255, 255, 255, 0.06); }
+:root[data-theme="espresso"] { --nc-wash: rgba(255, 240, 220, 0.05); }
+:root[data-theme="charcoal"] { --nc-wash: rgba(255, 255, 255, 0.05); }
+:root[data-theme="dusk"] { --nc-wash: rgba(255, 255, 255, 0.05); }
+:root[data-theme="forestnight"] { --nc-wash: rgba(230, 255, 235, 0.05); }
+:root[data-theme="mulberry"] { --nc-wash: rgba(255, 235, 250, 0.05); }
+:root[data-theme="nocturne"] { --nc-wash: rgba(220, 255, 255, 0.05); }
+
+/* ================================================================================================
+   THE CHAPTER-END COMPONENT IS THE PLATE.
+
+   Not a 3c button placed inside the old read-aloud pill — that read as two designs stacked. In this ONE
+   state the pill sheds its own identity completely (the 16px radius, the chrome ground, the frosted blur,
+   the 1px chrome border, the deep floating shadow, the 380px fixed width, the column layout and the inner
+   panel padding) and becomes the concept's paper plate: a single 38px strip with a 2px corner, a hairline
+   edge, and the ink cap struck at its leading end. Message, action and dismiss all sit ON that one piece of
+   paper with no container, no inner panel and no rule between them.
+
+   Scoped to `.chapter-end` ONLY. Every other read-aloud state — the transport rows, the progress hairline,
+   the RAWY-193 Edge-error pause — keeps the pill exactly as it is, by construction: they never carry this
+   class. The kashida keeps the standalone 196px plate, because there the plate replaces the progress stroke
+   inside the kashida's own stroke chrome rather than duplicating a panel.
+
+   Nothing about the FEATURE moves: same two buttons in the same DOM order (so tab order is untouched), same
+   callbacks, same conditions, same bottom-centre fixed position and --reading-shift centring. The visual
+   order is set with `order`, which does not affect focus order. */
+.tts-pill.chapter-end {
+  width: auto; max-width: calc(100vw - 28px); height: 38px;
+  flex-direction: row; align-items: stretch; gap: 0; padding: 0;
+  border: 0; border-radius: 2px; overflow: hidden;
+  background: var(--nc-paper);
+  backdrop-filter: none; -webkit-backdrop-filter: none;
+  box-shadow: inset 0 0 0 1px var(--nc-edge), 0 2px 6px var(--nc-shadow);
+}
+/* the base pill's dark-theme shadow is (0,3,0) and would otherwise win — restate it at equal weight */
+:root[data-dark="true"] .tts-pill.chapter-end {
+  box-shadow: inset 0 0 0 1px var(--nc-edge), 0 2px 6px var(--nc-shadow);
+}
+/* the inner panel dissolves: no padding, no space-between gap, no separation of any kind */
+.tts-pill.chapter-end .tts-pill-end {
+  flex: 1; min-width: 0; display: flex; align-items: stretch;
+  justify-content: flex-start; gap: 0; padding: 0;
+}
+/* `display: contents` lets the two action buttons order themselves against the message WITHOUT touching the
+   DOM — so the tab order stays message-less: next chapter, then close, exactly as today. */
+.tts-pill.chapter-end .tts-end-actions { display: contents; }
+.tts-pill.chapter-end .tts-x { order: 1; }
+.tts-pill.chapter-end .tts-end-msg { order: 2; }
+.tts-pill.chapter-end .tts-next-plate { order: 3; }
+
+/* the message is now a caption printed on the paper, not a heading beside a control */
+.tts-pill.chapter-end .tts-end-msg {
+  display: flex; align-items: center; white-space: nowrap; padding-inline-end: 14px;
+  font: 400 0.8125rem/1.35 var(--ui-font);
+  color: color-mix(in srgb, var(--nc-ink) 62%, transparent);
+}
+/* dismiss — a quiet full-height field at the trailing edge, opposite the cap */
+.tts-pill.chapter-end .tts-x {
+  width: 34px; height: auto; align-self: stretch; border-radius: 0; flex: none;
+  color: color-mix(in srgb, var(--nc-ink) 42%, transparent);
+  transition: background-color 220ms cubic-bezier(0.2, 0.6, 0.25, 1), color 200ms ease;
+}
+.tts-pill.chapter-end .tts-x:hover { background: var(--nc-wash); color: var(--nc-ink); }
+
+/* the action fills the rest and pushes hard against the leading edge, so the ink cap is flush with the
+   plate's own corner — the single dark mark the concept is named for. It has NO plate of its own now. */
+.tts-pill.chapter-end .tts-next-plate {
+  width: auto; height: auto; align-self: stretch; margin-inline-start: auto;
+  border-radius: 0; background: transparent; box-shadow: none;
+}
+.tts-pill.chapter-end .tts-next-label { padding-inline: 16px; }
+/* hover = touching paper: the label field takes the faintest wash, the cap deepens one step. No lift —
+   the plate is the whole component now, so raising a part of it would tear the object apart. */
+.tts-pill.chapter-end .tts-next-plate:hover { background: var(--nc-wash); box-shadow: none; }
+/* pressed = seated: the field takes the shadow inside. No 1px drop, for the same reason. */
+.tts-pill.chapter-end .tts-next-plate:active {
+  background: var(--nc-wash); transform: none;
+  box-shadow: inset 0 2px 4px var(--nc-shadow);
+}
+/* focus rings turn INWARD here: the plate clips to its 2px corner, so an outset ring would be cut off.
+   Same 2px accent ring (3px on Ink), same visibility, drawn just inside the control's own edge. */
+.tts-pill.chapter-end button:focus-visible {
+  outline: var(--nc-ring-w, 2px) solid var(--accent); outline-offset: -2px;
+}
+
 /* RAWY-193: the explicit "Edge unavailable" PAUSE state. Reuses the chapter-end block wholesale; the message
    reads as an alert (the RAWY-190 errored ink), and "Switch to Piper" is a NEUTRAL secondary beside the accent
    Retry so the primary recovery (stay on the chosen Edge voice) reads first. Theme-aware; mirrors in RTL. */
@@ -1301,10 +1784,10 @@ html, body, #root {
 .tts-kash-swap svg { width: 17px; height: 17px; }
 .tts-kash-swap:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
 
-/* RAWY-190: chapter-end "next chapter" continue in the kashida. It reuses `.tts-end-next` wholesale (same
-   typography + theme tokens + hover as the full/collapsed pill's control — no new colours or motion); this
-   only makes it not-stretch and sit at the bead's height in place of the progress stroke. */
-.tts-kash-next { flex: none; height: 34px; }
+/* RAWY-190: chapter-end "next chapter" continue in the kashida. It is the SAME control as the full pill's —
+   the concept-3c inked cap, same tokens, same states — so this only has to stop it stretching. Its 38px
+   height now equals the bead's, and its 208px width sits where the 190px progress stroke did. */
+.tts-kash-next { flex: none; }
 
 @keyframes tts-halo { 0% { opacity: 0.5; transform: scale(1); } 100% { opacity: 0; transform: scale(1.9); } }
 @keyframes tts-kash-glow { 0%, 100% { filter: none; } 50% { filter: brightness(1.16); } }
@@ -1621,6 +2104,67 @@ html, body, #root {
   cursor: pointer; margin-bottom: 8px;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
+
+/* ================================================================================================
+   RAWY-282 — NOTE TITLES, and the note-card TEXT CONTAINMENT audit (bug 4).
+   ================================================================================================
+   THE OVERFLOW ROOT CAUSE. `.rp-note-body` carried `white-space: pre-wrap` and NO `overflow-wrap`.
+   `pre-wrap` wraps at spaces and honours newlines, but it does NOT break a long UNBROKEN token — a
+   URL, a path, a long Arabic word with no spaces — so one such token made the content box wider than
+   the card and spilled out of the panel. `.rp-x-text` in the cross-book list already had
+   `overflow-wrap: anywhere` and was correct; the in-book body simply never got it.
+   The SECOND leak is `.rp-item-head`: a flex row whose `.rp-chapter` had no `min-width: 0`, so a long
+   chapter label refused to shrink and pushed the Edit/Delete actions out of the card. A flex item's
+   default `min-width: auto` is the classic cause and needs the explicit override.
+   Everything below is containment only — no colour, spacing or type change, so a card that fits today
+   renders identically. */
+.rp-note-body,
+.rp-excerpt,
+.rp-x-text,
+.rp-x-src { overflow-wrap: anywhere; }
+/* Let the card and its rows actually shrink inside the scroller instead of forcing it wider. */
+.rp-item, .rp-note-text { min-width: 0; }
+.rp-item-head { min-width: 0; }
+.rp-chapter { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-item-actions { flex: none; } /* the actions keep their width; the label yields instead */
+
+/* The title: emphasised heading above the body. */
+.rp-note-text { cursor: pointer; }
+.rp-note-title {
+  font: 600 0.90625rem/1.4 var(--ui-font); color: var(--text);
+  margin-bottom: 3px; overflow-wrap: anywhere;
+}
+/* WITH a title the body becomes a PREVIEW — the first lines only. Expressed as a sibling selector so
+   an UNTITLED note keeps the full, unclamped body it has always had: no JS branch, and the untouched
+   case is byte-identical. The full text stays reachable through Edit. */
+.rp-note-title + .rp-note-body {
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  color: color-mix(in srgb, var(--text) 82%, transparent);
+}
+/* The title field, matching `.rp-textarea` exactly so the editor reads as one control set. */
+.rp-title-input {
+  width: 100%; border: 1px solid var(--chrome-border); border-radius: 7px;
+  background: var(--paper-bg); color: var(--text); padding: 7px 8px; box-sizing: border-box;
+  /* RAWY-283: one step above the 0.8125rem body (ratio 1.077) — enough to read as a heading in a narrow
+     panel, small enough that it never competes with the note it belongs to. */
+  font: 600 0.875rem/1.4 var(--ui-font);
+}
+.rp-title-input:focus { outline: none; border-color: var(--accent); }
+
+/* The in-book Note Editor Card's title field — borderless like `.nec-note`, one size down from the
+   body so the hierarchy reads as heading-then-note rather than two equal fields. */
+/* RAWY-283: the title was 1.0625rem (17px) against a 1.1875rem (19px) body — SMALLER than the text it
+   heads, which is why it did not read as a title. Now 1.3125rem (21px): a ratio of 1.105 over the body,
+   so the size difference is legible but slight, and the weight (600 vs 400) does most of the work. That
+   keeps it clearly a heading without letting it dominate an editor whose subject is the note itself.
+   Line-height tightened 1.5 -> 1.35 because a one-line heading does not want the body's airy leading. */
+.nec-title {
+  width: 100%; border: 0; background: transparent; padding: 0 0 6px;
+  font: 600 1.3125rem/1.35 var(--ui-font); color: var(--text); text-align: start;
+  border-bottom: 1px solid var(--chrome-border); margin-bottom: 10px;
+}
+.nec-title:focus { outline: none; border-bottom-color: var(--accent); }
+.nec-title::placeholder { color: color-mix(in srgb, var(--muted) 70%, transparent); font-weight: 400; }
 .rp-dots { display: flex; gap: 7px; }
 .rp-dot { width: 15px; height: 15px; border-radius: 50%; border: 0; cursor: pointer; box-shadow: 0 0 0 1px rgba(0,0,0,0.08); }
 .rp-dot.active { box-shadow: 0 0 0 2px var(--paper-bg), 0 0 0 3.5px var(--accent); }
@@ -1872,10 +2416,24 @@ html, body, #root {
   border: none; background: transparent; color: inherit; font: inherit; cursor: pointer; text-align: start;
 }
 .lib-shelf-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.lib-shelf-count { flex: none; color: var(--lib-faint); font-size: 0.75rem; }
-.lib-shelf-actions { display: none; align-items: center; gap: 2px; flex: none; }
-.lib-shelf:hover .lib-shelf-actions { display: flex; }
-.lib-shelf:hover .lib-shelf-count { display: none; }
+/* RAWY-269 (4) — the trailing cell is a fixed 1x1 GRID that the count and the hover actions SHARE.
+   Both occupy the same track, so which one is visible is a paint change and can never be a layout
+   change. Before this, hover swapped `display` between them: measured, `.lib-shelf-main` went
+   161px -> 125px on every row the pointer crossed (5.8k-10.9k changed pixels per row), and a long
+   shelf name re-ellipsised mid-glide — a 36px jolt in exactly the place you aim to pick a shelf.
+   `justify-items: end` is LOGICAL, so the cell keeps to the row's trailing edge in both directions.
+   The delete CONFIRM is allowed to widen the cell (`.confirming`): that is a deliberate click, not a
+   pointer passing by, and the prompt needs the room. */
+.lib-shelf-trail {
+  flex: none; display: grid; min-width: 44px; height: 22px;
+  align-items: center; justify-items: end;
+}
+.lib-shelf-trail.confirming { min-width: auto; }
+.lib-shelf-count, .lib-shelf-actions { grid-area: 1 / 1; }
+.lib-shelf-count { color: var(--lib-faint); font-size: 0.75rem; }
+.lib-shelf-actions { display: flex; align-items: center; gap: 2px; opacity: 0; pointer-events: none; }
+.lib-shelf:hover .lib-shelf-actions, .lib-shelf:focus-within .lib-shelf-actions { opacity: 1; pointer-events: auto; }
+.lib-shelf:hover .lib-shelf-count, .lib-shelf:focus-within .lib-shelf-count { opacity: 0; }
 .lib-shelf-act {
   border: none; background: transparent; cursor: pointer; color: var(--lib-faint);
   font-size: 0.75rem; line-height: 1; padding: 3px 5px; border-radius: 5px;
@@ -1942,6 +2500,21 @@ html, body, #root {
 
 /* ---- main ---- */
 .lib-main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
+/* RAWY-269 (1) — the INCOMING section, laid out and decoding but not shown.
+   `visibility: hidden` is LOAD-BEARING and is NOT interchangeable with `display: none`: a
+   `display:none` subtree is not laid out at all, so its images would never load and it could never
+   become ready — the swap would always fall through to its safety cap. `visibility:hidden` keeps the
+   pane in layout (so images load and `getBoundingClientRect` is meaningful) while removing it from
+   the accessibility tree and the tab order. It matches `.lib-main`'s own flex column so a pane that
+   relies on `flex: 1` (every one of them) measures the same here as it will on screen. */
+.lib-pane-preload {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  visibility: hidden; pointer-events: none;
+}
+/* The VISIBLE pane's wrapper. It exists so that the visible and the preloaded pane are the same
+   keyed child in the same list — see the comment at the `.map()` in Library.tsx. It reproduces
+   `.lib-main`'s flex column exactly, so every pane measures the same wrapped as it did unwrapped. */
+.lib-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .lib-head { padding: 26px 30px 14px; }
 .lib-head-top { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
 .lib-title-wrap { display: flex; align-items: baseline; gap: 12px; }
@@ -2032,7 +2605,15 @@ html, body, #root {
    top-left. Pairing this with the per-column default sort order (date → newest first, see
    pickSort) puts the most-recently-read book where the reader's eye starts. */
 /* ---- shelf rows (RAWY-46, Band E-II): labelled horizontal rows, sideways scroll, RTL-mirroring ---- */
-.lib-rows { flex: 1; overflow-y: auto; padding: 6px 0 26px; display: flex; flex-direction: column; gap: 2px; }
+/* RAWY-269 (3) — `scrollbar-gutter: stable` on every VERTICAL library scroller.
+   These are `overflow: auto`, so the scrollbar appeared and disappeared as the content crossed the
+   overflow threshold — which a shelf change does routinely. Measured on the release build: content
+   width flipped 872px <-> 862px and the grid column 185px <-> 182.5px, every card re-laid out and
+   re-rastered, and `PerformanceObserver('layout-shift')` recorded value 0.17548 (sources
+   `lib-shelfrow, lib-cover, #text, lib-title-count`). Reserving the gutter permanently costs 10px of
+   width that the layout was only borrowing anyway, and makes the shift arithmetically impossible.
+   Vertical scrollers ONLY: `.lib-shelfrow-scroll` is horizontal and was not implicated. */
+.lib-rows { flex: 1; overflow-y: auto; scrollbar-gutter: stable; padding: 6px 0 26px; display: flex; flex-direction: column; gap: 2px; }
 .lib-shelfrow { padding: 0 0 18px; }
 .lib-shelfrow-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 30px 11px; }
 .lib-shelfrow-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
@@ -2057,7 +2638,8 @@ html, body, #root {
 .lib-rows-noshelves-hint { font: 400 0.84375rem/1.65 var(--ui-font); color: var(--muted); max-width: 440px; margin-bottom: 8px; }
 
 .lib-grid {
-  flex: 1; overflow: auto; padding: 8px 30px 92px; /* RAWY-170: extra bottom room clears the corner rosette */
+  flex: 1; overflow: auto; scrollbar-gutter: stable; /* RAWY-269 (3) — see .lib-rows */
+  padding: 8px 30px 92px; /* RAWY-170: extra bottom room clears the corner rosette */
   display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
   gap: 26px 24px; align-content: start;
 }
@@ -2065,8 +2647,17 @@ html, body, #root {
   padding: 0; border: none; background: none; cursor: pointer;
   display: flex; flex-direction: column; gap: 9px; text-align: start; min-width: 0;
 }
+/* RAWY-269 (5) — the cover cell is an OPAQUE PLATE in both modes.
+   Crop mode used to paint no background at all, so between a card being inserted and its image
+   being decoded the cell was a HOLE: on a library whose ground is the reader's own photograph, the
+   wallpaper showed through the covers. Measured pre-fix, a shelf change took the whole window to
+   32.71 -> 24.09 (two frames DARKER than either endpoint) -> 62.50 luma. `warmCovers` now makes
+   that window rare; the plate makes it invisible when it happens anyway — belt and braces, because
+   one is a timing guarantee and the other is not. `--lib-letterbox` is the colour fit mode already
+   used, so the two modes now agree instead of differing. */
 .lib-cover {
   aspect-ratio: 2 / 3; border-radius: 3px; overflow: hidden; position: relative;
+  background: var(--lib-letterbox);
   box-shadow: 0 6px 14px rgba(40, 28, 14, 0.2); transition: transform 140ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 .lib-card:hover .lib-cover { transform: translateY(-3px); box-shadow: 0 12px 22px rgba(40, 28, 14, 0.26); }
@@ -2198,7 +2789,7 @@ html, body, #root {
 }
 
 /* ---- list ---- */
-.lib-list { flex: 1; overflow: auto; padding: 0 32px 84px; }
+.lib-list { flex: 1; overflow: auto; scrollbar-gutter: stable; padding: 0 32px 84px; } /* RAWY-269 (3) — see .lib-rows */
 /* RAWY-79 (audit #4, design "Sard Library List Row"): the header and every row share ONE grid, so
    the column labels line up EXACTLY with the cells (the old flex header + flex rows didn't align).
    Columns: cover · title (fluid, truncates) · author · format · progress · last-read. Every colour a
@@ -2229,6 +2820,10 @@ html, body, #root {
 }
 :root[dir="rtl"] .lib-row:focus-visible { box-shadow: inset -2px 0 0 var(--accent); }
 .ll-thumb { width: 34px; height: 50px; border-radius: 2px 3px 3px 2px; overflow: hidden; box-shadow: 0 2px 5px rgba(0, 0, 0, 0.16); }
+/* RAWY-280: the real cover in a list row. `cover` (not `contain`) so a cover of any ratio fills the
+   34x50 slot without letterboxing — the row is a dense list, not a gallery, and the grid card already
+   offers the fit/crop choice. `display:block` kills the inline baseline gap under the image. */
+.ll-thumb img.real { display: block; width: 100%; height: 100%; object-fit: cover; object-position: center; }
 :root[dir="rtl"] .ll-thumb { border-radius: 3px 2px 2px 3px; }
 .ll-title { min-width: 0; font: 500 0.9375rem/1.5 var(--ui-font); color: var(--text); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ll-title.ar { font: 700 1.0625rem/1.5 var(--ui-font); }
@@ -2607,7 +3202,7 @@ html, body, #root {
   color: var(--muted); font: 500 0.75rem var(--ui-font); white-space: nowrap;
 }
 .inbox-seg button.on { background: var(--paper-bg); color: var(--accent); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
-.inbox-list { flex: 1; overflow-y: auto; padding: 8px 36px 28px; display: flex; flex-direction: column; gap: 12px; }
+.inbox-list { flex: 1; overflow-y: auto; scrollbar-gutter: stable; padding: 8px 36px 28px; display: flex; flex-direction: column; gap: 12px; } /* RAWY-269 (3) — see .lib-rows */
 /* a card carries a soft tint of its colour + matching border + a 4px colour bar (RAWY-22 cards) */
 .inbox-card {
   display: flex; gap: 14px; width: 100%; text-align: start; cursor: pointer; padding: 15px 18px; border-radius: 10px;
@@ -3133,7 +3728,7 @@ html, body, #root {
 .pc-saveinapp-ico::before { content: ""; position: absolute; left: 2.5px; top: 3px; width: 8px; height: 1.6px; background: currentColor; }
 
 /* gallery — a cross-book grid, styled from the app theme tokens */
-.pg-root { display: flex; flex-direction: column; padding: 24px 30px 0; overflow-y: auto; }
+.pg-root { display: flex; flex-direction: column; padding: 24px 30px 0; overflow-y: auto; scrollbar-gutter: stable; } /* RAWY-269 (3) — see .lib-rows */
 .pg-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; }
 .pg-title { margin: 0; font: 600 1.625rem var(--ui-font); color: var(--text); }
 .pg-count { font: 500 0.8125rem var(--ui-font); color: var(--muted); }
@@ -3455,4 +4050,490 @@ html, body, #root {
 .ref-popup-phrase { font: 700 1.15rem/1.4 var(--ui-font); color: var(--text); overflow-wrap: anywhere; }
 .ref-popup-rule { height: 1px; background: color-mix(in srgb, var(--text) 8%, transparent); margin: 0.55rem 0 0.5rem; }
 .ref-popup-note { font: 400 1rem/1.6 var(--ui-font); color: var(--muted); overflow-wrap: anywhere; }
+
+/* ================================================================================================
+   RAWY-265 — BACKGROUND PERSONALISATION, Phase 1: the LIBRARY surface.
+   ================================================================================================
+   ARCHITECTURE. Two pseudo-elements on an EXISTING container (`.lib-root`), never a new DOM node —
+   the RAWY-146 Moonlit pattern. Both are `position:absolute; inset:0; z-index:-1; pointer-events:none`,
+   so they cannot participate in layout (invariant I-2) and cannot intercept a click. `.lib-root` is a
+   FLEX container, and an absolutely-positioned pseudo-element is NOT a flex item — that is what keeps
+   the sidebar/main split untouched. `isolation:isolate` gives `.lib-root` a stacking context so the
+   `z-index:-1` layers sit ABOVE its own `--paper-bg` background but BELOW every child.
+
+   WHY TWO LAYERS AND NOT ONE. `::before` carries the image and is BLURRED; `::after` carries the
+   scrim, the falloff and the grain and is CRISP. One layer cannot do both: a `filter: blur()` would
+   soften the scrim harmlessly but would destroy the grain, which exists precisely to reintroduce
+   fine texture.
+
+   THE GATE. Every rule here is scoped to `:root[data-bg-library="on"]`. With no background chosen the
+   attribute is absent, not one rule matches, no compositing layer is created and no image is decoded
+   — the feature is INERT, not merely invisible (invariant I-1).
+
+   THE MEASURED FLOOR. `--bg-lib-scrim` is never lighter than 77%: measured across all 16 themes, that
+   is the least scrim at which `--text` still clears WCAG AA (4.5:1) over ANY image content, with
+   Slate the binding case at 0.767. The falloff below can only ADD opacity to that floor, never
+   subtract, so no combination of controls can breach it. (Library only — the reading surface targets
+   AAA; see lib/background.ts for the full derivation.)
+   ================================================================================================ */
+:root[data-bg-library="on"] .lib-root { isolation: isolate; }
+
+/* ---- layer 1: the image ---- */
+:root[data-bg-library="on"] .lib-root::before {
+  content: "";
+  position: absolute;
+  /* Negative insets so `filter: blur()` samples beyond the frame. Without this the blur fades to
+     transparent at the window edges and draws a vignette of nothing. */
+  inset: calc(-3 * var(--bg-lib-blur, 0px) - 8px);
+  z-index: -1;
+  pointer-events: none;
+  background-image: var(--bg-lib-image);
+  background-size: cover;
+  /* The focal point. `cover` always crops; this chooses WHAT survives the crop, which is the whole
+     answer to "it cut off the face". */
+  background-position: var(--bg-lib-pos, 50% 50%);
+  background-repeat: no-repeat;
+  filter: blur(var(--bg-lib-blur, 0px));
+  /* PHYSICAL, never mirrored by UI direction: this flips the photograph, and a photograph does not
+     have a reading direction. (Same reasoning as the media transport controls, which are also not
+     mirrored in RTL because they represent time.) */
+  transform: scaleX(var(--bg-lib-flip, 1));
+}
+
+/* ---- layer 2: scrim + falloff + grain, all crisp ---- */
+:root[data-bg-library="on"] .lib-root::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    /* (a) GRAIN, topmost. The same fractal-noise field the page margins use, at a baked-in 5% alpha
+       so it needs no element opacity of its own — which is what lets it share this single layer.
+       It unifies a photograph with Sard's paper texture: the photo reads as printed into the app
+       rather than pasted behind it. */
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E"),
+    /* (b) FALLOFF. Extra theme weight at the top, where `.lib-head` puts the title, the count and the
+       search field on the bare ground. It ADDS to the flat scrim below and so can only ever make the
+       ground MORE theme-dominated — the measured floor cannot be breached from here. Vertical, so it
+       is direction-agnostic and needs no RTL mirror. */
+    linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--paper-bg) 14%, transparent),
+      transparent 46%
+    ),
+    /* (c) The flat scrim at the measured floor, in the THEME's own colour — not black. A black
+       overlay would make all 16 themes converge on the same muddy grey; a theme-tinted one keeps
+       Ivory warm and Nocturne cool, and the image reads as lit by the theme. */
+    linear-gradient(
+      color-mix(in srgb, var(--paper-bg) var(--bg-lib-scrim, 100%), transparent),
+      color-mix(in srgb, var(--paper-bg) var(--bg-lib-scrim, 100%), transparent)
+    );
+  background-repeat: repeat, no-repeat, no-repeat;
+  background-size: 160px 160px, 100% 100%, 100% 100%;
+}
+
+/* ---- entrance: a fade-in, not a hard swap (spec §10.3) ----
+   `@starting-style` is what makes a transition run on a pseudo-element that has just come into
+   existence — a plain transition does not fire on first render. Where it is unsupported the layer
+   simply appears, which is a graceful degradation rather than a broken animation. */
+/* RAWY-269 — the entrance is gated on `[data-bg-entrance]`, which `applyBackgrounds` raises only
+   when the background surface goes from ABSENT to PRESENT (app start, or the reader choosing an
+   image). `@starting-style` fires whenever the pseudo-element COMES INTO EXISTENCE, and `.lib-root`
+   is re-created on every return from the reader — so without this gate the entrance replayed on
+   each one, from opacity 0, i.e. from the bare `--paper-bg`. Measured on a `trueblack` profile:
+   closing a book took the whole window to 5.15 luma (near-black) and climbed back over ~180 ms,
+   every single time. An entrance is for arriving, not for coming back. */
+@supports (transition-behavior: allow-discrete) {
+  :root[data-bg-entrance][data-bg-library="on"] .lib-root::before,
+  :root[data-bg-entrance][data-bg-library="on"] .lib-root::after {
+    transition: opacity 200ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+  @starting-style {
+    :root[data-bg-entrance][data-bg-library="on"] .lib-root::before,
+    :root[data-bg-entrance][data-bg-library="on"] .lib-root::after { opacity: 0; }
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-bg-library="on"] .lib-root::before,
+  :root[data-bg-library="on"] .lib-root::after { transition: none; }
+}
+
+/* ---- `--lib-faint` re-grounding ----
+   MEASURED: this token is 1.88-3.51:1 against its own ground with NO background at all — under 3:1
+   on 13 of the 16 themes. No scrim opacity can rescue a colour that fails at alpha 1.0, so the 16
+   elements that use it (shelf names and counts, the title count, the search placeholder, list-row
+   dates, edit-field labels) are re-inked instead, by the RAWY-256 rule: keep the source colour if it
+   clears, else carry it toward `--text` until it does. `lib/background.ts` computes the value; this
+   rule only has to WIN, and `:root[...] .lib-root` (0,2,0) out-specifies `.lib-root` (0,1,0) where the
+   token is declared. Wherever a background is on, this text is strictly MORE legible than today. */
+:root[data-bg-library="on"] .lib-root { --lib-faint: var(--bg-lib-faint, var(--muted)); }
+
+/* ---- the sidebar ----
+   The image spans the WHOLE window; stopping it at the sidebar's edge would read as "a panel with a
+   picture in it", not as a background. So the sidebar becomes translucent chrome — but only ever
+   here, so an untouched profile keeps its opaque sidebar byte-for-byte.
+   MEASURED: `--text` on `--chrome-bg` over any image needs 0.800 (Slate, binding). The specified
+   0.85 floor clears that with margin and is what ships. `backdrop-filter` additionally softens
+   whatever sits behind it, so the 15% that shows through is never detailed enough to compete. */
+/* RAWY-278 (fix) — THE SIDEBAR'S BLUR NOW FOLLOWS THE BLUR SLIDER.
+   It was hardcoded `blur(18px)`, containing no `var()`, so it was **the only mandatory blur in the
+   whole system**: a 228px band down the full height of the library stayed blurred at every slider
+   position, including 0. That is the residual blur the owner could see and could not remove.
+   MEASURED SAFE, not assumed: D74's contrast requirement for `--text` on `--chrome-bg` over an image
+   is alpha 0.800 and the shipped floor is 0.85, and that requirement was derived against PURE BLACK
+   and PURE WHITE showing through the 15% — a BLUR-INDEPENDENT worst case, since blurring can only
+   pull the ground toward the image's mean and away from those extremes. Re-verified across all 16
+   themes with the blur at ZERO: worst case **5.252:1 on Slate** against a 4.5:1 floor, 0 failures.
+   So the 0.85 alpha carries the floor on its own and the blur was never load-bearing for legibility.
+   `BLUR_DEFAULT` is 18 and the old hardcoded value was 18px, so a profile at the default slider
+   position renders the sidebar EXACTLY as it did before. `saturate(1.1)` is untouched — it is not
+   blur, and dropping it would change the tint. */
+:root[data-bg-library="on"] .lib-sidebar {
+  background: color-mix(in srgb, var(--chrome-bg) var(--bg-lib-sidebar, 85%), transparent);
+  backdrop-filter: blur(var(--bg-lib-blur, 0px)) saturate(1.1);
+  -webkit-backdrop-filter: blur(var(--bg-lib-blur, 0px)) saturate(1.1);
+}
+
+/* ---- covers must sit ON the surface, not on top of a picture ----
+   `0 6px 14px rgba(40,28,14,.2)` is tuned against a flat `--paper-bg` and is simply invisible over a
+   photograph, which is what makes covers read as pasted on. Deepening the shadow (and holding the
+   edge against a busy ground) restores the depth cue. */
+:root[data-bg-library="on"] .lib-cover {
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.42), 0 2px 6px rgba(0, 0, 0, 0.28);
+}
+:root[data-bg-library="on"] .lib-card:hover .lib-cover {
+  box-shadow: 0 18px 38px rgba(0, 0, 0, 0.5), 0 3px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* ---- Moonlit: a user image REPLACES the decorations (D50's precedent, extended to the library) ----
+   A crescent, a star field and a photograph competing for the same space is clutter. D50 already
+   established that a custom background replaces the decorations so the choice reads as intentional
+   rather than as orphaned clouds; the same rule applies here. */
+:root[data-theme="moonlit"][data-bg-library="on"] .lib-main::before { content: none; }
+
+/* ---- accessibility overrides ----
+   Each of these SUPPRESSES the feature rather than softening it. A reader who has asked the OS for
+   high contrast, forced colours or reduced transparency has stated a requirement, not a preference,
+   and a decorative image is exactly what should yield. The user's configuration is untouched — only
+   the rendering stops — so nothing is lost when the setting is turned off again. */
+@media (forced-colors: active) {
+  :root[data-bg-library="on"] .lib-root::before,
+  :root[data-bg-library="on"] .lib-root::after { content: none; }
+  :root[data-bg-library="on"] .lib-sidebar {
+    background: var(--chrome-bg); backdrop-filter: none; -webkit-backdrop-filter: none;
+  }
+}
+@media (prefers-contrast: more) {
+  :root[data-bg-library="on"] .lib-root::before,
+  :root[data-bg-library="on"] .lib-root::after { content: none; }
+  :root[data-bg-library="on"] .lib-sidebar {
+    background: var(--chrome-bg); backdrop-filter: none; -webkit-backdrop-filter: none;
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-bg-library="on"] .lib-sidebar {
+    background: var(--chrome-bg); backdrop-filter: none; -webkit-backdrop-filter: none;
+  }
+}
+
+/* ================================================================================================
+   RAWY-265 — Phase 2: the READING DESK.
+   ================================================================================================
+   SAME two-layer architecture as the library (`::before` = image, blurred; `::after` = scrim + grain,
+   crisp), on `.reader-desk` — the container RAWY-146 already established as the environmental layer.
+
+   WHY THE FLOOR IS DIFFERENT (0.62 here vs 0.77 in the library), and why that is not a weakening:
+   MEASURED — the desk carries NO bare text. The book sits on the OPAQUE `.page-sheet`, so the image
+   can only ever reach the L/R margins, never behind a word of it (RAWY-146's guarantee, unchanged).
+   Every floating element brings its own chrome ground; the thinnest is the kashida bead at 90%, and
+   with the scrim at ZERO its text still clears 6.20:1 worst-case across all 16 themes (Slate binding).
+   So nothing here forces a scrim at all: 0.62 is a DESIGN floor for presence, chosen by the owner,
+   not a safety floor. Reading comfort is preserved STRUCTURALLY rather than by this number.
+   The reading surface keeps the AAA target for Phase 3, where the paper itself becomes translucent
+   and body text DOES meet the image — that is a different problem with a different floor.
+
+   MOONLIT: its reader decoration is scoped OUT (`:not([data-bg-reading="on"])`, up at RAWY-146's rule)
+   rather than suppressed with `content: none`, because the decoration and this image want the SAME
+   pseudo-element — `content: none` would kill the replacement along with the replaced.
+
+   ⚠ D50 PRECEDENCE IS REVERSED BY RAWY-280 — THE WALLPAPER NOW WINS.
+   RAWY-265 gave the per-book background COLOUR precedence over the image, reasoning that the colour is
+   the more specific, deliberate choice. In use that reads as a broken feature: a reader who had once
+   set a colour picked a wallpaper, saw nothing change, and concluded the wallpaper does not work — the
+   suppression is invisible and there is no affordance anywhere saying which one won. Choosing a
+   wallpaper is the LATER and equally deliberate act, so it takes the surface.
+   NOTHING IS LOST AND NOTHING NEW IS STORED. The colour still lives in `reading_style.backgroundColor`
+   untouched; while a wallpaper is active it stops being the desk's paint and becomes the SCRIM'S TINT
+   instead, because the scrim below already resolves `var(--reader-bg, var(--app-bg))` — so the reader's
+   colour still shapes the surface rather than being discarded. Remove the wallpaper and
+   `[data-bg-reading="on"]` disappears, not one rule in this block matches, and `.reader-desk` falls
+   back to its own `background: var(--reader-bg, …)` — the colour returns by itself, with no restore
+   step, no migration and no second source of truth.
+   ================================================================================================ */
+/* The scrim strength is a REGISTERED custom property so it can actually be TRANSITIONED. An unregistered
+   `--var` is an untyped token and animates discretely (it would snap), and re-declaring the layer stack
+   in the receded state would not animate either — `background-image` is not an animatable property.
+   Registering it as a `<percentage>` makes the immersive recede a real composited interpolation, and
+   `color-mix()` re-resolves at each step. JS supplies only the BASE; the receded state adds to it, so
+   the measured floor is never subtracted from. */
+@property --bg-rd-scrim {
+  syntax: "<percentage>";
+  inherits: true;
+  initial-value: 100%;
+}
+:root[data-bg-reading="on"] .reader-desk {
+  isolation: isolate;
+  --bg-rd-scrim: var(--bg-rd-scrim-base, 100%);
+  transition: --bg-rd-scrim 220ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* ---- layer 1: the image ---- */
+:root[data-bg-reading="on"] .reader-desk::before {
+  content: "";
+  position: absolute;
+  /* Negative insets so `filter: blur()` samples beyond the frame — without them the blur fades to
+     transparent at the edges and draws a vignette of nothing. */
+  inset: calc(-3 * var(--bg-rd-blur, 0px) - 8px);
+  z-index: -1;
+  pointer-events: none;
+  background-image: var(--bg-rd-image);
+  background-size: cover;
+  background-position: var(--bg-rd-pos, 50% 50%);
+  background-repeat: no-repeat;
+  filter: blur(var(--bg-rd-blur, 0px));
+  /* PHYSICAL, never mirrored: this flips a photograph, which has no reading direction. */
+  transform: scaleX(var(--bg-rd-flip, 1));
+  /* Explicit, because Moonlit's decoration rule sets `opacity: .55` on this same pseudo-element in
+     the theme where both could apply. Scoping already prevents the collision; this makes the image's
+     own opacity independent of it rather than relying on that scoping alone. */
+  opacity: 1;
+}
+
+/* ---- layer 2: scrim + grain, crisp ---- */
+:root[data-bg-reading="on"] .reader-desk::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    /* GRAIN — the same fractal-noise field the page margins use, at a baked-in 5% alpha so it needs
+       no element opacity of its own and can share this single layer. It makes a photograph read as
+       printed into the app rather than pasted behind it. */
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E"),
+    /* The scrim, in the DESK's own colour (`--app-bg`, or the reader-scoped `--reader-bg` when D50
+       sets one) — not black, so each theme keeps its character and the image reads as lit by it.
+       Resolved entirely in CSS, so while a book is open it follows the BOOK theme automatically. */
+    linear-gradient(
+      color-mix(in srgb, var(--reader-bg, var(--app-bg)) var(--bg-rd-scrim, 100%), transparent),
+      color-mix(in srgb, var(--reader-bg, var(--app-bg)) var(--bg-rd-scrim, 100%), transparent)
+    );
+  background-repeat: repeat, no-repeat;
+  background-size: 160px 160px, 100% 100%;
+  transition: opacity 220ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* ---- RAWY-280: the D50 suppression rule that used to live here is DELETED, deliberately ----
+   It read `:root[data-bg-reading="on"] .reader-desk.custom-bg::before, …::after { content: none; }`
+   and was the reason a chosen wallpaper stayed invisible for anyone who had ever set a background
+   colour. Deleting it is the whole fix on this path: no replacement rule, no new class, no new state.
+   The colour is not discarded — see the block comment at the top of this section for where it goes. */
+
+/* ---- the page must sit ON the desk, not on top of a picture ----
+   `0 0 30px rgba(60,40,16,.10)` is tuned against a flat desk and is invisible over a photograph — the
+   same defect the library covers had. Deepening it restores the "resting on a surface" cue. The dark
+   variant below keeps its inset light edge (which still reads) and gains the outer depth it lacked. */
+:root[data-bg-reading="on"] .page-sheet {
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.44), 0 2px 10px rgba(0, 0, 0, 0.26);
+}
+:root[data-bg-reading="on"][data-dark="true"] .page-sheet {
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55), 0 2px 10px rgba(0, 0, 0, 0.34),
+    inset 1px 0 0 rgba(255, 255, 255, 0.05), inset -1px 0 0 rgba(255, 255, 255, 0.05);
+}
+
+/* ---- immersive RECEDE (spec §4.2) ----
+   When immersive is on AND the reader has deliberately scrolled away, the environment steps back: a
+   little more scrim, a little more blur. NO new toggle — this is what the background does, joining a
+   behaviour the reader already understands (RAWY-210/211's `.scrolled-away`, which is set only on a
+   deliberate wheel scroll, never by the ordinary chrome auto-hide).
+   The scrim step is a composited opacity change; the blur step is deliberately SMALL (+4px) because
+   animating a large blur radius over a full-window layer is the expensive kind of filter animation.
+
+   RAWY-278 — the blur step is now OPTIONAL, and the fallback is what preserves today.
+   `--bg-rd-immstep` is emitted by `applyBackgrounds` ONLY when the reader turns the preference off,
+   in which case it is `0px`. When the preference is on — the default, and every profile that predates
+   it — the property is absent and this `var()` resolves to its own `4px` fallback, so the enabled
+   state is byte-identical to what shipped rather than a value re-derived in JS.
+   At `0px` the receded filter computes to the SAME value as the un-receded state, so Chromium starts
+   no transition and re-rasterises nothing. The scrim step below is deliberately NOT gated: only the
+   blur is optional, and the environment still recedes. */
+:root[data-bg-reading="on"] .reader-root.immersive .reader-desk::before {
+  transition: filter 220ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+:root[data-bg-reading="on"] .reader-root.immersive.scrolled-away .reader-desk::before {
+  filter: blur(calc(var(--bg-rd-blur, 0px) + var(--bg-rd-immstep, 4px)));
+}
+/* RAWY-278 (fix) — PREVIEW, so the boost can actually be SEEN while it is being set.
+   ROOT CAUSE of "the toggle does nothing": opening the Reading Settings drawer calls
+   `setHold(true)` (Reader.tsx:589) → `setVis(true)` (useChromeOnIntent:151) → `setScrolledAway(false)`
+   (useChromeOnIntent:74, RAWY-211). `.scrolled-away` is the ONLY state this boost exists in, so the
+   act of opening the panel that contains the control switches off the effect the control governs.
+   The mechanism was never broken — measured, enabled computes blur(16px) and disabled blur(12px) —
+   it was unobservable at the exact moment of use.
+   This rule reproduces the receded FILTER (and nothing else — no scrim step, no transition change)
+   while the control is hovered or focused. It is gated on an attribute that exists ONLY during that
+   interaction and is removed on unmount, so RUNTIME BEHAVIOUR IS UNCHANGED: outside the drawer this
+   selector can never match. `.scrolled-away` is deliberately NOT relaxed — that would be a real
+   behaviour change, and RAWY-211 exists to keep the pill and scrollbar alive under an open drawer. */
+:root[data-bg-reading="on"][data-bg-imm-preview] .reader-desk::before {
+  filter: blur(calc(var(--bg-rd-blur, 0px) + var(--bg-rd-immstep, 4px)));
+}
+/* The preview mirrors the scrim step too, now that the preference gates both. Showing only the blur
+   half would preview 1.20/255 of a 3.49/255 effect — i.e. it would under-report what the switch does,
+   which is the same failure being fixed. */
+:root[data-bg-reading="on"][data-bg-imm-preview] .reader-desk {
+  --bg-rd-scrim: calc(var(--bg-rd-scrim-base, 100%) + var(--bg-rd-immscrim, 14%));
+}
+/* The scrim step: ONE value change, on the registered property, so it interpolates. Additive
+   so the measured floor is only ever moved UP — the recede can never make the desk more exposed.
+
+   RAWY-278 (bug fix) — THE STEP IS GATED BY THE SAME PREFERENCE AS THE BLUR, and this is the fix for
+   "the immersive blur toggle does nothing". The recede has TWO steps and only the blur was gated;
+   the +14% scrim kept firing. On a real wallpaper the SCRIM is the part you can see: measured live,
+   entering immersive with the boost OFF changed 91.4% of pixels (mean 3.49/255), and neutralising
+   just this step took the same transition to 412 pixels of 792,000 (mean 0.0235/255). The blur step
+   alone is mean 1.20/255 — 2.9x smaller. A contrast drop on a dark image reads as softening, which
+   is exactly why it was reported as blur.
+   `14%` stays as the var's own fallback, so the ENABLED default is byte-identical to what shipped;
+   `applyBackgrounds` emits `0%` only when the reader switches the preference off. */
+:root[data-bg-reading="on"] .reader-root.immersive.scrolled-away .reader-desk {
+  --bg-rd-scrim: calc(var(--bg-rd-scrim-base, 100%) + var(--bg-rd-immscrim, 14%));
+}
+@media (prefers-reduced-motion: reduce) {
+  :root[data-bg-reading="on"] .reader-root.immersive .reader-desk::before,
+  :root[data-bg-reading="on"] .reader-desk,
+  :root[data-bg-reading="on"] .reader-desk::after { transition: none; }
+}
+
+/* ---- entrance fade (matches the library) ----
+   RAWY-269: gated on `[data-bg-entrance]` for the same reason and by the same mechanism as the
+   library's — `.reader-desk` is re-created on every book opened, so the entrance was replaying on
+   each one rather than on the background arriving. Kept identical to the library half so the two
+   surfaces cannot drift apart. */
+@supports (transition-behavior: allow-discrete) {
+  :root[data-bg-entrance][data-bg-reading="on"] .reader-desk::before,
+  :root[data-bg-entrance][data-bg-reading="on"] .reader-desk::after {
+    transition: opacity 200ms cubic-bezier(0.22, 0.61, 0.36, 1);
+  }
+  @starting-style {
+    :root[data-bg-entrance][data-bg-reading="on"] .reader-desk::before,
+    :root[data-bg-entrance][data-bg-reading="on"] .reader-desk::after { opacity: 0; }
+  }
+}
+
+/* ---- RAWY-265 Phase 3: PAGE OPACITY — the sheet's half of the paper ----
+   The paper is painted by TWO surfaces: this margin band, and the book iframe's own html/body (which
+   injectedCss writes as `rgba(...)`). They must resolve the SAME colour or a seam appears down the
+   edge of the text column — RAWY-201's lesson, invariant I-4. `color-mix(C 84%, transparent)` is
+   exactly `rgba(C, 0.84)`, and both sides take their alpha from the same measured value, so the two
+   agree by construction rather than by being kept in step.
+
+   Its own gate (`data-bg-page`), separate from `data-bg-reading`: the desk image can be showing while
+   the paper stays fully opaque, which is the default. At 100% this rule does not exist at all. */
+:root[data-bg-page="on"] .page-sheet {
+  background: color-mix(in srgb, var(--reader-page, var(--paper-bg)) var(--bg-page-opacity, 100%), transparent);
+}
+/* THE THIRD PAINT. foliate's paginator renders `<div id="background" part="filter">` and fills it with
+   the book document's own background (paginator.js:556, set from getBackground() at 635/696/1135). That
+   is a second copy of the paper inside a CLOSED shadow root — measured, it is why the text area stayed
+   fully opaque while only the margin band went translucent.
+   `::part()` reaches it: shadow parts are addressable whether the root is open or closed, so this needs
+   no foliate fork. It is ALSO the part that makes a live opacity change correct — foliate samples that
+   background once at render time and caches it, so without this rule a mid-section change would leave a
+   stale opaque copy behind the text until the next re-render. */
+:root[data-bg-page="on"] foliate-view::part(filter) { background: transparent !important; }
+
+/* ---- accessibility overrides: suppress, never soften (same contract as the library) ---- */
+@media (forced-colors: active) {
+  :root[data-bg-reading="on"] .reader-desk::before,
+  :root[data-bg-reading="on"] .reader-desk::after { content: none; }
+}
+@media (prefers-contrast: more) {
+  :root[data-bg-reading="on"] .reader-desk::before,
+  :root[data-bg-reading="on"] .reader-desk::after { content: none; }
+}
+/* A reader who has asked the OS to reduce transparency gets the SOLID paper back — the page is a
+   reading surface first, and this is the one preference that speaks directly to it. */
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-bg-page="on"] .page-sheet { background: var(--reader-page, var(--paper-bg)); }
+}
+@media (forced-colors: active) {
+  :root[data-bg-page="on"] .page-sheet { background: var(--reader-page, var(--paper-bg)); }
+}
+@media (prefers-contrast: more) {
+  :root[data-bg-page="on"] .page-sheet { background: var(--reader-page, var(--paper-bg)); }
+}
+
+/* ---- RAWY-265: the Global Settings controls (Appearance -> Library background) ----
+   These render only once an image is chosen (progressive disclosure in GlobalSettings.tsx), so with
+   no background the section is a single "Choose image…" row and none of this is in the DOM. */
+.bg-ctl-row { display: flex; align-items: center; gap: 10px; }
+.bg-ctl-thumb {
+  flex: none; width: 46px; height: 30px; border-radius: 3px; background-size: cover;
+  background-position: center; border: 1px solid var(--chrome-border);
+}
+.bg-ctl-name {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 400 0.75rem var(--ui-font); color: var(--muted);
+}
+.bg-ctl-act {
+  flex: none; padding: 5px 10px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--chrome-border); background: transparent; color: var(--text);
+  font: 500 0.71875rem var(--ui-font);
+}
+.bg-ctl-act:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.bg-ctl-act:disabled { opacity: 0.5; cursor: default; }
+.bg-ctl-act.danger { color: #b4442e; }
+/* The focal-point preview. A real preview at the SAME `cover` sizing the background uses, so the dot
+   marks the point that will actually survive the crop rather than an abstract coordinate. */
+.bg-ctl-focal {
+  position: relative; width: 100%; height: 104px; padding: 0; cursor: crosshair;
+  border: 1px solid var(--chrome-border); border-radius: 5px; overflow: hidden;
+  background-size: cover; background-repeat: no-repeat;
+}
+.bg-ctl-focal-dot {
+  position: absolute; width: 13px; height: 13px; margin: -7px 0 0 -7px; border-radius: 50%;
+  border: 2px solid #fff; background: color-mix(in srgb, var(--accent) 80%, transparent);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45); pointer-events: none;
+}
+/* The dot is positioned with PHYSICAL left/top from a pointer coordinate, so — like the image flip —
+   it must not mirror with the UI direction, or a click would land opposite the mark it sets. */
+.bg-ctl-focal { direction: ltr; }
+.bg-ctl-err { color: #b4442e; }
+
+/* ---- RAWY-278: the import BUSY state ----
+   MEASURED: preparing a 115.68 MP source takes 4.3 s (decode 765 ms + luminance 261 ms + Lanczos3
+   3131 ms + PNG encode 113 ms). None of that is on the main thread — `background_choose` is async
+   and RAWY-FINAL moved the heavy stage out from under the DB lock, so the window genuinely stays
+   live. The defect was that nothing SAID so: the button greyed out and kept its old label, which on
+   a four-second operation reads as a hang, and the natural next act is a second click.
+
+   INDETERMINATE BY DESIGN. The preparation exposes no progress fraction — the resample reports none
+   — so a bar would be a SIMULATION, and a simulated bar on a 4 s wait is worse than no bar at all.
+   A spinner states "working" and claims nothing further, which is the only honest thing available.
+
+   Reuses the RAWY-89 `sp-spin` keyframe rather than declaring a second identical rotation, and
+   inherits `currentColor` so it is correct on both button grounds in all 16 themes without a token
+   of its own. It mounts on the real in-flight flag and unmounts with it, so it adds NO permanent
+   animation — the reduced-motion rule slows it rather than stopping it, matching `.sp-spinner`,
+   because a frozen "spinner" would assert the opposite of what it is there to say. */
+.bg-ctl-spin {
+  display: inline-block; flex: none; width: 0.85em; height: 0.85em;
+  vertical-align: -0.08em; margin-inline-end: 0.45em; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, currentColor 24%, transparent);
+  border-top-color: currentColor;
+  animation: sp-spin 0.7s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) { .bg-ctl-spin { animation-duration: 1.4s; } }
 

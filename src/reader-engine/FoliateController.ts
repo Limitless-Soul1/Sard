@@ -2505,7 +2505,36 @@ export class FoliateController {
     // between sections. Every item is still consumed IN ORDER, so results / order / counts are unchanged.
     let lastYield = performance.now();
     try {
-      for await (const r of view.search({ query: q, draw: () => {} })) {
+      // RAWY-289 — the `draw` MUST return a Node. `() => {}` is an arrow with an EMPTY BLOCK body, so it
+      // returned `undefined`, and that broke the Overlayer's central invariant: every entry in its `#map`
+      // must hold an `element` that is a real child of the overlay `<svg>`.
+      //
+      // WHAT ACTUALLY HAPPENED (proven, not inferred). `Overlayer.add` does
+      //     const element = draw(rects, options); this.#svg.append(element); this.#map.set(key, { element })
+      // so `undefined` was appended as the literal TEXT NODE "undefined" and stored as the entry's element.
+      // `Overlayer.redraw()` then walks every entry doing `this.#svg.removeChild(element)` — with no
+      // try/catch — so it threw `TypeError: parameter 1 is not of type 'Node'` AND ABORTED THE LOOP.
+      //
+      // THE ABORT IS THE REAL BUG, and it is why this is one root cause rather than one cosmetic error:
+      // the overlayer is SHARED. Sard's highlights, the reference marks, the TTS reading spotlight
+      // (READING_KEY) and the karaoke word pill (WORD_KEY) all live in the SAME `#map` as the search
+      // hits. Whichever of them sit after the first poisoned entry in insertion order were never redrawn
+      // after any re-layout, keeping stale geometry from the previous layout.
+      // MEASURED: with search results present, ONE alignment change threw exactly ONE exception — one per
+      // redraw, not one per poisoned entry, which is the signature of the loop aborting at the first.
+      // Without a prior search the same churn threw ZERO.
+      //
+      // Re-layout is triggered by far more than alignment: font, line-height, letter/paragraph spacing,
+      // zoom, first-line indent, theme re-inject, immersive toggling, flow switching and window resize
+      // all reach `paginator.expand()` -> `Overlayer.redraw()`.
+      //
+      // THE FIX IS AT THE VIOLATION, NOT THE SYMPTOM: return a real but EMPTY <g>. It satisfies the
+      // contract, paints nothing (no children), and keeps the intent — the engine still draws no
+      // per-match outline, because Sard does its own flash on jump. `createElementNS` from the top-level
+      // document is exactly what foliate's own `createSVGElement` does, so the node is of the same kind
+      // the Overlayer creates for every other entry.
+      const drawNothing = () => document.createElementNS("http://www.w3.org/2000/svg", "g");
+      for await (const r of view.search({ query: q, draw: drawNothing })) {
         if (opts.signal?.aborted) break;
         if (r === "done") break;
         const now = performance.now();

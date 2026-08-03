@@ -9,12 +9,11 @@ import { useEffect, useState, type ChangeEvent, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
 import type { TKey } from "../../i18n/locales/en";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { getVersion } from "@tauri-apps/api/app";
 
 import { Hoopoe } from "../library/Hoopoe";
 import { settingsGet, settingsSet } from "../../lib/ipc";
-import { runUpdateCheck, type UpdResult } from "../../lib/updater";
+import { useUpdater } from "../../lib/updater";
 import { FONT_CATALOGUE, UI_SCALE_MAX, UI_SCALE_MIN, useFonts } from "../../lib/fonts";
 // RAWY-265: the Library background surface (measured constants + the apply layer live in the module).
 import { BG_BLUR_MAX, BG_PRESENCE_MAX, bgSrcUrl, useBackground } from "../../lib/background";
@@ -856,26 +855,21 @@ function LanguageSection() {
   );
 }
 
-// RAWY-168: in-app update CHECK (updater Phase 1) — manual/opt-in; the network call is Rust-side, and
-// a newer version only OPENS the release page in the OS browser (no in-app download/install). Fails
-// quietly (a network error OR the not-yet-configured manifest URL both show a calm "couldn't check").
-// RAWY-170: the check itself now lives in the shared `runUpdateCheck` (also used by the Library
-// rosette). This row keeps its own idle/checking chrome and reuses that terminal result.
-type UpdState = { k: "idle" } | { k: "checking" } | UpdResult;
+// RAWY-290: About's update row is now a SECOND TRIGGER for the one shared updater, not a second
+// implementation of it. It calls the same `manual()` the Library rosette calls, and the outcome —
+// "up to date", the update dialog, or an error — is rendered by the shared store and dialog. This
+// row therefore holds no result state of its own; keeping one would let the two entry points
+// disagree about what the latest version is, which is exactly what the old pair did.
 
 function AboutSection() {
   const { t } = useI18n();
-  const [upd, setUpd] = useState<UpdState>({ k: "idle" });
-  const [showNotes, setShowNotes] = useState(false);
+  const updState = useUpdater((s) => s.state);
+  const check = useUpdater((s) => s.manual);
+  const busy = updState.k === "checking" || updState.k === "downloading" || updState.k === "installing";
   // RAWY-177 (AUD-15): read the REAL version from the bundled config (D41 bumps it each checkpoint)
   // rather than a hardcoded literal, so About can never drift from the shipped binary.
   const [ver, setVer] = useState("");
   useEffect(() => { getVersion().then(setVer).catch(() => {}); }, []);
-  const check = async () => {
-    setUpd({ k: "checking" });
-    setShowNotes(false);
-    setUpd(await runUpdateCheck()); // uptodate / available / unavailable (never throws)
-  };
   return (
     <>
       <SecHead>{t("gs.about")}</SecHead>
@@ -888,27 +882,13 @@ function AboutSection() {
         </div>
       </div>
       <div className="gs-update">
-        <button className="gs-update-btn" onClick={check} disabled={upd.k === "checking"}>
-          <svg className={upd.k === "checking" ? "gs-update-spin" : ""} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 11a8 8 0 1 0-.6 3M20 4v6h-6" /></svg>
-          <span>{upd.k === "checking" ? t("gs.update.checking") : t("gs.update.check")}</span>
+        <button className="gs-update-btn" onClick={check} disabled={busy}>
+          <svg className={busy ? "gs-update-spin" : ""} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 11a8 8 0 1 0-.6 3M20 4v6h-6" /></svg>
+          <span>{busy ? t("gs.update.checking") : t("gs.update.check")}</span>
         </button>
-        {upd.k === "uptodate" && <div className="gs-update-msg">{t("gs.update.uptodate", { v: upd.ver })}</div>}
-        {upd.k === "unavailable" && <div className="gs-update-msg gs-update-quiet">{t("gs.update.failed")}</div>}
-        {upd.k === "available" && (
-          <div className="gs-update-card">
-            <div className="gs-update-avail">{t("gs.update.available", { v: upd.ver })}</div>
-            {upd.notes && (
-              <>
-                <button className="gs-update-notes-toggle" onClick={() => setShowNotes((s) => !s)}>{t("gs.update.notes")}</button>
-                {showNotes && <div className="gs-update-notes">{upd.notes}</div>}
-              </>
-            )}
-            <div className="gs-update-actions">
-              <button className="gs-update-go" onClick={() => upd.url && openUrl(upd.url).catch(() => {})}>{t("gs.update.get")}</button>
-              <button className="gs-update-later" onClick={() => setUpd({ k: "idle" })}>{t("gs.update.later")}</button>
-            </div>
-          </div>
-        )}
+        {/* Only the "nothing to do" outcome belongs inline. An available update, a download and any
+            failure all open the shared dialog, so this row never renders a second copy of them. */}
+        {updState.k === "uptodate" && <div className="gs-update-msg">{t("upd.uptodate")}</div>}
       </div>
       <TwoLevelCard />
     </>

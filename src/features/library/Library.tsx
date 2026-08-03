@@ -29,6 +29,7 @@ import {
 import { AutoCover } from "./AutoCover";
 import { GlobalSettings } from "../settings/GlobalSettings";
 import { UpdateRosette } from "../updater/UpdateRosette";
+import { UpdateDialog } from "../updater/UpdateDialog";
 import { Hoopoe } from "./Hoopoe";
 import { Inbox } from "./Inbox";
 import { BookmarksShelf } from "./BookmarksShelf";
@@ -731,6 +732,9 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
       {toast && <div className="lib-toast">{toast}</div>}
       <GlobalSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <UpdateRosette />
+      {/* RAWY-290: the update conversation is one dialog, mounted once beside the rosette. Both the
+          rosette and Settings → About feed the same store, so it renders wherever the check began. */}
+      <UpdateDialog />
     </div>
   );
 

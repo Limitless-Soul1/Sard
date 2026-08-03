@@ -2766,25 +2766,113 @@ html, body, #root {
   animation: upd-badge-pulse 2.6s ease-in-out infinite;
 }
 
-/* the small "update available" card, opening above the rosette toward the screen centre */
-.upd-card {
-  position: absolute; bottom: calc(100% + 12px); inset-inline-end: 0; width: max-content; max-width: 264px;
-  padding: 13px 15px; border-radius: 13px;
+/* RAWY-290 — "you're using the latest version", beside the rosette. This is the ONE outcome the
+   rosette still says itself; an available update, a download and every failure belong to the dialog.
+   It opens toward the screen centre, so it never runs off the corner it lives in. */
+.upd-latest {
+  position: absolute; bottom: calc(100% + 12px); inset-inline-end: 0; width: max-content; max-width: 280px;
+  display: flex; align-items: center; gap: 9px; padding: 10px 14px; border-radius: 13px;
   background: color-mix(in srgb, var(--chrome-bg) 96%, transparent);
   border: 1px solid var(--chrome-border); box-shadow: 0 14px 34px rgba(40, 28, 14, 0.24);
   backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px); animation: upd-card-in 0.18s ease;
 }
-:root[data-dark="true"] .upd-card { box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5); }
-.upd-card-title { font: 600 0.9375rem var(--ui-font); color: var(--text); margin-bottom: 4px; }
-.upd-card-notes { font: 400 0.8125rem var(--ui-font); color: var(--muted); line-height: 1.5; max-height: 96px; overflow: auto; }
-.upd-card-actions { display: flex; gap: 8px; margin-top: 11px; }
-.upd-card-go { flex: 1; padding: 7px 12px; border-radius: 9px; border: 0; cursor: pointer; font: 600 0.8125rem var(--ui-font); color: var(--paper-bg); background: var(--accent); }
-.upd-card-go:hover { filter: brightness(1.06); }
-.upd-card-later { padding: 7px 12px; border-radius: 9px; cursor: pointer; font: 500 0.8125rem var(--ui-font); color: var(--muted); background: transparent; border: 1px solid var(--chrome-border); }
-.upd-card-later:hover { color: var(--text); }
+:root[data-dark="true"] .upd-latest { box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5); }
+.upd-latest-tick { color: var(--accent); font-size: 0.9375rem; line-height: 1; }
+.upd-latest-text { font: 500 0.84375rem var(--ui-font); color: var(--text); white-space: nowrap; }
+.upd-latest-ver { font: 500 0.75rem var(--ui-font); color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ============================================================================
+   RAWY-290 — THE UPDATE DIALOG. Deliberately not a system dialog: an update is a
+   moment where Sard asks the reader for something, and an OS box over the paper
+   would read as an interruption from elsewhere. Same surface as the note editor
+   and Global Settings — chrome ground, theme tokens, accent action. Every inset
+   is logical, so the whole thing mirrors in Arabic with no second code path.
+   ============================================================================ */
+.upd-scrim {
+  position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); animation: upd-scrim-in 0.18s ease;
+}
+@keyframes upd-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+.upd-dialog {
+  position: fixed; z-index: 61; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: min(460px, calc(100vw - 48px)); max-height: calc(100vh - 64px); overflow-y: auto;
+  padding: 24px 26px 20px; border-radius: 15px;
+  background: var(--chrome-bg); color: var(--text); border: 1px solid var(--chrome-border);
+  box-shadow: 0 28px 64px rgba(20, 12, 4, 0.42); font-family: var(--ui-font);
+  animation: upd-dlg-in 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes upd-dlg-in { from { opacity: 0; transform: translate(-50%, -50%) scale(0.975); } }
+.upd-dlg-eyebrow {
+  font: 700 0.625rem var(--ui-font); letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent);
+}
+.upd-dlg-eyebrow-warn { color: #b05220; }
+:root[data-dark="true"] .upd-dlg-eyebrow-warn { color: #E0A07A; }
+.upd-dlg-title { margin: 8px 0 0; font: 600 1.25rem/1.4 var(--ui-font); color: var(--text); }
+:root[dir="rtl"] .upd-dlg-title { font-weight: 700; }
+
+/* current → new. The arrow is the one glyph that must mirror, and it does, via the RTL rule. */
+.upd-versions {
+  display: flex; align-items: center; gap: 14px; margin: 18px 0;
+  padding: 14px 16px; border-radius: 11px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+.upd-ver { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.upd-ver-label { font: 500 0.65625rem var(--ui-font); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.upd-ver-num { font: 600 1.0625rem var(--ui-font); color: var(--text); font-variant-numeric: tabular-nums; }
+.upd-ver-new .upd-ver-num { color: var(--accent); }
+.upd-ver-arrow { color: var(--muted); font-size: 1.125rem; flex: none; }
+:root[dir="rtl"] .upd-ver-arrow { transform: scaleX(-1); }
+
+.upd-notes { margin-bottom: 16px; }
+.upd-notes-label { font: 600 0.65625rem var(--ui-font); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.upd-notes-body {
+  font: 400 0.84375rem/1.65 var(--ui-font); color: color-mix(in srgb, var(--text) 86%, transparent);
+  max-height: 168px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere;
+  padding: 12px 14px; border-radius: 9px; background: var(--paper-bg); border: 1px solid var(--chrome-border);
+}
+.upd-ask { margin: 0 0 20px; font: 400 0.875rem/1.65 var(--ui-font); color: var(--muted); }
+
+.upd-dlg-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.upd-btn {
+  padding: 10px 20px; border-radius: 9px; cursor: pointer; font: 500 0.84375rem var(--ui-font);
+  color: var(--muted); background: transparent; border: 1px solid var(--chrome-border);
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.upd-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+.upd-btn:disabled { opacity: 0.55; cursor: default; }
+.upd-btn-primary { border: 0; background: var(--accent); color: var(--paper-bg); font-weight: 600; }
+.upd-btn-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, #000); color: var(--paper-bg); }
+
+/* the download bar. Determinate when the server sent a length; an honest sweep when it did not. */
+.upd-bar {
+  height: 6px; border-radius: 6px; margin: 20px 0 9px; overflow: hidden;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+}
+.upd-bar-fill {
+  height: 100%; border-radius: 6px; background: var(--accent);
+  transition: width 0.18s linear;
+}
+.upd-bar.indet .upd-bar-fill { width: 38%; animation: upd-indet 1.25s ease-in-out infinite; }
+@keyframes upd-indet {
+  0% { margin-inline-start: -38%; } 100% { margin-inline-start: 100%; }
+}
+.upd-bar-meta {
+  display: flex; justify-content: space-between; gap: 12px; margin-bottom: 18px;
+  font: 500 0.75rem var(--ui-font); color: var(--muted);
+}
+.upd-fineprint { margin: 14px 0 0; font: 400 0.75rem/1.6 var(--ui-font); color: var(--muted); }
+.upd-installing { display: flex; align-items: center; gap: 14px; margin-top: 18px; }
+.spin-ring {
+  flex: none; width: 22px; height: 22px; border-radius: 50%;
+  border: 2.5px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-top-color: var(--accent); animation: sp-spin 0.7s linear infinite;
+}
+.upd-installing .upd-fineprint { margin: 0; }
 
 @media (prefers-reduced-motion: reduce) {
-  .upd-petals, .upd-svg, .upd-badge, .upd-card { animation: none !important; }
+  .upd-petals, .upd-svg, .upd-badge, .upd-latest, .upd-dialog, .upd-scrim { animation: none !important; }
+  .upd-bar.indet .upd-bar-fill { animation: none; width: 100%; opacity: 0.5; }
+  .spin-ring { animation-duration: 1.6s; }
   .upd-rosette.is-uptodate .upd-check { stroke-dashoffset: 0; }
 }
 

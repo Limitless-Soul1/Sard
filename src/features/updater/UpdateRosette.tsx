@@ -5,21 +5,21 @@
 // THEME-NEUTRAL: every colour is the active theme's `--accent` (currentColor) plus a pale jewel glint —
 // no Moonlit-only motifs; it draws Ivory terracotta / Sage green / Moonlit gold alike.
 //
-// FOUR STATES (driven by `useUpdater`, RAWY-170, reusing the RAWY-168 check):
-//   • idle       — the rosette turns slowly and shimmers at rest.
-//   • checking   — it spins alive while a check runs.
-//   • uptodate   — petals settle and a check ✓ appears (only after an explicit tap).
-//   • available  — a quiet accent badge (dot + soft halo) sits at the corner + a faint orbit ring; a
-//                  tap opens a small card (version + open the release page externally).
+// RAWY-290: the rosette keeps its shape and its state machine, but now sits on the OFFICIAL updater
+// plugin. Its four visual states map onto the store's states; it owns no update logic itself:
+//   • idle       — turns slowly and shimmers at rest
+//   • checking   — spins alive while a check (or a download/install) runs
+//   • uptodate   — petals settle, a ✓ appears, and a small message says so (explicit tap only)
+//   • available  — a quiet accent badge sits at the corner; the DIALOG carries the decision now,
+//                  so a tap no longer opens a card of its own
 //
 // A once-daily auto-check runs on mount (gated in the store via `updater_last_check`); a tap always
-// checks now. Network is Rust-side (RAWY-64 posture); this only opens the release URL in the OS browser.
+// checks now.
 
-import { useEffect, useState } from "react";
-
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { useEffect } from "react";
 
 import { useI18n } from "../../i18n";
+import { localeDigits } from "../../lib/format";
 import { useUpdater } from "../../lib/updater";
 
 const PETALS = [0, 1, 2, 3, 4, 5, 6, 7];
@@ -27,63 +27,53 @@ const PETALS = [0, 1, 2, 3, 4, 5, 6, 7];
 export function UpdateRosette() {
   const { t } = useI18n();
   const state = useUpdater((s) => s.state);
-  const ver = useUpdater((s) => s.ver);
-  const url = useUpdater((s) => s.url);
-  const notes = useUpdater((s) => s.notes);
   const auto = useUpdater((s) => s.auto);
   const manual = useUpdater((s) => s.manual);
   const dismiss = useUpdater((s) => s.dismiss);
-  const [cardOpen, setCardOpen] = useState(false);
 
   // Once-daily auto-check on app start (the store gates it; async, so it never blocks the render).
   useEffect(() => {
     auto();
   }, [auto]);
 
-  // After a manual check, a settled "up to date" / quiet "couldn't check" eases back to idle.
+  // "You're using the latest version" is a reassurance, not a notice to dismiss — it eases away.
   useEffect(() => {
-    if (state === "uptodate" || state === "unavailable") {
-      const id = setTimeout(() => dismiss(), 4200);
-      return () => clearTimeout(id);
-    }
-  }, [state, dismiss]);
+    if (state.k !== "uptodate") return;
+    const id = setTimeout(() => dismiss(), 4200);
+    return () => clearTimeout(id);
+  }, [state.k, dismiss]);
 
-  // The card only makes sense while an update is available.
-  useEffect(() => {
-    if (state !== "available") setCardOpen(false);
-  }, [state]);
+  // `downloading`/`installing` keep the rosette spinning: the dialog is doing the talking, and a
+  // settled rosette behind a live progress bar would contradict it.
+  const visual =
+    state.k === "checking" || state.k === "downloading" || state.k === "installing" ? "checking" :
+    state.k === "available" ? "available" :
+    state.k === "uptodate" ? "uptodate" :
+    "idle";
+
+  const label =
+    visual === "checking" ? t("updater.checking") :
+    visual === "available" ? t("updater.available") :
+    visual === "uptodate" ? t("upd.uptodate") :
+    t("updater.check");
 
   const onTap = () => {
-    if (state === "available") {
-      setCardOpen((o) => !o);
-      return;
-    }
-    if (state === "checking") return;
+    if (state.k === "checking" || state.k === "downloading" || state.k === "installing") return;
     manual();
   };
 
-  const label =
-    state === "checking" ? t("updater.checking") :
-    state === "available" ? t("updater.available") :
-    state === "uptodate" ? t("gs.update.uptodate", { v: ver }) :
-    t("updater.check");
-
   return (
-    <div className={`upd-rosette is-${state}`}>
-      {cardOpen && state === "available" && (
-        <div className="upd-card" role="dialog" aria-label={t("updater.available")}>
-          <div className="upd-card-title">{t("gs.update.available", { v: ver })}</div>
-          {notes && <div className="upd-card-notes">{notes}</div>}
-          <div className="upd-card-actions">
-            <button className="upd-card-go" onClick={() => url && openUrl(url).catch(() => {})}>
-              {t("gs.update.get")}
-            </button>
-            <button className="upd-card-later" onClick={() => setCardOpen(false)}>
-              {t("gs.update.later")}
-            </button>
-          </div>
+    <div className={`upd-rosette is-${visual}`}>
+      {/* The one piece of good news the rosette still delivers itself; everything else is the
+          dialog's job. `role="status"` so a screen reader hears it without the focus moving. */}
+      {state.k === "uptodate" && (
+        <div className="upd-latest" role="status" aria-live="polite">
+          <span className="upd-latest-tick" aria-hidden>✓</span>
+          <span className="upd-latest-text">{t("upd.uptodate")}</span>
+          <span className="upd-latest-ver">{localeDigits(state.current)}</span>
         </div>
       )}
+
       <button type="button" className="upd-rosette-btn" onClick={onTap} aria-label={label} title={label}>
         <svg className="upd-svg" viewBox="0 0 48 48" aria-hidden>
           <circle className="upd-orbit" cx="24" cy="24" r="20.5" fill="none" stroke="currentColor" strokeWidth="1" />
@@ -105,7 +95,7 @@ export function UpdateRosette() {
             strokeLinejoin="round"
           />
         </svg>
-        {state === "available" && <span className="upd-badge" aria-hidden />}
+        {visual === "available" && <span className="upd-badge" aria-hidden />}
       </button>
     </div>
   );

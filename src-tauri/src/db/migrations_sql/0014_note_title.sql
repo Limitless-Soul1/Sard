@@ -1,0 +1,21 @@
+-- RAWY-282: a note may carry an OPTIONAL TITLE, independent of its body.
+--
+-- Until now a note was body-only, so the Notes list could show nothing but the first lines of the body
+-- as its own heading. A title is genuinely new data — it cannot be derived from the body without
+-- inventing a delimiter convention inside user text, which would be a parallel data model living in a
+-- string, and would corrupt the moment a body legitimately contained that delimiter.
+--
+-- ADDITIVE AND BACKWARD-COMPATIBLE BY CONSTRUCTION, exactly as 0011 was:
+--   * a new nullable column only — no table rewrite, no data touched, nothing dropped or renamed;
+--   * NULL means "this note has no title", which is precisely what every existing note is, so all
+--     pre-existing rows keep rendering byte-identically with no backfill and no migration of content;
+--   * the UI already has a body-only presentation and keeps using it whenever the title is NULL or
+--     blank, so the absence of a title is a rendering branch that already exists rather than a new one;
+--   * an older build reading this database simply ignores the column — every note still lists and edits,
+--     because the body remains the sole required field.
+--
+-- Deliberately NOT `NOT NULL DEFAULT ''`: an empty string and "absent" would then be indistinguishable,
+-- and the list has to tell them apart to decide whether to render the title line at all. NULL is the
+-- sentinel, matching the 0011 lesson that a "reproduce today's behaviour" default must store the absence
+-- rather than a snapshot of some current value.
+ALTER TABLE notes ADD COLUMN title TEXT;

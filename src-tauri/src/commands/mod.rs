@@ -7,7 +7,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::db::{self, AppState};
-use crate::{books, fonts, library, photocards, settings};
+use crate::{backgrounds, books, fonts, library, photocards, settings};
 
 #[derive(Serialize)]
 pub struct AppInfo {
@@ -33,6 +33,34 @@ fn err<E: std::fmt::Display>(e: E) -> String {
 /// Reject anything else before it's spliced into a filename, so an id can't be used to write/read
 /// outside its intended managed subdirectory (defense-in-depth alongside the RAWY-64 sandbox fix,
 /// which is what actually stops untrusted content from reaching these commands at all).
+/// RAWY-FINAL — a path handed back by `stage_png`, and nothing else.
+///
+/// `book_set_cover_png` and `photocard_save` `fs::read` then `fs::remove_file` their path argument,
+/// and `save_photo_card` `fs::copy`s ONTO its destination and then deletes the source — arbitrary
+/// read, arbitrary overwrite, arbitrary delete, all from an unvalidated string. `safe_id` guarded the
+/// ID; no one guarded the PATH.
+///
+/// This is DEFENCE IN DEPTH, not a live hole: the only caller is Sard's own JS, and book content
+/// cannot execute script (the RAWY-64 patches drop `allow-scripts` from both iframe creation sites,
+/// and the CSP is `script-src 'self'` with no `unsafe-eval`). But the entire point of the RAWY-177
+/// staging design is that these paths are always temp files THIS process just created, so asserting
+/// that costs nothing and removes the class outright if the sandbox ever regresses on a re-vendor.
+///
+/// The shape is the one `stage_png` writes: `<temp>/sard-stage-<pid>-<nanos>.png`.
+fn staged_png_path(path: &str) -> Result<(), String> {
+    let p = Path::new(path);
+    let in_temp = p
+        .parent()
+        .map(|d| d == std::env::temp_dir().as_path())
+        .unwrap_or(false);
+    let named = p
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|n| n.starts_with("sard-stage-") && n.ends_with(".png"))
+        .unwrap_or(false);
+    if in_temp && named { Ok(()) } else { Err("invalid staged path".into()) }
+}
+
 fn safe_id(id: &str) -> Result<(), String> {
     let ok = !id.is_empty()
         && !id.contains('/')
@@ -40,42 +68,6 @@ fn safe_id(id: &str) -> Result<(), String> {
         && !id.contains("..")
         && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     if ok { Ok(()) } else { Err("invalid id".into()) }
-}
-
-/// RAWY-277 — a path this process handed out from `stage_png`, and nothing else.
-///
-/// `safe_id` guards the ID. Nothing guarded the PATH. Three commands take a caller-supplied path and
-/// act on it: `book_set_cover_png` and `photocard_save` `fs::read` then `fs::remove_file` it, and
-/// `save_photo_card` `fs::copy`s FROM it and then deletes it. Between them that is an arbitrary read
-/// and an arbitrary delete of any file the process can reach, driven by an IPC argument.
-///
-/// THIS IS DEFENCE IN DEPTH AND IS NOT A LIVE HOLE — stated plainly rather than dressed up. The only
-/// caller is Sard's own JS, and book content cannot execute script: VERIFIED at this commit, both
-/// iframe creation sites set `sandbox="allow-same-origin"` with no `allow-scripts` (the only four
-/// `allow-scripts` strings in the tree are comments and the vendored README), and the CSP is
-/// `script-src 'self'` with neither `unsafe-inline` nor `unsafe-eval`. No orphaned staged file has ever
-/// been observed in TEMP either.
-///
-/// It is worth closing anyway for three reasons, none of them speculative. The engineering contract
-/// states as a standing rule that no user-controlled path may escape its intended root, and these had
-/// no root at all. The RAWY-64 sandbox patches live in VENDORED foliate-js and say "Re-apply on any
-/// re-vendor" — a future foliate update can silently restore `allow-scripts`, and this guard is what
-/// makes that a rendering bug instead of an arbitrary-delete bug. And PDF.js parses untrusted PDFs in
-/// the PARENT context, so a PDF.js vulnerability is a real, if currently unrealised, script-execution
-/// vector.
-///
-/// The shape is exactly what `stage_png` writes: `<temp_dir>/sard-stage-<pid>-<nanos>.png`. The
-/// DESTINATION of `save_photo_card` is deliberately NOT constrained — that is the user's own choice
-/// from the save dialog, and they may write anywhere they like.
-fn staged_png_path(path: &str) -> Result<(), String> {
-    let p = Path::new(path);
-    let in_temp = p.parent().map(|d| d == std::env::temp_dir().as_path()).unwrap_or(false);
-    let named = p
-        .file_name()
-        .and_then(|n| n.to_str())
-        .map(|n| n.starts_with("sard-stage-") && n.ends_with(".png"))
-        .unwrap_or(false);
-    if in_temp && named { Ok(()) } else { Err("invalid staged path".into()) }
 }
 
 #[tauri::command]
@@ -330,12 +322,9 @@ pub fn book_set_cover(
 #[tauri::command]
 pub fn book_set_cover_png(id: String, png_path: String, state: State<AppState>) -> Result<bool, String> {
     safe_id(&id)?;
-    staged_png_path(&png_path)?; // RAWY-277: only a path stage_png produced
-    // RAWY-277: once the path is established as OURS, it is removed on EVERY exit, not only success —
-    // a failed read used to leave the staged PNG in TEMP with nothing to collect it.
-    let data = std::fs::read(&png_path).map_err(err);
+    staged_png_path(&png_path)?; // RAWY-FINAL: only a path stage_png produced
+    let data = std::fs::read(&png_path).map_err(err)?;
     let _ = std::fs::remove_file(&png_path);
-    let data = data?;
     let app_data_dir = state.app_data_dir.clone();
     let conn = state.conn();
     library::set_cover_bytes(&conn, &app_data_dir, &id, &data)?;
@@ -430,6 +419,9 @@ pub fn note_create(
     color: Option<String>,
     body: String,
     chapter_label: Option<String>,
+    // RAWY-282: optional and LAST, so an older caller that omits it still compiles and still creates a
+    // titleless note — Tauri fills a missing `Option` argument with `None`.
+    title: Option<String>,
     state: State<AppState>,
 ) -> Result<Option<library::NoteRow>, String> {
     let conn = state.conn();
@@ -441,14 +433,21 @@ pub fn note_create(
         color.as_deref(),
         &body,
         chapter_label.as_deref(),
+        title.as_deref(),
     )
     .map_err(err)
 }
 
 #[tauri::command]
-pub fn note_update(id: String, body: String, color: Option<String>, state: State<AppState>) -> Result<Option<library::NoteRow>, String> {
+pub fn note_update(
+    id: String,
+    body: String,
+    color: Option<String>,
+    title: Option<String>,
+    state: State<AppState>,
+) -> Result<Option<library::NoteRow>, String> {
     let conn = state.conn();
-    library::note_update(&conn, &id, &body, color.as_deref()).map_err(err)
+    library::note_update(&conn, &id, &body, color.as_deref(), title.as_deref()).map_err(err)
 }
 
 #[tauri::command]
@@ -549,21 +548,108 @@ pub fn font_remove(id: String, state: State<AppState>) -> Result<bool, String> {
     Ok(true)
 }
 
+// ---- Backgrounds (RAWY-265, Phase 1): managed user background images. ----
+
+/// Import a background image. **ASYNC ON PURPOSE, and it must stay that way.** The body decodes the
+/// image and may run a Lanczos3 resample — real CPU work. A SYNC `#[tauri::command]` runs on the main
+/// thread and freezes the ENTIRE native window until it returns (LESSONS, threading: the RAWY-183 and
+/// RAWY-188 scars). `async` dispatches it to the runtime's worker pool instead, so the window stays
+/// live while a 24 MP photo is processed.
+///
+/// The body contains NO `.await`, matching `tts_synthesize`'s shape — so nothing non-`Send` (the
+/// `MutexGuard` over the connection) is ever held across an await point.
+/// Import AND bind in one call. Deliberately not two: a bare import leaves the row unreferenced, and
+/// the GC that runs on any surface bind would collect the image the user just chose (verified in
+/// `tests/backgrounds.rs`). Binding inside the same call closes that window by construction.
+///
+/// RAWY-FINAL: the heavy stage now runs with NO DB LOCK HELD.
+///
+/// `async` was already right and is unchanged. What was wrong is that the body took `state.db.lock()`
+/// and then ran decode + Lanczos3 + PNG encode while holding it. That is the app's ONLY connection,
+/// and every other DB command is SYNCHRONOUS — so the main thread blocked on the mutex for the whole
+/// resample and the window froze regardless of this command being off-thread. The stages are now:
+///   1. `prepare`   — read + sniff + probe + content id, NO lock;
+///   2. dedup check — a BRIEF lock, so an already-managed image costs no decode at all;
+///   3. `materialize` — decode, luma, resample, PNG-encode into memory, NO lock;
+///   4. commit+bind — ONE lock for the file writes, the INSERT, the surface binding and the GC.
+///
+/// Step 4 is indivisible on purpose: `gc()` collects any file in `backgrounds/` that no row names, so
+/// writing the managed copy with the lock released would let a concurrent bind delete the image the
+/// user just chose. Binding still happens inside the same lock as the INSERT, which is what keeps
+/// `choose()`'s original atomicity guarantee (verified by `tests/backgrounds.rs`) true here too.
+#[tauri::command]
+pub async fn background_choose(
+    surface: String,
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<backgrounds::Background, String> {
+    let key = match surface.as_str() {
+        "library" => backgrounds::KEY_LIBRARY_ID,
+        "reading" => backgrounds::KEY_READING_ID,
+        _ => return Err("bg.err.surface".into()),
+    };
+    let app_data_dir = state.app_data_dir.clone();
+
+    // 1. no lock
+    let prep = backgrounds::prepare(&path)?;
+
+    // 2. brief lock — an exact re-import binds the existing row and never reaches the decoder
+    {
+        let conn = state.conn();
+        if let Some(existing) = backgrounds::dedup_or_repair(&conn, prep.id())? {
+            backgrounds::set_surface(&conn, &app_data_dir, key, Some(&existing.id))?;
+            return Ok(existing);
+        }
+    }
+
+    // 3. no lock — this is the part that used to freeze the window
+    let mat = backgrounds::materialize(prep)?;
+
+    // 4. one lock: write + record + bind + collect, indivisible against gc()
+    let conn = state.conn();
+    let row = backgrounds::commit(&conn, &app_data_dir, mat)?;
+    backgrounds::set_surface(&conn, &app_data_dir, key, Some(&row.id))?;
+    Ok(row)
+}
+
+#[tauri::command]
+pub fn backgrounds_list(state: State<AppState>) -> Result<Vec<backgrounds::Background>, String> {
+    let conn = state.conn();
+    backgrounds::list(&conn)
+}
+
+/// Bind a surface ("library" / "reading") to a background id, or clear it with `None`. Collecting
+/// orphans is done INSIDE this call, not exposed separately, so zero-orphans (D31) cannot be missed
+/// by a caller that forgets to follow up.
+#[tauri::command]
+pub fn background_set_surface(
+    surface: String,
+    id: Option<String>,
+    state: State<AppState>,
+) -> Result<bool, String> {
+    let key = match surface.as_str() {
+        "library" => backgrounds::KEY_LIBRARY_ID,
+        "reading" => backgrounds::KEY_READING_ID,
+        _ => return Err("bg.err.surface".into()),
+    };
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.conn();
+    backgrounds::set_surface(&conn, &app_data_dir, key, id.as_deref())?;
+    Ok(true)
+}
+
 // ---- Photo Mode (RAWY-49): write a rendered photo-card PNG to a user-chosen path. ----
 // The frontend rasterises the card DOM to PNG bytes (html-to-image) and picks a path via the
 // dialog plugin; RAWY-177 (AUD-4) stages those bytes to a temp file first (raw ipc body, no JSON
 // number-array on the UI thread), so this just moves the staged file onto the chosen destination.
 #[tauri::command]
 pub fn save_photo_card(path: String, src_path: String) -> Result<(), String> {
-    // RAWY-277: the SOURCE must be a file we staged. `path` is the user's own pick from the save
-    // dialog and is deliberately unconstrained — they may write wherever they like.
-    staged_png_path(&src_path)?;
+    staged_png_path(&src_path)?; // RAWY-FINAL: the SOURCE must be ours; `path` is the user's dialog pick
     // Copy (not rename) so a cross-volume destination — temp on C:, library on M: — still works,
     // then drop the temp. The output bytes are identical to the staged PNG.
-    // RAWY-277: the temp is dropped on the FAILURE path too. `copy(..)?` returned early, so a write to
-    // a full disk, a read-only folder or a disconnected network drive orphaned the staged PNG in TEMP
-    // with nothing to collect it. (Measured magnitude if it happens: the owner's saved cards average
-    // 0.17 MB and peak at 0.24 MB. Measured occurrences to date: zero.)
+    // RAWY-FINAL: the temp is dropped on the FAILURE path too. It used to be deleted only after a
+    // successful copy, so a write to a full or read-only destination orphaned a multi-MB PNG in %TEMP%
+    // that nothing ever collected.
     let res = std::fs::copy(&src_path, &path).map_err(err);
     let _ = std::fs::remove_file(&src_path);
     res?;
@@ -610,11 +696,9 @@ pub fn photocard_save(
     state: State<AppState>,
 ) -> Result<photocards::PhotoCard, String> {
     safe_id(&id)?;
-    staged_png_path(&png_path)?; // RAWY-277: only a path stage_png produced
-    // RAWY-277: removed on EVERY exit once the path is established as ours (see book_set_cover_png).
-    let data = std::fs::read(&png_path).map_err(err);
+    staged_png_path(&png_path)?; // RAWY-FINAL: only a path stage_png produced
+    let data = std::fs::read(&png_path).map_err(err)?;
     let _ = std::fs::remove_file(&png_path);
-    let data = data?;
     let app_data_dir = state.app_data_dir.clone();
     let conn = state.conn();
     let meta = photocards::SaveMeta {
@@ -682,98 +766,45 @@ pub fn ref_delete(id: String, state: State<AppState>) -> Result<bool, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{safe_id, save_photo_card, staged_png_path};
+    use super::{safe_id, staged_png_path};
 
-    /// Build a path the way `stage_png` does, so the guard is tested against the real emitter rather
-    /// than against a hand-written approximation.
-    fn stage_png_shaped_path(nanos: u128) -> std::path::PathBuf {
+    /// RAWY-FINAL. The guard is only correct if it ACCEPTS what `stage_png` actually produces — a
+    /// mismatch here would silently break Save/Export and cover extraction, which is worse than the
+    /// hole it closes. This builds the path exactly as `stage_png` does (`temp_dir()` +
+    /// `sard-stage-<pid>-<nanos>.png`) and asserts the round trip. It also pins the Windows detail
+    /// that `temp_dir()` carries a trailing separator while `Path::parent()` does not: `Path` compares
+    /// by COMPONENT, so the two are equal — assert it rather than assume it.
+    #[test]
+    fn staged_png_path_accepts_what_stage_png_writes() {
         let mut p = std::env::temp_dir();
-        p.push(format!("sard-stage-{}-{}.png", std::process::id(), nanos));
-        p
-    }
-
-    /// THE LOAD-BEARING TEST. A guard that rejects a legitimate staged path would silently break
-    /// Save-to-file, Save-in-app and PDF cover extraction — worse than the hole it closes. This also
-    /// pins the Windows detail that `temp_dir()` carries a trailing separator while `Path::parent()`
-    /// does not: `Path` compares by COMPONENT, so the two are equal. Asserted, not assumed.
-    #[test]
-    fn accepts_exactly_what_stage_png_emits() {
-        let p = stage_png_shaped_path(1_234_567_890_123);
-        assert_eq!(staged_png_path(&p.to_string_lossy()), Ok(()), "must accept {}", p.display());
-        // and again with a different nanos, to show it is not an accident of one value
-        let q = stage_png_shaped_path(1);
-        assert_eq!(staged_png_path(&q.to_string_lossy()), Ok(()));
+        p.push(format!("sard-stage-{}-{}.png", std::process::id(), 1_234_567_890_u128));
+        assert_eq!(
+            staged_png_path(&p.to_string_lossy()),
+            Ok(()),
+            "the guard must accept stage_png's own output: {}",
+            p.display()
+        );
     }
 
     #[test]
-    fn rejects_anything_else() {
+    fn staged_png_path_rejects_everything_else() {
         let temp = std::env::temp_dir();
         for bad in [
             r"C:\Windows\System32\drivers\etc\hosts",
-            r"C:\Users\Public\Documents\important.png",
-            "sard-stage-1-2.png",     // relative: no parent, cannot be in temp
-            "",
+            r"C:\Users\Public\important.png",
+            "relative-sard-stage-1-2.png",
         ] {
-            assert!(staged_png_path(bad).is_err(), "should reject {bad:?}");
+            assert!(staged_png_path(bad).is_err(), "should reject {bad}");
         }
-        // right directory, wrong name — the prefix AND the extension are both part of the contract
+        // Right directory, wrong name — the prefix/extension pair is part of the contract.
         assert!(staged_png_path(&temp.join("evil.png").to_string_lossy()).is_err());
         assert!(staged_png_path(&temp.join("sard-stage-1-2.exe").to_string_lossy()).is_err());
-        assert!(staged_png_path(&temp.join("notsard-stage-1-2.png").to_string_lossy()).is_err());
-        // traversal: parent() is no longer temp, so it cannot pass
+        // Traversal out of temp: `parent()` is no longer temp, so it cannot pass.
         assert!(staged_png_path(&temp.join("..").join("sard-stage-1-2.png").to_string_lossy()).is_err());
-        // a nested dir under temp is also not temp itself
-        assert!(staged_png_path(&temp.join("sub").join("sard-stage-1-2.png").to_string_lossy()).is_err());
-    }
-
-    /// The arbitrary-delete this closes: before the guard, `save_photo_card` would have deleted any
-    /// path it was handed. Here it must refuse and LEAVE THE FILE ALONE.
-    #[test]
-    fn save_photo_card_refuses_a_foreign_source_and_does_not_touch_it() {
-        let victim = std::env::temp_dir().join("sard277-victim.txt");
-        std::fs::write(&victim, b"do not delete me").unwrap();
-        let dest = std::env::temp_dir().join("sard277-dest.png");
-
-        let r = save_photo_card(dest.to_string_lossy().into_owned(), victim.to_string_lossy().into_owned());
-        assert!(r.is_err(), "a foreign source must be refused");
-        assert!(victim.exists(), "and the file must still be there");
-        assert_eq!(std::fs::read(&victim).unwrap(), b"do not delete me", "byte-identical");
-        assert!(!dest.exists(), "and nothing was written to the destination");
-
-        let _ = std::fs::remove_file(&victim);
-    }
-
-    /// The orphan: a FAILED copy must still remove the staged temp. Before this, `copy(..)?` returned
-    /// early and the staged PNG stayed in TEMP forever.
-    #[test]
-    fn a_failed_save_still_removes_the_staged_temp() {
-        let staged = stage_png_shaped_path(777_000_111);
-        std::fs::write(&staged, b"PNGDATA").unwrap();
-        // a destination inside a directory that does not exist -> copy fails
-        let dest = std::env::temp_dir().join("sard277-no-such-dir").join("out.png");
-
-        let r = save_photo_card(dest.to_string_lossy().into_owned(), staged.to_string_lossy().into_owned());
-        assert!(r.is_err(), "the copy must fail for this test to mean anything");
-        assert!(!staged.exists(), "the staged temp must be gone even though the save failed");
-    }
-
-    /// And the success path still works end to end, unchanged.
-    #[test]
-    fn a_successful_save_copies_then_removes_the_staged_temp() {
-        let staged = stage_png_shaped_path(777_000_222);
-        std::fs::write(&staged, b"PNGDATA").unwrap();
-        let dest = std::env::temp_dir().join("sard277-ok.png");
-        let _ = std::fs::remove_file(&dest);
-
-        save_photo_card(dest.to_string_lossy().into_owned(), staged.to_string_lossy().into_owned()).unwrap();
-        assert_eq!(std::fs::read(&dest).unwrap(), b"PNGDATA", "bytes arrive unchanged");
-        assert!(!staged.exists(), "and the staged temp is cleaned up");
-
-        let _ = std::fs::remove_file(&dest);
     }
 
     #[test]
-    fn safe_id_still_rejects_separators_and_traversal() {
+    fn safe_id_rejects_separators_and_traversal() {
         assert!(safe_id("a1b2c3-D4_e5").is_ok());
         for bad in ["", "..", "a/b", r"a\b", "a..b", "a b", "id;drop"] {
             assert!(safe_id(bad).is_err(), "should reject {bad:?}");

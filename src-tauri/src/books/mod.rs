@@ -50,16 +50,21 @@ pub fn import_books(conn: &Connection, app_data_dir: &Path, paths: &[String]) ->
     paths.iter().map(|p| import_one(conn, app_data_dir, p)).collect()
 }
 
-/// RAWY-80 (audit #7): "Import a folder" for real — collect every `.epub`/`.pdf` under `dir`
-/// (recursively, depth-capped, symlinks skipped to stay loop-safe) and run them through the
-/// exact same pipeline as a multi-file pick (dedup, magic-byte format check, managed copy).
-/// RAWY-176 (AUD-5): PDFs are collected too, so a folder import matches drag-drop instead of
-/// silently skipping them. An empty folder simply yields an empty result list.
-pub fn import_folder(conn: &Connection, app_data_dir: &Path, dir: &str) -> Vec<ImportResult> {
+/// RAWY-80 (audit #7): collect every `.epub`/`.pdf` under `dir` (recursively, depth-capped, symlinks
+/// skipped to stay loop-safe), sorted into a stable, human-legible import order.
+/// RAWY-176 (AUD-5): PDFs are collected too, so a folder import matches drag-drop instead of silently
+/// skipping them. An empty folder simply yields an empty list.
+fn collect_from_dir(dir: &str) -> Vec<String> {
     let mut paths: Vec<String> = Vec::new();
     collect_books(Path::new(dir), 0, &mut paths);
-    paths.sort(); // stable, human-legible import order
-    import_books(conn, app_data_dir, &paths)
+    paths.sort();
+    paths
+}
+
+/// "Import a folder" — collect, then run every book through the exact same pipeline as a multi-file
+/// pick (dedup, magic-byte format check, managed copy).
+pub fn import_folder(conn: &Connection, app_data_dir: &Path, dir: &str) -> Vec<ImportResult> {
+    import_books(conn, app_data_dir, &collect_from_dir(dir))
 }
 
 /// Recurse `dir` collecting `.epub`/`.pdf` file paths (RAWY-176/AUD-5: PDFs are collected too, so a

@@ -36,6 +36,11 @@ quick-xml = "0.36"
 # TTS (RAWY-105): download Piper voice models on demand (voices are NOT bundled — installer stays small).
 # ureq 3 (RAWY-111): bumped from 2 so it dedupes with msedge-tts's ureq (one copy in the tree).
 ureq = "3"
+# RAWY-265 (backgrounds): decode + Lanczos3 downscale + LOSSLESS PNG encode for the render-ceiling
+# derivative, and EXIF-orientation resolution. `default-features = false` keeps the tree to exactly the
+# three formats the spec accepts — notably NO `gif`, so an animated GIF cannot even be decoded here
+# (it is refused by magic-byte sniff long before that). MIT/Apache-2.0, permissive, consistent with D3.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 # TTS engine #2 (RAWY-111): the FREE, keyless Edge "Read Aloud" neural voices (edge-tts protocol) —
 # the Arabic-quality path. Blocking client (ureq + tungstenite + rustls), MIT, whole tree permissive.
 msedge-tts = "0.4"

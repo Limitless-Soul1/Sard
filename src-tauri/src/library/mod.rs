@@ -537,8 +537,14 @@ fn highlight_row(r: &rusqlite::Row) -> rusqlite::Result<HighlightRow> {
 const HL_COLS: &str = "id, book_id, start_cfi, color, text_excerpt, chapter_label, created_at, alpha";
 
 pub fn highlights_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<HighlightRow>> {
+    // RAWY-283: NEWEST FIRST, matching `notes_for_book` and the cross-book `annotations_all`. The two
+    // in-book tabs previously sorted OPPOSITE ways, which has no defensible reason.
+    // ⚠ This list ALSO feeds the in-book overlay (`loadHighlights` iterates it and calls `addAnnotation`
+    // per item, so array order IS paint order). The store therefore re-sorts a COPY chronologically
+    // before handing it to the renderer — see `annotationsStore.load` — so which of two OVERLAPPING
+    // marks paints on top is unchanged. Sorting here without that would have been a silent visual change.
     let mut stmt = conn.prepare(&format!(
-        "SELECT {HL_COLS} FROM highlights WHERE book_id = ?1 ORDER BY created_at"
+        "SELECT {HL_COLS} FROM highlights WHERE book_id = ?1 ORDER BY created_at DESC"
     ))?;
     let rows = stmt.query_map([book_id], highlight_row)?;
     rows.collect()
@@ -710,6 +716,9 @@ pub struct NoteRow {
     pub chapter_label: Option<String>,
     pub created_at: Option<i64>,
     pub updated_at: Option<i64>,
+    /// RAWY-282: optional, independent of `body`. `None` = this note has no title, which is what every
+    /// note written before migration 14 is — the list then renders exactly as it always did.
+    pub title: Option<String>,
 }
 
 fn note_row(r: &rusqlite::Row) -> rusqlite::Result<NoteRow> {
@@ -723,15 +732,22 @@ fn note_row(r: &rusqlite::Row) -> rusqlite::Result<NoteRow> {
         chapter_label: r.get(6)?,
         created_at: r.get(7)?,
         updated_at: r.get(8)?,
+        title: r.get(9)?,
     })
 }
 
+// RAWY-282: `title` APPENDED, never inserted mid-list — every existing index in `note_row` keeps its
+// position, so nothing that already read a column can read the wrong one.
 const NOTE_COLS: &str =
-    "id, book_id, highlight_id, locator_cfi, color, body, chapter_label, created_at, updated_at";
+    "id, book_id, highlight_id, locator_cfi, color, body, chapter_label, created_at, updated_at, title";
 
 pub fn notes_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<NoteRow>> {
+    // RAWY-282: NEWEST FIRST. This was `ORDER BY created_at` (ascending), which put the note just
+    // written at the very BOTTOM of the panel — the opposite of every note-taking app, and of this
+    // app's own cross-book Inbox, whose `annotations_all` has always ordered `created_at DESC`. The
+    // two views disagreed; this makes the in-book list agree with the one that was already right.
     let mut stmt = conn.prepare(&format!(
-        "SELECT {NOTE_COLS} FROM notes WHERE book_id = ?1 ORDER BY created_at"
+        "SELECT {NOTE_COLS} FROM notes WHERE book_id = ?1 ORDER BY created_at DESC"
     ))?;
     let rows = stmt.query_map([book_id], note_row)?;
     rows.collect()
@@ -743,6 +759,10 @@ fn get_note(conn: &Connection, id: &str) -> rusqlite::Result<Option<NoteRow>> {
 }
 
 /// One note per highlight (or per standalone location) — idempotent on the anchor.
+// RAWY-282: `title` made this the 8th parameter. Allowed rather than bundled into a struct, matching
+// the `#[allow]` its own `#[tauri::command]` wrapper has carried since before this ticket — inventing a
+// params struct for one added field would be a wider change than the feature.
+#[allow(clippy::too_many_arguments)]
 pub fn note_create(
     conn: &Connection,
     book_id: &str,
@@ -751,23 +771,35 @@ pub fn note_create(
     color: Option<&str>,
     body: &str,
     chapter: Option<&str>,
+    title: Option<&str>,
 ) -> rusqlite::Result<Option<NoteRow>> {
     let anchor = highlight_id.or(cfi).unwrap_or("");
     let id = gen_id(&format!("note:{book_id}:{anchor}"));
     let now = now_unix();
     conn.execute(
-        "INSERT INTO notes(id, book_id, highlight_id, locator_cfi, color, body, chapter_label, created_at, updated_at) \
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?8) \
-         ON CONFLICT(id) DO UPDATE SET body=excluded.body, color=excluded.color, updated_at=excluded.updated_at",
-        rusqlite::params![id, book_id, highlight_id, cfi, color, body, chapter, now],
+        "INSERT INTO notes(id, book_id, highlight_id, locator_cfi, color, body, chapter_label, created_at, updated_at, title) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?8,?9) \
+         ON CONFLICT(id) DO UPDATE SET body=excluded.body, color=excluded.color, title=excluded.title, updated_at=excluded.updated_at",
+        rusqlite::params![id, book_id, highlight_id, cfi, color, body, chapter, now, title],
     )?;
     get_note(conn, &id)
 }
 
-pub fn note_update(conn: &Connection, id: &str, body: &str, color: Option<&str>) -> rusqlite::Result<Option<NoteRow>> {
+/// RAWY-282: `title` is `Option` and, unlike `color`, is written UNCONDITIONALLY rather than through
+/// `COALESCE`. That is deliberate and is the only way "clear the title" can be expressed: with
+/// `COALESCE` a `None` would mean "keep whatever is there", leaving a title the reader has just erased
+/// permanently stuck on the note. `color` keeps its COALESCE because its callers legitimately mean
+/// "update the text, leave the colour alone"; the title editor always sends the field it owns.
+pub fn note_update(
+    conn: &Connection,
+    id: &str,
+    body: &str,
+    color: Option<&str>,
+    title: Option<&str>,
+) -> rusqlite::Result<Option<NoteRow>> {
     conn.execute(
-        "UPDATE notes SET body = ?2, color = COALESCE(?3, color), updated_at = ?4 WHERE id = ?1",
-        rusqlite::params![id, body, color, now_unix()],
+        "UPDATE notes SET body = ?2, color = COALESCE(?3, color), title = ?4, updated_at = ?5 WHERE id = ?1",
+        rusqlite::params![id, body, color, title, now_unix()],
     )?;
     get_note(conn, id)
 }
@@ -868,12 +900,18 @@ pub struct AnnoItem {
     // note's tag NAMES, so the Inbox can filter by tag. Empty for an untagged/note-less item.
     pub note_id: Option<String>,
     pub tags: Vec<String>,
+    /// RAWY-282: the attached note's title, or `None`. Lets the cross-book Inbox render the same
+    /// title/preview shape as the in-book list without a second query.
+    pub note_title: Option<String>,
 }
 
 fn anno_item(r: &rusqlite::Row) -> rusqlite::Result<AnnoItem> {
     // GROUP_CONCAT joins the tag names with a newline (a tag name is a single-line string, so it never
     // contains one) — split back into a list; NULL (no tags) -> empty.
     let tag_str: Option<String> = r.get(13)?;
+    // RAWY-282: column 14, APPENDED after the tags for the same reason RAWY-203 appended 12 and 13 —
+    // every earlier index keeps its position, so no existing field can shift under a reader.
+    let note_title: Option<String> = r.get(14)?;
     let tags = tag_str
         .map(|s| s.split('\n').filter(|t| !t.is_empty()).map(str::to_string).collect())
         .unwrap_or_default();
@@ -892,6 +930,7 @@ fn anno_item(r: &rusqlite::Row) -> rusqlite::Result<AnnoItem> {
         created_at: r.get(11)?,
         note_id: r.get(12)?,
         tags,
+        note_title,
     })
 }
 
@@ -906,13 +945,13 @@ pub fn annotations_all(conn: &Connection) -> rusqlite::Result<Vec<AnnoItem>> {
     let sql = format!(
         "SELECT h.id, 'highlight', h.book_id, {OV_TITLE}, b.file_path, \
             COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='dir'), b.dir), \
-            h.chapter_label, h.color, h.text_excerpt, n.body, h.start_cfi, h.created_at, n.id, {tags_sub} \
+            h.chapter_label, h.color, h.text_excerpt, n.body, h.start_cfi, h.created_at, n.id, {tags_sub}, n.title \
          FROM highlights h JOIN books b ON b.id = h.book_id \
          LEFT JOIN notes n ON n.highlight_id = h.id \
          UNION ALL \
          SELECT n.id, 'note', n.book_id, {OV_TITLE}, b.file_path, \
             COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='dir'), b.dir), \
-            n.chapter_label, n.color, n.body, NULL, n.locator_cfi, n.created_at, n.id, {tags_sub} \
+            n.chapter_label, n.color, n.body, NULL, n.locator_cfi, n.created_at, n.id, {tags_sub}, n.title \
          FROM notes n JOIN books b ON b.id = n.book_id \
          WHERE n.highlight_id IS NULL \
          ORDER BY created_at DESC"

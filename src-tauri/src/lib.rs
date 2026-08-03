@@ -7,6 +7,7 @@
 
 #[cfg(target_os = "windows")]
 pub mod audio_identity; // RAWY-270A: name + icon Sard's WebView2 audio session in the Volume Mixer
+pub mod backgrounds; // RAWY-265: managed user background images (copy-in, dedup, derivative, GC)
 pub mod commands; // IPC seam: #[tauri::command] handlers (the only frontend↔core boundary)
 pub mod db; // SQLite connection, pragmas, migration runner, AppState
 pub mod library; // repositories: books, shelves, highlights, notes, bookmarks, progress (placeholder)
@@ -174,6 +175,9 @@ pub fn run() {
             commands::font_import,
             commands::fonts_list,
             commands::font_remove,
+            commands::background_choose, // RAWY-265: managed background images (import + bind, atomic)
+            commands::backgrounds_list,
+            commands::background_set_surface,
             commands::bookmark_create,
             commands::bookmark_delete,
             commands::bookmarks_for_book,

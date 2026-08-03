@@ -68,6 +68,16 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "references",
         include_str!("migrations_sql/0012_references.sql"),
     ),
+    (
+        13,
+        "backgrounds",
+        include_str!("migrations_sql/0013_backgrounds.sql"),
+    ),
+    (
+        14,
+        "note_title",
+        include_str!("migrations_sql/0014_note_title.sql"),
+    ),
 ];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.

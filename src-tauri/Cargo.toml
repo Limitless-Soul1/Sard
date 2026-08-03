@@ -20,6 +20,15 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
+# The OFFICIAL in-app updater: fetches a signed manifest from GitHub Releases, verifies the
+# minisign signature against the public key in tauri.conf.json, then runs the NSIS installer with
+# `/UPDATE`. It replaces the hand-rolled check-only path this project carried before — one update
+# system, not two. Sard is desktop-only, so this needs no per-platform cfg guard.
+tauri-plugin-updater = "2"
+# `relaunch()` after an install. On Windows the NSIS installer restarts Sard itself (the plugin
+# passes `/ARGS`), so this is belt-and-braces there — but it is the documented path on macOS and
+# Linux, and having it means the frontend has one restart call that is correct everywhere.
+tauri-plugin-process = "2"
 tauri-plugin-dialog = "2"
 # RAWY-173 (AUD-9): a second launch focuses the existing window instead of starting a rival instance
 # that would attach the same WAL DB + fight over per-session state.

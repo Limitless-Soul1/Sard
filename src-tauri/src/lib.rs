@@ -18,7 +18,6 @@ pub mod photocards; // saved photo cards: PNG store + DB rows (RAWY-52, Photo Mo
 pub mod settings; // key/value settings persistence
 pub mod sync; // FUTURE seam: backend trait only (placeholder)
 pub mod tts; // RAWY-105: bundled piper sidecar (persistent process) + on-demand voice download
-pub mod updater; // RAWY-168: in-app update CHECK (Phase 1 — notify only, no download/install)
 pub mod webview_chrome; // RAWY-196: strip WebView2's browser chrome + accelerators (find bar, reload, print)
 pub mod window_chrome; // RAWY-118: theme the native title bar to match the app theme (DWM, Windows)
 
@@ -89,6 +88,12 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        // The in-app updater. Everything it needs — the manifest endpoint, the minisign public key
+        // and the Windows install mode — is declarative, in tauri.conf.json; there is no update
+        // command of our own any more, and no update code path outside this plugin.
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // Restart after an install. Required by the updater flow; see the note in Cargo.toml.
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // Resolve & create the OS app-data dir (%APPDATA%/com.sard.app on Windows).
             let app_data_dir = app.path().app_data_dir()?;
@@ -192,7 +197,6 @@ pub fn run() {
             tts::tts_synthesize,
             tts::tts_edge_voices,
             tts::tts_stop,
-            updater::check_for_update,
             window_chrome::set_titlebar_theme,
         ])
         .build(tauri::generate_context!())

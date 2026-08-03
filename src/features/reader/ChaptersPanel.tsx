@@ -6,7 +6,7 @@
 // edge, the same side as the toolbar "contents" button. Book-derived chapter titles use
 // dir="auto" so Arabic titles still render RTL inside an LTR UI (and vice-versa).
 
-import { memo, useEffect, useRef } from "react";
+import { memo, useEffect, useMemo, useRef } from "react";
 
 import { useI18n } from "../../i18n";
 import type { ReadMarkerKey } from "../../lib/readMarkerStyle"; // RAWY-256
@@ -21,6 +21,7 @@ import type { TocEntry } from "../../reader-engine/FoliateController";
 const TocRow = memo(function TocRow({
   entry,
   index,
+  num,
   active,
   read,
   hideTitles,
@@ -28,6 +29,9 @@ const TocRow = memo(function TocRow({
 }: {
   entry: TocEntry;
   index: number;
+  /** RAWY-287: the number to display, decided ONCE for the whole book (see `bookNumbers`).
+   *  `null` = this entry has no chapter designator in a book that numbers its chapters. */
+  num: number | null;
   active: boolean;
   /** RAWY-256: chapter read to the end (completion rule + storage are RAWY-250 / D66 — consumed, not
    *  recomputed). Drives the `.read` class; the six variants are pure CSS on this row, no extra DOM. */
@@ -36,9 +40,14 @@ const TocRow = memo(function TocRow({
   onJump: (href: string) => void;
 }) {
   const { t, lang } = useI18n();
-  const realNum = extractChapterNumber(entry.label);
-  const badgeNum = realNum ?? index + 1;
-  const chapterLabel = t("panel.chapter", { n: localeNum(badgeNum, lang) });
+  // RAWY-287: ONE numbering source per book — see `bookNumbers` in the panel below. `num` is either
+  // the book's OWN designator or a positional fallback, never a mixture of the two in one list, and
+  // `null` means "this entry carries no chapter number and the book numbers its chapters itself"
+  // (front matter, Contents, a preface). Such a row is labelled as a SECTION, not as a chapter,
+  // because calling it "Chapter 3" is what made a Contents page outrank the real Chapter I.
+  const chapterLabel = num == null
+    ? t("panel.tocSection", { n: localeNum(index + 1, lang) })
+    : t("panel.chapter", { n: localeNum(num, lang) });
   const label = hideTitles ? null : entry.label || chapterLabel;
   return (
     <button
@@ -50,7 +59,7 @@ const TocRow = memo(function TocRow({
       {hideTitles ? (
         <span className="toc-num big" dir="auto">{chapterLabel}</span>
       ) : (
-        <span className="toc-num">{localeNum(badgeNum, lang)}</span>
+        <span className="toc-num">{localeNum(num ?? index + 1, lang)}</span>
       )}
       {label && (
         <span className="toc-label" dir="auto">
@@ -67,6 +76,11 @@ interface Props {
   onClose: () => void;
   toc: TocEntry[];
   currentHref: string | null;
+  /** RAWY-287: the TOC row the reader is currently inside, resolved by the Reader against EPUB
+   *  reading order (see `tocIndex` there). `-1` = genuinely outside every listed entry. Supersedes
+   *  matching `currentHref` here, which could not represent either of the two cases a valid EPUB
+   *  routinely produces: a spine document with NO nav entry, and several nav entries in ONE document. */
+  activeIndex: number;
   /** RAWY-256: TOC hrefs whose chapter is read — a STABLE Set (memoised in Reader), never rebuilt per row. */
   readHrefs: Set<string>;
   /** RAWY-256: the global variant choice; scopes the CSS for all six on the list container. */
@@ -88,6 +102,7 @@ function ChaptersPanelInner({
   onClose,
   toc,
   currentHref,
+  activeIndex,
   readHrefs,
   readMarker,
   hideTitles,
@@ -119,6 +134,27 @@ function ChaptersPanelInner({
     });
     return () => cancelAnimationFrame(raf);
   }, [open, currentHref, toc]);
+
+  // RAWY-287 — ONE NUMBERING SOURCE PER BOOK, decided from the TOC itself.
+  //
+  // The defect was not only that numbers were scraped from prose; it was that TWO sources were mixed
+  // in one list. Rows whose label carried a designator showed the BOOK's number, rows without showed
+  // their POSITION, and the two collide as soon as a book has front matter: measured on a real EPUB,
+  // "Contents" (position 3) and an edition line (scraped 3) both rendered "Chapter 3", while the
+  // book's actual Chapter I rendered "Chapter 4" and no row rendered "Chapter 2" at all.
+  //
+  // A book either numbers its own chapters or it does not, so pick one source for the whole list:
+  //   • two or more entries carry a designator  -> the book numbers itself. Use ITS numbers, and mark
+  //     the remaining entries as unnumbered sections rather than inventing chapter numbers for them.
+  //   • otherwise -> no numbering to honour; fall back to TOC position for every row, exactly as
+  //     before. This is the common case (an Arabic novel whose entries are plain titles) and it keeps
+  //     those books rendering identically to the previous build.
+  // Collisions are impossible by construction: within one book the two sources are never mixed.
+  // Requiring TWO designators (not one) stops a single stray match from re-numbering a whole book.
+  const bookNumbers = useMemo(() => {
+    const own = toc.map((c) => extractChapterNumber(c.label));
+    return own.filter((n) => n != null).length >= 2 ? own : toc.map((_, i) => i + 1);
+  }, [toc]);
 
   return (
     <aside className={`reader-panel rp-lead${open ? " show" : ""}`} dir={dir} aria-hidden={!open}>
@@ -154,7 +190,8 @@ function ChaptersPanelInner({
             key={`${c.href ?? "x"}-${i}`}
             entry={c}
             index={i}
-            active={!!c.href && c.href === currentHref}
+            num={bookNumbers[i]}
+            active={i === activeIndex}
             read={!!c.href && readHrefs.has(c.href)}
             hideTitles={hideTitles}
             onJump={onJump}

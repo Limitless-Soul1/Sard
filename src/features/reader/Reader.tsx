@@ -1230,11 +1230,51 @@ export function Reader({
   // currently-matched TOC label — RAWY-67). A single-volume import whose real first chapter is
   // "الفصل 200" now correctly shows 200, not the imposed list position. Never fabricated: a
   // label/entry with no extractable number falls back to the TOC array position, same as before.
-  const tocIndex = toc.findIndex((c) => c.href && c.href === chapterHref);
-  const realChapterNum = extractChapterNumber(chapterLabel);
-  const chapter = hideChapterTitles
-    ? t("panel.chapter", { n: localeNum(realChapterNum ?? (tocIndex >= 0 ? tocIndex : 0) + 1, lang) })
-    : chapterLabel || t("reader.chapterFallback");
+  // RAWY-287 — WHICH TOC ENTRY THE READER IS INSIDE, resolved against EPUB reading order.
+  //
+  // `chapterHref` is foliate's `tocItem.href` for the current position, and it is correct — but it is
+  // `null` whenever the position lies in a spine document that the nav document does not list. That is
+  // ordinary, valid EPUB (a cover, a title page, an unlisted opening section). Matching hrefs alone
+  // therefore reported "no chapter" for a reader who was plainly inside the book, and the old chrome
+  // label then printed a confident, wrong "Chapter 1".
+  //
+  // The general rule, which needs no per-book knowledge: you are inside the LAST TOC entry that begins
+  // at or before your position in reading order. Resolution order:
+  //   1. foliate's own `tocItem` — authoritative, and the only thing that can distinguish SEVERAL
+  //      entries inside ONE document (a Gutenberg front matter with three anchors in one file).
+  //   2. otherwise the nearest preceding entry by SPINE index, via the RAWY-256 `tocSecMap` already
+  //      built once per book. This is what makes an unlisted opening section resolve to something
+  //      honest instead of to nothing.
+  //   3. otherwise -1: genuinely before the first listed entry, and the chrome says so.
+  const curSec = cfi ? (ctrlRef.current?.currentSectionIndex() ?? -1) : -1;
+  const tocIndex = useMemo(() => {
+    const direct = toc.findIndex((c) => c.href && c.href === chapterHref);
+    if (direct >= 0) return direct;
+    if (curSec < 0 || !tocSecMap.size) return -1;
+    let best = -1, bestSec = -1;
+    toc.forEach((c, i) => {
+      const sec = c.href ? tocSecMap.get(c.href) : undefined;
+      if (typeof sec === "number" && sec <= curSec && sec >= bestSec) { best = i; bestSec = sec; }
+    });
+    return best;
+  }, [toc, chapterHref, curSec, tocSecMap]);
+
+  // RAWY-287: the chrome's number comes from the SAME single source the panel uses, so the bar and the
+  // list can never disagree. An entry with no designator — in a book that numbers its chapters — is a
+  // section, not "Chapter N"; and a position inside no listed entry at all is stated as unknown rather
+  // than rendered as "Chapter 1", which is what both reported books displayed.
+  const tocOwnNumbers = useMemo(() => {
+    const own = toc.map((c) => extractChapterNumber(c.label));
+    return own.filter((n) => n != null).length >= 2 ? own : null;
+  }, [toc]);
+  const chapter = (() => {
+    if (!hideChapterTitles) return chapterLabel || t("reader.chapterFallback");
+    if (tocIndex < 0) return t("reader.chapterFallback");
+    const own = tocOwnNumbers ? tocOwnNumbers[tocIndex] : tocIndex + 1;
+    return own == null
+      ? t("panel.tocSection", { n: localeNum(tocIndex + 1, lang) })
+      : t("panel.chapter", { n: localeNum(own, lang) });
+  })();
 
   // RAWY-105: start read-aloud from the current chapter (top-bar Listen). Voice defaults by the BOOK's
   // direction (Arabic book → Arabic voice). RAWY-227: if a session is already reading THIS chapter, resume
@@ -1558,6 +1598,7 @@ export function Reader({
         onClose={closeContents}
         toc={toc}
         currentHref={chapterHref}
+        activeIndex={tocIndex}
         hideTitles={hideChapterTitles}
         onJump={jumpHref}
         readHrefs={readHrefs}

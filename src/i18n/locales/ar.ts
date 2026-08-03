@@ -310,6 +310,10 @@ export const ar: Record<TKey, string> = {
   "panel.close": "إغلاق", // RAWY-119: the panel/drawer close (✕) — a real label so it isn't a bare glyph
   "panel.chaptersMeta": "{n} فصلًا · قُرئ {p}٪",
   "panel.chapter": "الفصل {n}",
+  // RAWY-287 — مدخل في الفهرس بلا رقم فصل، في كتاب يرقّم فصوله: الغلاف، صفحة العنوان، المحتويات،
+  // المقدّمة، الخاتمة. تسميتها «الفصل ن» هي ما جعل صفحة المحتويات تحتلّ رقم فصل بينما يُدفَع الفصل
+  // الأوّل الحقيقي خارجه. الرقم هنا موضع المدخل في القائمة لا أكثر، فوجب ألّا تقول الكلمة «فصل».
+  "panel.tocSection": "قسم {n}",
   "panel.hideTitles": "إخفاء العناوين",
   "panel.showTitles": "إظهار العناوين",
   "panel.hideFirstLine": "إخفاء السطر الأول",

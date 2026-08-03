@@ -311,6 +311,12 @@ export const en = {
   "panel.close": "Close", // RAWY-119: the panel/drawer close (✕) — a real label so it isn't a bare glyph
   "panel.chaptersMeta": "{n} chapters · {p}% read",
   "panel.chapter": "Chapter {n}",
+  // RAWY-287: a TOC entry that carries NO chapter designator, in a book that numbers its chapters —
+  // a cover, a title page, Contents, a preface, an afterword. Calling these "Chapter N" is what let a
+  // Contents page occupy a chapter number while the book's real first chapter was pushed off it. The
+  // number here is the entry's POSITION in the list (that is all it is), so the word must not say
+  // "chapter". Only ever shown while "Hide chapter titles" is on; otherwise the real title shows.
+  "panel.tocSection": "Section {n}",
   "panel.hideTitles": "Hide titles",
   "panel.showTitles": "Show titles",
   "panel.hideFirstLine": "Hide first line",

@@ -98,7 +98,8 @@ export function SearchPanel({
   const allShown = allUpToShown && (!reveal || shownAhead.length >= ahead.length);
 
   return (
-    <aside className={`reader-panel rp-lead search-panel${open ? " show" : ""}`} dir={dir} aria-hidden={!open}>
+    // RAWY-288: see ChaptersPanel — `inert` keeps the closed panel out of the tab order.
+    <aside className={`reader-panel rp-lead search-panel${open ? " show" : ""}`} dir={dir} aria-hidden={!open} inert={!open}>
       <div className="rp-head">
         <div className="rp-head-titles">
           <span className="rp-title">{t("search.title")}</span>

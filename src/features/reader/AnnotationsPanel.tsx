@@ -140,6 +140,7 @@ export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, initialTab
       className={`reader-panel rp-trail${open ? " show" : ""}`}
       dir={dir}
       aria-hidden={!open}
+      inert={!open} // RAWY-288: see ChaptersPanel — keeps the closed panel out of the tab order
       // The source menu closes on select or on any other click INSIDE the panel: `.lib-clickaway` is
       // position:fixed, and this panel is `transform`ed — which makes it the containing block — so a
       // fixed overlay could never cover the window here.

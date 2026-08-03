@@ -128,6 +128,12 @@ export function ReaderChrome({
     : 0;
 
   return (
+    // RAWY-288: DELIBERATELY NOT `inert`, unlike the five closed panels. RAWY-194 gives a keyboard user
+    // their only route to the auto-hidden toolbar: Tab INTO it reveals and pins it (the `focusin` +
+    // `:focus-visible` handler in Reader). Marking it inert would remove the chrome from the tab order
+    // and delete that affordance outright — a worse accessibility outcome than the transient
+    // aria-hidden mismatch it would fix. That mismatch lasts one tick: focus lands, the handler fires,
+    // and `visible` flips true.
     <div className={`reader-chrome${visible ? " show" : ""}`} aria-hidden={!visible}>
       <div className="rc-top">
         {/* left nav: back + book/chapter context */}

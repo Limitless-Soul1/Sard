@@ -70,7 +70,7 @@ export function SettingsPanel({
   // an even rhythm so the menu reads as a tidy, PDF-appropriate panel (RAWY-141).
   if (isPdf) {
     return (
-      <aside className={`settings-panel${open ? " show" : ""}`} aria-hidden={!open}>
+      <aside className={`settings-panel${open ? " show" : ""}`} aria-hidden={!open} inert={!open}>
         <div className="sp-head">
           <span className="sp-title">{t("pdf.options")}</span>
           <button className="rc-icon" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
@@ -102,7 +102,7 @@ export function SettingsPanel({
     );
   }
   return (
-    <aside className={`settings-panel${open ? " show" : ""}`} aria-hidden={!open}>
+    <aside className={`settings-panel${open ? " show" : ""}`} aria-hidden={!open} inert={!open}>
       <div className="sp-head">
         <span className="sp-title">{t("reader.settings")}</span>
         <button className="rc-icon" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>

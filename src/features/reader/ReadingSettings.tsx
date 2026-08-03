@@ -4,7 +4,7 @@
 // chrome → inherits the UI direction and uses theme tokens. Replaces the old cramped
 // TypographyBar wall-of-buttons; the dev page-turn / book-switcher / status controls are gone.
 
-import { useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
 import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
@@ -118,6 +118,22 @@ function ColorRow({
 }
 
 // ---- small, reusable, theme-tokened controls ----
+
+/**
+ * RAWY-288: the enclosing `Section`'s label, so a control inside it can carry an ACCESSIBLE NAME
+ * without every call site remembering to pass one.
+ *
+ * MEASURED (CDP Accessibility domain — the computed name a screen reader actually resolves, not an
+ * attribute guess): with the settings drawer open, all 4 `slider` nodes had an EMPTY accessible name,
+ * while all 38 buttons and both comboboxes were correctly named. A slider announced only as "slider,
+ * 1.95" gives a screen-reader user no way to know which reading setting they are changing.
+ *
+ * The name is taken from the section heading that is ALREADY on screen above the control, so the
+ * spoken name matches the visible one by construction. Wiring it through context rather than through
+ * a prop is deliberate: it means a slider added later cannot ship unnamed by omission.
+ */
+const SectionLabel = createContext<string | undefined>(undefined);
+
 function Section({ label, value, children }: { label: string; value?: ReactNode; children: ReactNode }) {
   return (
     <div className="rs-sec">
@@ -125,7 +141,7 @@ function Section({ label, value, children }: { label: string; value?: ReactNode;
         <span className="rs-label">{label}</span>
         {value != null && <span className="rs-value">{value}</span>}
       </div>
-      {children}
+      <SectionLabel.Provider value={label}>{children}</SectionLabel.Provider>
     </div>
   );
 }
@@ -139,6 +155,7 @@ function Slider({
   disabled,
   lead,
   trail,
+  ariaLabel,
 }: {
   value: number;
   min: number;
@@ -148,7 +165,11 @@ function Slider({
   disabled?: boolean;
   lead?: ReactNode;
   trail?: ReactNode;
+  /** RAWY-288: only for a slider that is NOT inside a `Section` (it inherits the section label
+   *  otherwise — see `SectionLabel`). Never leave both unset: that is what shipped unnamed. */
+  ariaLabel?: string;
 }) {
+  const sectionLabel = useContext(SectionLabel);
   // RAWY-65: an audit flagged native <input type=range> as a well-known browser quirk that
   // doesn't mirror for RTL. Investigated live on the release build (WebView2/Chromium) before
   // touching anything — a CSS transform and a JS value-complement were both tried and both made
@@ -170,6 +191,7 @@ function Slider({
         step={step}
         value={value}
         disabled={disabled}
+        aria-label={ariaLabel ?? sectionLabel}
         onChange={(e) => onInput(Number(e.target.value))}
       />
       {trail != null && <span className="rs-slider-cap rs-slider-cap-lg">{trail}</span>}

@@ -157,7 +157,13 @@ function ChaptersPanelInner({
   }, [toc]);
 
   return (
-    <aside className={`reader-panel rp-lead${open ? " show" : ""}`} dir={dir} aria-hidden={!open}>
+    // RAWY-288: `inert` alongside `aria-hidden`. The panel stays MOUNTED when closed (that is what keeps
+    // the ~1,400-row TOC instant to reopen) and is only moved off-screen by transform — so every row
+    // stayed in the tab order while being announced as hidden. Measured over a 160-press Tab cycle: 67
+    // stops (42%) landed on controls inside `aria-hidden` closed panels. `inert` is the standard
+    // primitive that removes a subtree from BOTH the tab order and the a11y tree, so the two can no
+    // longer disagree; no per-control tabIndex bookkeeping, and nothing to undo when the panel opens.
+    <aside className={`reader-panel rp-lead${open ? " show" : ""}`} dir={dir} aria-hidden={!open} inert={!open}>
       {/* header (RAWY-33; RAWY-36): title + chapter/percent meta + close. */}
       <div className="rp-head">
         <div className="rp-head-titles">

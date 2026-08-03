@@ -512,10 +512,17 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
                 </div>
                 <label className="lib-search">
                   <span className="lib-search-ico" aria-hidden>⌕</span>
+                  {/* RAWY-288: the <label> wrapper alone does NOT name this field — its only content is
+                      the magnifier span, which is aria-hidden and therefore contributes nothing to the
+                      accessible name. Measured via the CDP Accessibility domain: this textbox resolved
+                      to an EMPTY name, the only unnamed control on the Library surface. An explicit
+                      aria-label is what a screen reader actually reads; the placeholder stays for
+                      sighted users and is not relied on as the name. */}
                   <input
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     placeholder={t("lib.search")}
+                    aria-label={t("lib.search")}
                   />
                 </label>
               </div>

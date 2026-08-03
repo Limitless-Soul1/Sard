@@ -21,6 +21,7 @@
 <p align="center">
   <a href="#overview">Overview</a> ·
   <a href="#key-features">Features</a> ·
+  <a href="#screenshots">Screenshots</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#text-to-speech">Read-aloud</a> ·
   <a href="#build">Build</a> ·
@@ -94,14 +95,114 @@ and each one is measured rather than asserted.
 
 ## Screenshots
 
-> _Coming soon._ Screenshots of the library, the reading surface, the annotation panel and the
-> read-aloud transport will be added here.
+### Library
 
-<!--
-| Library | Reader |
-| --- | --- |
-| ![Library](docs/screenshots/library.png) | ![Reader](docs/screenshots/reader.png) |
--->
+Your books as objects: real covers, shelves you define, and grid, list or shelf-row views. The
+interface mirrors completely between Arabic and English — this is the same screen in both.
+
+<p align="center">
+  <img src="docs/screenshots/Library.png" alt="Sard's library in Arabic, right-to-left, showing the cover grid and user-defined shelves" width="900">
+</p>
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/Library-en-lang.png" alt="The same library in English, mirrored left-to-right"></td>
+<td width="50%"><img src="docs/screenshots/Library-with-background-image.png" alt="The library with a personal background image behind the covers"></td>
+</tr>
+<tr>
+<td><b>English, mirrored</b> — the sidebar, shelves and controls all move; only the wordmark keeps its order.</td>
+<td><b>Your own background</b> — an image behind the library, with the theme still setting every colour.</td>
+</tr>
+</table>
+
+### Reader
+
+A single column of text on an opaque page, with the desk showing in the margins. Measure, margins,
+page width, leading and per-script fonts are all yours to set.
+
+<p align="center">
+  <img src="docs/screenshots/in-book-with-image-background.png" alt="The reading surface: a centred page of text resting on a desk with a background image in the margins" width="900">
+</p>
+
+### Search
+
+Diacritic-insensitive, and **spoiler-safe**: matches up to your position are shown in full, while
+everything ahead is sealed behind a count until you ask for it.
+
+<p align="center">
+  <img src="docs/screenshots/search-feature.png" alt="In-book search with the spoiler-safe toggle on, showing one match hidden behind a sealed card" width="820">
+</p>
+
+### Notes &amp; annotations
+
+A note can carry a title, a body, an ink colour, an ink density and tags — written in a centred
+editor built to be a quiet room, with the passage above and nothing competing for attention.
+
+<p align="center">
+  <img src="docs/screenshots/notes.png" alt="The note editor: the highlighted passage, an optional title, the note body, and a margin panel with colour, ink density and tags" width="880">
+</p>
+
+### Selecting text &amp; references
+
+Select any passage and the toolbar offers eight highlight inks and every action that can follow —
+including **Add reference**, which binds a note to a word or phrase and marks it wherever that
+phrase recurs.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/options-en.png" alt="The selection toolbar in English: eight highlight inks above, then Listen, Note, Add reference, Copy, Add to card and Create photo card"></td>
+<td width="50%"><img src="docs/screenshots/options-ar.png" alt="The same selection toolbar in Arabic, mirrored"></td>
+</tr>
+<tr>
+<td><b>English</b></td>
+<td><b>Arabic</b> — same toolbar, mirrored.</td>
+</tr>
+</table>
+
+### Themes
+
+Sixteen papers, from Ivory through True-Black to Moonlit Sky. Each carries its own eight highlight
+inks, tuned so a highlight lightens dark paper instead of blotting it.
+
+<p align="center">
+  <img src="docs/screenshots/Themes.png" alt="The Appearance settings showing all sixteen themes as labelled swatches, plus day/night mode and the library background controls" width="900">
+</p>
+
+### Settings
+
+Two levels: app-wide from the Library, and per-book while reading. This is the in-book drawer —
+five tabs, with Contents open on one side and the reading surface live between them, so every
+change previews on the real page.
+
+<p align="center">
+  <img src="docs/screenshots/In-book-settings.png" alt="Reading an Arabic book with the Contents panel open on the left and the in-book settings drawer on the right" width="900">
+</p>
+
+### Read aloud
+
+Offline neural speech through Piper, or Microsoft Edge's online voices. The sentence being spoken is
+spotlit and the current word tracked inside it; the transport carries engine, voice, speed and
+volume, and collapses to a single calligraphic stroke when you want the page to yourself.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/in-book-en-with-background-and-TTS-working.png" alt="Reading in English with read-aloud playing: the spoken sentence spotlit, the current word highlighted, and the transport showing the Piper and Edge engines, voice and speed"></td>
+<td width="50%"><img src="docs/screenshots/in-book-ar-with-background-and-TTS-working.png" alt="The same read-aloud transport while reading an Arabic book, right-to-left"></td>
+</tr>
+<tr>
+<td><b>English</b> — engine, voice, speed and volume in one pill.</td>
+<td><b>Arabic</b> — the same tracking, right-to-left.</td>
+</tr>
+</table>
+
+### Photo cards
+
+Turn a passage into a shareable image — five card styles, sixteen papers, four formats — and keep it
+in the app to re-share later.
+
+<p align="center">
+  <img src="docs/screenshots/quote.png" alt="The photo card composer: a portrait card with a quotation, beside controls for card style, paper, format and text size" width="880">
+</p>
 
 <p align="center">
   <img src="src-tauri/icons/Sard-.png" alt="" width="140">

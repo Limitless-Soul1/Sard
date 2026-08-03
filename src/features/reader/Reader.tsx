@@ -514,7 +514,12 @@ export function Reader({
         if (cur) settingsSet(`tts_position:${initial.id}`, JSON.stringify(cur)).catch(() => {});
       }
       if (styleRafRef.current) cancelAnimationFrame(styleRafRef.current); // RAWY-82: drop a pending live-apply frame
-      ctrlRef.current?.dispose();
+      // RAWY-286: `destroy()`, not `dispose()`. This cleanup is the LEAVE-THE-BOOK path (unmount, or
+      // `initial.id` changing on a cross-book follow), so the read-aloud ranges must go too — they hold
+      // `Range`s into the outgoing chapter's document and were measured pinning it for the whole session.
+      // `open()` keeps calling plain `dispose()`, which is what preserves RAWY-129's same-book re-open.
+      // Ordering matters and is already correct: `getTtsCursor` above reads `ttsUnits` BEFORE this runs.
+      ctrlRef.current?.destroy();
       // RAWY-155: read-aloud is a per-reading-session activity — leaving the book (Back to Library,
       // opening a different book, the error screen — every exit unmounts the Reader or changes
       // `initial.id`) must STOP it completely. `useTts.stop()` halts both engines' playback + the

@@ -1086,6 +1086,41 @@ export class FoliateController {
     }
   }
 
+  /**
+   * RAWY-286: FINAL teardown — `dispose()` plus the read-aloud ranges it deliberately leaves alone.
+   *
+   * WHY THIS IS SEPARATE FROM `dispose()`. `dispose()` has TWO callers with OPPOSITE requirements, and
+   * that is the whole reason the leak existed:
+   *   • `open()` calls it to swap the view. The RAWY-129 (A) `create-overlay` handler then relies on
+   *     `ttsUnitsIndex >= 0` SURVIVING, so a flow-mode change that re-opens the SAME book while
+   *     read-aloud plays can rebuild the units against the fresh doc and restore the spotlight.
+   *     Clearing there would be a behaviour regression, which is why `dispose()` leaves them.
+   *   • The Reader's unmount / book-change cleanup calls it to LEAVE the book. Nothing is coming back,
+   *     and keeping the ranges there is pure retention.
+   *
+   * MEASURED (real release build, heap snapshot with retainer paths): after leaving a book that had
+   * read-aloud running, one `Range` per retained unit still pointed into that chapter's document,
+   * giving the retainer chain
+   *     Range -> .range -> [i] -> elements -> `ttsUnits` -> FoliateController -> ctrlRef.current
+   * and the same shape via `wordRanges`. A `Range` keeps its `Text` node — and therefore its ancestors
+   * and its owner `Document` — alive, so each book listened to pinned one detached chapter document
+   * (~7,000 nodes, ~5 MB). Cycling open -> Listen -> back measured +2 Documents, +1 Frame, ~+7,000
+   * Nodes and ~+6 MB PER CYCLE, with a natural control (a cycle whose Listen never started grew by
+   * exactly zero) and two isolating runs (book switching alone: 0 drift; repeated read-aloud inside
+   * ONE book: 0 drift). The cost appears only at the intersection, which is precisely this exit path.
+   *
+   * The controller instance itself is retained past unmount by other holders (the module-level
+   * annotations/references stores keep the `ctrl` they were bound to). That is a separate and far
+   * cheaper question — a bare object rather than a document — and is deliberately NOT addressed here.
+   * Clearing the ranges releases the DOM whether or not the controller is collected.
+   */
+  destroy(): void {
+    this.dispose();
+    this.ttsUnits = [];
+    this.ttsUnitsIndex = -1;
+    this.wordRanges = [];
+  }
+
   /** Open `source` into `container`. Idempotent — disposes any prior view first. */
   async open(source: string, container: HTMLElement, opts: OpenOptions): Promise<void> {
     this.dispose();

@@ -785,15 +785,26 @@ pub struct TranslatorSettings {
     pub target_lang: String,
 }
 
+/// The ONE rule for whether translation is enabled. ON by default: a fresh install (no stored
+/// value) is enabled so the toolbar button shows without a Settings visit; a reader who explicitly
+/// turned it OFF stays off. Both `translator_settings_get` (what the frontend renders) and the
+/// `translate` command's gate (what actually allows a call) MUST go through here, so the button the
+/// reader sees and the refusal the reader gets can never disagree — the bug that happened when each
+/// had its own inline check (frontend defaulted absent→true, the gate defaulted absent→false).
+fn translator_enabled(conn: &rusqlite::Connection) -> bool {
+    settings::get(conn, "translator.enabled")
+        .ok()
+        .flatten()
+        .as_deref()
+        != Some("false")
+}
+
 #[tauri::command]
 pub fn translator_settings_get(state: State<AppState>) -> Result<TranslatorSettings, String> {
     let conn = state.conn();
     let get = |k: &str| settings::get(&conn, k).ok().flatten();
     Ok(TranslatorSettings {
-        // ON by default: a fresh install (no stored value) reports enabled=true so the toolbar
-        // button shows without a Settings visit. A reader who explicitly turned it OFF stays off —
-        // we honor an explicit "false", and only default absent→true.
-        enabled: get("translator.enabled").as_deref() != Some("false"),
+        enabled: translator_enabled(&conn),
         provider: get("translator.provider").unwrap_or_else(|| "google".to_string()),
         api_key_set: get("translator.deepl_key").is_some(),
         target_lang: get("translator.target_lang").unwrap_or_default(),
@@ -833,9 +844,9 @@ pub fn translate(
     let conn = state.conn();
     let get = |k: &str| settings::get(&conn, k).ok().flatten();
 
-    // Gate: if disabled, refuse. The frontend should never call this while off, but a stale
-    // selection or a race could; returning an error keeps the contract honest.
-    if get("translator.enabled").as_deref() != Some("true") {
+    // Gate via the SAME rule `translator_settings_get` uses (translator_enabled), so the button the
+    // reader sees and the refusal the reader gets can never disagree.
+    if !translator_enabled(&conn) {
         return Err("Translation is disabled. Enable it in Settings.".to_string());
     }
 

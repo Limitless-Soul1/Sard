@@ -650,6 +650,12 @@ export function AnnotationLayer({
     ctrl.onSelection((s) => {
       setSelection(s);
       if (s) setActive(null);
+      // The controller fires onSelection(null) on EVERY pointerdown inside the content iframe
+      // (FoliateController.ts:1539) — including a plain tap on text, not just a drag-select. So this
+      // is the bridge that dismisses the Translate popover when the reader presses anywhere on the
+      // book: pointer events inside the iframe never reach the parent-window listener wired in the
+      // dismiss() Effect above, but they DO surface here through the controller's selection callback.
+      setTrSel(null);
     });
     ctrl.onShowAnnotation((hit) => {
       setSelection(null);

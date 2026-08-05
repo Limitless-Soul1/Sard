@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::db::{self, AppState};
+use crate::translate;
 use crate::{backgrounds, books, fonts, library, photocards, settings};
 
 #[derive(Serialize)]

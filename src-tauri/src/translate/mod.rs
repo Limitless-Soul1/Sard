@@ -39,7 +39,7 @@ impl Provider {
     pub fn from_stored(s: &str) -> Option<Self> {
         match s {
             "google" => Some(Provider::Google),
-            "deepl" => Some(Provider::DeepL),
+            "deepl" => Some(Provider::Deepl),
             _ => None,
         }
     }
@@ -49,7 +49,7 @@ impl Provider {
     pub fn as_str(self) -> &'static str {
         match self {
             Provider::Google => "google",
-            Provider::DeepL => "deepl",
+            Provider::Deepl => "deepl",
         }
     }
 }
@@ -103,7 +103,7 @@ pub fn run(
     let agent = agent();
     match provider {
         Provider::Google => google::translate(&agent, text, target),
-        Provider::DeepL => {
+        Provider::Deepl => {
             let key = deepl_key.ok_or_else(|| {
                 "DeepL is selected but no API key is set. Add one in Settings.".to_string()
             })?;

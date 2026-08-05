@@ -29,7 +29,7 @@ import {
   INK_RADIUS_EM,
   INK_EDGE_EM,
 } from "../../lib/highlightInk";
-import { noteTagsFor, noteTagsSet, type HighlightColor, type HighlightRow, type NoteRow, type RefRow } from "../../lib/ipc";
+import { noteTagsFor, noteTagsSet, translate, translatorSettingsGet, type HighlightColor, type HighlightRow, type NoteRow, type RefRow } from "../../lib/ipc";
 
 function useHl() {
   const id = useTheme((s) => s.themeId);
@@ -237,6 +237,13 @@ const ListenIcon = () => (
     <path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2" />
   </svg>
 );
+// Translate — a globe with an overlaid glyph, in the same 16×16 stroke idiom as the other actions.
+const TranslateIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <path d="M4 9h7M7.5 4.5c1.8 2.6 2.5 4.6 2.5 7s-.7 4.4-2.5 7M3 13c1.2 2.5 3.3 4 6 4" />
+    <path d="M13 19l3-7 3 7M14.2 17h3.6" />
+  </svg>
+);
 
 // The redesigned selection toolbar (RAWY-59, design "Selection Toolbar — two-tier popover"):
 // a floating dark popover with the COLOUR PALETTE on top (one tap highlights in that ink — no
@@ -251,6 +258,7 @@ function SelectionToolbar({
   onCopy,
   onAddToCard,
   onPhotoCard,
+  onTranslate,
 }: {
   sel: SelectionInfo;
   onColor: (c: HighlightColor) => void;
@@ -260,6 +268,9 @@ function SelectionToolbar({
   onCopy: () => void;
   onAddToCard: () => void;
   onPhotoCard: () => void;
+  /** Translate the selection. Absent when translation is disabled in Settings — the button is not
+   *  rendered at all, so there is no path to send text to a provider while the feature is off. */
+  onTranslate?: () => void;
 }) {
   const { t } = useI18n();
   const hl = useHl();
@@ -298,8 +309,68 @@ function SelectionToolbar({
                 and RAWY-124's warning still holds: never drop one of the other five. */}
             <button className="hl-pop-act" onClick={onReference}><RefIcon />{t("ref.add")}</button>
             <button className="hl-pop-act" onClick={onCopy}><CopyIcon />{t("hl.copy")}</button>
+            {/* Translate — shown only when the feature is enabled in Settings. Sits beside Copy since
+                both are read-only "what is this text" actions, leaving the create-* actions grouped. */}
+            {onTranslate && (
+              <button className="hl-pop-act" onClick={onTranslate}><TranslateIcon />{t("tr.act")}</button>
+            )}
             <button className="hl-pop-act" onClick={onAddToCard}><AddCardIcon />{t("photo.addToCard")}</button>
             <button className="hl-pop-act primary" onClick={onPhotoCard}><PhotoIcon />{t("photo.card")}</button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// The Translate result popover — shown in place of the toolbar once a translation is requested.
+// Three states: loading (a spinner + the source line), result (the translation + detected source),
+// error (the message). It anchors to the SAME rect the toolbar used, so the reader's eye doesn't
+// travel. A click outside / Esc dismisses it; the parent AnnotationLayer already wires those.
+function TranslatePopover({ sel, onClose }: { sel: SelectionInfo; onClose: () => void }) {
+  const { t, dir } = useI18n();
+  const [state, setState] = useState<{ k: "loading" } | { k: "ok"; text: string; src: string | null; provider: string } | { k: "err"; msg: string }>({ k: "loading" });
+  const below = sel.rect.top < 140;
+
+  useEffect(() => {
+    let alive = true;
+    translate(sel.text)
+      .then((r) => { if (alive) setState({ k: "ok", text: r.text, src: r.detected_source, provider: r.provider }); })
+      .catch((e) => { if (alive) setState({ k: "err", msg: String(e) }); });
+    return () => { alive = false; };
+  }, [sel.text]);
+
+  return (
+    <div
+      className={`tr-pop${below ? " below" : ""}`}
+      dir={dir}
+      role="dialog"
+      aria-label={t("tr.act")}
+      style={anchorStyle(sel.rect, below)}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <div className="tr-pop-head">
+        <span className="tr-pop-eye">{t("tr.act")}</span>
+        <button className="tr-pop-x" onClick={onClose} aria-label="✕">✕</button>
+      </div>
+      <div className="tr-pop-quote" dir="auto">{sel.text}</div>
+      {state.k === "loading" && (
+        <div className="tr-pop-loading"><span className="tr-pop-spin" aria-hidden /> {t("tr.loading")}</div>
+      )}
+      {state.k === "err" && (
+        <div className="tr-pop-err">{state.msg}</div>
+      )}
+      {state.k === "ok" && (
+        <>
+          <div className="tr-pop-result" dir="auto">{state.text}</div>
+          <div className="tr-pop-meta">
+            {state.src && <span>{t("tr.source", { lang: state.src })}</span>}
+            <button
+              className="tr-pop-copy"
+              onClick={() => { navigator.clipboard.writeText(state.text).catch(console.error); onClose(); }}
+            >
+              {t("tr.copy")}
+            </button>
           </div>
         </>
       )}
@@ -556,6 +627,16 @@ export function AnnotationLayer({
 }) {
   const [selection, setSelection] = useState<SelectionInfo | null>(null);
   const [active, setActive] = useState<AnnotationHit | null>(null);
+  // The selection currently being translated. When set, the TranslatePopover replaces the toolbar.
+  const [trSel, setTrSel] = useState<SelectionInfo | null>(null);
+  // Whether translation is enabled in Settings — loaded once. The toolbar button is rendered only
+  // when true, so there is no accidental path to a provider while the feature is off.
+  const [trEnabled, setTrEnabled] = useState(false);
+  useEffect(() => {
+    translatorSettingsGet()
+      .then((s) => setTrEnabled(s.enabled))
+      .catch(() => setTrEnabled(false));
+  }, []);
   const highlightByCfi = useAnnotations((s) => s.highlightByCfi);
   const noteForHighlight = useAnnotations((s) => s.noteForHighlight);
   // Subscribe to the arrays so the popover re-renders when the store mutates.
@@ -712,7 +793,7 @@ export function AnnotationLayer({
           onClose={() => setRefDialog(null)}
         />
       )}
-      {selection && (
+      {selection && !trSel && (
         <SelectionToolbar
           sel={selection}
           onColor={onPickColor}
@@ -727,8 +808,17 @@ export function AnnotationLayer({
             clearSel();
             onPhotoCard?.(s);
           }}
+          onTranslate={trEnabled ? () => {
+            const s = selection;
+            // Keep the selection rect for anchoring, but drop the live toolbar + browser selection so
+            // the popover owns the surface. trSel replaces `selection` as the rendered anchor.
+            setTrSel(s);
+            setSelection(null);
+            clearSel();
+          } : undefined}
         />
       )}
+      {trSel && <TranslatePopover sel={trSel} onClose={() => setTrSel(null)} />}
       {active && activeHi && (
         <NoteEditorModal
           hi={activeHi}

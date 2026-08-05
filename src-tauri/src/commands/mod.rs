@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::db::{self, AppState};
@@ -762,6 +762,91 @@ pub fn ref_delete(id: String, state: State<AppState>) -> Result<bool, String> {
     let conn = state.conn();
     library::ref_delete(&conn, &id).map_err(err)?;
     Ok(true)
+}
+
+// ---- Translation (Google unofficial + DeepL official) ----
+//
+// Off by default, no storage, network only from here. See `translate/mod.rs` for the privacy
+// framing. `translator_settings_get` is a convenience reader that folds the four `translator.*`
+// settings rows into one structured object so the frontend opens its panel in a single round-trip
+// instead of four. `translator_set` is the symmetric writer so one settings-save round-trip writes
+// the whole group atomically (one DB transaction).
+
+#[derive(Serialize, Deserialize)]
+pub struct TranslatorSettings {
+    pub enabled: bool,
+    /// "google" | "deepl"
+    pub provider: String,
+    /// True iff a DeepL key is stored. The KEY itself is never sent to the frontend — it lives in
+    /// Rust state, read only by `translate`, so a devtools slip or a render log can't leak it.
+    pub api_key_set: bool,
+    /// Optional explicit target override (e.g. "fr"). Empty string = auto from UI language.
+    pub target_lang: String,
+}
+
+#[tauri::command]
+pub fn translator_settings_get(state: State<AppState>) -> Result<TranslatorSettings, String> {
+    let conn = state.conn();
+    let get = |k: &str| settings::get(&conn, k).ok().flatten();
+    Ok(TranslatorSettings {
+        enabled: get("translator.enabled").as_deref() == Some("true"),
+        provider: get("translator.provider").unwrap_or_else(|| "google".to_string()),
+        api_key_set: get("translator.deepl_key").is_some(),
+        target_lang: get("translator.target_lang").unwrap_or_default(),
+    })
+}
+
+/// Persist the translator group. `deepl_key` is OPTIONAL: `None` leaves the stored key untouched
+/// (so a reader can toggle provider/target without re-entering the key each time), `Some("")`
+/// clears it, `Some(s)` overwrites. The frontend therefore sends the key only on an explicit change.
+#[tauri::command]
+pub fn translator_set(
+    enabled: bool,
+    provider: String,
+    target_lang: String,
+    deepl_key: Option<String>,
+    state: State<AppState>,
+) -> Result<bool, String> {
+    let conn = state.conn();
+    settings::set(&conn, "translator.enabled", if enabled { "true" } else { "false" }).map_err(err)?;
+    settings::set(&conn, "translator.provider", &provider).map_err(err)?;
+    settings::set(&conn, "translator.target_lang", &target_lang).map_err(err)?;
+    if let Some(k) = deepl_key {
+        settings::set(&conn, "translator.deepl_key", &k).map_err(err)?;
+    }
+    Ok(true)
+}
+
+/// Translate `text`. The provider, key and target are resolved from stored settings; the optional
+/// `target` override lets a caller translate to a specific language this once without changing the
+/// saved default. Returns a structured result; errors are stringified for the IPC boundary.
+#[tauri::command]
+pub fn translate(
+    text: String,
+    target: Option<String>,
+    state: State<AppState>,
+) -> Result<translate::TranslateResult, String> {
+    let conn = state.conn();
+    let get = |k: &str| settings::get(&conn, k).ok().flatten();
+
+    // Gate: if disabled, refuse. The frontend should never call this while off, but a stale
+    // selection or a race could; returning an error keeps the contract honest.
+    if get("translator.enabled").as_deref() != Some("true") {
+        return Err("Translation is disabled. Enable it in Settings.".to_string());
+    }
+
+    let provider_str = get("translator.provider").unwrap_or_else(|| "google".to_string());
+    let provider = translate::Provider::from_stored(&provider_str).unwrap_or(translate::Provider::Google);
+    let deepl_key = get("translator.deepl_key");
+    let stored_target = get("translator.target_lang");
+    // The UI language (`ui_lang` key) drives the auto target when no override is set anywhere.
+    let app_lang = get("ui_lang").unwrap_or_else(|| "en".to_string());
+    let target = translate::resolve_target(
+        target.as_deref().or(stored_target.as_deref()),
+        &app_lang,
+    );
+
+    translate::run(&text, provider, &target, deepl_key.as_deref())
 }
 
 #[cfg(test)]

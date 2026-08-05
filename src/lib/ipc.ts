@@ -514,3 +514,51 @@ export const refSave = (
   invoke<RefRow | null>("ref_save", { bookId, phrase, phraseFold, wordCount, note });
 
 export const refDelete = (id: string): Promise<boolean> => invoke<boolean>("ref_delete", { id });
+
+// ---- Translation (Google unofficial + DeepL official) ----
+// Off by default, no storage. See src-tauri/src/translate/mod.rs for the privacy framing.
+
+export interface TranslatorSettings {
+  enabled: boolean;
+  /** "google" | "deepl" */
+  provider: string;
+  /** True iff a DeepL key is stored. The KEY itself never crosses this seam. */
+  api_key_set: boolean;
+  /** Optional explicit target override (e.g. "fr"). Empty string = auto from UI language. */
+  target_lang: string;
+}
+
+export interface TranslateResult {
+  text: string;
+  detected_source: string | null;
+  provider: "google" | "deepl";
+}
+
+/** Read the whole translator group in one round-trip (folds four `settings` rows). */
+export const translatorSettingsGet = (): Promise<TranslatorSettings> =>
+  invoke<TranslatorSettings>("translator_settings_get");
+
+/**
+ * Persist the translator group. `deeplKey` is OPTIONAL: omit to leave the stored key untouched, pass
+ * "" to clear it, pass a string to overwrite. Sent only on an explicit change so the key is never
+ * echoed back over IPC on a routine settings save.
+ */
+export const translatorSet = (
+  enabled: boolean,
+  provider: string,
+  targetLang: string,
+  deeplKey?: string,
+): Promise<boolean> =>
+  invoke<boolean>("translator_set", {
+    enabled,
+    provider,
+    targetLang,
+    deeplKey: deeplKey ?? null,
+  });
+
+/**
+ * Translate `text`. Provider, key and target resolve from stored settings; the optional `target`
+ * overrides the saved target for this call only. Errors are localized in the popover.
+ */
+export const translate = (text: string, target?: string): Promise<TranslateResult> =>
+  invoke<TranslateResult>("translate", { text, target: target ?? null });

@@ -3192,6 +3192,50 @@ html, body, #root {
 }
 .hl-pop-act.primary:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
 
+/* ---- Translate result popover — mirrors .hl-pop's shell so the hand-off from the toolbar to the
+   result card is visually seamless. Shares the dark floating-card look, arrow, and below/above flip. */
+.tr-pop {
+  position: fixed; z-index: 30; transform: translate(-50%, -100%);
+  background: var(--text); color: var(--paper-bg);
+  border-radius: 15px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4); font-family: var(--ui-font);
+  padding: 11px 13px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 240px; max-width: 380px;
+}
+:root[data-dark="true"] .tr-pop { background: var(--chrome-bg); color: var(--text); }
+.tr-pop.below { transform: translate(-50%, 0); }
+.tr-pop::after {
+  content: ""; position: absolute; left: 50%; bottom: -7px; transform: translateX(-50%);
+  border-left: 7px solid transparent; border-right: 7px solid transparent; border-top: 8px solid var(--text);
+}
+:root[data-dark="true"] .tr-pop::after { border-top-color: var(--chrome-bg); }
+.tr-pop.below::after { bottom: auto; top: -7px; border-top: none; border-bottom: 8px solid var(--text); }
+:root[data-dark="true"] .tr-pop.below::after { border-bottom-color: var(--chrome-bg); }
+.tr-pop-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tr-pop-eye { font: 600 0.6875rem var(--ui-font); opacity: 0.7; text-transform: uppercase; letter-spacing: 0.03em; }
+.tr-pop-x { background: none; border: none; color: inherit; cursor: pointer; font-size: 0.95rem; opacity: 0.6; padding: 0 2px; }
+.tr-pop-x:hover { opacity: 1; }
+.tr-pop-quote {
+  font: 0.8125rem var(--ui-font); opacity: 0.7; line-height: 1.5;
+  border-inline-start: 2px solid rgba(255, 255, 255, 0.18); padding-inline-start: 9px; max-height: 4.8em; overflow: hidden;
+}
+:root[data-dark="true"] .tr-pop-quote { border-inline-start-color: rgba(255, 255, 255, 0.12); }
+.tr-pop-loading { display: flex; align-items: center; gap: 8px; font: 0.8125rem var(--ui-font); opacity: 0.8; padding: 4px 0; }
+.tr-pop-spin {
+  width: 14px; height: 14px; border: 2px solid rgba(255, 255, 255, 0.25); border-top-color: currentColor;
+  border-radius: 50%; animation: tr-spin 0.8s linear infinite;
+}
+:root[data-dark="true"] .tr-pop-spin { border-color: rgba(255, 255, 255, 0.18); border-top-color: currentColor; }
+@keyframes tr-spin { to { transform: rotate(360deg); } }
+.tr-pop-result { font: 500 0.95rem var(--ui-font); line-height: 1.6; }
+.tr-pop-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 2px; }
+.tr-pop-meta span { font: 0.6875rem var(--ui-font); opacity: 0.55; }
+.tr-pop-copy {
+  background: none; border: 1px solid rgba(255, 255, 255, 0.22); color: inherit; cursor: pointer;
+  border-radius: 8px; padding: 4px 11px; font: 500 0.75rem var(--ui-font); opacity: 0.85;
+}
+:root[data-dark="true"] .tr-pop-copy { border-color: rgba(255, 255, 255, 0.16); }
+.tr-pop-copy:hover { opacity: 1; }
+.tr-pop-err { font: 0.8125rem var(--ui-font); color: #e0886b; line-height: 1.5; }
+
 .hl-card { width: 284px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .hl-card .hl-dots { gap: 7px; }
 .hl-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
@@ -3508,6 +3552,18 @@ html, body, #root {
   background: color-mix(in srgb, #7b59a0 16%, var(--paper-bg)); border: 1px solid color-mix(in srgb, #7b59a0 30%, transparent);
   border-radius: 16px; padding: 6px 13px; font: 500 0.71875rem var(--ui-font); color: color-mix(in srgb, #7b59a0 75%, var(--text));
 }
+/* The translator's first-use disclosure banner — a warmer, attention-tinted sibling of .gs-banner. */
+.gs-banner-warn {
+  background: color-mix(in srgb, #b87a3e 16%, var(--paper-bg)); border: 1px solid color-mix(in srgb, #b87a3e 30%, transparent);
+  color: color-mix(in srgb, #b87a3e 78%, var(--text));
+}
+/* A plain text input for settings (API key, language code). Shares the field look of existing controls. */
+.gs-input {
+  width: 100%; box-sizing: border-box; font: 0.8125rem var(--ui-font);
+  background: var(--surface-bg); color: var(--text); border: 1px solid var(--hairline);
+  border-radius: 10px; padding: 9px 12px; outline: none;
+}
+.gs-input:focus { border-color: var(--accent); }
 .gs-slider-head { display: flex; align-items: baseline; justify-content: space-between; }
 .gs-slider-head span:first-child { font: 500 0.8125rem var(--ui-font); color: var(--text); }
 .gs-slider-val { font: 500 0.75rem var(--ui-font); color: var(--accent); }

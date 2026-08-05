@@ -12,7 +12,7 @@ import type { TKey } from "../../i18n/locales/en";
 import { getVersion } from "@tauri-apps/api/app";
 
 import { Hoopoe } from "../library/Hoopoe";
-import { settingsGet, settingsSet } from "../../lib/ipc";
+import { settingsGet, settingsSet, translatorSettingsGet, translatorSet } from "../../lib/ipc";
 import { useUpdater } from "../../lib/updater";
 import { FONT_CATALOGUE, UI_SCALE_MAX, UI_SCALE_MIN, useFonts } from "../../lib/fonts";
 // RAWY-265: the Library background surface (measured constants + the apply layer live in the module).
@@ -34,13 +34,14 @@ import { THEMES, THEME_ORDER, currentMode, useTheme, type ThemeMode } from "../.
 
 const STYLE_KEY = "reading_style";
 
-type Section = "appearance" | "fonts" | "reading" | "bookmark" | "language" | "about";
+type Section = "appearance" | "fonts" | "reading" | "bookmark" | "language" | "translate" | "about";
 const NAV: { key: Section; label: TKey; icon: string }[] = [
   { key: "appearance", label: "gs.nav.appearance", icon: "◑" },
   { key: "fonts", label: "gs.nav.fonts", icon: "A" },
   { key: "reading", label: "gs.nav.reading", icon: "▤" },
   { key: "bookmark", label: "gs.nav.bookmark", icon: "▸" },
   { key: "language", label: "gs.nav.language", icon: "⌘" },
+  { key: "translate", label: "gs.nav.translate", icon: "G" },
   { key: "about", label: "gs.nav.about", icon: "ⓘ" },
 ];
 
@@ -90,6 +91,7 @@ export function GlobalSettings({ open, onClose }: { open: boolean; onClose: () =
             {section === "reading" && <ReadingDefaultsSection />}
             {section === "bookmark" && <BookmarkSection />}
             {section === "language" && <LanguageSection />}
+            {section === "translate" && <TranslationSection />}
             {section === "about" && <AboutSection />}
           </div>
         </div>
@@ -851,6 +853,146 @@ function LanguageSection() {
         <div className="gs-note">{t("gs.languageHint")}</div>
       </div>
       <TwoLevelCard />
+    </>
+  );
+}
+
+// Selection-based translation (Google unofficial + DeepL official).
+//
+// Off by default, network-only-from-Rust, no storage — see src-tauri/src/translate/mod.rs for the
+// privacy framing. The whole group loads in one round-trip (`translatorSettingsGet`) and saves in
+// one (`translatorSet`). The DeepL key input is MASKED and sent ONLY when the reader edits it, so a
+// routine provider/target change never echoes the key back over IPC.
+function TranslationSection() {
+  const { t } = useI18n();
+  const [enabled, setEnabled] = useState(false);
+  const [provider, setProvider] = useState<"google" | "deepl">("google");
+  const [keySet, setKeySet] = useState(false);
+  const [keyInput, setKeyInput] = useState(""); // empty unless the reader is typing a new key
+  const [target, setTarget] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    translatorSettingsGet()
+      .then((s) => {
+        setEnabled(s.enabled);
+        setProvider(s.provider === "deepl" ? "deepl" : "google");
+        setKeySet(s.api_key_set);
+        setTarget(s.target_lang);
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, []);
+
+  const save = async (patch: { enabled?: boolean; provider?: "google" | "deepl"; target?: string; key?: string }) => {
+    const next = {
+      enabled: patch.enabled ?? enabled,
+      provider: patch.provider ?? provider,
+      target: patch.target ?? target,
+    };
+    setBusy(true);
+    try {
+      // `key` is passed through only when the reader actually edited it; otherwise the stored key is
+      // left untouched on the Rust side. An empty string clears it.
+      await translatorSet(next.enabled, next.provider, next.target, patch.key);
+      if (patch.enabled !== undefined) setEnabled(next.enabled);
+      if (patch.provider !== undefined) setProvider(next.provider);
+      if (patch.target !== undefined) setTarget(next.target);
+      if (patch.key !== undefined) {
+        setKeySet(patch.key.length > 0);
+        setKeyInput("");
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // The disclosure banner — shown once, before the reader enables. Stating plainly that the text
+  // leaves the machine is the whole point of opt-in; without it the toggle would be a silent consent.
+  const disclosure = !enabled;
+
+  // Wait for the single load before rendering the form so the toggle never flashes its off state.
+  if (!loaded) return null;
+
+  return (
+    <>
+      <SecHead>{t("gs.translate")}</SecHead>
+
+      {disclosure && <div className="gs-banner gs-banner-warn">⚠ {t("tr.disclosure")}</div>}
+
+      <div className="gs-sec">
+        <BgToggle
+          label={t("tr.enable")}
+          hint={t("tr.enableHint")}
+          on={enabled}
+          onToggle={() => save({ enabled: !enabled })}
+        />
+      </div>
+
+      {enabled && (
+        <>
+          <div className="gs-sec">
+            <Label>{t("tr.provider")}</Label>
+            <Seg<"google" | "deepl">
+              value={provider}
+              onPick={(p) => save({ provider: p })}
+              options={[
+                { key: "google", label: t("tr.provider.google") },
+                { key: "deepl", label: t("tr.provider.deepl") },
+              ]}
+            />
+            <div className="gs-note">{provider === "google" ? t("tr.provider.googleHint") : t("tr.provider.deeplHint")}</div>
+          </div>
+
+          {provider === "deepl" && (
+            <div className="gs-sec">
+              <Label hint={keySet ? t("tr.key.set") : undefined}>{t("tr.key")}</Label>
+              <input
+                className="gs-input"
+                type="password"
+                value={keyInput}
+                placeholder={keySet ? t("tr.key.replace") : t("tr.key.placeholder")}
+                onChange={(e) => setKeyInput(e.target.value)}
+                dir="ltr"
+              />
+              <div className="bg-ctl-row">
+                <button
+                  className="bg-ctl-act"
+                  disabled={busy || !keyInput.trim()}
+                  onClick={() => save({ key: keyInput.trim() })}
+                >
+                  {t("tr.key.save")}
+                </button>
+                {keySet && (
+                  <button
+                    className="bg-ctl-act danger"
+                    disabled={busy}
+                    onClick={() => save({ key: "" })}
+                  >
+                    {t("tr.key.clear")}
+                  </button>
+                )}
+              </div>
+              <div className="gs-note">{t("tr.key.hint")}</div>
+            </div>
+          )}
+
+          <div className="gs-sec">
+            <Label hint={t("tr.target.hint")}>{t("tr.target")}</Label>
+            <input
+              className="gs-input"
+              type="text"
+              value={target}
+              placeholder={t("tr.target.auto")}
+              onChange={(e) => setTarget(e.target.value)}
+              onBlur={() => save({ target: target.trim() })}
+              dir="ltr"
+            />
+            <div className="gs-note">{t("tr.target.note")}</div>
+          </div>
+        </>
+      )}
     </>
   );
 }

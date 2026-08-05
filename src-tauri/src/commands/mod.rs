@@ -790,7 +790,10 @@ pub fn translator_settings_get(state: State<AppState>) -> Result<TranslatorSetti
     let conn = state.conn();
     let get = |k: &str| settings::get(&conn, k).ok().flatten();
     Ok(TranslatorSettings {
-        enabled: get("translator.enabled").as_deref() == Some("true"),
+        // ON by default: a fresh install (no stored value) reports enabled=true so the toolbar
+        // button shows without a Settings visit. A reader who explicitly turned it OFF stays off —
+        // we honor an explicit "false", and only default absent→true.
+        enabled: get("translator.enabled").as_deref() != Some("false"),
         provider: get("translator.provider").unwrap_or_else(|| "google".to_string()),
         api_key_set: get("translator.deepl_key").is_some(),
         target_lang: get("translator.target_lang").unwrap_or_default(),

@@ -725,7 +725,6 @@ export const en = {
   "tr.loading": "Translating…",
   "tr.copy": "Copy",
   "tr.source": "from {lang}",
-  "tr.disclosure": "Translations are sent to the chosen provider. Sard does not store them.",
   "tr.enable": "Enable translation",
   "tr.enableHint": "Adds a Translate action to the selection toolbar.",
   "tr.provider": "Provider",

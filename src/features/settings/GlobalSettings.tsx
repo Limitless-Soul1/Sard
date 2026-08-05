@@ -908,18 +908,12 @@ function TranslationSection() {
     }
   };
 
-  // The disclosure banner — shown once, before the reader enables. Stating plainly that the text
-  // leaves the machine is the whole point of opt-in; without it the toggle would be a silent consent.
-  const disclosure = !enabled;
-
   // Wait for the single load before rendering the form so the toggle never flashes its off state.
   if (!loaded) return null;
 
   return (
     <>
       <SecHead>{t("gs.translate")}</SecHead>
-
-      {disclosure && <div className="gs-banner gs-banner-warn">⚠ {t("tr.disclosure")}</div>}
 
       <div className="gs-sec">
         <BgToggle

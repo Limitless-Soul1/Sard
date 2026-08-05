@@ -702,7 +702,6 @@ export const ar: Record<TKey, string> = {
   "tr.loading": "جارٍ الترجمة…",
   "tr.copy": "نسخ",
   "tr.source": "من {lang}",
-  "tr.disclosure": "تُرسَل الترجمة إلى المزوّد المختار. لا يخزّنها سَرد.",
   "tr.enable": "تفعيل الترجمة",
   "tr.enableHint": "يضيف إجراء ترجمة إلى شريط التحديد.",
   "tr.provider": "المزوّد",

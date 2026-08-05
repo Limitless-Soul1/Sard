@@ -3552,11 +3552,6 @@ html, body, #root {
   background: color-mix(in srgb, #7b59a0 16%, var(--paper-bg)); border: 1px solid color-mix(in srgb, #7b59a0 30%, transparent);
   border-radius: 16px; padding: 6px 13px; font: 500 0.71875rem var(--ui-font); color: color-mix(in srgb, #7b59a0 75%, var(--text));
 }
-/* The translator's first-use disclosure banner — a warmer, attention-tinted sibling of .gs-banner. */
-.gs-banner-warn {
-  background: color-mix(in srgb, #b87a3e 16%, var(--paper-bg)); border: 1px solid color-mix(in srgb, #b87a3e 30%, transparent);
-  color: color-mix(in srgb, #b87a3e 78%, var(--text));
-}
 /* A plain text input for settings (API key, language code). Shares the field look of existing controls. */
 .gs-input {
   width: 100%; box-sizing: border-box; font: 0.8125rem var(--ui-font);

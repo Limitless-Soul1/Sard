@@ -670,6 +670,7 @@ export function AnnotationLayer({
     const dismiss = () => {
       setSelection(null);
       setActive(null);
+      setTrSel(null); // also drop the Translate result popover on any outside pointerdown/Esc
       ctrlRef.current?.clearSelection();
     };
     const onKey = (e: KeyboardEvent) => {

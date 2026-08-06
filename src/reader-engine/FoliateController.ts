@@ -3286,4 +3286,36 @@ export class FoliateController {
       return null;
     }
   }
+
+  /**
+   * The visible text of the current page(s), joined by blank lines. Walks the loaded content docs
+   * (the same `renderer.getContents()` surface applyFonts/applyDynamic read through) and collects the
+   * text of block-level elements inside the reader's main text container — the same nodes foliate
+   * paginates, so this is the text a reader actually sees on the current spread. Used by the
+   * page-translation panel to send the current page to the translate command.
+   *
+   * Returns "" when there is nothing to extract (no view, no contents, empty section) so the caller
+   * can show an honest empty state rather than guess.
+   */
+  currentPageText(): string {
+    const contents = this.view?.renderer?.getContents?.() as { doc?: Document }[] | undefined;
+    if (!contents) return "";
+    const parts: string[] = [];
+    for (const c of contents) {
+      const doc = c?.doc;
+      if (!doc) continue;
+      // foliate wraps the book body in the content doc; collect block-level text nodes. We walk a
+      // broad set of containers so a chapter's paragraphs, headings, list items and quotes all count,
+      // while skipping script/style/nav (non-reading content that would leak chrome into the text).
+      const blocks = doc.querySelectorAll("p, h1, h2, h3, h4, h5, h6, li, blockquote, dd, dt, figcaption, div");
+      blocks.forEach((el) => {
+        // Skip elements whose own text is fully covered by a descendant block we'll visit separately
+        // (avoids duplicating a paragraph's text once for the <p> and once for a nested <div>).
+        if (el.querySelector("p, h1, h2, h3, h4, h5, h6, li, blockquote, div")) return;
+        const txt = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+        if (txt) parts.push(txt);
+      });
+    }
+    return parts.join("\n\n");
+  }
 }

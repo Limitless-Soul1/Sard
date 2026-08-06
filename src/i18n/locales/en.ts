@@ -743,6 +743,14 @@ export const en = {
   "tr.target.auto": "Auto (from interface language)",
   "tr.target.hint": "Two-letter code, e.g. en, ar, fr. Empty = auto.",
   "tr.target.note": "Auto translates to Arabic for an English interface and vice versa.",
+  // Full-page translation panel
+  "tr.page.title": "Translate page",
+  "tr.page.chrome": "Translate",
+  "tr.page.translate": "Translate this page",
+  "tr.page.translating": "Translating…",
+  "tr.page.idle": "Open the panel to translate the current page.",
+  "tr.page.empty": "No text found on this page.",
+  "tr.page.disabled": "Translation is disabled. Enable it in Settings.",
 } as const;
 
 export type TKey = keyof typeof en;

@@ -14,7 +14,7 @@ import {
   type ReadingStyle,
   type RevealLabels,
 } from "../../reader-engine/injectedCss";
-import { bookRegister, bookSetCoverPng, bookUpdate, progressGet, progressSave, settingsGet, settingsSet } from "../../lib/ipc";
+import { bookRegister, bookSetCoverPng, bookUpdate, progressGet, progressSave, settingsGet, settingsSet, translatorSettingsGet } from "../../lib/ipc";
 import { useI18n } from "../../i18n";
 import { extractChapterNumber, localeNum } from "../../lib/format";
 import { applyTheme, THEMES, useTheme, type ThemeId } from "../../theme";
@@ -37,6 +37,7 @@ import { PhotoBasketTray } from "./PhotoBasketTray";
 import { usePhotoBasket } from "./photoBasket";
 import { ChaptersPanel } from "./ChaptersPanel";
 import { SearchPanel } from "./SearchPanel";
+import { TranslatePanel } from "./TranslatePanel";
 import { PageBookmark } from "./PageBookmark";
 import { useAnnotations } from "./annotationsStore";
 import { useReferences } from "./referencesStore"; // RAWY-260: phrase-bound references, per book
@@ -132,9 +133,14 @@ export function Reader({
   // RAWY-89: Contents + Search share the physical-left, so only ONE is open at a time — a single
   // source of truth makes that structural (no two-setter races; the persisted-open effect can't
   // re-open Contents over a Search the user just opened). `chaptersOpen`/`searchOpen` are derived.
-  const [leftPanel, setLeftPanel] = useState<"contents" | "search" | null>(null);
+  const [leftPanel, setLeftPanel] = useState<"contents" | "search" | "translate" | null>(null);
   const chaptersOpen = leftPanel === "contents";
   const searchOpen = leftPanel === "search";
+  const translateOpen = leftPanel === "translate";
+  // Whether translation is enabled in Settings — drives the chrome button's visibility. Loaded once
+  // per book open (the AnnotationLayer tracks it too for its selection button; both are fine to hold
+  // separately since the value rarely changes and a toggle re-reads on next book open).
+  const [translateEnabled, setTranslateEnabled] = useState(false);
   const [annoOpen, setAnnoOpen] = useState(false);
   const readMarker = useReadMarkerStyle((s2) => s2.marker); // RAWY-256: global choice, applied to the panel
   const [toc, setToc] = useState<TocEntry[]>([]);
@@ -651,8 +657,8 @@ export function Reader({
   // the bar to it meant the bar never auto-hid for the owner. Contents now leaves the bar free to
   // auto-hide on idle/scroll (the panel itself stays open; it just doesn't force the bar shown).
   useEffect(
-    () => setHold(settingsOpen || annoOpen || basketOpen || searchOpen || chromeFocused),
-    [settingsOpen, annoOpen, basketOpen, searchOpen, chromeFocused, setHold],
+    () => setHold(settingsOpen || annoOpen || basketOpen || searchOpen || translateOpen || chromeFocused),
+    [settingsOpen, annoOpen, basketOpen, searchOpen, translateOpen, chromeFocused, setHold],
   );
   // RAWY-194 (C): track whether keyboard focus is inside the chrome, so Tab-into-the-toolbar reveals+pins it
   // (via the setHold above) and Tab-away releases it. `focusout.relatedTarget` is where focus is going.
@@ -753,7 +759,7 @@ export function Reader({
   // return focus on the close transition UNLESS a KEYBOARD user is focused in the TOOLBAR (Tab + :focus-visible),
   // whose place we must not steal (RAWY-194). The root-level release below already drops POINTER focus to <body>;
   // this covers keyboard/Escape closes and puts focus back IN the frame so page-turn arrows (TTS off) work too.
-  const anyPanelOpen = settingsOpen || annoOpen || basketOpen || searchOpen || chaptersOpen;
+  const anyPanelOpen = settingsOpen || annoOpen || basketOpen || searchOpen || chaptersOpen || translateOpen;
   const prevAnyPanelRef = useRef(false);
   useEffect(() => {
     if (prevAnyPanelRef.current && !anyPanelOpen) {
@@ -791,6 +797,8 @@ export function Reader({
     // RAWY-89: open Contents by default ONLY if no left panel is already open (don't clobber a Search
     // the user opened during this async read — the collision the owner saw).
     settingsGet("chapters_open").then((v) => setLeftPanel((p) => (v !== "0" && p == null ? "contents" : p)));
+    // Load the translator-enabled flag so the chrome Translate button shows/hides with Settings.
+    translatorSettingsGet().then((s) => setTranslateEnabled(s.enabled)).catch(() => setTranslateEnabled(false));
   }, [status]);
 
   // Placement model (RAWY-32 — supersedes the RAWY-30/D20 follow-direction model): reading panels
@@ -1236,7 +1244,7 @@ export function Reader({
   // visible (RAWY-42); same condition the chrome itself uses. RAWY-73: `chaptersOpen` is excluded
   // (matching the pin above) so the Contents panel being open no longer forces the bar shown — the
   // bar follows the auto-hide (chromeVisible), and the marker tracks it.
-  const chromeShown = chromeVisible || settingsOpen || annoOpen || basketOpen || searchOpen;
+  const chromeShown = chromeVisible || settingsOpen || annoOpen || basketOpen || searchOpen || translateOpen;
   // When chapter titles are hidden (anti-spoiler), the chrome shows a neutral "Chapter N" — using
   // the book's OWN chapter number, parsed straight from `chapterLabel` (already the real,
   // currently-matched TOC label — RAWY-67). A single-volume import whose real first chapter is
@@ -1503,6 +1511,8 @@ export function Reader({
   const jumpCfi = useCallback((cfi: string) => { beginJump(cfi); return ctrlRef.current?.goToLocator(cfi); }, [beginJump]);
   const closeContents = useCallback(() => setLeftPanel((p) => (p === "contents" ? null : p)), []);
   const closeSearch = useCallback(() => setLeftPanel((p) => (p === "search" ? null : p)), []);
+  const closeTranslate = useCallback(() => setLeftPanel((p) => (p === "translate" ? null : p)), []);
+  const toggleTranslate = useCallback(() => setLeftPanel((p) => (p === "translate" ? null : "translate")), []);
   // (RAWY-216 removed the two anti-spoiler toggle callbacks: the Contents panel no longer duplicates
   // those controls, so their only home is the drawer's "All books" tab, which reads useTheme directly.)
 
@@ -1534,7 +1544,7 @@ export function Reader({
   const PANEL_LEAD = 300;
   const PANEL_TRAIL = 340;
   // Contents + Search both live on the physical-left and are mutually exclusive — either shifts the desk.
-  const leftPad = chaptersOpen || searchOpen ? PANEL_LEAD : 0;
+  const leftPad = chaptersOpen || searchOpen || translateOpen ? PANEL_LEAD : 0;
   // The Notes drawer pushes the desk so the page sits beside it. The SETTINGS drawer does NOT
   // (RAWY-36): it overlays the page's edge, so the page keeps its full width and the Page-width
   // control shows its real effect live while you adjust it (pushing the desk capped the sheet to
@@ -1642,6 +1652,15 @@ export function Reader({
         />
       )}
 
+      {!isPdf && (
+        <TranslatePanel
+          open={translateOpen}
+          onClose={closeTranslate}
+          bookTitle={bookTitle}
+          ctrlRef={ctrlRef}
+        />
+      )}
+
       <AnnotationsPanel
         open={annoOpen}
         onClose={() => setAnnoOpen(false)}
@@ -1659,6 +1678,9 @@ export function Reader({
         onContents={toggleChapters}
         onSearch={toggleSearch}
         searchOpen={searchOpen}
+        onTranslate={toggleTranslate}
+        translateOpen={translateOpen}
+        translateEnabled={translateEnabled}
         onListen={startListen}
         ttsActive={ttsActive}
         onText={() => openSettings("typography")}

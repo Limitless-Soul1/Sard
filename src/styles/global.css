@@ -1962,6 +1962,27 @@ html, body, #root {
 
 /* ===== RAWY-88: in-book search panel (design: In-Book Search) ===== */
 .search-panel { inline-size: 340px; }
+
+/* ---- Page-translation panel — same shell as Search, a translate-specific body ---- */
+.translate-panel { inline-size: 340px; }
+.tp-actions { padding: 10px 16px; border-bottom: 1px solid var(--hairline); }
+.tp-run {
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+  font: 600 0.8125rem var(--ui-font); color: color-mix(in srgb, var(--accent) 60%, #fff);
+  background: color-mix(in srgb, var(--accent) 16%, transparent); border: none; border-radius: 10px;
+  padding: 8px 14px;
+}
+.tp-run:disabled { opacity: 0.55; cursor: default; }
+.tp-spin {
+  width: 13px; height: 13px; border: 2px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-top-color: currentColor; border-radius: 50%; animation: tp-rot 0.8s linear infinite;
+}
+@keyframes tp-rot { to { transform: rotate(360deg); } }
+.tp-body { padding: 14px 16px; overflow-y: auto; flex: 1; }
+.tp-empty, .tp-loading, .tp-err { font: 0.8125rem var(--ui-font); color: var(--text-soft); line-height: 1.6; }
+.tp-err { color: #b4442e; }
+.tp-src { font: 500 0.6875rem var(--ui-font); color: var(--text-soft); opacity: 0.8; margin-bottom: 8px; }
+.tp-result { font: 0.9375rem var(--ui-font); line-height: 1.75; color: var(--text); }
 /* search input */
 .sp-search-field {
   display: flex; align-items: center; gap: 8px; margin: 4px 12px 10px;

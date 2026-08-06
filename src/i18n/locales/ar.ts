@@ -720,4 +720,12 @@ export const ar: Record<TKey, string> = {
   "tr.target.auto": "تلقائي (حسب لغة الواجهة)",
   "tr.target.hint": "رمز من حرفين، مثل en أو ar أو fr. فارغ = تلقائي.",
   "tr.target.note": "يترجم تلقائيًّا إلى العربية لو الواجهة إنجليزية، والعكس.",
+  // ترجمة الصفحة كاملةً
+  "tr.page.title": "ترجمة الصفحة",
+  "tr.page.chrome": "ترجمة",
+  "tr.page.translate": "ترجمة هذه الصفحة",
+  "tr.page.translating": "جارٍ الترجمة…",
+  "tr.page.idle": "افتح اللوحة لترجمة الصفحة الحالية.",
+  "tr.page.empty": "لا يوجد نصٌّ في هذه الصفحة.",
+  "tr.page.disabled": "الترجمة معطّلة. فعّلها من الإعدادات.",
 };

@@ -22,20 +22,21 @@ pub fn translate(
     text: &str,
     target: &str,
 ) -> Result<TranslateResult, String> {
-    // POST, not GET: a full page of text is far too long for a URL query param. The endpoint
-    // accepts the SAME urlencoded params in the request body (measured: GET 400s at ~15 KB; POST
-    // returns valid translations at 100 KB+). The body is sent with `.send_empty()` — ureq 3's
-    // typestate puts `post()` in RequestBuilder<WithBody>, where the bodyless `.call()` is absent;
-    // `.send_empty()` is the explicit "no body" send and the params live in `.query()` either way.
-    // (The form params are identical whether on the URL or in the body — the endpoint reads both.)
+    // POST with the params as a form-encoded BODY — two limits avoided in one shape:
+    //  1. GET put `q` on the URL, which 400s past ~15 KB (a full page blows that).
+    //  2. POST with NO body (`.send_empty()`) 411s — Google requires a Content-Length, so the
+    //     params must live IN the body, not as `.query()` on an empty POST.
+    // `.send_form` URL-encodes the pairs and sets `Content-Type: application/x-www-form-urlencoded`,
+    // giving the request a real body + length (measured: valid translations at 100 KB+).
     let resp = agent
         .post(ENDPOINT)
-        .query("client", "gtx")
-        .query("sl", "auto")
-        .query("tl", target)
-        .query("dt", "t")
-        .query("q", text)
-        .send_empty()
+        .send_form([
+            ("client", "gtx"),
+            ("sl", "auto"),
+            ("tl", target),
+            ("dt", "t"),
+            ("q", text),
+        ])
         .map_err(|e| format!("Google request failed: {e}"))?;
 
     let body: Value = resp

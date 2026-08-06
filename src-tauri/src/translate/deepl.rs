@@ -29,14 +29,16 @@ pub fn translate(
     // DeepL's target param is uppercase (`EN`, not `en`); source auto-detection is the default when
     // no `source_lang` is supplied.
     let target_up = target.to_uppercase();
-    // ureq 3 typestate: `post()` returns `RequestBuilder<WithBody>`, where `.call()` (the bodyless
-    // GET trigger) is not available. `.send_empty()` is the explicit "POST with no body" send.
+    // Params as a form-encoded BODY (`.send_form`), not `.query()` on an empty POST: the DeepL API
+    // is a form-style endpoint, and a POST with no body would 411 the same way Google did. The
+    // Authorization header rides along on the request regardless of where the params live.
     let resp = agent
         .post(&url)
         .header("Authorization", format!("DeepL-Auth-Key {key}"))
-        .query("target_lang", target_up.as_str())
-        .query("text", text)
-        .send_empty()
+        .send_form([
+            ("target_lang", target_up.as_str()),
+            ("text", text),
+        ])
         .map_err(|e| format!("DeepL request failed: {e}"))?;
 
     #[derive(Deserialize)]

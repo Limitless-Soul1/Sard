@@ -3,10 +3,11 @@
 
 use std::path::Path;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use crate::db::{self, AppState};
+use crate::translate;
 use crate::{backgrounds, books, fonts, library, photocards, settings};
 
 #[derive(Serialize)]
@@ -762,6 +763,105 @@ pub fn ref_delete(id: String, state: State<AppState>) -> Result<bool, String> {
     let conn = state.conn();
     library::ref_delete(&conn, &id).map_err(err)?;
     Ok(true)
+}
+
+// ---- Translation (Google unofficial + DeepL official) ----
+//
+// Off by default, no storage, network only from here. See `translate/mod.rs` for the privacy
+// framing. `translator_settings_get` is a convenience reader that folds the four `translator.*`
+// settings rows into one structured object so the frontend opens its panel in a single round-trip
+// instead of four. `translator_set` is the symmetric writer so one settings-save round-trip writes
+// the whole group atomically (one DB transaction).
+
+#[derive(Serialize, Deserialize)]
+pub struct TranslatorSettings {
+    pub enabled: bool,
+    /// "google" | "deepl"
+    pub provider: String,
+    /// True iff a DeepL key is stored. The KEY itself is never sent to the frontend — it lives in
+    /// Rust state, read only by `translate`, so a devtools slip or a render log can't leak it.
+    pub api_key_set: bool,
+    /// Optional explicit target override (e.g. "fr"). Empty string = auto from UI language.
+    pub target_lang: String,
+}
+
+/// The ONE rule for whether translation is enabled. ON by default: a fresh install (no stored
+/// value) is enabled so the toolbar button shows without a Settings visit; a reader who explicitly
+/// turned it OFF stays off. Both `translator_settings_get` (what the frontend renders) and the
+/// `translate` command's gate (what actually allows a call) MUST go through here, so the button the
+/// reader sees and the refusal the reader gets can never disagree — the bug that happened when each
+/// had its own inline check (frontend defaulted absent→true, the gate defaulted absent→false).
+fn translator_enabled(conn: &rusqlite::Connection) -> bool {
+    settings::get(conn, "translator.enabled")
+        .ok()
+        .flatten()
+        .as_deref()
+        != Some("false")
+}
+
+#[tauri::command]
+pub fn translator_settings_get(state: State<AppState>) -> Result<TranslatorSettings, String> {
+    let conn = state.conn();
+    let get = |k: &str| settings::get(&conn, k).ok().flatten();
+    Ok(TranslatorSettings {
+        enabled: translator_enabled(&conn),
+        provider: get("translator.provider").unwrap_or_else(|| "google".to_string()),
+        api_key_set: get("translator.deepl_key").is_some(),
+        target_lang: get("translator.target_lang").unwrap_or_default(),
+    })
+}
+
+/// Persist the translator group. `deepl_key` is OPTIONAL: `None` leaves the stored key untouched
+/// (so a reader can toggle provider/target without re-entering the key each time), `Some("")`
+/// clears it, `Some(s)` overwrites. The frontend therefore sends the key only on an explicit change.
+#[tauri::command]
+pub fn translator_set(
+    enabled: bool,
+    provider: String,
+    target_lang: String,
+    deepl_key: Option<String>,
+    state: State<AppState>,
+) -> Result<bool, String> {
+    let conn = state.conn();
+    settings::set(&conn, "translator.enabled", if enabled { "true" } else { "false" }).map_err(err)?;
+    settings::set(&conn, "translator.provider", &provider).map_err(err)?;
+    settings::set(&conn, "translator.target_lang", &target_lang).map_err(err)?;
+    if let Some(k) = deepl_key {
+        settings::set(&conn, "translator.deepl_key", &k).map_err(err)?;
+    }
+    Ok(true)
+}
+
+/// Translate `text`. The provider, key and target are resolved from stored settings; the optional
+/// `target` override lets a caller translate to a specific language this once without changing the
+/// saved default. Returns a structured result; errors are stringified for the IPC boundary.
+#[tauri::command]
+pub fn translate(
+    text: String,
+    target: Option<String>,
+    state: State<AppState>,
+) -> Result<translate::TranslateResult, String> {
+    let conn = state.conn();
+    let get = |k: &str| settings::get(&conn, k).ok().flatten();
+
+    // Gate via the SAME rule `translator_settings_get` uses (translator_enabled), so the button the
+    // reader sees and the refusal the reader gets can never disagree.
+    if !translator_enabled(&conn) {
+        return Err("Translation is disabled. Enable it in Settings.".to_string());
+    }
+
+    let provider_str = get("translator.provider").unwrap_or_else(|| "google".to_string());
+    let provider = translate::Provider::from_stored(&provider_str).unwrap_or(translate::Provider::Google);
+    let deepl_key = get("translator.deepl_key");
+    let stored_target = get("translator.target_lang");
+    // The UI language (`ui_lang` key) drives the auto target when no override is set anywhere.
+    let app_lang = get("ui_lang").unwrap_or_else(|| "en".to_string());
+    let target = translate::resolve_target(
+        target.as_deref().or(stored_target.as_deref()),
+        &app_lang,
+    );
+
+    translate::run(&text, provider, &target, deepl_key.as_deref())
 }
 
 #[cfg(test)]

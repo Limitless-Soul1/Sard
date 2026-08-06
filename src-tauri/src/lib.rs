@@ -17,6 +17,7 @@ pub mod fonts; // register/validate custom fonts (placeholder)
 pub mod photocards; // saved photo cards: PNG store + DB rows (RAWY-52, Photo Mode part 2a)
 pub mod settings; // key/value settings persistence
 pub mod sync; // FUTURE seam: backend trait only (placeholder)
+pub mod translate; // selection-based translation (Google unofficial + DeepL official) — opt-in, no storage
 pub mod tts; // RAWY-105: bundled piper sidecar (persistent process) + on-demand voice download
 pub mod webview_chrome; // RAWY-196: strip WebView2's browser chrome + accelerators (find bar, reload, print)
 pub mod window_chrome; // RAWY-118: theme the native title bar to match the app theme (DWM, Windows)
@@ -197,6 +198,9 @@ pub fn run() {
             tts::tts_synthesize,
             tts::tts_edge_voices,
             tts::tts_stop,
+            commands::translator_settings_get,
+            commands::translator_set,
+            commands::translate,
             window_chrome::set_titlebar_theme,
         ])
         .build(tauri::generate_context!())

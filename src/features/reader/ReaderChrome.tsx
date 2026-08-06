@@ -18,6 +18,9 @@ interface Props {
   onContents: () => void;
   onSearch: () => void; // RAWY-88: in-book search (EPUB only)
   searchOpen: boolean;
+  onTranslate: () => void; // page translation panel (EPUB only)
+  translateOpen: boolean;
+  translateEnabled: boolean; // the button is hidden when translation is disabled in Settings
   onListen: () => void; // RAWY-105: read-aloud / TTS (EPUB only)
   ttsActive: boolean;
   onText: () => void;
@@ -66,6 +69,9 @@ export function ReaderChrome({
   onContents,
   onSearch,
   searchOpen,
+  onTranslate,
+  translateOpen,
+  translateEnabled,
   onListen,
   ttsActive,
   onText,
@@ -162,6 +168,21 @@ export function ReaderChrome({
                 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" /></svg>
               </span>
               <span className="rc-btn-label">{t("search.title")}</span>
+            </button>
+          )}
+          {/* Page Translate — opens the page-translation panel. EPUB-only (PDF text is unreliable,
+              same reason as Listen), and gated on the translator being enabled in Settings so a
+              reader who turned it off never sees the button. Sits beside Search for the same
+              "understand your way" grouping. */}
+          {!isPdf && translateEnabled && (
+            <button className={`rc-btn${translateOpen ? " on" : ""}`} onClick={onTranslate} title={t("tr.page.title")}>
+              <span className="rc-btn-ico">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M4 9h7M7.5 4.5c1.8 2.6 2.5 4.6 2.5 7s-.7 4.4-2.5 7M3 13c1.2 2.5 3.3 4 6 4" />
+                  <path d="M13 19l3-7 3 7M14.2 17h3.6" />
+                </svg>
+              </span>
+              <span className="rc-btn-label">{t("tr.page.chrome")}</span>
             </button>
           )}
           {/* RAWY-105: Listen (read-aloud) — EPUB-only (Arabic PDF text is unreliable, RAWY-86). */}

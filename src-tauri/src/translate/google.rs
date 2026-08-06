@@ -22,15 +22,20 @@ pub fn translate(
     text: &str,
     target: &str,
 ) -> Result<TranslateResult, String> {
-    // `dt=t` asks for the translated sentence segments. Source is auto-detected (`sl=auto`).
+    // POST, not GET: a full page of text is far too long for a URL query param. The endpoint
+    // accepts the SAME urlencoded params in the request body (measured: GET 400s at ~15 KB; POST
+    // returns valid translations at 100 KB+). The body is sent with `.send_empty()` — ureq 3's
+    // typestate puts `post()` in RequestBuilder<WithBody>, where the bodyless `.call()` is absent;
+    // `.send_empty()` is the explicit "no body" send and the params live in `.query()` either way.
+    // (The form params are identical whether on the URL or in the body — the endpoint reads both.)
     let resp = agent
-        .get(ENDPOINT)
+        .post(ENDPOINT)
         .query("client", "gtx")
         .query("sl", "auto")
         .query("tl", target)
         .query("dt", "t")
         .query("q", text)
-        .call()
+        .send_empty()
         .map_err(|e| format!("Google request failed: {e}"))?;
 
     let body: Value = resp

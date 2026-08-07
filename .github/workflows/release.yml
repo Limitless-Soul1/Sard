@@ -66,7 +66,8 @@ jobs:
       - name: Refuse to release a tree containing diagnostic components
         shell: bash
         run: |
-          # Anything on internal-lab that has not been reviewed and cleaned would show up here.
+          # Anything carried over from `develop` that has not been reviewed and cleaned shows up here.
+          # See WORKFLOW.md — this is the automated half of the pre-merge cleanup checklist.
           FOUND=$(git ls-files \
             'src/lib/diag.ts' 'src/lib/pdfDiag.ts' 'src/lib/renderDiag.ts' 'src/lib/stageLedger.ts' \
             'src-tauri/src/diag_startup.rs' 'src-tauri/tauri.diag.conf.json' 'scripts/pack-diag.mjs')

@@ -1,0 +1,199 @@
+# Sard — development workflow
+
+This is the permanent process for this repository. It exists because of a real incident, described
+at the end, and every rule here is a response to something that actually went wrong rather than a
+convention borrowed from elsewhere.
+
+Two branches, one direction of travel: work happens on `develop`, and only completed, reviewed,
+cleaned and explicitly approved work moves to `main`.
+
+---
+
+## `main` — the production branch
+
+**Rules**
+
+- Production only. This is the branch the public sees and the only branch a release is ever cut from.
+- Always buildable, always releasable. If `main` is broken, the project is broken.
+- Contains no diagnostic code, no instrumentation, no experiments, no temporary utilities and no
+  working notes.
+- Nothing lands here except by an explicitly approved merge (see [Merging into `main`](#merging-into-main)).
+- Never committed to directly. Not for a typo, not for a one-line fix, not "just this once" — the
+  exceptions are how a branch stops being trustworthy.
+
+**What being "clean" buys.** `main` is the answer to the question *"what is actually in the build our
+users are running?"* That question has to have a cheap, reliable answer. It stops having one the
+moment `main` contains anything that is not in the product.
+
+---
+
+## `develop` — the daily development branch
+
+**All implementation work happens here.** Specifically:
+
+| | |
+|---|---|
+| New features | Diagnostics and instrumentation |
+| Bug fixes | Investigation tools and harnesses |
+| Refactoring | Temporary utilities and scripts |
+| Experiments and spikes | Internal documentation and working notes |
+
+**Rules**
+
+- May contain unfinished work. That is what it is for.
+- May contain temporary tools, scratch files and notes that will never reach `main`.
+- Does not need to be releasable at any given moment.
+- **Is never released from.** CI refuses to build a release from any ref that is not on `main`.
+- Is not pushed to the public `origin` while it carries internal tooling — see
+  [A note on pushing `develop`](#a-note-on-pushing-develop).
+
+Working freely here is the point. The safety does not come from being careful on `develop`; it comes
+from the gate in front of `main`.
+
+---
+
+## Merging into `main`
+
+A merge happens only when **all five** are true:
+
+1. **The work is complete.** Not "working", not "nearly there" — finished.
+2. **Testing is finished.** Unit suite, typecheck, and the relevant harnesses have been run and pass.
+3. **The repository has been cleaned.** The checklist below has been worked through.
+4. **The owner has reviewed it.**
+5. **The owner has explicitly approved publishing.** Approval to merge and approval to release are
+   the same decision here and are given in words, not inferred from silence or from earlier approval
+   of something related.
+
+### The pre-merge cleanup checklist
+
+Work through this in order. Anything that cannot be ticked blocks the merge.
+
+- [ ] **Clean the repository.** No stray build output, no scratch directories, no half-finished files.
+- [ ] **Move reusable diagnostic tools out of the project.** Anything worth keeping — harnesses,
+      probes, packaging helpers — belongs in the external toolkit, not in the product repository. The
+      test is: *would a stranger cloning this repo to read books be confused by this file?*
+- [ ] **Remove temporary investigation files.** Probe scripts, one-off measurement harnesses,
+      captured logs, sample outputs.
+- [ ] **Remove temporary Markdown notes.** Investigation reports, checkpoints, remediation plans and
+      study documents are working artifacts. Anything with lasting value moves to the docs vault;
+      the rest goes. (This file is not one of them — `WORKFLOW.md` is permanent documentation.)
+- [ ] **Verify the release build contains no diagnostic functionality:**
+      ```
+      npm run build:release      # builds, then runs the gate
+      # or, against an existing build:
+      npm run verify:release
+      ```
+      This must print `VERIFIED: this artifact is PUBLIC RELEASE`. It reads the executable's PE
+      version resource and searches the binary and the web bundle for instrumentation markers. It is
+      not advisory — a failure means the artifact may not be packaged, uploaded or shared.
+- [ ] **Verify the repository is production-ready.** `npx tsc --noEmit`, `npm test`, and the harnesses
+      relevant to what changed. A green suite on `develop` is not evidence about the *cleaned* tree —
+      re-run after cleaning, because cleaning is itself a change.
+
+### What CI enforces on its own
+
+The checklist above is human discipline. These are the parts a machine refuses to let past, in
+`.github/workflows/release.yml`:
+
+- **Releases come from `main` only.** For a tag, the workflow resolves the tag to its commit and
+  requires `main` to actually contain it — a tag's *name* proves nothing about where it points.
+- **A tree containing diagnostic components is refused**, by path, before anything is built.
+- **The `diag` Cargo feature must not be on by default**, or every build would be a diagnostic build.
+- **The finished artifact is verified** by `scripts/verify-artifact.mjs` before it can be published.
+
+---
+
+## Build kinds
+
+There are exactly two, and they are different applications as far as Windows is concerned. Defined
+once in `scripts/build-identity.mjs`; do not reproduce these values anywhere else.
+
+| | Release | Diagnostic |
+|---|---|---|
+| Product name | `Sard` | `Sard Diagnostic` |
+| Executable | `Sard.exe` | `sard-diag.exe` |
+| Identifier | `com.sard.app` | `com.sard.diag` |
+| Version | `1.1.0` | `1.1.0-diag` |
+| Updater | public GitHub endpoint | **none** |
+| Installer | `Sard-Setup.exe` | `Sard-DIAG-<stamp>-Setup.exe` |
+
+A diagnostic build installs *beside* a release install, keeps its own profile, and cannot update
+itself or be updated. Its name says what it is after any number of copies, downloads and renames.
+
+**Switching kind requires `cargo clean -p sard`.** `generate_context!` reads the Tauri config through
+an environment variable that Cargo does not include in its fingerprint, so a cached compile will
+silently keep the previous identity. The verifier catches this, but clean first and save the round
+trip.
+
+### Rules for diagnostic builds
+
+- Never built from `main`.
+- Never released, never uploaded to GitHub Releases, never given a version that looks like a release.
+- Never shared without passing `scripts/verify-artifact.mjs --kind=diag`.
+- Shared **only** through a location used for nothing else — never a folder or link that has ever
+  held, or will ever hold, a public build.
+
+---
+
+## Sharing a build with anyone
+
+This is where the incident happened, so it gets its own rules.
+
+1. **One link, one purpose.** A location that has ever hosted a public build never hosts a diagnostic
+   one, and vice versa. Re-using a location silently changes what an old link points at.
+2. **Send the filename, not just the link.** `Sard-DIAG-20260807-Setup.exe` and `Sard-Setup.exe` are
+   different things and now look different. Say which one you mean.
+3. **When you send a new link, say the old one is dead.** A link you stop updating is not a link
+   anyone else knows to stop using.
+4. **Every package ships `BUILD-INFO.txt`.** When someone reports a problem, ask for its `BUILD ID`
+   first. It is the fastest way to find out what they are actually running, and it costs one message.
+
+Anyone can check a build by hand: right-click the executable → **Properties → Details**. `Product
+name` reads either `Sard` or `Sard Diagnostic`. This is the same field the automated verifier reads,
+so the manual check and the machine check cannot disagree.
+
+---
+
+## A note on pushing `develop`
+
+`origin` is a **public** repository. Pushing `develop` there would publish every diagnostic tool,
+harness and internal note in it — the opposite of the separation this workflow exists to create.
+
+So `develop` currently lives locally only. If it needs a backup or a second machine, it needs a
+**private** remote — a private repository added as a second remote, or a private fork. That is a
+decision to make deliberately, not a `git push` to make absent-mindedly.
+
+---
+
+## Why this exists
+
+On **2026-08-07** a public user downloaded and ran a diagnostic build of Sard.
+
+GitHub was not the source, and this was established rather than assumed: the published installer
+verified byte-for-byte against its minisign signature, GitHub Actions had run exactly once (three
+days before the diagnostic build existed), no release or asset had been created or modified since,
+the fork had no releases, and no diagnostic source had ever been committed to any branch.
+
+The build reached the user through a **stale cloud-storage link**. They had been given it before the
+public release; diagnostic builds were later uploaded to the same location; they returned to the link
+they already had and took the newest file.
+
+The confusing part — *"the last commit predates the diagnostic build by three days"* — dissolved on
+reading the share package's own `BUILD-INFO.txt`: `HEAD + 65 uncommitted path(s)`, built **from the
+working tree**. The commit history had never described what was inside the distributed binaries.
+
+The stale link was the delivery. The **defect** was that the two builds were indistinguishable once
+separated from the folder they were built into: identical filename, product name, version, identifier
+and updater endpoint. A diagnostic build therefore installed *over* a real Sard, shared its profile,
+and reported itself up to date so nothing would ever repair it. The same collision, running the other
+way, is why a tester had earlier installed the diagnostic package and got a build with no diagnostics
+in it — one root cause, two incidents.
+
+Two lessons are built into the tooling rather than written down and hoped for:
+
+- **A folder is not a property of a file.** Separation that survives only while a file stays where it
+  was made is not separation. Identity has to travel with the artifact.
+- **An absence is only evidence if you have proved you can see.** An earlier comparison of two
+  installers found no diagnostic strings in either and concluded they were the same build — Tauri had
+  compressed the assets and the search was reading nothing. `verify-artifact.mjs` now proves it can
+  read a file before it will believe anything is missing from it.

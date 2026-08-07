@@ -111,7 +111,15 @@ const FINGERPRINT_JS = `(() => {
       flow: renderer.getAttribute('flow'),
       pages: renderer.pages,
       columns: columnLefts.size,
-      paragraphs: paras.length,
+      // pTags, NOT paragraphs (PPC-3). This counts <p> ELEMENTS while the old name called them
+      // paragraphs, and that name cost a real investigation: الشوقيات reported "paras: 1" for
+      // thousands of characters and was filed as a paragraph-extraction defect. Measured on section
+      // 5 of that book - 21,076 characters, 50 <p>, 97 <div>, 701 <span>, 805 elements carrying
+      // their own text, and the reading pipeline resolving 104 blocks with 104 usable ranges. The
+      // count was right; the NAME was a claim the number could not support. css-modes.mjs was
+      // renamed for the same reason; this harness kept the misleading name until now.
+      // (No backticks in this comment: it lives inside the FINGERPRINT_JS template literal.)
+      pTags: paras.length,
     },
     // Sard's own document-level assertions — the injected direction and zoom, and foliate's columns.
     root: { direction: rootCs.direction, columnWidth: rootCs.columnWidth, columnGap: rootCs.columnGap, overflow: rootCs.overflow },

@@ -1,6 +1,6 @@
 {
   "tag": "paged-1",
-  "capturedAt": "2026-08-07T04:38:06.320Z",
+  "capturedAt": "2026-08-07T04:58:01.922Z",
   "engine": "Chrome/151.0.0.0",
   "books": {
     "arabic-normal--ad-daa-wad-dawaa.epub": {
@@ -12,7 +12,7 @@
         "flow": "paginated",
         "pages": 13,
         "columns": 9,
-        "paragraphs": 24
+        "pTags": 24
       },
       "root": {
         "direction": "rtl",
@@ -471,7 +471,7 @@
         "flow": "paginated",
         "pages": 23,
         "columns": 19,
-        "paragraphs": 40
+        "pTags": 40
       },
       "root": {
         "direction": "rtl",
@@ -1185,7 +1185,7 @@
         "flow": "paginated",
         "pages": 40,
         "columns": 10,
-        "paragraphs": 15
+        "pTags": 15
       },
       "root": {
         "direction": "rtl",
@@ -1491,7 +1491,7 @@
         "flow": "paginated",
         "pages": 16,
         "columns": 12,
-        "paragraphs": 29
+        "pTags": 29
       },
       "root": {
         "direction": "rtl",
@@ -2035,7 +2035,7 @@
         "flow": "paginated",
         "pages": 120,
         "columns": 29,
-        "paragraphs": 29
+        "pTags": 29
       },
       "root": {
         "direction": "rtl",
@@ -2579,7 +2579,7 @@
         "flow": "paginated",
         "pages": 508,
         "columns": 418,
-        "paragraphs": 1020
+        "pTags": 1020
       },
       "root": {
         "direction": "rtl",
@@ -3293,7 +3293,7 @@
         "flow": "paginated",
         "pages": 59,
         "columns": 55,
-        "paragraphs": 195
+        "pTags": 195
       },
       "root": {
         "direction": "rtl",
@@ -4007,7 +4007,7 @@
         "flow": "paginated",
         "pages": 80,
         "columns": 38,
-        "paragraphs": 42
+        "pTags": 42
       },
       "root": {
         "direction": "ltr",
@@ -4721,7 +4721,7 @@
         "flow": "paginated",
         "pages": 289,
         "columns": 168,
-        "paragraphs": 240
+        "pTags": 240
       },
       "root": {
         "direction": "ltr",
@@ -5438,7 +5438,7 @@
         "flow": "paginated",
         "pages": 123,
         "columns": 103,
-        "paragraphs": 218
+        "pTags": 218
       },
       "root": {
         "direction": "rtl",
@@ -6152,7 +6152,7 @@
         "flow": "paginated",
         "pages": 53,
         "columns": 44,
-        "paragraphs": 83
+        "pTags": 83
       },
       "root": {
         "direction": "rtl",
@@ -6866,7 +6866,7 @@
         "flow": "paginated",
         "pages": 40,
         "columns": 36,
-        "paragraphs": 62
+        "pTags": 62
       },
       "root": {
         "direction": "rtl",
@@ -7580,7 +7580,7 @@
         "flow": "paginated",
         "pages": 25,
         "columns": 0,
-        "paragraphs": 0
+        "pTags": 0
       },
       "root": {
         "direction": "rtl",

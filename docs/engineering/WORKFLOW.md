@@ -52,8 +52,8 @@ Nothing is developed directly on `main` — not a feature, not a fix, not a typo
   always to hand and always current — and it is never merged into `main`.
 - Does not need to be releasable at any given moment.
 - **Is never released from.** CI refuses to build a release from any ref that is not on `main`.
-- Is not pushed to the public `origin` while it carries internal tooling — see
-  [A note on pushing `develop`](#a-note-on-pushing-develop).
+- **Is never pushed to the public `origin`.** It lives on the private remote — see
+  [Two repositories, and why](#two-repositories-and-why).
 
 Working freely here is the point. The safety does not come from being careful on `develop`; it comes
 from the gate in front of `main`.
@@ -366,16 +366,27 @@ so the manual check and the machine check cannot disagree.
 
 ---
 
-## A note on pushing `develop`
+## Two repositories, and why
 
-`origin` is a **public** repository. Pushing `develop` there would publish every diagnostic tool,
-harness and internal note in it — the opposite of the separation this workflow exists to create.
+| Remote | Repository | Holds | Visibility |
+|---|---|---|---|
+| `origin` | `Limitless-Soul1/Sard` | `main` only — the production source tree | **PUBLIC** |
+| `private` | `Limitless-Soul1/Sard-develop` | `develop` — the engineering workspace | **PRIVATE** |
 
-So `develop` currently lives locally only. If it needs a backup or a second machine, it needs a
-**private** remote — a private repository added as a second remote, or a private fork. That is a
-decision to make deliberately, not a `git push` to make absent-mindedly.
+`develop` carries diagnostics, harnesses, investigation notes and `docs/engineering/`. One
+`git push origin develop` would publish all of it at once, so that command is made to fail rather
+than trusted not to be typed:
 
----
+- **`remote.origin.push` is pinned to `refs/heads/main:refs/heads/main`** — a bare `git push` to the
+  public remote can only ever move `main`.
+- **A `pre-push` hook refuses any ref but `main` to the public URL** — this catches the explicit
+  `git push origin develop` that overrides the pinned refspec. Verified: it refuses.
+- **`develop` tracks `private/develop`**, so `git push` and `git pull` from `develop` use the private
+  remote with no flags.
+
+The hook lives in `.git/hooks/` and is **not** version-controlled — git cannot share hooks. On a new
+clone, re-create it and re-pin the refspec before doing any work. The two GitHub-side guards
+(`main`-only releases, the development-only file check) are in CI and travel with the repository.
 
 ## Why this exists
 

@@ -91,6 +91,36 @@ choice with a real trade-off, and the trade-off is worth stating so nobody re-li
 There is no risk of drift in the meantime, because `main` is not being touched. It is exactly the
 tree v1.1.0 was built from until the day we replace it wholesale.
 
+### Cleanup is a milestone, not a habit
+
+**Until the owner declares Feature Freeze, the answer to "should we clean this up?" is NO.**
+
+While the laboratory is active, do not:
+
+- make the repository look clean,
+- move tools out to the toolbox,
+- remove investigation artifacts,
+- reorganise folders for aesthetics,
+- optimise anything for a future merge.
+
+`develop` is **allowed to be messy while it is being worked in, and that is expected, not tolerated.**
+A stray probe script, a directory of captured logs, a Markdown file that was useful for one afternoon
+— none of these are debts. They are what an active investigation looks like.
+
+The priority is always improving the product. Repository hygiene performed early is work done twice:
+once now, and again at the real cleanup, because the tree will have moved. Worse, it is work done
+*instead of* the product, and it feels productive while it is happening, which is what makes it worth
+a written rule rather than good intentions.
+
+**This applies to me as much as to you.** If I ever find myself thinking "this should probably be
+tidied first", the default is to leave it and say nothing. The one exception is a mess that is
+actively costing us — a harness that corrupts a profile, a file that breaks a build, a name collision
+that misleads a person. That is not hygiene, it is a defect, and defects are product work.
+
+Declaring **Feature Freeze** is what switches the priorities. Only then: finish the last fixes, stop
+adding features, clean the repository, move the reusable tools to the external toolbox, remove the
+temporary artifacts, review everything, merge to `main`, build and publish.
+
 ### The five conditions
 
 When that day comes, the merge happens only when **all five** are true:

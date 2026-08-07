@@ -24,7 +24,7 @@
 //     npx tauri build
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { extractBuildId, kindOf } from "./build-identity.mjs";
 
@@ -43,11 +43,32 @@ execFileSync(process.execPath,
   [join(REPO, "scripts/verify-artifact.mjs"), "--kind=beta", "--exe=src-tauri/target/release/sard.exe", "--dist=false"],
   { cwd: REPO, stdio: "inherit" });
 
-const setupSrc = existsSync(NSIS_DIR)
-  ? readdirSync(NSIS_DIR).filter((f) => f.endsWith("-setup.exe")).map((f) => join(NSIS_DIR, f))[0]
-  : null;
-if (!setupSrc) {
-  console.error(`\n  no NSIS installer in ${NSIS_DIR}\n  build WITHOUT --no-bundle so the installer is produced.\n`);
+// THE INSTALLER IS CHOSEN BY NAME AND PROVED BY TIMESTAMP — never by "the first one in the folder".
+//
+// `target/release/bundle/nsis/` accumulates EVERY installer ever built and Tauri never cleans it: at
+// the time of writing it held 0.1.0 (11 July), 0.5.0, 0.5.1, 1.0.0, 1.0.9 and 1.1.0. The first
+// version of this script took `readdirSync(...)[0]`, which is alphabetical, so it selected
+// `Sard_0.1.0_x64-setup.exe` — a build from 11 July — and packaged it as the Beta. The ZIP was
+// 22.9 MB instead of 71.2 MB, which is the only reason it was noticed.
+//
+// That is precisely the failure `pack-share.mjs` records (archiving by pattern swept 511 MB of stale
+// binaries out of sibling folders), repeated three lines below the comment quoting it. So the name is
+// now DERIVED from the config being built, and the file must be NEWER than the executable the
+// verifier just approved — which rules out a stale installer of the same version too.
+const conf = JSON.parse(readFileSync(join(REPO, "src-tauri/tauri.conf.json"), "utf8"));
+const expected = `${conf.productName}_${conf.version}_x64-setup.exe`;
+const setupSrc = join(NSIS_DIR, expected);
+if (!existsSync(setupSrc)) {
+  console.error(`\n  no installer at ${setupSrc}\n  build WITHOUT --no-bundle so the installer is produced.\n`);
+  process.exit(1);
+}
+if (statSync(setupSrc).mtimeMs < statSync(EXE).mtimeMs - 5 * 60_000) {
+  console.error(
+    `\n  ${expected} is OLDER than the executable that was just verified.\n` +
+    `    installer  ${new Date(statSync(setupSrc).mtimeMs).toISOString()}\n` +
+    `    executable ${new Date(statSync(EXE).mtimeMs).toISOString()}\n` +
+    `  It is a leftover from an earlier build. Re-run the bundle step.\n`,
+  );
   process.exit(1);
 }
 

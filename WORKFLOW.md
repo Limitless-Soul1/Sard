@@ -290,8 +290,8 @@ once in `scripts/build-identity.mjs`; do not reproduce these values anywhere els
 | Executable | `Sard.exe` | `Sard.exe` | `sard-diag.exe` |
 | Identifier | `com.sard.app` | `com.sard.app` | `com.sard.diag` |
 | Version | `1.1.0` | `1.1.0` — the REAL version | `1.1.0-diag` |
-| Window title | `Sard` | **`Sard — BETA`** | `Sard DIAGNOSTIC — not for release` |
-| About panel | version | **version · BETA + build id** | version |
+| Window title |  |  — identical |  |
+| About panel | version | **version · Beta Build · BUILD ID** | version |
 | BUILD ID | `REL-…` | **`BETA-…`** | `DIAG-…` |
 | Updater | public endpoint | public endpoint | **none** |
 | Distribution | **GitHub Releases** | **private — handed to testers** | private |
@@ -301,14 +301,16 @@ once in `scripts/build-identity.mjs`; do not reproduce these values anywhere els
 2026-08-07). Same name, executable and identifier, so it REPLACES a tester Sard and they keep reading
 their own library, which is the only way to get feedback about what we actually ship.
 
-⚠ **A Beta carries the product REAL version — no pre-release suffix.** Betas are private builds handed
-to a few testers directly; they are never published to GitHub Releases and are not part of the
-official release channel, so they must not be dressed as pre-releases of it. An earlier attempt set
-`1.2.0-beta.N` to satisfy the updater semver ordering — designing the product version number around a
-channel the artifact never enters. **GitHub Releases carry official production versions only.**
+⚠ **A Beta is byte-comparable to a release apart from its BUILD ID.** Same version, same window
+title, same product name — a tester must experience EXACTLY the application they will eventually
+receive, so nothing on the everyday surface may differ. Betas are private builds handed to a few
+testers directly; they are never published to GitHub Releases, which carry official production
+versions only.
 
-A Beta is identified by everything EXCEPT its version, and two Betas are told apart by their BUILD ID
-(UTC stamp + commit), so no manual version bump is ever needed.
+**The About panel is the one place a Beta admits what it is**, showing  and the BUILD ID.
+Two Betas are told apart by that id (UTC stamp + commit), so no version bump is ever needed. Two
+earlier attempts were reverted for the same reason — a  version, then a  window
+title — because each changed the thing under test.
 
 A diagnostic build installs *beside* a release install, keeps its own profile, and cannot update
 itself or be updated. Its name says what it is after any number of copies, downloads and renames.

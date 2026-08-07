@@ -321,7 +321,7 @@ export const THEMES: Record<ThemeId, Theme> = {
   },
 
   // ---- RAWY-145: Moonlit Sky — Phase 1 (COLOUR TOKENS only; Phase 2 adds the decorative SVG layer:
-  // crescent/stars/clouds/glow). A gold-on-night theme from the Claude Design handoff
+  // crescent/stars/clouds/glow). A gold-on-night theme from the design handoff
   // (docs/design/Moonlit Sky Library and Reader (standalone).html). Its richer token block (bg-app/base,
   // surface primary/secondary/elevated/chrome/input/glass, text primary/secondary/muted/faint, gold
   // accent ×3, borders ×4, gradients, shadow/glow) MAPS onto Sard's compact schema — no new machinery,

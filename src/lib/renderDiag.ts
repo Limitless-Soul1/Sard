@@ -404,11 +404,56 @@ function inspectDocument(doc: Document, index: number): DocShot {
 }
 
 /** Every section document reachable right now: the renderer's, plus any same-origin iframe. */
-function liveDocs(): { doc: Document; where: string }[] {
-  const out: { doc: Document; where: string }[] = [];
+/**
+ * IS A BOOK ACTUALLY ON SCREEN RIGHT NOW?
+ *
+ * The autopsy used to assume the answer was always yes, because it was written for a tester staring
+ * at a black page. It is not always yes: the export button and Ctrl+Shift+D work everywhere, and a
+ * tester who exports from the LIBRARY produced a report claiming a rendering failure that had not
+ * happened — stated at confidence MEASURED, which is the highest thing this instrument can say.
+ *
+ * Answered from the LIVE document rather than from anything we recorded, because what we recorded is
+ * exactly what goes stale.
+ */
+function readingContext(): { open: boolean; why: string } {
+  try {
+    const view = document.querySelector(".page-host foliate-view") as { book?: unknown } | null;
+    if (!view) return { open: false, why: "no <foliate-view> is in the document — the reader is not on screen" };
+    if (!view.book) return { open: false, why: "a <foliate-view> exists but has no book loaded" };
+    return { open: true, why: "a book is open in the reader" };
+  } catch (e) {
+    return { open: false, why: `could not determine the reading context: ${(e as Error).message}` };
+  }
+}
+
+/**
+ * `attached` is the difference between "the section the reader is looking at" and "a section from a
+ * book they closed ten minutes ago". `surface` and `lastDoc` are deliberately never cleared — a
+ * tester who exports after a failure may have nothing else left — but a detached document must never
+ * be allowed to stand in for the live one, which is what produced verdicts about the wrong book.
+ */
+function liveDocs(): { doc: Document; where: string; attached: boolean }[] {
+  const out: { doc: Document; where: string; attached: boolean }[] = [];
   const seen = new Set<Document>();
+  const isAttached = (d: Document): boolean => {
+    try {
+      const fr = d.defaultView?.frameElement as Element | null | undefined;
+      // `isConnected` and NOTHING ELSE. The first version also required `document.contains(fr)`, and
+      // that is wrong here in a way that inverted the whole result: foliate renders each section into
+      // an iframe inside a CLOSED shadow root, and `Node.contains` does not cross shadow boundaries,
+      // so a perfectly live section came back false. Measured — with a book open and visibly
+      // rendering, the report announced "NO SECTION DOCUMENT IS ON SCREEN", which is a worse false
+      // verdict than the one this whole change set out to remove.
+      //
+      // `isConnected` is shadow-aware by specification: it is true when the node is connected to a
+      // document OR to a shadow root whose host is itself connected. That is exactly the question.
+      //
+      // No frame element at all means we cannot place it on screen, so it does not get to be "live".
+      return !!fr && fr.isConnected;
+    } catch { return false; }
+  };
   const add = (d: Document | null | undefined, where: string) => {
-    if (d && !seen.has(d)) { seen.add(d); out.push({ doc: d, where }); }
+    if (d && !seen.has(d)) { seen.add(d); out.push({ doc: d, where, attached: isAttached(d) }); }
   };
   try {
     const roots: ParentNode[] = [document];
@@ -427,6 +472,8 @@ function liveDocs(): { doc: Document; where: string }[] {
 }
 
 export interface BlackScreenReport {
+  /** Whether a book was actually on screen when the report was taken — see readingContext(). */
+  readingContext: string;
   verdict: string;
   confidence: "MEASURED" | "DERIVED" | "UNKNOWN";
   hostBg: string;
@@ -448,11 +495,17 @@ export interface BlackScreenReport {
  */
 export function autopsy(): BlackScreenReport {
   const out: BlackScreenReport = {
-    verdict: "UNKNOWN", confidence: "UNKNOWN", hostBg: "(unknown)", surfaceRect: null, topmostOverReadingArea: "(not measured)", displayedDoc: "(not determined)",
+    verdict: "UNKNOWN", confidence: "UNKNOWN", readingContext: "(not determined)", hostBg: "(unknown)", surfaceRect: null, topmostOverReadingArea: "(not measured)", displayedDoc: "(not determined)",
     overlays: [], docs: [], resourceErrors: [...resourceErrors], themeChanges: [...themeChanges], error: null,
   };
   try {
-    const host = surface ?? document.querySelector<HTMLElement>(".page-host") ?? document.body;
+    const ctx = readingContext();
+    out.readingContext = ctx.why;
+    // The host falls back to `document.body` when there is no reading area, and everything measured
+    // from it then describes the LIBRARY: its background reported as "hostBg", its cards hit-tested
+    // as "topmost over the reading area", its chrome listed as overlays. All true of the library and
+    // all meaningless as evidence about rendering, so it is not measured at all when no book is open.
+    const host = ctx.open ? (surface ?? document.querySelector<HTMLElement>(".page-host") ?? document.body) : null;
     if (host) {
       const r = host.getBoundingClientRect();
       out.surfaceRect = { w: Math.round(r.width), h: Math.round(r.height) };
@@ -490,11 +543,15 @@ export function autopsy(): BlackScreenReport {
     }
 
     const docRefs: Document[] = [];
-    for (const { doc, where } of liveDocs()) {
+    const attachedByIndex: boolean[] = [];
+    for (const { doc, where, attached } of liveDocs()) {
       try {
         docRefs.push(doc);
+        attachedByIndex.push(attached);
         const shot = inspectDocument(doc, out.docs.length);
-        shot.url = `${shot.url}  [${where}]`;
+        // Said in the URL line, where nobody reading the report can miss it. A detached section is
+        // not evidence about the screen; it is evidence about the past.
+        shot.url = `${shot.url}  [${where}${attached ? "" : " — DETACHED, no longer on screen"}]`;
         out.docs.push(shot);
       } catch (e) {
         out.docs.push({ ...({} as DocShot), problem: `inspecting this document threw: ${(e as Error).message}`, ok: false, samples: [], sheets: [], sardSheets: [] });
@@ -520,14 +577,40 @@ export function autopsy(): BlackScreenReport {
       const h = Math.max(0, Math.min(fr.bottom, hostRect.bottom) - Math.max(fr.top, hostRect.top));
       return w * h;
     };
-    const ranked = [...out.docs].sort((a, b) => visibleArea(b) - visibleArea(a));
-    const d = visibleArea(ranked[0]) > 0 ? ranked[0] : out.docs[0];
-    out.displayedDoc = d ? `#${d.index} (visible area ${Math.round(visibleArea(d))} px²of ${out.docs.length} document(s))` : "none";
+    // Only an ATTACHED document can be the one on screen. A detached one ranks last however large its
+    // remembered geometry was, so a closed book can never be adopted as the displayed section.
+    const attachedOf = (shot: DocShot): boolean => attachedByIndex[out.docs.indexOf(shot)] ?? false;
+    const ranked = [...out.docs].sort((a, b) => {
+      if (attachedOf(a) !== attachedOf(b)) return attachedOf(a) ? -1 : 1;
+      return visibleArea(b) - visibleArea(a);
+    });
+    const liveRanked = ranked.filter(attachedOf);
+    const d = liveRanked.length ? liveRanked[0] : null;
+    out.displayedDoc = d
+      ? `#${d.index} (visible area ${Math.round(visibleArea(d))} px² of ${out.docs.length} document(s))`
+      : out.docs.length
+        ? `none on screen — all ${out.docs.length} document(s) found are detached`
+        : "none";
 
     // ORDERED verdict: the earliest failure in the pipeline is the one that explains the screen.
     // Each branch names the measurement it rests on, so the reasoning can be checked, not trusted.
-    if (out.docs.length === 0) {
-      out.verdict = "NO SECTION DOCUMENT EXISTS — nothing was ever rendered into the reading area. The blackness is an empty surface, not hidden text.";
+    //
+    // THE FIRST QUESTION IS WHETHER THERE IS A SCREEN TO EXPLAIN.
+    //
+    // A report exported from the library used to reach the "NO SECTION DOCUMENT EXISTS — nothing was
+    // ever rendered" branch and assert a rendering failure, at confidence MEASURED, when the only
+    // thing that had happened was that the tester was not reading a book. Worse, `surface` and
+    // `lastDoc` are never cleared, so the previous book's section was usually still reachable and the
+    // autopsy would deliver a confident verdict about a book that had not been on screen for
+    // minutes. A diagnostic that invents failures is worse than no diagnostic: it costs the next
+    // investigation its time and its trust.
+    if (!ctx.open) {
+      out.verdict = `NOT APPLICABLE — no book was open when this report was taken (${ctx.why}). This section makes NO claim about rendering. If you were investigating a black page, please reproduce it and export while the black page is still on screen.`;
+      out.confidence = "MEASURED";
+    } else if (!d) {
+      out.verdict = out.docs.length
+        ? `NO SECTION DOCUMENT IS ON SCREEN — a book is open, but all ${out.docs.length} document(s) found are detached from the page. The reading area is empty because nothing is currently attached to it, not because text is hidden.`
+        : "NO SECTION DOCUMENT EXISTS — a book is open but nothing was ever rendered into the reading area. The blackness is an empty surface, not hidden text.";
       out.confidence = "MEASURED";
     } else if (d && !d.hasBody) {
       out.verdict = `THE SECTION DOCUMENT HAS NO <body>. The HTML arrived but did not parse into a usable document${d.parserError ? ` (parser error: ${d.parserError.slice(0, 120)})` : ""}. There is nothing to paint, so the page shows the empty background. This is what a malformed XHTML section (for example a missing xmlns) produces.`;
@@ -580,17 +663,30 @@ export function renderBlackScreenText(a: BlackScreenReport): string {
   L.push("Measured against the LIVE screen at the moment the report was exported, so if the");
   L.push("page was black when these keys were pressed, this describes that exact state.");
   L.push("");
+  // Stated BEFORE the verdict, because it decides whether the verdict means anything at all. A report
+  // exported from the library used to open with a confident rendering failure; now it opens by saying
+  // there was nothing to render.
+  L.push("READING CONTEXT AT EXPORT TIME");
+  L.push(`  ${a.readingContext}`);
+  L.push("");
   L.push("WHY THE PAGE LOOKS THE WAY IT DOES");
   L.push(`  [${a.confidence}] ${a.verdict}`);
   if (a.error) L.push(`  autopsy error: ${a.error}`);
   L.push("");
+  // The surface block is measured from the reading area. With no book open there is no reading area,
+  // and everything here would describe the library instead — true, and worthless as evidence about
+  // rendering. Say so rather than printing numbers that invite the wrong conclusion.
   L.push("READING SURFACE");
-  L.push(`  host background      ${a.hostBg}`);
-  L.push(`  host size            ${a.surfaceRect ? `${a.surfaceRect.w} x ${a.surfaceRect.h}` : "UNKNOWN"}`);
-  L.push(`  topmost element at its centre: <${a.topmostOverReadingArea}>`);
-  L.push(`  large opaque overlays covering it: ${a.overlays.length}   (ancestors of the reading area are excluded — they paint BEHIND it)`);
-  for (const o of a.overlays) {
-    L.push(`    <${o.tag} class="${o.cls}">  bg ${o.bg}  opacity ${o.opacity}  z-index ${o.z}  ${o.rect.w} x ${o.rect.h}`);
+  if (!a.surfaceRect && /^NOT APPLICABLE/.test(a.verdict)) {
+    L.push("  not measured — there was no reading area on screen to measure.");
+  } else {
+    L.push(`  host background      ${a.hostBg}`);
+    L.push(`  host size            ${a.surfaceRect ? `${a.surfaceRect.w} x ${a.surfaceRect.h}` : "UNKNOWN"}`);
+    L.push(`  topmost element at its centre: <${a.topmostOverReadingArea}>`);
+    L.push(`  large opaque overlays covering it: ${a.overlays.length}   (ancestors of the reading area are excluded — they paint BEHIND it)`);
+    for (const o of a.overlays) {
+      L.push(`    <${o.tag} class="${o.cls}">  bg ${o.bg}  opacity ${o.opacity}  z-index ${o.z}  ${o.rect.w} x ${o.rect.h}`);
+    }
   }
   L.push("");
   L.push(`SECTION DOCUMENTS FOUND: ${a.docs.length}`);

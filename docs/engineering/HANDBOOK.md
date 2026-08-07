@@ -171,7 +171,28 @@ technical correctness — the owner decides product and UX.
 
 ---
 
-## 9 · Builds and packaging
+## 9 · Project neutrality
+
+**Nothing in this project references development tooling or assistants.** Permanent rule, no
+exceptions without the owner asking.
+
+Applies to: commit messages · source comments · documentation · Markdown · branch names · tags ·
+release notes · scripts · build metadata · TODOs · every other artifact.
+
+- **Housekeeping commits use .** Neutral, professional, and revealing
+  nothing about internal process.
+- **Commit messages describe the change, not how it was produced.** No co-author or generator
+  trailers — hosting platforms parse those into the contributor list, so they change who the
+  project appears to be written by.
+- **Enforced by a  hook** that strips such trailers and REFUSES a message naming a
+  vendor or assistant. It is in  and is not version-controlled — re-create it on a
+  fresh clone.
+
+Wording that is already in published history is left alone; rewriting public history costs every
+clone and every tag. The rule is forward-looking.
+
+---
+## 10 · Builds and packaging
 
 Mechanics in `WORKFLOW.md` (same folder). The principles:
 
@@ -187,7 +208,7 @@ Mechanics in `WORKFLOW.md` (same folder). The principles:
 
 ---
 
-## 10 · Regression prevention
+## 11 · Regression prevention
 
 - **A net that has never caught anything is unproven.** Test it by breaking what it guards.
 - **A net that measures one mode measures one mode.** A baseline capturing only scrolled rendering
@@ -199,7 +220,7 @@ Mechanics in `WORKFLOW.md` (same folder). The principles:
 
 ---
 
-## 11 · Mistakes
+## 12 · Mistakes
 
 - **Record near-misses where they happened**, in the code: what it was, why it looked right, what
   caught it.
@@ -220,7 +241,7 @@ Mechanics in `WORKFLOW.md` (same folder). The principles:
 
 ---
 
-## 12 · Working rhythm
+## 13 · Working rhythm
 
 **Feature work** — understand the requirement (and what it is not) → check architectural fit →
 approval if product/UI/UX changes (§6) → smallest correct implementation → measure before and after
@@ -233,7 +254,7 @@ something: that is a defect, and defects are product work. Cadence and checklist
 
 ---
 
-## 13 · Maintaining this handbook
+## 14 · Maintaining this handbook
 
 **It is a living document, and it is kept short.**
 

@@ -1,11 +1,21 @@
-// PPC-4 — the panel's CONTENT must mirror; its BOX must not move.
+// THE SETTINGS DRAWER STAYS LTR — a DELIBERATE design decision, guarded so it is not "fixed" again.
 //
-// RAWY-32 pins the settings drawer to the physical right edge with `right`/`translateX` rather than
-// logical insets, precisely so the UI language cannot move it. That is what makes carrying `dir` on
-// the aside safe — but "the CSS says so" is not a measurement, and the whole reason PPC-4 was filed
-// as risky is that a direction change was assumed to disturb drawer placement (RAWY-89).
+// This file began as the verification for PPC-4, which changed the drawer to follow the UI language.
+// The owner reverted that on 2026-08-07: the LTR slider layout is intentional and is to remain. So
+// the harness now asserts the OPPOSITE of what it originally did, and that inversion is the point.
 //
-// So: assert the box is where it was, and the content flows the other way.
+// WHY THIS FILE STILL EXISTS. PPC-4 was filed as a bug precisely because the intent was written down
+// nowhere: the drawer is the only reader panel without `dir`, which reads like an oversight next to
+// Contents, Notes and the photo tray, all of which carry it. Anyone auditing RTL completeness finds
+// it again and files it again — I did. A comment can be missed; a failing check cannot. This is the
+// record that the asymmetry is a decision.
+//
+// It is NOT a claim that mirroring would be wrong. It is a claim that the current behaviour is
+// chosen, and that changing it is a product decision for the owner rather than a defect fix.
+//
+// Still measured here, unchanged from the PPC-4 work because they are worth keeping either way:
+// the drawer's physical placement (RAWY-32 pins it right, direction-independent) and RAWY-89's
+// LTR pin on `.reader-root`.
 import { execFileSync } from "node:child_process";
 import { launchSard } from "file:///M:/eRawy/tests/harness/cdp.mjs";
 import { snapshotDb, restoreDb } from "file:///M:/eRawy/tests/harness/profile.mjs";
@@ -49,7 +59,10 @@ try {
   if (sp) {
     ok("its right edge is the viewport's right edge (unmoved by direction)", Math.abs(sp.right - sp.vw) <= 1,
        `right=${sp.right} vs viewport ${sp.vw}`);
-    ok("its content direction is now RTL (the PPC-4 fix)", sp.dir === "rtl", `direction=${sp.dir}`);
+    ok("its content direction is LTR — the intended, deliberate behaviour", sp.dir === "ltr",
+       `direction=${sp.dir}. If this now reads "rtl", the settings drawer has been made to follow the UI ` +
+       `language. That was tried (PPC-4) and REVERTED by the owner on 2026-08-07: it is a product ` +
+       `decision, not a defect fix. Do not re-apply it without asking.`);
   }
 
   console.log("\n2. RAWY-89's pin is untouched");
@@ -78,8 +91,9 @@ try {
     const caps = [...row.querySelectorAll('.rs-slider-cap')].map(c => ({ t: (c.textContent||'').trim(), x: c.getBoundingClientRect().left }));
     return JSON.stringify(caps); })()`));
   if (capOrder.length >= 2) {
-    // In RTL the FIRST cap (the small "A") must sit further RIGHT than the second.
-    ok("the leading (small) cap sits on the right, as Arabic reads", capOrder[0].x > capOrder[1].x,
+    // The intended layout: small `A` on the LEFT, large on the right, regardless of UI language.
+    ok("the small cap sits on the LEFT — the intended layout, unchanged by the UI language",
+       capOrder[0].x < capOrder[1].x,
        `small at x=${Math.round(capOrder[0].x)}, large at x=${Math.round(capOrder[1].x)}`);
   } else {
     console.log(`   NOTE: only ${capOrder.length} cap(s) on the size row — order not asserted`);

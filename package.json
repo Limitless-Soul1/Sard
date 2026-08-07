@@ -27,11 +27,11 @@
     "harness:ro-resize": "node tests/harness/ro-resize.mjs",
     "harness:autopsy": "node tests/harness/autopsy-context.mjs",
     "harness:ledger": "node tests/harness/ledger-freshness.mjs",
-    "harness:rtl": "node tests/harness/rtl-panel.mjs",
     "harness:ppc1": "node tests/harness/ppc1-inline-css.mjs",
     "harness:fingerprint:paged": "node tests/harness/byte-identity.mjs compare --tag=paged-1 --flow=paged",
     "harness:ppc3": "node tests/harness/ppc3-shawqiyyat.mjs",
-    "harness:fingerprint:all": "npm run harness:fingerprint && npm run harness:fingerprint:paged"
+    "harness:fingerprint:all": "npm run harness:fingerprint && npm run harness:fingerprint:paged",
+    "harness:panel-ltr": "node tests/harness/rtl-panel.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

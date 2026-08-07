@@ -42,6 +42,8 @@ moment `main` contains anything that is not in the product.
 
 - May contain unfinished work. That is what it is for.
 - May contain temporary tools, scratch files and notes that will never reach `main`.
+- **Holds `WORKFLOW.md` permanently.** This document lives here, on the branch we work on, so it is
+  always to hand and always current — and it is never merged into `main`.
 - Does not need to be releasable at any given moment.
 - **Is never released from.** CI refuses to build a release from any ref that is not on `main`.
 - Is not pushed to the public `origin` while it carries internal tooling — see
@@ -74,9 +76,15 @@ Work through this in order. Anything that cannot be ticked blocks the merge.
       test is: *would a stranger cloning this repo to read books be confused by this file?*
 - [ ] **Remove temporary investigation files.** Probe scripts, one-off measurement harnesses,
       captured logs, sample outputs.
-- [ ] **Remove temporary Markdown notes.** Investigation reports, checkpoints, remediation plans and
-      study documents are working artifacts. Anything with lasting value moves to the docs vault;
-      the rest goes. (This file is not one of them — `WORKFLOW.md` is permanent documentation.)
+- [ ] **Remove development-only documentation.** Investigation reports, checkpoints, remediation
+      plans, study documents, diagnostic guides — and **this file**. Anything with lasting value moves
+      to the docs vault or stays on `develop`; none of it goes to `main`. See
+      [What never crosses into `main`](#what-never-crosses-into-main).
+- [ ] **Run the production-tree check**, which decides the two items above for you:
+      ```
+      node scripts/check-production-tree.mjs
+      ```
+      It must print `This tree is fit for main.` It is the same check CI runs before a release.
 - [ ] **Verify the release build contains no diagnostic functionality:**
       ```
       npm run build:release      # builds, then runs the gate
@@ -90,6 +98,42 @@ Work through this in order. Anything that cannot be ticked blocks the merge.
       relevant to what changed. A green suite on `develop` is not evidence about the *cleaned* tree —
       re-run after cleaning, because cleaning is itself a change.
 
+### What never crosses into `main`
+
+`develop` is the laboratory. `main` is the product users receive. These stay behind, permanently:
+
+| | |
+|---|---|
+| **`WORKFLOW.md` — this document** | Internal documentation of any kind |
+| Investigation reports and studies | Checkpoints and status notes |
+| Diagnostic instrumentation | Diagnostic guides and tester instructions |
+| Investigation harnesses | Packaging utilities for non-release builds |
+| Temporary utilities and scratch tooling | Any development-only asset that is not part of the released application |
+
+**`WORKFLOW.md` lives on `develop` and is never merged into `main`.** It is a working document for
+the two of us, kept on the branch we work on so it is always at hand and always current. Production
+carries only what belongs in the released project, and internal process documentation is not that.
+
+The rule is executable, in `scripts/check-production-tree.mjs`, so it cannot quietly rot into a
+suggestion. It lists every excluded path **with the reason it is excluded**, because an exclusion
+whose reason is lost is one that eventually gets overridden by someone acting in good faith.
+
+**It draws one distinction carefully, and that distinction matters more than the list.** "Mentions
+diagnostics" is not "is diagnostics":
+
+| Stays on `main` — production | Never reaches `main` — development |
+|---|---|
+| `src/lib/diagOff.ts` — the no-op stub a release build compiles **against**; remove it and the release build fails to resolve its imports | `src/lib/diag.ts`, `pdfDiag.ts`, `renderDiag.ts`, `stageLedger.ts` — the instrumentation itself |
+| `scripts/verify-artifact.mjs`, `scripts/build-identity.mjs` — CI runs these against every published artifact; they are what **proves** there is no instrumentation | `src-tauri/src/diag_startup.rs`, `src-tauri/tauri.diag.conf.json` — the diagnostic build's code and identity |
+
+A rule that deletes the safety equipment along with the hazard is not a safety rule.
+
+**One open question for the first real merge:** `tests/harness/` is excluded (investigation harnesses;
+the reusable ones belong in the external toolkit), but `main` currently carries **no tests at all** —
+not the unit suite either. That matches the exclusion as written and matches `main` today, so nothing
+changes by default. Whether a public repository should ship its unit tests is a product decision, not
+a cleanup decision, and it is yours to make when the first merge comes.
+
 ### What CI enforces on its own
 
 The checklist above is human discipline. These are the parts a machine refuses to let past, in
@@ -97,7 +141,9 @@ The checklist above is human discipline. These are the parts a machine refuses t
 
 - **Releases come from `main` only.** For a tag, the workflow resolves the tag to its commit and
   requires `main` to actually contain it — a tag's *name* proves nothing about where it points.
-- **A tree containing diagnostic components is refused**, by path, before anything is built.
+- **A tree containing development-only files is refused** before anything is built — the same
+  `scripts/check-production-tree.mjs` run listed in the checklist, so the pre-merge check and the
+  pre-release check cannot drift apart.
 - **The `diag` Cargo feature must not be on by default**, or every build would be a diagnostic build.
 - **The finished artifact is verified** by `scripts/verify-artifact.mjs` before it can be published.
 

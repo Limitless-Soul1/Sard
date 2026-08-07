@@ -63,31 +63,35 @@ jobs:
             exit 1
           fi
 
-      - name: Refuse to release a tree containing diagnostic components
+      - name: Refuse to release with the diag feature on by default
         shell: bash
         run: |
-          # Anything carried over from `develop` that has not been reviewed and cleaned shows up here.
-          # See WORKFLOW.md — this is the automated half of the pre-merge cleanup checklist.
-          FOUND=$(git ls-files \
-            'src/lib/diag.ts' 'src/lib/pdfDiag.ts' 'src/lib/renderDiag.ts' 'src/lib/stageLedger.ts' \
-            'src-tauri/src/diag_startup.rs' 'src-tauri/tauri.diag.conf.json' 'scripts/pack-diag.mjs')
-          if [ -n "$FOUND" ]; then
-            echo "::error::the release tree contains diagnostic components:"
-            echo "$FOUND" | sed 's/^/::error::  /'
-            exit 1
-          fi
-          # The `diag` Cargo feature must not be on by default, or every build is a diagnostic build.
+          # If `diag` were a default feature, EVERY build would be a diagnostic build — including this
+          # one. Checked here, in pure shell, so it fails in seconds alongside the branch check.
           if grep -qE '^\s*default\s*=\s*\[[^]]*"diag"' src-tauri/Cargo.toml; then
             echo "::error::the 'diag' Cargo feature is enabled by default in src-tauri/Cargo.toml."
             exit 1
           fi
-          echo "tree is clean of diagnostic components"
+          echo "the diag feature is off by default"
 
       - name: Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
+
+      # Placed AFTER the Node step on purpose: it is a Node script, and depending on whatever version
+      # the runner image happens to preinstall is how a guard starts behaving differently from the one
+      # that runs on a developer's machine.
+      - name: Refuse to release a tree containing development-only files
+        shell: bash
+        run: |
+          # Anything carried over from `develop` that has not been reviewed and cleaned shows up here:
+          # diagnostic instrumentation, investigation reports, internal notes, WORKFLOW.md, packaging
+          # utilities and harnesses. The rule lives in scripts/check-production-tree.mjs rather than
+          # being spelled out again here, so the check CI runs and the check run before a merge are
+          # the same check — two copies of a rule is one rule and one stale copy.
+          node scripts/check-production-tree.mjs
 
       - name: Rust
         uses: dtolnay/rust-toolchain@stable

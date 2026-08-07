@@ -13,6 +13,23 @@
 //   node tests/harness/byte-identity.mjs compare            # re-measure + diff (exit 1 on drift)
 //   node tests/harness/byte-identity.mjs baseline --tag=pre-wp4
 //
+// THE TWO OFFICIAL BASELINES (adopted 2026-08-07, PPC-5). Both are current: captured under the
+// owner's present reading settings and with the corrected `pTags` key.
+//
+//   resilience-1-final  --flow=scrolled   npm run harness:fingerprint
+//   paged-1             --flow=paged      npm run harness:fingerprint:paged
+//                       both              npm run harness:fingerprint:all
+//
+// BOTH, not one. The scrolled baseline reports `columns: 1` for every book — that field is inert in
+// scrolled mode, which is why NAV-1 (paged never paginating) passed this gate unnoticed. Checking
+// only the scrolled one re-opens exactly the hole PPC-2 closed.
+//
+// `resilience-1-final` was RE-CAPTURED on adoption rather than adopted as it stood: its previous
+// content had drifted against the owner's settings — pageOpacity 1→0.84, zoom 2→2.5,
+// hide_chapter_titles 1→0, hide_first_line 1→0 — and the harness's own config guard reported each
+// one as "not a code change — re-baseline". A baseline that fails for reasons nobody can act on is
+// a baseline people learn to ignore. The pre-adoption capture is preserved in git history (18b042e).
+//
 // ⚠ IT DRIVES THE REAL APP AGAINST THE REAL PROFILE. Tauri resolves app data from the bundle
 // identifier with no environment override, so there is no isolated profile. Opening a book writes
 // reading progress, `last_opened_at`, `seen_start` and `chapters_read`. The harness therefore

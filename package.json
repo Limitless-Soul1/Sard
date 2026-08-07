@@ -15,7 +15,7 @@
     "corpus:verify": "node tests/corpus/verify.mjs",
     "corpus:build-manifest": "node tests/corpus/build-manifest.mjs",
     "harness:csp": "node tests/harness/csp.mjs",
-    "harness:fingerprint": "node tests/harness/byte-identity.mjs",
+    "harness:fingerprint": "node tests/harness/byte-identity.mjs compare --tag=resilience-1-final --flow=scrolled",
     "typecheck:tests": "tsc -p tsconfig.test.json",
     "harness:tts": "node tests/harness/tts-track.mjs",
     "harness:interaction": "node tests/harness/interaction.mjs --gate",
@@ -30,7 +30,8 @@
     "harness:rtl": "node tests/harness/rtl-panel.mjs",
     "harness:ppc1": "node tests/harness/ppc1-inline-css.mjs",
     "harness:fingerprint:paged": "node tests/harness/byte-identity.mjs compare --tag=paged-1 --flow=paged",
-    "harness:ppc3": "node tests/harness/ppc3-shawqiyyat.mjs"
+    "harness:ppc3": "node tests/harness/ppc3-shawqiyyat.mjs",
+    "harness:fingerprint:all": "npm run harness:fingerprint && npm run harness:fingerprint:paged"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

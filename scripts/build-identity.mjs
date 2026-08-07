@@ -78,8 +78,14 @@ export const KINDS = {
   // is; the updater behaves exactly as it does in a release build; GitHub Releases carry official
   // production versions only.
   //
-  // A Beta is identified by everything EXCEPT its version: the window title reads "Sard — BETA", the
-  // About panel says so, the BUILD ID begins `BETA-`, and the installer and ZIP are named for it.
+  // ⚠ AND NO OTHER VISIBLE DIFFERENCE EITHER. Same window title, same product name, same everything a
+  // tester sees while reading — because a Beta exists to give them EXACTLY the application they will
+  // eventually receive. An earlier version retitled the window "Sard — BETA"; that was removed for
+  // the same reason the version suffix was: it changed the thing under test.
+  //
+  // So the BUILD ID is the whole identity. It is stamped in at compile time, begins `BETA-`, is shown
+  // in the About panel — the one place that admits it — and names the installer and the ZIP. A tester
+  // who wants to know opens About; everyone else just reads.
   beta: {
     id: "beta",
     label: "BETA (private — external testers)",
@@ -98,14 +104,17 @@ export const KINDS = {
       "diag_probe_assets",
       "SARD DIAGNOSTIC BUILD",
     ],
-    // The window-title FRAGMENT, not the whole title. Measured: "Sard — BETA" appears nowhere in the
-    // binary as one piece — the compiler splits it, exactly as it split "com.sard.diag" into
-    // "com.sard" + "ard.diag". "— BETA" IS contiguous (1 hit, UTF-8), and an em dash followed by BETA
-    // cannot occur by accident in a release build, whose title is simply "Sard".
-    requiredMarkers: ["— BETA"],
+    // Nothing to require. A Beta is byte-comparable to a release apart from its build id, which the
+    // verifier checks separately by prefix. A marker here would assert a difference that deliberately
+    // does not exist.
+    requiredMarkers: [],
     setupName: "Sard-BETA-Setup.exe",
     standaloneName: "Sard.exe",
-    tauriConfigOverlay: "src-tauri/tauri.beta.conf.json",
+    // NULL, and deliberately so. An earlier version pointed at a config overlay that retitled the
+    // window "Sard — BETA" — which changed the very thing a Beta exists to leave alone. With the
+    // title, version, name and identifier all identical to production there is nothing left for an
+    // overlay to override, so a Beta is simply the release build compiled with a BETA- build id.
+    tauriConfigOverlay: null,
     cargoFeatures: [],
   },
 

@@ -4889,8 +4889,11 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   padding: 7px 10px; border-radius: 5px; text-align: start;
 }
 
-/* BETA identification in About. Shown ONLY in a Beta build (the build id decides), so a release
-   build's About panel is untouched. Betas are private test builds that deliberately keep the
-   product's real version number, so the version line alone cannot distinguish them. */
-.gs-about-beta { color: var(--accent); font-weight: 700; letter-spacing: 0.04em; }
-.gs-about-build { margin-top: 2px; font: 500 0.6875rem var(--ui-font); color: var(--muted); direction: ltr; }
+
+/* BETA identification in About — the ONLY place a Beta says it is one (owner, 2026-08-07). The window
+   title, product name and version stay identical to production so a tester experiences exactly the
+   application they will receive; this block appears only when the build id begins BETA-. */
+.gs-about-beta { margin-top: 2px; font: 700 0.75rem var(--ui-font); color: var(--accent); letter-spacing: 0.04em; }
+.gs-about-build { margin-top: 4px; font: 500 0.6875rem var(--ui-font); color: var(--muted); direction: ltr; text-align: start; }
+.gs-about-build-lbl { display: block; opacity: 0.8; }
+.gs-about-build code { font-family: ui-monospace, Consolas, monospace; font-size: 0.6875rem; }

@@ -548,6 +548,8 @@ export const en = {
   "gs.languageHint": "Sets the interface language and direction. The book's own direction is unaffected.",
   "gs.about": "About",
   "gs.about.version": "Version",
+  "gs.about.beta": "Beta Build",
+  "gs.about.buildId": "BUILD ID",
   "gs.about.tagline": "A calm, Arabic-first reader.",
   // RAWY-168: in-app update check (Phase 1 — notify + open the release page)
   "gs.update.check": "Check for updates",

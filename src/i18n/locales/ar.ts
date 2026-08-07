@@ -541,6 +541,8 @@ export const ar: Record<TKey, string> = {
   "gs.languageHint": "تضبط لغة الواجهة واتجاهها. اتجاه الكتاب نفسه لا يتأثر.",
   "gs.about": "حول",
   "gs.about.version": "الإصدار",
+  "gs.about.beta": "نسخة تجريبية",
+  "gs.about.buildId": "معرّف البناء",
   "gs.about.tagline": "قارئٌ هادئ، عربيٌّ أولًا.",
   // RAWY-168: التحقّق من التحديثات داخل التطبيق (المرحلة 1 — إشعار + فتح صفحة الإصدار)
   "gs.update.check": "التحقّق من التحديثات",

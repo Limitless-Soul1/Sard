@@ -3,7 +3,7 @@
 //   npm run pack:beta
 //
 // EXPECTED OUTPUT
-//   M:/Sard-Beta/Sard-BETA-<stamp>-<sha>.zip
+//   M:/Sard-Beta/Sard-BETA-<timestamp>.zip
 //     └── Sard-BETA-Setup.exe
 //
 // A Beta is THE PRODUCT, MARKED — not a separate application. Same product name, same executable,
@@ -14,14 +14,14 @@
 // VERSION — no pre-release suffix, no version invented to satisfy the updater's semver ordering for
 // a channel the artifact never enters. GitHub Releases carry official production versions only.
 //
-// A Beta is identified by everything EXCEPT its version: window title "Sard — BETA", a BETA line in
-// About, a BUILD ID beginning "BETA-", and the installer and ZIP named for it. Two Betas are told
+// A Beta is identified ONLY by its BUILD ID: shown in the About panel and naming the package. The
+// window title, product name and version are identical to production, deliberately. Two Betas are told
 // apart by their BUILD ID, which carries a UTC stamp and the commit — no manual version bump needed.
 //
 // The build itself is NOT run here — it is run deliberately, with its own build id:
 //
 //   SARD_BUILD_ID=BETA-$(date -u +%Y%m%d%H%M%S)-$(git rev-parse --short HEAD) \
-//     npx tauri build --config src-tauri/tauri.beta.conf.json
+//     npx tauri build
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -63,7 +63,6 @@ if (!buildId.startsWith("BETA-")) {
 // where archiving by pattern swept 511 MB of stale binaries out of sibling folders. What is not
 // deliberately staged cannot ship by accident — and this ZIP must contain exactly one file.
 const stamp = buildId.split("-")[1];
-const short = buildId.split("-")[2];
 const stage = join(OUT, `stage-beta-${stamp}`);
 mkdirSync(OUT, { recursive: true });
 rmSync(stage, { recursive: true, force: true });
@@ -71,7 +70,7 @@ mkdirSync(stage, { recursive: true });
 const setupBytes = readFileSync(setupSrc);
 writeFileSync(join(stage, kind.setupName), setupBytes);
 
-const zipPath = join(OUT, `Sard-BETA-${stamp}-${short}.zip`);
+const zipPath = join(OUT, `Sard-BETA-${stamp}.zip`);
 rmSync(zipPath, { force: true });
 execFileSync("powershell", ["-NoProfile", "-NonInteractive", "-Command",
   `Compress-Archive -Path '${stage.replace(/'/g, "''")}\\*' -DestinationPath '${zipPath.replace(/'/g, "''")}' -CompressionLevel Optimal`],
@@ -86,5 +85,5 @@ console.log(`    zip size   ${(zipBytes.length / 1048576).toFixed(1)} MB`);
 console.log(`    zip sha256 ${sha(zipBytes)}`);
 console.log(`    exe sha256 ${sha(setupBytes)}`);
 console.log(`    build id   ${buildId}\n`);
-console.log(`  Testers will see:  window title "Sard — BETA" · a BETA line in About · build id ${buildId}\n`);
+console.log(`  Testers see the ordinary app. About shows "Beta Build" and ${buildId}.\n`);
 console.log(`  PRIVATE build — hand to testers directly. Never publish it to GitHub Releases.\n`);

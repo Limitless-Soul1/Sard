@@ -871,11 +871,17 @@ function AboutSection() {
   // rather than a hardcoded literal, so About can never drift from the shipped binary.
   const [ver, setVer] = useState("");
   useEffect(() => { getVersion().then(setVer).catch(() => {}); }, []);
-  // A BETA build must say so here as well as in the title bar. Betas are PRIVATE builds handed to a
-  // few testers directly; they are never published and deliberately carry the product's real version
-  // number, so the version line alone cannot distinguish one from the public release. The BUILD ID
-  // can: it is stamped in at compile time and a Beta's begins `BETA-`. Shown only when it does, so a
-  // release build's About panel is exactly as it was.
+  // THE ONLY PLACE A BETA SAYS IT IS A BETA.
+  //
+  // Deliberately not the window title, not the product name, not the version (owner, 2026-08-07): a
+  // tester should experience exactly the application they will eventually receive, so the everyday
+  // surface is identical to production. Identification lives here, where someone goes when they want
+  // to know — and nowhere else.
+  //
+  // Betas are PRIVATE builds handed to a few testers directly, never published, and they carry the
+  // product's real version. So the version line cannot distinguish one from the public release; the
+  // BUILD ID can, because it is stamped in at compile time and a Beta's begins `BETA-`. Shown only
+  // when it does, which leaves a release build's About panel exactly as it was.
   const [betaId, setBetaId] = useState<string | null>(null);
   useEffect(() => {
     appInfo()
@@ -890,11 +896,16 @@ function AboutSection() {
         <div>
           <div className="gs-about-name">Sard · سَرْد</div>
           <div className="gs-about-tag">{t("gs.about.tagline")}</div>
-          <div className="gs-about-ver">
-            {t("gs.about.version")} {ver}
-            {betaId && <span className="gs-about-beta"> · BETA</span>}
-          </div>
-          {betaId && <div className="gs-about-build">{betaId}</div>}
+          <div className="gs-about-ver">{t("gs.about.version")} {ver}</div>
+          {betaId && (
+            <>
+              <div className="gs-about-beta">{t("gs.about.beta")}</div>
+              <div className="gs-about-build">
+                <span className="gs-about-build-lbl">{t("gs.about.buildId")}</span>
+                <code>{betaId}</code>
+              </div>
+            </>
+          )}
         </div>
       </div>
       <div className="gs-update">

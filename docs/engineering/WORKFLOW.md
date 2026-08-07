@@ -16,6 +16,10 @@ private one is where the project lives, the public one is where releases go.
 
 ## Repository architecture
 
+> **FINAL — settled 2026-08-07.** This architecture does not change unless the owner explicitly
+> decides to change it. It is not a default to be improved on, and it is not revisited because a
+> different arrangement would be marginally more convenient on some particular day.
+
 **The private repository is the source of truth. The public repository is a distribution channel.**
 
 | | Repository | Visibility | Holds | Role |

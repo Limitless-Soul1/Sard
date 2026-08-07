@@ -12,7 +12,7 @@
 // remembers to read it. The 2026-08-07 incident was not caused by anyone being careless — it was
 // caused by two files that were correct in every respect except that nothing could tell them apart.
 // So the rule about what may live on `main` is written here, where it can be run, rather than only in
-// WORKFLOW.md where it can be skimmed.
+// docs/engineering/WORKFLOW.md where it can be skimmed.
 //
 // THE DISTINCTION THIS FILE EXISTS TO GET RIGHT
 // "Mentions diagnostics" and "IS diagnostics" are not the same thing, and treating them as the same
@@ -46,10 +46,14 @@ const args = Object.fromEntries(
  * — because an exclusion whose reason is lost is an exclusion someone eventually overrides.
  */
 const DEVELOPMENT_ONLY = [
-  { re: /^WORKFLOW\.md$/, why: "the development workflow — a laboratory document, not part of the product" },
+  // ONE DIRECTORY, ONE RULE. Every internal engineering document — handbook, workflow, notes,
+  // checklists, lessons — lives under docs/engineering/, so a single pattern covers all of them and
+  // a new one is protected the moment it is created. `WORKFLOW.md` used to sit at the repo root with
+  // its own rule; a per-file pattern only protects the files someone remembered to list.
+  //
   // `docs/` is PARTLY production: docs/screenshots/ is referenced by the public README and must ship.
-  // Only the engineering subtree is internal, so the exclusion is scoped to it rather than to docs/.
-  { re: /^docs\/engineering\//, why: "the engineering handbook — how the product is built, not the product" },
+  // So the exclusion is scoped to the engineering subtree rather than to docs/.
+  { re: /^docs\/engineering\//, why: "internal engineering documents — how the product is built, not the product" },
   { re: /^CHECKPOINT-.*\.md$/, why: "an investigation checkpoint" },
   { re: /^(BETA-\d+|REMEDIATION_PLAN|PROJECT_MASTER_SUMMARY|NEXT_STAGE_STUDY)\.md$/, why: "an internal plan or status note" },
   { re: /_(STUDY|INVESTIGATION|PLAN)\.md$/, why: "an investigation report" },
@@ -108,7 +112,7 @@ for (const [why, list] of byReason) {
   console.log("");
 }
 console.error(
-  `  This tree is NOT fit for main. Exclude these from the merge (see WORKFLOW.md), or, if one of\n` +
+  `  This tree is NOT fit for main. Exclude these from the merge (see docs/engineering/WORKFLOW.md), or, if one of\n` +
     `  them genuinely belongs in the released product, add it to PRODUCTION_ALWAYS with the reason.\n`,
 );
 process.exit(1);

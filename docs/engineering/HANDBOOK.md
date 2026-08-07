@@ -8,7 +8,7 @@ reasoning is compressed to the clause that makes them stick.
 | Document | Owns |
 |---|---|
 | **This document** | How work is done: investigation, evidence, verification, harnesses, decisions |
-| `WORKFLOW.md` | Branches, merge policy, build kinds, packaging, release |
+| `WORKFLOW.md` (same folder) | Branches, merge policy, build kinds, packaging, release |
 | `BETA-1.md`, item records | The status of specific findings |
 
 Nothing is stated in two documents. Where a rule belongs elsewhere, this one points at it.
@@ -173,7 +173,7 @@ technical correctness — the owner decides product and UX.
 
 ## 9 · Builds and packaging
 
-Mechanics in `WORKFLOW.md`. The principles:
+Mechanics in `WORKFLOW.md` (same folder). The principles:
 
 - **Identity is data, not convention.** Two builds differing only by folder are indistinguishable once
   either is copied. Identity travels with the artifact.
@@ -229,7 +229,7 @@ approval if product/UI/UX changes (§6) → smallest correct implementation → 
 **Investigation work** — the sequence in §2, ending in the report shape given there.
 
 **Cleanup** — until Feature Freeze the answer is **no**, except for a mess that is *actively costing*
-something: that is a defect, and defects are product work. Cadence and checklist: `WORKFLOW.md`.
+something: that is a defect, and defects are product work. Cadence and checklist: `WORKFLOW.md` (same folder).
 
 ---
 

@@ -87,7 +87,7 @@ jobs:
         shell: bash
         run: |
           # Anything carried over from `develop` that has not been reviewed and cleaned shows up here:
-          # diagnostic instrumentation, investigation reports, internal notes, WORKFLOW.md, packaging
+          # diagnostic instrumentation, investigation reports, internal engineering docs, packaging
           # utilities and harnesses. The rule lives in scripts/check-production-tree.mjs rather than
           # being spelled out again here, so the check CI runs and the check run before a merge are
           # the same check — two copies of a rule is one rule and one stale copy.

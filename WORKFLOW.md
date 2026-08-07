@@ -220,6 +220,30 @@ The checklist above is human discipline. These are the parts a machine refuses t
 
 ---
 
+## The diagnostic subsystem is COMPLETE
+
+**Declared 2026-08-07. No further improvement, polish or refinement.**
+
+It has cost a lot of time and it now does its job: it reports which build produced it, it refuses to
+judge a screen that has no book on it, it describes one book rather than a whole session, and it says
+UNKNOWN where it does not know. That is enough. A diagnostic subsystem is a means, and it had started
+to become the work.
+
+Further work on it is allowed **only** when one of these is true:
+
+1. **A real bug is discovered in it** — it reports something false, or fails to report at all.
+2. **A real investigation needs a capability it does not have** — driven by an actual failure being
+   chased, not by an improvement imagined in advance.
+3. **The owner explicitly asks for an enhancement.**
+
+"While I was in here I noticed…" is not one of them. Neither is a gap I can see but nothing is
+currently blocked by. Two such gaps are already known and deliberately NOT being built: the rendering
+ledger keeps no per-attempt history (unlike `pdfDiag`), and a diagnostic build's separate profile
+means a tester must re-import the book they are reproducing with. Both are written down where they
+happened. If an investigation ever needs either, that is condition 2 and the work is justified then.
+
+Everything else goes to the product.
+
 ## Build kinds
 
 There are exactly two, and they are different applications as far as Windows is concerned. Defined

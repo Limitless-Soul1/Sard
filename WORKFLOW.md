@@ -34,9 +34,11 @@ moment `main` contains anything that is not in the product.
 | | |
 |---|---|
 | New features | Diagnostics and instrumentation |
-| Bug fixes | Investigation tools and harnesses |
-| Refactoring | Temporary utilities and scripts |
+| Bug fixes | Investigation tools and test harnesses |
+| Refactoring | Packaging scripts and temporary utilities |
 | Experiments and spikes | Internal documentation and working notes |
+
+Nothing is developed directly on `main` — not a feature, not a fix, not a typo.
 
 **Rules**
 
@@ -56,7 +58,42 @@ from the gate in front of `main`.
 
 ## Merging into `main`
 
-A merge happens only when **all five** are true:
+### Cadence: one cleanup, not many
+
+**We do not merge continuously.** There is no per-feature merge, no "small safe one to keep the
+branches close", no merging just because something happens to be finished. `develop` runs ahead of
+`main` for as long as it takes.
+
+The sequence is:
+
+1. Keep fixing the remaining issues on `develop`.
+2. Keep building new features on `develop`.
+3. Keep using every diagnostic tool, harness and throwaway utility on `develop`, freely.
+4. **Then, and only when the owner decides the application is complete enough:**
+   - clean the repository,
+   - move the reusable internal tools out into the separate toolbox,
+   - remove the temporary artifacts,
+   - review everything,
+   - merge `develop` → `main`,
+   - publish.
+
+**One comprehensive cleanup instead of repeated cleanups after every feature.** That is a deliberate
+choice with a real trade-off, and the trade-off is worth stating so nobody re-litigates it later:
+
+- **The cost.** The gap between the branches grows, and the eventual cleanup is one large piece of
+  work rather than many small ones.
+- **What is bought.** Cleaning after every feature means either doing the cleanup badly, many times,
+  or letting the cleanup pressure shape the development work itself — which is how diagnostic tooling
+  starts getting written to be *presentable* rather than to be *useful*. The laboratory only works if
+  nothing in it has to be tidy. Meanwhile `main` is not degraded by waiting: it sits at a known-good
+  released commit the entire time.
+
+There is no risk of drift in the meantime, because `main` is not being touched. It is exactly the
+tree v1.1.0 was built from until the day we replace it wholesale.
+
+### The five conditions
+
+When that day comes, the merge happens only when **all five** are true:
 
 1. **The work is complete.** Not "working", not "nearly there" — finished.
 2. **Testing is finished.** Unit suite, typecheck, and the relevant harnesses have been run and pass.
@@ -71,9 +108,13 @@ A merge happens only when **all five** are true:
 Work through this in order. Anything that cannot be ticked blocks the merge.
 
 - [ ] **Clean the repository.** No stray build output, no scratch directories, no half-finished files.
-- [ ] **Move reusable diagnostic tools out of the project.** Anything worth keeping — harnesses,
-      probes, packaging helpers — belongs in the external toolkit, not in the product repository. The
-      test is: *would a stranger cloning this repo to read books be confused by this file?*
+- [ ] **Move the reusable internal tools out into the separate toolbox.** Anything worth keeping —
+      the CDP harnesses, the probes, the packaging helpers, the profile snapshot/restore — leaves the
+      product repository and goes to the toolbox, a repository of its own. It is *moved*, not deleted:
+      these tools took real work and will be needed again the next time something cannot be reproduced
+      on a development machine. Anything not worth moving is deleted outright.
+      The sorting test is: *would a stranger cloning this repo to read books be confused by this file?*
+      If yes, it is not product — move it or delete it, but do not merge it.
 - [ ] **Remove temporary investigation files.** Probe scripts, one-off measurement harnesses,
       captured logs, sample outputs.
 - [ ] **Remove development-only documentation.** Investigation reports, checkpoints, remediation

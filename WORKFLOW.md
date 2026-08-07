@@ -220,6 +220,41 @@ The checklist above is human discipline. These are the parts a machine refuses t
 
 ---
 
+## Verification may proceed. Product behaviour needs approval.
+
+**The dividing line, set 2026-08-07 after it was crossed.**
+
+| Proceed freely | Ask first, every time |
+|---|---|
+| Measuring whether something is true | Product behaviour |
+| Reproducing a reported failure | UI and UX |
+| Building a fixture, harness or probe | Workflows and interactions |
+| Fixing something measurably wrong | Visual decisions |
+| Renaming a thing that misdescribes itself | Anything a reader would notice and could have an opinion about |
+
+Verification changes what we KNOW. Product changes what the reader GETS. The first is why the
+harnesses exist and needs no permission. The second is the owner's, always — even when the change is
+small, even when it is obviously an improvement, and even when it is already implemented and measured.
+
+**How this was learned.** PPC-4 was filed as "typography sliders do not mirror in RTL". It sat in a
+table of postponed items, so it read as a defect awaiting a fix. It was investigated, implemented,
+measured, verified — and then reverted, because the LTR layout is deliberate and mirroring it was
+never approved. Everything about the work was sound except the decision to do it.
+
+Two traps in that, both worth naming:
+
+- **A filed observation is not an authorisation.** A line in a postponed-items table records that
+  someone noticed something. It does not say the answer is "change it".
+- **"Go ahead" answers the question that was asked.** I raised the UX concern, was told to proceed,
+  and read that as approval for the design change. It was approval to *work the item*. Where a
+  request could reasonably mean either, pin it down before building — afterwards the work itself
+  applies pressure toward keeping it.
+
+When a decision IS made, record it where the next person will trip over it — a test that fails, not a
+comment that can be skimmed. `tests/harness/rtl-panel.mjs` is the worked example: it guards a chosen
+behaviour, states plainly that it is a preference rather than a correctness rule, and says that a
+deliberate redesign should update or delete it.
+
 ## The diagnostic subsystem is COMPLETE
 
 **Declared 2026-08-07. No further improvement, polish or refinement.**

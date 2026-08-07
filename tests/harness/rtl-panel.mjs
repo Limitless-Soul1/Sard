@@ -10,8 +10,18 @@
 // it again and files it again — I did. A comment can be missed; a failing check cannot. This is the
 // record that the asymmetry is a decision.
 //
-// It is NOT a claim that mirroring would be wrong. It is a claim that the current behaviour is
-// chosen, and that changing it is a product decision for the owner rather than a defect fix.
+// ⚠ THIS IS A PRODUCT DECISION, NOT A TECHNICAL CORRECTNESS REQUIREMENT.
+//
+// Nothing here says an LTR drawer is more correct than a mirrored one. Mirroring would work: it was
+// implemented, measured, and shown not to disturb RAWY-32's physical pinning or RAWY-89's LTR
+// reading area. It was reverted because the owner wants the current layout, and that is a sufficient
+// and final reason. This file records a CHOICE so it is not re-litigated, not a rule about how RTL
+// interfaces ought to behave.
+//
+// SO IT IS NOT A BLOCKER. If the settings panel is ever intentionally redesigned, UPDATING OR
+// DELETING THIS HARNESS IS PART OF THAT REDESIGN — not an obstacle to it, and not a discussion. A
+// failure here means "someone changed a decided behaviour; was that decided?", never "this is
+// broken". Read the failure message, not just the exit code.
 //
 // Still measured here, unchanged from the PPC-4 work because they are worth keeping either way:
 // the drawer's physical placement (RAWY-32 pins it right, direction-independent) and RAWY-89's

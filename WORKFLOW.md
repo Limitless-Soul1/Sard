@@ -307,9 +307,9 @@ receive, so nothing on the everyday surface may differ. Betas are private builds
 testers directly; they are never published to GitHub Releases, which carry official production
 versions only.
 
-**The About panel is the one place a Beta admits what it is**, showing  and the BUILD ID.
+**The About panel is the one place a Beta admits what it is**, showing `Beta Build` and the BUILD ID.
 Two Betas are told apart by that id (UTC stamp + commit), so no version bump is ever needed. Two
-earlier attempts were reverted for the same reason — a  version, then a  window
+earlier attempts were reverted for the same reason — a `-beta` version, then a `Sard — BETA` window
 title — because each changed the thing under test.
 
 A diagnostic build installs *beside* a release install, keeps its own profile, and cannot update

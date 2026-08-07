@@ -64,6 +64,44 @@ export const KINDS = {
     cargoFeatures: [],
   },
 
+  // THE BETA IS THE PRODUCT, MARKED — not a separate application.
+  //
+  // Same productName, same executable, same identifier, therefore the same install directory and the
+  // same profile: a Beta REPLACES a tester's Sard and they carry on with their real library, which is
+  // the only way to get feedback about the thing we are actually shipping. What differs is that it
+  // says so, in the two places a person looks: the window title and the version.
+  //
+  // ⚠ THE BASE VERSION MUST STAY AHEAD OF THE PUBLISHED RELEASE, and this is not cosmetic.
+  // The published release is 1.1.0 and the in-app updater compares semver. `1.1.0-beta.1` is LOWER
+  // than `1.1.0` by the semver rules, so the updater would have offered every Beta tester an
+  // "update" back to the public build and quietly pulled them off the thing they were testing.
+  // `1.2.0-beta.N` is higher than 1.1.0 and lower than a future 1.2.0, so a Beta sits between the
+  // last release and the next one — exactly where it belongs.
+  beta: {
+    id: "beta",
+    label: "BETA (external testers)",
+    productName: "Sard",
+    mainBinaryName: "Sard",
+    identifier: "com.sard.app",
+    versionSuffix: "-beta",
+    // Kept. A Beta that cannot receive the next Beta is a Beta nobody can move forward.
+    updater: true,
+    // A Beta is a release build with a label. It carries no instrumentation, and the verifier holds
+    // it to exactly the release standard.
+    forbiddenMarkers: [
+      "FRONTEND HANDSHAKE",
+      "ENTIRELY OLDER THAN",
+      "diag_startup_mark",
+      "diag_probe_assets",
+      "SARD DIAGNOSTIC BUILD",
+    ],
+    requiredMarkers: [],
+    setupName: "Sard-BETA-Setup.exe",
+    standaloneName: "Sard.exe",
+    tauriConfigOverlay: "src-tauri/tauri.beta.conf.json",
+    cargoFeatures: [],
+  },
+
   diag: {
     id: "diag",
     label: "DIAGNOSTIC (NEVER FOR RELEASE)",
@@ -131,7 +169,7 @@ export function buildId(kind, { cwd = process.cwd() } = {}) {
   };
   const sha = git(["rev-parse", "--short", "HEAD"]) || "nogit";
   const dirty = git(["status", "--porcelain"]).split("\n").filter(Boolean).length;
-  const prefix = kind.id === "diag" ? "DIAG" : "REL";
+  const prefix = { diag: "DIAG", beta: "BETA", release: "REL" }[kind.id] ?? "REL";
   return `${prefix}-${utcStamp()}-${sha}${dirty ? `+${dirty}` : ""}`;
 }
 
@@ -151,7 +189,7 @@ export function buildId(kind, { cwd = process.cwd() } = {}) {
  * string used for paperwork — the MATCH/MISMATCH check in the report compares the two injected
  * constants directly and never goes through this pattern.
  */
-export const BUILD_ID_RE = /\b(REL|DIAG)-\d{14}-[0-9a-f]{7,40}(?:\+\d+)?/;
+export const BUILD_ID_RE = /\b(REL|DIAG|BETA)-\d{14}-[0-9a-f]{7,40}(?:\+\d+)?/;
 
 /**
  * Read the BUILD ID back OUT of a compiled binary.

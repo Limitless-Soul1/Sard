@@ -125,14 +125,30 @@ function verifyBinary(kind, exePath) {
     if (info.ProductName === kind.productName) ok(`ProductName is ${JSON.stringify(kind.productName)}`);
     else bad(`ProductName is ${JSON.stringify(info.ProductName)} but this kind requires ${JSON.stringify(kind.productName)}`);
 
-    const wantsSuffix = kind.versionSuffix !== "";
-    const hasSuffix = String(info.ProductVersion || "").endsWith("-diag");
-    if (wantsSuffix && !hasSuffix) bad(`a DIAGNOSTIC build must carry a -diag version; this one reports ${JSON.stringify(info.ProductVersion)}`);
-    else if (!wantsSuffix && hasSuffix) bad(`a RELEASE build must NOT carry a -diag version; this one reports ${JSON.stringify(info.ProductVersion)}`);
-    else ok(`ProductVersion ${JSON.stringify(info.ProductVersion)} matches this kind`);
+    // THE VERSION SUFFIX, checked generically across every kind rather than against a hardcoded
+    // "-diag". With three kinds (release · beta · diag) a hardcoded suffix silently stopped checking
+    // anything the moment a second suffixed kind existed: a BETA build with no `-beta` would have
+    // passed, and a RELEASE carrying `-beta` would have passed too.
+    const ver = String(info.ProductVersion || "");
+    const wrongSuffix = Object.values(KINDS)
+      .filter((k) => k.versionSuffix && k.id !== kind.id)
+      .find((k) => ver.includes(k.versionSuffix));
+    if (kind.versionSuffix && !ver.includes(kind.versionSuffix)) {
+      bad(`a ${kind.label} build must carry a ${kind.versionSuffix} version; this one reports ${JSON.stringify(ver)}`);
+    } else if (wrongSuffix) {
+      bad(`this ${kind.label} artifact carries ${wrongSuffix.versionSuffix} — the version of a ${wrongSuffix.label} build`);
+    } else if (!kind.versionSuffix && /-(beta|diag|alpha|rc)/i.test(ver)) {
+      bad(`a plain RELEASE must carry no pre-release suffix; this one reports ${JSON.stringify(ver)}`);
+    } else {
+      ok(`ProductVersion ${JSON.stringify(ver)} matches this kind`);
+    }
 
-    const other = Object.values(KINDS).find((k) => k.id !== kind.id);
-    if (info.ProductName === other.productName) bad(`this artifact identifies as the OTHER kind (${other.label})`);
+    // "Identifies as another kind" can only be judged on kinds that use a DIFFERENT product name.
+    // Beta and release deliberately share "Sard" — that is the whole point of a Beta being the
+    // product rather than a separate application — so comparing names alone would fail every Beta.
+    const impostor = Object.values(KINDS)
+      .find((k) => k.id !== kind.id && k.productName !== kind.productName && info.ProductName === k.productName);
+    if (impostor) bad(`this artifact identifies as a different kind (${impostor.label})`);
   }
 
   // THE BUILD ID. An artifact that cannot say which build it is cannot be supported: every report it
@@ -142,7 +158,7 @@ function verifyBinary(kind, exePath) {
   if (!id) {
     bad("carries NO build id — it was compiled outside the build scripts, so no report it produces can identify it");
   } else {
-    const wantPrefix = kind.id === "diag" ? "DIAG" : "REL";
+    const wantPrefix = { diag: "DIAG", beta: "BETA", release: "REL" }[kind.id];
     if (id.startsWith(wantPrefix)) ok(`carries a build id: ${id}`);
     else bad(`build id ${id} declares the wrong kind (expected a ${wantPrefix}- prefix)`);
   }

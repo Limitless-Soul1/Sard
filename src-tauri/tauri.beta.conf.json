@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "version": "1.2.0-beta.1",
+  "app": {
+    "windows": [
+      {
+        "title": "Sard — BETA"
+      }
+    ]
+  }
+}

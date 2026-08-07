@@ -32,7 +32,9 @@
     "harness:ppc3": "node tests/harness/ppc3-shawqiyyat.mjs",
     "harness:fingerprint:all": "npm run harness:fingerprint && npm run harness:fingerprint:paged",
     "harness:panel-ltr": "node tests/harness/rtl-panel.mjs",
-    "pack:diag-zip": "node scripts/pack-diag-zip.mjs"
+    "pack:diag-zip": "node scripts/pack-diag-zip.mjs",
+    "pack:beta": "node scripts/pack-beta-zip.mjs",
+    "verify:beta": "node scripts/verify-artifact.mjs --kind=beta --exe=src-tauri/target/release/sard.exe"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

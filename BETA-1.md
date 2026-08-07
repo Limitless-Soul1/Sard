@@ -77,9 +77,10 @@ Things that are true of this build and are **not** defects to report:
    exists in the database only, and takes effect on the next book open.
 2. **Long sentences can still run under the read-aloud transport.** The start of the sentence and the
    word cursor are always clear; the tail of a 5-line sentence may pass beneath it.
-3. **Typography sliders read left-to-right in Arabic.** Small `A` on the left, large `A` on the
-   right, while the volume slider mirrors correctly. Known, documented, deliberately not changed
-   before the freeze — see PPC-4.
+3. ~~**Typography sliders read left-to-right in Arabic.**~~ **FIXED 2026-08-07 (PPC-4).** The settings
+   drawer was the only reader panel not carrying `dir`, so it inherited the LTR pin RAWY-89 puts on
+   `.reader-root`. It now follows the UI language like the Contents and Notes panels do; its physical
+   right-edge docking is unchanged (RAWY-32 pins that with `right`/`translateX`, not logical insets).
 4. **The reader's Back control sits at the left and points left in Arabic.** Deliberately unchanged:
    we want Arabic readers to tell us what feels natural before we move reader navigation.
 5. **The contents list mixes two numbering schemes** — `الفصل N` uses the book's own chapter number,

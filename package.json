@@ -26,7 +26,8 @@
     "harness:ro": "node tests/harness/ro-storm.mjs --label=check --cycles=6",
     "harness:ro-resize": "node tests/harness/ro-resize.mjs",
     "harness:autopsy": "node tests/harness/autopsy-context.mjs",
-    "harness:ledger": "node tests/harness/ledger-freshness.mjs"
+    "harness:ledger": "node tests/harness/ledger-freshness.mjs",
+    "harness:rtl": "node tests/harness/rtl-panel.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

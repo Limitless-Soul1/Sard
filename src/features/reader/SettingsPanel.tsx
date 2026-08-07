@@ -54,7 +54,11 @@ export function SettingsPanel({
   onPdfInvert,
   onPdfCopy,
 }: Props) {
-  const { t } = useI18n();
+  // PPC-4: `dir` is what makes the panel's CONTENT follow the UI language. Its physical placement is
+  // deliberately direction-independent (RAWY-32 pins it to the right edge with `right`/`translateX`
+  // rather than logical insets), so carrying `dir` moves nothing — it only restores the behaviour
+  // RAWY-32's own note already claims: "only its content/labels translate (they inherit <html dir>)".
+  const { t, dir } = useI18n();
   // RAWY-216: five CONCEPT tabs (was Text/Page/Theme, which mixed typography with colour and read-aloud).
   // The bar wraps to a second row when five labels don't fit the 384px drawer — same pill styling.
   const tabs: { key: SettingsSection; label: string }[] = [
@@ -70,7 +74,7 @@ export function SettingsPanel({
   // an even rhythm so the menu reads as a tidy, PDF-appropriate panel (RAWY-141).
   if (isPdf) {
     return (
-      <aside className={`settings-panel${open ? " show" : ""}`} aria-hidden={!open} inert={!open}>
+      <aside className={`settings-panel${open ? " show" : ""}`} dir={dir} aria-hidden={!open} inert={!open}>
         <div className="sp-head">
           <span className="sp-title">{t("pdf.options")}</span>
           <button className="rc-icon" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
@@ -102,7 +106,7 @@ export function SettingsPanel({
     );
   }
   return (
-    <aside className={`settings-panel${open ? " show" : ""}`} aria-hidden={!open} inert={!open}>
+    <aside className={`settings-panel${open ? " show" : ""}`} dir={dir} aria-hidden={!open} inert={!open}>
       <div className="sp-head">
         <span className="sp-title">{t("reader.settings")}</span>
         <button className="rc-icon" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>

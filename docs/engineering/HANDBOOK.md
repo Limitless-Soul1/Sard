@@ -179,13 +179,13 @@ exceptions without the owner asking.
 Applies to: commit messages · source comments · documentation · Markdown · branch names · tags ·
 release notes · scripts · build metadata · TODOs · every other artifact.
 
-- **Housekeeping commits use .** Neutral, professional, and revealing
+- **Housekeeping commits use `Repository maintenance`.** Neutral, professional, and revealing
   nothing about internal process.
 - **Commit messages describe the change, not how it was produced.** No co-author or generator
   trailers — hosting platforms parse those into the contributor list, so they change who the
   project appears to be written by.
-- **Enforced by a  hook** that strips such trailers and REFUSES a message naming a
-  vendor or assistant. It is in  and is not version-controlled — re-create it on a
+- **Enforced by a `commit-msg` hook** that strips such trailers and REFUSES a message naming a
+  vendor or assistant. It lives in `.git/hooks/` and is not version-controlled — re-create it on a
   fresh clone.
 
 Wording that is already in published history is left alone; rewriting public history costs every

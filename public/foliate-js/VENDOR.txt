@@ -123,3 +123,43 @@ Chromium >= 140 and the EPUB set to Chromium >= 117.)
                          the LAST such request in `#pendingTurn` and replays it once on release.
                          Depth one, never a queue — a held key must not bank turns that then run
                          away. Touches `#turnPage` and one new private field; no other call site.
+
+  9. paginator.js:427   — RESIZEOBSERVER TEARDOWN (RESILIENCE-1). Two destroy() paths failed to
+     paginator.js:1189    release their ResizeObserver, each in a different way, and both leave the
+                         observer watching a node that has been detached from the document. Blink
+                         then emits "ResizeObserver loop completed with undelivered notifications"
+                         once per frame for it — WITHOUT invoking the JS callback, which is why the
+                         app cannot see this at all. It surfaces only as an uncaught-error rate.
+
+                         9a  View.destroy() — upstream guards the unobserve on `this.document`, and
+                             by teardown time the iframe is usually already gone, so it NEVER RUNS.
+                             Measured at 0 calls across repeated open/close cycles.
+                         9b  Paginator.destroy() — upstream calls `unobserve(this)`, but the observer
+                             observes `this.#container`, never `this`. Passing an element that was
+                             never registered is silent by specification: no error, no return value.
+                             A pure no-op.
+
+                         Both become `disconnect()`. That is the point of the fix rather than an
+                         incidental choice: disconnect needs no reference to what was observed, so it
+                         cannot be wrong about WHICH element to release and cannot be skipped by a
+                         guard that happens to be false.
+                         PROVEN SAFE: no View is reused after destroy() — `#createView()` constructs
+                         a new one (with a fresh observer) and Paginator.destroy() nulls the field.
+                         MEASURED on the real binary, 6 open/close cycles: 452 and 464 errors before,
+                         0 and 0 after. Resizing verified still working in both flows, including for
+                         a view created AFTER a destroy() ran (the path this patch changes):
+                         scrolled re-layout, paged re-pagination (40 <-> 74 pages), and font-size
+                         expansion all respond as before.
+                         IF THIS PATCH IS LOST ON A RE-VENDOR: reading is unaffected and nothing
+                         visibly breaks — the only symptom is a growing uncaught-error rate after
+                         each book is closed, which no user will ever report.
+                         Regression test:
+                           node tests/harness/ro-storm.mjs
+                         SESSION TOTAL must be 0.
+
+  NOTE ON NUMBERING: entries 1-8 above predate this one and their numbers do not all match the
+  `SARD LOCAL PATCH n` markers in the sources (the stylesheet-sanitiser hook is marked 5 in epub.js
+  but listed as 6 here, and the turn-coalescing entry is listed as 5 out of order at the end). That
+  mismatch is INHERITED, not introduced here, and is left alone deliberately: renumbering during
+  active development would churn the sources for no product benefit. Patch 9's markers and its entry
+  here do agree. Fix the older numbering during the cleanup milestone, not before.

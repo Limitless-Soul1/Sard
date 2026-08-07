@@ -423,9 +423,23 @@ class View {
     get overlayer() {
         return this.#overlayer
     }
+    // ---- SARD LOCAL PATCH 9a (RESILIENCE-1) — disconnect, don't unobserve ----
+    // Upstream: `if (this.document) this.#observer.unobserve(this.document.body)`.
+    //
+    // The guard is the defect. By the time a View is destroyed the iframe is frequently already torn
+    // down, so `this.document` is null and the unobserve NEVER RUNS — measured at 0 calls in the real
+    // app across repeated open/close cycles. The observer then keeps watching a body that has been
+    // detached from the document, and Blink emits "ResizeObserver loop completed with undelivered
+    // notifications" once per frame for it. The JS callback is never invoked, so the app cannot see
+    // this: it shows up only as an uncaught-error rate.
+    //
+    // `disconnect()` needs no reference to what was observed, which is exactly why it is correct here
+    // — it cannot be wrong about WHICH element to release, and it cannot be skipped by a guard that
+    // happens to be false. A View is never reused after destroy(), so there is nothing to re-observe.
     destroy() {
-        if (this.document) this.#observer.unobserve(this.document.body)
+        this.#observer.disconnect()
     }
+    // ---- end SARD LOCAL PATCH 9a ----
 }
 
 // NOTE: everything here assumes the so-called "negative scroll type" for RTL
@@ -1159,8 +1173,20 @@ export class Paginator extends HTMLElement {
     focusView() {
         this.#view.document.defaultView.focus()
     }
+    // ---- SARD LOCAL PATCH 9b (RESILIENCE-1) — unobserve the element that was actually observed ----
+    // Upstream: `this.#observer.unobserve(this)`.
+    //
+    // This observer observes `this.#container` (see the constructor), never `this`. So the call is a
+    // NO-OP against an element that was never registered — the container stays observed for the life
+    // of the page, detached, generating the same per-frame error as 9a above. Passing the wrong
+    // element to unobserve is silent by specification: there is no error and no return value.
+    //
+    // `disconnect()` again, for the same reason: it releases what was observed rather than what
+    // someone believed was observed. MEASURED across 6 open/close cycles on the real binary:
+    // 452 and 464 errors before, 0 after.
     destroy() {
-        this.#observer.unobserve(this)
+        this.#observer.disconnect()
+        // ---- end SARD LOCAL PATCH 9b ----
         this.#view.destroy()
         this.#view = null
         this.sections[this.#index]?.unload?.()

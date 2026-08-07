@@ -28,7 +28,8 @@
     "harness:autopsy": "node tests/harness/autopsy-context.mjs",
     "harness:ledger": "node tests/harness/ledger-freshness.mjs",
     "harness:rtl": "node tests/harness/rtl-panel.mjs",
-    "harness:ppc1": "node tests/harness/ppc1-inline-css.mjs"
+    "harness:ppc1": "node tests/harness/ppc1-inline-css.mjs",
+    "harness:fingerprint:paged": "node tests/harness/byte-identity.mjs compare --tag=paged-1 --flow=paged"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

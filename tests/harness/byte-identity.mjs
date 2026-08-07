@@ -286,7 +286,35 @@ async function closeBook(s) {
   await wait(600);
 }
 
-async function capture({ tag }) {
+/**
+ * FORCE the reading flow for this capture (PPC-2).
+ *
+ * The capture used to READ `flowMode` and record it, never set it — so which flow got measured was
+ * whatever the owner's profile happened to hold, and it held `scrolled` every time. All 16 baseline
+ * books were therefore captured in scrolled mode, where `layout.pages` and `layout.columns` are
+ * inert: the two fields added specifically to catch a pagination collapse were never once measured
+ * in the mode that can collapse. NAV-1 — paged mode never paginating at all, ~97% of every chapter
+ * clipped and unreachable — went out in a build while this net reported byte-identical.
+ *
+ * Writing the mode makes a paged baseline reproducible instead of a coincidence. It edits the real
+ * `reading_style`, which is safe because `snapshotDb`/`restoreDb` already bracket the whole run —
+ * the same guard that lets the harness open books at all.
+ */
+async function forceFlow(s, flow) {
+  const applied = await s.evaluate(`(async () => {
+    const inv = window.__TAURI_INTERNALS__.invoke;
+    const raw = await inv('settings_get', { key: 'reading_style' }).catch(() => null);
+    let style = {};
+    try { style = raw ? JSON.parse(raw) : {}; } catch { style = {}; }
+    if (style.flowMode === ${JSON.stringify(flow)}) return 'already ' + ${JSON.stringify(flow)};
+    style.flowMode = ${JSON.stringify(flow)};
+    await inv('settings_set', { key: 'reading_style', value: JSON.stringify(style) });
+    return 'set to ' + ${JSON.stringify(flow)};
+  })()`);
+  return applied;
+}
+
+async function capture({ tag, flow }) {
   if (!corpusAvailable()) return { skipped: "no corpus — see tests/corpus/README.md" };
   const manifest = readManifest();
   const books = manifest.books.filter((b) => !b.retired && b.format === "epub");
@@ -303,6 +331,9 @@ async function capture({ tag }) {
     }
     out.engine = (await s.evaluate("navigator.userAgent")).match(/Chrome\/[\d.]+/)?.[0] ?? "unknown";
     await waitForApp(s);
+    // BEFORE readConfig, so the recorded configuration is the one actually measured under. A flow
+    // written after the config was read would make every capture claim a mode it did not use.
+    if (flow) console.log(`  flow: ${await forceFlow(s, flow)}`);
     out.config = await readConfig(s);
     console.log(`  engine: ${out.engine}`);
     console.log(`  config: ${Object.entries(out.config).map(([k, v]) => `${k}=${v}`).join(" · ")}\n`);
@@ -466,9 +497,16 @@ async function runCli() {
 const mode = process.argv[2] ?? "compare";
 const tagArg = process.argv.find((a) => a.startsWith("--tag="))?.slice(6);
 const tag = tagArg ?? "baseline";
+// PPC-2: which reading FLOW to capture under. Explicit, because leaving it to the profile is what
+// left every baseline in scrolled mode with the pagination fields inert.
+const flowArg = process.argv.find((a) => a.startsWith("--flow="))?.slice(7);
+if (flowArg && !["scrolled", "paged"].includes(flowArg)) {
+  console.error(`--flow must be "scrolled" or "paged" (got ${JSON.stringify(flowArg)})`);
+  process.exit(2);
+}
 
 if (!["baseline", "compare", "list"].includes(mode)) {
-  console.error(`usage: byte-identity.mjs <baseline|compare|list> [--tag=NAME]`);
+  console.error(`usage: byte-identity.mjs <baseline|compare|list> [--tag=NAME] [--flow=scrolled|paged]`);
   process.exit(2);
 }
 
@@ -480,7 +518,7 @@ if (mode === "list") {
   process.exit(0);
 }
 
-const res = await capture({ tag });
+const res = await capture({ tag, flow: flowArg });
 if (res.skipped) {
   console.log(`\n  ⓘ SKIPPED — ${res.skipped}`);
   console.log(`     This is a SKIP, not a pass.\n`);

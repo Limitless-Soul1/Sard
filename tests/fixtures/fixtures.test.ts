@@ -40,9 +40,12 @@ describe("fixture generator", () => {
       // The control is the one fixture that legitimately belongs to no package.
       if (name !== "control-wellformed") {
         // `WP-n` for planned work; `NAV-n` / `TRACK-n` for a defect found mid-milestone and fixed
-        // out of band (the milestone already carries NAV-1..3 that way). The rule is TRACEABILITY —
-        // every fixture must say which investigation it belongs to — not the WP prefix itself.
-        expect(f.proves, `${name} must name the work it belongs to`).toMatch(/(WP|NAV|TRACK)-\d/);
+        // out of band (the milestone already carries NAV-1..3 that way); `PPC-n` for a POSTPONED
+        // item being closed later (BETA-1.md §3 — PPC-1 is the first fixture to arrive this way).
+        // The rule is TRACEABILITY — every fixture must say which investigation it belongs to — not
+        // the prefix itself, so a new class of work id is added here rather than worked around in
+        // the fixture's own description.
+        expect(f.proves, `${name} must name the work it belongs to`).toMatch(/(WP|NAV|TRACK|PPC)-\d/);
       }
     }
   });

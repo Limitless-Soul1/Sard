@@ -27,7 +27,8 @@
     "harness:ro-resize": "node tests/harness/ro-resize.mjs",
     "harness:autopsy": "node tests/harness/autopsy-context.mjs",
     "harness:ledger": "node tests/harness/ledger-freshness.mjs",
-    "harness:rtl": "node tests/harness/rtl-panel.mjs"
+    "harness:rtl": "node tests/harness/rtl-panel.mjs",
+    "harness:ppc1": "node tests/harness/ppc1-inline-css.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

@@ -188,18 +188,27 @@ function cp1256Encode(text) {
 // windows-1256 book declares windows-1256 in its content documents too, not just in the OPF —
 // getting this wrong produced a fixture whose Arabic body decoded to mojibake, so the RTL-sniff
 // fixture proved nothing. Caught by the isolation self-test (arabicRatio 0 where 1 was declared).
-function buildChapter(spec, cssHref, declaredEncoding = "utf-8") {
+function buildChapter(spec, cssHref, declaredEncoding = "utf-8", sheet = {}) {
   const link = cssHref ? `<link rel="stylesheet" type="text/css" href="${cssHref}"/>` : "";
+  // PPC-1: the two CSS paths that had NEVER been exercised by a hostile fixture. Every WP-7 test to
+  // date used an EXTERNAL stylesheet, so "does the sanitiser also cover an inline <style> block and a
+  // style= attribute?" was answered only by reading epub.js — which routes all three through
+  // `replaceCSS`, where the Sard hook lives. Reading is not measuring, and a fixture that cannot
+  // produce the case can never falsify the claim.
+  const sb = spec.styleBlock ?? sheet.styleBlock;
+  const sa = spec.styleAttr ?? sheet.styleAttr;
+  const styleBlock = sb ? `<style type="text/css">${sb}</style>` : "";
+  const styleAttr = sa ? ` style="${sa.replace(/"/g, "&quot;")}"` : "";
   // `inlineOnly`: the body carries NO block-level element — paragraphs are inline <span>s separated
   // by <br>, with one bare text node, exactly as .txt→EPUB converters emit. Every walk that assumes
   // "text lives inside a block container" sees an empty document here.
   const body = spec.inlineOnly
     ? `\n  ${spec.body}\n  <br/>\n` +
       [1, 2, 3].map((n) => `  <span class="s${n}">${spec.body}</span>\n  <br/>\n`).join("")
-    : `<h1 class="chap">${spec.id}</h1><p class="para">${spec.body}</p>`;
+    : `<h1 class="chap">${spec.id}</h1><p class="para"${styleAttr}>${spec.body}</p>`;
   return (
     `<?xml version="1.0" encoding="${declaredEncoding}"?>` +
-    `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>${spec.id}</title>${link}</head>` +
+    `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>${spec.id}</title>${link}${styleBlock}</head>` +
     `<body>${body}</body></html>`
   );
 }
@@ -279,7 +288,7 @@ export function buildEpub(spec) {
     { name: s.opfPath, data: encodeText(buildOpf(s), s.opfEncoding) },
     ...s.chapters.map((c) => ({
       name: dir + c.href,
-      data: encodeText(buildChapter(c, cssHref, s.opfDeclaredEncoding), s.opfEncoding),
+      data: encodeText(buildChapter(c, cssHref, s.opfDeclaredEncoding, s), s.opfEncoding),
     })),
   ];
   if (s.nav) entries.push({ name: dir + "nav.xhtml", data: Buffer.from(buildNav(s.nav), "utf8") });
@@ -400,6 +409,35 @@ export const FIXTURES = {
         `.chap { position: absolute; float: left; width: 900px; }\n` +
         `body { color: #000; background: #fff; }\n` +
         `@page { margin-bottom: 5pt; }\n`,
+    },
+  },
+
+  // PPC-1. Every hostile CSS fixture before this one used an EXTERNAL stylesheet, so the sanitiser's
+  // coverage of the other two paths was code-derived only: epub.js routes `<style>` text and `style=`
+  // attributes through the same `replaceCSS`, so it *should* apply — never observed at runtime.
+  //
+  // Each hostile declaration is paired with a benign one the sanitiser must KEEP, so a run where
+  // everything disappears (the sheet failed to load, the selector matched nothing, the fixture is
+  // broken) is distinguishable from a run where the sanitiser did its job. Without that pairing a
+  // vacuous pass looks exactly like a real one — the FINDING-6 lesson.
+  "hostile-inline-style": {
+    proves:
+      "PPC-1 · an inline <style> BLOCK and a style= ATTRIBUTE must be sanitised like an external sheet",
+    spec: {
+      styleBlock:
+        // must be DROPPED
+        `.para { margin: -80pt 0 0 -60pt; font-size: 9pt; }\n` +
+        `.chap { position: absolute; }\n` +
+        `body { color: #010101; }\n` +
+        `.para { text-align: left !important; }\n` +
+        `.chap { letter-spacing: ! important 4px; }\n` +   // FINDING-1: space between ! and important
+        `@media screen { .para { margin: -99pt; } }\n` +
+        // must be KEPT — the control that makes a vacuous pass detectable
+        `.para { font-style: italic; }\n` +
+        `.chap { font-weight: 700; }\n`,
+      // The attribute path. `color` on an element (not body/html) is legitimate and must survive;
+      // the absolute negative margin must not.
+      styleAttr: "color: #c05000; margin-left: -70pt; font-size: 8pt",
     },
   },
 

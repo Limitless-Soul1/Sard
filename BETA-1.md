@@ -102,7 +102,7 @@ Filed, evidenced, and deliberately **not** scheduled. Each is a decision, not an
 
 | id | item | why it is postponed |
 |---|---|---|
-| **PPC-1** | Inline `<style>` blocks may bypass the sanitiser | Code-derived only: `epub.js` routes `<style>` text through the same hook, so it *should* apply, but every hostile test to date used an external stylesheet. **Never observed at runtime.** One fixture plus one measurement closes it. |
+| ~~**PPC-1**~~ | ~~Inline `<style>` blocks may bypass the sanitiser~~ | **CLOSED 2026-08-07 — no defect.** Measured on the real binary with the `hostile-inline-style` fixture. RAW proves the fixture is potent (`position:absolute` applied; the `style=` attribute's `-70pt` became `-93.3px`). SANITISED drops every hostile declaration from BOTH the `<style>` block and the `style=` attribute while keeping the benign ones — and the attribute is **rewritten to empty**, which no cascade could do. `npm run harness:ppc1`. |
 | **PPC-2** | Byte-identity has only ever measured **scrolled** rendering | All 16 baseline books were captured with `flowMode: scrolled`, so `column-width`, `column-gap`, page and column counts have been inert in every capture. Pagination regressions of the NAV-1 class would not be caught by that net. Task 4 drove paged mode directly, so it is covered by the subsystem matrix — but not by the byte-identity baseline. |
 | **PPC-3** | FINDING-5 — الشوقيات reports `paras: 1` for 6032 characters | Unexplained in all three modes. Low impact, cause unknown. |
 | **PPC-4** | Typography sliders do not mirror in RTL | Contained fix, but it means locally undoing the pin that fixed the RAWY-89 drawer overlap. Wants its own before/after verification. |

@@ -9,7 +9,52 @@ at the end, and every rule here is a response to something that actually went wr
 convention borrowed from elsewhere.
 
 Two branches, one direction of travel: work happens on `develop`, and only completed, reviewed,
-cleaned and explicitly approved work moves to `main`.
+cleaned and explicitly approved work moves to `main`. Two repositories, one direction of travel: the
+private one is where the project lives, the public one is where releases go.
+
+---
+
+## Repository architecture
+
+**The private repository is the source of truth. The public repository is a distribution channel.**
+
+| | Repository | Visibility | Holds | Role |
+|---|---|---|---|---|
+| `private` | `Limitless-Soul1/Sard-develop` | **PRIVATE** | `develop` **and** `main` | **Primary.** All engineering work |
+| `origin` | `Limitless-Soul1/Sard` | **PUBLIC** | `main` only | **Distribution.** Released code + GitHub Releases |
+
+Everything lives in the private repository: `develop`, the engineering documents, diagnostics,
+harnesses, investigation notes, checkpoints, packaging scripts and internal tools. `main` is mirrored
+there too, so the private repository is a complete record and the public one is never needed to
+reconstruct anything.
+
+The public repository receives **only** production snapshots of `main`, and only through the release
+pipeline below. Nothing else is ever pushed to it.
+
+### Working in this model
+
+```
+git push                     # from develop -> private/develop   (tracked; no flags needed)
+npm run release:to-main      # dry run: build main from develop, minus development-only files
+npm run release:to-main -- --commit
+git push private main        # record the snapshot in the source of truth
+git push origin main         # publish it
+```
+
+### Why it cannot go wrong by accident
+
+- **`remote.origin.push` is pinned** to `refs/heads/main:refs/heads/main` — a bare push to the public
+  remote can only ever move `main`.
+- **A `pre-push` hook refuses any ref but `main` to the public URL**, catching the explicit
+  `git push origin develop` that would override the pinned refspec. Verified: it refuses.
+- **The release excludes development-only paths by construction**, not by anyone remembering to
+  delete them.
+- **CI refuses** to release from a ref that is not on `main`, or from a tree containing
+  development-only files.
+
+The hook is in `.git/hooks/` and is **not** version-controlled — git cannot share hooks. On a fresh
+clone, re-create it and re-pin the refspec before doing any work. The CI guards travel with the
+repository; the local ones do not.
 
 ---
 
@@ -52,8 +97,8 @@ Nothing is developed directly on `main` — not a feature, not a fix, not a typo
   always to hand and always current — and it is never merged into `main`.
 - Does not need to be releasable at any given moment.
 - **Is never released from.** CI refuses to build a release from any ref that is not on `main`.
-- **Is never pushed to the public `origin`.** It lives on the private remote — see
-  [Two repositories, and why](#two-repositories-and-why).
+- **Is never pushed to the public `origin`.** It lives in the private repository — see
+  [Repository architecture](#repository-architecture).
 
 Working freely here is the point. The safety does not come from being careful on `develop`; it comes
 from the gate in front of `main`.

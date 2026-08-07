@@ -35,7 +35,8 @@
     "pack:diag-zip": "node scripts/pack-diag-zip.mjs",
     "pack:beta": "node scripts/pack-beta-zip.mjs",
     "verify:beta": "node scripts/verify-artifact.mjs --kind=beta --exe=src-tauri/target/release/sard.exe",
-    "verify:main-ready": "node scripts/check-production-tree.mjs"
+    "verify:main-ready": "node scripts/check-production-tree.mjs",
+    "release:to-main": "node scripts/release-to-main.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

@@ -30,6 +30,7 @@
 // A rule that deletes the safety equipment along with the hazard is not a safety rule.
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { DEVELOPMENT_ONLY, PRODUCTION_ALWAYS } from "./production-tree-rules.mjs";
 
 const REPO = resolve(import.meta.dirname, "..");
 const args = Object.fromEntries(
@@ -38,43 +39,6 @@ const args = Object.fromEntries(
     return [k, v.join("=") || true];
   }),
 );
-
-/**
- * FILES THAT MUST NEVER REACH `main`.
- *
- * Each entry is a regex over the repo-relative, forward-slashed path, plus the reason it is excluded
- * — because an exclusion whose reason is lost is an exclusion someone eventually overrides.
- */
-const DEVELOPMENT_ONLY = [
-  // ONE DIRECTORY, ONE RULE. Every internal engineering document — handbook, workflow, notes,
-  // checklists, lessons — lives under docs/engineering/, so a single pattern covers all of them and
-  // a new one is protected the moment it is created. `WORKFLOW.md` used to sit at the repo root with
-  // its own rule; a per-file pattern only protects the files someone remembered to list.
-  //
-  // `docs/` is PARTLY production: docs/screenshots/ is referenced by the public README and must ship.
-  // So the exclusion is scoped to the engineering subtree rather than to docs/.
-  { re: /^docs\/engineering\//, why: "internal engineering documents — how the product is built, not the product" },
-  { re: /^CHECKPOINT-.*\.md$/, why: "an investigation checkpoint" },
-  { re: /^(BETA-\d+|REMEDIATION_PLAN|PROJECT_MASTER_SUMMARY|NEXT_STAGE_STUDY)\.md$/, why: "an internal plan or status note" },
-  { re: /_(STUDY|INVESTIGATION|PLAN)\.md$/, why: "an investigation report" },
-  { re: /^DIAG-README\.txt$/, why: "the diagnostic package's tester instructions" },
-  { re: /^src\/lib\/(diag|pdfDiag|renderDiag|stageLedger)\.ts$/, why: "diagnostic instrumentation" },
-  { re: /^src-tauri\/src\/diag_startup\.rs$/, why: "diagnostic instrumentation" },
-  { re: /^src-tauri\/tauri\.(diag|beta)\.conf\.json$/, why: "a non-release build's identity overlay (diagnostic or private Beta)" },
-  { re: /^scripts\/pack-(diag|share)\.mjs$/, why: "a packaging utility for non-release builds" },
-  { re: /^tests\/harness\//, why: "an investigation harness — reusable ones belong in the external toolkit" },
-];
-
-/**
- * Explicitly PRODUCTION, even though a pattern above might otherwise catch them. Listed first and
- * checked first, so the safety equipment can never be swept out with the hazard.
- */
-const PRODUCTION_ALWAYS = [
-  /^src\/lib\/diagOff\.ts$/,
-  /^scripts\/(verify-artifact|build-identity)\.mjs$/,
-  /^\.github\/workflows\//,
-  /^(README|BUILD|LICENSE|CHANGELOG)(\.md)?$/,
-];
 
 const ref = typeof args.ref === "string" ? args.ref : null;
 const files = execFileSync(

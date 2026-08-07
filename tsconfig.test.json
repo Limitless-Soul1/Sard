@@ -21,6 +21,10 @@
     // own valid code — the test config was simply missing a type the app has always relied on.
     "types": ["vitest/globals", "node", "vite/client"]
   },
-  "include": ["tests/**/*.ts"],
+  // `src/vite-env.d.ts` for the SAME reason `vite/client` is in `types` above: tests import product
+  // modules, so product code enters this program and it relies on constants Vite defines at build
+  // time (`__SARD_BUILD_ID__`). Without the declaration the test pass fails on the app's own valid
+  // code — a typecheck failure that says nothing about the tests.
+  "include": ["tests/**/*.ts", "src/vite-env.d.ts"],
   "references": []
 }

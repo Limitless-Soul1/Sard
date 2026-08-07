@@ -167,6 +167,10 @@ fn build_record(app_data_dir: &Path) -> String {
     let _ = writeln!(p);
     let _ = writeln!(p, "  writtenAtEpoch     {}", now());
     let _ = writeln!(p, "  appVersion         {}", env!("CARGO_PKG_VERSION"));
+    // THE FIRST THING TO ASK A REPORT. Baked in at compile time by build.rs, so it identifies this
+    // exact binary rather than whatever the sender believes they installed. The 2026-08-07
+    // investigation spent days on "which build is this?" with no way to ask the running app.
+    let _ = writeln!(p, "  BUILD ID           {}", env!("SARD_BUILD_ID"));
 
     // ---- the executable itself -------------------------------------------------------------
     let _ = writeln!(p, "\n------------------------------------------------------------------------------");

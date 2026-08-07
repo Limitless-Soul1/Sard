@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
-import { artifactName, kindOf } from "./build-identity.mjs";
+import { artifactName, extractBuildId, kindOf } from "./build-identity.mjs";
 
 const REPO = resolve(import.meta.dirname, "..");
 const OUT = "M:/Sard-Diagnostic";
@@ -44,7 +44,13 @@ for (const rel of sourceFiles) {
 const fingerprint = fp.digest("hex").toUpperCase();
 const head = git(["rev-parse", "--short", "HEAD"]);
 const dirty = git(["status", "--porcelain"]).split("\n").filter(Boolean).length;
-const buildId = `DIAG-${stamp}-${head}`;
+// READ from the binary, never regenerated: this script runs after the build, so a fresh id would
+// carry a different timestamp than the one compiled in and BUILD-INFO.txt would describe a build
+// that does not exist. What is written here is what the app itself will report.
+const diagExe = join(REPO, "src-tauri/target/release/sard-diag.exe");
+if (!existsSync(diagExe)) throw new Error(`diagnostic binary not found: ${diagExe}`);
+const buildId = extractBuildId(readFileSync(diagExe));
+if (!buildId) throw new Error("the diagnostic binary carries no BUILD ID — build it through the Sard build scripts (SARD_BUILD_ID must be set)");
 
 // Fresh output directory every time — no chance of carrying anything forward.
 rmSync(OUT, { recursive: true, force: true });

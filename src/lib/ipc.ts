@@ -4,6 +4,8 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 
 export interface AppInfo {
+  /** The build the RUST CORE was compiled as — compare with __SARD_BUILD_ID__ (the frontend bundle). */
+  build_id: string;
   app_data_dir: string;
   db_path: string;
   schema_version: number;

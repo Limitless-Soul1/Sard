@@ -42,9 +42,22 @@ const diagOffPlugin = {
   },
 };
 
+// THE BUILD ID, baked into the frontend bundle at build time.
+//
+// The Rust core gets the same string through build.rs, and the diagnostic report prints both side by
+// side. Two values that were generated once and then travelled separately can be COMPARED, and that
+// comparison answers a question nothing in the running app could answer during the 2026-08-07
+// investigation: is the frontend in this executable the one we shipped with it?
+//
+// Never invented. Without the build scripts it says so, in words, rather than showing a plausible id.
+// @ts-expect-error process is a nodejs global
+const BUILD_ID = process.env.SARD_BUILD_ID || "UNSET — built directly, not through the Sard build scripts";
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: IS_DIAG ? [react()] : [diagOffPlugin, react()],
+
+  define: { __SARD_BUILD_ID__: JSON.stringify(BUILD_ID) },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

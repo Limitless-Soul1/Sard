@@ -110,3 +110,69 @@ export function artifactName(template, stamp) {
 export function utcStamp(d = new Date()) {
   return d.toISOString().replace(/[-:T]/g, "").slice(0, 14);
 }
+
+/**
+ * THE BUILD ID — one string that identifies exactly which build someone is running.
+ *
+ * `<KIND>-<utc stamp>-<git short sha>[+N]`, where `+N` counts uncommitted paths. Sard's public
+ * artifacts are built from the WORKING TREE, not from a commit, so a sha alone would be a half-truth:
+ * `dd23765+76` says "this is dd23765 plus 76 changes you cannot see from the history", which is the
+ * honest thing to say and exactly what BUILD-INFO.txt has always recorded.
+ *
+ * Generated ONCE per build and passed to both halves of the app through `SARD_BUILD_ID`:
+ * `build.rs` re-emits it for Rust, Vite defines it for the frontend. One value, two consumers, and a
+ * report that prints both — so "did the frontend of THIS executable actually run?" becomes a
+ * comparison rather than an argument. That question cost the installer investigation days.
+ */
+export function buildId(kind, { cwd = process.cwd() } = {}) {
+  const { execFileSync } = requireChildProcess();
+  const git = (args) => {
+    try { return execFileSync("git", args, { cwd, encoding: "utf8" }).trim(); } catch { return ""; }
+  };
+  const sha = git(["rev-parse", "--short", "HEAD"]) || "nogit";
+  const dirty = git(["status", "--porcelain"]).split("\n").filter(Boolean).length;
+  const prefix = kind.id === "diag" ? "DIAG" : "REL";
+  return `${prefix}-${utcStamp()}-${sha}${dirty ? `+${dirty}` : ""}`;
+}
+
+/**
+ * The shape `buildId()` produces: `REL-20260807031743-8174cff+10`.
+ *
+ * NO TRAILING `\b`. The first version had one and silently truncated the id, dropping `+12` from
+ * `DIAG-20260807032144-8174cff+12`: the compiler packs string literals into .rdata with no separator,
+ * so the id is immediately followed by the next literal — here the `S` of "Sard Diagnostics". `\b`
+ * between `2` and `S` does not hold (both are word characters), so the pattern backtracked, gave up
+ * the `+12`, and matched a shorter id that ended at a `+`. BUILD-INFO.txt would then have recorded a
+ * build id the app never reports, which is the precise disagreement this whole mechanism exists to
+ * prevent.
+ *
+ * Residual hazard, stated rather than hidden: with no trailing anchor, a sha could over-capture if
+ * the byte after the id happened to be a hex digit. The consequence is limited to the extracted
+ * string used for paperwork — the MATCH/MISMATCH check in the report compares the two injected
+ * constants directly and never goes through this pattern.
+ */
+export const BUILD_ID_RE = /\b(REL|DIAG)-\d{14}-[0-9a-f]{7,40}(?:\+\d+)?/;
+
+/**
+ * Read the BUILD ID back OUT of a compiled binary.
+ *
+ * The packaging scripts run AFTER the build, so they cannot generate the id the binary carries —
+ * generating a second one would put a different timestamp in BUILD-INFO.txt than the app reports,
+ * and a package whose paperwork disagrees with its contents is how the 2026-08-07 confusion started.
+ * So the id is EXTRACTED, and BUILD-INFO.txt states what the executable will actually say.
+ *
+ * Returns null when the binary carries none, which means it was built outside the build scripts. The
+ * caller must treat that as a failure rather than substituting something plausible.
+ */
+export function extractBuildId(buf) {
+  const m = buf.toString("latin1").match(BUILD_ID_RE);
+  return m ? m[0] : null;
+}
+
+// `getBuiltinModule` rather than a top-level import, so this module stays usable from contexts that
+// only want the identity table and never shell out.
+function requireChildProcess() {
+  return globalThis.process?.getBuiltinModule
+    ? { execFileSync: globalThis.process.getBuiltinModule("node:child_process").execFileSync }
+    : { execFileSync: () => { throw new Error("child_process unavailable"); } };
+}

@@ -7,6 +7,7 @@
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve, delimiter } from "node:path";
+import { buildId, kindOf } from "./build-identity.mjs";
 
 const root = resolve(import.meta.dirname, "..");
 const step = (cmd) => {
@@ -60,6 +61,15 @@ if (!cargoOnPath()) {
 step("npm test"); // typechecks tests/ then runs the suite
 
 // ---- build ------------------------------------------------------------------------------------------
+// THE BUILD ID, generated once here and handed to both halves: build.rs re-emits it for Rust, Vite
+// defines it for the frontend. Set BEFORE the build so both pick up the same value in one pass — a
+// second call would produce a second timestamp and a permanent, meaningless "MISMATCH" in every
+// report. This is a test build, so it is stamped REL like any non-diagnostic build; the id records
+// the git sha plus the number of uncommitted paths, which is the honest description of a tree Sard
+// actually builds from.
+process.env.SARD_BUILD_ID = buildId(kindOf("release"), { cwd: root });
+console.log(`[Sard] BUILD ID  ${process.env.SARD_BUILD_ID}`);
+
 step("node scripts/kill-sard.mjs");    // close any running Sard (incl. Sard-standalone) or abort loudly
 step("npx tauri build --no-bundle");   // fast standalone release, NO installer (Share needs the FULL build)
 step("node scripts/copy-release.mjs"); // copy Sard.exe + piper into test-build\

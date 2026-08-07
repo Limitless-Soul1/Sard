@@ -11,6 +11,10 @@ use crate::{backgrounds, books, fonts, library, photocards, settings};
 
 #[derive(Serialize)]
 pub struct AppInfo {
+    /// THE BUILD ID baked in at compile time (build.rs). Product metadata, not instrumentation:
+    /// "which build are you running?" is the first question of every support conversation, and
+    /// before this the running app had no way to answer it.
+    pub build_id: String,
     pub app_data_dir: String,
     pub db_path: String,
     pub schema_version: i64,
@@ -75,6 +79,7 @@ pub fn app_info(state: State<AppState>) -> Result<AppInfo, String> {
     let conn = state.conn();
     let schema_version = db::schema_version(&conn).map_err(err)?;
     Ok(AppInfo {
+        build_id: env!("SARD_BUILD_ID").to_string(),
         app_data_dir: state.app_data_dir.display().to_string(),
         db_path: state.db_path.display().to_string(),
         schema_version,

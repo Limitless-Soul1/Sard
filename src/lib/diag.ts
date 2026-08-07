@@ -280,8 +280,35 @@ function startTtsWatch(): void {
 // ---------------------------------------------------------------------------------------------
 // Environment
 // ---------------------------------------------------------------------------------------------
+/**
+ * Compare the build id the RUST CORE was compiled with against the one baked into this web bundle.
+ *
+ * Pulled out as a pure function purely so it can be TESTED. The MISMATCH branch only ever fires in
+ * the emergency it exists for — a partial install, a stale cached bundle, an executable carrying a
+ * frontend it was not built with — so left inline it would be a line of code that has never once run
+ * and is trusted anyway. That is the shape of a check that quietly does not work.
+ *
+ * `unknown` is deliberately not "match": a missing id must never read as agreement.
+ */
+export function compareBuildIds(core: string | null | undefined, frontend: string | null | undefined): string {
+  if (!core || !frontend) return "UNKNOWN — one side reported no build id, so nothing was compared";
+  if (/^UNSET/.test(core) || /^UNSET/.test(frontend)) {
+    return "UNKNOWN — built outside the Sard build scripts, so the ids are not meaningful";
+  }
+  return core === frontend
+    ? "MATCH — the core and the frontend are from the same build"
+    : "*** MISMATCH *** — this executable is NOT running the frontend it was built with";
+}
+
 async function environment(): Promise<Record<string, unknown>> {
   const env: Record<string, unknown> = {
+    // FIRST, because it is the first question of every investigation. The frontend's id is compiled
+    // into this bundle by Vite; the core's arrives over IPC below; `buildIdMatch` compares them.
+    // Nothing in the running app could answer "which build is this?" during the 2026-08-07
+    // investigation, and days went into inferring it from file sizes and install directories.
+    buildIdFrontend: __SARD_BUILD_ID__,
+    buildIdCore: "UNKNOWN — app_info did not answer",
+    buildIdMatch: "UNKNOWN",
     collectedAt: new Date().toISOString(),
     userAgent: navigator.userAgent,
     engine: (navigator as unknown as { userAgentData?: { brands?: { brand: string; version: string }[] } })
@@ -303,9 +330,22 @@ async function environment(): Promise<Record<string, unknown>> {
   };
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    env.appInfo = await invoke("app_info");
+    const info = await invoke<{ build_id?: string }>("app_info");
+    env.appInfo = info;
+    // THE HANDSHAKE. Both ids were generated once, by one script, and then travelled by completely
+    // separate routes into this binary: one through build.rs into the Rust core, one through Vite
+    // into the web bundle. If they disagree, the executable is NOT carrying the frontend it was
+    // built with — an installer that wrote one and not the other, a stale cached bundle, a partial
+    // update. That is precisely the hypothesis the installer investigation could neither confirm
+    // nor rule out, because nothing in the running app could be asked.
+    const core = info?.build_id;
+    if (typeof core === "string" && core.length) {
+      env.buildIdCore = core;
+      env.buildIdMatch = compareBuildIds(core, __SARD_BUILD_ID__);
+    }
   } catch (e) {
     env.appInfo = `UNKNOWN — ${String(e)}`;
+    env.buildIdMatch = "UNKNOWN — the core could not be asked, so no comparison was made";
   }
   return env;
 }

@@ -24,7 +24,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
-import { KINDS, kindOf } from "./build-identity.mjs";
+import { KINDS, extractBuildId, kindOf } from "./build-identity.mjs";
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((a) => {
@@ -133,6 +133,18 @@ function verifyBinary(kind, exePath) {
 
     const other = Object.values(KINDS).find((k) => k.id !== kind.id);
     if (info.ProductName === other.productName) bad(`this artifact identifies as the OTHER kind (${other.label})`);
+  }
+
+  // THE BUILD ID. An artifact that cannot say which build it is cannot be supported: every report it
+  // produces starts with an unanswerable question, which is exactly the position the 2026-08-07
+  // investigation was in. Its prefix is also a second, independent statement of the artifact's kind.
+  const id = extractBuildId(buf);
+  if (!id) {
+    bad("carries NO build id — it was compiled outside the build scripts, so no report it produces can identify it");
+  } else {
+    const wantPrefix = kind.id === "diag" ? "DIAG" : "REL";
+    if (id.startsWith(wantPrefix)) ok(`carries a build id: ${id}`);
+    else bad(`build id ${id} declares the wrong kind (expected a ${wantPrefix}- prefix)`);
   }
 
   // The updater endpoint is the difference between "a diagnostic build someone ran once" and "a

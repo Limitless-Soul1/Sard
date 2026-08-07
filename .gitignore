@@ -68,3 +68,13 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# NOTHING ARCHIVED MAY LIVE IN public/. Vite copies public/ verbatim into dist/, and Tauri embeds
+# dist/ into the executable — so a stray archive here is compiled into every build. A 47 MB RAR of a
+# previous Beta package sat here from 2026-08-05 and tripled the binary (24 MB -> 72 MB) in every
+# artifact built afterwards, including one sent to a tester. Nothing referenced it.
+public/**/*.rar
+public/**/*.zip
+public/**/*.7z
+public/**/*.exe
+public/**/*.msi

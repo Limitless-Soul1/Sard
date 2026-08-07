@@ -185,12 +185,23 @@ function verifyBundle(kind, distDir) {
   ok(`the search can read the web bundle (canaries: ${canary.join(", ")})`);
 
   // Validated 2026-08-07 by building both kinds and measuring: release 0 / diag 2, 5, 3 respectively.
+  // ONE KIND CARRIES INSTRUMENTATION; EVERY OTHER KIND MUST NOT.
+  //
+  // This used to branch on `release` and `diag` by name, so when `beta` was added it matched neither
+  // and fell through to the `else` — which reports a PASS and, worse, printed "web bundle carries
+  // __sardDiag" while asserting nothing at all. A Beta could have shipped the entire diagnostic
+  // frontend and this would have said VERIFIED. It is the third check in this file to fail OPEN when
+  // a third kind appeared, which is a pattern rather than an accident: a rule written as "if A … else
+  // if B …" quietly stops covering anything the moment a C exists.
+  //
+  // Phrased as a property of the KIND instead: diagnostics belong to diagnostic builds, full stop.
   const FRONTEND_DIAG = ["__sardDiag", "diagStart", "NOT ENTERED"];
+  const mustCarry = kind.id === "diag";
   for (const m of FRONTEND_DIAG) {
     const n = countIn(buf, m);
-    if (kind.id === "release" && n > 0) bad(`the RELEASE web bundle contains ${JSON.stringify(m)} (${n}x) — the diagnostic modules were not substituted`);
-    else if (kind.id === "diag" && n === 0) bad(`the DIAGNOSTIC web bundle is missing ${JSON.stringify(m)} — its instrumentation did not make it in`);
-    else ok(`web bundle ${kind.id === "release" ? "free of" : "carries"} ${JSON.stringify(m)}`);
+    if (!mustCarry && n > 0) bad(`the ${kind.label} web bundle contains ${JSON.stringify(m)} (${n}x) — the diagnostic modules were not substituted`);
+    else if (mustCarry && n === 0) bad(`the ${kind.label} web bundle is missing ${JSON.stringify(m)} — its instrumentation did not make it in`);
+    else ok(`web bundle ${mustCarry ? "carries" : "free of"} ${JSON.stringify(m)}`);
   }
 }
 

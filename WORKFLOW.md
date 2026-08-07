@@ -289,23 +289,26 @@ once in `scripts/build-identity.mjs`; do not reproduce these values anywhere els
 | Product name | `Sard` | `Sard` | `Sard Diagnostic` |
 | Executable | `Sard.exe` | `Sard.exe` | `sard-diag.exe` |
 | Identifier | `com.sard.app` | `com.sard.app` | `com.sard.diag` |
-| Version | `1.1.0` | `1.2.0-beta.N` | `1.1.0-diag` |
+| Version | `1.1.0` | `1.1.0` — the REAL version | `1.1.0-diag` |
 | Window title | `Sard` | **`Sard — BETA`** | `Sard DIAGNOSTIC — not for release` |
+| About panel | version | **version · BETA + build id** | version |
+| BUILD ID | `REL-…` | **`BETA-…`** | `DIAG-…` |
 | Updater | public endpoint | public endpoint | **none** |
+| Distribution | **GitHub Releases** | **private — handed to testers** | private |
 | Package | `Sard-Setup.exe` | `Sard-BETA-<stamp>-<sha>.zip` | `Sard-DIAG-<stamp>.zip` |
 
-**The Beta is the product, marked — not a separate application** (owner's decision, 2026-08-07). Same
-name, executable and identifier, so it REPLACES a tester's Sard and they keep reading their own
-library, which is the only way to get feedback about what we are actually shipping. What differs is
-that it says so, in the two places a person looks: the window title and the version.
+**The Beta is the product, marked — not a separate application and NOT a release channel** (owner,
+2026-08-07). Same name, executable and identifier, so it REPLACES a tester Sard and they keep reading
+their own library, which is the only way to get feedback about what we actually ship.
 
-⚠ **Bump the pre-release number in `tauri.beta.conf.json` before every Beta** (`-beta.1` → `-beta.2`).
-Two Betas sharing a version cannot be told apart by a tester and cannot be ordered by the updater.
+⚠ **A Beta carries the product REAL version — no pre-release suffix.** Betas are private builds handed
+to a few testers directly; they are never published to GitHub Releases and are not part of the
+official release channel, so they must not be dressed as pre-releases of it. An earlier attempt set
+`1.2.0-beta.N` to satisfy the updater semver ordering — designing the product version number around a
+channel the artifact never enters. **GitHub Releases carry official production versions only.**
 
-⚠ **The base version must stay ABOVE the published release, and this is not cosmetic.** The updater
-compares semver: `1.1.0-beta.1` is LOWER than the published `1.1.0`, so it would offer every tester an
-"update" back to the public build and quietly pull them off the Beta. `1.2.0-beta.N` sits correctly
-between the last release and the next one.
+A Beta is identified by everything EXCEPT its version, and two Betas are told apart by their BUILD ID
+(UTC stamp + commit), so no manual version bump is ever needed.
 
 A diagnostic build installs *beside* a release install, keeps its own profile, and cannot update
 itself or be updated. Its name says what it is after any number of copies, downloads and renames.

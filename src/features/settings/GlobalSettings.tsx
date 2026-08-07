@@ -10,6 +10,7 @@ import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
 import type { TKey } from "../../i18n/locales/en";
 import { getVersion } from "@tauri-apps/api/app";
+import { appInfo } from "../../lib/ipc"; // BETA identification in About (build id)
 
 import { Hoopoe } from "../library/Hoopoe";
 import { settingsGet, settingsSet } from "../../lib/ipc";
@@ -870,6 +871,17 @@ function AboutSection() {
   // rather than a hardcoded literal, so About can never drift from the shipped binary.
   const [ver, setVer] = useState("");
   useEffect(() => { getVersion().then(setVer).catch(() => {}); }, []);
+  // A BETA build must say so here as well as in the title bar. Betas are PRIVATE builds handed to a
+  // few testers directly; they are never published and deliberately carry the product's real version
+  // number, so the version line alone cannot distinguish one from the public release. The BUILD ID
+  // can: it is stamped in at compile time and a Beta's begins `BETA-`. Shown only when it does, so a
+  // release build's About panel is exactly as it was.
+  const [betaId, setBetaId] = useState<string | null>(null);
+  useEffect(() => {
+    appInfo()
+      .then((i) => setBetaId(i.build_id?.startsWith("BETA-") ? i.build_id : null))
+      .catch(() => {});
+  }, []);
   return (
     <>
       <SecHead>{t("gs.about")}</SecHead>
@@ -878,7 +890,11 @@ function AboutSection() {
         <div>
           <div className="gs-about-name">Sard · سَرْد</div>
           <div className="gs-about-tag">{t("gs.about.tagline")}</div>
-          <div className="gs-about-ver">{t("gs.about.version")} {ver}</div>
+          <div className="gs-about-ver">
+            {t("gs.about.version")} {ver}
+            {betaId && <span className="gs-about-beta"> · BETA</span>}
+          </div>
+          {betaId && <div className="gs-about-build">{betaId}</div>}
         </div>
       </div>
       <div className="gs-update">

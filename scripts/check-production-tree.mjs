@@ -53,7 +53,7 @@ const DEVELOPMENT_ONLY = [
   { re: /^DIAG-README\.txt$/, why: "the diagnostic package's tester instructions" },
   { re: /^src\/lib\/(diag|pdfDiag|renderDiag|stageLedger)\.ts$/, why: "diagnostic instrumentation" },
   { re: /^src-tauri\/src\/diag_startup\.rs$/, why: "diagnostic instrumentation" },
-  { re: /^src-tauri\/tauri\.diag\.conf\.json$/, why: "the diagnostic build's identity overlay" },
+  { re: /^src-tauri\/tauri\.(diag|beta)\.conf\.json$/, why: "a non-release build's identity overlay (diagnostic or private Beta)" },
   { re: /^scripts\/pack-(diag|share)\.mjs$/, why: "a packaging utility for non-release builds" },
   { re: /^tests\/harness\//, why: "an investigation harness — reusable ones belong in the external toolkit" },
 ];

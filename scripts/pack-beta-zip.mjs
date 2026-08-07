@@ -1,6 +1,6 @@
 // Package a BETA build as a ZIP containing ONE installer, for external testers.
 //
-//   npm run pack:beta            # uses the version already in tauri.beta.conf.json
+//   npm run pack:beta
 //
 // EXPECTED OUTPUT
 //   M:/Sard-Beta/Sard-BETA-<stamp>-<sha>.zip
@@ -8,14 +8,15 @@
 //
 // A Beta is THE PRODUCT, MARKED — not a separate application. Same product name, same executable,
 // same bundle identifier, so it replaces a tester's Sard and they keep reading their own library.
-// What differs is that it says so, in the two places a person looks: the window title reads
-// "Sard — BETA" and the version carries `-beta`.
 //
-// ⚠ BEFORE EACH BETA, BUMP THE PRE-RELEASE NUMBER in src-tauri/tauri.beta.conf.json
-// (1.2.0-beta.1 → 1.2.0-beta.2 …). Two Betas sharing a version cannot be told apart by a tester, and
-// the updater cannot order them. The base version must also stay ABOVE the published release: the
-// updater compares semver, and `1.1.0-beta.1` is LOWER than the published `1.1.0`, so it would have
-// offered every tester an "update" back to the public build and quietly pulled them off the Beta.
+// Betas are PRIVATE builds handed to a few testers directly. They are never published to GitHub
+// Releases and are not part of the official release channel, so they carry the PRODUCT'S REAL
+// VERSION — no pre-release suffix, no version invented to satisfy the updater's semver ordering for
+// a channel the artifact never enters. GitHub Releases carry official production versions only.
+//
+// A Beta is identified by everything EXCEPT its version: window title "Sard — BETA", a BETA line in
+// About, a BUILD ID beginning "BETA-", and the installer and ZIP named for it. Two Betas are told
+// apart by their BUILD ID, which carries a UTC stamp and the commit — no manual version bump needed.
 //
 // The build itself is NOT run here — it is run deliberately, with its own build id:
 //
@@ -85,4 +86,5 @@ console.log(`    zip size   ${(zipBytes.length / 1048576).toFixed(1)} MB`);
 console.log(`    zip sha256 ${sha(zipBytes)}`);
 console.log(`    exe sha256 ${sha(setupBytes)}`);
 console.log(`    build id   ${buildId}\n`);
-console.log(`  Testers will see:  window title "Sard — BETA",  version ${JSON.parse(readFileSync(join(REPO, "src-tauri/tauri.beta.conf.json"), "utf8")).version}\n`);
+console.log(`  Testers will see:  window title "Sard — BETA" · a BETA line in About · build id ${buildId}\n`);
+console.log(`  PRIVATE build — hand to testers directly. Never publish it to GitHub Releases.\n`);

@@ -42,7 +42,7 @@ const bad = (m) => { problems.push(m); notes.push(`  FAIL  ${m}`); };
 /** Count occurrences of `needle` in `buf`, in both plain and UTF-16LE encodings. */
 function countIn(buf, needle) {
   let n = 0;
-  for (const enc of ["latin1", "utf16le"]) {
+  for (const enc of ["latin1", "utf8", "utf16le"]) {
     const nb = Buffer.from(needle, enc);
     if (!nb.length) continue;
     let i = 0;
@@ -97,13 +97,13 @@ function verifyBinary(kind, exePath) {
 
   for (const m of kind.forbiddenMarkers) {
     const n = countIn(buf, m);
-    if (n > 0) bad(`a RELEASE build contains the diagnostic marker ${JSON.stringify(m)} (${n}x)`);
+    if (n > 0) bad(`a ${kind.label} build contains the forbidden marker ${JSON.stringify(m)} (${n}x)`);
     else ok(`no diagnostic marker ${JSON.stringify(m)}`);
   }
   for (const m of kind.requiredMarkers) {
     const n = countIn(buf, m);
     if (n > 0) ok(`carries its required marker ${JSON.stringify(m)} (${n}x)`);
-    else bad(`a DIAGNOSTIC build is MISSING its marker ${JSON.stringify(m)} — the instrumentation is not in this binary`);
+    else bad(`a ${kind.label} build is MISSING its required marker ${JSON.stringify(m)}`);
   }
 
   // IDENTITY comes from the PE VERSION RESOURCE, not from a string search.

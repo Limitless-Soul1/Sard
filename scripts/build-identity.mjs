@@ -64,26 +64,29 @@ export const KINDS = {
     cargoFeatures: [],
   },
 
-  // THE BETA IS THE PRODUCT, MARKED — not a separate application.
+  // THE BETA IS THE PRODUCT, MARKED — not a separate application, and NOT a release channel.
   //
-  // Same productName, same executable, same identifier, therefore the same install directory and the
-  // same profile: a Beta REPLACES a tester's Sard and they carry on with their real library, which is
-  // the only way to get feedback about the thing we are actually shipping. What differs is that it
-  // says so, in the two places a person looks: the window title and the version.
+  // Same productName, executable and identifier, therefore the same install directory and the same
+  // profile: a Beta REPLACES a tester's Sard and they carry on with their real library, which is the
+  // only way to get feedback about the thing we are actually shipping.
   //
-  // ⚠ THE BASE VERSION MUST STAY AHEAD OF THE PUBLISHED RELEASE, and this is not cosmetic.
-  // The published release is 1.1.0 and the in-app updater compares semver. `1.1.0-beta.1` is LOWER
-  // than `1.1.0` by the semver rules, so the updater would have offered every Beta tester an
-  // "update" back to the public build and quietly pulled them off the thing they were testing.
-  // `1.2.0-beta.N` is higher than 1.1.0 and lower than a future 1.2.0, so a Beta sits between the
-  // last release and the next one — exactly where it belongs.
+  // ⚠ NO VERSION SUFFIX. Betas are PRIVATE builds handed to a few testers over Google Drive. They are
+  // never published to GitHub Releases and are not part of the official release channel at all, so
+  // they must not be dressed as pre-releases of it. An earlier version of this entry set
+  // `1.2.0-beta.N` to satisfy the updater's semver ordering — designing the product's version number
+  // around a channel the artifact never enters. The version stays exactly what the product's version
+  // is; the updater behaves exactly as it does in a release build; GitHub Releases carry official
+  // production versions only.
+  //
+  // A Beta is identified by everything EXCEPT its version: the window title reads "Sard — BETA", the
+  // About panel says so, the BUILD ID begins `BETA-`, and the installer and ZIP are named for it.
   beta: {
     id: "beta",
-    label: "BETA (external testers)",
+    label: "BETA (private — external testers)",
     productName: "Sard",
     mainBinaryName: "Sard",
     identifier: "com.sard.app",
-    versionSuffix: "-beta",
+    versionSuffix: "",
     // Kept. A Beta that cannot receive the next Beta is a Beta nobody can move forward.
     updater: true,
     // A Beta is a release build with a label. It carries no instrumentation, and the verifier holds
@@ -95,7 +98,11 @@ export const KINDS = {
       "diag_probe_assets",
       "SARD DIAGNOSTIC BUILD",
     ],
-    requiredMarkers: [],
+    // The window-title FRAGMENT, not the whole title. Measured: "Sard — BETA" appears nowhere in the
+    // binary as one piece — the compiler splits it, exactly as it split "com.sard.diag" into
+    // "com.sard" + "ard.diag". "— BETA" IS contiguous (1 hit, UTF-8), and an em dash followed by BETA
+    // cannot occur by accident in a release build, whose title is simply "Sard".
+    requiredMarkers: ["— BETA"],
     setupName: "Sard-BETA-Setup.exe",
     standaloneName: "Sard.exe",
     tauriConfigOverlay: "src-tauri/tauri.beta.conf.json",

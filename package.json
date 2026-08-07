@@ -19,7 +19,10 @@
     "typecheck:tests": "tsc -p tsconfig.test.json",
     "harness:tts": "node tests/harness/tts-track.mjs",
     "harness:interaction": "node tests/harness/interaction.mjs --gate",
-    "harness:lifecycle": "node tests/harness/lifecycle.mjs"
+    "harness:lifecycle": "node tests/harness/lifecycle.mjs",
+    "build:release": "npx tauri build && node scripts/verify-artifact.mjs --kind=release --exe=src-tauri/target/release/Sard.exe",
+    "verify:release": "node scripts/verify-artifact.mjs --kind=release --exe=src-tauri/target/release/Sard.exe",
+    "verify:diag": "node scripts/verify-artifact.mjs --kind=diag --exe=src-tauri/target/release/sard-diag.exe"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

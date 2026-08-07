@@ -27,7 +27,7 @@ import {
 } from "./injectedCss";
 import { navIntent } from "./navIntent";
 import { stageEnter as diagStageEnter, stageOk as diagStageOk, stageFail as diagStageFail, probePdfChain as diagProbeChain, watchFirstPage as diagWatchFirstPage } from "../lib/pdfDiag"; // DIAGNOSTIC BUILD ONLY
-import { diagAttachDocument } from "../lib/diag"; // DIAGNOSTIC BUILD ONLY
+import { diagAttachDocument, diagNote, diagPublishUnits } from "../lib/diag"; // DIAGNOSTIC BUILD ONLY
 import { renderStageOk as rStageOk, renderStageFail as rStageFail, renderDiagAdoptDoc, renderDiagNotEpub, renderDiagSurface, renderDiagTheme } from "../lib/renderDiag"; // DIAGNOSTIC BUILD ONLY
 import { sanitiseBookCss, type BookCssMode } from "./cssSanitiser"; // WP-7 stage 3
 import { synthesiseToc, type SectionHeading, type SynthToc } from "./tocSynth"; // WP-6A // → is always the next page; see that file for why
@@ -1298,8 +1298,7 @@ export function setBookCssMode(mode: BookCssMode): void {
 /** DIAGNOSTIC BUILD ONLY: record why the reading-follow refused to act for sentence `i`. */
 function diagFollow(i: number, reason: string, data: Record<string, unknown>): void {
   try {
-    (globalThis as unknown as { __sardDiag?: { note?: (s: string, t: string, m: string, d?: Record<string, unknown>) => void } })
-      .__sardDiag?.note?.("tts.follow", "MEASURED", `follow SKIPPED for sentence ${i}: ${reason}`, { sentenceIndex: i, reason, ...data });
+    diagNote("tts.follow", "MEASURED", `follow SKIPPED for sentence ${i}: ${reason}`, { sentenceIndex: i, reason, ...data });
   } catch {
     /* never let instrumentation affect playback */
   }
@@ -1307,12 +1306,12 @@ function diagFollow(i: number, reason: string, data: Record<string, unknown>): v
 
 function publishDiagUnits(section: number, unitCount: number, displayed: number | null): void {
   try {
-    const w = globalThis as unknown as {
-      __sardDiagUnits?: { section: number; units: number; displayed: number | null; at: string };
-      __sardDiag?: { note?: (s: string, t: string, m: string, d?: Record<string, unknown>) => void };
-    };
-    w.__sardDiagUnits = { section, units: unitCount, displayed, at: new Date().toISOString() };
-    w.__sardDiag?.note?.("tts.units", "MEASURED", `tracking units built: ${unitCount} for section ${section}`, {
+    // The snapshot the collector takes later reads this section number; `diagNote` records the moment
+    // it changed. Both go through lib/diag, which a release build aliases away — the pair used to
+    // reach for `globalThis.__sardDiag*` directly, and a global back-channel is invisible to the
+    // bundler, so it survived into release bundles that were supposed to have no instrumentation.
+    diagPublishUnits(section, unitCount, displayed);
+    diagNote("tts.units", "MEASURED", `tracking units built: ${unitCount} for section ${section}`, {
       ttsUnitsSectionIndex: section,
       displayedSectionIndex: displayed,
       unitCount,

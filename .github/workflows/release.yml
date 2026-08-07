@@ -38,6 +38,50 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # ---- THE RELEASE GATE (added after the 2026-08-07 diagnostic-build incident) ----------------
+      #
+      # A public release may be cut from `main` and from nothing else, and only from a tree with no
+      # instrumentation in it. Neither condition was checked before, and neither would have caught
+      # that incident on its own — the build reached the user through a stale cloud link, not through
+      # CI. They are here because the next mistake will not be the last one: the cheapest place to
+      # refuse to publish an experimental build is before it is built.
+      - name: Refuse to release from anywhere but main
+        shell: bash
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            # A tag can point at any commit, including one that was never on main. Resolve it and
+            # require that main actually contains it, rather than trusting the tag's name.
+            git fetch --force --depth=200 origin main:refs/remotes/origin/main
+            if ! git merge-base --is-ancestor "${{ github.sha }}" refs/remotes/origin/main; then
+              echo "::error::tag ${{ github.ref_name }} points at ${{ github.sha }}, which is NOT on main."
+              echo "::error::Public releases are cut from main only. Merge and review first."
+              exit 1
+            fi
+            echo "tag ${{ github.ref_name }} -> ${{ github.sha }} is on main"
+          elif [ "${{ github.ref_name }}" != "main" ]; then
+            echo "::error::manual runs are allowed on main only; this is '${{ github.ref_name }}'."
+            exit 1
+          fi
+
+      - name: Refuse to release a tree containing diagnostic components
+        shell: bash
+        run: |
+          # Anything on internal-lab that has not been reviewed and cleaned would show up here.
+          FOUND=$(git ls-files \
+            'src/lib/diag.ts' 'src/lib/pdfDiag.ts' 'src/lib/renderDiag.ts' 'src/lib/stageLedger.ts' \
+            'src-tauri/src/diag_startup.rs' 'src-tauri/tauri.diag.conf.json' 'scripts/pack-diag.mjs')
+          if [ -n "$FOUND" ]; then
+            echo "::error::the release tree contains diagnostic components:"
+            echo "$FOUND" | sed 's/^/::error::  /'
+            exit 1
+          fi
+          # The `diag` Cargo feature must not be on by default, or every build is a diagnostic build.
+          if grep -qE '^\s*default\s*=\s*\[[^]]*"diag"' src-tauri/Cargo.toml; then
+            echo "::error::the 'diag' Cargo feature is enabled by default in src-tauri/Cargo.toml."
+            exit 1
+          fi
+          echo "tree is clean of diagnostic components"
+
       - name: Node
         uses: actions/setup-node@v4
         with:
@@ -98,3 +142,13 @@ jobs:
           # restarts the app itself. msiexec on a per-user install is a rougher road. The MSI stays a
           # release asset for people who want it; it is simply not the update payload.
           updaterJsonPreferNsis: true
+
+      # The artifact itself is asked what it is, AFTER it exists. Every check above is about intent;
+      # this one is about bytes, and it is the only one that could have caught a diagnostic build that
+      # got this far. It reads the PE version resource (the same field a user sees under Properties →
+      # Details) and searches for instrumentation markers, refusing to let a mislabelled binary reach
+      # the release page. Note it runs after tauri-action, so a failure here means a release exists
+      # with a bad asset — treat that as an incident and delete the release, do not just re-run.
+      - name: Verify the artifact is a PUBLIC RELEASE build
+        shell: bash
+        run: node scripts/verify-artifact.mjs --kind=release --exe=src-tauri/target/release/Sard.exe

@@ -716,6 +716,26 @@ function installExportButton(): void {
   }
 }
 
+/**
+ * DIAGNOSTIC BUILD ONLY — the TTS module publishes its AudioContext here.
+ *
+ * The karaoke clock is derived from `currentTime`, which does NOT advance while a context is
+ * suspended, so the collector has to be able to watch it. It used to be written straight onto
+ * `globalThis` by tts.ts; that put an instrumentation call in a product module where the bundler
+ * could not see it was diagnostic, and it duly survived into release bundles. Routed through this
+ * module it disappears with the rest when a release build aliases lib/diag to no-ops.
+ */
+export function diagPublishAudio(ctx: unknown): void {
+  try { (window as unknown as Record<string, unknown>).__sardDiagAudio = ctx; } catch { /* never affect playback */ }
+}
+
+/** DIAGNOSTIC BUILD ONLY — the section the reading-tracking units were built for (see audioState/snapshot). */
+export function diagPublishUnits(section: number, units: number, displayed: number | null): void {
+  try {
+    (window as unknown as Record<string, unknown>).__sardDiagUnits = { section, units, displayed, at: new Date().toISOString() };
+  } catch { /* never affect playback */ }
+}
+
 export function diagStop(): void {
   armed = false;
   if (ttsUnsub) { ttsUnsub(); ttsUnsub = null; }

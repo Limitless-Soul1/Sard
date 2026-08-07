@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { artifactName, kindOf } from "./build-identity.mjs";
 
 const REPO = resolve(import.meta.dirname, "..");
 const OUT = "M:/Sard-Diagnostic";
@@ -49,12 +50,36 @@ const buildId = `DIAG-${stamp}-${head}`;
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 
-const setupSrc = join(REPO, "src-tauri/target/release/bundle/nsis/Sard_1.1.0_x64-setup.exe");
+// THE ARTIFACT NAME — the whole reason the 2026-08-07 incident was possible.
+//
+// This script used to write `Sard-Setup.exe`, the SAME name the public beta package uses. The two
+// files then differed only by which folder they sat in, and a folder is not a property of a file:
+// the moment either one is uploaded, attached, or dropped in a shared drive, nothing distinguishes
+// them. A user with an old link to the share location downloaded "the latest Sard-Setup.exe" and got
+// a diagnostic build. The same collision, running the other way, is why a tester had earlier
+// installed the diagnostic package and got a build with no diagnostics in it.
+//
+// The name now carries the kind and the build stamp, so it stays self-describing after any number of
+// copies, renames-on-download, or years in a folder next to a real installer.
+const kind = kindOf("diag");
+const setupOut = artifactName(kind.setupName, stamp); // Sard-DIAG-<stamp>-Setup.exe
+const setupSrc = join(REPO, "src-tauri/target/release/bundle/nsis/Sard Diagnostic_1.1.0-diag_x64-setup.exe");
 if (!existsSync(setupSrc)) throw new Error(`installer not found: ${setupSrc}`);
-cpSync(setupSrc, join(OUT, "Sard-Setup.exe"));
+
+// THE GATE. The binary is asked what it is before it is packaged, and a diagnostic package that has
+// somehow been built without its instrumentation — or with the public updater still wired in — is
+// refused here rather than discovered by a tester a week later.
+execFileSync(
+  process.execPath,
+  [join(REPO, "scripts/verify-artifact.mjs"), "--kind=diag",
+   "--exe=src-tauri/target/release/sard-diag.exe"],
+  { cwd: REPO, stdio: "inherit" },
+);
+
+cpSync(setupSrc, join(OUT, setupOut));
 cpSync(join(REPO, "DIAG-README.txt"), join(OUT, "README.txt"));
 
-const setupBytes = readFileSync(join(OUT, "Sard-Setup.exe"));
+const setupBytes = readFileSync(join(OUT, setupOut));
 const info = `SARD - DIAGNOSTIC BUILD (PDF + READ-ALOUD + BLACK PAGE)
 =======================================================
 This is NOT a release. It is an instrumented build whose only purpose is to
@@ -74,7 +99,7 @@ Git HEAD          ${head}  (+ ${dirty} uncommitted path(s))
 Source fingerprint ${fingerprint}
                   (${sourceFiles.length} files, ${bytes.toLocaleString("en-US")} bytes)
 
-Sard-Setup.exe    ${sha(setupBytes)}
+${setupOut.padEnd(17)} ${sha(setupBytes)}
                   ${setupBytes.length.toLocaleString("en-US")} bytes
 
 HOW IT DIFFERS FROM THE NORMAL BUILD
@@ -204,7 +229,7 @@ const rarPath = join(OUT, rarName);
 const tree = join(REPO, `.diagpack-${stamp}`);
 rmSync(tree, { recursive: true, force: true });
 mkdirSync(tree, { recursive: true });
-for (const f of ["Sard-Setup.exe", "README.txt", "BUILD-INFO.txt"]) cpSync(join(OUT, f), join(tree, f));
+for (const f of [setupOut, "README.txt", "BUILD-INFO.txt"]) cpSync(join(OUT, f), join(tree, f));
 execFileSync(RAR, ["a", "-r", "-ep1", "-m3", "-idq", rarPath, "*"], { cwd: tree });
 rmSync(tree, { recursive: true, force: true });
 
@@ -212,7 +237,7 @@ execFileSync(RAR, ["t", "-idq", rarPath]);
 const listing = execFileSync(RAR, ["lb", rarPath], { encoding: "utf8" }).split("\n").filter(Boolean);
 console.log(`\n  BUILD ID    ${buildId}`);
 console.log(`  fingerprint ${fingerprint}`);
-console.log(`  Sard-Setup.exe  ${setupBytes.length.toLocaleString("en-US")} bytes  ${sha(setupBytes).slice(0, 16)}…`);
+console.log(`  ${setupOut}  ${setupBytes.length.toLocaleString("en-US")} bytes  ${sha(setupBytes).slice(0, 16)}…`);
 console.log(`\n  RAR ${rarPath}`);
 console.log(`      ${statSync(rarPath).size.toLocaleString("en-US")} bytes · integrity OK · ${listing.length} entries:`);
 for (const e of listing) console.log(`        ${e}`);

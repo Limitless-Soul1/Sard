@@ -15,6 +15,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 
 import { type BookScript, voiceCompatibility, isImplausiblyShortAudio } from "./voiceCompat"; // WP-5
+// DIAGNOSTIC BUILD ONLY. A release build aliases this specifier to src/lib/diagOff.ts, so these two
+// calls compile to no-ops and the instrumentation leaves the bundle entirely. They used to write to
+// `globalThis.__sardDiag*` inline, which the bundler cannot recognise as diagnostic — that is how
+// instrumentation kept reaching release bundles that were meant to have none.
+import { diagNote, diagPublishAudio } from "./diag";
 import { settingsGet, settingsSet, ttsDownloadVoice, ttsEdgeVoices, ttsStop, ttsVoicePresent } from "./ipc";
 import { LatencySeries, newSeries, recordSeries, resetSeries, seriesSummary, SynthScheduler } from "./ttsScheduler";
 
@@ -965,7 +970,7 @@ const audioCtx = (): AudioContext => {
   // DIAGNOSTIC BUILD: publish the context so the collector can watch `state` and `currentTime`. The
   // karaoke clock is derived from currentTime, which does NOT advance while a context is suspended.
   try {
-    (globalThis as unknown as { __sardDiagAudio?: AudioContext }).__sardDiagAudio = ctx;
+    diagPublishAudio(ctx);
   } catch {
     /* ignore */
   }
@@ -1048,8 +1053,7 @@ function parseFramed(raw: ArrayBuffer): { words: TtsWord[]; audio: ArrayBuffer }
   // while the audio plays perfectly. Recorded at the source so it can never be confused with a
   // rendering fault further down.
   try {
-    (globalThis as unknown as { __sardDiag?: { note?: (s: string, t: string, m: string, d?: Record<string, unknown>) => void } })
-      .__sardDiag?.note?.("tts.synth", "MEASURED", "word-timing frame received", {
+    diagNote("tts.synth", "MEASURED", "word-timing frame received", {
         jsonLengthBytes: jlen,
         wordCount: words.length,
         audioBytes: raw.byteLength - 4 - jlen,

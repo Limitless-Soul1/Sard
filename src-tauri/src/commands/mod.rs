@@ -89,6 +89,9 @@ pub fn app_info(state: State<AppState>) -> Result<AppInfo, String> {
 /// directory, which the UI shows so the tester can find the files.
 ///
 /// Reads nothing and changes nothing: it only writes what the frontend already collected.
+// DIAGNOSTIC BUILD ONLY — compiled ONLY under the `diag` Cargo feature, so a release build has no
+// such command to invoke and its name never reaches the binary (see lib.rs::sard_invoke_handler).
+#[cfg(feature = "diag")]
 #[tauri::command]
 pub fn diag_save(
     text: String,
@@ -138,11 +141,17 @@ pub fn diag_save(
 /// frontend of THIS executable actually executed — which no measurement taken from Rust can
 /// establish, and which distinguishes "the new build ran and its frontend is dead" from "an older
 /// executable ran". Writes text the frontend has already formatted; it computes nothing.
+// DIAGNOSTIC BUILD ONLY — compiled ONLY under the `diag` Cargo feature, so a release build has no
+// such command to invoke and its name never reaches the binary (see lib.rs::sard_invoke_handler).
+#[cfg(feature = "diag")]
 #[tauri::command]
 pub fn diag_startup_mark(section: String) -> Result<(), String> {
     crate::diag_startup::append_frontend(&section)
 }
 
+// DIAGNOSTIC BUILD ONLY — compiled ONLY under the `diag` Cargo feature, so a release build has no
+// such command to invoke and its name never reaches the binary (see lib.rs::sard_invoke_handler).
+#[cfg(feature = "diag")]
 #[tauri::command]
 pub fn diag_probe_assets(app: tauri::AppHandle) -> Result<Vec<String>, String> {
     use tauri::Manager;

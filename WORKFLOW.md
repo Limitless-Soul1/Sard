@@ -220,6 +220,23 @@ The checklist above is human discipline. These are the parts a machine refuses t
 
 ---
 
+## The engineering handbook
+
+`docs/engineering/HANDBOOK.md` is the single source of truth for **how work is done** — investigation
+method, evidence tiers, verification, harness design, decision boundaries, post-mortems, and the
+classes of mistake that have recurred here. This file covers branches, builds and release; the
+handbook covers thinking.
+
+**It must be kept current.** Whenever a workflow rule is agreed, a mistake reveals a *class* of
+mistake, or a decision is made that would otherwise be re-litigated, update it in the same change that
+established it — not later. A lesson recorded a week after it was learned is a lesson already half
+lost, and one recorded nowhere is one the project pays for twice.
+
+Where a rule can be enforced rather than described, add the check as well: a failing test outlives a
+paragraph.
+
+Like this file, the handbook is development-only and never merged into `main`.
+
 ## Verification may proceed. Product behaviour needs approval.
 
 **The dividing line, set 2026-08-07 after it was crossed.**

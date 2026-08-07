@@ -47,6 +47,9 @@ const args = Object.fromEntries(
  */
 const DEVELOPMENT_ONLY = [
   { re: /^WORKFLOW\.md$/, why: "the development workflow — a laboratory document, not part of the product" },
+  // `docs/` is PARTLY production: docs/screenshots/ is referenced by the public README and must ship.
+  // Only the engineering subtree is internal, so the exclusion is scoped to it rather than to docs/.
+  { re: /^docs\/engineering\//, why: "the engineering handbook — how the product is built, not the product" },
   { re: /^CHECKPOINT-.*\.md$/, why: "an investigation checkpoint" },
   { re: /^(BETA-\d+|REMEDIATION_PLAN|PROJECT_MASTER_SUMMARY|NEXT_STAGE_STUDY)\.md$/, why: "an internal plan or status note" },
   { re: /_(STUDY|INVESTIGATION|PLAN)\.md$/, why: "an investigation report" },

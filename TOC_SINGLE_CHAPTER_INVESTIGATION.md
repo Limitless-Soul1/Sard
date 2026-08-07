@@ -502,7 +502,7 @@ node <scratch>/active-probe.mjs   # §6.2 active row / chrome label
 ```
 
 Scripts are in
-`C:\Users\ADMINI~1\AppData\Local\Temp\claude\m--eRawy\37163f2b-5f92-44d9-8235-e818a8586270\scratchpad\`.
+`<scratch directory>`.
 They follow `tests/harness/`'s contract exactly: `snapshotDb` → `launchSard` → drive → `restoreDb`. The
 profile was verified unchanged after the last run.
 

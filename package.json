@@ -25,7 +25,8 @@
     "verify:diag": "node scripts/verify-artifact.mjs --kind=diag --exe=src-tauri/target/release/sard-diag.exe",
     "harness:ro": "node tests/harness/ro-storm.mjs --label=check --cycles=6",
     "harness:ro-resize": "node tests/harness/ro-resize.mjs",
-    "harness:autopsy": "node tests/harness/autopsy-context.mjs"
+    "harness:autopsy": "node tests/harness/autopsy-context.mjs",
+    "harness:ledger": "node tests/harness/ledger-freshness.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

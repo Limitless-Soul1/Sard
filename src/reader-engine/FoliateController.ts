@@ -28,7 +28,7 @@ import {
 import { navIntent } from "./navIntent";
 import { stageEnter as diagStageEnter, stageOk as diagStageOk, stageFail as diagStageFail, probePdfChain as diagProbeChain, watchFirstPage as diagWatchFirstPage } from "../lib/pdfDiag"; // DIAGNOSTIC BUILD ONLY
 import { diagAttachDocument, diagNote, diagPublishUnits } from "../lib/diag"; // DIAGNOSTIC BUILD ONLY
-import { renderStageOk as rStageOk, renderStageFail as rStageFail, renderDiagAdoptDoc, renderDiagNotEpub, renderDiagSurface, renderDiagTheme } from "../lib/renderDiag"; // DIAGNOSTIC BUILD ONLY
+import { renderStageOk as rStageOk, renderStageFail as rStageFail, renderDiagAdoptDoc, renderDiagNotEpub, renderDiagReset, renderDiagSurface, renderDiagTheme } from "../lib/renderDiag"; // DIAGNOSTIC BUILD ONLY
 import { sanitiseBookCss, type BookCssMode } from "./cssSanitiser"; // WP-7 stage 3
 import { synthesiseToc, type SectionHeading, type SynthToc } from "./tocSynth"; // WP-6A // → is always the next page; see that file for why
 import { resolveSpotlight, resolvePill } from "./ttsTrack"; // RAWY-200: pure per-theme track resolution
@@ -1475,6 +1475,23 @@ export class FoliateController {
     // Catching it HERE gives the real exception and stack; it is rethrown untouched so behaviour is
     // identical to the uninstrumented build.
     diagStageEnter("controller.open", { source: String(source).slice(0, 200), isPdf: /\.pdf(\?|$)/i.test(String(source)) });
+    // DIAGNOSTIC BUILD ONLY — START THE RENDERING LEDGER FOR *THIS* BOOK.
+    //
+    // `renderDiagReset()` existed but was never called from anywhere, so one ledger described a whole
+    // session and carried two defects into every report:
+    //
+    //   1. STALE REASONS. Opening a PDF marks stages 2-14 NOT OBSERVABLE with "this book is a PDF".
+    //      Opening an EPUB afterwards moves their STATE on, but `meta.reason` is only ever assigned
+    //      into, never cleared — so the report told the next investigator "this book is a PDF" about
+    //      an EPUB, and any stage the EPUB did not re-enter stayed NOT OBSERVABLE for that reason.
+    //   2. SESSION-SPAN DURATIONS. The ledger's `t0` was set when the module loaded, so every stage
+    //      timestamp was "milliseconds since the app started". A tester who opens the failing book
+    //      ten minutes in produced a ledger where every stage read ~600000 ms and nothing could be
+    //      told from anything else.
+    //
+    // Resetting HERE — at the first stage of an open, before anything is recorded — makes the ledger
+    // describe one book, which is the only thing it was ever able to describe honestly.
+    renderDiagReset();
     renderDiagSurface(container); // DIAGNOSTIC BUILD ONLY — the surface the black-page autopsy walks
     rStageOk("open.requested", { source: String(source).slice(0, 200), format: /\.pdf(\?|$)/i.test(String(source)) ? "pdf" : "epub" });
     try {

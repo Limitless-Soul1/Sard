@@ -265,6 +265,29 @@ This is where the incident happened, so it gets its own rules.
 4. **Every package ships `BUILD-INFO.txt`.** When someone reports a problem, ask for its `BUILD ID`
    first. It is the fastest way to find out what they are actually running, and it costs one message.
 
+## Standard procedure: ask for the BUILD ID first
+
+**Before any debugging begins, on every report, from anyone: get the BUILD ID.** Not after
+reproducing, not once a theory needs checking — first, before the investigation has a shape.
+
+Three ways to get it, in order of what the reporter has to hand:
+
+| They have | Where to look |
+|---|---|
+| A diagnostic build | The report's first lines: `buildIdFrontend` / `buildIdCore` / `buildIdMatch` |
+| Any build at all | Right-click the executable → **Properties → Details** → *Product name* and *Product version* |
+| The package it came in | `BUILD-INFO.txt`, the `BUILD ID` line |
+
+Why this is first and not fourth: the 2026-08-07 investigation ran for days on "which build is this?",
+answered by inferring from file sizes, install directories and WebView2 cache timestamps — and the
+answer that eventually mattered (a diagnostic build from a stale link) was reachable in one message.
+Every measurement taken before the build is known is a measurement that may be about the wrong
+program.
+
+Read `buildIdMatch` too, not just the id. **MISMATCH** means the executable is not running the
+frontend it was built with, and that changes what is worth investigating at all: nothing else in the
+report can be trusted to describe a coherent program.
+
 Anyone can check a build by hand: right-click the executable → **Properties → Details**. `Product
 name` reads either `Sard` or `Sard Diagnostic`. This is the same field the automated verifier reads,
 so the manual check and the machine check cannot disagree.

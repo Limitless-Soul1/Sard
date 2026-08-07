@@ -1,5 +1,9 @@
 # Sard — development workflow
 
+**This document owns: branches, merge policy, build kinds, packaging and release.**
+`docs/engineering/HANDBOOK.md` owns how work is done — investigation, evidence, verification,
+harness design, decision boundaries and post-mortems. Nothing is stated in both.
+
 This is the permanent process for this repository. It exists because of a real incident, described
 at the end, and every rule here is a response to something that actually went wrong rather than a
 convention borrowed from elsewhere.
@@ -237,40 +241,13 @@ paragraph.
 
 Like this file, the handbook is development-only and never merged into `main`.
 
-## Verification may proceed. Product behaviour needs approval.
+## Approval boundaries
 
-**The dividing line, set 2026-08-07 after it was crossed.**
+**Verification may proceed. Product behaviour needs approval.** The full rule, the three kinds of
+question it distinguishes, and the two traps that caused it to be written live in
+**`docs/engineering/HANDBOOK.md` §6 — Decision boundaries**.
 
-| Proceed freely | Ask first, every time |
-|---|---|
-| Measuring whether something is true | Product behaviour |
-| Reproducing a reported failure | UI and UX |
-| Building a fixture, harness or probe | Workflows and interactions |
-| Fixing something measurably wrong | Visual decisions |
-| Renaming a thing that misdescribes itself | Anything a reader would notice and could have an opinion about |
-
-Verification changes what we KNOW. Product changes what the reader GETS. The first is why the
-harnesses exist and needs no permission. The second is the owner's, always — even when the change is
-small, even when it is obviously an improvement, and even when it is already implemented and measured.
-
-**How this was learned.** PPC-4 was filed as "typography sliders do not mirror in RTL". It sat in a
-table of postponed items, so it read as a defect awaiting a fix. It was investigated, implemented,
-measured, verified — and then reverted, because the LTR layout is deliberate and mirroring it was
-never approved. Everything about the work was sound except the decision to do it.
-
-Two traps in that, both worth naming:
-
-- **A filed observation is not an authorisation.** A line in a postponed-items table records that
-  someone noticed something. It does not say the answer is "change it".
-- **"Go ahead" answers the question that was asked.** I raised the UX concern, was told to proceed,
-  and read that as approval for the design change. It was approval to *work the item*. Where a
-  request could reasonably mean either, pin it down before building — afterwards the work itself
-  applies pressure toward keeping it.
-
-When a decision IS made, record it where the next person will trip over it — a test that fails, not a
-comment that can be skimmed. `tests/harness/rtl-panel.mjs` is the worked example: it guards a chosen
-behaviour, states plainly that it is a preference rather than a correctness rule, and says that a
-deliberate redesign should update or delete it.
+It is not restated here. Two copies of a rule drift, and the reader cannot tell which is current.
 
 ## The diagnostic subsystem is COMPLETE
 
@@ -424,11 +401,12 @@ and reported itself up to date so nothing would ever repair it. The same collisi
 way, is why a tester had earlier installed the diagnostic package and got a build with no diagnostics
 in it — one root cause, two incidents.
 
-Two lessons are built into the tooling rather than written down and hoped for:
+The lesson this document owns is the one about identity:
 
 - **A folder is not a property of a file.** Separation that survives only while a file stays where it
-  was made is not separation. Identity has to travel with the artifact.
-- **An absence is only evidence if you have proved you can see.** An earlier comparison of two
-  installers found no diagnostic strings in either and concluded they were the same build — Tauri had
-  compressed the assets and the search was reading nothing. `verify-artifact.mjs` now proves it can
-  read a file before it will believe anything is missing from it.
+  was made is not separation. Identity has to travel with the artifact — which is why build kinds,
+  BUILD IDs and package names exist above.
+
+The incident also taught an evidence lesson — *an absence is only evidence once you have proved you
+can see* — which belongs to method rather than process and is recorded in
+**`docs/engineering/HANDBOOK.md` §3.1**, where the rest of the measurement rules live.

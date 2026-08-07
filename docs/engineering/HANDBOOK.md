@@ -13,7 +13,23 @@ stated, because a rule whose price is hidden gets discarded the first time someo
 | `WORKFLOW.md` (on `develop`) | Branches, merges, build kinds, packaging, release process |
 | This document | How to think, investigate, verify, and decide |
 
+**Each document owns its topic and nothing is stated in both.** Where a rule belongs to the other
+document, this one points at it rather than restating it — two copies drift, and the reader cannot
+tell which is current.
+
 Both are development-only. Neither is ever merged into `main`.
+
+**Contents**
+
+| | | | |
+|---|---|---|---|
+| [1 Philosophy](#1--development-philosophy) | [2 Investigation](#2--investigation) | [3 Measuring vs assuming](#3--measuring-versus-assuming) | [4 Verification](#4--verification) |
+| [5 Harnesses](#5--harnesses) | [6 Decision boundaries](#6--decision-boundaries) | [7 Diagnostics](#7--diagnostics) | [8 Naming](#8--naming-and-traceability) |
+| [9 Builds & packaging](#9--builds-ids-and-packaging) | [10 Regression prevention](#10--regression-prevention) | [11 Post-mortems](#11--self-critique-and-post-mortems) | [12 Documentation](#12--documentation) |
+| [13 Working rhythm](#13--working-rhythm) | [14 Maintaining this document](#14--maintaining-this-document) | | |
+
+**If you read one section, read [§3](#3--measuring-versus-assuming).** More wrong conclusions on this
+project came from believing an absence than from any other cause.
 
 ---
 
@@ -461,29 +477,79 @@ this document carries the reason it exists.
 6. Report: facts → analysis → recommendation → alternatives → confidence.
 7. **Do not implement a fix inside the investigation** unless it was asked for.
 
-### 13.3 Cleanup is a milestone, not a habit
+### 13.3 Cleanup is a milestone
 
-Until Feature Freeze is declared, the answer to "should we tidy this?" is **no**. The laboratory is
-allowed to be messy while it is in use; hygiene performed early is work done twice and done *instead*
-of the product. The exception is a mess that is actively costing something — a harness that corrupts
-data, a name collision that misleads a person. That is a defect, and defects are product work.
+Until Feature Freeze is declared, the answer to "should we tidy this?" is **no** — with one exception:
+a mess that is *actively costing* something (a harness that corrupts data, a name collision that
+misleads a person) is a defect, and defects are product work.
+
+The cadence, the reasoning and the pre-merge checklist belong to `WORKFLOW.md`.
 
 ---
 
 ## 14 · Maintaining this document
 
-**This handbook is the single source of truth for the engineering process, and it is expected to
-grow.**
+**This handbook is a living document. It is expected to change as often as the project teaches
+something.**
 
-Add to it whenever:
+### 14.1 Update it in the same change that taught the lesson
 
-- a workflow rule is agreed,
-- a mistake reveals a **class** of mistake,
-- a decision is made that would otherwise be re-litigated,
-- a new instrument, harness pattern or verification technique proves itself.
+Not afterwards, not in a cleanup pass. A lesson recorded a week later is already half lost; one
+recorded nowhere is paid for twice. If a piece of work established a rule, the commit that did the
+work also updates this file.
 
-Keep entries **concise and reasoned**. A handbook nobody finishes reading protects nobody. Prefer a
-short rule with its one-line justification over a long passage of narrative.
+Update it whenever:
 
-It lives on `develop` and is never merged into `main` — like `WORKFLOW.md`, it documents how the
-product is built, not the product.
+- a workflow rule or engineering principle is agreed,
+- a mistake reveals a **class** of mistake rather than an instance,
+- a decision is made that would otherwise be re-litigated later,
+- a new instrument, harness pattern or verification technique proves itself,
+- an existing rule turns out to be wrong.
+
+### 14.2 Never duplicate a rule between documents
+
+Each document owns its topic:
+
+| Document | Owns |
+|---|---|
+| `WORKFLOW.md` | Branches, merge policy, build kinds, packaging, release |
+| `docs/engineering/HANDBOOK.md` | How work is done: investigation, evidence, verification, harnesses, decisions, post-mortems |
+| `BETA-1.md` and the item records | The status of specific findings |
+
+If a rule belongs elsewhere, **point at it**; do not restate it. Two copies drift, and then the reader
+has to guess which is current. This rule exists because both documents were written with nine
+overlapping rules before anyone noticed.
+
+### 14.3 Obsolete guidance is removed, not left standing
+
+A rule that no longer holds is worse than no rule: it is followed by someone who does not know it was
+superseded. When something changes, **edit or delete the old text** in the same change. Do not append a
+correction below it and leave both.
+
+The same applies to status: a closed item still listed as open sends the next person to re-investigate
+it. When one place is updated, check the others that state the same fact.
+
+### 14.4 Document principles, not incidents
+
+An incident earns a place here only when it teaches a **reusable** lesson, and then it appears as the
+principle with the incident as its one-line evidence — not as a story.
+
+> ✗ "On 7 August a package was built from the wrong installer because …" *(three paragraphs)*
+> ✓ "Never select an artifact by folder order. `readdirSync(...)[0]` is alphabetical and once chose a
+>   build eleven weeks old."
+
+If an incident teaches nothing reusable, it belongs in the commit message, not here.
+
+### 14.5 Keep it short enough to be finished
+
+A handbook nobody reads to the end protects nobody. Prefer a short rule with its one-line
+justification over a passage of narrative. When a section grows past its usefulness, cut it rather
+than letting the document become an archive.
+
+Every rule states **why** it exists. A rule without its reason is waived the first time it is
+inconvenient.
+
+---
+
+*The goal: someone reading only this document should understand exactly how engineering work is
+expected to be performed on Sard.*

@@ -366,27 +366,32 @@ so the manual check and the machine check cannot disagree.
 
 ---
 
-## Two repositories, and why
+## How  is updated
 
-| Remote | Repository | Holds | Visibility |
-|---|---|---|---|
-| `origin` | `Limitless-Soul1/Sard` | `main` only — the production source tree | **PUBLIC** |
-| `private` | `Limitless-Soul1/Sard-develop` | `develop` — the engineering workspace | **PRIVATE** |
+**`main` is not a merge target. It is a published snapshot of `develop`, minus the
+development-only files.**
 
-`develop` carries diagnostics, harnesses, investigation notes and `docs/engineering/`. One
-`git push origin develop` would publish all of it at once, so that command is made to fail rather
-than trusted not to be typed:
+```
+npm run release:to-main            # dry run — shows exactly what would be kept and dropped
+npm run release:to-main -- --commit
+```
 
-- **`remote.origin.push` is pinned to `refs/heads/main:refs/heads/main`** — a bare `git push` to the
-  public remote can only ever move `main`.
-- **A `pre-push` hook refuses any ref but `main` to the public URL** — this catches the explicit
-  `git push origin develop` that overrides the pinned refspec. Verified: it refuses.
-- **`develop` tracks `private/develop`**, so `git push` and `git pull` from `develop` use the private
-  remote with no flags.
+**Why not `git merge`.** Git cannot permanently exclude paths from a merge, and the usual
+suggestion — `.gitattributes` with `merge=ours` — does NOT work: a merge driver is only invoked when
+BOTH sides changed the same file. A file that exists on `develop` and never existed on `main` is not
+a conflict, so git simply adds it and no driver is consulted. It would appear to work right up until
+the moment it mattered. `.gitignore` cannot help either — these files are TRACKED.
 
-The hook lives in `.git/hooks/` and is **not** version-controlled — git cannot share hooks. On a new
-clone, re-create it and re-pin the refspec before doing any work. The two GitHub-side guards
-(`main`-only releases, the development-only file check) are in CI and travel with the repository.
+So the release takes `develop`'s tree, drops the excluded paths, and commits that onto `main`. That
+is what a production branch honestly is: the tree we chose to ship. The history of how we got there
+stays on `develop`, in full.
+
+The exclusion list lives in `scripts/production-tree-rules.mjs` and is imported by BOTH the release
+and the gate, so the two can never describe different trees. Adding a new internal document under
+`docs/engineering/` requires no change anywhere — the directory rule already covers it.
+
+The script refuses to run on a dirty tree or from the wrong branch, builds through a temporary index
+so the working tree is never touched, and verifies `main` afterwards rather than assuming.
 
 ## Why this exists
 

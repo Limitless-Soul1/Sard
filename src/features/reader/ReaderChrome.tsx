@@ -1,8 +1,10 @@
 import { useRef, useState } from "react";
 
 import { useI18n } from "../../i18n";
+import { displayTitle } from "../../lib/bookMeta"; // WP-3: one rule for a missing title
 import { localeNum } from "../../lib/format";
 import { releaseButtonFocusAfterPointerClick } from "../../lib/tts";
+import type { PositionReadout } from "../../reader-engine/position"; // WP-4F
 
 // RAWY-216: the settings drawer is grouped by CONCEPT, not by which tab got built first. Five tabs;
 // the toolbar's three shortcut buttons (Aa / theme / layout) still land on the three most-used ones,
@@ -11,6 +13,8 @@ export type SettingsSection = "typography" | "layout" | "colour" | "readaloud" |
 
 interface Props {
   visible: boolean;
+  /** WP-4F: the resolved position readout, or null when the book reports no usable position. */
+  position: PositionReadout | null;
   bookTitle: string | null;
   chapter: string;
   fraction: number;
@@ -59,6 +63,7 @@ const BasketIco = () => (
 // Text/Theme/Layout open the settings slide-over at the matching section.
 export function ReaderChrome({
   visible,
+  position,
   bookTitle,
   chapter,
   fraction,
@@ -140,7 +145,7 @@ export function ReaderChrome({
         <div className="rc-nav">
           <button className="rc-back" onClick={onBack} title={t("reader.back")}>‹</button>
           <div className="rc-title-block">
-            <span className="rc-book" dir="auto">{bookTitle || t("reader.untitledBook")}</span>
+            <span className="rc-book" dir="auto">{displayTitle({ title: bookTitle }, t)}</span>
             <span className="rc-chapter" dir="auto">{chapter}</span>
           </div>
         </div>
@@ -245,6 +250,16 @@ export function ReaderChrome({
               ? t("pdf.pageOf", { n: localeNum(pdfPage, lang), total: localeNum(pdfPageCount, lang) })
               : chapter}
           </span>
+          {/* RESILIENCE-1 / WP-4F: the position readout the reader asked for. A PDF already shows a
+              real page count above, so this is the reflowable case only. Absent (not zero, not a
+              guess) when the book gives foliate nothing to report — see reader-engine/position.ts. */}
+          {!isPdf && position && (
+            <span className="rc-pos" dir="auto">
+              {position.total
+                ? t(position.labelKey, { n: position.current, t: position.total })
+                : t(position.labelKey, { n: position.current })}
+            </span>
+          )}
           <span>{localeNum(pct, lang)}%</span>
         </div>
         <div

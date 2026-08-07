@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { appDataDir, join } from "@tauri-apps/api/path";
 
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum, uiDateTimeFormat } from "../../lib/format";
 import {
+  bookCommitCover,
   bookDelete,
+  bookDiscardCover,
   bookRevertCover,
-  bookSetCover,
+  bookStageCover,
   bookUpdate,
   collectionAddBook,
   collectionCreate,
@@ -26,11 +29,24 @@ import {
   type SortKey,
   type SortOrder,
 } from "../../lib/ipc";
+// RESILIENCE-1 / WP-1
+import { buildImportReport, isCleanImport, splitByCapability, type ImportReport } from "./importReport";
+import { classifyBookError } from "../../lib/bookErrors";
+import { recordDiagnostic, toDiagnostic } from "../../lib/errors";
+import { canRender } from "../../lib/runtime";
+import { openWebView2Help } from "../../lib/webview2";
 import { AutoCover } from "./AutoCover";
+import { coverSrc } from "./coverSrc";
+
+// What the picker OFFERS. Deliberately not an acceptance rule: Rust decodes what it can and anything
+// else is put to the renderer, so this list only spares the reader from browsing to a file that was
+// never going to be an image. Adding a format here costs nothing and rejects nothing.
+const IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "gif", "avif", "svg", "bmp", "ico"];
 import { GlobalSettings } from "../settings/GlobalSettings";
 import { UpdateRosette } from "../updater/UpdateRosette";
 import { UpdateDialog } from "../updater/UpdateDialog";
 import { Hoopoe } from "./Hoopoe";
+import { displayAuthorOrUnknown, displayTitle, resolveBookMeta, titleIsGuess, titleProvenanceKey } from "../../lib/bookMeta"; // WP-3
 import { Inbox } from "./Inbox";
 import { BookmarksShelf } from "./BookmarksShelf";
 import { PhotoGallery } from "../photo/PhotoGallery";
@@ -45,6 +61,10 @@ export interface OpenTarget {
   dir?: string | null;
   cfi?: string | null; // jump-to location (RAWY-27 inbox); else resume saved progress
   format?: string | null; // RAWY-85 — 'pdf' opens read-only (no themes/annotations); else EPUB
+  // RESILIENCE-1 / WP-3 — a HINT, not the source. The reader re-reads the row by id; these only
+  // stand in if that read fails, so a launching surface never becomes an authority on the name.
+  title?: string | null;
+  author?: string | null;
 }
 
 type View = "grid" | "list" | "rows";
@@ -141,6 +161,7 @@ function warmCovers(rows: readonly BookRow[]): Promise<void> {
   return Promise.race([all, new Promise<void>((res) => window.setTimeout(res, COVER_WARM_MAX_MS))]);
 }
 
+/** The quiet one-line summary — used ONLY when every file was handled without a problem. */
 function summarize(results: ImportResult[], t: TFn, lang: string): string {
   const c = { imported: 0, duplicate: 0, unsupported: 0, error: 0 };
   for (const r of results) c[r.status]++;
@@ -150,6 +171,80 @@ function summarize(results: ImportResult[], t: TFn, lang: string): string {
   if (c.unsupported) parts.push(t("lib.import.unsupported", { n: localeNum(c.unsupported, lang) }));
   if (c.error) parts.push(t("lib.import.error", { n: localeNum(c.error, lang) }));
   return parts.join(" · ") || t("lib.import.none");
+}
+
+/**
+ * RESILIENCE-1 / WP-1 — the per-file import result panel.
+ *
+ * Shown only when something did NOT get added; a clean import keeps the unobtrusive toast. Each
+ * problem names the file and states the reason in one sentence. Rust's own message is kept behind
+ * Details, never in the list — the same rule the reader's error card follows.
+ */
+function ImportResultsPanel({
+  report,
+  onDismiss,
+  t,
+  lang,
+}: {
+  report: ImportReport;
+  onDismiss: () => void;
+  t: TFn;
+  lang: string;
+}) {
+  const [showDetails, setShowDetails] = useState(false);
+  const hasRuntimeBlocked = report.runtimeBlocked.length > 0;
+  return (
+    <div className="import-report" role="alert">
+      <div className="import-report-head">
+        <span className="import-report-title">{t("lib.import.resultsTitle")}</span>
+        <button className="rp-x" onClick={onDismiss} aria-label={t("lib.import.dismiss")}>
+          ✕
+        </button>
+      </div>
+      <div className="import-report-counts">
+        {report.added > 0 && <span>{t("lib.import.okCount", { n: localeNum(report.added, lang) })}</span>}
+        {report.duplicates > 0 && <span>{t("lib.import.duplicate", { n: localeNum(report.duplicates, lang) })}</span>}
+        <span className="import-report-bad">
+          {t("lib.import.problemCount", { n: localeNum(report.problems.length, lang) })}
+        </span>
+      </div>
+
+      {hasRuntimeBlocked && (
+        <p className="import-report-runtime">
+          {t(report.runtimeBlocked.length === 1 ? "err.pdfBlocked.one" : "err.pdfBlocked.many", {
+            n: localeNum(report.runtimeBlocked.length, lang),
+          })}{" "}
+          <button className="import-report-link" onClick={() => void openWebView2Help()}>
+            {t("err.act.updateRuntime")}
+          </button>
+        </p>
+      )}
+
+      <ul className="import-report-list">
+        {report.problems.map((p, i) => (
+          <li key={`${p.name}-${i}`} data-fault={p.fault}>
+            <span className="import-report-name" dir="auto">
+              {p.name}
+            </span>
+            <span className="import-report-reason">{t(p.reasonKey)}</span>
+          </li>
+        ))}
+      </ul>
+
+      <button className="reader-error-btn err-btn-quiet" aria-expanded={showDetails} onClick={() => setShowDetails((v) => !v)}>
+        {t(showDetails ? "err.act.hideDetails" : "err.act.details")}
+      </button>
+      {showDetails && (
+        <div className="err-details">
+          <div className="err-details-note">{t("err.detailsNote")}</div>
+          {/* The ONLY place Rust's raw message is rendered. */}
+          <pre className="reader-error-detail">
+            {report.problems.map((p) => `${p.name}\n  ${p.status}: ${p.raw ?? "(no message)"}`).join("\n\n")}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
@@ -197,6 +292,9 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const [forceEmpty, setForceEmpty] = useState(false);
   const [importing, setImporting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // RESILIENCE-1 / WP-1: the per-file result panel. Non-null only when something wasn't added — a
+  // clean import keeps the quiet toast it has always had.
+  const [importReport, setImportReport] = useState<ImportReport | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
 
   // Remember the reader's view/sort/cover/shelf choices across sessions (persisted via
@@ -417,13 +515,34 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
       if (!paths.length || importing) return;
       setImporting(true);
       try {
-        const results = await importBooks(paths);
+        // RESILIENCE-1 / WP-1: refuse formats this runtime cannot render BEFORE importing them.
+        // The library should represent usable content — an entry guaranteed to fail on open is
+        // worse than an honest refusal that names the fix.
+        const { accepted, blocked } = splitByCapability(paths, canRender("pdf"));
+        const results = accepted.length ? await importBooks(accepted) : [];
         loadBooks();
         loadShelves();
-        flashToast(summarize(results, t, lang));
+        const report = buildImportReport(results, blocked);
+        // Every refused file is recorded, so a compatibility problem stays diagnosable later
+        // without asking the user to reproduce it (principle 5).
+        for (const p of report.problems) {
+          recordDiagnostic({
+            at: Date.now(),
+            scope: "import",
+            kind: p.status,
+            fault: p.fault,
+            raw: p.raw ?? "(no message from the import pipeline)",
+            context: { file: p.name },
+          });
+        }
+        if (isCleanImport(report)) flashToast(summarize(results, t, lang));
+        else setImportReport(report);
         await surfaceEditForNew(results);
       } catch (e) {
-        flashToast(String(e));
+        // The batch itself failed (not one file) — classify it rather than printing the throwable.
+        const c = classifyBookError(e, { stage: "import-batch" });
+        recordDiagnostic(toDiagnostic("import", c));
+        flashToast(t(c.presentation.titleKey));
       } finally {
         setImporting(false);
       }
@@ -439,7 +558,11 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const addBooks = useCallback(async () => {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const sel = await open({ multiple: true, filters: [{ name: "Books", extensions: ["epub", "pdf"] }] });
+      // RESILIENCE-1 / WP-1: don't offer a format this runtime cannot render. Drag-drop and folder
+      // import can still deliver a PDF, and `splitByCapability` refuses those with an explanation —
+      // this just stops the picker inviting the mistake in the first place.
+      const extensions = canRender("pdf") ? ["epub", "pdf"] : ["epub"];
+      const sel = await open({ multiple: true, filters: [{ name: "Books", extensions }] });
       if (!sel) return;
       runImport(Array.isArray(sel) ? sel : [sel]);
     } catch (e) {
@@ -459,16 +582,33 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
       if (!dir || Array.isArray(dir)) return;
       setImporting(true);
       try {
+        // RESILIENCE-1 / WP-1: a folder import walks the tree Rust-side, so a PDF cannot be filtered
+        // out before the call — it is reported afterwards instead, through the same panel. Same
+        // outcome, same explanation, one code path for the user.
         const results = await importFolder(dir);
         loadBooks();
         loadShelves();
-        flashToast(summarize(results, t, lang));
+        const report = buildImportReport(results);
+        for (const p of report.problems) {
+          recordDiagnostic({
+            at: Date.now(),
+            scope: "import",
+            kind: p.status,
+            fault: p.fault,
+            raw: p.raw ?? "(no message from the import pipeline)",
+            context: { file: p.name, source: "folder" },
+          });
+        }
+        if (isCleanImport(report)) flashToast(summarize(results, t, lang));
+        else setImportReport(report);
         await surfaceEditForNew(results);
       } finally {
         setImporting(false);
       }
     } catch (e) {
-      flashToast(String(e));
+      const c = classifyBookError(e, { stage: "import-folder" });
+      recordDiagnostic(toDiagnostic("import", c));
+      flashToast(t(c.presentation.titleKey));
     }
   }, [importing, loadBooks, loadShelves, flashToast, t, lang, surfaceEditForNew]);
 
@@ -509,7 +649,10 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     setMenu(null);
     setConfirmShelf(null); // RAWY-76: navigating away backs out of a pending shelf-delete confirm
   };
-  const open = (b: BookRow) => onOpen({ id: b.id, filePath: b.file_path, dir: b.dir, format: b.format });
+  // WP-3: the card passes what it is displaying as a hint, so a failed row read still shows the same
+  // name the reader just clicked — never as the authority (the reader re-reads the row by id).
+  const open = (b: BookRow) =>
+    onOpen({ id: b.id, filePath: b.file_path, dir: b.dir, format: b.format, title: b.title, author: b.author });
 
   // Shelf writes (RAWY-31): each returns the refreshed shelf list (names + counts).
   const commitCreate = async () => {
@@ -721,7 +864,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
             if (b) setEditing(b); // keep open with refreshed cover after replace/revert
           }}
           onDeleted={() => {
-            const title = editing.title ?? "—"; // capture before we clear `editing`
+            const title = displayTitle(resolveBookMeta(editing), t); // capture before we clear `editing`
             setEditing(null); // RAWY-76: close the dialog and refresh the library + shelf counts
             loadBooks();
             loadShelves();
@@ -730,6 +873,9 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         />
       )}
       {toast && <div className="lib-toast">{toast}</div>}
+      {importReport && (
+        <ImportResultsPanel report={importReport} onDismiss={() => setImportReport(null)} t={t} lang={lang} />
+      )}
       <GlobalSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <UpdateRosette />
       {/* RAWY-290: the update conversation is one dialog, mounted once beside the rosette. Both the
@@ -1132,7 +1278,7 @@ function BookCard({
   const { t } = useI18n();
   const p = progressInfo(book);
   const [failed, setFailed] = useState(false); // cover image absent or failed to load
-  const title = book.title ?? "—";
+  const title = displayTitle(resolveBookMeta(book), t); // WP-3: the same chrome every surface uses
   const arabic = ARABIC.test(title);
   const showImg = !!book.cover_path && !failed;
   // A per-book Crop/Fit override (RAWY-19) wins over the library-wide mode.
@@ -1155,7 +1301,7 @@ function BookCard({
         {showImg ? (
           // RAWY-269 (5): `decoding="sync"` asks the frame that first shows the card to show its
           // cover too, instead of presenting the plate and landing the image 2-3 frames later.
-          <img className="real" src={convertFileSrc(book.cover_path!)} alt="" decoding="sync" onError={() => setFailed(true)} />
+          <img className="real" src={coverSrc(book)!} alt="" decoding="sync" onError={() => setFailed(true)} />
         ) : (
           <AutoCover title={title} author={book.author} dir={book.dir} />
         )}
@@ -1220,10 +1366,14 @@ function EditBook({
   const initialFit = book.cover_fit === "crop" || book.cover_fit === "fit" ? book.cover_fit : "";
   const [coverFit, setCoverFit] = useState<"" | "crop" | "fit">(initialFit);
   const [busy, setBusy] = useState(false);
+  // Why a message and not a silent no-op: the reported complaint was that replacing a cover simply
+  // did nothing, leaving the reader to guess. A refusal must say why.
+  const [coverError, setCoverError] = useState<string | null>(null);
   // RAWY-76: a deliberate two-step delete (matches the photo-card confirm pattern) — the footer
   // swaps to a confirm row so a stray click can't cascade-delete a book and all its data.
   const [confirmDel, setConfirmDel] = useState(false);
   const arabicTitle = ARABIC.test(title);
+  const editMeta = resolveBookMeta(book); // WP-3: where this book's stored name actually came from
 
   const del = async () => {
     setBusy(true);
@@ -1255,20 +1405,47 @@ function EditBook({
       setBusy(false);
     }
   };
+  // The renderer's half of the two-stage validation. Rust has already copied the file in under its
+  // content-addressed name and told us whether IT could decode it; a `verified: false` is not a
+  // rejection, it means "we have no decoder for this" — AVIF is one Chromium displays today. So the
+  // engine that will actually paint the cover is asked, which is the only answer that means "this
+  // will display", and it needs no format list that would rot as new formats ship.
+  const rendererAccepts = async (rel: string): Promise<boolean> => {
+    try {
+      const url = convertFileSrc(await join(await appDataDir(), rel));
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      return img.naturalWidth > 0 && img.naturalHeight > 0;
+    } catch {
+      return false;
+    }
+  };
+
   const replaceCover = async () => {
+    setCoverError(null);
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const sel = await open({
-        multiple: false,
-        filters: [{ name: "Image", extensions: ["jpg", "jpeg", "png", "webp", "gif"] }],
-      });
+      const sel = await open({ multiple: false, filters: [{ name: "Image", extensions: IMAGE_EXTENSIONS }] });
       if (!sel || Array.isArray(sel)) return;
-      onSaved(await bookSetCover(book.id, sel));
+      const staged = await bookStageCover(book.id, sel);
+      if (!staged.verified && !(await rendererAccepts(staged.rel))) {
+        // Nothing was adopted, so nothing needs undoing — only the staged bytes are dropped. The
+        // reader is TOLD, rather than left looking at the previous cover wondering what happened,
+        // which was the original complaint about this feature.
+        await bookDiscardCover(staged.rel).catch(() => {});
+        setCoverError(t("edit.coverUnreadable"));
+        return;
+      }
+      onSaved(await bookCommitCover(book.id, staged.rel));
     } catch (e) {
-      console.error(e);
+      // Rust refuses an unreadable, empty or absurdly large file with a specific reason; show it
+      // rather than a generic failure.
+      setCoverError(String((e as Error)?.message ?? e));
     }
   };
   const revertCover = async () => {
+    setCoverError(null);
     try {
       onSaved(await bookRevertCover(book.id));
     } catch (e) {
@@ -1288,13 +1465,14 @@ function EditBook({
           <div className="edit-cover">
             <div className="lib-cover" data-mode={coverFit || "crop"}>
               {book.cover_path ? (
-                <img className="real" src={convertFileSrc(book.cover_path)} alt="" />
+                <img className="real" src={coverSrc(book)!} alt="" />
               ) : (
-                <AutoCover title={book.title ?? "—"} author={book.author} dir={book.dir} />
+                <AutoCover title={displayTitle(resolveBookMeta(book), t)} author={book.author} dir={book.dir} />
               )}
             </div>
             <button className="edit-btn" onClick={replaceCover}>{t("edit.replaceCover")}</button>
             <button className="edit-link" onClick={revertCover}>{t("edit.revertCover")}</button>
+            {coverError && <p className="edit-cover-error" role="alert">{coverError}</p>}
           </div>
 
           <div className="edit-fields">
@@ -1306,6 +1484,14 @@ function EditBook({
                 className={arabicTitle ? "ar" : ""}
                 dir={arabicTitle ? "rtl" : "ltr"}
               />
+              {/* RESILIENCE-1 / WP-3: when WP-2 had to fall past a placeholder (a Calibre "Unknown",
+                  an empty <dc:title>), say so HERE — where the reader can act on it — instead of
+                  presenting a guessed name as though the book had claimed it. */}
+              {titleIsGuess(editMeta) && (
+                <span className="edit-hint">
+                  {t("meta.titleGuess")} {titleProvenanceKey(editMeta) && t(titleProvenanceKey(editMeta)!)}
+                </span>
+              )}
             </label>
             <label className="edit-field">
               <span>{t("edit.author")}</span>
@@ -1369,6 +1555,7 @@ function EditBook({
 function ListRow({ book, onOpen, lang, t }: { book: BookRow; onOpen: () => void; lang: string; t: TFn }) {
   const p = progressInfo(book);
   const rtl = book.dir === "rtl";
+  const meta = resolveBookMeta(book); // WP-3: one resolver, so this row cannot drift from the card
   const readLabel = (() => {
     if (!book.read_at) return t("lib.date.none");
     const d = new Date(book.read_at * 1000);
@@ -1384,18 +1571,22 @@ function ListRow({ book, onOpen, lang, t }: { book: BookRow; onOpen: () => void;
           still showed a plain rectangle here while the grid showed the artwork. */}
       <span className="ll-thumb">
         {book.cover_path ? (
-          <img className="real" src={convertFileSrc(book.cover_path)} alt="" decoding="sync" />
+          <img className="real" src={coverSrc(book)!} alt="" decoding="sync" />
         ) : (
-          <AutoCover title={book.title ?? "—"} dir={book.dir} variant="mini" />
+          <AutoCover title={displayTitle(meta, t)} dir={book.dir} variant="mini" />
         )}
       </span>
       {/* dir="auto" so a mixed AR title / Latin author each render + ellipsis-truncate on the
           correct side (design "Sard Library List Row"); block alignment follows the view direction. */}
+      {/* RESILIENCE-1 / WP-3: these two are fixed COLUMNS — a blank cell reads as a broken row, not
+          as "nothing is known". Both fall back to chrome, which is never stored, so the database
+          keeps telling the truth (NULL) while the row stays legible. The grid caption above makes
+          the opposite call deliberately: it has no reserved slot, so it simply omits the line. */}
       <span className={`ll-title${rtl ? " ar" : ""}`} dir="auto">
-        {book.title}
+        {displayTitle(meta, t)}
       </span>
       <span className={`ll-author${rtl ? " ar" : ""}`} dir="auto">
-        {book.author}
+        {displayAuthorOrUnknown(meta, t)}
       </span>
       <span className="ll-format">
         {book.format && <span className="ll-badge">{book.format.toUpperCase()}</span>}

@@ -7,11 +7,14 @@ import { initReadMarkerStyle } from "./lib/readMarkerStyle"; // RAWY-256: persis
 import { initFonts } from "./lib/fonts";
 import { applyBackgrounds, initBackground, useBackground } from "./lib/background"; // RAWY-265
 import { initStyleScope } from "./lib/styleScope";
+import { diagStart } from "./lib/diag"; // DIAGNOSTIC BUILD ONLY - observes, never intervenes
 import { registerOutcomeRecorder } from "./lib/listeningOutcomes"; // RAWY-263: the local outcome baseline
 import { initTheme, reapplyTitlebarTheme, useTheme, THEMES } from "./theme";
 import { LanguagePicker } from "./features/onboarding/LanguagePicker";
 import { Library, type OpenTarget } from "./features/library/Library";
 import { Reader } from "./features/reader/Reader";
+import { RuntimeGate } from "./app/RuntimeGate"; // RESILIENCE-1 / WP-1
+import { canRender } from "./lib/runtime";
 import { libraryListBooks, settingsGet, settingsSet } from "./lib/ipc";
 
 // RAWY-12 i18n + RAWY-13 themes + RAWY-15 Library home. First run shows the language
@@ -36,6 +39,12 @@ function Root() {
   }, []);
 
   if (!i18nReady || !themeReady) return null; // brief: settings loading (avoids theme flash)
+  // RESILIENCE-1 / WP-1: the runtime gate. foliate's OPF parser needs browser features an older
+  // WebView2 does not have; without them NO book opens, so this is a genuine precondition rather
+  // than a per-book failure. Placed AFTER i18n is ready (so the notice is in the user's language)
+  // but BEFORE the language picker: choosing a language is pointless if nothing can be read.
+  // A missing PDF capability is NOT checked here — EPUB reading is unaffected by it (see RuntimeGate).
+  if (!canRender("epub")) return <RuntimeGate />;
   if (!hasLang) return <LanguagePicker />;
   // RAWY-206: `onOpenBook` is the SAME `setOpen` the Library hands a book to — the reader's Notes panel
   // uses it to open another book at a note's locator, so there is one open path, not two.
@@ -53,6 +62,10 @@ function App() {
     initBookmarkStyle(); // load persisted bookmark shape/colour/position (RAWY-41)
     initReadMarkerStyle(); // RAWY-256: persisted chapter read-marker variant (global, like bookmark shape)
     initStyleScope(); // load unified-vs-per-book book-style scope (RAWY-43)
+    // DIAGNOSTIC BUILD ONLY. Armed at startup so the tester has to do nothing special before
+    // reproducing — the evidence for a failure is worthless if collection began after it. Hooks
+    // `fetch` and subscribes to the TTS store; it records and never intervenes.
+    diagStart();
     // RAWY-265: loaded in the SAME startup batch as the theme, so the first paint is already correct.
     // Applying it later would paint the themed ground first and then swap — the RAWY-118 class of flash.
     initBackground();

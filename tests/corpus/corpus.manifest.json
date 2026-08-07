@@ -1,0 +1,525 @@
+{
+  "version": 1,
+  "generated": "2026-08-04",
+  "note": "The permanent Sard regression corpus. Book FILES live outside this repository (see README.md) at %SARD_CORPUS%, default M:\\ProjectDocs\\sard\\Corpus. This manifest records what each book IS, so a parser change that alters how a book is read fails `npm run corpus:verify` before any rendering is involved. Membership is permanent: books are added, never removed.",
+  "slots": {
+    "control-wellformed": "A golden, correctly-authored EPUB 3 — the control every rendering change is measured against.",
+    "arabic-normal": "Ordinary Arabic EPUB with correct metadata and a working TOC.",
+    "english-normal": "Ordinary English/Latin EPUB.",
+    "rtl-declared": "Declares page-progression-direction=\"rtl\" — direction comes from metadata.",
+    "rtl-undeclared": "Arabic content with NO RTL signal in metadata — exercises the RAWY-189 content sniff.",
+    "word-generated": "Produced from a Word document (in practice via Calibre) — the reported-defect class.",
+    "calibre-generated": "Calibre output, including finely split spines.",
+    "css-heavy": "Large or numerous stylesheets — the WP-7 stress case.",
+    "broken-toc": "A TOC that exists but is degenerate (far fewer entries than sections).",
+    "no-toc": "No usable TOC at all — neither a nav document nor an NCX.",
+    "very-large": "At least 10 MB and/or 1000+ spine sections.",
+    "poetry-rtl": "Arabic verse — the alignment and centring stress case.",
+    "placeholder-metadata": "Carries literal placeholder metadata such as dc:title \"Unknown\".",
+    "pdf-arabic": "Arabic PDF — scanned or embedded-font.",
+    "pdf-normal": "Ordinary Latin PDF.",
+    "txt-converted": "An EPUB converted from a plain .txt source: chapters carry NO block-level container at all — paragraphs are inline <span>s separated by <br>, some text sits bare in <body>. Exercises every walk that assumes a block element exists (TTS tracking units + ranges most of all)."
+  },
+  "gaps": {
+    "no-toc": "No book in the current corpus lacks a TOC entirely. The generated fixture `no-toc-at-all` covers the code path; a real book is still wanted, because real ones fail in messier ways. Source: any older EPUB 2 with no NCX.",
+    "pdf-normal": "The only corpus PDF is Arabic. A Latin PDF with a real embedded text layer is needed to separate 'PDF handling is broken' from 'Arabic PDF text extraction is unreliable' (a known, documented limit — RAWY-86)."
+  },
+  "books": [
+    {
+      "file": "arabic-normal--ad-daa-wad-dawaa.epub",
+      "sha256": "ec3e573ff97fa1f5bd8ae4dc3594ca3b4899f4a489a2bd077e5f273ec95a534a",
+      "bytes": 776318,
+      "format": "epub",
+      "title": "الداء والدواء — ابن قيم الجوزية",
+      "note": "113 sections with a full matching nav TOC — a well-formed Arabic book with many sections, so 'many sections' can be separated from 'broken TOC'.",
+      "tags": [
+        "arabic-normal"
+      ],
+      "traits": {
+        "readable": true,
+        "mimetype": "application/epub+zip",
+        "mimetypeStored": true,
+        "mimetypeBom": false,
+        "epubVersion": "3.0",
+        "hasMetadataBlock": true,
+        "title": "الداء والدواء",
+        "creator": "ابن قيم الجوزية",
+        "language": "ar",
+        "ppd": null,
+        "spineCount": 113,
+        "manifestCount": 117,
+        "tocEntries": 112,
+        "tocSource": "nav",
+        "cssFiles": 1,
+        "arabicRatio": 1
+      }
+    },
+    {
+      "file": "arabic-normal--art-of-war.epub",
+      "sha256": "36a279ae943b115d57d094d816ca007420178503c5f207ae2c3dc6885dd5ca8b",
+      "bytes": 193288,
+      "format": "epub",
+      "title": "فن الحرب — صن تزو",
+      "note": "Small, clean EPUB 3. Fast smoke-test book.",
+      "tags": [
+        "arabic-normal"
+      ],
+      "traits": {
+        "readable": true,
+        "mimetype": "application/epub+zip",
+        "mimetypeStored": true,
+        "mimetypeBom": false,
+        "epubVersion": "3.0",
+        "hasMetadataBlock": true,
+        "title": "فن الحرب",
+        "creator": "صن تزو",
+        "language": "ar",
+        "ppd": null,
+        "spineCount": 16,
+        "manifestCount": 20,
+        "tocEntries": 15,
+        "tocSource": "nav",
+        "cssFiles": 1,
+        "arabicRatio": 0.99
+      }
+    },
+    {
+      "file": "arabic-normal--karamazov.epub",
+      "sha256": "53582f1e82819c13398c4ee6818ce9c40142a0ea439d20b337188b56d8ed822a",
+      "bytes": 639378,
+      "format": "epub",
+      "title": "الإخوة كارامازوف (الجزء الأول) — فيودور دوستويفسكي",
+      "note": null,
+      "tags": [
+        "arabic-normal"
+      ],
+      "traits": {
+        "readable": true,
+        "mimetype": "application/epub+zip",
+        "mimetypeStored": true,
+        "mimetypeBom": false,
+        "epubVersion": "3.0",
+        "hasMetadataBlock": true,
+        "title": "الإخوة كارامازوف - الجزء الأول",
+        "creator": "فيودور دوستويفسكي",
+        "language": "ar",
+        "ppd": null,
+        "spineCount": 53,
+        "manifestCount": 57,
+        "tocEntries": 52,
+        "tocSource": "nav",
+        "cssFiles": 1,
+        "arabicRatio": 1
+      }
+    },
+    {
+      "file": "arabic-normal--little-prince.epub",
+      "sha256": "1fc56a6d389c34dd1acc791ac223f4363d84b480ce01ddc6bd15ce2355da1953",
+      "bytes": 145756,
+      "format": "epub",
+      "title": "الأمير الصغير — أنطوان دو سانت إكزوبيري",
+      "note": null,
+      "tags": [
+        "arabic-normal"
+      ],
+      "traits": {
+        "readable": true,
+        "mimetype": "application/epub+zip",
+        "mimetypeStored": true,
+        "mimetypeBom": false,
+        "epubVersion": "3.0",
+        "hasMetadataBlock": true,
+        "title": "الأمير الصغير",
+        "creator": "أنطوان دو سانت إكزوبيري",
+        "language": "ar",
+        "ppd": null,
+        "spineCount": 23,
+        "manifestCount": 27,
+        "tocEntries": 22,
+        "tocSource": "nav",
+        "cssFiles": 1,
+        "arabicRatio": 1
+      }
+    },
+    {
+      "file": "arabic-normal--metamorphosis.epub",
+      "sha256": "f01eb2a43d5ca2a3044f89cb482cdc667d2884d7fc5e2f2dc4e6fc2b4e409ead",
+      "bytes": 158518,
+      "format": "epub",
+      "title": "التحول — فرانتس كافكا",
+      "note": "Has a user title+author override in the owner's library — the WP-3 metadata-consistency case.",
+      "tags": [
+        "arabic-normal"
+      ],
+      "traits": {
+        "readable": true,
+        "mimetype": "application/epub+zip",
+        "mimetypeStored": true,
+        "mimetypeBom": false,
+        "epubVersion": "3.0",
+        "hasMetadataBlock": true,
+        "title": "التحول",
+        "creator": "فرانتس كافكا",
+        "language": "ar",
+        "ppd": null,
+        "spineCount": 5,
+        "manifestCount": 9,
+        "tocEntries": 4,
+        "tocSource": "nav",
+        "cssFiles": 1,
+        "arabicRatio": 1
+      }
+    },
+    {
+      "file": "arabic-normal--risalat-alghufran.epub",
+      "sha256": "bfce928e798b262c3cb0cb21bfa672b7bea4c8f61896e851b184df9895feb169",
+      "bytes": 509910,
+      "format": "epub",
+      "title": "رسالة الغفران — أبو العلاء المعري",
+      "note": "Only 4 spine sections — the 'very few, very long sections' shape, opposite of the fragmented case.",
+      "tags": [
+        "arabic-normal"
+      ],
+      "traits": {
+        "readable": true,
+        "mimetype": "application/epub+zip",
+        "mimetypeStored": true,
+        "mimetypeBom": false,
+        "epubVersion": "3.0",
+        "hasMetadataBlock": true,
+        "title": "رسالة الغفران",
+        "creator": "أبو العلاء المعري",
+        "language": "ar",
+        "ppd": null,
+        "spineCount": 4,
+        "manifestCount": 8,
+        "tocEntries": 3,
+        "tocSource": "nav",
+        "cssFiles": 1,
+        "arabicRatio": 1
+      }
+    },
+    {
+      "file": "calibre-generated--lord-of-mysteries.epub",
+      "sha256": "cd27ab1d4ba14011f0069c30d56e75ef0bbd1ed37c0226b5bc70e36f5547de82",
+      "bytes": 10288498,
+      "format": "epub",
+      "title": "لورد الغوامض — Cuttlefish That Loves Diving",
+      "note": "1433 sections with a MATCHING 1432-entry NCX. The control that proves a fragmented spine is survivable when the TOC is sound. Declares dc:language=en over Arabic content. Carries body{text-align:right!important} — the WP-7 specificity case.",
+      "tags": [
+        "calibre-generated",
+        "rtl-undeclared",
+        "very-large"
+      ],
+      "traits": {
+        "readable": true,
+        "mimetype": "application/epub+zip",
+        "mimetypeStored": true,
+        "mimetypeBom": false,
+        "epubVersion": "2.0",
+        "hasMetadataBlock": true,
+        "title": "لورد الغوامض",
+        "creator": "Cuttlefish That Loves Diving",
+        "language": "en",
+        "ppd": null,
+        "spineCount": 1433,
+        "manifestCount": 1437,
+        "tocEntries": 1432,
+        "tocSource": "ncx",
+        "cssFiles": 2,
+        "arabicRatio": 1
+      }
+    },
+    {
+      "file": "control-wellformed--alice.epub",
+      "sha256": "b976d473e774aff4d2279ec3372708d7740baa7fcee3154187997986b3325bae",
+      "bytes": 189196,
+      "format": "epub",
+      "title": "Alice's Adventures in Wonderland — Lewis Carroll",
+      "note": "THE control. Public domain. Carries p.poem{margin-left:10%} and p.asterism — the properties RAWY-195 used to prove no book stylesheet reaches the cascade, and the ones WP-7 must restore without flattening the book's centring.",
+      "tags": [
+        "control-wellformed",
+        "english-normal",
+        "css-heavy"
+      ],
+      "traits": {
+        "readable": true,
+        "mimetype": "application/epub+zip",
+        "mimetypeStored": true,
+        "mimetypeBom": false,
+        "epubVersion": "3.0",
+        "hasMetadataBlock": true,
+        "title": "Alice's Adventures in Wonderland",
+        "creator": "Lewis Carroll",
+        "language": "en",
+        "ppd": null,
+        "spineCount": 15,
+        "manifestCount": 21,
+        "tocEntries": 16,
+        "tocSource": "nav",
+        "cssFiles": 3,
+        "arabicRatio": 0
+      }
+    },
+    {
+      "file": "english-normal--monte-cristo.epub",
+      "sha256": "e48df13d680d91f50dcd2b1850462c5b3077865360fa5aecc26b8a8a011f1f58",
+      "bytes": 1668175,
+      "format": "epub",
+      "title": "The Count of Monte Cristo — Alexandre Dumas",
+      "note": "Public domain. 122 sections, 122 nav entries, 12 KB of CSS, dc:language=en-US (a region subtag, not a bare code).",
+      "tags": [
+        "english-normal",
+        "css-heavy"
+      ],
+      "traits": {
+        "readable": true,
+        "mimetype": "application/epub+zip",
+        "mimetypeStored": true,
+        "mimetypeBom": false,
+        "epubVersion": "3.0",
+        "hasMetadataBlock": true,
+        "title": "The Count of Monte Cristo",
+        "creator": "Alexandre Dumas",
+        "language": "en-US",
+        "ppd": null,
+        "spineCount": 122,
+        "manifestCount": 129,
+        "tocEntries": 122,
+        "tocSource": "nav",
+        "cssFiles": 3,
+        "arabicRatio": 0
+      }
+    },
+    {
+      "file": "pdf-arabic--muqaddima.pdf",
+      "sha256": "115cbc14fefe3e5229978d284e2bbcc0fcb91414860d7a57d79a9154f91c285e",
+      "bytes": 20880658,
+      "format": "pdf",
+      "title": "مقدمة ابن خلدون",
+      "note": "20 MB Arabic PDF. The WP-1B runtime-gate case: PDF.js 5.5 needs Chromium >= 140, so this is the book that fails with `hashOriginal.toHex is not a function` on an older WebView2.",
+      "tags": [
+        "pdf-arabic"
+      ],
+      "traits": null
+    },
+    {
+      "file": "poetry-rtl--shawqiyyat.epub",
+      "sha256": "774682e34253f44178f392bfd4e3112dfff07a9abdbb392b3459120fdf488909",
+      "bytes": 2500601,
+      "format": "epub",
+      "title": "الشوقيات — أحمد شوقي",
+      "note": "Arabic verse across 141 sections. Stores `mimetype` DEFLATE-compressed — a spec violation Sard already tolerates and must keep tolerating. Its nav document also carries page-list/landmarks navs, so it catches a TOC counter that fails to scope to epub:type=\"toc\".",
+      "tags": [
+        "poetry-rtl",
+        "rtl-declared",
+        "arabic-normal",
+        "css-heavy"
+      ],
+      "traits": {
+        "readable": true,
+        "mimetype": "application/epub+zip",
+        "mimetypeStored": false,
+        "mimetypeBom": false,
+        "epubVersion": "3.0",
+        "hasMetadataBlock": true,
+        "title": "الشوقيات",
+        "creator": "أحمد شوقي",
+        "language": "ar",
+        "ppd": "rtl",
+        "spineCount": 141,
+        "manifestCount": 170,
+        "tocEntries": 135,
+        "tocSource": "nav",
+        "cssFiles": 2,
+        "arabicRatio": 1
+      }
+    },
+    {
+      "file": "rtl-declared--les-miserables.epub",
+      "sha256": "664548f5b5bc6d88e06e37d9d21d81b82c5229a27a332e6aa8978128f749740c",
+      "bytes": 236416,
+      "format": "epub",
+      "title": "البؤساء — فيكتور هيجو",
+      "note": "Explicit page-progression-direction=\"rtl\" — direction from metadata, never from the sniff.",
+      "tags": [
+        "rtl-declared",
+        "arabic-normal"
+      ],
+      "traits": {
+        "readable": true,
+        "mimetype": "application/epub+zip",
+        "mimetypeStored": true,
+        "mimetypeBom": false,
+        "epubVersion": "3.0",
+        "hasMetadataBlock": true,
+        "title": "البؤساء",
+        "creator": "فيكتور هيجو",
+        "language": "ar",
+        "ppd": "rtl",
+        "spineCount": 15,
+        "manifestCount": 18,
+        "tocEntries": 14,
+        "tocSource": "nav",
+        "cssFiles": 1,
+        "arabicRatio": 1
+      }
+    },
+    {
+      "file": "rtl-declared--red-rising.epub",
+      "sha256": "80efd1f3eb1078228a200ecae7a9d8fdfc5f45f768d16f8806877c8153b1084f",
+      "bytes": 1282313,
+      "format": "epub",
+      "title": "انتفاضة الحمر — بيرس براون",
+      "note": null,
+      "tags": [
+        "rtl-declared",
+        "arabic-normal"
+      ],
+      "traits": {
+        "readable": true,
+        "mimetype": "application/epub+zip",
+        "mimetypeStored": true,
+        "mimetypeBom": false,
+        "epubVersion": "3.0",
+        "hasMetadataBlock": true,
+        "title": "انتفاضة الحمر",
+        "creator": "بيرس براون",
+        "language": "ar",
+        "ppd": "rtl",
+        "spineCount": 54,
+        "manifestCount": 62,
+        "tocEntries": 53,
+        "tocSource": "nav",
+        "cssFiles": 1,
+        "arabicRatio": 1
+      }
+    },
+    {
+      "file": "rtl-undeclared--halaqat-alhatmiyya.epub",
+      "sha256": "237052309733cebbd88380a04a07346fd2fd0a3bfbe460b350ccc669756ac841",
+      "bytes": 6285346,
+      "format": "epub",
+      "title": "حلقة الحتمية",
+      "note": "1166 sections, 1166 NCX entries, ZERO stylesheets. Arabic content declaring dc:language=en with no ppd — the RAWY-189 sniff must flip it. Sard's own \"Unknown\" author fallback is stored for this book, which is the WP-2C case for making that fallback NULL.",
+      "tags": [
+        "rtl-undeclared",
+        "calibre-generated",
+        "very-large"
+      ],
+      "traits": {
+        "readable": true,
+        "mimetype": "application/epub+zip",
+        "mimetypeStored": true,
+        "mimetypeBom": false,
+        "epubVersion": "2.0",
+        "hasMetadataBlock": true,
+        "title": "حلقة الحتمية",
+        "creator": null,
+        "language": "en",
+        "ppd": null,
+        "spineCount": 1166,
+        "manifestCount": 1168,
+        "tocEntries": 1166,
+        "tocSource": "ncx",
+        "cssFiles": 0,
+        "arabicRatio": 1
+      }
+    },
+    {
+      "file": "txt-converted--daw-alkhalid.epub",
+      "sha256": "2575c25387129084e7aa174a10d46aa0c7a3e1f54e311cf3d708e09aa8326030",
+      "bytes": 663421,
+      "format": "epub",
+      "title": "داو الخالد العجيب — Foxtail Quill",
+      "note": "User-reported: Edge TTS spoke normally but the word/sentence highlight never appeared. All 88 chapter documents have ZERO block containers, so the unit walk fell back to a whole-body read that emitted text without DOM ranges — audible, untrackable. Kept permanently as the no-block-container case.",
+      "tags": [
+        "txt-converted"
+      ],
+      "traits": {
+        "readable": true,
+        "mimetype": "application/epub+zip",
+        "mimetypeStored": true,
+        "mimetypeBom": false,
+        "epubVersion": "2.0",
+        "hasMetadataBlock": true,
+        "title": "داو الخالد العجيب",
+        "creator": "Foxtail Quill",
+        "language": "en",
+        "ppd": null,
+        "spineCount": 88,
+        "manifestCount": 90,
+        "tocEntries": 88,
+        "tocSource": "ncx",
+        "cssFiles": 0,
+        "arabicRatio": 0.97
+      }
+    },
+    {
+      "file": "word-generated--a4.epub",
+      "sha256": "80e7dea09205ec21efb606da6401d6ff3fba68efc3fb9b11cbcb9c14752c3107",
+      "bytes": 1562517,
+      "format": "epub",
+      "title": "a4",
+      "note": "The SECOND Word→Calibre conversion, found during WP-0. 196 sections, 1 NCX entry, arabic ratio 0.78 (mixed script). Title is the source filename. Independent confirmation that the reported defects are a class, not one bad file.",
+      "tags": [
+        "word-generated",
+        "calibre-generated",
+        "broken-toc",
+        "rtl-undeclared"
+      ],
+      "traits": {
+        "readable": true,
+        "mimetype": "application/epub+zip",
+        "mimetypeStored": true,
+        "mimetypeBom": false,
+        "epubVersion": "2.0",
+        "hasMetadataBlock": true,
+        "title": "a4",
+        "creator": "9ofe",
+        "language": "en",
+        "ppd": null,
+        "spineCount": 196,
+        "manifestCount": 200,
+        "tocEntries": 1,
+        "tocSource": "ncx",
+        "cssFiles": 2,
+        "arabicRatio": 0.78
+      }
+    },
+    {
+      "file": "word-generated--unknown-title.epub",
+      "sha256": "45182e1433d261b28f5f0a245501b0f1b0cdb334b9cf791710f06381c8722946",
+      "bytes": 10744409,
+      "format": "epub",
+      "title": "(dc:title is the literal string \"Unknown\")",
+      "note": "THE REPORTED BOOK. Word → Calibre 9.9.0. 116 sections / 1 NCX entry; dc:title=\"Unknown\", dc:creator=\"word\", dc:language=en over Arabic content; 16 KB of stylesheet carrying margin:0 369pt 0 -84.8pt — the declaration that makes WP-7 dangerous without a sanitiser.",
+      "tags": [
+        "word-generated",
+        "calibre-generated",
+        "broken-toc",
+        "very-large",
+        "css-heavy",
+        "placeholder-metadata"
+      ],
+      "traits": {
+        "readable": true,
+        "mimetype": "application/epub+zip",
+        "mimetypeStored": true,
+        "mimetypeBom": false,
+        "epubVersion": "2.0",
+        "hasMetadataBlock": true,
+        "title": "Unknown",
+        "creator": "word",
+        "language": "en",
+        "ppd": null,
+        "spineCount": 116,
+        "manifestCount": 131,
+        "tocEntries": 1,
+        "tocSource": "ncx",
+        "cssFiles": 2,
+        "arabicRatio": 0.99
+      }
+    }
+  ]
+}

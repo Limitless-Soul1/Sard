@@ -83,6 +83,39 @@ html, body, #root {
 :root { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text) 32%, transparent) transparent; }
 * { scrollbar-width: thin; }
 
+/* ---- RESILIENCE-1 / WP-4A — THE READER'S LAYER SCALE ------------------------------------------
+   The reader had ~20 hand-picked `z-index` numbers chosen one at a time, which cannot be reasoned
+   about as a SET. That is how a z-3 page-turn button ended up buried under a z-30 drawer: nothing
+   was wrong with either number on its own, and no rule said which had to win.
+
+   THE WRITTEN INVARIANT, in rank order:
+     no book content may occlude application chrome, and
+     NO APPLICATION CONTROL MAY BE OCCLUDED BY A PANEL.
+
+   Every value below is the number that rule already used, so this block is a RENAME and changes no
+   stacking — with ONE deliberate exception, `--z-nav`, which is raised above `--z-panel` because the
+   invariant says a control must stay reachable. (WP-4B moves the chevrons out from under the panel
+   as the real fix; this rank is the backstop for any future layout that overlaps them again.)
+
+   Scope is the READER stacking context. The library, photo composer, updater and reference popups
+   keep their own numbers — WP-4 does not touch those surfaces, and renaming them here would be
+   churn no test in this milestone can check. */
+:root {
+  --z-behind: -1;   /* decorative pseudo-layers: above their host's background, below its children */
+  --z-page: 1;      /* the page sheet and its content */
+  --z-chrome: 4;    /* the reading bars (top/bottom) */
+  --z-page-mark: 5; /* a mark ON the page — the bookmark ribbon — above the bar so it stays legible */
+  --z-scrim: 5;     /* the settings scrim */
+  --z-drawer: 6;    /* the settings slide-over */
+  --z-pill: 25;     /* the floating read-aloud pill */
+  --z-pill-over: 26;/* things that stack on the pill (return pill, voice sheet) */
+  --z-pill-top: 27; /* the draggable mini pill */
+  --z-panel: 30;    /* Contents / Notes drawers, and the full-area error card */
+  --z-panel-over: 31; /* an explicit swap that must sit above an open panel (RAWY-169) */
+  --z-nav: 35;      /* page-turn controls — ABOVE a panel, by the invariant above */
+  --z-modal: 40;    /* a decision the reader must make before anything continues (WP-5C) */
+}
+
 /* ---- Reader layout (RAWY-14, band C) ---- */
 /* RAWY-89: force a stable LTR positioning context for the whole reading area (like the chrome bar,
    which pins LTR for the same reason — .rc-top). In an Arabic (RTL) UI the reading area inherited
@@ -316,7 +349,7 @@ html, body, #root {
   /* RAWY-42: above the chrome (z5 > chrome z4) so it's never hidden by the top bar, and a soft
      shadow for clarity. When the bar is shown the marker drops BELOW it (.below) so it stays
      fully legible; when immersive it tucks at the page top. */
-  z-index: 5;
+  z-index: var(--z-page-mark);
   cursor: grab; touch-action: none; user-select: none;
   filter: drop-shadow(0 3px 4px rgba(30, 18, 6, 0.32));
   transition: top 0.22s cubic-bezier(0.22, 1, 0.36, 1);
@@ -344,13 +377,32 @@ html, body, #root {
   align-items: center;
   justify-content: center;
   opacity: 0.55;
-  z-index: 3;
-  transition: opacity 0.18s ease, background 0.18s ease;
+  /* WP-4A: above a panel, per the invariant — a control must stay reachable. This is the BACKSTOP;
+     the real fix is the inset below, which moves the button out from under the panel entirely. */
+  z-index: var(--z-nav);
+  transition: opacity 0.18s ease, background 0.18s ease, left 0.22s cubic-bezier(0.22, 0.61, 0.36, 1),
+    right 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
+@media (prefers-reduced-motion: reduce) { .page-chevron { transition: opacity 0.18s ease, background 0.18s ease; } }
 .page-chevron:hover { opacity: 1; background: color-mix(in srgb, var(--accent) 14%, var(--chrome-bg)); }
 :root[data-dark="true"] .page-chevron { box-shadow: 0 3px 10px rgba(0, 0, 0, 0.4); }
-.page-chevron-left { left: 22px; }
-.page-chevron-right { right: 22px; }
+
+/* RESILIENCE-1 / WP-4B — THE CHEVRONS FOLLOW THE READING AREA.
+   MEASURED, all four {en,ar}×{ltr,rtl} combinations: with Contents open the left chevron sat at
+   x=22..64 while the panel spanned 0..300 — 1764px² of overlap, i.e. entirely inside it, and
+   `elementFromPoint` at the button's own centre returned the panel. The button was not merely
+   behind the list, it was unclickable.
+   Raising z-index alone would NOT have fixed it properly: the button would then float ON TOP of the
+   chapter list, look wrong and steal its clicks. The cause is layout, not paint — an absolutely
+   positioned child resolves its offsets against its containing block's PADDING BOX, so the desk's
+   `padding-left: 300px` moves the page sheet and can never move a `left: 22px` child.
+   These two vars carry the SAME insets the desk pads by (set in Reader.tsx beside them, so they
+   cannot drift), which makes the chevrons move with the reading area instead of staying pinned to
+   the window. Physical left/right, matching the physical padding: the reading area is pinned LTR
+   (`.reader-root { direction: ltr }`, RAWY-89) and the drawers dock physically, so a logical
+   property here would mirror against a box that does not. */
+.page-chevron-left { left: calc(var(--panel-lead, 0px) + 22px); }
+.page-chevron-right { right: calc(var(--panel-trail, 0px) + 22px); }
 
 /* ---- reading chrome (RAWY-33, design C-VI/C-VII): clear LABELLED controls, hidden until
    intent. A raised button face (--rc-surface) lifts the buttons off the translucent bar so
@@ -361,7 +413,7 @@ html, body, #root {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 4;
+  z-index: var(--z-chrome);
   opacity: 0;
   transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1);
   --rc-surface: color-mix(in srgb, var(--chrome-bg) 90%, white 10%);
@@ -484,6 +536,11 @@ html, body, #root {
 /* bottom: chapter / percent meta + progress track with a knob. The bar is pinned LTR (the
    fill grows from the physical left); only the page-turn chevrons follow the book (RAWY-33). */
 .rc-meta { width: 100%; display: flex; justify-content: space-between; font: 500 0.6875rem var(--ui-font); color: var(--muted); }
+/* RESILIENCE-1 / WP-4F: the position readout sits between the chapter and the percentage. Quieter
+   than both — it is reference information, not a headline — and it never wraps or pushes the
+   percentage off the row on a narrow window. `tabular-nums` stops the row twitching as the number
+   changes on every page turn, which is the whole reason a counter is worth having. */
+.rc-pos { flex: 0 0 auto; margin: 0 12px; opacity: 0.85; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
 .rc-progress { width: 100%; height: 3px; background: color-mix(in srgb, var(--text) 12%, transparent); border-radius: 3px; position: relative; }
 .rc-progress-fill { position: absolute; inset-block: 0; left: 0; background: var(--accent); border-radius: 3px; }
 .rc-progress-knob {
@@ -519,7 +576,7 @@ html, body, #root {
 .panel-scrim {
   position: absolute;
   inset: 0;
-  z-index: 5;
+  z-index: var(--z-scrim);
   background: rgba(0, 0, 0, 0.18);
   opacity: 0;
   pointer-events: none;
@@ -533,7 +590,7 @@ html, body, #root {
      open. Consistent with the Contents/Notes drawers; mutually exclusive with Notes. */
   top: 70px; /* RAWY-66: matches the enlarged .rc-top */
   bottom: 56px;
-  z-index: 6;
+  z-index: var(--z-drawer);
   width: min(384px, 94vw);
   background: var(--chrome-bg);
   transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
@@ -596,7 +653,7 @@ html, body, #root {
 .reader-desk.pdf-invert .page-host { filter: invert(1) hue-rotate(180deg); }
 /* RAWY-86: transient PDF feedback toast (find result / copied). */
 .pdf-toast {
-  position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%); z-index: 25; pointer-events: none;
+  position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%); z-index: var(--z-pill); pointer-events: none;
   background: var(--text); color: var(--paper-bg); font: 500 0.8125rem var(--ui-font);
   padding: 9px 17px; border-radius: 20px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.3);
 }
@@ -645,6 +702,15 @@ html, body, #root {
    (and "Read-aloud" / "القراءة الصوتية" are the long ones), so the bar WRAPS: a ~30% basis puts three
    on the first row and lets the remaining two grow to fill the second. Same pill styling as before —
    only the wrap and a slightly tighter label are new. */
+/* RESILIENCE-1 (manual pass): five tabs at `1 1 30%` wrap to 3 + 2, and the bottom pair stretches
+   wider than the top three. That asymmetry was reviewed and KEPT deliberately — every alternative is
+   worse at this width (384px panel ≈ 340px usable):
+     · one row of five  → ~68px per tab, and "القراءة الصوتية" needs ~85px at this size: truncation,
+       or shortened Arabic copy, to fix a cosmetic complaint;
+     · a 3-column grid  → equal cells but leaves a visible HOLE in the second row;
+     · two per row      → three rows, taller and worse.
+   Filling the row is also what segmented controls conventionally do. The count is fixed at five (the
+   PDF drawer returns its own panel entirely), so this is not a responsive-count problem. */
 .sp-tabs {
   display: flex; flex-wrap: wrap; gap: 3px; margin: 0 16px 4px; padding: 3px; border-radius: 9px;
   background: color-mix(in srgb, var(--text) 8%, transparent);
@@ -660,6 +726,26 @@ html, body, #root {
   background: var(--paper-bg); box-shadow: 0 1px 3px rgba(40, 28, 14, 0.12);
 }
 .sp-body { padding: 8px 22px 26px; overflow-y: auto; overflow-x: hidden; }
+
+/* RESILIENCE-1 (manual pass): the settings drawer scrolls, but it ended in a HARD CUT — a section
+   heading or a swatch row sliced mid-height at the panel edge, which reads as a rendering fault
+   before it reads as "there is more below". A soft fade to the chrome colour makes the same clipping
+   look like depth, and is the standard affordance for a scrolling surface.
+
+   Deliberately a always-on gradient on the PANEL rather than a scroll-driven one on `.sp-body`:
+   `animation-timeline: scroll()` would need the pseudo-element to live on the scroller itself, and a
+   permanent soft edge is both correct-looking at rest and impossible to get wrong. `pointer-events:
+   none` keeps every control underneath clickable, and it sits below the drawer's own z-layer so it
+   can never veil a popover. */
+.settings-panel::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 34px;
+  pointer-events: none;
+  background: linear-gradient(to top, var(--chrome-bg) 14%, transparent);
+}
 
 /* ---- reading settings (RAWY-24): a calm, sectioned panel (design band D), all tokens ---- */
 .rs { display: flex; flex-direction: column; gap: 17px; }
@@ -814,7 +900,7 @@ html, body, #root {
   flex-direction: column;
   background: var(--chrome-bg);
   color: var(--text);
-  z-index: 30;
+  z-index: var(--z-panel);
   box-shadow: 0 18px 44px rgba(20, 14, 6, 0.22);
   /* RAWY-120: a CLOSED panel is fully HIDDEN, not merely translated off-screen. In the RTL UI the Notes
      panel's header overflows (3 tab labels + the close ✕ don't fit 300px), which pushes its ✕ ~35px
@@ -922,6 +1008,9 @@ html, body, #root {
 .rp-title { font: 600 0.9375rem var(--ui-font); color: var(--text); }
 .rp-head-titles { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .rp-submeta { font: 400 0.6875rem var(--ui-font); color: var(--muted); }
+/* RESILIENCE-1 / WP-6A: the provenance note. Quieter than the count above it — the reader needs to
+   know once that Sard built this list, not to be reminded while navigating it. */
+.rp-synth-note { display: block; margin-top: 3px; font: 400 0.625rem/1.4 var(--ui-font); color: var(--muted); opacity: 0.82; }
 .rp-head-actions { display: flex; align-items: center; gap: 6px; }
 .rp-eye, .rp-x {
   border: 0; background: transparent; cursor: pointer; color: var(--muted);
@@ -1008,7 +1097,7 @@ html, body, #root {
    rather than invented: it wears the SAME body, corner and elevation as a 30px square beside the main action.
    Behaviour is untouched — same two buttons, same callbacks, same show/hide, no dwell timer, no auto-exit. */
 .return-pill {
-  position: fixed; z-index: 26; left: 50%; top: 18px;
+  position: fixed; z-index: var(--z-pill-over); left: 50%; top: 18px;
   transform: translateX(calc(-50% + var(--reading-shift, 0px)));
   transition: top 0.22s cubic-bezier(0.22, 0.61, 0.36, 1), transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
   /* The cap is the ONLY thing that bounds the main action's width — the ✕ is a fixed 30px and the gap a
@@ -1231,7 +1320,7 @@ html, body, #root {
 }
 
 .tts-pill {
-  position: fixed; z-index: 25; left: 50%; bottom: 26px;
+  position: fixed; z-index: var(--z-pill); left: 50%; bottom: 26px;
   transform: translateX(calc(-50% + var(--reading-shift, 0px)));
   transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
   width: min(380px, calc(100vw - 28px)); /* RAWY-115: modest bump from 330 for breathing room */
@@ -1674,7 +1763,7 @@ html, body, #root {
   /* RAWY-115: open CLEANLY ABOVE the expanded pill (~198px tall from bottom:26px → top ≈ 224px) with
      a clear gap — the old 184px offset put the menu's bottom edge INSIDE the pill (overlap the owner
      saw); 26 + 210 = 236px leaves a ~12px gap above the pill. */
-  position: fixed; z-index: 26; left: 50%; bottom: calc(26px + 210px);
+  position: fixed; z-index: var(--z-pill-over); left: 50%; bottom: calc(26px + 210px);
   transform: translateX(calc(-50% + var(--reading-shift, 0px)));
   width: min(380px, calc(100vw - 28px)); max-height: min(42vh, 340px); /* RAWY-115: match the wider pill */
   display: flex; flex-direction: column; border-radius: 14px; border: 1px solid var(--chrome-border);
@@ -1706,6 +1795,96 @@ html, body, #root {
 .tts-menu-row.on { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .tts-menu-name { flex: none; font: 700 0.8125rem var(--ui-font); }
 .tts-voice-meta { flex: 1; min-width: 0; font: 400 0.6875rem var(--ui-font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: start; }
+/* RESILIENCE-1 / WP-5C: the selection-time note on a voice MEASURED to return silence for this book's
+   script. Advisory, not a lock — the row stays fully selectable, because RAWY-197 removed the language
+   filter deliberately and D37 says Sard warns and obeys. Styled as a quiet caution rather than an
+   error: the reader may have a reason, and this is information, not a refusal. */
+/* RESILIENCE-1 / WP-5C — the incompatible-voice marker in the picker.
+   A BADGE, not a sentence. The list is ~322 voices, so anything longer than two words stops the eye
+   on every row it appears on; the reader is scanning for a voice that WORKS, and the marker's job is
+   to let them skip past the ones that do not. Muted rather than red: this is guidance, not an error,
+   and the row stays fully selectable. */
+.tts-voice-warn {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 4px;
+  font: 500 0.625rem var(--ui-font); color: var(--muted); white-space: nowrap;
+  padding: 2px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+.tts-voice-warn::before {
+  content: ""; width: 5px; height: 5px; border-radius: 50%; flex: 0 0 auto;
+  background: color-mix(in srgb, var(--muted) 70%, transparent);
+}
+/* The name dims with it, so a scanning eye reads "available" vs "not" from weight alone before it
+   reads a single word. */
+.tts-menu-row.incompatible .tts-menu-name { opacity: 0.6; }
+.tts-menu-row.incompatible:hover .tts-menu-name { opacity: 0.85; }
+
+/* ---- RESILIENCE-1 / WP-5C — the voice-compatibility card -------------------------------------
+   Sard's own vocabulary, borrowed deliberately from the WP-1 ErrorCard so this reads as the same
+   product rather than a modal added late: the 56px accent-tint mark, the same title weights (Arabic
+   gets more weight AND size — it needs both), the same solid-accent primary. What differs is the
+   GROUND: the ErrorCard owns the whole window because its book cannot open, while here the book is
+   fine and only listening failed, so the page stays visible behind a soft scrim. */
+.vm-scrim {
+  /* FIXED, like the pill it accompanies. The reading desk pads by 300px when a panel is open, so an
+     absolutely-positioned scrim would inherit that inset and sit off-centre over the book. */
+  position: fixed; inset: 0; z-index: var(--z-modal);
+  display: flex; align-items: center; justify-content: center; padding: 32px;
+  background: color-mix(in srgb, var(--text) 22%, transparent);
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+  animation: vm-fade 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes vm-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .vm-scrim { animation: none; } }
+
+.vm-card {
+  position: relative; width: 100%; max-width: 420px;
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  /* The whitespace IS the design. 40px of breathing room top and bottom is what separates this from
+     the 8px-padded pill row it replaces. */
+  padding: 40px 40px 32px;
+  background: var(--paper-bg); color: var(--text);
+  border: 1px solid var(--chrome-border); border-radius: 14px;
+  box-shadow: 0 24px 60px rgba(20, 14, 6, 0.26);
+}
+:root[data-dark="true"] .vm-card { box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55); }
+
+.vm-mark {
+  width: 56px; height: 56px; margin-bottom: 20px; flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.vm-mark svg { width: 26px; height: 26px; }
+
+.vm-title { margin: 0 0 10px; font: 600 1.25rem/1.4 var(--ui-font); color: var(--text); }
+:root[dir="rtl"] .vm-title { font: 700 1.375rem/1.5 var(--ui-font); }
+
+/* The reason. Muted and narrower than the card so the line length stays readable — an editorial
+   measure, not a full-bleed paragraph. */
+.vm-body { margin: 0 0 28px; max-width: 32ch; font: 400 0.875rem/1.65 var(--ui-font); color: var(--muted); }
+:root[dir="rtl"] .vm-body { font: 400 0.9375rem/1.8 var(--ui-font); max-width: 34ch; }
+
+/* Stacked, not side by side: side-by-side buttons read as equal choices however they are styled.
+   Vertical order carries the hierarchy — the recommended action is first and full width, the escape
+   hatch sits beneath it with no border and no fill. */
+.vm-actions { display: flex; flex-direction: column; align-items: stretch; gap: 8px; width: 100%; }
+.vm-btn { font: 500 0.875rem var(--ui-font); border-radius: 10px; cursor: pointer; transition: background 0.16s ease, color 0.16s ease, border-color 0.16s ease; }
+.vm-primary { padding: 12px 22px; border: none; background: var(--accent); color: var(--paper-bg); }
+.vm-primary:hover { background: color-mix(in srgb, var(--accent) 88%, #000); }
+.vm-primary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.vm-quiet { padding: 9px 22px; border: none; background: transparent; color: var(--muted); }
+.vm-quiet:hover { color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); }
+.vm-quiet:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The dismiss sits on the TRAILING edge in both directions — logical, so it mirrors with the card. */
+.vm-x {
+  position: absolute; top: 14px; inset-inline-end: 14px;
+  width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
+  border: none; background: transparent; color: var(--muted); border-radius: 8px; cursor: pointer;
+}
+.vm-x:hover { color: var(--text); background: color-mix(in srgb, var(--text) 6%, transparent); }
+.vm-x svg { width: 15px; height: 15px; }
 .tts-menu-check { flex: none; width: 16px; height: 16px; margin-inline-start: auto; color: var(--accent); }
 
 /* ============================================================================
@@ -1720,7 +1899,7 @@ html, body, #root {
 .tts-pill-right { display: flex; align-items: center; } /* RAWY-164: only ✕ now (minimize chip removed) */
 
 /* shared minimized-player bits — fixed, isolated from selection/scroll (handlers in JS). NOT draggable. */
-.tts-mini { position: fixed; z-index: 27; touch-action: none; user-select: none; -webkit-user-select: none; font-family: var(--ui-font); }
+.tts-mini { position: fixed; z-index: var(--z-pill-top); touch-action: none; user-select: none; -webkit-user-select: none; font-family: var(--ui-font); }
 .tts-mini-play { position: relative; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; padding: 0; cursor: pointer; }
 .tts-mini-play svg { position: relative; width: 42%; height: 42%; }
 
@@ -1730,7 +1909,7 @@ html, body, #root {
    dir-independent — the WHOLE shape mirrors (taper + bead position + fill) via `.orient-*`. */
 .tts-mini--kashida {
   direction: ltr; /* physical layout; the side + mirror are computed in JS and styled by left/right */
-  bottom: 24px; z-index: 31; /* RAWY-169: ABOVE the reader panels (z 30) so an explicit swap onto a
+  bottom: 24px; z-index: var(--z-panel-over); /* RAWY-169: ABOVE the reader panels so an explicit swap onto a
                                 paneled side stays visible instead of hiding behind the panel */
   display: flex; align-items: center; gap: 12px;
   padding: 9px 15px; border-radius: 18px; cursor: pointer;
@@ -1799,7 +1978,7 @@ html, body, #root {
    centred over the reading area (reads the same `--reading-shift` so it clears an open panel). On-brand
    accent, per-theme (light + Moonlit), RTL via `dir`. Non-intrusive; auto-dismisses. */
 .tts-resume {
-  position: fixed; z-index: 26; top: 74px; left: 50%;
+  position: fixed; z-index: var(--z-pill-over); top: 74px; left: 50%;
   transform: translateX(calc(-50% + var(--reading-shift, 0px)));
   display: flex; align-items: center; gap: 9px;
   max-width: min(460px, calc(100vw - 28px));
@@ -2309,7 +2488,7 @@ html, body, #root {
 /* RAWY-79 (#11): calm, themed reader error state with its own recovery actions. Covers the stage
    above the chrome (z above the top bar) so it's always reachable regardless of the auto-hide. */
 .reader-error-overlay {
-  position: absolute; inset: 0; z-index: 30; padding: 32px;
+  position: absolute; inset: 0; z-index: var(--z-panel); padding: 32px;
   display: flex; align-items: center; justify-content: center; background: var(--paper-bg);
 }
 .reader-error-card {
@@ -2337,6 +2516,77 @@ html, body, #root {
 .reader-error-btn:hover { border-color: var(--accent); color: var(--text); }
 .reader-error-btn.primary { border: none; background: var(--accent); color: var(--paper-bg); }
 .reader-error-btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, #000); color: var(--paper-bg); }
+
+/* ---- RESILIENCE-1 / WP-1: the failure surface -------------------------------------------------
+   ADDITIVE ONLY, and deliberately scoped. This block adds the body paragraph, the Details
+   disclosure, the startup runtime gate and the import-results panel. It does NOT touch the reader's
+   layout, its stacking model, any z-index, or any interaction rule — WP-4 owns those, and this block
+   was written so the two never meet. The only pre-existing selectors reused are `.reader-error-*`
+   (unchanged) and `.rp-x` (the shared close button).
+   ---------------------------------------------------------------------------------------------- */
+
+/* The body sentence: what happened, whose responsibility, what next. Never the exception. */
+.err-body {
+  margin: 0; max-width: 42ch; text-wrap: pretty;
+  font: 400 0.875rem/1.62 var(--ui-font); color: var(--muted);
+}
+.reader-error-card .err-body + .err-body { margin-top: -4px; }
+
+/* A quiet action — Details / copy. Distinct from a recovery action so the eye finds the real
+   choices first; it is still a real button with a real focus ring. */
+.reader-error-btn.err-btn-quiet { border-color: transparent; color: var(--muted); padding: 8px 14px; }
+.reader-error-btn.err-btn-quiet:hover { border-color: var(--chrome-border); color: var(--text); }
+
+/* The disclosure. The ONE place raw engine text is rendered anywhere in Sard. */
+.err-details {
+  width: 100%; display: flex; flex-direction: column; gap: 8px; align-items: center; margin-top: 2px;
+}
+.err-details-note { font: 400 0.6875rem/1.5 var(--ui-font); color: var(--muted); opacity: 0.85; text-align: center; }
+/* `pre` (was a div): a stack trace with its newlines intact is the point of Details. */
+pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-align: start; }
+
+/* Startup runtime gate — a full-window notice, because nothing at all can be read below this floor.
+   `position: fixed; inset: 0` with no z-index: it is the only thing mounted, so it needs no rank in
+   the reader's stacking model and deliberately does not join it. */
+.runtime-gate {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  padding: 32px; background: var(--app-bg); overflow: auto;
+}
+.err-gate-meta {
+  margin: 0; font: 400 0.75rem/1.5 ui-monospace, monospace; color: var(--muted); opacity: 0.9;
+  text-align: center; overflow-wrap: anywhere;
+}
+
+/* Import results — shown only when a file was NOT added. Bottom-centred like the toast it
+   replaces in that case, so the feedback appears where the reader already looks. */
+.import-report {
+  position: fixed; inset-inline: 0; bottom: 24px; margin: 0 auto; z-index: 21;
+  width: min(520px, 92vw); max-height: 60vh; overflow: auto;
+  display: flex; flex-direction: column; gap: 10px; padding: 14px 16px 16px;
+  background: var(--chrome-bg); color: var(--text); border: 1px solid var(--chrome-border);
+  border-radius: 12px; box-shadow: 0 16px 40px rgba(40, 28, 14, 0.28);
+}
+:root[data-dark="true"] .import-report { box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5); }
+.import-report-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.import-report-title { font: 600 0.9375rem var(--ui-font); }
+.import-report-counts { display: flex; flex-wrap: wrap; gap: 4px 14px; font: 400 0.8125rem var(--ui-font); color: var(--muted); }
+.import-report-bad { color: var(--text); font-weight: 500; }
+.import-report-runtime { margin: 0; font: 400 0.8125rem/1.6 var(--ui-font); color: var(--text); }
+.import-report-link {
+  border: 0; background: none; padding: 0; cursor: pointer; font: inherit; color: var(--accent);
+  text-decoration: underline; text-underline-offset: 3px;
+}
+.import-report-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.import-report-list li {
+  display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  /* A 2px edge carrying the FAULT: the file's own problem vs this machine's. Colour is never the
+     only signal — the reason line says it in words too. */
+  border-inline-start: 2px solid color-mix(in srgb, var(--muted) 45%, transparent);
+}
+.import-report-list li[data-fault="environment"] { border-inline-start-color: var(--accent); }
+.import-report-name { font: 500 0.8125rem var(--ui-font); overflow-wrap: anywhere; }
+.import-report-reason { font: 400 0.75rem var(--ui-font); color: var(--muted); }
 
 /* ============================================================================
    LIBRARY (RAWY-15, band E) — page-on-desk home. Every colour via theme tokens;
@@ -3034,6 +3284,10 @@ html, body, #root {
 .edit-chip:hover { border-color: var(--accent); color: var(--text); }
 .edit-chip.on { background: var(--accent); border-color: var(--accent); color: var(--paper-bg); }
 .edit-shelves-hint { font: 400 0.75rem var(--ui-font); color: var(--lib-faint); }
+/* RESILIENCE-1 / WP-3: the "this title is a guess" note under the title box. Same voice as the
+   shelves hint above — quiet, not an error — because a guessed name is an invitation to correct it,
+   not a failure. It is UI chrome, so it follows the interface language like the label above it. */
+.edit-hint { display: block; margin-top: 6px; font: 400 0.75rem var(--ui-font); color: var(--lib-faint); line-height: 1.5; }
 /* RAWY-76: the footer holds the destructive Delete on the leading edge, Cancel+Save trailing.
    space-between splits them; the actions cluster keeps its own gap. */
 .edit-foot {
@@ -4625,3 +4879,12 @@ html, body, #root {
 }
 @media (prefers-reduced-motion: reduce) { .bg-ctl-spin { animation-duration: 1.4s; } }
 
+
+/* A refused cover says why, in the dialog, next to the button that refused it. Uses the theme
+   ink rather than a literal red so it stays legible on all sixteen papers. */
+.edit-cover-error {
+  margin: 6px 0 0; font: 500 0.8125rem/1.45 var(--ui-font); color: var(--text);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-inline-start: 3px solid var(--accent);
+  padding: 7px 10px; border-radius: 5px; text-align: start;
+}

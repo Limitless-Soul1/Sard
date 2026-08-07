@@ -16,11 +16,21 @@ export type DiacriticsMode = "show" | "dim" | "hide";
 // (all four are valid CSS keywords), so no value needs special-casing in the funnel below.
 export type Align = "justify" | "start" | "center" | "end";
 export type FlowMode = "scrolled" | "paged";
+
+// THE READING-SIZE LATTICE — ONE definition, because there are now TWO inputs.
+//
+// The Settings slider and Ctrl+Wheel both move `ReadingStyle.zoom` (D6). If each carried its own
+// bounds and step they would eventually disagree, and the percentage readout would show a value the
+// slider could not express. Both read these instead, so the two inputs move on the same lattice by
+// construction rather than by anyone remembering to keep them level.
+export const ZOOM_MIN = 0.8;
+export const ZOOM_MAX = 2.5;
+export const ZOOM_STEP = 0.05;
 export type ArabicFont = "amiri" | "notoNaskh" | "arefRuqaa" | "plexArabic";
 export type LatinFont = "literata" | "sourceSerif" | "inter" | "plexLatin";
 
 export interface ReadingStyle {
-  zoom: number; // size via CSS zoom (D6): 0.8 .. 2.5
+  zoom: number; // size via CSS zoom (D6): ZOOM_MIN .. ZOOM_MAX, see below
   // A built-in key (ArabicFont/LatinFont) OR an IMPORTED font's family name (RAWY-44). Imported
   // fonts resolve to an asset URL via the resolver below so their @font-face reaches the iframe.
   arabicFont: string;
@@ -651,7 +661,26 @@ export function buildReadingCss(
        scrollbar-color doesn't cross the frame boundary, so set it here from the reading ink (scrollInk)
        so it tracks the theme/paper. Still a real, draggable scrollbar — only restyled. */
     html, body { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, ${scrollInk} 30%, transparent) transparent; }
-    ${style.flowMode === "paged" ? "html, body { height: 100%; overflow: hidden; }" : ""}
+    ${/* RESILIENCE-1: `html`, NEVER `html, body`.
+          THE DEFECT THIS FIXES — paged mode never paginated. `overflow: hidden` makes an element a
+          SCROLL CONTAINER, and per CSS Fragmentation a scroll container is MONOLITHIC: it cannot be
+          split across columns. foliate paginates by columnising <html> and treating each column as a
+          page, so putting `overflow: hidden` on <body> collapsed every chapter into ONE unbreakable
+          box — it rendered in column 1 and everything past the first screen was CLIPPED AND
+          UNREACHABLE.
+          MEASURED on the real app (Alice, chapter I, 26 paragraphs): laid out to 20,331px inside a
+          624px box, ONE column, ~97% of the chapter unreachable, and foliate reported 3 pages where
+          it needed ~23. Removing the `body` half: 23 columns, all reachable. Isolated four ways —
+          `body{overflow:hidden}` alone breaks it, `body{height:100%}` alone is harmless.
+          It is also what made the reported TOC bug: `paginator.js #scrollToRect` maps an anchor to a
+          page with `floor(rect.left / size)`, and with no fragmentation every anchor in a section
+          shares one `left`, so every TOC entry pointing into the same section resolved to the SAME
+          page. In Alice the first three entries all point into one front-matter document.
+          `html` KEEPS the rule: that is what RAWY-04 needed (no stray paginated scrollbar), and
+          foliate's own `columnize()` sets `height`/`overflow:hidden` on <html> regardless — so this
+          is belt-and-braces there and load-bearing nowhere else.
+          Guarded by tests/unit/pagedFlow.test.ts and tests/harness/pagination.mjs. */ ""}
+    ${style.flowMode === "paged" ? "html { height: 100%; overflow: hidden; }" : ""}
     /* MARGINS are applied on the CHROME side (RAWY-36): foliate's paginator sets html padding
        inline with !important in BOTH scrolled + paged modes, which overrode an injected
        html padding-inline here (inline styles always beat a stylesheet rule). So the page

@@ -35,7 +35,7 @@ export const en = {
   "inert.arabicOnly": "Arabic text only.",
   "inert.latinOnly": "Latin text only.",
   "reader.chapterFallback": "Reading",
-  "reader.untitledBook": "Untitled",
+  // (moved to "meta.untitledBook" — WP-3: one key for one concept, now that the library shows it too)
   "reader.percentRead": "{p}%",
   // RAWY-88: in-book search + spoiler-safe (Plan Phase 7).
   "search.title": "Search",
@@ -196,6 +196,7 @@ export const en = {
   // direction is detected automatically and is no longer a user-facing preference.
   "edit.replaceCover": "Replace cover",
   "edit.revertCover": "Revert to original",
+  "edit.coverUnreadable": "That image couldn't be displayed. Try another file, or save it as PNG or JPEG.",
   "edit.coverFit": "Cover fit",
   "edit.fitDefault": "Default",
   "edit.save": "Save",
@@ -452,6 +453,27 @@ export const en = {
   "gs.scope.perbook": "Per-book",
   "gs.scope.unifiedHint": "All books share one style — changing font, theme, size or colour in any book applies to every book.",
   "gs.scope.perbookHint": "Each book keeps its own style — changes while reading affect only that book.",
+  // The 16 reading themes. These were rendered from a hard-coded English `name` on each theme, so a
+  // fully Arabic UI still showed sixteen English words in one grid — the most visible untranslated
+  // surface in the app. Keys are `theme.<ThemeId>`, so the template literal in ReadingSettings is
+  // type-checked against this list rather than cast.
+  "theme.ivory": "Ivory",
+  "theme.sepia": "Sepia",
+  "theme.slate": "Slate",
+  "theme.trueblack": "True-Black",
+  "theme.sage": "Sage",
+  "theme.rosequartz": "Rose Quartz",
+  "theme.parchment": "Parchment",
+  "theme.dusk": "Dusk",
+  "theme.ink": "Ink",
+  "theme.espresso": "Espresso",
+  "theme.forestnight": "Forest Night",
+  "theme.mulberry": "Mulberry",
+  "theme.charcoal": "Charcoal",
+  "theme.nocturne": "Nocturne",
+  "theme.linen": "Linen",
+  "theme.moonlit": "Moonlit Sky",
+
   "color.text": "Text colour",
   "color.within": "within the {theme} theme",
   "color.page": "Page colour", // RAWY-201: the reading surface
@@ -718,6 +740,97 @@ export const en = {
   "tts.chapterDone": "Chapter finished",
   "tts.nextChapter": "Next chapter",
   "tts.bookEnd": "End of the book",
+
+  // ── RESILIENCE-1 / WP-1: the failure surface ────────────────────────────────────────────────
+  // Every string here answers three questions in order: WHAT failed · WHOSE fault it is · WHAT NEXT.
+  // The technical cause is never in the body — it lives behind Details. Two internal kinds may
+  // share one pair of strings when they leave the user with the same decision (see bookErrors.ts).
+  //
+  // FAULT ATTRIBUTION IS EXPLICIT IN THE WORDING, because "is this the book, my machine, or the
+  // app?" is the first thing a reader wants to know and the thing a raw exception never answered.
+  "err.runtime.title": "Your Windows WebView2 needs updating",
+  "err.runtime.body":
+    "This book needs a newer version of the Microsoft Edge WebView2 runtime than the one on this computer. Nothing is wrong with the book or with Sard — updating WebView2 will fix it.",
+  "err.missing.title": "Sard can’t find this book’s file",
+  "err.missing.body":
+    "The copy Sard keeps for this book is no longer on disk. Import the file again to restore it, or remove it from your library.",
+  "err.damaged.title": "This book’s file is damaged",
+  "err.damaged.body":
+    "Sard couldn’t read the file as an ebook — it looks incomplete or corrupted. If you still have the original, importing it again usually fixes this.",
+  "err.unreadable.title": "Sard can’t read this book",
+  "err.unreadable.body":
+    "The file opened, but its internal structure isn’t something Sard can render. Importing the same file again won’t change that. This is a problem with the book, not with Sard.",
+  "err.temporary.title": "Something got in the way",
+  "err.temporary.body": "The book couldn’t be opened just now. This is usually momentary — try again.",
+  "err.internal.title": "Sard ran into a problem",
+  "err.internal.body":
+    "This one is on Sard, not on your book or your computer. Trying again may work. Opening Details gives you something to send us.",
+  // Recovery actions. Every failure offers at least one that is not "Details".
+  "err.act.retry": "Try again",
+  "err.act.updateRuntime": "How to update WebView2",
+  "err.act.reimport": "Back to library to re-import",
+  "err.act.removeBook": "Remove from library",
+  "err.act.back": "Back to library",
+  "err.act.details": "Details",
+  "err.act.hideDetails": "Hide details",
+  "err.act.copy": "Copy diagnostics",
+  "err.act.copied": "Copied",
+  "err.detailsNote": "Technical information for a bug report. Nothing here is sent anywhere.",
+
+  // The startup gate: EPUB itself is unrenderable on this runtime, so nothing will open.
+  "err.gate.title": "Sard needs a newer WebView2 runtime",
+  "err.gate.body":
+    "Sard reads books using the Microsoft Edge WebView2 runtime that comes with Windows. The version on this computer is too old to open books of any kind.",
+  "err.gate.how":
+    "Install the latest “Evergreen” WebView2 Runtime from Microsoft, then start Sard again.",
+  "err.gate.missing": "Missing browser features: {features}",
+  "err.gate.engine": "Detected engine: {engine}",
+
+  // PDF import refused because this runtime cannot render PDFs (importing would guarantee failure).
+  "err.pdfBlocked.one": "PDFs need a newer WebView2 runtime on this computer, so {n} PDF wasn’t imported.",
+  "err.pdfBlocked.many": "PDFs need a newer WebView2 runtime on this computer, so {n} PDFs weren’t imported.",
+
+  // Import results — a per-file list replaces the old bare counts.
+  "lib.import.resultsTitle": "Import finished",
+  "lib.import.okCount": "{n} added",
+  "lib.import.problemCount": "{n} not added",
+  "lib.import.reason.duplicate": "Already in your library",
+  "lib.import.reason.unsupported": "Not a book Sard can read",
+  "lib.import.reason.error": "Couldn’t be imported",
+  "lib.import.reason.runtime": "Needs a newer WebView2 runtime",
+  "lib.import.dismiss": "Close",
+
+  // ── RESILIENCE-1 / WP-3: one authoritative metadata source ──────────────────────────────────
+  // The database is the truth; the file's embedded metadata is only an extraction input to it.
+  // These strings are CHROME — they are shown in place of a missing value, and never stored, so
+  // "nothing was known" stays distinguishable from "the file said this".
+  // RESILIENCE-1 / WP-4F: the position readout. "page" is used ONLY when the book supplies a real
+  // printed page (an EPUB page-list); otherwise the unit is a byte-derived LOCATION and says so —
+  // a reflowable book has no stable page number, and naming it one would be a lie readers act on.
+  "reader.pos.page": "Page {n}",
+  "reader.pos.location": "Location {n} of {t}",
+  // RESILIENCE-1 / WP-5C: the voice/script mismatch state. MEASURED: this pair returns 6 bytes of
+  // audio — silence — so "Retry" is deliberately not offered; it cannot succeed.
+  // Three separate jobs: the TITLE says what happened, the BODY says why and what it would cost,
+  // and the actions say what to do. The old single line tried to be all three and was none of them.
+  "tts.mismatch.title": "{voice} can’t read this book",
+  "tts.mismatch.body": "{voice} doesn’t speak {script}, so this book would play as silence. Another voice will read it properly.",
+  "tts.mismatch.scriptArabic": "Arabic",
+  "tts.mismatch.scriptOther": "this book’s language",
+  "tts.mismatch.choose": "Choose another voice",
+  "tts.mismatch.anyway": "Use it anyway",
+  "tts.mismatch.note": "No Arabic",
+  // WP-6A: shown once in the Contents header when Sard built the list itself. Never on a row —
+  // a per-row badge would nag; the reader needs to know the PROVENANCE once, then navigate.
+  "panel.contentsSynthesised": "Contents by Sard — this book has none",
+  "meta.untitledBook": "Untitled",
+  "meta.unknownAuthor": "Unknown author",
+  // Shown when WP-2 had to fall back past a placeholder (e.g. Calibre's literal “Unknown”), so a
+  // guess is presented AS a guess and the reader is invited to correct it rather than trust it.
+  "meta.titleGuess": "Sard guessed this title — you can correct it.",
+  "meta.titleFrom.inferred": "Taken from the book’s first heading.",
+  "meta.titleFrom.filename": "Taken from the file name.",
+  "meta.titleFrom.default": "This book gave no usable title.",
 } as const;
 
 export type TKey = keyof typeof en;

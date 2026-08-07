@@ -38,7 +38,7 @@ export const ar: Record<TKey, string> = {
   "inert.arabicOnly": "للنص العربي فقط.",
   "inert.latinOnly": "للنص اللاتيني فقط.",
   "reader.chapterFallback": "القراءة",
-  "reader.untitledBook": "بدون عنوان",
+  // (نُقل إلى "meta.untitledBook" — WP-3: مفتاح واحد لمعنى واحد بعد استخدامه في المكتبة أيضًا)
   "reader.percentRead": "٪{p}",
   // RAWY-88: البحث داخل الكتاب مع الخيار الآمن من الحرق.
   "search.title": "بحث",
@@ -49,7 +49,10 @@ export const ar: Record<TKey, string> = {
   "search.countAll": "{n} نتيجة · الكل ظاهر",
   "search.youAreHere": "موضعك الآن · {pos}",
   "search.nothingBefore": "لا شيء قبل {pos}.",
-  "search.hidden": "{n} نتائج بعد موضعك — مخفيّة",
+  // Arabic counts 11–99 take the SINGULAR counted noun, so "72 نتيجة" — never "72 نتائج". Every
+  // sibling string here already does this; this one did not, and the two appeared three lines apart
+  // in the same panel.
+  "search.hidden": "{n} نتيجة بعد موضعك — مخفيّة",
   "search.hiddenBody": "لن يعرض سَرْد نصًّا لم تصل إليه بعد.",
   "search.reveal": "أظهرها على أي حال ←",
   "search.hideAgain": "أخفِها مجدّدًا",
@@ -196,6 +199,7 @@ export const ar: Record<TKey, string> = {
   // يُكتشف الاتجاه تلقائيًا ولم يعد تفضيلًا يظهر للمستخدم.
   "edit.replaceCover": "استبدال الغلاف",
   "edit.revertCover": "استعادة الأصلي",
+  "edit.coverUnreadable": "تعذّر عرض هذه الصورة. جرّب ملفًا آخر، أو احفظها بصيغة PNG أو JPEG.",
   "edit.coverFit": "ملاءمة الغلاف",
   "edit.fitDefault": "افتراضي",
   "edit.save": "حفظ",
@@ -447,6 +451,26 @@ export const ar: Record<TKey, string> = {
   "gs.scope.perbook": "لكل كتاب",
   "gs.scope.unifiedHint": "كل الكتب تشترك في نمط واحد — تغيير الخط أو السمة أو الحجم أو اللون في أي كتاب يُطبَّق على كل الكتب.",
   "gs.scope.perbookHint": "كل كتاب يحتفظ بنمطه — التغييرات أثناء القراءة تؤثّر في ذلك الكتاب وحده.",
+  // أسماء السمات الستّ عشرة. كانت تُعرض بالإنجليزية داخل واجهة عربية بالكامل. الأسماء هنا مترجمة
+  // ترجمة طبيعية لا حرفية: «رَقّ» للورق المصنوع من الجلد، و«غَسَق» لضوء ما بعد المغيب، و«مَرْيَميّ»
+  // لِلَون نبات المَرْيَميّة — لغة تليق بتطبيق قراءة، لا نقلًا صوتيًّا للكلمة الإنجليزية.
+  "theme.ivory": "عاجيّ",
+  "theme.sepia": "بُنّي عتيق",
+  "theme.slate": "أردوازيّ",
+  "theme.trueblack": "أسود خالص",
+  "theme.sage": "مَرْيَميّ",
+  "theme.rosequartz": "كوارتز ورديّ",
+  "theme.parchment": "رَقّ",
+  "theme.dusk": "غَسَق",
+  "theme.ink": "حِبر",
+  "theme.espresso": "إسبريسو",
+  "theme.forestnight": "ليل الغابة",
+  "theme.mulberry": "توتيّ",
+  "theme.charcoal": "فحميّ",
+  "theme.nocturne": "ليليّة",
+  "theme.linen": "كتّان",
+  "theme.moonlit": "سماء مقمرة",
+
   "color.text": "لون النص",
   "color.within": "ضمن سمة {theme}",
   "color.page": "لون الصفحة", // RAWY-201: سطح القراءة
@@ -695,4 +719,79 @@ export const ar: Record<TKey, string> = {
   "tts.chapterDone": "انتهى الفصل",
   "tts.nextChapter": "الفصل التالي",
   "tts.bookEnd": "نهاية الكتاب",
+
+  // ── RESILIENCE-1 / WP-1: سطح الأعطال ────────────────────────────────────────────────────────
+  // كل نصّ هنا يجيب عن ثلاثة أسئلة بالترتيب: ما الذي فشل · على مَن تقع المسؤولية · ما الخطوة التالية.
+  // السبب التقني لا يظهر في النصّ إطلاقًا — مكانه خلف «التفاصيل».
+  "err.runtime.title": "يحتاج WebView2 في ويندوز إلى تحديث",
+  "err.runtime.body":
+    "يحتاج هذا الكتاب إلى إصدار أحدث من بيئة تشغيل Microsoft Edge WebView2 مما هو مثبَّت على هذا الجهاز. لا عيب في الكتاب ولا في «سَرْد» — تحديث WebView2 يحلّ الأمر.",
+  "err.missing.title": "تعذّر العثور على ملفّ هذا الكتاب",
+  "err.missing.body":
+    "لم تعد النسخة التي يحتفظ بها «سَرْد» لهذا الكتاب موجودة على القرص. استورد الملفّ مرّة أخرى لاستعادته، أو احذفه من مكتبتك.",
+  "err.damaged.title": "ملفّ هذا الكتاب تالف",
+  "err.damaged.body":
+    "تعذّر على «سَرْد» قراءة الملفّ ككتاب — يبدو ناقصًا أو تالفًا. إن كان الأصل ما يزال لديك، فإعادة استيراده تحلّ هذا غالبًا.",
+  "err.unreadable.title": "لا يستطيع «سَرْد» قراءة هذا الكتاب",
+  "err.unreadable.body":
+    "فُتِح الملفّ، لكنّ بنيته الداخلية ليست ممّا يستطيع «سَرْد» عرضه. إعادة استيراد الملفّ نفسه لن تغيّر ذلك. المشكلة في الكتاب لا في «سَرْد».",
+  "err.temporary.title": "حال شيءٌ دون ذلك",
+  "err.temporary.body": "تعذّر فتح الكتاب في هذه اللحظة. غالبًا ما يكون هذا عارضًا — أعد المحاولة.",
+  "err.internal.title": "واجه «سَرْد» مشكلة",
+  "err.internal.body":
+    "هذه المرّة الخطأ من «سَرْد»، لا من كتابك ولا من جهازك. قد تنجح إعادة المحاولة، و«التفاصيل» تمنحك ما ترسله إلينا.",
+  "err.act.retry": "إعادة المحاولة",
+  "err.act.updateRuntime": "كيفية تحديث WebView2",
+  "err.act.reimport": "العودة للمكتبة لإعادة الاستيراد",
+  "err.act.removeBook": "حذف من المكتبة",
+  "err.act.back": "العودة إلى المكتبة",
+  "err.act.details": "التفاصيل",
+  "err.act.hideDetails": "إخفاء التفاصيل",
+  "err.act.copy": "نسخ معلومات التشخيص",
+  "err.act.copied": "نُسِخ",
+  "err.detailsNote": "معلومات تقنية لتقرير الأعطال. لا يُرسل أيّ شيء منها إلى أيّ جهة.",
+
+  "err.gate.title": "يحتاج «سَرْد» إلى إصدار أحدث من WebView2",
+  "err.gate.body":
+    "يقرأ «سَرْد» الكتب عبر بيئة تشغيل Microsoft Edge WebView2 المرفقة بويندوز. الإصدار المثبَّت على هذا الجهاز أقدم من أن يفتح الكتب بأنواعها.",
+  "err.gate.how": "ثبِّت أحدث إصدار «Evergreen» من WebView2 Runtime من مايكروسوفت، ثم شغِّل «سَرْد» من جديد.",
+  "err.gate.missing": "خصائص المتصفّح الناقصة: {features}",
+  "err.gate.engine": "المحرّك المكتشَف: {engine}",
+
+  "err.pdfBlocked.one": "تحتاج ملفّات PDF إلى إصدار أحدث من WebView2 على هذا الجهاز، فلم يُستورد {n} ملفّ PDF.",
+  "err.pdfBlocked.many": "تحتاج ملفّات PDF إلى إصدار أحدث من WebView2 على هذا الجهاز، فلم تُستورد {n} ملفّات PDF.",
+
+  "lib.import.resultsTitle": "انتهى الاستيراد",
+  "lib.import.okCount": "أُضيف {n}",
+  "lib.import.problemCount": "لم يُضَف {n}",
+  "lib.import.reason.duplicate": "موجود في مكتبتك مسبقًا",
+  "lib.import.reason.unsupported": "ليس كتابًا يستطيع «سَرْد» قراءته",
+  "lib.import.reason.error": "تعذّر استيراده",
+  "lib.import.reason.runtime": "يحتاج إصدارًا أحدث من WebView2",
+  "lib.import.dismiss": "إغلاق",
+
+  // ── RESILIENCE-1 / WP-3: مصدر واحد موثوق لبيانات الكتاب ────────────────────────────────────
+  // قاعدة البيانات هي المرجع؛ وبيانات الملفّ الداخلية مُدخَل استخراج إليها لا مصدر عرض.
+  // هذه النصوص للعرض فقط ولا تُخزَّن، حتى يبقى «لا شيء معروف» مختلفًا عن «هذا ما قاله الملفّ».
+  // RESILIENCE-1 / WP-4F: قراءة الموضع. تُستخدم «صفحة» فقط عندما يوفّر الكتاب ترقيمًا حقيقيًا؛
+  // وإلا فالوحدة موضع مشتق من البايتات، ويُصرَّح بذلك — فالكتاب المتدفّق بلا رقم صفحة ثابت.
+  "reader.pos.page": "صفحة {n}",
+  "reader.pos.location": "الموضع {n} من {t}",
+  // RESILIENCE-1 / WP-5C: حالة عدم توافق الصوت مع كتابة الكتاب. القياس: يعيد هذا الاقتران ٦ بايتات
+  // فقط — أي صمت — لذا لا تُعرض «إعادة المحاولة»؛ فهي لا يمكن أن تنجح.
+  "tts.mismatch.title": "لا يستطيع {voice} قراءة هذا الكتاب",
+  "tts.mismatch.body": "لا ينطق {voice} {script}، فسيصدر هذا الكتاب صامتًا. سيقرؤه صوتٌ آخر كما ينبغي.",
+  "tts.mismatch.scriptArabic": "العربية",
+  "tts.mismatch.scriptOther": "لغة هذا الكتاب",
+  "tts.mismatch.choose": "اختر صوتًا آخر",
+  "tts.mismatch.anyway": "استخدمه على أي حال",
+  "tts.mismatch.note": "لا يقرأ العربية",
+  // WP-6A: تظهر مرة واحدة في ترويسة المحتويات حين يبني «سَرْد» القائمة بنفسه.
+  "panel.contentsSynthesised": "محتويات من إعداد سَرْد — لا يحوي الكتاب فهرسًا",
+  "meta.untitledBook": "بدون عنوان",
+  "meta.unknownAuthor": "مؤلّف غير معروف",
+  "meta.titleGuess": "خمّن «سَرْد» هذا العنوان — يمكنك تصحيحه.",
+  "meta.titleFrom.inferred": "مأخوذ من أول عنوان داخل الكتاب.",
+  "meta.titleFrom.filename": "مأخوذ من اسم الملفّ.",
+  "meta.titleFrom.default": "لم يقدّم هذا الكتاب عنوانًا صالحًا.",
 };

@@ -178,6 +178,16 @@ export interface BookRow {
   fraction: number | null;
   read_at: number | null;
   cover_fit: string | null; // per-book crop/fit override (RAWY-19)
+  /** RESILIENCE-1 / WP-3: per-field provenance JSON from the WP-2 compatibility layer,
+   *  e.g. {"author":"default","title":"filename"}. Read through `lib/bookMeta.ts`. */
+  meta_provenance: string | null;
+  /** WP-5A: the script sniffed from the book's text at import — "arabic" | "latin" | null.
+   *  The TTS pre-flight gates on this rather than on the declared language. */
+  script_detected: string | null;
+  /** WP-6: 1 when the book has far too few TOC entries for its spine (contents are synthesised). */
+  toc_degenerate: number | null;
+  /** WP-6: 1 when the spine is many tiny sections (the book defaults to scrolled flow). */
+  spine_fragmented: number | null;
 }
 
 export type SortKey = "title" | "author" | "format" | "date_read" | "date_added";
@@ -243,6 +253,17 @@ export const importBooks = (paths: string[]): Promise<ImportResult[]> =>
 export const importFolder = (dir: string): Promise<ImportResult[]> =>
   invoke<ImportResult[]>("import_folder", { dir });
 
+/** RESILIENCE-1 / WP-3 — the authoritative row for ONE book (effective title/author).
+ *  The reader calls this on open instead of trusting the surface that launched it. */
+export const bookGet = (id: string): Promise<BookRow | null> =>
+  invoke<BookRow | null>("book_get", { id });
+
+/** RESILIENCE-1 / WP-3 — record metadata EXTRACTED FROM THE FILE (the PDF path, on first open).
+ *  Writes the BASE columns, NEVER `metadata_overrides`, so a title the reader set keeps winning.
+ *  Use `bookUpdate` for a human edit; this is for what the file itself said. */
+export const bookSetExtracted = (id: string, title?: string | null, author?: string | null): Promise<BookRow | null> =>
+  invoke<BookRow | null>("book_set_extracted", { id, title: title ?? null, author: author ?? null });
+
 export interface BookPatch {
   title?: string;
   author?: string;
@@ -255,9 +276,35 @@ export interface BookPatch {
 export const bookUpdate = (id: string, patch: BookPatch): Promise<BookRow | null> =>
   invoke<BookRow | null>("book_update", { id, patch });
 
-/** Replace a book's cover with a copied-in image. Returns the updated book. */
-export const bookSetCover = (id: string, imagePath: string): Promise<BookRow | null> =>
-  invoke<BookRow | null>("book_set_cover", { id, imagePath });
+/** A cover copied into managed storage but NOT yet adopted — see `bookStageCover`. */
+export interface StagedCover {
+  /** App-data-relative path of the staged file, to be committed or discarded. */
+  rel: string;
+  /** `true` = Rust decoded it, so it is known-good. `false` = only WE could not decode it. */
+  verified: boolean;
+  /** The format Rust detected, for diagnostics. `null` when it could not decode. */
+  format: string | null;
+}
+
+/**
+ * Stage a replacement cover: copied in under its content-addressed name, validated as far as Rust
+ * can, and NOT yet adopted.
+ *
+ * Two stages because acceptance cannot be decided in one place. Rust decoding catches a damaged file
+ * that a browser would silently render half of; the renderer accepts formats Rust has no decoder for
+ * — AVIF is one Chromium displays today — and needs no allow-list that would rot as new formats
+ * ship. So `verified: false` is not a rejection: ask the renderer, then commit or discard.
+ */
+export const bookStageCover = (id: string, imagePath: string): Promise<StagedCover> =>
+  invoke<StagedCover>("book_stage_cover", { id, imagePath });
+
+/** Adopt a staged cover. Returns the updated book. */
+export const bookCommitCover = (id: string, rel: string): Promise<BookRow | null> =>
+  invoke<BookRow | null>("book_commit_cover", { id, rel });
+
+/** Abandon a staged cover the renderer refused. Nothing was adopted, so nothing is undone. */
+export const bookDiscardCover = (rel: string): Promise<void> =>
+  invoke<void>("book_discard_cover", { rel });
 
 /** Revert to the extracted/auto cover. Returns the updated book. */
 export const bookRevertCover = (id: string): Promise<BookRow | null> =>

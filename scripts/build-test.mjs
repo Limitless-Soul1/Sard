@@ -50,6 +50,15 @@ if (!cargoOnPath()) {
   }
 }
 
+// ---- tests ------------------------------------------------------------------------------------------
+// RESILIENCE-1 / WP-0: the everyday loop runs the unit + fixture + corpus-definition suite BEFORE
+// spending two minutes on a Rust build. These are fast (~0.6 s) and pure — they launch nothing and
+// touch no profile. The expensive gates stay opt-in and are run per work package, not per build:
+//   npm run corpus:verify                          — corpus integrity (needs the corpus on disk)
+//   node tests/harness/byte-identity.mjs compare   — rendering identity (drives the real app)
+//   npm run harness:csp                            — the CSP/book-stylesheet finding
+step("npm test"); // typechecks tests/ then runs the suite
+
 // ---- build ------------------------------------------------------------------------------------------
 step("node scripts/kill-sard.mjs");    // close any running Sard (incl. Sard-standalone) or abort loudly
 step("npx tauri build --no-bundle");   // fast standalone release, NO installer (Share needs the FULL build)

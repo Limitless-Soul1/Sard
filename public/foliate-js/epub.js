@@ -814,8 +814,7 @@ class Loader {
         if ([MIME.XHTML, MIME.HTML, MIME.SVG].includes(mediaType)) {
             let doc = new DOMParser().parseFromString(str, mediaType)
             // change to HTML if it's not valid XHTML
-            if (mediaType === MIME.XHTML && (doc.querySelector('parsererror')
-            || !doc.documentElement?.namespaceURI)) {
+            if (sardInvalidXHTML(doc, mediaType)) { // SARD LOCAL PATCH 8 — one rule, both paths
                 console.warn(doc.querySelector('parsererror')?.innerText ?? 'Invalid XHTML')
                 item.mediaType = MIME.HTML
                 doc = new DOMParser().parseFromString(str, item.mediaType)
@@ -869,6 +868,14 @@ class Loader {
         return this.createURL(href, result, mediaType, parent)
     }
     async replaceCSS(str, href, parents = []) {
+        // ---- SARD LOCAL PATCH 5 (RESILIENCE-1 / WP-7) — sanitise the book's stylesheet ----
+        // Sard decides at runtime what a book's own CSS may contain (see reader-engine/cssSanitiser
+        // and bookCssSetting). The hook is read here, BEFORE the url()/@import rewriting below, so
+        // assets belonging to declarations that are about to be dropped are never fetched and never
+        // blobbed. Absent hook = upstream behaviour, byte for byte.
+        const sardSanitise = globalThis.__sardSanitiseBookCss
+        if (typeof sardSanitise === 'function') str = sardSanitise(str)
+        // ---- end SARD LOCAL PATCH 5 ----
         const replacedUrls = await replaceSeries(str,
             /url\(\s*["']?([^'"\n]*?)\s*["']?\s*\)/gi,
             (_, url) => this.loadHref(url, href, parents)
@@ -929,16 +936,44 @@ const getDisplayOptions = doc => {
     }
 }
 
+// SARD LOCAL PATCH 8 — upstream's own invalid-XHTML test, extracted so both the render path
+// (loadReplaced) and the document path (loadDocument) apply the SAME rule and cannot drift.
+const sardInvalidXHTML = (doc, mediaType) =>
+    mediaType === MIME.XHTML
+    && (doc.querySelector('parsererror') || !doc.documentElement?.namespaceURI)
+
 export class EPUB {
     parser = new DOMParser()
     #loader
     #encryption
+    #sardNcxToc
     constructor({ loadText, loadBlob, getSize, sha1 }) {
         this.loadText = loadText
         this.loadBlob = loadBlob
         this.getSize = getSize
         this.#encryption = new Encryption(deobfuscators(sha1))
     }
+    // ---- SARD LOCAL PATCH 6 (RESILIENCE-1 / WP-6B) — expose the NCX table of contents ----
+    // The NCX is parsed above ONLY when the navigation document yielded nothing (`if (!this.toc &&
+    // ncxPath)`). A book whose nav document is present but useless — measured: a single "Start" link
+    // beside a 529-entry NCX — therefore never reaches it. This accessor exposes the same parse, on
+    // demand, WITHOUT changing which source `this.toc` holds: selection stays Sard's decision, and
+    // the upstream behaviour of every book is byte-for-byte unchanged unless Sard asks.
+    // Lazy and memoised: a book that never asks pays nothing.
+    async getNCXToc() {
+        if (this.#sardNcxToc !== undefined) return this.#sardNcxToc
+        const ncxPath = this.resources?.ncxPath
+        if (!ncxPath) { this.#sardNcxToc = null; return null }
+        try {
+            const resolve = url => resolveURL(url, ncxPath)
+            this.#sardNcxToc = parseNCX(await this.#loadXML(ncxPath), resolve)?.toc ?? null
+        } catch (e) {
+            console.warn(e)
+            this.#sardNcxToc = null
+        }
+        return this.#sardNcxToc
+    }
+    // ---- end SARD LOCAL PATCH 6 ----
     async #loadXML(uri) {
         const str = await this.loadText(uri)
         if (!str) return null
@@ -1035,10 +1070,26 @@ ${doc.querySelector('parsererror').innerText}`)
         }
         return this
     }
+    // ---- SARD LOCAL PATCH 8 (RESILIENCE-1 / WP-8) — invalid-XHTML fallback on the DOCUMENT path ----
+    // Upstream already recovers from invalid XHTML, but ONLY on the render path (`loadReplaced`,
+    // below): it re-parses as HTML and rewrites `item.mediaType`. `loadDocument` — used by search,
+    // read-aloud extraction, synthesised contents and references — had no such fallback, so any
+    // section the renderer had not yet loaded came back as a PARSER ERROR document: `doc.body` null
+    // and 184 characters of error text instead of 11,145 characters of book. `search.js:116` then
+    // dereferences `doc.body.lang`, throws, and one bad section aborts the whole-book generator.
+    // MEASURED on omniscient-reader-viewpoint (553 sections, all declaring XHTML with no `xmlns`):
+    // search returned «لا نتائج» for text that is plainly in the book. 10 of 46 books share the shape.
+    // The condition is upstream's own, extracted so the rule exists ONCE rather than in two copies.
     async loadDocument(item) {
         const str = await this.loadText(item.href)
-        return this.parser.parseFromString(str, item.mediaType)
+        let doc = this.parser.parseFromString(str, item.mediaType)
+        if (sardInvalidXHTML(doc, item.mediaType)) {
+            item.mediaType = MIME.HTML
+            doc = this.parser.parseFromString(str, item.mediaType)
+        }
+        return doc
     }
+    // ---- end SARD LOCAL PATCH 8 ----
     getMediaOverlay() {
         return new MediaOverlay(this, this.#loadXML.bind(this))
     }

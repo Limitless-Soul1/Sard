@@ -13,6 +13,8 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { useI18n } from "../../i18n";
+import { voiceCompatibility } from "../../lib/voiceCompat"; // WP-5C: warn at selection time
+import { useReader } from "../../reader-engine/store";
 import { loadPickerVoices, type PickerVoice, useTts } from "../../lib/tts";
 
 // Section sort order: Multilingual FIRST (those voices speak any language), then العربية, then English,
@@ -66,6 +68,7 @@ const UNKNOWN_LANG_KEY = "tts.secUnknownLang";
 
 export function TtsVoicePicker({ onClose }: { onClose: () => void }) {
   const { t, lang: uiLang, dir } = useI18n();
+  const bookScript = useReader((r) => r.bookScript); // WP-5C: the sniffed script this book uses
   const engine = useTts((s) => s.engine);
   const voice = useTts((s) => s.voice);
   const curLang = useTts((s) => s.lang);
@@ -169,10 +172,16 @@ export function TtsVoicePicker({ onClose }: { onClose: () => void }) {
               <div className="tts-menu-section">{g.header}</div>
               {g.voices.map((v) => {
                 const on = v.id === voice && v.engine === engine;
+                // WP-5C: warn AT SELECTION TIME, so the problem is visible before Play rather than
+                // after. Advisory only — the row stays fully selectable (RAWY-197 removed the
+                // language filter deliberately, and D37 says Sard warns and obeys).
+                const bad = bookScript
+                  ? voiceCompatibility(bookScript, { id: v.id, lang: v.id }) === "incompatible"
+                  : false;
                 return (
                   <button
                     key={v.engine + v.id}
-                    className={`tts-menu-row${on ? " on" : ""}`}
+                    className={`tts-menu-row${on ? " on" : ""}${bad ? " incompatible" : ""}`}
                     role="menuitemradio"
                     aria-checked={on}
                     onClick={() => {
@@ -182,6 +191,7 @@ export function TtsVoicePicker({ onClose }: { onClose: () => void }) {
                   >
                     <span className="tts-menu-name">{v.label}</span>
                     <span className="tts-voice-meta">{meta(v)}</span>
+                    {bad && <span className="tts-voice-warn">{t("tts.mismatch.note")}</span>}
                     {on && (
                       <svg className="tts-menu-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 6 9 17l-5-5" /></svg>
                     )}

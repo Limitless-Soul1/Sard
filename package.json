@@ -8,7 +8,18 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "build:test": "node scripts/build-test.mjs"
+    "build:test": "node scripts/build-test.mjs",
+    "test": "tsc -p tsconfig.test.json && vitest run",
+    "test:watch": "vitest",
+    "fixtures:build": "node tests/fixtures/generate.mjs",
+    "corpus:verify": "node tests/corpus/verify.mjs",
+    "corpus:build-manifest": "node tests/corpus/build-manifest.mjs",
+    "harness:csp": "node tests/harness/csp.mjs",
+    "harness:fingerprint": "node tests/harness/byte-identity.mjs",
+    "typecheck:tests": "tsc -p tsconfig.test.json",
+    "harness:tts": "node tests/harness/tts-track.mjs",
+    "harness:interaction": "node tests/harness/interaction.mjs --gate",
+    "harness:lifecycle": "node tests/harness/lifecycle.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -23,10 +34,12 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@types/node": "^26.1.2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "vitest": "^3.2.7"
   }
 }

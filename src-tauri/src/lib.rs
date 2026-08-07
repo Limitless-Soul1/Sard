@@ -10,6 +10,7 @@ pub mod audio_identity; // RAWY-270A: name + icon Sard's WebView2 audio session 
 pub mod backgrounds; // RAWY-265: managed user background images (copy-in, dedup, derivative, GC)
 pub mod commands; // IPC seam: #[tauri::command] handlers (the only frontend↔core boundary)
 pub mod db; // SQLite connection, pragmas, migration runner, AppState
+pub mod diag_startup; // DIAGNOSTIC BUILD ONLY: the pre-WebView startup record
 pub mod library; // repositories: books, shelves, highlights, notes, bookmarks, progress (placeholder)
 pub mod books; // file import, format detection, EPUB/PDF orchestration (placeholder)
 pub mod metadata; // read embedded metadata + persist user overrides (placeholder)
@@ -100,6 +101,12 @@ pub fn run() {
             std::fs::create_dir_all(&app_data_dir)?;
             let db_path = app_data_dir.join("sard.db");
 
+            // DIAGNOSTIC BUILD ONLY. Written HERE — before the legacy migration, before the database
+            // is opened, and before any frontend code runs — so it survives a failure in any of them
+            // and so the file's ABSENCE proves the running executable is not this build. Observation
+            // only; it cannot fail in a way that reaches this function.
+            diag_startup::write_startup_record(app.path().document_dir().ok(), &app_data_dir);
+
             // Preserve data from the former "eRawy" identity (one-time, copy-verify).
             migrate_legacy_appdata(&app_data_dir, &db_path)?;
 
@@ -138,6 +145,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::app_info,
+            commands::diag_save, // DIAGNOSTIC BUILD ONLY
+            commands::diag_probe_assets, // DIAGNOSTIC BUILD ONLY
+            commands::diag_startup_mark, // DIAGNOSTIC BUILD ONLY
             commands::db_health,
             commands::settings_get,
             commands::settings_set,
@@ -154,8 +164,12 @@ pub fn run() {
             commands::collections_for_book,
             commands::import_books,
             commands::import_folder,
+            commands::book_get,
             commands::book_update,
-            commands::book_set_cover,
+            commands::book_set_extracted,
+            commands::book_stage_cover,
+            commands::book_commit_cover,
+            commands::book_discard_cover,
             commands::book_set_cover_png,
             commands::book_revert_cover,
             commands::book_delete,

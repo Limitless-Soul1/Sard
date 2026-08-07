@@ -148,14 +148,14 @@ function AppearanceSection() {
         <Label hint={t("gs.libraryThemeHint")}>{t("gs.libraryTheme")}</Label>
         <div className="gs-swatches">
           {THEME_ORDER.map((id) => (
-            <button key={id} className="gs-swatch-cell" onClick={() => setTheme(id)} title={THEMES[id].name}>
+            <button key={id} className="gs-swatch-cell" onClick={() => setTheme(id)} title={t(`theme.${id}`)}>
               <span
                 className={`gs-swatch${themeId === id && !autoMode ? " on" : ""}`}
                 style={{ background: THEMES[id].colors.paperBg, color: THEMES[id].colors.text }}
               >
                 Aa
               </span>
-              <span className="gs-swatch-name">{THEMES[id].name}</span>
+              <span className="gs-swatch-name">{t(`theme.${id}`)}</span>
             </button>
           ))}
         </div>

@@ -1,0 +1,26 @@
+{
+  // RESILIENCE-1 / WP-0. The product build (`tsc && vite build`) must NOT be gated on test code, so
+  // the base tsconfig deliberately keeps `include: ["src"]`. But untypechecked tests are how a test
+  // silently stops testing, so they get their own pass: `npm run typecheck:tests`.
+  //
+  // `noUnusedLocals`/`noUnusedParameters` are relaxed here: a test legitimately destructures more
+  // than it asserts on, and failing a type pass for that would be noise, not rigour.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    // Tests run under Node, not inside WebView2, so they may use a newer standard library than the
+    // product target. ES2021 (the product's floor, chosen for the WebView2 baseline) lacks the types
+    // for `new Error(msg, { cause })` and `Array.prototype.at`, both of which the WP-1 tests use
+    // legitimately. Raising it HERE keeps the product's own floor untouched — `tsconfig.json` still
+    // compiles src/ at ES2021, which is what actually ships.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    // WP-5D: the ladder invariants are asserted against the REAL module, so tts.ts enters this program
+    // and it uses `import.meta.env` (Vite). Without vite/client the typecheck fails on the product's
+    // own valid code — the test config was simply missing a type the app has always relied on.
+    "types": ["vitest/globals", "node", "vite/client"]
+  },
+  "include": ["tests/**/*.ts"],
+  "references": []
+}

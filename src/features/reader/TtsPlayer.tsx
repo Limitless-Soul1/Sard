@@ -11,9 +11,11 @@ import { useShallow } from "zustand/react/shallow";
 
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
-import { TTS_EMPTY, TTS_MAX_RETRIES, TTS_SPEEDS, releaseButtonFocusAfterPointerClick, skipSentenceForArrow, toggleTtsPlayback, ttsStats, useTts, voiceLabel } from "../../lib/tts";
+import { TTS_EMPTY, TTS_MAX_RETRIES, TTS_SPEEDS, VOICE_OK_PREFIX, releaseButtonFocusAfterPointerClick, skipSentenceForArrow, toggleTtsPlayback, ttsStats, useTts, voiceLabel } from "../../lib/tts";
+import { settingsSet } from "../../lib/ipc";
 import { NEXT_CHEVRON, TtsMini } from "./TtsMini";
 import { TtsVoicePicker } from "./TtsVoicePicker";
+import { VoiceMismatchCard } from "./VoiceMismatchCard"; // WP-5C: the compatibility decision surface
 
 const CHEV_UP = "m6 14 6-6 6 6";
 const CHEV_DOWN = "m6 10 6 6 6-6";
@@ -38,10 +40,11 @@ export function TtsPlayer({
   // Previously `useTts()` re-rendered the pill on EVERY store change — including the karaoke `words`/
   // `wordIndex` ticks (several/sec on Edge) it doesn't even read — which made size toggles feel heavy and
   // could swallow a click landing mid-re-render. Actions are stable Zustand refs, so they never re-render.
-  const { active, status, endDismissed, engine, voice, index, total, speed, volume, progress, chapterLabel, error, underruns, abandoned, lastFailure, debug, retryAttempt, skip, setSpeed, setVolume, setEngine, retry, resumeEdge, stop } = useTts(
+  const { active, status, endDismissed, engine, voice, index, total, speed, volume, progress, chapterLabel, error, underruns, abandoned, lastFailure, mismatch, debug, retryAttempt, skip, setSpeed, setVolume, setEngine, retry, resumeEdge, stop } = useTts(
     useShallow((s) => ({
       active: s.active, status: s.status, endDismissed: s.endDismissed, engine: s.engine, voice: s.voice, index: s.index, total: s.total,
       speed: s.speed, volume: s.volume, progress: s.progress, chapterLabel: s.chapterLabel, error: s.error, underruns: s.underruns, abandoned: s.abandoned, lastFailure: s.lastFailure,
+      mismatch: s.mismatch, // WP-5C: which voice the pre-flight refused, so the state can name it
       debug: s.debug, // RAWY-257/255: reactive, so toggling the setting shows/hides the readout immediately
       retryAttempt: s.retryAttempt, // RAWY-257 2B (D68): which backoff attempt is in flight (0 = none)
       skip: s.skip, setSpeed: s.setSpeed, setVolume: s.setVolume, setEngine: s.setEngine, retry: s.retry, resumeEdge: s.resumeEdge, stop: s.stop,
@@ -51,6 +54,14 @@ export function TtsPlayer({
   // chapter when you've navigated away, else pauses/resumes in place); fall back to the plain store toggle
   // if it isn't wired. Used by BOTH the pill Play button and the window-level Space shortcut, so they agree.
   const doPlayPause = (): boolean => (onPlayPause ? onPlayPause() : toggleTtsPlayback());
+  // WP-5C: "Use it anyway" — record the consent for THIS voice id and start again. Sard warns and
+  // obeys; it does not override a choice the reader made (D37). The record is per voice, so agreeing
+  // to one incompatible voice never silently clears the warning for a different one.
+  const useAnyway = async () => {
+    const id = mismatch?.voiceId ?? voice;
+    if (id) await settingsSet(`${VOICE_OK_PREFIX}${id}`, "1").catch(() => {});
+    retry();
+  };
   const { t, lang, dir } = useI18n();
   const [picking, setPicking] = useState(false);
   // RAWY-164: ONE progressive size state replaces the old two confusable controls (the row-collapse
@@ -61,7 +72,7 @@ export function TtsPlayer({
   // RAWY-193 (HARD CONDITION 1): the Edge-unavailable error is shown + actionable in EVERY pill state, so it
   // must NEVER render as the bare kashida bead (which has no error UI). Treat "edge-error" as un-minimized
   // regardless of `size` (no one-frame bead flash), and the effect below pulls `size` back to full.
-  const minimized = size === "kashida" && status !== "edge-error";
+  const minimized = size === "kashida" && status !== "edge-error" && status !== "voice-mismatch";
   const shrink = () => setSize((s) => (s === "full" ? "collapsed" : "kashida")); // one step down
   // A fresh Listen (active flips true) should start on the full pill, not a stale minimized state.
   useEffect(() => {
@@ -71,7 +82,7 @@ export function TtsPlayer({
   // pull the pill out of the minimized kashida into the full state so the Retry / Switch-to-Piper choice is
   // unmistakable. Fires only on the error status; normal minimized listening is untouched.
   useEffect(() => {
-    if (status === "edge-error") setSize("full");
+    if (status === "edge-error" || status === "voice-mismatch") setSize("full");
   }, [status]);
   // RAWY-180 (Part B): Space toggles read-aloud play/pause when a session is active (from PARENT focus —
   // the reading-frame case is handled by FoliateController.onSpace). Self-gates via `toggleTtsPlayback`
@@ -113,6 +124,9 @@ export function TtsPlayer({
   // transport) while the session stays alive so Play still reads the current chapter.
   const chapterEnd = status === "chapter-end" && !endDismissed;
   const edgeErrored = status === "edge-error"; // RAWY-193: explicit "Edge unavailable" pause + choice
+  // WP-5C: a DIFFERENT terminal state from edge-error, with different actions. "Retry" is useless here
+  // (a voice that cannot render this script will not learn to), so it is not offered.
+  const voiceMismatch = status === "voice-mismatch";
   const busy = preparing || downloading;
   const dlPct = Math.round(progress * 100);
   const trackPct = downloading ? progress * 100 : total > 1 ? (index / (total - 1)) * 100 : 0;
@@ -162,6 +176,23 @@ export function TtsPlayer({
       ) : (
       <>
       {picking && <TtsVoicePicker onClose={() => setPicking(false)} />}
+      {/* WP-5C: the compatibility decision is its own surface, not a row inside the transport pill.
+          Same three handlers as before — choose / use anyway / dismiss — so behaviour is unchanged;
+          only the presentation moved. Rendered beside the pill (not inside it) so the pill's own size
+          states (full / collapsed / kashida) cannot affect it. */}
+      {voiceMismatch && !picking && (
+        <VoiceMismatchCard
+          // The mismatch carries its OWN engine, and `voiceLabel` needs the engine that matches the
+          // id: given the wrong one it falls through to printing the raw "en-US-AriaNeural" instead
+          // of "Aria". Caught while measuring the redesign — a raw id in a dialog is precisely the
+          // developer-popup quality this rework exists to remove.
+          voiceName={voiceLabel(mismatch?.engine ?? engine, mismatch?.voiceId ?? voice)}
+          bookScript={mismatch?.bookScript ?? null}
+          onChoose={() => setPicking(true)}
+          onUseAnyway={() => void useAnyway()}
+          onDismiss={stop}
+        />
+      )}
       <div className={`tts-pill${expanded ? " expanded" : ""}${errored || edgeErrored ? " errored" : ""}${chapterEnd ? " chapter-end" : ""}`} dir={dir} role="group" aria-label={t("tts.player")} onClickCapture={releaseButtonFocusAfterPointerClick}>
         {edgeErrored ? (
           /* RAWY-193: the Edge engine failed (and the one bounded retry failed) — an EXPLICIT, actionable

@@ -75,6 +75,8 @@ interface Props {
   open: boolean;
   onClose: () => void;
   toc: TocEntry[];
+  /** WP-6A: null when these are the BOOK's contents; otherwise how Sard built them. */
+  synthesised?: boolean;
   currentHref: string | null;
   /** RAWY-287: the TOC row the reader is currently inside, resolved by the Reader against EPUB
    *  reading order (see `tocIndex` there). `-1` = genuinely outside every listed entry.
@@ -109,6 +111,7 @@ function ChaptersPanelInner({
   hideTitles,
   onJump,
   fraction,
+  synthesised = false,
 }: Props) {
   const { t, lang, dir } = useI18n();
   const pct = Math.round(fraction * 100);
@@ -151,10 +154,30 @@ function ChaptersPanelInner({
   //     before. This is the common case (an Arabic novel whose entries are plain titles) and it keeps
   //     those books rendering identically to the previous build.
   // Collisions are impossible by construction: within one book the two sources are never mixed.
-  // Requiring TWO designators (not one) stops a single stray match from re-numbering a whole book.
+  //
+  // RESILIENCE-1 — the "two designators" bar was far too low, and it was MEASURED, not reasoned:
+  // `extractChapterNumber` matched 25 of 264 entries in "أوفرلورد" (9.5 %), which was enough to
+  // select OWN and leave the other 239 rows unnumbered — every one of them rendering "Section N".
+  // Worse, the 25 matches were WRONG: labels read "المجلد 12 الفصل 214 : …", so the extractor took
+  // the VOLUME (12), not the chapter (214), and rows 215/216 both resolved to 12 — the very
+  // collision RAWY-287 exists to prevent, reintroduced through the back door.
+  //
+  // The invariant RAWY-287 states is "a book either numbers its chapters or it does not", and a
+  // 9.5 % hit rate is noise, not a numbering scheme. So the test is now PROPORTIONAL, with the
+  // threshold taken from the corpus rather than invented — measured match rates:
+  //
+  //     numbers itself : LotM 100 % · halaqat 100 % · red-rising 83 % · Alice 71 %
+  //     does not       : metamorphosis 40 % · أوفرلورد 9.5 % · ad-daa 3 % · shawqiyyat 1 %
+  //
+  // Nothing lies between 40 % and 71 %, so a half majority separates them with room on both sides.
+  // The original "two, not one" guard is KEPT as well, so a one-entry TOC cannot reach OWN at 100 %.
+  // Four books keep OWN exactly as before; three move to positional and every one is a repair
+  // (ad-daa alone had 110 of 113 rows mislabelled).
   const bookNumbers = useMemo(() => {
     const own = toc.map((c) => extractChapterNumber(c.label));
-    return own.filter((n) => n != null).length >= 2 ? own : toc.map((_, i) => i + 1);
+    const matched = own.filter((n) => n != null).length;
+    const numbersItself = matched >= 2 && matched / own.length >= 0.5;
+    return numbersItself ? own : toc.map((_, i) => i + 1);
   }, [toc]);
 
   return (
@@ -172,6 +195,10 @@ function ChaptersPanelInner({
           <span className="rp-submeta">
             {t("panel.chaptersMeta", { n: localeNum(toc.length, lang), p: localeNum(pct, lang) })}
           </span>
+          {/* RESILIENCE-1 / WP-6A: NEVER present a guess as the book's own. This book shipped a
+              contents list too small to navigate by, so Sard built one from the spine — and says so
+              quietly, once, in the header rather than on every row. */}
+          {synthesised && <span className="rp-synth-note">{t("panel.contentsSynthesised")}</span>}
         </div>
         <div className="rp-head-actions">
           <button className="rp-x" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>

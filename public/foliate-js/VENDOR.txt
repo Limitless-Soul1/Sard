@@ -1,3 +1,125 @@
-﻿foliate-js vendored at commit 78914aef4466eb960965702401634c2cb348e9b1 (2026-05-01)
+foliate-js vendored at commit 78914aef4466eb960965702401634c2cb348e9b1 (2026-05-01)
 Source: https://github.com/johnfactotum/foliate-js
 License: MIT (see ./LICENSE)
+
+Bundled: PDF.js 5.5.207 under vendor/pdfjs/ (Apache-2.0)
+
+
+=== BROWSER CAPABILITY FLOOR — RE-DERIVE ON ANY RE-VENDOR ==========================================
+
+The pin is not only a commit. It is also a set of browser features this code REQUIRES, and Sard
+must refuse to pretend otherwise: WebView2 is the user's, not ours, and Tauri's installer only
+installs it when ABSENT — it never upgrades an old one.
+
+What the vendored code calls, and where:
+
+  EPUB  Object.groupBy, Map.groupBy
+        epub.js:178, :200, :206, :258 — the OPF metadata parser, run for EVERY book.
+        Missing  =>  NO book of any kind opens.
+
+  PDF   Uint8Array.prototype.toHex      pdf.worker.mjs:59575  (every getDocument — unconditional)
+        Uint8Array.prototype.toBase64   pdf.mjs:7434          (embedded font @font-face rules)
+        Uint8Array.fromBase64           pdf.mjs:24263, :24267 (signature handling)
+        Missing  =>  EVERY PDF fails. This produced the reported defect:
+                     "UnknownErrorException: hashOriginal.toHex is not a function".
+
+These are enforced at runtime by FEATURE DETECTION in src/lib/runtime.ts — never by a version
+number. A version check would be a second copy of the same fact and would desync the moment this
+directory is re-pinned. If you re-vendor:
+
+  1. Diff the new engines for newly-used built-ins (search for `.toHex(`, `.toBase64(`, `groupBy(`,
+     `Promise.try`, `Iterator.`, `Float16Array`, `.withResolvers(`, `Array.fromAsync`, `using `).
+  2. Update CAPABILITY_FEATURES / RuntimeEnv in src/lib/runtime.ts to match.
+  3. Update tests/… so a missing feature still produces the runtime message rather than a raw throw.
+
+(For reference only, never for a decision: as of the 5.5.207 pin the PDF set corresponds to
+Chromium >= 140 and the EPUB set to Chromium >= 117.)
+
+
+=== LOCAL MODIFICATIONS — RE-APPLY ON ANY RE-VENDOR ================================================
+
+  1. paginator.js:252  — iframe sandbox hardened to `allow-same-origin` only (no allow-scripts).
+                         RAWY-64. Book content must never execute script.
+  2. paginator.js      — the `--sard-columns` / `--sard-measure` single-column patch (RAWY-21/23/25).
+  3. paginator.js      — the RAWY-75 wheel/scroll-intent patch.
+  4. pdf.js            — page canvas copied to an <img> via toDataURL; adoptNode renders blank in
+                         WebView2 (RAWY-85).
+  6. epub.js:871       — BOOK-STYLESHEET SANITISER HOOK (RESILIENCE-1 / WP-7, stage 3).
+                         Two lines at the top of `replaceCSS`: if `globalThis.__sardSanitiseBookCss`
+                         is a function, the sheet text is passed through it before foliate rewrites
+                         `url()` / `@import`. Placed BEFORE that rewriting on purpose — assets
+                         belonging to declarations the sanitiser is about to drop are then never
+                         fetched and never blobbed.
+                         WHY A GLOBAL HOOK: epub.js is a standalone module that imports nothing from
+                         Sard, and threading an option through Loader -> Book -> replaceCSS would
+                         have touched several call sites for one boolean. A single optional global
+                         keeps the vendored diff at two lines and makes it trivially reversible:
+                         DELETE THE TWO LINES and the file is upstream again. With no hook installed
+                         the behaviour is byte-for-byte upstream, which is what stages 1-3 rely on.
+                         Sard installs the hook in FoliateController; the mode it applies is the
+                         `book_css` setting, which ships `off`.
+
+  7. epub.js:944,+956  — NCX CONTENTS ACCESSOR (RESILIENCE-1 / WP-6B).
+                         One private field (`#sardNcxToc`) and one method (`getNCXToc()`) on the
+                         EPUB class. It parses the NCX with the file's own `parseNCX` + `resolveURL`
+                         and memoises the result. It CHANGES NOTHING: `this.toc` still holds whatever
+                         upstream selected, no call site is altered, and a book that never asks pays
+                         nothing (lazy). Delete the field and the method and the file is upstream.
+                         WHY: upstream reaches the NCX only when the navigation document yields
+                         NOTHING (`if (!this.toc && ncxPath)`, epub.js:~1040). An EPUB 3 book may
+                         carry a navigation document that is present, well-formed and useless.
+                         MEASURED on three real books: a single "Start" link beside an NCX holding
+                         2963 / 529 / 362 entries that resolve 100% of the linear spine, with the
+                         book's real chapter names. PROVEN CAUSALLY: deleting `properties="nav"`
+                         from one of them (18 bytes) made upstream produce all 529 real titles.
+                         Selection stays SARD's decision (Reader.tsx, at the existing
+                         `tocDegenerate` branch) — the engine only exposes the data.
+                         IF THIS PATCH IS LOST ON A RE-VENDOR: those books silently fall back to
+                         generated ordinal contents, in which row N opens chapter N-1 because the
+                         cover occupies linear spine position 1. Regression test:
+                         `node tests/harness/toc-regression.mjs` — 25/25 books must match what their
+                         own file declares.
+
+  8. epub.js:~940,1083 — INVALID-XHTML FALLBACK ON THE DOCUMENT PATH (RESILIENCE-1 / WP-8).
+                         One module-level helper (`sardInvalidXHTML`) plus its use in TWO places:
+                         `loadDocument` (new) and `loadReplaced` (replacing upstream's identical
+                         inline condition, so the rule exists ONCE). Delete the helper, restore the
+                         inline condition in loadReplaced, and revert loadDocument to its one-line
+                         body, and the file is upstream again.
+                         WHY: upstream already recovers from invalid XHTML — it re-parses as HTML and
+                         rewrites `item.mediaType` — but ONLY on the render path. `loadDocument`, used
+                         by SEARCH, SYNTHESISED CONTENTS and `getTOCItemOf`, had no fallback, so any
+                         section the renderer had not yet loaded came back as a PARSER ERROR document:
+                         `doc.body` null, 184 characters of error text instead of the book. Whole-book
+                         search then threw at `search.js:116` (`doc.body.lang`) and ONE bad section
+                         aborted the entire generator — the user saw "no results" for text plainly in
+                         the book.
+                         MEASURED on omniscient-reader-viewpoint (553 sections, all declaring
+                         application/xhtml+xml with NO xmlns): sections 1/20/40 went 0 -> 7,437 /
+                         10,451 / 8,636 characters; the throw disappeared; the UI went "لا نتائج" to
+                         "51 نتيجة". 10 of 46 books in the measured corpus share the shape.
+                         PROVEN SAFE: CFI string AND landing section byte-identical with the patch on
+                         and off (control run: with it off, search threw again); 29/29 books match
+                         what their own files declare; `getTOCItemOf` returns the same value both
+                         ways. Unreachable for valid XHTML — the condition is upstream's own
+                         (`parsererror || !documentElement.namespaceURI`), so healthy books never
+                         enter the branch and EPUB 2 books declaring text/html never do either.
+                         KNOWN, INHERITED: it mutates `item.mediaType`, exactly as upstream does.
+                         That shared state is why the bug presented as load-dependent for three rounds
+                         of investigation. Not introduced here; not removed here.
+                         IF THIS PATCH IS LOST ON A RE-VENDOR: search silently returns nothing on
+                         every book whose sections declare XHTML without a namespace, while those
+                         books still render perfectly — so nothing else signals the failure.
+                         Regression test:
+                           node tests/harness/search-probe.mjs --title=omniscient
+                         STAGE 4 must report `threw:false`, and STAGE 5 must show a result count
+                         rather than "لا نتائج".
+
+  5. paginator.js      — DEPTH-1 TURN COALESCING (RESILIENCE-1 / WP-4E). Upstream `#turnPage`
+                         returns immediately while `#locked`, so every page turn requested during
+                         the ~100 ms lock (plus any section load) is DISCARDED silently. Measured in
+                         the real app: two `next()` calls in one task advanced exactly ONE page, so
+                         a double chevron tap or a held arrow key loses turns. The patch remembers
+                         the LAST such request in `#pendingTurn` and replays it once on release.
+                         Depth one, never a queue — a held key must not bank turns that then run
+                         away. Touches `#turnPage` and one new private field; no other call site.

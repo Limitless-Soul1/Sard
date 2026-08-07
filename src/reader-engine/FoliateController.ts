@@ -25,6 +25,12 @@ import {
   type ReadingStyle,
   type RevealLabels,
 } from "./injectedCss";
+import { navIntent } from "./navIntent";
+import { stageEnter as diagStageEnter, stageOk as diagStageOk, stageFail as diagStageFail, probePdfChain as diagProbeChain, watchFirstPage as diagWatchFirstPage } from "../lib/pdfDiag"; // DIAGNOSTIC BUILD ONLY
+import { diagAttachDocument } from "../lib/diag"; // DIAGNOSTIC BUILD ONLY
+import { renderStageOk as rStageOk, renderStageFail as rStageFail, renderDiagAdoptDoc, renderDiagNotEpub, renderDiagSurface, renderDiagTheme } from "../lib/renderDiag"; // DIAGNOSTIC BUILD ONLY
+import { sanitiseBookCss, type BookCssMode } from "./cssSanitiser"; // WP-7 stage 3
+import { synthesiseToc, type SectionHeading, type SynthToc } from "./tocSynth"; // WP-6A // → is always the next page; see that file for why
 import { resolveSpotlight, resolvePill } from "./ttsTrack"; // RAWY-200: pure per-theme track resolution
 import type { Theme } from "../theme/tokens";
 import { extractChapterNumber, toWesternDigits } from "../lib/format";
@@ -103,6 +109,21 @@ export interface RelocateInfo {
   fraction: number;
   chapterLabel: string | null;
   chapterHref: string | null;
+  /**
+   * RESILIENCE-1 / WP-4F — WHERE THE READER IS, in foliate's own units.
+   *
+   * foliate computes all of this on every relocate and Sard used to discard it, which is why the
+   * reader had no position readout at all (measured: foliate offered `location 2/129, section 1/15`
+   * while the chrome showed nothing).
+   *
+   * `location` is BYTE-derived, so it is stable under font size, margins, page width, window size
+   * and flow mode — the property a page number cannot have in a reflowable book. `pageItem` is the
+   * REAL printed page of the source edition and exists only when the book ships a `page-list`.
+   */
+  location: { current: number; total: number } | null;
+  section: { current: number; total: number } | null;
+  /** The source edition's own page label, when the book provides one. Never synthesised. */
+  pageLabel: string | null;
 }
 
 // A flattened table-of-contents entry (RAWY-21 chapters panel).
@@ -839,6 +860,72 @@ function flattenToc(raw: any, level = 0): { label: string; href: string | null; 
   return out;
 }
 
+/** One fragment-bearing TOC entry inside a section. */
+export interface TocSectionEntry {
+  href: string;
+  label: string;
+  fragment: string;
+}
+
+/** Where a TOC anchor sits relative to what the reader can currently see. */
+export type AnchorPosition = "passed" | "visible" | "ahead" | "missing";
+
+/**
+ * RESILIENCE-1 (NAV-2) — the active-entry rule, as a pure function.
+ *
+ * `locate(fragment)` says where that anchor is relative to the visible range foliate reports on
+ * `relocate`: `passed` (behind the reader), `visible` (on screen now), `ahead` (not reached), or
+ * `missing` (not in the rendered document).
+ *
+ * THE RULE, derived from measurement rather than assumed:
+ *   1. the FIRST anchor visible on screen — the heading the reader is looking at;
+ *   2. else the LAST anchor passed — reading between headings;
+ *   3. else the section's first entry — before any anchor, still inside the section it heads.
+ *
+ * WHY "FIRST VISIBLE" AND NOT "LAST". Two anchors often share one page: Alice's edition line and
+ * its "Contents" heading are 182 px apart and always land in the same column. Preferring the LAST
+ * visible anchor — which is exactly what foliate's own `TOCProgress` does (progress.js:53) — makes
+ * every earlier entry on that page permanently unreachable, which was the reported defect.
+ *
+ * WHY THE FULL RANGE AND NOT A COLLAPSED START. Measured in paged flow: at page 4 the visible range
+ * spans document nodes #47 → #63 while the heading is #62, so the heading sits AFTER the range start
+ * even though it is on that very page. Comparing against a collapsed start therefore reported "not
+ * reached" for a heading in plain view — the first version of this fix did exactly that and the
+ * highlight stuck on entry 0. Scrolled flow hid the error because a TOC jump there scrolls the
+ * anchor precisely to the top, so range-start and anchor coincided.
+ *
+ * WHY `intersectsNode` AND NOT `comparePoint(el, 0)`. The question is "is this heading on screen?",
+ * and only intersection answers it. `comparePoint` tests the element's START POINT, so a heading the
+ * reader is sitting exactly on reports `-1` — "passed" — because the range begins INSIDE its text.
+ * Measured in scrolled flow: clicking the edition-line entry put the range start at offset 30 inside
+ * that very heading, which then read as passed, and the next heading down won as "first visible".
+ * Intersection has no such boundary case and needs no per-mode correction.
+ *
+ * Pure ordering logic, no pixels: identical in scrolled and paged flow and in both reading
+ * directions, which is why it needs no per-mode special cases.
+ */
+export function pickActiveTocEntry(
+  entries: readonly TocSectionEntry[],
+  locate: (fragment: string) => AnchorPosition,
+): TocSectionEntry | null {
+  if (entries.length === 0) return null;
+  let firstVisible: TocSectionEntry | null = null;
+  let lastPassed: TocSectionEntry | null = null;
+  for (const e of entries) {
+    const where = locate(e.fragment);
+    if (where === "missing") continue; // not in the rendered document — skip, never assume
+    if (where === "visible") {
+      if (!firstVisible) firstVisible = e;
+    } else if (where === "passed") {
+      lastPassed = e;
+    } else {
+      // Entries are in document order, so once one is ahead of the viewport every later one is too.
+      break;
+    }
+  }
+  return firstVisible ?? lastPassed ?? entries[0];
+}
+
 function sectionTocLabel(view: any, index: number): string | null {
   const sections = view?.book?.sections;
   const sectionId: string | undefined = sections?.[index]?.id;
@@ -1185,6 +1272,63 @@ function findMatchRange(doc: Document, pre: string, match: string, post: string)
 const UNITS_CHUNK = 24;
 const breathe = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
+// RESILIENCE-1 / WP-7 (stage 3) — INSTALL THE SANITISER HOOK, ONCE, AT MODULE LOAD.
+//
+// The vendored engine reads `globalThis.__sardSanitiseBookCss` at the top of `replaceCSS` (local
+// patch 5). Installing it here rather than per-open means there is no window in which a stylesheet
+// could be processed with no hook present, and the mode it applies is a module-level value the
+// Reader updates — so a setting change takes effect on the next book without re-installing anything.
+//
+// It starts at `off`, the shipping default. Until stage 4 opens the CSP no book stylesheet reaches
+// the frame at all, so this hook is currently reached only by sheets that are already inert — which
+// is exactly the property stage 3 must preserve and byte-identity is asked to prove.
+let bookCssMode: BookCssMode = "off";
+
+/** Set the mode future stylesheets are sanitised with. Called by the Reader from the stored setting. */
+export function setBookCssMode(mode: BookCssMode): void {
+  bookCssMode = mode;
+}
+
+/**
+ * DIAGNOSTIC BUILD ONLY. Publishes the tracking-unit section so `lib/diag.ts` can compare it against
+ * the displayed section. Writes to a window field and, when the collector is armed, records an
+ * event. Deliberately dependency-free and failure-proof: a diagnostic must never alter or break the
+ * pipeline it observes.
+ */
+/** DIAGNOSTIC BUILD ONLY: record why the reading-follow refused to act for sentence `i`. */
+function diagFollow(i: number, reason: string, data: Record<string, unknown>): void {
+  try {
+    (globalThis as unknown as { __sardDiag?: { note?: (s: string, t: string, m: string, d?: Record<string, unknown>) => void } })
+      .__sardDiag?.note?.("tts.follow", "MEASURED", `follow SKIPPED for sentence ${i}: ${reason}`, { sentenceIndex: i, reason, ...data });
+  } catch {
+    /* never let instrumentation affect playback */
+  }
+}
+
+function publishDiagUnits(section: number, unitCount: number, displayed: number | null): void {
+  try {
+    const w = globalThis as unknown as {
+      __sardDiagUnits?: { section: number; units: number; displayed: number | null; at: string };
+      __sardDiag?: { note?: (s: string, t: string, m: string, d?: Record<string, unknown>) => void };
+    };
+    w.__sardDiagUnits = { section, units: unitCount, displayed, at: new Date().toISOString() };
+    w.__sardDiag?.note?.("tts.units", "MEASURED", `tracking units built: ${unitCount} for section ${section}`, {
+      ttsUnitsSectionIndex: section,
+      displayedSectionIndex: displayed,
+      unitCount,
+      sectionsMatch: displayed === section,
+      note: displayed === section ? "sections agree — the draw gate can pass" : "SECTIONS DISAGREE — the draw gate will refuse",
+    });
+  } catch {
+    /* never let instrumentation affect playback */
+  }
+}
+
+if (typeof globalThis !== "undefined") {
+  (globalThis as unknown as { __sardSanitiseBookCss?: (css: string) => string }).__sardSanitiseBookCss =
+    (css: string) => sanitiseBookCss(css, bookCssMode);
+}
+
 export class FoliateController {
   private view: any | null = null;
   private style: ReadingStyle | null = null;
@@ -1311,6 +1455,7 @@ export class FoliateController {
    */
   destroy(): void {
     this.dispose();
+    this.synthToc = null; // WP-6A: belongs to the view that was just torn down
     this.ttsUnits = [];
     this.ttsUnitsIndex = -1;
     this.wordRanges = [];
@@ -1325,7 +1470,44 @@ export class FoliateController {
     this.view = view; // claim ownership before awaits; a later open() will replace this
     container.replaceChildren(view);
 
-    await view.open(source);
+    // DIAGNOSTIC BUILD ONLY — stages 5-7. `view.open()` is where the book is fetched, the format is
+    // detected and the format module is dynamically imported. The previous report could see the
+    // fetch but nothing after it, because a dynamic-import rejection never reaches `window.fetch`.
+    // Catching it HERE gives the real exception and stack; it is rethrown untouched so behaviour is
+    // identical to the uninstrumented build.
+    diagStageEnter("controller.open", { source: String(source).slice(0, 200), isPdf: /\.pdf(\?|$)/i.test(String(source)) });
+    renderDiagSurface(container); // DIAGNOSTIC BUILD ONLY — the surface the black-page autopsy walks
+    rStageOk("open.requested", { source: String(source).slice(0, 200), format: /\.pdf(\?|$)/i.test(String(source)) ? "pdf" : "epub" });
+    try {
+      await view.open(source);
+      diagStageOk("controller.open", { bookLoaded: !!view.book, sections: view.book?.sections?.length ?? null });
+      diagStageOk("book.make", { format: view.book?.rendition?.layout ?? "unknown", hasSections: !!view.book?.sections });
+      diagStageOk("open.requested", { outcome: "the open call returned without throwing" });
+      // DIAGNOSTIC BUILD ONLY — the same moment, told from the RENDERING pipeline's point of view.
+      // The metadata/spine facts are read from the opened book, never assumed.
+      rStageOk("book.opened", {
+        title: String(view.book?.metadata?.title ?? "(none)").slice(0, 80),
+        sections: view.book?.sections?.length ?? null,
+        layout: view.book?.rendition?.layout ?? "unknown",
+        hasMetadata: !!view.book?.metadata,
+      });
+      const toc = view.book?.toc;
+      if (Array.isArray(toc) && toc.length) rStageOk("nav.loaded", { tocEntries: toc.length, source: "book.toc" });
+      else if (view.book?.sections?.length) rStageOk("nav.loaded", { tocEntries: 0, source: "spine only — the book declares no navigation" });
+      else rStageFail("nav.loaded", new Error("the book exposes neither a TOC nor a spine"), {});
+      // A PDF renders to a canvas. Watch for one so that a WORKING machine reports stages 12-13 as
+      // completed — otherwise every report would show them NOT ENTERED and there would be no way to
+      // tell a healthy pipeline from a broken one.
+      if (/\.pdf(\?|$)/i.test(String(source))) {
+        void diagWatchFirstPage(container);
+        renderDiagNotEpub("this book is a PDF — the EPUB rendering pipeline does not run for it; see the PDF ledger above");
+      }
+    } catch (e) {
+      diagStageFail("controller.open", e, { source: String(source).slice(0, 200) });
+      rStageFail("book.opened", e, { source: String(source).slice(0, 200) }); // DIAGNOSTIC BUILD ONLY
+      void diagProbeChain("view.open() threw");
+      throw e;
+    }
     if (this.view !== view) return; // superseded by a newer open()
 
     // Reading flow (RAWY-25): scrolled is the default. Set BEFORE the first section lays out
@@ -1346,6 +1528,10 @@ export class FoliateController {
 
     // RAWY-19: a corrected direction (override) wins over the EPUB's page-progression so a
     // mistagged book (e.g. an Arabic book tagged ltr) reads + pages RTL once fixed.
+    // RESILIENCE-1 (NAV-2): the per-section TOC grouping belongs to THIS book — clear it on open,
+    // or a cross-book follow would refine the new book against the old book's table of contents.
+    this.tocBySection = null;
+    this.requestedTocHref = null; // a navigation intent belongs to the book it was made in
     this.forcedDir = opts.dir ?? undefined;
     if (this.forcedDir && view.book) view.book.dir = this.forcedDir;
 
@@ -1368,16 +1554,64 @@ export class FoliateController {
       if (!fxl && cfi) {
         if (!this.furthestCfi || (this.cfiCompareFn?.(cfi, this.furthestCfi) ?? 0) > 0) this.furthestCfi = cfi;
       }
+      // RESILIENCE-1 (NAV-2): refine WHICH TOC entry the reader is inside when a section holds more
+      // than one. See `refineTocEntry` — foliate's own answer is kept verbatim for every other book.
+      const sectionIndex = e.detail?.section?.current;
+      const refined = fxl ? null : this.refineTocEntry(sectionIndex, e.detail?.range);
+      // RESILIENCE-1 (NAV-3): a section no TOC entry points at — a cover or a full-page
+      // illustration. foliate reports nothing for it, which left the page belonging to no entry at
+      // all. Only consulted when foliate itself has no answer, so no book that HAS an entry for its
+      // section is affected.
+      const orphan =
+        !fxl && !refined && !e.detail?.tocItem && typeof sectionIndex === "number"
+          ? this.firstTocEntryAfterSection(sectionIndex)
+          : null;
+      const chosen = refined ?? orphan;
+      // WP-4F: carry foliate's own position through instead of dropping it. `location.current` can
+      // be 0-based or absent depending on the book, so it is only published when it is a real number
+      // and the total is positive — a readout that says "0 of 0" is worse than no readout.
+      const loc = e.detail?.location;
+      const sec = e.detail?.section;
+      const usable = (v: unknown): v is { current: number; total: number } =>
+        !!v && typeof (v as { current: unknown }).current === "number" &&
+        typeof (v as { total: unknown }).total === "number" && (v as { total: number }).total > 0;
       this.relocateCb?.({
         cfi,
         fraction,
-        chapterLabel: e.detail?.tocItem?.label ?? null,
-        chapterHref: e.detail?.tocItem?.href ?? null,
+        chapterLabel: chosen?.label ?? e.detail?.tocItem?.label ?? null,
+        chapterHref: chosen?.href ?? e.detail?.tocItem?.href ?? null,
+        location: usable(loc) ? { current: loc.current, total: loc.total } : null,
+        section: usable(sec) ? { current: sec.current, total: sec.total } : null,
+        pageLabel: e.detail?.pageItem?.label != null ? String(e.detail.pageItem.label) : null,
       });
     });
     view.addEventListener("load", (e: any) => {
       const doc: Document | undefined = e.detail?.doc;
       const index: number = e.detail?.index ?? 0;
+      // DIAGNOSTIC BUILD ONLY — record the section's own facts (body present, text length, its
+      // stylesheets, its layout box) BEFORE any of our own processing touches the document, so the
+      // report describes the book as it arrived rather than as we left it. Wrapped: a diagnostic must
+      // never be able to break the render it is observing.
+      //
+      // NOT for a PDF page. A pdf.js page is a canvas plus a text layer, so it has no meaningful body
+      // content size and no text nodes laid out the way an EPUB's are — measured: feeding PDF pages
+      // to this ledger reported "layout completed: FAILED" and "no visible text" for a PDF that was
+      // rendering perfectly. PDFs have their own ledger; this one is only about EPUB rendering.
+      if (!fxl) {
+        try {
+          renderDiagAdoptDoc(doc, index, view.book?.sections?.[index]?.id ?? undefined);
+        } catch {
+          /* observation only */
+        }
+      }
+      // DIAGNOSTIC BUILD ONLY — the export shortcut must work while a book is open. Focus lives in
+      // this document once the book is open, and its key events never reach the top-level window, so
+      // the listener has to be here too. EPUB and PDF alike: a PDF is what the tester came to report.
+      try {
+        diagAttachDocument(doc);
+      } catch {
+        /* observation only */
+      }
       if (!doc) return;
       // RAWY-86: a PDF page is a rendered image + a pdf.js text layer — none of the EPUB-content
       // machinery (tashkīl wrapping, in-body heading marking, the reveal, boundary-scroll) applies.
@@ -1385,10 +1619,10 @@ export class FoliateController {
       if (fxl) {
         this.pdfPageDoc = doc;
         doc.addEventListener("keydown", (ev: KeyboardEvent) => {
-          if (ev.key === "ArrowLeft" || ev.key === "ArrowUp" || ev.key === "PageUp") this.view?.prev?.();
           // RAWY-180 (Part B): Space toggles read-aloud when active; else it pages the PDF (as before).
-          else if (ev.key === " ") { if (this.spaceCb?.()) ev.preventDefault(); else this.view?.next?.(); }
-          else if (ev.key === "ArrowRight" || ev.key === "ArrowDown" || ev.key === "PageDown") this.view?.next?.();
+          if (ev.key === " ") { if (this.spaceCb?.()) ev.preventDefault(); else this.view?.next?.(); }
+          // WP-4C: the same single owner the EPUB path uses (see handleNavKey).
+          else if (this.handleNavKey(ev.key)) ev.preventDefault();
         });
         // RAWY-87 (#2): a wheel over the PDF PAGE fires INSIDE this iframe, so it never reaches the
         // reader-desk's onWheel (the frame boundary) — that's why wheeling the page did nothing while
@@ -1474,8 +1708,9 @@ export class FoliateController {
       doc.addEventListener("keydown", (ev: KeyboardEvent) => {
         // RAWY-184 (Part C): while read-aloud is active, arrows skip the prev/next SENTENCE (the cb
         // returns true → swallow); otherwise they keep the normal page-turn (next/prev).
-        if (ev.key === "ArrowLeft") { if (this.arrowCb?.("ArrowLeft")) ev.preventDefault(); else this.next(); }
-        else if (ev.key === "ArrowRight") { if (this.arrowCb?.("ArrowRight")) ev.preventDefault(); else this.prev(); }
+        // WP-4C: routed through the ONE owner (handleNavKey) so a key behaves identically whether
+        // focus is inside the book or up in the chrome.
+        if (ev.key === "ArrowLeft" || ev.key === "ArrowRight") { if (this.handleNavKey(ev.key)) ev.preventDefault(); }
         // RAWY-180 (Part B): Space toggles read-aloud when a session is active; otherwise it keeps its
         // normal behaviour (scrolling the content). Only swallow the key when the toggle actually fired.
         else if (ev.key === " ") { if (this.spaceCb?.()) ev.preventDefault(); }
@@ -1515,9 +1750,16 @@ export class FoliateController {
           window.dispatchEvent(new KeyboardEvent("keydown", { key: "/", code: "Slash" }));
         }
       });
-      // Scrolled mode: the chapter-boundary "new gesture to advance" handler (RAWY-25).
-      if (this.scrolledMode)
-        doc.addEventListener("wheel", (ev: WheelEvent) => this.onBoundaryWheel(ev), { passive: false });
+      // The section's ONE wheel entry point. It was registered only in scrolled mode, for the
+      // chapter-boundary "new gesture to advance" handler (RAWY-25) — which is scrolled-only and still
+      // is: `onBoundaryWheel` returns early when `!scrolledMode`.
+      //
+      // It is now registered in BOTH flows because Ctrl+Wheel zoom answers before that guard, and a
+      // zoom that works while scrolling and not while paging is not a feature. MEASURED: with the old
+      // condition, a trusted Ctrl+Wheel over the text in paged mode reached the content document and
+      // changed nothing — no listener was there to hear it. Non-passive is required (the handler calls
+      // preventDefault) and costs nothing in paged, where this document has no native scroll to block.
+      doc.addEventListener("wheel", (ev: WheelEvent) => this.onBoundaryWheel(ev), { passive: false });
       // RAWY-72: wake the auto-hiding chrome on pointer activity over the reading content. A move is
       // throttled (~8/s) since the hook only needs to know "the pointer moved"; both move + tap are
       // translated to parent-viewport coords for the hook's shared jitter dedup.
@@ -1673,10 +1915,19 @@ export class FoliateController {
    *  path re-declares @font-face and re-runs foliate's expand() (a column re-layout), so it is used
    *  ONLY for genuine geometry changes; colour/tashkīl go through the in-place dynamic sheet below. */
   private reinject(): void {
-    if (this.style)
-      this.view?.renderer?.setStyles?.(
-        buildReadingCss(this.style, this.theme, this.flags, this.dir, this.revealLabels),
-      );
+    if (this.style) {
+      const css = buildReadingCss(this.style, this.theme, this.flags, this.dir, this.revealLabels);
+      this.view?.renderer?.setStyles?.(css);
+      // DIAGNOSTIC BUILD ONLY — stages 9 and 10. "Changing the theme has no effect" is one of the
+      // reported symptoms, so the report must be able to show whether the theme actually reached the
+      // document: which sheet was written, how long it was, and the colours inside it.
+      try {
+        rStageOk("css.injected", { typographySheetChars: css.length, appliedVia: "renderer.setStyles" });
+        renderDiagTheme(String((this.theme as any)?.id ?? "(unknown)"), String((this.theme as any)?.mode ?? "(unknown)"), css);
+      } catch {
+        /* observation only */
+      }
+    }
   }
 
   // RAWY-140: (re)write the PAINT sheet for one content doc. Appended AFTER foliate's own <style> (so
@@ -1691,6 +1942,18 @@ export class FoliateController {
       doc.head.append(el); // last in <head> → beats foliate's sheet for the forced ink
     }
     el.textContent = buildDynamicCss(this.style, this.theme, this.flags);
+    // DIAGNOSTIC BUILD ONLY — the PAINT sheet is the one that carries the ink and page colour, so it
+    // is the sheet that matters most to a black page. Recorded per document, wrapped.
+    try {
+      rStageOk("theme.applied", {
+        paintSheetChars: el.textContent.length,
+        themeId: String((this.theme as any)?.id ?? "(unknown)"),
+        writtenInto: "the section document's own <style>",
+      });
+      renderDiagTheme(String((this.theme as any)?.id ?? "(unknown)"), String((this.theme as any)?.mode ?? "(unknown)"), el.textContent);
+    } catch {
+      /* observation only */
+    }
   }
 
   // RAWY-208: (re)write the @font-face sheet for one content doc. Written ONCE per doc at section load
@@ -1865,6 +2128,13 @@ export class FoliateController {
   }
   /** RAWY-73: receive scroll-direction intent (scrolled mode) so the reader can hide on scroll-down /
    *  show on scroll-up. `down` = the reader scrolled toward later content. */
+  /** A Ctrl+Wheel over the book text. The Reader converts it into a `ReadingStyle.zoom` change —
+   *  this only reports that it happened, so there is exactly one zoom system (D6). */
+  onZoomIntent(cb: (deltaY: number) => void): void {
+    this.zoomIntentCb = cb;
+  }
+  private zoomIntentCb: ((deltaY: number) => void) | null = null;
+
   onScrollIntent(cb: (down: boolean) => void): void {
     this.scrollIntentCb = cb;
   }
@@ -1877,6 +2147,37 @@ export class FoliateController {
   /** RAWY-184 (Part C): handle Left/Right arrow with focus INSIDE the reading frame. `cb(key)` returns
    *  true if it consumed the key (a TTS session was active → skipped a sentence), so we preventDefault;
    *  false leaves the arrow's normal page-turn intact. */
+  /**
+   * RESILIENCE-1 / WP-4C — THE ONE OWNER OF A PAGE-TURN KEY.
+   *
+   * MEASURED before this existed: ArrowRight did nothing on a fresh open, after a toolbar click, or
+   * after clicking the desk margin, because the ONLY page-turn handlers lived on the book iframe's
+   * document, and a reader's focus is not always inside it. A keydown in a child frame does not
+   * bubble to the parent window, so in those states the key reached no handler at all.
+   *
+   * Both entry points — the frame's own listener and the parent window's (Reader.tsx) — now call
+   * THIS, so the behaviour cannot differ by where focus happens to be. Exactly one of them sees any
+   * given physical keypress (a frame event never crosses to the parent, and the parent only receives
+   * keys when focus is outside the frame), so there is no double turn.
+   *
+   * Returns true when the key was consumed, so the caller knows whether to preventDefault.
+   */
+  handleNavKey(key: string): boolean {
+    // The intent table lives in `navIntent.ts` — ONE copy, shared with its tests, and taking no
+    // direction argument so a script direction cannot re-enter the decision.
+    const intent = navIntent(key);
+    if (!intent) return false;
+
+    // RAWY-184: while read-aloud runs, the arrows skip the previous/next SENTENCE instead of turning
+    // a page — the callback reports whether it claimed the key. EPUB only; a PDF has no sentences.
+    if (!this.isFixedLayout && (key === "ArrowLeft" || key === "ArrowRight")) {
+      if (this.arrowCb?.(key)) return true;
+    }
+    if (intent === "forward") this.forward();
+    else this.backward();
+    return true;
+  }
+
   onArrow(cb: (key: string) => boolean): void {
     this.arrowCb = cb;
   }
@@ -2000,7 +2301,153 @@ export class FoliateController {
    *  1432 TOC rows, and this costs one walk of the sections plus one of the TOC instead of 1432 resolutions.
    *  A TOC href may carry a fragment (`file.html#anchor`), so both the raw href and its pre-`#` part are
    *  keyed. The Reader calls this ONCE per book (when the TOC loads) and reuses the result for every render. */
-  tocHrefSectionMap(): Map<string, number> {
+  // ---------------------------------------------------------------------------
+  // RESILIENCE-1 (NAV-2) — which TOC entry is the reader actually inside?
+  //
+  // THE DEFECT. foliate's `TOCProgress.getProgress` (progress.js:38-55) walks the entries that point
+  // into the current section and returns the one before the first anchor that lies BELOW THE BOTTOM
+  // of the viewport; if no anchor is below it, it falls through to `items[items.length - 1]`.
+  //
+  // So whenever several TOC anchors are visible AT ONCE, it reports the LAST of them — whatever the
+  // reader is actually looking at. Alice's front matter is exactly that shape: a title, an edition
+  // line and a "Contents" heading, three headings inside ~530 px of one document. MEASURED on the
+  // real app: sitting exactly on anchor 0, foliate reported "Contents"; on anchor 1, "Contents"; and
+  // while reading through the section, "Contents" throughout. The first two entries could NEVER be
+  // reported as current — so the Contents panel never highlighted them, and clicking them was
+  // indistinguishable from clicking "Contents".
+  //
+  // THE RULE HERE, which is what a reader expects: the active entry is the LAST anchor at or before
+  // the TOP of the viewport; before any anchor is reached, the section's first entry.
+  //
+  // WHY NOT PATCH THE ENGINE. `getProgress` also serves `#pageProgress` (the printed page-list), and
+  // the pin already carries four local patches. Doing it here keeps the engine untouched and makes
+  // the blast radius exact: `refineTocEntry` returns null unless a section holds MORE THAN ONE entry,
+  // so 14 of the 15 corpus books take foliate's answer byte-for-byte, as before.
+  //
+  // COORDINATE-FREE ON PURPOSE. It compares DOM positions through `Range.comparePoint`, not pixels,
+  // so it is identical in scrolled and paged flow and in both reading directions — the three
+  // coordinate systems where a pixel comparison would have needed three different right answers.
+  // ---------------------------------------------------------------------------
+
+  /** TOC entries grouped by the section they point into, in TOC order. Built once per book. */
+  private tocBySection: Map<number, TocSectionEntry[]> | null = null;
+
+  private buildTocBySection(): Map<number, TocSectionEntry[]> {
+    const out = new Map<number, TocSectionEntry[]>();
+    const sections = this.view?.book?.sections as { id?: string }[] | undefined;
+    if (!sections) return out;
+    const sectionOf = new Map<string, number>();
+    sections.forEach((s, i) => {
+      if (s?.id) sectionOf.set(s.id, i);
+    });
+    for (const entry of flattenToc(this.view?.book?.toc)) {
+      if (!entry.href) continue;
+      const [path, fragment] = entry.href.split("#");
+      // Only entries WITH a fragment can be distinguished from one another inside a section; an
+      // entry without one is the section itself and needs no refinement.
+      if (!fragment) continue;
+      const index = sectionOf.get(path) ?? sectionOf.get(entry.href);
+      if (typeof index !== "number") continue;
+      const list = out.get(index) ?? [];
+      list.push({ href: entry.href, label: entry.label, fragment });
+      out.set(index, list);
+    }
+    return out;
+  }
+
+  /**
+   * RESILIENCE-1 (NAV-3) — a section that NO TOC entry points at.
+   *
+   * A cover or a full-page illustration is usually absent from the table of contents: Alice's spine
+   * begins with `wrap0000.xhtml`, and its TOC's first entry points at the NEXT document. MEASURED on
+   * that page: foliate's `TOCProgress` returns `null` (its `map` has no group for the section and
+   * inherits nothing, progress.js:29-33), so no entry was current, the Contents panel highlighted
+   * nothing, and the page read as if it sat outside the book entirely.
+   *
+   * It does not. The reader is BEFORE the first entry that follows it, so that entry is the one they
+   * are heading toward — the same reasoning `pickActiveTocEntry` uses within a section, applied
+   * between sections. Front matter now belongs to the book's opening entry instead of to nothing.
+   */
+  private firstTocEntryAfterSection(index: number): { href: string; label: string } | null {
+    const bySection = this.tocHrefSectionMap();
+    for (const entry of flattenToc(this.view?.book?.toc)) {
+      if (!entry.href) continue;
+      const sec = bySection.get(entry.href) ?? bySection.get(entry.href.split("#")[0]);
+      if (typeof sec === "number" && sec > index) return { href: entry.href, label: entry.label };
+    }
+    return null;
+  }
+
+  /**
+   * The TOC entry the reader is inside, or `null` to keep foliate's own answer.
+   *
+   * `null` whenever the section holds fewer than two fragment-bearing entries — which is every
+   * section of almost every book — so this changes nothing except where foliate provably cannot
+   * give a correct answer.
+   */
+  private refineTocEntry(index: unknown, range: unknown): { href: string; label: string } | null {
+    if (typeof index !== "number") return null;
+    try {
+      this.tocBySection ??= this.buildTocBySection();
+      const entries = this.tocBySection.get(index);
+      if (!entries || entries.length < 2) return null; // nothing to disambiguate
+
+      const doc = this.contentDoc;
+      if (!doc) return null;
+      const r = range as Range | undefined;
+      if (!r || typeof r.comparePoint !== "function") return entries[0]; // no position yet → the section's own entry
+
+      // The WHOLE visible range, deliberately — see `pickActiveTocEntry`. It is what tells us which
+      // anchors are ON SCREEN, and in paged flow a column begins mid-content, so a heading on the
+      // current page routinely sits after the range's start point.
+      const locate = (fragment: string): AnchorPosition => {
+        const el = doc.getElementById(fragment) ?? doc.querySelector(`[name="${CSS.escape(fragment)}"]`);
+        // "missing" rather than a guess: a TOC pointing at an id the section does not contain is
+        // common in converted books, and treating it as reached would jump the highlight forward.
+        if (!el) return "missing";
+        try {
+          // Intersection first — it is the direct answer to "is this heading on screen?" and has no
+          // boundary case when the range begins inside the heading itself.
+          if (r.intersectsNode(el)) return "visible";
+          return r.comparePoint(el, 0) < 0 ? "passed" : "ahead";
+        } catch {
+          return "missing"; // detached node / different document — unknown, never "reached"
+        }
+      };
+
+      // WHEN POSITION CANNOT DECIDE, INTENT DOES.
+      //
+      // Two TOC entries can share one page: Alice's edition line and its "Contents" heading are
+      // 182 px apart and always land in the same column, so in paged flow they are simultaneously
+      // and equally on screen. No position-based rule can separate them — a page cannot scroll
+      // within itself — and preferring either one by position alone makes the other unclickable.
+      //
+      // The active entry has two determinants: where the reader IS (reading) and what they asked
+      // for (navigating). This applies the second, and ONLY while the requested anchor is still
+      // visible — so it resolves exactly the ambiguous case and evaporates the moment the reader
+      // moves on. It can never pin the highlight: `locate` decides whether it survives.
+      const requested = this.requestedTocHref
+        ? entries.find((e) => e.href === this.requestedTocHref)
+        : undefined;
+      if (requested && locate(requested.fragment) === "visible") return requested;
+      this.requestedTocHref = null; // no longer on screen (or a different section) — position rules
+
+      return pickActiveTocEntry(entries, locate);
+    } catch {
+      return null; // a torn-down frame or a detached range must never break relocate
+    }
+  }
+
+  /**
+   * href → spine index for the contents being DISPLAYED.
+   *
+   * WP-6B: the caller may pass the list it actually adopted. Defaulting to the engine's own `book.toc`
+   * was silently wrong the moment Sard displayed a different source — measured: with the NCX contents
+   * on screen, a map built from the 1-entry navigation document matched nothing, so no row was ever
+   * marked current, the highlight never appeared and the panel never scrolled to the current chapter.
+   * The map must describe the list the reader is looking at.
+   */
+  tocHrefSectionMap(entries: TocEntry[] = this.getToc()): Map<string, number> {
     const out = new Map<string, number>();
     const sections = this.view?.book?.sections as { id?: string }[] | undefined;
     if (!sections) return out;
@@ -2008,7 +2455,7 @@ export class FoliateController {
     sections.forEach((s, i) => {
       if (s?.id) byId.set(s.id, i);
     });
-    for (const t of this.getToc()) {
+    for (const t of entries) {
       const href = t.href;
       if (!href) continue;
       const i = byId.get(href) ?? byId.get(href.split("#")[0]);
@@ -2116,6 +2563,19 @@ export class FoliateController {
   }
 
   private onBoundaryWheel(e: WheelEvent): void {
+    // Ctrl+Wheel is a ZOOM intent, not a scroll, and it is answered FIRST — before the flow-mode
+    // guard below, which returns early in paged mode. (That guard is why this listener is now
+    // registered in both flows: see the registration site.)
+    //
+    // The engine reports the intent and does nothing else: `ReadingStyle.zoom` belongs to the Reader
+    // (D6), and a second zoom owned down here is exactly the "two systems competing" that
+    // `webview_chrome.rs` disabled the browser's own zoom to prevent. `preventDefault` is safe
+    // because this listener is registered non-passive.
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      this.zoomIntentCb?.(e.deltaY);
+      return;
+    }
     const r = this.view?.renderer;
     if (!r || !this.scrolledMode) return;
     // RAWY-73: scroll intent for the chrome auto-hide runs FIRST, unconditionally — even before the
@@ -2133,6 +2593,98 @@ export class FoliateController {
   getToc(): TocEntry[] {
     return flattenToc(this.view?.book?.toc);
   }
+
+  /**
+   * RESILIENCE-1 / WP-6B — the book's NCX contents, flattened the same way as `getToc()`.
+   *
+   * WHY THIS EXISTS. An EPUB 3 book may ship a navigation document that is present, well-formed and
+   * useless, and the engine consults the NCX only when the navigation document yields NOTHING
+   * (`epub.js`: `if (!this.toc && ncxPath)`). Measured on three real books: a single "Start" link
+   * beside an NCX carrying every chapter — 2963, 529 and 362 entries, each resolving 100% of the
+   * linear spine. PROVEN CAUSALLY: removing `properties="nav"` from one of them (18 bytes) made the
+   * engine produce all 529 real chapter titles, navigable, with no synthesis.
+   *
+   * This reads the SAME parse through the same engine, so labels and href resolution are identical to
+   * a book that reaches the NCX naturally — 13 books in the measured library already do, and they
+   * work. Nothing here decides anything: the choice belongs to the caller.
+   */
+  async getNcxToc(): Promise<TocEntry[]> {
+    const book = this.view?.book as { getNCXToc?: () => Promise<unknown> } | undefined;
+    if (typeof book?.getNCXToc !== "function") return [];
+    try {
+      return flattenToc(await book.getNCXToc());
+    } catch {
+      return []; // a malformed NCX is not a reason to fail the open
+    }
+  }
+
+  /**
+   * RESILIENCE-1 / WP-6A — build contents for a book whose own table of contents is useless.
+   *
+   * Walks the LINEAR spine once, reading each section through foliate's own `createDocument()` — the
+   * same call in-book search uses, so this needs no rendering and no navigation. The decision about
+   * WHICH label to use lives in `tocSynth.ts` (pure, and tested against both flagged books); this
+   * method only gathers the material and turns the result into navigable entries.
+   *
+   * Called ONLY for a book WP-2 flagged `toc_degenerate`, and cached for the life of the view: it is
+   * ~196 document parses on the measured book, which is affordable once and not per panel-open.
+   * Yields to the event loop between chunks for the same reason `getChapterUnits` does — a long
+   * synchronous walk freezes the window, which is the RAWY-182 lesson.
+   */
+  async getSynthesisedToc(): Promise<SynthToc | null> {
+    if (this.synthToc) return this.synthToc;
+    const book = this.view?.book;
+    const sections: any[] = book?.sections ?? [];
+    if (!sections.length) return null;
+
+    const material: SectionHeading[] = [];
+    const spineIndex: number[] = []; // material[i] came from spine section spineIndex[i]
+    for (let i = 0; i < sections.length; i++) {
+      const sec = sections[i];
+      if (sec?.linear === "no") continue; // never offer a non-linear section as a chapter
+      let doc: Document | null = null;
+      try {
+        doc = await sec.createDocument();
+      } catch {
+        continue; // an unreadable section simply contributes no row
+      }
+      // ONLY the heading is read. The section's text is deliberately never touched: a label derived
+      // from a book's opening sentence would look like a title the author wrote, and none exists.
+      const h = doc?.body?.querySelector("h1,h2,h3,h4,h5,h6");
+      material.push({ heading: (h?.textContent ?? "").replace(/\s+/g, " ").trim() });
+      spineIndex.push(i);
+      if (material.length % UNITS_CHUNK === 0) await breathe();
+    }
+
+    this.synthToc = synthesiseToc(material, spineIndex);
+    return this.synthToc;
+  }
+
+  /**
+   * Navigate to a spine section by index — how a synthesised contents row moves the reader.
+   *
+   * The target is a NUMBER, not `{ index, anchor }`. foliate's `view.goTo()` RESOLVES a target: a
+   * number becomes `{index}`, a `{fraction}` is looked up, a CFI is parsed, and anything else is
+   * treated as an href and passed to `book.resolveHref()`. An already-resolved `{index, anchor}`
+   * object matches none of those, so it fell through to `resolveHref({...})`, which cannot resolve it
+   * — and because foliate catches that failure internally and only logs it, `goTo` returned
+   * `undefined` and the reader simply did not move. No error surfaced, which is exactly why every
+   * generated chapter row looked dead when clicked.
+   *
+   * MEASURED in the running app on a book with 116 generated rows:
+   *   view.goTo({ index: 30, anchor: 0 })      -> returned undefined, index 0 -> 0   (did NOT move)
+   *   view.goTo(30)                            -> returned {index:30}, index 0 -> 30 (moved)
+   *   view.renderer.goTo({ index: 30, anchor: 0 }) -> index 0 -> 30                  (moved)
+   *
+   * `view.goTo` is used rather than the renderer's, so a generated row goes through the SAME path as
+   * a native TOC row: history is pushed and `relocate` fires normally.
+   */
+  goToSection(index: number): Promise<unknown> | undefined {
+    return this.view?.goTo?.(index);
+  }
+
+  /** Cached synthesised contents for THIS view; cleared with the view in `dispose()`. */
+  private synthToc: SynthToc | null = null;
 
   /** RAWY-105 (TTS): the current chapter's text as an ordered list of sentences — the visible
    *  reading text, walked as LEAF blocks and segmented with Intl.Segmenter (Arabic-aware). Thin
@@ -2295,24 +2847,40 @@ export class FoliateController {
       if ((i + 1) % UNITS_CHUNK === 0 && i + 1 < all.length) await breathe();
     }
     if (!anyLeaf) {
-      // No visible leaf held text (text sits directly in <body>, or inline-only, or all-hidden) —
-      // read the whole body so a full chapter is never empty, but WITHOUT ranges (honest no-highlight).
-      const whole = norm(doc.body.textContent ?? "");
-      if (hasSpeech(whole)) {
-        if (seg) {
-          for (const part of seg.segment(whole)) {
-            const t = norm(part.segment);
-            if (hasSpeech(t)) units.push({ text: t, range: null });
-          }
-        } else {
-          units.push({ text: whole, range: null });
-        }
+      // No visible leaf held text: the chapter has NO block-level container at all. Measured on the
+      // reported book "داو الخالد العجيب" (a .txt→EPUB conversion): every chapter is `<span>`s
+      // separated by `<br>` directly inside `<body>`, so `CONTAINER` — which lists only block
+      // elements — matched 0 nodes in all 88 chapter documents.
+      //
+      // This used to read `body.textContent` and emit units with `range: null` — "honest
+      // no-highlight". But that is the one failure the reader cannot understand: `text` still feeds
+      // the TTS queue, so speech plays perfectly, while `showReadingHighlight` skips a null range and
+      // `setReadingWords` returns early, so the spotlight and the word pill NEVER appear. Audible,
+      // invisible, with nothing on screen to explain it (112 units, 0 ranges, before this change).
+      //
+      // Nothing about the DOM prevented mapping: the text nodes are ordinary and addressable.
+      // `segmentBlock` already walks every text node under an element, segments the joined string
+      // once, and maps each sentence's char offsets back to a live Range — so pointing it at <body>
+      // gives these chapters exactly the same units, ranges and RAWY-247 length-splitting as any
+      // other book, through the same proven code. This branch is unreachable for a chapter that has
+      // even one block container, so no well-formed book takes it.
+      this.segmentBlock(doc.body, doc, seg, norm, units);
+      // Last resort, preserving the original guarantee that a text-bearing chapter is never reported
+      // empty — e.g. a body whose only text sits in nodes `segmentBlock` declines to map.
+      if (units.length === 0) {
+        const whole = norm(doc.body.textContent ?? "");
+        if (hasSpeech(whole)) units.push({ text: whole, range: null });
       }
     }
 
     this.ttsUnits = units;
     this.ttsUnitsIndex = content?.index ?? -1;
     this.ttsLang = lang; // RAWY-129: remember it so a return-to-chapter rebuild segments identically
+    // DIAGNOSTIC BUILD: publish the section these units belong to. `followReadingSentence` and the
+    // overlay handler both refuse to draw unless this equals the DISPLAYED section, and that
+    // comparison is invisible from outside the controller — it is the single fact needed to tell
+    // "no highlight because the sections disagree" from "no highlight for some other reason".
+    publishDiagUnits(this.ttsUnitsIndex, units.length, this.view?.renderer?.getContents?.()?.[0]?.index ?? null);
     return units;
   }
 
@@ -2389,6 +2957,33 @@ export class FoliateController {
         if (hasSpeech(st)) out.push({ text: st, range: rangeFor(a, b) });
       }
     }
+  }
+
+  /** A dev/debug surface reachable from DevTools without shipping any UI — the same convention as
+   *  `window.__sardTtsStats` (lib/tts.ts). Reports what the TRACKING pipeline actually produced for
+   *  the loaded chapter, so "speech plays but nothing highlights" can be MEASURED rather than
+   *  reasoned about: `ranged` is the count of units carrying a live DOM Range, and a unit without one
+   *  is spoken and never highlighted. `unranged > 0` is the signature of that whole failure class.
+   *
+   *  Rebuilds the units when no TTS session owns them — which is exactly what pressing Play does —
+   *  and otherwise reports the retained set, so inspecting it can never disturb playback. */
+  async trackStats(lang?: string): Promise<{
+    section: number;
+    units: number;
+    ranged: number;
+    unranged: number;
+    rebuilt: boolean;
+  }> {
+    const live = this.ttsUnitsIndex >= 0;
+    const units = live ? this.ttsUnits : await this.getChapterUnits(lang ?? this.ttsLang);
+    const ranged = units.filter((u) => u.range).length;
+    return {
+      section: this.ttsUnitsIndex,
+      units: units.length,
+      ranged,
+      unranged: units.length - ranged,
+      rebuilt: !live,
+    };
   }
 
   /** RAWY-129 (A): register the Reader's redraw — invoked after the TTS chapter's overlay is (re)created
@@ -2583,20 +3178,44 @@ export class FoliateController {
     // hitch/heaviness the owner hit while scrolling during read-aloud.
     if (performance.now() - this.lastUserScrollTs < FOLLOW_SUPPRESS_MS) return;
     const content = this.view?.renderer?.getContents?.()?.[0];
-    if (!content || content.index !== this.ttsUnitsIndex) return;
+    if (!content || content.index !== this.ttsUnitsIndex) {
+      // DIAGNOSTIC BUILD: this is the early return the audit flagged. Name the exact condition.
+      diagFollow(i, !content ? "no rendered content" : "displayedSection != ttsUnitsSection", {
+        displayedSectionIndex: content?.index ?? null,
+        ttsUnitsSectionIndex: this.ttsUnitsIndex,
+      });
+      return;
+    }
     const range = this.ttsUnits[i]?.range;
     const doc: Document | undefined = content.doc;
     const r = this.view?.renderer;
-    if (!range || !doc || !r) return;
+    if (!range || !doc || !r) {
+      diagFollow(i, !range ? "no range for this sentence index" : !doc ? "no section document" : "no renderer", {
+        unitCount: this.ttsUnits.length,
+      });
+      return;
+    }
     const raw = range.getBoundingClientRect();
-    if (!(raw.width > 0) && !(raw.height > 0)) return; // not laid out yet
+    if (!(raw.width > 0) && !(raw.height > 0)) {
+      // Zero client rects is the "stale ranges after returning to a chapter" case.
+      diagFollow(i, "range has zero client rects (not laid out / stale)", { width: raw.width, height: raw.height });
+      return;
+    }
     const pr = this.rectInParent(raw, doc); // range rect in PARENT-viewport coords
     const rv = (r as Element).getBoundingClientRect?.(); // the visible reading box
     if (!rv || !(rv.height > 0)) return;
     if (this.scrolledMode) {
+      // RESILIENCE-1: the comfort band must end where the OCCLUSION starts, not where the box does.
+      // The read-aloud transport is `position: fixed` over the reading area (~30% of a 720px window),
+      // so the old 85% bottom sat INSIDE it: a sentence at 80% counted as "comfortably in view" while
+      // being physically behind the pill. Measured at sentence 6 of 30 — the spoken sentence was
+      // underneath the transport and the reader could not see the words being read to them.
       const comfortTop = rv.top + rv.height * 0.15;
-      const comfortBottom = rv.top + rv.height * 0.85;
-      if (pr.top >= comfortTop && pr.bottom <= comfortBottom) return; // already comfortably in view
+      const obstructed = this.readingObstructionTop();
+      const comfortBottom = Math.min(rv.top + rv.height * 0.85, (obstructed ?? rv.bottom) - 8);
+      // If the transport leaves no usable band (a very short window), fall through to the nudge
+      // rather than thrashing the scroll on every sentence.
+      if (comfortBottom > comfortTop && pr.top >= comfortTop && pr.bottom <= comfortBottom) return;
       const delta = pr.top - (rv.top + rv.height * 0.3); // >0 scrolls down (content up)
       if (typeof r.scrollByDelta === "function") r.scrollByDelta(delta);
     } else {
@@ -2607,16 +3226,60 @@ export class FoliateController {
     }
   }
 
+  /**
+   * Top edge of whatever is FLOATING over the reading area right now, in viewport coords — or `null`
+   * when nothing is. Today that is the read-aloud transport (`.tts-pill`), which is `position: fixed`
+   * and therefore invisible to any layout-based measure of "in view".
+   *
+   * Deliberately reads the live element rather than hard-coding the pill's height: the transport
+   * grows and shrinks (collapsed vs expanded, the chapter-end and Edge-error states), and a constant
+   * would be wrong in most of them. Hidden states are honoured — immersive mode fades the pill to
+   * `opacity: 0`, and a faded pill occludes nothing.
+   */
+  private readingObstructionTop(): number | null {
+    if (typeof document === "undefined") return null;
+    const pill = document.querySelector(".tts-pill");
+    if (!pill) return null;
+    const cs = getComputedStyle(pill);
+    if (cs.display === "none" || cs.visibility === "hidden" || Number(cs.opacity) < 0.05) return null;
+    const r = pill.getBoundingClientRect();
+    return r.height > 0 ? r.top : null;
+  }
+
   /** Jump to a TOC target (an href; foliate resolves it). */
   goToHref(href: string): Promise<unknown> | undefined {
+    // RESILIENCE-1 (NAV-2): remember WHICH entry was asked for. Position alone cannot always say
+    // which TOC entry is current — see `refineTocEntry` — and when it cannot, what the reader asked
+    // for is the answer. Held only while that entry is still on screen.
+    this.requestedTocHref = href;
     return this.view?.goTo(href);
   }
 
-  next(): void {
-    this.view?.goLeft(); // RTL: physical-left advances
+  /** The TOC entry the reader last navigated to, while it remains visible. See `refineTocEntry`. */
+  private requestedTocHref: string | null = null;
+
+  /**
+   * NAVIGATION IS IN READING ORDER, NOT SCREEN GEOMETRY.
+   *
+   * `forward()` is always the NEXT page of the book and `backward()` always the previous one, for an
+   * Arabic book exactly as for an English one.
+   *
+   * These replace `next()`/`prev()`, which called foliate's `goLeft()`/`goRight()` — and those are
+   * direction-aware (`goLeft() { return dir === 'rtl' ? next() : prev() }`), so they move the page
+   * PHYSICALLY. The result, measured on real books: in an LTR book ArrowRight went FORWARD, and in an
+   * RTL book the same key went BACKWARD. Reported from real reading as "the arrows are reversed".
+   *
+   * Screen direction must not invert what a control MEANS, and Sard already agreed with itself on
+   * that everywhere else: the PDF path has always mapped ArrowRight to `view.next()`, and the
+   * read-aloud skip maps ArrowRight to +1 with the explicit note "media convention, NOT mirrored in
+   * RTL" (lib/tts.ts). EPUB paging was the lone outlier, so this makes it match the rest of the app
+   * rather than introducing a new convention.
+   */
+  forward(): void {
+    this.view?.next?.();
   }
-  prev(): void {
-    this.view?.goRight();
+  backward(): void {
+    this.view?.prev?.();
   }
 
   /** RAWY-227: the chapter the end-of-chapter "next chapter" control advances FROM. It MUST be the chapter

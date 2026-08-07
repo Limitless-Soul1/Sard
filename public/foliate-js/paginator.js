@@ -449,6 +449,9 @@ export class Paginator extends HTMLElement {
     #anchor = 0 // anchor view to a fraction (0-1), Range, or Element
     #justAnchored = false
     #locked = false // while true, prevent any further navigation
+    // SARD LOCAL PATCH 4 (WP-4E): the ONE turn requested while locked, replayed on release. Depth 1
+    // deliberately — a held key must not bank a queue that then runs away. See #turnPage.
+    #pendingTurn = null
     #styles
     #styleMap = new WeakMap()
     #mediaQuery = matchMedia('(prefers-color-scheme: dark)')
@@ -1079,8 +1082,19 @@ export class Paginator extends HTMLElement {
         for (let index = this.#index + dir; this.#canGoToIndex(index); index += dir)
             if (this.sections[index]?.linear !== 'no') return index
     }
+    // ---- SARD LOCAL PATCH 4 (RESILIENCE-1 / WP-4E) — coalesce a turn instead of dropping it ----
+    // Upstream returns immediately while locked, so every turn requested during the ~100 ms lock (plus
+    // any section load) is DISCARDED with no feedback. Measured in the real app: two next() calls in
+    // one task advanced exactly ONE page. A reader tapping the chevron twice, or holding an arrow key,
+    // silently loses turns and concludes the button is unreliable.
+    // A queue would be wrong — a held key would bank dozens of turns and then run away. Depth ONE is
+    // the same "one-deep" discipline Sard already uses for jump anchors: remember that MORE was asked
+    // for, honour it once on release, and collapse everything beyond that.
     async #turnPage(dir, distance) {
-        if (this.#locked) return
+        if (this.#locked) {
+            this.#pendingTurn = { dir, distance }
+            return
+        }
         this.#locked = true
         const prev = dir === -1
         const shouldGo = await (prev ? this.#scrollPrev(distance) : this.#scrollNext(distance))
@@ -1090,6 +1104,11 @@ export class Paginator extends HTMLElement {
         })
         if (shouldGo || !this.hasAttribute('animated')) await wait(100)
         this.#locked = false
+        const pending = this.#pendingTurn
+        if (pending) {
+            this.#pendingTurn = null
+            await this.#turnPage(pending.dir, pending.distance)
+        }
     }
     prev(distance) {
         return this.#turnPage(-1, distance)

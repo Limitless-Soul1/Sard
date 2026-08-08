@@ -25,13 +25,15 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
-import { isDevelopmentOnly, productionPackageJson } from "./production-tree-rules.mjs";
+import { writeProductionTree } from "./production-tree.mjs";
 
 const REPO = resolve(import.meta.dirname, "..");
 const git = (args, opts = {}) =>
   execFileSync("git", args, { cwd: REPO, encoding: "utf8", maxBuffer: 64e6, ...opts }).trim();
 
-const SOURCE = process.argv.find((a) => a.startsWith("--from="))?.slice(7) ?? "develop";
+const arg = (n) => process.argv.find((a) => a.startsWith(`--${n}=`))?.slice(n.length + 3);
+const SOURCE = arg("from") ?? "develop";
+const REF = arg("ref");
 const KEEP = process.argv.includes("--keep");
 
 // The scratch tree lives INSIDE the repository, and deliberately so: Node and Vite find
@@ -39,36 +41,16 @@ const KEEP = process.argv.includes("--keep");
 // directory cannot resolve a single dependency. It is gitignored, and removed on every exit path.
 const OUT = resolve(REPO, ".release-check");
 
-console.log(`\nPRODUCTION-BUILD CHECK — the tree '${SOURCE}' would publish\n`);
+console.log(`\nPRODUCTION-BUILD CHECK — ${REF ? `tree ${REF}` : `the tree '${SOURCE}' would publish`}\n`);
 
-// ---- reconstruct the published tree, exactly as release-to-main.mjs does ------------------------
-const files = git(["ls-tree", "-r", "--name-only", SOURCE]).split("\n").filter(Boolean).map((f) => f.replace(/\\/g, "/"));
-const drop = files.filter((f) => isDevelopmentOnly(f));
-console.log(`  ${files.length} files on ${SOURCE} · ${files.length - drop.length} kept · ${drop.length} excluded`);
-
-const tmpIndex = resolve(REPO, ".git", "index.buildcheck-tmp");
-const env = { ...process.env, GIT_INDEX_FILE: tmpIndex };
-let tree;
-try {
-  git(["read-tree", SOURCE], { env });
-  if (drop.length) {
-    execFileSync("git", ["update-index", "--force-remove", "-z", "--stdin"],
-      { cwd: REPO, env, input: drop.join("\0") + "\0" });
-  }
-  // The release rewrites package.json's scripts for the published tree, so this must too — otherwise
-  // the gate would build a tree that is not the one that ships, and "it builds" would be an answer to
-  // the wrong question.
-  const pkgText = productionPackageJson(
-    execFileSync("git", ["show", `${SOURCE}:package.json`], { cwd: REPO, encoding: "utf8" }),
-  ).text;
-  const pkgBlob = execFileSync("git", ["hash-object", "-w", "--stdin"],
-    { cwd: REPO, input: pkgText, encoding: "utf8" }).trim();
-  execFileSync("git", ["update-index", "--add", "--cacheinfo", `100644,${pkgBlob},package.json`],
-    { cwd: REPO, env });
-
-  tree = git(["write-tree"], { env });
-} finally {
-  try { rmSync(tmpIndex, { force: true }); } catch { /* fine */ }
+// A caller that has already generated and audited the tree passes it in, so what is built here is
+// provably the same object. Generating it again would leave room for the audited tree and the built
+// tree to differ, which is precisely what must not be possible.
+let tree = REF;
+if (!tree) {
+  const built = writeProductionTree(SOURCE);
+  tree = built.tree;
+  console.log(`  ${built.keep.length + built.drop.size} files on ${SOURCE} · ${built.keep.length} kept · ${built.drop.size} excluded`);
 }
 console.log(`  production tree: ${tree}`);
 

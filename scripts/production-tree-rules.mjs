@@ -73,7 +73,7 @@ export const DEVELOPMENT_ONLY = [
   // build, kills a stray process or publishes this very branch — all developer-machine operations
   // with no role in the product.
   { re: /^scripts\/pack-(diag|share|beta)[-.]?\w*\.mjs$/, why: "a packaging utility for non-release builds" },
-  { re: /^scripts\/(build-test|copy-release|kill-sard|release-to-main|verify-main-buildable)\.mjs$/, why: "a development or release-operation script" },
+  { re: /^scripts\/(build-test|copy-release|kill-sard|release-to-main|verify-main-buildable|production-tree|check-production-content|production-content-rules)\.mjs$/, why: "a development or release-operation script" },
   { re: /^build-test\.bat$/, why: "a development build shortcut" },
 
   // ---- DIAGNOSTIC INSTRUMENTATION -------------------------------------------------------------

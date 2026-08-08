@@ -24,7 +24,7 @@
 // release and the check that guards it can never describe different trees.
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
-import { isDevelopmentOnly, productionPackageJson } from "./production-tree-rules.mjs";
+import { writeProductionTree } from "./production-tree.mjs";
 
 const REPO = resolve(import.meta.dirname, "..");
 const git = (args, opts = {}) => execFileSync("git", args, { cwd: REPO, encoding: "utf8", maxBuffer: 64e6, ...opts }).trim();
@@ -44,15 +44,13 @@ if (current !== SOURCE) {
 }
 
 const sourceSha = git(["rev-parse", "--short", SOURCE]);
-const files = git(["ls-tree", "-r", "--name-only", SOURCE]).split("\n").filter(Boolean).map((f) => f.replace(/\\/g, "/"));
 
-const keep = [];
-const drop = new Map();
-for (const f of files) {
-  const hit = isDevelopmentOnly(f);
-  if (hit) drop.set(f, hit.why);
-  else keep.push(f);
-}
+// THE tree — generated ONCE, here. Everything below audits, builds and commits this same object, so
+// "we audited it", "we built it" and "we shipped it" are statements about one thing rather than three
+// separately-constructed ones that only agree because their inputs did.
+const production = writeProductionTree(SOURCE);
+const { keep, drop } = production;
+const files = [...keep, ...drop.keys()];
 
 console.log(`\nRELEASE ${SOURCE} (${sourceSha}) -> ${TARGET}\n`);
 console.log(`  ${files.length} files on ${SOURCE}`);
@@ -74,49 +72,43 @@ for (const [why, list] of byReason) {
 // deliberately narrow — only the `scripts` block, only against an allowlist in
 // production-tree-rules.mjs — and `dependencies` are copied untouched so the two manifests cannot
 // disagree about what to install.
-const pkgSource = execFileSync("git", ["show", `${SOURCE}:package.json`], { cwd: REPO, encoding: "utf8" });
-const pkgProduction = productionPackageJson(pkgSource);
 console.log(`\n  TRANSFORMED — package.json scripts`);
-console.log(`      kept    (${pkgProduction.kept.length}): ${pkgProduction.kept.join(", ")}`);
-console.log(`      removed (${pkgProduction.dropped.length}): ${pkgProduction.dropped.join(", ")}`);
+console.log(`      kept    (${production.pkgKept.length}): ${production.pkgKept.join(", ")}`);
+console.log(`      removed (${production.pkgDropped.length}): ${production.pkgDropped.join(", ")}`);
+console.log(`\n  production tree: ${production.tree}`);
 
 if (!COMMIT) {
   console.log(`\n  DRY RUN. Nothing changed. Re-run with --commit to publish.\n`);
   process.exit(0);
 }
 
-// ---- refuse to publish a tree that does not build ------------------------------------------------
+// ---- GATE 1: is there internal material inside the files that ship? ------------------------------
 //
-// The clean-tree rules above decide what `main` CONTAINS. They cannot tell whether what is left still
+// Runs FIRST, and against the tree object generated above rather than against `develop`. The path
+// rules cannot see inside a file that legitimately ships, which is how v1.2.2 published a private
+// machine path, four internal test modules and twenty-one development npm scripts while every check
+// reported success. A failure here stops the release before anything is built or moved.
+console.log(`\n  auditing the production tree for internal content…`);
+execFileSync(process.execPath, [resolve(REPO, "scripts/check-production-content.mjs"), `--ref=${production.tree}`],
+  { cwd: REPO, stdio: "inherit" });
+
+// ---- GATE 2: does that same tree actually build? --------------------------------------------------
+//
+// The clean-tree rules decide what `main` CONTAINS. They cannot tell whether what is left still
 // compiles, and those are different questions: v1.2.0 passed every clean-tree check, was published,
 // and was tagged — and only then did CI find that the production tree could not resolve imports whose
 // files the rules legitimately exclude. `develop` building is not evidence, because `develop` has
-// every file. So the tree that is about to become `main` is built here, before `main` moves.
+// every file. The SAME tree the content gate just audited is built here, before `main` moves.
 console.log(`\n  checking the production tree builds…`);
-execFileSync(process.execPath, [resolve(REPO, "scripts/verify-main-buildable.mjs"), `--from=${SOURCE}`],
+execFileSync(process.execPath, [resolve(REPO, "scripts/verify-main-buildable.mjs"), `--ref=${production.tree}`],
   { cwd: REPO, stdio: "inherit" });
 
-// ---- build the target tree from the source tree, minus the exclusions ---------------------------
+// ---- commit THAT tree — the one both gates just passed -------------------------------------------
 //
-// Done with a temporary index so the working tree is never touched: a release must not depend on
-// checking anything out, and must leave the developer exactly where they were.
-const tmpIndex = resolve(REPO, ".git", "index.release-tmp");
-const env = { ...process.env, GIT_INDEX_FILE: tmpIndex };
-try {
-  git(["read-tree", SOURCE], { env });
-  if (drop.size) {
-    // `--stdin` with NUL separation: paths contain non-ASCII and spaces.
-    execFileSync("git", ["update-index", "--force-remove", "-z", "--stdin"],
-      { cwd: REPO, env, input: [...drop.keys()].join("\0") + "\0" });
-  }
-  // Write the transformed manifest as a new blob and stage THAT in the temporary index, so the
-  // rewrite lands in the published tree without the working copy ever changing.
-  const pkgBlob = execFileSync("git", ["hash-object", "-w", "--stdin"],
-    { cwd: REPO, input: pkgProduction.text, encoding: "utf8" }).trim();
-  execFileSync("git", ["update-index", "--add", "--cacheinfo", `100644,${pkgBlob},package.json`],
-    { cwd: REPO, env });
-
-  const tree = git(["write-tree"], { env });
+// No reconstruction here. The tree object was generated once at the top and has been audited and built
+// since; committing anything else would reintroduce the very gap these gates exist to close.
+{
+  const tree = production.tree;
 
   const parent = git(["rev-parse", "--verify", `refs/heads/${TARGET}`]);
   const message =
@@ -128,8 +120,6 @@ try {
   git(["update-ref", `refs/heads/${TARGET}`, commit, parent]);
 
   console.log(`\n  ${TARGET} updated -> ${commit.slice(0, 7)}`);
-} finally {
-  try { execFileSync("cmd", ["/c", "del", "/q", tmpIndex.replace(/\//g, "\\")], { stdio: "ignore" }); } catch { /* fine */ }
 }
 
 // ---- prove it, rather than assume it ------------------------------------------------------------

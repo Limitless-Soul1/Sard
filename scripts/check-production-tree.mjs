@@ -12,7 +12,7 @@
 // remembers to read it. The 2026-08-07 incident was not caused by anyone being careless — it was
 // caused by two files that were correct in every respect except that nothing could tell them apart.
 // So the rule about what may live on `main` is written here, where it can be run, rather than only in
-// docs/engineering/WORKFLOW.md where it can be skimmed.
+// prose where it can be skimmed.
 //
 // THE DISTINCTION THIS FILE EXISTS TO GET RIGHT
 // "Mentions diagnostics" and "IS diagnostics" are not the same thing, and treating them as the same
@@ -76,7 +76,7 @@ for (const [why, list] of byReason) {
   console.log("");
 }
 console.error(
-  `  This tree is NOT fit for main. Exclude these from the merge (see docs/engineering/WORKFLOW.md), or, if one of\n` +
-    `  them genuinely belongs in the released product, add it to PRODUCTION_ALWAYS with the reason.\n`,
+  `  This tree is NOT fit for main. Exclude these from the release, or, if one of them genuinely\n` +
+    `  belongs in the released product, add it to PRODUCTION_ALWAYS with the reason.\n`,
 );
 process.exit(1);

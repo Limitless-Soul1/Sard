@@ -139,12 +139,12 @@ export function Reader({
   const ctrlRef = useRef<FoliateController | null>(null);
   if (!ctrlRef.current) ctrlRef.current = new FoliateController();
   // A dev/debug surface reachable from DevTools without shipping any UI — the same convention as
-  // `window.__sardTtsStats`. Lets the TTS-tracking probe measure the REAL pipeline (see
-  // tests/harness/tts-track.mjs) instead of a re-implementation of it that could drift.
+  // `window.__sardTtsStats`. Lets the TTS-tracking probe measure the REAL pipeline instead of a
+  // re-implementation of it that could drift.
   (window as unknown as { __sardTrackStats?: (lang?: string) => unknown }).__sardTrackStats = (lang) =>
     ctrlRef.current?.trackStats(lang);
   // RAWY-292: the same convention for PDF read-aloud — units as the pipeline builds them, plus the
-  // text-layer verdict, so extraction QUALITY is measured through the real code (tests/harness/pdf-tts.mjs).
+  // text-layer verdict, so extraction QUALITY is measured through the real code.
   (window as unknown as { __sardPdfTts?: (lang?: string) => unknown }).__sardPdfTts = async (lang) => {
     const units = (await ctrlRef.current?.getChapterUnits(lang)) ?? [];
     return {

@@ -277,8 +277,8 @@ fn apply_field(conn: &Connection, id: &str, field: &str, base_col: &str, new: Op
     let Some(v) = new else { return Ok(()) }; // None = caller didn't touch this field
     // RESILIENCE-1 / WP-3 — NORMALISE AT THE BOUNDARY, so stored and displayed cannot disagree.
     //
-    // Found by the byte-identity harness, not by reasoning: the owner's library holds the override
-    // "الأنمساخ " with a trailing space (typed, invisible, harmless-looking). Once WP-3 gave every
+    // Found by measurement, not by reasoning: a real library held a title override ending in a
+    // trailing space — typed, invisible, harmless-looking. Once WP-3 gave every
     // surface one resolver, that resolver trimmed for display — and the shown title stopped matching
     // the stored one, which is the exact class of divergence this package exists to remove. Trimming
     // HERE means surrounding whitespace never enters the database, so display, sort and the folded

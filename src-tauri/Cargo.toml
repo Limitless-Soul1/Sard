@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 #
 # `diag` is OFF by default, so every ordinary `cargo build`, every `tauri build`, and every CI run
 # produces a release binary that has never compiled a line of instrumentation. Turning it on is an
-# explicit act (`--features diag`, which only `pack-diag.mjs` performs), and it changes the app's
+# explicit act (`--features diag`, which only the diagnostic packaging step performs), and it changes the app's
 # name, executable, identifier and version through `tauri.diag.conf.json` at the same time — the two
 # cannot be turned on separately, which is what makes a mislabelled build unbuildable rather than
 # merely discouraged. See scripts/build-identity.mjs for why this exists.

@@ -5,12 +5,10 @@
 // the release would pass a check it had already stopped satisfying.
 //
 // THE BOUNDARY THIS FILE DRAWS
-// `develop` is the complete development environment: product source, tests, fixtures, harnesses,
-// investigation tools, studies, reports, internal documentation and throwaway utilities. All of it is
-// kept, because it is how the product is built and verified. `main` is the finished product and
-// nothing else — it must read as an ordinary public repository for an application, not as somebody's
-// laboratory. Excluding a path here does NOT delete it; it stays on `develop` in full, and it stays in
-// the git history. Only the current tree published to `main` is filtered.
+// `develop` holds everything needed to build, test and verify the product. `main` holds the finished
+// product and nothing else, so it reads as an ordinary public repository for an application.
+// Excluding a path here does NOT delete it: it stays on `develop` in full, and it stays in the git
+// history. Only the current tree published to `main` is filtered.
 //
 // WHY THE ROOT-DOCUMENT RULE IS AN ALLOWLIST
 // A rule that names the files it knows about cannot hold: the next document is named something nobody
@@ -57,11 +55,10 @@ export const DEVELOPMENT_ONLY = [
   { re: /^DIAG-README\.txt$/, why: "the diagnostic package's tester instructions" },
 
   // ---- TESTING INFRASTRUCTURE -----------------------------------------------------------------
-  // ALL of it. Unit tests, fixtures, the corpus, the CDP harnesses and the runner configuration are
-  // how the product is verified; they are not part of the application a reader installs, and a public
-  // product repository does not carry its author's laboratory. Every one of these stays on `develop`
-  // and remains runnable there — excluding a path from the published tree does not remove it.
-  { re: /^tests\//, why: "testing infrastructure — unit tests, fixtures, corpus and investigation harnesses" },
+  // ALL of it. Tests, fixtures and their runner configuration are how the product is verified; they
+  // are not part of the application a reader installs. Every one of these stays on `develop` and
+  // remains runnable there — excluding a path from the published tree does not remove it.
+  { re: /^tests\//, why: "testing infrastructure — tests, fixtures and test data" },
   { re: /^src-tauri\/tests\//, why: "testing infrastructure — Rust integration tests" },
   // Rust test modules that live INSIDE src/ rather than under tests/. Cargo allows both, so the
   // directory rule above cannot see them. They are `#[cfg(test)]`, so removing the file is safe for a

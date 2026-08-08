@@ -679,7 +679,7 @@ export function buildReadingCss(
           `html` KEEPS the rule: that is what RAWY-04 needed (no stray paginated scrollbar), and
           foliate's own `columnize()` sets `height`/`overflow:hidden` on <html> regardless — so this
           is belt-and-braces there and load-bearing nowhere else.
-          Guarded by tests/unit/pagedFlow.test.ts and tests/harness/pagination.mjs. */ ""}
+          Covered by the paged-flow and pagination checks. */ ""}
     ${style.flowMode === "paged" ? "html { height: 100%; overflow: hidden; }" : ""}
     /* MARGINS are applied on the CHROME side (RAWY-36): foliate's paginator sets html padding
        inline with !important in BOTH scrolled + paged modes, which overrode an injected

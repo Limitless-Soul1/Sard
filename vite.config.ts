@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
-// IS THIS A DIAGNOSTIC BUILD? Set by `scripts/pack-diag.mjs` and by nothing else.
+// IS THIS A DIAGNOSTIC BUILD? Set by the diagnostic packaging step and by nothing else.
 //
 // The default is FALSE, and that default is the point: every ordinary `npm run build`, every CI run
 // and every release produces a bundle with no instrumentation in it, without anyone having to

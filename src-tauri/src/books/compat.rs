@@ -1,7 +1,7 @@
 //! RESILIENCE-1 / WP-2 — the EPUB compatibility layer.
 //!
 //! WHY THIS EXISTS. Imperfect EPUBs are the normal case, not the exception. Measured over the
-//! project's 15-book regression corpus (books nobody assembled to prove a point):
+//! fifteen real books, none of them chosen to prove a point:
 //!
 //!   * 3 books declare the wrong `dc:language` (Arabic content tagged `en`);
 //!   * 11 of 15 declare no `page-progression-direction` at all — RTL is inferred, never stated;

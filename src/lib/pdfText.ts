@@ -21,8 +21,8 @@
  * **THIS IS NOT A REMOVAL.** The whole PDF read-aloud implementation is intentionally preserved and
  * still compiles: extraction and Arabic repair (this file), unit derivation and span-granular ranges
  * (`FoliateController.pdfDeriveUnits` / `pdfPageUnits`), sentence highlighting
- * (`pdfMarkUnit` / `pdfClearMarks` / `pdfWatchLayer`), and every harness and report. Nothing was
- * reverted. The feature is dormant, not deleted.
+ * (`pdfMarkUnit` / `pdfClearMarks` / `pdfWatchLayer`). Nothing was reverted. The feature is dormant,
+ * not deleted.
  *
  * **TO RE-ENABLE: change this one constant to `true`.** Nothing else needs editing — the four call
  * sites below all read it, and they are the complete set:
@@ -38,8 +38,8 @@
  * Grep `PDF_TTS_ENABLED` to find all of them. EPUB read-aloud is completely unaffected: it never
  * consults this flag, and none of the four sites is on the EPUB path.
  *
- * When re-enabling, the gates to re-run are `tests/harness/pdf-highlight-acceptance.mjs` and
- * `pdf-tts-diagnosis5.mjs` — both currently fail by design, because the control they press is hidden.
+ * The acceptance checks for PDF read-aloud fail by design while this is `false`, because the control
+ * they press is hidden. Re-run them when re-enabling.
  */
 export const PDF_TTS_ENABLED = false;
 

@@ -24,7 +24,7 @@
 // release and the check that guards it can never describe different trees.
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
-import { isDevelopmentOnly } from "./production-tree-rules.mjs";
+import { isDevelopmentOnly, productionPackageJson } from "./production-tree-rules.mjs";
 
 const REPO = resolve(import.meta.dirname, "..");
 const git = (args, opts = {}) => execFileSync("git", args, { cwd: REPO, encoding: "utf8", maxBuffer: 64e6, ...opts }).trim();
@@ -66,6 +66,20 @@ for (const [why, list] of byReason) {
   if (list.length > 5) console.log(`      … and ${list.length - 5} more`);
 }
 
+// ---- the one file whose CONTENTS are rewritten, not merely kept or dropped ----------------------
+//
+// Stated plainly because it is an exception to everything above: the published tree is otherwise a
+// pure subset of the source tree. `package.json` is not, because dropping it is impossible (the build
+// needs it) and shipping it verbatim published the whole internal tooling inventory. The transform is
+// deliberately narrow — only the `scripts` block, only against an allowlist in
+// production-tree-rules.mjs — and `dependencies` are copied untouched so the two manifests cannot
+// disagree about what to install.
+const pkgSource = execFileSync("git", ["show", `${SOURCE}:package.json`], { cwd: REPO, encoding: "utf8" });
+const pkgProduction = productionPackageJson(pkgSource);
+console.log(`\n  TRANSFORMED — package.json scripts`);
+console.log(`      kept    (${pkgProduction.kept.length}): ${pkgProduction.kept.join(", ")}`);
+console.log(`      removed (${pkgProduction.dropped.length}): ${pkgProduction.dropped.join(", ")}`);
+
 if (!COMMIT) {
   console.log(`\n  DRY RUN. Nothing changed. Re-run with --commit to publish.\n`);
   process.exit(0);
@@ -95,6 +109,13 @@ try {
     execFileSync("git", ["update-index", "--force-remove", "-z", "--stdin"],
       { cwd: REPO, env, input: [...drop.keys()].join("\0") + "\0" });
   }
+  // Write the transformed manifest as a new blob and stage THAT in the temporary index, so the
+  // rewrite lands in the published tree without the working copy ever changing.
+  const pkgBlob = execFileSync("git", ["hash-object", "-w", "--stdin"],
+    { cwd: REPO, input: pkgProduction.text, encoding: "utf8" }).trim();
+  execFileSync("git", ["update-index", "--add", "--cacheinfo", `100644,${pkgBlob},package.json`],
+    { cwd: REPO, env });
+
   const tree = git(["write-tree"], { env });
 
   const parent = git(["rev-parse", "--verify", `refs/heads/${TARGET}`]);

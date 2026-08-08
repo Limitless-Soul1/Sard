@@ -21,12 +21,19 @@ use rusqlite::Connection;
 
 use super::import_books;
 
+// The corpus location comes from the environment and from nowhere else. There is deliberately NO
+// default: a hardcoded fallback would bake one machine's directory layout into the repository, and
+// the previous one did exactly that. An unset variable is a SKIP, never a silent pass.
 fn corpus_dir() -> Option<PathBuf> {
-    let p = PathBuf::from(std::env::var("SARD_CORPUS").unwrap_or_else(|_| "M:\\ProjectDocs\\sard\\Corpus".into()));
+    let Ok(var) = std::env::var("SARD_CORPUS") else {
+        eprintln!("[corpus] SKIPPED — SARD_CORPUS is not set. This is a SKIP, not a pass.");
+        return None;
+    };
+    let p = PathBuf::from(var);
     if p.is_dir() {
         Some(p)
     } else {
-        eprintln!("[corpus] SKIPPED — no corpus at {}. This is a SKIP, not a pass.", p.display());
+        eprintln!("[corpus] SKIPPED — SARD_CORPUS does not point at a directory. This is a SKIP, not a pass.");
         None
     }
 }

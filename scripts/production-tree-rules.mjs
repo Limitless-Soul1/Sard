@@ -66,6 +66,13 @@ export const DEVELOPMENT_ONLY = [
   // and remains runnable there — excluding a path from the published tree does not remove it.
   { re: /^tests\//, why: "testing infrastructure — unit tests, fixtures, corpus and investigation harnesses" },
   { re: /^src-tauri\/tests\//, why: "testing infrastructure — Rust integration tests" },
+  // Rust test modules that live INSIDE src/ rather than under tests/. Cargo allows both, so the
+  // directory rule above cannot see these — and four of them reached a public release carrying
+  // internal work-package names, references to the owner's live library, and a hardcoded path to a
+  // machine-local corpus directory. They are `#[cfg(test)]`, so a release build never compiles them:
+  // removing the file is safe because cfg-stripping happens before the module file is resolved.
+  // Only `cargo test` needs them, and that is not something `main` is for.
+  { re: /^src-tauri\/src\/(?:.*\/)?(?:tests|[A-Za-z0-9_]+_tests)\.rs$/, why: "a Rust test module — testing infrastructure, not the product" },
   { re: /^(tsconfig\.test\.json|vitest\.config\.ts)$/, why: "testing infrastructure — test-runner configuration" },
 
   // ---- DEVELOPMENT AND RELEASE-OPERATION SCRIPTS ----------------------------------------------
@@ -109,6 +116,47 @@ export const PRODUCTION_ALWAYS = [
   /^\.github\/workflows\//,
   /^(README|BUILD|LICENSE|CHANGELOG|CONTRIBUTING|SECURITY|CODE_OF_CONDUCT|NOTICE|AUTHORS)(\.md|\.txt)?$/,
 ];
+
+/**
+ * THE ONLY npm SCRIPTS THAT MAY APPEAR IN THE PUBLISHED `package.json`.
+ *
+ * Excluding a path stops a FILE from shipping; it does nothing about internal material inside a file
+ * that legitimately ships. `package.json` is exactly that case: 21 of its 34 scripts named harnesses,
+ * corpus tooling, diagnostic and Beta packaging, and the private release mechanism — every one of them
+ * pointing at a path the production tree does not contain. All of it was published.
+ *
+ * So the published `package.json` keeps only what genuinely runs there, and the list is derived from
+ * what actually executes rather than from taste:
+ *
+ *   build           `tauri.conf.json` sets beforeBuildCommand: "npm run build"
+ *   tauri           tauri-action's entry point — it runs `npm run tauri build`
+ *   dev, preview    the ordinary entry points a reader of a public repository expects
+ *   verify:release  runs scripts/verify-artifact.mjs, which ships and which CI runs against every
+ *                   published artifact
+ *
+ * `name`, `version`, `dependencies` and `devDependencies` are never touched, so the published
+ * manifest cannot drift from the real one — which is why this is a transform and not a second file.
+ * Adding an entry here publishes it; add only what the public repository genuinely needs.
+ */
+export const PRODUCTION_SCRIPTS = ["dev", "build", "preview", "tauri", "verify:release"];
+
+/**
+ * The published `package.json`, given the source one. Returns the serialised text.
+ *
+ * Only the `scripts` block changes. Key order within it is preserved, so the diff between the two
+ * trees stays readable.
+ */
+export function productionPackageJson(sourceText) {
+  const pkg = JSON.parse(sourceText);
+  const kept = {};
+  const dropped = [];
+  for (const [name, cmd] of Object.entries(pkg.scripts ?? {})) {
+    if (PRODUCTION_SCRIPTS.includes(name)) kept[name] = cmd;
+    else dropped.push(name);
+  }
+  pkg.scripts = kept;
+  return { text: JSON.stringify(pkg, null, 2) + "\n", kept: Object.keys(kept), dropped };
+}
 
 /** True when a repo-relative path must be kept out of `main`. */
 export function isDevelopmentOnly(path) {

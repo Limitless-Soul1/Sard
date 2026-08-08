@@ -82,10 +82,15 @@ try {
   }
   if (!existsSync(resolve(OUT, "package.json"))) throw new Error("the extracted tree has no package.json");
 
-  const run = (label, cmd, args) => {
+  // The tool's own JS entry point is run with this Node, rather than going through `npx` and a shell.
+  // No PATH lookup, no shell quoting, no deprecation warning about arguments passed alongside
+  // `shell: true` — and the extracted tree needs no node_modules of its own, because both resolve
+  // from the repository above it.
+  const run = (label, bin, args) => {
     process.stdout.write(`  ${label} … `);
     try {
-      execFileSync(cmd, args, { cwd: OUT, encoding: "utf8", stdio: "pipe", shell: true, maxBuffer: 64e6 });
+      execFileSync(process.execPath, [resolve(REPO, bin), ...args],
+        { cwd: OUT, encoding: "utf8", stdio: "pipe", maxBuffer: 64e6 });
       console.log("PASS");
     } catch (e) {
       console.log("FAIL");
@@ -96,8 +101,8 @@ try {
     }
   };
 
-  run("typecheck (tsc)", "npx", ["tsc", "--noEmit", "-p", "tsconfig.json"]);
-  run("bundle (vite build)", "npx", ["vite", "build"]);
+  run("typecheck (tsc)", "node_modules/typescript/bin/tsc", ["--noEmit", "-p", "tsconfig.json"]);
+  run("bundle (vite build)", "node_modules/vite/bin/vite.js", ["build"]);
 } catch (e) {
   failed = e;
   // Report the cause. An earlier version swallowed it and printed only "this tree does not build",

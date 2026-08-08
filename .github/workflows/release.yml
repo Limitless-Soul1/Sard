@@ -93,6 +93,41 @@ jobs:
           # the same check — two copies of a rule is one rule and one stale copy.
           node scripts/check-production-tree.mjs
 
+      # ---- THE CONTENT AUDIT'S CI HALF -------------------------------------------------------------
+      #
+      # The check above matches PATHS. It cannot see internal material inside a file that legitimately
+      # ships, which is how a private machine path, four internal test modules and twenty-one
+      # development npm scripts reached v1.2.2 while every gate reported success. The content gate that
+      # does see them, and its rules, are development-only: shipping them would put the internal tooling
+      # inventory back into the published tree — the exact thing being prevented. So CI cannot re-run it.
+      #
+      # What CI can do is check IDENTITY. The release step audits a tree, builds that same tree, and
+      # records its SHA in the release commit. Here we recompute the tree of the commit being released
+      # and require it to be that one. A tree the gates never saw — a hand-edited `main`, a tag pointing
+      # at some other commit, a snapshot rebuilt after the audit — cannot pass.
+      #
+      # This is deliberately NOT a second copy of the content rules. Two copies of a rule is one rule and
+      # one stale copy, and the drift would be invisible until it mattered.
+      - name: Refuse to release a tree that was never audited
+        shell: bash
+        run: |
+          TREE="$(git rev-parse HEAD^{tree})"
+          CLAIM="$(git log -1 --format=%B | sed -n 's/^Audited-tree: \([0-9a-f]\{40\}\)$/\1/p' | tail -1)"
+          if [ -z "$CLAIM" ]; then
+            echo "::error::this commit carries no 'Audited-tree' record, so nothing proves its tree"
+            echo "::error::passed the production-content and production-build gates."
+            echo "::error::Releases are cut with 'npm run release:to-main -- --commit', which records it."
+            exit 1
+          fi
+          if [ "$CLAIM" != "$TREE" ]; then
+            echo "::error::the tree being released is NOT the tree that was audited."
+            echo "::error::  audited: $CLAIM"
+            echo "::error::  release: $TREE"
+            echo "::error::Something changed after the gates ran. Re-cut the release; do not override this."
+            exit 1
+          fi
+          echo "tree $TREE matches the audited tree recorded in the release commit"
+
       - name: Rust
         uses: dtolnay/rust-toolchain@stable
 

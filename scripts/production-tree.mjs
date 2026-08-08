@@ -15,6 +15,32 @@ const git = (args, opts = {}) =>
   execFileSync("git", args, { cwd: REPO, encoding: "utf8", maxBuffer: 64e6, ...opts }).trim();
 
 /**
+ * THE PROVENANCE BINDING between the local gates and CI.
+ *
+ * CI cannot re-run the content gate: that gate, and its rules, are development-only and deliberately
+ * absent from `main` — shipping them would put the internal tooling inventory back into the published
+ * tree, which is the thing being prevented. So CI cannot re-derive the verdict.
+ *
+ * What it CAN do is check identity. The release records the SHA of the tree it audited and built; CI
+ * recomputes the tree of the commit it is about to release and refuses if the two differ, or if the
+ * claim is missing. That turns "this tree passed the gates" from an assumption into something the
+ * pipeline checks, without a second copy of the rules to drift out of step.
+ *
+ * It binds accident, not attack — a hand-edited `main`, a tag pointing at a commit the release script
+ * never produced, or a snapshot rebuilt after the audit. Those are the ways v1.2.x actually went wrong.
+ */
+export const AUDIT_TRAILER = "Audited-tree";
+
+/** The line a release commit carries to record which tree passed the gates. */
+export const auditedTreeTrailer = (tree) => `${AUDIT_TRAILER}: ${tree}`;
+
+/** The tree SHA a commit message claims was audited, or null. Mirrored by the CI step in release.yml. */
+export function parseAuditedTree(message) {
+  const m = String(message).match(new RegExp(`^${AUDIT_TRAILER}: ([0-9a-f]{40})$`, "m"));
+  return m ? m[1] : null;
+}
+
+/**
  * Build the tree that `source` would publish, and return it.
  *
  * Writes a real tree object into the object database — cheap, unreferenced, and collected by `git gc`

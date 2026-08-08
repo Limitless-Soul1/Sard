@@ -24,7 +24,7 @@
 // release and the check that guards it can never describe different trees.
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
-import { writeProductionTree } from "./production-tree.mjs";
+import { writeProductionTree, auditedTreeTrailer } from "./production-tree.mjs";
 
 const REPO = resolve(import.meta.dirname, "..");
 const git = (args, opts = {}) => execFileSync("git", args, { cwd: REPO, encoding: "utf8", maxBuffer: 64e6, ...opts }).trim();
@@ -115,7 +115,11 @@ execFileSync(process.execPath, [resolve(REPO, "scripts/verify-main-buildable.mjs
     `Release from ${SOURCE} (${sourceSha})\n\n` +
     `Published snapshot of ${SOURCE}, with ${drop.size} development-only file(s) excluded by\n` +
     `scripts/production-tree-rules.mjs — the same list the production-tree gate enforces.\n\n` +
-    `Kept ${keep.length} files. The full development history stays on ${SOURCE}.\n`;
+    `Kept ${keep.length} files. The full development history stays on ${SOURCE}.\n\n` +
+    // Recorded so CI can refuse a tree the gates never saw. CI cannot re-run the content gate — its
+    // rules are development-only and must not ship — but it can recompute this commit's tree and
+    // require it to be the one that passed. See production-tree.mjs for why identity, not re-derivation.
+    `${auditedTreeTrailer(tree)}\n`;
   const commit = git(["commit-tree", tree, "-p", parent, "-m", message]);
   git(["update-ref", `refs/heads/${TARGET}`, commit, parent]);
 

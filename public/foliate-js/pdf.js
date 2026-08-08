@@ -12,7 +12,20 @@ const textLayerBuilderCSS = await fetchText(pdfjsPath('text_layer_builder.css'))
 // https://raw.githubusercontent.com/mozilla/pdf.js/refs/tags/v5.5.207/web/annotation_layer_builder.css
 const annotationLayerBuilderCSS = await fetchText(pdfjsPath('annotation_layer_builder.css'))
 
+// SARD LOCAL PATCH 11 — per-document render generation (see VENDOR.txt).
+// Keyed by the PAGE DOCUMENT, not module-wide, so that two DIFFERENT pages rendering at once (a
+// spread, a prefetched neighbour) never cancel each other. Only a newer render of the SAME page
+// invalidates an older one. A WeakMap keeps this out of the page's own DOM and lets a closed page's
+// entry be collected with its document.
+const sardRenderGen = new WeakMap()
+
 const render = async (page, doc, zoom) => {
+    // Claim this document. Every `await` below re-checks, and a superseded render returns without
+    // touching the live DOM.
+    const myGen = (sardRenderGen.get(doc) ?? 0) + 1
+    sardRenderGen.set(doc, myGen)
+    const stale = () => sardRenderGen.get(doc) !== myGen
+
     const scale = zoom * devicePixelRatio
     doc.documentElement.style.transform = `scale(${1 / devicePixelRatio})`
     doc.documentElement.style.transformOrigin = 'top left'
@@ -26,6 +39,7 @@ const render = async (page, doc, zoom) => {
     canvas.width = viewport.width
     const canvasContext = canvas.getContext('2d')
     await page.render({ canvasContext, viewport }).promise
+    if (stale()) return // PATCH 11: a newer zoom arrived while painting; do not touch the page
     // RAWY-85 test: adopting a painted canvas across documents renders blank in Chromium/WebView2;
     // copy the pixels into an <img> in the page iframe instead (engine-robust).
     const pageImg = doc.createElement('img')
@@ -35,11 +49,33 @@ const render = async (page, doc, zoom) => {
     doc.querySelector('#canvas').replaceChildren(pageImg)
 
     const container = doc.querySelector('.textLayer')
-    const textLayer = new pdfjsLib.TextLayer({
-        textContentSource: await page.streamTextContent(),
-        container, viewport,
-    })
+    // SARD LOCAL PATCH 10 — clear the text layer before rendering into it.
+    // `TextLayer.render()` APPENDS to `container`, and `onZoom` below routes every zoom change back
+    // through this same function, so the spans accumulated instead of being replaced: measured
+    // 47 -> 141 -> 188 -> 235 -> 329 across zooms 2/3/4 and back to fit-page, the page's opening
+    // phrase repeating 7x, and read-aloud units going 5 -> 35 (the page would be spoken seven times).
+    // The image two lines above already does exactly this with `replaceChildren(pageImg)`; this
+    // restores the symmetry rather than introducing a mechanism.
+    //
+    // SARD LOCAL PATCH 11 — the await is HOISTED OUT of the object literal on purpose. It used to sit
+    // inside it, so the order was clear -> await -> append, and two overlapping renders both cleared
+    // and then both appended (measured 94 spans = 47 x 2 on every fit-mode transition). Awaiting the
+    // text source FIRST makes clear -> construct -> append adjacent, and the generation check between
+    // them means only the newest render ever reaches the clear.
+    const textContentSource = await page.streamTextContent()
+    if (stale()) return
+    container.replaceChildren()
+    const textLayer = new pdfjsLib.TextLayer({ textContentSource, container, viewport })
     await textLayer.render()
+    // PATCH 11: capture what THIS render put in the container at the synchronous instant its append
+    // finished — no `await` separates the two lines, so nothing else can have run in between and the
+    // list is exactly this render's own nodes. Only then test for staleness. Removing a node that a
+    // newer render has already discarded is a no-op, so this can never delete the winner's spans.
+    const myNodes = [...container.childNodes]
+    if (stale()) {
+        for (const node of myNodes) node.remove()
+        return
+    }
 
     // hide "offscreen" canvases appended to docuemnt when rendering text layer
     // https://github.com/mozilla/pdf.js/blob/642b9a5ae67ef642b9a8808fd9efd447e8c350e2/web/pdf_viewer.css#L51-L58

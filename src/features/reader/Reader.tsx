@@ -1,11 +1,21 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, useMemo } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { pdfAttemptStarted, stageOk } from "../../lib/pdfDiag"; // DIAGNOSTIC BUILD ONLY
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
+import { setBookCssMode } from "../../reader-engine/FoliateController";
 import { FoliateController, type SearchHit, type SelectionInfo, type TocEntry } from "../../reader-engine/FoliateController";
 import { PhotoComposer } from "../photo/PhotoComposer";
 import type { CardData } from "../photo/photo";
 import { useReader } from "../../reader-engine/store";
+import { parseSectionHref, sectionHref } from "../../reader-engine/sectionHref"; // WP-6A: generated-row hrefs
+import { positionReadout } from "../../reader-engine/position";
+import { loadBookCssMode } from "../../reader-engine/bookCssSetting"; // WP-7 stage 3 // WP-4F: one place decides the readout
+// RAWY-291: PDF reading appearances + the zoom lattice.
+import {
+  isPdfThemeId, PDF_THEME_KEY, pdfTheme, pdfZoomKey, pdfZoomAttr, parseStoredZoom,
+  stepPdfZoom, zoomForWheel, isFitMode, type PdfZoom, type PdfThemeId,
+} from "../../reader-engine/pdfView";
 import {
   ARABIC_DEFAULTS,
   defaultsForDir,
@@ -13,8 +23,19 @@ import {
   pageWidthPx,
   type ReadingStyle,
   type RevealLabels,
+  ZOOM_MAX,
+  ZOOM_MIN,
+  ZOOM_STEP,
 } from "../../reader-engine/injectedCss";
-import { bookRegister, bookSetCoverPng, bookUpdate, progressGet, progressSave, settingsGet, settingsSet } from "../../lib/ipc";
+import { bookGet, bookRegister, bookSetCoverPng, bookSetExtracted, progressGet, progressSave, settingsGet, settingsSet } from "../../lib/ipc";
+// RESILIENCE-1 / WP-3: the ONE place a book's displayed name is decided (see lib/bookMeta.ts).
+import { hintMeta, resolveBookMeta } from "../../lib/bookMeta";
+// RESILIENCE-1 / WP-1: every open failure flows through this one classifier + card.
+import { classifyBookError, runtimeRefusal } from "../../lib/bookErrors";
+import { formatDiagnostics, readDiagnostics, recordDiagnostic, toDiagnostic, type Classified } from "../../lib/errors";
+import { canRender, runtimeReport } from "../../lib/runtime";
+import { openWebView2Help } from "../../lib/webview2";
+import { ErrorCard } from "../../app/ErrorCard";
 import { useI18n } from "../../i18n";
 import { extractChapterNumber, localeNum } from "../../lib/format";
 import { applyTheme, THEMES, useTheme, type ThemeId } from "../../theme";
@@ -56,9 +77,17 @@ export interface OpenTarget {
   dir?: string | null;
   cfi?: string | null; // jump-to location (RAWY-27 inbox); else resume saved progress
   format?: string | null; // RAWY-85 — 'pdf' opens read-only (no themes/annotations); else EPUB
+  // RESILIENCE-1 / WP-3 — a HINT, not the source. The reader re-reads the row by id; these only
+  // stand in if that read fails, so a launching surface never becomes an authority on the name.
+  title?: string | null;
+  author?: string | null;
 }
 
 const SAVE_DEBOUNCE_MS = 500;
+
+// RESILIENCE-1 / WP-6A: a synthesised contents row targets a SPINE INDEX, not a document href — the
+// book has no anchors worth pointing at. The href space lives in reader-engine/sectionHref.ts so that
+// every surface that reads an href can recognise one, not just the jump handler.
 
 // RAWY-250: the position the owner was reading before a programmatic jump, plus the chapter label the return
 // pill shows ("العودة إلى … · <chapter>") and the section it lived in. A CFI is cross-section, so the anchor
@@ -109,6 +138,22 @@ export function Reader({
   const stageRef = useRef<HTMLDivElement>(null);
   const ctrlRef = useRef<FoliateController | null>(null);
   if (!ctrlRef.current) ctrlRef.current = new FoliateController();
+  // A dev/debug surface reachable from DevTools without shipping any UI — the same convention as
+  // `window.__sardTtsStats`. Lets the TTS-tracking probe measure the REAL pipeline (see
+  // tests/harness/tts-track.mjs) instead of a re-implementation of it that could drift.
+  (window as unknown as { __sardTrackStats?: (lang?: string) => unknown }).__sardTrackStats = (lang) =>
+    ctrlRef.current?.trackStats(lang);
+  // RAWY-292: the same convention for PDF read-aloud — units as the pipeline builds them, plus the
+  // text-layer verdict, so extraction QUALITY is measured through the real code (tests/harness/pdf-tts.mjs).
+  (window as unknown as { __sardPdfTts?: (lang?: string) => unknown }).__sardPdfTts = async (lang) => {
+    const units = (await ctrlRef.current?.getChapterUnits(lang)) ?? [];
+    return {
+      units: units.length,
+      withRange: units.filter((u) => !!u.range).length,
+      text: units.map((u) => u.text).join(" "),
+      verdict: ctrlRef.current?.pdfTextQuality() ?? null,
+    };
+  };
   // RAWY-70: the hide-first-line placeholder/reveal strings that ride into the content frame.
   // RAWY-71: + the UI direction so the confirm row (question · Reveal · Cancel) mirrors correctly.
   const makeRevealLabels = (): RevealLabels => ({
@@ -140,6 +185,8 @@ export function Reader({
   const [toc, setToc] = useState<TocEntry[]>([]);
   // RAWY-256: href -> spine section index, built ONCE per book (not per row, not per render) from
   // book.sections ids. Feeds the Contents read markers.
+  // WP-6A: true when THIS book's contents were built by Sard from the spine (the panel says so).
+  const [synthNote, setSynthNote] = useState(false);
   const [tocSecMap, setTocSecMap] = useState<Map<string, number>>(new Map());
   // Bumped whenever a chapter is newly marked read, so the memoised read-href Set recomputes exactly then.
   const [readVersion, setReadVersion] = useState(0);
@@ -240,7 +287,7 @@ export function Reader({
   const ttsWords = useTts((s) => s.words); // RAWY-127: the sentence's Edge word timings ([] = Piper)
   const ttsWordIndex = useTts((s) => s.wordIndex); // RAWY-127: active word (drives the karaoke pill)
 
-  const { status, dir, cfi, fraction, chapterLabel, chapterHref, error, style, bookTitle } = useReader();
+  const { status, dir, cfi, fraction, chapterLabel, chapterHref, error, style, bookTitle, location, pageLabel } = useReader();
   // RAWY-43: unified (all books share one style) vs per-book. Drives where changes are written
   // and how a book's effective style/theme is resolved.
   const scope = useStyleScope((s) => s.scope);
@@ -268,6 +315,22 @@ export function Reader({
   // focusing a transport button never trips this.
   const [chromeFocused, setChromeFocused] = useState(false);
 
+  // RESILIENCE-1 / WP-1: one exit for every failed open — classify, RECORD, then show. Recording is
+  // unconditional and fire-and-forget: a compatibility problem reported weeks later has to be
+  // diagnosable without asking the reader to reproduce it (principle 5).
+  const failOpen = useCallback((classified: Classified) => {
+    recordDiagnostic(toDiagnostic("book-open", classified));
+    useReader.getState().set({ status: "error", error: classified });
+  }, []);
+
+  // The Details block: this failure PLUS the recorded history and the runtime report. A single
+  // paste that answers "what broke, on what machine, and had it broken before" (principle 5).
+  const [diagText, setDiagText] = useState("");
+  useEffect(() => {
+    if (status !== "error") return;
+    void readDiagnostics().then((entries) => setDiagText(formatDiagnostics(entries, runtimeReport())));
+  }, [status]);
+
   const openBook = useCallback(async (target: OpenTarget) => {
     const set = useReader.getState().set;
     // RAWY-78: supersede any in-flight open and capture THIS invocation's epoch. `stale()` turns
@@ -275,6 +338,18 @@ export function Reader({
     // superseded continuation bails before touching any shared state.
     const epoch = ++openEpoch.current;
     const stale = () => openEpoch.current !== epoch;
+
+    // RESILIENCE-1 / WP-1 — PRE-FLIGHT. Refuse before attempting, when the refusal is already known.
+    // A PDF on a runtime without PDF.js's required features cannot open, and letting it try only
+    // buys a slower failure with a worse message. Checking the CAPABILITY (not a version, not the
+    // eventual exception text) keeps this correct even if a future engine changes what it throws.
+    const preflightFormat = (target.format ?? "epub").toLowerCase();
+    if (!canRender(preflightFormat === "pdf" ? "pdf" : "epub")) {
+      bookRef.current = target.id;
+      failOpen(runtimeRefusal(preflightFormat, { bookId: target.id }));
+      return;
+    }
+
     try {
       bookRef.current = target.id;
       set({ status: "loading", bookId: target.id });
@@ -304,10 +379,35 @@ export function Reader({
       setActiveHitCfi(null);
       setPdfPageCount(0);
 
+      // DIAGNOSTIC BUILD ONLY — stages 1-4 of the PDF ledger. Observation only.
+      pdfAttemptStarted({
+        bookId: target.id,
+        filePath: target.filePath,
+        format: target.filePath?.toLowerCase().endsWith(".pdf") ? "pdf" : "other",
+        title: target.title ?? null,
+      });
+      stageOk("library.row", { bookId: target.id });
+      stageOk("path.resolved", { filePath: target.filePath, length: target.filePath?.length ?? 0 });
+
       const url = convertFileSrc(target.filePath);
+      stageOk("asset.url", { assetUrl: url, scheme: (() => { try { return new URL(url).protocol + "//" + new URL(url).host; } catch { return "UNPARSEABLE"; } })() });
 
       await bookRegister(target.id, target.filePath);
       if (stale()) return;
+
+      // RESILIENCE-1 / WP-3 — READ THE AUTHORITATIVE ROW, once, here.
+      //
+      // The reader is launched from four surfaces (library card, inbox, bookmarks shelf, a cross-book
+      // note jump) and only the library card ever held a full row, so a caller-supplied title would be
+      // right on one path and absent on three. Asking the database by id makes every path identical.
+      // A failure here is NOT fatal: the book still opens, and the chrome falls back to the hint the
+      // caller passed (`target.title`) — a missing name must never cost the reader their book.
+      let meta = await bookGet(target.id)
+        .then((row) => (row ? resolveBookMeta(row) : null))
+        .catch(() => null);
+      if (stale()) return;
+      if (!meta && (target.title || target.author)) meta = hintMeta(target.id, target.title, target.author);
+      set({ bookTitle: meta?.title ?? null, bookAuthor: meta?.author ?? null, bookScript: meta?.script ?? null });
       const saved = await progressGet(target.id);
       if (stale()) return;
       // RAWY-85: a PDF is fixed-layout — it has a page index, not a CFI. It resumes by FRACTION and
@@ -326,6 +426,12 @@ export function Reader({
       // install (no row) an Arabic book now opens at zoom 1.15 / line-height 1.9 / start, not Latin.
       const ts = useTheme.getState();
       const unified = useStyleScope.getState().scope === "unified";
+      // RESILIENCE-1 / WP-7 (stage 3): tell the engine what this book's own stylesheet may contain,
+      // BEFORE `ctrl.open()` — the sanitiser hook runs while the book's resources are being loaded,
+      // so the mode has to be current by then. Ships `off`, so today this loads a setting whose value
+      // makes the sanitiser return an empty sheet.
+      setBookCssMode(await loadBookCssMode());
+      if (stale()) return;
       const global = await loadGlobalStyle(target.dir ?? undefined);
       if (stale()) return;
       const override = await loadBookOverride(target.id);
@@ -347,11 +453,16 @@ export function Reader({
       // and the same call site, exercised once loading had finished, correctly merged (`[1]` → `[1,6]`).
       // Nothing here depends on the view, so the reads simply belong before it. No flag, no guard, no
       // deferral of the handler: the data is just present before anything can read it.
-      const [readRaw, seenRaw, spoilerRaw, invertRaw] = await Promise.all([
+      const [readRaw, seenRaw, spoilerRaw, invertRaw, pdfThemeRaw, pdfZoomRaw] = await Promise.all([
         settingsGet(`chapters_read:${target.id}`).catch(() => null),
         settingsGet(`seen_start:${target.id}`).catch(() => null),
         settingsGet(`spoiler_safe:${target.id}`).catch(() => null),
         settingsGet(`pdf_invert:${target.id}`).catch(() => null),
+        // The PDF appearance is a READING preference, so it is global like the book theme — a reader
+        // who wants sepia wants it for every PDF. Zoom is the opposite: it belongs to the document,
+        // because the right magnification depends on that file's page size and scan quality.
+        settingsGet(PDF_THEME_KEY).catch(() => null),
+        settingsGet(pdfZoomKey(target.id)).catch(() => null),
       ]);
       if (stale()) return;
       // RAWY-250 (PART 4) / RAWY-256 (addendum, case 6): the read-chapter set and the "beginning seen" set,
@@ -365,16 +476,37 @@ export function Reader({
       // OFF via the Library route — same book, same stored value). Loading them on the same path as every
       // other per-book value removes the second lifecycle rather than adding a second reset.
       setSpoilerSafe(spoilerRaw !== "0"); // default ON (design §5)
-      setPdfInvert(invertRaw === "1");
+      // A reader who had chosen "inverted" before themes existed keeps a dark page: the old boolean is
+      // honoured once, as "night", and only when no theme has been chosen since. Nobody's setting is
+      // silently discarded, and nobody who never used invert gets a dark theme they did not ask for.
+      setPdfThemeId(isPdfThemeId(pdfThemeRaw) ? pdfThemeRaw : invertRaw === "1" ? "night" : "normal");
+      setPdfZoom(parseStoredZoom(pdfZoomRaw) ?? "fit-page");
       // The book's theme comes from the shared BOOK theme (D29), NOT the Library theme:
       // unified → the shared book theme; per-book → this book's override, else the shared book theme.
       const bookDefault = ts.bookThemeId;
       const effTheme = unified ? bookDefault : (override.themeId ?? bookDefault);
-      const initialStyle = unified ? global : effectiveStyle(global, override);
+      let initialStyle = unified ? global : effectiveStyle(global, override);
+
+      // RESILIENCE-1 / WP-6B — a FRAGMENTED spine defaults to SCROLLED flow.
+      //
+      // MEASURED across the corpus: exactly one book qualifies — `word-generated--unknown-title`,
+      // 116 sections whose median is under 4 KB. foliate paginates strictly per section and
+      // `expand()` pads each one up to a whole page (paginator.js:381), so in PAGED mode those 116
+      // arbitrary breaks become 116 mostly-blank pages. In SCROLLED mode they are invisible.
+      // The 1433-section Calibre book is deliberately NOT caught: its sections are large enough that
+      // the breaks are real chapter boundaries — the flag tests the median, not the count.
+      //
+      // A DEFAULT, not a lock: it applies only when this book has no saved flow of its own, so a
+      // reader who chooses paged keeps paged, on this book, for ever. The global preference is left
+      // alone — one degenerate book must not change how every other book opens.
+      if (meta?.spineFragmented && !unified && override.style?.flowMode == null) {
+        initialStyle = { ...initialStyle, flowMode: "scrolled" };
+      }
 
       const ctrl = ctrlRef.current!;
-      ctrl.onRelocate(({ cfi, fraction, chapterLabel, chapterHref }) => {
-        set({ cfi, fraction, chapterLabel, chapterHref });
+      ctrl.onRelocate(({ cfi, fraction, chapterLabel, chapterHref, location, pageLabel }) => {
+        // WP-4F: `location`/`pageLabel` are foliate's own position data, which used to be dropped here.
+        set({ cfi, fraction, chapterLabel, chapterHref, location, pageLabel });
         // RAWY-190: if read-aloud finished a chapter (status "chapter-end") and the user navigated to a
         // DIFFERENT section, the stale "next chapter" offer no longer applies (its button would advance
         // from the chapter on screen, which is now the one the user moved to — not the finished one). Stop
@@ -469,10 +601,91 @@ export function Reader({
 
       setBookThemeId(effTheme);
       setHasOv(!unified && calcHasOverride(override)); // Reset is a per-book affordance
-      set({ status: "ready", dir: ctrl.dir ?? "?", style: initialStyle, bookTitle: ctrl.title ?? null });
+      // RESILIENCE-1 / WP-3 — the DATABASE names this book, not the file.
+      //
+      // `bookTitle` used to be `ctrl.title`: foliate's `dc:title`, straight out of the EPUB. That made
+      // the reading chrome, the note card and every shared photo card disagree with the library the
+      // moment a reader renamed a book — proven in the owner's own library, where `cd27ab1d` reads
+      // "Lord Of The mysteries" on the shelf and showed the embedded "لورد الغوامض" in the reader.
+      // `meta` is the row this reader fetched by id (see the open above), so all five surfaces now
+      // resolve from the same COALESCE'd value.
+      set({
+        status: "ready",
+        dir: ctrl.dir ?? "?",
+        style: initialStyle,
+        bookTitle: meta?.title ?? null,
+        bookAuthor: meta?.author ?? null,
+        bookScript: meta?.script ?? null, // WP-5A: what the read-aloud pre-flight gates on
+      });
       if (targetIsPdf) setPdfPageCount(ctrl.pdfPageCount); // RAWY-87: total pages for the position readout
       setToc(ctrl.getToc()); // chapters panel (RAWY-21)
       setTocSecMap(ctrl.tocHrefSectionMap()); // RAWY-256: one pass, reused by every marker render
+      // RESILIENCE-1 / WP-6A: this book's own contents are useless (WP-2 measured it). Build a usable
+      // index from the spine instead — off the critical path, so the book is already readable while
+      // it runs, and only for a flagged book so no well-formed book pays for it.
+      setSynthNote(false);
+      if (meta?.tocDegenerate && !targetIsPdf) {
+        // WP-6B — BEFORE generating anything, ask the book again.
+        //
+        // `tocDegenerate` means "the contents the engine chose are too small for this spine". It does
+        // NOT mean the book has no contents: an EPUB 3 file may carry a useless navigation document
+        // and a complete NCX, and the engine only falls back to the NCX when the navigation document
+        // yields nothing at all. Measured on the three reported books — 1 nav entry beside 2963 / 529
+        // / 362 NCX entries that resolve 100% of the linear spine, with the book's real chapter names.
+        //
+        // The test is a COMPARISON, not a threshold: adopt the NCX only when it offers strictly more
+        // destinations than what is displayed. That can only increase navigability, it needs no tuned
+        // constant, and it leaves books whose NCX is no better (the Word conversions, whose NCX holds
+        // one entry and which the engine already uses) on exactly the path they take today.
+        //
+        // Generating from the spine stays the LAST resort, unchanged, for books with no better source.
+        void (async () => {
+          const ncx = await ctrl.getNcxToc();
+          if (stale()) return;
+          const shown = ctrl.getToc().length;
+          if (ncx.length >= 2 && ncx.length > shown) {
+            setToc(ncx);
+            setTocSecMap(ctrl.tocHrefSectionMap(ncx)); // the map must describe the list actually shown
+            return; // authored contents — nothing is generated, and no note is shown
+          }
+          const synth = await ctrl.getSynthesisedToc();
+          if (stale() || !synth || !synth.entries.length) return;
+          applySynthesised(synth);
+        })();
+      }
+      // The LAST resort, unchanged from WP-6A: contents generated from the spine.
+      function applySynthesised(synth: { entries: { label: string | null; ordinal: number; index: number }[] }) {
+          // A section with no heading is NUMBERED, never named from its text. The number is the
+          // section's position in the linear spine, so it says where the reader is and nothing more.
+          // The generated rows REPLACE the book's own contents, so the href→section map must describe
+          // THEM. Left as it was, `tocSecMap` still held the book's unusable native hrefs — keys that
+          // appear nowhere in the TOC being displayed — so every lookup keyed by a displayed row's
+          // href missed: the nearest-preceding fallback in `tocIndex` and the read-chapter markers in
+          // `readHrefs`, which are built by walking this map.
+          //
+          // Stated precisely, because it was mutation-tested: removing this line does NOT break the
+          // active highlight on the measured book (that resolves by another route and still passes
+          // 6/6), so this is not the fix for the highlight and is not claimed to be. It is here
+          // because a map keyed by hrefs the TOC no longer contains is wrong state whatever currently
+          // depends on it.
+          setTocSecMap(new Map(synth.entries.map((e) => [sectionHref(e.index), e.index])));
+          setToc(
+            synth.entries.map((e) => ({
+              // "Chapter N", not "Section N". These ARE spine sections internally, but the Contents
+              // panel is a NAVIGATION surface and "Chapter" is what a reader of a novel expects. The
+              // label claims nothing about the file — it never asserts the book contained this title,
+              // it just names a place to go. `panel.chapter` already exists for exactly this row.
+              label: e.label ?? t("panel.chapter", { n: localeNum(e.ordinal, lang) }),
+              href: sectionHref(e.index),
+              level: 0,
+            })),
+          );
+          setSynthNote(true);
+      }
+      // WP-4D: opening a book is the first navigation action, and it never claimed focus — measured,
+      // a freshly opened book had focus on <body>, so the very first arrow key did nothing. This is
+      // the state a reader meets before any other, which is why it produced the loudest report.
+      restoreReadingFocus();
 
       // RAWY-85: enrich a PDF's real title/author (PDF.js getMetadata) + a page-1 cover (getCover)
       // ONCE — import stored only the filename + no cover. The library reflects it on next visit.
@@ -480,10 +693,40 @@ export function Reader({
         const done = await settingsGet(`pdf_meta:${target.id}`).catch(() => null);
         if (!done && !stale()) {
           const t = ctrl.title;
-          if (t && t.trim()) await bookUpdate(target.id, { title: t, author: ctrl.author }).catch(console.error);
+          // RESILIENCE-1 / WP-3D — this is an EXTRACTION, so it writes the extraction columns.
+          //
+          // It used to call `bookUpdate`, which writes `metadata_overrides` — the table that means
+          // "the reader typed this". A PDF opened after being renamed would therefore have its
+          // override silently replaced by whatever PDF.js found in the file, and the rename would be
+          // unrecoverable because the original was gone. `bookSetExtracted` writes the base columns
+          // and only where they are still empty, so a reader's title always wins through COALESCE.
+          if (t && t.trim()) await bookSetExtracted(target.id, t, ctrl.author).catch(console.error);
           const bytes = await ctrl.getCoverBytes();
           if (bytes && bytes.byteLength) await bookSetCoverPng(target.id, bytes).catch(console.error);
           await settingsSet(`pdf_meta:${target.id}`, "1").catch(() => {});
+        }
+      }
+
+      // RESILIENCE-1 / WP-3 — CLOSE THE EXTRACTION GAP, don't paper over it in the view.
+      //
+      // A row can reach here with no title: imported before WP-2's tolerant decoder existed, or with
+      // an OPF that the old parser could not read. The tempting fix is to fall back to `ctrl.title`
+      // when displaying — but that puts the file back in the display path and the library keeps
+      // showing nothing, so the two surfaces disagree again. Instead the value foliate extracted goes
+      // INTO the database (base columns only, never over an override) and is displayed FROM it. The
+      // library agrees on its next visit, and the row heals itself permanently on first open.
+      const needTitle = !meta?.title && !!ctrl.title?.trim();
+      const needAuthor = !meta?.author && !!ctrl.author?.trim();
+      if (needTitle || needAuthor) {
+        const healed = await bookSetExtracted(
+          target.id,
+          needTitle ? ctrl.title : null,
+          needAuthor ? ctrl.author : null,
+        ).catch(() => null);
+        if (stale()) return;
+        if (healed) {
+          meta = resolveBookMeta(healed);
+          set({ bookTitle: meta.title, bookAuthor: meta.author });
         }
       }
       // Load this book's highlights/notes into the shared store (in-context layer + panel).
@@ -502,7 +745,9 @@ export function Reader({
       // A SUPERSEDED open's error (e.g. ctrl.open on a null stage after unmount) must NOT flip the
       // current book into the error overlay — only report a failure that belongs to the live open.
       if (stale()) return;
-      set({ status: "error", error: String(e) });
+      // RESILIENCE-1 / WP-1: THE single classification point for a failed open. Was `String(e)`,
+      // which printed engine internals straight into the card with only "Try again" beneath them.
+      failOpen(classifyBookError(e, { bookId: target.id, format: target.format, stage: "open" }));
     }
   }, []);
 
@@ -521,6 +766,7 @@ export function Reader({
         if (cur) settingsSet(`tts_position:${initial.id}`, JSON.stringify(cur)).catch(() => {});
       }
       if (styleRafRef.current) cancelAnimationFrame(styleRafRef.current); // RAWY-82: drop a pending live-apply frame
+      if (zoomRaf.current) { cancelAnimationFrame(zoomRaf.current); zoomRaf.current = 0; } // and a pending Ctrl+Wheel step
       // RAWY-286: `destroy()`, not `dispose()`. This cleanup is the LEAVE-THE-BOOK path (unmount, or
       // `initial.id` changing on a cross-book follow), so the read-aloud ranges must go too — they hold
       // `Range`s into the outgoing chapter's document and were measured pinning it for the whole session.
@@ -694,6 +940,12 @@ export function Reader({
     // full-height during TTS via `.reader-root.tts-playing .page-host` (global.css), so the bars hide/show
     // by compositing over a stationary reading area — smooth, no page-host relayout).
     ctrl?.onScrollIntent((down) => signalScroll(down));
+    // Ctrl+Wheel over the BOOK TEXT. The wheel fires inside the section iframe and never crosses the
+    // frame boundary, so the desk's own handler cannot see it — the same split RAWY-87 documented for
+    // PDF paging. Both routes end in `zoomByWheel`, so the behaviour is identical wherever the pointer is.
+    // RAWY-291: routed through a ref because this effect runs once — reading `isPdf`/the PDF zoom
+    // callback directly would freeze whichever values existed at registration.
+    ctrl?.onZoomIntent((deltaY) => zoomIntentRef.current(deltaY));
     // RAWY-129 (A): after returning to a still-playing chapter (its overlay is recreated, units rebuilt with
     // fresh ranges), re-draw the reading track at the CURRENT sentence/word from the store.
     ctrl?.onReadingRedraw(() => {
@@ -753,15 +1005,31 @@ export function Reader({
   // return focus on the close transition UNLESS a KEYBOARD user is focused in the TOOLBAR (Tab + :focus-visible),
   // whose place we must not steal (RAWY-194). The root-level release below already drops POINTER focus to <body>;
   // this covers keyboard/Escape closes and puts focus back IN the frame so page-turn arrows (TTS off) work too.
+  // RESILIENCE-1 / WP-4D — THE FOCUS POLICY, STATED ONCE.
+  //
+  //   After any navigation action, focus belongs to the READING FRAME,
+  //   unless a keyboard user is deliberately in the chrome.
+  //
+  // Before this there was one partial rule that fired only when the LAST panel closed, so every
+  // other transition left focus wherever it landed. Measured: on a fresh open, after a toolbar
+  // click, and after a desk-margin click, `document.activeElement` was <body> and ArrowRight did
+  // nothing. WP-4C makes the key work from anywhere; this makes focus land somewhere sensible so
+  // the reader keeps the caret, text selection and screen-reader context inside the book.
+  //
+  // The keyboard-user exception is not politeness, it is correctness: a Tab user standing on a
+  // toolbar button (:focus-visible) must not have their place stolen (RAWY-194).
+  const restoreReadingFocus = useCallback(() => {
+    const ae = document.activeElement as HTMLElement | null;
+    const keyboardInChrome = !!(ae && ae.closest?.(".reader-chrome") && ae.matches?.(":focus-visible"));
+    if (!keyboardInChrome) ctrlRef.current?.focusReadingView();
+  }, []);
+
   const anyPanelOpen = settingsOpen || annoOpen || basketOpen || searchOpen || chaptersOpen;
   const prevAnyPanelRef = useRef(false);
   useEffect(() => {
-    if (prevAnyPanelRef.current && !anyPanelOpen) {
-      const ae = document.activeElement as HTMLElement | null;
-      const keyboardInChrome = !!(ae && ae.closest?.(".reader-chrome") && ae.matches?.(":focus-visible"));
-      if (!keyboardInChrome) ctrlRef.current?.focusReadingView();
-    }
+    if (prevAnyPanelRef.current && !anyPanelOpen) restoreReadingFocus();
     prevAnyPanelRef.current = anyPanelOpen;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anyPanelOpen]);
 
   // RAWY-162: persist the last-spoken sentence for this book (a cursor separate from the reading CFI).
@@ -882,6 +1150,42 @@ export function Reader({
   // RAWY-40: a reading-setting change WHILE READING writes a PER-BOOK override (the global
   // `reading_style` defaults are only touched by Global Settings). Effective = global ∪ override;
   // the override accumulates exactly the fields the user changed for THIS book.
+  // Ctrl+Wheel zoom. Deliberately NOT a second zoom system: it computes the next value on the
+  // slider's own lattice and hands it to the SAME `update` the slider calls, so the two inputs cannot
+  // drift — there is one field, one writer, and nothing to keep in sync.
+  //
+  // Coalesced to one change per animation frame. MEASURED: a zoom step costs ~51 ms to apply and
+  // settle (scrolled and paged alike), while a wheel emits far faster than that, so writing every
+  // tick would queue reflows behind each other. A frame is the natural bound and needs no timer and
+  // no tunable constant. The pending value — not the committed one — is the base for the next tick,
+  // so a fast spin accumulates instead of collapsing to a single step.
+  const zoomRaf = useRef(0);
+  const zoomPending = useRef<number | null>(null);
+  // `update` is a fresh closure every render, while the wheel handler is registered ONCE (the callback
+  // effect above runs on mount). Reading the writer through a ref means the handler always calls the
+  // CURRENT `update` instead of the one that existed when the book opened — the same reason
+  // `playRef` exists a few hundred lines up.
+  const updateRef = useRef<(patch: Partial<ReadingStyle>) => void>(() => {});
+  const zoomByWheel = useCallback((deltaY: number) => {
+    if (!deltaY) return;
+    const cur = zoomPending.current ?? useReader.getState().style?.zoom;
+    if (cur == null) return;
+    // Wheel UP (negative delta) zooms IN, matching every other application.
+    // Rounded to the same 2 decimals the slider stores, so a value reached by wheel is one the slider
+    // can also express — otherwise the two inputs would drift onto different lattices.
+    const raw = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, cur + (deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP)));
+    const next = Math.round(raw * 100) / 100;
+    if (next === cur) return; // already at a bound — nothing to schedule
+    zoomPending.current = next;
+    if (zoomRaf.current) return;
+    zoomRaf.current = requestAnimationFrame(() => {
+      zoomRaf.current = 0;
+      const v = zoomPending.current;
+      zoomPending.current = null;
+      if (v != null) updateRef.current({ zoom: v });
+    });
+  }, []);
+
   const update = (patch: Partial<ReadingStyle>) => {
     const current = useReader.getState().style;
     const global = globalStyleRef.current;
@@ -947,6 +1251,7 @@ export function Reader({
       else saveBookOverride(bookRef.current, overrideRef.current);
     }, SAVE_DEBOUNCE_MS);
   };
+  updateRef.current = update;
 
   // THEME change from the Theme tab. Applies to the reading surface (:root while reading + the
   // book iframe) but NEVER to the Library's own theme (RAWY-48/D29). PER-BOOK (RAWY-40): change
@@ -1006,27 +1311,106 @@ export function Reader({
   // RAWY-86: PDF appearance INVERT (approximate night mode — a CSS invert filter, NOT real themes;
   // it flips images too), persisted per book. Plus copy-selection. Feedback rides a small transient
   // message. RAWY-141: the reading-direction override + in-PDF find were removed (see SettingsPanel).
-  const [pdfInvert, setPdfInvert] = useState(false);
-  const [pdfMsg, setPdfMsg] = useState<string | null>(null);
-  const pdfMsgTimer = useRef<number | undefined>(undefined);
-  const flashPdf = (m: string) => {
-    setPdfMsg(m);
-    if (pdfMsgTimer.current) clearTimeout(pdfMsgTimer.current);
-    pdfMsgTimer.current = window.setTimeout(() => setPdfMsg(null), 2600);
-  };
+  // RAWY-291: the two-state invert is now a set of reading appearances (see reader-engine/pdfView.ts
+  // for why a PDF "theme" can only be a colour transform), and the renderer's zoom is finally exposed.
+  const [pdfThemeId, setPdfThemeId] = useState<PdfThemeId>("normal");
+  const [pdfZoom, setPdfZoom] = useState<PdfZoom>("fit-page");
+  // RAWY-292: the PDF toast is gone with copy-selection, its only caller. A PDF that cannot be read
+  // aloud now degrades through the EXISTING read-aloud path: unusable pages yield zero units, which is
+  // the same empty-chapter state an empty EPUB chapter produces — one behaviour, not a parallel one.
   // RAWY-285: `pdf_invert` is loaded by `openBook` with every other per-book value (it was a mount-once
   // effect, which a reused Reader silently never re-ran). The setter below is unchanged.
-  const togglePdfInvert = () => {
-    setPdfInvert((v) => {
-      const next = !v;
-      settingsSet(`pdf_invert:${initial.id}`, next ? "1" : "0").catch(() => {});
-      return next;
+  const choosePdfTheme = (id: PdfThemeId) => {
+    setPdfThemeId(id);
+    settingsSet(PDF_THEME_KEY, id).catch(() => {});
+    // Keep the legacy per-book key truthful, so a downgrade still shows a dark page for a dark theme.
+    settingsSet(`pdf_invert:${initial.id}`, pdfTheme(id).dark ? "1" : "0").catch(() => {});
+  };
+
+  // ZOOM. The renderer re-renders the page through pdf.js at the requested scale (fixed-layout.js
+  // observes `zoom`), so this is real resolution, not a magnified bitmap. Two consequences shape the
+  // code below: a re-render costs real work, so wheel events are COALESCED rather than applied one by
+  // one; and the scale a fit-mode resolves to is known only to the renderer, so stepping out of a fit
+  // mode reads the scale actually on screen instead of guessing.
+  const pdfZoomRef = useRef<PdfZoom>("fit-page");
+  pdfZoomRef.current = pdfZoom;
+  const zoomIntentRef = useRef<(d: number) => void>(() => {});
+  const pdfZoomWrite = useRef<number | undefined>(undefined);
+  const applyPdfZoom = useCallback((z: PdfZoom) => {
+    setPdfZoom(z);
+    ctrlRef.current?.setPdfZoom(z);
+    // Persist lazily: a wheel gesture must not write a settings row per frame.
+    if (pdfZoomWrite.current) clearTimeout(pdfZoomWrite.current);
+    pdfZoomWrite.current = window.setTimeout(() => {
+      settingsSet(pdfZoomKey(initial.id), pdfZoomAttr(z)).catch(() => {});
+    }, 400);
+  }, [initial.id]);
+  /** The scale currently on screen — resolved by the renderer when a fit mode is active. */
+  const currentPdfScale = useCallback(
+    () => (isFitMode(pdfZoomRef.current) ? (ctrlRef.current?.pdfRenderedScale() ?? 1) : (pdfZoomRef.current as number)),
+    [],
+  );
+  const pdfZoomStep = useCallback((dir: 1 | -1) => applyPdfZoom(stepPdfZoom(currentPdfScale(), dir)), [applyPdfZoom, currentPdfScale]);
+  // Wheel/pinch: coalesce to one render per frame. A trackpad pinch arrives as ctrl+wheel too, which
+  // is why no separate gesture handler is needed on this platform.
+  const pdfZoomPending = useRef<number | null>(null);
+  const pdfZoomRaf = useRef<number | undefined>(undefined);
+  const pdfZoomByWheel = useCallback((deltaY: number) => {
+    const from = pdfZoomPending.current ?? currentPdfScale();
+    pdfZoomPending.current = zoomForWheel(from, deltaY);
+    if (pdfZoomRaf.current !== undefined) return;
+    pdfZoomRaf.current = requestAnimationFrame(() => {
+      pdfZoomRaf.current = undefined;
+      const v = pdfZoomPending.current;
+      pdfZoomPending.current = null;
+      if (v != null) applyPdfZoom(v);
     });
-  };
-  const copyPdfSelection = async () => {
-    const txt = (await ctrlRef.current?.copyPdfSelection()) ?? "";
-    flashPdf(txt ? t("pdf.copied") : t("pdf.copyEmpty"));
-  };
+  }, [applyPdfZoom, currentPdfScale]);
+  zoomIntentRef.current = isPdf ? pdfZoomByWheel : zoomByWheel;
+  useEffect(() => () => {
+    if (pdfZoomRaf.current !== undefined) cancelAnimationFrame(pdfZoomRaf.current);
+    if (pdfZoomWrite.current) clearTimeout(pdfZoomWrite.current);
+  }, []);
+
+  // RAWY-294: push the appearance INTO the PDF page's own document, so it cannot reach the surround.
+  useEffect(() => {
+    if (!isPdf) return;
+    const th = pdfTheme(pdfThemeId);
+    const apply = () => ctrlRef.current?.setPdfTheme(th.filter, th.tint);
+    apply();
+    // Pages render asynchronously; re-apply briefly so a page that arrives late is not left untinted.
+    const id = window.setInterval(apply, 700);
+    const stop = window.setTimeout(() => window.clearInterval(id), 6000);
+    return () => { window.clearInterval(id); window.clearTimeout(stop); };
+  }, [isPdf, pdfThemeId, initial.id]);
+
+  // RAWY-293: whether THIS page yields speakable text — the read-aloud control follows real
+  // extraction, so it never appears on a scan and never promises what the pipeline cannot deliver.
+  const [pdfCanListen, setPdfCanListen] = useState(false);
+  useEffect(() => {
+    if (!isPdf) { setPdfCanListen(false); return; }
+    const tick = () => setPdfCanListen(ctrlRef.current?.pdfHasSpeakableText() ?? false);
+    tick();
+    const id = window.setInterval(tick, 1200);
+    return () => window.clearInterval(id);
+  }, [isPdf, initial.id]);
+
+  // Apply the remembered zoom once the PDF's renderer exists. The renderer defaults to fit-page, so
+  // without this a document reopened at 2x would silently come back at fit-page.
+  useEffect(() => {
+    if (!isPdf) return;
+    let tries = 0;
+    const id = window.setInterval(() => {
+      if (ctrlRef.current?.pdfPageCount || tries++ > 40) {
+        ctrlRef.current?.setPdfZoom(pdfZoomRef.current);
+        window.clearInterval(id);
+      }
+    }, 150);
+    return () => window.clearInterval(id);
+  }, [isPdf, initial.id]);
+  // RAWY-292: copy-selection removed from the PDF panel. It depended on the same text layer that
+  // measurement showed is absent or damaged in most of these documents, so the control was offered
+  // far more often than it could work. The controller method remains for the selection path.
 
   // RAWY-87 (#1): a PDF has no chapters, so the bottom chrome shows page position (page / total) and
   // the progress bar is scrubbable to jump. pageCount = the PDF's fixed-layout section count (set on
@@ -1150,6 +1534,13 @@ export function Reader({
     // doc (the search CFI is unreliable there — the rendered structure differs from the search doc).
     ctrlRef.current?.goToSearchHit(hit.cfi, { pre: hit.pre, match: hit.match, post: hit.post });
   }, []);
+  // RESILIENCE-1 / WP-4F: the position readout, decided in ONE pure place (reader-engine/position.ts)
+  // and formatted with the app's locale digits — the same formatter the PDF page counter already uses.
+  const position = useMemo(
+    () => positionReadout({ location, pageLabel }, (n) => localeNum(n, lang)),
+    [location, pageLabel, lang],
+  );
+
   // the reader's position label for the toggle + "you are here" (current chapter, else a percent)
   const searchPositionLabel = chapterLabel || t("reader.percentRead", { p: localeNum(Math.round(fraction * 100), lang) });
 
@@ -1175,18 +1566,45 @@ export function Reader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPdf]);
 
+  // RESILIENCE-1 / WP-4C — THE PARENT WINDOW OWNS PAGE-TURN KEYS.
+  //
+  // The book's iframe already had arrow handlers, but a keydown in a child frame never reaches the
+  // parent — so whenever focus sat anywhere else (a fresh open, a toolbar click, the desk margin)
+  // the key reached NO handler and the reader concluded that navigation was broken. This listener
+  // is the missing half: it catches those exact states and routes them into `handleNavKey`, the one
+  // owner the frame also calls, so a key cannot behave differently by where focus happens to be.
+  //
+  // Exactly one path sees any physical keypress, so there is no double turn.
+  useEffect(() => {
+    const onNavKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+      // Never steal a key from someone typing, or from a control that legitimately uses arrows
+      // (a slider, a select) — the settings drawer is full of them.
+      const t = e.target as HTMLElement | null;
+      if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
+      if (t && t.closest?.('[role="slider"], input[type="range"]')) return;
+      if (!(e.key === "ArrowLeft" || e.key === "ArrowRight")) return;
+      if (ctrlRef.current?.handleNavKey(e.key)) e.preventDefault();
+    };
+    window.addEventListener("keydown", onNavKey);
+    return () => window.removeEventListener("keydown", onNavKey);
+  }, []);
+
   // RAWY-49: open the Photo Mode composer for a selected passage. The card starts on the book's
   // current theme + direction, with the book title/author/chapter as removable metadata.
   const openPhotoCard = (sel: SelectionInfo) => {
-    const ctrl = ctrlRef.current;
     const st = useReader.getState();
     setPhotoCard({
       quote: sel.text.replace(/\s+/g, " ").trim(),
       dir: dir === "rtl" ? "rtl" : "ltr",
       bookId: bookRef.current,
       cfi: sel.cfi,
-      bookTitle: ctrl?.title ?? st.bookTitle ?? undefined,
-      author: ctrl?.author,
+      // RESILIENCE-1 / WP-3: a card is SHARED, so it must credit what the reader believes they are
+      // reading. These were `ctrl?.title` / `ctrl?.author` — the file's embedded metadata — which
+      // meant a renamed book went out into the world under its old name, and a corrected author
+      // credit was undone the moment the quote left the app.
+      bookTitle: st.bookTitle ?? undefined,
+      author: st.bookAuthor ?? undefined,
       chapterLabel: st.chapterLabel ?? undefined,
       date: new Date(),
     });
@@ -1195,7 +1613,6 @@ export function Reader({
   // RAWY-60: "Add to card" collects a passage into the session basket with the chapter it was
   // taken from (so a card can span chapters). A new book resets the basket (store-side).
   const addToBasket = (sel: SelectionInfo) => {
-    const ctrl = ctrlRef.current;
     const st = useReader.getState();
     usePhotoBasket.getState().add(
       {
@@ -1206,8 +1623,9 @@ export function Reader({
       },
       {
         bookId: bookRef.current,
-        bookTitle: ctrl?.title ?? st.bookTitle ?? null,
-        author: ctrl?.author ?? null,
+        // WP-3: same rule as the single-passage card above — the credit is the effective name.
+        bookTitle: st.bookTitle ?? null,
+        author: st.bookAuthor ?? null,
         dir: dir === "rtl" ? "rtl" : "ltr",
       },
     );
@@ -1338,7 +1756,8 @@ export function Reader({
       else if (key) { const k = sentences.findIndex((s) => norm(s).includes(key)); startIndex = k >= 0 ? k : Math.min(Math.max(0, at), sentences.length - 1); }
       else startIndex = Math.min(Math.max(0, at), sentences.length - 1);
     }
-    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: chapter });
+    // WP-5A: the SNIFFED script rides along so the pre-flight can refuse before any synthesis.
+    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: chapter, bookScript: useReader.getState().bookScript });
   };
   // RAWY-186 (Part A): the Play/Pause gesture (pill button AND Space). Read-aloud audio is decoupled from
   // the view (RAWY-129: you can browse while listening), so pressing Play after navigating to a DIFFERENT
@@ -1426,7 +1845,13 @@ export function Reader({
   // reading area — not only over the text. A wheel over the text fires INSIDE the iframe (never
   // bubbles here across the frame boundary), so this can't double-scroll. Paged mode ignores it.
   const onDeskWheel = (e: React.WheelEvent) => {
-    if (isPdf) { ctrlRef.current?.pageByWheel(e.deltaY); return; } // RAWY-86: wheel turns PDF pages
+    // Zoom is answered before the PDF and paged branches, so Ctrl+Wheel behaves the same everywhere
+    // in the reading area. (A PDF is fixed-layout and has no ReadingStyle, so it keeps paging.)
+    // RAWY-291: Ctrl+Wheel now zooms a PDF as well. It previously fell through to the paging branch
+    // below, so the gesture every reader expects to magnify a scan turned the page instead.
+    if (e.ctrlKey || e.metaKey) { e.preventDefault(); (isPdf ? pdfZoomByWheel : zoomByWheel)(e.deltaY); return; }
+    // RAWY-86 / RAWY-293: scrolls the zoomed page first, turns the page only at its edge.
+    if (isPdf) { e.preventDefault(); ctrlRef.current?.pageByWheel(e.deltaY, e.deltaX); return; }
     if (isPaged) return;
     ctrlRef.current?.scrollByWheel(e.deltaY);
   };
@@ -1499,8 +1924,28 @@ export function Reader({
   // a PLACE the reader intends to read FROM, not a piece of content he wants to look at. It therefore does NOT
   // freeze and shows no pill; progress saves normally. (RAWY-232's path table measured which paths WRITE
   // progress — it was never a ruling on which are jumps.)
-  const jumpHref = useCallback((href: string) => ctrlRef.current?.goToHref(href), []);
-  const jumpCfi = useCallback((cfi: string) => { beginJump(cfi); return ctrlRef.current?.goToLocator(cfi); }, [beginJump]);
+  // WP-4D: a TOC click IS a navigation action, so focus returns to the book. It used to navigate and
+  // leave focus on the clicked row (measured: activeElement <body>/the row, arrows dead) — the panel
+  // deliberately stays open, so the close-transition rule above never fired for this path.
+  const jumpHref = useCallback(
+    (href: string) => {
+      // WP-6A: a synthesised row carries a spine index, not a real href.
+      const section = parseSectionHref(href);
+      const r = section != null ? ctrlRef.current?.goToSection(section) : ctrlRef.current?.goToHref(href);
+      restoreReadingFocus();
+      return r;
+    },
+    [restoreReadingFocus],
+  );
+  const jumpCfi = useCallback(
+    (cfi: string) => {
+      beginJump(cfi);
+      const r = ctrlRef.current?.goToLocator(cfi);
+      restoreReadingFocus();
+      return r;
+    },
+    [beginJump, restoreReadingFocus],
+  );
   const closeContents = useCallback(() => setLeftPanel((p) => (p === "contents" ? null : p)), []);
   const closeSearch = useCallback(() => setLeftPanel((p) => (p === "search" ? null : p)), []);
   // (RAWY-216 removed the two anti-spoiler toggle callbacks: the Contents panel no longer duplicates
@@ -1547,6 +1992,11 @@ export function Reader({
     "--page-margin": `${style?.marginPx ?? 56}px`,
     paddingLeft: leftPad,
     paddingRight: rightPad,
+    // RESILIENCE-1 / WP-4B: the SAME insets, published as vars so the page-turn chevrons can move
+    // with the reading area. They must be set here, next to the padding they mirror — an absolutely
+    // positioned child cannot read its parent's padding, and a second hardcoded 300 would drift.
+    "--panel-lead": `${leftPad}px`,
+    "--panel-trail": `${rightPad}px`,
   } as CSSProperties;
 
   // RAWY-114: centre the floating read-aloud pill over the READING AREA (not the raw viewport), so an
@@ -1576,16 +2026,23 @@ export function Reader({
     // can capture SPACE/arrows — superseding the per-container onClickCapture the toolbar/pills still carry.
     <div className={`reader-root${chromeShown ? "" : " chrome-hidden"}${ttsActive ? " tts-playing" : ""}${!isPaged && !isPdf ? " flow-scrolled" : ""}${immersive ? " immersive" : ""}${scrolledAway && !chromeShown ? " scrolled-away" : ""}${style?.immHidePill ? " im-hide-pill" : ""}${style?.immHideScrollbar ? " im-hide-scrollbar" : ""}${ttsStatus === "chapter-end" ? " tts-chapter-end" : ""}${ttsStatus === "edge-error" ? " tts-edge-error" : ""}`} style={rootVars} onClickCapture={releaseButtonFocusAfterPointerClick}>
       {/* desk + centered page sheet (the book) + page-turn affordances */}
-      <div className={`reader-desk${isPdf && pdfInvert ? " pdf-invert" : ""}${style?.backgroundColor ? " custom-bg" : ""}`} style={deskStyle} onWheel={onDeskWheel}>
+      <div
+        // RAWY-294: `pdf-view` marks EVERY PDF (it carries the scroll containment); the theme itself
+        // is applied inside the page document, not by a class on this ancestor.
+        className={`reader-desk${isPdf ? " pdf-view" : ""}${style?.backgroundColor ? " custom-bg" : ""}`}
+        style={deskStyle}
+        onWheel={onDeskWheel}
+      >
         {showChevrons && (
           <button
             className="page-chevron page-chevron-left"
-            onClick={() => ctrlRef.current?.next()}
-            // The LEFT chevron always moves to the physical-left page (foliate's goLeft()) —
-            // for an LTR book that's Previous; for an RTL book it's actually Next (RAWY-65: the
-            // tooltip previously always said "Previous", which was wrong for Arabic books even
-            // though the click behavior itself was already correct).
-            title={isRtlBook ? t("reader.next") : t("reader.prev")}
+            // ‹ is ALWAYS the previous page and › ALWAYS the next one, in every book. These used to
+            // move the page PHYSICALLY (left chevron = goLeft), so in an Arabic book ‹ advanced and
+            // › went back — the same inversion the keyboard arrows had, and the same complaint. The
+            // tooltip no longer needs to know the book's direction, because the control no longer
+            // changes meaning with it.
+            onClick={() => ctrlRef.current?.backward()}
+            title={t("reader.prev")}
           >
             ‹
           </button>
@@ -1600,8 +2057,8 @@ export function Reader({
         {showChevrons && (
           <button
             className="page-chevron page-chevron-right"
-            onClick={() => ctrlRef.current?.prev()}
-            title={isRtlBook ? t("reader.prev") : t("reader.next")}
+            onClick={() => ctrlRef.current?.forward()}
+            title={t("reader.next")}
           >
             ›
           </button>
@@ -1612,7 +2069,13 @@ export function Reader({
         open={chaptersOpen}
         onClose={closeContents}
         toc={toc}
-        currentHref={chapterHref}
+        synthesised={synthNote}
+        // A generated TOC has no native href to report as "current", so foliate's `chapterHref` stays
+        // null for the whole book and the panel's scroll-to-current effect never re-fires as the
+        // reader moves. Falling back to the active row's own href gives it a value that changes per
+        // chapter, exactly as a native TOC does. Native books are unaffected: `chapterHref` is set,
+        // so the fallback is never reached.
+        currentHref={chapterHref ?? toc[tocIndex]?.href ?? null}
         activeIndex={tocIndex}
         hideTitles={hideChapterTitles}
         onJump={jumpHref}
@@ -1652,6 +2115,7 @@ export function Reader({
 
       <ReaderChrome
         visible={chromeShown}
+        position={position}
         bookTitle={bookTitle}
         chapter={chapter}
         fraction={fraction}
@@ -1675,6 +2139,7 @@ export function Reader({
         basketOpen={basketOpen}
         onBasket={() => setBasketOpen((v) => !v)}
         isPdf={isPdf}
+        pdfCanListen={pdfCanListen}
         pdfPageCount={pdfPageCount}
         onScrub={onPdfScrub}
       />
@@ -1694,16 +2159,18 @@ export function Reader({
         onReset={resetBook}
         unified={scope === "unified"}
         isPdf={isPdf}
-        pdfInvert={pdfInvert}
-        onPdfInvert={togglePdfInvert}
-        onPdfCopy={copyPdfSelection}
+        pdfThemeId={pdfThemeId}
+        onPdfTheme={choosePdfTheme}
+        pdfZoom={pdfZoom}
+        onPdfZoomStep={pdfZoomStep}
+        onPdfZoomMode={(m) => applyPdfZoom(m)}
       />
 
       {/* RAWY-85: no in-context selection toolbar (highlight/note/Photo Mode) for PDFs — they're
           CFI-less in Phase 0, so the whole annotation layer is disabled rather than half-working. */}
       {!isPdf && <AnnotationLayer ctrlRef={ctrlRef} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} onListen={startListenFromSelection} />}
       {/* RAWY-105: read-aloud player (EPUB-only) — floats above the reading area while listening. */}
-      {!isPdf && (
+      {(!isPdf || pdfCanListen) && (
         <TtsPlayer
           panelLeft={chaptersOpen || searchOpen}
           panelRight={annoOpen}
@@ -1725,7 +2192,6 @@ export function Reader({
       )}
 
       {/* RAWY-86: transient PDF feedback (find result / copied). */}
-      {pdfMsg && <div className="pdf-toast">{pdfMsg}</div>}
 
       <PhotoBasketTray open={basketOpen} onClose={() => setBasketOpen(false)} onCompose={composeBasket} />
 
@@ -1739,24 +2205,27 @@ export function Reader({
         />
       )}
 
-      {status === "error" && (
+      {status === "error" && error && (
         // RAWY-79 (#11): a calm, themed failure state with its OWN recovery actions — always visible,
         // independent of the auto-hiding chrome (so a load failure with no mouse movement isn't a
-        // dead end). "Try again" re-runs openBook for the same target; "Back to library" exits.
+        // dead end).
+        //
+        // RESILIENCE-1 / WP-1: the card is now driven by the CLASSIFICATION, not by a raw string.
+        // Which actions appear is decided by the failure's own presentation — "Try again" is offered
+        // only where retrying can actually work, which is why the reported PDF failure now offers
+        // "How to update WebView2" instead of a button that could never have helped.
         <div className="reader-error-overlay" role="alert">
-          <div className="reader-error-card">
-            <div className="reader-error-mark" aria-hidden>⚠</div>
-            <div className="reader-error-title">{t("reader.error.title")}</div>
-            {error && <div className="reader-error-detail">{error}</div>}
-            <div className="reader-error-actions">
-              <button className="reader-error-btn primary" onClick={() => openBook(initial)}>
-                {t("reader.error.retry")}
-              </button>
-              <button className="reader-error-btn" onClick={onExit}>
-                {t("reader.error.back")}
-              </button>
-            </div>
-          </div>
+          <ErrorCard
+            classified={error}
+            handlers={{
+              retry: () => openBook(initial),
+              back: onExit,
+              reimport: onExit, // re-importing happens in the Library — take them there
+              "remove-book": onExit, // deletion lives in the Library's own two-step confirm (D31)
+              "update-runtime": () => void openWebView2Help(),
+            }}
+            diagnosticsText={diagText}
+          />
         </div>
       )}
     </div>

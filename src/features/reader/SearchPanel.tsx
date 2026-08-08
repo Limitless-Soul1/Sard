@@ -10,6 +10,7 @@ import { memo, useEffect, useRef, useState } from "react";
 
 import { useI18n } from "../../i18n";
 import { localeNum } from "../../lib/format";
+import { displayTitle } from "../../lib/bookMeta"; // WP-3: one rule for a missing title
 import type { SearchHit } from "../../reader-engine/FoliateController";
 
 interface Props {
@@ -103,7 +104,7 @@ export function SearchPanel({
       <div className="rp-head">
         <div className="rp-head-titles">
           <span className="rp-title">{t("search.title")}</span>
-          <span className="rp-submeta" dir="auto">{bookTitle || t("reader.untitledBook")}</span>
+          <span className="rp-submeta" dir="auto">{displayTitle({ title: bookTitle }, t)}</span>
         </div>
         <div className="rp-head-actions">
           <button className="rp-x" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>

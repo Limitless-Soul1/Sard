@@ -31,6 +31,31 @@ dist-ssr
 # (GitHub Pages serves from `docs/` on the default branch). Nothing else belongs in it —
 # design sources, screenshots and reports are not repository material.
 
+# RESILIENCE-1 / WP-0 — test artefacts.
+#
+# Generated EPUB fixtures: rebuilt by `npm run fixtures:build`. The GENERATOR is the source of
+# truth and is committed; the binaries are not, so a public repo carries no opaque test blobs.
+/tests/fixtures/epub/
+#
+# The regression CORPUS is real books — mostly third-party copyrighted works, ~55 MB. It lives
+# OUTSIDE this repository at %SARD_CORPUS% (default M:\ProjectDocs\sard\Corpus). Only
+# tests/corpus/corpus.manifest.json is committed. This rule is a backstop in case anyone ever
+# copies the books in: publishing them would be a licensing violation, and irreversible.
+/tests/corpus/books/
+/corpus/
+
+# Byte-identity failure dumps (FINDING-2). The baselines beside them ARE kept — they are the
+# reference. These are per-failure evidence: timestamped, sometimes large, and they name corpus
+# books, which are third-party copyrighted works this public repo must never describe in bulk.
+/tests/harness/fingerprints/diff-*.json
+/tests/harness/subsystem-runs/
+
+# Sample clips for the background-media harnesses (`bg-media-benchmark`, `bg-media-readability`).
+# Tens of MB of video and GIF, generated or downloaded per investigation and never worth committing.
+# The harnesses take the directory as `--media=<dir>` or `$SARD_MEDIA_DIR` and fall back to here, so
+# this rule keeps that fallback from ever dirtying the working tree.
+/tests/harness/.media/
+
 # Private — REAL user data. Each `.db-snapshot-*` directory is a byte copy of the live
 # %APPDATA%/com.sard.app/sard.db (+ its -wal/-shm), taken before a risky task. They hold the
 # owner's library paths, reading positions, highlights, notes, bookmarks, tags and listening
@@ -49,3 +74,13 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# NOTHING ARCHIVED MAY LIVE IN public/. Vite copies public/ verbatim into dist/, and Tauri embeds
+# dist/ into the executable — so a stray archive here is compiled into every build. A 47 MB RAR of a
+# previous Beta package sat here from 2026-08-05 and tripled the binary (24 MB -> 72 MB) in every
+# artifact built afterwards, including one sent to a tester. Nothing referenced it.
+public/**/*.rar
+public/**/*.zip
+public/**/*.7z
+public/**/*.exe
+public/**/*.msi

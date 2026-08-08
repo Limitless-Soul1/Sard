@@ -6,14 +6,16 @@
 // default, both synth paths, the voices picker, per-language persistence, and the RAWY-193 explicit
 // "Edge unavailable" pause state); this is the pill's markup/CSS, re-binding the same controls. Mirrors RTL.
 
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
-import { TTS_EMPTY, TTS_MAX_RETRIES, TTS_SPEEDS, releaseButtonFocusAfterPointerClick, skipSentenceForArrow, toggleTtsPlayback, ttsStats, useTts, voiceLabel } from "../../lib/tts";
+import { TTS_EMPTY, TTS_MAX_RETRIES, TTS_SPEEDS, VOICE_OK_PREFIX, releaseButtonFocusAfterPointerClick, skipSentenceForArrow, toggleTtsPlayback, ttsStats, useTts, voiceLabel } from "../../lib/tts";
+import { settingsSet } from "../../lib/ipc";
 import { NEXT_CHEVRON, TtsMini } from "./TtsMini";
 import { TtsVoicePicker } from "./TtsVoicePicker";
+import { VoiceMismatchCard } from "./VoiceMismatchCard"; // WP-5C: the compatibility decision surface
 
 const CHEV_UP = "m6 14 6-6 6 6";
 const CHEV_DOWN = "m6 10 6 6 6-6";
@@ -38,10 +40,11 @@ export function TtsPlayer({
   // Previously `useTts()` re-rendered the pill on EVERY store change — including the karaoke `words`/
   // `wordIndex` ticks (several/sec on Edge) it doesn't even read — which made size toggles feel heavy and
   // could swallow a click landing mid-re-render. Actions are stable Zustand refs, so they never re-render.
-  const { active, status, endDismissed, engine, voice, index, total, speed, volume, progress, chapterLabel, error, underruns, abandoned, lastFailure, debug, retryAttempt, skip, setSpeed, setVolume, setEngine, retry, resumeEdge, stop } = useTts(
+  const { active, status, endDismissed, engine, voice, index, total, speed, volume, progress, chapterLabel, error, underruns, abandoned, lastFailure, mismatch, debug, retryAttempt, skip, setSpeed, setVolume, setEngine, retry, resumeEdge, stop } = useTts(
     useShallow((s) => ({
       active: s.active, status: s.status, endDismissed: s.endDismissed, engine: s.engine, voice: s.voice, index: s.index, total: s.total,
       speed: s.speed, volume: s.volume, progress: s.progress, chapterLabel: s.chapterLabel, error: s.error, underruns: s.underruns, abandoned: s.abandoned, lastFailure: s.lastFailure,
+      mismatch: s.mismatch, // WP-5C: which voice the pre-flight refused, so the state can name it
       debug: s.debug, // RAWY-257/255: reactive, so toggling the setting shows/hides the readout immediately
       retryAttempt: s.retryAttempt, // RAWY-257 2B (D68): which backoff attempt is in flight (0 = none)
       skip: s.skip, setSpeed: s.setSpeed, setVolume: s.setVolume, setEngine: s.setEngine, retry: s.retry, resumeEdge: s.resumeEdge, stop: s.stop,
@@ -51,6 +54,14 @@ export function TtsPlayer({
   // chapter when you've navigated away, else pauses/resumes in place); fall back to the plain store toggle
   // if it isn't wired. Used by BOTH the pill Play button and the window-level Space shortcut, so they agree.
   const doPlayPause = (): boolean => (onPlayPause ? onPlayPause() : toggleTtsPlayback());
+  // WP-5C: "Use it anyway" — record the consent for THIS voice id and start again. Sard warns and
+  // obeys; it does not override a choice the reader made (D37). The record is per voice, so agreeing
+  // to one incompatible voice never silently clears the warning for a different one.
+  const useAnyway = async () => {
+    const id = mismatch?.voiceId ?? voice;
+    if (id) await settingsSet(`${VOICE_OK_PREFIX}${id}`, "1").catch(() => {});
+    retry();
+  };
   const { t, lang, dir } = useI18n();
   const [picking, setPicking] = useState(false);
   // RAWY-164: ONE progressive size state replaces the old two confusable controls (the row-collapse
@@ -58,10 +69,41 @@ export function TtsPlayer({
   // kashida; tapping the kashida stroke returns straight to full. UI-only — never persisted.
   const [size, setSize] = useState<"full" | "collapsed" | "kashida">("full");
   const expanded = size === "full"; // the engine/voices/speed rows show only when full
+  // RAWY-296: the speed chip opens a MENU instead of cycling. The list grew from 6 stops to 11, and a
+  // tap-cycle through 11 is a worse control than a list — reaching 1.75 could take ten taps, each one
+  // an audible rate change. Nothing about how a speed is APPLIED changed: the same `setSpeed`, the same
+  // `nearestSpeed` invariant, the same `mediaEl.playbackRate` (RAWY-264), no engine or buffer effect.
+  //
+  // ⚠ These hooks live HERE, above `if (!active) return null` (below), not beside the markup they serve.
+  // Placing them next to the chip put them after that early return, so the hook count changed the
+  // moment the player became active — React error #310, and the whole pill failed to render. Caught by
+  // the harness on the first run; the lesson is that this component has a conditional return partway
+  // down and every hook must stay above it.
+  const [speedOpen, setSpeedOpen] = useState(false);
+  const speedWrapRef = useRef<HTMLDivElement>(null);
+  // Dismissal: a pointer anywhere outside the chip+menu, or Escape. Both in the CAPTURE phase so a
+  // control underneath cannot swallow the event first, and both registered only while the menu is
+  // open — an always-on document listener during playback is exactly the kind of cost RAWY-181 trimmed.
+  useEffect(() => {
+    if (!speedOpen) return;
+    const onDown = (e: PointerEvent) => {
+      if (!speedWrapRef.current?.contains(e.target as Node)) setSpeedOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSpeedOpen(false); };
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [speedOpen]);
+  // The row that hosts the chip unmounts when the pill collapses; drop the open state with it so it
+  // does not spring back open on re-expand.
+  useEffect(() => { if (!expanded) setSpeedOpen(false); }, [expanded]);
   // RAWY-193 (HARD CONDITION 1): the Edge-unavailable error is shown + actionable in EVERY pill state, so it
   // must NEVER render as the bare kashida bead (which has no error UI). Treat "edge-error" as un-minimized
   // regardless of `size` (no one-frame bead flash), and the effect below pulls `size` back to full.
-  const minimized = size === "kashida" && status !== "edge-error";
+  const minimized = size === "kashida" && status !== "edge-error" && status !== "voice-mismatch";
   const shrink = () => setSize((s) => (s === "full" ? "collapsed" : "kashida")); // one step down
   // A fresh Listen (active flips true) should start on the full pill, not a stale minimized state.
   useEffect(() => {
@@ -71,7 +113,7 @@ export function TtsPlayer({
   // pull the pill out of the minimized kashida into the full state so the Retry / Switch-to-Piper choice is
   // unmistakable. Fires only on the error status; normal minimized listening is untouched.
   useEffect(() => {
-    if (status === "edge-error") setSize("full");
+    if (status === "edge-error" || status === "voice-mismatch") setSize("full");
   }, [status]);
   // RAWY-180 (Part B): Space toggles read-aloud play/pause when a session is active (from PARENT focus —
   // the reading-frame case is handled by FoliateController.onSpace). Self-gates via `toggleTtsPlayback`
@@ -113,17 +155,14 @@ export function TtsPlayer({
   // transport) while the session stays alive so Play still reads the current chapter.
   const chapterEnd = status === "chapter-end" && !endDismissed;
   const edgeErrored = status === "edge-error"; // RAWY-193: explicit "Edge unavailable" pause + choice
+  // WP-5C: a DIFFERENT terminal state from edge-error, with different actions. "Retry" is useless here
+  // (a voice that cannot render this script will not learn to), so it is not offered.
+  const voiceMismatch = status === "voice-mismatch";
   const busy = preparing || downloading;
   const dlPct = Math.round(progress * 100);
   const trackPct = downloading ? progress * 100 : total > 1 ? (index / (total - 1)) * 100 : 0;
-  // RAWY-281: cycle the explicit speed LIST rather than adding a fixed step. Same gesture, same
-  // wrap-at-the-end behaviour, same order — it simply has one more stop (1.10x). `indexOf` cannot miss:
-  // `setSpeed` and the restore path both snap through `nearestSpeed`, so `speed` is always a member;
-  // the `< 0` guard is there so a hand-edited setting degrades to the first speed instead of NaN.
-  const cycleSpeed = () => {
-    const i = TTS_SPEEDS.indexOf(speed as (typeof TTS_SPEEDS)[number]);
-    setSpeed(TTS_SPEEDS[i < 0 ? 0 : (i + 1) % TTS_SPEEDS.length]);
-  };
+  /** "1", "1.15", "2" — never "1.00". `String` already drops trailing zeros for these values. */
+  const speedLabel = (v: number) => localeDigits(String(v), lang);
   const volPct = Math.round(volume * 100); // RAWY-180 (Part A): inline volume slider 0–100%
   const sub =
     errored ? ` · ${t("tts.error")}` :
@@ -162,6 +201,23 @@ export function TtsPlayer({
       ) : (
       <>
       {picking && <TtsVoicePicker onClose={() => setPicking(false)} />}
+      {/* WP-5C: the compatibility decision is its own surface, not a row inside the transport pill.
+          Same three handlers as before — choose / use anyway / dismiss — so behaviour is unchanged;
+          only the presentation moved. Rendered beside the pill (not inside it) so the pill's own size
+          states (full / collapsed / kashida) cannot affect it. */}
+      {voiceMismatch && !picking && (
+        <VoiceMismatchCard
+          // The mismatch carries its OWN engine, and `voiceLabel` needs the engine that matches the
+          // id: given the wrong one it falls through to printing the raw "en-US-AriaNeural" instead
+          // of "Aria". Caught while measuring the redesign — a raw id in a dialog is precisely the
+          // developer-popup quality this rework exists to remove.
+          voiceName={voiceLabel(mismatch?.engine ?? engine, mismatch?.voiceId ?? voice)}
+          bookScript={mismatch?.bookScript ?? null}
+          onChoose={() => setPicking(true)}
+          onUseAnyway={() => void useAnyway()}
+          onDismiss={stop}
+        />
+      )}
       <div className={`tts-pill${expanded ? " expanded" : ""}${errored || edgeErrored ? " errored" : ""}${chapterEnd ? " chapter-end" : ""}`} dir={dir} role="group" aria-label={t("tts.player")} onClickCapture={releaseButtonFocusAfterPointerClick}>
         {edgeErrored ? (
           /* RAWY-193: the Edge engine failed (and the one bounded retry failed) — an EXPLICIT, actionable
@@ -314,9 +370,41 @@ export function TtsPlayer({
                 <span className="tts-voices-name">{voiceLabel(engine, voice)}</span>
                 <svg className="tts-voices-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={picking ? CHEV_DOWN : CHEV_UP} /></svg>
               </button>
-              <button className="tts-speed-chip" onClick={cycleSpeed} aria-label={t("tts.speed")} title={t("tts.speed")}>
-                {localeDigits(speed.toFixed(2).replace(/0$/, "").replace(/\.$/, ""), lang)}×
-              </button>
+              {/* RAWY-296: chip + menu. The wrapper is `position: relative` so the menu anchors to the
+                  chip and mirrors with it in RTL (it uses `inset-inline-end`, never `right`). */}
+              <div className="tts-speed-wrap" ref={speedWrapRef}>
+                <button
+                  className={`tts-speed-chip${speedOpen ? " on" : ""}`}
+                  onClick={() => setSpeedOpen((o) => !o)}
+                  aria-label={t("tts.speed")}
+                  title={t("tts.speed")}
+                  aria-haspopup="listbox"
+                  aria-expanded={speedOpen}
+                >
+                  {speedLabel(speed)}×
+                </button>
+                {speedOpen && (
+                  <div className="tts-speed-menu" role="listbox" aria-label={t("tts.speed")} dir={dir}>
+                    {TTS_SPEEDS.map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        role="option"
+                        aria-selected={v === speed}
+                        className={`tts-speed-opt${v === speed ? " on" : ""}`}
+                        onClick={() => { setSpeed(v); setSpeedOpen(false); }}
+                      >
+                        <span className="tts-speed-check" aria-hidden>
+                          {v === speed && (
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12.5 4.5 4.5L19 7" /></svg>
+                          )}
+                        </span>
+                        <span className="tts-speed-val">{speedLabel(v)}×</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
             {/* RAWY-180 (Part A): the inline VOLUME slider — a hairline row under Voice/Speed (design
                 "approach B"). Speaker glyph (accent; a muted glyph at 0) + a thin accent-fill track +

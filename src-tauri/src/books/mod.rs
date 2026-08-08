@@ -9,6 +9,13 @@
 //! branch — RAWY-85); other formats are rejected gracefully. Nothing in here panics on a bad file
 //! — every failure becomes a per-file `ImportResult` so one broken book never sinks a multi-file drop.
 
+
+pub mod compat;
+
+#[cfg(test)]
+mod corpus_tests;
+#[cfg(test)]
+mod wp2_tests;
 use std::io::{Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -159,9 +166,18 @@ fn import_one(conn: &Connection, app_data_dir: &Path, src: &str) -> ImportResult
         Ok(z) => z,
         Err(_) => return ImportResult::of("unsupported", "", &name, Some("Not a valid EPUB (bad ZIP)".into())),
     };
-    // A real EPUB declares its media type in an uncompressed `mimetype` entry.
+    // A real EPUB declares its media type in a `mimetype` entry.
+    //
+    // WP-2A: `mimetype_ok` is BOM- and case-tolerant. The old `trim() != "…"` refused any file whose
+    // mimetype carried a UTF-8 BOM, because Rust's `trim` does not strip U+FEFF (White_Space=No —
+    // verified by compiling the check). That rejected otherwise-valid books at the door.
+    //
+    // A MISSING mimetype is no longer fatal either: if `container.xml` and a parsable OPF are both
+    // present, the file is an EPUB whatever its packaging says. The entry is required by the
+    // specification, but refusing a readable book over it serves nobody.
     let mimetype = read_entry_string(&mut zip, "mimetype").unwrap_or_default();
-    if mimetype.trim() != "application/epub+zip" {
+    let meta_probe = if compat::mimetype_ok(&mimetype) { None } else { parse_epub(&mut zip) };
+    if !compat::mimetype_ok(&mimetype) && meta_probe.is_none() {
         return ImportResult::of("unsupported", "", &name, Some("Not an EPUB (missing epub mimetype)".into()));
     }
 
@@ -172,9 +188,43 @@ fn import_one(conn: &Connection, app_data_dir: &Path, src: &str) -> ImportResult
     }
 
     // Parse the OPF for title/author/language/direction/cover (all best-effort).
-    let meta = parse_epub(&mut zip).unwrap_or_default();
-    let title = meta.title.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| name.clone());
-    let author = meta.author.clone().filter(|s| !s.trim().is_empty()).unwrap_or_else(|| "Unknown".into());
+    let meta = meta_probe.or_else(|| parse_epub(&mut zip)).unwrap_or_default();
+
+    // RESILIENCE-1 / WP-2C — the placeholder-aware metadata ladder.
+    //
+    // The old code accepted ANY non-empty `dc:title`, which is how a tester's library ended up
+    // showing a book called "Unknown": Calibre writes that literal string when the source document
+    // carried no title, and "not empty" cannot tell a placeholder from a name. The ladder is
+    // dc:title → the book's own first heading → the filename → nothing, with EVERY rung rejecting
+    // placeholders as well as blanks. The final rung is `None`, and the caller (here) supplies the
+    // filename rather than a UI string, so the database never holds a localised default.
+    let mut provenance: std::collections::BTreeMap<&'static str, compat::Provenance> = Default::default();
+    let heading = if meta.title.as_deref().is_some_and(|t| compat::is_placeholder_title(t, meta.identifier.as_deref()))
+        || meta.title.is_none()
+    {
+        // Only read content documents when the declared title is actually unusable — a good book
+        // must not pay for a recovery it does not need.
+        first_content_heading(&mut zip, &meta)
+    } else {
+        None
+    };
+    let (resolved_title, title_prov) = compat::resolve_title(
+        meta.title.as_deref(),
+        heading.as_deref(),
+        &name,
+        meta.identifier.as_deref(),
+    );
+    // `name` (the filename stem) is the last honest fallback; `file_stem` already yields "Untitled"
+    // for a pathological path, so this can never store an empty title.
+    let title = resolved_title.unwrap_or_else(|| name.clone());
+    provenance.insert("title", title_prov);
+
+    // WP-2C: the author fallback is now NULL, not the literal string "Unknown". Writing "Unknown"
+    // made "the FILE said Unknown" indistinguishable from "Sard gave up" — and both states exist in
+    // the real corpus. A NULL is honest; the UI renders "Unknown author" as chrome.
+    let (author, author_prov) = compat::resolve_author(meta.author.as_deref());
+    provenance.insert("author", author_prov);
+
     // RAWY-189: metadata can lie — an Arabic-script book may declare `en` (or no language) with no spine
     // page-progression, which would store `ltr` and open the book left-to-right. When the metadata gives
     // no reliable RTL signal, sniff the content; a predominantly Arabic-script body is stored `dir='rtl'`
@@ -182,11 +232,34 @@ fn import_one(conn: &Connection, app_data_dir: &Path, src: &str) -> ImportResult
     // language field is left as the file declared it, except a *missing* one is filled with `ar` since we
     // just proved the script; the user can still edit both.
     let mut language = meta.language.clone().filter(|s| !s.trim().is_empty());
+    let declared_language = language.is_some();
     let flip = should_flip_to_rtl(&mut zip, &meta);
     let dir = if flip { "rtl".to_string() } else { book_direction(&meta.ppd, language.as_deref()) };
     if flip && language.is_none() {
         language = Some("ar".to_string());
     }
+    provenance.insert("language", if declared_language { compat::Provenance::Declared } else if language.is_some() { compat::Provenance::Inferred } else { compat::Provenance::Default });
+    provenance.insert("dir", if flip { compat::Provenance::Inferred } else { compat::Provenance::Declared });
+
+    // WP-2D: record what the CONTENT is, alongside what the file CLAIMS. `books.language` keeps the
+    // declaration (a user may have reasons for it, and RAWY-189 deliberately preserves it); this is
+    // the second, independent fact, and it is what a future per-language feature should key off —
+    // `language` is untrustworthy, which is why RAWY-189 exists at all.
+    // The `||` short-circuits, so the content sample is only taken when the cheap signals say
+    // nothing — the same work the previous nested form did, without the duplicated arm.
+    let script_detected = if flip || dir == "rtl" || detect_arabic_script(&mut zip, &meta.spine_docs) {
+        Some("arabic")
+    } else {
+        Some("latin")
+    };
+
+    // WP-2E: the two structural facts, computed once here and stored, so the reader never re-derives
+    // them per open. `None` (unknown) is preserved when the book declares no TOC document at all —
+    // that is a different state from "declares one and it is nearly empty".
+    let toc_degenerate = count_toc_entries(&mut zip, &meta)
+        .map(|entries| compat::toc_degenerate(entries, meta.spine_docs.len()));
+    let spine_fragmented = compat::spine_fragmented(&spine_section_sizes(&mut zip, &meta));
+    let producer = meta.producer.clone();
 
     // Copy into managed storage; the library references this copy, not the source.
     let library_dir = app_data_dir.join("library");
@@ -206,9 +279,12 @@ fn import_one(conn: &Connection, app_data_dir: &Path, src: &str) -> ImportResult
     let res = conn.execute(
         // RAWY-178 (AUD-12): title_fold/author_fold via afold() so the library search folds Arabic
         // consistently with the in-book search (كتاب ⇒ كِتاب, أحمد ⇔ احمد).
+        // RESILIENCE-1 / WP-2: five additive columns (migration 15). Every pre-existing column is
+        // written exactly as before, so a well-formed book's row is byte-identical to v1.1.0.
         "INSERT INTO books(id, file_path, file_hash, format, title, author, language, dir, \
-                           cover_path, size_bytes, added_at, last_opened_at, title_fold, author_fold) \
-         VALUES(?1,?2,?3,'epub',?4,?5,?6,?7,?8,?9,?10,NULL, afold(?4), afold(?5))",
+                           cover_path, size_bytes, added_at, last_opened_at, title_fold, author_fold, \
+                           producer, script_detected, toc_degenerate, spine_fragmented, meta_provenance) \
+         VALUES(?1,?2,?3,'epub',?4,?5,?6,?7,?8,?9,?10,NULL, afold(?4), afold(?5), ?11,?12,?13,?14,?15)",
         rusqlite::params![
             id,
             managed.to_string_lossy(),
@@ -220,6 +296,11 @@ fn import_one(conn: &Connection, app_data_dir: &Path, src: &str) -> ImportResult
             cover_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
             size,
             now_unix(),
+            producer,
+            script_detected,
+            toc_degenerate.map(|b| b as i64),
+            spine_fragmented as i64,
+            compat::provenance_json(&provenance),
         ],
     );
     match res {
@@ -244,6 +325,15 @@ struct EpubMeta {
     cover_path_in_zip: Option<String>,
     cover_media: Option<String>,
     spine_docs: Vec<String>,        // RAWY-189: content-document zip paths, in reading order
+    // ---- RESILIENCE-1 / WP-2 ----
+    /// `dc:identifier` — so a title that is merely the book's own id is recognised as a placeholder.
+    identifier: Option<String>,
+    /// `dc:contributor[role=bkp]` / a Calibre meta stamp. Conditions every recovery rule.
+    producer: Option<String>,
+    /// The nav document's zip path (manifest `properties="nav"`), when the book is EPUB 3.
+    nav_path: Option<String>,
+    /// The NCX's zip path (spine `toc=` → manifest item, else any `.ncx`), when EPUB 2.
+    ncx_path: Option<String>,
 }
 
 fn parse_epub<R: Read + Seek>(zip: &mut zip::ZipArchive<R>) -> Option<EpubMeta> {
@@ -251,7 +341,53 @@ fn parse_epub<R: Read + Seek>(zip: &mut zip::ZipArchive<R>) -> Option<EpubMeta> 
     let opf_path = find_opf_path(&container)?;
     let opf = read_entry_string(zip, &opf_path)?;
     let opf_dir = parent_dir(&opf_path);
-    Some(parse_opf(&opf, &opf_dir))
+    let mut m = parse_opf(&opf, &opf_dir);
+    // WP-2B: the producer is read from the RAW OPF text (a namespaced attribute quick-xml would
+    // otherwise make us hunt for), because it conditions every other recovery rule.
+    m.producer = compat::detect_producer(&opf);
+    Some(m)
+}
+
+/// WP-2E: how many entries the table of contents actually offers.
+///
+/// Follows the SAME order foliate does at render time (nav document first, then NCX —
+/// `epub.js:1001-1016`), so "degenerate" here means what it will mean on screen. Returns `None`
+/// when the book declares no TOC document at all, which is a different fact from "declares one and
+/// it is nearly empty" — only the latter is worth recovering from.
+fn count_toc_entries<R: Read + Seek>(zip: &mut zip::ZipArchive<R>, meta: &EpubMeta) -> Option<usize> {
+    if let Some(p) = meta.nav_path.as_deref() {
+        if let Some(s) = read_entry_string(zip, p) {
+            return Some(compat::count_toc_entries(&s, false));
+        }
+    }
+    if let Some(p) = meta.ncx_path.as_deref() {
+        if let Some(s) = read_entry_string(zip, p) {
+            return Some(compat::count_toc_entries(&s, true));
+        }
+    }
+    None
+}
+
+/// WP-2E: the UNCOMPRESSED size of each linear content document, read from the zip's central
+/// directory. No decompression — this costs nothing even on a 1,433-section book.
+fn spine_section_sizes<R: Read + Seek>(zip: &mut zip::ZipArchive<R>, meta: &EpubMeta) -> Vec<u64> {
+    meta.spine_docs
+        .iter()
+        .filter_map(|p| zip.by_name(p).ok().map(|f| f.size()))
+        .collect()
+}
+
+/// WP-2C rung 2: the book's own first heading, from the earliest linear content document that has
+/// one. Bounded to the first few documents — a title lives at the front or nowhere.
+fn first_content_heading<R: Read + Seek>(zip: &mut zip::ZipArchive<R>, meta: &EpubMeta) -> Option<String> {
+    for path in meta.spine_docs.iter().take(3) {
+        if let Some(html) = read_entry_string(zip, path) {
+            if let Some(h) = compat::first_heading(&html) {
+                return Some(h);
+            }
+        }
+    }
+    None
 }
 
 fn find_opf_path(container_xml: &str) -> Option<String> {
@@ -281,6 +417,9 @@ fn parse_opf(opf_xml: &str, opf_dir: &str) -> EpubMeta {
     let mut spine_refs: Vec<(String, String)> = Vec::new();
     let mut cur: Option<&'static str> = None;
 
+    // WP-2E: the spine's `toc="…"` idref, resolved against the manifest after the walk.
+    let mut spine_toc_idref: Option<String> = None;
+
     let mut r = quick_xml::Reader::from_str(opf_xml);
     loop {
         match r.read_event() {
@@ -289,7 +428,11 @@ fn parse_opf(opf_xml: &str, opf_dir: &str) -> EpubMeta {
                     b"title" => cur = Some("title"),
                     b"creator" => cur = Some("creator"),
                     b"language" => cur = Some("language"),
-                    b"spine" => m.ppd = attr(&e, b"page-progression-direction"),
+                    b"identifier" => cur = Some("identifier"), // WP-2C: a title equal to this is a placeholder
+                    b"spine" => {
+                        m.ppd = attr(&e, b"page-progression-direction");
+                        spine_toc_idref = attr(&e, b"toc");
+                    }
                     b"itemref" => spine_refs.push((
                         attr(&e, b"idref").unwrap_or_default(),
                         attr(&e, b"linear").unwrap_or_default(),
@@ -298,7 +441,10 @@ fn parse_opf(opf_xml: &str, opf_dir: &str) -> EpubMeta {
                 }
             }
             Ok(Event::Empty(e)) => match e.local_name().as_ref() {
-                b"spine" => m.ppd = attr(&e, b"page-progression-direction"),
+                b"spine" => {
+                    m.ppd = attr(&e, b"page-progression-direction");
+                    spine_toc_idref = attr(&e, b"toc");
+                }
                 b"meta" => {
                     if attr(&e, b"name").as_deref() == Some("cover") {
                         cover_meta_id = attr(&e, b"content");
@@ -325,6 +471,7 @@ fn parse_opf(opf_xml: &str, opf_dir: &str) -> EpubMeta {
                                 "title" if m.title.is_none() => m.title = Some(s),
                                 "creator" if m.author.is_none() => m.author = Some(s),
                                 "language" if m.language.is_none() => m.language = Some(s),
+                                "identifier" if m.identifier.is_none() => m.identifier = Some(s),
                                 _ => {}
                             }
                         }
@@ -352,6 +499,21 @@ fn parse_opf(opf_xml: &str, opf_dir: &str) -> EpubMeta {
             m.cover_media = Some(media.clone());
         }
     }
+
+    // WP-2E: resolve the TOC documents the way the FORMAT defines them, never by filename.
+    // Guessing at `nav.xhtml` / `*.ncx` mis-read three real corpus books — two as "no TOC at all"
+    // and one with double-counted entries — which would have flagged good books as degenerate.
+    m.nav_path = items
+        .iter()
+        .find(|(_, _, _, props)| props.split_whitespace().any(|p| p == "nav"))
+        .filter(|(_, href, _, _)| !href.is_empty())
+        .map(|(_, href, _, _)| zip_join(opf_dir, &percent_decode(href)));
+    m.ncx_path = spine_toc_idref
+        .as_ref()
+        .and_then(|idref| items.iter().find(|(id, _, _, _)| id == idref))
+        .or_else(|| items.iter().find(|(_, _, media, _)| media == "application/x-dtbncx+xml"))
+        .filter(|(_, href, _, _)| !href.is_empty())
+        .map(|(_, href, _, _)| zip_join(opf_dir, &percent_decode(href)));
 
     // RAWY-189: resolve the spine into ordered content-document zip paths for content sniffing.
     // Skip `linear="no"` refs — that's how covers / nav / other non-linear matter are marked — and
@@ -398,11 +560,19 @@ fn extract_cover<R: Read + Seek>(
 
 // ---- small helpers --------------------------------------------------------
 
+/// Read one zip entry as text, TOLERANTLY.
+///
+/// RESILIENCE-1 / WP-2A: this used `read_to_string`, which returns `Err` on any non-UTF-8 byte —
+/// and that error path was silently catastrophic. `parse_epub` returned `None`, so a book with a
+/// `windows-1256` OPF (still common in older Arabic EPUBs) lost its title, author, language AND
+/// cover, and — because the spine could not be read — its RTL detection too, importing an Arabic
+/// book as `dir='ltr'`. `compat::decode_xml` never fails; at worst it falls back to latin-1, which
+/// still recovers the ASCII structure everything else depends on.
 fn read_entry_string<R: Read + Seek>(zip: &mut zip::ZipArchive<R>, name: &str) -> Option<String> {
     let mut f = zip.by_name(name).ok()?;
-    let mut s = String::new();
-    f.read_to_string(&mut s).ok()?;
-    Some(s)
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).ok()?;
+    Some(compat::decode_xml(&buf).text)
 }
 
 fn attr(e: &quick_xml::events::BytesStart, key: &[u8]) -> Option<String> {
@@ -603,6 +773,159 @@ pub fn backfill_arabic_dir(conn: &Connection, app_data_dir: &Path) -> rusqlite::
     }
     tx.commit()?;
     Ok(flipped)
+}
+
+// ---------------------------------------------------------------------------
+// RESILIENCE-1 / WP-2H — the compatibility backfill (migration 16)
+// ---------------------------------------------------------------------------
+
+/// What a re-examination of one already-imported EPUB learned.
+struct Recovered {
+    producer: Option<String>,
+    script: Option<&'static str>,
+    toc_degenerate: Option<bool>,
+    spine_fragmented: bool,
+    /// `Some` only when the STORED title is a placeholder and a better one was found.
+    better_title: Option<(String, compat::Provenance)>,
+    /// `true` when the stored title is a placeholder that could NOT be improved.
+    ///
+    /// This is a real and unavoidable state for a book imported before WP-2: Sard stores every book
+    /// as `library/<id>.epub`, so the ORIGINAL filename — rung 3 of the ladder, and the rung that
+    /// rescues the reported book on a fresh import — no longer exists. The backfill refuses to
+    /// invent one, and records the fact instead so the UI can present the title as the placeholder
+    /// it is rather than as the book's name.
+    title_still_placeholder: bool,
+    /// `true` when the stored author is a placeholder that should become NULL.
+    author_is_placeholder: bool,
+}
+
+/// Re-open one managed EPUB and re-derive the WP-2 facts. Best-effort: any failure yields `None`
+/// and the row is skipped, so a missing or corrupt file can never fail the backfill.
+fn recover_one(app_data_dir: &Path, id: &str, stored_title: &str, stored_author: Option<&str>, filename_stem: &str) -> Option<Recovered> {
+    let path = app_data_dir.join("library").join(format!("{id}.epub"));
+    let file = std::fs::File::open(&path).ok()?;
+    let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file)).ok()?;
+    let meta = parse_epub(&mut zip)?;
+
+    let stored_is_placeholder = compat::is_placeholder_title(stored_title, meta.identifier.as_deref());
+    let better_title = if stored_is_placeholder {
+        let heading = first_content_heading(&mut zip, &meta);
+        // The DECLARED title is deliberately not offered again: it is what produced the stored
+        // placeholder in the first place.
+        let (t, p) = compat::resolve_title(None, heading.as_deref(), filename_stem, meta.identifier.as_deref());
+        t.map(|t| (t, p))
+    } else {
+        None
+    };
+
+    let flip = should_flip_to_rtl(&mut zip, &meta);
+    let script = if flip || detect_arabic_script(&mut zip, &meta.spine_docs) { "arabic" } else { "latin" };
+
+    Some(Recovered {
+        producer: meta.producer.clone(),
+        script: Some(script),
+        toc_degenerate: count_toc_entries(&mut zip, &meta)
+            .map(|entries| compat::toc_degenerate(entries, meta.spine_docs.len())),
+        spine_fragmented: compat::spine_fragmented(&spine_section_sizes(&mut zip, &meta)),
+        title_still_placeholder: stored_is_placeholder && better_title.is_none(),
+        better_title,
+        author_is_placeholder: stored_author.is_some_and(compat::is_placeholder_author),
+    })
+}
+
+/// Migration 16 — fill the WP-2 columns for books imported before this shipped, and correct the
+/// metadata that made a tester's library show a book called "Unknown".
+///
+/// Guards, following the RAWY-189 precedent (`backfill_arabic_dir`) exactly:
+///   * only `format='epub'` rows, and only those not yet examined (`script_detected IS NULL`), so a
+///     re-run is a true no-op — idempotent independently of the migration marker;
+///   * **`metadata_overrides` is NEVER touched**, so a title the user set keeps winning via COALESCE;
+///   * a title is replaced ONLY when the stored one is a recognised placeholder AND something better
+///     was found — a real title is never overwritten, whatever else changes;
+///   * a missing / unreadable / corrupt book is skipped silently, so the app launches even if the
+///     whole `library/` folder is gone.
+///
+/// Returns `(examined, titles_corrected)`.
+pub fn backfill_compat(conn: &Connection, app_data_dir: &Path) -> rusqlite::Result<(usize, usize)> {
+    let rows: Vec<(String, String, Option<String>, String)> = {
+        let mut stmt = conn.prepare(
+            "SELECT id, COALESCE(title,''), author, COALESCE(file_path,'') FROM books \
+             WHERE format = 'epub' AND script_detected IS NULL",
+        )?;
+        let it = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+        it.filter_map(|r| r.ok()).collect()
+    };
+
+    let tx = conn.unchecked_transaction()?;
+    let mut examined = 0usize;
+    let mut retitled = 0usize;
+    for (id, title, author, file_path) in &rows {
+        // The managed copy is named `<id>.epub`, so the ORIGINAL filename is long gone. The stored
+        // title is the best stand-in for it — and when that title is itself a placeholder, the
+        // ladder simply falls through to `None` and nothing is changed. Honest either way.
+        let stem = file_stem(file_path);
+        let stem = if stem == *id { title.clone() } else { stem };
+        let Some(rec) = recover_one(app_data_dir, id, title, author.as_deref(), &stem) else {
+            continue; // unreadable → leave every column NULL so a later run retries it
+        };
+        examined += 1;
+
+        tx.execute(
+            "UPDATE books SET producer = ?2, script_detected = ?3, toc_degenerate = ?4, spine_fragmented = ?5 \
+             WHERE id = ?1 AND format = 'epub'",
+            rusqlite::params![
+                id,
+                rec.producer,
+                rec.script,
+                rec.toc_degenerate.map(|b| b as i64),
+                rec.spine_fragmented as i64
+            ],
+        )?;
+
+        // Provenance is recorded for EVERY examined book, not only the corrected ones. A book whose
+        // placeholder title could not be improved is precisely the case the UI most needs to know
+        // about — leaving it NULL would make "we checked and this really is a placeholder"
+        // indistinguishable from "never examined".
+        let mut prov_map: std::collections::BTreeMap<&'static str, compat::Provenance> = Default::default();
+        prov_map.insert(
+            "title",
+            match (&rec.better_title, rec.title_still_placeholder) {
+                (Some((_, p)), _) => *p,
+                (None, true) => compat::Provenance::Default,
+                (None, false) => compat::Provenance::Declared,
+            },
+        );
+        prov_map.insert(
+            "author",
+            if rec.author_is_placeholder || author.is_none() {
+                compat::Provenance::Default
+            } else {
+                compat::Provenance::Declared
+            },
+        );
+        tx.execute(
+            "UPDATE books SET meta_provenance = ?2 WHERE id = ?1",
+            rusqlite::params![id, compat::provenance_json(&prov_map)],
+        )?;
+
+        if let Some((better, _)) = rec.better_title {
+            tx.execute(
+                "UPDATE books SET title = ?2, title_fold = afold(?2) WHERE id = ?1",
+                rusqlite::params![id, better],
+            )?;
+            retitled += 1;
+        }
+        if rec.author_is_placeholder {
+            // Sard's own old fallback wrote 'Unknown' here. Clearing it restores the distinction
+            // between "the file said so" and "nothing was known".
+            tx.execute(
+                "UPDATE books SET author = NULL, author_fold = NULL WHERE id = ?1",
+                rusqlite::params![id],
+            )?;
+        }
+    }
+    tx.commit()?;
+    Ok((examined, retitled))
 }
 
 fn parent_dir(path: &str) -> String {

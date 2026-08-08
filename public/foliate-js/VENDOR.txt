@@ -1,3 +1,234 @@
-﻿foliate-js vendored at commit 78914aef4466eb960965702401634c2cb348e9b1 (2026-05-01)
+foliate-js vendored at commit 78914aef4466eb960965702401634c2cb348e9b1 (2026-05-01)
 Source: https://github.com/johnfactotum/foliate-js
 License: MIT (see ./LICENSE)
+
+Bundled: PDF.js 5.5.207 under vendor/pdfjs/ (Apache-2.0)
+
+
+=== BROWSER CAPABILITY FLOOR — RE-DERIVE ON ANY RE-VENDOR ==========================================
+
+The pin is not only a commit. It is also a set of browser features this code REQUIRES, and Sard
+must refuse to pretend otherwise: WebView2 is the user's, not ours, and Tauri's installer only
+installs it when ABSENT — it never upgrades an old one.
+
+What the vendored code calls, and where:
+
+  EPUB  Object.groupBy, Map.groupBy
+        epub.js:178, :200, :206, :258 — the OPF metadata parser, run for EVERY book.
+        Missing  =>  NO book of any kind opens.
+
+  PDF   Uint8Array.prototype.toHex      pdf.worker.mjs:59575  (every getDocument — unconditional)
+        Uint8Array.prototype.toBase64   pdf.mjs:7434          (embedded font @font-face rules)
+        Uint8Array.fromBase64           pdf.mjs:24263, :24267 (signature handling)
+        Missing  =>  EVERY PDF fails. This produced the reported defect:
+                     "UnknownErrorException: hashOriginal.toHex is not a function".
+
+These are enforced at runtime by FEATURE DETECTION in src/lib/runtime.ts — never by a version
+number. A version check would be a second copy of the same fact and would desync the moment this
+directory is re-pinned. If you re-vendor:
+
+  1. Diff the new engines for newly-used built-ins (search for `.toHex(`, `.toBase64(`, `groupBy(`,
+     `Promise.try`, `Iterator.`, `Float16Array`, `.withResolvers(`, `Array.fromAsync`, `using `).
+  2. Update CAPABILITY_FEATURES / RuntimeEnv in src/lib/runtime.ts to match.
+  3. Update tests/… so a missing feature still produces the runtime message rather than a raw throw.
+
+(For reference only, never for a decision: as of the 5.5.207 pin the PDF set corresponds to
+Chromium >= 140 and the EPUB set to Chromium >= 117.)
+
+
+=== LOCAL MODIFICATIONS — RE-APPLY ON ANY RE-VENDOR ================================================
+
+  1. paginator.js:252  — iframe sandbox hardened to `allow-same-origin` only (no allow-scripts).
+                         RAWY-64. Book content must never execute script.
+  2. paginator.js      — the `--sard-columns` / `--sard-measure` single-column patch (RAWY-21/23/25).
+  3. paginator.js      — the RAWY-75 wheel/scroll-intent patch.
+  4. pdf.js            — page canvas copied to an <img> via toDataURL; adoptNode renders blank in
+                         WebView2 (RAWY-85).
+  6. epub.js:871       — BOOK-STYLESHEET SANITISER HOOK (RESILIENCE-1 / WP-7, stage 3).
+                         Two lines at the top of `replaceCSS`: if `globalThis.__sardSanitiseBookCss`
+                         is a function, the sheet text is passed through it before foliate rewrites
+                         `url()` / `@import`. Placed BEFORE that rewriting on purpose — assets
+                         belonging to declarations the sanitiser is about to drop are then never
+                         fetched and never blobbed.
+                         WHY A GLOBAL HOOK: epub.js is a standalone module that imports nothing from
+                         Sard, and threading an option through Loader -> Book -> replaceCSS would
+                         have touched several call sites for one boolean. A single optional global
+                         keeps the vendored diff at two lines and makes it trivially reversible:
+                         DELETE THE TWO LINES and the file is upstream again. With no hook installed
+                         the behaviour is byte-for-byte upstream, which is what stages 1-3 rely on.
+                         Sard installs the hook in FoliateController; the mode it applies is the
+                         `book_css` setting, which ships `off`.
+
+  7. epub.js:944,+956  — NCX CONTENTS ACCESSOR (RESILIENCE-1 / WP-6B).
+                         One private field (`#sardNcxToc`) and one method (`getNCXToc()`) on the
+                         EPUB class. It parses the NCX with the file's own `parseNCX` + `resolveURL`
+                         and memoises the result. It CHANGES NOTHING: `this.toc` still holds whatever
+                         upstream selected, no call site is altered, and a book that never asks pays
+                         nothing (lazy). Delete the field and the method and the file is upstream.
+                         WHY: upstream reaches the NCX only when the navigation document yields
+                         NOTHING (`if (!this.toc && ncxPath)`, epub.js:~1040). An EPUB 3 book may
+                         carry a navigation document that is present, well-formed and useless.
+                         MEASURED on three real books: a single "Start" link beside an NCX holding
+                         2963 / 529 / 362 entries that resolve 100% of the linear spine, with the
+                         book's real chapter names. PROVEN CAUSALLY: deleting `properties="nav"`
+                         from one of them (18 bytes) made upstream produce all 529 real titles.
+                         Selection stays SARD's decision (Reader.tsx, at the existing
+                         `tocDegenerate` branch) — the engine only exposes the data.
+                         IF THIS PATCH IS LOST ON A RE-VENDOR: those books silently fall back to
+                         generated ordinal contents, in which row N opens chapter N-1 because the
+                         cover occupies linear spine position 1. Regression test:
+                         `node tests/harness/toc-regression.mjs` — 25/25 books must match what their
+                         own file declares.
+
+  8. epub.js:~940,1083 — INVALID-XHTML FALLBACK ON THE DOCUMENT PATH (RESILIENCE-1 / WP-8).
+                         One module-level helper (`sardInvalidXHTML`) plus its use in TWO places:
+                         `loadDocument` (new) and `loadReplaced` (replacing upstream's identical
+                         inline condition, so the rule exists ONCE). Delete the helper, restore the
+                         inline condition in loadReplaced, and revert loadDocument to its one-line
+                         body, and the file is upstream again.
+                         WHY: upstream already recovers from invalid XHTML — it re-parses as HTML and
+                         rewrites `item.mediaType` — but ONLY on the render path. `loadDocument`, used
+                         by SEARCH, SYNTHESISED CONTENTS and `getTOCItemOf`, had no fallback, so any
+                         section the renderer had not yet loaded came back as a PARSER ERROR document:
+                         `doc.body` null, 184 characters of error text instead of the book. Whole-book
+                         search then threw at `search.js:116` (`doc.body.lang`) and ONE bad section
+                         aborted the entire generator — the user saw "no results" for text plainly in
+                         the book.
+                         MEASURED on omniscient-reader-viewpoint (553 sections, all declaring
+                         application/xhtml+xml with NO xmlns): sections 1/20/40 went 0 -> 7,437 /
+                         10,451 / 8,636 characters; the throw disappeared; the UI went "لا نتائج" to
+                         "51 نتيجة". 10 of 46 books in the measured corpus share the shape.
+                         PROVEN SAFE: CFI string AND landing section byte-identical with the patch on
+                         and off (control run: with it off, search threw again); 29/29 books match
+                         what their own files declare; `getTOCItemOf` returns the same value both
+                         ways. Unreachable for valid XHTML — the condition is upstream's own
+                         (`parsererror || !documentElement.namespaceURI`), so healthy books never
+                         enter the branch and EPUB 2 books declaring text/html never do either.
+                         KNOWN, INHERITED: it mutates `item.mediaType`, exactly as upstream does.
+                         That shared state is why the bug presented as load-dependent for three rounds
+                         of investigation. Not introduced here; not removed here.
+                         IF THIS PATCH IS LOST ON A RE-VENDOR: search silently returns nothing on
+                         every book whose sections declare XHTML without a namespace, while those
+                         books still render perfectly — so nothing else signals the failure.
+                         Regression test:
+                           node tests/harness/search-probe.mjs --title=omniscient
+                         STAGE 4 must report `threw:false`, and STAGE 5 must show a result count
+                         rather than "لا نتائج".
+
+  5. paginator.js      — DEPTH-1 TURN COALESCING (RESILIENCE-1 / WP-4E). Upstream `#turnPage`
+                         returns immediately while `#locked`, so every page turn requested during
+                         the ~100 ms lock (plus any section load) is DISCARDED silently. Measured in
+                         the real app: two `next()` calls in one task advanced exactly ONE page, so
+                         a double chevron tap or a held arrow key loses turns. The patch remembers
+                         the LAST such request in `#pendingTurn` and replays it once on release.
+                         Depth one, never a queue — a held key must not bank turns that then run
+                         away. Touches `#turnPage` and one new private field; no other call site.
+
+  9. paginator.js:427   — RESIZEOBSERVER TEARDOWN (RESILIENCE-1). Two destroy() paths failed to
+     paginator.js:1189    release their ResizeObserver, each in a different way, and both leave the
+                         observer watching a node that has been detached from the document. Blink
+                         then emits "ResizeObserver loop completed with undelivered notifications"
+                         once per frame for it — WITHOUT invoking the JS callback, which is why the
+                         app cannot see this at all. It surfaces only as an uncaught-error rate.
+
+                         9a  View.destroy() — upstream guards the unobserve on `this.document`, and
+                             by teardown time the iframe is usually already gone, so it NEVER RUNS.
+                             Measured at 0 calls across repeated open/close cycles.
+                         9b  Paginator.destroy() — upstream calls `unobserve(this)`, but the observer
+                             observes `this.#container`, never `this`. Passing an element that was
+                             never registered is silent by specification: no error, no return value.
+                             A pure no-op.
+
+                         Both become `disconnect()`. That is the point of the fix rather than an
+                         incidental choice: disconnect needs no reference to what was observed, so it
+                         cannot be wrong about WHICH element to release and cannot be skipped by a
+                         guard that happens to be false.
+                         PROVEN SAFE: no View is reused after destroy() — `#createView()` constructs
+                         a new one (with a fresh observer) and Paginator.destroy() nulls the field.
+                         MEASURED on the real binary, 6 open/close cycles: 452 and 464 errors before,
+                         0 and 0 after. Resizing verified still working in both flows, including for
+                         a view created AFTER a destroy() ran (the path this patch changes):
+                         scrolled re-layout, paged re-pagination (40 <-> 74 pages), and font-size
+                         expansion all respond as before.
+                         IF THIS PATCH IS LOST ON A RE-VENDOR: reading is unaffected and nothing
+                         visibly breaks — the only symptom is a growing uncaught-error rate after
+                         each book is closed, which no user will ever report.
+                         Regression test:
+                           node tests/harness/ro-storm.mjs
+                         SESSION TOTAL must be 0.
+
+ 10. pdf.js:38        — TEXT-LAYER CLEAR BEFORE RE-RENDER (PDF read-aloud correctness).
+                        One statement, `container.replaceChildren()`, immediately before
+                        `new pdfjsLib.TextLayer(...)`.
+                        WHY: upstream renders the page image with `replaceChildren(pageImg)` two lines
+                        earlier, but hands the text layer to `TextLayer.render()`, which APPENDS to
+                        the container. `onZoom` (same file) routes every zoom change back through the
+                        same `render()`, so each zoom deposited another complete copy of the page's
+                        spans into the one `.textLayer` div. The asymmetry is upstream's; the reader
+                        simply read what it was given.
+                        MEASURED on رسالة الغفران, one container throughout (`layerCount` stayed 1):
+                        spans 47 -> 141 -> 188 -> 235 -> 329 across zoom 2/3/4 and back to fit-page;
+                        text 800 -> 5,600 chars; the opening phrase repeating 1 -> 3 -> 4 -> 5 -> 7
+                        times; and read-aloud units 5 -> 35. A listener who zoomed then pressed
+                        `استماع` would hear the page read SEVEN TIMES. A page change already cleared
+                        it (a new page is a new document), which is why it never showed up in
+                        page-turn testing.
+                        NOT a rendering bug: the page image was always correct, because the image path
+                        already replaced. Only the invisible text layer accumulated, which is why this
+                        survived the PDF zoom/theme/geometry acceptance work untouched.
+                        IF THIS PATCH IS LOST ON A RE-VENDOR: PDFs still render and zoom perfectly and
+                        nothing looks wrong; only read-aloud degrades, and only after a zoom — the
+                        page is spoken once per zoom performed. Nothing else signals it.
+                        ⚠ NECESSARY BUT NOT SUFFICIENT ON ITS OWN — it removes the UNBOUNDED growth
+                        (worst case 329 spans / 7 copies -> 94 / 2) but leaves a render RACE that
+                        duplicated the layer exactly twice on every fit-mode transition. That second
+                        defect is fixed by PATCH 11 below, and the two must be kept TOGETHER: with
+                        only 10 the layer doubles, with only 11 it grows without bound.
+                        Regression test: see PATCH 11.
+                        (Red-verified: on the unpatched file the harness shows monotonic growth to
+                        329 spans and 35 units.)
+
+ 11. pdf.js:15,22-27  — RENDER GENERATION GUARD (PDF read-aloud correctness; completes patch 10).
+     pdf.js:42,65-78    A module-level `WeakMap` (`sardRenderGen`) keyed by the PAGE DOCUMENT, a
+                        generation claimed at the top of `render()`, and three staleness checks — one
+                        after `page.render()`, one after `streamTextContent()`, one after
+                        `textLayer.render()`. Plus one structural change: the
+                        `await page.streamTextContent()` is HOISTED OUT of the `TextLayer` options
+                        literal into its own statement above the clear.
+                        WHY: `render()` is async and was not reentrancy-safe. Patch 10's clear ran,
+                        then TWO awaits passed before the spans landed, so two overlapping renders
+                        each cleared and then each appended. Hoisting the await makes
+                        clear -> construct -> append adjacent, and the generation check immediately
+                        before the clear means only the newest render for that page ever reaches it.
+                        WHY KEYED BY DOCUMENT, not a module-wide counter: two DIFFERENT pages may
+                        render concurrently (a spread, a prefetched neighbour) and a global counter
+                        would let one page cancel the other's text layer. Only a newer render of the
+                        SAME page may invalidate an older one.
+                        WHY THE THIRD CHECK CAPTURES FIRST: it records `[...container.childNodes]` at
+                        the synchronous instant its own append finishes — no await separates the two
+                        lines, so the list is exactly this render's nodes — and only then tests
+                        staleness. Removing a node a newer render has already discarded is a no-op, so
+                        it can never delete the winner's spans.
+                        MEASURED, after both patches, on رسالة الغفران (baseline 47 spans / 5 units):
+                        four full cycles of fit-page -> 2 -> 3 -> 4 -> fit-page with VARIED settle
+                        times (4.5 s / 2.5 s) = 16 samples, every one 47 spans / 5 units /
+                        headRepeats 1 / layerCount 1; plus a hostile burst of four zoom changes 120 ms
+                        apart (the ctrl+wheel condition, where overlap is guaranteed) — also 47 / 5.
+                        Read-aloud after the cycling: player total 5 units, status playing,
+                        readyState 4, underruns 0, abandoned 0, lastFailure none. Zero violations.
+                        Varied timings matter: the pre-fix race was INTERMITTENT (86 spans on one run,
+                        58 on the next), so a single clean pass proves nothing.
+                        IF EITHER PATCH IS LOST ON A RE-VENDOR: PDFs still render and zoom perfectly
+                        and nothing looks wrong; only read-aloud degrades, and only after a zoom.
+                        Regression test:
+                          node tests/harness/pdf-tts-diagnosis4.mjs   (single ladder — must be 47/1/5)
+                          node tests/harness/pdf-tts-diagnosis5.mjs   (cycles + burst + playback)
+                        diagnosis5 must report `violations: 0`. Run it with `--cycles=N` to widen the
+                        window; it fails if ANY sample deviates from the baseline.
+
+  NOTE ON NUMBERING: entries 1-8 above predate this one and their numbers do not all match the
+  `SARD LOCAL PATCH n` markers in the sources (the stylesheet-sanitiser hook is marked 5 in epub.js
+  but listed as 6 here, and the turn-coalescing entry is listed as 5 out of order at the end). That
+  mismatch is INHERITED, not introduced here, and is left alone deliberately: renumbering during
+  active development would churn the sources for no product benefit. Patch 9's markers and its entry
+  here do agree. Fix the older numbering during the cleanup milestone, not before.

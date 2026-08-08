@@ -12,6 +12,24 @@
   - If cargo is nowhere, the build stops with a one-line "install Rust / add `%USERPROFILE%\.cargo\bin`"
     message instead of the raw cargo dump. Install Rust from <https://rustup.rs>.
 
+## Runtime requirement — the WebView2 floor (RESILIENCE-1 / WP-1)
+
+Sard renders books in the system **WebView2** runtime, and the vendored engines under
+`public/foliate-js/` need browser features that older runtimes do not have:
+
+| Content | Requires | If missing |
+|---|---|---|
+| **EPUB** | `Object.groupBy`, `Map.groupBy` (foliate `epub.js`) | **No book of any kind opens.** Sard shows a full-window gate at startup. |
+| **PDF** | `Uint8Array.prototype.toHex` / `.toBase64`, `Uint8Array.fromBase64` (PDF.js 5.5) | **Every PDF fails.** PDF import is refused and opening one shows the runtime message. EPUB is unaffected. |
+
+This is enforced by **feature detection** in `src/lib/runtime.ts` — never by a version number, so it
+cannot desync when the engines are re-pinned. `public/foliate-js/VENDOR.txt` carries the full list,
+the call sites, and the standing instruction to re-derive it on any re-vendor.
+
+> ⚠ **Tauri's installer does not upgrade an existing WebView2 runtime** — it installs one only when
+> absent. A machine whose runtime is pinned by policy stays below the floor indefinitely, which is
+> exactly how this reached a tester. Mention the requirement in release notes.
+
 ## Test build — fast, for trying a code change locally
 
 **One command**, from the CURRENT working tree (**including uncommitted changes**):

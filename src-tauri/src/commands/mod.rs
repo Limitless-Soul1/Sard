@@ -11,6 +11,10 @@ use crate::{backgrounds, books, fonts, library, photocards, settings};
 
 #[derive(Serialize)]
 pub struct AppInfo {
+    /// THE BUILD ID baked in at compile time (build.rs). Product metadata, not instrumentation:
+    /// "which build are you running?" is the first question of every support conversation, and
+    /// before this the running app had no way to answer it.
+    pub build_id: String,
     pub app_data_dir: String,
     pub db_path: String,
     pub schema_version: i64,
@@ -75,10 +79,120 @@ pub fn app_info(state: State<AppState>) -> Result<AppInfo, String> {
     let conn = state.conn();
     let schema_version = db::schema_version(&conn).map_err(err)?;
     Ok(AppInfo {
+        build_id: env!("SARD_BUILD_ID").to_string(),
         app_data_dir: state.app_data_dir.display().to_string(),
         db_path: state.db_path.display().to_string(),
         schema_version,
     })
+}
+
+/// DIAGNOSTIC BUILD ONLY — write the collected evidence next to the profile.
+///
+/// Two user-reported failures cannot be reproduced on any development machine, so the evidence has
+/// to be captured where they happen and sent back. Writes a human-readable `.txt` beside a `.json`
+/// of the same events, timestamped so repeated reproductions never overwrite each other. Returns the
+/// directory, which the UI shows so the tester can find the files.
+///
+/// Reads nothing and changes nothing: it only writes what the frontend already collected.
+// DIAGNOSTIC BUILD ONLY — compiled ONLY under the `diag` Cargo feature, so a release build has no
+// such command to invoke and its name never reaches the binary (see lib.rs::sard_invoke_handler).
+#[cfg(feature = "diag")]
+#[tauri::command]
+pub fn diag_save(
+    text: String,
+    json: String,
+    app: tauri::AppHandle,
+    state: State<AppState>,
+) -> Result<String, String> {
+    // Documents\Sard Diagnostics, NOT the profile folder. A non-technical tester should never have
+    // to find %APPDATA%, which is hidden by default on Windows. Falls back to the profile only if
+    // the Documents folder cannot be resolved, so saving can never fail outright.
+    use tauri::Manager;
+    let dir = match app.path().document_dir() {
+        Ok(docs) => docs.join("Sard Diagnostics"),
+        Err(_) => state.app_data_dir.join("diagnostics"),
+    };
+    std::fs::create_dir_all(&dir).map_err(err)?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(err)?
+        .as_secs();
+    let txt = dir.join(format!("sard-diag-{stamp}.txt"));
+    let js = dir.join(format!("sard-diag-{stamp}.json"));
+    std::fs::write(&txt, text).map_err(err)?;
+    std::fs::write(&js, json).map_err(err)?;
+
+    // Open the folder so the tester does not have to navigate anywhere. Best-effort: if the shell
+    // call fails the report is already on disk, and the dialog still names the exact path.
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("explorer.exe").arg(&dir).spawn();
+    }
+
+    Ok(dir.display().to_string())
+}
+
+/// DIAGNOSTIC BUILD ONLY — on-disk facts about the vendored PDF engine, read straight from the
+/// filesystem so they are independent of the web layer entirely.
+///
+/// If the browser cannot load `pdf.mjs`, the first question is whether the bytes are even there.
+/// Antivirus quarantine and a partially-written install both produce a missing or truncated file,
+/// and neither is visible from JavaScript. Returns one line per file: exists, size, and whether it
+/// can actually be opened for reading (presence is not the same as readability).
+/// DIAGNOSTIC BUILD ONLY — amend THIS launch's startup record with what the frontend found.
+///
+/// The startup record is written by Rust before any frontend code runs and says `NOT REACHED`. This
+/// is the only thing that can change that, so the section it appends is the evidence that the
+/// frontend of THIS executable actually executed — which no measurement taken from Rust can
+/// establish, and which distinguishes "the new build ran and its frontend is dead" from "an older
+/// executable ran". Writes text the frontend has already formatted; it computes nothing.
+// DIAGNOSTIC BUILD ONLY — compiled ONLY under the `diag` Cargo feature, so a release build has no
+// such command to invoke and its name never reaches the binary (see lib.rs::sard_invoke_handler).
+#[cfg(feature = "diag")]
+#[tauri::command]
+pub fn diag_startup_mark(section: String) -> Result<(), String> {
+    crate::diag_startup::append_frontend(&section)
+}
+
+// DIAGNOSTIC BUILD ONLY — compiled ONLY under the `diag` Cargo feature, so a release build has no
+// such command to invoke and its name never reaches the binary (see lib.rs::sard_invoke_handler).
+#[cfg(feature = "diag")]
+#[tauri::command]
+pub fn diag_probe_assets(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    use tauri::Manager;
+    let mut out = Vec::new();
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+    out.push(format!("exe_dir = {}", exe_dir.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "UNKNOWN".into())));
+    out.push(format!(
+        "resource_dir = {}",
+        app.path().resource_dir().map(|p| p.display().to_string()).unwrap_or_else(|_| "UNKNOWN".into())
+    ));
+
+    // The frontend is embedded in the binary, so these paths may not exist on disk at all — that is
+    // itself a useful fact, and is reported rather than treated as an error.
+    for rel in [
+        "foliate-js/vendor/pdfjs/pdf.mjs",
+        "foliate-js/vendor/pdfjs/pdf.worker.mjs",
+        "foliate-js/vendor/pdfjs/text_layer_builder.css",
+        "foliate-js/vendor/pdfjs/annotation_layer_builder.css",
+    ] {
+        let mut seen = false;
+        for root in [exe_dir.clone(), app.path().resource_dir().ok()].into_iter().flatten() {
+            let p = root.join(rel);
+            if p.exists() {
+                seen = true;
+                let len = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+                let readable = std::fs::File::open(&p).is_ok();
+                out.push(format!("{rel}: EXISTS at {} size={len} readable={readable}", p.display()));
+            }
+        }
+        if !seen {
+            out.push(format!("{rel}: not present on disk (expected — the frontend is embedded in the executable)"));
+        }
+    }
+    Ok(out)
 }
 
 #[tauri::command]
@@ -149,8 +263,9 @@ pub fn library_list_books(
     search: Option<String>,
     state: State<AppState>,
 ) -> Result<Vec<library::BookRow>, String> {
+    let app_data_dir = state.app_data_dir.clone();
     let conn = state.conn();
-    library::list_books(
+    let mut rows = library::list_books(
         &conn,
         &sort,
         &order,
@@ -158,7 +273,13 @@ pub fn library_list_books(
         collection.as_deref(),
         search.as_deref(),
     )
-    .map_err(err)
+    .map_err(err)?;
+    // Storage is app-data-relative; the IPC contract stays "absolute path". Converting HERE, at the
+    // boundary, is what lets custody move later without touching a single consumer.
+    for r in rows.iter_mut() {
+        library::resolve_row_cover(&app_data_dir, r);
+    }
+    Ok(rows)
 }
 
 /// RAWY-15 — shelves (collections) with live book counts, for the sidebar.
@@ -283,6 +404,21 @@ pub struct BookPatch {
     pub cover_fit: Option<String>,
 }
 
+/// RESILIENCE-1 / WP-3 — read ONE book's authoritative row (effective title/author, i.e.
+/// `COALESCE(override, extracted)`).
+///
+/// The reader opens from four different surfaces (library card, inbox, bookmarks shelf, a
+/// cross-book annotation jump) and only one of them held a full row. Rather than trust whichever
+/// caller happened to launch it, the reader asks the database for the book it is opening.
+#[tauri::command]
+pub fn book_get(id: String, state: State<AppState>) -> Result<Option<library::BookRow>, String> {
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.conn();
+    let mut row = library::get_book(&conn, &id).map_err(err)?;
+    if let Some(r) = row.as_mut() { library::resolve_row_cover(&app_data_dir, r); }
+    Ok(row)
+}
+
 /// RAWY-19 — update a book's metadata as OVERRIDES (never touches the source EPUB).
 #[tauri::command]
 pub fn book_update(
@@ -303,17 +439,59 @@ pub fn book_update(
     .map_err(err)
 }
 
-/// RAWY-19 — replace a book's cover with a copied-in image (managed storage).
+/// RESILIENCE-1 / WP-3 — record metadata EXTRACTED FROM THE FILE (the PDF path reads it from
+/// PDF.js on first open). Writes the BASE columns, never `metadata_overrides`, so a title the
+/// reader set keeps winning through COALESCE. See `library::set_extracted_metadata`.
 #[tauri::command]
-pub fn book_set_cover(
+pub fn book_set_extracted(
+    id: String,
+    title: Option<String>,
+    author: Option<String>,
+    state: State<AppState>,
+) -> Result<Option<library::BookRow>, String> {
+    let conn = state.conn();
+    library::set_extracted_metadata(&conn, &id, title.as_deref(), author.as_deref()).map_err(err)
+}
+
+/// RAWY-19 — STAGE a replacement cover: copy it into managed storage under its content-addressed
+/// name and validate what Rust can, WITHOUT adopting it yet.
+///
+/// Staging and committing are separate because acceptance cannot be decided in one place. Rust
+/// decoding catches damage a browser would silently render half of; the renderer accepts formats
+/// Rust has no decoder for (AVIF today, whatever ships next) and needs no allow-list to maintain.
+/// `verified: false` means only "we could not decode it" — the caller asks the renderer and then
+/// calls `book_commit_cover` or `book_discard_cover`.
+#[tauri::command]
+pub fn book_stage_cover(
     id: String,
     image_path: String,
+    state: State<AppState>,
+) -> Result<library::StagedCover, String> {
+    safe_id(&id)?;
+    library::stage_cover(&state.app_data_dir, &id, &image_path)
+}
+
+/// RAWY-19 — adopt a staged cover (see `book_stage_cover`).
+#[tauri::command]
+pub fn book_commit_cover(
+    id: String,
+    rel: String,
     state: State<AppState>,
 ) -> Result<Option<library::BookRow>, String> {
     safe_id(&id)?;
     let app_data_dir = state.app_data_dir.clone();
     let conn = state.conn();
-    library::set_cover(&conn, &app_data_dir, &id, &image_path)
+    let mut row = library::commit_cover(&conn, &app_data_dir, &id, &rel)?;
+    if let Some(r) = row.as_mut() {
+        library::resolve_row_cover(&app_data_dir, r);
+    }
+    Ok(row)
+}
+
+/// RAWY-19 — abandon a staged cover the renderer refused. Nothing was adopted, so nothing is undone.
+#[tauri::command]
+pub fn book_discard_cover(rel: String, state: State<AppState>) -> Result<(), String> {
+    library::discard_cover(&state.app_data_dir, &rel)
 }
 
 /// RAWY-85 — set a PDF's page-1 cover from PNG bytes (extracted by the reader on first open).
@@ -337,8 +515,13 @@ pub fn book_revert_cover(
     id: String,
     state: State<AppState>,
 ) -> Result<Option<library::BookRow>, String> {
+    let app_data_dir = state.app_data_dir.clone();
     let conn = state.conn();
-    library::revert_cover(&conn, &id)
+    let mut row = library::revert_cover(&conn, &app_data_dir, &id)?;
+    if let Some(r) = row.as_mut() {
+        library::resolve_row_cover(&app_data_dir, r);
+    }
+    Ok(row)
 }
 
 /// RAWY-76 — delete a book and cascade ALL related rows + files (zero orphans). Other books intact.

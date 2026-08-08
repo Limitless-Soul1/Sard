@@ -2,6 +2,9 @@
 //! reading progress. RAWY-09 implements reading-progress persistence (CFI + fraction);
 //! RAWY-15 adds the Library home reads (`list_books`, `collections_list`) + a dev seed.
 
+#[cfg(test)]
+mod wp3_tests; // RESILIENCE-1 / WP-3 — the database is the single source of a book's name
+
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -70,6 +73,20 @@ pub struct BookRow {
     pub fraction: Option<f64>,
     pub read_at: Option<i64>,         // reading_progress.updated_at — "date read"
     pub cover_fit: Option<String>,    // per-book crop/fit override (RAWY-19), or null
+    /// RESILIENCE-1 / WP-3: per-field provenance JSON from the WP-2 compatibility layer, e.g.
+    /// {"author":"default","title":"filename"}. Lets the UI present a GUESSED title as a guess
+    /// instead of as the book's name. NULL for a row the backfill has not examined.
+    pub meta_provenance: Option<String>,
+    /// RESILIENCE-1 / WP-5A: the script SNIFFED from the book's own text at import ("arabic" /
+    /// "latin"), never its declared language — WP-2 exists because declared metadata lies. The TTS
+    /// pre-flight gates on this, so it must not gate on the field that was already wrong.
+    pub script_detected: Option<String>,
+    /// RESILIENCE-1 / WP-6: WP-2's structural flags, measured once at import and never re-derived.
+    /// `toc_degenerate` = far too few TOC entries for the spine, so 6A synthesises contents.
+    pub toc_degenerate: Option<i64>,
+    /// `spine_fragmented` = many sections with a tiny median, so 6B defaults the book to scrolled
+    /// flow (where arbitrary section breaks are invisible).
+    pub spine_fragmented: Option<i64>,
 }
 
 // Effective fields = a metadata_overrides value when present, else the extracted column.
@@ -125,7 +142,8 @@ fn book_select() -> String {
          COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='dir'), b.dir), \
          COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='cover'), b.cover_path), \
          b.added_at, b.last_opened_at, p.fraction, p.updated_at, \
-         (SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='cover_fit')"
+         (SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='cover_fit'), \
+         b.meta_provenance, b.script_detected, b.toc_degenerate, b.spine_fragmented"
     )
 }
 
@@ -144,6 +162,10 @@ fn row_from(r: &rusqlite::Row) -> rusqlite::Result<BookRow> {
         fraction: r.get(10)?,
         read_at: r.get(11)?,
         cover_fit: r.get(12)?,
+        meta_provenance: r.get(13)?,
+        script_detected: r.get(14)?,
+        toc_degenerate: r.get(15)?,
+        spine_fragmented: r.get(16)?,
     })
 }
 
@@ -253,12 +275,61 @@ fn base_field(conn: &Connection, id: &str, col: &str) -> rusqlite::Result<Option
 /// overrides table stays minimal and editing a value back to the original reverts it).
 fn apply_field(conn: &Connection, id: &str, field: &str, base_col: &str, new: Option<&str>) -> rusqlite::Result<()> {
     let Some(v) = new else { return Ok(()) }; // None = caller didn't touch this field
+    // RESILIENCE-1 / WP-3 — NORMALISE AT THE BOUNDARY, so stored and displayed cannot disagree.
+    //
+    // Found by the byte-identity harness, not by reasoning: the owner's library holds the override
+    // "الأنمساخ " with a trailing space (typed, invisible, harmless-looking). Once WP-3 gave every
+    // surface one resolver, that resolver trimmed for display — and the shown title stopped matching
+    // the stored one, which is the exact class of divergence this package exists to remove. Trimming
+    // HERE means surrounding whitespace never enters the database, so display, sort and the folded
+    // search shadow all agree. Rows written before this keep their space until next edited; the
+    // resolver still trims them for display, which is why both halves are needed.
+    let v = v.trim();
     let base = base_field(conn, id, base_col)?;
     if v.is_empty() || base.as_deref() == Some(v) {
         clear_override(conn, id, field)
     } else {
         set_override(conn, id, field, v)
     }
+}
+
+/// RESILIENCE-1 / WP-3 — record metadata EXTRACTED FROM THE FILE, never as a user edit.
+///
+/// WHY THIS IS SEPARATE FROM `update_book`. `update_book` writes `metadata_overrides` — the table
+/// that means "the reader said so". The PDF path was using it to store what PDF.js read out of the
+/// file on first open, so an extraction was indistinguishable from a human decision and could
+/// overwrite one. This writes the BASE columns instead, so `COALESCE(override, extracted)` keeps
+/// any value the reader set winning, exactly as it does for EPUBs.
+///
+/// Only fills a base column that is EMPTY: an extraction never overwrites an earlier extraction
+/// either, so re-running it cannot churn the row. `metadata_overrides` is never read or written.
+pub fn set_extracted_metadata(
+    conn: &Connection,
+    id: &str,
+    title: Option<&str>,
+    author: Option<&str>,
+) -> rusqlite::Result<Option<BookRow>> {
+    if let Some(t) = title.map(str::trim).filter(|t| !t.is_empty()) {
+        conn.execute(
+            "UPDATE books SET title = ?2 WHERE id = ?1 AND (title IS NULL OR title = '')",
+            rusqlite::params![id, t],
+        )?;
+    }
+    if let Some(a) = author.map(str::trim).filter(|a| !a.is_empty()) {
+        conn.execute(
+            "UPDATE books SET author = ?2 WHERE id = ?1 AND (author IS NULL OR author = '')",
+            rusqlite::params![id, a],
+        )?;
+    }
+    // Keep the folded search shadows in step with the EFFECTIVE value, exactly as update_book does.
+    conn.execute(
+        "UPDATE books SET \
+            title_fold  = afold(COALESCE((SELECT value FROM metadata_overrides WHERE book_id=books.id AND field='title'),  title)), \
+            author_fold = afold(COALESCE((SELECT value FROM metadata_overrides WHERE book_id=books.id AND field='author'), author)) \
+         WHERE id = ?1",
+        [id],
+    )?;
+    get_book(conn, id)
 }
 
 /// Update editable metadata as overrides; returns the fresh book.
@@ -293,19 +364,188 @@ pub fn update_book(
     get_book(conn, id)
 }
 
-/// Replace the cover: copy the image INTO managed storage and store a 'cover' override
-/// (the extracted cover file is left intact, so revert restores it).
-pub fn set_cover(conn: &Connection, app_data_dir: &Path, id: &str, image_path: &str) -> Result<Option<BookRow>, String> {
-    let covers = app_data_dir.join("library").join("covers");
+// =================================================================================================
+// CUSTOM COVERS
+//
+// Three concerns are kept deliberately separate here, because merging them is what caused the defect
+// this replaced: CUSTODY (where the bytes live), IDENTITY (how one version is named) and DELIVERY
+// (how the renderer gets them). The old code used a single string for all three — `{id}-custom.{ext}`
+// was simultaneously the location, the name and the cache key — so replacing a .jpg with another
+// .jpg produced a byte-identical URL and the WebView served its cached copy. MEASURED at the time:
+//     bytes ON DISK 1000x1400 · page RENDERS 1284x1600 · cache-busted RENDERS 1000x1400
+// The copy had always worked; only the URL was stale.
+//
+// IDENTITY IS NOW THE CONTENT. The name carries a hash of the bytes, so the reference changes if and
+// only if the image changes — cache correctness is a property of the design rather than something
+// every call site has to remember. Re-picking the same image is therefore a no-op, and two devices
+// that choose the same cover derive the same name, which is what makes this safe to sync later.
+//
+// THE BYTES ARE STORED UNMODIFIED. No recompression, ever — the same guarantee `backgrounds` makes.
+// Re-encoding would destroy quality and animation to buy a size bound that a regenerable derivative
+// provides without either loss. If a thumbnail layer is ever added it is a CACHE, never authoritative.
+//
+// ⚠ IF A DERIVATIVE IS EVER GENERATED, IT MUST APPLY EXIF ORIENTATION AND HONOUR THE ICC PROFILE.
+// The original relies on the rendering engine to do both, which it does; a naively decoded thumbnail
+// would be rotated and colour-shifted relative to the cover it stands for. `backgrounds` already
+// bakes orientation into its derivative for exactly this reason.
+// =================================================================================================
+
+/// The largest image accepted as a cover. Not a quality judgement — a guard against a pathological
+/// input (a 200 MP camera original) becoming a permanent per-render decode cost. Generous enough
+/// that no real cover is refused.
+const MAX_COVER_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Where covers live, relative to the app-data root. Stored in this form rather than absolute so a
+/// profile survives being restored under a different user, on a different platform, or on a phone
+/// whose container path changes between installs.
+const COVERS_REL: &str = "library/covers";
+
+/// A staged cover, written to its final content-addressed name but NOT yet adopted.
+#[derive(Serialize)]
+pub struct StagedCover {
+    /// App-data-relative path of the staged file.
+    pub rel: String,
+    /// `true` when Rust decoded it, so it is known-good and the caller may commit immediately.
+    /// `false` means only that WE could not decode it — the caller must ask the renderer, which is
+    /// the one validator whose answer means "this will display".
+    pub verified: bool,
+    /// The format Rust detected, for diagnostics. `None` when it could not decode.
+    pub format: Option<String>,
+}
+
+/// Resolve a stored cover reference to an absolute path.
+///
+/// Accepts BOTH forms on purpose: rows written before this change hold an absolute path, and
+/// rewriting them would be a migration over real user data to buy nothing. A legacy row keeps
+/// working and heals itself the next time its cover is replaced.
+pub fn resolve_cover(app_data_dir: &Path, stored: &str) -> String {
+    let p = Path::new(stored);
+    if p.is_absolute() {
+        stored.to_string()
+    } else {
+        app_data_dir.join(p).to_string_lossy().into_owned()
+    }
+}
+
+/// Apply `resolve_cover` to a row on its way out to the frontend, so the IPC contract stays
+/// "absolute path" while storage is relative. The boundary converts; nothing downstream changes.
+pub fn resolve_row_cover(app_data_dir: &Path, row: &mut BookRow) {
+    if let Some(c) = row.cover_path.as_deref() {
+        row.cover_path = Some(resolve_cover(app_data_dir, c));
+    }
+}
+
+/// Remove every custom cover of this book except `keep` — the file just written, or `None` to remove
+/// all of them. Best-effort by design: an undeletable leftover is untidy, never broken, and must not
+/// fail the replacement the reader asked for. This also collects files left by earlier naming
+/// schemes, so covers/ converges on exactly one custom file per book without a migration.
+fn sweep_custom_covers(covers: &Path, id: &str, keep: Option<&Path>) {
+    let prefix = format!("{id}-custom");
+    let Ok(rd) = std::fs::read_dir(covers) else { return };
+    for e in rd.flatten() {
+        let p = e.path();
+        if keep == Some(p.as_path()) {
+            continue;
+        }
+        if e.file_name().to_string_lossy().starts_with(&prefix) {
+            let _ = std::fs::remove_file(&p);
+        }
+    }
+}
+
+/// STAGE a replacement cover: validate what we can, write it under its content-addressed name, and
+/// return without adopting it. Adoption is `commit_cover`; abandonment is `discard_cover`.
+///
+/// Two-stage on purpose. Deciding acceptance in Rust alone would mean maintaining a format allow-list
+/// forever, and it would lag the renderer by construction — AVIF is a mainstream format Chromium
+/// renders today that `image` cannot decode, so a Rust-only rule would refuse a file Sard can display
+/// perfectly. Deciding it in the renderer alone is weaker in the other direction: browsers render a
+/// truncated JPEG partially without complaining, while a decoder rejects it. So: decode here to catch
+/// damage, and fall through to the renderer for anything we simply do not know — which needs no
+/// allow-list and gains new formats for free as the engine does.
+pub fn stage_cover(app_data_dir: &Path, id: &str, image_path: &str) -> Result<StagedCover, String> {
+    let meta = std::fs::metadata(image_path).map_err(|e| format!("Couldn't read that image: {e}"))?;
+    if !meta.is_file() {
+        return Err("That is not a file.".into());
+    }
+    if meta.len() == 0 {
+        return Err("That file is empty.".into());
+    }
+    if meta.len() > MAX_COVER_BYTES {
+        return Err(format!(
+            "That image is {} MB. Covers are limited to {} MB.",
+            meta.len() / (1024 * 1024),
+            MAX_COVER_BYTES / (1024 * 1024)
+        ));
+    }
+    let bytes = std::fs::read(image_path).map_err(|e| format!("Couldn't read that image: {e}"))?;
+
+    // ⚠ "DAMAGED" AND "UNKNOWN" ARE DIFFERENT ANSWERS AND MUST NOT BE COLLAPSED.
+    //
+    // Recognising the container but failing to decode it means the file is DAMAGED, and it is
+    // refused here — a browser will happily paint the top half of a truncated JPEG and call it a
+    // cover, which is exactly the silent failure this feature is supposed to end. Not recognising
+    // the container at all means only that WE have no decoder; that is not a verdict, so the file
+    // is staged and the renderer decides. Measured during validation: collapsing the two let a
+    // 400-byte truncated JPEG through to the renderer instead of being named as damage.
+    let decoded = match image::guess_format(&bytes) {
+        Ok(fmt) => match image::load_from_memory(&bytes) {
+            Ok(_) => Some(fmt),
+            Err(e) => return Err(format!("That image is damaged and could not be read ({e}).")),
+        },
+        Err(_) => None, // unknown to us — ask the renderer, which may well display it (AVIF, SVG…)
+    };
+    let ext = match decoded {
+        // The extension is NOT what types the response — MEASURED: Tauri's asset protocol sniffs the
+        // bytes and returns image/jpeg even for a file with no extension or a lying one. It matters
+        // for exactly one thing: TEXT-BASED formats. An SVG with no extension is served as text/html
+        // and does not render, because browsers deliberately do not sniff SVG. So the extension is
+        // kept for truthfulness and for that one case, not for binary correctness.
+        Some(f) => f.extensions_str().first().unwrap_or(&"img").to_string(),
+        None => Path::new(image_path)
+            .extension()
+            .map(|e| e.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_else(|| "img".into()),
+    };
+
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    // 16 bytes, the same width `backgrounds` chose for its content ids — one convention for managed
+    // images rather than two. Scoped to a single book that holds one custom cover at a time.
+    let hash = format!("{:x}", hasher.finalize())[..32].to_string();
+
+    let covers = app_data_dir.join(COVERS_REL);
     std::fs::create_dir_all(&covers).map_err(|e| e.to_string())?;
-    let ext = Path::new(image_path)
-        .extension()
-        .map(|e| e.to_string_lossy().to_ascii_lowercase())
-        .unwrap_or_else(|| "img".into());
-    let dest = covers.join(format!("{id}-custom.{ext}"));
-    std::fs::copy(image_path, &dest).map_err(|e| format!("Couldn't copy cover: {e}"))?;
-    set_override(conn, id, "cover", &dest.to_string_lossy()).map_err(|e| e.to_string())?;
+    let name = format!("{id}-custom-{hash}.{ext}");
+    std::fs::write(covers.join(&name), &bytes).map_err(|e| format!("Couldn't save that cover: {e}"))?;
+
+    Ok(StagedCover {
+        rel: format!("{COVERS_REL}/{name}"),
+        verified: decoded.is_some(),
+        format: decoded.map(|f| format!("{f:?}")),
+    })
+}
+
+/// Adopt a staged cover. The extracted cover file is untouched, so revert still restores it.
+pub fn commit_cover(conn: &Connection, app_data_dir: &Path, id: &str, rel: &str) -> Result<Option<BookRow>, String> {
+    let covers = app_data_dir.join(COVERS_REL);
+    let dest = app_data_dir.join(rel);
+    if !dest.is_file() {
+        return Err("That cover is no longer there.".into());
+    }
+    set_override(conn, id, "cover", rel).map_err(|e| e.to_string())?;
+    // Only AFTER the new cover is recorded, and never the file just written.
+    sweep_custom_covers(&covers, id, Some(dest.as_path()));
     get_book(conn, id).map_err(|e| e.to_string())
+}
+
+/// Abandon a staged cover the renderer refused. Nothing was adopted, so nothing else needs undoing.
+pub fn discard_cover(app_data_dir: &Path, rel: &str) -> Result<(), String> {
+    let p = app_data_dir.join(rel);
+    if p.starts_with(app_data_dir.join(COVERS_REL)) {
+        let _ = std::fs::remove_file(p);
+    }
+    Ok(())
 }
 
 /// RAWY-85: persist a page-1 cover for a PDF from raw PNG bytes (the reader extracts it via the
@@ -325,11 +565,16 @@ pub fn set_cover_bytes(conn: &Connection, app_data_dir: &Path, id: &str, data: &
 }
 
 /// Revert to the extracted/auto cover: delete the custom file + the 'cover' override.
-pub fn revert_cover(conn: &Connection, id: &str) -> Result<Option<BookRow>, String> {
-    if let Some(path) = get_override(conn, id, "cover").map_err(|e| e.to_string())? {
-        let _ = std::fs::remove_file(&path); // best-effort; ignore if already gone
+pub fn revert_cover(conn: &Connection, app_data_dir: &Path, id: &str) -> Result<Option<BookRow>, String> {
+    // The stored value may be relative (written by this version) or absolute (written by an earlier
+    // one), so it is resolved rather than used raw — otherwise revert would silently leave the file.
+    if let Some(stored) = get_override(conn, id, "cover").map_err(|e| e.to_string())? {
+        let _ = std::fs::remove_file(resolve_cover(app_data_dir, &stored)); // best-effort
     }
     clear_override(conn, id, "cover").map_err(|e| e.to_string())?;
+    // Anything else this book left behind goes too, so reverting is a clean slate rather than a
+    // partial one.
+    sweep_custom_covers(&app_data_dir.join(COVERS_REL), id, None);
     get_book(conn, id).map_err(|e| e.to_string())
 }
 
@@ -382,9 +627,14 @@ pub fn delete_book(conn: &Connection, app_data_dir: &Path, id: &str) -> Result<b
     if let Some(c) = cover_path {
         let _ = std::fs::remove_file(&c);
     }
+    // Resolved, because the stored reference is relative on rows written by this version and
+    // absolute on older ones — removing it raw would leave the file behind for every new row.
     if let Some(c) = custom_cover {
-        let _ = std::fs::remove_file(&c);
+        let _ = std::fs::remove_file(resolve_cover(app_data_dir, &c));
     }
+    // And anything the book left behind under an earlier name, so deleting really does reach zero
+    // orphans (D31) rather than zero-orphans-for-the-currently-referenced-file.
+    sweep_custom_covers(&app_data_dir.join(COVERS_REL), id, None);
     let cards_dir = app_data_dir.join("photocards");
     for cid in card_ids {
         let _ = std::fs::remove_file(cards_dir.join(format!("{cid}.png")));

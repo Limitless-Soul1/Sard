@@ -3,6 +3,8 @@ import { ReadingSettings } from "./ReadingSettings";
 import type { SettingsSection } from "./ReaderChrome";
 import type { ReadingStyle } from "../../reader-engine/injectedCss";
 import type { ThemeId } from "../../theme";
+import { PDF_THEMES, type PdfZoom, type PdfThemeId } from "../../reader-engine/pdfView";
+import { PDF_TTS_ENABLED } from "../../lib/pdfText";
 
 interface Props {
   open: boolean;
@@ -24,8 +26,13 @@ interface Props {
   // real themes), and copy-selection. The reading-direction toggle (cosmetic on a fixed-layout PDF) and
   // the in-PDF find (unreliable for Arabic text layers + a cramped misfit) were removed.
   isPdf?: boolean;
-  pdfInvert?: boolean;
-  onPdfInvert?: () => void;
+  // RAWY-291: the two-state invert became a set of reading appearances, and the renderer's zoom (which
+  // re-renders through pdf.js, so it gains real resolution) is exposed here and on Ctrl+Wheel.
+  pdfThemeId?: PdfThemeId;
+  onPdfTheme?: (id: PdfThemeId) => void;
+  pdfZoom?: PdfZoom;
+  onPdfZoomStep?: (dir: 1 | -1) => void;
+  onPdfZoomMode?: (mode: "fit-width" | "fit-page") => void;
   onPdfCopy?: () => void;
 }
 
@@ -50,9 +57,11 @@ export function SettingsPanel({
   onReset,
   unified,
   isPdf,
-  pdfInvert,
-  onPdfInvert,
-  onPdfCopy,
+  pdfThemeId,
+  onPdfTheme,
+  pdfZoom,
+  onPdfZoomStep,
+  onPdfZoomMode,
 }: Props) {
   const { t } = useI18n();
   // RAWY-216: five CONCEPT tabs (was Text/Page/Theme, which mixed typography with colour and read-aloud).
@@ -81,22 +90,80 @@ export function SettingsPanel({
             <div className="sp-pdf-body">{t("pdf.readonly.body")}</div>
           </div>
 
-          {/* Appearance: an INVERT filter as an approximate night mode — NOT real themes. */}
+          {/* RAWY-291 · ZOOM. Placed first: it is the control a reader of a scanned book reaches for.
+              The percentage reads the mode when a fit is active, because "fit width" is the truth then
+              and a stale number beside it would not be. */}
+          <div className="rs-sec">
+            <div className="rs-sec-head">
+              <span className="rs-label">{t("pdf.zoom")}</span>
+              <span className="rs-value">
+                {pdfZoom === "fit-width" ? t("pdf.zoom.fitWidth")
+                  : pdfZoom === "fit-page" ? t("pdf.zoom.fitPage")
+                  : `${Math.round((pdfZoom ?? 1) * 100)}%`}
+              </span>
+            </div>
+            <div className="pdf-zoom-row">
+              <button className="pdf-zoom-btn" onClick={() => onPdfZoomStep?.(-1)} title={t("pdf.zoom.out")} aria-label={t("pdf.zoom.out")}>−</button>
+              <button className="pdf-zoom-btn" onClick={() => onPdfZoomStep?.(1)} title={t("pdf.zoom.in")} aria-label={t("pdf.zoom.in")}>+</button>
+              <button className={`pdf-zoom-fit${pdfZoom === "fit-width" ? " on" : ""}`} onClick={() => onPdfZoomMode?.("fit-width")}>
+                {t("pdf.zoom.fitWidth")}
+              </button>
+              <button className={`pdf-zoom-fit${pdfZoom === "fit-page" ? " on" : ""}`} onClick={() => onPdfZoomMode?.("fit-page")}>
+                {t("pdf.zoom.fitPage")}
+              </button>
+            </div>
+            <div className="rs-sec-hint">{t("pdf.zoom.hint")}</div>
+          </div>
+
+          {/* Appearance. A PDF page is a rendered image, so these are colour transforms over the page
+              rather than EPUB-style themes — see reader-engine/pdfView.ts. */}
           <div className="rs-sec">
             <div className="rs-sec-head"><span className="rs-label">{t("pdf.appearance")}</span></div>
-            <div className="rs-seg" role="group">
-              <button className={`rs-seg-item${!pdfInvert ? " on" : ""}`} onClick={() => pdfInvert && onPdfInvert?.()}>
-                {t("pdf.appearance.normal")}
-              </button>
-              <button className={`rs-seg-item${pdfInvert ? " on" : ""}`} onClick={() => !pdfInvert && onPdfInvert?.()}>
-                {t("pdf.appearance.inverted")}
-              </button>
+            {/* The preview is a MINIATURE PAGE, not a swatch: paper with text lines, carrying the same
+                filter the real page gets and sitting on the same desk colour. A flat swatch was the
+                problem before — eight light filters over white read as eight identical white boxes,
+                because a filter's effect is only visible on the ink-and-paper it transforms. */}
+            <div className="pdf-theme-list" role="group">
+              {PDF_THEMES.map((th) => (
+                <button
+                  key={th.id}
+                  className={`pdf-theme-card pdf-chip-${th.id}${(pdfThemeId ?? "normal") === th.id ? " on" : ""}`}
+                  onClick={() => onPdfTheme?.(th.id)}
+                  title={t(th.labelKey)}
+                  aria-label={t(th.labelKey)}
+                  aria-pressed={(pdfThemeId ?? "normal") === th.id}
+                >
+                  <span className="ptp-frame" aria-hidden="true">
+                    <span className="ptp-page">
+                      <span className="ptp-head" />
+                      <span className="ptp-line" />
+                      <span className="ptp-line" />
+                      <span className="ptp-line short" />
+                      <span className="ptp-line" />
+                    </span>
+                  </span>
+                  <span className="pdf-chip-name">{t(th.labelKey)}</span>
+                </button>
+              ))}
             </div>
             <div className="rs-sec-hint">{t("pdf.appearance.hint")}</div>
           </div>
 
-          {/* Copy the current text selection (where the PDF's text layer allows). */}
-          <button className="sp-pdf-copy" onClick={() => onPdfCopy?.()}>{t("pdf.copy")}</button>
+          {/* RAWY-292: read-aloud for PDFs is possible but document-dependent, so the panel says so
+              rather than letting a reader discover it. The wording is deliberately about the FILE,
+              because that is where the limitation lives.
+              (The copy-selection button was removed here: it depended on the same text layer that
+              measurement showed is absent or damaged in most of these documents.) */}
+          {/* TEMPORARY (2026-08-08): hidden while PDF read-aloud is disabled — see `PDF_TTS_ENABLED`
+              in lib/pdfText.ts. The note explains how well a given PDF can be READ ALOUD, so leaving
+              it visible would advertise a feature the reader has no way to reach. The block and its
+              two locale strings are kept, not deleted, so re-enabling restores it unchanged. */}
+          {PDF_TTS_ENABLED && (
+            <div className="sp-pdf-note sp-pdf-tts">
+              <div className="sp-pdf-title">{t("pdf.tts.title")}</div>
+              <div className="sp-pdf-body">{t("pdf.tts.body")}</div>
+            </div>
+          )}
         </div>
       </aside>
     );

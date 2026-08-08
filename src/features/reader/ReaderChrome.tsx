@@ -1,8 +1,10 @@
 import { useRef, useState } from "react";
 
 import { useI18n } from "../../i18n";
+import { displayTitle } from "../../lib/bookMeta"; // WP-3: one rule for a missing title
 import { localeNum } from "../../lib/format";
 import { releaseButtonFocusAfterPointerClick } from "../../lib/tts";
+import type { PositionReadout } from "../../reader-engine/position"; // WP-4F
 
 // RAWY-216: the settings drawer is grouped by CONCEPT, not by which tab got built first. Five tabs;
 // the toolbar's three shortcut buttons (Aa / theme / layout) still land on the three most-used ones,
@@ -11,6 +13,8 @@ export type SettingsSection = "typography" | "layout" | "colour" | "readaloud" |
 
 interface Props {
   visible: boolean;
+  /** WP-4F: the resolved position readout, or null when the book reports no usable position. */
+  position: PositionReadout | null;
   bookTitle: string | null;
   chapter: string;
   fraction: number;
@@ -37,6 +41,9 @@ interface Props {
   basketOpen: boolean;
   onBasket: () => void;
   isPdf?: boolean; // RAWY-85: a PDF is read-only — hide the EPUB-only controls
+  // RAWY-293: read-aloud IS offered for a PDF, but only when the open document actually yields
+  // speakable text. Gated on real extraction, never on the format alone.
+  pdfCanListen?: boolean;
   // RAWY-87 (#1): a PDF has no chapters, so the bottom shows a page position (page / total) and the
   // progress bar is scrubbable to jump anywhere. EPUB is untouched (these are only wired for a PDF).
   pdfPageCount?: number;
@@ -59,6 +66,7 @@ const BasketIco = () => (
 // Text/Theme/Layout open the settings slide-over at the matching section.
 export function ReaderChrome({
   visible,
+  position,
   bookTitle,
   chapter,
   fraction,
@@ -82,6 +90,7 @@ export function ReaderChrome({
   basketOpen,
   onBasket,
   isPdf,
+  pdfCanListen,
   pdfPageCount,
   onScrub,
 }: Props) {
@@ -140,7 +149,7 @@ export function ReaderChrome({
         <div className="rc-nav">
           <button className="rc-back" onClick={onBack} title={t("reader.back")}>‹</button>
           <div className="rc-title-block">
-            <span className="rc-book" dir="auto">{bookTitle || t("reader.untitledBook")}</span>
+            <span className="rc-book" dir="auto">{displayTitle({ title: bookTitle }, t)}</span>
             <span className="rc-chapter" dir="auto">{chapter}</span>
           </div>
         </div>
@@ -164,8 +173,9 @@ export function ReaderChrome({
               <span className="rc-btn-label">{t("search.title")}</span>
             </button>
           )}
-          {/* RAWY-105: Listen (read-aloud) — EPUB-only (Arabic PDF text is unreliable, RAWY-86). */}
-          {!isPdf && (
+          {/* RAWY-105 / RAWY-293: Listen. For a PDF this appears once the text layer proves usable —
+              a scan yields nothing to speak, so offering the control there would be a dead button. */}
+          {(!isPdf || pdfCanListen) && (
             <button className={`rc-btn${ttsActive ? " on" : ""}`} onClick={onListen} title={t("tts.listen")}>
               <span className="rc-btn-ico">
                 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2" /></svg>
@@ -245,6 +255,16 @@ export function ReaderChrome({
               ? t("pdf.pageOf", { n: localeNum(pdfPage, lang), total: localeNum(pdfPageCount, lang) })
               : chapter}
           </span>
+          {/* RESILIENCE-1 / WP-4F: the position readout the reader asked for. A PDF already shows a
+              real page count above, so this is the reflowable case only. Absent (not zero, not a
+              guess) when the book gives foliate nothing to report — see reader-engine/position.ts. */}
+          {!isPdf && position && (
+            <span className="rc-pos" dir="auto">
+              {position.total
+                ? t(position.labelKey, { n: position.current, t: position.total })
+                : t(position.labelKey, { n: position.current })}
+            </span>
+          )}
           <span>{localeNum(pct, lang)}%</span>
         </div>
         <div

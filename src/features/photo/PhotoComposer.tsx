@@ -741,8 +741,8 @@ export function PhotoComposer({
                     className={`pc-swatch${themeId === id ? " on" : ""}`}
                     style={{ background: THEMES[id].colors.paperBg, color: THEMES[id].colors.text }}
                     onClick={() => setThemeId(id)}
-                    title={THEMES[id].name}
-                    aria-label={THEMES[id].name}
+                    title={t(`theme.${id}`)}
+                    aria-label={t(`theme.${id}`)}
                   >
                     Aa
                   </button>

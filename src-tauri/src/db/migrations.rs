@@ -78,6 +78,12 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "note_title",
         include_str!("migrations_sql/0014_note_title.sql"),
     ),
+    // RESILIENCE-1 / WP-2: five nullable columns for what the compatibility layer learned.
+    (
+        15,
+        "book_compat",
+        include_str!("migrations_sql/0015_book_compat.sql"),
+    ),
 ];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.
@@ -120,6 +126,10 @@ pub fn run(conn: &Connection, app_data_dir: Option<&Path>) -> rusqlite::Result<(
     // (so the NEXT migration — SQL or code — must be >= 9). Skipped when `app_data_dir` is None.
     if let Some(dir) = app_data_dir {
         run_arabic_dir_backfill(conn, dir);
+        // RESILIENCE-1 / WP-2: migration 16 — the compatibility backfill. Same shape and the same
+        // guarantees as migration 8 above: wrapped so it can never prevent launch, marker written
+        // only on success, and idempotent by its own WHERE clause independently of that marker.
+        run_compat_backfill(conn, dir);
     }
     Ok(())
 }
@@ -161,6 +171,54 @@ fn run_arabic_dir_backfill(conn: &Connection, app_data_dir: &Path) {
         Ok(Err(e)) => eprintln!("[Sard] migration 8 (arabic_dir_backfill) deferred, will retry next launch: {e}"),
         Err(_) => eprintln!("[Sard] migration 8 (arabic_dir_backfill) panicked; skipped, app continues"),
     }
+}
+
+/// Migration 16 (RESILIENCE-1 / WP-2): fill the compatibility columns for books imported before
+/// WP-2 shipped, and correct placeholder metadata such as the literal title "Unknown".
+///
+/// Deliberately identical in shape to migration 8: never fails a launch, never repeats after
+/// success, and — because `backfill_compat` scopes its own query to `script_detected IS NULL` — a
+/// re-run after a failed marker write examines only what is still unexamined.
+fn run_compat_backfill(conn: &Connection, app_data_dir: &Path) {
+    match conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version = 16)",
+        [],
+        |r| r.get::<_, bool>(0),
+    ) {
+        Ok(true) => return, // already applied — no file scan on later launches
+        Ok(false) => {}
+        Err(e) => {
+            eprintln!("[Sard] migration 16 check failed, skipping this launch: {e}");
+            return;
+        }
+    }
+
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::books::backfill_compat(conn, app_data_dir)
+    }));
+    match outcome {
+        Ok(Ok((examined, retitled))) => match record_migration(conn, 16, "book_compat_backfill") {
+            Ok(()) => {
+                if examined > 0 {
+                    println!("[Sard] migration 16 (book_compat_backfill): examined {examined} book(s), corrected {retitled} placeholder title(s)");
+                }
+            }
+            Err(e) => eprintln!("[Sard] migration 16 applied ({examined} examined) but marker write failed, will re-scan: {e}"),
+        },
+        Ok(Err(e)) => eprintln!("[Sard] migration 16 (book_compat_backfill) deferred, will retry next launch: {e}"),
+        Err(_) => eprintln!("[Sard] migration 16 (book_compat_backfill) panicked; skipped, app continues"),
+    }
+}
+
+/// Record a code migration's marker. (Migration 8 predates this and keeps its own writer, so its
+/// shipped behaviour is untouched.)
+fn record_migration(conn: &Connection, version: i64, name: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO schema_migrations(version, name, applied_at) VALUES(?1, ?2, ?3)",
+        rusqlite::params![version, name, now_unix()],
+    )?;
+    conn.pragma_update(None, "user_version", version)?;
+    Ok(())
 }
 
 fn record_migration_8(conn: &Connection) -> rusqlite::Result<()> {

@@ -14,6 +14,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 
+import { type BookScript, voiceCompatibility, isImplausiblyShortAudio } from "./voiceCompat"; // WP-5
+// DIAGNOSTIC BUILD ONLY. A release build aliases this specifier to src/lib/diagOff.ts, so these two
+// calls compile to no-ops and the instrumentation leaves the bundle entirely. They used to write to
+// `globalThis.__sardDiag*` inline, which the bundler cannot recognise as diagnostic — that is how
+// instrumentation kept reaching release bundles that were meant to have none.
+import { diagNote, diagPublishAudio } from "./diag";
 import { settingsGet, settingsSet, ttsDownloadVoice, ttsEdgeVoices, ttsStop, ttsVoicePresent } from "./ipc";
 import { LatencySeries, newSeries, recordSeries, resetSeries, seriesSummary, SynthScheduler } from "./ttsScheduler";
 
@@ -35,7 +41,23 @@ import { LatencySeries, newSeries, recordSeries, resetSeries, seriesSummary, Syn
  * NOT an engine change: `mediaEl.playbackRate` is a float and time-stretches at 1.10 exactly as it
  * does at 1.25 (RAWY-264). Nothing in scheduling, buffering, retry or the Edge pipeline reads these.
  */
-export const TTS_SPEEDS = [0.75, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0] as const;
+/**
+ * RAWY-296 (owner, 2026-08-08): the list is now chosen from a MENU rather than cycled, so it can carry
+ * fine steps without a long tap-cycle — the reason the set was kept to six stops before.
+ *
+ * ⚠ **0.75 IS REMOVED — the only sub-1x speed.** Two consequences, both deliberate:
+ *   1. A reader who had set 0.75 does not keep it. On restore, `saved >= TTS_MIN_SPEED` is now false
+ *      for 0.75, so it falls through to the default rather than being snapped — a one-time reset of
+ *      that preference. RAWY-281's "lossless" property therefore no longer holds for 0.75; it still
+ *      holds for every other previously storable value (1.00 / 1.10 / 1.25 / 1.50 / 1.75 / 2.00 are
+ *      all still members and map to themselves).
+ *   2. `TTS_MIN_SPEED` becomes 1.0, which tightens the playback watchdog's bound
+ *      (`durationSec / TTS_MIN_SPEED + 2`). That stays CORRECT rather than becoming risky: the bound
+ *      means "slowest-case play time", and the slowest selectable case really is 1.0 now. It cannot
+ *      fire early, because no slower rate is reachable.
+ * The maximum stays 2.0 — nothing above it.
+ */
+export const TTS_SPEEDS = [1.0, 1.1, 1.15, 1.2, 1.25, 1.3, 1.35, 1.4, 1.5, 1.75, 2.0] as const;
 /** Derived so they can never drift from the list. Both are consumed elsewhere — `TTS_MIN_SPEED`
  *  also bounds the decode-context lifetime (`durationSec / TTS_MIN_SPEED`), which is why it stays. */
 export const TTS_MIN_SPEED = TTS_SPEEDS[0];
@@ -185,16 +207,30 @@ async function resolveVoicePref(lang: TtsLang): Promise<TtsVoiceRef> {
 // audio isn't ready yet (an underrun) or the chapter-start/seek "keep-one-ahead" lead is still synthesizing.
 // It is transient (it resolves to "playing" the moment the audio is ready, or escalates to "edge-error" on a
 // timeout), so it is never a silent gap. Distinct from "preparing" so skipping still works during a buffer.
-type Status = "idle" | "preparing" | "downloading" | "playing" | "paused" | "error" | "chapter-end" | "edge-error" | "buffering";
+// RESILIENCE-1 / WP-5: "voice-mismatch" is TERMINAL and never retried — the pre-flight refused before
+// any dispatch, or the empty-audio net (WP-5B) proved the voice cannot render this script. It is
+// deliberately NOT "edge-error": that state offers a retry, and retrying this can only fail again.
+type Status = "idle" | "preparing" | "downloading" | "playing" | "paused" | "error" | "chapter-end" | "edge-error" | "buffering" | "voice-mismatch";
 
 // RAWY-231: `deferPrefetch` (RAWY-188) is REMOVED — it had no callers (the RAWY-227 resume-prompt removal
 // left it dead), and the scheduler now prioritizes the current+lead sentence over look-ahead by construction,
 // so the old "start only the first sentence" hack is obsolete.
-interface StartOpts { sentences: string[]; lang: TtsLang; startIndex?: number; chapterLabel: string }
+interface StartOpts { sentences: string[]; lang: TtsLang; startIndex?: number; chapterLabel: string;
+  /** WP-5A: the script SNIFFED from the book (never its declared language). null = do not gate. */
+  bookScript?: BookScript }
+
+/** WP-5C: the settings prefix recording "I chose this voice anyway", for ONE voice id. Per-voice, so
+ *  an override can never silently generalise to a different incompatible voice. */
+export const VOICE_OK_PREFIX = "tts_voice_ok:";
+
+/** WP-5: which voice the pre-flight refused, so the dialog can name it and offer the alternative. */
+export interface VoiceMismatch { voiceId: string; engine: TtsEngineKind; bookScript: BookScript }
 
 interface TtsState {
   active: boolean; // player pill visible
   status: Status;
+  /** WP-5: set together with status "voice-mismatch"; null in every other state. */
+  mismatch: VoiceMismatch | null;
   // RAWY-190: at "chapter-end" the pill/kashida offer a "next chapter" continue control. If the user
   // instead navigates the view off the finished chapter, that offer is stale — this hides it WITHOUT
   // stopping read-aloud, so the player (bead/transport) stays and a later Play reads the CURRENT chapter.
@@ -561,8 +597,28 @@ async function rawSynth(engine: TtsEngineKind, id: string, text: string): Promis
 // than slow: a refused connect returns in milliseconds, so this retry plus Rust's own internal one burned
 // ~4 attempts inside ~50–200 ms against the same bad instant. Retry ownership now belongs solely to the
 // ladder in `synthDispatch`.
+/**
+ * RESILIENCE-1 / WP-5B — THE SAFETY NET, matched to what Edge ACTUALLY does.
+ *
+ * The plan specified this as a wire-error class. MEASUREMENT M1 proved there is no wire error: a
+ * mismatched pair returns HTTP **success** carrying a 6-byte MP3, against 28,676–41,356 bytes for
+ * every working pair. So the only available signal is a success that contains no speech, and a class
+ * matched on an error that never arrives would have been dead code dressed as protection.
+ *
+ * This is the net for whatever the WP-5A pre-flight does not catch — a book whose sniffed script is
+ * absent, or a voice the rule believes is fine that this endpoint disagrees about. It throws a marker
+ * error that `isPermanentFailure` recognises, so it leaves the retry ladder completely untouched
+ * while never entering it: retrying a voice that cannot render this script can only fail again.
+ */
+export const VOICE_MISMATCH_MARKER = "voice-language-mismatch";
+
 async function synthInvoke(i: number): Promise<ArrayBuffer> {
-  return await rawSynth(curEngine, curVoice, sentences[i]);
+  const text = sentences[i];
+  const buf = await rawSynth(curEngine, curVoice, text);
+  if (isImplausiblyShortAudio(text, buf?.byteLength ?? 0)) {
+    throw new Error(`${VOICE_MISMATCH_MARKER}: ${curVoice} returned ${buf?.byteLength ?? 0} bytes for ${text.length} chars`);
+  }
+  return buf;
 }
 
 // RAWY-257 2B (C3/D68): the approved backoff ladder — one initial attempt, then a retry after each delay.
@@ -579,6 +635,10 @@ export const TTS_MAX_RETRIES = RETRY_BACKOFF_MS.length;
 const isPermanentFailure = (e: unknown): boolean => {
   const s = String(e);
   if (s.includes("unknown edge voice")) return true;
+  // WP-5B: a voice that cannot render this script will not learn to on a later attempt. Sits here,
+  // beside the existing permanent class, rather than anywhere inside the ladder — WP-5D's rule is
+  // that the ladder, its constants and every other classifier stay untouched.
+  if (s.includes(VOICE_MISMATCH_MARKER)) return true;
   // RAWY-257 (C1 — regression fix): 429 "Too Many Requests" is a RATE LIMIT, not a rejection. It is the one
   // 4xx that CAN succeed on a later attempt, and a spaced retry is the canonical response to it — so the
   // blanket 4xx rule was swallowing exactly the failure the D68 ladder exists to absorb. MEASURED: a
@@ -903,6 +963,9 @@ export function ttsStats() {
 
 if (typeof window !== "undefined") {
   (window as unknown as { __sardTtsStats?: () => unknown }).__sardTtsStats = ttsStats;
+  // WP-5: a dev/debug surface, same convention as __sardTtsStats — lets the M1 harness verify the
+  // SHIPPING compatibility rule rather than a copy of it. No UI, no behaviour.
+  (window as unknown as { __sardVoiceCompat?: unknown }).__sardVoiceCompat = { voiceCompatibility, isImplausiblyShortAudio };
   // RAWY-257 (Phase 1, item 4): arm the fault seam — DEV ONLY, and only ever from a console.
   //   __sardTtsFault("fail-fast")            → next synth attempt fails instantly (the C3 case)
   //   __sardTtsFault("fail-fast", { times: 6 }) → six attempts fail (3 ladder rounds × first+retry)
@@ -920,6 +983,13 @@ if (typeof window !== "undefined") {
 
 const audioCtx = (): AudioContext => {
   if (!ctx || ctx.state === "closed") ctx = new AudioContext();
+  // DIAGNOSTIC BUILD: publish the context so the collector can watch `state` and `currentTime`. The
+  // karaoke clock is derived from currentTime, which does NOT advance while a context is suspended.
+  try {
+    diagPublishAudio(ctx);
+  } catch {
+    /* ignore */
+  }
   return ctx;
 };
 
@@ -994,6 +1064,22 @@ function parseFramed(raw: ArrayBuffer): { words: TtsWord[]; audio: ArrayBuffer }
   const dv = new DataView(raw);
   const jlen = dv.getUint32(0); // big-endian, matches Rust `to_be_bytes`
   const words: TtsWord[] = jlen ? JSON.parse(new TextDecoder().decode(new Uint8Array(raw, 4, jlen))) : [];
+  // DIAGNOSTIC BUILD: `jlen` is the whole word-level story. jlen === 0 means Edge returned audio with
+  // NO timing metadata, so the karaoke loop takes its early return and the word cursor never moves —
+  // while the audio plays perfectly. Recorded at the source so it can never be confused with a
+  // rendering fault further down.
+  try {
+    diagNote("tts.synth", "MEASURED", "word-timing frame received", {
+        jsonLengthBytes: jlen,
+        wordCount: words.length,
+        audioBytes: raw.byteLength - 4 - jlen,
+        note: jlen === 0
+          ? "NO word timings returned — word karaoke will be skipped by its own early return"
+          : "timings present",
+      });
+  } catch {
+    /* never let instrumentation affect playback */
+  }
   return { words, audio: raw.slice(4 + jlen) };
 }
 
@@ -1242,6 +1328,15 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
     // or swap the voice — PAUSE and surface the explicit "Edge unavailable" choice (Retry / Switch to Piper),
     // visible in EVERY pill state (the player force-expands out of the kashida on this status). A non-Edge
     // failure (unspeakable "…"/"..." that yields empty audio, a Piper exit with no WAV) keeps RAWY-159 skip.
+    // RESILIENCE-1 / WP-5B: a voice that cannot render this book's script is TERMINAL and must not be
+    // offered as "Edge unavailable — Retry", which is a different problem with a useless action here.
+    // Checked BEFORE the edge-down branch because the marker would otherwise be absorbed by it.
+    if (String(e).includes(VOICE_MISMATCH_MARKER)) {
+      noteFailure(idx, e);
+      stopSource();
+      set({ status: "voice-mismatch", mismatch: { voiceId: curVoice, engine: curEngine, bookScript: lastStart?.bookScript ?? null } });
+      return;
+    }
     if (curEngine === "edge" && isEdgeDown(e)) {
       noteFailure(idx, e); // RAWY-247: record the failing unit's length + classification for the owner
       stopSource();
@@ -1379,6 +1474,7 @@ async function ensureAndPlay(engine: TtsEngineKind, voice: string, fromIndex: nu
 export const useTts = create<TtsState>((set, get) => ({
   active: false,
   status: "idle",
+  mismatch: null,
   endDismissed: false,
   engine: "piper",
   voice: "",
@@ -1414,7 +1510,7 @@ export const useTts = create<TtsState>((set, get) => ({
 
   start: async (opts) => {
     lastStart = opts;
-    const { sentences: sen, lang, startIndex = 0, chapterLabel } = opts;
+    const { sentences: sen, lang, startIndex = 0, chapterLabel, bookScript = null } = opts;
     audioCtx(); // create within the user gesture so autoplay policy unlocks it
     const myGen = ++gen;
     stopSource();
@@ -1462,6 +1558,26 @@ export const useTts = create<TtsState>((set, get) => ({
     curEngine = engine;
     curVoice = id;
     set({ engine, voice: id });
+
+    // RESILIENCE-1 / WP-5A — THE PRE-FLIGHT. Refuse BEFORE the first synthesis, never after.
+    //
+    // Measured (M1): a non-Arabic Edge voice fed Arabic returns HTTP success carrying 6 bytes — the
+    // reader hears silence and nothing in the pipeline sees a failure. Piper is worse: an English
+    // model fed Arabic returns REAL audio, phonemised under English rules, so there is no signal at
+    // all. Neither can be caught after the fact, which is why the check lives here.
+    //
+    // The voice id carries its own locale for BOTH engines ("ar-EG-SalmaNeural", "ar_JO-kareem-
+    // medium"), so no voice-list lookup is needed and the gate cannot be defeated by a cold cache.
+    if (bookScript && voiceCompatibility(bookScript, { id, lang: id }) === "incompatible") {
+      const allowed = await settingsGet(`${VOICE_OK_PREFIX}${id}`).catch(() => null);
+      if (myGen !== gen) return;
+      if (!allowed) {
+        // A terminal state, NOT an error the ladder can retry — nothing was dispatched, so there is
+        // nothing to retry. The reader chooses a voice or overrides; both are explicit presses.
+        set({ status: "voice-mismatch", mismatch: { voiceId: id, engine, bookScript } });
+        return;
+      }
+    }
     void ensureAndPlay(engine, id, Math.min(startIndex, units.length - 1), myGen);
   },
 
@@ -1653,3 +1769,11 @@ export const useTts = create<TtsState>((set, get) => ({
     set({ active: false, status: "idle", index: 0, total: 0, progress: 0, error: null, words: [], wordIndex: -1, underruns: 0, abandoned: 0, lastFailure: null, retryAttempt: 0 });
   },
 }));
+
+// WP-5C: a dev/debug surface for the STORE itself, same convention as `window.__sardTtsStats` —
+// it lets a harness drive a state (e.g. the voice-mismatch card) and measure how it RENDERS, without
+// needing the network or a matching book. Read-only from the app's point of view: no UI, no
+// behaviour, and nothing in the product reads it back.
+if (typeof window !== "undefined") {
+  (window as unknown as { __sardTtsStore?: unknown }).__sardTtsStore = useTts;
+}

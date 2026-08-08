@@ -5,7 +5,7 @@
 
 // The original 4 (RAWY-13) + 11 added in RAWY-29 (from docs/design/themes.json — the canonical
 // token export, since the design editing project ≠ the read-only MCP project). 15 total.
-// RAWY-145: + Moonlit Sky (gold-on-night, from the Claude Design handoff) = 16.
+// RAWY-145: + Moonlit Sky (gold-on-night, from the design handoff) = 16.
 export type ThemeId =
   | "ivory"
   | "sepia"

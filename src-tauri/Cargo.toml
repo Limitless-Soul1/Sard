@@ -1,6 +1,6 @@
 [package]
 name = "sard"
-version = "1.1.0"
+version = "1.2.0"
 description = "Sard (سَرْد) — a beautiful, Arabic-first ebook reader"
 authors = ["Sard"]
 edition = "2021"
@@ -13,6 +13,18 @@ edition = "2021"
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
 name = "sard_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+# THE ONLY SWITCH BETWEEN A RELEASE BUILD AND A DIAGNOSTIC ONE.
+#
+# `diag` is OFF by default, so every ordinary `cargo build`, every `tauri build`, and every CI run
+# produces a release binary that has never compiled a line of instrumentation. Turning it on is an
+# explicit act (`--features diag`, which only `pack-diag.mjs` performs), and it changes the app's
+# name, executable, identifier and version through `tauri.diag.conf.json` at the same time — the two
+# cannot be turned on separately, which is what makes a mislabelled build unbuildable rather than
+# merely discouraged. See scripts/build-identity.mjs for why this exists.
+[features]
+default = []
+diag = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -49,7 +61,12 @@ ureq = "3"
 # derivative, and EXIF-orientation resolution. `default-features = false` keeps the tree to exactly the
 # three formats the spec accepts — notably NO `gif`, so an animated GIF cannot even be decoded here
 # (it is refused by magic-byte sniff long before that). MIT/Apache-2.0, permissive, consistent with D3.
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+# `gif` is here for COVER VALIDATION only, not for backgrounds: a decoder is what lets Sard say
+# "this file is damaged" instead of storing something that will never render. It is pure Rust, so it
+# adds no external dependency and no cross-platform build cost. Formats this cannot decode are NOT
+# rejected — they fall through to the renderer, which is the only validator whose answer means
+# "this will display" (see library::stage_cover).
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "gif"] }
 # TTS engine #2 (RAWY-111): the FREE, keyless Edge "Read Aloud" neural voices (edge-tts protocol) —
 # the Arabic-quality path. Blocking client (ureq + tungstenite + rustls), MIT, whole tree permissive.
 msedge-tts = "0.4"

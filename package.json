@@ -1,14 +1,42 @@
 {
   "name": "sard",
   "private": true,
-  "version": "1.1.0",
+  "version": "1.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "build:test": "node scripts/build-test.mjs"
+    "build:test": "node scripts/build-test.mjs",
+    "test": "tsc -p tsconfig.test.json && vitest run",
+    "test:watch": "vitest",
+    "fixtures:build": "node tests/fixtures/generate.mjs",
+    "corpus:verify": "node tests/corpus/verify.mjs",
+    "corpus:build-manifest": "node tests/corpus/build-manifest.mjs",
+    "harness:csp": "node tests/harness/csp.mjs",
+    "harness:fingerprint": "node tests/harness/byte-identity.mjs compare --tag=resilience-1-final --flow=scrolled",
+    "typecheck:tests": "tsc -p tsconfig.test.json",
+    "harness:tts": "node tests/harness/tts-track.mjs",
+    "harness:interaction": "node tests/harness/interaction.mjs --gate",
+    "harness:lifecycle": "node tests/harness/lifecycle.mjs",
+    "build:release": "npx tauri build && node scripts/verify-artifact.mjs --kind=release --exe=src-tauri/target/release/Sard.exe",
+    "verify:release": "node scripts/verify-artifact.mjs --kind=release --exe=src-tauri/target/release/Sard.exe",
+    "verify:diag": "node scripts/verify-artifact.mjs --kind=diag --exe=src-tauri/target/release/sard-diag.exe",
+    "harness:ro": "node tests/harness/ro-storm.mjs --label=check --cycles=6",
+    "harness:ro-resize": "node tests/harness/ro-resize.mjs",
+    "harness:autopsy": "node tests/harness/autopsy-context.mjs",
+    "harness:ledger": "node tests/harness/ledger-freshness.mjs",
+    "harness:ppc1": "node tests/harness/ppc1-inline-css.mjs",
+    "harness:fingerprint:paged": "node tests/harness/byte-identity.mjs compare --tag=paged-1 --flow=paged",
+    "harness:ppc3": "node tests/harness/ppc3-shawqiyyat.mjs",
+    "harness:fingerprint:all": "npm run harness:fingerprint && npm run harness:fingerprint:paged",
+    "harness:panel-ltr": "node tests/harness/rtl-panel.mjs",
+    "pack:diag-zip": "node scripts/pack-diag-zip.mjs",
+    "pack:beta": "node scripts/pack-beta-zip.mjs",
+    "verify:beta": "node scripts/verify-artifact.mjs --kind=beta --exe=src-tauri/target/release/sard.exe",
+    "verify:main-ready": "node scripts/check-production-tree.mjs",
+    "release:to-main": "node scripts/release-to-main.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
@@ -23,10 +51,12 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@types/node": "^26.1.2",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4"
+    "vite": "^7.0.4",
+    "vitest": "^3.2.7"
   }
 }

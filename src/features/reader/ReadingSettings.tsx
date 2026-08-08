@@ -18,6 +18,9 @@ import {
   PAGE_WIDTH_MIN,
   type Align,
   type ArabicFont,
+  ZOOM_MAX,
+  ZOOM_MIN,
+  ZOOM_STEP,
   type DiacriticsMode,
   type FlowMode,
   type LatinFont,
@@ -737,9 +740,9 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
       <Section label={t("type.size")} value={localeDigits(`${Math.round(style.zoom * 100)}%`, lang)}>
         <Slider
           value={style.zoom}
-          min={0.8}
-          max={2.5}
-          step={0.05}
+          min={ZOOM_MIN}
+          max={ZOOM_MAX}
+          step={ZOOM_STEP}
           onInput={(v) => update({ zoom: r2(v) })}
           lead={<span style={{ fontSize: 13 }}>A</span>}
           trail={<span style={{ fontSize: 21 }}>A</span>}
@@ -863,7 +866,7 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
         {THEME_ORDER.map((id) => (
           <button key={id} className="rs-swatch-cell" onClick={() => onPickTheme(id)}>
             <span className={`rs-swatch${bookThemeId === id ? " on" : ""}`} style={{ background: THEMES[id].colors.paperBg }} />
-            <span className="rs-swatch-name">{THEMES[id].name}</span>
+            <span className="rs-swatch-name">{t(`theme.${id}`)}</span>
           </button>
         ))}
       </div>
@@ -873,7 +876,7 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
       {/* ---- TEXT COLOUR (RAWY-40, Band I) — per-book ink within the active theme ---- */}
       <div className="rs-sec-head">
         <span className="rs-label">{t("color.text")}</span>
-        <span className="rs-value rs-na">{t("color.within", { theme: theme.name })}</span>
+        <span className="rs-value rs-na">{t("color.within", { theme: t(`theme.${theme.id}`) })}</span>
       </div>
       <div className="rs-inks">
         {/* Default = follow the theme ink (textColor null) */}
@@ -906,7 +909,7 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
       </div>
       <div className={`rs-contrast${readable ? "" : " warn"}`}>
         <span aria-hidden>{readable ? "✓" : "⚠"}</span>
-        <span>{readable ? t("color.contrastOk") : t("color.contrastWarn", { theme: theme.name })}</span>
+        <span>{readable ? t("color.contrastOk") : t("color.contrastWarn", { theme: t(`theme.${theme.id}`) })}</span>
       </div>
 
       {/* ---- PAGE COLOUR (RAWY-201) — the reading surface, per-book; null = the theme's own paper ---- */}

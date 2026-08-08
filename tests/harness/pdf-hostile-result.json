@@ -1,0 +1,244 @@
+{
+ "malformed": [
+  {
+   "name": "truncated.pdf",
+   "why": "valid header, cut off mid-body — xref points past EOF",
+   "ms": 54,
+   "result": {
+    "ok": true,
+    "r": [
+     {
+      "id": "40b59868fef03968101fdb9830dd800821065ab828cf831760c4fa5b2283db61",
+      "title": "truncated",
+      "status": "imported",
+      "message": null
+     }
+    ]
+   },
+   "appAlive": true
+  },
+  {
+   "name": "no-trailer.pdf",
+   "why": "body intact, trailer and startxref removed",
+   "ms": 70,
+   "result": {
+    "ok": true,
+    "r": [
+     {
+      "id": "63f8aabba39254a33557522fa166f8b443aba8bbc5bb4ad60758446fec09d4ec",
+      "title": "no-trailer",
+      "status": "imported",
+      "message": null
+     }
+    ]
+   },
+   "appAlive": true
+  },
+  {
+   "name": "garbage.pdf",
+   "why": "PDF header, random bytes after it",
+   "ms": 27,
+   "result": {
+    "ok": true,
+    "r": [
+     {
+      "id": "968d5a84a69e5e36b5976adccfa7c32ad664d91cdd066b568f92719aa49b7110",
+      "title": "garbage",
+      "status": "imported",
+      "message": null
+     }
+    ]
+   },
+   "appAlive": true
+  },
+  {
+   "name": "not-a-pdf.pdf",
+   "why": "text file wearing a .pdf extension",
+   "ms": 20,
+   "result": {
+    "ok": true,
+    "r": [
+     {
+      "id": "",
+      "title": "not-a-pdf",
+      "status": "unsupported",
+      "message": "Not an EPUB or PDF file"
+     }
+    ]
+   },
+   "appAlive": true
+  },
+  {
+   "name": "empty.pdf",
+   "why": "zero bytes",
+   "ms": 3,
+   "result": {
+    "ok": true,
+    "r": [
+     {
+      "id": "",
+      "title": "empty",
+      "status": "unsupported",
+      "message": "Not an EPUB or PDF file"
+     }
+    ]
+   },
+   "appAlive": true
+  },
+  {
+   "name": "header-only.pdf",
+   "why": "header and nothing else",
+   "ms": 15,
+   "result": {
+    "ok": true,
+    "r": [
+     {
+      "id": "0716f9264c9fe19f5d7455276107f3ddcc1d3497f63d60689a73558ae8a1bf5e",
+      "title": "header-only",
+      "status": "imported",
+      "message": null
+     }
+    ]
+   },
+   "appAlive": true
+  }
+ ],
+ "blanks": {
+  "sampled": 26,
+  "blank": 6,
+  "stayedBlankAfterWait": 6,
+  "series": [
+   {
+    "page": 1,
+    "ink": 0.3402,
+    "afterWait": null
+   },
+   {
+    "page": 2,
+    "ink": 0,
+    "afterWait": 0
+   },
+   {
+    "page": 3,
+    "ink": 0.0081,
+    "afterWait": null
+   },
+   {
+    "page": 4,
+    "ink": 0.05,
+    "afterWait": null
+   },
+   {
+    "page": 5,
+    "ink": 0.0173,
+    "afterWait": null
+   },
+   {
+    "page": 6,
+    "ink": 0,
+    "afterWait": 0
+   },
+   {
+    "page": 7,
+    "ink": 0.0121,
+    "afterWait": null
+   },
+   {
+    "page": 8,
+    "ink": 0,
+    "afterWait": 0
+   },
+   {
+    "page": 9,
+    "ink": 0.047,
+    "afterWait": null
+   },
+   {
+    "page": 10,
+    "ink": 0,
+    "afterWait": 0
+   },
+   {
+    "page": 11,
+    "ink": 0.0617,
+    "afterWait": null
+   },
+   {
+    "page": 12,
+    "ink": 0.086,
+    "afterWait": null
+   },
+   {
+    "page": 13,
+    "ink": 0.0657,
+    "afterWait": null
+   },
+   {
+    "page": 14,
+    "ink": 0,
+    "afterWait": 0
+   },
+   {
+    "page": 15,
+    "ink": 0.0819,
+    "afterWait": null
+   },
+   {
+    "page": 16,
+    "ink": 0.1094,
+    "afterWait": null
+   },
+   {
+    "page": 17,
+    "ink": 0.0834,
+    "afterWait": null
+   },
+   {
+    "page": 18,
+    "ink": 0,
+    "afterWait": 0
+   },
+   {
+    "page": 19,
+    "ink": 0.0811,
+    "afterWait": null
+   },
+   {
+    "page": 20,
+    "ink": 0.1211,
+    "afterWait": null
+   },
+   {
+    "page": 21,
+    "ink": 0.1195,
+    "afterWait": null
+   },
+   {
+    "page": 22,
+    "ink": 0.0641,
+    "afterWait": null
+   },
+   {
+    "page": 23,
+    "ink": 0.0744,
+    "afterWait": null
+   },
+   {
+    "page": 24,
+    "ink": 0.0919,
+    "afterWait": null
+   },
+   {
+    "page": 25,
+    "ink": 0.096,
+    "afterWait": null
+   },
+   {
+    "page": 26,
+    "ink": 0.0879,
+    "afterWait": null
+   }
+  ]
+ },
+ "errorsAfterImports": []
+}

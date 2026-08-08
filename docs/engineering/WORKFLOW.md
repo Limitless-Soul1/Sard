@@ -1,8 +1,15 @@
 # Sard — development workflow
 
+> **Starting a new session?** Read `docs/engineering/PROJECT_HANDOFF.md` first. It is the
+> authoritative entry point: current state, what is proven and unproven, the open blocker, and the
+> exact next action. This document assumes you already know *what* is being worked on and covers only
+> *how the repository is operated*.
+
 **This document owns: branches, merge policy, build kinds, packaging and release.**
 `docs/engineering/HANDBOOK.md` owns how work is done — investigation, evidence, verification,
-harness design, decision boundaries and post-mortems. Nothing is stated in both.
+harness design, decision boundaries and post-mortems.
+`docs/engineering/PROJECT_HANDOFF.md` owns project state, subsystem status and open issues.
+Nothing is stated in more than one of the three.
 
 This is the permanent process for this repository. It exists because of a real incident, described
 at the end, and every rule here is a response to something that actually went wrong rather than a
@@ -475,3 +482,188 @@ The lesson this document owns is the one about identity:
 The incident also taught an evidence lesson — *an absence is only evidence once you have proved you
 can see* — which belongs to method rather than process and is recorded in
 **`docs/engineering/HANDBOOK.md` §3.1**, where the rest of the measurement rules live.
+
+---
+
+# Tooling inventory
+
+Every script, harness and utility used to develop and verify Sard. **Categories matter**, because two
+different things look alike and belong in opposite places:
+
+| Category | Meaning | Where it lives |
+|---|---|---|
+| **OFFICIAL** | Part of the build/verify/release workflow. Version-controlled on `develop`. | `scripts/`, `tests/` in the repo |
+| **EVIDENCE** | Generated output — proof of a measurement, not a tool. | `tests/harness/*-result.json` in-repo; narrative reports in the vault |
+| **THROWAWAY** | Produced one answer and has no ongoing role. | `M:\ProjectDocs\sard\Tools\` (outside the repo) |
+| **LOCAL** | Machine state that git cannot carry. | `.git/hooks/`, git config |
+
+⚠ The vault's `Tools/README.md` states plainly that nothing in it builds, runs, tests or packages
+Sard. **Do not move repo harnesses there.** They are OFFICIAL tooling and belong on `develop`.
+
+## Build and release scripts — `scripts/` (OFFICIAL, permanent)
+
+| Script | Purpose | Invoked by | Depended on by |
+|---|---|---|---|
+| `build-test.mjs` | Builds the release binary and copies it to `test-build\Sard.exe` **plus the Piper engine**. Every harness needs this first. | `npm run build:test` | All 54 harnesses |
+| `build-identity.mjs` | Build kinds as data (`release`/`beta`/`diag`), BUILD ID generation and extraction. | imported | verifier, packagers |
+| `verify-artifact.mjs` | **The release gate.** Canaries, forbidden/required markers, PE version resource, BUILD ID prefix, updater endpoint, web-bundle check. | `npm run verify:release` / `:beta` / `:diag` | packaging, CI |
+| `production-tree-rules.mjs` | The single definition of development-only paths. | imported | `check-production-tree.mjs`, `release-to-main.mjs` |
+| `check-production-tree.mjs` | Refuses a tree containing development-only files. | `npm run verify:main-ready` | pre-release |
+| `release-to-main.mjs` | Builds `main` as a **snapshot** of `develop` minus development-only paths. | `npm run release:to-main -- --commit` | the publish sequence |
+| `pack-beta-zip.mjs` | Beta installer → ZIP. Derives the artifact name from config; refuses one older than the verified binary. | `npm run pack:beta` | Beta distribution |
+| `pack-diag-zip.mjs` | Diagnostic package. | `npm run pack:diag-zip` | tester diagnostics |
+| `copy-release.mjs`, `kill-sard.mjs`, `pack-diag.mjs`, `pack-share.mjs` | Support utilities. | ad hoc | — |
+
+## Test infrastructure (OFFICIAL, permanent)
+
+- **`tests/unit/`** — Vitest. `npm test` runs `tsc -p tsconfig.test.json && vitest run`.
+  **376 tests / 26 files, all passing.** Includes `pdfText.test.ts` (21 tests covering Arabic
+  presentation forms, tatweel, watermark stripping and the document-quality verdict).
+- **`tests/harness/`** — **54 `.mjs` harnesses** driving the *real binary* over CDP.
+  - `cdp.mjs` — the client. Exposes `launchSard({exe, port, timeoutMs})` returning `{ send, evaluate,
+    close }`. `send` gives raw CDP (`Performance.getMetrics`, `HeapProfiler.collectGarbage`).
+  - `profile.mjs` — `snapshotDb()` / `restoreDb()`. **Mandatory on every exit path, including a
+    crash.** A harness that can lose the user's library is a defect regardless of what it measures.
+- **`tests/fixtures/`**, **`tests/corpus/`** — `npm run fixtures:build`, `corpus:verify`.
+
+### Harnesses built during the PDF/audit work (OFFICIAL, permanent — keep on `develop`)
+
+| Harness | Purpose | Evidence file |
+|---|---|---|
+| `library-audit.mjs` | Full-library structural audit: spine, TOC resolution, panel rows, order, blanks, images. | `library-audit-merged.json` (39 books) |
+| `ux-endurance.mjs` | Page-turn latency, scrolling, chapter transitions, annotations, open/close cycles, UI coherence. | `ux-endurance-result.json` |
+| `ux-leak-scroll.mjs` | **Leak test with forced GC at a fixed lifecycle point**, scroll validity, annotation CRUD. | `ux-leak-scroll-result.json` |
+| `pdf-stress.mjs` | Open latency, turn latency, hammer, jump-to-last, outlines, memory, per PDF. | `pdf-stress-result.json` |
+| `pdf-hostile.mjs` | Malformed-PDF import + blank-page discrimination. Creates/cleans its own fixtures. | `pdf-hostile-result.json` |
+| `pdf-corrupt-open.mjs` | What opening an accepted-but-damaged PDF does. | `pdf-corrupt-open-result.json` |
+| `pdf-text-layer.mjs` | Text-layer usability per document (the TTS feasibility measurement). | `pdf-text-layer-result.json` |
+| `pdf-tts.mjs` | Extraction quality through the real pipeline via `window.__sardPdfTts`. | `pdf-tts-result.json` |
+| `pdf-zoom-theme.mjs` | Zoom re-render proof + theme application + persistence. | `pdf-zoom-theme-result.json` |
+| `pdf-fixes.mjs` | The three reported failures, tested as reported. | `pdf-fixes-result.json` |
+| `pdf-acceptance.mjs` | **The PDF acceptance suite** — zoom scroll both directions, themes while zoomed, TTS state. | `pdf-acceptance-result.json` |
+| `pdf-tts-diagnosis.mjs` | Staged PDF read-aloud diagnosis with **EPUB as the control**: Edge capability, playback via `__sardTtsStats()`, extraction, highlighting structure. | `pdf-tts-diagnosis-result.json` |
+| `pdf-tts-diagnosis2.mjs` | Round 2 — sustained multi-unit playback, range→span resolution, page-change mark lifetime. | `pdf-tts-diagnosis2-result.json` |
+| `pdf-tts-diagnosis3.mjs` | Round 3 — zoom on `view.renderer` (the real call site), **proving the re-render happened** before judging span identity. | `pdf-tts-diagnosis3-result.json` |
+| `pdf-tts-diagnosis4.mjs` | Round 4 — **the text-layer accumulation harness.** Red-verified: fails on the current build. Gate for the pdf.js fix. | `pdf-tts-diagnosis4-result.json` |
+| `pdf-tts-diagnosis5.mjs` | **The render-race gate.** Repeated zoom cycles with varied settle times + a hostile burst + playback. `--cycles=N`. Must report `violations: 0`. | `pdf-tts-diagnosis5-result.json` |
+| `pdf-highlight-poc.mjs`, `poc2.mjs` | **Study harnesses** for the highlighting design — they use a *replica* of the unit derivation, cross-validated against the real pipeline. Superseded as gates by the one below; kept for the design record. | `pdf-highlight-poc{,2}-result.json` |
+| `pdf-highlight-acceptance.mjs` | **THE PDF SENTENCE-HIGHLIGHTING GATE (RAWY-295).** Drives the product's own code, no replica: index tracking, pause/resume, seek, zoom at a frozen index, all 8 themes with **no re-application**, page-change leak, stop, scan. Exits 3 on any violation. ⚠ **Fails BY DESIGN while PDF read-aloud is disabled** — it presses a hidden control. Do not "fix" it; it is the re-enablement gate. | `pdf-highlight-acceptance-result.json` |
+| `pdf-tts-disabled.mjs` | **The DISABLED-state gate.** Proves a reader can reach no PDF read-aloud surface (no control, no player, no marks, no note) **while** the implementation stays reachable (`units=5/withRange=5`, text layer intact) and EPUB read-aloud still plays. Checks a *text* PDF, never a scan — a scan cannot distinguish "disabled" from "no text". | `pdf-tts-disabled-result.json` |
+
+⚠ **PDF read-aloud is TEMPORARILY DISABLED** (owner, 2026-08-08) behind `PDF_TTS_ENABLED` in
+`src/lib/pdfText.ts`. The implementation is preserved, not removed. While it is off,
+`pdf-highlight-acceptance.mjs` and the playback stage of `pdf-tts-diagnosis5.mjs` fail by design;
+`pdf-tts-disabled.mjs` is the harness that must pass. See `PROJECT_HANDOFF.md` §8.
+
+Run: `node tests/harness/<name>.mjs`. Some accept `--limit=`, `--from=`, `--only=`.
+**Environment:** Windows; `test-build\Sard.exe` must be current; each harness uses its own CDP port
+(9900–9938 in use) so two must not run concurrently on the same port.
+
+### Debug surfaces in product code (permanent, no UI)
+`window.__sardTrackStats(lang)` and `window.__sardPdfTts(lang)` in `Reader.tsx` — they let a harness
+measure the **real** pipeline instead of a re-implementation that could drift.
+
+## Evidence and reports
+
+- **In-repo:** `tests/harness/*-result.json` — raw measurements, regenerated by re-running.
+- **In-repo narrative:** `LIBRARY_COMPATIBILITY_AUDIT.md`, `UX_AND_PDF_STRESS_AUDIT.md`,
+  `PDF_FEATURES_RAWY-291.md` (repo root; development-only, never published).
+- **Vault:** `M:\ProjectDocs\sard\Reports\`, `Evidence\`, `DB-Snapshots\`, `Corpus\`.
+
+**How to record verification evidence:** state the measurement, the instrument, and the label
+(PROVEN / DISPROVEN / UNVERIFIED). A number without its instrument is not evidence. If an instrument
+could lie, say how — the pitfalls are catalogued in `PROJECT_HANDOFF.md` §6.
+
+---
+
+# Git and GitHub — operating rules
+
+**Branches.** `develop` is the daily development branch and the only place work happens. `main` is the
+**published snapshot** — not a merge target, because `git merge` cannot permanently exclude paths and
+`.gitattributes merge=ours` silently fails for files that never existed on the target.
+
+**Remotes.** `private` = `Limitless-Soul1/Sard-develop` (PRIVATE, holds `develop` **and** `main`, the
+source of truth). `origin` = `Limitless-Soul1/Sard` (PUBLIC, `main` only, releases).
+**`develop` must never reach `origin`.**
+
+**Push restrictions (LOCAL, verified present on this machine):**
+- `remote.origin.push` = `refs/heads/main:refs/heads/main`
+- `.git/hooks/pre-push` refuses non-main to the public URL
+- `.git/hooks/commit-msg` strips assistant/vendor trailers and refuses messages naming one
+
+⚠ **Hooks and refspec are not version-controlled — re-create both on a fresh clone and verify them
+before the first commit of a session.**
+
+**Commit conventions.** Messages describe the change, never how it was produced or internal process.
+Housekeeping/cleanup commits are exactly `Repository maintenance`. **No `Co-Authored-By:` or
+"Generated with" trailers, ever** — hosting platforms parse them into the contributor list.
+
+**Never commit or push:** anything referencing development assistants or tooling; archives under
+`public/` (a 47 MB leftover once tripled every build); development-only paths onto `main`;
+credentials or signing keys.
+
+**Build/test/verify sequence before anything is considered done:**
+```
+npx tsc --noEmit -p tsconfig.json     # typecheck
+npm test                              # 376 unit tests
+npm run build:test                    # real binary
+node tests/harness/<relevant>.mjs     # runtime measurement of what changed
+```
+
+**Release sequence:**
+```
+npm run verify:main-ready
+npm run release:to-main -- --commit
+git push private main
+git push origin main
+git tag vX.Y.Z && git push origin vX.Y.Z   # CI builds, signs, generates latest.json
+```
+
+**Approval.** Verification may proceed freely. **Product behaviour, UI, UX and visual decisions
+require the owner's approval before implementation** — a filed observation is not an authorisation.
+
+**Continuing in a new conversation:** read `docs/engineering/PROJECT_HANDOFF.md` (state, blockers,
+next action) → this file (process) → `HANDBOOK.md` (method). Then `git status`, verify the hooks, and
+reproduce before changing anything.
+
+---
+
+# Where everything lives — READ BEFORE ANY ARCHITECTURAL WORK
+
+Sard's forward planning is deliberately kept **outside the source tree**. A session that starts from
+the repository alone will not see it and will re-decide settled questions.
+
+| # | What | Exact path |
+|---|---|---|
+| 1 | **Project source** | `M:\eRawy` |
+| 2 | **Documentation vault** | `M:\ProjectDocs\sard\` — start at `STATE.md` (~4 KB hot layer; ⚠ stale as of 2026-08-04, orient from `M:\eRawy\PROJECT_MASTER_SUMMARY.md`). **Never read `archive\PROJECT.md`** (1.6 MB) |
+| 3 | **Cross-platform plans** | `M:\Sard Desktop\` — 40 documents, ADR-based, entry `INDEX.md` |
+| 4 | **Mobile plans** | `M:\Sard Mobile\` — 44 documents, ADR-based, entry `INDEX.md` |
+
+**Canonical plan file per area**
+
+| Area | Canonical source |
+|---|---|
+| Cross-platform (Linux + macOS) | `M:\Sard Desktop\` — **supersedes** `M:\eRawy\DESKTOP_CROSSPLATFORM_PLAN.md` |
+| Linux | `M:\Sard Desktop\20-platform\01-linux.md` |
+| macOS | `M:\Sard Desktop\20-platform\02-macos.md` |
+| Android **and** iOS | `M:\Sard Mobile\30-mobile\` + `M:\Sard Mobile\40-decisions\` |
+| Mobile architecture | `M:\Sard Mobile\30-mobile\04-mobile-architecture.md`, `05-native-service-layer.md` |
+| TTS (desktop/cross-platform) | `M:\Sard Desktop\30-architecture\04-tts-strategy.md` |
+| TTS (mobile) | `M:\Sard Mobile\20-architecture\05-audio-and-tts-architecture.md` |
+| Portability split | `M:\Sard Desktop\10-current-state\02-subsystem-portability-inventory.md` |
+
+**Previous investigations and decisions** — `M:\Sard Desktop\40-decisions\` (8 ADRs),
+`M:\Sard Mobile\40-decisions\` (7 ADRs), `M:\ProjectDocs\sard\DECISIONS.md`, `LESSONS.md`,
+`HISTORY.md`, `ENGINEERING-CONTRACT.md`, and the in-repo audits
+(`LIBRARY_COMPATIBILITY_AUDIT.md`, `UX_AND_PDF_STRESS_AUDIT.md`, `PDF_FEATURES_RAWY-291.md`).
+
+> **A future session MUST read the relevant documents above before making any architectural decision
+> or starting implementation work on another platform.** The ADRs record decisions with their
+> reasoning; re-deciding them without new evidence is a defect, not initiative. Full index and the
+> per-platform status: `docs/engineering/CROSSPLATFORM_MOBILE_HANDOFF.md`.
+
+**Platform status (PROVEN from the repository):** Windows is the **only** implemented platform
+(v1.1.0; WebView2; CI runs `windows-latest` only). Linux, macOS, Android and iOS are **planned and
+documented, not built** — no Linux/macOS CI, no `src-tauri/gen/android`, no iOS project. The desktop
+cross-platform stage is active; the **mobile stage is paused**.

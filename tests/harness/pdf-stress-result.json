@@ -1,0 +1,93 @@
+[
+ {
+  "key": "مقدمة ابن خلدون",
+  "match": "مقدمة ابن خلدون",
+  "mb": 19.9,
+  "pages": 567,
+  "kind": "scanned, CCITT, per-page varying size",
+  "outline": true,
+  "fonts": 1,
+  "stages": {},
+  "firstPage": {
+   "img": true,
+   "surface": "img",
+   "nw": 443,
+   "nh": 650,
+   "cw": 443,
+   "ch": 650,
+   "complete": true,
+   "inkRatio": 0.1655
+  },
+  "openMs": 1016,
+  "pagesSeen": 567,
+  "turn": {
+   "n": 20,
+   "stuck": 0,
+   "blank": 0,
+   "p50": 114,
+   "p95": 143,
+   "max": 143
+  },
+  "zoom": {
+   "natural": 486,
+   "displayed": 486,
+   "magnification": 1,
+   "ctrlWheelChangedRaster": true,
+   "ctrlWheelTurnedPageInstead": true,
+   "zoomControlsInPdfPanel": 3,
+   "viewport": {
+    "win": [
+     1100,
+     720
+    ],
+    "dpr": 1,
+    "sheet": [
+     800,
+     720
+    ],
+    "host": [
+     800,
+     720
+    ]
+   },
+   "areaUsed": 0.608
+  },
+  "hammer": {
+   "from": 0.044092,
+   "to": 0.097002,
+   "ms": 6799,
+   "painted": true,
+   "ink": 0.1461
+  },
+  "jumpEnd": {
+   "ms": 265,
+   "ok": true,
+   "frac": 1,
+   "label": "567 / 567100%",
+   "ink": 0.0672
+  },
+  "panelRows": 5,
+  "metrics": {
+   "heapMB": 5.5,
+   "nodes": 272,
+   "listeners": 227,
+   "docs": 10
+  },
+  "errors": []
+ },
+ {
+  "summary": true,
+  "baseline": {
+   "heapMB": 2.9,
+   "nodes": 667,
+   "listeners": 366,
+   "docs": 11
+  },
+  "after": {
+   "heapMB": 4.6,
+   "nodes": 611,
+   "listeners": 326,
+   "docs": 6
+  }
+ }
+]

@@ -1,0 +1,155 @@
+{
+ "scroll": {
+  "mixed (Noor-Book) @ 400%": {
+   "extent": 1727,
+   "notches": 8,
+   "premature": 0,
+   "reachedBottom": true,
+   "revPremature": 0,
+   "reachedTop": true,
+   "turnsWhenExhausted": true
+  },
+  "mixed (Noor-Book) @ 600%": {
+   "extent": 2943,
+   "notches": 14,
+   "premature": 0,
+   "reachedBottom": true,
+   "revPremature": 0,
+   "reachedTop": true,
+   "turnsWhenExhausted": true
+  },
+  "scan (697) @ 400%": {
+   "extent": 1185,
+   "notches": 6,
+   "premature": 0,
+   "reachedBottom": true,
+   "revPremature": 0,
+   "reachedTop": true,
+   "turnsWhenExhausted": true
+  },
+  "scan (697) @ 600%": {
+   "extent": 2130,
+   "notches": 10,
+   "premature": 0,
+   "reachedBottom": true,
+   "revPremature": 0,
+   "reachedTop": true,
+   "turnsWhenExhausted": true
+  }
+ },
+ "themes": {
+  "normal": {
+   "box": [
+    1574,
+    2432
+   ],
+   "ar": 0.647,
+   "filter": "none",
+   "tint": "rgba(0, 0, 0, 0)",
+   "desk": "rgb(14, 14, 14)",
+   "extent": 1727,
+   "distinct": true
+  },
+  "sepia": {
+   "box": [
+    1574,
+    2432
+   ],
+   "ar": 0.647,
+   "filter": "contrast(0.96) brightness(1.04)",
+   "tint": "rgb(217, 185, 130)",
+   "desk": "rgb(14, 14, 14)",
+   "extent": 1727,
+   "distinct": true
+  },
+  "warm": {
+   "box": [
+    1574,
+    2432
+   ],
+   "ar": 0.647,
+   "filter": "contrast(0.97) brightness(1.05)",
+   "tint": "rgb(230, 205, 163)",
+   "desk": "rgb(14, 14, 14)",
+   "extent": 1727,
+   "distinct": true
+  },
+  "cream": {
+   "box": [
+    1574,
+    2432
+   ],
+   "ar": 0.647,
+   "filter": "contrast(0.96) brightness(1.06)",
+   "tint": "rgb(240, 226, 192)",
+   "desk": "rgb(14, 14, 14)",
+   "extent": 1727,
+   "distinct": true
+  },
+  "green": {
+   "box": [
+    1574,
+    2432
+   ],
+   "ar": 0.647,
+   "filter": "contrast(0.96) brightness(1.05)",
+   "tint": "rgb(191, 220, 192)",
+   "desk": "rgb(14, 14, 14)",
+   "extent": 1727,
+   "distinct": true
+  },
+  "grey": {
+   "box": [
+    1574,
+    2432
+   ],
+   "ar": 0.647,
+   "filter": "invert(0.9) hue-rotate(180deg) contrast(0.86) brightness(0.98)",
+   "tint": "rgba(0, 0, 0, 0)",
+   "desk": "rgb(14, 14, 14)",
+   "extent": 1727,
+   "distinct": true
+  },
+  "night": {
+   "box": [
+    1574,
+    2432
+   ],
+   "ar": 0.647,
+   "filter": "invert(1) hue-rotate(180deg) brightness(0.9) contrast(1.06)",
+   "tint": "rgba(0, 0, 0, 0)",
+   "desk": "rgb(14, 14, 14)",
+   "extent": 1727,
+   "distinct": true
+  },
+  "ink": {
+   "box": [
+    1574,
+    2432
+   ],
+   "ar": 0.647,
+   "filter": "grayscale(1) contrast(1.75) brightness(0.94)",
+   "tint": "rgba(0, 0, 0, 0)",
+   "desk": "rgb(14, 14, 14)",
+   "extent": 1727,
+   "distinct": true
+  }
+ },
+ "themeGeometryStable": true,
+ "surroundStable": true,
+ "themesDistinct": 8,
+ "scrollAfterTheme": {
+  "frac": 0.029411764705882353,
+  "top": 220,
+  "max": 1727,
+  "zoom": "4"
+ },
+ "tts": {
+  "units": 5,
+  "withRange": 5,
+  "buttonPresent": false,
+  "buttonOnScan": false,
+  "scanNotice": ""
+ },
+ "errors": []
+}

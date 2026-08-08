@@ -41,7 +41,23 @@ import { LatencySeries, newSeries, recordSeries, resetSeries, seriesSummary, Syn
  * NOT an engine change: `mediaEl.playbackRate` is a float and time-stretches at 1.10 exactly as it
  * does at 1.25 (RAWY-264). Nothing in scheduling, buffering, retry or the Edge pipeline reads these.
  */
-export const TTS_SPEEDS = [0.75, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0] as const;
+/**
+ * RAWY-296 (owner, 2026-08-08): the list is now chosen from a MENU rather than cycled, so it can carry
+ * fine steps without a long tap-cycle — the reason the set was kept to six stops before.
+ *
+ * ⚠ **0.75 IS REMOVED — the only sub-1x speed.** Two consequences, both deliberate:
+ *   1. A reader who had set 0.75 does not keep it. On restore, `saved >= TTS_MIN_SPEED` is now false
+ *      for 0.75, so it falls through to the default rather than being snapped — a one-time reset of
+ *      that preference. RAWY-281's "lossless" property therefore no longer holds for 0.75; it still
+ *      holds for every other previously storable value (1.00 / 1.10 / 1.25 / 1.50 / 1.75 / 2.00 are
+ *      all still members and map to themselves).
+ *   2. `TTS_MIN_SPEED` becomes 1.0, which tightens the playback watchdog's bound
+ *      (`durationSec / TTS_MIN_SPEED + 2`). That stays CORRECT rather than becoming risky: the bound
+ *      means "slowest-case play time", and the slowest selectable case really is 1.0 now. It cannot
+ *      fire early, because no slower rate is reachable.
+ * The maximum stays 2.0 — nothing above it.
+ */
+export const TTS_SPEEDS = [1.0, 1.1, 1.15, 1.2, 1.25, 1.3, 1.35, 1.4, 1.5, 1.75, 2.0] as const;
 /** Derived so they can never drift from the list. Both are consumed elsewhere — `TTS_MIN_SPEED`
  *  also bounds the decode-context lifetime (`durationSec / TTS_MIN_SPEED`), which is why it stays. */
 export const TTS_MIN_SPEED = TTS_SPEEDS[0];

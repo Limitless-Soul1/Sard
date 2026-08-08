@@ -157,6 +157,75 @@ Chromium >= 140 and the EPUB set to Chromium >= 117.)
                            node tests/harness/ro-storm.mjs
                          SESSION TOTAL must be 0.
 
+ 10. pdf.js:38        — TEXT-LAYER CLEAR BEFORE RE-RENDER (PDF read-aloud correctness).
+                        One statement, `container.replaceChildren()`, immediately before
+                        `new pdfjsLib.TextLayer(...)`.
+                        WHY: upstream renders the page image with `replaceChildren(pageImg)` two lines
+                        earlier, but hands the text layer to `TextLayer.render()`, which APPENDS to
+                        the container. `onZoom` (same file) routes every zoom change back through the
+                        same `render()`, so each zoom deposited another complete copy of the page's
+                        spans into the one `.textLayer` div. The asymmetry is upstream's; the reader
+                        simply read what it was given.
+                        MEASURED on رسالة الغفران, one container throughout (`layerCount` stayed 1):
+                        spans 47 -> 141 -> 188 -> 235 -> 329 across zoom 2/3/4 and back to fit-page;
+                        text 800 -> 5,600 chars; the opening phrase repeating 1 -> 3 -> 4 -> 5 -> 7
+                        times; and read-aloud units 5 -> 35. A listener who zoomed then pressed
+                        `استماع` would hear the page read SEVEN TIMES. A page change already cleared
+                        it (a new page is a new document), which is why it never showed up in
+                        page-turn testing.
+                        NOT a rendering bug: the page image was always correct, because the image path
+                        already replaced. Only the invisible text layer accumulated, which is why this
+                        survived the PDF zoom/theme/geometry acceptance work untouched.
+                        IF THIS PATCH IS LOST ON A RE-VENDOR: PDFs still render and zoom perfectly and
+                        nothing looks wrong; only read-aloud degrades, and only after a zoom — the
+                        page is spoken once per zoom performed. Nothing else signals it.
+                        ⚠ NECESSARY BUT NOT SUFFICIENT ON ITS OWN — it removes the UNBOUNDED growth
+                        (worst case 329 spans / 7 copies -> 94 / 2) but leaves a render RACE that
+                        duplicated the layer exactly twice on every fit-mode transition. That second
+                        defect is fixed by PATCH 11 below, and the two must be kept TOGETHER: with
+                        only 10 the layer doubles, with only 11 it grows without bound.
+                        Regression test: see PATCH 11.
+                        (Red-verified: on the unpatched file the harness shows monotonic growth to
+                        329 spans and 35 units.)
+
+ 11. pdf.js:15,22-27  — RENDER GENERATION GUARD (PDF read-aloud correctness; completes patch 10).
+     pdf.js:42,65-78    A module-level `WeakMap` (`sardRenderGen`) keyed by the PAGE DOCUMENT, a
+                        generation claimed at the top of `render()`, and three staleness checks — one
+                        after `page.render()`, one after `streamTextContent()`, one after
+                        `textLayer.render()`. Plus one structural change: the
+                        `await page.streamTextContent()` is HOISTED OUT of the `TextLayer` options
+                        literal into its own statement above the clear.
+                        WHY: `render()` is async and was not reentrancy-safe. Patch 10's clear ran,
+                        then TWO awaits passed before the spans landed, so two overlapping renders
+                        each cleared and then each appended. Hoisting the await makes
+                        clear -> construct -> append adjacent, and the generation check immediately
+                        before the clear means only the newest render for that page ever reaches it.
+                        WHY KEYED BY DOCUMENT, not a module-wide counter: two DIFFERENT pages may
+                        render concurrently (a spread, a prefetched neighbour) and a global counter
+                        would let one page cancel the other's text layer. Only a newer render of the
+                        SAME page may invalidate an older one.
+                        WHY THE THIRD CHECK CAPTURES FIRST: it records `[...container.childNodes]` at
+                        the synchronous instant its own append finishes — no await separates the two
+                        lines, so the list is exactly this render's nodes — and only then tests
+                        staleness. Removing a node a newer render has already discarded is a no-op, so
+                        it can never delete the winner's spans.
+                        MEASURED, after both patches, on رسالة الغفران (baseline 47 spans / 5 units):
+                        four full cycles of fit-page -> 2 -> 3 -> 4 -> fit-page with VARIED settle
+                        times (4.5 s / 2.5 s) = 16 samples, every one 47 spans / 5 units /
+                        headRepeats 1 / layerCount 1; plus a hostile burst of four zoom changes 120 ms
+                        apart (the ctrl+wheel condition, where overlap is guaranteed) — also 47 / 5.
+                        Read-aloud after the cycling: player total 5 units, status playing,
+                        readyState 4, underruns 0, abandoned 0, lastFailure none. Zero violations.
+                        Varied timings matter: the pre-fix race was INTERMITTENT (86 spans on one run,
+                        58 on the next), so a single clean pass proves nothing.
+                        IF EITHER PATCH IS LOST ON A RE-VENDOR: PDFs still render and zoom perfectly
+                        and nothing looks wrong; only read-aloud degrades, and only after a zoom.
+                        Regression test:
+                          node tests/harness/pdf-tts-diagnosis4.mjs   (single ladder — must be 47/1/5)
+                          node tests/harness/pdf-tts-diagnosis5.mjs   (cycles + burst + playback)
+                        diagnosis5 must report `violations: 0`. Run it with `--cycles=N` to widen the
+                        window; it fails if ANY sample deviates from the baseline.
+
   NOTE ON NUMBERING: entries 1-8 above predate this one and their numbers do not all match the
   `SARD LOCAL PATCH n` markers in the sources (the stylesheet-sanitiser hook is marked 5 in epub.js
   but listed as 6 here, and the turn-coalescing entry is listed as 5 out of order at the end). That

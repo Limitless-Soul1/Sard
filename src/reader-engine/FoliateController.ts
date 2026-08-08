@@ -26,6 +26,7 @@ import {
   type RevealLabels,
 } from "./injectedCss";
 import { navIntent } from "./navIntent";
+import { normalizePdfText, stripPdfArtifacts, hasSpeakableText, scorePdfDocument, PDF_TTS_ENABLED, type PdfTextScore } from "../lib/pdfText"; // RAWY-292
 import { stageEnter as diagStageEnter, stageOk as diagStageOk, stageFail as diagStageFail, probePdfChain as diagProbeChain, watchFirstPage as diagWatchFirstPage } from "../lib/pdfDiag"; // DIAGNOSTIC BUILD ONLY
 import { diagAttachDocument, diagNote, diagPublishUnits } from "../lib/diag"; // DIAGNOSTIC BUILD ONLY
 import { renderStageOk as rStageOk, renderStageFail as rStageFail, renderDiagAdoptDoc, renderDiagNotEpub, renderDiagReset, renderDiagSurface, renderDiagTheme } from "../lib/renderDiag"; // DIAGNOSTIC BUILD ONLY
@@ -1414,6 +1415,13 @@ export class FoliateController {
     this.prevRefKeys.clear(); // RAWY-281: paint bookkeeping follows the ranges (strings only — never a leak)
     this.contentDoc = null;
     this.pdfPageDoc = null;
+    // RAWY-295: the layer observer holds a node inside the outgoing page document. VENDOR patch 9
+    // exists because two ResizeObservers were left watching detached nodes and emitted a silent
+    // per-frame error storm; `disconnect()` needs no reference to what it observed, so it cannot be
+    // wrong about which element to release or be skipped by a guard that happens to be false.
+    this.pdfLayerObserver?.disconnect();
+    this.pdfLayerObserver = null;
+    this.pdfHighlightIndex = null;
     if (v) {
       try {
         v.close?.();
@@ -1634,6 +1642,14 @@ export class FoliateController {
       // Capture the page doc (for copy) + keep arrow-key paging + chrome-wake activity; skip the rest.
       if (fxl) {
         this.pdfPageDoc = doc;
+        if (this.pdfTheme) this.setPdfTheme(this.pdfTheme.filter, this.pdfTheme.tint); // RAWY-294
+        // RAWY-295: a page turn is a NEW document, so the previous page's highlight cannot leak here —
+        // there is nothing to clear. What is needed is the reverse: the units belong to the page on
+        // screen, so the highlight is re-derived for THIS page, and the layer is watched for the
+        // rebuild a zoom causes. `readingRedrawCb` re-reads the live index from the TTS store, which is
+        // the same route RAWY-129 already uses after a section is recreated.
+        this.pdfWatchLayer(doc);
+        if (this.pdfHighlightIndex != null) this.readingRedrawCb?.();
         doc.addEventListener("keydown", (ev: KeyboardEvent) => {
           // RAWY-180 (Part B): Space toggles read-aloud when active; else it pages the PDF (as before).
           if (ev.key === " ") { if (this.spaceCb?.()) ev.preventDefault(); else this.view?.next?.(); }
@@ -1646,7 +1662,16 @@ export class FoliateController {
         // wheel to the SAME pageByWheel path, so a wheel anywhere in the reading area pages the PDF.
         // The two paths are mutually exclusive per physical wheel (page XOR margin), so no double-turn;
         // the page is fit-to-view (no native scroll to fight), so this is passive with no preventDefault.
-        doc.addEventListener("wheel", (ev: WheelEvent) => this.pageByWheel(ev.deltaY), { passive: true });
+        // RAWY-291: Ctrl+Wheel (and a trackpad pinch, which arrives as exactly that) must ZOOM here
+        // rather than page, matching the desk's handler. `passive: false` only for the zoom case, so
+        // the browser's own page-zoom does not also fire; plain paging stays passive as before.
+        doc.addEventListener("wheel", (ev: WheelEvent) => {
+          if (ev.ctrlKey || ev.metaKey) { ev.preventDefault(); this.zoomIntentCb?.(ev.deltaY); return; }
+          // RAWY-293: a wheel over the page must scroll the ZOOMED page first (layer 1), so the
+          // in-frame path and the desk path share one behaviour. deltaX rides along for wide pages.
+          ev.preventDefault();
+          this.pageByWheel(ev.deltaY, ev.deltaX);
+        }, { passive: false });
         doc.addEventListener("pointerdown", (ev: PointerEvent) => {
           if (this.activityCb) {
             const off = frameOffset(doc);
@@ -2814,10 +2839,21 @@ export class FoliateController {
   async getChapterUnits(lang?: string): Promise<{ text: string; range: Range | null }[]> {
     const content = this.view?.renderer?.getContents?.()?.[0];
     const doc: Document | undefined = content?.doc;
-    if (!doc?.body || this.isFixedLayout) {
+    if (!doc?.body) {
       this.ttsUnits = [];
       this.ttsUnitsIndex = -1;
       return [];
+    }
+    // RAWY-292: a PDF page carries pdf.js's own TEXT LAYER — real positioned spans over the rendered
+    // image. That is a DOM, so read-aloud reuses this same unit contract ({text, range}) and the same
+    // highlighting; only the extraction differs, because the text needs repairing before it is spoken
+    // (see lib/pdfText.ts — most Arabic PDFs here emit presentation forms, not letters).
+    if (this.isFixedLayout) {
+      const units = this.pdfPageUnits(doc);
+      this.ttsUnits = units;
+      this.ttsUnitsIndex = content?.index ?? this.pdfPageIndex;
+      this.ttsLang = lang;
+      return units;
     }
     const win = doc.defaultView;
     const CONTAINER = "p, h1, h2, h3, h4, h5, h6, li, blockquote, div, section, article";
@@ -3016,7 +3052,17 @@ export class FoliateController {
    *  isn't the one the units were built for (a chapter change → clear), or the sentence has no range
    *  (whole-body fallback → honest no-highlight). */
   showReadingHighlight(i: number): void {
-    if (this.isFixedLayout) return;
+    // RAWY-295: PDF takes the span-marking branch. Same caller, same index, same `ttsUnits` — the
+    // only thing that differs is the surface, because a fixed-layout page has no overlayer.
+    if (this.isFixedLayout) {
+      // TEMPORARY (2026-08-08): defence in depth. `pdfHasSpeakableText()` already prevents a PDF
+      // session from ever starting, so nothing should reach here — but a caller that obtained an index
+      // another way must not paint into a page whose feature is switched off.
+      if (!PDF_TTS_ENABLED) return;
+      this.pdfHighlightIndex = i;
+      this.pdfMarkUnit(i);
+      return;
+    }
     const content = this.view?.renderer?.getContents?.()?.[0];
     const overlayer = content?.overlayer as
       | { add: (k: string, r: Range, d: typeof drawReadingSpotlight, o: unknown) => void; remove: (k: string) => void }
@@ -3047,6 +3093,11 @@ export class FoliateController {
 
   /** Remove the reading spotlight AND the word pill (stop / play closed / left the chapter). */
   clearReadingHighlight(): void {
+    // RAWY-295: forget the index FIRST, so a text-layer rebuild racing this call cannot repaint the
+    // mark we are removing. Clearing is unconditional — a book can switch from PDF to EPUB while the
+    // controller is reused (`Reader` renders one instance with no `key`), so both surfaces are cleared.
+    this.pdfHighlightIndex = null;
+    this.pdfClearMarks();
     const overlayer = this.view?.renderer?.getContents?.()?.[0]?.overlayer as
       | { remove: (k: string) => void }
       | undefined;
@@ -3333,18 +3384,337 @@ export class FoliateController {
   // RAWY-86: PDF (fixed-layout) paging by wheel — one page per gesture, throttled. Uses LOGICAL
   // forward/back (view.next/prev), so scroll-down advances in reading order regardless of dir.
   private lastPageWheel = 0;
-  pageByWheel(deltaY: number): void {
-    if (!this.isFixedLayout || !deltaY) return;
+  /**
+   * RAWY-293: TWO NAVIGATION LAYERS for a fixed-layout page.
+   *
+   *   Layer 1 — move inside the CURRENT page while it still has unseen content.
+   *   Layer 2 — turn the page, but only once layer 1 cannot consume the scroll in that direction.
+   *
+   * Before this, a zoomed PDF turned the page on the first wheel notch, so anything below the fold of
+   * an enlarged page was unreachable: zoom to 400%, and four fifths of the page could not be read.
+   * At fit-page there is nothing to scroll, so layer 1 never fires and paging behaves exactly as it
+   * always did — the normal-zoom behaviour is preserved by construction, not by a separate branch.
+   */
+  pageByWheel(deltaY: number, deltaX = 0): void {
+    if (!this.isFixedLayout || (!deltaY && !deltaX)) return;
+    const r = this.view?.renderer as HTMLElement | undefined;
+    if (r) {
+      // Layer 1. `foliate-fxl`'s host is the scroll container (`:host { overflow: auto }`), so when the
+      // rendered page is larger than the viewport it has real scrollable extent.
+      const maxY = r.scrollHeight - r.clientHeight;
+      const maxX = r.scrollWidth - r.clientWidth;
+      if (deltaY && maxY > 1) {
+        const before = r.scrollTop;
+        const next = Math.max(0, Math.min(maxY, before + deltaY));
+        if (Math.abs(next - before) > 0.5) { r.scrollTop = next; return; }
+      }
+      // A horizontal wheel (or a wide page at high zoom) moves across before it turns a page.
+      if (deltaX && maxX > 1) {
+        const before = r.scrollLeft;
+        const next = Math.max(0, Math.min(maxX, before + deltaX));
+        if (Math.abs(next - before) > 0.5) { r.scrollLeft = next; return; }
+      }
+      // Reaching here means the page is at its edge in the requested direction: fall through to a turn.
+      if (!deltaY) return; // a purely horizontal gesture must never turn the page
+    }
     const now = performance.now();
     if (now - this.lastPageWheel < 280) return; // ~one page per wheel notch/gesture
     this.lastPageWheel = now;
-    if (deltaY > 0) this.view?.next?.();
+    const forward = deltaY > 0;
+    if (forward) this.view?.next?.();
     else this.view?.prev?.();
+    // Land where reading continues: the top of the next page, the BOTTOM of the previous one, so
+    // paging backwards through a zoomed document does not skip the part just left behind.
+    const host = r;
+    if (host) {
+      window.setTimeout(() => {
+        const max = host.scrollHeight - host.clientHeight;
+        if (max > 1) host.scrollTop = forward ? 0 : max;
+      }, 120);
+    }
   }
+
+  /**
+   * RAWY-292: read-aloud units for ONE PDF page, from pdf.js's text layer.
+   *
+   * MAPPING. The text is repaired before it is spoken, and repair changes lengths (a lam-alef ligature
+   * becomes two letters), so char offsets into the raw DOM would drift. Units are therefore mapped at
+   * SPAN granularity: each span is normalised first, the normalised runs are joined, and a sentence's
+   * range spans the first and last span it touches. The reader hears repaired text while the highlight
+   * sits on the glyphs actually drawn — which is what a reader wants to see.
+   *
+   * A page with no usable text yields no units. That is not an error: three of the six PDFs measured
+   * here are scans, and the honest answer for them is silence plus an explanation in the UI.
+   */
+  private pdfPageUnits(doc: Document): { text: string; range: Range | null }[] {
+    const layer = doc.querySelector(".textLayer");
+    if (!layer) return [];
+    // Record the RAW page text toward the document verdict HERE, not at page load: pdf.js renders the
+    // text layer asynchronously, so at load time it is still empty. Sampling it then made every
+    // document — including ones producing perfectly good units — report "no text layer".
+    //
+    // RAWY-295: the SAMPLING and the STICKY FLAG stay in this wrapper, deliberately. The derivation
+    // below is now also called by the sentence highlighter on every unit change and every re-render —
+    // if the sampling moved with it, one page would be pushed into `pdfSeenPages` dozens of times and
+    // the document verdict's `coverage` would be computed from a corpus of duplicates.
+    if (this.pdfSeenPages.length < 24) this.pdfSeenPages.push(layer.textContent ?? "");
+    const { units, foundText } = this.pdfDeriveUnits(doc);
+    if (foundText) this.pdfFoundText = true; // sticky: this DOCUMENT has speakable text somewhere
+    return units.map((u) => ({ text: u.text, range: u.range }));
+  }
+
+  /**
+   * RAWY-295: the one derivation, returning the covered SPANS alongside the unit.
+   *
+   * Read-aloud needs `{text, range}`; the sentence highlighter needs the spans. Deriving them twice
+   * would be two algorithms that drift, and the highlight would eventually mark a different sentence
+   * from the one being spoken. So there is exactly one walk, and `pdfPageUnits` is a projection of it.
+   *
+   * Pure apart from its return value — no sampling, no sticky flags — because the highlighter calls it
+   * on every unit change and every text-layer rebuild.
+   */
+  private pdfDeriveUnits(doc: Document): { units: { text: string; range: Range | null; spans: Element[] }[]; foundText: boolean } {
+    const layer = doc.querySelector(".textLayer");
+    if (!layer) return { units: [], foundText: false };
+    const spans = [...layer.querySelectorAll("span")].filter((s) => !s.classList.contains("endOfContent"));
+    const parts: { el: Element; text: string; start: number; end: number }[] = [];
+    let joined = "";
+    for (const el of spans) {
+      const clean = normalizePdfText(el.textContent ?? "");
+      // Drop watermark-only runs here rather than page-wide: a URL span carries no prose to lose.
+      if (!clean || !hasSpeakableText(clean)) continue;
+      const start = joined.length ? joined.length + 1 : 0;
+      joined = joined.length ? `${joined} ${clean}` : clean;
+      parts.push({ el, text: clean, start, end: joined.length });
+    }
+    if (!parts.length || !hasSpeakableText(joined)) return { units: [], foundText: false };
+
+    // Sentence segmentation, the same instrument the EPUB path uses.
+    type SegPart = { index: number; segment: string };
+    const Seg = (globalThis as unknown as { Intl?: { Segmenter?: new (l?: string, o?: object) => { segment: (s: string) => Iterable<SegPart> } } }).Intl?.Segmenter;
+    const pieces: { text: string; start: number }[] = [];
+    if (Seg) {
+      try {
+        const seg = new Seg(this.ttsLang || undefined, { granularity: "sentence" });
+        for (const p of seg.segment(joined)) if (p.segment.trim()) pieces.push({ text: p.segment, start: p.index });
+      } catch { /* fall through to the whole page */ }
+    }
+    if (!pieces.length) pieces.push({ text: joined, start: 0 });
+
+    const units: { text: string; range: Range | null; spans: Element[] }[] = [];
+    for (const p of pieces) {
+      const text = stripPdfArtifacts(p.text);
+      if (!hasSpeakableText(text)) continue;
+      const from = p.start;
+      const to = p.start + p.text.length;
+      const hit = parts.filter((x) => x.end > from && x.start < to);
+      let range: Range | null = null;
+      if (hit.length) {
+        try {
+          range = doc.createRange();
+          range.setStartBefore(hit[0].el);
+          range.setEndAfter(hit[hit.length - 1].el);
+        } catch { range = null; }
+      }
+      units.push({ text, range, spans: hit.map((h) => h.el) });
+    }
+    return { units, foundText: true };
+  }
+
+  // ---- RAWY-295: PDF sentence highlighting ----------------------------------------------------
+  //
+  // The fixed-layout path has NO overlayer (`overlayerInDoc: false`), and it needs none. pdf.js has
+  // already positioned every text run as a <span> over the page image, so a sentence highlight is one
+  // CSS class on the spans the active unit covers — no rects, no coordinate maths, no second surface.
+  //
+  // MEASURED, and each one shaped the design:
+  //   * The page document survives a zoom, but the SPANS DO NOT — the vendored render clears the text
+  //     layer on every re-render, so a mark must be re-derived rather than kept. Holding a span list or
+  //     a live Range across a zoom would leave the highlight pointing at detached nodes.
+  //   * Re-deriving BY INDEX is safe: unit count, unit text and the span mapping are identical at
+  //     fit-page / 2x / 3x / 4x (`[18,2,2,2,1]` at every level), so index N is the same sentence.
+  //   * The injected <style> DOES survive a re-render (it lives in <head>, not in `.textLayer`), so only
+  //     the class is re-applied, never the stylesheet.
+  //   * The highlight cannot be recoloured or covered by a theme: the theme's filter targets
+  //     `#canvas img` and its tint is `#canvas::after`, and the text layer is outside `#canvas`.
+  /** Reserved, prefixed, and never a user annotation — the same rule as READING_KEY / WORD_KEY. */
+  private static readonly PDF_HL_CLASS = "sard-pdf-reading";
+  private static readonly PDF_HL_STYLE_ID = "sard-pdf-reading-style";
+  /** The unit currently highlighted, so a text-layer rebuild can restore it without asking the store. */
+  private pdfHighlightIndex: number | null = null;
+  /** Watches the text layer for the rebuild a zoom causes. One per page document; see `pdfWatchLayer`. */
+  private pdfLayerObserver: MutationObserver | null = null;
+
+  /** Ensure the highlight rule exists in this page document. Idempotent; sits beside the theme sheet. */
+  private pdfEnsureHighlightStyle(doc: Document): void {
+    const ID = FoliateController.PDF_HL_STYLE_ID;
+    if (doc.getElementById(ID)) return;
+    const el = doc.createElement("style");
+    el.id = ID;
+    // `background` only — deliberately NOT a filter, because the theme owns filters on this page and a
+    // second one would compose with it differently under each of the eight themes. A translucent wash
+    // reads correctly over both light paper and the two inverting themes.
+    el.textContent = `.${FoliateController.PDF_HL_CLASS}{background:rgba(255,196,0,.34);border-radius:3px}`;
+    (doc.head ?? doc.documentElement)?.appendChild(el);
+  }
+
+  /** Paint unit `i`, re-deriving the spans from the CURRENT DOM. Clears any previous mark first. */
+  private pdfMarkUnit(i: number): void {
+    const doc = this.pdfPageDoc;
+    if (!doc) return;
+    this.pdfClearMarks(doc);
+    // Respect the same preference the EPUB spotlight does — one control, both formats.
+    if (this.style && this.style.ttsSpotlightOn === false) return;
+    const { units } = this.pdfDeriveUnits(doc);
+    const spans = units[i]?.spans;
+    if (!spans?.length) return; // no span for this unit → no highlight, exactly as a null range does
+    this.pdfEnsureHighlightStyle(doc);
+    for (const el of spans) el.classList.add(FoliateController.PDF_HL_CLASS);
+  }
+
+  /** Remove every mark from `doc` (defaults to the live page). Never touches the stylesheet. */
+  private pdfClearMarks(doc?: Document | null): void {
+    const d = doc ?? this.pdfPageDoc;
+    if (!d) return;
+    for (const el of [...d.querySelectorAll(`.${FoliateController.PDF_HL_CLASS}`)]) {
+      el.classList.remove(FoliateController.PDF_HL_CLASS);
+    }
+  }
+
+  /**
+   * Re-apply the highlight after pdf.js rebuilds the text layer.
+   *
+   * A zoom re-render replaces every span, so the class is destroyed with them. Observing `childList` on
+   * the layer catches that — and catches any OTHER cause of a rebuild too (a resize, a fit-mode
+   * recompute), which hooking `setPdfZoom` alone would miss. `attributes` is deliberately NOT observed:
+   * adding the class is an attribute mutation, and watching it would re-enter forever.
+   */
+  private pdfWatchLayer(doc: Document): void {
+    this.pdfLayerObserver?.disconnect(); // a previous page's observer must never outlive its document
+    this.pdfLayerObserver = null;
+    // TEMPORARY (2026-08-08): with PDF read-aloud disabled there is never a highlight to restore, so
+    // no observer is installed at all. The disconnect above still runs, so turning the feature off
+    // mid-session releases any observer a previous page created rather than leaving it watching.
+    if (!PDF_TTS_ENABLED) return;
+    const layer = doc.querySelector(".textLayer");
+    if (!layer) return;
+    const obs = new MutationObserver(() => {
+      if (this.pdfHighlightIndex == null) return;
+      if (doc !== this.pdfPageDoc) return; // the page moved on; this observer is about to be replaced
+      this.pdfMarkUnit(this.pdfHighlightIndex);
+    });
+    obs.observe(layer, { childList: true });
+    this.pdfLayerObserver = obs;
+  }
+
+  /**
+   * RAWY-292: how far this PDF's text layer can be trusted, sampled across the document rather than
+   * from the open page — a title page proves nothing about the body. Cached per book: the sampling
+   * renders pages, so it must not run on every play.
+   */
+  /** RAWY-293: does the page on screen actually yield speakable units? The read-aloud CONTROL is
+   *  gated on this rather than on the sampled verdict, because it is the same code that would feed
+   *  the speech engine — it cannot claim availability the pipeline would not honour. */
+  /**
+   * RAWY-294: apply the reading appearance INSIDE the PDF page's own document.
+   *
+   * It used to live on  — an ancestor that also contains the reading surround, so the
+   * filter and tint were painted over the background too. No colour choice can fix that: an ancestor
+   * filter applies to everything inside it by definition. Each PDF page is a same-origin iframe, so
+   * styling the page document scopes the effect to the page by CONSTRUCTION: the surround is outside
+   * the iframe and cannot be reached.
+   */
+  setPdfTheme(filter: string, tint: string): void {
+    this.pdfTheme = { filter, tint };
+    const doc = this.pdfPageDoc;
+    if (!doc) return;
+    const ID = 'sard-pdf-theme';
+    let el = doc.getElementById(ID) as HTMLStyleElement | null;
+    if (!el) {
+      el = doc.createElement('style');
+      el.id = ID;
+      doc.head?.appendChild(el) ?? doc.documentElement.appendChild(el);
+    }
+    const hasTint = !!tint && tint !== "transparent";
+    const f = filter && filter !== "none" ? filter : "none";
+    // The tint is a MULTIPLY over the page image: it darkens white paper toward the paper colour and
+    // leaves black ink black, which is what a paper tint physically is. A hue filter alone was
+    // measured at 6-14/255 on a real scan — applied, but invisible.
+    const overlay = hasTint
+      ? `#canvas::after { content: ""; position: absolute; inset: 0; pointer-events: none;`
+        + ` background: ${tint}; mix-blend-mode: multiply; }`
+      : "";
+    // `#canvas` is a block, so it can be WIDER than the page image — an overlay at `inset: 0` would
+    // then tint beyond the real page edge. Shrink-wrapping it to the image (inline-block, no line-box
+    // slack) makes the tint rectangle exactly the PDF page rectangle.
+    el.textContent = `#canvas { position: relative; display: inline-block; font-size: 0; line-height: 0; }\n`
+      + `#canvas img { filter: ${f}; display: block; }\n${overlay}\n`;
+  }
+  private pdfTheme: { filter: string; tint: string } | null = null;
+
+  pdfHasSpeakableText(): boolean {
+    // TEMPORARY (2026-08-08): PDF read-aloud is disabled at the product level — see `PDF_TTS_ENABLED`
+    // in lib/pdfText.ts. This is the availability SOURCE, so returning false here removes the Listen
+    // control and the player without touching either component: both render on `(!isPdf ||
+    // pdfCanListen)`, and `pdfCanListen` polls exactly this method. The extraction below is left
+    // intact and still reachable from the diagnostics, so the implementation stays exercised.
+    if (!PDF_TTS_ENABLED) return false;
+    if (!this.isFixedLayout) return false;
+    const doc = this.pdfPageDoc;
+    if (!doc) return false;
+    try { return this.pdfPageUnits(doc).length > 0 || this.pdfFoundText; } catch { return this.pdfFoundText; }
+  }
+
+  pdfTextQuality(): PdfTextScore {
+    return scorePdfDocument(this.pdfSeenPages.length ? this.pdfSeenPages : [""]);
+  }
+  private pdfSeenPages: string[] = [];
+  private pdfFoundText = false;
+  /** Cleared when a different book opens, so a verdict never leaks between documents. */
+  resetPdfQuality(): void { this.pdfSeenPages = []; this.pdfFoundText = false; }
 
   /** RAWY-86: the number of pages in the open PDF (fixed-layout sections). */
   get pdfPageCount(): number {
     return this.view?.book?.sections?.length ?? 0;
+  }
+
+  /**
+   * RAWY-291: set the PDF zoom. `fixed-layout.js` observes the `zoom` attribute and accepts a number,
+   * "fit-width" or "fit-page"; for a PDF it calls back into pdf.js to RE-RENDER the page at that scale,
+   * so zooming gains real resolution instead of magnifying the existing bitmap.
+   *
+   * Setting the attribute to its current value is a no-op in the DOM (no attributeChangedCallback), so
+   * repeated identical writes during a wheel gesture cost nothing.
+   */
+  setPdfZoom(zoom: number | "fit-width" | "fit-page"): void {
+    if (!this.isFixedLayout) return;
+    const r = this.view?.renderer as HTMLElement | undefined;
+    r?.setAttribute("zoom", String(zoom));
+  }
+
+  /**
+   * The scale actually on screen. A fit mode resolves to a number only inside the renderer, so
+   * stepping out of "fit-page" has to read what is rendered rather than assume 1 — otherwise the first
+   * zoom-in after opening a book jumps instead of stepping.
+   *
+   * Measured from the rendered page image against the page's own intrinsic size, which is what the
+   * renderer itself scales.
+   */
+  pdfRenderedScale(): number {
+    try {
+      const doc = this.pdfPageDoc;
+      const img = doc?.querySelector("img") as HTMLImageElement | null;
+      const host = this.view?.renderer as HTMLElement | undefined;
+      if (!img || !host) return 1;
+      // The <img> is sized in CSS pixels by pdf.js at `zoom * devicePixelRatio`, then the document is
+      // scaled back down by 1/dpr — so the on-screen scale is the CSS width over the intrinsic width.
+      const shown = img.getBoundingClientRect().width;
+      const intrinsic = img.naturalWidth / (globalThis.devicePixelRatio || 1);
+      if (!shown || !intrinsic) return 1;
+      return Math.max(0.05, Math.min(12, shown / intrinsic));
+    } catch {
+      return 1;
+    }
   }
   /** DEV (RAWY-87 #2): dispatch a synthetic wheel on the PDF page doc to exercise the page-wheel →
    *  pageByWheel forwarding added in the load handler. WebView2 can't inject a REAL wheel, but a real

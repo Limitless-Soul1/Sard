@@ -650,7 +650,97 @@ html, body, #root {
 .sp-pdf-copy:hover { border-color: var(--accent); }
 /* RAWY-86: PDF INVERT — an approximate night mode (a CSS filter on the page; flips images too),
    NOT the reading themes. Applied to the page host so it covers the fixed-layout page iframe. */
-.reader-desk.pdf-invert .page-host { filter: invert(1) hue-rotate(180deg); }
+/* RAWY-291 · PDF READING APPEARANCES.
+   A PDF page is a rendered raster (pdf.js paints to a canvas, the pixels are copied into an <img>),
+   so an appearance can only be a colour transform over the finished page — there is no text to
+   recolour. The filter goes on `.page-host` so it covers the page and nothing else; the desk colour
+   is set alongside it so a dark page is not framed in white. Rationale and tuning: pdfView.ts. */
+/* RAWY-293 · WHY A FILTER ALONE WAS NOT ENOUGH.
+   The paper tints were built from `sepia()`, which was measured on a real scanned page and moved its
+   mean colour by 6–14 units out of 255 — technically applied, perceptually invisible. Only the two
+   INVERTING themes (285 and 346) were distinguishable, which is exactly the "3 of 8 work" report.
+   The cause: `sepia()` on paper that is already grey (220,225,221 measured, not white) has almost
+   nothing to shift. Tinting paper is a MULTIPLY, not a hue filter — multiply darkens white paper
+   toward the tint while leaving black ink black, which is what a paper tint physically is. */
+/* RAWY-294 · THE THEME IS NO LONGER APPLIED HERE.
+   It used to be a filter + ::after tint on `.page-host`, which is an ANCESTOR of both the page and the
+   reading surround — so by definition it painted over the background as well, and no colour choice
+   could have prevented that. The appearance is now injected into each PDF page's own (same-origin)
+   iframe document by FoliateController.setPdfTheme, which scopes it to the page by construction.
+
+   CONTAINMENT: the fixed-layout renderer must be BOUNDED by the reading area, or its own
+   `:host { overflow: auto }` can never engage. Measured before this: scrollHeight === clientHeight at
+   2x, 4x and 6x (945/945, 1890/1890, 2835/2835) — the host grew to fit the page, so a zoomed page had
+   no scrollable extent and the wheel could only ever turn the page. */
+.reader-desk.pdf-view .page-host { block-size: 100%; min-block-size: 0; overflow: hidden; }
+/* Bound the height ONLY. `display: block` here overrode the renderer's own
+   `:host { display: flex; justify-content: center; align-items: center }`, which is what sizes and
+   centres the page box — losing it let the page geometry be driven by the viewport instead of by the
+   PDF's real dimensions. The host keeps its flex layout; only its extent is constrained. */
+.reader-desk.pdf-view .page-host foliate-view { block-size: 100%; min-block-size: 0; }
+/* RAWY-294: the surround is NOT tinted. A PDF theme is a property of the PAGE; the reading surface
+   stays whatever the app theme says, so switching PDF themes never restyles the reader around it. */
+/* Light themes: the tint does the work, the filter only trims glare. */
+.reader-desk.pdf-theme-sepia { --pdf-tint: #d9b982; --pdf-filter: contrast(0.96) brightness(1.04); }
+.reader-desk.pdf-theme-warm  { --pdf-tint: #e6cda3; --pdf-filter: contrast(0.97) brightness(1.05); }
+.reader-desk.pdf-theme-cream { --pdf-tint: #f0e2c0; --pdf-filter: contrast(0.96) brightness(1.06); }
+.reader-desk.pdf-theme-green { --pdf-tint: #bfdcc0; --pdf-filter: contrast(0.96) brightness(1.05); }
+/* Dark themes invert; a tint on top of an inversion muddies it, so they use none. */
+.reader-desk.pdf-theme-grey  { --pdf-tint: transparent; --pdf-filter: invert(0.9) hue-rotate(180deg) contrast(0.86) brightness(0.98); }
+.reader-desk.pdf-theme-night { --pdf-tint: transparent; --pdf-filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(1.06); }
+/* High contrast: no tint, hard grey-scale punch for faint scans. */
+.reader-desk.pdf-theme-ink   { --pdf-tint: transparent; --pdf-filter: grayscale(1) contrast(1.75) brightness(0.94); }
+
+/* The PDF panel's zoom row and appearance chips. */
+.pdf-zoom-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.pdf-zoom-btn {
+  inline-size: 40px; block-size: 34px; border-radius: 9px; font-size: 18px; line-height: 1;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); cursor: pointer;
+}
+.pdf-zoom-btn:hover { background: var(--surface-3); }
+.pdf-zoom-fit {
+  block-size: 34px; padding-inline: 12px; border-radius: 9px; font-size: 13px;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); cursor: pointer;
+}
+.pdf-zoom-fit:hover { background: var(--surface-3); }
+.pdf-zoom-fit.on { background: var(--accent); color: var(--accent-ink, #fff); border-color: transparent; }
+/* RAWY-292 · THEME PREVIEWS AS MINIATURE PAGES.
+   The previous swatch was a flat near-white rectangle, so eight filters designed to tint PAPER read as
+   eight identical white boxes. A filter is only visible on the ink-and-paper it transforms, so each
+   preview is now a small page — paper, a heading bar, text lines — inside a frame carrying that
+   theme's desk colour. Two columns keep the previews large enough to tell apart in a 384px drawer. */
+.pdf-theme-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.pdf-theme-card {
+  display: flex; flex-direction: column; align-items: stretch; gap: 7px; padding: 8px;
+  border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); cursor: pointer;
+  transition: border-color .12s ease, box-shadow .12s ease;
+}
+.pdf-theme-card:hover { background: var(--surface-3); }
+.pdf-theme-card.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
+/* The frame is the reading surround; the page inside it takes the theme's filter — exactly the
+   arrangement used for real reading (`.reader-desk` colour behind, filter on `.page-host`). */
+.ptp-frame {
+  display: grid; place-items: center; block-size: 76px; border-radius: 8px;
+  background: var(--ptp-desk, #0e0e0e); padding: 7px;
+}
+.ptp-page {
+  display: flex; flex-direction: column; gap: 4px; justify-content: center;
+  inline-size: 46px; block-size: 100%; padding: 7px 6px; border-radius: 3px;
+  background: #fbfaf7; filter: var(--ptp-filter, none);
+}
+.ptp-head { block-size: 5px; border-radius: 1px; background: #24201b; }
+.ptp-line { block-size: 3px; border-radius: 1px; background: #3f3a33; }
+.ptp-line.short { inline-size: 62%; }
+.pdf-chip-name { font-size: 11.5px; color: var(--ink); text-align: center; line-height: 1.2; }
+.pdf-chip-normal { --ptp-filter: none; --ptp-tint: transparent; --ptp-desk: #0e0e0e; }
+.pdf-chip-sepia  { --ptp-filter: contrast(0.96) brightness(1.04); --ptp-tint: #d9b982; --ptp-desk: #e4d3b0; }
+.pdf-chip-warm   { --ptp-filter: contrast(0.97) brightness(1.05); --ptp-tint: #e6cda3; --ptp-desk: #edddc0; }
+.pdf-chip-cream  { --ptp-filter: contrast(0.96) brightness(1.06); --ptp-tint: #f0e2c0; --ptp-desk: #f4ecd8; }
+.pdf-chip-green  { --ptp-filter: contrast(0.96) brightness(1.05); --ptp-tint: #bfdcc0; --ptp-desk: #d3e5d2; }
+.pdf-chip-grey   { --ptp-filter: invert(0.9) hue-rotate(180deg) contrast(0.86) brightness(0.98); --ptp-desk: #2b2b2e; }
+.pdf-chip-night  { --ptp-filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(1.06); --ptp-desk: #16181c; }
+.pdf-chip-ink    { --ptp-filter: grayscale(1) contrast(1.75) brightness(0.94); --ptp-tint: transparent; --ptp-desk: #dcdce0; }
+.sp-pdf-tts { margin-block-start: 4px; }
 /* RAWY-86: transient PDF feedback toast (find result / copied). */
 .pdf-toast {
   position: fixed; bottom: 92px; left: 50%; transform: translateX(-50%); z-index: var(--z-pill); pointer-events: none;
@@ -1432,6 +1522,38 @@ html, body, #root {
   color: var(--text); font: 700 0.78125rem var(--ui-font); white-space: nowrap;
 }
 .tts-speed-chip:hover { background: color-mix(in srgb, var(--text) 9%, transparent); }
+
+/* RAWY-296: the speed MENU. Same surface language as the pill itself (chrome ground, chrome border,
+   16px-family radius) so it reads as part of the player rather than a system popup. It anchors to the
+   chip and opens UPWARD, because the pill already sits near the bottom of the window.
+   RTL: `inset-inline-end` and `text-align: start` — never `right`/`left`, so it mirrors with the pill. */
+.tts-speed-wrap { position: relative; flex: none; }
+.tts-speed-chip.on {
+  background: color-mix(in srgb, var(--text) 9%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--chrome-border));
+}
+.tts-speed-menu {
+  position: absolute; z-index: 2; bottom: calc(100% + 7px); inset-inline-end: 0;
+  display: flex; flex-direction: column; gap: 1px;
+  min-width: 104px; max-height: 246px; overflow-y: auto; overscroll-behavior: contain;
+  padding: 5px; border-radius: 13px; border: 1px solid var(--chrome-border);
+  /* Matches `.tts-pill`'s 96% ground; the pill's own 4px blur already frosts what is behind both. */
+  background: color-mix(in srgb, var(--chrome-bg) 96%, transparent);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
+  animation: tts-speed-in 0.13s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes tts-speed-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .tts-speed-menu { animation: none; } }
+.tts-speed-opt {
+  display: flex; align-items: center; gap: 7px; width: 100%; text-align: start; cursor: pointer;
+  height: 30px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent;
+  color: var(--text); font: 600 0.78125rem var(--ui-font); white-space: nowrap;
+}
+.tts-speed-opt:hover { background: color-mix(in srgb, var(--text) 9%, transparent); }
+.tts-speed-opt.on { color: var(--accent); font-weight: 700; }
+.tts-speed-check { flex: none; display: flex; width: 13px; height: 13px; color: var(--accent); }
+.tts-speed-check svg { width: 100%; height: 100%; }
+.tts-speed-val { flex: 1; }
 
 /* RAWY-180 (Part A): the inline VOLUME slider row (design "approach B") — a hairline row under
    Voice/Speed. Themed via the shared tokens (--accent / --text / --chrome-border), so light + Moonlit

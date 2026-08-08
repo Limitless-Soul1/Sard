@@ -1,0 +1,368 @@
+{
+ "turn": {
+  "n": 80,
+  "failed": 0,
+  "p50": 87,
+  "p95": 126,
+  "max": 149,
+  "over250": 0,
+  "longTasks": []
+ },
+ "scroll": {
+  "ms": 7561,
+  "longTasks": [],
+  "pos": {
+   "frac": 0.0490982,
+   "idx": 6,
+   "len": 14741
+  },
+  "over100": 0
+ },
+ "transitions": {
+  "n": 12,
+  "ok": 12,
+  "empty": 0,
+  "p95": 154,
+  "detail": [
+   {
+    "from": 6,
+    "to": 7,
+    "ms": 152,
+    "len": 16380,
+    "ok": true
+   },
+   {
+    "from": 7,
+    "to": 8,
+    "ms": 151,
+    "len": 36,
+    "ok": true
+   },
+   {
+    "from": 8,
+    "to": 9,
+    "ms": 153,
+    "len": 8598,
+    "ok": true
+   },
+   {
+    "from": 9,
+    "to": 10,
+    "ms": 153,
+    "len": 15551,
+    "ok": true
+   },
+   {
+    "from": 10,
+    "to": 11,
+    "ms": 153,
+    "len": 13148,
+    "ok": true
+   },
+   {
+    "from": 11,
+    "to": 12,
+    "ms": 154,
+    "len": 12538,
+    "ok": true
+   },
+   {
+    "from": 12,
+    "to": 13,
+    "ms": 152,
+    "len": 15913,
+    "ok": true
+   },
+   {
+    "from": 13,
+    "to": 14,
+    "ms": 152,
+    "len": 17792,
+    "ok": true
+   },
+   {
+    "from": 14,
+    "to": 15,
+    "ms": 153,
+    "len": 15047,
+    "ok": true
+   },
+   {
+    "from": 15,
+    "to": 16,
+    "ms": 153,
+    "len": 15058,
+    "ok": true
+   },
+   {
+    "from": 16,
+    "to": 17,
+    "ms": 153,
+    "len": 28,
+    "ok": true
+   },
+   {
+    "from": 17,
+    "to": 18,
+    "ms": 152,
+    "len": 9604,
+    "ok": true
+   }
+  ]
+ },
+ "annotations": {
+  "bookIdFound": false,
+  "error": "FOREIGN KEY constraint failed"
+ },
+ "cycles": {
+  "n": 12,
+  "failed": 0,
+  "openP50": 261,
+  "openMax": 266,
+  "first": {
+   "heapMB": 6.2,
+   "nodes": 2322,
+   "listeners": 999,
+   "docs": 13
+  },
+  "last": {
+   "heapMB": 11.1,
+   "nodes": 5201,
+   "listeners": 1876,
+   "docs": 22
+  },
+  "detail": [
+   {
+    "heapMB": 6.2,
+    "nodes": 2322,
+    "listeners": 999,
+    "docs": 13
+   },
+   {
+    "heapMB": 6.2,
+    "nodes": 1414,
+    "listeners": 432,
+    "docs": 8
+   },
+   {
+    "heapMB": 9.8,
+    "nodes": 3695,
+    "listeners": 1395,
+    "docs": 15
+   },
+   {
+    "heapMB": 5.7,
+    "nodes": 1414,
+    "listeners": 298,
+    "docs": 8
+   },
+   {
+    "heapMB": 10,
+    "nodes": 3695,
+    "listeners": 1261,
+    "docs": 15
+   },
+   {
+    "heapMB": 7.5,
+    "nodes": 1496,
+    "listeners": 593,
+    "docs": 11
+   },
+   {
+    "heapMB": 8.6,
+    "nodes": 1740,
+    "listeners": 656,
+    "docs": 13
+   },
+   {
+    "heapMB": 9.8,
+    "nodes": 2937,
+    "listeners": 1018,
+    "docs": 15
+   },
+   {
+    "heapMB": 6.2,
+    "nodes": 1414,
+    "listeners": 298,
+    "docs": 8
+   },
+   {
+    "heapMB": 10.4,
+    "nodes": 3695,
+    "listeners": 1261,
+    "docs": 15
+   },
+   {
+    "heapMB": 9.8,
+    "nodes": 2920,
+    "listeners": 913,
+    "docs": 15
+   },
+   {
+    "heapMB": 11.1,
+    "nodes": 5201,
+    "listeners": 1876,
+    "docs": 22
+   }
+  ]
+ },
+ "sequence": {
+  "n": 12,
+  "failed": 1,
+  "detail": [
+   {
+    "key": "⋯الإخوة كارامازوف - الجزء ",
+    "ms": 261,
+    "ok": true,
+    "m": {
+     "heapMB": 9.9,
+     "nodes": 2920,
+     "listeners": 913,
+     "docs": 15
+    }
+   },
+   {
+    "key": "⋯The Villain Wants to Live",
+    "ms": 260,
+    "ok": true,
+    "m": {
+     "heapMB": 14.8,
+     "nodes": 11793,
+     "listeners": 2219,
+     "docs": 23
+    }
+   },
+   {
+    "key": "⋯انتفاضة الحمربيرس براون",
+    "ms": 259,
+    "ok": true,
+    "m": {
+     "heapMB": 9.5,
+     "nodes": 4847,
+     "listeners": 625,
+     "docs": 13
+    }
+   },
+   {
+    "key": "⋯القس المجنون<unknown>",
+    "ms": 290,
+    "ok": true,
+    "m": {
+     "heapMB": 23,
+     "nodes": 24510,
+     "listeners": 1854,
+     "docs": 15
+    }
+   },
+   {
+    "key": "⋯الهوبيتجون رونالد رويل تو",
+    "ms": 323,
+    "ok": true,
+    "m": {
+     "heapMB": 14.8,
+     "nodes": 19419,
+     "listeners": 1815,
+     "docs": 15
+    }
+   },
+   {
+    "key": "⋯Kingdom's Bloodline",
+    "ms": 268,
+    "ok": true,
+    "m": {
+     "heapMB": 16.1,
+     "nodes": 30424,
+     "listeners": 2793,
+     "docs": 23
+    }
+   },
+   {
+    "key": "⋯Lord Of The mysteriescutt",
+    "ms": 364,
+    "ok": true,
+    "m": {
+     "heapMB": 34.2,
+     "nodes": 37102,
+     "listeners": 2225,
+     "docs": 15
+    }
+   },
+   {
+    "key": "⋯Alice's Adventures in Won",
+    "ms": 270,
+    "ok": true,
+    "m": {
+     "heapMB": 18,
+     "nodes": 17800,
+     "listeners": 2653,
+     "docs": 15
+    }
+   },
+   {
+    "key": "⋯مقدمة ابن خلدونعبد الرحمن",
+    "ms": 30148,
+    "ok": false,
+    "m": {
+     "heapMB": 7.1,
+     "nodes": 232,
+     "listeners": 199,
+     "docs": 7
+    }
+   },
+   {
+    "key": "⋯حلقة الحتمية",
+    "ms": 288,
+    "ok": true,
+    "m": {
+     "heapMB": 13.5,
+     "nodes": 26420,
+     "listeners": 1575,
+     "docs": 14
+    }
+   },
+   {
+    "key": "⋯The Count of Monte Cristo",
+    "ms": 261,
+    "ok": true,
+    "m": {
+     "heapMB": 19.3,
+     "nodes": 31510,
+     "listeners": 2622,
+     "docs": 19
+    }
+   },
+   {
+    "key": "⋯البؤساءفيكتور هيجو",
+    "ms": 262,
+    "ok": true,
+    "m": {
+     "heapMB": 18.7,
+     "nodes": 33196,
+     "listeners": 3595,
+     "docs": 26
+    }
+   }
+  ]
+ },
+ "final": {
+  "metrics": {
+   "heapMB": 16.3,
+   "nodes": 33788,
+   "listeners": 3988,
+   "docs": 26
+  },
+  "errors": [],
+  "ui": {
+   "cards": 39,
+   "strayReader": false,
+   "openPanels": 0,
+   "overlays": 0
+  }
+ },
+ "baseline": {
+  "heapMB": 2.9,
+  "nodes": 667,
+  "listeners": 366,
+  "docs": 11
+ }
+}

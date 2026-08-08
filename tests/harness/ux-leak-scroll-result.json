@@ -1,0 +1,115 @@
+{
+ "leak": {
+  "samples": [
+   {
+    "heapMB": 2.4,
+    "nodes": 605,
+    "listeners": 321,
+    "docs": 5
+   },
+   {
+    "heapMB": 4.4,
+    "nodes": 612,
+    "listeners": 323,
+    "docs": 6
+   },
+   {
+    "heapMB": 4.6,
+    "nodes": 612,
+    "listeners": 323,
+    "docs": 6
+   },
+   {
+    "heapMB": 4.8,
+    "nodes": 612,
+    "listeners": 323,
+    "docs": 6
+   },
+   {
+    "heapMB": 4.9,
+    "nodes": 612,
+    "listeners": 323,
+    "docs": 6
+   },
+   {
+    "heapMB": 5,
+    "nodes": 612,
+    "listeners": 323,
+    "docs": 6
+   },
+   {
+    "heapMB": 5,
+    "nodes": 612,
+    "listeners": 323,
+    "docs": 6
+   },
+   {
+    "heapMB": 5.1,
+    "nodes": 612,
+    "listeners": 323,
+    "docs": 6
+   },
+   {
+    "heapMB": 5.2,
+    "nodes": 612,
+    "listeners": 323,
+    "docs": 6
+   },
+   {
+    "heapMB": 5.4,
+    "nodes": 612,
+    "listeners": 323,
+    "docs": 6
+   },
+   {
+    "heapMB": 5.5,
+    "nodes": 612,
+    "listeners": 323,
+    "docs": 6
+   }
+  ],
+  "deltaHeapMB": 3.1,
+  "deltaNodes": 7,
+  "deltaListeners": 2,
+  "deltaDocs": 1,
+  "perCycleNodes": 0.7,
+  "perCycleListeners": 0.2
+ },
+ "scroll": {
+  "mode": "scrolled",
+  "scrolled": true,
+  "before": {
+   "frac": 0.03493560453485757,
+   "idx": 5,
+   "flow": "scrolled",
+   "scrolled": true,
+   "len": 11506
+  },
+  "after": {
+   "frac": 0.04188788741986705,
+   "idx": 5,
+   "flow": "scrolled",
+   "scrolled": true,
+   "len": 11506
+  },
+  "moved": true,
+  "ms": 6544,
+  "longTasks": [],
+  "over100": 0,
+  "worst": 0
+ },
+ "annotations": {
+  "cfiUsed": "epubcfi(/6/12!/4/18,/3:112,/5:176)",
+  "bookmarkCreated": true,
+  "highlightCreated": true,
+  "bookmarksReadBack": 1,
+  "highlightsReadBack": 1,
+  "deletedBookmark": true,
+  "deletedHighlight": true,
+  "bookmarksAfterDelete": 0,
+  "highlightsAfterDelete": 0
+ },
+ "errors": [
+  "ResizeObserver loop completed with undelivered notifications."
+ ]
+}

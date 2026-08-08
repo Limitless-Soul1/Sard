@@ -1,0 +1,236 @@
+{
+ "startedAt": "2026-08-07T23:41:22.962Z",
+ "stages": {
+  "a_zoomStability": {
+   "levels": [
+    {
+     "zoom": "fit-page",
+     "units": 5,
+     "spanTotal": 47,
+     "texts": [
+      "رسالة الغفران أبو العلاء ا",
+      "جميع الحقوق الخاصة بصورة و",
+      "جميع الحقوق الأخرى ذات الص",
+      "Cover Artwork and Design C",
+      "All other rights related t"
+     ],
+     "perUnitSpans": [
+      18,
+      2,
+      2,
+      2,
+      1
+     ],
+     "realUnits": 5
+    },
+    {
+     "zoom": "2",
+     "units": 5,
+     "spanTotal": 47,
+     "texts": [
+      "رسالة الغفران أبو العلاء ا",
+      "جميع الحقوق الخاصة بصورة و",
+      "جميع الحقوق الأخرى ذات الص",
+      "Cover Artwork and Design C",
+      "All other rights related t"
+     ],
+     "perUnitSpans": [
+      18,
+      2,
+      2,
+      2,
+      1
+     ],
+     "realUnits": 5
+    },
+    {
+     "zoom": "3",
+     "units": 5,
+     "spanTotal": 47,
+     "texts": [
+      "رسالة الغفران أبو العلاء ا",
+      "جميع الحقوق الخاصة بصورة و",
+      "جميع الحقوق الأخرى ذات الص",
+      "Cover Artwork and Design C",
+      "All other rights related t"
+     ],
+     "perUnitSpans": [
+      18,
+      2,
+      2,
+      2,
+      1
+     ],
+     "realUnits": 5
+    },
+    {
+     "zoom": "4",
+     "units": 5,
+     "spanTotal": 47,
+     "texts": [
+      "رسالة الغفران أبو العلاء ا",
+      "جميع الحقوق الخاصة بصورة و",
+      "جميع الحقوق الأخرى ذات الص",
+      "Cover Artwork and Design C",
+      "All other rights related t"
+     ],
+     "perUnitSpans": [
+      18,
+      2,
+      2,
+      2,
+      1
+     ],
+     "realUnits": 5
+    },
+    {
+     "zoom": "fit-page",
+     "units": 5,
+     "spanTotal": 47,
+     "texts": [
+      "رسالة الغفران أبو العلاء ا",
+      "جميع الحقوق الخاصة بصورة و",
+      "جميع الحقوق الأخرى ذات الص",
+      "Cover Artwork and Design C",
+      "All other rights related t"
+     ],
+     "perUnitSpans": [
+      18,
+      2,
+      2,
+      2,
+      1
+     ],
+     "realUnits": 5
+    }
+   ],
+   "unitCountStable": true,
+   "unitTextStable": true,
+   "spanMappingStable": true
+  },
+  "b_markLifetime": {
+   "marked": {
+    "ok": true,
+    "units": 5,
+    "marked": 2,
+    "text": "جميع الحقوق الخاصة بصورة وتصميم الغلاف م"
+   },
+   "before": {
+    "marked": 2,
+    "markBg": "rgba(255, 214, 0, 0.38)",
+    "markZ": "1",
+    "opacity": "1",
+    "topElementIsMark": true,
+    "topElementTag": "SPAN.__sard_hl_probe",
+    "tint": "rgba(0, 0, 0, 0)",
+    "imgFilter": "invert(0.9) hue-rotate(180deg) con",
+    "layerZ": "0"
+   },
+   "afterZoomNoAction": {
+    "marked": 0
+   },
+   "afterRedraw": {
+    "ok": true,
+    "units": 5,
+    "marked": 2,
+    "text": "جميع الحقوق الخاصة بصورة وتصميم الغلاف م"
+   },
+   "styleSurvived": true
+  },
+  "c_themes": {
+   "themes": [
+    {
+     "id": "normal",
+     "clicked": true,
+     "marked": 2,
+     "markBg": "rgba(255, 214, 0, 0.38)",
+     "markZ": "1",
+     "opacity": "1",
+     "topElementIsMark": true,
+     "topElementTag": "SPAN.__sard_hl_probe",
+     "tint": "rgba(0, 0, 0, 0)",
+     "imgFilter": "none",
+     "layerZ": "0"
+    },
+    {
+     "id": "sepia",
+     "clicked": true,
+     "marked": 2,
+     "markBg": "rgba(255, 214, 0, 0.38)",
+     "markZ": "1",
+     "opacity": "1",
+     "topElementIsMark": true,
+     "topElementTag": "SPAN.__sard_hl_probe",
+     "tint": "rgb(217, 185, 130)",
+     "imgFilter": "contrast(0.96) brightness(1.04)",
+     "layerZ": "0"
+    },
+    {
+     "id": "night",
+     "clicked": true,
+     "marked": 2,
+     "markBg": "rgba(255, 214, 0, 0.38)",
+     "markZ": "1",
+     "opacity": "1",
+     "topElementIsMark": true,
+     "topElementTag": "SPAN.__sard_hl_probe",
+     "tint": "rgba(0, 0, 0, 0)",
+     "imgFilter": "invert(1) hue-rotate(180deg) brigh",
+     "layerZ": "0"
+    },
+    {
+     "id": "ink",
+     "clicked": true,
+     "marked": 2,
+     "markBg": "rgba(255, 214, 0, 0.38)",
+     "markZ": "1",
+     "opacity": "1",
+     "topElementIsMark": true,
+     "topElementTag": "SPAN.__sard_hl_probe",
+     "tint": "rgba(0, 0, 0, 0)",
+     "imgFilter": "grayscale(1) contrast(1.75) bright",
+     "layerZ": "0"
+    },
+    {
+     "id": "cream",
+     "clicked": true,
+     "marked": 2,
+     "markBg": "rgba(255, 214, 0, 0.38)",
+     "markZ": "1",
+     "opacity": "1",
+     "topElementIsMark": true,
+     "topElementTag": "SPAN.__sard_hl_probe",
+     "tint": "rgb(240, 226, 192)",
+     "imgFilter": "contrast(0.96) brightness(1.06)",
+     "layerZ": "0"
+    },
+    {
+     "id": "grey",
+     "clicked": true,
+     "marked": 2,
+     "markBg": "rgba(255, 214, 0, 0.38)",
+     "markZ": "1",
+     "opacity": "1",
+     "topElementIsMark": true,
+     "topElementTag": "SPAN.__sard_hl_probe",
+     "tint": "rgba(0, 0, 0, 0)",
+     "imgFilter": "invert(0.9) hue-rotate(180deg) con",
+     "layerZ": "0"
+    }
+   ],
+   "panelOpened": true,
+   "themesActuallyChanged": true,
+   "markVisibleEverywhere": true
+  },
+  "leftover": 0
+ },
+ "verdicts": {
+  "unitTextStableAcrossZoom": true,
+  "marksLostOnZoom": true,
+  "marksRecoverableAfterZoom": true,
+  "styleSurvivesZoom": true,
+  "themesActuallyChanged": true,
+  "highlightVisibleUnderAllThemes": true
+ },
+ "violations": []
+}

@@ -1,0 +1,168 @@
+{
+ "themes": {
+  "الأمير الصغير (mixed)": [
+   {
+    "id": "normal",
+    "clicked": true,
+    "changesPage": false,
+    "filter": "none",
+    "deskBg": "rgb(14, 14, 14)",
+    "deskInline": "--page-pref: 1400px; --page-margin: 0px; padding-left: 300px; padding-right: 0px"
+   },
+   {
+    "id": "sepia",
+    "clicked": true,
+    "changesPage": true,
+    "filter": "contrast(0.96) brightness(1.04)",
+    "deskBg": "rgb(228, 211, 176)",
+    "deskInline": "--page-pref: 1400px; --page-margin: 0px; padding-left: 300px; padding-right: 0px"
+   },
+   {
+    "id": "warm",
+    "clicked": true,
+    "changesPage": true,
+    "filter": "contrast(0.97) brightness(1.05)",
+    "deskBg": "rgb(237, 221, 192)",
+    "deskInline": "--page-pref: 1400px; --page-margin: 0px; padding-left: 300px; padding-right: 0px"
+   },
+   {
+    "id": "cream",
+    "clicked": true,
+    "changesPage": true,
+    "filter": "contrast(0.96) brightness(1.06)",
+    "deskBg": "rgb(244, 236, 216)",
+    "deskInline": "--page-pref: 1400px; --page-margin: 0px; padding-left: 300px; padding-right: 0px"
+   },
+   {
+    "id": "green",
+    "clicked": true,
+    "changesPage": true,
+    "filter": "contrast(0.96) brightness(1.05)",
+    "deskBg": "rgb(211, 229, 210)",
+    "deskInline": "--page-pref: 1400px; --page-margin: 0px; padding-left: 300px; padding-right: 0px"
+   },
+   {
+    "id": "grey",
+    "clicked": true,
+    "changesPage": true,
+    "filter": "invert(0.9) hue-rotate(180deg) contrast(0.86) brightness(0.98)",
+    "deskBg": "rgb(43, 43, 46)",
+    "deskInline": "--page-pref: 1400px; --page-margin: 0px; padding-left: 300px; padding-right: 0px"
+   },
+   {
+    "id": "night",
+    "clicked": true,
+    "changesPage": true,
+    "filter": "invert(1) hue-rotate(180deg) brightness(0.9) contrast(1.06)",
+    "deskBg": "rgb(22, 24, 28)",
+    "deskInline": "--page-pref: 1400px; --page-margin: 0px; padding-left: 300px; padding-right: 0px"
+   },
+   {
+    "id": "ink",
+    "clicked": true,
+    "changesPage": true,
+    "filter": "grayscale(1) contrast(1.75) brightness(0.94)",
+    "deskBg": "rgb(220, 220, 224)",
+    "deskInline": "--page-pref: 1400px; --page-margin: 0px; padding-left: 300px; padding-right: 0px"
+   }
+  ],
+  "697 (pure scan)": [
+   {
+    "id": "normal",
+    "clicked": true,
+    "changesPage": false,
+    "filter": "none",
+    "deskBg": "rgb(14, 14, 14)",
+    "deskInline": "--page-pref: 1400px; --page-margin: 0px; padding-left: 300px; padding-right: 0px"
+   },
+   {
+    "id": "sepia",
+    "clicked": true,
+    "changesPage": true,
+    "filter": "contrast(0.96) brightness(1.04)",
+    "deskBg": "rgb(228, 211, 176)",
+    "deskInline": "--page-pref: 1400px; --page-margin: 0px; padding-left: 300px; padding-right: 0px"
+   },
+   {
+    "id": "warm",
+    "clicked": true,
+    "changesPage": true,
+    "filter": "contrast(0.97) brightness(1.05)",
+    "deskBg": "rgb(237, 221, 192)",
+    "deskInline": "--page-pref: 1400px; --page-margin: 0px; padding-left: 300px; padding-right: 0px"
+   },
+   {
+    "id": "cream",
+    "clicked": true,
+    "changesPage": true,
+    "filter": "contrast(0.96) brightness(1.06)",
+    "deskBg": "rgb(244, 236, 216)",
+    "deskInline": "--page-pref: 1400px; --page-margin: 0px; padding-left: 300px; padding-right: 0px"
+   },
+   {
+    "id": "green",
+    "clicked": true,
+    "changesPage": true,
+    "filter": "contrast(0.96) brightness(1.05)",
+    "deskBg": "rgb(211, 229, 210)",
+    "deskInline": "--page-pref: 1400px; --page-margin: 0px; padding-left: 300px; padding-right: 0px"
+   },
+   {
+    "id": "grey",
+    "clicked": true,
+    "changesPage": true,
+    "filter": "invert(0.9) hue-rotate(180deg) contrast(0.86) brightness(0.98)",
+    "deskBg": "rgb(43, 43, 46)",
+    "deskInline": "--page-pref: 1400px; --page-margin: 0px; padding-left: 300px; padding-right: 0px"
+   },
+   {
+    "id": "night",
+    "clicked": true,
+    "changesPage": true,
+    "filter": "invert(1) hue-rotate(180deg) brightness(0.9) contrast(1.06)",
+    "deskBg": "rgb(22, 24, 28)",
+    "deskInline": "--page-pref: 1400px; --page-margin: 0px; padding-left: 300px; padding-right: 0px"
+   },
+   {
+    "id": "ink",
+    "clicked": true,
+    "changesPage": true,
+    "filter": "grayscale(1) contrast(1.75) brightness(0.94)",
+    "deskBg": "rgb(220, 220, 224)",
+    "deskInline": "--page-pref: 1400px; --page-margin: 0px; padding-left: 300px; padding-right: 0px"
+   }
+  ]
+ },
+ "zoom": {
+  "2x": {
+   "maxScroll": 0,
+   "scrolledSteps": 0,
+   "turnedEarly": false,
+   "reachedBottom": true,
+   "endFrac": 0.06862745098039216,
+   "startFrac": 0.00980392156862745
+  },
+  "4x": {
+   "maxScroll": 0,
+   "scrolledSteps": 0,
+   "turnedEarly": false,
+   "reachedBottom": true,
+   "endFrac": 0.12745098039215685,
+   "startFrac": 0.06862745098039216
+  },
+  "6x": {
+   "maxScroll": 0,
+   "scrolledSteps": 0,
+   "turnedEarly": false,
+   "reachedBottom": true,
+   "endFrac": 0.18627450980392157,
+   "startFrac": 0.12745098039215685
+  },
+  "fitPageStillTurns": true
+ },
+ "tts": {
+  "controlOnTextPdf": false,
+  "controlOnScan": false
+ },
+ "errors": []
+}

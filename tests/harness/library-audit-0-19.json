@@ -1,0 +1,2404 @@
+[
+ {
+  "i": 0,
+  "title": "⋯The Villain Wants to Live",
+  "opened": true,
+  "spine": 364,
+  "tocCount": 1,
+  "tocDepth": 0,
+  "resolvable": 0,
+  "unresolvable": [
+   "Start"
+  ],
+  "dir": "rtl",
+  "flow": "scrolled",
+  "firstLabels": [
+   "Start"
+  ],
+  "panelRows": 362,
+  "panelFirst": [
+   "10",
+   "11"
+  ],
+  "sampled": 6,
+  "idxs": [
+   0,
+   0,
+   0,
+   1,
+   1,
+   1
+  ],
+  "ordered": true,
+  "advanced": true,
+  "blanks": 0,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "idx": 0,
+    "len": 160,
+    "els": 13,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 3,
+    "start": 0,
+    "frac": 0
+   },
+   {
+    "idx": 0,
+    "len": 160,
+    "els": 13,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 3,
+    "start": 720,
+    "frac": 0.00004446466407761112
+   },
+   {
+    "idx": 0,
+    "len": 160,
+    "els": 13,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 3,
+    "start": 1266,
+    "frac": 0.00007818370100313288
+   },
+   {
+    "idx": 1,
+    "len": 11387,
+    "els": 359,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 51,
+    "start": 0,
+    "frac": 0.0001226406455210083
+   },
+   {
+    "idx": 1,
+    "len": 11387,
+    "els": 359,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 51,
+    "start": 720,
+    "frac": 0.0001769007702354663
+   },
+   {
+    "idx": 1,
+    "len": 11387,
+    "els": 359,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 51,
+    "start": 1440,
+    "frac": 0.0002311608949499243
+   }
+  ]
+ },
+ {
+  "i": 1,
+  "title": "⋯انتفاضة الحمربيرس براون",
+  "opened": true,
+  "spine": 54,
+  "tocCount": 53,
+  "tocDepth": 0,
+  "resolvable": 53,
+  "unresolvable": [],
+  "dir": "rtl",
+  "flow": "scrolled",
+  "firstLabels": [
+   "صفحة العنوان",
+   "الخريطة",
+   "شكر وتقدير"
+  ],
+  "panelRows": 53,
+  "panelFirst": [
+   "1صفحة العنوان",
+   "2الخريطة"
+  ],
+  "sampled": 6,
+  "idxs": [
+   18,
+   18,
+   18,
+   18,
+   18,
+   18
+  ],
+  "ordered": true,
+  "advanced": true,
+  "blanks": 0,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "idx": 18,
+    "len": 19558,
+    "els": 1005,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 47,
+    "start": 47,
+    "frac": 0.21218634274073303
+   },
+   {
+    "idx": 18,
+    "len": 19558,
+    "els": 1005,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 47,
+    "start": 767,
+    "frac": 0.2128525886129207
+   },
+   {
+    "idx": 18,
+    "len": 19558,
+    "els": 1005,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 47,
+    "start": 1487,
+    "frac": 0.21351883448510836
+   },
+   {
+    "idx": 18,
+    "len": 19558,
+    "els": 1005,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 47,
+    "start": 2207,
+    "frac": 0.21418508035729603
+   },
+   {
+    "idx": 18,
+    "len": 19558,
+    "els": 1005,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 47,
+    "start": 2927,
+    "frac": 0.2148513262294837
+   },
+   {
+    "idx": 18,
+    "len": 19558,
+    "els": 1005,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 47,
+    "start": 3647,
+    "frac": 0.21551757210167136
+   }
+  ]
+ },
+ {
+  "i": 2,
+  "title": "⋯القس المجنون<unknown>",
+  "opened": true,
+  "spine": 1023,
+  "tocCount": 1022,
+  "tocDepth": 0,
+  "resolvable": 1022,
+  "unresolvable": [],
+  "dir": "rtl",
+  "flow": "scrolled",
+  "firstLabels": [
+   "Information",
+   "1",
+   "2"
+  ],
+  "panelRows": 1022,
+  "panelFirst": [
+   "1Information",
+   "11"
+  ],
+  "sampled": 6,
+  "idxs": [
+   9,
+   9,
+   9,
+   9,
+   9,
+   9
+  ],
+  "ordered": true,
+  "advanced": true,
+  "blanks": 0,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "idx": 9,
+    "len": 10283,
+    "els": 125,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 26,
+    "start": 238,
+    "frac": 0.00559956499988335
+   },
+   {
+    "idx": 9,
+    "len": 10283,
+    "els": 125,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 26,
+    "start": 958,
+    "frac": 0.005636848095986754
+   },
+   {
+    "idx": 9,
+    "len": 10283,
+    "els": 125,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 26,
+    "start": 1678,
+    "frac": 0.005674131192090157
+   },
+   {
+    "idx": 9,
+    "len": 10283,
+    "els": 125,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 26,
+    "start": 2398,
+    "frac": 0.005711414288193561
+   },
+   {
+    "idx": 9,
+    "len": 10283,
+    "els": 125,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 26,
+    "start": 3118,
+    "frac": 0.005748697384296965
+   },
+   {
+    "idx": 9,
+    "len": 10283,
+    "els": 125,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 26,
+    "start": 3838,
+    "frac": 0.005785980480400368
+   }
+  ]
+ },
+ {
+  "i": 3,
+  "title": "⋯الهوبيتجون رونالد رويل تولكين",
+  "opened": true,
+  "spine": 72,
+  "tocCount": 22,
+  "tocDepth": 0,
+  "resolvable": 22,
+  "unresolvable": [],
+  "dir": "rtl",
+  "flow": "scrolled",
+  "firstLabels": [
+   "مكتبة Telegram Network 2020",
+   "كلمة المؤلف",
+   "الفصل الأول"
+  ],
+  "panelRows": 22,
+  "panelFirst": [
+   "1مكتبة Telegram Network 2020",
+   "2كلمة المؤلف"
+  ],
+  "sampled": 6,
+  "idxs": [
+   8,
+   8,
+   8,
+   8,
+   8,
+   8
+  ],
+  "ordered": true,
+  "advanced": true,
+  "blanks": 0,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "idx": 8,
+    "len": 40841,
+    "els": 388,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 121,
+    "start": 54,
+    "frac": 0.040792829322152294
+   },
+   {
+    "idx": 8,
+    "len": 40841,
+    "els": 388,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 121,
+    "start": 774,
+    "frac": 0.04151348924163359
+   },
+   {
+    "idx": 8,
+    "len": 40841,
+    "els": 388,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 121,
+    "start": 1494,
+    "frac": 0.042234149161114884
+   },
+   {
+    "idx": 8,
+    "len": 40841,
+    "els": 388,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 121,
+    "start": 2214,
+    "frac": 0.04295480908059617
+   },
+   {
+    "idx": 8,
+    "len": 40841,
+    "els": 388,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 121,
+    "start": 2934,
+    "frac": 0.04367546900007746
+   },
+   {
+    "idx": 8,
+    "len": 40841,
+    "els": 388,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 121,
+    "start": 3654,
+    "frac": 0.044396128919558756
+   }
+  ]
+ },
+ {
+  "i": 4,
+  "title": "⋯Kingdom's Bloodline",
+  "opened": true,
+  "spine": 530,
+  "tocCount": 1,
+  "tocDepth": 0,
+  "resolvable": 0,
+  "unresolvable": [
+   "Start"
+  ],
+  "dir": "rtl",
+  "flow": "scrolled",
+  "firstLabels": [
+   "Start"
+  ],
+  "panelRows": 529,
+  "panelFirst": [
+   "1غلاف الرواية",
+   "1الفصل 1 - المتسول"
+  ],
+  "sampled": 6,
+  "idxs": [
+   106,
+   106,
+   106,
+   106,
+   106,
+   106
+  ],
+  "ordered": true,
+  "advanced": true,
+  "blanks": 0,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "idx": 106,
+    "len": 26478,
+    "els": 337,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 77,
+    "start": 47,
+    "frac": 0.1766880177097395
+   },
+   {
+    "idx": 106,
+    "len": 26478,
+    "els": 337,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 77,
+    "start": 767,
+    "frac": 0.1767262978152043
+   },
+   {
+    "idx": 106,
+    "len": 26478,
+    "els": 337,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 77,
+    "start": 1487,
+    "frac": 0.17676457792066907
+   },
+   {
+    "idx": 106,
+    "len": 26478,
+    "els": 337,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 77,
+    "start": 2207,
+    "frac": 0.17680285802613385
+   },
+   {
+    "idx": 106,
+    "len": 26478,
+    "els": 337,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 77,
+    "start": 2927,
+    "frac": 0.17684113813159863
+   },
+   {
+    "idx": 106,
+    "len": 26478,
+    "els": 337,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 77,
+    "start": 3647,
+    "frac": 0.1768794182370634
+   }
+  ]
+ },
+ {
+  "i": 5,
+  "title": "⋯Lord Of The mysteriescuttlefish that loves ",
+  "opened": true,
+  "spine": 1433,
+  "tocCount": 1432,
+  "tocDepth": 0,
+  "resolvable": 1432,
+  "unresolvable": [],
+  "dir": "rtl",
+  "flow": "scrolled",
+  "firstLabels": [
+   "الفصل 1 : قرمزي.",
+   "الفصل 2 : الحالة.",
+   "الفصل 3 : ميليسا."
+  ],
+  "panelRows": 1432,
+  "panelFirst": [
+   "1الفصل 1 : قرمزي.",
+   "2الفصل 2 : الحالة."
+  ],
+  "sampled": 6,
+  "idxs": [
+   555,
+   555,
+   555,
+   555,
+   555,
+   555
+  ],
+  "ordered": true,
+  "advanced": true,
+  "blanks": 0,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "idx": 555,
+    "len": 8701,
+    "els": 332,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 30,
+    "start": 35,
+    "frac": 0.3925140091071943
+   },
+   {
+    "idx": 555,
+    "len": 8701,
+    "els": 332,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 30,
+    "start": 755,
+    "frac": 0.3925378986454739
+   },
+   {
+    "idx": 555,
+    "len": 8701,
+    "els": 332,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 30,
+    "start": 1475,
+    "frac": 0.3925617881837534
+   },
+   {
+    "idx": 555,
+    "len": 8701,
+    "els": 332,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 30,
+    "start": 2195,
+    "frac": 0.392585677722033
+   },
+   {
+    "idx": 555,
+    "len": 8701,
+    "els": 332,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 30,
+    "start": 2915,
+    "frac": 0.39260956726031265
+   },
+   {
+    "idx": 555,
+    "len": 8701,
+    "els": 332,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 30,
+    "start": 3635,
+    "frac": 0.39263345679859224
+   }
+  ]
+ },
+ {
+  "i": 6,
+  "title": "⋯الإخوة كارامازوف - الجزء الأولفيودور دوستوي",
+  "opened": true,
+  "spine": 53,
+  "tocCount": 52,
+  "tocDepth": 0,
+  "resolvable": 52,
+  "unresolvable": [],
+  "dir": "rtl",
+  "flow": "scrolled",
+  "firstLabels": [
+   "ملاحظة المؤلف",
+   "الكتاب الأول: قصة عائلة صغيرة",
+   "فيودور بافلوفتش كارامازوف"
+  ],
+  "panelRows": 52,
+  "panelFirst": [
+   "1ملاحظة المؤلف",
+   "2الكتاب الأول: قصة عائلة صغيرة"
+  ],
+  "sampled": 6,
+  "idxs": [
+   3,
+   3,
+   3,
+   3,
+   3,
+   3
+  ],
+  "ordered": true,
+  "advanced": true,
+  "blanks": 0,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "idx": 3,
+    "len": 6397,
+    "els": 40,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 14,
+    "start": 499,
+    "frac": 0.009471830864633246
+   },
+   {
+    "idx": 3,
+    "len": 6397,
+    "els": 40,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 14,
+    "start": 1219,
+    "frac": 0.010128104169089446
+   },
+   {
+    "idx": 3,
+    "len": 6397,
+    "els": 40,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 14,
+    "start": 1939,
+    "frac": 0.010784377473545647
+   },
+   {
+    "idx": 3,
+    "len": 6397,
+    "els": 40,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 14,
+    "start": 2659,
+    "frac": 0.011440650778001847
+   },
+   {
+    "idx": 3,
+    "len": 6397,
+    "els": 40,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 14,
+    "start": 3379,
+    "frac": 0.012096924082458048
+   },
+   {
+    "idx": 3,
+    "len": 6397,
+    "els": 40,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 14,
+    "start": 4099,
+    "frac": 0.012753197386914248
+   }
+  ]
+ },
+ {
+  "i": 7,
+  "title": "⋯Alice's Adventures in WonderlandLewis Carro",
+  "opened": true,
+  "spine": 15,
+  "tocCount": 16,
+  "tocDepth": 0,
+  "resolvable": 16,
+  "unresolvable": [],
+  "dir": "ltr",
+  "flow": "scrolled",
+  "firstLabels": [
+   "Alice’s Adventures in Wonderland",
+   "THE MILLENNIUM FULCRUM EDITION 3.0",
+   "Contents"
+  ],
+  "panelRows": 16,
+  "panelFirst": [
+   "1Alice’s Adventures in Wonderland",
+   "2THE MILLENNIUM FULCRUM EDITION 3.0"
+  ],
+  "sampled": 6,
+  "idxs": [
+   2,
+   2,
+   2,
+   2,
+   2,
+   2
+  ],
+  "ordered": true,
+  "advanced": true,
+  "blanks": 0,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "idx": 2,
+    "len": 11313,
+    "els": 54,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 35,
+    "start": 3864,
+    "frac": 0.03451045582393248
+   },
+   {
+    "idx": 2,
+    "len": 11313,
+    "els": 54,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 35,
+    "start": 4584,
+    "frac": 0.036448309486400716
+   },
+   {
+    "idx": 2,
+    "len": 11313,
+    "els": 54,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 35,
+    "start": 5304,
+    "frac": 0.03838616314886895
+   },
+   {
+    "idx": 2,
+    "len": 11313,
+    "els": 54,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 35,
+    "start": 6024,
+    "frac": 0.040324016811337196
+   },
+   {
+    "idx": 2,
+    "len": 11313,
+    "els": 54,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 35,
+    "start": 6744,
+    "frac": 0.04226187047380543
+   },
+   {
+    "idx": 2,
+    "len": 11313,
+    "els": 54,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 35,
+    "start": 7464,
+    "frac": 0.04419972413627367
+   }
+  ]
+ },
+ {
+  "i": 8,
+  "title": "⋯مقدمة ابن خلدونعبد الرحمن بن خلدون ولي الدي",
+  "opened": true,
+  "spine": 567,
+  "tocCount": 5,
+  "tocDepth": 2,
+  "resolvable": 5,
+  "unresolvable": [],
+  "dir": null,
+  "flow": null,
+  "firstLabels": [
+   "مقدمة ابن خلدون",
+   "الجزء الأول",
+   "مقدمة المحقق"
+  ],
+  "panelRows": 5,
+  "panelFirst": [
+   "1مقدمة ابن خلدون",
+   "2الجزء الأول"
+  ],
+  "sampled": 6,
+  "idxs": [],
+  "ordered": true,
+  "advanced": false,
+  "blanks": 6,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "len": 0,
+    "els": 7,
+    "imgs": 1,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(0, 0, 0)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": null,
+    "start": null,
+    "frac": 0.010582010582010581
+   },
+   {
+    "len": 0,
+    "els": 5,
+    "imgs": 1,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(0, 0, 0)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": null,
+    "start": null,
+    "frac": 0.012345679012345678
+   },
+   {
+    "len": 0,
+    "els": 5,
+    "imgs": 1,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(0, 0, 0)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": null,
+    "start": null,
+    "frac": 0.014109347442680775
+   },
+   {
+    "len": 0,
+    "els": 5,
+    "imgs": 1,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(0, 0, 0)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": null,
+    "start": null,
+    "frac": 0.015873015873015872
+   },
+   {
+    "len": 0,
+    "els": 5,
+    "imgs": 1,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(0, 0, 0)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": null,
+    "start": null,
+    "frac": 0.01763668430335097
+   },
+   {
+    "len": 0,
+    "els": 5,
+    "imgs": 1,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(0, 0, 0)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": null,
+    "start": null,
+    "frac": 0.019400352733686066
+   }
+  ]
+ },
+ {
+  "i": 9,
+  "title": "⋯حلقة الحتمية",
+  "opened": true,
+  "spine": 1166,
+  "tocCount": 1166,
+  "tocDepth": 0,
+  "resolvable": 1166,
+  "unresolvable": [],
+  "dir": "rtl",
+  "flow": "scrolled",
+  "firstLabels": [
+   "1",
+   "2",
+   "3"
+  ],
+  "panelRows": 1166,
+  "panelFirst": [
+   "11",
+   "22"
+  ],
+  "sampled": 6,
+  "idxs": [
+   22,
+   22,
+   22,
+   22,
+   22,
+   22
+  ],
+  "ordered": true,
+  "advanced": true,
+  "blanks": 0,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "idx": 22,
+    "len": 8112,
+    "els": 210,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 31,
+    "start": 17036,
+    "frac": 0.02117253498985143
+   },
+   {
+    "idx": 22,
+    "len": 8112,
+    "els": 210,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 31,
+    "start": 17756,
+    "frac": 0.021199687341842154
+   },
+   {
+    "idx": 22,
+    "len": 8112,
+    "els": 210,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 31,
+    "start": 18476,
+    "frac": 0.021226839693832877
+   },
+   {
+    "idx": 22,
+    "len": 8112,
+    "els": 210,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 31,
+    "start": 19196,
+    "frac": 0.021253992045823598
+   },
+   {
+    "idx": 22,
+    "len": 8112,
+    "els": 210,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 31,
+    "start": 19916,
+    "frac": 0.021281144397814325
+   },
+   {
+    "idx": 22,
+    "len": 8112,
+    "els": 210,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 31,
+    "start": 20636,
+    "frac": 0.02130829674980505
+   }
+  ]
+ },
+ {
+  "i": 10,
+  "title": "⋯The Count of Monte CristoAlexandre Dumas",
+  "opened": true,
+  "spine": 122,
+  "tocCount": 122,
+  "tocDepth": 0,
+  "resolvable": 122,
+  "unresolvable": [],
+  "dir": "ltr",
+  "flow": "scrolled",
+  "firstLabels": [
+   "Titlepage",
+   "Imprint",
+   "I: Marseilles—The Arrival"
+  ],
+  "panelRows": 122,
+  "panelFirst": [
+   "1Titlepage",
+   "2Imprint"
+  ],
+  "sampled": 6,
+  "idxs": [
+   2,
+   2,
+   2,
+   2,
+   2,
+   2
+  ],
+  "ordered": true,
+  "advanced": true,
+  "blanks": 0,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "idx": 2,
+    "len": 17258,
+    "els": 418,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 62,
+    "start": 404,
+    "frac": 0.0012148985986791191
+   },
+   {
+    "idx": 2,
+    "len": 17258,
+    "els": 418,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 62,
+    "start": 1124,
+    "frac": 0.0013349037511474354
+   },
+   {
+    "idx": 2,
+    "len": 17258,
+    "els": 418,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 62,
+    "start": 1844,
+    "frac": 0.0014549089036157517
+   },
+   {
+    "idx": 2,
+    "len": 17258,
+    "els": 418,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 62,
+    "start": 2564,
+    "frac": 0.001574914056084068
+   },
+   {
+    "idx": 2,
+    "len": 17258,
+    "els": 418,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 62,
+    "start": 3284,
+    "frac": 0.0016949192085523844
+   },
+   {
+    "idx": 2,
+    "len": 17258,
+    "els": 418,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 62,
+    "start": 4004,
+    "frac": 0.0018149243610207004
+   }
+  ]
+ },
+ {
+  "i": 11,
+  "title": "⋯البؤساءفيكتور هيجو",
+  "opened": true,
+  "spine": 15,
+  "tocCount": 14,
+  "tocDepth": 0,
+  "resolvable": 14,
+  "unresolvable": [],
+  "dir": "rtl",
+  "flow": "scrolled",
+  "firstLabels": [
+   "مقدمة عن المؤلف",
+   "الأسقف",
+   "الفصل الثاني"
+  ],
+  "panelRows": 14,
+  "panelFirst": [
+   "1مقدمة عن المؤلف",
+   "2الأسقف"
+  ],
+  "sampled": 6,
+  "idxs": [
+   1,
+   1,
+   1,
+   1,
+   1,
+   2
+  ],
+  "ordered": true,
+  "advanced": true,
+  "blanks": 0,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "idx": 1,
+    "len": 3141,
+    "els": 56,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 8,
+    "start": 2697,
+    "frac": 0.007035914682682292
+   },
+   {
+    "idx": 1,
+    "len": 3141,
+    "els": 56,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 8,
+    "start": 3417,
+    "frac": 0.008673974694753835
+   },
+   {
+    "idx": 1,
+    "len": 3141,
+    "els": 56,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 8,
+    "start": 4137,
+    "frac": 0.010312034706825377
+   },
+   {
+    "idx": 1,
+    "len": 3141,
+    "els": 56,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 8,
+    "start": 4857,
+    "frac": 0.01195009471889692
+   },
+   {
+    "idx": 1,
+    "len": 3141,
+    "els": 56,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 8,
+    "start": 5302,
+    "frac": 0.01296250680969114
+   },
+   {
+    "idx": 2,
+    "len": 37873,
+    "els": 770,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 106,
+    "start": 0,
+    "frac": 0.014600993399890825
+   }
+  ]
+ },
+ {
+  "i": 12,
+  "title": "⋯الداء والدواءابن قيم الجوزية",
+  "opened": true,
+  "spine": 113,
+  "tocCount": 112,
+  "tocDepth": 0,
+  "resolvable": 112,
+  "unresolvable": [],
+  "dir": "rtl",
+  "flow": "scrolled",
+  "firstLabels": [
+   "الداء والدواء",
+   "والدعاء من أنفع الأدوية وهو عدو البلاء ي",
+   "ومن أنفع الأدوية: /٣ب الإلحاحفي الدعاء"
+  ],
+  "panelRows": 112,
+  "panelFirst": [
+   "1الداء والدواء",
+   "2والدعاء من أنفع الأدوية وهو عدو البلاء يدافعه ويعالجه ويمنع نزوله ويرفعه أويخففه"
+  ],
+  "sampled": 6,
+  "idxs": [
+   5,
+   5,
+   5,
+   5,
+   5,
+   5
+  ],
+  "ordered": true,
+  "advanced": true,
+  "blanks": 0,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "idx": 5,
+    "len": 9519,
+    "els": 213,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 34,
+    "start": 54,
+    "frac": 0.02675022384064314
+   },
+   {
+    "idx": 5,
+    "len": 9519,
+    "els": 213,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 34,
+    "start": 774,
+    "frac": 0.02724877924758218
+   },
+   {
+    "idx": 5,
+    "len": 9519,
+    "els": 213,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 34,
+    "start": 1494,
+    "frac": 0.027747334654521227
+   },
+   {
+    "idx": 5,
+    "len": 9519,
+    "els": 213,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 34,
+    "start": 2214,
+    "frac": 0.028245890061460267
+   },
+   {
+    "idx": 5,
+    "len": 9519,
+    "els": 213,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 34,
+    "start": 2934,
+    "frac": 0.028744445468399302
+   },
+   {
+    "idx": 5,
+    "len": 9519,
+    "els": 213,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 34,
+    "start": 3654,
+    "frac": 0.029243000875338345
+   }
+  ]
+ },
+ {
+  "i": 13,
+  "title": "⋯الأمير الصغيرأنطوان دو سانت إكزوبيري",
+  "opened": true,
+  "spine": 23,
+  "tocCount": 22,
+  "tocDepth": 0,
+  "resolvable": 22,
+  "unresolvable": [],
+  "dir": "rtl",
+  "flow": "scrolled",
+  "firstLabels": [
+   "الفصل الأول",
+   "الفصل السادس",
+   "الفصل السابع"
+  ],
+  "panelRows": 22,
+  "panelFirst": [
+   "1الفصل الأول",
+   "2الفصل السادس"
+  ],
+  "sampled": 6,
+  "idxs": [
+   7,
+   7,
+   7,
+   7,
+   7,
+   7
+  ],
+  "ordered": true,
+  "advanced": true,
+  "blanks": 0,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "idx": 7,
+    "len": 2924,
+    "els": 51,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 11,
+    "start": 54,
+    "frac": 0.43760156043629805
+   },
+   {
+    "idx": 7,
+    "len": 2924,
+    "els": 51,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 11,
+    "start": 774,
+    "frac": 0.442463112855624
+   },
+   {
+    "idx": 7,
+    "len": 2924,
+    "els": 51,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 11,
+    "start": 1494,
+    "frac": 0.4473246652749499
+   },
+   {
+    "idx": 7,
+    "len": 2924,
+    "els": 51,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 11,
+    "start": 2214,
+    "frac": 0.4521862176942758
+   },
+   {
+    "idx": 7,
+    "len": 2924,
+    "els": 51,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 11,
+    "start": 2934,
+    "frac": 0.4570477701136017
+   },
+   {
+    "idx": 7,
+    "len": 2924,
+    "els": 51,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 11,
+    "start": 3654,
+    "frac": 0.46190932253292766
+   }
+  ]
+ },
+ {
+  "i": 14,
+  "title": "⋯مقدمة ابن خلدون - الجزء الأولعبد الرحمن بن ",
+  "opened": true,
+  "spine": 85,
+  "tocCount": 84,
+  "tocDepth": 0,
+  "resolvable": 84,
+  "unresolvable": [],
+  "dir": "rtl",
+  "flow": "scrolled",
+  "firstLabels": [
+   "مقدمة المحقق",
+   "مقدمة ابن خلدون",
+   "المقدمة الأولى"
+  ],
+  "panelRows": 84,
+  "panelFirst": [
+   "1مقدمة المحقق",
+   "2مقدمة ابن خلدون"
+  ],
+  "sampled": 6,
+  "idxs": [
+   0,
+   0,
+   0,
+   1,
+   1,
+   1
+  ],
+  "ordered": true,
+  "advanced": true,
+  "blanks": 0,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "idx": 0,
+    "len": 436,
+    "els": 39,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 4,
+    "start": 1425,
+    "frac": 0.0005107168736522392
+   },
+   {
+    "idx": 0,
+    "len": 436,
+    "els": 39,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 4,
+    "start": 2145,
+    "frac": 0.000768763294023897
+   },
+   {
+    "idx": 0,
+    "len": 436,
+    "els": 39,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 4,
+    "start": 2348,
+    "frac": 0.0008415180486564616
+   },
+   {
+    "idx": 1,
+    "len": 124728,
+    "els": 698,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 309,
+    "start": 0,
+    "frac": 0.0010996316686167577
+   },
+   {
+    "idx": 1,
+    "len": 124728,
+    "els": 698,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 309,
+    "start": 720,
+    "frac": 0.0015902122868735127
+   },
+   {
+    "idx": 1,
+    "len": 124728,
+    "els": 698,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 309,
+    "start": 1440,
+    "frac": 0.0020807929051302673
+   }
+  ]
+ },
+ {
+  "i": 15,
+  "title": "⋯رسالة الغفرانأبو العلاء المعري",
+  "opened": true,
+  "spine": 4,
+  "tocCount": 3,
+  "tocDepth": 0,
+  "resolvable": 3,
+  "unresolvable": [],
+  "dir": "rtl",
+  "flow": "scrolled",
+  "firstLabels": [
+   "الجزء الأول: الفردوس",
+   "العودة إلى الفردوس",
+   "الجزء الثاني: الرد على رسالة ابن القارح"
+  ],
+  "panelRows": 3,
+  "panelFirst": [
+   "1الجزء الأول: الفردوس",
+   "2العودة إلى الفردوس"
+  ],
+  "sampled": 6,
+  "idxs": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "ordered": true,
+  "advanced": true,
+  "blanks": 0,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "idx": 0,
+    "len": 15325,
+    "els": 275,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 40,
+    "start": 54,
+    "frac": 0.00014369275445547396
+   },
+   {
+    "idx": 0,
+    "len": 15325,
+    "els": 275,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 40,
+    "start": 774,
+    "frac": 0.0020595961471951267
+   },
+   {
+    "idx": 0,
+    "len": 15325,
+    "els": 275,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 40,
+    "start": 1494,
+    "frac": 0.0039754995399347804
+   },
+   {
+    "idx": 0,
+    "len": 15325,
+    "els": 275,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 40,
+    "start": 2214,
+    "frac": 0.005891402932674433
+   },
+   {
+    "idx": 0,
+    "len": 15325,
+    "els": 275,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 40,
+    "start": 2934,
+    "frac": 0.007807306325414085
+   },
+   {
+    "idx": 0,
+    "len": 15325,
+    "els": 275,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 40,
+    "start": 3654,
+    "frac": 0.009723209718153738
+   }
+  ]
+ },
+ {
+  "i": 16,
+  "title": "⋯الأنمساخفرانز كافكا",
+  "opened": true,
+  "spine": 5,
+  "tocCount": 4,
+  "tocDepth": 0,
+  "resolvable": 4,
+  "unresolvable": [],
+  "dir": "rtl",
+  "flow": "scrolled",
+  "firstLabels": [
+   "التحول",
+   "I",
+   "II"
+  ],
+  "panelRows": 4,
+  "panelFirst": [
+   "1التحول",
+   "1I"
+  ],
+  "sampled": 6,
+  "idxs": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "ordered": true,
+  "advanced": true,
+  "blanks": 0,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "idx": 0,
+    "len": 1885,
+    "els": 45,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 6,
+    "start": 247,
+    "frac": 0.0011220554558277283
+   },
+   {
+    "idx": 0,
+    "len": 1885,
+    "els": 45,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 6,
+    "start": 967,
+    "frac": 0.0043928243958923615
+   },
+   {
+    "idx": 0,
+    "len": 1885,
+    "els": 45,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 6,
+    "start": 1687,
+    "frac": 0.0076635933359569955
+   },
+   {
+    "idx": 0,
+    "len": 1885,
+    "els": 45,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 6,
+    "start": 2407,
+    "frac": 0.01093436227602163
+   },
+   {
+    "idx": 0,
+    "len": 1885,
+    "els": 45,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 6,
+    "start": 3127,
+    "frac": 0.014205131216086261
+   },
+   {
+    "idx": 0,
+    "len": 1885,
+    "els": 45,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 6,
+    "start": 3461,
+    "frac": 0.015722404585505133
+   }
+  ]
+ },
+ {
+  "i": 17,
+  "title": "⋯فن الحربصن تزو",
+  "opened": true,
+  "spine": 16,
+  "tocCount": 15,
+  "tocDepth": 0,
+  "resolvable": 15,
+  "unresolvable": [],
+  "dir": "rtl",
+  "flow": "scrolled",
+  "firstLabels": [
+   "الفصل الأول: الخطط",
+   "الفصل الثاني: شن الحرب",
+   "الفصل الثالث: الهجوم بالخداع"
+  ],
+  "panelRows": 15,
+  "panelFirst": [
+   "1الفصل الأول: الخطط",
+   "2الفصل الثاني: شن الحرب"
+  ],
+  "sampled": 6,
+  "idxs": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "ordered": true,
+  "advanced": true,
+  "blanks": 0,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "idx": 0,
+    "len": 13000,
+    "els": 183,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 41,
+    "start": 54,
+    "frac": 0.00027652914588052643
+   },
+   {
+    "idx": 0,
+    "len": 13000,
+    "els": 183,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 41,
+    "start": 774,
+    "frac": 0.003963584424287545
+   },
+   {
+    "idx": 0,
+    "len": 13000,
+    "els": 183,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 41,
+    "start": 1494,
+    "frac": 0.007650639702694565
+   },
+   {
+    "idx": 0,
+    "len": 13000,
+    "els": 183,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 41,
+    "start": 2214,
+    "frac": 0.011337694981101583
+   },
+   {
+    "idx": 0,
+    "len": 13000,
+    "els": 183,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 41,
+    "start": 2934,
+    "frac": 0.015024750259508604
+   },
+   {
+    "idx": 0,
+    "len": 13000,
+    "els": 183,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 41,
+    "start": 3654,
+    "frac": 0.01871180553791562
+   }
+  ]
+ },
+ {
+  "i": 18,
+  "title": "S697⋯697",
+  "opened": true,
+  "spine": 967,
+  "tocCount": 1,
+  "tocDepth": 0,
+  "resolvable": 1,
+  "unresolvable": [],
+  "dir": null,
+  "flow": null,
+  "firstLabels": [
+   "efe"
+  ],
+  "panelRows": 1,
+  "panelFirst": [
+   "1efe"
+  ],
+  "sampled": 6,
+  "idxs": [],
+  "ordered": true,
+  "advanced": false,
+  "blanks": 6,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "len": 0,
+    "els": 7,
+    "imgs": 1,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(0, 0, 0)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": null,
+    "start": null,
+    "frac": 0.001034126163391934
+   },
+   {
+    "len": 0,
+    "els": 5,
+    "imgs": 1,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(0, 0, 0)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": null,
+    "start": null,
+    "frac": 0.002068252326783868
+   },
+   {
+    "len": 0,
+    "els": 5,
+    "imgs": 1,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(0, 0, 0)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": null,
+    "start": null,
+    "frac": 0.0031023784901758012
+   },
+   {
+    "len": 0,
+    "els": 5,
+    "imgs": 1,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(0, 0, 0)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": null,
+    "start": null,
+    "frac": 0.004136504653567736
+   },
+   {
+    "len": 0,
+    "els": 5,
+    "imgs": 1,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(0, 0, 0)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": null,
+    "start": null,
+    "frac": 0.005170630816959669
+   },
+   {
+    "len": 0,
+    "els": 5,
+    "imgs": 1,
+    "brokenImgs": 0,
+    "dir": "ltr",
+    "colour": "rgb(0, 0, 0)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": null,
+    "start": null,
+    "frac": 0.0062047569803516025
+   }
+  ]
+ },
+ {
+  "i": 19,
+  "title": "⋯Infinite Mana in The Apocalypse",
+  "opened": true,
+  "spine": 2964,
+  "tocCount": 1,
+  "tocDepth": 0,
+  "resolvable": 1,
+  "unresolvable": [],
+  "dir": "rtl",
+  "flow": "scrolled",
+  "firstLabels": [
+   "Start"
+  ],
+  "panelRows": 2963,
+  "panelFirst": [
+   "1غلاف الرواية",
+   "1الفصل 1: الإيقاظ"
+  ],
+  "sampled": 6,
+  "idxs": [
+   0,
+   0,
+   0,
+   1,
+   1,
+   1
+  ],
+  "ordered": true,
+  "advanced": true,
+  "blanks": 0,
+  "brokenImgs": 0,
+  "walk": [
+   {
+    "idx": 0,
+    "len": 160,
+    "els": 13,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 3,
+    "start": 0,
+    "frac": 0
+   },
+   {
+    "idx": 0,
+    "len": 160,
+    "els": 13,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 3,
+    "start": 720,
+    "frac": 0.000012488348046247221
+   },
+   {
+    "idx": 0,
+    "len": 160,
+    "els": 13,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 3,
+    "start": 1130,
+    "frac": 0.000019599768461471336
+   },
+   {
+    "idx": 1,
+    "len": 6555,
+    "els": 151,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 19,
+    "start": 0,
+    "frac": 0.00003209055563819634
+   },
+   {
+    "idx": 1,
+    "len": 6555,
+    "els": 151,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 19,
+    "start": 720,
+    "frac": 0.00005367731261829462
+   },
+   {
+    "idx": 1,
+    "len": 6555,
+    "els": 151,
+    "imgs": 0,
+    "brokenImgs": 0,
+    "dir": "rtl",
+    "colour": "rgb(207, 200, 186)",
+    "bg": "rgba(0, 0, 0, 0)",
+    "pages": 19,
+    "start": 1440,
+    "frac": 0.0000752640695983929
+   }
+  ]
+ },
+ {
+  "i": 20,
+  "title": "⋯Leveling with the Gods",
+  "opened": false,
+  "error": "card not found (live cards: 0)",
+  "state": "{\"url\":\"\",\"cards\":0,\"reader\":true,\"view\":true,\"errorCard\":false,\"bodyLen\":109883,\"head\":\"المحتويات2963 فصلًا · قُرئ 2٪✕1غلاف الرواية1الفصل 1: الإيقاظ2الفصل 2: ​​رخصة الصياد3الفصل 3: [جنة القرد]4الفصل 4: هل هذا مبتدئ ... أم؟5الفصل 5 - كم عدد الكرات ا\"}"
+ },
+ {
+  "i": 21,
+  "title": "سNoor-Book.com الأمير الصغير⋯Noor-Book.com ا",
+  "opened": false,
+  "error": "card not found (live cards: 0)",
+  "state": "{\"url\":\"\",\"cards\":0,\"reader\":true,\"view\":true,\"errorCard\":false,\"bodyLen\":109883,\"head\":\"المحتويات2963 فصلًا · قُرئ 2٪✕1غلاف الرواية1الفصل 1: الإيقاظ2الفصل 2: ​​رخصة الصياد3الفصل 3: [جنة القرد]4الفصل 4: هل هذا مبتدئ ... أم؟5الفصل 5 - كم عدد الكرات ا\"}"
+ },
+ {
+  "i": 22,
+  "title": "⋯omniscient reader viewpoint",
+  "opened": false,
+  "error": "card not found (live cards: 0)",
+  "state": "{\"url\":\"\",\"cards\":0,\"reader\":true,\"view\":true,\"errorCard\":false,\"bodyLen\":109883,\"head\":\"المحتويات2963 فصلًا · قُرئ 2٪✕1غلاف الرواية1الفصل 1: الإيقاظ2الفصل 2: ​​رخصة الصياد3الفصل 3: [جنة القرد]4الفصل 4: هل هذا مبتدئ ... أم؟5الفصل 5 - كم عدد الكرات ا\"}"
+ },
+ {
+  "i": 23,
+  "title": "⋯أصبحت اللورد الفاسد ذو المستوى سالب 99",
+  "opened": false,
+  "error": "card not found (live cards: 0)",
+  "state": "{\"url\":\"\",\"cards\":0,\"reader\":true,\"view\":true,\"errorCard\":false,\"bodyLen\":109883,\"head\":\"المحتويات2963 فصلًا · قُرئ 2٪✕1غلاف الرواية1الفصل 1: الإيقاظ2الفصل 2: ​​رخصة الصياد3الفصل 3: [جنة القرد]4الفصل 4: هل هذا مبتدئ ... أم؟5الفصل 5 - كم عدد الكرات ا\"}"
+ },
+ {
+  "i": 24,
+  "title": "⋯أوفرلوردMaruyama Kugane",
+  "opened": false,
+  "error": "card not found (live cards: 0)",
+  "state": "{\"url\":\"\",\"cards\":0,\"reader\":true,\"view\":true,\"errorCard\":false,\"bodyLen\":109883,\"head\":\"المحتويات2963 فصلًا · قُرئ 2٪✕1غلاف الرواية1الفصل 1: الإيقاظ2الفصل 2: ​​رخصة الصياد3الفصل 3: [جنة القرد]4الفصل 4: هل هذا مبتدئ ... أم؟5الفصل 5 - كم عدد الكرات ا\"}"
+ },
+ {
+  "i": 25,
+  "title": "⋯التحولفرانتس كافكا",
+  "opened": false,
+  "error": "card not found (live cards: 0)",
+  "state": "{\"url\":\"\",\"cards\":0,\"reader\":true,\"view\":true,\"errorCard\":false,\"bodyLen\":109883,\"head\":\"المحتويات2963 فصلًا · قُرئ 2٪✕1غلاف الرواية1الفصل 1: الإيقاظ2الفصل 2: ​​رخصة الصياد3الفصل 3: [جنة القرد]4الفصل 4: هل هذا مبتدئ ... أم؟5الفصل 5 - كم عدد الكرات ا\"}"
+ },
+ {
+  "i": 26,
+  "title": "⋯الخالد المرتد (Renegade Immortal)Er Gen",
+  "opened": false,
+  "error": "card not found (live cards: 0)",
+  "state": "{\"url\":\"\",\"cards\":0,\"reader\":true,\"view\":true,\"errorCard\":false,\"bodyLen\":109883,\"head\":\"المحتويات2963 فصلًا · قُرئ 2٪✕1غلاف الرواية1الفصل 1: الإيقاظ2الفصل 2: ​​رخصة الصياد3الفصل 3: [جنة القرد]4الفصل 4: هل هذا مبتدئ ... أم؟5الفصل 5 - كم عدد الكرات ا\"}"
+ },
+ {
+  "i": 27,
+  "title": "سالداء والدواء _الكتاب⋯الداء والدواء _الكتاب",
+  "opened": false,
+  "error": "card not found (live cards: 0)",
+  "state": "{\"url\":\"\",\"cards\":0,\"reader\":true,\"view\":true,\"errorCard\":false,\"bodyLen\":109883,\"head\":\"المحتويات2963 فصلًا · قُرئ 2٪✕1غلاف الرواية1الفصل 1: الإيقاظ2الفصل 2: ​​رخصة الصياد3الفصل 3: [جنة القرد]4الفصل 4: هل هذا مبتدئ ... أم؟5الفصل 5 - كم عدد الكرات ا\"}"
+ },
+ {
+  "i": 28,
+  "title": "⋯الليتش المجنونAngry Squirrel",
+  "opened": false,
+  "error": "card not found (live cards: 0)",
+  "state": "{\"url\":\"\",\"cards\":0,\"reader\":true,\"view\":true,\"errorCard\":false,\"bodyLen\":109883,\"head\":\"المحتويات2963 فصلًا · قُرئ 2٪✕1غلاف الرواية1الفصل 1: الإيقاظ2الفصل 2: ​​رخصة الصياد3الفصل 3: [جنة القرد]4الفصل 4: هل هذا مبتدئ ... أم؟5الفصل 5 - كم عدد الكرات ا\"}"
+ },
+ {
+  "i": 29,
+  "title": "سالنار والدمجورج ر. ر. مارتن⋯النار والدمجورج",
+  "opened": false,
+  "error": "card not found (live cards: 0)",
+  "state": "{\"url\":\"\",\"cards\":0,\"reader\":true,\"view\":true,\"errorCard\":false,\"bodyLen\":109883,\"head\":\"المحتويات2963 فصلًا · قُرئ 2٪✕1غلاف الرواية1الفصل 1: الإيقاظ2الفصل 2: ​​رخصة الصياد3الفصل 3: [جنة القرد]4الفصل 4: هل هذا مبتدئ ... أم؟5الفصل 5 - كم عدد الكرات ا\"}"
+ },
+ {
+  "i": 30,
+  "title": "سالنار والدمجورج ر. ر. مارتن⋯النار والدمجورج",
+  "opened": false,
+  "error": "card not found (live cards: 0)",
+  "state": "{\"url\":\"\",\"cards\":0,\"reader\":true,\"view\":true,\"errorCard\":false,\"bodyLen\":109883,\"head\":\"المحتويات2963 فصلًا · قُرئ 2٪✕1غلاف الرواية1الفصل 1: الإيقاظ2الفصل 2: ​​رخصة الصياد3الفصل 3: [جنة القرد]4الفصل 4: هل هذا مبتدئ ... أم؟5الفصل 5 - كم عدد الكرات ا\"}"
+ },
+ {
+  "i": 31,
+  "title": "⋯انتفاضة الحُمربيرس براون (Pierce Brown)",
+  "opened": false,
+  "error": "card not found (live cards: 0)",
+  "state": "{\"url\":\"\",\"cards\":0,\"reader\":true,\"view\":true,\"errorCard\":false,\"bodyLen\":109883,\"head\":\"المحتويات2963 فصلًا · قُرئ 2٪✕1غلاف الرواية1الفصل 1: الإيقاظ2الفصل 2: ​​رخصة الصياد3الفصل 3: [جنة القرد]4الفصل 4: هل هذا مبتدئ ... أم؟5الفصل 5 - كم عدد الكرات ا\"}"
+ },
+ {
+  "i": 32,
+  "title": "⋯تحرير الساحرةER MU",
+  "opened": false,
+  "error": "card not found (live cards: 0)",
+  "state": "{\"url\":\"\",\"cards\":0,\"reader\":true,\"view\":true,\"errorCard\":false,\"bodyLen\":109883,\"head\":\"المحتويات2963 فصلًا · قُرئ 2٪✕1غلاف الرواية1الفصل 1: الإيقاظ2الفصل 2: ​​رخصة الصياد3الفصل 3: [جنة القرد]4الفصل 4: هل هذا مبتدئ ... أم؟5الفصل 5 - كم عدد الكرات ا\"}"
+ },
+ {
+  "i": 33,
+  "title": "⋯داو الخالد العجيبFoxtail Quill",
+  "opened": false,
+  "error": "card not found (live cards: 0)",
+  "state": "{\"url\":\"\",\"cards\":0,\"reader\":true,\"view\":true,\"errorCard\":false,\"bodyLen\":109883,\"head\":\"المحتويات2963 فصلًا · قُرئ 2٪✕1غلاف الرواية1الفصل 1: الإيقاظ2الفصل 2: ​​رخصة الصياد3الفصل 3: [جنة القرد]4الفصل 4: هل هذا مبتدئ ... أم؟5الفصل 5 - كم عدد الكرات ا\"}"
+ },
+ {
+  "i": 34,
+  "title": "سرسالة الغفران_33102_Foulabook.com_⋯رسالة ال",
+  "opened": false,
+  "error": "card not found (live cards: 0)",
+  "state": "{\"url\":\"\",\"cards\":0,\"reader\":true,\"view\":true,\"errorCard\":false,\"bodyLen\":109883,\"head\":\"المحتويات2963 فصلًا · قُرئ 2٪✕1غلاف الرواية1الفصل 1: الإيقاظ2الفصل 2: ​​رخصة الصياد3الفصل 3: [جنة القرد]4الفصل 4: هل هذا مبتدئ ... أم؟5الفصل 5 - كم عدد الكرات ا\"}"
+ },
+ {
+  "i": 35,
+  "title": "⋯ري زيرو: بدء الحياة في عالم أخر من الصفرNag",
+  "opened": false,
+  "error": "card not found (live cards: 0)",
+  "state": "{\"url\":\"\",\"cards\":0,\"reader\":true,\"view\":true,\"errorCard\":false,\"bodyLen\":109883,\"head\":\"المحتويات2963 فصلًا · قُرئ 2٪✕1غلاف الرواية1الفصل 1: الإيقاظ2الفصل 2: ​​رخصة الصياد3الفصل 3: [جنة القرد]4الفصل 4: هل هذا مبتدئ ... أم؟5الفصل 5 - كم عدد الكرات ا\"}"
+ },
+ {
+  "i": 36,
+  "title": "سفنّ الحرب_24116_Foulabook.com_⋯فنّ الحرب_24",
+  "opened": false,
+  "error": "card not found (live cards: 0)",
+  "state": "{\"url\":\"\",\"cards\":0,\"reader\":true,\"view\":true,\"errorCard\":false,\"bodyLen\":109883,\"head\":\"المحتويات2963 فصلًا · قُرئ 2٪✕1غلاف الرواية1الفصل 1: الإيقاظ2الفصل 2: ​​رخصة الصياد3الفصل 3: [جنة القرد]4الفصل 4: هل هذا مبتدئ ... أم؟5الفصل 5 - كم عدد الكرات ا\"}"
+ },
+ {
+  "i": 37,
+  "title": "⋯منزل@أهوالي@kol",
+  "opened": false,
+  "error": "card not found (live cards: 0)",
+  "state": "{\"url\":\"\",\"cards\":0,\"reader\":true,\"view\":true,\"errorCard\":false,\"bodyLen\":109883,\"head\":\"المحتويات2963 فصلًا · قُرئ 2٪✕1غلاف الرواية1الفصل 1: الإيقاظ2الفصل 2: ​​رخصة الصياد3الفصل 3: [جنة القرد]4الفصل 4: هل هذا مبتدئ ... أم؟5الفصل 5 - كم عدد الكرات ا\"}"
+ },
+ {
+  "i": 38,
+  "title": "⋯يوم سقط القناعtopaz",
+  "opened": false,
+  "error": "card not found (live cards: 0)",
+  "state": "{\"url\":\"\",\"cards\":0,\"reader\":true,\"view\":true,\"errorCard\":false,\"bodyLen\":109883,\"head\":\"المحتويات2963 فصلًا · قُرئ 2٪✕1غلاف الرواية1الفصل 1: الإيقاظ2الفصل 2: ​​رخصة الصياد3الفصل 3: [جنة القرد]4الفصل 4: هل هذا مبتدئ ... أم؟5الفصل 5 - كم عدد الكرات ا\"}"
+ }
+]

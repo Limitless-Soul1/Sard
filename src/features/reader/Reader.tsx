@@ -11,6 +11,11 @@ import { useReader } from "../../reader-engine/store";
 import { parseSectionHref, sectionHref } from "../../reader-engine/sectionHref"; // WP-6A: generated-row hrefs
 import { positionReadout } from "../../reader-engine/position";
 import { loadBookCssMode } from "../../reader-engine/bookCssSetting"; // WP-7 stage 3 // WP-4F: one place decides the readout
+// RAWY-291: PDF reading appearances + the zoom lattice.
+import {
+  isPdfThemeId, PDF_THEME_KEY, pdfTheme, pdfZoomKey, pdfZoomAttr, parseStoredZoom,
+  stepPdfZoom, zoomForWheel, isFitMode, type PdfZoom, type PdfThemeId,
+} from "../../reader-engine/pdfView";
 import {
   ARABIC_DEFAULTS,
   defaultsForDir,
@@ -138,6 +143,17 @@ export function Reader({
   // tests/harness/tts-track.mjs) instead of a re-implementation of it that could drift.
   (window as unknown as { __sardTrackStats?: (lang?: string) => unknown }).__sardTrackStats = (lang) =>
     ctrlRef.current?.trackStats(lang);
+  // RAWY-292: the same convention for PDF read-aloud — units as the pipeline builds them, plus the
+  // text-layer verdict, so extraction QUALITY is measured through the real code (tests/harness/pdf-tts.mjs).
+  (window as unknown as { __sardPdfTts?: (lang?: string) => unknown }).__sardPdfTts = async (lang) => {
+    const units = (await ctrlRef.current?.getChapterUnits(lang)) ?? [];
+    return {
+      units: units.length,
+      withRange: units.filter((u) => !!u.range).length,
+      text: units.map((u) => u.text).join(" "),
+      verdict: ctrlRef.current?.pdfTextQuality() ?? null,
+    };
+  };
   // RAWY-70: the hide-first-line placeholder/reveal strings that ride into the content frame.
   // RAWY-71: + the UI direction so the confirm row (question · Reveal · Cancel) mirrors correctly.
   const makeRevealLabels = (): RevealLabels => ({
@@ -437,11 +453,16 @@ export function Reader({
       // and the same call site, exercised once loading had finished, correctly merged (`[1]` → `[1,6]`).
       // Nothing here depends on the view, so the reads simply belong before it. No flag, no guard, no
       // deferral of the handler: the data is just present before anything can read it.
-      const [readRaw, seenRaw, spoilerRaw, invertRaw] = await Promise.all([
+      const [readRaw, seenRaw, spoilerRaw, invertRaw, pdfThemeRaw, pdfZoomRaw] = await Promise.all([
         settingsGet(`chapters_read:${target.id}`).catch(() => null),
         settingsGet(`seen_start:${target.id}`).catch(() => null),
         settingsGet(`spoiler_safe:${target.id}`).catch(() => null),
         settingsGet(`pdf_invert:${target.id}`).catch(() => null),
+        // The PDF appearance is a READING preference, so it is global like the book theme — a reader
+        // who wants sepia wants it for every PDF. Zoom is the opposite: it belongs to the document,
+        // because the right magnification depends on that file's page size and scan quality.
+        settingsGet(PDF_THEME_KEY).catch(() => null),
+        settingsGet(pdfZoomKey(target.id)).catch(() => null),
       ]);
       if (stale()) return;
       // RAWY-250 (PART 4) / RAWY-256 (addendum, case 6): the read-chapter set and the "beginning seen" set,
@@ -455,7 +476,11 @@ export function Reader({
       // OFF via the Library route — same book, same stored value). Loading them on the same path as every
       // other per-book value removes the second lifecycle rather than adding a second reset.
       setSpoilerSafe(spoilerRaw !== "0"); // default ON (design §5)
-      setPdfInvert(invertRaw === "1");
+      // A reader who had chosen "inverted" before themes existed keeps a dark page: the old boolean is
+      // honoured once, as "night", and only when no theme has been chosen since. Nobody's setting is
+      // silently discarded, and nobody who never used invert gets a dark theme they did not ask for.
+      setPdfThemeId(isPdfThemeId(pdfThemeRaw) ? pdfThemeRaw : invertRaw === "1" ? "night" : "normal");
+      setPdfZoom(parseStoredZoom(pdfZoomRaw) ?? "fit-page");
       // The book's theme comes from the shared BOOK theme (D29), NOT the Library theme:
       // unified → the shared book theme; per-book → this book's override, else the shared book theme.
       const bookDefault = ts.bookThemeId;
@@ -918,7 +943,9 @@ export function Reader({
     // Ctrl+Wheel over the BOOK TEXT. The wheel fires inside the section iframe and never crosses the
     // frame boundary, so the desk's own handler cannot see it — the same split RAWY-87 documented for
     // PDF paging. Both routes end in `zoomByWheel`, so the behaviour is identical wherever the pointer is.
-    ctrl?.onZoomIntent((deltaY) => zoomByWheel(deltaY));
+    // RAWY-291: routed through a ref because this effect runs once — reading `isPdf`/the PDF zoom
+    // callback directly would freeze whichever values existed at registration.
+    ctrl?.onZoomIntent((deltaY) => zoomIntentRef.current(deltaY));
     // RAWY-129 (A): after returning to a still-playing chapter (its overlay is recreated, units rebuilt with
     // fresh ranges), re-draw the reading track at the CURRENT sentence/word from the store.
     ctrl?.onReadingRedraw(() => {
@@ -1284,27 +1311,106 @@ export function Reader({
   // RAWY-86: PDF appearance INVERT (approximate night mode — a CSS invert filter, NOT real themes;
   // it flips images too), persisted per book. Plus copy-selection. Feedback rides a small transient
   // message. RAWY-141: the reading-direction override + in-PDF find were removed (see SettingsPanel).
-  const [pdfInvert, setPdfInvert] = useState(false);
-  const [pdfMsg, setPdfMsg] = useState<string | null>(null);
-  const pdfMsgTimer = useRef<number | undefined>(undefined);
-  const flashPdf = (m: string) => {
-    setPdfMsg(m);
-    if (pdfMsgTimer.current) clearTimeout(pdfMsgTimer.current);
-    pdfMsgTimer.current = window.setTimeout(() => setPdfMsg(null), 2600);
-  };
+  // RAWY-291: the two-state invert is now a set of reading appearances (see reader-engine/pdfView.ts
+  // for why a PDF "theme" can only be a colour transform), and the renderer's zoom is finally exposed.
+  const [pdfThemeId, setPdfThemeId] = useState<PdfThemeId>("normal");
+  const [pdfZoom, setPdfZoom] = useState<PdfZoom>("fit-page");
+  // RAWY-292: the PDF toast is gone with copy-selection, its only caller. A PDF that cannot be read
+  // aloud now degrades through the EXISTING read-aloud path: unusable pages yield zero units, which is
+  // the same empty-chapter state an empty EPUB chapter produces — one behaviour, not a parallel one.
   // RAWY-285: `pdf_invert` is loaded by `openBook` with every other per-book value (it was a mount-once
   // effect, which a reused Reader silently never re-ran). The setter below is unchanged.
-  const togglePdfInvert = () => {
-    setPdfInvert((v) => {
-      const next = !v;
-      settingsSet(`pdf_invert:${initial.id}`, next ? "1" : "0").catch(() => {});
-      return next;
+  const choosePdfTheme = (id: PdfThemeId) => {
+    setPdfThemeId(id);
+    settingsSet(PDF_THEME_KEY, id).catch(() => {});
+    // Keep the legacy per-book key truthful, so a downgrade still shows a dark page for a dark theme.
+    settingsSet(`pdf_invert:${initial.id}`, pdfTheme(id).dark ? "1" : "0").catch(() => {});
+  };
+
+  // ZOOM. The renderer re-renders the page through pdf.js at the requested scale (fixed-layout.js
+  // observes `zoom`), so this is real resolution, not a magnified bitmap. Two consequences shape the
+  // code below: a re-render costs real work, so wheel events are COALESCED rather than applied one by
+  // one; and the scale a fit-mode resolves to is known only to the renderer, so stepping out of a fit
+  // mode reads the scale actually on screen instead of guessing.
+  const pdfZoomRef = useRef<PdfZoom>("fit-page");
+  pdfZoomRef.current = pdfZoom;
+  const zoomIntentRef = useRef<(d: number) => void>(() => {});
+  const pdfZoomWrite = useRef<number | undefined>(undefined);
+  const applyPdfZoom = useCallback((z: PdfZoom) => {
+    setPdfZoom(z);
+    ctrlRef.current?.setPdfZoom(z);
+    // Persist lazily: a wheel gesture must not write a settings row per frame.
+    if (pdfZoomWrite.current) clearTimeout(pdfZoomWrite.current);
+    pdfZoomWrite.current = window.setTimeout(() => {
+      settingsSet(pdfZoomKey(initial.id), pdfZoomAttr(z)).catch(() => {});
+    }, 400);
+  }, [initial.id]);
+  /** The scale currently on screen — resolved by the renderer when a fit mode is active. */
+  const currentPdfScale = useCallback(
+    () => (isFitMode(pdfZoomRef.current) ? (ctrlRef.current?.pdfRenderedScale() ?? 1) : (pdfZoomRef.current as number)),
+    [],
+  );
+  const pdfZoomStep = useCallback((dir: 1 | -1) => applyPdfZoom(stepPdfZoom(currentPdfScale(), dir)), [applyPdfZoom, currentPdfScale]);
+  // Wheel/pinch: coalesce to one render per frame. A trackpad pinch arrives as ctrl+wheel too, which
+  // is why no separate gesture handler is needed on this platform.
+  const pdfZoomPending = useRef<number | null>(null);
+  const pdfZoomRaf = useRef<number | undefined>(undefined);
+  const pdfZoomByWheel = useCallback((deltaY: number) => {
+    const from = pdfZoomPending.current ?? currentPdfScale();
+    pdfZoomPending.current = zoomForWheel(from, deltaY);
+    if (pdfZoomRaf.current !== undefined) return;
+    pdfZoomRaf.current = requestAnimationFrame(() => {
+      pdfZoomRaf.current = undefined;
+      const v = pdfZoomPending.current;
+      pdfZoomPending.current = null;
+      if (v != null) applyPdfZoom(v);
     });
-  };
-  const copyPdfSelection = async () => {
-    const txt = (await ctrlRef.current?.copyPdfSelection()) ?? "";
-    flashPdf(txt ? t("pdf.copied") : t("pdf.copyEmpty"));
-  };
+  }, [applyPdfZoom, currentPdfScale]);
+  zoomIntentRef.current = isPdf ? pdfZoomByWheel : zoomByWheel;
+  useEffect(() => () => {
+    if (pdfZoomRaf.current !== undefined) cancelAnimationFrame(pdfZoomRaf.current);
+    if (pdfZoomWrite.current) clearTimeout(pdfZoomWrite.current);
+  }, []);
+
+  // RAWY-294: push the appearance INTO the PDF page's own document, so it cannot reach the surround.
+  useEffect(() => {
+    if (!isPdf) return;
+    const th = pdfTheme(pdfThemeId);
+    const apply = () => ctrlRef.current?.setPdfTheme(th.filter, th.tint);
+    apply();
+    // Pages render asynchronously; re-apply briefly so a page that arrives late is not left untinted.
+    const id = window.setInterval(apply, 700);
+    const stop = window.setTimeout(() => window.clearInterval(id), 6000);
+    return () => { window.clearInterval(id); window.clearTimeout(stop); };
+  }, [isPdf, pdfThemeId, initial.id]);
+
+  // RAWY-293: whether THIS page yields speakable text — the read-aloud control follows real
+  // extraction, so it never appears on a scan and never promises what the pipeline cannot deliver.
+  const [pdfCanListen, setPdfCanListen] = useState(false);
+  useEffect(() => {
+    if (!isPdf) { setPdfCanListen(false); return; }
+    const tick = () => setPdfCanListen(ctrlRef.current?.pdfHasSpeakableText() ?? false);
+    tick();
+    const id = window.setInterval(tick, 1200);
+    return () => window.clearInterval(id);
+  }, [isPdf, initial.id]);
+
+  // Apply the remembered zoom once the PDF's renderer exists. The renderer defaults to fit-page, so
+  // without this a document reopened at 2x would silently come back at fit-page.
+  useEffect(() => {
+    if (!isPdf) return;
+    let tries = 0;
+    const id = window.setInterval(() => {
+      if (ctrlRef.current?.pdfPageCount || tries++ > 40) {
+        ctrlRef.current?.setPdfZoom(pdfZoomRef.current);
+        window.clearInterval(id);
+      }
+    }, 150);
+    return () => window.clearInterval(id);
+  }, [isPdf, initial.id]);
+  // RAWY-292: copy-selection removed from the PDF panel. It depended on the same text layer that
+  // measurement showed is absent or damaged in most of these documents, so the control was offered
+  // far more often than it could work. The controller method remains for the selection path.
 
   // RAWY-87 (#1): a PDF has no chapters, so the bottom chrome shows page position (page / total) and
   // the progress bar is scrubbable to jump. pageCount = the PDF's fixed-layout section count (set on
@@ -1741,8 +1847,11 @@ export function Reader({
   const onDeskWheel = (e: React.WheelEvent) => {
     // Zoom is answered before the PDF and paged branches, so Ctrl+Wheel behaves the same everywhere
     // in the reading area. (A PDF is fixed-layout and has no ReadingStyle, so it keeps paging.)
-    if (!isPdf && (e.ctrlKey || e.metaKey)) { e.preventDefault(); zoomByWheel(e.deltaY); return; }
-    if (isPdf) { ctrlRef.current?.pageByWheel(e.deltaY); return; } // RAWY-86: wheel turns PDF pages
+    // RAWY-291: Ctrl+Wheel now zooms a PDF as well. It previously fell through to the paging branch
+    // below, so the gesture every reader expects to magnify a scan turned the page instead.
+    if (e.ctrlKey || e.metaKey) { e.preventDefault(); (isPdf ? pdfZoomByWheel : zoomByWheel)(e.deltaY); return; }
+    // RAWY-86 / RAWY-293: scrolls the zoomed page first, turns the page only at its edge.
+    if (isPdf) { e.preventDefault(); ctrlRef.current?.pageByWheel(e.deltaY, e.deltaX); return; }
     if (isPaged) return;
     ctrlRef.current?.scrollByWheel(e.deltaY);
   };
@@ -1917,7 +2026,13 @@ export function Reader({
     // can capture SPACE/arrows — superseding the per-container onClickCapture the toolbar/pills still carry.
     <div className={`reader-root${chromeShown ? "" : " chrome-hidden"}${ttsActive ? " tts-playing" : ""}${!isPaged && !isPdf ? " flow-scrolled" : ""}${immersive ? " immersive" : ""}${scrolledAway && !chromeShown ? " scrolled-away" : ""}${style?.immHidePill ? " im-hide-pill" : ""}${style?.immHideScrollbar ? " im-hide-scrollbar" : ""}${ttsStatus === "chapter-end" ? " tts-chapter-end" : ""}${ttsStatus === "edge-error" ? " tts-edge-error" : ""}`} style={rootVars} onClickCapture={releaseButtonFocusAfterPointerClick}>
       {/* desk + centered page sheet (the book) + page-turn affordances */}
-      <div className={`reader-desk${isPdf && pdfInvert ? " pdf-invert" : ""}${style?.backgroundColor ? " custom-bg" : ""}`} style={deskStyle} onWheel={onDeskWheel}>
+      <div
+        // RAWY-294: `pdf-view` marks EVERY PDF (it carries the scroll containment); the theme itself
+        // is applied inside the page document, not by a class on this ancestor.
+        className={`reader-desk${isPdf ? " pdf-view" : ""}${style?.backgroundColor ? " custom-bg" : ""}`}
+        style={deskStyle}
+        onWheel={onDeskWheel}
+      >
         {showChevrons && (
           <button
             className="page-chevron page-chevron-left"
@@ -2024,6 +2139,7 @@ export function Reader({
         basketOpen={basketOpen}
         onBasket={() => setBasketOpen((v) => !v)}
         isPdf={isPdf}
+        pdfCanListen={pdfCanListen}
         pdfPageCount={pdfPageCount}
         onScrub={onPdfScrub}
       />
@@ -2043,16 +2159,18 @@ export function Reader({
         onReset={resetBook}
         unified={scope === "unified"}
         isPdf={isPdf}
-        pdfInvert={pdfInvert}
-        onPdfInvert={togglePdfInvert}
-        onPdfCopy={copyPdfSelection}
+        pdfThemeId={pdfThemeId}
+        onPdfTheme={choosePdfTheme}
+        pdfZoom={pdfZoom}
+        onPdfZoomStep={pdfZoomStep}
+        onPdfZoomMode={(m) => applyPdfZoom(m)}
       />
 
       {/* RAWY-85: no in-context selection toolbar (highlight/note/Photo Mode) for PDFs — they're
           CFI-less in Phase 0, so the whole annotation layer is disabled rather than half-working. */}
       {!isPdf && <AnnotationLayer ctrlRef={ctrlRef} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} onListen={startListenFromSelection} />}
       {/* RAWY-105: read-aloud player (EPUB-only) — floats above the reading area while listening. */}
-      {!isPdf && (
+      {(!isPdf || pdfCanListen) && (
         <TtsPlayer
           panelLeft={chaptersOpen || searchOpen}
           panelRight={annoOpen}
@@ -2074,7 +2192,6 @@ export function Reader({
       )}
 
       {/* RAWY-86: transient PDF feedback (find result / copied). */}
-      {pdfMsg && <div className="pdf-toast">{pdfMsg}</div>}
 
       <PhotoBasketTray open={basketOpen} onClose={() => setBasketOpen(false)} onCompose={composeBasket} />
 

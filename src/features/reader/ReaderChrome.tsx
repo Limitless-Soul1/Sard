@@ -41,6 +41,9 @@ interface Props {
   basketOpen: boolean;
   onBasket: () => void;
   isPdf?: boolean; // RAWY-85: a PDF is read-only — hide the EPUB-only controls
+  // RAWY-293: read-aloud IS offered for a PDF, but only when the open document actually yields
+  // speakable text. Gated on real extraction, never on the format alone.
+  pdfCanListen?: boolean;
   // RAWY-87 (#1): a PDF has no chapters, so the bottom shows a page position (page / total) and the
   // progress bar is scrubbable to jump anywhere. EPUB is untouched (these are only wired for a PDF).
   pdfPageCount?: number;
@@ -87,6 +90,7 @@ export function ReaderChrome({
   basketOpen,
   onBasket,
   isPdf,
+  pdfCanListen,
   pdfPageCount,
   onScrub,
 }: Props) {
@@ -169,8 +173,9 @@ export function ReaderChrome({
               <span className="rc-btn-label">{t("search.title")}</span>
             </button>
           )}
-          {/* RAWY-105: Listen (read-aloud) — EPUB-only (Arabic PDF text is unreliable, RAWY-86). */}
-          {!isPdf && (
+          {/* RAWY-105 / RAWY-293: Listen. For a PDF this appears once the text layer proves usable —
+              a scan yields nothing to speak, so offering the control there would be a dead button. */}
+          {(!isPdf || pdfCanListen) && (
             <button className={`rc-btn${ttsActive ? " on" : ""}`} onClick={onListen} title={t("tts.listen")}>
               <span className="rc-btn-ico">
                 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2" /></svg>

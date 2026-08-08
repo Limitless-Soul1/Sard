@@ -6,7 +6,7 @@
 // default, both synth paths, the voices picker, per-language persistence, and the RAWY-193 explicit
 // "Edge unavailable" pause state); this is the pill's markup/CSS, re-binding the same controls. Mirrors RTL.
 
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { useI18n } from "../../i18n";
@@ -69,6 +69,37 @@ export function TtsPlayer({
   // kashida; tapping the kashida stroke returns straight to full. UI-only — never persisted.
   const [size, setSize] = useState<"full" | "collapsed" | "kashida">("full");
   const expanded = size === "full"; // the engine/voices/speed rows show only when full
+  // RAWY-296: the speed chip opens a MENU instead of cycling. The list grew from 6 stops to 11, and a
+  // tap-cycle through 11 is a worse control than a list — reaching 1.75 could take ten taps, each one
+  // an audible rate change. Nothing about how a speed is APPLIED changed: the same `setSpeed`, the same
+  // `nearestSpeed` invariant, the same `mediaEl.playbackRate` (RAWY-264), no engine or buffer effect.
+  //
+  // ⚠ These hooks live HERE, above `if (!active) return null` (below), not beside the markup they serve.
+  // Placing them next to the chip put them after that early return, so the hook count changed the
+  // moment the player became active — React error #310, and the whole pill failed to render. Caught by
+  // the harness on the first run; the lesson is that this component has a conditional return partway
+  // down and every hook must stay above it.
+  const [speedOpen, setSpeedOpen] = useState(false);
+  const speedWrapRef = useRef<HTMLDivElement>(null);
+  // Dismissal: a pointer anywhere outside the chip+menu, or Escape. Both in the CAPTURE phase so a
+  // control underneath cannot swallow the event first, and both registered only while the menu is
+  // open — an always-on document listener during playback is exactly the kind of cost RAWY-181 trimmed.
+  useEffect(() => {
+    if (!speedOpen) return;
+    const onDown = (e: PointerEvent) => {
+      if (!speedWrapRef.current?.contains(e.target as Node)) setSpeedOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setSpeedOpen(false); };
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [speedOpen]);
+  // The row that hosts the chip unmounts when the pill collapses; drop the open state with it so it
+  // does not spring back open on re-expand.
+  useEffect(() => { if (!expanded) setSpeedOpen(false); }, [expanded]);
   // RAWY-193 (HARD CONDITION 1): the Edge-unavailable error is shown + actionable in EVERY pill state, so it
   // must NEVER render as the bare kashida bead (which has no error UI). Treat "edge-error" as un-minimized
   // regardless of `size` (no one-frame bead flash), and the effect below pulls `size` back to full.
@@ -130,14 +161,8 @@ export function TtsPlayer({
   const busy = preparing || downloading;
   const dlPct = Math.round(progress * 100);
   const trackPct = downloading ? progress * 100 : total > 1 ? (index / (total - 1)) * 100 : 0;
-  // RAWY-281: cycle the explicit speed LIST rather than adding a fixed step. Same gesture, same
-  // wrap-at-the-end behaviour, same order — it simply has one more stop (1.10x). `indexOf` cannot miss:
-  // `setSpeed` and the restore path both snap through `nearestSpeed`, so `speed` is always a member;
-  // the `< 0` guard is there so a hand-edited setting degrades to the first speed instead of NaN.
-  const cycleSpeed = () => {
-    const i = TTS_SPEEDS.indexOf(speed as (typeof TTS_SPEEDS)[number]);
-    setSpeed(TTS_SPEEDS[i < 0 ? 0 : (i + 1) % TTS_SPEEDS.length]);
-  };
+  /** "1", "1.15", "2" — never "1.00". `String` already drops trailing zeros for these values. */
+  const speedLabel = (v: number) => localeDigits(String(v), lang);
   const volPct = Math.round(volume * 100); // RAWY-180 (Part A): inline volume slider 0–100%
   const sub =
     errored ? ` · ${t("tts.error")}` :
@@ -345,9 +370,41 @@ export function TtsPlayer({
                 <span className="tts-voices-name">{voiceLabel(engine, voice)}</span>
                 <svg className="tts-voices-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={picking ? CHEV_DOWN : CHEV_UP} /></svg>
               </button>
-              <button className="tts-speed-chip" onClick={cycleSpeed} aria-label={t("tts.speed")} title={t("tts.speed")}>
-                {localeDigits(speed.toFixed(2).replace(/0$/, "").replace(/\.$/, ""), lang)}×
-              </button>
+              {/* RAWY-296: chip + menu. The wrapper is `position: relative` so the menu anchors to the
+                  chip and mirrors with it in RTL (it uses `inset-inline-end`, never `right`). */}
+              <div className="tts-speed-wrap" ref={speedWrapRef}>
+                <button
+                  className={`tts-speed-chip${speedOpen ? " on" : ""}`}
+                  onClick={() => setSpeedOpen((o) => !o)}
+                  aria-label={t("tts.speed")}
+                  title={t("tts.speed")}
+                  aria-haspopup="listbox"
+                  aria-expanded={speedOpen}
+                >
+                  {speedLabel(speed)}×
+                </button>
+                {speedOpen && (
+                  <div className="tts-speed-menu" role="listbox" aria-label={t("tts.speed")} dir={dir}>
+                    {TTS_SPEEDS.map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        role="option"
+                        aria-selected={v === speed}
+                        className={`tts-speed-opt${v === speed ? " on" : ""}`}
+                        onClick={() => { setSpeed(v); setSpeedOpen(false); }}
+                      >
+                        <span className="tts-speed-check" aria-hidden>
+                          {v === speed && (
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12.5 4.5 4.5L19 7" /></svg>
+                          )}
+                        </span>
+                        <span className="tts-speed-val">{speedLabel(v)}×</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
             {/* RAWY-180 (Part A): the inline VOLUME slider — a hairline row under Voice/Speed (design
                 "approach B"). Speaker glyph (accent; a muted glyph at 0) + a thin accent-fill track +

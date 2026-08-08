@@ -25,7 +25,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
-import { isDevelopmentOnly } from "./production-tree-rules.mjs";
+import { isDevelopmentOnly, productionPackageJson } from "./production-tree-rules.mjs";
 
 const REPO = resolve(import.meta.dirname, "..");
 const git = (args, opts = {}) =>
@@ -55,6 +55,17 @@ try {
     execFileSync("git", ["update-index", "--force-remove", "-z", "--stdin"],
       { cwd: REPO, env, input: drop.join("\0") + "\0" });
   }
+  // The release rewrites package.json's scripts for the published tree, so this must too — otherwise
+  // the gate would build a tree that is not the one that ships, and "it builds" would be an answer to
+  // the wrong question.
+  const pkgText = productionPackageJson(
+    execFileSync("git", ["show", `${SOURCE}:package.json`], { cwd: REPO, encoding: "utf8" }),
+  ).text;
+  const pkgBlob = execFileSync("git", ["hash-object", "-w", "--stdin"],
+    { cwd: REPO, input: pkgText, encoding: "utf8" }).trim();
+  execFileSync("git", ["update-index", "--add", "--cacheinfo", `100644,${pkgBlob},package.json`],
+    { cwd: REPO, env });
+
   tree = git(["write-tree"], { env });
 } finally {
   try { rmSync(tmpIndex, { force: true }); } catch { /* fine */ }

@@ -13,11 +13,8 @@
 // the git history. Only the current tree published to `main` is filtered.
 //
 // WHY THE ROOT-DOCUMENT RULE IS AN ALLOWLIST
-// Every leak this file has had came from the same shape: a rule that named the development files it
-// knew about, and a new file whose name did not match. `_STUDY.md$` did not catch
-// `BACKGROUND_MEDIA_STUDY_2_READABILITY.md`, `STRESS_TEST_3e0fc98.md`, `LIBRARY_COMPATIBILITY_AUDIT.md`
-// or `PDF_FEATURES_RAWY-291.md`, and each of those would have been published. Chasing suffixes cannot
-// win, because the next report will be named something nobody predicted.
+// A rule that names the files it knows about cannot hold: the next document is named something nobody
+// predicted, does not match, and ships. Chasing suffixes loses that race by design.
 //
 // So the root-level rule is inverted. A public product repository has a small, boring set of top-level
 // documents — README, BUILD, LICENSE, CHANGELOG and their usual companions. Those are listed in
@@ -67,11 +64,9 @@ export const DEVELOPMENT_ONLY = [
   { re: /^tests\//, why: "testing infrastructure — unit tests, fixtures, corpus and investigation harnesses" },
   { re: /^src-tauri\/tests\//, why: "testing infrastructure — Rust integration tests" },
   // Rust test modules that live INSIDE src/ rather than under tests/. Cargo allows both, so the
-  // directory rule above cannot see these — and four of them reached a public release carrying
-  // internal work-package names, references to the owner's live library, and a hardcoded path to a
-  // machine-local corpus directory. They are `#[cfg(test)]`, so a release build never compiles them:
-  // removing the file is safe because cfg-stripping happens before the module file is resolved.
-  // Only `cargo test` needs them, and that is not something `main` is for.
+  // directory rule above cannot see them. They are `#[cfg(test)]`, so removing the file is safe for a
+  // release build: cfg-stripping happens before the module file is resolved. Only `cargo test` needs
+  // them, and that is not what `main` is for.
   { re: /^src-tauri\/src\/(?:.*\/)?(?:tests|[A-Za-z0-9_]+_tests)\.rs$/, why: "a Rust test module — testing infrastructure, not the product" },
   { re: /^(tsconfig\.test\.json|vitest\.config\.ts)$/, why: "testing infrastructure — test-runner configuration" },
 
@@ -120,13 +115,12 @@ export const PRODUCTION_ALWAYS = [
 /**
  * THE ONLY npm SCRIPTS THAT MAY APPEAR IN THE PUBLISHED `package.json`.
  *
- * Excluding a path stops a FILE from shipping; it does nothing about internal material inside a file
- * that legitimately ships. `package.json` is exactly that case: 21 of its 34 scripts named harnesses,
- * corpus tooling, diagnostic and Beta packaging, and the private release mechanism — every one of them
- * pointing at a path the production tree does not contain. All of it was published.
+ * Excluding a path stops a FILE from shipping; it does nothing about the contents of a file that
+ * legitimately ships. `package.json` is that case: most of its scripts point at paths the published
+ * tree does not contain, so they neither run there nor belong there.
  *
- * So the published `package.json` keeps only what genuinely runs there, and the list is derived from
- * what actually executes rather than from taste:
+ * The published manifest keeps only what genuinely runs there, and the list is derived from what
+ * actually executes rather than from taste:
  *
  *   build           `tauri.conf.json` sets beforeBuildCommand: "npm run build"
  *   tauri           tauri-action's entry point — it runs `npm run tauri build`

@@ -391,10 +391,10 @@ npm install
 npm run tauri build      # release binary + MSI/NSIS installers
 ```
 
-For a fast local build without installers — including uncommitted changes — use
-`npm run build:test`, or double-click `build-test.bat`. It closes any running instance first,
-because a running Sard locks its own executable and the build would otherwise fail obscurely.
-See [`BUILD.md`](./BUILD.md) for the details and the common failure modes.
+For a faster local build, `npx tauri build --no-bundle` skips the installers and produces just the
+executable. Close any running copy of Sard first — it holds its own executable open, and the build
+would otherwise fail with a misleading error. See [`BUILD.md`](./BUILD.md) for the details and the
+common failure modes.
 
 ## Development
 

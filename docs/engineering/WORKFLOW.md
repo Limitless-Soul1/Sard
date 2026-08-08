@@ -513,6 +513,34 @@ Sard. **Do not move repo harnesses there.** They are OFFICIAL tooling and belong
 | `pack-beta-zip.mjs` | Beta installer → ZIP. Derives the artifact name from config; refuses one older than the verified binary. | `npm run pack:beta` | Beta distribution |
 | `pack-diag-zip.mjs` | Diagnostic package. | `npm run pack:diag-zip` | tester diagnostics |
 | `copy-release.mjs`, `kill-sard.mjs`, `pack-diag.mjs`, `pack-share.mjs` | Support utilities. | ad hoc | — |
+| `verify-main-buildable.mjs` | **The production-build gate.** Reconstructs the tree the release would publish and runs the production typecheck and bundle against it. | `npm run verify:main-buildable` | `release-to-main.mjs` |
+
+### The fast test build — `npm run build:test`
+
+**This lives here, not in `BUILD.md`.** `BUILD.md` ships to `main`, where none of these scripts exist,
+so instructions naming them were both broken for a public reader and a description of internal
+tooling. The knowledge is kept; only its location changed.
+
+`scripts/build-test.mjs`, from the CURRENT working tree **including uncommitted changes**, in order:
+
+1. **Checks cargo is resolvable** — falls back to the rustup default `%USERPROFILE%\.cargo\bin` if it
+   is not on PATH, or aborts with a clear "install Rust / fix PATH" message.
+2. **Closes any running Sard** — `sard.exe`, `Sard.exe` **and** `Sard-standalone.exe`, via
+   `scripts/kill-sard.mjs` — and aborts loudly if one cannot be closed, rather than letting the build
+   die later with a cryptic `Access is denied (os error 5)` / `EBUSY`.
+3. Runs **`tauri build --no-bundle`** — a real release `.exe`, no installer, skipping the slow WiX MSI
+   and NSIS bundling a local test does not need.
+4. Copies the result to a stable path via `scripts/copy-release.mjs`: `test-build\Sard.exe` and
+   `test-build\piper\` (from `target\release\piper`, falling back to `src-tauri\resources\piper`).
+
+⚠ **`--no-bundle` is for TEST builds only.** A release needs the full `tauri build` — the installer is
+the artifact. `build:test` once ran the full bundle in an `&&` chain, so any bundling failure aborted
+everything and left no fresh `test-build\Sard.exe`, making the app look broken when only the installer
+step had failed.
+
+⚠ **The standalone's process name is `Sard-standalone`.** The Share single-file is `sard.exe` renamed,
+so `taskkill /IM sard.exe` and `Get-Process -Name sard` both miss it. `kill-sard.mjs` covers all three
+names, which is why a running copy cannot silently break a build.
 
 ## Test infrastructure (OFFICIAL, permanent)
 

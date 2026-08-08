@@ -172,7 +172,36 @@ export function useChromeOnIntent(): {
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => signalMove(e.clientX, e.clientY);
-    const onTap = () => wake();
+    // RAWY-298: a pointerdown inside the CONTENTS panel must not force the chrome open.
+    //
+    // THE BUG IT FIXES — measured, not inferred. With the chrome hidden (`.rc-top` at
+    // `translateY(-70px)`) and Contents open, pressing a chapter row fired this listener, `wake()` slid
+    // the bar to 0, and the panel's rows moved down by exactly 70px — so `pointerup` landed on a
+    // DIFFERENT row and no `click` was generated. The row's own handler is fine: a synthetic `.click()`
+    // navigated correctly (section 7 -> 9). The first press only revealed the bar; navigation needed a
+    // second one.
+    //
+    // WHY CONTENTS ONLY, AND NOT `.reader-panel`. Every other panel — Settings, Notes, basket, Search —
+    // is in the `setHold(true)` list (Reader.tsx), which pins the chrome VISIBLE while it is open, so
+    // there is no hidden bar to slide in and the shift cannot happen there. Contents is deliberately
+    // NOT held (RAWY-73: it is a side list you keep open while reading, and it opens by default, so
+    // holding meant the bar never auto-hid). That exclusion is exactly what makes Contents — and only
+    // Contents — able to be clicked while the chrome is hidden. Narrowing the guard to it keeps
+    // Search/Annotations behaviour byte-identical.
+    //
+    // The selector picks the Contents aside specifically: Search shares `.reader-panel.rp-lead` and is
+    // distinguished by its own `search-panel` class (SearchPanel.tsx), Annotations is `.rp-trail`.
+    //
+    // `arm()` still runs, so an ALREADY-VISIBLE bar keeps its idle countdown reset while the reader
+    // works in the panel — the guard suppresses the forced reveal, not the liveness.
+    const onTap = (e: PointerEvent) => {
+      const el = e.target as Element | null;
+      if (el?.closest?.(".reader-panel.rp-lead:not(.search-panel)")) {
+        arm();
+        return;
+      }
+      wake();
+    };
     window.addEventListener("mousemove", onMove, { passive: true });
     window.addEventListener("pointerdown", onTap, { passive: true });
     // RAWY-194 (C): NO `keydown → wake`. Waking on ANY window keydown revealed the reading chrome on every
@@ -186,7 +215,9 @@ export function useChromeOnIntent(): {
       window.removeEventListener("pointerdown", onTap);
       if (timer.current) clearTimeout(timer.current);
     };
-  }, [signalMove, wake]);
+    // `arm` joins the deps because `onTap` now calls it. All three are stable useCallbacks, so this
+    // does not change how often the listeners are re-registered.
+  }, [signalMove, wake, arm]);
 
   return { visible, scrolledAway, wake, signalMove, signalScroll, setHold, hideChrome };
 }

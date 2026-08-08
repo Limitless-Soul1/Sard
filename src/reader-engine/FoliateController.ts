@@ -27,9 +27,9 @@ import {
 } from "./injectedCss";
 import { navIntent } from "./navIntent";
 import { normalizePdfText, stripPdfArtifacts, hasSpeakableText, scorePdfDocument, PDF_TTS_ENABLED, type PdfTextScore } from "../lib/pdfText"; // RAWY-292
-import { stageEnter as diagStageEnter, stageOk as diagStageOk, stageFail as diagStageFail, probePdfChain as diagProbeChain, watchFirstPage as diagWatchFirstPage } from "../lib/pdfDiag"; // DIAGNOSTIC BUILD ONLY
-import { diagAttachDocument, diagNote, diagPublishUnits } from "../lib/diag"; // DIAGNOSTIC BUILD ONLY
-import { renderStageOk as rStageOk, renderStageFail as rStageFail, renderDiagAdoptDoc, renderDiagNotEpub, renderDiagReset, renderDiagSurface, renderDiagTheme } from "../lib/renderDiag"; // DIAGNOSTIC BUILD ONLY
+import { stageEnter as diagStageEnter, stageOk as diagStageOk, stageFail as diagStageFail, probePdfChain as diagProbeChain, watchFirstPage as diagWatchFirstPage } from "@pdfDiag"; // DIAGNOSTIC BUILD ONLY
+import { diagAttachDocument, diagNote, diagPublishUnits } from "@diag"; // DIAGNOSTIC BUILD ONLY
+import { renderStageOk as rStageOk, renderStageFail as rStageFail, renderDiagAdoptDoc, renderDiagNotEpub, renderDiagReset, renderDiagSurface, renderDiagTheme } from "@renderDiag"; // DIAGNOSTIC BUILD ONLY
 import { sanitiseBookCss, type BookCssMode } from "./cssSanitiser"; // WP-7 stage 3
 import { synthesiseToc, type SectionHeading, type SynthToc } from "./tocSynth"; // WP-6A // → is always the next page; see that file for why
 import { resolveSpotlight, resolvePill } from "./ttsTrack"; // RAWY-200: pure per-theme track resolution

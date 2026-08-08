@@ -18,7 +18,22 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+
+    /* THE INSTRUMENTATION SPECIFIERS — two entries each, tried in order.
+       The real module first, the no-op stub second. TypeScript takes the first that EXISTS, so ONE
+       shared config serves both trees: `develop` carries the real modules and typechecks against
+       them, while the production tree excludes them and falls back to `diagOff.ts`. Vite performs the
+       same substitution (see vite.config.ts), so the typechecker and the bundler agree.
+       These must stay BARE specifiers — `paths` is never applied to a relative import, which is what
+       made the v1.2.0 production build fail.
+       No `baseUrl`: it is deprecated for TypeScript 7, and since 5.x `paths` resolves relative to this
+       file, which is what these entries assume. */
+    "paths": {
+      "@diag": ["./src/lib/diag.ts", "./src/lib/diagOff.ts"],
+      "@pdfDiag": ["./src/lib/pdfDiag.ts", "./src/lib/diagOff.ts"],
+      "@renderDiag": ["./src/lib/renderDiag.ts", "./src/lib/diagOff.ts"]
+    }
   },
   "include": ["src"],
   "references": [{ "path": "./tsconfig.node.json" }]

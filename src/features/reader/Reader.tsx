@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, useMemo } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { pdfAttemptStarted, stageOk } from "../../lib/pdfDiag"; // DIAGNOSTIC BUILD ONLY
+import { pdfAttemptStarted, stageOk } from "@pdfDiag"; // DIAGNOSTIC BUILD ONLY
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { setBookCssMode } from "../../reader-engine/FoliateController";

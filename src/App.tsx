@@ -7,7 +7,7 @@ import { initReadMarkerStyle } from "./lib/readMarkerStyle"; // RAWY-256: persis
 import { initFonts } from "./lib/fonts";
 import { applyBackgrounds, initBackground, useBackground } from "./lib/background"; // RAWY-265
 import { initStyleScope } from "./lib/styleScope";
-import { diagStart } from "./lib/diag"; // DIAGNOSTIC BUILD ONLY - observes, never intervenes
+import { diagStart } from "@diag"; // DIAGNOSTIC BUILD ONLY - observes, never intervenes
 import { registerOutcomeRecorder } from "./lib/listeningOutcomes"; // RAWY-263: the local outcome baseline
 import { initTheme, reapplyTitlebarTheme, useTheme, THEMES } from "./theme";
 import { LanguagePicker } from "./features/onboarding/LanguagePicker";

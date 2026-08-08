@@ -23,6 +23,39 @@ const DIAG_FILES = new Set(
   DIAG_MODULES.map((m) => resolve(import.meta.dirname, `src/lib/${m}.ts`).replace(/\\/g, "/")),
 );
 
+// HOW PRODUCT CODE NAMES THE INSTRUMENTATION.
+//
+// Product code imports `@diag`, `@pdfDiag` and `@renderDiag` — BARE specifiers, not relative paths,
+// and that is the whole point. `tsconfig.json` maps each to a two-entry fallback list, real module
+// first and `diagOff.ts` second, so the typechecker follows the same substitution the bundler does:
+// on `develop` it finds the real module, and on `main` — where the production tree does not carry the
+// instrumentation at all — it falls back to the stub. TypeScript only applies `paths` to bare
+// specifiers, never to `./diag`, which is why the specifiers had to change.
+//
+// This was found the hard way: the v1.2.0 release failed in CI because `npm run build` runs
+// `tsc` BEFORE Vite, and the typechecker cannot resolve an import whose file the production tree
+// legitimately excludes. The bundler alias alone was never enough.
+const DIAG_ALIASES: Record<string, string> = {
+  "@diag": "src/lib/diag.ts",
+  "@pdfDiag": "src/lib/pdfDiag.ts",
+  "@renderDiag": "src/lib/renderDiag.ts",
+};
+
+// ALWAYS REGISTERED, for BOTH build kinds — and that is not a detail.
+//
+// `diagOffPlugin` below is deliberately omitted from diagnostic builds. Putting this resolution inside
+// it therefore left a diagnostic build unable to resolve `@diag` at all. The alias must be answered by
+// a plugin that is never omitted; only the SUBSTITUTION stays conditional.
+const diagAliasPlugin = {
+  name: "sard-diagnostics-alias",
+  enforce: "pre" as const,
+  resolveId(source: string) {
+    const target = DIAG_ALIASES[source];
+    if (!target) return null;
+    return IS_DIAG ? resolve(import.meta.dirname, target) : DIAG_OFF;
+  },
+};
+
 // Matched on the RESOLVED FILE, never on the import specifier.
 //
 // The first version of this matched specifiers with a regex and silently missed `./diag` — the way
@@ -55,7 +88,7 @@ const BUILD_ID = process.env.SARD_BUILD_ID || "UNSET — built directly, not thr
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: IS_DIAG ? [react()] : [diagOffPlugin, react()],
+  plugins: IS_DIAG ? [diagAliasPlugin, react()] : [diagAliasPlugin, diagOffPlugin, react()],
 
   define: { __SARD_BUILD_ID__: JSON.stringify(BUILD_ID) },
 

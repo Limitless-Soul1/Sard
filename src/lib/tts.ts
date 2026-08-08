@@ -19,7 +19,7 @@ import { type BookScript, voiceCompatibility, isImplausiblyShortAudio } from "./
 // calls compile to no-ops and the instrumentation leaves the bundle entirely. They used to write to
 // `globalThis.__sardDiag*` inline, which the bundler cannot recognise as diagnostic — that is how
 // instrumentation kept reaching release bundles that were meant to have none.
-import { diagNote, diagPublishAudio } from "./diag";
+import { diagNote, diagPublishAudio } from "@diag";
 import { settingsGet, settingsSet, ttsDownloadVoice, ttsEdgeVoices, ttsStop, ttsVoicePresent } from "./ipc";
 import { LatencySeries, newSeries, recordSeries, resetSeries, seriesSummary, SynthScheduler } from "./ttsScheduler";
 

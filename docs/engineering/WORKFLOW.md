@@ -641,11 +641,70 @@ node tests/harness/<relevant>.mjs     # runtime measurement of what changed
 **Release sequence:**
 ```
 npm run verify:main-ready
-npm run release:to-main -- --commit
+npm run release:to-main -- --commit        # audits AND builds the exact shipping tree first
 git push private main
 git push origin main
-git tag vX.Y.Z && git push origin vX.Y.Z   # CI builds, signs, generates latest.json
+git tag -a vX.Y.Z && git push origin vX.Y.Z   # CI builds, signs, generates latest.json
 ```
+The order is not a convenience — see [Production release cleanliness](#production-release-cleanliness).
+
+---
+
+# Production release cleanliness
+
+> **PERMANENT. Applies to every future release, at every version number, without exception.**
+> Declared 2026-08-08, after v1.2.2 shipped carrying internal development material.
+
+**Before every production release, the exact tree and artifact that will reach users must be audited
+for BOTH build correctness AND production cleanliness.**
+
+## Why the path check is not enough
+
+The production-tree rules match **paths**. That answers "is an excluded file present?" and nothing
+else, and two things slip past it every time:
+
+- **Internal material inside a file that legitimately ships.** `package.json` shipped the whole
+  internal tooling inventory; a source comment shipped a private machine path.
+- **Development files under a path no rule names.** Rust test modules under `src-tauri/src/` were
+  never matched, because the rule named `src-tauri/tests/`.
+
+Both were published in v1.2.2 while every gate reported success. A gate that passes on a contaminated
+tree is not a gate.
+
+## What must be detected
+
+Content inspection, not only path matching. The tree must be free of:
+
+- private machine paths and local development paths;
+- internal developer or test modules;
+- diagnostic tools, harnesses, investigation utilities and testing infrastructure;
+- internal plans, reports, studies, checkpoints, evidence files, workflow and handoff documents;
+- developer-only scripts and packaging tools;
+- internal project or process terminology **where it reveals private development infrastructure** —
+  not ordinary product comments;
+- development databases, temporary files, internal configuration and other developer-specific material;
+- anything else not genuinely required by the end-user application.
+
+**Vendored third-party code is exempt by path**, with its provenance recorded. Upstream terminology in
+a vendored library is not contamination, and vendored files are never edited to satisfy this rule.
+
+## The mandatory order
+
+1. **Generate** the exact production shipping tree.
+2. **Audit** that tree for forbidden paths *and* forbidden content.
+3. **Build** that same tree.
+4. **Verify the artifact** — production identity, version, BUILD ID, no diagnostic or development traces.
+5. **Only then publish.**
+
+**A release is never published before artifact verification succeeds.** v1.2.1 was published and then
+rejected by its own verification, leaving an unverified installer live on the updater endpoint. The
+release therefore builds to a **draft** and a later step promotes it only after verification passes.
+
+**Two trees must never diverge.** Whatever is audited must be exactly what is built and exactly what is
+shipped. Verifying one tree and releasing another is the failure this rule exists to prevent — which is
+why the production-build check applies the same content transforms the release does.
+
+**Any cleanliness failure blocks the release.** Not a warning, not a note to fix later.
 
 **Approval.** Verification may proceed freely. **Product behaviour, UI, UX and visual decisions
 require the owner's approval before implementation** — a filed observation is not an authorisation.

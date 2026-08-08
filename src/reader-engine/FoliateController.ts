@@ -1273,6 +1273,11 @@ function findMatchRange(doc: Document, pre: string, match: string, post: string)
 const UNITS_CHUNK = 24;
 const breathe = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
+/** RAWY-297: elements whose character data is never rendered, so it must never be spoken. Matched on
+ *  `localName`, which is lowercase in BOTH parsers — see `segmentBlock` for why that matters, why this
+ *  set is exactly two entries, and why `noscript` is not one of them. */
+const NEVER_RENDERED = new Set(["script", "style"]);
+
 // RESILIENCE-1 / WP-7 (stage 3) — INSTALL THE SANITISER HOOK, ONCE, AT MODULE LOAD.
 //
 // The vendored engine reads `globalThis.__sardSanitiseBookCss` at the top of `replaceCSS` (local
@@ -2947,7 +2952,43 @@ export class FoliateController {
     norm: (s: string) => string,
     out: { text: string; range: Range | null }[],
   ): void {
-    const walker = doc.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    // RAWY-297: reject text that is NEVER RENDERED.
+    //
+    // Reported by a tester: read-aloud spoke «window dot pubfuturetag…» mid-chapter. The book embeds an
+    // ad tag — `<div id="pf-…"><script>window.pubfuturetag…</script></div>` — in every one of its 759
+    // content documents. `getChapterUnits` tests `isHidden` on the CONTAINER, which is genuinely
+    // `display:block; visibility:visible`; the text was then taken from every descendant text node,
+    // including the script's. The visibility test and the text read were applied to DIFFERENT nodes.
+    //
+    // The filter belongs HERE and nowhere later: `strs`, `full`, `prefix`, `locate` and `rangeFor` are
+    // all derived from `nodes`, so a node never admitted is absent from all of them at once and the
+    // char offsets stay consistent with the DOM ranges BY CONSTRUCTION. Filtering the text after `full`
+    // is built would leave `prefix` describing the unfiltered nodes and silently shift every range
+    // after the removed span.
+    //
+    // EXACTLY TWO ELEMENTS, and the set is a fact about HTML rather than a heuristic: `script` and
+    // `style` are `display:none` in the UA stylesheet unconditionally, so no document, stylesheet or
+    // scripting state can make their contents visible. The parent alone is the whole test — neither
+    // may contain elements, so their character data is always a direct text child.
+    //
+    // ⚠ MATCH ON `localName`, NOT `nodeName`. EPUB content documents come in BOTH flavours, and the
+    // casing differs between them: in an HTML-parsed document `nodeName` is uppercased ("SCRIPT"), but
+    // in an XHTML/XML-parsed document it preserves the source case ("script"). The first version of
+    // this filter compared against an uppercase set and therefore did NOTHING on every XHTML book —
+    // it was caught by the gate, which stayed red on an XHTML host while the reported (HTML-parsed)
+    // book would have passed. `localName` is lowercase in both parsers, so it cannot drift this way.
+    //
+    // ⚠ `noscript` is deliberately NOT in this set. Its contents are parsed as raw text only when the
+    // scripting flag is ENABLED. Sard's content iframes are sandboxed `allow-same-origin` with no
+    // `allow-scripts` (RAWY-64), so scripting is disabled and the browser RENDERS `<noscript>` content
+    // as ordinary markup — measured in this build: `display:inline`, `offsetHeight:34`, present in
+    // `innerText`. Excluding it would delete prose the reader can see.
+    // `template` is absent for the opposite reason: its children live in a separate DocumentFragment
+    // and are not in the document tree, so this walker never reaches them.
+    const walker = doc.createTreeWalker(el, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n) =>
+        NEVER_RENDERED.has(n.parentElement?.localName ?? "") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+    });
     const nodes: Text[] = [];
     const strs: string[] = [];
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {

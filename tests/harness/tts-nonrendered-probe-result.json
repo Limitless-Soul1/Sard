@@ -1,0 +1,84 @@
+{
+ "startedAt": "2026-08-08T03:37:32.427Z",
+ "verdicts": {
+  "scriptLeaks": true,
+  "scriptVisible": false,
+  "styleLeaks": true,
+  "styleVisible": false,
+  "noscriptLeaks": true,
+  "noscriptVisible": true,
+  "templateReachedByWalker": false,
+  "templateVisible": false,
+  "hiddenSpanLeaks": true,
+  "hiddenSpanVisible": false,
+  "probeRemoved": true
+ },
+ "probe": {
+  "scriptingRuns": false,
+  "script": {
+   "innerTag": "script",
+   "innerDisplay": "none",
+   "containerDisplay": "block",
+   "containerVisibility": "visible",
+   "containerIsLeaf": true,
+   "containerTextContent": "SCRIPTPAYLOAD",
+   "walkerCollected": [
+    "SCRIPTPAYLOAD"
+   ],
+   "innerTextSeenByReader": "",
+   "offsetHeight": 0
+  },
+  "style": {
+   "innerTag": "style",
+   "innerDisplay": "none",
+   "containerDisplay": "block",
+   "containerVisibility": "visible",
+   "containerIsLeaf": true,
+   "containerTextContent": ".x{color:red}",
+   "walkerCollected": [
+    ".x{color:red}"
+   ],
+   "innerTextSeenByReader": "",
+   "offsetHeight": 0
+  },
+  "noscript": {
+   "innerTag": "noscript",
+   "innerDisplay": "inline",
+   "containerDisplay": "block",
+   "containerVisibility": "visible",
+   "containerIsLeaf": true,
+   "containerTextContent": "NOSCRIPTPAYLOAD",
+   "walkerCollected": [
+    "NOSCRIPTPAYLOAD"
+   ],
+   "innerTextSeenByReader": "NOSCRIPTPAYLOAD",
+   "offsetHeight": 34
+  },
+  "template": {
+   "innerTag": "template",
+   "innerDisplay": "none",
+   "containerDisplay": "block",
+   "containerVisibility": "visible",
+   "containerIsLeaf": true,
+   "containerTextContent": "",
+   "walkerCollected": [],
+   "innerTextSeenByReader": "",
+   "offsetHeight": 0
+  },
+  "hiddenSpan": {
+   "innerTag": "span",
+   "innerDisplay": "none",
+   "containerDisplay": "block",
+   "containerVisibility": "visible",
+   "containerIsLeaf": true,
+   "containerTextContent": "VISIBLEHIDDENSPAN",
+   "walkerCollected": [
+    "VISIBLE",
+    "HIDDENSPAN"
+   ],
+   "innerTextSeenByReader": "VISIBLE",
+   "offsetHeight": 34
+  },
+  "removed": true
+ }
+}

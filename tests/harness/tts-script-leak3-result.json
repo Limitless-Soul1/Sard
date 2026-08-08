@@ -1,0 +1,55 @@
+{
+ "startedAt": "2026-08-08T03:19:06.718Z",
+ "sections": [
+  {
+   "idx": 403,
+   "totalWithAd": 71,
+   "totalWithoutAd": 70,
+   "totalRestored": 71,
+   "delta": 1,
+   "node": {
+    "ok": true,
+    "tag": "DIV",
+    "id": "pf-12454-1",
+    "textLen": 133,
+    "text": "window.pubfuturetag = window.pubfuturetag || [];window.pubfuturetag.push({unit: \"673524f31c366f114b8e6d97\", id: \"pf-12454-1\"})"
+   }
+  },
+  {
+   "idx": 700,
+   "totalWithAd": 70,
+   "totalWithoutAd": 69,
+   "totalRestored": 70,
+   "delta": 1,
+   "node": {
+    "ok": true,
+    "tag": "DIV",
+    "id": "pf-12454-1",
+    "textLen": 133,
+    "text": "window.pubfuturetag = window.pubfuturetag || [];window.pubfuturetag.push({unit: \"673524f31c366f114b8e6d97\", id: \"pf-12454-1\"})"
+   }
+  },
+  {
+   "idx": 120,
+   "totalWithAd": 137,
+   "totalWithoutAd": 136,
+   "totalRestored": 137,
+   "delta": 1,
+   "node": {
+    "ok": true,
+    "tag": "DIV",
+    "id": "pf-12454-1",
+    "textLen": 133,
+    "text": "window.pubfuturetag = window.pubfuturetag || [];window.pubfuturetag.push({unit: \"673524f31c366f114b8e6d97\", id: \"pf-12454-1\"})"
+   }
+  }
+ ],
+ "verdicts": {
+  "everyDeltaExactlyOne": true,
+  "restoredEverywhere": true
+ },
+ "book": {
+  "id": "c109180d8c8eb733dd99708aed9e9d2d8788c83fa4f24f4cc1884f9668bff96f",
+  "title": "لورد الغوامض 2: حلقة الحتمية"
+ }
+}

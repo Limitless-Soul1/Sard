@@ -1,0 +1,63 @@
+{
+ "startedAt": "2026-08-08T06:48:04.742Z",
+ "commit": "3e0fc98",
+ "steps": {
+  "chromeHidden": {
+   "topOpacity": "1",
+   "topTransform": "matrix(1, 0, 0, 1, 0, -70)",
+   "botOpacity": "1",
+   "scrolledAway": true,
+   "rootClasses": ""
+  },
+  "rowBefore": {
+   "rows": 22,
+   "idx": 8,
+   "top": 351,
+   "left": -292,
+   "h": 35,
+   "cx": -157,
+   "cy": 369,
+   "panelTop": 0,
+   "panelH": 720,
+   "elementUnderCentreIsRow": false,
+   "underTag": null,
+   "label": "9الفصل الخامس عشر"
+  },
+  "rowAfterPointerDown": {
+   "rows": 22,
+   "idx": 8,
+   "top": 351,
+   "left": -292,
+   "h": 35,
+   "cx": -157,
+   "cy": 369,
+   "panelTop": 0,
+   "panelH": 720,
+   "elementUnderCentreIsRow": false,
+   "underTag": null,
+   "label": "9الفصل الخامس عشر"
+  },
+  "chromeAfter": {
+   "topOpacity": "1",
+   "topTransform": "matrix(1, 0, 0, 1, 0, -70)",
+   "botOpacity": "1",
+   "scrolledAway": true,
+   "rootClasses": ""
+  },
+  "rowShiftPx": 0,
+  "firstClick": {
+   "chromeAtClick": {
+    "topOpacity": "1",
+    "topTransform": "matrix(1, 0, 0, 1, 0, -70)",
+    "botOpacity": "1",
+    "scrolledAway": true,
+    "rootClasses": ""
+   },
+   "sectionBefore": 7,
+   "sectionAfter": 9,
+   "navigated": true
+  },
+  "secBefore": 7
+ },
+ "pageErrors": []
+}

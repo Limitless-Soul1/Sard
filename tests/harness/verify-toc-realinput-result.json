@@ -1,0 +1,75 @@
+{
+ "startedAt": "2026-08-08T06:53:49.379Z",
+ "cases": {
+  "sentinel": {
+   "beforeS": {
+    "dy": -70,
+    "hidden": true
+   },
+   "afterS": {
+    "dy": 0,
+    "hidden": false
+   },
+   "inputWorks": true
+  },
+  "case1": [
+   {
+    "row": 9,
+    "label": "10الفصل السادس عشر",
+    "s0": 7,
+    "s1": 10,
+    "navigated": true,
+    "chromeHiddenBefore": true,
+    "chromeHiddenAfter": true
+   },
+   {
+    "row": 4,
+    "label": "5الفصل التاسع",
+    "s0": 10,
+    "s1": 5,
+    "navigated": true,
+    "chromeHiddenBefore": true,
+    "chromeHiddenAfter": true
+   },
+   {
+    "row": 14,
+    "label": "15الفصل الحادي والعشرون",
+    "s0": 5,
+    "s1": 15,
+    "navigated": true,
+    "chromeHiddenBefore": true,
+    "chromeHiddenAfter": true
+   }
+  ],
+  "case2": {
+   "Enter": {
+    "s0": 15,
+    "s1": 12,
+    "navigated": true
+   },
+   "Space": {
+    "s0": 12,
+    "s1": 7,
+    "navigated": true
+   }
+  },
+  "case3": {
+   "b3": {
+    "dy": -70,
+    "hidden": true
+   },
+   "a3": {
+    "dy": -70,
+    "hidden": true
+   },
+   "revealed": false
+  },
+  "case4": {
+   "covered": false
+  }
+ },
+ "violations": [
+  "CASE 3: reading-area click no longer reveals the chrome"
+ ],
+ "inputWorks": true
+}

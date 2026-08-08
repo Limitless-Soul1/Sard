@@ -1,0 +1,116 @@
+{
+ "startedAt": "2026-08-08T06:16:34.991Z",
+ "commit": "3e0fc98",
+ "target": "kotobati - كتاب مقدمة ابن خلدون 1",
+ "control": "الأمير الصغير",
+ "cycles": 50,
+ "counters": {
+  "zoomOps": 150,
+  "bursts": 0,
+  "themes": 50,
+  "turns": 100,
+  "resizes": 3,
+  "immersive": 4,
+  "opens": 6,
+  "ttsSessions": 0,
+  "speedChanges": 0,
+  "checks": 0
+ },
+ "samples": [
+  {
+   "label": "start",
+   "t": "2026-08-08T06:16:39.199Z",
+   "heapMB": 2.43,
+   "nodes": 617,
+   "listeners": 330,
+   "docs": 5,
+   "frames": 5,
+   "layout": 31,
+   "taskS": 0.3
+  },
+  {
+   "label": "cycle 10",
+   "t": "2026-08-08T06:16:51.290Z",
+   "heapMB": 2.42,
+   "nodes": 617,
+   "listeners": 330,
+   "docs": 5,
+   "frames": 5,
+   "layout": 64,
+   "taskS": 0.3
+  },
+  {
+   "label": "cycle 20",
+   "t": "2026-08-08T06:17:07.922Z",
+   "heapMB": 4.45,
+   "nodes": 624,
+   "listeners": 332,
+   "docs": 6,
+   "frames": 6,
+   "layout": 233,
+   "taskS": 1
+  },
+  {
+   "label": "cycle 30",
+   "t": "2026-08-08T06:17:21.008Z",
+   "heapMB": 4.45,
+   "nodes": 624,
+   "listeners": 332,
+   "docs": 6,
+   "frames": 6,
+   "layout": 274,
+   "taskS": 1.1
+  },
+  {
+   "label": "cycle 40",
+   "t": "2026-08-08T06:17:37.580Z",
+   "heapMB": 4.75,
+   "nodes": 624,
+   "listeners": 332,
+   "docs": 6,
+   "frames": 6,
+   "layout": 407,
+   "taskS": 1.4
+  },
+  {
+   "label": "cycle 50",
+   "t": "2026-08-08T06:17:50.366Z",
+   "heapMB": 4.75,
+   "nodes": 624,
+   "listeners": 332,
+   "docs": 6,
+   "frames": 6,
+   "layout": 443,
+   "taskS": 1.5
+  },
+  {
+   "label": "end",
+   "t": "2026-08-08T06:17:51.075Z",
+   "heapMB": 4.75,
+   "nodes": 624,
+   "listeners": 332,
+   "docs": 6,
+   "frames": 6,
+   "layout": 443,
+   "taskS": 1.5
+  }
+ ],
+ "findings": [
+  {
+   "sev": "HARNESS",
+   "w": "no library card carries the exact stored title — PDF still uncovered"
+  }
+ ],
+ "khaldun": null,
+ "enduranceMs": 72990,
+ "pageErrors": [
+  "ERR:ResizeObserver loop completed with undelivered notifications."
+ ],
+ "growth": {
+  "heapMB": 2.32,
+  "nodes": 7,
+  "listeners": 2,
+  "docs": 1,
+  "frames": 1
+ }
+}

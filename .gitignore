@@ -50,6 +50,12 @@ dist-ssr
 /tests/harness/fingerprints/diff-*.json
 /tests/harness/subsystem-runs/
 
+# Sample clips for the background-media harnesses (`bg-media-benchmark`, `bg-media-readability`).
+# Tens of MB of video and GIF, generated or downloaded per investigation and never worth committing.
+# The harnesses take the directory as `--media=<dir>` or `$SARD_MEDIA_DIR` and fall back to here, so
+# this rule keeps that fallback from ever dirtying the working tree.
+/tests/harness/.media/
+
 # Private — REAL user data. Each `.db-snapshot-*` directory is a byte copy of the live
 # %APPDATA%/com.sard.app/sard.db (+ its -wal/-shm), taken before a risky task. They hold the
 # owner's library paths, reading positions, highlights, notes, bookmarks, tags and listening

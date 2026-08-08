@@ -105,6 +105,29 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # THE BUILD ID, generated here because nothing else in this workflow does.
+      #
+      # `scripts/build-identity.mjs` mints it, `build.rs` bakes it into the Rust binary and Vite
+      # defines it for the frontend — but both read it from SARD_BUILD_ID in the environment, and
+      # tauri-action runs `npm run tauri build` directly rather than through Sard's own build scripts.
+      # So on a CI build the variable was simply never set, both halves fell back to their "UNSET"
+      # string, and the finished artifact could not say which build produced it.
+      #
+      # That is what rejected the v1.2.1 artifact — after it had already been published, because the
+      # verification then ran too late. An artifact that cannot identify itself cannot be supported:
+      # every report it produces begins with an unanswerable question, which is the exact position the
+      # 2026-08-07 investigation was stuck in. Setting it here fixes the cause rather than the symptom.
+      - name: Generate the build id
+        shell: bash
+        run: |
+          ID=$(node -e "import('./scripts/build-identity.mjs').then(m => console.log(m.buildId(m.kindOf('release'), { cwd: process.cwd() })))")
+          case "$ID" in
+            REL-*) ;;
+            *) echo "::error::generated build id '$ID' is not a release id"; exit 1 ;;
+          esac
+          echo "SARD_BUILD_ID=$ID" >> "$GITHUB_ENV"
+          echo "build id: $ID"
+
       # The release notes come from the ANNOTATED TAG's message. They end up in two places that
       # matter: the GitHub release page, and the `notes` field of latest.json — which is the text
       # the in-app update dialog shows the reader. Writing them at `git tag -a` time is what keeps
@@ -138,8 +161,16 @@ jobs:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
           releaseName: "Sard v__VERSION__"
           releaseBody: ${{ steps.notes.outputs.body }}
-          # A manual run publishes a draft so it can be inspected and discarded; a tag publishes.
-          releaseDraft: ${{ github.ref_type != 'tag' }}
+          # ALWAYS a draft, including for a tag. The verification below decides whether it becomes a
+          # real release.
+          #
+          # This step builds, signs, creates the release AND uploads the assets in one action, so
+          # publishing here would mean publishing before anything has been checked — which is exactly
+          # what happened to v1.2.1: the artifact was rejected by the gate below, but the release was
+          # already public, already marked latest, and already being offered to every installed copy
+          # through the updater endpoint. A draft is not served by /releases/latest and does not appear
+          # in the public release list, so a failed verification now leaves nothing for a user to find.
+          releaseDraft: true
           prerelease: false
           # THE IMPORTANT ONE. Sard bundles both NSIS and MSI, and this input defaults to FALSE,
           # which would put the MSI in latest.json "for legacy reasons". The updater's tested Windows
@@ -151,9 +182,28 @@ jobs:
       # The artifact itself is asked what it is, AFTER it exists. Every check above is about intent;
       # this one is about bytes, and it is the only one that could have caught a diagnostic build that
       # got this far. It reads the PE version resource (the same field a user sees under Properties →
-      # Details) and searches for instrumentation markers, refusing to let a mislabelled binary reach
-      # the release page. Note it runs after tauri-action, so a failure here means a release exists
-      # with a bad asset — treat that as an incident and delete the release, do not just re-run.
+      # Details), confirms the build id, and searches for instrumentation markers.
+      #
+      # It runs while the release is still a DRAFT. If it fails, the job stops here and the draft is
+      # never promoted, so no user is ever offered an artifact that did not pass. That ordering is the
+      # correction v1.2.1 forced: previously this ran after the release was already public, which made
+      # the gate a post-mortem rather than a gate.
       - name: Verify the artifact is a PUBLIC RELEASE build
         shell: bash
         run: node scripts/verify-artifact.mjs --kind=release --exe=src-tauri/target/release/Sard.exe
+
+      # ONLY NOW does the release become real. Everything above has passed: the ref is on main, the
+      # tree carries no development-only files, the diag feature is off, the artifact is verified and
+      # carries its build id. Promoting the draft is what makes the updater endpoint start serving it,
+      # so it is deliberately the last thing that happens.
+      #
+      # A manual (workflow_dispatch) run is left as a draft, as before: it exists to exercise the
+      # pipeline without publishing, and it can be inspected and discarded.
+      - name: Publish the verified release
+        if: github.ref_type == 'tag'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft=false --latest
+          echo "published ${{ github.ref_name }}"

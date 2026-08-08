@@ -5,12 +5,10 @@
 - **`cargo` must be resolvable.** rustup installs it at **`%USERPROFILE%\.cargo\bin\cargo.exe`** and normally
   adds that folder to your PATH. If it didn't, `tauri build` fails with an opaque
   `failed to run 'cargo metadata' … program not found`.
-  - `npm run build:test` **auto-falls back** to `%USERPROFILE%\.cargo\bin` (and `$CARGO_HOME\bin`) for the
-    build, so it still works — but to make `cargo` work in *every* shell, add that folder to your **User
-    PATH** and open a **new** terminal (a reboot isn't needed). One-off for the current shell:
+  - To fix it for *every* shell, add that folder to your **User PATH** and open a **new** terminal (a
+    reboot isn't needed). One-off for the current shell:
     `` $env:Path = "$env:USERPROFILE\.cargo\bin;$env:Path" ``
-  - If cargo is nowhere, the build stops with a one-line "install Rust / add `%USERPROFILE%\.cargo\bin`"
-    message instead of the raw cargo dump. Install Rust from <https://rustup.rs>.
+  - If cargo is not installed at all, install Rust from <https://rustup.rs>.
 
 ## Runtime requirement — the WebView2 floor (RESILIENCE-1 / WP-1)
 

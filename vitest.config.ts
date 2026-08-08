@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { resolve } from "node:path";
 
 // WP-0 (RESILIENCE-1): the project's first JavaScript test runner.
 //
@@ -9,6 +10,23 @@ import { defineConfig } from "vitest/config";
 // the actual engine, which is what `tests/harness/` is for. Adding a DOM shim now would buy nothing
 // and would invite tests that pass in a fake DOM and lie about WebView2.
 export default defineConfig({
+  // THE INSTRUMENTATION SPECIFIERS, pointed at the REAL modules.
+  //
+  // Product code imports `@diag`, `@pdfDiag` and `@renderDiag` so that the production tree — which
+  // excludes the instrumentation — can fall back to `diagOff.ts` (see tsconfig.json and
+  // vite.config.ts). Vitest resolves through neither of those, so without this a test that imports
+  // any product module fails with "Cannot find package '@pdfDiag'".
+  //
+  // These point at the REAL modules, not the stub, and deliberately: the suite runs against the full
+  // development tree and should exercise the code that actually runs there, exactly as `tsc` does on
+  // this branch. A test passing against a no-op would be a test that had stopped testing.
+  resolve: {
+    alias: {
+      "@diag": resolve(import.meta.dirname, "src/lib/diag.ts"),
+      "@pdfDiag": resolve(import.meta.dirname, "src/lib/pdfDiag.ts"),
+      "@renderDiag": resolve(import.meta.dirname, "src/lib/renderDiag.ts"),
+    },
+  },
   test: {
     include: ["tests/**/*.test.ts"],
     // `public/foliate-js` is a VENDORED engine pinned at a commit (see public/foliate-js/VENDOR.txt).

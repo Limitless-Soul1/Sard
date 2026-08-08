@@ -50,6 +50,12 @@ dist-ssr
 /tests/harness/fingerprints/diff-*.json
 /tests/harness/subsystem-runs/
 
+# The production-build check's scratch tree (`scripts/verify-main-buildable.mjs`). It extracts the
+# tree that would become `main` and builds it, and it must live inside the repository because Node and
+# Vite resolve `node_modules` by walking UP from the project directory. Removed on every exit path;
+# this rule is the backstop for a run that is interrupted.
+/.release-check/
+
 # Sample clips for the background-media harnesses (`bg-media-benchmark`, `bg-media-readability`).
 # Tens of MB of video and GIF, generated or downloaded per investigation and never worth committing.
 # The harnesses take the directory as `--media=<dir>` or `$SARD_MEDIA_DIR` and fall back to here, so

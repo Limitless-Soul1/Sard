@@ -71,6 +71,17 @@ if (!COMMIT) {
   process.exit(0);
 }
 
+// ---- refuse to publish a tree that does not build ------------------------------------------------
+//
+// The clean-tree rules above decide what `main` CONTAINS. They cannot tell whether what is left still
+// compiles, and those are different questions: v1.2.0 passed every clean-tree check, was published,
+// and was tagged — and only then did CI find that the production tree could not resolve imports whose
+// files the rules legitimately exclude. `develop` building is not evidence, because `develop` has
+// every file. So the tree that is about to become `main` is built here, before `main` moves.
+console.log(`\n  checking the production tree builds…`);
+execFileSync(process.execPath, [resolve(REPO, "scripts/verify-main-buildable.mjs"), `--from=${SOURCE}`],
+  { cwd: REPO, stdio: "inherit" });
+
 // ---- build the target tree from the source tree, minus the exclusions ---------------------------
 //
 // Done with a temporary index so the working tree is never touched: a release must not depend on

@@ -27,6 +27,7 @@ pub mod books; // file import, format detection, EPUB/PDF orchestration (placeho
 pub mod metadata; // read embedded metadata + persist user overrides (placeholder)
 pub mod fonts; // register/validate custom fonts (placeholder)
 pub mod photocards; // saved photo cards: PNG store + DB rows (RAWY-52, Photo Mode part 2a)
+pub mod bookhost; // the isolated reader-host origin (origin-isolation step 1; serves a static bundle only)
 pub mod settings; // key/value settings persistence
 pub mod sync; // FUTURE seam: backend trait only (placeholder)
 pub mod tts; // read-aloud over the Edge Read-Aloud neural voices
@@ -182,7 +183,12 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init());
+        .plugin(tauri_plugin_dialog::init())
+        // THE READER-HOST ORIGIN (origin-isolation step 1). A distinct origin serving a static,
+        // allow-listed slice of the frontend bundle: the host document, its script, the bundled
+        // fonts, and the pdf.js assets pdf.js resolves against its own URL. It reads through the
+        // asset resolver, so it has no filesystem path to serve a book with. Nothing embeds it yet.
+        .register_uri_scheme_protocol(bookhost::SCHEME, bookhost::handle);
 
     // THE UPDATER — RELEASE BUILDS ONLY, and this cfg is the whole reason it is split out of the
     // chain above. A diagnostic build that carries the public update channel is a diagnostic build

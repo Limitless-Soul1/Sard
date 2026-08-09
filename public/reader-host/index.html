@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sard reader host</title>
+<!-- The reader-host origin. Step 1 establishes the origin and its policy; the reading engine moves
+     in later, and this body is what it replaces.
+
+     There is no inline script anywhere in this document on purpose: the policy this origin ships
+     under is `script-src 'self'`, so an inline block would be refused. If one ever appears here and
+     the page still works, the policy has stopped being applied and that is a defect, not a
+     convenience. -->
+<style>
+  html, body { margin: 0; height: 100%; background: #f7f2e8; }
+  #report { position: absolute; left: -9999px; top: -9999px; width: 1px; height: 1px;
+            overflow: hidden; pointer-events: none; white-space: pre; }
+</style>
+</head>
+<body>
+  <div id="stage"></div>
+  <pre id="report"></pre>
+  <script src="/host.js"></script>
+</body>
+</html>

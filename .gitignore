@@ -16,20 +16,30 @@ dist-ssr
 /src-tauri/target
 /src-tauri/gen/schemas
 
-# Standalone test build the owner launches directly (RAWY-35) — a copy of the release binary
+# THE PRIVATE WORKSPACE — local only, never committed, never pushed, never published.
+#
+# Everything internal lives here: plans, reports, investigations, evidence, checkpoints and working
+# notes. Nothing in it is part of the product, and nothing in it may reach a public repository or a
+# release artifact.
+#
+# This rule is a LOCAL boundary and deliberately not the only one. It stops the material being
+# committed at all; the production-tree and production-content gates independently refuse it from any
+# published snapshot. Two independent controls, because the release pipeline must not depend on a
+# single ignore line being correct.
+/private/
+
+# Local build output.
 /test-build/
 
 # Env
 .env
 .env.*
 
-# Private — working notes that used to live here. They now live outside the repository and
-# must stay there; this rule remains as a backstop so a stray copy can never be committed.
+# Kept as a backstop so a stray local copy can never be committed.
 /PROJECT.md
 
-# NOTE: `/docs/` is deliberately NOT ignored. It is reserved for the published project site
-# (GitHub Pages serves from `docs/` on the default branch). Nothing else belongs in it —
-# design sources, screenshots and reports are not repository material.
+# NOTE: `/docs/` is deliberately NOT ignored — GitHub Pages serves the published project site from
+# it on the default branch.
 
 # RESILIENCE-1 / WP-0 — test artefacts.
 #
@@ -37,36 +47,24 @@ dist-ssr
 # truth and is committed; the binaries are not, so a public repo carries no opaque test blobs.
 /tests/fixtures/epub/
 #
-# The regression CORPUS is real books — mostly third-party copyrighted works, ~55 MB. It lives
-# OUTSIDE this repository at %SARD_CORPUS% (default M:\ProjectDocs\sard\Corpus). Only
-# tests/corpus/corpus.manifest.json is committed. This rule is a backstop in case anyone ever
-# copies the books in: publishing them would be a licensing violation, and irreversible.
+# Test books are third-party copyrighted works and are never committed. Their location comes from
+# %SARD_CORPUS%; only the manifest is tracked. This rule is a backstop against copying them in.
 /tests/corpus/books/
 /corpus/
 
-# Byte-identity failure dumps (FINDING-2). The baselines beside them ARE kept — they are the
-# reference. These are per-failure evidence: timestamped, sometimes large, and they name corpus
-# books, which are third-party copyrighted works this public repo must never describe in bulk.
+# Generated comparison output. The tracked baselines beside it are the reference; these files are
+# large, per-run, and may name third-party works.
 /tests/harness/fingerprints/diff-*.json
 /tests/harness/subsystem-runs/
 
-# The production-build check's scratch tree (`scripts/verify-main-buildable.mjs`). It extracts the
-# tree that would become `main` and builds it, and it must live inside the repository because Node and
-# Vite resolve `node_modules` by walking UP from the project directory. Removed on every exit path;
-# this rule is the backstop for a run that is interrupted.
+# Scratch build directory. It must sit inside the repository because Node and Vite resolve
+# node_modules by walking up from the project directory. Removed after each run; this is a backstop.
 /.release-check/
 
-# Sample clips for the background-media harnesses (`bg-media-benchmark`, `bg-media-readability`).
-# Tens of MB of video and GIF, generated or downloaded per investigation and never worth committing.
-# The harnesses take the directory as `--media=<dir>` or `$SARD_MEDIA_DIR` and fall back to here, so
-# this rule keeps that fallback from ever dirtying the working tree.
+# Large local media samples. Their directory is supplied at run time and falls back to here.
 /tests/harness/.media/
 
-# Private — REAL user data. Each `.db-snapshot-*` directory is a byte copy of the live
-# %APPDATA%/com.sard.app/sard.db (+ its -wal/-shm), taken before a risky task. They hold the
-# owner's library paths, reading positions, highlights, notes, bookmarks, tags and listening
-# records. They were NOT matched by any rule above, so a `git add -A` before the repo goes public
-# would publish all of it irreversibly. NEVER pushed.
+# Local database copies. These contain real personal data and must never be committed.
 /.db-snapshot-*/
 /.zcode/
 
@@ -81,10 +79,8 @@ dist-ssr
 *.sln
 *.sw?
 
-# NOTHING ARCHIVED MAY LIVE IN public/. Vite copies public/ verbatim into dist/, and Tauri embeds
-# dist/ into the executable — so a stray archive here is compiled into every build. A 47 MB RAR of a
-# previous Beta package sat here from 2026-08-05 and tripled the binary (24 MB -> 72 MB) in every
-# artifact built afterwards, including one sent to a tester. Nothing referenced it.
+# No archives in public/. Vite copies public/ verbatim into dist/ and Tauri embeds dist/ into the
+# executable, so a stray archive here is compiled into every build and inflates every artifact.
 public/**/*.rar
 public/**/*.zip
 public/**/*.7z

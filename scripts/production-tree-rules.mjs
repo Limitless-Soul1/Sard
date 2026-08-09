@@ -5,19 +5,14 @@
 // the release would pass a check it had already stopped satisfying.
 //
 // THE BOUNDARY THIS FILE DRAWS
-// `develop` is the complete development environment: product source, tests, fixtures, harnesses,
-// investigation tools, studies, reports, internal documentation and throwaway utilities. All of it is
-// kept, because it is how the product is built and verified. `main` is the finished product and
-// nothing else — it must read as an ordinary public repository for an application, not as somebody's
-// laboratory. Excluding a path here does NOT delete it; it stays on `develop` in full, and it stays in
-// the git history. Only the current tree published to `main` is filtered.
+// `develop` holds everything needed to build, test and verify the product. `main` holds the finished
+// product and nothing else, so it reads as an ordinary public repository for an application.
+// Excluding a path here does NOT delete it: it stays on `develop` in full, and it stays in the git
+// history. Only the current tree published to `main` is filtered.
 //
 // WHY THE ROOT-DOCUMENT RULE IS AN ALLOWLIST
-// Every leak this file has had came from the same shape: a rule that named the development files it
-// knew about, and a new file whose name did not match. `_STUDY.md$` did not catch
-// `BACKGROUND_MEDIA_STUDY_2_READABILITY.md`, `STRESS_TEST_3e0fc98.md`, `LIBRARY_COMPATIBILITY_AUDIT.md`
-// or `PDF_FEATURES_RAWY-291.md`, and each of those would have been published. Chasing suffixes cannot
-// win, because the next report will be named something nobody predicted.
+// A rule that names the files it knows about cannot hold: the next document is named something nobody
+// predicted, does not match, and ships. Chasing suffixes loses that race by design.
 //
 // So the root-level rule is inverted. A public product repository has a small, boring set of top-level
 // documents — README, BUILD, LICENSE, CHANGELOG and their usual companions. Those are listed in
@@ -40,6 +35,16 @@ export const DEVELOPMENT_ONLY = [
   //
   // `docs/` is PARTLY production: docs/screenshots/ is referenced by the public README and must ship,
   // so the exclusion is scoped to the engineering subtree rather than to docs/.
+  // THE PRIVATE WORKSPACE. `.gitignore` already stops it being committed, so in normal operation this
+  // rule never fires — and that is exactly why it is here. An ignore rule protects only what has not
+  // been added yet; a force-add, a stale index or a rule someone edits would slip straight past it.
+  // This is the second, independent control, and it is the one the release actually consults.
+  { re: /^private\//, why: "the private workspace — internal material, local only" },
+  // Only the release workflow ships (PRODUCTION_ALWAYS below pins it, because CI runs it from `main`).
+  // Every other workflow validates `develop`: it runs the unit suite, the harness rules and the gate
+  // scripts, none of which the published tree carries, so on `main` it would be a workflow that could
+  // only fail.
+  { re: /^\.github\/workflows\/(?!release\.yml$)/, why: "a development-branch workflow — it validates develop, not the product" },
   { re: /^docs\/engineering\//, why: "internal engineering documents — how the product is built, not the product" },
 
   // ---- ROOT-LEVEL DOCUMENTS -------------------------------------------------------------------
@@ -60,12 +65,16 @@ export const DEVELOPMENT_ONLY = [
   { re: /^DIAG-README\.txt$/, why: "the diagnostic package's tester instructions" },
 
   // ---- TESTING INFRASTRUCTURE -----------------------------------------------------------------
-  // ALL of it. Unit tests, fixtures, the corpus, the CDP harnesses and the runner configuration are
-  // how the product is verified; they are not part of the application a reader installs, and a public
-  // product repository does not carry its author's laboratory. Every one of these stays on `develop`
-  // and remains runnable there — excluding a path from the published tree does not remove it.
-  { re: /^tests\//, why: "testing infrastructure — unit tests, fixtures, corpus and investigation harnesses" },
+  // ALL of it. Tests, fixtures and their runner configuration are how the product is verified; they
+  // are not part of the application a reader installs. Every one of these stays on `develop` and
+  // remains runnable there — excluding a path from the published tree does not remove it.
+  { re: /^tests\//, why: "testing infrastructure — tests, fixtures and test data" },
   { re: /^src-tauri\/tests\//, why: "testing infrastructure — Rust integration tests" },
+  // Rust test modules that live INSIDE src/ rather than under tests/. Cargo allows both, so the
+  // directory rule above cannot see them. They are `#[cfg(test)]`, so removing the file is safe for a
+  // release build: cfg-stripping happens before the module file is resolved. Only `cargo test` needs
+  // them, and that is not what `main` is for.
+  { re: /^src-tauri\/src\/(?:.*\/)?(?:tests|[A-Za-z0-9_]+_tests)\.rs$/, why: "a Rust test module — testing infrastructure, not the product" },
   { re: /^(tsconfig\.test\.json|vitest\.config\.ts)$/, why: "testing infrastructure — test-runner configuration" },
 
   // ---- DEVELOPMENT AND RELEASE-OPERATION SCRIPTS ----------------------------------------------
@@ -74,7 +83,7 @@ export const DEVELOPMENT_ONLY = [
   // build, kills a stray process or publishes this very branch — all developer-machine operations
   // with no role in the product.
   { re: /^scripts\/pack-(diag|share|beta)[-.]?\w*\.mjs$/, why: "a packaging utility for non-release builds" },
-  { re: /^scripts\/(build-test|copy-release|kill-sard|release-to-main|verify-main-buildable)\.mjs$/, why: "a development or release-operation script" },
+  { re: /^scripts\/(build-test|copy-release|kill-sard|release-to-main|verify-main-buildable|production-tree|check-production-content|production-content-rules)\.mjs$/, why: "a development or release-operation script" },
   { re: /^build-test\.bat$/, why: "a development build shortcut" },
 
   // ---- DIAGNOSTIC INSTRUMENTATION -------------------------------------------------------------
@@ -106,9 +115,51 @@ export const DEVELOPMENT_ONLY = [
 export const PRODUCTION_ALWAYS = [
   /^src\/lib\/diagOff\.ts$/,
   /^scripts\/(verify-artifact|build-identity|production-tree-rules|check-production-tree)\.mjs$/,
-  /^\.github\/workflows\//,
+  // The release workflow specifically — CI runs it from `main`, so it has to be there. Narrowed from
+  // the whole directory once a second, development-only workflow existed.
+  /^\.github\/workflows\/release\.yml$/,
   /^(README|BUILD|LICENSE|CHANGELOG|CONTRIBUTING|SECURITY|CODE_OF_CONDUCT|NOTICE|AUTHORS)(\.md|\.txt)?$/,
 ];
+
+/**
+ * THE ONLY npm SCRIPTS THAT MAY APPEAR IN THE PUBLISHED `package.json`.
+ *
+ * Excluding a path stops a FILE from shipping; it does nothing about the contents of a file that
+ * legitimately ships. `package.json` is that case: most of its scripts point at paths the published
+ * tree does not contain, so they neither run there nor belong there.
+ *
+ * The published manifest keeps only what genuinely runs there, and the list is derived from what
+ * actually executes rather than from taste:
+ *
+ *   build           `tauri.conf.json` sets beforeBuildCommand: "npm run build"
+ *   tauri           tauri-action's entry point — it runs `npm run tauri build`
+ *   dev, preview    the ordinary entry points a reader of a public repository expects
+ *   verify:release  runs scripts/verify-artifact.mjs, which ships and which CI runs against every
+ *                   published artifact
+ *
+ * `name`, `version`, `dependencies` and `devDependencies` are never touched, so the published
+ * manifest cannot drift from the real one — which is why this is a transform and not a second file.
+ * Adding an entry here publishes it; add only what the public repository genuinely needs.
+ */
+export const PRODUCTION_SCRIPTS = ["dev", "build", "preview", "tauri", "verify:release"];
+
+/**
+ * The published `package.json`, given the source one. Returns the serialised text.
+ *
+ * Only the `scripts` block changes. Key order within it is preserved, so the diff between the two
+ * trees stays readable.
+ */
+export function productionPackageJson(sourceText) {
+  const pkg = JSON.parse(sourceText);
+  const kept = {};
+  const dropped = [];
+  for (const [name, cmd] of Object.entries(pkg.scripts ?? {})) {
+    if (PRODUCTION_SCRIPTS.includes(name)) kept[name] = cmd;
+    else dropped.push(name);
+  }
+  pkg.scripts = kept;
+  return { text: JSON.stringify(pkg, null, 2) + "\n", kept: Object.keys(kept), dropped };
+}
 
 /** True when a repo-relative path must be kept out of `main`. */
 export function isDevelopmentOnly(path) {

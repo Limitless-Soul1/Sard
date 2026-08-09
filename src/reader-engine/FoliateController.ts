@@ -1287,7 +1287,7 @@ const NEVER_RENDERED = new Set(["script", "style"]);
 //
 // It starts at `off`, the shipping default. Until stage 4 opens the CSP no book stylesheet reaches
 // the frame at all, so this hook is currently reached only by sheets that are already inert — which
-// is exactly the property stage 3 must preserve and byte-identity is asked to prove.
+// is exactly the property stage 3 must preserve, and which rendering comparison must confirm.
 let bookCssMode: BookCssMode = "off";
 
 /** Set the mode future stylesheets are sanitised with. Called by the Reader from the stored setting. */

@@ -8,7 +8,8 @@ use tauri::State;
 
 use crate::db::{self, AppState};
 use crate::{backgrounds, books, fonts, library, photocards, settings};
-
+mod discord;
+pub use discord::*;
 #[derive(Serialize)]
 pub struct AppInfo {
     /// THE BUILD ID baked in at compile time (build.rs). Product metadata, not instrumentation:

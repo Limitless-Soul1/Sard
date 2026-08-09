@@ -32,6 +32,7 @@ pub mod sync; // FUTURE seam: backend trait only (placeholder)
 pub mod tts; // RAWY-105: bundled piper sidecar (persistent process) + on-demand voice download
 pub mod webview_chrome; // RAWY-196: strip WebView2's browser chrome + accelerators (find bar, reload, print)
 pub mod window_chrome; // RAWY-118: theme the native title bar to match the app theme (DWM, Windows)
+pub mod discord_rpc; // Discord Rich Presence (optional, opt-in)
 
 use std::path::Path;
 
@@ -98,6 +99,9 @@ macro_rules! sard_invoke_handler {
             commands::book_register,
             commands::progress_save,
             commands::progress_get,
+            commands::discord_set_reading,
+            commands::discord_clear,
+            commands::discord_set_browsing,
             commands::library_list_books,
             commands::collections_list,
             commands::collection_create,
@@ -251,6 +255,7 @@ pub fn run() {
                 db_path,
             });
             app.manage(tts::TtsEngine::default()); // RAWY-105: persistent piper process holder
+            app.manage(discord_rpc::init());
             Ok(())
         });
 
@@ -276,6 +281,9 @@ pub fn run() {
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 if let Some(engine) = app_handle.try_state::<tts::TtsEngine>() {
                     tts::shutdown(&engine);
+                }
+                if let Some(discord) = app_handle.try_state::<discord_rpc::DiscordState>() {
+                    discord_rpc::shutdown(&discord);
                 }
             }
         });

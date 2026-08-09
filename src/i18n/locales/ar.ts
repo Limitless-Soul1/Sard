@@ -738,6 +738,7 @@ export const ar: Record<TKey, string> = {
   "tts.nextChapter": "الفصل التالي",
   "tts.bookEnd": "نهاية الكتاب",
 
+
   // ── RESILIENCE-1 / WP-1: سطح الأعطال ────────────────────────────────────────────────────────
   // كل نصّ هنا يجيب عن ثلاثة أسئلة بالترتيب: ما الذي فشل · على مَن تقع المسؤولية · ما الخطوة التالية.
   // السبب التقني لا يظهر في النصّ إطلاقًا — مكانه خلف «التفاصيل».
@@ -812,4 +813,17 @@ export const ar: Record<TKey, string> = {
   "meta.titleFrom.inferred": "مأخوذ من أول عنوان داخل الكتاب.",
   "meta.titleFrom.filename": "مأخوذ من اسم الملفّ.",
   "meta.titleFrom.default": "لم يقدّم هذا الكتاب عنوانًا صالحًا.",
+
+//اعدادات الدسكورد
+"gs.nav.sharing": "المشاركة",
+"gs.sharing": "المشاركة",
+"gs.discord": "دسكورد",
+"gs.discord.hint": "شارك ما تقرأه على الدسكورد",
+"gs.discord.enable": "إظهار نشاط القراءة في الدسكورد",
+"gs.discord.enableHint": "لا يُرسل شيء ما لم يكن هذا الخيار مفعّلاً. يتطلب تشغيل الدسكورد على سطح المكتب.",
+"gs.discord.showTitle": "إظهار عنوان الكتاب",
+"gs.discord.showChapter": "إظهار عنوان الفصل",
+"gs.discord.showProgress": " إظهار تقدم القراءة %", 
+"gs.discord.hiddenNote": "سيرى أصدقاؤك «Reading a book» بدلاً من العنوان.",
+
 };

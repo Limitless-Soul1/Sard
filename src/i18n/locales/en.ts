@@ -546,6 +546,16 @@ export const en = {
   "gs.fontsUsedBy": "Imported fonts become available as the interface font.",
   "gs.imported": "imported",
   "gs.remove": "Remove",
+  "gs.nav.sharing": "Sharing",
+  "gs.sharing": "Sharing",
+  "gs.discord": "Discord",
+"gs.discord.hint": "Share what you're reading on Discord",
+"gs.discord.enable": "Show reading activity on Discord",
+"gs.discord.enableHint": "Nothing is sent unless this is on. Requires the Discord desktop app to be running.",
+"gs.discord.showTitle": "Show book title",
+"gs.discord.showChapter": "Show chapter name",
+"gs.discord.showProgress": "Show reading progress",
+"gs.discord.hiddenNote": "Friends will see \"Reading a book\" instead of the title.",
   // RAWY-284: "Book styles", not "Reading defaults". In unified scope this section holds no defaults —
   // the reading-appearance controls moved to the reader, where they preview — so the old title promised
   // something that is not there. "Book styles" is true in BOTH scopes.

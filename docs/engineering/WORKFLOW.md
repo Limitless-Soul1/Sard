@@ -87,9 +87,80 @@ moment `main` contains anything that is not in the product.
 
 ---
 
+## The branch workflow
+
+```
+feature/*  or  fix/*  ──PR──▶  develop  ──release process──▶  main  ──tag──▶  CI  ──▶  release
+```
+
+**Never work directly on `main`. Never work directly on `develop` either** — day-to-day work happens on
+short-lived branches taken from `develop`.
+
+```
+git checkout develop
+git pull
+git checkout -b feature/login-page
+```
+
+Commit and push to that branch, then open a pull request into `develop` and merge it once the work is
+done. That is the whole daily routine, and it is deliberately ordinary.
+
+### The one step that is not a merge
+
+**A release is NOT a `develop` → `main` pull request.** `main` is a *published snapshot*, not a merge
+target: it carries 693 files where `develop` carries ~900, and one of them (`package.json`) has its
+contents rewritten. Git cannot express that — a merge would add every excluded file, and
+`.gitattributes merge=ours` does not help, because a file that exists on `develop` and never existed on
+`main` is not a conflict at all. Git simply adds it.
+
+So the release runs the release process instead, which generates the snapshot, audits it, builds that
+same tree, and only then moves `main`. Pushing an annotated `vX.Y.Z` tag is what triggers CI — merging
+into `main` does nothing, because the workflow fires on `push: tags: v*`.
+
+Two consequences worth stating, because both look like sensible settings and both break things:
+
+- **Do not enable "Require a pull request before merging" on `main`.** It blocks the direct push the
+  release performs. *"Block force pushes"* is the protection to enable — it enforces the no-rewrite rule
+  and does not interfere.
+- **Do not change the public repository's default branch.** `develop` does not exist there, and both the
+  pinned refspec and the `pre-push` hook refuse to put it there.
+
+---
+
+## `private/` — the local internal workspace
+
+**Local only. Never committed, never pushed, never published, never packaged.**
+
+One clearly identifiable root for everything internal: plans, reports, investigations, studies, audits,
+evidence, checkpoints, working notes, and any local utility with no role in the build. Organised by
+purpose — `plans/`, `reports/`, `engineering/`, `diagnostics/`, `testing/`, `harnesses/`, `scripts/`,
+`packaging/`, `evidence/`, `checkpoints/`, `scratch/` — so *"is this internal?"* is answered by where a
+file sits rather than judged one file at a time. Loose internal documents at the repository root are how
+material gets published by accident: each one looks harmless on its own.
+
+**The boundary is enforced twice, and the second one is not redundant:**
+
+1. `.gitignore` ignores `/private/`, so nothing in it is ever committed.
+2. `production-tree-rules.mjs` excludes `^private/` from any published snapshot, and the
+   production-content gate scans the generated tree.
+
+An ignore rule protects only what has not been added yet. A force-add, a stale index, or an edit to that
+one line would slip straight past it — and the release consults the gates, not `.gitignore`. **The ignore
+rule is an additional local boundary, never a replacement for the production gates.**
+
+⚠ **`private/` is not backed up.** No history, no remote copy. Anything that would hurt to lose belongs
+in the documentation vault at `M:\ProjectDocs\sard\`.
+
+**What deliberately stays in the tracked tree**, because the build, the test run or CI resolves it by
+path: `tests/`, `scripts/`, `docs/engineering/`, `src/lib/diag*.ts`, `src-tauri/src/diag_startup.rs` and
+the `*_tests.rs` modules. All of it is already excluded from `main` by the production-tree rules, so it
+is private where it counts — it never reaches the public repository or a release artifact.
+
+---
+
 ## `develop` — the daily development branch
 
-**All implementation work happens here.** Specifically:
+**All implementation work lands here, through the feature branches above.** Specifically:
 
 | | |
 |---|---|

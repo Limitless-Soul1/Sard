@@ -35,6 +35,11 @@ export const DEVELOPMENT_ONLY = [
   //
   // `docs/` is PARTLY production: docs/screenshots/ is referenced by the public README and must ship,
   // so the exclusion is scoped to the engineering subtree rather than to docs/.
+  // THE PRIVATE WORKSPACE. `.gitignore` already stops it being committed, so in normal operation this
+  // rule never fires — and that is exactly why it is here. An ignore rule protects only what has not
+  // been added yet; a force-add, a stale index or a rule someone edits would slip straight past it.
+  // This is the second, independent control, and it is the one the release actually consults.
+  { re: /^private\//, why: "the private workspace — internal material, local only" },
   { re: /^docs\/engineering\//, why: "internal engineering documents — how the product is built, not the product" },
 
   // ---- ROOT-LEVEL DOCUMENTS -------------------------------------------------------------------

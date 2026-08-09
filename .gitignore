@@ -16,6 +16,18 @@ dist-ssr
 /src-tauri/target
 /src-tauri/gen/schemas
 
+# THE PRIVATE WORKSPACE — local only, never committed, never pushed, never published.
+#
+# Everything internal lives here: plans, reports, investigations, evidence, checkpoints and working
+# notes. Nothing in it is part of the product, and nothing in it may reach a public repository or a
+# release artifact.
+#
+# This rule is a LOCAL boundary and deliberately not the only one. It stops the material being
+# committed at all; the production-tree and production-content gates independently refuse it from any
+# published snapshot. Two independent controls, because the release pipeline must not depend on a
+# single ignore line being correct.
+/private/
+
 # Local build output.
 /test-build/
 

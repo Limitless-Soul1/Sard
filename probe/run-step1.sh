@@ -48,8 +48,11 @@ rm -f "$SARD_PROBE_OUT"
 APP=$!
 # The window title carries the probe's stage, so a stall or a rejected invoke is visible rather
 # than silent — the previous attempt produced no output at all and no reason for it.
-LAST=""
+LAST=""; LASTALL=""
 for _ in $(seq 1 220); do
+  ALL="$(xdotool search --name . getwindowname %@ 2>/dev/null | tr '
+' '|')"
+  [[ -n "$ALL" && "$ALL" != "$LASTALL" ]] && { echo "  windows: $ALL"; LASTALL="$ALL"; echo "$ALL" >> "$OUT/titles.log"; }
   T="$(xdotool search --name "^PROBE" getwindowname %@ 2>/dev/null | tail -1)"
   [[ -n "$T" && "$T" != "$LAST" ]] && { echo "  title: $T"; LAST="$T"; echo "$T" >> "$OUT/titles.log"; }
   [[ -f "$SARD_PROBE_OUT" ]] && break

@@ -270,9 +270,11 @@ pub fn run() {
             // PROBE-ONLY (throwaway branch): open the runtime probe page instead of relying on the
             // main UI. It mounts the real sardhost: origin and reports through the command above.
             if std::env::var("SARD_PROBE").is_ok() {
-                let cors = std::env::var("SARD_PROBE_CORS").unwrap_or_default();
-                let url = format!("__probe/index.html?cors={cors}");
-                tauri::WebviewWindowBuilder::new(app, "probe", tauri::WebviewUrl::App(url.into()))
+                // No query string: `WebviewUrl::App` takes a RELATIVE path, and a value containing
+                // "://" makes the parse produce something that never loads. probe.js carries the
+                // default third-origin port instead.
+                tauri::WebviewWindowBuilder::new(app, "probe",
+                    tauri::WebviewUrl::App("__probe/index.html".into()))
                     .title("sard-step1-probe")
                     .inner_size(1200.0, 900.0)
                     .build()?;

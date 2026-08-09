@@ -58,8 +58,15 @@ echo "::group::build the binary BEFORE timing anything — RELEASE, and that is 
 #
 # The previous run also spent 125 s of a 240 s budget compiling and was then killed with rc=124.
 # Building before anything is timed means the timeout below measures runtime and nothing else.
-( cd "$ROOT/src-tauri" && cargo build --release --locked ) >"$OUT/build.log" 2>&1 || {
-  echo "cargo build failed"; tail -30 "$OUT/build.log"; exit 2; }
+#
+# AND WHY THE CLI, NOT `cargo build --release`. A release build alone was not enough — the guard
+# below caught it still reaching for localhost:1420. The dev-versus-production choice is baked into
+# the context that `generate_context!` compiles in, and only the Tauri CLI sets the environment that
+# makes that context embed `frontendDist`. `cargo` on its own has no idea the distinction exists.
+# `--no-bundle` stops after the binary: no .deb or AppImage is wanted here, only something to run.
+# The CLI runs `beforeBuildCommand` (`npm run build`) itself, so the bundle is current by definition.
+( cd "$ROOT" && npx tauri build --no-bundle ) >"$OUT/build.log" 2>&1 || {
+  echo "tauri build failed"; tail -30 "$OUT/build.log"; exit 2; }
 BIN="$ROOT/src-tauri/target/release/sard"
 [[ -x "$BIN" ]] || { echo "no release binary at $BIN"; exit 2; }
 echo "  built: $(stat -c%s "$BIN") bytes"

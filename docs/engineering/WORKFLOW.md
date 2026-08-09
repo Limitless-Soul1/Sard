@@ -96,14 +96,47 @@ feature/*  or  fix/*  ──PR──▶  develop  ──release process──▶
 **Never work directly on `main`. Never work directly on `develop` either** — day-to-day work happens on
 short-lived branches taken from `develop`.
 
+| Branch | Purpose |
+|---|---|
+| `main` | **Production.** The version users run. Protected. Only an approved release reaches it |
+| `develop` | **Integration.** The latest finished development state. Protected; changes arrive by pull request |
+| `feature/*` | A new feature, branched from `develop` — e.g. `feature/book-backgrounds` |
+| `fix/*` | A bug fix, branched from `develop` — e.g. `fix/tts-playback-gap` |
+
+Other short-lived branches are fine when they suit the work, but everything branches from `develop` and
+returns to `develop` through a pull request.
+
+### The daily routine
+
 ```
-git checkout develop
-git pull
-git checkout -b feature/login-page
+git switch develop
+git pull                            # start from the latest develop, always
+git switch -c feature/book-backgrounds
+# …implement, test, commit locally…
+git push private feature/book-backgrounds     # ONLY when finished — see below
+# open a pull request into develop, let the checks run, review, merge
+git branch -d feature/book-backgrounds        # delete once merged
 ```
 
-Commit and push to that branch, then open a pull request into `develop` and merge it once the work is
-done. That is the whole daily routine, and it is deliberately ordinary.
+### ⚠ A branch is published only when the work is FINISHED
+
+**Do not push a development branch to save unfinished work remotely.** A branch is published when, and
+only when:
+
+- the implementation is complete;
+- the intended functionality actually works;
+- it has been tested — and tested the way CI will run it, not only the way it runs here;
+- known issues are fixed, or written down deliberately;
+- it is genuinely ready for someone to review.
+
+An unfinished branch on the remote invites review of work that is not ready, and turns the remote into
+a backup drive rather than a record of finished work. Local commits are the place for work in progress;
+they cost nothing and lose nothing.
+
+**"Tested" means tested against the conditions CI uses.** Four consecutive CI failures on this project
+were all the same shape — a clean checkout lacked something this machine happened to have: generated
+fixtures, Node 22, LF line endings, a corpus directory. A green local run is not evidence about a clean
+runner. Reproduce the runner's conditions before pushing.
 
 ### The one step that is not a merge
 
@@ -131,12 +164,40 @@ Two consequences worth stating, because both look like sensible settings and bot
 
 **Local only. Never committed, never pushed, never published, never packaged.**
 
-One clearly identifiable root for everything internal: plans, reports, investigations, studies, audits,
-evidence, checkpoints, working notes, and any local utility with no role in the build. Organised by
-purpose — `plans/`, `reports/`, `engineering/`, `diagnostics/`, `testing/`, `harnesses/`, `scripts/`,
-`packaging/`, `evidence/`, `checkpoints/`, `scratch/` — so *"is this internal?"* is answered by where a
-file sits rather than judged one file at a time. Loose internal documents at the repository root are how
-material gets published by accident: each one looks harmless on its own.
+One clearly identifiable root for everything internal, organised by purpose, so *"is this internal?"* is
+answered by where a file sits rather than judged one file at a time. Loose internal documents at the
+repository root are how material gets published by accident: each one looks harmless on its own.
+
+```
+private/
+├── reports/          investigation reports, studies, audits
+├── plans/            roadmaps, stage plans, status summaries
+├── checkpoints/      session checkpoints and handoff snapshots
+├── diagnostics/      diagnostic packaging notes, tester instructions
+├── investigations/   work in progress on an open question
+├── notes/            personal development notes
+├── tools/            local utilities with no role in the build
+├── scripts/          local scripts, likewise
+├── evidence/         captured measurements, logs, before/after records
+├── scratch/          genuinely throwaway working material
+├── AI_DEVELOPMENT_STATUS.md
+└── README.md
+```
+
+Nothing here is part of the product, and none of it may reach a public repository or a release artifact.
+
+### `AI_DEVELOPMENT_STATUS.md`
+
+A **compact** handoff so a new session can pick the work up without reading hundreds of files: current
+branch and state, what was just finished, what is next, known issues and blockers, and the constraints
+that must be understood before changing anything.
+
+Keep it short and keep it current. It is a pointer, not a report — the moment it starts duplicating
+`PROJECT_HANDOFF.md` or the vault it has failed at its one job, which is to be cheap to read. Update it
+as work progresses; do not let it grow.
+
+**It is local-only, exactly like everything else here** — never committed, pushed, referenced from
+public documentation, or copied out of `private/`.
 
 **The boundary is enforced twice, and the second one is not redundant:**
 

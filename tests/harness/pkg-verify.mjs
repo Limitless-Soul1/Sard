@@ -49,7 +49,9 @@ try {
   const cardsBefore = await s.evaluate(
     `[...document.querySelectorAll('.lib-card')].map(c => c.getAttribute('title') || '')`,
   );
-  const CORPUS = process.env.SARD_CORPUS ?? "M:/ProjectDocs/sard/Corpus";
+  // `SARD_CORPUS` or nothing — no hardcoded default. Unset is a clear instruction, not a wrong path.
+  const CORPUS = process.env.SARD_CORPUS ?? "";
+  if (CORPUS === "") throw new Error("SARD_CORPUS is not set — this check needs the corpus books");
   const pdfPath = join(CORPUS, "pdf-arabic--muqaddima.pdf");
   if (!existsSync(pdfPath)) throw new Error(`no corpus PDF at ${pdfPath}`);
   const res = await s.evaluate(

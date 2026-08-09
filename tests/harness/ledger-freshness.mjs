@@ -23,7 +23,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const fail = [];
 const ok = (n, c, d = "") => { console.log(`   ${c ? "PASS" : "FAIL"}  ${n}${d ? ` — ${d}` : ""}`); if (!c) fail.push(n); };
 const REPORTS = join(process.env.USERPROFILE, "Documents", "Sard Diagnostics");
-const PDF = process.argv.find((a) => a.startsWith("--pdf="))?.slice(6) ?? "M:/روايات/697.pdf";
+// `--pdf=<path>` and nothing else. The previous default pointed at a personal book on one machine,
+// which is both a private path in the repository and useless to anyone else.
+const PDF = process.argv.find((a) => a.startsWith("--pdf="))?.slice(6) ?? "";
 
 const newestReport = () => {
   if (!existsSync(REPORTS)) return null;

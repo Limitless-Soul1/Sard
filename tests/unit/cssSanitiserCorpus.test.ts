@@ -15,8 +15,10 @@ import { sanitiseBookCss } from "../../src/reader-engine/cssSanitiser";
 // @ts-expect-error — .mjs helper, intentionally untyped
 import { zipEntries, zipRead, decodeXml } from "../lib/epub-read.mjs";
 
-const CORPUS = process.env.SARD_CORPUS || "M:\\ProjectDocs\\sard\\Corpus";
-const available = existsSync(CORPUS);
+// `SARD_CORPUS` or nothing. No hardcoded default: a fallback bakes one machine's layout into the
+// repository and fails everywhere else, including every CI runner.
+const CORPUS = process.env.SARD_CORPUS ?? "";
+const available = CORPUS !== "" && existsSync(CORPUS);
 
 /**
  * Just the declaration VALUES from sanitised output.
@@ -51,7 +53,10 @@ function corpusStylesheets(): { book: string; name: string; css: string }[] {
 }
 
 describe.skipIf(!available)("WP-7A — real corpus stylesheets", () => {
-  const sheets = corpusStylesheets();
+  // `skipIf` skips the TESTS, but this callback still runs during collection — so reading the corpus
+  // here unconditionally threw ENOENT on a machine without it, and the suite failed instead of
+  // skipping. The read has to be guarded, not just the tests it feeds.
+  const sheets = available ? corpusStylesheets() : [];
 
   it("finds stylesheets to test (guards against a vacuous pass)", () => {
     expect(sheets.length).toBeGreaterThan(10);

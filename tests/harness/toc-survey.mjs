@@ -31,7 +31,9 @@ try {
 }
 
 // Corpus books are third-party works living OUTSIDE the repo and are only ever read locally.
-const corpus = process.env.SARD_CORPUS ?? "M:/ProjectDocs/sard/Corpus";
+// `SARD_CORPUS` or nothing — no hardcoded default; the `existsSync` below turns an unset variable
+// into "no corpus books", not a wrong path on someone else's machine.
+const corpus = process.env.SARD_CORPUS ?? "";
 if (existsSync(corpus)) {
   for (const n of readdirSync(corpus)) {
     if (!n.toLowerCase().endsWith(".epub")) continue;

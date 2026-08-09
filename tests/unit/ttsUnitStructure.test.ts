@@ -78,9 +78,11 @@ describe("TRACK-1 — the no-block-container chapter shape", () => {
 });
 
 describe("TRACK-1 — the reported book, when the corpus is present", () => {
-  const corpus = process.env.SARD_CORPUS || "M:\\ProjectDocs\\sard\\Corpus";
-  const book = join(corpus, "txt-converted--daw-alkhalid.epub");
-  const present = existsSync(book);
+  // `SARD_CORPUS` or nothing — no hardcoded default. Unset means the corpus is absent, and these
+  // cases skip.
+  const corpus = process.env.SARD_CORPUS ?? "";
+  const book = corpus === "" ? "" : join(corpus, "txt-converted--daw-alkhalid.epub");
+  const present = book !== "" && existsSync(book);
 
   it.skipIf(!present)("every one of its chapters lacks a block container", () => {
     // The measured claim from the investigation, pinned so a future "it was only one chapter"

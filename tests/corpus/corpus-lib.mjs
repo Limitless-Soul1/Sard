@@ -9,14 +9,21 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const MANIFEST_PATH = join(HERE, "corpus.manifest.json");
 
-/** Where the book files live. Outside the repo by design — see README.md. */
+/**
+ * Where the book files live. Outside the repo by design — see README.md.
+ *
+ * `SARD_CORPUS` or nothing. There is deliberately no default: a hardcoded fallback bakes one
+ * machine's directory layout into the repository, and every other machine — including every CI
+ * runner — then fails on a path that was only ever right for one person. Callers guard with
+ * `corpusAvailable()`, so an unset variable means SKIP, never a wrong path and never a hard failure.
+ */
 export function corpusDir() {
-  return process.env.SARD_CORPUS || "M:\\ProjectDocs\\sard\\Corpus";
+  return process.env.SARD_CORPUS || "";
 }
 
 export function corpusAvailable() {
   const d = corpusDir();
-  return existsSync(d) && readdirSync(d).some((f) => /\.(epub|pdf)$/i.test(f));
+  return d !== "" && existsSync(d) && readdirSync(d).some((f) => /\.(epub|pdf)$/i.test(f));
 }
 
 export function readManifest() {

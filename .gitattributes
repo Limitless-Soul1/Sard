@@ -1,3 +1,16 @@
 # RAWY-105: the bundled piper engine (binaries + espeak config/data) must never have line
 # endings converted — CRLF would corrupt espeak-ng data files and break phonemization.
 src-tauri/resources/piper/** -text
+
+# `.mjs` FILES KEEP LF, ALWAYS.
+#
+# Several of these begin with a shebang, and `core.autocrlf` is true on Windows — so a checkout there
+# rewrote `#!/usr/bin/env node` to end in CRLF. The stray carriage return after the shebang is an
+# invalid token when the module is loaded through Vite, and three test files failed with
+# `SyntaxError: Invalid or unexpected token` on a clean runner while passing on a developer machine
+# whose working copy happened to still hold LF.
+#
+# This is not a Node problem: the same file fails on Node 20, 22 and 25 with CRLF, and passes on all
+# three with LF. It is also correct independently of that bug — a shebang script with CRLF does not
+# run on Linux or macOS at all.
+*.mjs text eol=lf

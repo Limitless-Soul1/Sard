@@ -26,10 +26,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Node 22, not 20. Two of the unit tests scan `src/**/*.{ts,tsx}` with `fs.globSync`, which is a
+      # Node 22 API — on 20 they fail with "globSync is not a function". `release.yml` deliberately
+      # stays on 20: it runs no tests, and it built and shipped the current release on that version.
       - name: Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies

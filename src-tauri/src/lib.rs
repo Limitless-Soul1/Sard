@@ -155,6 +155,7 @@ macro_rules! sard_invoke_handler {
             tts::tts_edge_voices,
             tts::tts_stop,
             window_chrome::set_titlebar_theme,
+            probe_write,  // PROBE-ONLY
             probe_finish, // PROBE-ONLY
             $($diag_cmd),*
         ])
@@ -167,10 +168,16 @@ macro_rules! sard_invoke_handler {
 // PROBE-ONLY (throwaway branch). Receives the runtime probe's findings, writes them where the CI
 // job can read them, and stops the app. Never merged.
 #[tauri::command]
-fn probe_finish(payload: String, app: tauri::AppHandle) {
+fn probe_write(payload: String) {
     let out = std::env::var("SARD_PROBE_OUT").unwrap_or_else(|_| "probe-out.json".into());
-    let _ = std::fs::write(&out, payload);
-    println!("[probe] wrote {out}");
+    let _ = std::fs::write(&out, &payload);
+    println!("[probe] wrote {} bytes via ipc", payload.len());
+}
+
+#[tauri::command]
+fn probe_finish(payload: String, app: tauri::AppHandle) {
+    probe_write(payload);
+    println!("[probe] finish");
     app.exit(0);
 }
 

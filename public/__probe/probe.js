@@ -1,82 +1,107 @@
 // PROBE-ONLY — throwaway branch. Never merged.
+//
+// Extraction is deliberately redundant. The previous iteration reported nothing at all and left no
+// way to tell whether the page had run, so this one reports through TWO independent channels and
+// reports EARLY:
+//
+//   • an HTTP collector the harness runs, which persists every stage as it happens and survives the
+//     window dying afterwards;
+//   • the Tauri command, which only works if the window is inside the capability scope.
+//
+// A partial result is emitted on boot, before any check runs, so "the page never executed" and "a
+// check hung" can never again be the same observation.
 (function () {
   "use strict";
-  var CORS = new URLSearchParams(location.search).get("cors") || "http://127.0.0.1:8791";
 
-  // Canaries. If the host could reach these, the boundary would have failed.
+  var COLLECT = "http://127.0.0.1:8792/report";
+  var CORS = "http://127.0.0.1:8791";
+
   window.__SARD_SECRET__ = "library-database-handle";
 
   var R = {
+    stage: "boot",
     appOrigin: location.origin,
     hostUrl: "sardhost://localhost/?selfcheck=1",
     appCanReadHost: {},
     hostReport: null,
     controls: {},
     windowMessages: 0,
+    ipc: "untried",
     errors: []
   };
 
-  function log() { document.getElementById("log").textContent = JSON.stringify(R, null, 1); }
-  function stage(s) { document.title = "PROBE " + s; }
-  window.addEventListener("error", function (e) { stage("JSERROR " + (e.message || "").slice(0, 60)); });
-  stage("BOOT");
-
-  function finish() {
-    log();
-    stage("FINISHING hostReport=" + (R.hostReport ? "yes" : "NO"));
+  var seq = 0;
+  function emit(stage) {
+    R.stage = stage;
+    R.seq = ++seq;
+    var body = JSON.stringify(R);
+    try { document.getElementById("log").textContent = body; } catch (e) { /* ignore */ }
+    // Channel 1 — the collector. Fire and forget; failures are recorded but never fatal.
+    try {
+      fetch(COLLECT, { method: "POST", body: body, headers: { "Content-Type": "text/plain" } })
+        .then(function () { R.collector = "ok"; }, function (e) { R.collector = "FAIL:" + e.name; });
+    } catch (e) { R.collector = "THREW:" + e.name; }
+    // Channel 2 — the Tauri command, if this window is in scope at all.
     try {
       var inv = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
-      if (!inv) { stage("NO_INVOKE_API"); return; }
-      Promise.resolve(inv("probe_finish", { payload: JSON.stringify(R) }))
-        .then(function () { stage("INVOKED_OK"); },
-              function (e) { stage("INVOKE_REJECTED " + String(e).slice(0, 70)); });
-    } catch (e) {
-      stage("INVOKE_THREW " + String(e).slice(0, 70));
-    }
+      if (!inv) { R.ipc = "no invoke api"; return; }
+      Promise.resolve(inv("probe_write", { payload: body }))
+        .then(function () { R.ipc = "ok"; }, function (e) { R.ipc = "rejected:" + String(e).slice(0, 60); });
+    } catch (e) { R.ipc = "threw:" + String(e).slice(0, 60); }
   }
 
-  // The host reports through postMessage because its origin holds no Tauri API — that is the design,
-  // not an oversight. Recorded, not trusted: nothing here acts on it.
+  window.addEventListener("error", function (e) {
+    R.errors.push("jserror: " + (e.message || "") + " @" + (e.filename || "") + ":" + (e.lineno || ""));
+    emit("jserror");
+  });
+  window.addEventListener("unhandledrejection", function (e) {
+    R.errors.push("unhandled: " + String(e.reason).slice(0, 120));
+    emit("unhandled");
+  });
+
+  emit("boot");                      // proves the page executed, before anything can hang
+
+  // The host reports through postMessage: its origin holds no Tauri API, by design.
   addEventListener("message", function (e) {
     var d = e.data;
     if (!d || !d.__sardProbeHost) return;
     R.windowMessages++;
     try { R.hostReport = JSON.parse(d.report); } catch (x) { R.hostReport = d.report; }
     R.hostReportOrigin = e.origin;
-    log();
+    emit("host-report-" + R.windowMessages);
   });
 
   var ifr = document.getElementById("host");
+  ifr.addEventListener("load", function () { emit("host-frame-load"); });
+  ifr.addEventListener("error", function () { R.errors.push("host frame error"); emit("host-frame-error"); });
   ifr.src = R.hostUrl;
+  emit("host-frame-src-set");
 
-  // ---- NEGATIVE CONTROLS -------------------------------------------------------------------
-  // Each mirrors something the host is expected to be refused. If the control also fails, the
-  // host's failure says nothing about policy and the corresponding result must read UNKNOWN.
   function control(key, p) {
-    return p.then(function (v) { R.controls[key] = v; }, function (e) { R.controls[key] = "FAIL:" + e.name; }).then(log);
+    return p.then(function (v) { R.controls[key] = v; }, function (e) { R.controls[key] = "FAIL:" + e.name; })
+            .then(function () { emit("control-" + key); });
   }
 
+  // Negative controls: if the app itself cannot reach these, a refusal at the host proves nothing.
   Promise.all([
-    // the app can reach its own origin
     control("app.fetchOwnOrigin", fetch("/__probe/probe.js").then(function (r) { return "OK:" + r.status; })),
-    // the app can reach the permissive third origin — so if the HOST cannot, that is the host's policy
-    control("app.fetchCorsOrigin", fetch(CORS + "/ping").then(function (r) { return "OK:" + r.status; })),
-    // can the privileged app read into the host frame? it must not be able to
-    new Promise(function (res) {
-      setTimeout(function () {
-        try { R.appCanReadHost.contentDocument = ifr.contentDocument ? "READABLE" : "null"; }
-        catch (e) { R.appCanReadHost.contentDocument = "BLOCKED:" + e.name; }
-        try { R.appCanReadHost.locationHref = ifr.contentWindow.location.href; }
-        catch (e) { R.appCanReadHost.locationHref = "BLOCKED:" + e.name; }
-        try { R.appCanReadHost.contentWindowIsObject = typeof ifr.contentWindow; }
-        catch (e) { R.appCanReadHost.contentWindowIsObject = "BLOCKED:" + e.name; }
-        res();
-      }, 4000);
-    })
+    control("app.fetchCorsOrigin", fetch(CORS + "/ping").then(function (r) { return "OK:" + r.status; }))
   ]).then(function () {
-    // give the host time to finish its own async checks and report
-    setTimeout(finish, 9000);
+    setTimeout(function () {
+      try { R.appCanReadHost.contentDocument = ifr.contentDocument ? "READABLE" : "null"; }
+      catch (e) { R.appCanReadHost.contentDocument = "BLOCKED:" + e.name; }
+      try { R.appCanReadHost.locationHref = ifr.contentWindow.location.href; }
+      catch (e) { R.appCanReadHost.locationHref = "BLOCKED:" + e.name; }
+      emit("app-read-host");
+    }, 3000);
   });
 
-  log();
+  // Final write happens regardless of what did or did not complete above.
+  setTimeout(function () {
+    emit("final");
+    try {
+      var inv = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
+      if (inv) inv("probe_finish", { payload: JSON.stringify(R) });
+    } catch (e) { /* the collector already has it */ }
+  }, 16000);
 })();

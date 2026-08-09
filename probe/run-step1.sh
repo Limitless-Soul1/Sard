@@ -5,7 +5,7 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; OUT="$ROOT/probe/out"; mkdir -p "$OUT"
 PC="${PC:-8791}"
 
-cleanup(){ [[ -n "${SC:-}" ]] && kill "$SC" 2>/dev/null; }
+cleanup(){ for p in ${SC:-} ${COL:-}; do kill "$p" 2>/dev/null; done; }
 trap cleanup EXIT
 
 echo "::group::permissive third origin (negative control)"
@@ -26,6 +26,37 @@ PY
 SC=$!
 sleep 1
 curl -fsS "http://127.0.0.1:$PC/ping" && echo "  third origin reachable (sends ACAO:*)"
+echo "::endgroup::"
+
+
+echo "::group::collector (persists every stage as it happens)"
+python3 - "$OUT" >"$OUT/collector.log" 2>&1 <<'PY2' &
+import sys, os, json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+OUT = sys.argv[1]; n = [0]
+class H(BaseHTTPRequestHandler):
+    def _cors(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Headers", "*")
+        self.send_header("Access-Control-Allow-Methods", "POST, OPTIONS")
+    def do_OPTIONS(self):
+        self.send_response(204); self._cors(); self.end_headers()
+    def do_POST(self):
+        body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        n[0] += 1
+        # Every stage is persisted the moment it arrives, so a later crash cannot erase it.
+        open(os.path.join(OUT, "latest.json"), "wb").write(body)
+        open(os.path.join(OUT, "stages.log"), "a", encoding="utf-8").write(
+            "%03d %s
+" % (n[0], (json.loads(body).get("stage") if body else "?")))
+        self.send_response(200); self._cors(); self.send_header("Content-Length", "2"); self.end_headers()
+        self.wfile.write(b"ok")
+    def log_message(self, *a): pass
+ThreadingHTTPServer(("127.0.0.1", 8792), H).serve_forever()
+PY2
+COL=$!
+sleep 1
+echo "  collector on :8792"
 echo "::endgroup::"
 
 echo "::group::build the frontend bundle"
@@ -64,6 +95,11 @@ echo "  app exited rc=$?"
 tail -20 "$OUT/app.log"
 echo "::endgroup::"
 
+echo "=== stages received by the collector ==="; cat "$OUT/stages.log" 2>/dev/null || echo "  (none)"
+if [[ ! -f "$SARD_PROBE_OUT" && -f "$OUT/latest.json" ]]; then
+  echo "  IPC produced nothing; using the collector's last persisted stage"
+  cp "$OUT/latest.json" "$SARD_PROBE_OUT"
+fi
 if [[ -f "$SARD_PROBE_OUT" ]]; then
   python3 "$ROOT/probe/step1-report.py" "$SARD_PROBE_OUT" | tee "$OUT/STEP1.md"
 else

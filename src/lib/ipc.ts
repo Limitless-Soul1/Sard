@@ -16,6 +16,20 @@ export interface DbHealth {
   schema_version: number;
   tables: string[];
 }
+export async function discordSetReading(
+  title: string,
+  author: string | null,
+  chapter: string | null,
+  progressPct: number | null,
+): Promise<void> {
+  await invoke("discord_set_reading", { title, author, chapter, progressPct });
+}
+export async function discordSetBrowsing(): Promise<void> {
+  await invoke("discord_set_browsing");
+}
+export async function discordClear(): Promise<void> {
+  await invoke("discord_clear");
+}
 
 /** Resolved app-data dir, DB path, and current schema version. */
 export const appInfo = (): Promise<AppInfo> => invoke<AppInfo>("app_info");

@@ -32,15 +32,17 @@ import {
   type ReadingStyle,
 } from "../../reader-engine/injectedCss";
 import { THEMES, THEME_ORDER, currentMode, useTheme, type ThemeMode } from "../../theme";
+import { useDiscordSettings } from "../../lib/discordSettings";
 
 const STYLE_KEY = "reading_style";
 
-type Section = "appearance" | "fonts" | "reading" | "bookmark" | "language" | "about";
+type Section = "appearance" | "fonts" | "reading" | "bookmark" | "sharing" | "language" | "about";
 const NAV: { key: Section; label: TKey; icon: string }[] = [
   { key: "appearance", label: "gs.nav.appearance", icon: "◑" },
   { key: "fonts", label: "gs.nav.fonts", icon: "A" },
   { key: "reading", label: "gs.nav.reading", icon: "▤" },
   { key: "bookmark", label: "gs.nav.bookmark", icon: "▸" },
+  { key: "sharing", label: "gs.nav.sharing", icon: "⇪" },
   { key: "language", label: "gs.nav.language", icon: "⌘" },
   { key: "about", label: "gs.nav.about", icon: "ⓘ" },
 ];
@@ -90,6 +92,7 @@ export function GlobalSettings({ open, onClose }: { open: boolean; onClose: () =
             {section === "fonts" && <FontsSection />}
             {section === "reading" && <ReadingDefaultsSection />}
             {section === "bookmark" && <BookmarkSection />}
+            {section === "sharing" && <SharingSection />}
             {section === "language" && <LanguageSection />}
             {section === "about" && <AboutSection />}
           </div>
@@ -837,6 +840,65 @@ function BookmarkSection() {
     </>
   );
 }
+// ---- Sharing: Discord Rich Presence (and a home for future "share" features) ----
+
+function SharingSection() {
+  const { t } = useI18n();
+  return (
+    <>
+      <SecHead>{t("gs.sharing")}</SecHead>
+      <DiscordPresenceSection />
+    </>
+  );
+}
+
+function DiscordPresenceSection() {
+  const { t } = useI18n();
+  const {
+    enabled,
+    showTitle,
+    showChapter,
+    showProgress,
+    setEnabled,
+    setShowTitle,
+    setShowChapter,
+    setShowProgress,
+  } = useDiscordSettings();
+
+  return (
+    <div className="gs-sec">
+      <Label hint={t("gs.discord.hint")}>{t("gs.discord")}</Label>
+
+      <BgToggle
+        label={t("gs.discord.enable")}
+        hint={t("gs.discord.enableHint")}
+        on={enabled}
+        onToggle={() => setEnabled(!enabled)}
+      />
+
+      {enabled && (
+        <>
+          <BgToggle
+            label={t("gs.discord.showTitle")}
+            on={showTitle}
+            onToggle={() => setShowTitle(!showTitle)}
+          />
+          <BgToggle
+            label={t("gs.discord.showChapter")}
+            on={showChapter}
+            onToggle={() => setShowChapter(!showChapter)}
+          />
+          <BgToggle
+            label={t("gs.discord.showProgress")}
+            on={showProgress}
+            onToggle={() => setShowProgress(!showProgress)}
+          />
+          {!showTitle && <div className="gs-note">{t("gs.discord.hiddenNote")}</div>}
+        </>
+      )}
+    </div>
+  );
+}
 
 function LanguageSection() {
   const { t, lang, setLang } = useI18n();
@@ -921,7 +983,6 @@ function AboutSection() {
     </>
   );
 }
-
 // The explicit two-level distinction (design Band H) — global vs in-book.
 function TwoLevelCard() {
   const { t } = useI18n();

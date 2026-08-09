@@ -15,7 +15,9 @@ import { Library, type OpenTarget } from "./features/library/Library";
 import { Reader } from "./features/reader/Reader";
 import { RuntimeGate } from "./app/RuntimeGate"; // RESILIENCE-1 / WP-1
 import { canRender } from "./lib/runtime";
-import { libraryListBooks, settingsGet, settingsSet } from "./lib/ipc";
+import { libraryListBooks, settingsGet, settingsSet, discordClear } from "./lib/ipc";
+import { initDiscordSettings, useDiscordSettings } from "./lib/discordSettings";
+import { initDiscordPresence, showBrowsingPresence } from "./reader-engine/discordPresence";
 
 // RAWY-12 i18n + RAWY-13 themes + RAWY-15 Library home. First run shows the language
 // picker; afterwards the saved language/theme drive the UI and the Library is the home
@@ -38,6 +40,13 @@ function Root() {
     })().catch(console.error);
   }, []);
 
+  // Discord: no book open (initial launch, or after backing out of one) -> "Browsing the library".
+  useEffect(() => {
+    if (!open) {
+      showBrowsingPresence();
+    }
+  }, [open]);
+
   if (!i18nReady || !themeReady) return null; // brief: settings loading (avoids theme flash)
   // RESILIENCE-1 / WP-1: the runtime gate. foliate's OPF parser needs browser features an older
   // WebView2 does not have; without them NO book opens, so this is a genuine precondition rather
@@ -46,10 +55,12 @@ function Root() {
   // A missing PDF capability is NOT checked here — EPUB reading is unaffected by it (see RuntimeGate).
   if (!canRender("epub")) return <RuntimeGate />;
   if (!hasLang) return <LanguagePicker />;
-  // RAWY-206: `onOpenBook` is the SAME `setOpen` the Library hands a book to — the reader's Notes panel
-  // uses it to open another book at a note's locator, so there is one open path, not two.
   return open ? (
-    <Reader book={open} onExit={() => setOpen(null)} onOpenBook={setOpen} />
+    <Reader
+      book={open}
+      onExit={() => setOpen(null)}
+      onOpenBook={setOpen}
+    />
   ) : (
     <Library onOpen={setOpen} />
   );
@@ -70,6 +81,30 @@ function App() {
     // Applying it later would paint the themed ground first and then swap — the RAWY-118 class of flash.
     initBackground();
     registerOutcomeRecorder(); // RAWY-263: observe listening outcomes locally. Read-only; never writes while audio plays.
+    initDiscordSettings(); // load persisted Discord presence settings
+  }, []);
+
+  // Discord Rich Presence — opt-in, off by default. Starts/stops the presence subscriber LIVE as the
+  // Sharing-tab master switch flips, so no restart is needed for the toggle to take effect.
+  useEffect(() => {
+    let stopDiscord: (() => void) | undefined;
+
+    const apply = (enabled: boolean) => {
+      if (enabled && !stopDiscord) {
+        stopDiscord = initDiscordPresence();
+      } else if (!enabled && stopDiscord) {
+        stopDiscord();
+        stopDiscord = undefined;
+        void discordClear().catch(() => {});
+      }
+    };
+
+    apply(useDiscordSettings.getState().enabled);
+    const unsub = useDiscordSettings.subscribe((s) => apply(s.enabled));
+    return () => {
+      unsub();
+      stopDiscord?.();
+    };
   }, []);
 
   // RAWY-265 — the library background is re-derived whenever the LIBRARY theme or any of its own

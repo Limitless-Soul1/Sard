@@ -44,7 +44,19 @@ export SARD_PROBE_OUT="$OUT/step1-runtime.json"
 export SARD_PROBE_CORS="http://127.0.0.1:$PC"
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
 rm -f "$SARD_PROBE_OUT"
-( cd "$ROOT/src-tauri" && timeout 240 cargo run --locked ) >"$OUT/app.log" 2>&1
+( cd "$ROOT/src-tauri" && timeout 240 cargo run --locked ) >"$OUT/app.log" 2>&1 &
+APP=$!
+# The window title carries the probe's stage, so a stall or a rejected invoke is visible rather
+# than silent — the previous attempt produced no output at all and no reason for it.
+LAST=""
+for _ in $(seq 1 220); do
+  T="$(xdotool search --name "^PROBE" getwindowname %@ 2>/dev/null | tail -1)"
+  [[ -n "$T" && "$T" != "$LAST" ]] && { echo "  title: $T"; LAST="$T"; echo "$T" >> "$OUT/titles.log"; }
+  [[ -f "$SARD_PROBE_OUT" ]] && break
+  kill -0 "$APP" 2>/dev/null || break
+  sleep 1
+done
+wait "$APP" 2>/dev/null
 echo "  app exited rc=$?"
 tail -20 "$OUT/app.log"
 echo "::endgroup::"

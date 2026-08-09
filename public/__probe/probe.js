@@ -17,14 +17,21 @@
   };
 
   function log() { document.getElementById("log").textContent = JSON.stringify(R, null, 1); }
+  function stage(s) { document.title = "PROBE " + s; }
+  window.addEventListener("error", function (e) { stage("JSERROR " + (e.message || "").slice(0, 60)); });
+  stage("BOOT");
 
   function finish() {
     log();
+    stage("FINISHING hostReport=" + (R.hostReport ? "yes" : "NO"));
     try {
-      window.__TAURI_INTERNALS__.invoke("probe_finish", { payload: JSON.stringify(R) });
+      var inv = window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke;
+      if (!inv) { stage("NO_INVOKE_API"); return; }
+      Promise.resolve(inv("probe_finish", { payload: JSON.stringify(R) }))
+        .then(function () { stage("INVOKED_OK"); },
+              function (e) { stage("INVOKE_REJECTED " + String(e).slice(0, 70)); });
     } catch (e) {
-      R.errors.push("invoke failed: " + e);
-      log();
+      stage("INVOKE_THREW " + String(e).slice(0, 70));
     }
   }
 

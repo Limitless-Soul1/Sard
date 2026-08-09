@@ -51,7 +51,7 @@ export const DEVELOPMENT_ONLY = [
   // The backstop described at the top of this file. Anything at the root that is not one of the
   // product's own documents (PRODUCTION_ALWAYS, checked first) is development material: reports,
   // studies, plans, checkpoints, status notes, tester instructions, scratch notes. Subdirectory
-  // documents are NOT caught here — public/foliate-js/README.md and the Piper LICENSES/README.md
+  // documents are NOT caught here — public/foliate-js/README.md
   // belong to shipped third-party code and must travel with it.
   { re: /^[^/]+\.(md|txt)$/i, why: "a root-level document that is not one of the product's own README/BUILD/LICENSE/CHANGELOG/NOTICE" },
 

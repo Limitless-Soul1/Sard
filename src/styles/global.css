@@ -1051,13 +1051,13 @@ html, body, #root {
    class is absent, so the pill still hides on scroll-away exactly as RAWY-210/212. Was RAWY-212's silent gap:
    the prompt lives INSIDE the pill, so hiding the pill hid the only way to continue a chapter while immersed. */
 /* RAWY-214: `:not(.tts-edge-error)` is the SECOND exemption, same shape as the chapter-end one. When Edge
-   fails, TtsPlayer swaps the transport for the "Edge unavailable / Retry / Switch to Piper" prompt
+   fails, TtsPlayer swaps the transport for the "Edge unavailable / Retry" prompt
    (`.tts-pill-edge-error`) — RAWY-193 requires that pause state VISIBLE and ACTIONABLE in every state, but it
    lives inside the pill, so `im-hide-pill` was hiding it: on a flaky network the audio just stopped with no
-   message and no way to switch engine while immersed — a silent failure, the exact thing D37's removal and
+   message and no way to retry while immersed — a silent failure, the exact thing D37's removal and
    RAWY-193 exist to prevent. Exempting it shows ONLY the error prompt (the transport is swapped out), alone
    over the clean page and clickable. Both exemptions are keyed off `ttsStatus`, so they are transient: the
-   moment the error clears (retry succeeds / user switches to Piper) the class drops and the pill hides again
+   moment the error clears (retry succeeds) the class drops and the pill hides again
    while still scrolled-away. `im-hide-scrollbar` is a separate rule and stays in effect throughout. */
 .reader-root.immersive.scrolled-away.im-hide-pill:not(.tts-chapter-end):not(.tts-edge-error) .tts-pill,
 .reader-root.immersive.scrolled-away.im-hide-pill:not(.tts-chapter-end):not(.tts-edge-error) .tts-mini { opacity: 0; pointer-events: none; }
@@ -1163,7 +1163,7 @@ html, body, #root {
 /* A ~330px pill floating ~26px above the page bottom, centred over the READING AREA (--reading-shift
    keeps it clear of an open Contents panel — the full-width bar overlapped it). Teal = the online
    (Edge) indicator, distinct from the terracotta/gold reading accent. */
-:root { --tts-teal: #4E8A7B; --tts-teal-dot: #5EA88F; }
+:root { --tts-teal: #4E8A7B; }
 :root[data-dark="true"] { --tts-teal: #8FC7B4; }
 
 /* RAWY-250 — the RETURN pill (top of the reader). Deliberately at the TOP, far from the read-aloud pill at
@@ -1487,24 +1487,6 @@ html, body, #root {
 .tts-pill.errored .tts-pill-chapter { color: color-mix(in srgb, #b05220 78%, var(--text)); }
 
 .tts-pill-controls { display: flex; flex-direction: column; gap: 7px; margin-top: 3px; }
-/* segmented Engine toggle: Piper | Edge (active = highlighted; Edge carries the teal dot) */
-.tts-engine-toggle {
-  display: flex; gap: 3px; padding: 3px; border-radius: 11px;
-  background: color-mix(in srgb, var(--text) 6%, transparent); border: 1px solid var(--chrome-border);
-}
-.tts-eng-seg {
-  flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
-  padding: 7px 4px; border: 0; border-radius: 8px; background: transparent; cursor: pointer;
-  color: var(--muted); font: 600 0.75rem var(--ui-font);
-}
-.tts-eng-seg svg { width: 15px; height: 15px; }
-.tts-eng-seg.on {
-  background: color-mix(in srgb, var(--paper-bg) 70%, transparent); color: var(--text); font-weight: 700;
-  box-shadow: 0 1px 3px rgba(40, 28, 14, 0.14);
-}
-:root[data-dark="true"] .tts-eng-seg.on { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4); }
-.tts-teal-dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: var(--tts-teal-dot); }
-
 .tts-voices-speed { display: flex; align-items: stretch; gap: 7px; }
 .tts-voices-chip {
   flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; cursor: pointer; text-align: start;
@@ -1614,8 +1596,8 @@ html, body, #root {
    below rather than derived from one block — the concept tunes each paper individually and inverting a
    single recipe is exactly what it rejects.
 
-   SCOPED, NOT GLOBAL: `.tts-end-next` is shared with the RAWY-193 Edge-error actions (Retry / Switch to
-   Piper), which are NOT part of this concept and must keep their current look. The skin therefore hangs off
+   SCOPED, NOT GLOBAL: `.tts-end-next` is shared with the RAWY-193 Edge-error action (Retry), which is
+   NOT part of this concept and must keep its current look. The skin therefore hangs off
    the added `.tts-next-plate` class, at (0,2,0) so it wins over the base rules above regardless of order,
    and the Edge-error buttons are untouched by construction — they never carry that class.
 
@@ -1864,15 +1846,9 @@ html, body, #root {
 }
 
 /* RAWY-193: the explicit "Edge unavailable" PAUSE state. Reuses the chapter-end block wholesale; the message
-   reads as an alert (the RAWY-190 errored ink), and "Switch to Piper" is a NEUTRAL secondary beside the accent
-   Retry so the primary recovery (stay on the chosen Edge voice) reads first. Theme-aware; mirrors in RTL. */
+   reads as an alert (the RAWY-190 errored ink) beside the accent Retry, which is the only action offered.
+   Theme-aware; mirrors in RTL. */
 .tts-pill-edge-error .tts-end-msg { color: color-mix(in srgb, #b05220 78%, var(--text)); }
-.tts-switch-piper {
-  border-color: var(--chrome-border);
-  background: transparent;
-  color: color-mix(in srgb, var(--text) 62%, transparent);
-}
-.tts-switch-piper:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
 
 .tts-spin {
   width: 16px; height: 16px; border-radius: 50%; border: 2px solid color-mix(in srgb, var(--paper-bg) 45%, transparent);

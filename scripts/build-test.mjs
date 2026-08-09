@@ -3,7 +3,7 @@
 // an env change between steps — so this orchestrator replaced that chain.
 //
 // Steps: cargo preflight (+ standard rustup fallback) -> close any running Sard -> `tauri build
-// --no-bundle` -> copy the exe + piper engine into test-build\.
+// --no-bundle` -> copy the exe into test-build\.
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve, delimiter } from "node:path";
@@ -70,4 +70,4 @@ console.log(`[Sard] BUILD ID  ${process.env.SARD_BUILD_ID}`);
 
 step("node scripts/kill-sard.mjs");    // close any running Sard (incl. Sard-standalone) or abort loudly
 step("npx tauri build --no-bundle");   // fast standalone release, NO installer (Share needs the FULL build)
-step("node scripts/copy-release.mjs"); // copy Sard.exe + piper into test-build\
+step("node scripts/copy-release.mjs"); // copy Sard.exe into test-build\

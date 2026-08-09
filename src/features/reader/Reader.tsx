@@ -284,7 +284,7 @@ export function Reader({
   const ttsActive = useTts((s) => s.active); // RAWY-105: read-aloud player visible?
   const ttsIndex = useTts((s) => s.index); // RAWY-126: current spoken sentence (drives the spotlight)
   const ttsStatus = useTts((s) => s.status); // RAWY-126: playing vs paused (paused keeps, doesn't follow)
-  const ttsWords = useTts((s) => s.words); // RAWY-127: the sentence's Edge word timings ([] = Piper)
+  const ttsWords = useTts((s) => s.words); // RAWY-127: the sentence's Edge word timings ([] = none)
   const ttsWordIndex = useTts((s) => s.wordIndex); // RAWY-127: active word (drives the karaoke pill)
 
   const { status, dir, cfi, fraction, chapterLabel, chapterHref, error, style, bookTitle, location, pageLabel } = useReader();
@@ -775,9 +775,9 @@ export function Reader({
       ctrlRef.current?.destroy();
       // RAWY-155: read-aloud is a per-reading-session activity — leaving the book (Back to Library,
       // opening a different book, the error screen — every exit unmounts the Reader or changes
-      // `initial.id`) must STOP it completely. `useTts.stop()` halts both engines' playback + the
+      // `initial.id`) must STOP it completely. `useTts.stop()` halts playback + the
       // WebAudio context, cancels the synth queue (gen++ so no late sentence fires) and the karaoke
-      // RAF, stops the Piper sidecar, and resets the pill/store. Without this the module-level engine
+      // RAF, drops the warm Edge connection, and resets the pill/store. Without this the module-level engine
       // (which lives outside the component tree) keeps playing into the Library and the next book.
       useTts.getState().stop();
       // The photo-card basket is a per-reading-session collection (RAWY-60) — clear it on exit.
@@ -976,14 +976,14 @@ export function Reader({
       return;
     }
     ctrl.showReadingHighlight(ttsIndex);
-    // RAWY-127: (re)build the word sub-ranges for this sentence (empty for Piper → no pill).
+    // RAWY-127: (re)build the word sub-ranges for this sentence (empty → no pill).
     ctrl.setReadingWords(ttsIndex, ttsWords);
     if (ttsStatus === "playing") ctrl.followReadingSentence(ttsIndex);
   }, [ttsActive, ttsIndex, ttsStatus, ttsWords]);
 
   // RAWY-127 (word karaoke, Edge only): move the solid pill to the active word within the sentence
   // track. Driven by the queue's `wordIndex` (a rAF loop maps the audio clock → the spoken word);
-  // -1 / no timing (Piper / fallback) → no pill, the Phase-1 sentence spotlight stands alone.
+  // -1 / no timing → no pill, the Phase-1 sentence spotlight stands alone.
   useEffect(() => {
     if (!ttsActive) return;
     // RAWY-230 (§2a): `ttsStatus` is a dep so the PAUSE transition re-runs this AFTER the sentence-highlight
@@ -1787,7 +1787,7 @@ export function Reader({
     // pill Play, Space, and the kashida bead (all route through onPlayPause), so every state agrees.
     if (st.status === "chapter-end") { void startListen(); return true; }
     return false; // preparing / downloading / error / edge-error (RAWY-193) — Play/Space do nothing; the
-                  // Edge-unavailable state is acted on only via its explicit Retry / Switch-to-Piper buttons
+                  // Edge-unavailable state is acted on only via its explicit Retry button
   };
   playRef.current = playOrRelisten;
   hideChromeRef.current = hideChrome;

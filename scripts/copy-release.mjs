@@ -9,7 +9,7 @@
 // report: the release binary tested was not actually the new one). Guard against it: close any
 // running copy first, then FAIL LOUDLY if the overwrite still can't happen — never leave a
 // stale binary masquerading as a fresh build.
-import { copyFileSync, cpSync, mkdirSync, existsSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, mkdirSync, existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { execSync } from "node:child_process";
 
@@ -17,18 +17,6 @@ const root = resolve(import.meta.dirname, "..");
 const src = resolve(root, "src-tauri/target/release/sard.exe");
 const outDir = resolve(root, "test-build");
 const dest = resolve(outDir, "Sard.exe");
-// RAWY-108: the bundled TTS engine (piper.exe + its DLLs + espeak-ng-data + tashkeel model) is an
-// EXTERNAL resource, NOT embedded in the exe — `tauri build` writes it to target/release/piper and
-// the installer lays it beside the installed exe. The standalone exe alone can't find it, so
-// read-aloud failed in the test-build ("piper engine not found at …\test-build\piper\piper.exe").
-// Copy the engine next to the exe so the portable test-build matches the installer layout.
-// RAWY-TOOLING: prefer the build output (target/release/piper); if a `--no-bundle` test build didn't lay
-// it down there, fall back to the SOURCE resources (src-tauri/resources/piper). Either way it is the SAME
-// bundled engine (version-static), so read-aloud works in the test-build without the installer bundle.
-const engineOut = resolve(root, "src-tauri/target/release/piper");
-const engineSrcRes = resolve(root, "src-tauri/resources/piper");
-const engineSrc = existsSync(resolve(engineOut, "piper.exe")) ? engineOut : engineSrcRes;
-const engineDest = resolve(outDir, "piper");
 
 if (!existsSync(src)) {
   console.error(`Release binary not found: ${src}\nRun the release build first ('npm run tauri build').`);
@@ -62,21 +50,3 @@ if (d.size !== s.size) {
 }
 const mb = (d.size / 1048576).toFixed(1);
 console.log(`Copied fresh release binary -> ${dest} (${mb} MB, built ${s.mtime.toISOString()}). Launch it directly; no dev server needed.`);
-
-// Copy the bundled TTS engine beside the exe (RAWY-108) so read-aloud can spawn piper. Without this
-// the standalone test-build has no engine and Listen fails at the piper.exe existence check.
-if (!existsSync(resolve(engineSrc, "piper.exe"))) {
-  console.error(
-    `\n[Sard] TTS engine not found at ${engineSrc}\\piper.exe.\n` +
-    `Read-aloud will fail in the test-build. Ensure src-tauri/resources/piper is bundled ` +
-    `(tauri.conf bundle.resources) and re-run the release build.`,
-  );
-  process.exit(1);
-}
-rmSync(engineDest, { recursive: true, force: true }); // drop any stale engine first
-cpSync(engineSrc, engineDest, { recursive: true });
-if (!existsSync(resolve(engineDest, "piper.exe")) || !existsSync(resolve(engineDest, "espeak-ng-data"))) {
-  console.error(`\n[Sard] Engine copy to ${engineDest} is incomplete — read-aloud may fail. Re-run the build.`);
-  process.exit(1);
-}
-console.log(`Copied TTS engine -> ${engineDest} (piper.exe + DLLs + espeak-ng-data + tashkeel model).`);

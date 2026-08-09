@@ -1,7 +1,7 @@
 // Typed bindings over Tauri's invoke — the single Rust↔JS boundary (RAWY-08).
 // Shapes mirror the serde structs in src-tauri/src/commands/mod.rs.
 
-import { Channel, invoke } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 
 export interface AppInfo {
   /** The build the RUST CORE was compiled as — compare with __SARD_BUILD_ID__ (the frontend bundle). */
@@ -32,18 +32,9 @@ export const settingsSet = (key: string, value: string): Promise<boolean> =>
   invoke<boolean>("settings_set", { key, value });
 
 
-// ---- TTS (RAWY-105): bundled piper sidecar + on-demand voice download ----
-/** Is the voice model present on disk (both .onnx + .onnx.json)? */
-export const ttsVoicePresent = (id: string): Promise<boolean> =>
-  invoke<boolean>("tts_voice_present", { id });
-/** Download a voice's model into app-data, reporting a 0–1 progress fraction (RAWY-106). */
-export const ttsDownloadVoice = (id: string, onProgress?: (frac: number) => void): Promise<void> => {
-  const ch = new Channel<number>();
-  if (onProgress) ch.onmessage = onProgress;
-  return invoke<void>("tts_download_voice", { id, onProgress: ch });
-};
+// ---- TTS: synthesis over the Edge Read-Aloud voices ----
 /** Synthesize one sentence with the given engine → raw audio bytes (WebAudio decodes them).
- *  RAWY-110: engine-dispatched ("piper" WAV; "edge" MP3). */
+ *  RAWY-110: engine-dispatched ("edge" MP3). */
 export const ttsSynthesize = (engine: string, id: string, text: string): Promise<ArrayBuffer> =>
   invoke<ArrayBuffer>("tts_synthesize", { engine, id, text });
 
@@ -56,7 +47,7 @@ export interface EdgeVoiceInfo {
 }
 /** List the free Edge Read-Aloud voices (Arabic + English), for the picker (RAWY-111). */
 export const ttsEdgeVoices = (): Promise<EdgeVoiceInfo[]> => invoke<EdgeVoiceInfo[]>("tts_edge_voices");
-/** Stop + drop the persistent piper process. */
+/** Stop + drop the warm Edge connection. */
 export const ttsStop = (): Promise<void> => invoke<void>("tts_stop");
 
 // ---- Fonts (RAWY-39): import + list user fonts (stored under app-data/fonts, served via asset). ----

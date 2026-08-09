@@ -700,7 +700,6 @@ export const ar: Record<TKey, string> = {
   "outcomes.userAction": "احتاج تدخّلك · انتهى بسؤالك",
   "outcomes.productionEvents": "عدد مرات إظهار المشغّل أنه يعمل",
   "outcomes.note": "يُسجَّل محليًا لمقارنة التغييرات باستماع حقيقي. لا يُرسَل أي شيء إلى أي مكان.",
-  "tts.downloading": "جارٍ تنزيل الصوت… {pct}٪",
   "tts.error": "تعذّر التشغيل",
   "tts.emptyChapter": "لا يوجد نص قابل للقراءة هنا",
   "tts.retry": "إعادة المحاولة",
@@ -718,19 +717,15 @@ export const ar: Record<TKey, string> = {
   // RAWY-111/113 — المحرّك ومنتقي الأصوات (بايبر وإيدج)
   "tts.voices": "الأصوات",
   "tts.voice": "الصوت",
-  "tts.engine": "المحرّك",
   "tts.online": "متصل",
-  "tts.offline": "غير متصل",
   "tts.lang.ar": "العربية",
   "tts.lang.en": "الإنجليزية",
   "tts.secMultilingual": "متعدّد اللغات", // RAWY-187: قسم في منتقي الأصوات (أصوات Edge التي تنطق بأي لغة)
   "tts.secUnknownLang": "لغة غير محدَّدة", // RAWY-199: قسم لأصوات بلا locale (كانت تُعرض بالمفتاح الخام "__nolocale")
-  "tts.piperBadge": "بايبر · دون اتصال",
   "tts.edgeBadge": "إيدج · متصل",
   "tts.male": "ذكر",
   "tts.female": "أنثى",
   "tts.edgeUnavailable": "إيدج غير متاح", // RAWY-193
-  "tts.switchToPiper": "التبديل إلى بايبر", // RAWY-193
   "tts.loadingVoices": "جارٍ تحميل الأصوات…",
   "tts.noVoices": "لا تتوفّر أصوات — تحتاج أصوات Edge إلى اتصال بالإنترنت.",
   "tts.volume": "مستوى الصوت",

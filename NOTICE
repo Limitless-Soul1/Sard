@@ -21,11 +21,8 @@ The licence above covers Sard's own source code only. It does not, and cannot, c
 the terms of the third-party components listed below: each remains governed by the
 licence granted by its own copyright holder, and those terms are not superseded here.
 
-One of those components requires particular attention. Sard bundles eSpeak NG, which is
-GPL-3.0-or-later (see §2 below). GPL-3.0 requires that a work it is conveyed with be
-under GPL-compatible terms and that no further restrictions be imposed on the rights it
-grants. Any binary distribution of Sard that includes the eSpeak NG binary must satisfy
-those requirements for that component.
+Every component Sard now ships is under permissive terms (MIT, Apache-2.0, SIL OFL 1.1),
+so none of them constrains the licence above.
 
 ================================================================================
 THIRD-PARTY COMPONENTS
@@ -47,36 +44,11 @@ THIRD-PARTY COMPONENTS
    Bundled font and CMap licences are under that directory: LICENSE_FOXIT,
    LICENSE_LIBERATION, cmaps/LICENSE.
 
-2) READ-ALOUD ENGINE  (prebuilt binaries — not built from this repository)
+2) READ-ALOUD
 
-   Bundled at src-tauri/resources/piper/. Full terms and the GPL-3.0 text:
-   src-tauri/resources/piper/LICENSES/
-
-   Piper 1.2.0          — MIT              https://github.com/rhasspy/piper
-   piper-phonemize      — MIT              https://github.com/rhasspy/piper-phonemize
-   eSpeak NG 1.52.0     — GPL-3.0-or-later https://github.com/espeak-ng/espeak-ng
-   ONNX Runtime         — MIT              https://github.com/microsoft/onnxruntime
-   libtashkeel (model)  — MIT (library)    https://github.com/mush42/libtashkeel
-
-   Versions are read from the binaries themselves — "1.52.0" is the version string
-   embedded in espeak-ng.dll and "1.2.0" the one embedded in piper.exe.
-
-   eSpeak NG is conveyed in OBJECT FORM. GPL-3.0 §6 therefore requires an offer of the
-   corresponding source: it is eSpeak NG 1.52.0, at
-   https://github.com/espeak-ng/espeak-ng/releases/tag/1.52.0
-   If that location becomes unavailable, open an issue on the Sard repository and the
-   source will be provided by other means at no charge beyond the cost of delivery, for
-   as long as Sard distributes this binary. See LICENSES/README.md.
-
-   The full text of every licence above ships beside the binaries, as GPL-3.0 §4 requires:
-   src-tauri/resources/piper/LICENSES/{GPL-3.0,MIT-piper,MIT-piper-phonemize,
-   MIT-onnxruntime,MIT-libtashkeel}.txt
-
-   Piper VOICE MODELS are not bundled. They are downloaded on demand at the user's
-   request and carry their own licences, stated by each voice's upstream publisher.
-
-   The Microsoft Edge online voices Sard can also use are a network service, not a
-   bundled component. Nothing from that service is redistributed here.
+   Sard bundles no speech engine. Read-aloud uses the Microsoft Edge online voices,
+   which are a network service, not a bundled component. Nothing from that service is
+   redistributed here.
 
 3) FONTS — all SIL Open Font License 1.1
 

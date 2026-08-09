@@ -26,7 +26,6 @@
  */
 export const VENDORED = [
   /^public\/foliate-js\//,
-  /^src-tauri\/resources\/piper\//,
 ];
 
 /** Extensions we never read as text. Keeps the scan fast and avoids nonsense matches in binaries. */

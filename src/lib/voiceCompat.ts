@@ -7,8 +7,6 @@
 //     endpoint): an en-US / fr-FR / de-DE voice fed Arabic script returns HTTP success carrying a
 //     6-byte MP3 — about one millisecond of nothing — against 28,000–41,000 bytes for every working
 //     pair. The reader hears silence and the pipeline sees a completed request.
-//   * Piper does not even do that. An English model fed Arabic is phonemised by eSpeak-NG under
-//     English rules and returns REAL audio — confident gibberish. There is no signal at all.
 //
 // THE RULE IS ASYMMETRIC, BECAUSE THE MEASUREMENT IS.
 //
@@ -72,7 +70,7 @@ export function isMultilingual(voiceId: string): boolean {
 
 export interface VoiceIdentity {
   id: string;
-  /** The voice's locale — `EdgeVoiceInfo.lang`, or the Piper model's own code. */
+  /** The voice's locale — `EdgeVoiceInfo.lang`. */
   lang: string;
 }
 

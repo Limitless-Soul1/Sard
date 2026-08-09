@@ -82,7 +82,7 @@ export interface ReadingStyle {
   ttsSpotlightColor: string | null; // null = the per-theme terracotta
   ttsSpotlightOpacity: number | null; // null = the per-theme band opacity; the baseline rule scales by the theme ratio
   ttsSpotlightRule: boolean; // default true — draw the thin baseline UNDERLINE under the band (RAWY-200). false = band only
-  ttsKaraokeOn: boolean; // default true — the word pill (Edge only; Piper has no word timings)
+  ttsKaraokeOn: boolean; // default true — the word pill (driven by Edge word timings)
   ttsKaraokeColor: string | null; // null = the per-theme terracotta
   ttsKaraokeOpacity: number | null; // null = the per-theme pill opacity (0.9)
   // RAWY-212: immersive-mode PER-ELEMENT hide sub-toggles. The MASTER (`immersive`, global — theme store)

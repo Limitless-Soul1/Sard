@@ -1,7 +1,3 @@
-# RAWY-105: the bundled piper engine (binaries + espeak config/data) must never have line
-# endings converted — CRLF would corrupt espeak-ng data files and break phonemization.
-src-tauri/resources/piper/** -text
-
 # `.mjs` FILES KEEP LF, ALWAYS.
 #
 # Several of these begin with a shebang, and `core.autocrlf` is true on Windows — so a checkout there

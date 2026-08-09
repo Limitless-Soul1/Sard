@@ -1,6 +1,6 @@
 // RAWY-231: the read-aloud synthesis SCHEDULER — the structural home of three of the five stall-fix
-// invariants (DECISIONS D60). The read-aloud engine is SERIALIZED and SINGLE-SOCKET (Piper = one warm
-// process, Edge = one warm WebSocket behind a mutex); the RAWY-191 connection pool stays REVERTED. This
+// invariants (DECISIONS D60). The read-aloud engine is SERIALIZED and SINGLE-SOCKET (one warm Edge
+// WebSocket behind a mutex); the RAWY-191 connection pool stays REVERTED. This
 // class does NOT add parallelism — it ORDERS the work on that one queue so the sentence the user is waiting
 // for is never stuck behind speculative look-ahead:
 //

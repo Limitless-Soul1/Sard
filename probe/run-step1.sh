@@ -43,13 +43,26 @@ for f in reader-host/index.html reader-host/host.js fonts/Amiri-Regular.ttf foli
 done
 echo "::endgroup::"
 
-echo "::group::build the binary BEFORE timing anything"
-# The previous run spent 125 s of a 240 s budget compiling and was then killed with rc=124 while the
-# probe window was still open. Building first means the timeout below measures runtime and nothing
-# else, and a compile failure is reported as a compile failure rather than as a silent probe.
-( cd "$ROOT/src-tauri" && cargo build --locked ) >"$OUT/build.log" 2>&1 || {
+echo "::group::build the binary BEFORE timing anything — RELEASE, and that is the whole point"
+# WHY RELEASE. This is the bug that produced four empty runs. A DEBUG build makes Tauri load
+# `build.devUrl` (http://localhost:1420) instead of `build.frontendDist`, and the last run proves it:
+#   px_manager_get_proxies_sync: url=http://localhost:1420 online=1
+# No Vite server was listening, so every window — main and probe alike — opened onto nothing. The GTK
+# window existed, which is what xdotool kept reporting, while no document ever loaded. Adding more
+# reporting channels inside a page that was never fetched could not have worked.
+#
+# Serving dist/ on port 1420 would start the page, but it would ALSO move it to an http origin with
+# whatever CSP that server sends — and origin behaviour and CSP enforcement are precisely what this
+# probe measures. A release build is the only configuration that exercises the real asset protocol,
+# the real origin and the real policy, so it is the only one whose result means anything.
+#
+# The previous run also spent 125 s of a 240 s budget compiling and was then killed with rc=124.
+# Building before anything is timed means the timeout below measures runtime and nothing else.
+( cd "$ROOT/src-tauri" && cargo build --release --locked ) >"$OUT/build.log" 2>&1 || {
   echo "cargo build failed"; tail -30 "$OUT/build.log"; exit 2; }
-echo "  built: $(ls -la "$ROOT/src-tauri/target/debug/sard" | awk '{print $5" bytes"}')"
+BIN="$ROOT/src-tauri/target/release/sard"
+[[ -x "$BIN" ]] || { echo "no release binary at $BIN"; exit 2; }
+echo "  built: $(stat -c%s "$BIN") bytes"
 echo "::endgroup::"
 
 echo "::group::run the real app under Xvfb"
@@ -68,7 +81,7 @@ export WEBKIT_DISABLE_DMABUF_RENDERER=1
 rm -f "$SARD_PROBE_OUT"
 # stdbuf: Rust block-buffers stdout when it is a pipe, which is why the last run's `[probe]` lines
 # all appeared at exit. Line buffering makes the beacon observable while the app is still alive.
-( cd "$ROOT/src-tauri" && timeout 120 stdbuf -oL -eL ./target/debug/sard ) >"$OUT/app.log" 2>&1 &
+( cd "$ROOT/src-tauri" && timeout 120 stdbuf -oL -eL "$BIN" ) >"$OUT/app.log" 2>&1 &
 APP=$!
 # The window title carries the probe's stage, so a stall or a rejected invoke is visible rather
 # than silent — the previous attempt produced no output at all and no reason for it.
@@ -88,6 +101,14 @@ done
 wait "$APP" 2>/dev/null
 echo "  app exited rc=$?"
 echo "::endgroup::"
+
+echo "=== CONFIGURATION GUARD: is the app loading the bundle or the dev server? ==="
+if grep -q "localhost:1420" "$OUT/app.log" 2>/dev/null; then
+  echo "  *** STILL POINTING AT devUrl — the result below is meaningless. ***"
+  grep -m3 "localhost:1420" "$OUT/app.log" | sed 's/^/    /'
+else
+  echo "  no devUrl traffic — the app is serving from its embedded bundle"
+fi
 
 echo "=== LIVENESS: did the WebKit web process fetch anything? ==="
 if grep -q "\[probe\] sardhost <-" "$OUT/app.log" 2>/dev/null; then

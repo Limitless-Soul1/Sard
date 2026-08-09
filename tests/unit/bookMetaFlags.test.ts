@@ -1,6 +1,6 @@
 // RESILIENCE-1 / WP-6 — the structural flags, as the frontend reads them.
 //
-// MEASURED across the corpus (tests/harness/toc-shape.mjs, values read from the real database):
+// MEASURED across a real book set, values read from the database:
 //
 //   word-generated--a4.epub             196 sections /   1 TOC entry   degenerate
 //   word-generated--unknown-title.epub  116 sections /   1 TOC entry   degenerate + FRAGMENTED

@@ -54,10 +54,8 @@ if (!cargoOnPath()) {
 // ---- tests ------------------------------------------------------------------------------------------
 // RESILIENCE-1 / WP-0: the everyday loop runs the unit + fixture + corpus-definition suite BEFORE
 // spending two minutes on a Rust build. These are fast (~0.6 s) and pure — they launch nothing and
-// touch no profile. The expensive gates stay opt-in and are run per work package, not per build:
-//   npm run corpus:verify                          — corpus integrity (needs the corpus on disk)
-//   node tests/harness/byte-identity.mjs compare   — rendering identity (drives the real app)
-//   npm run harness:csp                            — the CSP/book-stylesheet finding
+// touch no profile. The slower end-to-end checks stay opt-in and are run per work package rather
+// than per build, because they drive the real application and need a built binary.
 step("npm test"); // typechecks tests/ then runs the suite
 
 // ---- build ------------------------------------------------------------------------------------------

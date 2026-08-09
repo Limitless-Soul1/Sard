@@ -21,7 +21,7 @@ fn db_with_book(title: Option<&str>, author: Option<&str>) -> Connection {
     crate::db::migrations::run(&conn, None).unwrap();
     conn.execute(
         "INSERT INTO books(id, file_path, format, title, author, added_at, title_fold, author_fold) \
-         VALUES('b1', 'M:\\books\\x.epub', 'epub', ?1, ?2, 0, afold(?1), afold(?2))",
+         VALUES('b1', 'C:\\books\\x.epub', 'epub', ?1, ?2, 0, afold(?1), afold(?2))",
         rusqlite::params![title, author],
     )
     .unwrap();
@@ -148,7 +148,7 @@ fn extraction_is_idempotent() {
 
 #[test]
 fn a_readers_edit_is_trimmed_before_it_is_stored() {
-    // Found by the byte-identity harness: the owner's library really does hold "الأنمساخ " with a
+    // Found by measurement: a real library holds "الأنمساخ " with a
     // trailing space. Surrounding whitespace is invisible, never intended, and made the stored value
     // differ from the displayed one — so it is stripped where the value ENTERS the database.
     let conn = db_with_book(None, None);

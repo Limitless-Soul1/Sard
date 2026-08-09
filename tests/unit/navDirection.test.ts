@@ -15,7 +15,7 @@
 // `goLeft` and "correcting" the mapping back to physical movement for an RTL book. The controller
 // needs a live foliate view and a DOM, so what is tested here is the DECISION TABLE, extracted as a
 // pure function that the controller and these tests both use. The end-to-end proof runs on real
-// books in `tests/harness/interaction.mjs`, which fails the build if either direction inverts.
+// real books, which fails the build if either direction inverts.
 
 import { describe, expect, it } from "vitest";
 import { navIntent } from "../../src/reader-engine/navIntent";

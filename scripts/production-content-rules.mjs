@@ -72,7 +72,11 @@ export const CONTENT_RULES = [
   {
     id: "dev-tooling",
     why: "the name of a development-only script, harness or packaging utility",
-    re: /pack-diag|pack-beta|pack-share|build-test|kill-sard|copy-release|release-to-main|verify-main-buildable|check-production-content|byte-identity|corpus:verify|ro-storm|autopsy-context|ledger-freshness|ppc\d-|rtl-panel|tts-track/,
+    // Only tooling that is genuinely PRIVATE. The release and gate scripts — build-test, kill-sard,
+    // copy-release, release-to-main, verify-main-buildable, check-production-content — are public
+    // development tooling by decision, so naming them is not a leak and never was one after that
+    // decision. Listing them here would have flagged the public scripts for referring to themselves.
+    re: /pack-diag|pack-beta|pack-share|byte-identity|corpus:verify|ro-storm|autopsy-context|ledger-freshness|ppc\d-|rtl-panel|tts-track/,
     exempt: [
       // The path rules must name the very files they exclude — that IS the rule set, and CI runs it
       // against the published tree, so it has to ship. Exempt from THIS rule only.
@@ -84,7 +88,9 @@ export const CONTENT_RULES = [
   {
     id: "internal-docs",
     why: "a reference to an internal engineering or planning document",
-    re: /docs\/engineering\/|WORKFLOW\.md|HANDBOOK\.md|PROJECT_HANDOFF|CHECKPOINT-\d|REMEDIATION_PLAN|PROJECT_MASTER_SUMMARY|_INVESTIGATION\.md|_STUDY\.md/,
+    // `docs/WORKFLOW.md` is the PUBLIC workflow document, so a bare `WORKFLOW.md` must not match —
+    // only the internal `docs/engineering/` tree and the named internal documents.
+    re: /docs\/engineering\/|HANDBOOK\.md|PROJECT_HANDOFF|CHECKPOINT-\d|REMEDIATION_PLAN|PROJECT_MASTER_SUMMARY|_INVESTIGATION\.md|_STUDY\.md/,
     exempt: [
       { re: /^scripts\/production-tree-rules\.mjs$/, why: "the exclusion patterns are the rule itself" },
       { re: /^\.github\/workflows\//, why: "CI names the gate it runs" },
@@ -93,19 +99,19 @@ export const CONTENT_RULES = [
   {
     id: "test-infrastructure",
     why: "a reference to test or harness infrastructure that does not ship",
-    re: /tests\/harness\/|tests\/unit\/|tests\/corpus\/|tests\/fixtures\//,
+    // Only the parts that are now PRIVATE. `tests/unit/` and `tests/fixtures/` are public development
+    // infrastructure, so referring to them is normal; `tests/harness/` and `tests/corpus/` moved into
+    // the local workspace, so a reference to either is both a leak and a dangling path.
+    re: /tests\/harness\/|tests\/corpus\//,
     exempt: [
       { re: /^scripts\/production-tree-rules\.mjs$/, why: "the exclusion patterns are the rule itself" },
       { re: /^\.gitignore$/, why: "ignore patterns are paths, and they protect the development tree" },
     ],
   },
-  {
-    id: "test-module",
-    why: "a Rust test module inside the product source",
-    re: /^$/, // path-only rule; see `pathRule`
-    pathRule: /^src-tauri\/src\/(?:.*\/)?(?:tests|[A-Za-z0-9_]+_tests)\.rs$/,
-    exempt: [],
-  },
+  // NOTE: Rust test modules under `src-tauri/src/` are excluded from the PRODUCTION tree by
+  // `production-tree-rules.mjs`, which is the right place for a path decision. They are legitimate
+  // public development files, so this scanner — which also runs over the public development tree —
+  // must not flag them. Duplicating that path rule here conflated the two tiers.
   {
     id: "secret",
     why: "something shaped like a credential, key or token",
@@ -135,9 +141,23 @@ export function exemptionFor(rule, path) {
  *
  * Pure: no filesystem, no git, no process state — which is what makes it unit-testable.
  */
+/**
+ * THE SCANNER'S OWN RULE FILE.
+ *
+ * Every pattern here necessarily contains the thing it detects: the private-path rule contains a
+ * private path, the attribution rule contains vendor names, the personal-data rule contains the phrase
+ * it looks for. Scanning this file therefore reports its own definitions as violations, and
+ * "sanitising" them would delete the detection itself — the gate would pass by going blind.
+ *
+ * So it is exempt from CONTENT rules, exactly as `production-tree-rules.mjs` is exempt from the
+ * tooling-name rule and for the same reason: a rule may name what it forbids. The exemption is scoped
+ * to this one file and nothing else, and the file is short enough to be read in full during review.
+ */
+const SELF = /^scripts\/production-content-rules\.mjs$/;
+
 export function scanText(path, text) {
   const out = [];
-  if (isVendored(path) || BINARY.test(path)) return out;
+  if (isVendored(path) || BINARY.test(path) || SELF.test(path)) return out;
 
   for (const rule of CONTENT_RULES) {
     if (exemptionFor(rule, path)) continue;

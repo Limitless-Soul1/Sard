@@ -56,7 +56,7 @@ describe("buildImportReport", () => {
   it("handles a mixed batch without losing anything", () => {
     const rep = buildImportReport(
       [r("imported", "ok"), r("duplicate", "dup"), r("unsupported", "bad"), r("error", "worse", "Database error")],
-      ["D:\\x\\scan.pdf"],
+      ["C:\\books\\scan.pdf"],
     );
     expect(rep.added).toBe(1);
     expect(rep.duplicates).toBe(1);

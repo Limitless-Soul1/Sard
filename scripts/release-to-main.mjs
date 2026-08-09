@@ -9,7 +9,7 @@
 // `merge=ours` — DOES NOT WORK for this, and the reason is worth knowing before someone tries it
 // again: a merge driver is only invoked when BOTH sides changed the same file. A file that exists on
 // `develop` and has never existed on `main` is not a conflict at all; git simply adds it, and no
-// driver is consulted. So `docs/engineering/** merge=ours` silently lets every new internal document
+// driver is consulted. So a `merge=ours` attribute silently lets every new excluded document
 // through. It would appear to work right up until the moment it mattered.
 //
 // `.gitignore` cannot help either: these files are TRACKED on `develop`, and gitignore does not apply

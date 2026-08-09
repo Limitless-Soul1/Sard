@@ -5,10 +5,10 @@
 // cannot prove that it does. Here the well-formed control and every defective variant come from the
 // SAME builder, differing by one named mutation — so "this fixture tests the BOM and nothing else"
 // is a property of the code, not a claim in a comment. It also keeps ~0 bytes of binary in a public
-// repository (see tests/corpus/ for why that matters).
+// repository.
 //
 // These complement, and do not replace, the permanent Regression Corpus of REAL books
-// (tests/corpus/). Fixtures prove a specific defect is HANDLED; the corpus proves nothing else broke.
+// held outside the repository. Fixtures prove a specific defect is HANDLED; the corpus proves nothing else broke.
 //
 // Output: tests/fixtures/epub/<name>.epub  (git-ignored — rebuild with `npm run fixtures:build`)
 

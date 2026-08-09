@@ -18,7 +18,7 @@
 // `left`, so every TOC entry pointing into one section resolved to the SAME page. In Alice the first
 // three entries all point into one front-matter document, so two of them appeared to do nothing.
 //
-// `tests/harness/pagination.mjs` proves the CSS mechanism in real Chromium. This file guards the one
+// A separate end-to-end check proves the CSS mechanism in real Chromium. This file guards the one
 // thing a unit test can guard: that Sard never emits the rule again.
 
 import { describe, it, expect } from "vitest";

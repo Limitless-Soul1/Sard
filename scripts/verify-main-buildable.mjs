@@ -65,7 +65,7 @@ try {
   // `--output` plus a separate extract rather than a shell pipe, so it does not depend on which shell
   // happens to be running this and so a failure in either half is reported instead of swallowed.
   // RELATIVE paths, from the repository root. An absolute Windows path here does not work: tar reads
-  // the drive colon in `M:\...` as a remote host and reports "Cannot connect to M: resolve failed".
+  // a drive-letter colon as a remote host and reports "Cannot connect to M: resolve failed".
   const tarRel = ".git/release-check.tar";
   try {
     git(["archive", "--format=tar", `--output=${tarRel}`, tree]);

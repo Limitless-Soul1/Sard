@@ -5,7 +5,7 @@
 // from a chapter name the author wrote, and no such name exists in these files.
 //
 // Both flagged books are covered by construction, using the shapes measured through foliate's own
-// `createDocument()` (tests/harness/toc-shape.mjs):
+// `createDocument()`:
 //
 //   word-generated--a4.epub            196 linear sections · 195 with a heading · 1 without
 //   word-generated--unknown-title.epub 116 linear sections ·   0 with a heading

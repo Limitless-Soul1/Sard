@@ -7,7 +7,7 @@ import { resolve } from "node:path";
 // error classifier, WP-3's metadata resolver, WP-5's TTS language matrix) are all PURE modules with
 // no DOM — the same property that makes `lib/ttsScheduler.ts` testable. Real DOM/layout questions
 // (WP-4's chevron geometry, WP-7's cascade) cannot be answered by jsdom/happy-dom at all: they need
-// the actual engine, which is what `tests/harness/` is for. Adding a DOM shim now would buy nothing
+// the actual engine, which these unit tests deliberately do not attempt. Adding a DOM shim now would buy nothing
 // and would invite tests that pass in a fake DOM and lie about WebView2.
 export default defineConfig({
   // THE INSTRUMENTATION SPECIFIERS, pointed at the REAL modules.
@@ -22,9 +22,12 @@ export default defineConfig({
   // this branch. A test passing against a no-op would be a test that had stopped testing.
   resolve: {
     alias: {
-      "@diag": resolve(import.meta.dirname, "src/lib/diag.ts"),
-      "@pdfDiag": resolve(import.meta.dirname, "src/lib/pdfDiag.ts"),
-      "@renderDiag": resolve(import.meta.dirname, "src/lib/renderDiag.ts"),
+      // The real instrumentation is private and local-only, so the public tree resolves these to the
+      // no-op stub — the same file the production bundle uses. Tests must not depend on a module that
+      // is not in the repository.
+      "@diag": resolve(import.meta.dirname, "src/lib/diagOff.ts"),
+      "@pdfDiag": resolve(import.meta.dirname, "src/lib/diagOff.ts"),
+      "@renderDiag": resolve(import.meta.dirname, "src/lib/diagOff.ts"),
     },
   },
   test: {

@@ -370,7 +370,7 @@ fn the_backfill_corrects_a_placeholder_title_and_fills_the_new_columns() {
 fn the_backfill_records_a_placeholder_it_could_not_improve() {
     // A REAL and unavoidable state for a book imported before WP-2: Sard stores every book as
     // `library/<id>.epub`, so the ORIGINAL filename — the rung that rescues the reported book on a
-    // fresh import — no longer exists. Verified on the owner's live database: the reported book's
+    // fresh import — no longer exists. Verified against a real library: the reported book's
     // title stayed "Unknown" because there was genuinely nothing better to be had.
     //
     // The backfill must NOT invent a title, and must NOT leave the field looking unexamined. It

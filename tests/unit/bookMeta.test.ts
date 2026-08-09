@@ -20,7 +20,7 @@ import type { BookRow } from "../../src/lib/ipc";
 function row(over: Partial<BookRow> = {}): BookRow {
   return {
     id: "b1",
-    file_path: "M:\\books\\x.epub",
+    file_path: "C:\\books\\x.epub",
     title: "The Book",
     author: "An Author",
     language: "en",

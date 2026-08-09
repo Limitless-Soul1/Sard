@@ -1,6 +1,6 @@
 // RESILIENCE-1 / WP-5 — the compatibility matrix, pinned to the MEASUREMENTS.
 //
-// Every expectation below traces to a live synthesis recorded in M1 (tests/harness/tts-mismatch.mjs,
+// Every expectation below traces to a live synthesis recorded from live synthesis (
 // 10 pairs against the real Edge endpoint). Where there is no measurement there is no warning, and
 // these tests assert that too — a speculative warning is the failure mode this design ranks worst,
 // because it teaches readers to dismiss the dialog that matters.

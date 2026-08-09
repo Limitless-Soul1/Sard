@@ -3,7 +3,7 @@
 // Reported against "داو الخالد العجيب" and reproduced: 112 speakable units, 0 DOM ranges.
 //
 // WHAT THIS FILE CAN AND CANNOT PROVE. The defect lives in a DOM walk, and this suite runs on Node
-// with no DOM — so the end-to-end proof is `tests/harness/tts-track.mjs`, which measures the REAL
+// with no DOM — so the end-to-end proof is a separate check that measures the REAL
 // binary through the product's own `__sardTrackStats` hook and fails the run if any unit lacks a
 // range. What IS pinned here is the *input condition* that routes a chapter down the repaired path,
 // because that is a property of the FILE and needs no browser: a chapter with no block-level

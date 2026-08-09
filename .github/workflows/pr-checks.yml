@@ -38,6 +38,14 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit -p tsconfig.json
 
+      # The EPUB fixtures are generated, not committed: `.gitignore` excludes tests/fixtures/epub/ so
+      # the repository carries the generator rather than opaque binary blobs. That means a clean
+      # checkout has none of them, and the suites that read a fixture fail with ENOENT — which is
+      # exactly what happened the first time this workflow ran. A developer machine hides it, because
+      # the fixtures are already sitting there from an earlier build.
+      - name: Build test fixtures
+        run: npm run fixtures:build
+
       - name: Unit suite
         run: npm test
 

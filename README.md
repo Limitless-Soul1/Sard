@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="#license"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-9C5A3C"></a>
+  <a href="#license"><img alt="License: Source-Available" src="https://img.shields.io/badge/license-Source--Available-9C5A3C"></a>
   <img alt="Platform: Windows" src="https://img.shields.io/badge/platform-Windows-2C3A42">
   <img alt="Built with Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8DB">
   <img alt="Rust" src="https://img.shields.io/badge/Rust-core-CE422B">
@@ -463,15 +463,15 @@ will remain, free software.
 
 ## License
 
-Sard is licensed under the **GNU Affero General Public License v3.0** — see [`LICENSE`](./LICENSE).
+This project is licensed under the **Comprehensive Custom Source-Available License**. 
+You are free to view, adapt, and modify the code strictly for **personal and private use**. 
 
-You may use, study, modify and redistribute it, including commercially. What you may not do is
-close it: any derivative you distribute, or run as a network service, must remain under the same
-licence with its source available.
+Public redistribution, integration into other software, applications, extensions, plugins, add-ons, commercial use, and network/API exposure are strictly prohibited. See the [LICENSE](LICENSE) file for complete terms.
 
 Third-party components keep their own terms — foliate-js (MIT), PDF.js (Apache-2.0), Piper (MIT),
-eSpeak NG (GPL-3.0-or-later), ONNX Runtime (MIT), and the bundled fonts (SIL OFL 1.1). Full
-attribution is in [`NOTICE`](./NOTICE).
+eSpeak NG (GPL-3.0-or-later), ONNX Runtime (MIT), and the bundled fonts (SIL OFL 1.1). Those terms
+govern those components and are not superseded by the licence above. Full attribution is in
+[`NOTICE`](./NOTICE).
 
-The name **Sard / سَرْد** and the hoopoe mark are not covered by the AGPL. Use them to refer to
+The name **Sard / سَرْد** and the hoopoe mark are not covered by the licence. Use them to refer to
 this project, not to brand a fork.

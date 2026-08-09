@@ -8,9 +8,10 @@ use discord_rich_presence::{activity, DiscordIpc, DiscordIpcClient};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-// Replace with your own Discord Application ID from
-// https://discord.com/developers/applications
-const DISCORD_APP_ID: &str = "1421191366247186563";
+// TODO(maintainer): replace with Sard's own Discord Application ID before release.
+// Create one at https://discord.com/developers/applications, then upload a "sard_logo"
+// image under Rich Presence -> Art Assets using that same application.
+const DISCORD_APP_ID: &str = "YOUR_DISCORD_APPLICATION_ID_HERE";
 
 pub struct DiscordState(pub Mutex<Option<DiscordIpcClient>>);
 

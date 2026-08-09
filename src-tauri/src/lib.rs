@@ -208,7 +208,18 @@ pub fn run() {
         // allow-listed slice of the frontend bundle: the host document, its script, the bundled
         // fonts, and the pdf.js assets pdf.js resolves against its own URL. It reads through the
         // asset resolver, so it has no filesystem path to serve a book with. Nothing embeds it yet.
-        .register_uri_scheme_protocol(bookhost::SCHEME, bookhost::handle);
+        // PROBE-ONLY (throwaway branch): log every request this origin receives, then delegate to
+        // the real handler unchanged. Four iterations produced no page output at all, which left two
+        // very different explanations indistinguishable — the SCRIPT did not run, or the WebKit WEB
+        // PROCESS never rendered anything. A request arriving here is proof of the latter: it can
+        // only be produced by a live web process fetching a subresource, and the probe page now
+        // names one in static HTML so it happens with no JavaScript involved.
+        .register_uri_scheme_protocol(bookhost::SCHEME, |ctx, req| {
+            println!("[probe] sardhost <- {}", req.uri().path());
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            bookhost::handle(ctx, req)
+        });
 
     // THE UPDATER — RELEASE BUILDS ONLY, and this cfg is the whole reason it is split out of the
     // chain above. A diagnostic build that carries the public update channel is a diagnostic build

@@ -11,6 +11,13 @@
 <style>html,body{margin:0;height:100%;font:12px sans-serif}#host{width:100%;height:70%;border:2px solid #333}</style>
 </head>
 <body>
+<!-- LIVENESS BEACON — static markup, no JavaScript, deliberately first in the body.
+     Four iterations reported nothing and could not distinguish "the script did not run" from "the
+     web process never rendered". This iframe is fetched by the RENDERER itself, so a request logged
+     by the Rust handler proves the web process is alive regardless of whether any script executes.
+     An <img> or <link> beacon would prove nothing here: the application CSP allows `sardhost:` under
+     frame-src only, so those would be refused by policy rather than by liveness. -->
+<iframe src="sardhost://localhost/index.html" width="1" height="1" title="liveness"></iframe>
 <iframe id="host"></iframe>
 <pre id="log"></pre>
 <script src="/__probe/probe.js"></script>

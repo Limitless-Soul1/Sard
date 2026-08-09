@@ -1,0 +1,64 @@
+# Pull-request validation for `develop`.
+#
+# `develop` is protected: work arrives through short-lived feature/* and fix/* branches, and a pull
+# request cannot merge until this passes. Without a check that runs on pull requests, "require checks
+# before merging" has nothing to require — the setting looks like protection and enforces nothing.
+#
+# WHY THE RELEASE GATES RUN HERE TOO, AND NOT ONLY AT RELEASE TIME
+# The production-tree, production-content and production-build gates decide whether a tree can be
+# published. Running them only when a release is cut means a contaminating change sits on `develop`
+# until then, and is discovered at the worst moment — with a release in flight. Running them per pull
+# request moves that discovery to the change that caused it, while it is still one small diff.
+#
+# This workflow is development-only and is excluded from `main`: it exercises tests, harness rules and
+# gate scripts that the published tree deliberately does not carry.
+name: PR checks
+
+on:
+  pull_request:
+    branches: [develop]
+
+jobs:
+  verify:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit -p tsconfig.json
+
+      - name: Unit suite
+        run: npm test
+
+      # ONE snapshot, audited and built by every gate below. Generating it per gate would let the tree
+      # that was audited and the tree that was built drift apart — the failure the release pipeline is
+      # built to make impossible, and it should not be possible here either.
+      - name: Generate the production snapshot
+        shell: bash
+        run: |
+          TREE=$(node -e "import('./scripts/production-tree.mjs').then(m => console.log(m.writeProductionTree('HEAD').tree))")
+          echo "PROD_TREE=$TREE" >> "$GITHUB_ENV"
+          echo "production snapshot: $TREE"
+
+      - name: Production-tree gate
+        shell: bash
+        run: node scripts/check-production-tree.mjs --ref="$PROD_TREE"
+
+      - name: Production-content gate
+        shell: bash
+        run: node scripts/check-production-content.mjs --ref="$PROD_TREE"
+
+      - name: Production-build gate
+        shell: bash
+        run: node scripts/verify-main-buildable.mjs --ref="$PROD_TREE"

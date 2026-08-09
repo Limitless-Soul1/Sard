@@ -40,6 +40,11 @@ export const DEVELOPMENT_ONLY = [
   // been added yet; a force-add, a stale index or a rule someone edits would slip straight past it.
   // This is the second, independent control, and it is the one the release actually consults.
   { re: /^private\//, why: "the private workspace — internal material, local only" },
+  // Only the release workflow ships (PRODUCTION_ALWAYS below pins it, because CI runs it from `main`).
+  // Every other workflow validates `develop`: it runs the unit suite, the harness rules and the gate
+  // scripts, none of which the published tree carries, so on `main` it would be a workflow that could
+  // only fail.
+  { re: /^\.github\/workflows\/(?!release\.yml$)/, why: "a development-branch workflow — it validates develop, not the product" },
   { re: /^docs\/engineering\//, why: "internal engineering documents — how the product is built, not the product" },
 
   // ---- ROOT-LEVEL DOCUMENTS -------------------------------------------------------------------
@@ -110,7 +115,9 @@ export const DEVELOPMENT_ONLY = [
 export const PRODUCTION_ALWAYS = [
   /^src\/lib\/diagOff\.ts$/,
   /^scripts\/(verify-artifact|build-identity|production-tree-rules|check-production-tree)\.mjs$/,
-  /^\.github\/workflows\//,
+  // The release workflow specifically — CI runs it from `main`, so it has to be there. Narrowed from
+  // the whole directory once a second, development-only workflow existed.
+  /^\.github\/workflows\/release\.yml$/,
   /^(README|BUILD|LICENSE|CHANGELOG|CONTRIBUTING|SECURITY|CODE_OF_CONDUCT|NOTICE|AUTHORS)(\.md|\.txt)?$/,
 ];
 

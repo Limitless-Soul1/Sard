@@ -182,6 +182,34 @@ Nothing is developed directly on `main` — not a feature, not a fix, not a typo
 - **Is never pushed to the public `origin`.** It lives in the private repository — see
   [Repository architecture](#repository-architecture).
 
+### `develop` is PROTECTED — no direct work, no direct pushes
+
+**Working directly on `develop` is prohibited. Pushing directly to `develop` is prohibited.** Every
+change arrives through a pull request from a short-lived `feature/*` or `fix/*` branch, and there is no
+exception for a small fix, a typo, or a change that is "obviously safe" — those are how a branch stops
+being trustworthy, and the rule exists precisely because they always look reasonable at the time.
+
+Enforced on the **private** repository (`Limitless-Soul1/Sard-develop`), which is the only place
+`develop` exists:
+
+| Setting | State |
+|---|---|
+| Direct pushes | **blocked** — a pull request is required |
+| Force pushes | **blocked** |
+| Branch deletion | **blocked** |
+| Required status check | **`verify`** (`.github/workflows/pr-checks.yml`) must pass before merging |
+| Stale approvals dismissed on new commits | **on** |
+| Administrators | **not exempt** — the protection cannot be bypassed by the normal workflow |
+
+The required check runs the typecheck, the unit suite, and the production-tree, production-content and
+production-build gates against the snapshot the pull request would produce. Running the release gates
+per pull request is deliberate: a contaminating change otherwise sits on `develop` until a release is
+cut and is found with a release in flight, rather than in the one small diff that caused it.
+
+⚠ **`main` is protected separately**, and differently. It takes *"block force pushes"* only — **not**
+"require a pull request", which would block the direct push the release process performs. See
+[The branch workflow](#the-branch-workflow).
+
 Working freely here is the point. The safety does not come from being careful on `develop`; it comes
 from the gate in front of `main`.
 

@@ -38,6 +38,36 @@ pub const SCHEME: &str = "sardhost";
 
 /// The policy this origin ships under.
 ///
+/// SHAPE: `default-src 'none'` plus an explicit allowance per resource kind. That default is the
+/// point — a directive nobody thought about fails closed rather than inheriting something permissive.
+/// It is also the trap: an OMITTED directive falls back to `'none'`, so every kind of resource a book
+/// legitimately loads has to be named here or the reader silently renders nothing. The first draft of
+/// this policy named only `script-src`, `style-src` and `connect-src`, which meant `img-src`,
+/// `font-src`, `media-src` and `frame-src` all resolved to `'none'` — that policy could not have
+/// displayed a single image, loaded a single face, or even created the section iframe.
+///
+/// PRINCIPLE: the content-loading directives MIRROR the application CSP in `tauri.conf.json`, because
+/// today the book document inherits that policy; matching it is what keeps rendering behaviour
+/// identical. The privilege directives (`default-src`, `script-src`, `connect-src`) are STRICTER than
+/// the application's. Same content capability, less privilege — never the reverse. Anything wider
+/// than the application policy would be an expansion of what a book can reach, which this origin
+/// exists to prevent.
+///
+/// Per directive:
+/// - `script-src 'self'` — the host bootstrap and the engine, served from this origin only.
+/// - `style-src` — `'unsafe-inline'` and `blob:` because foliate rewrites book stylesheets into blobs
+///   and Sard injects its reading CSS inline; identical to the application policy.
+/// - `img-src` — `blob:`/`data:` carry EPUB images (foliate blobs them) and the PDF page canvas, which
+///   `pdf.js` copies to an `<img>` via `toDataURL` (VENDOR patch 4, RAWY-85). `asset:` carries images
+///   that live in app data.
+/// - `font-src` — `'self'` for the bundled faces served at `/fonts/*`, `blob:`/`data:` for faces
+///   embedded in the book, and `asset:` for USER-INSTALLED fonts: `fonts.ts:95` builds
+///   `@font-face { src: url(convertFileSrc(...)) }` and `FoliateController::writeFonts` writes that
+///   sheet into each content document. Without `asset:` every custom font silently disappears.
+/// - `media-src blob:` — exactly the application's value, no wider.
+/// - `frame-src 'self' blob:` — the paginator CREATES the section iframe from this document. Omit
+///   this and the reader has no iframe to render into at all.
+///
 /// `connect-src 'self'` is required rather than `'none'`: pdf.js fetches its own stylesheets
 /// (`pdf.js:10,13` call `fetchText(pdfjsPath(...))`), so a blanket refusal would break the PDF path.
 ///
@@ -45,9 +75,17 @@ pub const SCHEME: &str = "sardhost";
 /// CORS-permissive third origin both fail and both raise a `connect-src` violation, while a
 /// same-origin fetch succeeds. A WebSocket to another origin throws `SecurityError` with the same
 /// violation. Enforcement on WKWebView and WebView2 is UNKNOWN and must be measured there.
+///
+/// UNKNOWN, and NOT decided by this policy: whether an `asset:` response is CORS-readable as a FONT
+/// from this origin. CSP permitting a load is not the same as the fetch succeeding — a CORS refusal
+/// has a different signature (no `securitypolicyviolation` event) and must be measured separately.
 const CSP: &str = "default-src 'none'; \
                    script-src 'self'; \
                    style-src 'self' 'unsafe-inline' blob:; \
+                   img-src 'self' asset: http://asset.localhost https://asset.localhost blob: data:; \
+                   font-src 'self' asset: http://asset.localhost https://asset.localhost blob: data:; \
+                   media-src blob:; \
+                   frame-src 'self' blob:; \
                    connect-src 'self'";
 
 /// Map a request path onto a bundle path, or refuse.
@@ -214,11 +252,128 @@ mod tests {
         }
     }
 
+    /// Split a CSP into `directive -> value`, so a test can reason about one directive at a time
+    /// instead of substring-matching the whole string. Substring matching is what let the missing
+    /// directives through: asserting what IS present can never notice what is absent.
+    fn directives(csp: &str) -> std::collections::HashMap<String, String> {
+        csp.split(';')
+            .filter_map(|part| {
+                let part = part.trim();
+                if part.is_empty() {
+                    return None;
+                }
+                let (name, value) = part.split_once(char::is_whitespace)?;
+                Some((
+                    name.to_ascii_lowercase(),
+                    value.split_whitespace().collect::<Vec<_>>().join(" "),
+                ))
+            })
+            .collect()
+    }
+
+    fn app_csp() -> String {
+        let raw = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json"),
+        )
+        .expect("tauri.conf.json is readable");
+        let conf: serde_json::Value = serde_json::from_str(&raw).expect("tauri.conf.json parses");
+        conf["app"]["security"]["csp"]
+            .as_str()
+            .expect("the application CSP is a string")
+            .to_string()
+    }
+
     #[test]
     fn csp_is_the_policy_that_was_measured() {
-        assert!(CSP.contains("default-src 'none'"));
-        assert!(CSP.contains("script-src 'self'"));
-        assert!(CSP.contains("style-src 'self' 'unsafe-inline' blob:"));
-        assert!(CSP.contains("connect-src 'self'"));
+        let d = directives(CSP);
+        assert_eq!(d.get("default-src").map(String::as_str), Some("'none'"));
+        assert_eq!(d.get("script-src").map(String::as_str), Some("'self'"));
+        assert_eq!(d.get("connect-src").map(String::as_str), Some("'self'"));
+    }
+
+    /// `default-src 'none'` means an OMITTED directive resolves to `'none'`. Every resource kind the
+    /// reader actually loads must therefore be named explicitly. This is the test the first draft of
+    /// the policy did not have: it shipped without `img-src`, `font-src`, `media-src` or `frame-src`,
+    /// so it could not have rendered an image, loaded a custom face, or created the section iframe —
+    /// and the assertions of the day, which only checked that four directives were PRESENT, all passed.
+    #[test]
+    fn every_resource_kind_the_reader_loads_is_named_explicitly() {
+        let d = directives(CSP);
+        for required in ["style-src", "img-src", "font-src", "media-src", "frame-src"] {
+            assert!(
+                d.contains_key(required),
+                "{required} is absent, so it falls back to default-src 'none' and that resource \
+                 kind cannot load at all"
+            );
+        }
+    }
+
+    /// The content-loading directives must MIRROR the application policy, in both directions.
+    ///
+    /// Narrower than the application = the reader renders differently here than it does today, which
+    /// is the behaviour change this whole origin is supposed to avoid. Wider = a book reaches
+    /// something it cannot currently reach, which is the security property this origin exists for.
+    /// Equality is the only value that satisfies both, so the test asserts equality rather than
+    /// containment and reads the application policy from `tauri.conf.json` rather than duplicating it.
+    #[test]
+    fn content_directives_mirror_the_application_policy() {
+        let host = directives(CSP);
+        let app = directives(&app_csp());
+        for kind in ["style-src", "img-src", "font-src", "media-src", "frame-src"] {
+            let a = app.get(kind).unwrap_or_else(|| panic!("app CSP declares {kind}"));
+            let h = host.get(kind).unwrap_or_else(|| panic!("host CSP declares {kind}"));
+            assert_eq!(h, a, "{kind} must match the application policy exactly");
+        }
+    }
+
+    /// Proof that the guard above can actually fail.
+    ///
+    /// An assertion that passes on correct input tells you nothing until you have seen it reject bad
+    /// input. This replays the EXACT policy that shipped in the first draft and shows the check
+    /// rejecting it — so the guard is known to bite, not merely known to pass. Keeping the defective
+    /// string here as a fixture also documents the mistake precisely, which a comment cannot.
+    #[test]
+    fn the_guard_rejects_the_defective_first_draft() {
+        const FIRST_DRAFT: &str = "default-src 'none'; \
+                                   script-src 'self'; \
+                                   style-src 'self' 'unsafe-inline' blob:; \
+                                   connect-src 'self'";
+        let d = directives(FIRST_DRAFT);
+        let missing: Vec<&str> = ["style-src", "img-src", "font-src", "media-src", "frame-src"]
+            .into_iter()
+            .filter(|k| !d.contains_key(*k))
+            .collect();
+        assert_eq!(
+            missing,
+            vec!["img-src", "font-src", "media-src", "frame-src"],
+            "the first draft omitted exactly these four, and the guard must notice every one"
+        );
+        // And the policy in force must not be that string.
+        assert_ne!(CSP, FIRST_DRAFT);
+    }
+
+    /// The privilege directives must be STRICTER than the application's, never merely equal.
+    #[test]
+    fn privilege_directives_are_stricter_than_the_application() {
+        let host = directives(CSP);
+        let app = directives(&app_csp());
+        assert_eq!(host.get("default-src").map(String::as_str), Some("'none'"));
+        assert_ne!(
+            app.get("default-src").map(String::as_str),
+            Some("'none'"),
+            "if the application ever tightens to 'none' this comparison stops meaning anything"
+        );
+        let app_connect = app.get("connect-src").expect("app CSP declares connect-src");
+        let host_connect = host.get("connect-src").expect("host CSP declares connect-src");
+        assert!(
+            host_connect.split_whitespace().count() < app_connect.split_whitespace().count(),
+            "host connect-src ({host_connect}) must be narrower than the app's ({app_connect})"
+        );
+        for forbidden in ["ipc:", "http://ipc.localhost"] {
+            assert!(
+                !host_connect.contains(forbidden),
+                "the host origin must never be able to reach {forbidden}"
+            );
+        }
     }
 }

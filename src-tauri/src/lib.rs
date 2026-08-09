@@ -155,12 +155,25 @@ macro_rules! sard_invoke_handler {
             tts::tts_edge_voices,
             tts::tts_stop,
             window_chrome::set_titlebar_theme,
+            probe_finish, // PROBE-ONLY
             $($diag_cmd),*
         ])
     };
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+
+// ---------------------------------------------------------------------------------------------
+// PROBE-ONLY (throwaway branch). Receives the runtime probe's findings, writes them where the CI
+// job can read them, and stops the app. Never merged.
+#[tauri::command]
+fn probe_finish(payload: String, app: tauri::AppHandle) {
+    let out = std::env::var("SARD_PROBE_OUT").unwrap_or_else(|_| "probe-out.json".into());
+    let _ = std::fs::write(&out, payload);
+    println!("[probe] wrote {out}");
+    app.exit(0);
+}
+
 pub fn run() {
     // RAWY-111: two rustls crypto providers (aws-lc-rs via msedge-tts + ring via ureq 3) are compiled
     // in, so rustls' auto-detection is ambiguous and would PANIC on the first TLS handshake (the Edge
@@ -254,6 +267,17 @@ pub fn run() {
                 app_data_dir,
                 db_path,
             });
+            // PROBE-ONLY (throwaway branch): open the runtime probe page instead of relying on the
+            // main UI. It mounts the real sardhost: origin and reports through the command above.
+            if std::env::var("SARD_PROBE").is_ok() {
+                let cors = std::env::var("SARD_PROBE_CORS").unwrap_or_default();
+                let url = format!("__probe/index.html?cors={cors}");
+                tauri::WebviewWindowBuilder::new(app, "probe", tauri::WebviewUrl::App(url.into()))
+                    .title("sard-step1-probe")
+                    .inner_size(1200.0, 900.0)
+                    .build()?;
+                println!("[probe] probe window opened");
+            }
             app.manage(tts::TtsEngine::default()); // holds the warm Edge socket + cached voice list
             Ok(())
         });

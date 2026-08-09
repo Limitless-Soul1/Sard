@@ -1,0 +1,33 @@
+# THROWAWAY — Step 1 runtime probe. Probe branch only; never merged.
+name: Step 1 runtime probe
+on:
+  push:
+    branches: ["feature/step1-runtime-probe"]
+jobs:
+  step1:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf libssl-dev \
+            libayatana-appindicator3-dev build-essential xvfb curl
+          pkg-config --modversion webkit2gtk-4.1
+      - uses: swatinem/rust-cache@v2
+        with: { workspaces: ./src-tauri -> target }
+      - run: npm ci
+      - name: Step 1 runtime probe
+        run: |
+          chmod +x probe/run-step1.sh
+          ./probe/run-step1.sh
+      - name: Report
+        if: always()
+        run: cat probe/out/STEP1.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "no report" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: step1-runtime, path: probe/out/ }

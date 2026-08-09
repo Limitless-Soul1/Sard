@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Step 1 runtime probe</title>
+<!-- PROBE-ONLY. Lives on the throwaway branch; never merged.
+     This page is the PRIVILEGED application origin. It mounts the real sardhost: origin produced by
+     the Step 1 handler and measures the boundary from this side, while the host measures it from
+     the other. Negative controls run here too: if the app itself cannot reach a URL, then the
+     host's failure to reach it proves nothing. -->
+<style>html,body{margin:0;height:100%;font:12px sans-serif}#host{width:100%;height:70%;border:2px solid #333}</style>
+</head>
+<body>
+<iframe id="host"></iframe>
+<pre id="log"></pre>
+<script src="/__probe/probe.js"></script>
+</body>
+</html>

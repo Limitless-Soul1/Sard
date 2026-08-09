@@ -112,3 +112,23 @@
     write();
   });
 })();
+
+// ---------------------------------------------------------------------------------------------
+// PROBE-ONLY REPORTER — exists only on the throwaway probe branch and is never merged.
+//
+// The host origin holds no Tauri API by design, so an embedded host has no way to report except
+// postMessage. This block is that reporter and nothing else: it sends, it never listens, and it is
+// the reason criterion 10 is verified against the PRODUCTION file rather than this copy.
+// ---------------------------------------------------------------------------------------------
+(function () {
+  "use strict";
+  if (new URLSearchParams(location.search).get("selfcheck") !== "1") return;
+  if (window.parent === window) return;                       // top-level: nothing to report to
+  var sent = 0;
+  setInterval(function () {
+    var el = document.getElementById("report");
+    if (!el || !el.textContent) return;
+    if (sent++ > 60) return;
+    window.parent.postMessage({ __sardProbeHost: true, report: el.textContent }, "*");
+  }, 300);
+})();

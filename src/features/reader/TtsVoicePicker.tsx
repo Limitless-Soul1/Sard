@@ -1,6 +1,6 @@
 // TTS voice picker (RAWY-111; rescoped RAWY-113 for design 6) — the Voices chip opens this: the
-// voices available for the CURRENT engine + book language (Edge Arabic → Salma/Zariyah/Hamed/…;
-// Piper → the bundled voice). The Engine chip picks the engine; this refines the voice. Selecting
+// voices available for the CURRENT engine + book language (Edge Arabic → Salma/Zariyah/Hamed/…).
+// Selecting
 // persists it per language and switches live. Opens above the trailing chips.
 //
 // RAWY-197: the picker now lists EVERY language Edge returns (the backend ar-/en- filter was removed).
@@ -99,7 +99,7 @@ export function TtsVoicePicker({ onClose }: { onClose: () => void }) {
     };
   }, [uiLang]);
 
-  // RAWY-187 (Part A): scope to the CURRENT ENGINE only (the Engine chip picks Piper vs Edge). The former
+  // RAWY-187 (Part A): scope to the CURRENT ENGINE only. The former
   // book-language filter is GONE — every book's picker now lists all of the engine's voices, grouped by
   // language section below, so a Multilingual/English voice can be chosen even for an Arabic book. Selection
   // still persists per the current book language (`setVoice(…, curLang)` unchanged), so playback is identical.
@@ -148,7 +148,6 @@ export function TtsVoicePicker({ onClose }: { onClose: () => void }) {
   }, [items, t, uiLang]);
 
   const meta = (v: PickerVoice): string => {
-    if (v.engine !== "edge") return t("tts.offline");
     const region = v.locale.includes("-") ? regionName(v.locale.split("-")[1]) : "";
     const g = v.gender ? t(v.gender === "Male" ? "tts.male" : "tts.female") : "";
     return [region, g].filter(Boolean).join(" · ");

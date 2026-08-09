@@ -721,7 +721,6 @@ export const en = {
   "outcomes.userAction": "Needed your help · ended asking",
   "outcomes.productionEvents": "Times the player showed it was working",
   "outcomes.note": "Recorded locally so changes can be compared against real listening. Nothing is sent anywhere.",
-  "tts.downloading": "downloading voice… {pct}%",
   "tts.error": "couldn’t play",
   "tts.emptyChapter": "no readable text here",
   "tts.retry": "Try again",
@@ -736,22 +735,18 @@ export const en = {
   "tts.swapSide": "Swap side", // RAWY-160: flip the minimized kashida to the other margin
   // (RAWY-227 removed tts.resumePrompt / tts.resume / tts.dismiss — the 12s resume prompt is gone; Listen/Play
   //  now CONTINUE from the last position by default, so there is no prompt to label.)
-  // RAWY-111/113 — engine + voice picker (Piper + Edge engines)
+  // RAWY-111/113 — voice picker
   "tts.voices": "Voices",
   "tts.voice": "Voice",
-  "tts.engine": "Engine",
   "tts.online": "online",
-  "tts.offline": "offline",
   "tts.lang.ar": "Arabic",
   "tts.lang.en": "English",
   "tts.secMultilingual": "Multilingual", // RAWY-187: voice-picker section (Edge voices that speak any language)
   "tts.secUnknownLang": "Unspecified language", // RAWY-199: section for voices with no locale (was rendered as the raw "__nolocale" key)
-  "tts.piperBadge": "Piper · offline",
   "tts.edgeBadge": "Edge · online",
   "tts.male": "Male",
   "tts.female": "Female",
   "tts.edgeUnavailable": "Edge unavailable", // RAWY-193: explicit pause state — the Edge voice couldn't be reached
-  "tts.switchToPiper": "Switch to Piper", // RAWY-193: explicit engine switch from the Edge-unavailable state
   "tts.loadingVoices": "loading voices…",
   "tts.noVoices": "No voices available — Edge voices need an internet connection.",
   "tts.volume": "Volume",

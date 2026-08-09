@@ -3158,7 +3158,7 @@ export class FoliateController {
    *  whitespace/punctuation between words, and to RTL since matching is in logical order), then mapped
    *  to a live DOM sub-range of the sentence range. A word that can't be matched verbatim (a number
    *  Edge spoke differently, say) falls back to consuming its char length — so the cursor never stalls.
-   *  No-op when the sentence has no timing (Piper) → the pill simply never shows (Phase-1 only). */
+   *  No-op when the sentence has no timing → the pill simply never shows (Phase-1 only). */
   setReadingWords(sentenceIndex: number, words: { text: string }[] | undefined): void {
     this.wordRanges = [];
     if (this.isFixedLayout || !words?.length) return;

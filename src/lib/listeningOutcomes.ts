@@ -18,9 +18,9 @@
 //
 //   • `underruns` increments in EXACTLY one place — `playFrom` finding the sentence not ready on a natural
 //     advance (`!ready && !establishLead`). That is the app's own definition of an UNEXPECTED wait.
-//   • `status === "preparing"` is set by only four call sites: start(), setVoice(), resumeEdge(), and the
-//     Piper voice download. They are told apart by what else changed, so a new chapter, a voice change and
-//     a user-driven recovery are each identified rather than inferred.
+//   • `status === "preparing"` is set by only three call sites: start(), setVoice() and resumeEdge().
+//     They are told apart by what else changed, so a new chapter, a voice change and a user-driven
+//     recovery are each identified rather than inferred.
 //
 // A gap is therefore a FAILURE only when the app itself says playback had to wait, or when it ended in a
 // state the listener had to acknowledge. Everything the listener asked for — pause, seek, chapter change,
@@ -330,19 +330,17 @@ function finish(reason: EndReason): void {
 function onChange(s: Snap, p: Snap): void {
   const t = now();
 
-  // A session BOUNDARY. `preparing` is only ever set by start(), setVoice(), resumeEdge() or a Piper voice
-  // download, and those are told apart by what else changed:
+  // A session BOUNDARY. `preparing` is only ever set by start(), setVoice() or resumeEdge(), and those
+  // are told apart by what else changed:
   //   • after an error state          → resumeEdge: the listener recovering. SAME session.
   //   • engine or voice changed       → setVoice: an intentional switch. SAME session.
-  //   • after "downloading"           → the Piper model fetch. SAME session.
   //   • otherwise                     → start(): a NEW chapter. New session.
   const enteredPreparing = s.status === "preparing" && p.status !== "preparing";
   if (enteredPreparing && cur && s.active) {
     const recovery = p.status === "error" || p.status === "edge-error";
     const voiceChange = s.engine !== p.engine || s.voice !== p.voice;
-    const download = p.status === "downloading";
     if (recovery) { cur.neededUserAction = true; retryDuringGap = true; }
-    if (!recovery && !voiceChange && !download) {
+    if (!recovery && !voiceChange) {
       closePhase(t, s, "chapterChange");   // the silence of a chapter change is discarded, not recorded
       finish("chapterChange");
       startSession(t, s, false);
@@ -397,8 +395,8 @@ function onChange(s: Snap, p: Snap): void {
   const acknowledged = s.status === "error" || s.status === "edge-error";
 
   // O5 and the context that describes the session, captured when audio ACTUALLY starts — at activation the
-  // engine and voice are not yet resolved and `total` may be stale, which is why v1 recorded engine=piper
-  // and units=0 for Edge sessions.
+  // engine and voice are not yet resolved and `total` may be stale, which is why v1 recorded an
+  // unresolved engine and units=0 for Edge sessions.
   if (sounding && !cur.metaCaptured) {
     if (cur.timeToFirstAudioMs === null && !cur.joinedLate) cur.timeToFirstAudioMs = Math.round(t - sessionT0);
     cur.engine = s.engine; cur.voice = s.voice; cur.speed = s.speed;
@@ -421,7 +419,7 @@ function onChange(s: Snap, p: Snap): void {
   else if (s.status === "paused") next = "paused";
   else if (sounding) next = "sounding";
   else if (s.status === "buffering") next = cur.metaCaptured ? "silent" : "preparing";
-  else if (s.status === "preparing" || s.status === "downloading") next = "preparing";
+  else if (s.status === "preparing") next = "preparing";
   else next = "paused"; // chapter-end and idle-ish states are not interruptions (§5)
 
   if (next !== phase) {

@@ -29,7 +29,7 @@ pub mod fonts; // register/validate custom fonts (placeholder)
 pub mod photocards; // saved photo cards: PNG store + DB rows (RAWY-52, Photo Mode part 2a)
 pub mod settings; // key/value settings persistence
 pub mod sync; // FUTURE seam: backend trait only (placeholder)
-pub mod tts; // RAWY-105: bundled piper sidecar (persistent process) + on-demand voice download
+pub mod tts; // read-aloud over the Edge Read-Aloud neural voices
 pub mod webview_chrome; // RAWY-196: strip WebView2's browser chrome + accelerators (find bar, reload, print)
 pub mod window_chrome; // RAWY-118: theme the native title bar to match the app theme (DWM, Windows)
 
@@ -150,8 +150,6 @@ macro_rules! sard_invoke_handler {
             commands::photocard_save,
             commands::photocards_list,
             commands::photocard_delete,
-            tts::tts_voice_present,
-            tts::tts_download_voice,
             tts::tts_synthesize,
             tts::tts_edge_voices,
             tts::tts_stop,
@@ -250,7 +248,7 @@ pub fn run() {
                 app_data_dir,
                 db_path,
             });
-            app.manage(tts::TtsEngine::default()); // RAWY-105: persistent piper process holder
+            app.manage(tts::TtsEngine::default()); // holds the warm Edge socket + cached voice list
             Ok(())
         });
 
@@ -270,8 +268,8 @@ pub fn run() {
     builder
         .build(tauri::generate_context!())
         .expect("error while building Sard")
-        // RAWY-173 (AUD-10): on app exit, kill the warm Piper child (belt-and-braces — piper --json-input
-        // should self-exit on stdin EOF when the parent drops, but this guarantees no orphaned piper.exe).
+        // RAWY-173 (AUD-10): on app exit, drop the warm Edge socket rather than leaving the
+        // connection to be reaped by process teardown.
         .run(|app_handle, event| {
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 if let Some(engine) = app_handle.try_state::<tts::TtsEngine>() {

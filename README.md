@@ -84,7 +84,7 @@ and each one is measured rather than asserted.
 - Photo cards: turn a passage into a shareable image in five papers and four formats
 
 **Read-aloud**
-- Offline neural voices via Piper, or Microsoft Edge's online voices
+- Microsoft Edge's online neural voices
 - Sentence spotlight and word-level highlighting that follow the audio
 - A transport that shrinks from a full pill to a single calligraphic stroke in the margin
 
@@ -180,13 +180,13 @@ change previews on the real page.
 
 ### Read aloud
 
-Offline neural speech through Piper, or Microsoft Edge's online voices. The sentence being spoken is
-spotlit and the current word tracked inside it; the transport carries engine, voice, speed and
-volume, and collapses to a single calligraphic stroke when you want the page to yourself.
+Neural speech through Microsoft Edge's online voices. The sentence being spoken is spotlit and the
+current word tracked inside it; the transport carries voice, speed and volume, and collapses to a
+single calligraphic stroke when you want the page to yourself.
 
 <table>
 <tr>
-<td width="50%"><img src="docs/screenshots/in-book-en-with-background-and-TTS-working.png" alt="Reading in English with read-aloud playing: the spoken sentence spotlit, the current word highlighted, and the transport showing the Piper and Edge engines, voice and speed"></td>
+<td width="50%"><img src="docs/screenshots/in-book-en-with-background-and-TTS-working.png" alt="Reading in English with read-aloud playing: the spoken sentence spotlit, the current word highlighted, and the transport showing voice and speed"></td>
 <td width="50%"><img src="docs/screenshots/in-book-ar-with-background-and-TTS-working.png" alt="The same read-aloud transport while reading an Arabic book, right-to-left"></td>
 </tr>
 <tr>
@@ -219,7 +219,7 @@ in the app to re-share later.
 | Storage | SQLite via `rusqlite` (bundled), one file under `%APPDATA%` |
 | EPUB | [foliate-js](https://github.com/johnfactotum/foliate-js), vendored and pinned |
 | PDF | [PDF.js](https://github.com/mozilla/pdf.js) |
-| Offline speech | [Piper](https://github.com/rhasspy/piper) + [eSpeak NG](https://github.com/espeak-ng/espeak-ng) + [ONNX Runtime](https://github.com/microsoft/onnxruntime) |
+| Speech | Microsoft Edge online neural voices |
 | Type | Amiri · Noto Naskh Arabic · Aref Ruqaa · IBM Plex Sans (+ Arabic) · Literata · Source Serif 4 · Inter |
 
 ## Architecture
@@ -237,7 +237,7 @@ in the app to re-share later.
 │  commands/   the single frontend↔core boundary     │
 │  library/ books/ metadata/   import + catalogue    │
 │  db/        SQLite, one shared connection          │
-│  tts.rs     Piper sidecar + Edge orchestration     │
+│  tts.rs     Edge read-aloud orchestration          │
 │  backgrounds/  decode, resample, encode            │
 └────────────────────────────────────────────────────┘
 ```
@@ -274,14 +274,10 @@ Performance here means measured before and after, not asserted:
 
 ## Text-to-speech
 
-Two engines, chosen per book:
+- **Microsoft Edge** neural voices are used over the network, including word-level timing. Nothing
+  is bundled and no account is needed, which keeps the installer small.
 
-- **Piper** runs locally as a bundled sidecar. No network, no account. Voices are downloaded on
-  request — they are not shipped with the app, which keeps the installer small.
-- **Microsoft Edge** neural voices are used over the network when you want them, including
-  word-level timing.
-
-While a chapter plays, the current sentence is spotlit on the page and — with Edge — the current
+While a chapter plays, the current sentence is spotlit on the page and the current
 word is tracked inside it. Speed is an explicit ordered set rather than a slider, so 1.10× exists
 instead of being rounded away. The transport collapses in two steps: a full pill, a compact row,
 then a **kashida** — a tapered calligraphic stroke in the bottom margin whose fill is your
@@ -468,10 +464,9 @@ You are free to view, adapt, and modify the code strictly for **personal and pri
 
 Public redistribution, integration into other software, applications, extensions, plugins, add-ons, commercial use, and network/API exposure are strictly prohibited. See the [LICENSE](LICENSE) file for complete terms.
 
-Third-party components keep their own terms — foliate-js (MIT), PDF.js (Apache-2.0), Piper (MIT),
-eSpeak NG (GPL-3.0-or-later), ONNX Runtime (MIT), and the bundled fonts (SIL OFL 1.1). Those terms
-govern those components and are not superseded by the licence above. Full attribution is in
-[`NOTICE`](./NOTICE).
+Third-party components keep their own terms — foliate-js (MIT), PDF.js (Apache-2.0) and the bundled
+fonts (SIL OFL 1.1). Those terms govern those components and are not superseded by the licence
+above. Full attribution is in [`NOTICE`](./NOTICE).
 
 The name **Sard / سَرْد** and the hoopoe mark are not covered by the licence. Use them to refer to
 this project, not to brand a fork.

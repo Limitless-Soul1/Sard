@@ -176,9 +176,8 @@ export function TtsTrackingControls(props: Props) {
         <span className="rs-label">{t("track.heading")}</span>
       </div>
       <EffectBlock {...props} kind="spotlight" />
-      {/* Karaoke is Edge-only (Piper has no word timing). The hint states that plainly so the control
-          never implies it works with Piper — it IS a real, persisted preference that applies whenever
-          Edge is the engine; it just cannot render under Piper. (RAWY-193 lesson: no silent lie.) */}
+      {/* Karaoke is driven by Edge word timings. It is a real, persisted preference; a sentence that
+          arrives without timing simply renders at sentence level. (RAWY-193 lesson: no silent lie.) */}
       <EffectBlock {...props} kind="karaoke" hint={t("track.karaokeEdgeOnly")} />
     </div>
   );

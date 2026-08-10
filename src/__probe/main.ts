@@ -4,10 +4,20 @@
 // the host answered but said nothing about the transport the product actually uses. This one calls
 // `createReader()` and then drives the result through `FoliateController`'s own surface, so what is
 // measured is the shipping code path: the proxy, the mirror, the event pushes, the local decisions.
-// The REAL UI stylesheet as TEXT. A plain `import "…css"` emits a separate file that this page never
-// links, so the rules silently did not apply and `--ui-font` measured as empty. `?inline` hands over
-// the source, which is then injected — the actual @font-face rules, the actual unicode-ranges.
-import uiCss from "../styles/global.css?inline";
+// The REAL stylesheet, fetched from the SHIPPED application at run time.
+//
+// Two earlier attempts to get it into this page failed silently and both produced a measurement of
+// nothing: a plain css import emits a file the page never links, and `?inline` embedded text whose
+// rules still did not take effect — `--ui-font` measured empty and `.page-host` kept none of its
+// insets. Reading `/index.html` and following its own <link> is the only version that is certainly
+// the same CSS the product loads, because it IS the file the product loads.
+async function loadAppStylesheet(): Promise<string> {
+  const html = await (await fetch("/index.html")).text();
+  const hrefs = [...html.matchAll(/<link[^>]+rel="stylesheet"[^>]+href="([^"]+)"/g)].map((m) => m[1]);
+  const parts: string[] = [];
+  for (const href of hrefs) parts.push(await (await fetch(href)).text());
+  return parts.join(String.fromCharCode(10));
+}
 import { createReader, needsReaderHost } from "../reader-transport";
 import type { FoliateController } from "../reader-engine/FoliateController";
 
@@ -79,14 +89,6 @@ addEventListener("unhandledrejection", (e) => {
   emit("unhandled");
 });
 
-// The application's real stylesheet, applied for the whole run: `.page-host`'s absolute insets and
-// the `foliate-view` sizing rule are what decide whether the reader is visible at all.
-(() => {
-  const st = document.createElement("style");
-  st.textContent = uiCss;
-  document.head.appendChild(st);
-})();
-
 emit("boot");
 
 async function step<T>(name: string, run: () => T | Promise<T>): Promise<T | undefined> {
@@ -103,6 +105,16 @@ async function step<T>(name: string, run: () => T | Promise<T>): Promise<T | und
 }
 
 async function main(): Promise<void> {
+  // Applied before anything is measured: `.page-host`'s absolute insets and the `foliate-view`
+  // sizing rule decide whether the reader is visible at all.
+  const uiCss = await loadAppStylesheet();
+  const st = document.createElement("style");
+  st.textContent = uiCss;
+  document.head.appendChild(st);
+  R.surface["appCssBytes"] = uiCss.length;
+  R.surface["appCssHasPageHost"] = /\.page-host\s*\{/.test(uiCss);
+  emit("app-css");
+
   // ---- ARABIC BASELINE: measure, do not theorise ------------------------------------------------
   //
   // Reported on a real Linux machine: within one line, the words carrying tashkīl sit higher than

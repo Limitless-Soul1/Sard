@@ -182,10 +182,10 @@
   // — a scan finds nothing and reports zero instrumented documents, which reads exactly like "input
   // never arrived" while actually meaning "nobody was listening".
   //
-  // The engine's own API is the way in, and it is the same route the Windows byte-identity harness
-  // uses to fingerprint a rendered page: `foliate-view` → `renderer.getContents()` → `.doc`. From the
-  // document, `defaultView.frameElement` reaches back out to the iframe element, which is how the
-  // sandbox attribute that patch 1b produced can be read at all.
+  // The engine's own API is the way in: `foliate-view` → `renderer.getContents()` → `.doc`, which is
+  // how anything outside the shadow root reaches a rendered section. From the document,
+  // `defaultView.frameElement` reaches back out to the iframe element, which is how the sandbox
+  // attribute that patch 1b produced can be read at all.
   //
   // Re-scanned rather than instrumented once: every section gets its own iframe and the engine
   // replaces them as the reader moves. An earlier probe attached to the first document only and then

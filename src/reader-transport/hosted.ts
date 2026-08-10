@@ -220,6 +220,16 @@ export function hostedReader(port: MessagePort): FoliateController {
     get(target, prop, receiver) {
       if (typeof prop !== "string") return Reflect.get(target, prop, receiver);
 
+      // `then` MUST NOT be manufactured, and this is not a hypothetical.
+      //
+      // `createReader()` is async, so returning this proxy makes the runtime ask whether it is a
+      // thenable — by reading `.then`. The catch-all below happily produced a forwarding function,
+      // the runtime called it with `(resolve, reject)`, and the transport tried to postMessage two
+      // FUNCTIONS. MEASURED on WebKitGTK: `DataCloneError: The object can not be cloned`, thrown
+      // inside `createReader()` before a single reader call had been made, as an unhandled rejection
+      // with nothing pointing at the cause. `catch` and `finally` are refused for the same reason.
+      if (prop === "then" || prop === "catch" || prop === "finally") return undefined;
+
       // Declared on HostedReader: the decisions, the mirrored reads with arguments, `open`.
       if (prop in target) return Reflect.get(target, prop, receiver);
 

@@ -277,6 +277,20 @@ crit.append(("23 a user font reaches the host over asset:",
              "PASS" if font == "LOADED" else (UNKNOWN if font is None else "FAIL"),
              str(font)))
 
+typo = surface.get("typography") or {}
+if typo:
+    say("## Arabic typography — measured on this engine")
+    say()
+    say("| run | top | height | bottom |")
+    say("|---|---|---|---|")
+    for k, v in typo.items():
+        if isinstance(v, dict) and "top" in v:
+            say(f"| `{k}` | {v['top']} | {v['height']} | {v['bottom']} |")
+    say()
+    say(f"- ui font stack: `{typo.get('uiFontStack')}`")
+    say(f"- faces available: `{json.dumps(typo.get('fontsReady'))[:200]}`")
+    say()
+
 say("## Verdict")
 say()
 say("| criterion | verdict | evidence |")

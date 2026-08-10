@@ -4,6 +4,9 @@
 // the host answered but said nothing about the transport the product actually uses. This one calls
 // `createReader()` and then drives the result through `FoliateController`'s own surface, so what is
 // measured is the shipping code path: the proxy, the mirror, the event pushes, the local decisions.
+// The REAL UI stylesheet, so the typography measurement below sees the actual font stack, the
+// actual @font-face rules and the actual unicode-ranges — not a re-creation of them.
+import "../styles/global.css";
 import { createReader, needsReaderHost } from "../reader-transport";
 import type { FoliateController } from "../reader-engine/FoliateController";
 
@@ -91,6 +94,55 @@ async function step<T>(name: string, run: () => T | Promise<T>): Promise<T | und
 }
 
 async function main(): Promise<void> {
+  // ---- ARABIC BASELINE: measure, do not theorise ------------------------------------------------
+  //
+  // Reported on a real Linux machine: within one line, the words carrying tashkīl sit higher than
+  // their neighbours — «رفّ» in «+ رفّ جديد», «أولًا» in the shelves hint. Two hypotheses were killed
+  // by reading alone: IBM Plex Sans Arabic DOES contain U+0651 and U+064B, and the face's
+  // unicode-range U+0600-06FF DOES cover them. So this measures instead.
+  //
+  // Each word is boxed separately and compared against the same word with its marks stripped, and
+  // against the same word forced to a single family. If a marked word's box starts higher than an
+  // unmarked neighbour on the same line, the raise is real and measurable.
+  R.surface["typography"] = (() => {
+    const host = document.createElement("div");
+    host.setAttribute(
+      "style",
+      "position:fixed;left:0;top:0;visibility:hidden;font-family:var(--ui-font);font-size:16px;line-height:1.5",
+    );
+    host.dir = "rtl";
+    document.body.appendChild(host);
+
+    const line = document.createElement("div");
+    host.appendChild(line);
+    const words = ["+", "رفّ", "جديد", "أولًا", "أولا", "رف", "الشريط"];
+    const spans = words.map((w) => {
+      const el = document.createElement("span");
+      el.textContent = w;
+      el.style.cssText = "display:inline-block";
+      line.appendChild(el);
+      line.appendChild(document.createTextNode(" "));
+      return el;
+    });
+
+    const out: Record<string, unknown> = {};
+    spans.forEach((el, i) => {
+      const r = el.getBoundingClientRect();
+      out[words[i]] = { top: +r.top.toFixed(2), height: +r.height.toFixed(2), bottom: +r.bottom.toFixed(2) };
+    });
+
+    // Does the browser have the faces it should?
+    out["fontsReady"] = {
+      SardUIArabic: document.fonts.check('16px "SardUIArabic"', "رف"),
+      SardUILatin: document.fonts.check('16px "SardUILatin"', "A"),
+      loadedFamilies: [...document.fonts].map((f) => (f as FontFace).family).join(","),
+    };
+    out["uiFontStack"] = getComputedStyle(document.documentElement).getPropertyValue("--ui-font").trim();
+    document.body.removeChild(host);
+    return out;
+  })();
+  emit("typography");
+
   const ctrl: FoliateController = await createReader();
   emit("reader-created");
 

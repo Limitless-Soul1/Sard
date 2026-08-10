@@ -52,7 +52,7 @@ for _ in $(seq 1 175); do
   # THE CLICK. Delivered by the X server to whatever is under the pointer — not dispatchEvent, not a
   # synthetic CDP event. The measured defect is in DELIVERY into a script-disabled frame, so only a
   # real one can falsify it. Fired once the page says the book is on screen and the counters armed.
-  if (( CLICKED == 0 )) && grep -q "ready-for-click" "$OUT/stages.log" 2>/dev/null; then
+  if (( CLICKED == 0 )) && grep -qE "^[0-9]+ (opened|sync-read|keyboard)$" "$OUT/stages.log" 2>/dev/null; then
     # The PROBE window, not the main one. The probe page lives in a second window titled
     # sard-step1-probe; clicking the main "Sard" window would deliver a real event to a page that is
     # not under test and report zero, which is indistinguishable from the defect being measured.

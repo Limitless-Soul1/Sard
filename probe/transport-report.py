@@ -195,11 +195,14 @@ crit.append(("19 search runs and reports progressively",
              json.dumps(sb)[:110]))
 
 ts = surface.get("trackStats")
-crit.append(("20 TTS tracking crosses (units + spotlight)",
+# Units and the session. The SPOTLIGHT is criterion 27, which measures paint rather than a call
+# returning — this used to reference a `showReadingHighlight` step that the spotlight loop replaced,
+# and a dangling reference read as a product failure.
+crit.append(("20 TTS units cross and a session can be built",
              "PASS" if isinstance(ts, dict) and (ts.get("units") or 0) > 0
-             and okstep("showReadingHighlight") and okstep("clearReadingHighlight")
+             and isinstance(surface.get("tts.buildUnits"), int) and surface["tts.buildUnits"] > 0
              else (UNKNOWN if ts is None else "FAIL"),
-             f"trackStats={json.dumps(ts)[:60]} spotlight={surface.get('showReadingHighlight')}"))
+             f"trackStats={json.dumps(ts)[:50]} sessionUnits={surface.get('tts.buildUnits')}"))
 
 pdf_fixed = surface.get("pdf.isFixedLayout")
 crit.append(("21 a real PDF opened through the host",

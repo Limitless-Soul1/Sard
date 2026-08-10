@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && node scripts/build-reader-host.mjs",
+    "build": "tsc && vite build && node scripts/build-reader-host.mjs && node scripts/build-probe.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "build:test": "node scripts/build-test.mjs",

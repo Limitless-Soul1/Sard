@@ -565,7 +565,10 @@ export function AnnotationLayer({
   useAnnotations((s) => s.highlights);
   useAnnotations((s) => s.notes);
 
-  // Wire the controller's selection + click callbacks once (the controller instance is stable).
+  // Wire the controller's selection + click callbacks. `readerReady` is in the deps because on the
+  // hosted path the controller does not exist yet at mount: the ref is still null, and filling a ref
+  // re-runs nothing. Without it this effect ran once against null and the selection menu never
+  // appeared on Linux. Re-running is safe — the controller assigns each callback, it does not append.
   useEffect(() => {
     const ctrl = ctrlRef.current;
     if (!ctrl) return;

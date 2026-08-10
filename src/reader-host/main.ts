@@ -91,6 +91,13 @@ function buildMirror(): Mirror {
     pdfRenderedScale: safe(() => controller.pdfRenderedScale(), 1),
     pdfHasSpeakableText: safe(() => controller.pdfHasSpeakableText(), false),
     isFixedLayout: safe(() => controller.isFixedLayout, false),
+    isScrolled: safe(() => controller.isScrolled, true),
+    readingScrollTop: safe(() => controller.readingScrollTop, 0),
+    pdfPageCount: safe(() => controller.pdfPageCount, 0),
+    furthestPosition: safe(() => controller.furthestPosition, null),
+    dir: safe(() => controller.dir, undefined),
+    title: safe(() => controller.title, undefined),
+    author: safe(() => controller.author, undefined),
     toc: safe(() => controller.getToc() as unknown[], []),
     // A Map does not survive structured cloning; entries do.
     tocHrefSection: safe(() => [...controller.tocHrefSectionMap()], []),

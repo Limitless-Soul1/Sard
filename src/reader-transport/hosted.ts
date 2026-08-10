@@ -29,6 +29,13 @@ const EMPTY_MIRROR: Mirror = {
   pdfRenderedScale: 1,
   pdfHasSpeakableText: false,
   isFixedLayout: false,
+  isScrolled: true,
+  readingScrollTop: 0,
+  pdfPageCount: 0,
+  furthestPosition: null,
+  dir: undefined,
+  title: undefined,
+  author: undefined,
   toc: [],
   tocHrefSection: [],
   ttsCursors: [],
@@ -51,6 +58,18 @@ const MIRRORED_DIRECT = {
   pdfRenderedScale: "pdfRenderedScale",
   pdfHasSpeakableText: "pdfHasSpeakableText",
 } as const satisfies Record<string, keyof Mirror>;
+
+/** The engine's public getters, read as properties and therefore always served from the mirror. */
+const GETTERS = [
+  "isFixedLayout",
+  "isScrolled",
+  "readingScrollTop",
+  "pdfPageCount",
+  "furthestPosition",
+  "dir",
+  "title",
+  "author",
+] as const;
 
 export class HostedReader {
   // Deliberately NOT `#private`. The proxy below has to read `handlers` and dispatch on the members
@@ -225,6 +244,11 @@ export class HostedReader {
     return this.mirror.ttsCursors[i] ?? null;
   }
 
+  /** A mirrored value read as a property rather than called. */
+  mirrorValue(key: keyof Mirror): unknown {
+    return this.mirror[key];
+  }
+
   /** Reads the mirror for the eight members whose value it carries directly. */
   mirrored(method: keyof typeof MIRRORED_DIRECT): unknown {
     return this.mirror[MIRRORED_DIRECT[method]];
@@ -256,6 +280,14 @@ export function hostedReader(port: MessagePort): FoliateController {
 
       // Declared on HostedReader: the decisions, the mirrored reads with arguments, `open`.
       if (prop in target) return Reflect.get(target, prop, receiver);
+
+      // GETTERS are read, not called. Returning a forwarding function for one is not a slow answer,
+      // it is a wrong VALUE: `ctrl.isFixedLayout` came back as a function and every consumer saw a
+      // truthy object. MEASURED on WebKitGTK — the PDF path reported `undefined` because
+      // JSON.stringify of a function is undefined.
+      if ((GETTERS as readonly string[]).includes(prop)) {
+        return target.mirrorValue(prop as keyof Mirror);
+      }
 
       // Mirrored, answered synchronously.
       if (prop in MIRRORED_DIRECT) {

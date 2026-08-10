@@ -236,6 +236,9 @@ async function main(): Promise<void> {
   await new Promise((r) => setTimeout(r, 8000));
   sync();
   R.keyboard.spaceCallbackAskedFinal = spaceAsked;
+  // Freeze the EPUB's state BEFORE the PDF replaces it. The final `sync()` used to run after the PDF
+  // opened, so the report read `toc=0` and called it a failure — a PDF has no table of contents.
+  R.surface["syncEpub"] = { ...R.sync };
   emit("input-window-closed");
 
   // ---- a user font over asset: ------------------------------------------------------------------

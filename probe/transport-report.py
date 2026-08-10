@@ -103,12 +103,15 @@ crit.append(("1 the transport built the reader",
 crit.append(("2 a real EPUB opened through the transport",
              "PASS" if d.get("open") == "opened" else (UNKNOWN if d.get("open") == "untried" else "FAIL"),
              str(surface.get("open"))[:100]))
+# The EPUB's state, frozen before the PDF replaced it. `sync` describes whatever is open LAST, and
+# reading a table of contents from a PDF is not a failure of the transport.
+epub = surface.get("syncEpub") or sync
 crit.append(("3 engine structure crossed (TOC)",
-             "PASS" if (sync.get("tocLength") or 0) > 0 else (UNKNOWN if "tocLength" not in sync else "FAIL"),
-             f"toc={sync.get('tocLength')} hrefMap={sync.get('tocHrefSectionSize')}"))
+             "PASS" if (epub.get("tocLength") or 0) > 0 else (UNKNOWN if "tocLength" not in epub else "FAIL"),
+             f"toc={epub.get('tocLength')} hrefMap={epub.get('tocHrefSectionSize')}"))
 crit.append(("4 mirrored synchronous reads answered",
-             "PASS" if isinstance(sync.get("currentSectionIndex"), int) else (UNKNOWN if not sync else "FAIL"),
-             f"section={sync.get('currentSectionIndex')} atChapterStart={sync.get('atChapterStart')}"))
+             "PASS" if isinstance(epub.get("currentSectionIndex"), int) else (UNKNOWN if not epub else "FAIL"),
+             f"section={epub.get('currentSectionIndex')} atChapterStart={epub.get('atChapterStart')}"))
 bm_ok = sync.get("bookmarkSameSection") is True and sync.get("bookmarkOtherSection") is False
 crit.append(("5 CFI / bookmark rule correct on the app side",
              "PASS" if bm_ok else (UNKNOWN if "bookmarkSameSection" not in sync else "FAIL"),

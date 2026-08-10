@@ -69,7 +69,9 @@ addEventListener("error", (e) => {
   emit("jserror");
 });
 addEventListener("unhandledrejection", (e) => {
-  R.errors.push(`unhandled: ${String((e as PromiseRejectionEvent).reason).slice(0, 200)}`);
+  const r = (e as PromiseRejectionEvent).reason;
+  const stack = r instanceof Error && r.stack ? r.stack.slice(0, 600) : "";
+  R.errors.push(`unhandled: ${String(r).slice(0, 200)} :: ${stack}`);
   emit("unhandled");
 });
 

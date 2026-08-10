@@ -20,11 +20,18 @@ node "$ROOT/probe/make-subject.mjs" || exit 2
 echo "::endgroup::"
 
 echo "::group::build (Tauri CLI — the only thing that embeds frontendDist rather than devUrl)"
+# The probe page is a bundled entry now, so it has to be built BEFORE the Tauri CLI embeds dist/.
+( cd "$ROOT" && SARD_BUILD_TARGET=probe node node_modules/vite/bin/vite.js build ) >"$OUT/probe-bundle.log" 2>&1 || {
+  echo "probe bundle failed"; tail -30 "$OUT/probe-bundle.log"; exit 2; }
 ( cd "$ROOT" && npx tauri build --no-bundle ) >"$OUT/build.log" 2>&1 || {
   echo "tauri build failed"; tail -40 "$OUT/build.log"; exit 2; }
+# `tauri build` reruns `npm run build`, which wipes dist/ — so the probe bundle is rebuilt after it.
+( cd "$ROOT" && SARD_BUILD_TARGET=probe node node_modules/vite/bin/vite.js build ) >>"$OUT/probe-bundle.log" 2>&1
+( cd "$ROOT" && npx tauri build --no-bundle ) >>"$OUT/build.log" 2>&1 || {
+  echo "second tauri build failed"; tail -40 "$OUT/build.log"; exit 2; }
 BIN="$ROOT/src-tauri/target/release/sard"
 [[ -x "$BIN" ]] || { echo "no binary at $BIN"; exit 2; }
-for f in reader-host/bundle.js reader-host/index.html reader-host/host.js __probe/book.epub; do
+for f in reader-host/bundle.js reader-host/index.html reader-host/host.js __probe/book.epub __probe/bundle.js; do
   [[ -f "$ROOT/dist/$f" ]] && echo "  bundled: $f ($(stat -c%s "$ROOT/dist/$f") bytes)" || { echo "  MISSING: $f"; exit 2; }
 done
 echo "::endgroup::"

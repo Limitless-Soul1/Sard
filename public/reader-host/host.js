@@ -1,12 +1,16 @@
-// The reader host, step 1.
+// The reader host's boundary self-check.
 //
-// The origin exists and carries its policy; nothing reads a book here yet. The engine, the byte
-// transfer, the section sandbox change and the message channel are later steps, each with its own
-// evidence gate, and none of them is present.
+// It measures, from INSIDE this origin, what this origin can actually reach — the one thing no
+// outside observer can establish, because every interesting answer here is a SecurityError that only
+// the code holding the reference can raise.
 //
-// `?selfcheck=1` runs the acceptance checks for this step and writes them into #report. Without it
-// the document is inert, so the checks are a deliberate act rather than something that runs behind
-// a reader every time a book opens.
+// It exists as shipped code, rather than as something a throwaway branch bolts on, because these
+// properties have to stay re-measurable against the REAL host after every change. A boundary proven
+// once against a special build is a boundary nobody can re-check.
+//
+// Inert without `?selfcheck=1`: a normal reader open runs none of it. It is absent from Windows
+// entirely — `scripts/build-reader-host.mjs` deletes this whole directory for that target, because
+// no origin is registered there to serve it.
 (function () {
   "use strict";
 
@@ -178,10 +182,10 @@
   // — a scan finds nothing and reports zero instrumented documents, which reads exactly like "input
   // never arrived" while actually meaning "nobody was listening".
   //
-  // The engine's own API is the way in, and it is the same route the Windows byte-identity harness
-  // uses to fingerprint a rendered page: `foliate-view` → `renderer.getContents()` → `.doc`. From the
-  // document, `defaultView.frameElement` reaches back out to the iframe element, which is how the
-  // sandbox attribute that patch 1b produced can be read at all.
+  // The engine's own API is the way in: `foliate-view` → `renderer.getContents()` → `.doc`, which is
+  // how anything outside the shadow root reaches a rendered section. From the document,
+  // `defaultView.frameElement` reaches back out to the iframe element, which is how the sandbox
+  // attribute that patch 1b produced can be read at all.
   //
   // Re-scanned rather than instrumented once: every section gets its own iframe and the engine
   // replaces them as the reader moves. An earlier probe attached to the first document only and then
@@ -207,16 +211,13 @@
 
 // ---------------------------------------------------------------------------------------------
 // PROBE-ONLY REPORTER — exists only on the throwaway probe branch and is never merged.
-//
 // The host origin holds no Tauri API by design, so an embedded host has no way to report except
-// postMessage. This block is that reporter and nothing else: it sends, it never listens, and it is
-// the reason the "no channel on the host global" criterion is verified against the PRODUCTION file
-// rather than this copy.
+// postMessage. This block sends; it never listens.
 // ---------------------------------------------------------------------------------------------
 (function () {
   "use strict";
   if (new URLSearchParams(location.search).get("selfcheck") !== "1") return;
-  if (window.parent === window) return;                       // top-level: nothing to report to
+  if (window.parent === window) return;
   var sent = 0;
   setInterval(function () {
     var el = document.getElementById("report");

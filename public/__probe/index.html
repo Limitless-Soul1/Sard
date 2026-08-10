@@ -2,24 +2,20 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Reader-host runtime gate</title>
-<!-- PROBE-ONLY. Lives on the throwaway branch; never merged.
-     This page is the PRIVILEGED application origin. It mounts the real sardhost: origin, hands it a
-     real EPUB over a MessagePort, and measures the boundary from this side while the host measures
-     it from the other.
-
-     The host frame FILLS THE WINDOW. The harness delivers a genuine X11 click at a coordinate, so
-     the book has to actually be under that coordinate — a small or offset frame would make a
-     negative result meaningless. Nothing else is on the page for the same reason: an earlier probe
-     put a large off-screen log element in the way and it silently swallowed the very clicks being
-     measured. -->
+<title>Reader transport runtime gate</title>
+<!-- PROBE-ONLY, throwaway branch. This is the PRIVILEGED application origin. It builds the reader
+     through the product's own `createReader()` and drives it through FoliateController's surface, so
+     what is measured is the shipping transport rather than a re-creation of it.
+     `#stage` fills the window: the harness delivers a genuine X11 click, so the book has to be under
+     the coordinate. Nothing else is on the page — an earlier probe put a large off-screen log element
+     in the way and it silently swallowed the clicks being measured. -->
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #222; }
-  #host { display: block; width: 100vw; height: 100vh; border: 0; }
+  #stage { position: absolute; inset: 0; }
 </style>
 </head>
 <body>
-<iframe id="host" title="reader host"></iframe>
-<script src="/__probe/probe.js"></script>
+<div id="stage"></div>
+<script type="module" src="/__probe/bundle.js"></script>
 </body>
 </html>

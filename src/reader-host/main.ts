@@ -239,16 +239,16 @@ async function run(msg: Request): Promise<unknown> {
     if (bookUrl) URL.revokeObjectURL(bookUrl);
     bookUrl = URL.createObjectURL(new Blob([msg.bytes]));
     const stage = ensureStage();
-    htrace("host.open start", { bytes: msg.bytes.byteLength, stage: { w: stage.clientWidth, h: stage.clientHeight }, opts: msg.opts });
+    htrace("host.T1 open start", { bytes: msg.bytes.byteLength, stage: { w: stage.clientWidth, h: stage.clientHeight }, opts: msg.opts });
     try {
       await controller.open(bookUrl, stage, msg.opts as never);
     } catch (e) {
       htrace("host.open THREW", String(e).slice(0, 400));
       throw e;
     }
-    htrace("host.open done", { toc: safe(() => controller.getToc().length, -1), ...(sectionReport() as object) });
+    htrace("host.T2 engine open returned", { toc: safe(() => controller.getToc().length, -1), ...(sectionReport() as object) });
     // And again after a paint, because layout right after open is not what the reader sees.
-    requestAnimationFrame(() => requestAnimationFrame(() => htrace("host.afterPaint", sectionReport())));
+    requestAnimationFrame(() => requestAnimationFrame(() => htrace("host.T3 first paint after open", sectionReport())));
     return { opened: true };
   }
 

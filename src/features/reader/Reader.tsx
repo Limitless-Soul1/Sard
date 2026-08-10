@@ -643,6 +643,7 @@ export function Reader({
       // "Lord Of The mysteries" on the shelf and showed the embedded "لورد الغوامض" in the reader.
       // `meta` is the row this reader fetched by id (see the open above), so all five surfaces now
       // resolve from the same COALESCE'd value.
+      diagTrace("APP      T-ready status=ready");
       set({
         status: "ready",
         dir: ctrl.dir ?? "?",
@@ -662,6 +663,7 @@ export function Reader({
       diagSnapshot("after-open-app-side");
       diagFonts("after-open");
       diagAfterPaint("first-render");
+      diagTrace("APP      T-toc setToc", { entries: ctrl.getToc().length });
       setToc(ctrl.getToc()); // chapters panel (RAWY-21)
       setTocSecMap(ctrl.tocHrefSectionMap()); // RAWY-256: one pass, reused by every marker render
       // RESILIENCE-1 / WP-6A: this book's own contents are useless (WP-2 measured it). Build a usable

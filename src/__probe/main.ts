@@ -102,7 +102,9 @@ async function main(): Promise<void> {
       (ctrl as unknown as Record<string, (cb: (...a: unknown[]) => void) => void>)[name]((...args: unknown[]) => {
         R.events[name] = (R.events[name] ?? 0) + 1;
         if (name === "onSelection" && args[0]) {
-          R.surface["selection.payload"] = JSON.parse(JSON.stringify(args[0]));
+          const sel = args[0] as { cfi?: string };
+          R.surface["selection.payload"] = JSON.parse(JSON.stringify(sel));
+          if (sel.cfi) realCfi = sel.cfi; // a CFI the engine itself produced, over real text
         }
       });
     } catch (e) {
@@ -110,6 +112,7 @@ async function main(): Promise<void> {
     }
   }
   // The two synchronous callbacks. Neither may cross the port.
+  let realCfi: string | null = null;
   let arrowAsked = 0;
   let spaceAsked = 0;
   ctrl.onArrow(() => {
@@ -171,22 +174,54 @@ async function main(): Promise<void> {
   // ---- highlights, references, search, TTS track ------------------------------------------------
   // Driven through the engine's own surface, so what is proven is the transport carrying the real
   // calls — not that forwarding code exists.
-  const cfi = (ctrl as unknown as { currentCfi?: () => string }).currentCfi?.() ?? null;
-  R.surface["cfiAtCursor"] = cfi;
+  // ---- async forwards over the proxy ------------------------------------------------------------
+  await step("getCurrentChapterSentences", async () => (await ctrl.getCurrentChapterSentences("ar")).length);
+  await step("goToNextChapter", async () => {
+    await ctrl.goToNextChapter();
+    return true;
+  });
+  await new Promise((r) => setTimeout(r, 1200));
+  sync();
+  R.surface["sectionAfterChapterJump"] = ctrl.currentSectionIndex();
+  emit("forwards");
 
-  await step("addHighlight", async () => await ctrl.addHighlight("epubcfi(/6/4!/4/2,/1:0,/1:40)", "#ffd54f", 0.5));
+  // Give real input (delivered by the harness) time to produce events.
+  await new Promise((r) => setTimeout(r, 8000));
+  sync();
+  R.keyboard.spaceCallbackAskedFinal = spaceAsked;
+  // Freeze the EPUB's state BEFORE the PDF replaces it. The final `sync()` used to run after the PDF
+  // opened, so the report read `toc=0` and called it a failure — a PDF has no table of contents.
+  R.surface["syncEpub"] = { ...R.sync };
+  emit("input-window-closed");
+
+  // A FABRICATED CFI PROVES NOTHING. The previous pass highlighted
+  // `epubcfi(/6/4!/4/2,/1:0,/1:40)`, which need not resolve to anything in this book — the call
+  // crosses, returns, paints no pixels, and a broken transport looks identical to a working one. The
+  // CFI used here is one the ENGINE produced from the real drag the harness performed, so it points
+  // at text that is genuinely on screen.
+  R.surface["realCfiFromSelection"] = realCfi;
+
+  await step("addHighlight", async () =>
+    realCfi ? await ctrl.addHighlight(realCfi, "#ffd54f", 0.5) : "no selection cfi");
   await step("loadHighlights", async () => {
-    await ctrl.loadHighlights([{ cfi: "epubcfi(/6/4!/4/4,/1:0,/1:30)", color: "#80cbc4", alpha: 0.4 }]);
+    await ctrl.loadHighlights(realCfi ? [{ cfi: realCfi, color: "#80cbc4", alpha: 0.4 }] : []);
     return true;
   });
   await step("setHighlightColor", () => {
-    ctrl.setHighlightColor("epubcfi(/6/4!/4/2,/1:0,/1:40)", "#ef9a9a");
+    if (realCfi) ctrl.setHighlightColor(realCfi, "#ef9a9a");
     return true;
   });
+  await new Promise((r) => setTimeout(r, 1500));
+  R.surface["overlayAfterHighlight"] =
+    (R.surface["hostSelfcheck"] as { overlay?: unknown } | undefined)?.overlay ?? null;
+
   await step("removeHighlight", () => {
-    ctrl.removeHighlight("epubcfi(/6/4!/4/2,/1:0,/1:40)");
+    if (realCfi) ctrl.removeHighlight(realCfi);
     return true;
   });
+  await new Promise((r) => setTimeout(r, 1200));
+  R.surface["overlayAfterRemove"] =
+    (R.surface["hostSelfcheck"] as { overlay?: unknown } | undefined)?.overlay ?? null;
 
   // References are the notes surface: a list pushed into the engine, matched against book text.
   await step("setReferences", () => {
@@ -220,26 +255,8 @@ async function main(): Promise<void> {
     ctrl.clearReadingHighlight();
     return true;
   });
+  emit("annotations");
 
-  // ---- async forwards over the proxy ------------------------------------------------------------
-  await step("getCurrentChapterSentences", async () => (await ctrl.getCurrentChapterSentences("ar")).length);
-  await step("goToNextChapter", async () => {
-    await ctrl.goToNextChapter();
-    return true;
-  });
-  await new Promise((r) => setTimeout(r, 1200));
-  sync();
-  R.surface["sectionAfterChapterJump"] = ctrl.currentSectionIndex();
-  emit("forwards");
-
-  // Give real input (delivered by the harness) time to produce events.
-  await new Promise((r) => setTimeout(r, 8000));
-  sync();
-  R.keyboard.spaceCallbackAskedFinal = spaceAsked;
-  // Freeze the EPUB's state BEFORE the PDF replaces it. The final `sync()` used to run after the PDF
-  // opened, so the report read `toc=0` and called it a failure — a PDF has no table of contents.
-  R.surface["syncEpub"] = { ...R.sync };
-  emit("input-window-closed");
 
   // ---- a user font over asset: ------------------------------------------------------------------
   // Staged by a probe-only Rust command from the compiled bundle, so nothing is downloaded and no

@@ -85,6 +85,9 @@ say(f"| refused traversal | `{assets.get('fetch.refusedTraversal')}` |")
 say(f"| cross-origin fetch | `{assets.get('fetch.crossOrigin')}` |")
 say(f"| MessagePort on host global | `{channels.get('messagePortsOnGlobal')}` |")
 say(f"| section sandbox | `{inp.get('sandbox')}` |")
+say(f"| overlayer after highlight | `{json.dumps(surface.get('overlayAfterHighlight'))[:90]}` |")
+say(f"| overlayer after remove | `{json.dumps(surface.get('overlayAfterRemove'))[:90]}` |")
+say(f"| rendered surfaces | `{json.dumps(self_check.get('rendered'))[:70]}` |")
 say(f"| real input into the section | `{inp.get('pointerdown')}` pointerdown, `{inp.get('click')}` click |")
 say()
 
@@ -210,6 +213,24 @@ crit.append(("22 PDF text quality crossed",
              f"quality={json.dumps(surface.get('pdf.textQuality'))[:70]} speakable={surface.get('pdf.hasSpeakableText')}"))
 
 font = surface.get("assetFont")
+ovh = surface.get("overlayAfterHighlight") or {}
+ovr = surface.get("overlayAfterRemove") or {}
+painted = ovh.get("painted") if isinstance(ovh, dict) else None
+crit.append(("24 a highlight is actually PAINTED, not merely forwarded",
+             "PASS" if isinstance(painted, int) and painted > 0 and (ovh.get("areaPx") or 0) > 0
+             else (UNKNOWN if not ovh else "FAIL"),
+             f"painted={painted} areaPx={ovh.get('areaPx') if isinstance(ovh, dict) else None} "
+             f"cfi={str(surface.get('realCfiFromSelection'))[:40]}"))
+crit.append(("25 removing it takes the paint away",
+             "PASS" if isinstance(painted, int) and painted > 0
+             and isinstance(ovr, dict) and (ovr.get("painted") or 0) < painted
+             else (UNKNOWN if not ovr else "FAIL"),
+             f"after={ovr.get('painted') if isinstance(ovr, dict) else None} before={painted}"))
+rendered = (self_check.get("rendered") or {}) if isinstance(self_check, dict) else {}
+crit.append(("26 the PDF page rendered to a sized surface",
+             "PASS" if (rendered.get("sized") or 0) > 0 else (UNKNOWN if not rendered else "FAIL"),
+             f"imgOrCanvas={rendered.get('imgOrCanvas')} sized={rendered.get('sized')}"))
+
 crit.append(("23 a user font reaches the host over asset:",
              "PASS" if font == "LOADED" else (UNKNOWN if font is None else "FAIL"),
              str(font)))

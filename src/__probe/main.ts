@@ -4,9 +4,10 @@
 // the host answered but said nothing about the transport the product actually uses. This one calls
 // `createReader()` and then drives the result through `FoliateController`'s own surface, so what is
 // measured is the shipping code path: the proxy, the mirror, the event pushes, the local decisions.
-// The REAL UI stylesheet, so the typography measurement below sees the actual font stack, the
-// actual @font-face rules and the actual unicode-ranges — not a re-creation of them.
-import "../styles/global.css";
+// The REAL UI stylesheet as TEXT. A plain `import "…css"` emits a separate file that this page never
+// links, so the rules silently did not apply and `--ui-font` measured as empty. `?inline` hands over
+// the source, which is then injected — the actual @font-face rules, the actual unicode-ranges.
+import uiCss from "../styles/global.css?inline";
 import { createReader, needsReaderHost } from "../reader-transport";
 import type { FoliateController } from "../reader-engine/FoliateController";
 
@@ -105,41 +106,50 @@ async function main(): Promise<void> {
   // against the same word forced to a single family. If a marked word's box starts higher than an
   // unmarked neighbour on the same line, the raise is real and measurable.
   R.surface["typography"] = (() => {
-    const host = document.createElement("div");
-    host.setAttribute(
-      "style",
-      "position:fixed;left:0;top:0;visibility:hidden;font-family:var(--ui-font);font-size:16px;line-height:1.5",
-    );
-    host.dir = "rtl";
-    document.body.appendChild(host);
+    const style = document.createElement("style");
+    style.textContent = uiCss;
+    document.head.appendChild(style);
 
-    const line = document.createElement("div");
-    host.appendChild(line);
-    const words = ["+", "رفّ", "جديد", "أولًا", "أولا", "رف", "الشريط"];
-    const spans = words.map((w) => {
-      const el = document.createElement("span");
-      el.textContent = w;
-      el.style.cssText = "display:inline-block";
-      line.appendChild(el);
-      line.appendChild(document.createTextNode(" "));
-      return el;
-    });
+    const stack = getComputedStyle(document.documentElement).getPropertyValue("--ui-font").trim();
+    const words = ["رفّ", "رف", "أولًا", "أولا", "جديد", "الشريط"];
 
-    const out: Record<string, unknown> = {};
-    spans.forEach((el, i) => {
-      const r = el.getBoundingClientRect();
-      out[words[i]] = { top: +r.top.toFixed(2), height: +r.height.toFixed(2), bottom: +r.bottom.toFixed(2) };
-    });
-
-    // Does the browser have the faces it should?
-    out["fontsReady"] = {
-      SardUIArabic: document.fonts.check('16px "SardUIArabic"', "رف"),
-      SardUILatin: document.fonts.check('16px "SardUILatin"', "A"),
-      loadedFamilies: [...document.fonts].map((f) => (f as FontFace).family).join(","),
+    // WHY CANVAS, NOT ELEMENT BOXES. An element's box is the LINE box; every inline sits on the same
+    // baseline by definition, so comparing element tops can only ever return "identical" — which is
+    // exactly the useless answer the first attempt produced. `actualBoundingBox*` measures where the
+    // INK actually lands relative to the baseline, and the width identifies WHICH font drew it.
+    const ctx = document.createElement("canvas").getContext("2d");
+    const measure = (font: string) => {
+      if (!ctx) return null;
+      ctx.font = font;
+      const out: Record<string, { w: number; asc: number; desc: number }> = {};
+      for (const w of words) {
+        const m = ctx.measureText(w);
+        out[w] = {
+          w: +m.width.toFixed(2),
+          asc: +(m.actualBoundingBoxAscent ?? 0).toFixed(2),
+          desc: +(m.actualBoundingBoxDescent ?? 0).toFixed(2),
+        };
+      }
+      return out;
     };
-    out["uiFontStack"] = getComputedStyle(document.documentElement).getPropertyValue("--ui-font").trim();
-    document.body.removeChild(host);
-    return out;
+
+    const viaStack = measure(`16px ${stack || "sans-serif"}`);
+    const viaArabic = measure('16px "SardUIArabic"');
+    const viaSystem = measure("16px system-ui");
+
+    // Which family actually drew each word: the one whose widths match.
+    const resolved: Record<string, string> = {};
+    for (const w of words) {
+      const a = viaStack?.[w]?.w;
+      resolved[w] =
+        a === undefined ? "?"
+        : a === viaArabic?.[w]?.w ? "SardUIArabic"
+        : a === viaSystem?.[w]?.w ? "system-ui(FALLBACK)"
+        : "other";
+    }
+
+    document.head.removeChild(style);
+    return { uiFontStack: stack, viaStack, viaArabic, viaSystem, resolved };
   })();
   emit("typography");
 

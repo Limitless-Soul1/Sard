@@ -281,14 +281,17 @@ typo = surface.get("typography") or {}
 if typo:
     say("## Arabic typography — measured on this engine")
     say()
-    say("| run | top | height | bottom |")
-    say("|---|---|---|---|")
-    for k, v in typo.items():
-        if isinstance(v, dict) and "top" in v:
-            say(f"| `{k}` | {v['top']} | {v['height']} | {v['bottom']} |")
-    say()
     say(f"- ui font stack: `{typo.get('uiFontStack')}`")
-    say(f"- faces available: `{json.dumps(typo.get('fontsReady'))[:200]}`")
+    say()
+    say("| word | width (stack) | ink ascent | ink descent | drawn by |")
+    say("|---|---|---|---|---|")
+    vs = typo.get("viaStack") or {}
+    res = typo.get("resolved") or {}
+    for k, v in vs.items():
+        say(f"| `{k}` | {v.get('w')} | {v.get('asc')} | {v.get('desc')} | {res.get(k)} |")
+    say()
+    say(f"- forced SardUIArabic: `{json.dumps(typo.get('viaArabic'))[:180]}`")
+    say(f"- forced system-ui: `{json.dumps(typo.get('viaSystem'))[:180]}`")
     say()
 
 say("## Verdict")

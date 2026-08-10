@@ -18,6 +18,7 @@ import { sameSection } from "../reader-engine/cfiSection";
 import type { FoliateController } from "../reader-engine/FoliateController";
 import { CROSSING } from "./surface";
 import type { Mirror, Push, Reply, Request, RequestBody } from "./protocol";
+import { trace, step as traceStep } from "./trace"; // DIAGNOSTIC
 
 const EMPTY_MIRROR: Mirror = {
   currentSectionIndex: 0,
@@ -96,7 +97,7 @@ export class HostedReader {
     if (this.mounting) return this.mounting;
     this.mounting = (async () => {
       const { mountHostIn } = await import("./index");
-      const { port, frame } = await mountHostIn(container);
+      const { port, frame } = await traceStep("host.mount+handshake", 20000, () => mountHostIn(container));
       this.port = port;
       this.frame = frame;
       port.onmessage = (e: MessageEvent<Reply | Push>) => this.receive(e.data);
@@ -107,10 +108,18 @@ export class HostedReader {
 
   private receive(msg: Reply | Push): void {
     if ("kind" in msg) {
-      if (msg.kind === "state") this.mirror = msg.mirror;
-      else if (msg.kind === "event") this.handlers.get(msg.name)?.(...msg.args);
+      if (msg.kind === "state") {
+        this.mirror = msg.mirror;
+        trace("MIRROR   push", { toc: msg.mirror.toc.length, section: msg.mirror.currentSectionIndex, dir: msg.mirror.dir, fixed: msg.mirror.isFixedLayout, cursors: msg.mirror.ttsCursors.length });
+      } else if (msg.kind === "event") {
+        trace(`EVENT    ${msg.name}`);
+        this.handlers.get(msg.name)?.(...msg.args);
+      } else if ((msg as unknown as { kind: string }).kind === "trace") {
+        trace(`HOST     ${(msg as unknown as { line: string }).line}`);
+      }
       return;
     }
+    trace(`REPLY    id=${msg.id} ok=${msg.ok}${msg.ok ? "" : " " + String(msg.error).slice(0, 200)}`);
     const p = this.pending.get(msg.id);
     if (!p) return;
     this.pending.delete(msg.id);
@@ -139,6 +148,7 @@ export class HostedReader {
 
   /** Used by the proxy for every member not declared on this class. */
   call(method: string, args: unknown[]): Promise<unknown> {
+    trace(`CALL     ${method}`, args.length ? args.map((a) => (typeof a === "object" ? "obj" : String(a).slice(0, 40))) : undefined);
     return this.send({ kind: "call", method, args });
   }
 
@@ -153,11 +163,23 @@ export class HostedReader {
    * (1257 ms vs 1278 ms on a 14.1 MB EPUB). `container` is ignored: the host owns its own.
    */
   async open(source: string, container: HTMLElement, opts: unknown): Promise<void> {
-    // The container is USED, not ignored. Ignoring it is what produced a full-window overlay that
-    // hid the toolbar and showed a blank page on a real Linux machine.
+    const { snapshot, afterPaint, snapshotFonts } = await import("./snapshot");
+    trace("OPEN     called", { source: String(source).slice(0, 140), container: container?.className });
+    snapshot("before-open");
+    snapshotFonts("before-open");
     await this.ensureHost(container);
-    const bytes = await (await fetch(source)).arrayBuffer();
-    await this.send({ kind: "open", bytes, opts }, [bytes]);
+    snapshot("host-mounted");
+    const bytes = await traceStep("open.fetchBytes", 30000, async () => {
+      const r = await fetch(source);
+      const b = await r.arrayBuffer();
+      trace("OPEN     bytes", { status: r.status, ok: r.ok, bytes: b.byteLength, type: r.headers.get("content-type") });
+      return b;
+    });
+    await traceStep("open.hostOpen", 90000, () => this.send({ kind: "open", bytes, opts }, [bytes]));
+    trace("OPEN     resolved", { toc: this.mirror.toc.length, section: this.mirror.currentSectionIndex, dir: this.mirror.dir });
+    snapshot("after-open");
+    snapshotFonts("after-open");
+    afterPaint("after-open");
   }
 
   // ---- the three decisions that cannot wait ------------------------------------------------------

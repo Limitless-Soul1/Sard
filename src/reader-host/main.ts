@@ -30,6 +30,46 @@ import { EVENT_NAMES, type Mirror, type Reply, type Request } from "../reader-tr
 (globalThis as { __sardSectionSandbox?: string }).__sardSectionSandbox =
   "allow-same-origin allow-scripts";
 
+// DIAGNOSTIC: the host has no Tauri API, so its trace rides the port back to the application.
+function htrace(line: string, detail?: unknown): void {
+  const text = detail === undefined ? line : `${line} ${JSON.stringify(detail).slice(0, 700)}`;
+  try {
+    channel?.postMessage({ kind: "trace", line: text });
+  } catch {
+    /* before the port exists there is nothing to send to */
+  }
+}
+
+/** What the section actually is, inside the host, where the application cannot look. */
+function sectionReport(): unknown {
+  const view = document.querySelector("foliate-view") as unknown as {
+    renderer?: { getContents?: () => { doc?: Document; index?: number }[] };
+    book?: { sections?: unknown[] };
+  } | null;
+  const contents = (() => { try { return view?.renderer?.getContents?.() ?? []; } catch { return []; } })();
+  const doc = contents[0]?.doc;
+  const body = doc?.body;
+  const el = document.querySelector("foliate-view");
+  const rect = (n: Element | null) => { if (!n) return null; const r = n.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; };
+  const cs = (n: Element | null) => { if (!n) return null; const c = getComputedStyle(n); return { display: c.display, visibility: c.visibility, opacity: c.opacity, background: c.backgroundColor, color: c.color, overflow: c.overflow, position: c.position, zIndex: c.zIndex }; };
+  const frameEl = (() => { try { return doc?.defaultView?.frameElement ?? null; } catch { return null; } })();
+  return {
+    sections: view?.book?.sections?.length ?? -1,
+    contents: contents.length,
+    sectionIndex: contents[0]?.index ?? -1,
+    hasBody: !!body,
+    textLen: (body?.textContent ?? "").trim().length,
+    bodyRect: rect(body ?? null),
+    bodyStyle: cs(body ?? null),
+    htmlStyle: cs(doc?.documentElement ?? null),
+    sectionIframe: { rect: rect(frameEl), style: cs(frameEl), sandbox: frameEl?.getAttribute("sandbox") ?? null },
+    foliateView: { rect: rect(el), style: cs(el) },
+    hostBody: { rect: rect(document.body), style: cs(document.body) },
+    hostDoc: { w: document.documentElement.clientWidth, h: document.documentElement.clientHeight },
+    stylesheetsInSection: doc ? doc.styleSheets.length : -1,
+  };
+}
+
 const controller = new FoliateController();
 
 let stage: HTMLElement | null = null;
@@ -198,7 +238,17 @@ async function run(msg: Request): Promise<unknown> {
     // so format detection does not depend on a filename and the engine needs no change to accept it.
     if (bookUrl) URL.revokeObjectURL(bookUrl);
     bookUrl = URL.createObjectURL(new Blob([msg.bytes]));
-    await controller.open(bookUrl, ensureStage(), msg.opts as never);
+    const stage = ensureStage();
+    htrace("host.T1 open start", { bytes: msg.bytes.byteLength, stage: { w: stage.clientWidth, h: stage.clientHeight }, opts: msg.opts });
+    try {
+      await controller.open(bookUrl, stage, msg.opts as never);
+    } catch (e) {
+      htrace("host.open THREW", String(e).slice(0, 400));
+      throw e;
+    }
+    htrace("host.T2 engine open returned", { toc: safe(() => controller.getToc().length, -1), ...(sectionReport() as object) });
+    // And again after a paint, because layout right after open is not what the reader sees.
+    requestAnimationFrame(() => requestAnimationFrame(() => htrace("host.T3 first paint after open", sectionReport())));
     return { opened: true };
   }
 
@@ -250,6 +300,10 @@ function attach(port: MessagePort): void {
     })();
   };
   port.start();
+  htrace("host.attach", { origin: location.origin, doc: { w: document.documentElement.clientWidth, h: document.documentElement.clientHeight }, ua: navigator.userAgent.slice(0, 120) });
+  addEventListener("error", (e) => htrace("host.jserror", `${e.message} @${e.filename}:${e.lineno}`));
+  addEventListener("unhandledrejection", (e) => htrace("host.unhandled", String((e as PromiseRejectionEvent).reason).slice(0, 300)));
+  addEventListener("securitypolicyviolation", (e) => htrace("host.csp", `${e.violatedDirective} blocked ${String(e.blockedURI).slice(0, 120)}`));
   registerEvents();
   pushState();
   port.postMessage({ id: 0, ok: true, value: { ready: true, origin: location.origin } } satisfies Reply);

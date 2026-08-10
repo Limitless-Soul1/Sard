@@ -1,0 +1,176 @@
+# Linux validation build — a runnable artifact for real-device testing. NOT a release.
+#
+# The hosted reader transport has been measured on WebKitGTK in CI and passes 29 runtime criteria,
+# but every one of those measurements used generated books inside Xvfb. What has never happened is a
+# person opening their own library on their own machine, and that is the only thing this build is
+# for.
+#
+# WHY IT IS NOT `release.yml`. That workflow is Windows-only, signs updater artifacts with a key this
+# job does not have, and publishes a GitHub Release. None of that is wanted here: nothing is signed,
+# nothing is published, and the output is a workflow artifact that expires.
+#
+# WHY ubuntu-22.04. It links against an older glibc than 24.04, so the AppImage runs on more
+# distributions than one built on the newest runner would. A validation build that will not start on
+# the tester's machine measures nothing.
+name: Linux diagnostic build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["feature/linux-diagnostic-build", "feature/linux-diag-stacked"]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        # Full history: the verification below diffs against a specific commit, and the default
+        # shallow clone does not contain it — `fatal: bad revision`.
+        with: { fetch-depth: 0 }
+
+      # WHAT THIS BUILD IS: 1edfca3 plus instrumentation and nothing else. The instrumented files
+      # are named here so the diff is a decision rather than an accident — anything else differing
+      # from the verified commit fails the build.
+      # THE BASE MOVED, AND THAT IS THE POINT. It used to be `df0f34c` — the CSP fix alone — so the
+      # two fixes completed after it could not be in the build, and this very guard would have
+      # REJECTED them: their files are not instrumentation and are not on the list below. A tester
+      # spent a session re-reporting two already-fixed defects against an artifact that could not
+      # contain the fixes.
+      #
+      # The base is now the audited tree itself (`e7eab87`, head of fix/linux-loading-ux), which holds
+      # all three approved fixes. So they arrive as the BASE rather than as exceptions, the allow-list
+      # needs no widening at all, and it still means what it always meant: nothing but instrumentation
+      # differs from a tree that was reviewed.
+      - name: Only instrumentation differs from the verified commit
+        run: |
+          VERIFIED=e7eab87
+          echo "building from $(git rev-parse --short HEAD)"
+          echo "verified base: $VERIFIED  $(git log -1 --format=%s "$VERIFIED")"
+          # The three approved fixes must be ANCESTORS of this build, not merely expected to be. This
+          # is the check whose absence produced an artifact missing two of them.
+          for C in df0f34c:CSP 8c10824:callback-lifecycle 49f3b10:loading-ux 3653d9f:tts-matrix; do
+            SHA=${C%%:*}; NAME=${C##*:}
+            git merge-base --is-ancestor "$SHA" HEAD \
+              && echo "  ancestor OK  $NAME ($SHA)" \
+              || { echo "::error::$NAME ($SHA) is NOT an ancestor of this build"; exit 1; }
+          done
+          ALLOWED='^(\.github/workflows/|src/reader-transport/trace\.ts|src/reader-transport/snapshot\.ts|src/reader-transport/hosted\.ts|src/reader-transport/index\.ts|src/reader-host/main\.ts|src/features/reader/Reader\.tsx|src/lib/tts\.ts|src-tauri/src/lib\.rs)'
+          UNEXPECTED=$(git diff --name-only "$VERIFIED" HEAD | grep -vE "$ALLOWED" || true)
+          if [ -n "$UNEXPECTED" ]; then
+            echo "::error::files changed that are not instrumentation:"; echo "$UNEXPECTED"; exit 1
+          fi
+          echo "changed (instrumentation only):"; git diff --name-only "$VERIFIED" HEAD | sed 's/^/  /'
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with: { workspaces: ./src-tauri -> target }
+
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf libssl-dev \
+            libayatana-appindicator3-dev build-essential file desktop-file-utils
+
+      - run: npm ci
+
+      # `createUpdaterArtifacts` is on in the committed config, and producing them needs the minisign
+      # key. It is overridden on the COMMAND LINE rather than in the file, so the repository still
+      # says what a real release does and this build changes nothing about it.
+      # The build id is stamped into the binary and printed as the FIRST line of the diagnostic log,
+      # so a returned log names the build that produced it instead of being unattributable.
+      - name: Build identity
+        run: echo "SARD_BUILD_ID=STACKED-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: npx tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      # THE POINT OF THIS BUILD, asserted rather than assumed. Four earlier diagnostic builds produced
+      # a file with the identical inner name and no decode matrix, which is indistinguishable from a
+      # matrix that never ran. If the three labels are not in the JavaScript that actually ships, this
+      # artifact is worthless and the build fails here instead of on the tester's machine.
+      # ALL FOUR THREADS, ASSERTED IN THE JAVASCRIPT THAT ACTUALLY SHIPS.
+      #
+      # Ancestry proves the commits are in the history; this proves the code survived into the bundle,
+      # which is a different claim and the one that matters to a tester. Every marker below was
+      # confirmed to survive minification before being relied on here — a marker that vanishes in a
+      # production build would fail this step forever and teach everyone to ignore it.
+      #
+      # The frontend strings CANNOT be checked from the finished binary: Tauri compresses the embedded
+      # assets, so even a string known to ship is unfindable in the executable. dist/ is the last point
+      # at which this is measurable, so it is measured here.
+      - name: All four threads are in the shipped bundle
+        run: |
+          FAIL=0
+          check() { if grep -rqF "$2" dist/assets/; then echo "  present  [$1] $2"; else echo "::error::[$1] MISSING: $2"; FAIL=1; fi; }
+          check callback-lifecycle readerReady
+          check loading-ux page-loading
+          check loading-ux rp-loading
+          check loading-ux panel.chaptersLoading
+          check loading-ux "فتح الكتاب"
+          check loading-ux "قراءة المحتويات"
+          for L in suspended-decode resumed-decode offline-decode "decode START" "resume START" canPlayType loadedmetadata; do
+            check tts-matrix "$L"
+          done
+          # The CSP travels in the Rust binary, not the bundle, so it is checked where it lives.
+          if strings src-tauri/target/release/sard | grep -qF "frame-src 'self' blob: sardhost://localhost"
+            then echo "  present  [csp] frame-src admits the host origin"
+            else echo "::error::[csp] the shipped binary does not admit sardhost://localhost"; FAIL=1; fi
+          strings src-tauri/target/release/sard | grep -qF diag_log || { echo "::error::the binary has no diag_log sink"; FAIL=1; }
+          exit $FAIL
+
+      # What makes this artifact worth testing: the reader host has to be inside it. Its absence
+      # would produce an app that looks fine and reads nothing on WebKit.
+      - name: The hosted transport is present
+        run: |
+          test -f dist/reader-host/bundle.js || { echo "::error::no reader-host bundle"; exit 1; }
+          echo "reader-host bundle: $(stat -c%s dist/reader-host/bundle.js) bytes"
+          test -f dist/reader-host/index.html || { echo "::error::no reader-host document"; exit 1; }
+          BIN=src-tauri/target/release/sard
+          strings "$BIN" | grep -q sardhost || { echo "::error::the binary has no sardhost origin"; exit 1; }
+          echo "the binary registers the sardhost origin"
+
+      # A validation build is still handed to a person, so it gets the same content discipline as a
+      # release: nothing internal rides along.
+      - name: No private or development material
+        run: |
+          test "$(git ls-files tests/harness | wc -l)" = "0" || { echo "::error::harness files tracked"; exit 1; }
+          test "$(git ls-files tests/corpus | wc -l)" = "0" || { echo "::error::corpus files tracked"; exit 1; }
+          # The probe page belongs to the throwaway branch and must never reach a build handed to
+          # anyone. The boundary self-check (reader-host/host.js) is a different thing: it is product
+          # code, it ships, and it does nothing without `?selfcheck=1`.
+          [ -e dist/__probe ] && { echo "::error::the probe page is in the bundle"; exit 1; }
+          echo "no probe page in the bundle"
+          test -f dist/reader-host/host.js && echo "boundary self-check present (inert without ?selfcheck=1)"
+          # The gate defaults to generating its snapshot from `develop`, which a CI checkout of a
+          # single branch does not have. `pr-checks.yml` makes the snapshot explicitly and passes it;
+          # the same is done here so the gate examines this tree rather than failing to find one.
+          TREE=$(node -e "import('./scripts/production-tree.mjs').then(m => console.log(m.writeProductionTree('HEAD').tree))")
+          node scripts/check-production-content.mjs --ref="$TREE" || { echo "::error::content gate refused the tree"; exit 1; }
+          node scripts/check-production-tree.mjs --ref="$TREE" || { echo "::error::tree gate refused the tree"; exit 1; }
+
+      # RENAME THE FILE ITSELF, not just the artifact around it. Tauri names every build of this
+      # branch `Sard_1.2.2_amd64.AppImage`, so five different diagnostic builds arrive on the tester's
+      # disk under one name and the wrong one gets run. The build id goes in the filename, so what is
+      # on disk says what it is without opening anything.
+      - name: Name the file after the build
+        run: |
+          cd src-tauri/target/release/bundle
+          for f in appimage/*.AppImage; do mv "$f" "appimage/Sard-${SARD_BUILD_ID}.AppImage"; done
+          for f in deb/*.deb; do mv "$f" "deb/Sard-${SARD_BUILD_ID}.deb"; done
+          find . -maxdepth 2 -type f \( -name '*.AppImage' -o -name '*.deb' \) -printf '%p  %s bytes\n'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sard-linux-STACKED-ALL-FIXES
+          path: |
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+          retention-days: 14

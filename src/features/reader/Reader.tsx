@@ -8,6 +8,20 @@ import { FoliateController, type SearchHit, type SelectionInfo, type TocEntry } 
 // The reader for THIS platform: the same object as always on Windows, the hosted transport on
 // WebKit. This import is the only place the reader's construction differs.
 import { createReader, needsReaderHost } from "../../reader-transport";
+// DIAGNOSTIC BUILD ONLY — instrumentation, no behaviour change. The trace goes to a file through the
+// core, because a WebKitGTK console does not reach the terminal the tester is watching.
+import { setTraceSink, trace as diagTrace } from "../../reader-transport/trace";
+import { snapshot as diagSnapshot, afterPaint as diagAfterPaint, snapshotFonts as diagFonts } from "../../reader-transport/snapshot";
+setTraceSink((line) => {
+  const inv = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: (c: string, a?: unknown) => Promise<unknown> } })
+    .__TAURI_INTERNALS__?.invoke;
+  try { void inv?.("diag_log", { line }); } catch { /* a failing logger must not break the app */ }
+});
+if (typeof window !== "undefined") {
+  addEventListener("error", (e) => diagTrace("APP      jserror", `${e.message} @${e.filename}:${e.lineno}`));
+  addEventListener("unhandledrejection", (e) => diagTrace("APP      unhandled", String((e as PromiseRejectionEvent).reason).slice(0, 300)));
+  addEventListener("securitypolicyviolation", (e) => diagTrace("APP      csp", `${e.violatedDirective} blocked ${String(e.blockedURI).slice(0, 140)}`));
+}
 import { PhotoComposer } from "../photo/PhotoComposer";
 import type { CardData } from "../photo/photo";
 import { useReader } from "../../reader-engine/store";
@@ -535,12 +549,15 @@ export function Reader({
       // On the hosted path this is the first moment the reader is actually needed, and the awaits
       // above have already given the host time to load. On Windows `ctrlRef.current` was assigned
       // during the first render and this resolves to it without awaiting anything.
+      diagTrace("APP      openBook: binding reader");
+      diagSnapshot("reader-shell-visible");
       if (!ctrlRef.current && hostedRef.current) {
         ctrlRef.current = await hostedRef.current;
         setReaderReady(true); // the effects below depend on this and register on the next render
       }
       if (stale()) return;
       const ctrl = ctrlRef.current!;
+      diagTrace("APP      reader bound", { hosted: !!hostedRef.current });
       ctrl.onRelocate(({ cfi, fraction, chapterLabel, chapterHref, location, pageLabel }) => {
         // WP-4F: `location`/`pageLabel` are foliate's own position data, which used to be dropped here.
         set({ cfi, fraction, chapterLabel, chapterHref, location, pageLabel });
@@ -646,6 +663,7 @@ export function Reader({
       // "Lord Of The mysteries" on the shelf and showed the embedded "لورد الغوامض" in the reader.
       // `meta` is the row this reader fetched by id (see the open above), so all five surfaces now
       // resolve from the same COALESCE'd value.
+      diagTrace("APP      T-ready status=ready");
       set({
         status: "ready",
         dir: ctrl.dir ?? "?",
@@ -655,6 +673,17 @@ export function Reader({
         bookScript: meta?.script ?? null, // WP-5A: what the read-aloud pre-flight gates on
       });
       if (targetIsPdf) setPdfPageCount(ctrl.pdfPageCount); // RAWY-87: total pages for the position readout
+      diagTrace("APP      state after open", {
+        dir: (ctrl as unknown as { dir?: string }).dir ?? null,
+        toc: ctrl.getToc().length,
+        section: ctrl.currentSectionIndex(),
+        fixed: (ctrl as unknown as { isFixedLayout?: boolean }).isFixedLayout ?? null,
+        tocMap: ctrl.tocHrefSectionMap().size,
+      });
+      diagSnapshot("after-open-app-side");
+      diagFonts("after-open");
+      diagAfterPaint("first-render");
+      diagTrace("APP      T-toc setToc", { entries: ctrl.getToc().length });
       setToc(ctrl.getToc()); // chapters panel (RAWY-21)
       setTocSecMap(ctrl.tocHrefSectionMap()); // RAWY-256: one pass, reused by every marker render
       // RESILIENCE-1 / WP-6A: this book's own contents are useless (WP-2 measured it). Build a usable

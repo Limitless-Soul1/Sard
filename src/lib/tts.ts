@@ -689,13 +689,24 @@ async function attemptSynth(i: number): Promise<Synthesized> {
   // RAWY-264: playback needs the ENCODED bytes, and the decode below DETACHES them (the Phase 1 defect
   // above), so the copy must be taken first. This copy is what is cached and played; the AudioBuffer that
   // decoding produces is used only to validate the payload and read its duration, then released.
+  ttrace("decode START", { bytes: audio.byteLength, ctxState: (ctx && ctx.state) || "no-ctx" });
+  // ONE-SHOT SELF-TEST, on the first decode only. The affected machine stops at exactly this line
+  // with no settle either way, and CI cannot reproduce it — CI has no audio device, so its context
+  // auto-runs and all three decode paths resolve in under 30 ms. This runs the same three variants
+  // HERE, on the machine that fails, so the difference is measured where it happens.
+  //
+  // It is diagnosis, not a workaround: it decodes its own copies, changes no state the player uses,
+  // and the real decode below is untouched and still un-timed.
+  void runDecodeSelfTest(audio.slice(0));
   const bytes = audio.slice(0);
   let buffer: AudioBuffer;
   try {
     buffer = await audioCtx().decodeAudioData(audio);
+    ttrace("decode OK", { seconds: +buffer.duration.toFixed(2), rate: buffer.sampleRate, channels: buffer.numberOfChannels });
   } catch (e) {
     // RAWY-247 (Part 3): the byte length + first 16 bytes (hex + ASCII sniff) of the non-audio payload, so
     // the owner can read WHY a decode failed without devtools (Defect C / §1.5 / feeds RAWY-248).
+    ttrace("decode FAILED", { err: String(e).slice(0, 200), sniff });
     pendingDecodeInfo = sniff;
     throw e; // the ORIGINAL decode error now propagates, so `classifyFailure` sees the real thing
   }
@@ -707,6 +718,7 @@ async function attemptSynth(i: number): Promise<Synthesized> {
   // A punctuation-only unit legitimately decodes to an empty buffer, so it is returned as-is and
   // `playFrom` keeps its RAWY-159 skip for it.
   if (curEngine === "edge" && (!buffer || buffer.length === 0 || buffer.duration === 0)) {
+    ttrace("decode EMPTY (decoded, but zero-length audio)", { sniff });
     pendingDecodeInfo = sniff;
     throw new Error("empty-audio (0-length buffer)");
   }
@@ -964,7 +976,10 @@ if (typeof window !== "undefined") {
 }
 
 const audioCtx = (): AudioContext => {
-  if (!ctx || ctx.state === "closed") ctx = new AudioContext();
+  if (!ctx || ctx.state === "closed") {
+    ctx = new AudioContext();
+    ttrace("AudioContext created", { state: ctx.state, rate: ctx.sampleRate });
+  }
   // DIAGNOSTIC BUILD: publish the context so the collector can watch `state` and `currentTime`. The
   // karaoke clock is derived from currentTime, which does NOT advance while a context is suspended.
   try {
@@ -1369,7 +1384,11 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
     // after the pause is granted. Awaiting it here guarantees the source armed below cannot be audible.
     if (c.state !== "suspended") await c.suspend();
   } else if (c.state === "suspended") {
-    await c.resume();
+    ttrace("playFrom resume START", { state: c.state });
+    await c.resume().then(
+      () => ttrace("playFrom resume RESOLVED", { state: c.state }),
+      (e) => { ttrace("playFrom resume REJECTED", String(e).slice(0, 150)); throw e; },
+    );
   }
   if (myGen !== gen) return;
   stopSource();
@@ -1389,6 +1408,10 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
   mediaSlot = (mediaSlot + 1) % pool.length;
   const el = pool[mediaSlot];
   revokeSlot(mediaSlot); // whatever this slot played last is now unreachable
+  // MP3 through an <audio> element. On WebKitGTK this depends on the system's GStreamer plugins,
+  // which is exactly the kind of thing that differs from WebView2 and would not show up as a
+  // synthesis failure.
+  ttrace("media START", { bytes: synthd.bytes.byteLength, type: "audio/mpeg" });
   const url = URL.createObjectURL(new Blob([synthd.bytes], { type: "audio/mpeg" }));
   blobsCreated++;
   mediaUrls[mediaSlot] = url;
@@ -1398,7 +1421,11 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
   mediaEl = el;
   const startedAt = c.currentTime;
   try {
-    await el.play();
+    ttrace("media canPlayType", { mpeg: el.canPlayType("audio/mpeg"), mp4: el.canPlayType("audio/mp4") });
+    await el.play().then(
+      () => ttrace("media play OK", { paused: el.paused, dur: el.duration, ctx: (mediaCtx && mediaCtx.state) || "no-ctx" }),
+      (e) => { ttrace("media play FAILED", String(e).slice(0, 200)); throw e; },
+    );
   } catch {
     // A rejected play() would strand playback in silence with no visible cause, so it is treated as a failed
     // sentence and takes the SAME route a synth failure takes (RAWY-159 skip, dead-end counting).
@@ -1435,7 +1462,82 @@ async function ensureAndPlay(voice: string, fromIndex: number, myGen: number) {
   void playFrom(fromIndex, myGen, true);
 }
 
-export const useTts = create<TtsState>((set, get) => ({
+// DIAGNOSTIC BUILD ONLY — instrumentation, no behaviour change.
+let decodeSelfTestDone = false;
+async function runDecodeSelfTest(sample: ArrayBuffer): Promise<void> {
+  if (decodeSelfTestDone) return;
+  decodeSelfTestDone = true;
+  const settle = async (label: string, run: () => Promise<AudioBuffer>) => {
+    const t = performance.now();
+    try {
+      const r = await Promise.race([
+        run().then((b) => `RESOLVED ${b.duration.toFixed(2)}s`),
+        new Promise<string>((res) => setTimeout(() => res("NEVER SETTLED (8s)"), 8000)),
+      ]);
+      ttrace(`selftest ${label}`, `${r} after ${Math.round(performance.now() - t)}ms`);
+    } catch (e) {
+      ttrace(`selftest ${label}`, `REJECTED ${String(e).slice(0, 120)} after ${Math.round(performance.now() - t)}ms`);
+    }
+  };
+  try {
+    const c1 = new AudioContext();
+    ttrace("selftest ctx1 created", { state: c1.state });
+    await settle("suspended-decode", () => c1.decodeAudioData(sample.slice(0)));
+    ttrace("selftest ctx1 after decode", { state: c1.state });
+
+    const c2 = new AudioContext();
+    const before = c2.state;
+    ttrace("selftest ctx2 resume START", { before });
+    try {
+      await Promise.race([
+        c2.resume().then(() => ttrace("selftest ctx2 resume RESOLVED", { state: c2.state })),
+        new Promise<void>((r) => setTimeout(() => { ttrace("selftest ctx2 resume NEVER SETTLED (5s)", { state: c2.state }); r(); }, 5000)),
+      ]);
+    } catch (e) {
+      ttrace("selftest ctx2 resume REJECTED", String(e).slice(0, 120));
+    }
+    await settle("resumed-decode", () => c2.decodeAudioData(sample.slice(0)));
+
+    const off = new OfflineAudioContext(1, 1, 44100);
+    await settle("offline-decode", () => off.decodeAudioData(sample.slice(0)));
+
+    // And the element path, which does not use Web Audio decoding at all.
+    const el = document.createElement("audio");
+    const url = URL.createObjectURL(new Blob([sample.slice(0)], { type: "audio/mpeg" }));
+    ttrace("selftest element canPlayType", { mpeg: el.canPlayType("audio/mpeg") });
+    for (const ev of ["loadedmetadata", "canplay", "error", "stalled", "suspend"]) {
+      el.addEventListener(ev, () => ttrace(`selftest element ${ev}`, { readyState: el.readyState, err: el.error?.code ?? null }), { once: true });
+    }
+    el.src = url;
+    el.load();
+    await new Promise((r) => setTimeout(r, 4000));
+    ttrace("selftest element final", { readyState: el.readyState, dur: el.duration, err: el.error?.code ?? null });
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    ttrace("selftest THREW", String(e).slice(0, 200));
+  }
+}
+
+function ttrace(event: string, detail?: unknown): void {
+  const line = detail === undefined ? `TTS      ${event}` : `TTS      ${event} ${JSON.stringify(detail).slice(0, 400)}`;
+  const inv = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: (c: string, a?: unknown) => Promise<unknown> } })
+    .__TAURI_INTERNALS__?.invoke;
+  try { void inv?.("diag_log", { line: `[tts] ${line}` }); } catch { /* ignore */ }
+  // eslint-disable-next-line no-console
+  console.log(line);
+}
+
+export const useTts = create<TtsState>((rawSet, get) => {
+  // Every transition, with the state it came from: the spinner is a status that never advances, and
+  // only the sequence shows which one it stopped at.
+  const set: typeof rawSet = ((patch: unknown, ...rest: unknown[]) => {
+    const p = typeof patch === "function" ? "(fn)" : patch;
+    if (p && typeof p === "object" && "status" in (p as Record<string, unknown>)) {
+      ttrace("status", { from: (get() as { status?: string }).status, to: (p as { status?: unknown }).status, error: (p as { error?: unknown }).error ?? null });
+    }
+    return (rawSet as (...a: unknown[]) => unknown)(patch, ...rest);
+  }) as typeof rawSet;
+  return {
   active: false,
   status: "idle",
   mismatch: null,
@@ -1516,7 +1618,11 @@ export const useTts = create<TtsState>((set, get) => ({
       return;
     }
     // Resolve the saved voice for this language inside the gesture chain.
-    const { engine, id } = await resolveVoicePref(lang);
+    ttrace("resolveVoicePref START", { lang });
+    const { engine, id } = await resolveVoicePref(lang).then(
+      (v) => { ttrace("resolveVoicePref OK", v); return v; },
+      (e) => { ttrace("resolveVoicePref FAILED", String(e).slice(0, 200)); throw e; },
+    );
     if (myGen !== gen) return;
     curEngine = engine;
     curVoice = id;
@@ -1711,7 +1817,8 @@ export const useTts = create<TtsState>((set, get) => ({
     void ttsStop().catch(() => {});
     set({ active: false, status: "idle", index: 0, total: 0, error: null, words: [], wordIndex: -1, underruns: 0, abandoned: 0, lastFailure: null, retryAttempt: 0 });
   },
-}));
+  };
+});
 
 // WP-5C: a dev/debug surface for the STORE itself, same convention as `window.__sardTtsStats` —
 // it lets a harness drive a state (e.g. the voice-mismatch card) and measure how it RENDERS, without

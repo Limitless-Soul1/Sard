@@ -257,7 +257,7 @@ async function main(): Promise<void> {
     try {
       const res = (await inv3("tts_synthesize", {
         engine: "edge",
-        id: "probe-1",
+        id: "ar-SA-HamedNeural", // a real Edge voice: `id` IS the voice, not a request id
         text: "السلام عليكم ورحمة الله وبركاته",
       })) as ArrayBuffer | { byteLength?: number };
       const len = res instanceof ArrayBuffer ? res.byteLength : (res?.byteLength ?? -1);
@@ -270,6 +270,13 @@ async function main(): Promise<void> {
   // THE SPOTLIGHT, ADVANCED AS PLAYBACK WOULD. What crosses the host during read-aloud is the
   // tracking, not the audio, so this is the transport-relevant half measured for real: each sentence
   // must produce painted geometry in the overlayer, and the paint must move between sentences.
+  // A SESSION FIRST. `showReadingHighlight` refuses when `content.index !== ttsUnitsIndex`, and only
+  // `getChapterUnits` retains units and sets that index — `trackStats` computes them transiently on
+  // its non-live branch. Without a session the spotlight correctly paints nothing, which is what an
+  // earlier pass measured and briefly mistook for a transport failure. The call travels the
+  // transport; the side effect it needs happens in the host, which is where the engine lives.
+  await step("tts.buildUnits", async () => (await ctrl.getChapterUnits("ar")).length);
+
   const spotlight: { i: number; painted: number | null; areaPx: number | null }[] = [];
   for (const i of [0, 1, 2]) {
     ctrl.showReadingHighlight(i);

@@ -281,7 +281,17 @@ pub fn run() {
                 use std::io::Write;
                 let _ = std::io::stdout().flush();
                 // Start each run from empty, so a report is one session rather than a pile of them.
-                let _ = std::fs::remove_file(app_data_dir.join("sard-diagnostic.log"));
+                let log = app_data_dir.join("sard-diagnostic.log");
+                let _ = std::fs::remove_file(&log);
+                // THE FIRST LINE NAMES THE BUILD. Every diagnostic AppImage carries the same inner
+                // filename, so a returned log used to be unattributable — a build without the decode
+                // matrix is indistinguishable from one where the matrix never ran. `SARD_BUILD_ID` is
+                // the identity the packaging scripts already stamp into the binary; writing it here
+                // makes the log answer "which build produced this?" on its own.
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log) {
+                    let _ = writeln!(f, "BUILD {}", env!("SARD_BUILD_ID"));
+                }
+                println!("[Sard] BUILD {}", env!("SARD_BUILD_ID"));
             }
 
             // RAWY-196: Sard owns its keyboard + pointer surface. Strip WebView2's browser chrome

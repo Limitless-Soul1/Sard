@@ -64,8 +64,29 @@ jobs:
       # `createUpdaterArtifacts` is on in the committed config, and producing them needs the minisign
       # key. It is overridden on the COMMAND LINE rather than in the file, so the repository still
       # says what a real release does and this build changes nothing about it.
+      # The build id is stamped into the binary and printed as the FIRST line of the diagnostic log,
+      # so a returned log names the build that produced it instead of being unattributable.
+      - name: Build identity
+        run: echo "SARD_BUILD_ID=TTS-MATRIX-$(git rev-parse --short HEAD)" >> "$GITHUB_ENV"
+
       - name: Build
         run: npx tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      # THE POINT OF THIS BUILD, asserted rather than assumed. Four earlier diagnostic builds produced
+      # a file with the identical inner name and no decode matrix, which is indistinguishable from a
+      # matrix that never ran. If the three labels are not in the JavaScript that actually ships, this
+      # artifact is worthless and the build fails here instead of on the tester's machine.
+      - name: The decode self-test matrix is in the shipped bundle
+        run: |
+          FAIL=0
+          for L in suspended-decode resumed-decode offline-decode; do
+            if grep -rqF "$L" dist/assets/; then echo "  present: $L"; else echo "::error::$L is NOT in the bundle"; FAIL=1; fi
+          done
+          for L in "decode START" "resume START" "canPlayType" "loadedmetadata"; do
+            if grep -rqF "$L" dist/assets/; then echo "  present: $L"; else echo "::error::$L is NOT in the bundle"; FAIL=1; fi
+          done
+          strings src-tauri/target/release/sard | grep -qF diag_log || { echo "::error::the binary has no diag_log sink"; FAIL=1; }
+          exit $FAIL
 
       # What makes this artifact worth testing: the reader host has to be inside it. Its absence
       # would produce an app that looks fine and reads nothing on WebKit.
@@ -97,14 +118,20 @@ jobs:
           node scripts/check-production-content.mjs --ref="$TREE" || { echo "::error::content gate refused the tree"; exit 1; }
           node scripts/check-production-tree.mjs --ref="$TREE" || { echo "::error::tree gate refused the tree"; exit 1; }
 
-      - name: What was produced
+      # RENAME THE FILE ITSELF, not just the artifact around it. Tauri names every build of this
+      # branch `Sard_1.2.2_amd64.AppImage`, so five different diagnostic builds arrive on the tester's
+      # disk under one name and the wrong one gets run. The build id goes in the filename, so what is
+      # on disk says what it is without opening anything.
+      - name: Name the file after the build
         run: |
-          find src-tauri/target/release/bundle -maxdepth 2 -type f \
-            \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) -printf '%p  %s bytes\n'
+          cd src-tauri/target/release/bundle
+          for f in appimage/*.AppImage; do mv "$f" "appimage/Sard-${SARD_BUILD_ID}.AppImage"; done
+          for f in deb/*.deb; do mv "$f" "deb/Sard-${SARD_BUILD_ID}.deb"; done
+          find . -maxdepth 2 -type f \( -name '*.AppImage' -o -name '*.deb' \) -printf '%p  %s bytes\n'
 
       - uses: actions/upload-artifact@v4
         with:
-          name: sard-linux-DIAGNOSTIC-cspfix-df0f34c
+          name: sard-linux-TTS-DECODE-MATRIX
           path: |
             src-tauri/target/release/bundle/appimage/*.AppImage
             src-tauri/target/release/bundle/deb/*.deb

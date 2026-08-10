@@ -151,7 +151,19 @@ crit.append(("6 the section iframe carries allow-scripts (patch 1b took effect)"
 instrumented = inp.get("docsInstrumented") or 0
 delivered = sum(int(inp.get(k) or 0) for k in ("pointerdown", "mousedown", "click"))
 control = sum(int(hostinp.get(k) or 0) for k in ("pointerdown", "mousedown", "click"))
-if not clicked:
+# ORDER MATTERS, and getting it wrong once already produced a wrong verdict.
+#
+# The control is consulted ONLY when the section saw nothing. Events dispatched inside an iframe do
+# not bubble out to the parent document, so a host-document count of zero is the NORMAL result of a
+# click that landed correctly on the book — reading it as "the click missed" turned a passing
+# measurement into UNKNOWN. Arrival in the section is self-proving: those events cannot exist unless
+# a real click both landed and was delivered.
+if delivered > 0:
+    v = "PASS"
+    why = (f"{delivered} genuine pointer event(s) reached the section document "
+           f"({instrumented} instrumented, host-document control {control} — expected 0, since "
+           f"in-frame events do not bubble out)")
+elif not clicked:
     v = UNKNOWN
     why = "the harness never delivered a click, so a count of zero measures nothing"
 elif not instrumented:
@@ -159,12 +171,12 @@ elif not instrumented:
     why = "no section document was readable, so nothing could be listening"
 elif control == 0:
     v = UNKNOWN
-    why = (f"CONTROL FAILED: the host's own document saw 0 events either, so the click missed the "
-           f"window — the section count of {delivered} says nothing about event delivery")
+    why = ("nothing arrived anywhere, host document included, so the click missed the window and "
+           "this measures the harness rather than the engine")
 else:
-    v = "PASS" if delivered > 0 else "FAIL"
-    why = (f"{delivered} event(s) in the section vs {control} on the host document "
-           f"({instrumented} instrumented)")
+    v = "FAIL"
+    why = (f"the host document saw {control} event(s) and the section saw none — a real delivery "
+           f"gap at the frame boundary")
 crit.append(("7 REAL X11 input reaches the section document", v, why))
 
 crit.append(("8 book/app boundary: no Tauri internals from the host",

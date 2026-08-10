@@ -26,6 +26,9 @@ import {
   type RevealLabels,
 } from "./injectedCss";
 import { navIntent } from "./navIntent";
+// RAWY-229: pure, and therefore shared. The hosted transport applies the same rule in the
+// application, because `bookmarkVisible` is read from a React render body that cannot await.
+import { sameSection } from "./cfiSection";
 import { normalizePdfText, stripPdfArtifacts, hasSpeakableText, scorePdfDocument, PDF_TTS_ENABLED, type PdfTextScore } from "../lib/pdfText"; // RAWY-292
 import { stageEnter as diagStageEnter, stageOk as diagStageOk, stageFail as diagStageFail, probePdfChain as diagProbeChain, watchFirstPage as diagWatchFirstPage } from "@pdfDiag"; // DIAGNOSTIC BUILD ONLY
 import { diagAttachDocument, diagNote, diagPublishUnits } from "@diag"; // DIAGNOSTIC BUILD ONLY
@@ -2754,20 +2757,10 @@ export class FoliateController {
    *  made the marker vanish mid-chapter and let the button add a 2nd bookmark) and NOT the whole-book
    *  fraction window (that lit the marker in every chapter of a long book — the original FEEDBACK 1.6 bug). */
   bookmarkVisible(bookmarkCfi: string | null | undefined, currentCfi: string | null | undefined): boolean {
-    const a = this.cfiSection(bookmarkCfi);
-    const b = this.cfiSection(currentCfi);
-    return a != null && a === b;
-  }
-
-  /** RAWY-229: the SPINE SECTION of a foliate CFI — the step before `!` (or the whole inner CFI at a
-   *  section boundary, which has no `!`), with any `[assertion]` stripped. Two CFIs in the same chapter
-   *  share it exactly, so string equality is "same chapter". Pure; no engine call. */
-  private cfiSection(cfi: string | null | undefined): string | null {
-    if (!cfi) return null;
-    const m = /^epubcfi\((.*)\)$/.exec(cfi.trim());
-    const inner = m ? m[1] : cfi.trim();
-    const spine = inner.split("!")[0].replace(/\[[^\]]*\]/g, "").trim();
-    return spine || null;
+    // Delegates to `cfiSection.ts`. The rule is pure and the hosted transport has to apply it in the
+    // application — `Reader.tsx:300` calls this inside a React render body, which cannot await a
+    // round trip to the reader host. One copy, so the two callers can never disagree.
+    return sameSection(bookmarkCfi, currentCfi);
   }
 
   /** RAWY-186: is the chapter the TTS SESSION is reading the one currently ON SCREEN? `ttsUnitsIndex`

@@ -158,9 +158,32 @@ macro_rules! sard_invoke_handler {
             tts::tts_edge_voices,
             tts::tts_stop,
             window_chrome::set_titlebar_theme,
+            diag_log, // DIAGNOSTIC BUILD ONLY
             $($diag_cmd),*
         ])
     };
+}
+
+// DIAGNOSTIC BUILD ONLY — the frontend's lifecycle trace, to stdout AND to a file.
+//
+// stdout so a tester running the AppImage from a terminal watches it live; a file because that is
+// what actually gets sent back, and asking someone to copy a terminal buffer loses the beginning of
+// it every time. The path is printed once at startup so nobody has to be told where to look.
+#[tauri::command]
+fn diag_log(app: tauri::AppHandle, line: String) {
+    use std::io::Write;
+    println!("[trace] {line}");
+    let _ = std::io::stdout().flush();
+    if let Ok(dir) = tauri::Manager::path(&app).app_data_dir() {
+        let _ = std::fs::create_dir_all(&dir);
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("sard-diagnostic.log"))
+        {
+            let _ = writeln!(f, "{line}");
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -249,6 +272,17 @@ pub fn run() {
             println!("[Sard] app_data_dir  = {}", app_data_dir.display());
             println!("[Sard] db_path       = {}", db_path.display());
             println!("[Sard] schema_version = {version}");
+            // DIAGNOSTIC BUILD: say where the trace lands, so nobody has to be told.
+            println!(
+                "[Sard] DIAGNOSTIC BUILD — trace file: {}",
+                app_data_dir.join("sard-diagnostic.log").display()
+            );
+            {
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
+                // Start each run from empty, so a report is one session rather than a pile of them.
+                let _ = std::fs::remove_file(app_data_dir.join("sard-diagnostic.log"));
+            }
 
             // RAWY-196: Sard owns its keyboard + pointer surface. Strip WebView2's browser chrome
             // (find bar, reload, print, the right-click Back/Refresh/Save/Print menu) before the user

@@ -13,6 +13,7 @@
 // call sites in `Reader.tsx` — sees the same surface either way.
 import { FoliateController } from "../reader-engine/FoliateController";
 import { hostedReader } from "./hosted";
+import { trace } from "./trace"; // DIAGNOSTIC
 
 /**
  * Is this a WebView that needs the reader host?
@@ -49,7 +50,10 @@ export function mountHostIn(container: HTMLElement): Promise<{ port: MessagePort
     // Fills the reading area it was given, and nothing beyond it.
     frame.style.cssText = "display:block;width:100%;height:100%;border:0;background:transparent";
 
+    frame.addEventListener("load", () => trace("HOSTFRAME load event"));
     const onMessage = (e: MessageEvent) => {
+      const d0 = e.data as { __sardHostReady?: boolean } | null;
+      if (d0?.__sardHostReady) trace("HOSTFRAME ready message", { fromExpectedSource: e.source === frame.contentWindow, origin: e.origin });
       if (e.source !== frame.contentWindow) return; // `e.origin` cannot authenticate; `e.source` can
       if (!(e.data as { __sardHostReady?: boolean })?.__sardHostReady) return;
       removeEventListener("message", onMessage);
@@ -64,6 +68,7 @@ export function mountHostIn(container: HTMLElement): Promise<{ port: MessagePort
     const probe = (globalThis as { __sardHostSelfcheck?: boolean }).__sardHostSelfcheck;
     frame.src = probe ? "sardhost://localhost/?selfcheck=1" : "sardhost://localhost/";
     // In the container BEFORE it loads. See above: it can never be moved afterwards.
+    trace("HOSTFRAME inserted", { container: container.className, w: container.clientWidth, h: container.clientHeight });
     container.replaceChildren(frame);
   });
 }
@@ -76,6 +81,7 @@ export function mountHostIn(container: HTMLElement): Promise<{ port: MessagePort
  * to put it.
  */
 export async function createReader(): Promise<FoliateController> {
+  trace("READER   createReader", { needsHost: needsReaderHost(), ua: navigator.userAgent.slice(0, 120) });
   if (!needsReaderHost()) return new FoliateController();
   return hostedReader();
 }

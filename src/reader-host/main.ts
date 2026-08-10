@@ -44,6 +44,9 @@ function ensureStage(): HTMLElement {
 
 let bookUrl: string | null = null;
 
+// The in-flight search, so an abort from the application can reach it.
+let searchAbort: AbortController | null = null;
+
 // ---------------------------------------------------------------------------------------------
 // The mirror.
 // ---------------------------------------------------------------------------------------------
@@ -190,6 +193,24 @@ async function run(msg: Request): Promise<unknown> {
     bookUrl = URL.createObjectURL(new Blob([msg.bytes]));
     await controller.open(bookUrl, ensureStage(), msg.opts as never);
     return { opened: true };
+  }
+
+  // Search reports progress WHILE it runs, and its callbacks cannot cross. The application keeps
+  // them; the host supplies its own and pushes each batch, so hits still arrive progressively.
+  if (msg.method === "searchBook") {
+    searchAbort?.abort();
+    searchAbort = new AbortController();
+    return cloneable(
+      await controller.searchBook(String(msg.args[0] ?? ""), {
+        signal: searchAbort.signal,
+        onProgress: (f) => push({ kind: "event", name: "search-progress", args: [f] }),
+        onBatch: (hits) => push({ kind: "event", name: "search-batch", args: [cloneable(hits)] }),
+      }),
+    );
+  }
+  if (msg.method === "__searchAbort") {
+    searchAbort?.abort();
+    return { aborted: true };
   }
 
   const fn = (controller as unknown as Record<string, unknown>)[msg.method];

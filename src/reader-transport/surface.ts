@@ -55,6 +55,20 @@ export const CROSSING: Readonly<Record<string, Crossing>> = Object.freeze({
   pdfRenderedScale: "mirrored",
   pdfHasSpeakableText: "mirrored",
 
+  // ---- getters: read as properties, so only the mirror can answer them ---------------------------
+  // A getter is never called, so a forwarding function is not a slow answer — it is the wrong VALUE.
+  // MEASURED on WebKitGTK before these were classified: `ctrl.isFixedLayout` came back as a function,
+  // every consumer saw something truthy, and the PDF path reported `undefined`. They were invisible
+  // to the guard as well, because `get name()` does not look like `name(`.
+  isFixedLayout: "mirrored",
+  isScrolled: "mirrored",
+  readingScrollTop: "mirrored",
+  pdfPageCount: "mirrored",
+  furthestPosition: "mirrored",
+  dir: "mirrored",
+  title: "mirrored",
+  author: "mirrored",
+
   // ---- decided in the application ---------------------------------------------------------------
   // `handleNavKey` is called from a keydown listener and its answer drives `preventDefault()`, so it
   // cannot wait for a round trip. It does not need to: its decision is `navIntent(key)` — a pure

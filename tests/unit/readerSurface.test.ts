@@ -48,6 +48,15 @@ function publicMethods(source: string): string[] {
     if (["if", "for", "while", "switch", "catch", "return", "constructor"].includes(name)) continue;
     names.add(name);
   }
+  // GETTERS TOO, and they were the third blind spot.
+  //
+  // `get isFixedLayout(): boolean {` never matched the pattern above, so eight public members were
+  // invisible — and the transport answered every one of them with a forwarding FUNCTION instead of a
+  // value. MEASURED on WebKitGTK: `ctrl.isFixedLayout` came back as a function, and the PDF path
+  // reported `undefined`. A getter is read, never called, so it can only ever be served from the
+  // mirror; it must be classified.
+  for (const m of source.matchAll(/^ {2}get\s+([a-zA-Z][A-Za-z0-9_]*)\s*\(/gm)) names.add(m[1]);
+
   return [...names].sort();
 }
 

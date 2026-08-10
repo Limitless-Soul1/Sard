@@ -34,8 +34,28 @@
     write();
   });
 
+  // The report element is created here and hung off documentElement, not body. The engine owns the
+  // body — `FoliateController.open` calls `container.replaceChildren` and the host hands it a
+  // container it just put there — so a node parked in the body would vanish the moment a book
+  // opened, taking the evidence with it. Kept 1px and pointer-events:none because an earlier probe
+  // used a large off-screen element and it silently swallowed the very clicks being measured.
+  function report() {
+    var el = document.getElementById("report");
+    if (!el || !el.isConnected) {
+      el = document.createElement("pre");
+      el.id = "report";
+      el.setAttribute(
+        "style",
+        "position:fixed;left:0;top:0;width:1px;height:1px;overflow:hidden;" +
+          "pointer-events:none;opacity:0;white-space:pre;margin:0;z-index:-1",
+      );
+      document.documentElement.appendChild(el);
+    }
+    return el;
+  }
+
   function write() {
-    document.getElementById("report").textContent = JSON.stringify(R, null, 1);
+    report().textContent = JSON.stringify(R, null, 1);
   }
 
   function attempt(name, fn) {
@@ -111,4 +131,45 @@
     R.done = true;
     write();
   });
+
+  // -------------------------------------------------------------------------------------------
+  // THE MEASUREMENT THIS WHOLE ARCHITECTURE EXISTS FOR.
+  // -------------------------------------------------------------------------------------------
+  // The defect: on WebKitGTK an iframe sandboxed `allow-same-origin` WITHOUT `allow-scripts` never
+  // delivers pointer events to listeners the parent attached across the frame boundary. That is the
+  // exact shape of every listener the engine uses, so the book renders and nothing responds.
+  //
+  // This listens the same way the engine does — `iframe.contentDocument.addEventListener` from the
+  // parent document — and counts what arrives. It proves nothing on its own: a count only means
+  // something when something real was clicked, so the harness drives a genuine X11 click with
+  // xdotool and reads these counters afterwards. A synthetic dispatchEvent would prove nothing at
+  // all, because the bug is in DELIVERY, not in dispatch.
+  R.input = { sandbox: null, docsInstrumented: 0, pointerdown: 0, mousedown: 0, click: 0, selectionchange: 0 };
+
+  var seen = new WeakSet();
+  function instrument(doc) {
+    if (!doc || seen.has(doc)) return;
+    seen.add(doc);
+    R.input.docsInstrumented++;
+    ["pointerdown", "mousedown", "click"].forEach(function (type) {
+      doc.addEventListener(type, function () { R.input[type]++; write(); }, true);
+    });
+    doc.addEventListener("selectionchange", function () { R.input.selectionchange++; write(); }, true);
+    write();
+  }
+
+  // Every section gets its own iframe and the engine replaces them as the reader moves, so this
+  // re-scans rather than instrumenting once. An earlier probe attached to the first document only
+  // and then measured a different one.
+  setInterval(function () {
+    var frames = document.querySelectorAll("iframe");
+    for (var i = 0; i < frames.length; i++) {
+      var f = frames[i];
+      if (R.input.sandbox === null && f.getAttribute("sandbox") !== null) {
+        R.input.sandbox = f.getAttribute("sandbox"); // what patch 1b actually produced here
+        write();
+      }
+      try { instrument(f.contentDocument); } catch (e) { /* not readable yet */ }
+    }
+  }, 250);
 })();

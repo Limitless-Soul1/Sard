@@ -85,7 +85,9 @@ export class FixedLayout extends HTMLElement {
         // (a WebKit-only event workaround Sard's Chromium/WebView2 runtime doesn't need) to close
         // the local-code-execution path; `allow-same-origin` alone preserves parent-side
         // `iframe.contentDocument` access for everything Sard's own code needs.
-        iframe.setAttribute('sandbox', 'allow-same-origin')
+        // SARD LOCAL PATCH 1b — read, not hardcoded; see the same line in paginator.js for why.
+        // Unset (every Windows build) yields the identical literal this line carried before.
+        iframe.setAttribute('sandbox', globalThis.__sardSectionSandbox ?? 'allow-same-origin')
         iframe.setAttribute('scrolling', 'no')
         iframe.setAttribute('part', 'filter')
         this.#root.append(element)

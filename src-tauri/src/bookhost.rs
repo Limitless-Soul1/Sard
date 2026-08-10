@@ -68,8 +68,13 @@ pub const SCHEME: &str = "sardhost";
 /// - `frame-src 'self' blob:` — the paginator CREATES the section iframe from this document. Omit
 ///   this and the reader has no iframe to render into at all.
 ///
-/// `connect-src 'self'` is required rather than `'none'`: pdf.js fetches its own stylesheets
+/// `connect-src 'self' blob:` is required rather than `'none'`: pdf.js fetches its own stylesheets
 /// (`pdf.js:10,13` call `fetchText(pdfjsPath(...))`), so a blanket refusal would break the PDF path.
+/// `blob:` carries the BOOK. Its bytes are transferred in over the command channel and turned into a
+/// blob URL here, deliberately instead of serving the file from this origin — serving it would give
+/// this origin a filesystem route, which is the one thing the allow-list exists to deny and which
+/// `serves_only_the_allow_listed_bundle` asserts it does not have. A blob URL can only be created by
+/// script already running in this origin, so it grants no reach that was not already granted.
 ///
 /// MEASURED, WebKitGTK only: with this policy a fetch to the application origin and to a
 /// CORS-permissive third origin both fail and both raise a `connect-src` violation, while a
@@ -86,7 +91,7 @@ const CSP: &str = "default-src 'none'; \
                    font-src 'self' asset: http://asset.localhost https://asset.localhost blob: data:; \
                    media-src blob:; \
                    frame-src 'self' blob:; \
-                   connect-src 'self'";
+                   connect-src 'self' blob:";
 
 /// Map a request path onto a bundle path, or refuse.
 ///
@@ -102,7 +107,24 @@ fn resolve(path: &str) -> Option<String> {
     match p {
         "" | "/" | "/index.html" => Some("reader-host/index.html".into()),
         "/host.js" => Some("reader-host/host.js".into()),
+        // The reading engine, built for this origin. One fixed name, because an allow-list cannot
+        // name a hashed one — and widening this to `/assets/*.js` to accommodate hashing would serve
+        // the APPLICATION's bundle from the book's origin too. `inlineDynamicImports` in the host
+        // build is what makes one name sufficient: there are no sibling chunks to fetch.
+        "/bundle.js" => Some("reader-host/bundle.js".into()),
         _ => {
+            if let Some(rest) = p.strip_prefix("/foliate-js/") {
+                // The engine's own modules. `FoliateController.ensureFoliateDefined` injects
+                // `<script src="/foliate-js/view.js">` against the DOCUMENT's origin, and view.js
+                // then imports its siblings relatively — so once the engine runs here, the whole
+                // module graph has to resolve here. Extensions are still allow-listed: this serves
+                // JavaScript and its assets, never an arbitrary bundle path.
+                return safe_path(
+                    rest,
+                    &["js", "mjs", "css", "json", "bcmap", "pfb", "ttf", "otf", "woff", "woff2", "wasm"],
+                )
+                .map(|r| format!("foliate-js/{r}"));
+            }
             if let Some(name) = p.strip_prefix("/fonts/") {
                 // Bundled faces only. `absFontUrl` (injectedCss.ts:179) pins @font-face to
                 // `location.origin`, so once the engine runs here these must resolve here.
@@ -134,24 +156,31 @@ fn safe_segment(name: &str, exts: &[&str]) -> Option<String> {
     exts.contains(&ext.as_str()).then(|| name.to_string())
 }
 
-/// The same rule, but permitting a single directory level (`cmaps/…`, `standard_fonts/…`).
+/// The same rule over a nested path: every directory segment conservative, the last one a file whose
+/// extension is on the list.
+///
+/// Depth is not the security property and never was — the per-segment character set is. A directory
+/// segment may not contain a dot, so `..` cannot BE a segment, and the caller has already refused any
+/// path containing `..` at all. What keeps this tight is that every segment must be alphanumeric with
+/// `_`/`-`, and the leaf must end in an allow-listed extension.
+///
+/// It used to stop at one directory level, which was enough for `pdfjs/cmaps/…`. The engine's own
+/// tree is deeper (`vendor/pdfjs/cmaps/UniJIS-UCS2-H.bcmap`), and capping the depth would have meant
+/// a second near-identical function whose rules could drift from this one.
 fn safe_path(rest: &str, exts: &[&str]) -> Option<String> {
-    let mut parts = rest.split('/');
-    let first = parts.next()?;
-    match parts.next() {
-        None => safe_segment(first, exts),
-        Some(name) if parts.next().is_none() => {
-            let dir_ok = !first.is_empty()
-                && first
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'));
-            if !dir_ok {
-                return None;
-            }
-            safe_segment(name, exts).map(|n| format!("{first}/{n}"))
+    let parts: Vec<&str> = rest.split('/').collect();
+    let (leaf, dirs) = parts.split_last()?;
+    for dir in dirs {
+        let ok = !dir.is_empty()
+            && dir
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'));
+        if !ok {
+            return None;
         }
-        _ => None, // deeper than the bundle needs
     }
+    let leaf = safe_segment(leaf, exts)?;
+    Some(if dirs.is_empty() { leaf } else { format!("{}/{leaf}", dirs.join("/")) })
 }
 
 fn mime_for(path: &str) -> &'static str {
@@ -223,6 +252,47 @@ mod tests {
         );
     }
 
+    /// The engine's own module graph. `ensureFoliateDefined` injects `/foliate-js/view.js` against
+    /// the DOCUMENT's origin and view.js imports its siblings relatively, so every one of these has
+    /// to resolve here or the engine cannot start in the host at all.
+    #[test]
+    fn serves_the_engine_the_host_runs() {
+        for (req, want) in [
+            ("/bundle.js", "reader-host/bundle.js"),
+            ("/foliate-js/view.js", "foliate-js/view.js"),
+            ("/foliate-js/epub.js", "foliate-js/epub.js"),
+            ("/foliate-js/paginator.js", "foliate-js/paginator.js"),
+            ("/foliate-js/fixed-layout.js", "foliate-js/fixed-layout.js"),
+            ("/foliate-js/pdf.js", "foliate-js/pdf.js"),
+            (
+                "/foliate-js/vendor/pdfjs/cmaps/UniJIS-UCS2-H.bcmap",
+                "foliate-js/vendor/pdfjs/cmaps/UniJIS-UCS2-H.bcmap",
+            ),
+            ("/foliate-js/vendor/pdfjs/pdf.mjs", "foliate-js/vendor/pdfjs/pdf.mjs"),
+        ] {
+            assert_eq!(resolve(req).as_deref(), Some(want), "{req}");
+        }
+    }
+
+    /// Serving a whole subtree is where an allow-list is easiest to get wrong, so the refusals are
+    /// named as explicitly as the permissions.
+    #[test]
+    fn the_engine_subtree_is_not_a_way_out_of_the_bundle() {
+        for p in [
+            "/foliate-js/../sard.db",
+            "/foliate-js/vendor/../../secret.js",
+            "/foliate-js/view.js.map",       // source maps are not on the extension list
+            "/foliate-js/VENDOR.txt",        // nor is anything that is not code or an asset
+            "/foliate-js/",                  // no leaf
+            "/foliate-js/sub dir/view.js",   // space is not in the segment character set
+            "/foliate-js/.hidden/view.js",   // a dot cannot appear in a directory segment
+            "/bundle.js.map",
+            "/reader-host/bundle.js",        // the mapped name is not also a request path
+        ] {
+            assert!(resolve(p).is_none(), "should refuse {p}");
+        }
+    }
+
     #[test]
     fn refuses_everything_else() {
         for p in [
@@ -288,7 +358,21 @@ mod tests {
         let d = directives(CSP);
         assert_eq!(d.get("default-src").map(String::as_str), Some("'none'"));
         assert_eq!(d.get("script-src").map(String::as_str), Some("'self'"));
-        assert_eq!(d.get("connect-src").map(String::as_str), Some("'self'"));
+        assert_eq!(d.get("connect-src").map(String::as_str), Some("'self' blob:"));
+    }
+
+    /// The book arrives as bytes and becomes a blob URL in this origin, so `connect-src` has to admit
+    /// `blob:` — and must not admit anything that would let it be fetched from somewhere else instead.
+    #[test]
+    fn connect_src_admits_the_book_blob_and_nothing_remote() {
+        let connect = directives(CSP).remove("connect-src").expect("declared");
+        assert!(connect.split_whitespace().any(|t| t == "blob:"), "the book needs blob:");
+        for forbidden in ["*", "http:", "https:", "ws:", "wss:", "data:", "asset:"] {
+            assert!(
+                !connect.split_whitespace().any(|t| t == forbidden),
+                "connect-src must not admit {forbidden}"
+            );
+        }
     }
 
     /// `default-src 'none'` means an OMITTED directive resolves to `'none'`. Every resource kind the

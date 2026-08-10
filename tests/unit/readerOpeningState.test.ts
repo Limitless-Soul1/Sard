@@ -87,6 +87,24 @@ describe("both surfaces actually consult it", () => {
     expect(reader).toContain("loading={opening}");
   });
 
+  it("the Arabic loading strings carry no combining marks", () => {
+    // NOT a style rule. MEASURED on real WebKitGTK: a word carrying an Arabic combining mark drops
+    // out of the UI font onto a fallback with different metrics and renders on a lower baseline,
+    // mid-sentence. The first draft of these two strings began "جارٍ" and did exactly that in the
+    // captured frame; the same words without the tanween sat flat beside it.
+    //
+    // This guard is here because the natural "improvement" to a status label is to add the
+    // diacritics back. The underlying font defect is a separate matter and is NOT fixed by this.
+    const combining = /[ً-ٰٟۖ-ۭ]/;
+    const ar = readFileSync(join("src", "i18n", "locales", "ar.ts"), "utf8");
+    for (const key of ["reader.opening", "panel.chaptersLoading"]) {
+      const line = ar.split("\n").find((l) => l.includes(`"${key}"`));
+      expect(line, `${key} is missing from the Arabic locale`).toBeTruthy();
+      const value = line!.slice(line!.indexOf(":") + 1);
+      expect(combining.test(value), `${key} contains a combining mark and will render displaced`).toBe(false);
+    }
+  });
+
   it("neither loading string is the other's", () => {
     // Two distinct sentences, in both locales — reusing `panel.noChapters` for the spinner would
     // reintroduce the lie with a spinner beside it.

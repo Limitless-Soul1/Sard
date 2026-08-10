@@ -2119,19 +2119,16 @@ export function Reader({
           {opening && (
             // `dir` is the UI's, not the book's: this is Sard speaking, and it is on screen before
             // the book's own direction is even known. Without it the label inherits the LTR of the
-            // page host beside it, which puts the ellipsis of "جارٍ فتح الكتاب…" on the wrong end —
+            // page host beside it, which put the ellipsis on the wrong end of the Arabic sentence —
             // seen on real WebKitGTK before this was set.
             <div className="page-loading" role="status" aria-live="polite" dir={uiDir}>
               <span className="sp-spinner" aria-hidden />
               <span>{t("reader.opening")}</span>
-              {/* DIAGNOSTIC — throwaway. In the first WebKitGTK capture of this label, "جارٍ" sat
-                  lower than "فتح الكتاب" and looked like a different typeface — the same signature as
-                  the open Arabic typography defect, but here in Sard's OWN UI font rather than in
-                  book content. The only difference between these two lines is the tanween (U+064D).
-                  If line 1 shifts and line 2 does not, the trigger is a font fallback for the
-                  diacritic; if both sit flat, the earlier capture was something else. */}
-              <span>جارٍ ← tanween</span>
-              <span>جار ← none</span>
+              {/* The A/B that isolated the tanween lived here and has been removed: it ANSWERED its
+                  question — "جارٍ" dropped to a lower baseline in a different typeface, "جار" beside
+                  it sat flat, so the trigger is a font fallback for the combining mark (U+064D). The
+                  shipped strings are diacritic-free because of that measurement; this run exists to
+                  confirm they render flat. */}
             </div>
           )}
         </div>

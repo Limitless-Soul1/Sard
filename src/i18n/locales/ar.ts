@@ -13,7 +13,12 @@ export const ar: Record<TKey, string> = {
   "reader.prev": "الصفحة السابقة",
   "reader.back": "المكتبة",
   "reader.contents": "المحتويات",
-  "reader.opening": "جارٍ فتح الكتاب…",
+  // No tanween, and that is not a style choice. MEASURED on WebKitGTK: a word carrying a combining
+  // mark (here the tanween of "جارٍ", U+064D) falls out of the UI font onto a fallback with different
+  // metrics and renders on a dropped baseline, mid-sentence. The masdar reads naturally as a status
+  // label and needs no diacritic. The underlying font defect is filed separately — it affects any
+  // Arabic text with diacritics, not just this string, and is not fixed by avoiding it here.
+  "reader.opening": "فتح الكتاب…",
   // RAWY-217: «النص»، لا «الطباعة». الأخيرة هي الترجمة الحرفية لـ Typography لكنها تُقرأ بالعربية
   // بمعنى الطباعة/النشر، لا تنسيق النص. و«النص» يصف ما يضبطه التبويب فعلًا (الحجم والوزن والتباعد
   // والمحاذاة والخط والتشكيل)، ويوافق سِجِلّ أخواته (الألوان/التخطيط/كل الكتب)، ويقارب «الخط» التي
@@ -338,7 +343,7 @@ export const ar: Record<TKey, string> = {
   "panel.showTitles": "إظهار العناوين",
   "panel.hideFirstLine": "إخفاء السطر الأول",
   "panel.hideFirstLineHint": "يخفي السطر الأول من كل فصل (غالبًا عنوان مكرّر — وقد يحتوي على حرق للأحداث).",
-  "panel.chaptersLoading": "جارٍ قراءة المحتويات…",
+  "panel.chaptersLoading": "قراءة المحتويات…", // diacritic-free for the same measured reason as above
   "panel.noChapters": "لا تتوفّر قائمة محتويات لهذا الكتاب",
   "panel.annotations": "التظليلات والملاحظات",
   "panel.annoEyebrow": "التعليقات", // RAWY-121: the quiet eyebrow label above the segmented tabs (design 2a)

@@ -354,7 +354,10 @@ pub fn run() {
             // until the line below — asking for it first panics inside Tauri, which is exactly what
             // the first attempt did.
             if std::env::var("SARD_SEED_BOOK").is_ok() {
-                if let Some(asset) = app.asset_resolver().get("__probe/book.epub".into()) {
+                // The CSS subject deliberately: an external stylesheet, a failing @import, a missing
+                // embedded font and a missing image. The plain subject has none of those, and a real
+                // book always does — so opening the plain one proves less than it appears to.
+                if let Some(asset) = app.asset_resolver().get("__probe/book-css.epub".into()) {
                     let src = app_data_dir.join("seed-book.epub");
                     if std::fs::write(&src, &asset.bytes).is_ok() {
                         let res = books::import_books(

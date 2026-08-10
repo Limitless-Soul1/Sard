@@ -28,6 +28,29 @@ const chapters = Array.from({ length: 8 }, (_, i) => ({
   body: Array.from({ length: 40 }, () => `<p>${PARA.repeat(3)}</p>`).join("\n"),
 }));
 
+// A SECOND, MORE REALISTIC SUBJECT. The first has no stylesheet at all, and a real book always
+// does — foliate rewrites book CSS through `replaceCSS`, blobs it, and the host CSP has to admit
+// the result. That is the most obvious difference between the generated subject and the books the
+// tester actually opens, so it gets its own file rather than being assumed equivalent.
+const withCss = buildEpub({
+  title: "كتاب بأنماط",
+  creator: "سرد",
+  language: "ar",
+  dir: "rtl",
+  chapters,
+  ncx: chapters.map((c) => ({ label: c.title, href: c.href })),
+  nav: chapters.map((c) => ({ label: c.title, href: c.href })),
+  css: [
+    "@import url('nonexistent-import.css');",
+    "body { font-family: 'BookEmbedded', serif; line-height: 1.9; color: #222; }",
+    "@font-face { font-family: 'BookEmbedded'; src: url('fonts/missing.ttf') format('truetype'); }",
+    "p { text-indent: 1.5em; margin-block: 0.6em; background-image: url('img/missing.png'); }",
+    "h1 { color: #7a3b2e; }",
+  ].join(String.fromCharCode(10)),
+});
+writeFileSync(new URL("../public/__probe/book-css.epub", import.meta.url), withCss);
+console.log(`[probe] css subject: ${withCss.length} bytes`);
+
 const bytes = buildEpub({
   title: "كتاب الاختبار",
   creator: "سرد",

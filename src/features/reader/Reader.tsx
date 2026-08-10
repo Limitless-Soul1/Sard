@@ -150,6 +150,18 @@ export function Reader({
   if (!ctrlRef.current && !needsReaderHost()) ctrlRef.current = new FoliateController();
   const hostedRef = useRef<Promise<FoliateController> | null>(null);
   if (!ctrlRef.current && !hostedRef.current) hostedRef.current = createReader();
+  // WHEN THE READER EXISTS, as a value effects can depend on.
+  //
+  // The callbacks below are registered in mount-time effects, and a ref is invisible to React — it
+  // cannot re-run anything when it is filled in. On Windows that never mattered: the controller is
+  // constructed during this first render, so `true` here and the effects find it. On the hosted path
+  // it arrives later, the effects ran once against `null`, and nine of the ten callbacks were never
+  // registered at all. MEASURED on real WebKitGTK: all three registration sites reported
+  // `ctrlPresent: false`, and a genuine drag across the text produced no selection event.
+  //
+  // Windows is unchanged by construction: this starts `true` there and never changes, so each effect
+  // still runs exactly once, at mount, exactly as before.
+  const [readerReady, setReaderReady] = useState(() => ctrlRef.current != null);
   // A dev/debug surface reachable from DevTools without shipping any UI — the same convention as
   // `window.__sardTtsStats`. Lets the TTS-tracking probe measure the REAL pipeline instead of a
   // re-implementation of it that could drift.
@@ -518,7 +530,10 @@ export function Reader({
       // On the hosted path this is the first moment the reader is actually needed, and the awaits
       // above have already given the host time to load. On Windows `ctrlRef.current` was assigned
       // during the first render and this resolves to it without awaiting anything.
-      if (!ctrlRef.current && hostedRef.current) ctrlRef.current = await hostedRef.current;
+      if (!ctrlRef.current && hostedRef.current) {
+        ctrlRef.current = await hostedRef.current;
+        setReaderReady(true); // the effects below depend on this and register on the next render
+      }
       if (stale()) return;
       const ctrl = ctrlRef.current!;
       ctrl.onRelocate(({ cfi, fraction, chapterLabel, chapterHref, location, pageLabel }) => {
@@ -972,7 +987,10 @@ export function Reader({
       ctrl.setReadingWords(st.index, st.words);
       ctrl.showReadingWord(st.wordIndex);
     });
-  }, [signalMove, signalScroll]);
+    // `readerReady` is what makes this re-run once the hosted controller exists. The registrations
+    // are assignments on the controller (`this.activityCb = cb`), so a re-run REPLACES each callback
+    // rather than adding a second one.
+  }, [signalMove, signalScroll, readerReady]);
 
   // When the basket empties (Clear, or removing the last passage) the top-bar button hides, so
   // close the now-orphaned tray too (RAWY-60).
@@ -2185,7 +2203,7 @@ export function Reader({
 
       {/* RAWY-85: no in-context selection toolbar (highlight/note/Photo Mode) for PDFs — they're
           CFI-less in Phase 0, so the whole annotation layer is disabled rather than half-working. */}
-      {!isPdf && <AnnotationLayer ctrlRef={ctrlRef} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} onListen={startListenFromSelection} />}
+      {!isPdf && <AnnotationLayer ctrlRef={ctrlRef} readerReady={readerReady} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} onListen={startListenFromSelection} />}
       {/* RAWY-105: read-aloud player (EPUB-only) — floats above the reading area while listening. */}
       {(!isPdf || pdfCanListen) && (
         <TtsPlayer

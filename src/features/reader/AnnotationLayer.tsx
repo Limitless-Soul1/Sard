@@ -545,11 +545,14 @@ function NoteEditorModal({
 
 export function AnnotationLayer({
   ctrlRef,
+  readerReady,
   onPhotoCard,
   onAddToCard,
   onListen,
 }: {
   ctrlRef: RefObject<FoliateController | null>;
+  /** True once the controller exists. A ref cannot re-run an effect; this can. See Reader.tsx. */
+  readerReady: boolean;
   onPhotoCard?: (sel: SelectionInfo) => void;
   onAddToCard?: (sel: SelectionInfo) => void;
   onListen?: (sel: SelectionInfo) => void; // RAWY-124: listen-from-selection (start TTS from here)
@@ -578,7 +581,11 @@ export function AnnotationLayer({
       ctrl.clearSelection();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // `readerReady` is the dependency that was missing. On the hosted path the controller does not
+    // exist at mount, so this effect returned early and `onSelection` was never registered — the
+    // selection menu could not appear because nothing was listening. Registration is assignment on
+    // the controller, so a re-run replaces the callback rather than adding a second one.
+  }, [ctrlRef, readerReady]);
 
   // Dismiss on a click anywhere in the parent chrome, or on Esc (toolbars stop propagation). RAWY-122:
   // ALSO clear the REAL text selection — not just the React popover — so a lingering browser selection
@@ -678,7 +685,8 @@ export function AnnotationLayer({
       const row = useReferences.getState().byId(hit.refId);
       if (row) setRefPopup({ row, rect: hit.rect });
     });
-  }, [ctrlRef]);
+    // Same reason as above: `ctrlRef` is a stable object, so it alone never re-ran this.
+  }, [ctrlRef, readerReady]);
   const onReference = () => {
     const s = selection;
     if (!s) return;

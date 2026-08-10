@@ -301,7 +301,13 @@ mod tests {
             "/fonts/sub/dir/x.ttf",
             "/fonts/book.epub",
             "/pdfjs/../../../epub.js",
-            "/foliate-js/view.js",
+            // `/foliate-js/view.js` USED TO BE ON THIS LIST and is deliberately no longer refused.
+            // It was correct while the host served a static bundle and ran no engine; the host now
+            // runs the engine, and `ensureFoliateDefined` injects exactly that script against this
+            // origin, so refusing it means the reader cannot start here at all. The assertion moved
+            // rather than vanished: `serves_the_engine_the_host_runs` pins what the subtree serves,
+            // and `the_engine_subtree_is_not_a_way_out_of_the_bundle` pins what it still refuses.
+            // Every other entry below is unchanged.
             "/library/book.epub",
             "/sard.db",
             "//evil",

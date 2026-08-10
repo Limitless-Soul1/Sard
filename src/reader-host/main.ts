@@ -125,10 +125,22 @@ function pushState(): void {
  */
 function cloneable(value: unknown): unknown {
   if (value == null || typeof value !== "object") return value;
+
+  // ARRAYS STAY ARRAYS. Rebuilding one through `Object.entries` produces `{0:…,1:…}` — no `.length`,
+  // no iteration, no `map`. MEASURED on WebKitGTK: `getCurrentChapterSentences` came back as an
+  // object and `.length` was undefined, so a caller counting sentences silently got nothing. Every
+  // forwarded method that returns a list was affected.
+  if (Array.isArray(value)) return value.map((v) => cloneable(v));
+
+  // A Map does not survive structured cloning either; entries do, and `tocHrefSectionMap` already
+  // travels that way in the mirror.
+  if (value instanceof Map) return [...value].map(([k, v]) => [cloneable(k), cloneable(v)]);
+  if (value instanceof Set) return [...value].map((v) => cloneable(v));
+
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
     if (v instanceof Range || v instanceof Node || typeof v === "function") continue;
-    out[k] = typeof v === "object" && v !== null ? cloneable(v) : v;
+    out[k] = cloneable(v);
   }
   return out;
 }

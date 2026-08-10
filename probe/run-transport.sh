@@ -73,6 +73,15 @@ for _ in $(seq 1 175); do
       # A drag too: selection needs the whole pointerdown/move/up sequence to arrive IN ORDER, so it
       # exposes a delivery gap a single click would not.
       xdotool mousemove $(( CX - 200 )) $(( CY - 20 )) mousedown 1               mousemove $(( CX + 200 )) $(( CY + 20 )) mouseup 1
+      sleep 1
+      # A REAL Space keypress. The engine's own keydown listeners run inside the host, so this is the
+      # only way to reach `spaceCb` — the path that cannot answer synchronously across a port and is
+      # resolved by the host claiming the key and pushing an event. Delivered to the focused window
+      # by the X server; a synthetic KeyboardEvent would prove nothing about delivery.
+      echo "  >>> delivering a real Space keypress"
+      xdotool key --clearmodifiers space
+      sleep 1
+      xdotool key --clearmodifiers space
       touch "$OUT/clicked"
     fi
     CLICKED=1

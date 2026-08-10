@@ -168,6 +168,59 @@ async function main(): Promise<void> {
   R.keyboard.sectionAfter = ctrl.currentSectionIndex();
   emit("keyboard");
 
+  // ---- highlights, references, search, TTS track ------------------------------------------------
+  // Driven through the engine's own surface, so what is proven is the transport carrying the real
+  // calls — not that forwarding code exists.
+  const cfi = (ctrl as unknown as { currentCfi?: () => string }).currentCfi?.() ?? null;
+  R.surface["cfiAtCursor"] = cfi;
+
+  await step("addHighlight", async () => await ctrl.addHighlight("epubcfi(/6/4!/4/2,/1:0,/1:40)", "#ffd54f", 0.5));
+  await step("loadHighlights", async () => {
+    await ctrl.loadHighlights([{ cfi: "epubcfi(/6/4!/4/4,/1:0,/1:30)", color: "#80cbc4", alpha: 0.4 }]);
+    return true;
+  });
+  await step("setHighlightColor", () => {
+    ctrl.setHighlightColor("epubcfi(/6/4!/4/2,/1:0,/1:40)", "#ef9a9a");
+    return true;
+  });
+  await step("removeHighlight", () => {
+    ctrl.removeHighlight("epubcfi(/6/4!/4/2,/1:0,/1:40)");
+    return true;
+  });
+
+  // References are the notes surface: a list pushed into the engine, matched against book text.
+  await step("setReferences", () => {
+    ctrl.setReferences([{ id: "r1", phrase: "الكاتب" } as never]);
+    return true;
+  });
+
+  // SEARCH — the progressive path. The callbacks stay app-side and the host pushes batches.
+  let batches = 0;
+  let progress = 0;
+  await step("searchBook", async () => {
+    const hits = await ctrl.searchBook("الكلمات", {
+      onBatch: () => { batches++; },
+      onProgress: () => { progress++; },
+    });
+    return { hits: hits.length, batches, progress };
+  });
+
+  // TTS TRACK — the spotlight the reader draws on the sentence being spoken. Audio itself is played
+  // in the application document and never crosses; what crosses is the tracking.
+  await step("trackStats", async () => {
+    const st = await ctrl.trackStats("ar");
+    return { units: (st as { units?: number }).units ?? null, withRange: (st as { withRange?: number }).withRange ?? null };
+  });
+  await step("showReadingHighlight", () => {
+    ctrl.showReadingHighlight(0);
+    return true;
+  });
+  await step("ttsCursorAfterTrack", () => ctrl.getTtsCursor(0));
+  await step("clearReadingHighlight", () => {
+    ctrl.clearReadingHighlight();
+    return true;
+  });
+
   // ---- async forwards over the proxy ------------------------------------------------------------
   await step("getCurrentChapterSentences", async () => (await ctrl.getCurrentChapterSentences("ar")).length);
   await step("goToNextChapter", async () => {
@@ -180,7 +233,44 @@ async function main(): Promise<void> {
   emit("forwards");
 
   // Give real input (delivered by the harness) time to produce events.
-  await new Promise((r) => setTimeout(r, 6000));
+  await new Promise((r) => setTimeout(r, 8000));
+  sync();
+  R.keyboard.spaceCallbackAskedFinal = spaceAsked;
+  emit("input-window-closed");
+
+  // ---- a user font over asset: ------------------------------------------------------------------
+  // Staged by a probe-only Rust command from the compiled bundle, so nothing is downloaded and no
+  // fixture enters the repository. Only the application can turn a path into an asset: URL, so it
+  // hands the URL to the host and the host answers whether it can actually load it as a face.
+  await step("assetFont.stage", async () => {
+    const inv2 = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: (c: string, a?: unknown) => Promise<unknown> } })
+      .__TAURI_INTERNALS__?.invoke;
+    if (!inv2) return "no invoke";
+    const path = (await inv2("probe_stage_font")) as string;
+    const { convertFileSrc } = await import("@tauri-apps/api/core");
+    const url = convertFileSrc(path);
+    R.surface["assetFont.url"] = url;
+    const frame = document.querySelector("iframe") as HTMLIFrameElement | null;
+    frame?.contentWindow?.postMessage({ __sardProbeFont: url }, "*");
+    return url;
+  });
+  await new Promise((r) => setTimeout(r, 2500));
+  R.surface["assetFont"] =
+    ((R.surface["hostSelfcheck"] as { assets?: Record<string, unknown> } | undefined)?.assets?.assetFont) ?? null;
+  emit("asset-font");
+
+  // ---- PDF, through the same host ---------------------------------------------------------------
+  // A real PDF, sniffed as one from its bytes. Opening it after the EPUB also exercises reopening
+  // the host with a different book, which is what switching books in the library does.
+  await step("openPdf", () => ctrl.open("/__probe/book.pdf", stage, {
+    style: { fontSizePx: 20, lineHeight: 1.8, marginPct: 6, fontFamily: "serif", justify: true },
+  } as never));
+  await new Promise((r) => setTimeout(r, 2500));
+  await step("pdf.isFixedLayout", () => (ctrl as unknown as { isFixedLayout: boolean }).isFixedLayout);
+  await step("pdf.pageCount", () => (ctrl as unknown as { pdfPageCount?: number }).pdfPageCount ?? null);
+  await step("pdf.textQuality", () => ctrl.pdfTextQuality());
+  await step("pdf.hasSpeakableText", () => ctrl.pdfHasSpeakableText());
+  await step("pdf.renderedScale", () => ctrl.pdfRenderedScale());
   sync();
   emit("final");
   const inv = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: (c: string, a: unknown) => unknown } })

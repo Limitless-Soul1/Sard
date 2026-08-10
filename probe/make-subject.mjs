@@ -40,3 +40,41 @@ const bytes = buildEpub({
 
 writeFileSync(OUT, bytes);
 console.log(`[probe] subject: ${bytes.length} bytes, ${chapters.length} sections -> ${OUT.pathname}`);
+
+// ---------------------------------------------------------------------------------------------
+// A REAL PDF, for the fixed-layout path.
+// ---------------------------------------------------------------------------------------------
+// Hand-built rather than fetched: the corpus PDF is not distributed, and the gate needs a file that
+// is genuinely a PDF — `makeBook` sniffs `%PDF-` from the bytes, so anything less would be routed
+// down the EPUB path and prove nothing about fixed layout. Two pages with drawable text is enough to
+// exercise open, render and page count.
+function pdf() {
+  const objs = [];
+  const page = (n) =>
+    `BT /F1 24 Tf 72 700 Td (Sard PDF gate - page ${n}) Tj ET\n` +
+    `BT /F1 12 Tf 72 660 Td (The quick brown fox jumps over the lazy dog.) Tj ET`;
+  const streams = [page(1), page(2)];
+  objs[1] = "<< /Type /Catalog /Pages 2 0 R >>";
+  objs[2] = "<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>";
+  objs[3] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 7 0 R >> >> /Contents 4 0 R >>";
+  objs[4] = `<< /Length ${streams[0].length} >>\nstream\n${streams[0]}\nendstream`;
+  objs[5] = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 7 0 R >> >> /Contents 6 0 R >>";
+  objs[6] = `<< /Length ${streams[1].length} >>\nstream\n${streams[1]}\nendstream`;
+  objs[7] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
+
+  let out = "%PDF-1.4\n";
+  const offsets = [0];
+  for (let i = 1; i < objs.length; i++) {
+    offsets[i] = out.length;
+    out += `${i} 0 obj\n${objs[i]}\nendobj\n`;
+  }
+  const xref = out.length;
+  out += `xref\n0 ${objs.length}\n0000000000 65535 f \n`;
+  for (let i = 1; i < objs.length; i++) out += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+  out += `trailer\n<< /Size ${objs.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(out, "latin1");
+}
+
+const pdfBytes = pdf();
+writeFileSync(new URL("../public/__probe/book.pdf", import.meta.url), pdfBytes);
+console.log(`[probe] pdf subject: ${pdfBytes.length} bytes, 2 pages`);

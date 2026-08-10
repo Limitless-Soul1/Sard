@@ -160,6 +160,7 @@ macro_rules! sard_invoke_handler {
             window_chrome::set_titlebar_theme,
             probe_write,  // PROBE-ONLY
             probe_finish, // PROBE-ONLY
+            probe_stage_font, // PROBE-ONLY
             $($diag_cmd),*
         ])
     };
@@ -174,6 +175,25 @@ fn probe_write(payload: String) {
     let out = std::env::var("SARD_PROBE_OUT").unwrap_or_else(|_| "probe-out.json".into());
     let _ = std::fs::write(&out, &payload);
     println!("[probe] wrote {} bytes via ipc", payload.len());
+}
+
+// PROBE-ONLY (throwaway branch): stage a real font file inside app data so the runtime gate can ask
+// whether the reader host can load one over `asset:`. The bytes come from the compiled bundle via
+// the asset resolver, so nothing is downloaded and no fixture is added to the repository. The asset
+// protocol's scope is $APPDATA/**, which is why it has to be written there to be reachable at all.
+#[tauri::command]
+fn probe_stage_font(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+    let asset = app
+        .asset_resolver()
+        .get("fonts/Amiri-Regular.ttf".into())
+        .ok_or("the bundle has no fonts/Amiri-Regular.ttf")?;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("probe-font.ttf");
+    std::fs::write(&path, &asset.bytes).map_err(|e| e.to_string())?;
+    println!("[probe] staged font at {}", path.display());
+    Ok(path.to_string_lossy().into_owned())
 }
 
 #[tauri::command]

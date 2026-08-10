@@ -405,11 +405,36 @@ mod tests {
     /// something it cannot currently reach, which is the security property this origin exists for.
     /// Equality is the only value that satisfies both, so the test asserts equality rather than
     /// containment and reads the application policy from `tauri.conf.json` rather than duplicating it.
+    /// The application may embed the host; the host may not embed another one.
+    ///
+    /// `frame-src` is the one content directive that legitimately DIFFERS between the two policies.
+    /// The application needs `sardhost://localhost` to put the reader on screen — omitting it is
+    /// what left a real Linux machine with a blank reader. The host needs no such permission: it
+    /// frames book sections from `blob:` and nothing else, and granting it would let book content
+    /// nest a second host document for no benefit at all.
+    #[test]
+    fn the_host_may_not_embed_another_host() {
+        let host = directives(CSP).remove("frame-src").expect("declared");
+        let app = directives(&app_csp()).remove("frame-src").expect("declared");
+        assert!(
+            app.contains("sardhost"),
+            "the application must be able to embed the host, or the reader cannot start on WebKit"
+        );
+        assert!(
+            !host.contains("sardhost"),
+            "the host must not be able to embed another host"
+        );
+        // Identical once that one permission is removed: no other difference has crept in.
+        assert_eq!(host, app.replace(" sardhost://localhost", ""));
+    }
+
     #[test]
     fn content_directives_mirror_the_application_policy() {
         let host = directives(CSP);
         let app = directives(&app_csp());
-        for kind in ["style-src", "img-src", "font-src", "media-src", "frame-src"] {
+        // `frame-src` is covered by `the_host_may_not_embed_another_host`, which pins the one
+        // permission the application has and the host must not.
+        for kind in ["style-src", "img-src", "font-src", "media-src"] {
             let a = app.get(kind).unwrap_or_else(|| panic!("app CSP declares {kind}"));
             let h = host.get(kind).unwrap_or_else(|| panic!("host CSP declares {kind}"));
             assert_eq!(h, a, "{kind} must match the application policy exactly");

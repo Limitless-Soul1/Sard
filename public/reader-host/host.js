@@ -254,4 +254,42 @@
       } catch (e) { /* ignore */ }
     }
   }, 250);
+
+  // PROBE-ONLY: can this origin load a USER font over `asset:`?
+  //
+  // CSP permitting a load and the fetch succeeding are different questions — a CORS refusal raises
+  // no securitypolicyviolation — so it is measured rather than reasoned about. The URL arrives from
+  // the application, because only it can call convertFileSrc. Inside this IIFE deliberately: `R` and
+  // `write` are its closure, and a sibling block cannot see them.
+  addEventListener("message", function (e) {
+    var d = e.data;
+    if (!d || !d.__sardProbeFont) return;
+    try {
+      new FontFace("SardProbeAssetFont", 'url("' + d.__sardProbeFont + '")').load().then(
+        function () { R.assets.assetFont = "LOADED"; write(); },
+        function (err) { R.assets.assetFont = "FAIL:" + (err && err.name ? err.name : "Error"); write(); }
+      );
+    } catch (err) {
+      R.assets.assetFont = "THREW:" + (err && err.name ? err.name : "Error");
+      write();
+    }
+  });
+})();
+
+// ---------------------------------------------------------------------------------------------
+// PROBE-ONLY REPORTER — exists only on the throwaway probe branch and is never merged.
+// The host origin holds no Tauri API by design, so an embedded host has no way to report except
+// postMessage. This block sends; it never listens.
+// ---------------------------------------------------------------------------------------------
+(function () {
+  "use strict";
+  if (new URLSearchParams(location.search).get("selfcheck") !== "1") return;
+  if (window.parent === window) return;
+  var sent = 0;
+  setInterval(function () {
+    var el = document.getElementById("report");
+    if (!el || !el.textContent) return;
+    if (sent++ > 400) return;
+    window.parent.postMessage({ __sardProbeHost: true, report: el.textContent }, "*");
+  }, 300);
 })();

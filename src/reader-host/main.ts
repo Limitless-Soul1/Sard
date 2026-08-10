@@ -30,6 +30,16 @@ import { EVENT_NAMES, type Mirror, type Reply, type Request } from "../reader-tr
 (globalThis as { __sardSectionSandbox?: string }).__sardSectionSandbox =
   "allow-same-origin allow-scripts";
 
+// DIAGNOSTIC — throwaway branch. The host has no Tauri API, so its trace rides the port.
+function htrace(line: string, detail?: unknown): void {
+  const text = detail === undefined ? line : `${line} ${JSON.stringify(detail).slice(0, 300)}`;
+  try {
+    channel?.postMessage({ kind: "trace", line: text });
+  } catch {
+    /* before the port exists there is nothing to send to */
+  }
+}
+
 const controller = new FoliateController();
 
 let stage: HTMLElement | null = null;
@@ -198,7 +208,36 @@ async function run(msg: Request): Promise<unknown> {
     // so format detection does not depend on a filename and the engine needs no change to accept it.
     if (bookUrl) URL.revokeObjectURL(bookUrl);
     bookUrl = URL.createObjectURL(new Blob([msg.bytes]));
-    await controller.open(bookUrl, ensureStage(), msg.opts as never);
+    const stage = ensureStage();
+    htrace("host.open start", {
+      bytes: msg.bytes.byteLength,
+      stage: { w: stage.clientWidth, h: stage.clientHeight },
+      doc: { w: document.documentElement.clientWidth, h: document.documentElement.clientHeight },
+    });
+    try {
+      await controller.open(bookUrl, stage, msg.opts as never);
+    } catch (e) {
+      htrace("host.open THREW", String(e).slice(0, 300));
+      throw e;
+    }
+    // What actually exists after open, measured rather than assumed.
+    const view = document.querySelector("foliate-view") as unknown as {
+      renderer?: { getContents?: () => { doc?: Document }[] };
+      book?: { sections?: unknown[] };
+    } | null;
+    const contents = view?.renderer?.getContents?.() ?? [];
+    const doc0 = contents[0]?.doc;
+    const body0 = doc0?.body;
+    htrace("host.open done", {
+      toc: safe(() => controller.getToc().length, -1),
+      sections: view?.book?.sections?.length ?? -1,
+      contents: contents.length,
+      sectionHasBody: !!body0,
+      sectionTextLen: (body0?.textContent ?? "").trim().length,
+      sectionRect: body0 ? { w: Math.round(body0.getBoundingClientRect().width), h: Math.round(body0.getBoundingClientRect().height) } : null,
+      viewRect: (() => { const v = document.querySelector("foliate-view"); if (!v) return null; const r = v.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; })(),
+      stageRect: { w: stage.clientWidth, h: stage.clientHeight },
+    });
     return { opened: true };
   }
 
@@ -250,6 +289,7 @@ function attach(port: MessagePort): void {
     })();
   };
   port.start();
+  htrace("host.attach", { origin: location.origin, docSize: { w: document.documentElement.clientWidth, h: document.documentElement.clientHeight } });
   registerEvents();
   pushState();
   port.postMessage({ id: 0, ok: true, value: { ready: true, origin: location.origin } } satisfies Reply);

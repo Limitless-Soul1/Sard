@@ -98,6 +98,19 @@ const BUILD_ID = process.env.SARD_BUILD_ID || "UNSET — built directly, not thr
 // answers, and widening it to `/assets/*.js` would hand the book origin the application's own bundle.
 // @ts-expect-error process is a nodejs global
 const IS_READER_HOST = process.env.SARD_BUILD_TARGET === "reader-host";
+// PROBE-ONLY (throwaway branch): the runtime gate's page, bundled so it can import the REAL
+// transport instead of hand-rolling messages at it. Never built on develop.
+// @ts-expect-error process is a nodejs global
+const IS_PROBE = process.env.SARD_BUILD_TARGET === "probe";
+
+const PROBE_BUILD = {
+  outDir: "dist/__probe",
+  emptyOutDir: false,
+  rollupOptions: {
+    input: resolve(import.meta.dirname, "src/__probe/main.ts"),
+    output: { format: "es" as const, entryFileNames: "bundle.js", inlineDynamicImports: true },
+  },
+};
 
 const READER_HOST_BUILD = {
   outDir: "dist/reader-host",
@@ -123,6 +136,7 @@ export default defineConfig(async () => ({
   // `dist/reader-host/` — fonts, the whole foliate-js tree, everything — producing a duplicate of the
   // bundle's own assets nested inside it. The application build already placed those files once.
   ...(IS_READER_HOST ? { build: READER_HOST_BUILD, publicDir: false as const } : {}),
+  ...(IS_PROBE ? { build: PROBE_BUILD, publicDir: false as const } : {}),
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

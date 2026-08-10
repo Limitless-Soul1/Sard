@@ -10,6 +10,7 @@ import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 
 import { useI18n } from "../../i18n";
 import { THEMES, useTheme } from "../../theme";
 import type { AnchorRect, AnnotationHit, FoliateController, SelectionInfo } from "../../reader-engine/FoliateController";
+import { trace as diagTrace } from "../../reader-transport/trace"; // DIAGNOSTIC
 import { useAnnotations } from "./annotationsStore";
 import { useReader } from "../../reader-engine/store"; // RAWY-259: the book title for the metadata block
 import { useReferences } from "./referencesStore"; // RAWY-260
@@ -571,8 +572,10 @@ export function AnnotationLayer({
   // appeared on Linux. Re-running is safe — the controller assigns each callback, it does not append.
   useEffect(() => {
     const ctrl = ctrlRef.current;
+    diagTrace("REG      AnnotationLayer mount effect", { ctrlPresent: !!ctrl, registers: ["onSelection", "onShowAnnotation"] });
     if (!ctrl) return;
     ctrl.onSelection((s) => {
+      diagTrace("SEL      onSelection fired", { hasText: !!s?.text, len: s?.text?.length ?? 0, rect: s?.rect ?? null, hasRange: !!s?.range });
       setSelection(s);
       if (s) setActive(null);
     });
@@ -684,6 +687,7 @@ export function AnnotationLayer({
   const [refDialog, setRefDialog] = useState<{ phrase: string; existing: RefRow | null } | null>(null);
   const [refPopup, setRefPopup] = useState<{ row: RefRow; rect: AnchorRect } | null>(null);
   useEffect(() => {
+    diagTrace("REG      AnnotationLayer refHit effect", { ctrlPresent: !!ctrlRef.current, registers: ["onReferenceHit"] });
     ctrlRef.current?.onReferenceHit((hit) => {
       const row = useReferences.getState().byId(hit.refId);
       if (row) setRefPopup({ row, rect: hit.rect });

@@ -158,12 +158,80 @@ macro_rules! sard_invoke_handler {
             tts::tts_edge_voices,
             tts::tts_stop,
             window_chrome::set_titlebar_theme,
+            probe_write,  // PROBE-ONLY
+            probe_finish, // PROBE-ONLY
+            probe_stage_font, // PROBE-ONLY
+            probe_stage_book, // PROBE-ONLY
+            probe_log,        // PROBE-ONLY
             $($diag_cmd),*
         ])
     };
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+// ---------------------------------------------------------------------------------------------
+// PROBE-ONLY (throwaway branch). Receives the runtime probe's findings, writes them where the CI
+// job can read them, and stops the app. Never merged.
+#[tauri::command]
+fn probe_write(payload: String) {
+    let out = std::env::var("SARD_PROBE_OUT").unwrap_or_else(|_| "probe-out.json".into());
+    let _ = std::fs::write(&out, &payload);
+    println!("[probe] wrote {} bytes via ipc", payload.len());
+}
+
+// PROBE-ONLY (throwaway branch): stage a real font file inside app data so the runtime gate can ask
+// whether the reader host can load one over `asset:`. The bytes come from the compiled bundle via
+// the asset resolver, so nothing is downloaded and no fixture is added to the repository. The asset
+// protocol's scope is $APPDATA/**, which is why it has to be written there to be reachable at all.
+#[tauri::command]
+fn probe_stage_font(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+    let asset = app
+        .asset_resolver()
+        .get("fonts/Amiri-Regular.ttf".into())
+        .ok_or("the bundle has no fonts/Amiri-Regular.ttf")?;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("probe-font.ttf");
+    std::fs::write(&path, &asset.bytes).map_err(|e| e.to_string())?;
+    println!("[probe] staged font at {}", path.display());
+    Ok(path.to_string_lossy().into_owned())
+}
+
+// PROBE-ONLY: stage a real EPUB inside app data so the gate can open it through the SAME url the
+// application uses — `convertFileSrc` over the asset protocol. Every earlier run opened a
+// same-origin path, which never exercised that fetch at all.
+// DIAGNOSTIC (throwaway): the frontend's lifecycle trace, straight to stdout so a tester running
+// the AppImage from a terminal sees it, and so CI can capture it.
+#[tauri::command]
+fn probe_log(line: String) {
+    println!("[trace] {line}");
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+}
+
+#[tauri::command]
+fn probe_stage_book(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+    let asset = app
+        .asset_resolver()
+        .get("__probe/book.epub".into())
+        .ok_or("the bundle has no __probe/book.epub")?;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("probe-book.epub");
+    std::fs::write(&path, &asset.bytes).map_err(|e| e.to_string())?;
+    println!("[probe] staged book at {}", path.display());
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn probe_finish(payload: String, app: tauri::AppHandle) {
+    probe_write(payload);
+    println!("[probe] finish");
+    app.exit(0);
+}
+
 pub fn run() {
     // RAWY-111: two rustls crypto providers (aws-lc-rs via msedge-tts + ring via ureq 3) are compiled
     // in, so rustls' auto-detection is ambiguous and would PANIC on the first TLS handshake (the Edge
@@ -264,6 +332,54 @@ pub fn run() {
             // Windows event and costs nothing until a session or a device actually changes.
             #[cfg(target_os = "windows")]
             audio_identity::start();
+
+            // PROBE-ONLY (throwaway branch): open the runtime probe page instead of relying on the
+            // main UI. It mounts the real sardhost: origin and reports through the command above.
+            if std::env::var("SARD_PROBE").is_ok() {
+                // No query string: `WebviewUrl::App` takes a RELATIVE path, and a value containing
+                // "://" makes the parse produce something that never loads. probe.js carries the
+                // default third-origin port instead.
+                tauri::WebviewWindowBuilder::new(app, "probe",
+                    tauri::WebviewUrl::App("__probe/index.html".into()))
+                    .title("sard-step1-probe")
+                    .inner_size(1200.0, 900.0)
+                    .build()?;
+                println!("[probe] probe window opened");
+            }
+            // DIAGNOSTIC (throwaway): put one real book in the library so the REAL application UI
+            // has something to open. Driving the product's own flow is the only instrument that
+            // reproduces what the tester sees; a probe page with its own layout does not.
+            //
+            // It uses `conn` directly rather than `app.state()`, because the state is not managed
+            // until the line below — asking for it first panics inside Tauri, which is exactly what
+            // the first attempt did.
+            if std::env::var("SARD_SEED_BOOK").is_ok() {
+                // The CSS subject deliberately: an external stylesheet, a failing @import, a missing
+                // embedded font and a missing image. The plain subject has none of those, and a real
+                // book always does — so opening the plain one proves less than it appears to.
+                if let Some(asset) = app.asset_resolver().get("__probe/book-css.epub".into()) {
+                    let src = app_data_dir.join("seed-book.epub");
+                    if std::fs::write(&src, &asset.bytes).is_ok() {
+                        let res = books::import_books(
+                            &conn,
+                            &app_data_dir,
+                            &[src.to_string_lossy().into_owned()],
+                        );
+                        // The language chooser is the FIRST screen on a fresh profile, so without
+                        // this the run never reaches the library at all — measured: the first
+                        // attempt screenshotted the onboarding picker. Setting the key is more
+                        // reliable than clicking a button whose position we would have to guess.
+                        let _ = conn.execute(
+                            "INSERT INTO settings(key, value) VALUES('ui_lang', 'ar')
+                             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                            [],
+                        );
+                        println!("[trace] seeded library: {:?}", res.first().map(|r| (&r.status, &r.id)));
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                    }
+                }
+            }
 
             app.manage(db::AppState {
                 db: std::sync::Mutex::new(conn),

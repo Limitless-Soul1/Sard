@@ -8,6 +8,14 @@ import { FoliateController, type SearchHit, type SelectionInfo, type TocEntry } 
 // The reader for THIS platform: the same object as always on Windows, the hosted transport on
 // WebKit. This import is the only place the reader's construction differs.
 import { createReader, needsReaderHost } from "../../reader-transport";
+// DIAGNOSTIC — throwaway branch. Sends the lifecycle trace to stdout via the core, because a
+// WebKitGTK console does not reach the terminal the tester is watching.
+import { setTraceSink, trace as diagTrace } from "../../reader-transport/trace";
+setTraceSink((line) => {
+  const inv = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: (c: string, a?: unknown) => Promise<unknown> } })
+    .__TAURI_INTERNALS__?.invoke;
+  try { void inv?.("probe_log", { line }); } catch { /* nothing to do about a failing logger */ }
+});
 import { PhotoComposer } from "../photo/PhotoComposer";
 import type { CardData } from "../photo/photo";
 import { useReader } from "../../reader-engine/store";
@@ -532,6 +540,7 @@ export function Reader({
         initialStyle = { ...initialStyle, flowMode: "scrolled" };
       }
 
+      diagTrace("APP      openBook reached the reader binding");
       // On the hosted path this is the first moment the reader is actually needed, and the awaits
       // above have already given the host time to load. On Windows `ctrlRef.current` was assigned
       // during the first render and this resolves to it without awaiting anything.
@@ -539,6 +548,7 @@ export function Reader({
         ctrlRef.current = await hostedRef.current;
         setReaderReady(true); // the effects below depend on this and register on the next render
       }
+      diagTrace("APP      reader bound", { hosted: !!hostedRef.current, readerReadyFlipped: true });
       if (stale()) return;
       const ctrl = ctrlRef.current!;
       ctrl.onRelocate(({ cfi, fraction, chapterLabel, chapterHref, location, pageLabel }) => {
@@ -655,6 +665,7 @@ export function Reader({
         bookScript: meta?.script ?? null, // WP-5A: what the read-aloud pre-flight gates on
       });
       if (targetIsPdf) setPdfPageCount(ctrl.pdfPageCount); // RAWY-87: total pages for the position readout
+      diagTrace("APP      after open", { dir: (ctrl as unknown as { dir?: string }).dir ?? null, toc: ctrl.getToc().length, pdfPages: (ctrl as unknown as { pdfPageCount?: number }).pdfPageCount ?? null });
       setToc(ctrl.getToc()); // chapters panel (RAWY-21)
       setTocSecMap(ctrl.tocHrefSectionMap()); // RAWY-256: one pass, reused by every marker render
       // RESILIENCE-1 / WP-6A: this book's own contents are useless (WP-2 measured it). Build a usable
@@ -962,6 +973,8 @@ export function Reader({
   // are stable, so this registers once and stays valid across section loads.
   useEffect(() => {
     const ctrl = ctrlRef.current;
+    // DIAGNOSTIC: does this mount-time registration find a controller at all?
+    diagTrace("REG      Reader mount effect", { ctrlPresent: !!ctrl, registers: ["onActivity", "onSpace", "onArrow", "onScrollIntent", "onZoomIntent", "onReadingRedraw"] });
     ctrl?.onActivity((x, y) => signalMove(x, y));
     // RAWY-180 (Part B): Space with focus inside the reading frame toggles read-aloud when a session is
     // active (returns true → the frame swallows the key); otherwise Space keeps scrolling/paging.

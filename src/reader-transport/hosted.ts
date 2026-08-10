@@ -18,6 +18,7 @@ import { sameSection } from "../reader-engine/cfiSection";
 import type { FoliateController } from "../reader-engine/FoliateController";
 import { CROSSING } from "./surface";
 import type { Mirror, Push, Reply, Request, RequestBody } from "./protocol";
+import { trace, step as traceStep } from "./trace"; // DIAGNOSTIC — throwaway branch
 
 const EMPTY_MIRROR: Mirror = {
   currentSectionIndex: 0,
@@ -96,7 +97,7 @@ export class HostedReader {
     if (this.mounting) return this.mounting;
     this.mounting = (async () => {
       const { mountHostIn } = await import("./index");
-      const { port, frame } = await mountHostIn(container);
+      const { port, frame } = await traceStep("host.mount+handshake", 15000, () => mountHostIn(container));
       this.port = port;
       this.frame = frame;
       port.onmessage = (e: MessageEvent<Reply | Push>) => this.receive(e.data);
@@ -107,10 +108,18 @@ export class HostedReader {
 
   private receive(msg: Reply | Push): void {
     if ("kind" in msg) {
-      if (msg.kind === "state") this.mirror = msg.mirror;
-      else if (msg.kind === "event") this.handlers.get(msg.name)?.(...msg.args);
+      if (msg.kind === "state") {
+        this.mirror = msg.mirror;
+        trace("MIRROR   push", { toc: msg.mirror.toc.length, section: msg.mirror.currentSectionIndex, dir: msg.mirror.dir, fixed: msg.mirror.isFixedLayout });
+      } else if (msg.kind === "event") {
+        trace(`EVENT    ${msg.name}`);
+        this.handlers.get(msg.name)?.(...msg.args);
+      } else if ((msg as unknown as { kind: string }).kind === "trace") {
+        trace(`HOST     ${(msg as unknown as { line: string }).line}`);
+      }
       return;
     }
+    trace(`REPLY    id=${msg.id} ok=${msg.ok}${msg.ok ? "" : " " + String(msg.error).slice(0, 160)}`);
     const p = this.pending.get(msg.id);
     if (!p) return;
     this.pending.delete(msg.id);
@@ -153,11 +162,16 @@ export class HostedReader {
    * (1257 ms vs 1278 ms on a 14.1 MB EPUB). `container` is ignored: the host owns its own.
    */
   async open(source: string, container: HTMLElement, opts: unknown): Promise<void> {
-    // The container is USED, not ignored. Ignoring it is what produced a full-window overlay that
-    // hid the toolbar and showed a blank page on a real Linux machine.
+    trace("OPEN     called", { source: String(source).slice(0, 120), container: container?.className });
     await this.ensureHost(container);
-    const bytes = await (await fetch(source)).arrayBuffer();
-    await this.send({ kind: "open", bytes, opts }, [bytes]);
+    const bytes = await traceStep("open.fetchBytes", 20000, async () => {
+      const r = await fetch(source);
+      const b = await r.arrayBuffer();
+      trace("OPEN     bytes", { status: r.status, bytes: b.byteLength });
+      return b;
+    });
+    await traceStep("open.hostOpen", 60000, () => this.send({ kind: "open", bytes, opts }, [bytes]));
+    trace("OPEN     resolved", { toc: this.mirror.toc.length, section: this.mirror.currentSectionIndex });
   }
 
   // ---- the three decisions that cannot wait ------------------------------------------------------

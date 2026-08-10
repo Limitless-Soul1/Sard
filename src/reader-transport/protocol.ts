@@ -72,8 +72,19 @@ export interface Mirror {
   pdfTextQuality: unknown;
   pdfRenderedScale: number;
   pdfHasSpeakableText: boolean;
-  /** Needed by `handleNavKey`, which must decide locally. */
+  /**
+   * The engine's public GETTERS. They are read as properties, not called, so the proxy cannot answer
+   * them with a forwarding function — it did, and `ctrl.isFixedLayout` came back as a function that
+   * JSON.stringify turned into undefined. Every one of them is mirrored.
+   */
   isFixedLayout: boolean;
+  isScrolled: boolean;
+  readingScrollTop: number;
+  pdfPageCount: number;
+  furthestPosition: string | null;
+  dir: string | undefined;
+  title: string | undefined;
+  author: string | undefined;
   toc: unknown[];
   /** `tocHrefSectionMap()` with its default argument, as entries — a Map does not survive cloning. */
   tocHrefSection: [string, number][];

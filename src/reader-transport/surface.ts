@@ -24,7 +24,12 @@ export type Crossing =
   /** The host registers a callback and expects a SYNCHRONOUS answer. A port cannot answer in time. */
   | "sync-callback"
   /** Signature carries a live DOM object. It cannot be cloned, so it does not cross. */
-  | "dom-bound";
+  | "dom-bound"
+  /**
+   * Takes callbacks and an AbortSignal to report progress WHILE it runs. Neither can be cloned, so
+   * the call crosses without them and the host pushes progress back as events.
+   */
+  | "progressive";
 
 /**
  * The classification, one entry per public member of `FoliateController`.
@@ -49,6 +54,20 @@ export const CROSSING: Readonly<Record<string, Crossing>> = Object.freeze({
   pdfTextQuality: "mirrored",
   pdfRenderedScale: "mirrored",
   pdfHasSpeakableText: "mirrored",
+
+  // ---- getters: read as properties, so only the mirror can answer them ---------------------------
+  // A getter is never called, so a forwarding function is not a slow answer — it is the wrong VALUE.
+  // MEASURED on WebKitGTK before these were classified: `ctrl.isFixedLayout` came back as a function,
+  // every consumer saw something truthy, and the PDF path reported `undefined`. They were invisible
+  // to the guard as well, because `get name()` does not look like `name(`.
+  isFixedLayout: "mirrored",
+  isScrolled: "mirrored",
+  readingScrollTop: "mirrored",
+  pdfPageCount: "mirrored",
+  furthestPosition: "mirrored",
+  dir: "mirrored",
+  title: "mirrored",
+  author: "mirrored",
 
   // ---- decided in the application ---------------------------------------------------------------
   // `handleNavKey` is called from a keydown listener and its answer drives `preventDefault()`, so it
@@ -77,6 +96,15 @@ export const CROSSING: Readonly<Record<string, Crossing>> = Object.freeze({
   // the consequence. Neither is re-implemented anywhere.
   onArrow: "sync-callback",
   onSpace: "sync-callback",
+
+  // ---- reports progress while it runs -----------------------------------------------------------
+  // `searchBook(query, { signal, onProgress, onBatch })` carries two functions and an AbortSignal
+  // inside an options object. It was invisible to the guard twice over — its signature spans several
+  // lines, and the callbacks are nested rather than named `cb` — so it would have reached the hosted
+  // transport and thrown DataCloneError the first time anyone searched. The query crosses alone; the
+  // host runs the search with its own callbacks and pushes each batch back, so results still arrive
+  // progressively rather than all at the end.
+  searchBook: "progressive",
 
   // ---- carries a live DOM object ----------------------------------------------------------------
   // `open` takes the container to render into. Hosted, the host supplies its own and the parameter

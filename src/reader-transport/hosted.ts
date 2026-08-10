@@ -29,6 +29,13 @@ const EMPTY_MIRROR: Mirror = {
   pdfRenderedScale: 1,
   pdfHasSpeakableText: false,
   isFixedLayout: false,
+  isScrolled: true,
+  readingScrollTop: 0,
+  pdfPageCount: 0,
+  furthestPosition: null,
+  dir: undefined,
+  title: undefined,
+  author: undefined,
   toc: [],
   tocHrefSection: [],
   ttsCursors: [],
@@ -51,6 +58,18 @@ const MIRRORED_DIRECT = {
   pdfRenderedScale: "pdfRenderedScale",
   pdfHasSpeakableText: "pdfHasSpeakableText",
 } as const satisfies Record<string, keyof Mirror>;
+
+/** The engine's public getters, read as properties and therefore always served from the mirror. */
+const GETTERS = [
+  "isFixedLayout",
+  "isScrolled",
+  "readingScrollTop",
+  "pdfPageCount",
+  "furthestPosition",
+  "dir",
+  "title",
+  "author",
+] as const;
 
 export class HostedReader {
   // Deliberately NOT `#private`. The proxy below has to read `handlers` and dispatch on the members
@@ -169,6 +188,30 @@ export class HostedReader {
     }) as (...a: unknown[]) => unknown);
   }
 
+  // ---- search: results arrive while it runs ------------------------------------------------------
+
+  /**
+   * `searchBook(query, { signal, onProgress, onBatch })` cannot be forwarded as written — two
+   * functions and an AbortSignal, none of them cloneable.
+   *
+   * The callbacks stay on this side, where the application put them. Only the query crosses; the
+   * host runs the search with callbacks of its own and pushes each batch back, so hits still appear
+   * progressively instead of all at the end. An abort crosses as a consequence, not as a signal.
+   */
+  searchBook(
+    query: string,
+    opts: { signal?: AbortSignal; onProgress?: (f: number) => void; onBatch?: (h: unknown[]) => void } = {},
+  ): Promise<unknown[]> {
+    if (opts.onProgress) this.handlers.set("search-progress", opts.onProgress as (...a: unknown[]) => unknown);
+    if (opts.onBatch) this.handlers.set("search-batch", opts.onBatch as (...a: unknown[]) => unknown);
+    opts.signal?.addEventListener("abort", () => this.tell("__searchAbort"), { once: true });
+    return this.send({ kind: "call", method: "searchBook", args: [query] }).then((v) => {
+      this.handlers.delete("search-progress");
+      this.handlers.delete("search-batch");
+      return (v ?? []) as unknown[];
+    });
+  }
+
   // ---- synchronous reads, answered from the mirror -----------------------------------------------
 
   getToc(): unknown[] {
@@ -199,6 +242,11 @@ export class HostedReader {
 
   getTtsCursor(i: number): unknown {
     return this.mirror.ttsCursors[i] ?? null;
+  }
+
+  /** A mirrored value read as a property rather than called. */
+  mirrorValue(key: keyof Mirror): unknown {
+    return this.mirror[key];
   }
 
   /** Reads the mirror for the eight members whose value it carries directly. */
@@ -232,6 +280,14 @@ export function hostedReader(port: MessagePort): FoliateController {
 
       // Declared on HostedReader: the decisions, the mirrored reads with arguments, `open`.
       if (prop in target) return Reflect.get(target, prop, receiver);
+
+      // GETTERS are read, not called. Returning a forwarding function for one is not a slow answer,
+      // it is a wrong VALUE: `ctrl.isFixedLayout` came back as a function and every consumer saw a
+      // truthy object. MEASURED on WebKitGTK — the PDF path reported `undefined` because
+      // JSON.stringify of a function is undefined.
+      if ((GETTERS as readonly string[]).includes(prop)) {
+        return target.mirrorValue(prop as keyof Mirror);
+      }
 
       // Mirrored, answered synchronously.
       if (prop in MIRRORED_DIRECT) {

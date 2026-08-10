@@ -44,6 +44,9 @@ function ensureStage(): HTMLElement {
 
 let bookUrl: string | null = null;
 
+// The in-flight search, so an abort from the application can reach it.
+let searchAbort: AbortController | null = null;
+
 // ---------------------------------------------------------------------------------------------
 // The mirror.
 // ---------------------------------------------------------------------------------------------
@@ -88,6 +91,13 @@ function buildMirror(): Mirror {
     pdfRenderedScale: safe(() => controller.pdfRenderedScale(), 1),
     pdfHasSpeakableText: safe(() => controller.pdfHasSpeakableText(), false),
     isFixedLayout: safe(() => controller.isFixedLayout, false),
+    isScrolled: safe(() => controller.isScrolled, true),
+    readingScrollTop: safe(() => controller.readingScrollTop, 0),
+    pdfPageCount: safe(() => controller.pdfPageCount, 0),
+    furthestPosition: safe(() => controller.furthestPosition, null),
+    dir: safe(() => controller.dir, undefined),
+    title: safe(() => controller.title, undefined),
+    author: safe(() => controller.author, undefined),
     toc: safe(() => controller.getToc() as unknown[], []),
     // A Map does not survive structured cloning; entries do.
     tocHrefSection: safe(() => [...controller.tocHrefSectionMap()], []),
@@ -190,6 +200,24 @@ async function run(msg: Request): Promise<unknown> {
     bookUrl = URL.createObjectURL(new Blob([msg.bytes]));
     await controller.open(bookUrl, ensureStage(), msg.opts as never);
     return { opened: true };
+  }
+
+  // Search reports progress WHILE it runs, and its callbacks cannot cross. The application keeps
+  // them; the host supplies its own and pushes each batch, so hits still arrive progressively.
+  if (msg.method === "searchBook") {
+    searchAbort?.abort();
+    searchAbort = new AbortController();
+    return cloneable(
+      await controller.searchBook(String(msg.args[0] ?? ""), {
+        signal: searchAbort.signal,
+        onProgress: (f) => push({ kind: "event", name: "search-progress", args: [f] }),
+        onBatch: (hits) => push({ kind: "event", name: "search-batch", args: [cloneable(hits)] }),
+      }),
+    );
+  }
+  if (msg.method === "__searchAbort") {
+    searchAbort?.abort();
+    return { aborted: true };
   }
 
   const fn = (controller as unknown as Record<string, unknown>)[msg.method];

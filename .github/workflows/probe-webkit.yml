@@ -21,13 +21,13 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with: { workspaces: ./src-tauri -> target }
       - run: npm ci
-      - name: Step 1 runtime probe
+      - name: Reader-host runtime gate
         run: |
-          chmod +x probe/run-step1.sh
-          ./probe/run-step1.sh
+          chmod +x probe/run-transport.sh
+          ./probe/run-transport.sh
       - name: Report
         if: always()
-        run: cat probe/out/STEP1.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "no report" >> "$GITHUB_STEP_SUMMARY"
+        run: cat probe/out/GATE.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "no report" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with: { name: step1-runtime, path: probe/out/ }

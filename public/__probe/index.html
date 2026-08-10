@@ -2,24 +2,24 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Step 1 runtime probe</title>
+<title>Reader-host runtime gate</title>
 <!-- PROBE-ONLY. Lives on the throwaway branch; never merged.
-     This page is the PRIVILEGED application origin. It mounts the real sardhost: origin produced by
-     the Step 1 handler and measures the boundary from this side, while the host measures it from
-     the other. Negative controls run here too: if the app itself cannot reach a URL, then the
-     host's failure to reach it proves nothing. -->
-<style>html,body{margin:0;height:100%;font:12px sans-serif}#host{width:100%;height:70%;border:2px solid #333}</style>
+     This page is the PRIVILEGED application origin. It mounts the real sardhost: origin, hands it a
+     real EPUB over a MessagePort, and measures the boundary from this side while the host measures
+     it from the other.
+
+     The host frame FILLS THE WINDOW. The harness delivers a genuine X11 click at a coordinate, so
+     the book has to actually be under that coordinate — a small or offset frame would make a
+     negative result meaningless. Nothing else is on the page for the same reason: an earlier probe
+     put a large off-screen log element in the way and it silently swallowed the very clicks being
+     measured. -->
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #222; }
+  #host { display: block; width: 100vw; height: 100vh; border: 0; }
+</style>
 </head>
 <body>
-<!-- LIVENESS BEACON — static markup, no JavaScript, deliberately first in the body.
-     Four iterations reported nothing and could not distinguish "the script did not run" from "the
-     web process never rendered". This iframe is fetched by the RENDERER itself, so a request logged
-     by the Rust handler proves the web process is alive regardless of whether any script executes.
-     An <img> or <link> beacon would prove nothing here: the application CSP allows `sardhost:` under
-     frame-src only, so those would be refused by policy rather than by liveness. -->
-<iframe src="sardhost://localhost/index.html" width="1" height="1" title="liveness"></iframe>
-<iframe id="host"></iframe>
-<pre id="log"></pre>
+<iframe id="host" title="reader host"></iframe>
 <script src="/__probe/probe.js"></script>
 </body>
 </html>

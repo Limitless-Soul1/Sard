@@ -86,11 +86,43 @@ const diagOffPlugin = {
 // @ts-expect-error process is a nodejs global
 const BUILD_ID = process.env.SARD_BUILD_ID || "UNSET — built directly, not through the Sard build scripts";
 
+// THE READER-HOST BUNDLE — a SECOND build of this same config, not a second configuration.
+//
+// The host runs the reader engine inside an isolated origin on WebKit (see src-tauri/src/bookhost.rs).
+// That code is the same `src/reader-engine` the application uses, so it needs the same `@diag`
+// aliasing, the same substitution and the same build id — and getting those from a separate config
+// file would mean two places to keep in step. A target switch reuses every plugin above verbatim.
+//
+// `inlineDynamicImports` makes the result ONE self-contained file. Shared chunks would be emitted to
+// `assets/`, which the host origin deliberately does not serve — its allow-list names each path it
+// answers, and widening it to `/assets/*.js` would hand the book origin the application's own bundle.
+// @ts-expect-error process is a nodejs global
+const IS_READER_HOST = process.env.SARD_BUILD_TARGET === "reader-host";
+
+const READER_HOST_BUILD = {
+  outDir: "dist/reader-host",
+  emptyOutDir: false, // the static index.html is already there, copied from public/
+  rollupOptions: {
+    input: resolve(import.meta.dirname, "src/reader-host/main.ts"),
+    output: {
+      format: "es" as const,
+      entryFileNames: "bundle.js", // fixed, because bookhost.rs allow-lists this exact path
+      inlineDynamicImports: true,
+    },
+  },
+};
+
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: IS_DIAG ? [diagAliasPlugin, react()] : [diagAliasPlugin, diagOffPlugin, react()],
 
   define: { __SARD_BUILD_ID__: JSON.stringify(BUILD_ID) },
+
+  // `publicDir: false` matters as much as the build block. Vite copies the public directory into
+  // outDir on EVERY build, so without this the host build copies all of `public/` a second time into
+  // `dist/reader-host/` — fonts, the whole foliate-js tree, everything — producing a duplicate of the
+  // bundle's own assets nested inside it. The application build already placed those files once.
+  ...(IS_READER_HOST ? { build: READER_HOST_BUILD, publicDir: false as const } : {}),
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

@@ -149,8 +149,19 @@ struct Imported {
     provenance: Option<String>,
 }
 
+/// Distinguishes two calls that build the SAME bytes. The working directory used to be keyed on the
+/// EPUB's hash alone, and several cases here import a byte-identical `Build::default()` book — so
+/// two of them landed on one directory and, running on separate threads as cargo does by default,
+/// one called `remove_dir_all` while the other was mid-import. The loser read no row back and saw
+/// every column as `None`, which reads exactly like a product bug in whichever assertion got there
+/// first. It surfaced as `spine_fragmented: None` where `Some(0)` was expected, and it did not
+/// reproduce on the next run. The counter makes each call's directory its own.
+static IMPORT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 fn import(bytes: &[u8], filename: &str) -> Imported {
-    let base = std::env::temp_dir().join(format!("sard_wp2_{}", &hex_sha256(bytes)[..16]));
+    let seq = IMPORT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let base = std::env::temp_dir()
+        .join(format!("sard_wp2_{seq}_{filename}_{}", &hex_sha256(bytes)[..16]));
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(base.join("src")).unwrap();
     let src = base.join("src").join(format!("{filename}.epub"));

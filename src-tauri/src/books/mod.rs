@@ -12,7 +12,16 @@
 
 pub mod compat;
 
-#[cfg(test)]
+// The corpus tests read a book corpus that is not distributed, so `corpus_tests.rs` exists only in
+// the private workspace — it was dropped when the public tree was split out, while this declaration
+// was left behind. `mod` cannot be made conditional on a file existing, so an unqualified
+// declaration made `cargo test` fail to COMPILE in every tree that lacks the file: not one Rust test
+// could run anywhere, including the 102 that have nothing to do with the corpus.
+//
+// A feature gate is used rather than deleting the line, because the two trees share this file
+// byte-for-byte; deleting it here would diverge them and the breakage would return on the next sync.
+// The workspace that has the corpus runs them with `--features corpus-tests`.
+#[cfg(all(test, feature = "corpus-tests"))]
 mod corpus_tests;
 #[cfg(test)]
 mod wp2_tests;

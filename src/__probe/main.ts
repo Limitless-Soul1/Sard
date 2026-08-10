@@ -246,15 +246,46 @@ async function main(): Promise<void> {
     const st = await ctrl.trackStats("ar");
     return { units: (st as { units?: number }).units ?? null, withRange: (st as { withRange?: number }).withRange ?? null };
   });
-  await step("showReadingHighlight", () => {
-    ctrl.showReadingHighlight(0);
-    return true;
+  // REAL AUDIO. `tts_synthesize` is an application-side IPC command — it never crosses the reader
+  // host — but synthesising a sentence for real is the only way to say the read-aloud pipeline works
+  // in this environment rather than merely that its plumbing exists. A network failure here is a
+  // property of the runner, not of the transport, and is reported as such.
+  await step("tts.synthesize", async () => {
+    const inv3 = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: (c: string, a?: unknown) => Promise<unknown> } })
+      .__TAURI_INTERNALS__?.invoke;
+    if (!inv3) return "no invoke";
+    try {
+      const res = (await inv3("tts_synthesize", {
+        engine: "edge",
+        id: "probe-1",
+        text: "السلام عليكم ورحمة الله وبركاته",
+      })) as ArrayBuffer | { byteLength?: number };
+      const len = res instanceof ArrayBuffer ? res.byteLength : (res?.byteLength ?? -1);
+      return { audioBytes: len };
+    } catch (e) {
+      return `NETWORK-OR-ENGINE:${e instanceof Error ? e.message.slice(0, 90) : String(e).slice(0, 90)}`;
+    }
   });
+
+  // THE SPOTLIGHT, ADVANCED AS PLAYBACK WOULD. What crosses the host during read-aloud is the
+  // tracking, not the audio, so this is the transport-relevant half measured for real: each sentence
+  // must produce painted geometry in the overlayer, and the paint must move between sentences.
+  const spotlight: { i: number; painted: number | null; areaPx: number | null }[] = [];
+  for (const i of [0, 1, 2]) {
+    ctrl.showReadingHighlight(i);
+    await new Promise((r) => setTimeout(r, 700));
+    const ov = (R.surface["hostSelfcheck"] as { overlay?: { painted?: number; areaPx?: number } } | undefined)?.overlay;
+    spotlight.push({ i, painted: ov?.painted ?? null, areaPx: ov?.areaPx ?? null });
+  }
+  R.surface["tts.spotlight"] = spotlight;
   await step("ttsCursorAfterTrack", () => ctrl.getTtsCursor(0));
   await step("clearReadingHighlight", () => {
     ctrl.clearReadingHighlight();
     return true;
   });
+  await new Promise((r) => setTimeout(r, 700));
+  R.surface["tts.spotlightAfterClear"] =
+    (R.surface["hostSelfcheck"] as { overlay?: { painted?: number } } | undefined)?.overlay?.painted ?? null;
   emit("annotations");
 
 
@@ -291,6 +322,23 @@ async function main(): Promise<void> {
   await step("pdf.textQuality", () => ctrl.pdfTextQuality());
   await step("pdf.hasSpeakableText", () => ctrl.pdfHasSpeakableText());
   await step("pdf.renderedScale", () => ctrl.pdfRenderedScale());
+  R.surface["pdf.renderedSurface"] =
+    (R.surface["hostSelfcheck"] as { rendered?: unknown } | undefined)?.rendered ?? null;
+
+  // PDF INTERACTION. The text layer is switched off at the product level (`PDF_TTS_ENABLED = false`,
+  // and FoliateController returns early on it), so `coverage: 0` is the correct answer rather than a
+  // defect — there is no text layer to test. What a reader actually does with a PDF is turn pages
+  // and zoom, and both go through the transport.
+  await step("pdf.navKey", () => ctrl.handleNavKey("ArrowLeft"));
+  await new Promise((r) => setTimeout(r, 1500));
+  await step("pdf.zoom", () => {
+    ctrl.setPdfZoom("fit-width");
+    return true;
+  });
+  await new Promise((r) => setTimeout(r, 1500));
+  await step("pdf.scaleAfterZoom", () => ctrl.pdfRenderedScale());
+  R.surface["pdf.surfaceAfterInteraction"] =
+    (R.surface["hostSelfcheck"] as { rendered?: unknown } | undefined)?.rendered ?? null;
   sync();
   emit("final");
   const inv = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: (c: string, a: unknown) => unknown } })

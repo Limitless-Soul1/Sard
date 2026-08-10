@@ -231,6 +231,29 @@ crit.append(("26 the PDF page rendered to a sized surface",
              "PASS" if (rendered.get("sized") or 0) > 0 else (UNKNOWN if not rendered else "FAIL"),
              f"imgOrCanvas={rendered.get('imgOrCanvas')} sized={rendered.get('sized')}"))
 
+spot = surface.get("tts.spotlight") or []
+spot_painted = [x.get("painted") or 0 for x in spot if isinstance(x, dict)]
+crit.append(("27 the TTS spotlight paints for each sentence",
+             "PASS" if spot_painted and all(p > 0 for p in spot_painted) else
+             (UNKNOWN if not spot else "FAIL"),
+             f"painted per sentence={spot_painted} afterClear={surface.get('tts.spotlightAfterClear')}"))
+
+audio = surface.get("tts.synthesize")
+if isinstance(audio, dict) and (audio.get("audioBytes") or 0) > 0:
+    v, why = "PASS", f"{audio['audioBytes']} bytes of audio synthesised"
+elif isinstance(audio, str) and audio.startswith("NETWORK-OR-ENGINE"):
+    v, why = UNKNOWN, f"the runner could not reach the speech service: {audio[:80]}"
+else:
+    v, why = (UNKNOWN if audio is None else "FAIL"), str(audio)[:100]
+crit.append(("28 read-aloud audio is really synthesised", v, why))
+
+crit.append(("29 the PDF responds to navigation and zoom",
+             "PASS" if surface.get("pdf.navKey") is True and okstep("pdf.zoom")
+             and isinstance(surface.get("pdf.scaleAfterZoom"), (int, float))
+             else (UNKNOWN if "pdf.navKey" not in surface else "FAIL"),
+             f"navKey={surface.get('pdf.navKey')} zoom={surface.get('pdf.zoom')} "
+             f"scale={surface.get('pdf.scaleAfterZoom')} surface={json.dumps(surface.get('pdf.surfaceAfterInteraction'))[:40]}"))
+
 crit.append(("23 a user font reaches the host over asset:",
              "PASS" if font == "LOADED" else (UNKNOWN if font is None else "FAIL"),
              str(font)))

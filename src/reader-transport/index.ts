@@ -27,15 +27,27 @@ export function needsReaderHost(ua: string = navigator.userAgent): boolean {
   return /AppleWebKit/.test(ua) && !/Chrome|Chromium|Edg\//.test(ua);
 }
 
-/** The host document, mounted once and kept for the life of the window. */
-let hostFrame: HTMLIFrameElement | null = null;
-
-function mountHost(): Promise<MessagePort> {
+/**
+ * Create the host inside the container the reader gave us, and complete the handshake.
+ *
+ * WHY THE CONTAINER, AND WHY SO LATE. The first version of this appended the frame to
+ * `document.body` at `position:absolute; inset:0`, intending the reading area to move it into place
+ * later. Nothing ever did — the accessor written for that was never called — so on a real Linux
+ * machine the host became a full-window overlay: it covered the toolbar, which vanished, and showed
+ * its own empty background, which read as a blank page. The reader was working the whole time,
+ * behind it.
+ *
+ * Moving the frame afterwards is not an option and that is the reason this is deferred rather than
+ * fixed in place: re-parenting an iframe reloads its document, which would destroy the host and the
+ * port with it. So the frame is created where it belongs, once, at the moment the reader first has a
+ * container to give — which is `open()`.
+ */
+export function mountHostIn(container: HTMLElement): Promise<{ port: MessagePort; frame: HTMLIFrameElement }> {
   return new Promise((resolve, reject) => {
     const frame = document.createElement("iframe");
-    hostFrame = frame;
     frame.setAttribute("title", "reader");
-    frame.style.cssText = "position:absolute;inset:0;width:100%;height:100%;border:0";
+    // Fills the reading area it was given, and nothing beyond it.
+    frame.style.cssText = "display:block;width:100%;height:100%;border:0;background:transparent";
 
     const onMessage = (e: MessageEvent) => {
       if (e.source !== frame.contentWindow) return; // `e.origin` cannot authenticate; `e.source` can
@@ -43,32 +55,27 @@ function mountHost(): Promise<MessagePort> {
       removeEventListener("message", onMessage);
       const channel = new MessageChannel();
       frame.contentWindow?.postMessage({ __sardHostInit: true }, "*", [channel.port2]);
-      resolve(channel.port1);
+      resolve({ port: channel.port1, frame });
     };
     addEventListener("message", onMessage);
     frame.addEventListener("error", () => reject(new Error("the reader host failed to load")));
-    // PROBE-ONLY (throwaway branch): the runtime gate needs the host's boundary self-check running
-    // inside the REAL host, and the self-check is gated on `?selfcheck=1`. Nothing sets this global
-    // on develop, so the production URL is exactly the string above.
+
+    // PROBE-ONLY hook on the throwaway branch; nothing sets this in a shipped build.
     const probe = (globalThis as { __sardHostSelfcheck?: boolean }).__sardHostSelfcheck;
     frame.src = probe ? "sardhost://localhost/?selfcheck=1" : "sardhost://localhost/";
-    document.body.appendChild(frame);
+    // In the container BEFORE it loads. See above: it can never be moved afterwards.
+    container.replaceChildren(frame);
   });
 }
 
 /**
  * The reader for this platform.
  *
- * Windows resolves immediately with the object it has always used. The hosted path has to wait for
- * the host document to announce itself, which is why this is asynchronous on both — a signature that
- * differs by platform would push the difference into the caller.
+ * Windows resolves immediately with the object it has always used. The hosted reader is returned
+ * immediately too — it has no host yet, and creates one the first time `open()` gives it somewhere
+ * to put it.
  */
 export async function createReader(): Promise<FoliateController> {
   if (!needsReaderHost()) return new FoliateController();
-  return hostedReader(await mountHost());
-}
-
-/** The frame the host runs in, for the reading area to place. Null on the direct path. */
-export function readerHostFrame(): HTMLIFrameElement | null {
-  return hostFrame;
+  return hostedReader();
 }

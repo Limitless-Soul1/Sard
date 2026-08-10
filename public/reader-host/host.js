@@ -148,6 +148,8 @@
   // something when something real was clicked, so the harness drives a genuine X11 click with
   // xdotool and reads these counters afterwards. A synthetic dispatchEvent would prove nothing at
   // all, because the bug is in DELIVERY, not in dispatch.
+  R.overlay = null;
+  R.rendered = null;
   R.input = { sandbox: null, docsInstrumented: 0, pointerdown: 0, mousedown: 0, click: 0, selectionchange: 0 };
 
   // THE POSITIVE CONTROL, and the run that lacked it is why it is here.
@@ -205,6 +207,51 @@
         } catch (e) { /* frameElement across the boundary */ }
       }
       instrument(doc);
+
+      // WHAT IS ACTUALLY DRAWN.
+      //
+      // A highlight crossing the transport and a highlight APPEARING are different claims, and only
+      // the second one is what a reader sees. foliate draws marks as SVG in the overlayer, so the
+      // shapes are countable and measurable: a mark that resolved to no geometry produces no rect,
+      // and a CFI that pointed nowhere would look exactly like a working transport.
+      try {
+        var ov = contents[i] && contents[i].overlayer;
+        var svg = ov && ov.element;
+        if (svg) {
+          var shapes = svg.querySelectorAll("rect, path, polygon");
+          var painted = 0;
+          var area = 0;
+          for (var s = 0; s < shapes.length; s++) {
+            var box = shapes[s].getBoundingClientRect();
+            if (box.width > 0 && box.height > 0) { painted++; area += box.width * box.height; }
+          }
+          R.overlay = {
+            shapes: shapes.length,
+            painted: painted,
+            areaPx: Math.round(area),
+            fills: (function () {
+              var out = [];
+              for (var f = 0; f < shapes.length && f < 6; f++) {
+                out.push(shapes[f].getAttribute("fill") || shapes[f].style.fill || "none");
+              }
+              return out.join(",");
+            })(),
+          };
+          write();
+        }
+      } catch (e) { /* no overlayer yet */ }
+
+      // The PDF page is drawn to a canvas and copied to an <img> (VENDOR patch 4). Its presence and
+      // size are the only proof the fixed-layout path rendered anything at all.
+      try {
+        var imgs = doc.querySelectorAll("img, canvas");
+        var big = 0;
+        for (var k = 0; k < imgs.length; k++) {
+          var r = imgs[k].getBoundingClientRect();
+          if (r.width > 50 && r.height > 50) big++;
+        }
+        if (imgs.length) { R.rendered = { imgOrCanvas: imgs.length, sized: big }; write(); }
+      } catch (e) { /* ignore */ }
     }
   }, 250);
 })();

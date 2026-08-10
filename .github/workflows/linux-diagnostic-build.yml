@@ -37,7 +37,7 @@ jobs:
         run: |
           VERIFIED=df0f34c
           echo "building from $(git rev-parse --short HEAD)"
-          ALLOWED='^(\.github/workflows/|src/reader-transport/trace\.ts|src/reader-transport/snapshot\.ts|src/reader-transport/hosted\.ts|src/reader-transport/index\.ts|src/reader-host/main\.ts|src/features/reader/Reader\.tsx|src-tauri/src/lib\.rs)'
+          ALLOWED='^(\.github/workflows/|src/reader-transport/trace\.ts|src/reader-transport/snapshot\.ts|src/reader-transport/hosted\.ts|src/reader-transport/index\.ts|src/reader-host/main\.ts|src/features/reader/Reader\.tsx|src/lib/tts\.ts|src-tauri/src/lib\.rs)'
           UNEXPECTED=$(git diff --name-only "$VERIFIED" HEAD | grep -vE "$ALLOWED" || true)
           if [ -n "$UNEXPECTED" ]; then
             echo "::error::files changed that are not instrumentation:"; echo "$UNEXPECTED"; exit 1

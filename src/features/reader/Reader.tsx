@@ -60,6 +60,7 @@ import { AnnotationsPanel } from "./AnnotationsPanel";
 import { PhotoBasketTray } from "./PhotoBasketTray";
 import { usePhotoBasket } from "./photoBasket";
 import { ChaptersPanel } from "./ChaptersPanel";
+import { isOpening } from "./openingState";
 import { SearchPanel } from "./SearchPanel";
 import { PageBookmark } from "./PageBookmark";
 import { useAnnotations } from "./annotationsStore";
@@ -312,6 +313,10 @@ export function Reader({
   const ttsWordIndex = useTts((s) => s.wordIndex); // RAWY-127: active word (drives the karaoke pill)
 
   const { status, dir, cfi, fraction, chapterLabel, chapterHref, error, style, bookTitle, location, pageLabel } = useReader();
+  // The book is still being opened — the page has nothing to show, and the contents are not yet
+  // known. Both surfaces below read this ONE value so they can never disagree; see openingState.ts
+  // for why an empty TOC cannot answer the question by itself.
+  const opening = isOpening(status);
   // RAWY-43: unified (all books share one style) vs per-book. Drives where changes are written
   // and how a book's effective style/theme is resolved.
   const scope = useStyleScope((s) => s.scope);
@@ -2088,6 +2093,17 @@ export function Reader({
           {activeBm && <PageBookmark title={t("bookmark.here")} belowChrome={chromeShown} />}
           <div className="page-host" ref={stageRef} dir="ltr" />
           <div className="page-grain" />
+          {/* The page while the book is being opened. It sits INSIDE the sheet, so the paper, its
+              width and its theme are already the ones the book will use — the page does not change
+              shape when the text arrives, it just fills. No timer and no minimum duration: it is
+              mounted by the reader's own status and unmounts the moment the status turns `ready`,
+              so what it shows is exactly how long the parse took. */}
+          {opening && (
+            <div className="page-loading" role="status" aria-live="polite">
+              <span className="sp-spinner" aria-hidden />
+              <span>{t("reader.opening")}</span>
+            </div>
+          )}
         </div>
         {showChevrons && (
           <button
@@ -2104,6 +2120,9 @@ export function Reader({
         open={chaptersOpen}
         onClose={closeContents}
         toc={toc}
+        // An empty `toc` is ambiguous on its own — see openingState.ts. This is what tells the panel
+        // whether it is looking at a book with no contents or at a book it has not finished reading.
+        loading={opening}
         synthesised={synthNote}
         // A generated TOC has no native href to report as "current", so foliate's `chapterHref` stays
         // null for the whole book and the panel's scroll-to-current effect never re-fires as the

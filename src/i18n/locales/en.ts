@@ -12,6 +12,9 @@ export const en = {
   "reader.prev": "Previous page",
   "reader.back": "Library",
   "reader.contents": "Contents",
+  // Shown on the page itself while the book is being parsed. Deliberately says what is happening
+  // rather than promising how long it will take — the duration is the book's, not Sard's to predict.
+  "reader.opening": "Opening the book…",
   "reader.typography": "Typography",
   "reader.layout": "Layout",
   "reader.notes": "Notes",
@@ -337,6 +340,8 @@ export const en = {
   "panel.showTitles": "Show titles",
   "panel.hideFirstLine": "Hide first line",
   "panel.hideFirstLineHint": "Hides the first line of each chapter (often a repeated title — and may contain spoilers).",
+  // The two are NOT interchangeable: the first is "not known yet", the second is the final answer.
+  "panel.chaptersLoading": "Reading the contents…",
   "panel.noChapters": "This book has no contents list",
   "panel.annotations": "Highlights & notes",
   "panel.annoEyebrow": "Annotations", // RAWY-121: the quiet eyebrow label above the segmented tabs (design 2a)

@@ -12,6 +12,7 @@ import { useI18n } from "../../i18n";
 import type { ReadMarkerKey } from "../../lib/readMarkerStyle"; // RAWY-256
 import { extractChapterNumber, localeNum } from "../../lib/format";
 import type { TocEntry } from "../../reader-engine/FoliateController";
+import { contentsView } from "./openingState";
 
 // RAWY-175 (AUD-3): one TOC row, MEMOIZED. On a chapter change only the two rows whose `active` flips
 // re-render — the other ~1,300 rows are skipped (their props are unchanged) instead of re-reconciling
@@ -75,6 +76,12 @@ interface Props {
   open: boolean;
   onClose: () => void;
   toc: TocEntry[];
+  /**
+   * The book is still being opened, so `toc` being empty means "not known yet" rather than "none".
+   * Without this the panel announced "this book has no contents list" for the whole ~2.5 s parse of
+   * a large book — a final answer given before the question had been resolved.
+   */
+  loading: boolean;
   /** WP-6A: null when these are the BOOK's contents; otherwise how Sard built them. */
   synthesised?: boolean;
   currentHref: string | null;
@@ -104,6 +111,7 @@ function ChaptersPanelInner({
   open,
   onClose,
   toc,
+  loading,
   currentHref,
   activeIndex,
   readHrefs,
@@ -115,6 +123,7 @@ function ChaptersPanelInner({
 }: Props) {
   const { t, lang, dir } = useI18n();
   const pct = Math.round(fraction * 100);
+  const view = contentsView(loading, toc.length);
 
   // RAWY-103: when the panel opens (or the current chapter / TOC becomes known while it's open),
   // scroll the list so the ACTIVE chapter is centred in view. Without this the list always sits at
@@ -192,9 +201,14 @@ function ChaptersPanelInner({
       <div className="rp-head">
         <div className="rp-head-titles">
           <span className="rp-title">{t("panel.contents")}</span>
-          <span className="rp-submeta">
-            {t("panel.chaptersMeta", { n: localeNum(toc.length, lang), p: localeNum(pct, lang) })}
-          </span>
+          {/* The count is omitted rather than shown as zero while the book is being opened: "0
+              chapters · 0% read" is the same false certainty as the empty state below, in smaller
+              type. It appears, once, with the real number. */}
+          {view !== "loading" && (
+            <span className="rp-submeta">
+              {t("panel.chaptersMeta", { n: localeNum(toc.length, lang), p: localeNum(pct, lang) })}
+            </span>
+          )}
           {/* RESILIENCE-1 / WP-6A: NEVER present a guess as the book's own. This book shipped a
               contents list too small to navigate by, so Sard built one from the spine — and says so
               quietly, once, in the header rather than on every row. */}
@@ -213,7 +227,17 @@ function ChaptersPanelInner({
       {/* RAWY-256: the chosen variant scopes the marker CSS for the whole list (one class, not per row),
           so switching variants costs a single attribute change even on a 1432-row panel. */}
       <div className={`rp-scroll rm-${readMarker}`} ref={scrollRef}>
-        {toc.length === 0 && <div className="rp-empty">{t("panel.noChapters")}</div>}
+        {/* Loading, genuinely empty, or the list — decided in one place (openingState.ts) so this
+            panel and the reading surface can never contradict each other. `toc.length === 0` used to
+            decide it alone, which is why an unparsed book and a book with no contents looked the
+            same here. */}
+        {view === "loading" && (
+          <div className="rp-loading" role="status" aria-live="polite">
+            <span className="sp-spinner" aria-hidden />
+            <span>{t("panel.chaptersLoading")}</span>
+          </div>
+        )}
+        {view === "empty" && <div className="rp-empty">{t("panel.noChapters")}</div>}
         {/* RAWY-175: each row is a memoized <TocRow> (see top of file). The book's OWN chapter number
             (RAWY-67), the "الفصل N"/"Chapter N" hidden-titles label (RAWY-69/70), the active highlight,
             paddingInlineStart-by-level, and the click-to-navigate all live in TocRow — unchanged; only

@@ -75,16 +75,34 @@ export class HostedReader {
   // Deliberately NOT `#private`. The proxy below has to read `handlers` and dispatch on the members
   // declared here, and a `#name` field is unreachable from outside the class body — an earlier draft
   // reached for one through a cast, which type-checks and is always `undefined` at run time.
-  private readonly port: MessagePort;
+  // No port until the first `open()` gives the host somewhere to live. Everything before that reads
+  // the empty mirror, which is the same thing the direct path shows before a book is opened.
+  private port: MessagePort | null = null;
+  private frame: HTMLIFrameElement | null = null;
+  private mounting: Promise<void> | null = null;
   private nextId = 1;
   private readonly pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private mirror: Mirror = EMPTY_MIRROR;
   readonly handlers = new Map<string, (...args: unknown[]) => unknown>();
 
-  constructor(port: MessagePort) {
-    this.port = port;
-    port.onmessage = (e: MessageEvent<Reply | Push>) => this.receive(e.data);
-    port.start();
+  /**
+   * Create the host inside the reading area, once.
+   *
+   * Deferred to the first `open()` because an iframe cannot be re-parented without reloading — see
+   * `mountHostIn`. Concurrent opens share one mount rather than racing two hosts into the DOM.
+   */
+  private ensureHost(container: HTMLElement): Promise<void> {
+    if (this.port && this.frame?.isConnected) return Promise.resolve();
+    if (this.mounting) return this.mounting;
+    this.mounting = (async () => {
+      const { mountHostIn } = await import("./index");
+      const { port, frame } = await mountHostIn(container);
+      this.port = port;
+      this.frame = frame;
+      port.onmessage = (e: MessageEvent<Reply | Push>) => this.receive(e.data);
+      port.start();
+    })();
+    return this.mounting;
   }
 
   private receive(msg: Reply | Push): void {
@@ -101,10 +119,16 @@ export class HostedReader {
   }
 
   private send(req: RequestBody, transfer: Transferable[] = []): Promise<unknown> {
+    const port = this.port;
+    if (!port) {
+      // Named, not silent. Before the first `open()` there is no host, and a call arriving here is a
+      // caller doing something the direct path would also find meaningless on a reader with no book.
+      return Promise.reject(new Error(`the reader host is not mounted yet (${JSON.stringify(req).slice(0, 60)})`));
+    }
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
-      this.port.postMessage({ ...req, id } as Request, transfer);
+      port.postMessage({ ...req, id } as Request, transfer);
     });
   }
 
@@ -128,7 +152,10 @@ export class HostedReader {
    * the bytes are read HERE and transferred, which is also the cheaper of the two measured options
    * (1257 ms vs 1278 ms on a 14.1 MB EPUB). `container` is ignored: the host owns its own.
    */
-  async open(source: string, _container: HTMLElement, opts: unknown): Promise<void> {
+  async open(source: string, container: HTMLElement, opts: unknown): Promise<void> {
+    // The container is USED, not ignored. Ignoring it is what produced a full-window overlay that
+    // hid the toolbar and showed a blank page on a real Linux machine.
+    await this.ensureHost(container);
     const bytes = await (await fetch(source)).arrayBuffer();
     await this.send({ kind: "open", bytes, opts }, [bytes]);
   }
@@ -262,8 +289,8 @@ export class HostedReader {
  * and writing them out by hand invites the one that is subtly different from the rest — which is the
  * failure mode this whole seam is trying to avoid.
  */
-export function hostedReader(port: MessagePort): FoliateController {
-  const impl = new HostedReader(port);
+export function hostedReader(): FoliateController {
+  const impl = new HostedReader();
   return new Proxy(impl, {
     get(target, prop, receiver) {
       if (typeof prop !== "string") return Reflect.get(target, prop, receiver);

@@ -402,6 +402,19 @@ async function main(): Promise<void> {
   // host — but synthesising a sentence for real is the only way to say the read-aloud pipeline works
   // in this environment rather than merely that its plumbing exists. A network failure here is a
   // property of the runner, not of the transport, and is reported as such.
+  // ---- DOES WEBKITGTK ACTUALLY DECODE AND PLAY EDGE'S MP3? --------------------------------------
+  // Synthesis returning bytes is not playback. Edge returns MP3, and on WebKitGTK both the Web Audio
+  // decoder and <audio> depend on the system's GStreamer plugins — a dependency WebView2 does not
+  // have. "Audio was generated" and "audio was heard" are different claims and this separates them.
+  await step("tts.canPlayType", () => {
+    const el = document.createElement("audio");
+    return { mpeg: el.canPlayType("audio/mpeg"), mp4: el.canPlayType("audio/mp4"), wav: el.canPlayType("audio/wav") };
+  });
+  await step("tts.audioContext", () => {
+    const c = new AudioContext();
+    return { state: c.state, rate: c.sampleRate };
+  });
+
   await step("tts.synthesize", async () => {
     const inv3 = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: (c: string, a?: unknown) => Promise<unknown> } })
       .__TAURI_INTERNALS__?.invoke;
@@ -416,6 +429,28 @@ async function main(): Promise<void> {
       return { audioBytes: len };
     } catch (e) {
       return `NETWORK-OR-ENGINE:${e instanceof Error ? e.message.slice(0, 90) : String(e).slice(0, 90)}`;
+    }
+  });
+
+  // Decode what was synthesised — the step between "bytes arrived" and "sound came out".
+  await step("tts.decode", async () => {
+    const inv4 = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: (c: string, a?: unknown) => Promise<unknown> } })
+      .__TAURI_INTERNALS__?.invoke;
+    if (!inv4) return "no invoke";
+    try {
+      const res = (await inv4("tts_synthesize", { engine: "edge", id: "ar-SA-HamedNeural", text: "مرحبا" })) as ArrayBuffer;
+      const buf = res instanceof ArrayBuffer ? res : new ArrayBuffer(0);
+      if (!buf.byteLength) return "no audio bytes";
+      const head = [...new Uint8Array(buf.slice(0, 4))].map((b) => b.toString(16).padStart(2, "0")).join(" ");
+      const ctx2 = new AudioContext();
+      try {
+        const decoded = await ctx2.decodeAudioData(buf.slice(0));
+        return { bytes: buf.byteLength, head, decoded: true, seconds: +decoded.duration.toFixed(2), rate: decoded.sampleRate };
+      } catch (e) {
+        return { bytes: buf.byteLength, head, decoded: false, error: String(e).slice(0, 140) };
+      }
+    } catch (e) {
+      return `SYNTH-FAILED:${String(e).slice(0, 120)}`;
     }
   });
 

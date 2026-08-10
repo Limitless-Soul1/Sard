@@ -169,6 +169,30 @@ export class HostedReader {
     }) as (...a: unknown[]) => unknown);
   }
 
+  // ---- search: results arrive while it runs ------------------------------------------------------
+
+  /**
+   * `searchBook(query, { signal, onProgress, onBatch })` cannot be forwarded as written — two
+   * functions and an AbortSignal, none of them cloneable.
+   *
+   * The callbacks stay on this side, where the application put them. Only the query crosses; the
+   * host runs the search with callbacks of its own and pushes each batch back, so hits still appear
+   * progressively instead of all at the end. An abort crosses as a consequence, not as a signal.
+   */
+  searchBook(
+    query: string,
+    opts: { signal?: AbortSignal; onProgress?: (f: number) => void; onBatch?: (h: unknown[]) => void } = {},
+  ): Promise<unknown[]> {
+    if (opts.onProgress) this.handlers.set("search-progress", opts.onProgress as (...a: unknown[]) => unknown);
+    if (opts.onBatch) this.handlers.set("search-batch", opts.onBatch as (...a: unknown[]) => unknown);
+    opts.signal?.addEventListener("abort", () => this.tell("__searchAbort"), { once: true });
+    return this.send({ kind: "call", method: "searchBook", args: [query] }).then((v) => {
+      this.handlers.delete("search-progress");
+      this.handlers.delete("search-batch");
+      return (v ?? []) as unknown[];
+    });
+  }
+
   // ---- synchronous reads, answered from the mirror -----------------------------------------------
 
   getToc(): unknown[] {

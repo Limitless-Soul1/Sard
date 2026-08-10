@@ -30,11 +30,18 @@ function publicMethods(source: string): string[] {
   // the same indentation inside module-level functions — `walk(raw, level);` and
   // `collectLeadingBlocks(body, MAX, blocks);` were both reported as unclassified engine members.
   // A declaration opens a body on the same line here; a call ends in a semicolon.
-  // Ending in `{` is the whole discriminator, and it must NOT also forbid semicolons: four real
-  // members were lost that way, because an inline object type puts one inside the signature —
-  // `getChapterUnits(...): Promise<{ text: string; range: Range | null }[]> {`. A call statement
-  // ends in `;`, so requiring `{` already excludes it.
-  const re = /^ {2}(?:async\s+)?([a-zA-Z][A-Za-z0-9_]*)\s*(?:<[^>]*>)?\(.*\{\s*$/gm;
+  // A declaration is a name at member indentation followed by `(`, on a line that does NOT end in a
+  // semicolon. Two earlier attempts were both wrong in ways that hid real members:
+  //
+  //   • forbidding semicolons anywhere lost four members whose signature contains an inline object
+  //     type — `getChapterUnits(...): Promise<{ text: string; range: Range | null }[]>`;
+  //   • requiring the line to END in `{` lost every MULTI-LINE signature, and `searchBook` is one.
+  //     That is the worst kind of miss: the member was invisible, so no classification check could
+  //     ever fire on it, and it went to the hosted transport carrying two callbacks and an
+  //     AbortSignal that a MessagePort cannot clone.
+  //
+  // Ending in `;` is what a call statement does (`walk(raw, level);`), and a declaration never does.
+  const re = /^ {2}(?:async\s+)?([a-zA-Z][A-Za-z0-9_]*)\s*(?:<[^>]*>)?\((?!.*\);\s*$).*$/gm;
   for (const m of source.matchAll(re)) {
     const name = m[1];
     // Control-flow keywords indent the same way a member does; they are not members.
@@ -42,6 +49,29 @@ function publicMethods(source: string): string[] {
     names.add(name);
   }
   return [...names].sort();
+}
+
+/**
+ * A member's full signature: from its name to the brace that opens its body.
+ *
+ * Scanned with balanced parentheses rather than matched with a regex, because three regex attempts
+ * each truncated it somewhere that mattered — at the first `)`, which falls inside
+ * `(frac: number) => void`; at the first `{`, which falls inside `opts: { … }`; and a fixed-size
+ * window, which over-read into the body and made every void method look suspicious. Each of those
+ * hid or invented a problem. Counting brackets is the only version that describes the signature.
+ */
+function signatureOf(source: string, name: string): string {
+  const at = source.search(new RegExp(`^ {2}(?:async\\s+)?${name}\\s*(?:<[^>]*>)?\\(`, "m"));
+  if (at < 0) return "";
+  const open = source.indexOf("(", at);
+  let depth = 0;
+  let i = open;
+  for (; i < source.length; i++) {
+    if (source[i] === "(") depth++;
+    else if (source[i] === ")" && --depth === 0) break;
+  }
+  const brace = source.indexOf("{", i);
+  return source.slice(at, brace < 0 ? i + 1 : brace + 1);
 }
 
 describe("reader engine surface", () => {
@@ -66,11 +96,18 @@ describe("reader engine surface", () => {
     // forwarded: a non-promise return, a DOM type, or a callback parameter.
     const unclassified = methods.filter((name) => !(name in CROSSING));
     const suspicious = unclassified.filter((name) => {
-      const sig = source.match(new RegExp(`^ {2}(?:async\\s+)?${name}\\s*(?:<[^>]*>)?\\([^)]*\\)[^{]*`, "m"))?.[0] ?? "";
+      const sig = signatureOf(source, name);
       const returnsPromise = /:\s*Promise</.test(sig);
       const isAsync = /^\s{2}async\s/.test(sig);
-      const returnsVoid = /:\s*void\s*$/.test(sig.trim());
-      const takesCallback = /\bcb\s*:/.test(sig);
+      // `sig` now ends at the opening brace, so the void test has to allow for it. Without this the
+      // guard flagged every plain `foo(): void {` member in the class.
+      const returnsVoid = /:\s*void\s*\{?\s*$/.test(sig.trim());
+      // A callback is not always named `cb`. `searchBook(query, { signal, onProgress, onBatch })`
+      // hides two functions and an AbortSignal inside an options object, and matching only `cb:`
+      // declared it plainly forwardable — it would have thrown DataCloneError the first time search
+      // ran on the hosted path. Any function TYPE in the signature counts, however it is spelled,
+      // and so does an AbortSignal, which is just as uncloneable and just as easy to miss.
+      const takesCallback = /\bcb\s*:/.test(sig) || /=>/.test(sig) || /\bAbortSignal\b/.test(sig);
       const touchesDom = /\b(Range|HTMLElement|Document|Node|Element|Selection)\b/.test(sig);
       return takesCallback || touchesDom || !(returnsPromise || isAsync || returnsVoid);
     });

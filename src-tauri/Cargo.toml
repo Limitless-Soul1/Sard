@@ -25,6 +25,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [features]
 default = []
 diag = []
+# Compiles `books::corpus_tests`, whose source ships only with the private workspace because the book
+# corpus it reads is not distributed. Off by default so a tree without that file still builds its
+# test target; the workspace that has it runs `cargo test --features corpus-tests`.
+corpus-tests = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

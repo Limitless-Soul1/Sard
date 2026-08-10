@@ -71,6 +71,11 @@ dist-ssr
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
+# Visual Studio's workspace cache. `*.suo` below covers one file inside it; the directory itself was
+# not listed, so `git add -A` staged the whole thing — including DocumentLayout.json, which records
+# the absolute path of the machine it was opened on. The production-content gate refused the tree
+# over exactly that, which is the gate working. Ignoring the directory stops it recurring.
+.vs/
 .idea
 .DS_Store
 *.suo
@@ -78,6 +83,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python bytecode from the local probe/measurement scripts.
+__pycache__/
+*.pyc
 
 # No archives in public/. Vite copies public/ verbatim into dist/ and Tauri embeds dist/ into the
 # executable, so a stray archive here is compiled into every build and inflates every artifact.

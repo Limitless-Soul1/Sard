@@ -41,6 +41,30 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit -p tsconfig.json
 
+      # THE RUST SIDE WAS NEVER CHECKED BY CI AT ALL — not compiled, not tested, not once. The cost of
+      # that was measured rather than guessed: `src/books/mod.rs` declared a module whose file had been
+      # removed with the public/private split, so `cargo test` failed to COMPILE and every one of the
+      # 102 Rust tests had been silently absent for as long as the declaration had been wrong. Nothing
+      # reported it, because nothing ran it.
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      # --locked, so a pull request that quietly needs a different dependency graph fails here rather
+      # than resolving to something nobody chose. --all-targets reaches the binary and the test target,
+      # neither of which `cargo test` alone would compile.
+      - name: Cargo check
+        working-directory: src-tauri
+        run: cargo check --all-targets --locked
+
+      - name: Cargo test
+        working-directory: src-tauri
+        run: cargo test --locked
+
       # The EPUB fixtures are generated, not committed: `.gitignore` excludes tests/fixtures/epub/ so
       # the repository carries the generator rather than opaque binary blobs. That means a clean
       # checkout has none of them, and the suites that read a fixture fail with ENOENT — which is
@@ -73,3 +97,57 @@ jobs:
       - name: Production-build gate
         shell: bash
         run: node scripts/verify-main-buildable.mjs --ref="$PROD_TREE"
+
+  # A SECOND PLATFORM, COMPILED. The job above runs on windows-latest, so `#[cfg(not(target_os =
+  # "windows"))]` code is never compiled by it — the arm that exists precisely because the other
+  # platforms need something different is the arm CI cannot see. `webview_chrome.rs` and
+  # `window_chrome.rs` already carry such arms, and the reader-host work will add more.
+  #
+  # Compilation only. No tests that need a display, no bundling, no artifact: this answers "does the
+  # non-Windows arm still build" and deliberately nothing else, so it stays fast and has one meaning
+  # when it fails.
+  rust-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Pinned to match the job above rather than taking whatever the runner image ships, so the two
+      # jobs cannot build the bundle with different toolchains.
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      # Tauri links against the system WebKitGTK on Linux; without these the crate does not configure.
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf libssl-dev \
+            libayatana-appindicator3-dev build-essential
+
+      # `tauri::generate_context!` reads `frontendDist`, so the directory has to exist before the crate
+      # will compile. The bundle's CONTENTS are irrelevant to a compile check — only its presence is —
+      # so this builds the real one rather than inventing a stub that could drift from it.
+      - name: Frontend bundle
+        run: |
+          npm ci
+          npm run build
+
+      - name: Cargo check
+        working-directory: src-tauri
+        run: cargo check --all-targets --locked
+
+      - name: Cargo test
+        working-directory: src-tauri
+        run: cargo test --locked

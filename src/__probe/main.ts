@@ -79,6 +79,14 @@ addEventListener("unhandledrejection", (e) => {
   emit("unhandled");
 });
 
+// The application's real stylesheet, applied for the whole run: `.page-host`'s absolute insets and
+// the `foliate-view` sizing rule are what decide whether the reader is visible at all.
+(() => {
+  const st = document.createElement("style");
+  st.textContent = uiCss;
+  document.head.appendChild(st);
+})();
+
 emit("boot");
 
 async function step<T>(name: string, run: () => T | Promise<T>): Promise<T | undefined> {
@@ -213,6 +221,34 @@ async function main(): Promise<void> {
     style: { fontSizePx: 20, lineHeight: 1.8, marginPct: 6, fontFamily: "serif", justify: true },
     flow: "paged",
   } as never));
+
+  // ---- THE READ THE APPLICATION ACTUALLY MAKES --------------------------------------------------
+  // `Reader.tsx` reads `ctrl.getToc()`, `ctrl.dir` and `ctrl.pdfPageCount` on the line AFTER
+  // `await ctrl.open(...)`. Every one of them is served from the mirror, and the host sends its
+  // reply BEFORE the state push — so the caller resumes on the reply and reads the pre-open mirror.
+  // Reported from a real machine as "the TOC shows 0 chapters".
+  R.surface["tocImmediatelyAfterOpen"] = ctrl.getToc().length;
+  R.surface["dirImmediatelyAfterOpen"] = (ctrl as unknown as { dir?: string }).dir ?? null;
+  await new Promise((r) => setTimeout(r, 400));
+  R.surface["tocAfterAtick"] = ctrl.getToc().length;
+  emit("mirror-timing");
+
+  // ---- IS THE READER VISIBLE? -------------------------------------------------------------------
+  // The frame being inside the reading area is not the same as the reader being on screen. This
+  // measures the rendered geometry of the frame and what the host paints behind the book.
+  await new Promise((r) => setTimeout(r, 1200));
+  R.surface["visibility"] = (() => {
+    const frame = stage.querySelector("iframe") as HTMLIFrameElement | null;
+    if (!frame) return { frame: "none" };
+    const r = frame.getBoundingClientRect();
+    const hostRect = stage.getBoundingClientRect();
+    return {
+      frame: { w: Math.round(r.width), h: Math.round(r.height), top: Math.round(r.top) },
+      pageHost: { w: Math.round(hostRect.width), h: Math.round(hostRect.height), top: Math.round(hostRect.top) },
+      frameHasSize: r.width > 50 && r.height > 50,
+    };
+  })();
+  emit("visibility");
 
   // ---- COMPOSITION: is the host INSIDE the reading area, or over the whole window? --------------
   // The symptom on the real machine was "the toolbar appears, then disappears, and the page is

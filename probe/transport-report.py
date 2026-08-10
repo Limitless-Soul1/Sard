@@ -273,6 +273,17 @@ crit.append(("32 the book opens through a real asset: URL",
              else (UNKNOWN if bu is None else "FAIL"),
              f"url={str(bu)[:70]} open={d.get('open')}"))
 
+toc_now = surface.get("tocImmediatelyAfterOpen")
+toc_later = surface.get("tocAfterAtick")
+crit.append(("33 a mirrored read is correct IMMEDIATELY after the call that changed it",
+             "PASS" if isinstance(toc_now, int) and toc_now > 0 else
+             (UNKNOWN if toc_now is None else "FAIL"),
+             f"tocImmediately={toc_now} tocOneTickLater={toc_later}"))
+vis = surface.get("visibility") or {}
+crit.append(("34 the reader frame has real size on screen",
+             "PASS" if vis.get("frameHasSize") is True else (UNKNOWN if not vis else "FAIL"),
+             json.dumps(vis)[:120]))
+
 crit.append(("23 a user font reaches the host over asset:",
              "PASS" if font == "LOADED" else (UNKNOWN if font is None else "FAIL"),
              str(font)))
@@ -293,6 +304,14 @@ if typo:
     say(f"- forced SardUIArabic: `{json.dumps(typo.get('viaArabic'))[:180]}`")
     say(f"- forced system-ui: `{json.dumps(typo.get('viaSystem'))[:180]}`")
     say()
+
+say("## Real-app behaviour: mirror timing and visibility")
+say()
+say(f"- TOC read immediately after `await open()`: **{surface.get('tocImmediatelyAfterOpen')}**")
+say(f"- TOC read one tick later: **{surface.get('tocAfterAtick')}**")
+say(f"- `ctrl.dir` immediately after open: `{surface.get('dirImmediatelyAfterOpen')}`")
+say(f"- visibility: `{json.dumps(surface.get('visibility'))[:200]}`")
+say()
 
 say("## Verdict")
 say()

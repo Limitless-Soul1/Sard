@@ -3,25 +3,25 @@
 <head>
 <meta charset="utf-8">
 <title>Reader transport runtime gate</title>
-<!-- PROBE-ONLY, throwaway branch. This is the PRIVILEGED application origin.
-     THE LAYOUT MATTERS AND IT DID NOT BEFORE. Every earlier version of this page gave the reader a
-     stage that filled the whole window and put nothing else on it, so a host frame that covered the
-     entire window looked exactly like one placed correctly. On a real Linux machine it was not:
-     it covered the toolbar and showed its own empty background. This page therefore has a toolbar
-     ABOVE the reading area, like the real reader, so "did the host stay inside the area it was
-     given" is a question the gate can actually ask. -->
+<!-- PROBE-ONLY, throwaway branch. This mirrors the REAL reader's DOM shape, because a probe page
+     that invents its own layout cannot see a layout defect. `.page-sheet > .page-host` and the
+     70px top inset are the application's own structure and classes; global.css is injected by the
+     bundle so the real rules apply to them. -->
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #222; font: 14px sans-serif; }
-  #app { display: flex; flex-direction: column; height: 100%; }
-  #toolbar { height: 48px; flex: 0 0 48px; background: #8a6d3b; color: #fff;
-             display: flex; align-items: center; padding: 0 12px; }
-  #stage { flex: 1 1 auto; position: relative; min-height: 0; background: #f7f2e8; }
+  #app { position: relative; height: 100%; }
+  #toolbar { position: absolute; inset-block-start: 0; inset-inline: 0; height: 48px;
+             background: #8a6d3b; color: #fff; display: flex; align-items: center; padding: 0 12px; z-index: 5; }
+  /* the application's own paper sheet, positioned so `.page-host`'s absolute insets resolve */
+  .page-sheet { position: absolute; inset: 0; background: #efe6d2; }
 </style>
 </head>
 <body>
 <div id="app">
   <div id="toolbar">Sard — probe toolbar</div>
-  <div id="stage"></div>
+  <div class="page-sheet">
+    <div class="page-host" id="stage" dir="ltr"></div>
+  </div>
 </div>
 <script type="module" src="/__probe/bundle.js"></script>
 </body>

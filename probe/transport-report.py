@@ -88,6 +88,7 @@ say(f"| section sandbox | `{inp.get('sandbox')}` |")
 say(f"| overlayer after highlight | `{json.dumps(surface.get('overlayAfterHighlight'))[:90]}` |")
 say(f"| overlayer after remove | `{json.dumps(surface.get('overlayAfterRemove'))[:90]}` |")
 say(f"| rendered surfaces | `{json.dumps(self_check.get('rendered'))[:70]}` |")
+say(f"| composition | `{json.dumps(surface.get('composition'))[:150]}` |")
 say(f"| real input into the section | `{inp.get('pointerdown')}` pointerdown, `{inp.get('click')}` click |")
 say()
 
@@ -256,6 +257,21 @@ crit.append(("29 the PDF responds to navigation and zoom",
              else (UNKNOWN if "pdf.navKey" not in surface else "FAIL"),
              f"navKey={surface.get('pdf.navKey')} zoom={surface.get('pdf.zoom')} "
              f"scale={surface.get('pdf.scaleAfterZoom')} surface={json.dumps(surface.get('pdf.surfaceAfterInteraction'))[:40]}"))
+
+comp = surface.get("composition") or {}
+crit.append(("30 the host stays INSIDE the reading area it was given",
+             "PASS" if comp.get("parentIsStage") is True else (UNKNOWN if not comp else "FAIL"),
+             f"parent={comp.get('parentId')} frame={comp.get('frameRect')}"))
+crit.append(("31 the toolbar is not covered by the host",
+             "PASS" if comp.get("toolbarStillOnTop") is True and comp.get("overlapsToolbar") is False
+             else (UNKNOWN if not comp else "FAIL"),
+             f"topmostAtToolbarCentre={comp.get('topmostAtToolbarCentre')} overlaps={comp.get('overlapsToolbar')}"))
+bu = surface.get("book.assetUrl")
+crit.append(("32 the book opens through a real asset: URL",
+             "PASS" if isinstance(bu, str) and bu.startswith(("asset:", "http://asset", "https://asset"))
+             and d.get("open") == "opened"
+             else (UNKNOWN if bu is None else "FAIL"),
+             f"url={str(bu)[:70]} open={d.get('open')}"))
 
 crit.append(("23 a user font reaches the host over asset:",
              "PASS" if font == "LOADED" else (UNKNOWN if font is None else "FAIL"),

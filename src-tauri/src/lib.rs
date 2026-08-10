@@ -161,6 +161,7 @@ macro_rules! sard_invoke_handler {
             probe_write,  // PROBE-ONLY
             probe_finish, // PROBE-ONLY
             probe_stage_font, // PROBE-ONLY
+            probe_stage_book, // PROBE-ONLY
             $($diag_cmd),*
         ])
     };
@@ -193,6 +194,24 @@ fn probe_stage_font(app: tauri::AppHandle) -> Result<String, String> {
     let path = dir.join("probe-font.ttf");
     std::fs::write(&path, &asset.bytes).map_err(|e| e.to_string())?;
     println!("[probe] staged font at {}", path.display());
+    Ok(path.to_string_lossy().into_owned())
+}
+
+// PROBE-ONLY: stage a real EPUB inside app data so the gate can open it through the SAME url the
+// application uses — `convertFileSrc` over the asset protocol. Every earlier run opened a
+// same-origin path, which never exercised that fetch at all.
+#[tauri::command]
+fn probe_stage_book(app: tauri::AppHandle) -> Result<String, String> {
+    use tauri::Manager;
+    let asset = app
+        .asset_resolver()
+        .get("__probe/book.epub".into())
+        .ok_or("the bundle has no __probe/book.epub")?;
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("probe-book.epub");
+    std::fs::write(&path, &asset.bytes).map_err(|e| e.to_string())?;
+    println!("[probe] staged book at {}", path.display());
     Ok(path.to_string_lossy().into_owned())
 }
 

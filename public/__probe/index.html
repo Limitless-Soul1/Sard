@@ -3,19 +3,26 @@
 <head>
 <meta charset="utf-8">
 <title>Reader transport runtime gate</title>
-<!-- PROBE-ONLY, throwaway branch. This is the PRIVILEGED application origin. It builds the reader
-     through the product's own `createReader()` and drives it through FoliateController's surface, so
-     what is measured is the shipping transport rather than a re-creation of it.
-     `#stage` fills the window: the harness delivers a genuine X11 click, so the book has to be under
-     the coordinate. Nothing else is on the page — an earlier probe put a large off-screen log element
-     in the way and it silently swallowed the clicks being measured. -->
+<!-- PROBE-ONLY, throwaway branch. This is the PRIVILEGED application origin.
+     THE LAYOUT MATTERS AND IT DID NOT BEFORE. Every earlier version of this page gave the reader a
+     stage that filled the whole window and put nothing else on it, so a host frame that covered the
+     entire window looked exactly like one placed correctly. On a real Linux machine it was not:
+     it covered the toolbar and showed its own empty background. This page therefore has a toolbar
+     ABOVE the reading area, like the real reader, so "did the host stay inside the area it was
+     given" is a question the gate can actually ask. -->
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: #222; }
-  #stage { position: absolute; inset: 0; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #222; font: 14px sans-serif; }
+  #app { display: flex; flex-direction: column; height: 100%; }
+  #toolbar { height: 48px; flex: 0 0 48px; background: #8a6d3b; color: #fff;
+             display: flex; align-items: center; padding: 0 12px; }
+  #stage { flex: 1 1 auto; position: relative; min-height: 0; background: #f7f2e8; }
 </style>
 </head>
 <body>
-<div id="stage"></div>
+<div id="app">
+  <div id="toolbar">Sard — probe toolbar</div>
+  <div id="stage"></div>
+</div>
 <script type="module" src="/__probe/bundle.js"></script>
 </body>
 </html>

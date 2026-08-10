@@ -130,12 +130,54 @@ async function main(): Promise<void> {
   R.bookBytes = bytes.byteLength;
   emit("book-fetched");
 
-  // OPEN through the engine's own signature. The hosted transport fetches the bytes itself.
+  // OPEN THE WAY THE APPLICATION DOES.
+  //
+  // Every earlier run passed `/__probe/book.epub`, a same-origin path. The application passes
+  // `convertFileSrc(filePath)` — an `asset:` URL — so the fetch that actually happens in the product
+  // was never exercised here at all. The book is staged into app data and opened through that URL.
   const stage = document.getElementById("stage") as HTMLElement;
-  await step("open", () => ctrl.open("/__probe/book.epub", stage, {
+  const invB = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: (c: string, a?: unknown) => Promise<unknown> } })
+    .__TAURI_INTERNALS__?.invoke;
+  let bookUrl = "/__probe/book.epub";
+  await step("book.assetUrl", async () => {
+    if (!invB) return "no invoke";
+    const path = (await invB("probe_stage_book")) as string;
+    const { convertFileSrc } = await import("@tauri-apps/api/core");
+    bookUrl = convertFileSrc(path);
+    return bookUrl;
+  });
+
+  await step("open", () => ctrl.open(bookUrl, stage, {
     style: { fontSizePx: 20, lineHeight: 1.8, marginPct: 6, fontFamily: "serif", justify: true },
     flow: "paged",
   } as never));
+
+  // ---- COMPOSITION: is the host INSIDE the reading area, or over the whole window? --------------
+  // The symptom on the real machine was "the toolbar appears, then disappears, and the page is
+  // blank". That is what a full-window host frame looks like from outside, and no measurement here
+  // could see it while the probe page was a single full-window stage.
+  await new Promise((r) => setTimeout(r, 800));
+  R.surface["composition"] = (() => {
+    const frame = document.querySelector("iframe") as HTMLIFrameElement | null;
+    const bar = document.getElementById("toolbar") as HTMLElement;
+    if (!frame) return { frame: "none" };
+    const f = frame.getBoundingClientRect();
+    const b = bar.getBoundingClientRect();
+    const overlapsToolbar = f.top < b.bottom && f.bottom > b.top && f.left < b.right && f.right > b.left;
+    // What is actually on top at the toolbar's centre? If the host is over it, this is the frame.
+    const atToolbarCentre = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+    return {
+      parentIsStage: frame.parentElement?.id === "stage",
+      parentId: frame.parentElement?.id ?? frame.parentElement?.tagName ?? "?",
+      frameRect: { top: Math.round(f.top), height: Math.round(f.height), width: Math.round(f.width) },
+      toolbarRect: { top: Math.round(b.top), height: Math.round(b.height) },
+      overlapsToolbar,
+      topmostAtToolbarCentre: (atToolbarCentre as HTMLElement | null)?.id
+        || (atToolbarCentre as HTMLElement | null)?.tagName || "none",
+      toolbarStillOnTop: (atToolbarCentre as HTMLElement | null)?.id === "toolbar",
+    };
+  })();
+  emit("composition");
   R.open = typeof R.surface["open"] === "string" && String(R.surface["open"]).startsWith("FAIL") ? "failed" : "opened";
   emit("opened");
 

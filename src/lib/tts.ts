@@ -690,6 +690,14 @@ async function attemptSynth(i: number): Promise<Synthesized> {
   // above), so the copy must be taken first. This copy is what is cached and played; the AudioBuffer that
   // decoding produces is used only to validate the payload and read its duration, then released.
   ttrace("decode START", { bytes: audio.byteLength, ctxState: (ctx && ctx.state) || "no-ctx" });
+  // ONE-SHOT SELF-TEST, on the first decode only. The affected machine stops at exactly this line
+  // with no settle either way, and CI cannot reproduce it — CI has no audio device, so its context
+  // auto-runs and all three decode paths resolve in under 30 ms. This runs the same three variants
+  // HERE, on the machine that fails, so the difference is measured where it happens.
+  //
+  // It is diagnosis, not a workaround: it decodes its own copies, changes no state the player uses,
+  // and the real decode below is untouched and still un-timed.
+  void runDecodeSelfTest(audio.slice(0));
   const bytes = audio.slice(0);
   let buffer: AudioBuffer;
   try {
@@ -1376,7 +1384,11 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
     // after the pause is granted. Awaiting it here guarantees the source armed below cannot be audible.
     if (c.state !== "suspended") await c.suspend();
   } else if (c.state === "suspended") {
-    await c.resume();
+    ttrace("playFrom resume START", { state: c.state });
+    await c.resume().then(
+      () => ttrace("playFrom resume RESOLVED", { state: c.state }),
+      (e) => { ttrace("playFrom resume REJECTED", String(e).slice(0, 150)); throw e; },
+    );
   }
   if (myGen !== gen) return;
   stopSource();
@@ -1451,6 +1463,61 @@ async function ensureAndPlay(voice: string, fromIndex: number, myGen: number) {
 }
 
 // DIAGNOSTIC BUILD ONLY — instrumentation, no behaviour change.
+let decodeSelfTestDone = false;
+async function runDecodeSelfTest(sample: ArrayBuffer): Promise<void> {
+  if (decodeSelfTestDone) return;
+  decodeSelfTestDone = true;
+  const settle = async (label: string, run: () => Promise<AudioBuffer>) => {
+    const t = performance.now();
+    try {
+      const r = await Promise.race([
+        run().then((b) => `RESOLVED ${b.duration.toFixed(2)}s`),
+        new Promise<string>((res) => setTimeout(() => res("NEVER SETTLED (8s)"), 8000)),
+      ]);
+      ttrace(`selftest ${label}`, `${r} after ${Math.round(performance.now() - t)}ms`);
+    } catch (e) {
+      ttrace(`selftest ${label}`, `REJECTED ${String(e).slice(0, 120)} after ${Math.round(performance.now() - t)}ms`);
+    }
+  };
+  try {
+    const c1 = new AudioContext();
+    ttrace("selftest ctx1 created", { state: c1.state });
+    await settle("suspended-decode", () => c1.decodeAudioData(sample.slice(0)));
+    ttrace("selftest ctx1 after decode", { state: c1.state });
+
+    const c2 = new AudioContext();
+    const before = c2.state;
+    ttrace("selftest ctx2 resume START", { before });
+    try {
+      await Promise.race([
+        c2.resume().then(() => ttrace("selftest ctx2 resume RESOLVED", { state: c2.state })),
+        new Promise<void>((r) => setTimeout(() => { ttrace("selftest ctx2 resume NEVER SETTLED (5s)", { state: c2.state }); r(); }, 5000)),
+      ]);
+    } catch (e) {
+      ttrace("selftest ctx2 resume REJECTED", String(e).slice(0, 120));
+    }
+    await settle("resumed-decode", () => c2.decodeAudioData(sample.slice(0)));
+
+    const off = new OfflineAudioContext(1, 1, 44100);
+    await settle("offline-decode", () => off.decodeAudioData(sample.slice(0)));
+
+    // And the element path, which does not use Web Audio decoding at all.
+    const el = document.createElement("audio");
+    const url = URL.createObjectURL(new Blob([sample.slice(0)], { type: "audio/mpeg" }));
+    ttrace("selftest element canPlayType", { mpeg: el.canPlayType("audio/mpeg") });
+    for (const ev of ["loadedmetadata", "canplay", "error", "stalled", "suspend"]) {
+      el.addEventListener(ev, () => ttrace(`selftest element ${ev}`, { readyState: el.readyState, err: el.error?.code ?? null }), { once: true });
+    }
+    el.src = url;
+    el.load();
+    await new Promise((r) => setTimeout(r, 4000));
+    ttrace("selftest element final", { readyState: el.readyState, dur: el.duration, err: el.error?.code ?? null });
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    ttrace("selftest THREW", String(e).slice(0, 200));
+  }
+}
+
 function ttrace(event: string, detail?: unknown): void {
   const line = detail === undefined ? `TTS      ${event}` : `TTS      ${event} ${JSON.stringify(detail).slice(0, 400)}`;
   const inv = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: (c: string, a?: unknown) => Promise<unknown> } })

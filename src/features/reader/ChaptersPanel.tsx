@@ -13,6 +13,7 @@ import type { ReadMarkerKey } from "../../lib/readMarkerStyle"; // RAWY-256
 import { extractChapterNumber, localeNum } from "../../lib/format";
 import type { TocEntry } from "../../reader-engine/FoliateController";
 import { contentsView } from "./openingState";
+import { trace as diagTrace } from "../../reader-transport/trace"; // DIAGNOSTIC
 
 // RAWY-175 (AUD-3): one TOC row, MEMOIZED. On a chapter change only the two rows whose `active` flips
 // re-render — the other ~1,300 rows are skipped (their props are unchanged) instead of re-reconciling
@@ -124,6 +125,11 @@ function ChaptersPanelInner({
   const { t, lang, dir } = useI18n();
   const pct = Math.round(fraction * 100);
   const view = contentsView(loading, toc.length);
+  // DIAGNOSTIC — throwaway branch. Screenshots can miss a state that is only up for two seconds;
+  // this cannot. It records every transition of the three-way decision on the real machine.
+  useEffect(() => {
+    diagTrace("TOC      contents view", { view, loading, toc: toc.length });
+  }, [view, loading, toc.length]);
 
   // RAWY-103: when the panel opens (or the current chapter / TOC becomes known while it's open),
   // scroll the list so the ACTIVE chapter is centred in view. Without this the list always sits at

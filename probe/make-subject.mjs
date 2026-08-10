@@ -51,18 +51,36 @@ const withCss = buildEpub({
 writeFileSync(new URL("../public/__probe/book-css.epub", import.meta.url), withCss);
 console.log(`[probe] css subject: ${withCss.length} bytes`);
 
+// THE SEEDED SUBJECT IS BIG ON PURPOSE — it is the one the loading gate photographs.
+//
+// The 8-section book above parses in a few hundred milliseconds, so a screenshot of the loading
+// state would be a coin toss and a MISS would prove nothing either way. The defect being fixed was
+// measured on the owner's own book: 10.2 MB of text across 1,432 entries, ~2.48 s inside the
+// engine's open(). This reproduces that SHAPE — ~12 MB of prose across 300 entries — so the window
+// the indicator has to cover is a real one.
+//
+// Nothing here slows the reader down: the text is genuinely there and genuinely parsed. The zip is
+// small (the prose is repetitive, so it compresses hard), which keeps the build and the download
+// cheap while the parse stays honest.
+const bigChapters = Array.from({ length: 300 }, (_, i) => ({
+  id: `c${i}`,
+  href: `c${i}.xhtml`,
+  title: `الفصل ${i + 1}`,
+  body: Array.from({ length: 40 }, () => `<p>${PARA.repeat(3)}</p>`).join("\n"),
+}));
+
 const bytes = buildEpub({
   title: "كتاب الاختبار",
   creator: "سرد",
   language: "ar",
   dir: "rtl",
-  chapters,
-  ncx: chapters.map((c) => ({ label: c.title, href: c.href })),
-  nav: chapters.map((c) => ({ label: c.title, href: c.href })),
+  chapters: bigChapters,
+  ncx: bigChapters.map((c) => ({ label: c.title, href: c.href })),
+  nav: bigChapters.map((c) => ({ label: c.title, href: c.href })),
 });
 
 writeFileSync(OUT, bytes);
-console.log(`[probe] subject: ${bytes.length} bytes, ${chapters.length} sections -> ${OUT.pathname}`);
+console.log(`[probe] subject: ${bytes.length} bytes, ${bigChapters.length} sections -> ${OUT.pathname}`);
 
 // ---------------------------------------------------------------------------------------------
 // A REAL PDF, for the fixed-layout path.

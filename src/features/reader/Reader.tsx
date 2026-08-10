@@ -325,6 +325,11 @@ export function Reader({
   // known. Both surfaces below read this ONE value so they can never disagree; see openingState.ts
   // for why an empty TOC cannot answer the question by itself.
   const opening = isOpening(status);
+  // DIAGNOSTIC — throwaway branch. The page indicator's whole lifetime, timestamped, so it can be
+  // compared against the engine's own open() duration rather than eyeballed from a screenshot.
+  useEffect(() => {
+    diagTrace("PAGE     opening indicator", { opening, status });
+  }, [opening, status]);
   // RAWY-43: unified (all books share one style) vs per-book. Drives where changes are written
   // and how a book's effective style/theme is resolved.
   const scope = useStyleScope((s) => s.scope);

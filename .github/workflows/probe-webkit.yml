@@ -2,7 +2,7 @@
 name: Step 1 runtime probe
 on:
   push:
-    branches: ["feature/step1-runtime-probe", "feature/diag-linux-lifecycle"]
+    branches: ["feature/step1-runtime-probe", "feature/diag-linux-lifecycle", "feature/diag-linux-loading"]
 jobs:
   step1:
     runs-on: ubuntu-24.04
@@ -24,7 +24,10 @@ jobs:
       - name: Reader-host runtime gate
         run: |
           chmod +x probe/run-transport.sh probe/run-realapp.sh
-          if [ "$GITHUB_REF_NAME" = "feature/diag-linux-lifecycle" ]; then ./probe/run-realapp.sh; else ./probe/run-transport.sh; fi
+          case "$GITHUB_REF_NAME" in
+            feature/diag-linux-*) ./probe/run-realapp.sh ;;
+            *) ./probe/run-transport.sh ;;
+          esac
       - name: Report
         if: always()
         run: cat probe/out/GATE.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || echo "no report" >> "$GITHUB_STEP_SUMMARY"

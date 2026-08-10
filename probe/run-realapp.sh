@@ -56,7 +56,15 @@ for _ in $(seq 1 145); do
         grep -q "OPEN     called" "$OUT/app.log" 2>/dev/null && break
         # shellcheck disable=SC2086
         xdotool mousemove $POS click 1
-        sleep 3
+        # BURST, because the thing being photographed is temporary. The loading state exists only
+        # while the engine parses (~2.5 s on the seeded subject), so a single frame taken afterwards
+        # would always miss it — which is indistinguishable from it never appearing. Frames are ~0.4 s
+        # apart from the click, so the last one still showing the indicator also bounds how long it
+        # was up, against the trace's own OPEN called → OPEN resolved timestamps.
+        for i in 0 1 2 3 4 5 6 7 8 9; do
+          import -window root png24:"$OUT/load-$i.png" 2>/dev/null
+          sleep 0.4
+        done
       done
       import -window root png24:"$OUT/01b-afterclick.png" 2>/dev/null
       CLICKED=1

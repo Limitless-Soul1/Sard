@@ -2099,7 +2099,11 @@ export function Reader({
               mounted by the reader's own status and unmounts the moment the status turns `ready`,
               so what it shows is exactly how long the parse took. */}
           {opening && (
-            <div className="page-loading" role="status" aria-live="polite">
+            // `dir` is the UI's, not the book's: this is Sard speaking, and it is on screen before
+            // the book's own direction is even known. Without it the label inherits the LTR of the
+            // page host beside it, which put the ellipsis on the wrong end of the Arabic sentence —
+            // seen on real WebKitGTK before this was set.
+            <div className="page-loading" role="status" aria-live="polite" dir={uiDir}>
               <span className="sp-spinner" aria-hidden />
               <span>{t("reader.opening")}</span>
             </div>

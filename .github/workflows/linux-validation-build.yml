@@ -1,0 +1,110 @@
+# Linux validation build — a runnable artifact for real-device testing. NOT a release.
+#
+# The hosted reader transport has been measured on WebKitGTK in CI and passes 29 runtime criteria,
+# but every one of those measurements used generated books inside Xvfb. What has never happened is a
+# person opening their own library on their own machine, and that is the only thing this build is
+# for.
+#
+# WHY IT IS NOT `release.yml`. That workflow is Windows-only, signs updater artifacts with a key this
+# job does not have, and publishes a GitHub Release. None of that is wanted here: nothing is signed,
+# nothing is published, and the output is a workflow artifact that expires.
+#
+# WHY ubuntu-22.04. It links against an older glibc than 24.04, so the AppImage runs on more
+# distributions than one built on the newest runner would. A validation build that will not start on
+# the tester's machine measures nothing.
+name: Linux validation build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["feature/linux-validation-build"]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        # Full history: the verification below diffs against a specific commit, and the default
+        # shallow clone does not contain it — `fatal: bad revision`.
+        with: { fetch-depth: 0 }
+
+      # The claim this build makes about itself. Everything except the workflow file must be
+      # identical to the verified commit; if it is not, the artifact is not what it says it is.
+      - name: Prove the source is the verified commit
+        run: |
+          VERIFIED=1edfca3
+          echo "building from $(git rev-parse --short HEAD)"
+          DIFF=$(git diff --name-only "$VERIFIED" HEAD -- . ':(exclude).github/workflows/**')
+          if [ -n "$DIFF" ]; then
+            echo "::error::the tree differs from $VERIFIED outside .github/workflows:"; echo "$DIFF"; exit 1
+          fi
+          echo "source is identical to $VERIFIED (only this workflow file was added)"
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with: { workspaces: ./src-tauri -> target }
+
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf libssl-dev \
+            libayatana-appindicator3-dev build-essential file desktop-file-utils
+
+      - run: npm ci
+
+      # `createUpdaterArtifacts` is on in the committed config, and producing them needs the minisign
+      # key. It is overridden on the COMMAND LINE rather than in the file, so the repository still
+      # says what a real release does and this build changes nothing about it.
+      - name: Build
+        run: npx tauri build --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
+      # What makes this artifact worth testing: the reader host has to be inside it. Its absence
+      # would produce an app that looks fine and reads nothing on WebKit.
+      - name: The hosted transport is present
+        run: |
+          test -f dist/reader-host/bundle.js || { echo "::error::no reader-host bundle"; exit 1; }
+          echo "reader-host bundle: $(stat -c%s dist/reader-host/bundle.js) bytes"
+          test -f dist/reader-host/index.html || { echo "::error::no reader-host document"; exit 1; }
+          BIN=src-tauri/target/release/sard
+          strings "$BIN" | grep -q sardhost || { echo "::error::the binary has no sardhost origin"; exit 1; }
+          echo "the binary registers the sardhost origin"
+
+      # A validation build is still handed to a person, so it gets the same content discipline as a
+      # release: nothing internal rides along.
+      - name: No private or development material
+        run: |
+          test "$(git ls-files tests/harness | wc -l)" = "0" || { echo "::error::harness files tracked"; exit 1; }
+          test "$(git ls-files tests/corpus | wc -l)" = "0" || { echo "::error::corpus files tracked"; exit 1; }
+          # The probe page belongs to the throwaway branch and must never reach a build handed to
+          # anyone. The boundary self-check (reader-host/host.js) is a different thing: it is product
+          # code, it ships, and it does nothing without `?selfcheck=1`.
+          [ -e dist/__probe ] && { echo "::error::the probe page is in the bundle"; exit 1; }
+          echo "no probe page in the bundle"
+          test -f dist/reader-host/host.js && echo "boundary self-check present (inert without ?selfcheck=1)"
+          # The gate defaults to generating its snapshot from `develop`, which a CI checkout of a
+          # single branch does not have. `pr-checks.yml` makes the snapshot explicitly and passes it;
+          # the same is done here so the gate examines this tree rather than failing to find one.
+          TREE=$(node -e "import('./scripts/production-tree.mjs').then(m => console.log(m.writeProductionTree('HEAD').tree))")
+          node scripts/check-production-content.mjs --ref="$TREE" || { echo "::error::content gate refused the tree"; exit 1; }
+          node scripts/check-production-tree.mjs --ref="$TREE" || { echo "::error::tree gate refused the tree"; exit 1; }
+
+      - name: What was produced
+        run: |
+          find src-tauri/target/release/bundle -maxdepth 2 -type f \
+            \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' \) -printf '%p  %s bytes\n'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sard-linux-validation-1edfca3
+          path: |
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+          retention-days: 14

@@ -49,7 +49,10 @@ for _ in $(seq 1 145); do
       # The library is RTL (ui_lang=ar is seeded), so the first card is on the RIGHT. Both sides are
       # tried anyway: a click on empty desk does nothing, and guessing wrong once already cost a run.
       echo "  >>> clicking the first book card"
-      for POS in "$(( X + WIDTH - 200 )) $(( Y + 300 ))" "$(( X + 200 )) $(( Y + 300 ))"                  "$(( X + WIDTH - 200 )) $(( Y + 420 ))" "$(( X + 200 )) $(( Y + 420 ))"; do
+      # Coordinates read off a captured screenshot of the real library, not guessed: the sidebar
+      # occupies the right ~230px in RTL and the first card sits just left of it, centred near
+      # (WIDTH-350, 280). The first attempt clicked WIDTH-200, which is inside the sidebar.
+      for POS in "$(( X + WIDTH - 350 )) $(( Y + 280 ))" "$(( X + WIDTH - 350 )) $(( Y + 200 ))"                  "$(( X + WIDTH - 250 )) $(( Y + 280 ))" "$(( X + WIDTH - 450 )) $(( Y + 280 ))"; do
         grep -q "OPEN     called" "$OUT/app.log" 2>/dev/null && break
         # shellcheck disable=SC2086
         xdotool mousemove $POS click 1

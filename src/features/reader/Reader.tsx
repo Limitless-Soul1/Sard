@@ -950,6 +950,8 @@ export function Reader({
   // are stable, so this registers once and stays valid across section loads.
   useEffect(() => {
     const ctrl = ctrlRef.current;
+    // DIAGNOSTIC: does this mount-time registration find a controller at all?
+    diagTrace("REG      Reader mount effect", { ctrlPresent: !!ctrl, registers: ["onActivity", "onSpace", "onArrow", "onScrollIntent", "onZoomIntent", "onReadingRedraw"] });
     ctrl?.onActivity((x, y) => signalMove(x, y));
     // RAWY-180 (Part B): Space with focus inside the reading frame toggles read-aloud when a session is
     // active (returns true → the frame swallows the key); otherwise Space keeps scrolling/paging.

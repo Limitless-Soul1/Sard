@@ -63,8 +63,19 @@ for _ in $(seq 1 145); do
     fi
   fi
 
-  if (( CLICKED == 1 )) && grep -q "APP      after open\|TIMEOUT\|host.open done\|host.open THREW" "$OUT/app.log" 2>/dev/null; then
-    sleep 6
+  if (( CLICKED == 1 )) && grep -q "APP      state after open\|APP      after open\|TIMEOUT\|host.T2\|host.open THREW" "$OUT/app.log" 2>/dev/null; then
+    sleep 8
+    # A REAL text selection: press, drag across a line of the book, release. This is what should
+    # raise Sard's selection menu, and the only way to see whether the event reaches a handler.
+    eval "$(xdotool getwindowgeometry --shell "$(xdotool search --name "^Sard$" | tail -1)")"
+    CX=$(( X + WIDTH / 2 )); CY=$(( Y + HEIGHT / 2 ))
+    echo "  >>> dragging to select text at ${CX},${CY}"
+    xdotool mousemove $(( CX - 220 )) "$CY" mousedown 1
+    xdotool mousemove $(( CX - 100 )) "$CY"
+    xdotool mousemove $(( CX + 160 )) "$CY"
+    xdotool mouseup 1
+    sleep 3
+    import -window root png24:"$OUT/04-selection.png" 2>/dev/null
     import -window root png24:"$OUT/02-reader.png" 2>/dev/null
     break
   fi

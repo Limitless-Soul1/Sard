@@ -40,6 +40,20 @@ Chromium >= 140 and the EPUB set to Chromium >= 117.)
 
   1. paginator.js:252  — iframe sandbox hardened to `allow-same-origin` only (no allow-scripts).
                          RAWY-64. Book content must never execute script.
+ 1b. paginator.js:252  — and fixed-layout.js:88. That sandbox value is now READ from
+     fixed-layout.js:88   `globalThis.__sardSectionSandbox`, falling back to the exact literal above.
+                         The parent decides, because only the parent knows its engine. Unset — every
+                         Windows build — is behaviour-identical to patch 1.
+                         WHY: MEASURED on WebKitGTK, an iframe sandboxed `allow-same-origin` without
+                         `allow-scripts` never delivers the pointer events the parent listens for, so
+                         patch 1 alone produces a book nobody can touch on that engine. Upstream
+                         documents the same thing (README, WebKit bug 218086) and ships
+                         `allow-scripts` because of it. D30 is preserved by ENCLOSURE rather than by
+                         the attribute: the only place Sard sets this to include `allow-scripts` is
+                         inside the isolated reader host, whose origin holds no Tauri API, no app
+                         document and no secret.
+                         Same global-hook shape as patch 5; reverted by deleting the `??` and its
+                         left operand.
   2. paginator.js      — the `--sard-columns` / `--sard-measure` single-column patch (RAWY-21/23/25).
   3. paginator.js      — the RAWY-75 wheel/scroll-intent patch.
   4. pdf.js            — page canvas copied to an <img> via toDataURL; adoptNode renders blank in

@@ -1,12 +1,16 @@
-// The reader host, step 1.
+// The reader host's boundary self-check.
 //
-// The origin exists and carries its policy; nothing reads a book here yet. The engine, the byte
-// transfer, the section sandbox change and the message channel are later steps, each with its own
-// evidence gate, and none of them is present.
+// It measures, from INSIDE this origin, what this origin can actually reach — the one thing no
+// outside observer can establish, because every interesting answer here is a SecurityError that only
+// the code holding the reference can raise.
 //
-// `?selfcheck=1` runs the acceptance checks for this step and writes them into #report. Without it
-// the document is inert, so the checks are a deliberate act rather than something that runs behind
-// a reader every time a book opens.
+// It exists as shipped code, rather than as something a throwaway branch bolts on, because these
+// properties have to stay re-measurable against the REAL host after every change. A boundary proven
+// once against a special build is a boundary nobody can re-check.
+//
+// Inert without `?selfcheck=1`: a normal reader open runs none of it. It is absent from Windows
+// entirely — `scripts/build-reader-host.mjs` deletes this whole directory for that target, because
+// no origin is registered there to serve it.
 (function () {
   "use strict";
 
@@ -34,8 +38,28 @@
     write();
   });
 
+  // The report element is created here and hung off documentElement, not body. The engine owns the
+  // body — `FoliateController.open` calls `container.replaceChildren` and the host hands it a
+  // container it just put there — so a node parked in the body would vanish the moment a book
+  // opened, taking the evidence with it. Kept 1px and pointer-events:none because an earlier probe
+  // used a large off-screen element and it silently swallowed the very clicks being measured.
+  function report() {
+    var el = document.getElementById("report");
+    if (!el || !el.isConnected) {
+      el = document.createElement("pre");
+      el.id = "report";
+      el.setAttribute(
+        "style",
+        "position:fixed;left:0;top:0;width:1px;height:1px;overflow:hidden;" +
+          "pointer-events:none;opacity:0;white-space:pre;margin:0;z-index:-1",
+      );
+      document.documentElement.appendChild(el);
+    }
+    return el;
+  }
+
   function write() {
-    document.getElementById("report").textContent = JSON.stringify(R, null, 1);
+    report().textContent = JSON.stringify(R, null, 1);
   }
 
   function attempt(name, fn) {
@@ -111,4 +135,76 @@
     R.done = true;
     write();
   });
+
+  // -------------------------------------------------------------------------------------------
+  // THE MEASUREMENT THIS WHOLE ARCHITECTURE EXISTS FOR.
+  // -------------------------------------------------------------------------------------------
+  // The defect: on WebKitGTK an iframe sandboxed `allow-same-origin` WITHOUT `allow-scripts` never
+  // delivers pointer events to listeners the parent attached across the frame boundary. That is the
+  // exact shape of every listener the engine uses, so the book renders and nothing responds.
+  //
+  // This listens the same way the engine does — `iframe.contentDocument.addEventListener` from the
+  // parent document — and counts what arrives. It proves nothing on its own: a count only means
+  // something when something real was clicked, so the harness drives a genuine X11 click with
+  // xdotool and reads these counters afterwards. A synthetic dispatchEvent would prove nothing at
+  // all, because the bug is in DELIVERY, not in dispatch.
+  R.input = { sandbox: null, docsInstrumented: 0, pointerdown: 0, mousedown: 0, click: 0, selectionchange: 0 };
+
+  // THE POSITIVE CONTROL, and the run that lacked it is why it is here.
+  //
+  // A count of zero in the section has two completely different meanings: the engine difference this
+  // architecture exists to fix, or a click that never landed on the window at all. Only a second
+  // counter can separate them. This one is on the HOST's own document — the same window, the same
+  // click, one frame boundary nearer. If this is zero too, the harness missed and the section result
+  // says nothing; if this is non-zero and the section is zero, the gap is real and it is between
+  // these two documents.
+  R.hostInput = { pointerdown: 0, mousedown: 0, click: 0 };
+  ["pointerdown", "mousedown", "click"].forEach(function (type) {
+    document.addEventListener(type, function () { R.hostInput[type]++; write(); }, true);
+  });
+
+  var seen = new WeakSet();
+  function instrument(doc) {
+    if (!doc || seen.has(doc)) return;
+    seen.add(doc);
+    R.input.docsInstrumented++;
+    ["pointerdown", "mousedown", "click"].forEach(function (type) {
+      doc.addEventListener(type, function () { R.input[type]++; write(); }, true);
+    });
+    doc.addEventListener("selectionchange", function () { R.input.selectionchange++; write(); }, true);
+    write();
+  }
+
+  // FINDING THE SECTION DOCUMENT.
+  //
+  // Not with `document.querySelectorAll("iframe")`. The paginator builds its iframe inside a CLOSED
+  // shadow root (`attachShadow({mode:'closed'})`), so from this document that iframe does not exist
+  // — a scan finds nothing and reports zero instrumented documents, which reads exactly like "input
+  // never arrived" while actually meaning "nobody was listening".
+  //
+  // The engine's own API is the way in: `foliate-view` → `renderer.getContents()` → `.doc`, which is
+  // how anything outside the shadow root reaches a rendered section. From the document,
+  // `defaultView.frameElement` reaches back out to the iframe element, which is how the sandbox
+  // attribute that patch 1b produced can be read at all.
+  //
+  // Re-scanned rather than instrumented once: every section gets its own iframe and the engine
+  // replaces them as the reader moves. An earlier probe attached to the first document only and then
+  // measured a different one.
+  setInterval(function () {
+    var view = document.querySelector("foliate-view");
+    if (!view || !view.renderer || typeof view.renderer.getContents !== "function") return;
+    var contents;
+    try { contents = view.renderer.getContents() || []; } catch (e) { return; }
+    for (var i = 0; i < contents.length; i++) {
+      var doc = contents[i] && contents[i].doc;
+      if (!doc) continue;
+      if (R.input.sandbox === null) {
+        try {
+          var fe = doc.defaultView && doc.defaultView.frameElement;
+          if (fe) { R.input.sandbox = fe.getAttribute("sandbox"); write(); }
+        } catch (e) { /* frameElement across the boundary */ }
+      }
+      instrument(doc);
+    }
+  }, 250);
 })();

@@ -249,7 +249,17 @@ class View {
         // and the Tauri IPC bridge) while keeping 100% of Sard's own reading/theming/highlight
         // functionality, which all depends on `allow-same-origin` for `iframe.contentDocument`
         // access. Re-apply on any re-vendor, alongside the RAWY-21 --sard-measure patch above.
-        this.#iframe.setAttribute('sandbox', 'allow-same-origin')
+        //
+        // SARD LOCAL PATCH 1b — the value is READ, not hardcoded. The paragraph above is exactly
+        // right about Chromium and exactly wrong about WebKit: MEASURED on WebKitGTK, a script-
+        // disabled iframe never receives the pointer events the parent listens for, so on that
+        // engine the reasoning above produces a book nobody can touch. The parent decides, because
+        // only the parent knows which engine it is on and whether it is running inside the isolated
+        // reader host (where `allow-scripts` costs nothing, since the host holds nothing to steal).
+        // Unset — every Windows build — yields the same literal string as before, so this line is
+        // behaviour-identical there. Same global-hook shape as PATCH 5 in epub.js, and reverted the
+        // same way: delete the `??` and its left operand.
+        this.#iframe.setAttribute('sandbox', globalThis.__sardSectionSandbox ?? 'allow-same-origin')
         this.#iframe.setAttribute('scrolling', 'no')
     }
     get element() {

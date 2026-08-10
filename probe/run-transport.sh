@@ -50,15 +50,27 @@ for _ in $(seq 1 175); do
   # synthetic CDP event. The measured defect is in DELIVERY into a script-disabled frame, so only a
   # real one can falsify it. Fired once the page says the book is on screen and the counters armed.
   if (( CLICKED == 0 )) && grep -q "ready-for-click" "$OUT/stages.log" 2>/dev/null; then
-    WID="$(xdotool search --name "^Sard$" | tail -1)"
-    [[ -n "$WID" ]] && xdotool windowactivate --sync "$WID" 2>/dev/null
-    sleep 1
-    echo "  >>> delivering a real X11 click at (700,500) and a drag for selection"
-    xdotool mousemove 700 500 click 1
-    sleep 1
-    # A drag too: selection is the interaction most likely to expose a delivery gap that a single
-    # click would not, because it needs the whole pointerdown/move/up sequence to arrive in order.
-    xdotool mousemove 500 480 mousedown 1 mousemove 900 520 mouseup 1
+    # The PROBE window, not the main one. The probe page lives in a second window titled
+    # sard-step1-probe; clicking the main "Sard" window would deliver a real event to a page that is
+    # not under test and report zero, which is indistinguishable from the defect being measured.
+    WID="$(xdotool search --name "sard-step1-probe" | tail -1)"
+    if [[ -z "$WID" ]]; then
+      echo "  !! probe window not found; windows are: $(xdotool search --name . getwindowname %@ 2>/dev/null | tr '
+' '|')"
+    else
+      xdotool windowactivate --sync "$WID" 2>/dev/null
+      xdotool windowraise "$WID" 2>/dev/null
+      eval "$(xdotool getwindowgeometry --shell "$WID")"
+      CX=$(( X + WIDTH / 2 )); CY=$(( Y + HEIGHT / 2 ))
+      echo "  probe window ${WIDTH}x${HEIGHT} at ${X},${Y} — centre ${CX},${CY}"
+      sleep 1
+      echo "  >>> delivering a real X11 click at the centre of the book"
+      xdotool mousemove "$CX" "$CY" click 1
+      sleep 1
+      # A drag too: selection needs the whole pointerdown/move/up sequence to arrive IN ORDER, so it
+      # exposes a delivery gap a single click would not.
+      xdotool mousemove $(( CX - 200 )) $(( CY - 20 )) mousedown 1               mousemove $(( CX + 200 )) $(( CY + 20 )) mouseup 1
+    fi
     CLICKED=1
   fi
 

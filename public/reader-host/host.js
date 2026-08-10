@@ -158,18 +158,36 @@
     write();
   }
 
-  // Every section gets its own iframe and the engine replaces them as the reader moves, so this
-  // re-scans rather than instrumenting once. An earlier probe attached to the first document only
-  // and then measured a different one.
+  // FINDING THE SECTION DOCUMENT.
+  //
+  // Not with `document.querySelectorAll("iframe")`. The paginator builds its iframe inside a CLOSED
+  // shadow root (`attachShadow({mode:'closed'})`), so from this document that iframe does not exist
+  // — a scan finds nothing and reports zero instrumented documents, which reads exactly like "input
+  // never arrived" while actually meaning "nobody was listening".
+  //
+  // The engine's own API is the way in, and it is the same route the Windows byte-identity harness
+  // uses to fingerprint a rendered page: `foliate-view` → `renderer.getContents()` → `.doc`. From the
+  // document, `defaultView.frameElement` reaches back out to the iframe element, which is how the
+  // sandbox attribute that patch 1b produced can be read at all.
+  //
+  // Re-scanned rather than instrumented once: every section gets its own iframe and the engine
+  // replaces them as the reader moves. An earlier probe attached to the first document only and then
+  // measured a different one.
   setInterval(function () {
-    var frames = document.querySelectorAll("iframe");
-    for (var i = 0; i < frames.length; i++) {
-      var f = frames[i];
-      if (R.input.sandbox === null && f.getAttribute("sandbox") !== null) {
-        R.input.sandbox = f.getAttribute("sandbox"); // what patch 1b actually produced here
-        write();
+    var view = document.querySelector("foliate-view");
+    if (!view || !view.renderer || typeof view.renderer.getContents !== "function") return;
+    var contents;
+    try { contents = view.renderer.getContents() || []; } catch (e) { return; }
+    for (var i = 0; i < contents.length; i++) {
+      var doc = contents[i] && contents[i].doc;
+      if (!doc) continue;
+      if (R.input.sandbox === null) {
+        try {
+          var fe = doc.defaultView && doc.defaultView.frameElement;
+          if (fe) { R.input.sandbox = fe.getAttribute("sandbox"); write(); }
+        } catch (e) { /* frameElement across the boundary */ }
       }
-      try { instrument(f.contentDocument); } catch (e) { /* not readable yet */ }
+      instrument(doc);
     }
   }, 250);
 })();

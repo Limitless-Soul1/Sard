@@ -27,7 +27,10 @@ pub mod books; // file import, format detection, EPUB/PDF orchestration (placeho
 pub mod metadata; // read embedded metadata + persist user overrides (placeholder)
 pub mod fonts; // register/validate custom fonts (placeholder)
 pub mod photocards; // saved photo cards: PNG store + DB rows (RAWY-52, Photo Mode part 2a)
-pub mod bookhost; // the isolated reader-host origin (origin-isolation step 1; serves a static bundle only)
+// The isolated reader-host origin (origin-isolation step 1; serves a static bundle only). Compiled
+// only where a WebView actually needs it — see the registration in `run()` for why Windows does not.
+#[cfg(not(target_os = "windows"))]
+pub mod bookhost;
 pub mod settings; // key/value settings persistence
 pub mod sync; // FUTURE seam: backend trait only (placeholder)
 pub mod tts; // read-aloud over the Edge Read-Aloud neural voices
@@ -183,12 +186,25 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
-        // THE READER-HOST ORIGIN (origin-isolation step 1). A distinct origin serving a static,
-        // allow-listed slice of the frontend bundle: the host document, its script, the bundled
-        // fonts, and the pdf.js assets pdf.js resolves against its own URL. It reads through the
-        // asset resolver, so it has no filesystem path to serve a book with. Nothing embeds it yet.
-        .register_uri_scheme_protocol(bookhost::SCHEME, bookhost::handle);
+        .plugin(tauri_plugin_dialog::init());
+
+    // THE READER-HOST ORIGIN (origin-isolation step 1) — NOT ON WINDOWS, DELIBERATELY.
+    //
+    // A distinct origin serving a static, allow-listed slice of the frontend bundle: the host
+    // document, its script, the bundled fonts, and the pdf.js assets pdf.js resolves against its own
+    // URL. It reads through the asset resolver, so it has no filesystem path to serve a book with.
+    //
+    // WHY IT IS ABSENT ON WINDOWS. It exists to answer ONE measured defect: WebKitGTK does not
+    // deliver input into an iframe sandboxed `allow-same-origin` without `allow-scripts`, while
+    // Blink does. Windows has no such defect, so the host would be an unused origin registered in a
+    // shipping product — new attack surface bought with no benefit. A `cfg` rather than a runtime
+    // check because the difference should be a fact about the binary, not a branch someone can flip:
+    // the Windows executable does not merely leave this unused, it never compiles it, exactly as
+    // `webview_chrome` and `audio_identity` already do for their own platform-specific reasons.
+    //
+    // Nothing embeds this origin yet; registering it serves it, and no reader uses it.
+    #[cfg(not(target_os = "windows"))]
+    let builder = builder.register_uri_scheme_protocol(bookhost::SCHEME, bookhost::handle);
 
     // THE UPDATER — RELEASE BUILDS ONLY, and this cfg is the whole reason it is split out of the
     // chain above. A diagnostic build that carries the public update channel is a diagnostic build

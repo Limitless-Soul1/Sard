@@ -432,6 +432,67 @@ async function main(): Promise<void> {
     }
   });
 
+  // ---- THE DECISIVE TTS EXPERIMENT -------------------------------------------------------------
+  //
+  // On the affected machine the sequence stops dead at:
+  //     decode START {bytes: 13536, ctxState: "suspended"}
+  // with no OK and no FAILED afterwards. The promise never settles, so the pipeline waits forever in
+  // `buffering`. `playFrom`'s resume() sits AFTER the decode it is waiting on, so it is never reached.
+  //
+  // The falsifiable claim: on WebKitGTK, `decodeAudioData` on a SUSPENDED AudioContext never settles.
+  // Each variant below is raced against a marker so a hang is recorded as a hang rather than
+  // disappearing — the marker is diagnosis, not a fallback, and nothing retries on it.
+  await step("tts.decodeMatrix", async () => {
+    const inv5 = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: (c: string, a?: unknown) => Promise<unknown> } })
+      .__TAURI_INTERNALS__?.invoke;
+    if (!inv5) return "no invoke";
+    const res = (await inv5("tts_synthesize", { engine: "edge", id: "en-AU-WilliamMultilingualNeural", text: "مرحبا بالعالم" })) as ArrayBuffer;
+    const src = res instanceof ArrayBuffer ? res : new ArrayBuffer(0);
+    if (!src.byteLength) return "no audio bytes";
+
+    const settle = async (label: string, run: () => Promise<AudioBuffer>) => {
+      const t = performance.now();
+      let outcome: string;
+      try {
+        const b = await Promise.race([
+          run().then((x) => ({ ok: true as const, x })),
+          new Promise<{ ok: false }>((r) => setTimeout(() => r({ ok: false }), 8000)),
+        ]);
+        outcome = b.ok ? `RESOLVED ${b.x.duration.toFixed(2)}s` : "NEVER SETTLED (8s)";
+      } catch (e) {
+        outcome = `REJECTED ${String(e).slice(0, 90)}`;
+      }
+      return `${label}: ${outcome} after ${Math.round(performance.now() - t)}ms`;
+    };
+
+    const out: string[] = [];
+
+    // 1. Exactly what the product does today: decode on a context nobody resumed.
+    const c1 = new AudioContext();
+    out.push(`ctx1 created state=${c1.state}`);
+    out.push(await settle("suspended-decode", () => c1.decodeAudioData(src.slice(0))));
+    out.push(`ctx1 after state=${c1.state}`);
+
+    // 2. Resume FIRST, then decode — the ordering the fix would use.
+    const c2 = new AudioContext();
+    const beforeResume = c2.state;
+    let resumeOutcome = "n/a";
+    try {
+      await Promise.race([
+        c2.resume().then(() => { resumeOutcome = "RESOLVED"; }),
+        new Promise<void>((r) => setTimeout(() => { resumeOutcome = "NEVER SETTLED (5s)"; r(); }, 5000)),
+      ]);
+    } catch (e) { resumeOutcome = `REJECTED ${String(e).slice(0, 80)}`; }
+    out.push(`ctx2 ${beforeResume} -> resume ${resumeOutcome} -> state=${c2.state}`);
+    out.push(await settle("resumed-decode", () => c2.decodeAudioData(src.slice(0))));
+
+    // 3. OfflineAudioContext — decoding without any hardware audio thread at all.
+    const off = new OfflineAudioContext(1, 1, 44100);
+    out.push(await settle("offline-decode", () => off.decodeAudioData(src.slice(0))));
+
+    return out;
+  });
+
   // Decode what was synthesised — the step between "bytes arrived" and "sound came out".
   await step("tts.decode", async () => {
     const inv4 = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: (c: string, a?: unknown) => Promise<unknown> } })

@@ -335,27 +335,6 @@ pub fn run() {
 
             // PROBE-ONLY (throwaway branch): open the runtime probe page instead of relying on the
             // main UI. It mounts the real sardhost: origin and reports through the command above.
-            // DIAGNOSTIC (throwaway): put one real book in the library so the REAL application UI
-            // has something to open. Driving the product's own flow is the only instrument that
-            // reproduces what the tester sees; a probe page with its own layout does not.
-            if std::env::var("SARD_SEED_BOOK").is_ok() {
-                if let Some(asset) = app.asset_resolver().get("__probe/book.epub".into()) {
-                    if let Ok(dir) = app.path().app_data_dir() {
-                        let _ = std::fs::create_dir_all(&dir);
-                        let src = dir.join("seed-book.epub");
-                        if std::fs::write(&src, &asset.bytes).is_ok() {
-                            let state = app.state::<db::AppState>();
-                            let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
-                            let res = books::import_books(
-                                &conn,
-                                &dir,
-                                &[src.to_string_lossy().into_owned()],
-                            );
-                            println!("[trace] seeded library: {:?}", res.first().map(|r| (&r.status, &r.id)));
-                        }
-                    }
-                }
-            }
             if std::env::var("SARD_PROBE").is_ok() {
                 // No query string: `WebviewUrl::App` takes a RELATIVE path, and a value containing
                 // "://" makes the parse produce something that never loads. probe.js carries the
@@ -367,6 +346,29 @@ pub fn run() {
                     .build()?;
                 println!("[probe] probe window opened");
             }
+            // DIAGNOSTIC (throwaway): put one real book in the library so the REAL application UI
+            // has something to open. Driving the product's own flow is the only instrument that
+            // reproduces what the tester sees; a probe page with its own layout does not.
+            //
+            // It uses `conn` directly rather than `app.state()`, because the state is not managed
+            // until the line below — asking for it first panics inside Tauri, which is exactly what
+            // the first attempt did.
+            if std::env::var("SARD_SEED_BOOK").is_ok() {
+                if let Some(asset) = app.asset_resolver().get("__probe/book.epub".into()) {
+                    let src = app_data_dir.join("seed-book.epub");
+                    if std::fs::write(&src, &asset.bytes).is_ok() {
+                        let res = books::import_books(
+                            &conn,
+                            &app_data_dir,
+                            &[src.to_string_lossy().into_owned()],
+                        );
+                        println!("[trace] seeded library: {:?}", res.first().map(|r| (&r.status, &r.id)));
+                        use std::io::Write;
+                        let _ = std::io::stdout().flush();
+                    }
+                }
+            }
+
             app.manage(db::AppState {
                 db: std::sync::Mutex::new(conn),
                 app_data_dir,

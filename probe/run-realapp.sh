@@ -41,7 +41,7 @@ for _ in $(seq 1 145); do
     if [[ -n "$WID" ]]; then
       xdotool windowactivate --sync "$WID" 2>/dev/null; xdotool windowraise "$WID" 2>/dev/null
       sleep 6   # let the library render its grid
-      import -window root "$OUT/01-library.png" 2>/dev/null
+      import -window root png24:"$OUT/01-library.png" 2>/dev/null
       eval "$(xdotool getwindowgeometry --shell "$WID")"
       # The first book card sits in the upper-left of the grid in LTR and upper-right in RTL; the
       # library defaults to the UI language, so both are clicked in turn. A click on empty desk does
@@ -57,14 +57,14 @@ for _ in $(seq 1 145); do
 
   if (( CLICKED == 1 )) && grep -q "APP      after open\|TIMEOUT\|host.open done\|host.open THREW" "$OUT/app.log" 2>/dev/null; then
     sleep 6
-    import -window root "$OUT/02-reader.png" 2>/dev/null
+    import -window root png24:"$OUT/02-reader.png" 2>/dev/null
     break
   fi
   kill -0 "$APP" 2>/dev/null || break
   sleep 1
 done
 sleep 2
-import -window root "$OUT/03-final.png" 2>/dev/null
+import -window root png24:"$OUT/03-final.png" 2>/dev/null
 kill "$APP" 2>/dev/null; wait "$APP" 2>/dev/null
 echo "::endgroup::"
 

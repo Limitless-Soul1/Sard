@@ -2117,9 +2117,21 @@ export function Reader({
               mounted by the reader's own status and unmounts the moment the status turns `ready`,
               so what it shows is exactly how long the parse took. */}
           {opening && (
-            <div className="page-loading" role="status" aria-live="polite">
+            // `dir` is the UI's, not the book's: this is Sard speaking, and it is on screen before
+            // the book's own direction is even known. Without it the label inherits the LTR of the
+            // page host beside it, which puts the ellipsis of "جارٍ فتح الكتاب…" on the wrong end —
+            // seen on real WebKitGTK before this was set.
+            <div className="page-loading" role="status" aria-live="polite" dir={uiDir}>
               <span className="sp-spinner" aria-hidden />
               <span>{t("reader.opening")}</span>
+              {/* DIAGNOSTIC — throwaway. In the first WebKitGTK capture of this label, "جارٍ" sat
+                  lower than "فتح الكتاب" and looked like a different typeface — the same signature as
+                  the open Arabic typography defect, but here in Sard's OWN UI font rather than in
+                  book content. The only difference between these two lines is the tanween (U+064D).
+                  If line 1 shifts and line 2 does not, the trigger is a font fallback for the
+                  diacritic; if both sit flat, the earlier capture was something else. */}
+              <span>جارٍ ← tanween</span>
+              <span>جار ← none</span>
             </div>
           )}
         </div>

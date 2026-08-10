@@ -56,6 +56,10 @@ for _ in $(seq 1 145); do
         grep -q "OPEN     called" "$OUT/app.log" 2>/dev/null && break
         # shellcheck disable=SC2086
         xdotool mousemove $POS click 1
+        # Open the contents panel WHILE the book is still parsing — that is the only window in which
+        # its loading row exists, and it is the surface that used to claim "no contents list". The
+        # button is the leftmost of the toolbar's icon group (RTL), at ~59% of the window width.
+        xdotool mousemove $(( X + WIDTH * 59 / 100 )) $(( Y + 30 )) click 1
         # BURST, because the thing being photographed is temporary. The loading state exists only
         # while the engine parses (~2.5 s on the seeded subject), so a single frame taken afterwards
         # would always miss it — which is indistinguishable from it never appearing. Frames are ~0.4 s

@@ -27,6 +27,8 @@ if not d:
 
 host = d.get("hostReport") or {}
 inp = host.get("input") or {}
+hostinp = host.get("hostInput") or {}
+clicked = len(sys.argv) > 2 and os.path.exists(sys.argv[2])
 reach = host.get("reach") or {}
 assets = host.get("assets") or {}
 viol = host.get("cspViolations") or []
@@ -72,6 +74,10 @@ say("## Real input delivery — the measurement the architecture exists for")
 say()
 say(f"- section iframe sandbox actually set: {val(inp.get('sandbox'))}")
 say(f"- section documents instrumented: {val(inp.get('docsInstrumented'))}")
+say(f"- a real X11 click was delivered by the harness: {val(clicked)}")
+say(f"- CONTROL — events on the host's own document: "
+    f"pointerdown {val(hostinp.get('pointerdown'))}, mousedown {val(hostinp.get('mousedown'))}, "
+    f"click {val(hostinp.get('click'))}")
 say("")
 say("| event | count |")
 say("|---|---|")
@@ -144,12 +150,21 @@ crit.append(("6 the section iframe carries allow-scripts (patch 1b took effect)"
 
 instrumented = inp.get("docsInstrumented") or 0
 delivered = sum(int(inp.get(k) or 0) for k in ("pointerdown", "mousedown", "click"))
-if not instrumented:
+control = sum(int(hostinp.get(k) or 0) for k in ("pointerdown", "mousedown", "click"))
+if not clicked:
     v = UNKNOWN
-    why = "no section document was ever readable, so nothing could be listening"
+    why = "the harness never delivered a click, so a count of zero measures nothing"
+elif not instrumented:
+    v = UNKNOWN
+    why = "no section document was readable, so nothing could be listening"
+elif control == 0:
+    v = UNKNOWN
+    why = (f"CONTROL FAILED: the host's own document saw 0 events either, so the click missed the "
+           f"window — the section count of {delivered} says nothing about event delivery")
 else:
     v = "PASS" if delivered > 0 else "FAIL"
-    why = f"{delivered} pointer event(s) arrived across {instrumented} instrumented document(s)"
+    why = (f"{delivered} event(s) in the section vs {control} on the host document "
+           f"({instrumented} instrumented)")
 crit.append(("7 REAL X11 input reaches the section document", v, why))
 
 crit.append(("8 book/app boundary: no Tauri internals from the host",

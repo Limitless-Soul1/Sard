@@ -37,7 +37,7 @@ export SARD_PROBE=1
 export SARD_PROBE_OUT="$OUT/transport.json"
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
 export WEBKIT_DISABLE_DMABUF_RENDERER=1
-rm -f "$SARD_PROBE_OUT"
+rm -f "$SARD_PROBE_OUT" "$OUT/clicked" "$OUT/stages.log"
 ( cd "$ROOT/src-tauri" && timeout 180 stdbuf -oL -eL "$BIN" ) >"$OUT/app.log" 2>&1 &
 APP=$!
 
@@ -70,11 +70,16 @@ for _ in $(seq 1 175); do
       # A drag too: selection needs the whole pointerdown/move/up sequence to arrive IN ORDER, so it
       # exposes a delivery gap a single click would not.
       xdotool mousemove $(( CX - 200 )) $(( CY - 20 )) mousedown 1               mousemove $(( CX + 200 )) $(( CY + 20 )) mouseup 1
+      touch "$OUT/clicked"
     fi
     CLICKED=1
   fi
 
-  [[ -f "$SARD_PROBE_OUT" ]] && break
+  # NOT `[[ -f $SARD_PROBE_OUT ]]`. probe_write rewrites that file on EVERY stage, so testing for its
+  # existence broke this loop on the first emit — before the click was ever delivered — and the run
+  # then reported "0 events arrived" for a click that never happened. Wait for the page to say it is
+  # finished, or for the app to die.
+  grep -q "^[0-9]* final$" "$OUT/stages.log" 2>/dev/null && break
   kill -0 "$APP" 2>/dev/null || break
   sleep 1
 done
@@ -99,7 +104,7 @@ if [[ ! -f "$SARD_PROBE_OUT" && -f "$OUT/latest.json" ]]; then
   cp "$OUT/latest.json" "$SARD_PROBE_OUT"
 fi
 if [[ -f "$SARD_PROBE_OUT" ]]; then
-  python3 "$ROOT/probe/transport-report.py" "$SARD_PROBE_OUT" | tee "$OUT/GATE.md"
+  python3 "$ROOT/probe/transport-report.py" "$SARD_PROBE_OUT" "$OUT/clicked" | tee "$OUT/GATE.md"
 else
   echo "# Reader-host runtime gate" | tee "$OUT/GATE.md"
   echo >> "$OUT/GATE.md"

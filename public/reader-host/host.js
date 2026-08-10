@@ -146,6 +146,19 @@
   // all, because the bug is in DELIVERY, not in dispatch.
   R.input = { sandbox: null, docsInstrumented: 0, pointerdown: 0, mousedown: 0, click: 0, selectionchange: 0 };
 
+  // THE POSITIVE CONTROL, and the run that lacked it is why it is here.
+  //
+  // A count of zero in the section has two completely different meanings: the engine difference this
+  // architecture exists to fix, or a click that never landed on the window at all. Only a second
+  // counter can separate them. This one is on the HOST's own document — the same window, the same
+  // click, one frame boundary nearer. If this is zero too, the harness missed and the section result
+  // says nothing; if this is non-zero and the section is zero, the gap is real and it is between
+  // these two documents.
+  R.hostInput = { pointerdown: 0, mousedown: 0, click: 0 };
+  ["pointerdown", "mousedown", "click"].forEach(function (type) {
+    document.addEventListener(type, function () { R.hostInput[type]++; write(); }, true);
+  });
+
   var seen = new WeakSet();
   function instrument(doc) {
     if (!doc || seen.has(doc)) return;

@@ -5,6 +5,9 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { setBookCssMode } from "../../reader-engine/FoliateController";
 import { FoliateController, type SearchHit, type SelectionInfo, type TocEntry } from "../../reader-engine/FoliateController";
+// The reader for THIS platform: the same object as always on Windows, the hosted transport on
+// WebKit. This import is the only place the reader's construction differs.
+import { createReader, needsReaderHost } from "../../reader-transport";
 import { PhotoComposer } from "../photo/PhotoComposer";
 import type { CardData } from "../photo/photo";
 import { useReader } from "../../reader-engine/store";
@@ -137,7 +140,16 @@ export function Reader({
   const { t, lang, dir: uiDir } = useI18n();
   const stageRef = useRef<HTMLDivElement>(null);
   const ctrlRef = useRef<FoliateController | null>(null);
-  if (!ctrlRef.current) ctrlRef.current = new FoliateController();
+  // WINDOWS IS UNCHANGED: the same synchronous construction, available on the first render exactly as
+  // before. `needsReaderHost()` is false there, so this line runs and the ref below is never used.
+  //
+  // On WebKit the reader cannot be built synchronously — the reader host is a document that has to
+  // load and hand back a port first. Rather than make every reader of `ctrlRef` cope with null, the
+  // promise is created once here and awaited at the ONE place that needs the object before it can do
+  // anything: `openBook`. Everything else already guards with `?.`.
+  if (!ctrlRef.current && !needsReaderHost()) ctrlRef.current = new FoliateController();
+  const hostedRef = useRef<Promise<FoliateController> | null>(null);
+  if (!ctrlRef.current && !hostedRef.current) hostedRef.current = createReader();
   // A dev/debug surface reachable from DevTools without shipping any UI — the same convention as
   // `window.__sardTtsStats`. Lets the TTS-tracking probe measure the REAL pipeline instead of a
   // re-implementation of it that could drift.
@@ -503,6 +515,11 @@ export function Reader({
         initialStyle = { ...initialStyle, flowMode: "scrolled" };
       }
 
+      // On the hosted path this is the first moment the reader is actually needed, and the awaits
+      // above have already given the host time to load. On Windows `ctrlRef.current` was assigned
+      // during the first render and this resolves to it without awaiting anything.
+      if (!ctrlRef.current && hostedRef.current) ctrlRef.current = await hostedRef.current;
+      if (stale()) return;
       const ctrl = ctrlRef.current!;
       ctrl.onRelocate(({ cfi, fraction, chapterLabel, chapterHref, location, pageLabel }) => {
         // WP-4F: `location`/`pageLabel` are foliate's own position data, which used to be dropped here.

@@ -46,11 +46,16 @@ for _ in $(seq 1 145); do
       # The first book card sits in the upper-left of the grid in LTR and upper-right in RTL; the
       # library defaults to the UI language, so both are clicked in turn. A click on empty desk does
       # nothing, so trying both is harmless.
+      # The library is RTL (ui_lang=ar is seeded), so the first card is on the RIGHT. Both sides are
+      # tried anyway: a click on empty desk does nothing, and guessing wrong once already cost a run.
       echo "  >>> clicking the first book card"
-      xdotool mousemove $(( X + 220 )) $(( Y + 260 )) click 1; sleep 4
-      if ! grep -q "OPEN     called" "$OUT/app.log" 2>/dev/null; then
-        xdotool mousemove $(( X + WIDTH - 220 )) $(( Y + 260 )) click 1; sleep 4
-      fi
+      for POS in "$(( X + WIDTH - 200 )) $(( Y + 300 ))" "$(( X + 200 )) $(( Y + 300 ))"                  "$(( X + WIDTH - 200 )) $(( Y + 420 ))" "$(( X + 200 )) $(( Y + 420 ))"; do
+        grep -q "OPEN     called" "$OUT/app.log" 2>/dev/null && break
+        # shellcheck disable=SC2086
+        xdotool mousemove $POS click 1
+        sleep 3
+      done
+      import -window root png24:"$OUT/01b-afterclick.png" 2>/dev/null
       CLICKED=1
     fi
   fi

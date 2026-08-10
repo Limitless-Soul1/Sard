@@ -362,6 +362,15 @@ pub fn run() {
                             &app_data_dir,
                             &[src.to_string_lossy().into_owned()],
                         );
+                        // The language chooser is the FIRST screen on a fresh profile, so without
+                        // this the run never reaches the library at all — measured: the first
+                        // attempt screenshotted the onboarding picker. Setting the key is more
+                        // reliable than clicking a button whose position we would have to guess.
+                        let _ = conn.execute(
+                            "INSERT INTO settings(key, value) VALUES('ui_lang', 'ar')
+                             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                            [],
+                        );
                         println!("[trace] seeded library: {:?}", res.first().map(|r| (&r.status, &r.id)));
                         use std::io::Write;
                         let _ = std::io::stdout().flush();

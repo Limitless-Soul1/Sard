@@ -162,6 +162,7 @@ macro_rules! sard_invoke_handler {
             probe_finish, // PROBE-ONLY
             probe_stage_font, // PROBE-ONLY
             probe_stage_book, // PROBE-ONLY
+            probe_log,        // PROBE-ONLY
             $($diag_cmd),*
         ])
     };
@@ -200,6 +201,15 @@ fn probe_stage_font(app: tauri::AppHandle) -> Result<String, String> {
 // PROBE-ONLY: stage a real EPUB inside app data so the gate can open it through the SAME url the
 // application uses — `convertFileSrc` over the asset protocol. Every earlier run opened a
 // same-origin path, which never exercised that fetch at all.
+// DIAGNOSTIC (throwaway): the frontend's lifecycle trace, straight to stdout so a tester running
+// the AppImage from a terminal sees it, and so CI can capture it.
+#[tauri::command]
+fn probe_log(line: String) {
+    println!("[trace] {line}");
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+}
+
 #[tauri::command]
 fn probe_stage_book(app: tauri::AppHandle) -> Result<String, String> {
     use tauri::Manager;
@@ -325,6 +335,27 @@ pub fn run() {
 
             // PROBE-ONLY (throwaway branch): open the runtime probe page instead of relying on the
             // main UI. It mounts the real sardhost: origin and reports through the command above.
+            // DIAGNOSTIC (throwaway): put one real book in the library so the REAL application UI
+            // has something to open. Driving the product's own flow is the only instrument that
+            // reproduces what the tester sees; a probe page with its own layout does not.
+            if std::env::var("SARD_SEED_BOOK").is_ok() {
+                if let Some(asset) = app.asset_resolver().get("__probe/book.epub".into()) {
+                    if let Ok(dir) = app.path().app_data_dir() {
+                        let _ = std::fs::create_dir_all(&dir);
+                        let src = dir.join("seed-book.epub");
+                        if std::fs::write(&src, &asset.bytes).is_ok() {
+                            let state = app.state::<db::AppState>();
+                            let conn = state.db.lock().unwrap_or_else(|e| e.into_inner());
+                            let res = books::import_books(
+                                &conn,
+                                &dir,
+                                &[src.to_string_lossy().into_owned()],
+                            );
+                            println!("[trace] seeded library: {:?}", res.first().map(|r| (&r.status, &r.id)));
+                        }
+                    }
+                }
+            }
             if std::env::var("SARD_PROBE").is_ok() {
                 // No query string: `WebviewUrl::App` takes a RELATIVE path, and a value containing
                 // "://" makes the parse produce something that never loads. probe.js carries the

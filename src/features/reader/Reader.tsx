@@ -8,6 +8,14 @@ import { FoliateController, type SearchHit, type SelectionInfo, type TocEntry } 
 // The reader for THIS platform: the same object as always on Windows, the hosted transport on
 // WebKit. This import is the only place the reader's construction differs.
 import { createReader, needsReaderHost } from "../../reader-transport";
+// DIAGNOSTIC — throwaway branch. Sends the lifecycle trace to stdout via the core, because a
+// WebKitGTK console does not reach the terminal the tester is watching.
+import { setTraceSink, trace as diagTrace } from "../../reader-transport/trace";
+setTraceSink((line) => {
+  const inv = (window as unknown as { __TAURI_INTERNALS__?: { invoke?: (c: string, a?: unknown) => Promise<unknown> } })
+    .__TAURI_INTERNALS__?.invoke;
+  try { void inv?.("probe_log", { line }); } catch { /* nothing to do about a failing logger */ }
+});
 import { PhotoComposer } from "../photo/PhotoComposer";
 import type { CardData } from "../photo/photo";
 import { useReader } from "../../reader-engine/store";
@@ -515,10 +523,9 @@ export function Reader({
         initialStyle = { ...initialStyle, flowMode: "scrolled" };
       }
 
-      // On the hosted path this is the first moment the reader is actually needed, and the awaits
-      // above have already given the host time to load. On Windows `ctrlRef.current` was assigned
-      // during the first render and this resolves to it without awaiting anything.
+      diagTrace("APP      openBook reached the reader binding");
       if (!ctrlRef.current && hostedRef.current) ctrlRef.current = await hostedRef.current;
+      diagTrace("APP      reader bound", { hosted: !!hostedRef.current });
       if (stale()) return;
       const ctrl = ctrlRef.current!;
       ctrl.onRelocate(({ cfi, fraction, chapterLabel, chapterHref, location, pageLabel }) => {
@@ -635,6 +642,7 @@ export function Reader({
         bookScript: meta?.script ?? null, // WP-5A: what the read-aloud pre-flight gates on
       });
       if (targetIsPdf) setPdfPageCount(ctrl.pdfPageCount); // RAWY-87: total pages for the position readout
+      diagTrace("APP      after open", { dir: (ctrl as unknown as { dir?: string }).dir ?? null, toc: ctrl.getToc().length, pdfPages: (ctrl as unknown as { pdfPageCount?: number }).pdfPageCount ?? null });
       setToc(ctrl.getToc()); // chapters panel (RAWY-21)
       setTocSecMap(ctrl.tocHrefSectionMap()); // RAWY-256: one pass, reused by every marker render
       // RESILIENCE-1 / WP-6A: this book's own contents are useless (WP-2 measured it). Build a usable

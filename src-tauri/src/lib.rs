@@ -27,6 +27,7 @@ pub mod books; // file import, format detection, EPUB/PDF orchestration (placeho
 pub mod metadata; // read embedded metadata + persist user overrides (placeholder)
 pub mod fonts; // register/validate custom fonts (placeholder)
 pub mod photocards; // saved photo cards: PNG store + DB rows (RAWY-52, Photo Mode part 2a)
+pub mod presence; // DISC/RPC: Discord Rich Presence worker thread + the on/off gate
 pub mod settings; // key/value settings persistence
 pub mod sync; // FUTURE seam: backend trait only (placeholder)
 pub mod tts; // RAWY-105: bundled piper sidecar (persistent process) + on-demand voice download
@@ -155,6 +156,8 @@ macro_rules! sard_invoke_handler {
             tts::tts_synthesize,
             tts::tts_edge_voices,
             tts::tts_stop,
+            presence::presence_update, // DISC/RPC: push the reading activity to Discord
+            presence::presence_clear, // DISC/RPC: clear it (leaving the book, or toggled off)
             window_chrome::set_titlebar_theme,
             $($diag_cmd),*
         ])
@@ -251,6 +254,7 @@ pub fn run() {
                 db_path,
             });
             app.manage(tts::TtsEngine::default()); // RAWY-105: persistent piper process holder
+            app.manage(presence::PresenceManager::start()); // DISC/RPC: the worker thread (idle until used)
             Ok(())
         });
 
@@ -276,6 +280,12 @@ pub fn run() {
             if let tauri::RunEvent::ExitRequested { .. } = event {
                 if let Some(engine) = app_handle.try_state::<tts::TtsEngine>() {
                     tts::shutdown(&engine);
+                }
+                // DISC/RPC: clear the activity before the pipe dies, so no exit leaves a stale
+                // "reading" card on the user's Discord profile. Fire-and-forget: the worker also
+                // ends when the channel drops, and the process exit is not delayed for it.
+                if let Some(presence) = app_handle.try_state::<presence::PresenceManager>() {
+                    presence::shutdown(&presence);
                 }
             }
         });

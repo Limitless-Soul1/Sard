@@ -525,6 +525,7 @@ export const en = {
   "gs.nav.reading": "Book styles", // RAWY-284 — see "gs.reading"
   "gs.nav.bookmark": "Bookmark style",
   "gs.nav.language": "Language",
+  "gs.nav.presence": "Presence", // DISC/RPC
   "gs.nav.about": "About",
   "gs.appearance": "Appearance",
   "gs.mode": "MODE",
@@ -563,6 +564,11 @@ export const en = {
   "gs.language": "Language",
   "gs.languageHint": "Sets the interface language and direction. The book's own direction is unaffected.",
   "gs.about": "About",
+  // DISC/RPC: the Discord presence section. Exactly one switch — the feature is "on, unless told".
+  "gs.presence": "Discord Rich Presence",
+  "gs.presence.enabled": "Show reading activity on Discord",
+  "gs.presence.enabledHint": "While you read, your Discord profile shows the book and your progress in it.",
+  "gs.presence.note": "Shows only while a book is open, and only when the Discord desktop app is running. Only the book title and your position are ever shared — no notes, highlights, searches or files.",
   "gs.about.version": "Version",
   "gs.about.beta": "Beta Build",
   "gs.about.buildId": "BUILD ID",

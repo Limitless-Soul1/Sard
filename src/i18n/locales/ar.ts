@@ -519,6 +519,7 @@ export const ar: Record<TKey, string> = {
   "gs.nav.reading": "أنماط الكتب", // RAWY-284 — انظر "gs.reading"
   "gs.nav.bookmark": "شكل الفاصل",
   "gs.nav.language": "اللغة",
+  "gs.nav.presence": "الحضور",
   "gs.nav.about": "حول",
   "gs.appearance": "المظهر",
   "gs.mode": "الوضع",
@@ -556,6 +557,11 @@ export const ar: Record<TKey, string> = {
   "gs.language": "اللغة",
   "gs.languageHint": "تضبط لغة الواجهة واتجاهها. اتجاه الكتاب نفسه لا يتأثر.",
   "gs.about": "حول",
+  // DISC/RPC: قسم الحضور في ديسكورد — مفتاح واحد فقط؛ الميزة «مفعّلة ما لم يُطلب إيقافها».
+  "gs.presence": "الحضور في ديسكورد",
+  "gs.presence.enabled": "إظهار نشاط القراءة على ديسكورد",
+  "gs.presence.enabledHint": "أثناء قراءتك يظهر على ملفك في ديسكورد اسم الكتاب وموضعك فيه.",
+  "gs.presence.note": "يظهر فقط عند فتح كتاب، وفقط عند تشغيل تطبيق ديسكورد على الجهاز. لا يُشارَك سوى اسم الكتاب وموضعك — لا ملاحظات ولا تظليل ولا بحث ولا ملفات.",
   "gs.about.version": "الإصدار",
   "gs.about.beta": "نسخة تجريبية",
   "gs.about.buildId": "معرّف البناء",

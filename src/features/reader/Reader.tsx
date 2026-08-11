@@ -65,6 +65,7 @@ import { useBookmarks } from "./bookmarksStore";
 import { ReaderChrome, type SettingsSection } from "./ReaderChrome";
 import { SettingsPanel } from "./SettingsPanel";
 import { useReadMarkerStyle } from "../../lib/readMarkerStyle"; // RAWY-256: the global read-marker variant
+import { endReadingSession, startReadingSession, updateReadingSession } from "../../lib/presence"; // DISC/RPC
 import { ReturnPill } from "./ReturnPill"; // RAWY-250: the return-to-reading-position pill
 import { TtsPlayer } from "./TtsPlayer";
 import { releaseButtonFocusAfterPointerClick, skipSentenceForArrow, useTts } from "../../lib/tts";
@@ -507,6 +508,9 @@ export function Reader({
       ctrl.onRelocate(({ cfi, fraction, chapterLabel, chapterHref, location, pageLabel }) => {
         // WP-4F: `location`/`pageLabel` are foliate's own position data, which used to be dropped here.
         set({ cfi, fraction, chapterLabel, chapterHref, location, pageLabel });
+        // DISC/RPC: the activity's position line follows the real reading position — the chapter
+        // label when the engine has one, else the whole-book percent. Throttled inside.
+        updateReadingSession(chapterLabel, fraction);
         // RAWY-190: if read-aloud finished a chapter (status "chapter-end") and the user navigated to a
         // DIFFERENT section, the stale "next chapter" offer no longer applies (its button would advance
         // from the chapter on screen, which is now the one the user moved to — not the finished one). Stop
@@ -617,6 +621,10 @@ export function Reader({
         bookAuthor: meta?.author ?? null,
         bookScript: meta?.script ?? null, // WP-5A: what the read-aloud pre-flight gates on
       });
+      // DISC/RPC: a NEW session starts the moment the book is readable. The details line is the
+      // database name (the same `meta` every other surface resolves) and the clock starts now; the
+      // first relocate below fills the position line in.
+      startReadingSession((meta?.title ?? target.title ?? "").trim() || t("app.name"));
       if (targetIsPdf) setPdfPageCount(ctrl.pdfPageCount); // RAWY-87: total pages for the position readout
       setToc(ctrl.getToc()); // chapters panel (RAWY-21)
       setTocSecMap(ctrl.tocHrefSectionMap()); // RAWY-256: one pass, reused by every marker render
@@ -782,6 +790,10 @@ export function Reader({
       useTts.getState().stop();
       // The photo-card basket is a per-reading-session collection (RAWY-60) — clear it on exit.
       usePhotoBasket.getState().clear();
+      // DISC/RPC: this reading session is over — clear the activity off Discord. Runs on every
+      // exit path (Back to Library, a cross-book follow, the error screen) because all of them
+      // either unmount the Reader or change `initial.id`, and this cleanup covers both.
+      endReadingSession();
       // Restore the LIBRARY theme to the chrome on exit (RAWY-40/48) — the book theme was only
       // for this reading session; the Library shows its own independent theme again.
       applyTheme(THEMES[libraryThemeRef.current]);

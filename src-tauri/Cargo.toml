@@ -75,6 +75,13 @@ msedge-tts = "0.4"
 # connect). We install aws-lc-rs as the explicit process default at startup to disambiguate.
 rustls = { version = "0.23", features = ["aws_lc_rs"] }
 
+# Discord Rich Presence (PR: disc/rpc): what the user is reading, shown on their Discord profile.
+# v1.x is a from-scratch rewrite that speaks Discord's IPC protocol directly — no GameSDK, no
+# bundled DLL, and no build-time download (the old discord-sdk path fetched a binary from Discord).
+# Same client id + asset keys as any Discord application; the id lives in src/presence.rs, one
+# constant, because it must be supplied by the app owner (see the comment there). MIT.
+discord-rich-presence = "1.1"
+
 # RAWY-196: reach WebView2's own settings to strip the browser chrome (find bar, reload, print,
 # context menu). Tauri exposes none of these, so they are set through `with_webview` -> the WebView2
 # controller. Both crates are ALREADY in the tree via tauri/wry — pinned to those exact versions so

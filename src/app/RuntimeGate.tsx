@@ -12,7 +12,7 @@
 import { useI18n } from "../i18n";
 import type { Classified } from "../lib/errors";
 import { currentEnv, engineLabel, missingFeatures } from "../lib/runtime";
-import { openWebView2Help, WEBVIEW2_URL } from "../lib/webview2";
+import { canUpdateRuntime, openWebView2Help, WEBVIEW2_URL } from "../lib/webview2";
 import { ErrorCard } from "./ErrorCard";
 
 export function RuntimeGate() {
@@ -20,17 +20,21 @@ export function RuntimeGate() {
   const env = currentEnv();
   const missing = missingFeatures(env, "epub");
 
+  // The repair offer is WebView2-only. Everywhere else the engine is not the app's to update, so the
+  // card states the problem and drops the action rather than pointing at a page that cannot help.
+  const canRepair = canUpdateRuntime();
+
   // The gate is a precondition rather than a caught exception, so its `Classified` is built here.
   // It still goes through ErrorCard: one failure look, no matter where the failure came from.
   const classified: Classified = {
     kind: "runtime-outdated",
     presentation: {
       fault: "environment",
-      titleKey: "err.gate.title",
-      bodyKey: "err.gate.body",
-      actions: ["update-runtime", "details"],
+      titleKey: canRepair ? "err.gate.title" : "err.gate.title.engine",
+      bodyKey: canRepair ? "err.gate.body" : "err.gate.body.engine",
+      actions: canRepair ? ["update-runtime", "details"] : ["details"],
     },
-    raw: `pre-flight: this WebView2 runtime lacks ${missing.join(", ")} — required to render EPUB`,
+    raw: `pre-flight: this web engine lacks ${missing.join(", ")} — required to render EPUB`,
     context: { stage: "startup-gate", missingForFormat: missing.join(",") },
   };
 
@@ -41,10 +45,10 @@ export function RuntimeGate() {
         handlers={{ "update-runtime": () => void openWebView2Help() }}
         diagnosticsText={`${t("err.gate.engine", { engine: engineLabel() })}\n${t("err.gate.missing", {
           features: missing.join(", "),
-        })}\n${WEBVIEW2_URL}`}
+        })}${canRepair ? `\n${WEBVIEW2_URL}` : ""}`}
         extra={
           <>
-            <p className="err-body">{t("err.gate.how")}</p>
+            <p className="err-body">{t(canRepair ? "err.gate.how" : "err.gate.how.engine")}</p>
             <p className="err-gate-meta">{t("err.gate.missing", { features: missing.join(", ") })}</p>
             <p className="err-gate-meta">{t("err.gate.engine", { engine: engineLabel() })}</p>
           </>

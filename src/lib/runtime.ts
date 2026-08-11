@@ -3,9 +3,9 @@
 // THE DEFECT THIS EXISTS FOR. Sard vendors two rendering engines under `public/foliate-js/`, and
 // both need browser features newer than the WebView2 runtime some machines actually have:
 //
-//   * PDF.js 5.5.207 calls `Uint8Array.prototype.toHex()` on the unconditional PDF-open path
-//     (pdf.worker.mjs:59575). Where that method is missing, EVERY PDF fails with
-//     `UnknownErrorException: hashOriginal.toHex is not a function` — the reported defect.
+//   * PDF.js 5.5.207 calls `Promise.try`, `Uint8Array.prototype.toHex()` and
+//     `Map.prototype.getOrInsertComputed()` with no feature detection of its own. Where they are
+//     missing, `getDocument()` NEVER SETTLES — opening a PDF hangs rather than failing.
 //   * foliate's `epub.js` calls `Object.groupBy` / `Map.groupBy` in the OPF metadata parser
 //     (epub.js:178, :200, :206, :258). Where those are missing, NO book of any kind opens.
 //
@@ -13,6 +13,13 @@
 // inspects it, and Tauri's installer only installs the WebView2 runtime when it is ABSENT — it does
 // not upgrade an old one. So a machine with a runtime pinned by policy stays broken forever, and the
 // failure surfaces as an internal exception 40 minutes later.
+//
+// AND THE PDF SIDE IS NOW REPAIRED RATHER THAN REFUSED. `public/foliate-js/sard-pdf-polyfill.mjs`
+// supplies those three built-ins on any engine lacking them — in the page (index.html) and in the
+// pdf.js worker (scripts/build-pdf-worker.mjs). So this gate no longer decides whether the ENGINE
+// shipped them; it decides whether SARD CAN RENDER, which is the question that was always meant.
+// Measured: with the layer in place, Chromium 124 matches Chromium 150 byte for byte on document
+// fingerprints, text extraction, text-layer geometry and selection rectangles.
 //
 // WHY FEATURE DETECTION AND NOT A VERSION NUMBER. A version check is a second copy of the same fact,
 // and the two copies desync the moment the vendored engines are re-pinned: whoever re-vendors would
@@ -34,38 +41,60 @@ export type Capability = "epub" | "pdf";
 export interface RuntimeEnv {
   objectGroupBy: boolean;
   mapGroupBy: boolean;
+  promiseTry: boolean;
   uint8ToHex: boolean;
-  uint8ToBase64: boolean;
-  uint8FromBase64: boolean;
+  mapGetOrInsertComputed: boolean;
 }
 
-/** Which named features each capability needs — used for the decision AND for the Details text. */
+/**
+ * Which named features each capability needs — used for the decision AND for the Details text.
+ *
+ * THE PDF SET WAS WRONG IN BOTH DIRECTIONS UNTIL IT WAS MEASURED ON A DEVICE, and the correction is
+ * worth recording because the old list looked perfectly reasonable:
+ *
+ *   REMOVED  `Uint8Array.prototype.toBase64`, `Uint8Array.fromBase64`. Instrumented call counters
+ *            against a PDF carrying 23 embedded TrueType fonts measured them at ZERO calls. They
+ *            serve `createFontFaceRule`, digital signatures and XFA — none on Sard's path. Requiring
+ *            them refused PDFs on devices that render them perfectly.
+ *   ADDED    `Promise.try` and `Map.prototype.getOrInsertComputed`. Neither was checked, and both
+ *            fail EARLIER than anything that was: on Android WebView 124 the first failure is
+ *            `Promise.try`, and it does not throw where anyone can see it — `getDocument()` never
+ *            settles, so opening a PDF hung for ever instead of showing this gate's own message.
+ *
+ * MEASURED AFTER THE COMPATIBILITY LAYER, NOT BEFORE. `public/foliate-js/sard-pdf-polyfill.mjs` is
+ * loaded by index.html ahead of the application bundle, so by the time anything asks, these three are
+ * present on every engine Sard supports. That is the point: the question is "can Sard render a PDF
+ * here", not "did this WebView ship the built-in natively". Keeping the probe means a future engine
+ * change, or a polyfill that failed to load, is still caught rather than assumed.
+ */
 export const CAPABILITY_FEATURES: Record<Capability, readonly (keyof RuntimeEnv)[]> = {
   // foliate epub.js:178/:200/:206/:258 — the OPF metadata parser, run for every EPUB.
   epub: ["objectGroupBy", "mapGroupBy"],
-  // PDF.js 5.5.207 — pdf.worker.mjs:59575 (every getDocument), pdf.mjs:7434 (embedded fonts),
-  // pdf.mjs:24263/:24267 (signatures).
-  pdf: ["uint8ToHex", "uint8ToBase64", "uint8FromBase64"],
+  // PDF.js 5.5.207 — pdf.mjs:8404 + the worker's message handler (`Promise.try`),
+  // pdf.worker.mjs:59575 (`toHex`, the fingerprint on every open), and `getOrInsertComputed`
+  // (pdf.mjs ×9, pdf.worker.mjs ×6, surfacing at getPage).
+  pdf: ["promiseTry", "uint8ToHex", "mapGetOrInsertComputed"],
 };
 
 /** The human-readable feature names, for the Details panel and for bug reports. */
 export const FEATURE_LABELS: Record<keyof RuntimeEnv, string> = {
   objectGroupBy: "Object.groupBy",
   mapGroupBy: "Map.groupBy",
+  promiseTry: "Promise.try",
   uint8ToHex: "Uint8Array.prototype.toHex",
-  uint8ToBase64: "Uint8Array.prototype.toBase64",
-  uint8FromBase64: "Uint8Array.fromBase64",
+  mapGetOrInsertComputed: "Map.prototype.getOrInsertComputed",
 };
 
 /** Read the real globals. The ONLY place this module touches the environment. */
 export function readEnv(): RuntimeEnv {
-  const u8 = Uint8Array as unknown as { fromBase64?: unknown; prototype: Record<string, unknown> };
+  const u8 = Uint8Array as unknown as { prototype: Record<string, unknown> };
+  const mapProto = Map.prototype as unknown as Record<string, unknown>;
   return {
     objectGroupBy: typeof (Object as unknown as { groupBy?: unknown }).groupBy === "function",
     mapGroupBy: typeof (Map as unknown as { groupBy?: unknown }).groupBy === "function",
+    promiseTry: typeof (Promise as unknown as { try?: unknown }).try === "function",
     uint8ToHex: typeof u8.prototype?.toHex === "function",
-    uint8ToBase64: typeof u8.prototype?.toBase64 === "function",
-    uint8FromBase64: typeof u8.fromBase64 === "function",
+    mapGetOrInsertComputed: typeof mapProto.getOrInsertComputed === "function",
   };
 }
 

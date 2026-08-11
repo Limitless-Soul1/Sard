@@ -240,6 +240,35 @@ Chromium >= 140 and the EPUB set to Chromium >= 117.)
                         diagnosis5 must report `violations: 0`. Run it with `--cycles=N` to widen the
                         window; it fails if ANY sample deviates from the baseline.
 
+ 12. pdf.js:5        — `workerSrc` points at `vendor/pdfjs/pdf.worker.sard.mjs`, a GENERATED file:
+                        Sard's PDF compatibility layer concatenated in front of the vendored worker
+                        by `scripts/build-pdf-worker.mjs`. The vendored `pdf.worker.mjs` is NOT
+                        edited — it is read and copied, so a re-vendor of this directory needs no
+                        re-application beyond re-running the build.
+                        WHY: PDF.js 5.5.207 calls three modern built-ins with no feature detection
+                        of its own — `Promise.try` (pdf.mjs x4, pdf.worker.mjs x4),
+                        `Uint8Array.prototype.toHex` (pdf.worker.mjs:59575, the fingerprint on every
+                        open) and `Map.prototype.getOrInsertComputed` (pdf.mjs x9, worker x6).
+                        MEASURED on Android System WebView 124.0.6367.219: none of the three exists,
+                        and the failure is not an error but a HANG — `getDocument()` never settles.
+                        A worker is its own realm, so the copy loaded into the page from index.html
+                        does not reach it; without the layer in the worker, pdf.js logs "Setting up
+                        fake worker" and parses on the main thread instead.
+                        WHY CONCATENATION rather than an import: the app CSP is `script-src 'self'`
+                        and refuses a blob: wrapper (measured), and `pdf.worker.mjs` contains ZERO
+                        static imports, so nothing in the shipped tree exercises module-import-
+                        inside-a-worker under this CSP. Concatenation adds no mechanism that can
+                        fail.
+                        NOT INCLUDED, deliberately: `Uint8Array.prototype.toBase64` and
+                        `Uint8Array.fromBase64`. Call counters against a PDF with 23 embedded
+                        TrueType fonts measured them at ZERO calls — they serve `createFontFaceRule`,
+                        signatures and XFA. `Float16Array` is absent for a different reason: pdf.js
+                        feature-detects that one itself.
+                        VERIFIED: with the layer, Chromium 124 matches Chromium 150 byte for byte on
+                        document fingerprints, text-item counts, text-layer geometry and selection
+                        rectangles — on Latin, Arabic and embedded-font PDFs.
+                        Reverted by deleting the polyfill, the build script and restoring pdf.js:5.
+
   NOTE ON NUMBERING: entries 1-8 above predate this one and their numbers do not all match the
   `SARD LOCAL PATCH n` markers in the sources (the stylesheet-sanitiser hook is marked 5 in epub.js
   but listed as 6 here, and the turn-coalescing entry is listed as 5 out of order at the end). That

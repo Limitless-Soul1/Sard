@@ -8,6 +8,13 @@
 
   <body>
     <div id="root"></div>
+    <!-- PDF compatibility layer — BEFORE the application bundle, deliberately.
+         It installs three built-ins that older WebViews lack (see the file for the measurements).
+         Loading it here rather than from a module import is what guarantees the ordering: the
+         capability probe in src/lib/runtime.ts must measure what Sard can actually do, not what the
+         engine happened to ship, and a probe that ran first would refuse PDFs this build can render.
+         Inert on a current engine — every polyfill in it is feature-detected. -->
+    <script type="module" src="/foliate-js/sard-pdf-polyfill.mjs"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

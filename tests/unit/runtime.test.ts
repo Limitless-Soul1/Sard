@@ -20,9 +20,9 @@ import {
 const FULL: RuntimeEnv = {
   objectGroupBy: true,
   mapGroupBy: true,
+  promiseTry: true,
   uint8ToHex: true,
-  uint8ToBase64: true,
-  uint8FromBase64: true,
+  mapGetOrInsertComputed: true,
 };
 
 afterEach(() => __setRuntimeForTests(null));
@@ -47,7 +47,7 @@ describe("capability decisions", () => {
   it("the PDF floor is INDEPENDENT of the EPUB floor — losing PDF must not block reading", () => {
     // The design decision this pins: a missing PDF capability is not fatal. If this ever inverts,
     // an outdated runtime would lock a user out of their entire EPUB library over a PDF feature.
-    const noPdf: RuntimeEnv = { ...FULL, uint8ToHex: false, uint8ToBase64: false, uint8FromBase64: false };
+    const noPdf: RuntimeEnv = { ...FULL, promiseTry: false, uint8ToHex: false, mapGetOrInsertComputed: false };
     expect(capabilitiesOf(noPdf)).toEqual({ epub: true, pdf: false });
   });
 
@@ -89,9 +89,9 @@ describe("the live environment", () => {
   });
 
   it("runtimeReport names what is missing, for a bug report", () => {
-    __setRuntimeForTests({ ...FULL, uint8ToHex: false, uint8FromBase64: false });
+    __setRuntimeForTests({ ...FULL, uint8ToHex: false, promiseTry: false });
     expect(runtimeReport().pdf).toContain("Uint8Array.prototype.toHex");
-    expect(runtimeReport().pdf).toContain("Uint8Array.fromBase64");
+    expect(runtimeReport().pdf).toContain("Promise.try");
     expect(runtimeReport().epub).toBe("ok");
   });
 });

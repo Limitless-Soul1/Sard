@@ -8,6 +8,23 @@
 export const WEBVIEW2_URL = "https://developer.microsoft.com/microsoft-edge/webview2/";
 
 /**
+ * Is "update your runtime" an action this user can actually take?
+ *
+ * ONLY ON WEBVIEW2. The recovery below opens Microsoft's download page, which repairs exactly one
+ * situation: a Windows machine whose Evergreen runtime is old. Everywhere else it is a dead end
+ * dressed as a fix — on Android the WebView is updated by the store on its own schedule and the app
+ * cannot install one, and on iOS the engine is part of the operating system. Offering the button
+ * there would tell a user to do something impossible, which is worse than saying nothing.
+ *
+ * Asked of the ENGINE rather than the operating system, for the same reason `needsReaderHost` is:
+ * WebView2 identifies itself with an `Edg/` token, and that token is what makes the download page the
+ * correct answer. A Chromium-based engine that is not WebView2 is not fixed by it.
+ */
+export function canUpdateRuntime(ua: string = navigator.userAgent): boolean {
+  return /Edg\//.test(ua);
+}
+
+/**
  * Open the download page in the user's real browser.
  *
  * Never throws: a failed launch must not turn a recovery action into a new error. The URL is also

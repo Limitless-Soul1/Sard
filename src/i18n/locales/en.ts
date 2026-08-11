@@ -796,6 +796,15 @@ export const en = {
     "Sard reads books using the Microsoft Edge WebView2 runtime that comes with Windows. The version on this computer is too old to open books of any kind.",
   "err.gate.how":
     "Install the latest “Evergreen” WebView2 Runtime from Microsoft, then start Sard again.",
+  // The same gate where the engine is NOT WebView2 — Android's system WebView, or a WebKit build.
+  // Sard cannot install an engine there and neither can the reader: on Android the store updates it
+  // on its own schedule, and on Apple platforms it belongs to the operating system. So this wording
+  // states the situation and stops, rather than offering a download that would do nothing.
+  "err.gate.title.engine": "Sard needs a newer web engine",
+  "err.gate.body.engine":
+    "Sard reads books using this device’s built-in web engine. The version on this device is too old to open books of any kind.",
+  "err.gate.how.engine":
+    "Updating the system WebView — or the device’s operating system — is what raises this version. Sard cannot install it on your behalf.",
   "err.gate.missing": "Missing browser features: {features}",
   "err.gate.engine": "Detected engine: {engine}",
 

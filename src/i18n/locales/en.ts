@@ -525,6 +525,7 @@ export const en = {
   "gs.nav.reading": "Book styles", // RAWY-284 — see "gs.reading"
   "gs.nav.bookmark": "Bookmark style",
   "gs.nav.language": "Language",
+  "gs.nav.presence": "Activity", // DISC/RPC
   "gs.nav.about": "About",
   "gs.appearance": "Appearance",
   "gs.mode": "MODE",
@@ -563,6 +564,20 @@ export const en = {
   "gs.language": "Language",
   "gs.languageHint": "Sets the interface language and direction. The book's own direction is unaffected.",
   "gs.about": "About",
+  // DISC/RPC: the Discord presence section. Exactly one switch — the feature is "on, unless told".
+  "gs.presence": "Discord Activity",
+  "gs.presence.enabled": "Show reading activity on Discord",
+  "gs.presence.enabledHint": "While you read, your Discord profile shows the book and your progress in it.",
+  "gs.presence.showBook": "Show the book title",
+  "gs.presence.showBookHint": "The details line shows \"Reading {book title}\". Off: only the position line appears.",
+  "gs.presence.showPosition": "Show chapter and progress",
+  "gs.presence.showPositionHint": "The second line shows the current chapter and your percentage in the book.",
+  "gs.presence.showBrowsing": "Show browsing activity",
+  "gs.presence.showBrowsingHint": "While no book is open, shows \"Sard — Browsing the library\".",
+  "gs.presence.note": "Shows while Sard is open: the library browse, or the book and your position while you read. Only when the Discord desktop app is running. Nothing else is ever shared — no notes, highlights, searches or files.",
+  // DISC/RPC: the activity shown while the app is open and no book is — replaced by the book
+  // itself on open, returned to on close.
+  "presence.browsing": "Browsing the library",
   "gs.about.version": "Version",
   "gs.about.beta": "Beta Build",
   "gs.about.buildId": "BUILD ID",

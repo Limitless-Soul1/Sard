@@ -519,6 +519,7 @@ export const ar: Record<TKey, string> = {
   "gs.nav.reading": "أنماط الكتب", // RAWY-284 — انظر "gs.reading"
   "gs.nav.bookmark": "شكل الفاصل",
   "gs.nav.language": "اللغة",
+  "gs.nav.presence": "الأنشطة",
   "gs.nav.about": "حول",
   "gs.appearance": "المظهر",
   "gs.mode": "الوضع",
@@ -556,6 +557,19 @@ export const ar: Record<TKey, string> = {
   "gs.language": "اللغة",
   "gs.languageHint": "تضبط لغة الواجهة واتجاهها. اتجاه الكتاب نفسه لا يتأثر.",
   "gs.about": "حول",
+  // DISC/RPC: قسم الحضور في ديسكورد — مفتاح واحد فقط؛ الميزة «مفعّلة ما لم يُطلب إيقافها».
+  "gs.presence": "نشاط ديسكورد",
+  "gs.presence.enabled": "إظهار نشاط القراءة على ديسكورد",
+  "gs.presence.enabledHint": "أثناء قراءتك يظهر على ملفك في ديسكورد اسم الكتاب وموضعك فيه.",
+  "gs.presence.showBook": "إظهار اسم الكتاب",
+  "gs.presence.showBookHint": "يُظهر السطر الأول «أقرأ {اسم الكتاب}». عند الإيقاف يظهر سطر الموضع فقط.",
+  "gs.presence.showPosition": "إظهار الفصل والتقدّم",
+  "gs.presence.showPositionHint": "يُظهر السطر الثاني الفصل الحالي ونسبة تقدّمك في الكتاب.",
+  "gs.presence.showBrowsing": "إظهار نشاط التصفّح",
+  "gs.presence.showBrowsingHint": "عند عدم وجود كتاب مفتوح يُظهر «سرد — تصفّح المكتبة».",
+  "gs.presence.note": "يظهر طالما سرد مفتوحة: تصفّح المكتبة، أو الكتاب وموضعك أثناء القراءة. فقط عند تشغيل تطبيق ديسكورد على الجهاز. لا يُشارَك سوى ذلك — لا ملاحظات ولا تظليل ولا بحث ولا ملفات.",
+  // DISC/RPC: النشاط الظاهر عند فتح التطبيق دون كتاب — يُستبدل بالكتاب عند فتحه، ويُعاد إليه عند إغلاقه.
+  "presence.browsing": "تصفّح المكتبة",
   "gs.about.version": "الإصدار",
   "gs.about.beta": "نسخة تجريبية",
   "gs.about.buildId": "معرّف البناء",

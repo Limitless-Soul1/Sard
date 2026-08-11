@@ -88,5 +88,5 @@ Do not reference anything under `private/` from public code or documentation.
 
 ## Getting started
 
-See [`BUILD.md`](../BUILD.md) for prerequisites and how to build. `npm test` runs the unit suite;
+See [`BUILD.md`](BUILD.md) for prerequisites and how to build. `npm test` runs the unit suite;
 `npm run build` type-checks and bundles the frontend.

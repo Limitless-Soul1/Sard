@@ -1,11 +1,11 @@
-// PDF.js COMPATIBILITY LAYER — three built-ins that older WebViews do not have.
+// PDF.js COMPATIBILITY LAYER — four built-ins that older WebViews do not have.
 //
 // SARD LOCAL ADDITION (see VENDOR.txt). This is Sard's file, not vendored code: pdf.js is never
 // edited, it is given an engine that meets its assumptions.
 //
 // THE DEFECT THIS EXISTS FOR, measured on a real device rather than reasoned about. PDF.js 5.5.207
-// calls three modern built-ins with no feature detection of its own. On Android System WebView
-// 124.0.6367.219 none of the three exists, and the failure is not a clean error — `getDocument()`
+// calls four modern built-ins with no feature detection of its own. On Android System WebView
+// 124.0.6367.219 none of the four exists, and the first failure is not a clean error — `getDocument()`
 // never settles, so opening a PDF hangs for ever with nothing in the log to explain it:
 //
 //   Promise.try                       pdf.mjs ×4, pdf.worker.mjs ×4 — the main-thread↔worker message
@@ -13,6 +13,8 @@
 //   Uint8Array.prototype.toHex        pdf.worker.mjs:59575 — the document fingerprint, computed on
 //                                     every open.
 //   Map.prototype.getOrInsertComputed pdf.mjs ×9, pdf.worker.mjs ×6 — surfaces at getPage().
+//   URL.parse                         pdf.mjs ×8, pdf.worker.mjs ×3 — reached from PDFWorker's own
+//                                     setup. Costs the WORKER rather than correctness: see below.
 //
 // WHAT IS DELIBERATELY NOT HERE. `Uint8Array.prototype.toBase64` and `Uint8Array.fromBase64` were in
 // Sard's old capability check and are NOT in this file, because instrumenting the polyfills with call
@@ -27,7 +29,7 @@
 // native implementation is faster and is the one pdf.js was tested against. Every guard below is
 // `typeof … !== "function"`, so a modern WebView leaves this module inert.
 //
-// VERIFIED: with these three installed, Chromium 124 produces byte-identical results to Chromium 150
+// VERIFIED: with these four installed, Chromium 124 produces byte-identical results to Chromium 150
 // native — same document fingerprints, same text-item counts, same text-layer geometry, same
 // selection rectangles, on Latin, Arabic and embedded-font PDFs.
 //
@@ -59,6 +61,28 @@ if (typeof Uint8Array.prototype.toHex !== "function") {
       return s;
     },
   });
+}
+
+if (typeof URL.parse !== "function") {
+  // THE ONE THAT COSTS PERFORMANCE RATHER THAN CORRECTNESS, and the reason it was nearly missed.
+  //
+  // `PDFWorker.#initialize` calls `_isSameOrigin(...)` — which calls `URL.parse` — INSIDE the try
+  // block that wraps `new Worker(...)`. Where `URL.parse` is missing that throws, the catch logs
+  // "The worker has been disabled", and pdf.js quietly parses on the MAIN THREAD for the rest of the
+  // session. Everything still renders correctly, which is exactly why this hid: the only symptom is
+  // that page turns block the UI.
+  //
+  // MEASURED: absent on Chromium 124 (where `URL.canParse` IS present — they shipped separately, so
+  // one is not evidence of the other). With this installed, the real worker starts.
+  //
+  // Returns null rather than throwing on a bad URL, which is the whole point of the static.
+  URL.parse = function (url, base) {
+    try {
+      return base === undefined ? new URL(url) : new URL(url, base);
+    } catch {
+      return null;
+    }
+  };
 }
 
 if (typeof Map.prototype.getOrInsertComputed !== "function") {

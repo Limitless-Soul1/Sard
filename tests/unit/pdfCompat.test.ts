@@ -115,8 +115,9 @@ describe("PDF compatibility layer — correctness", () => {
 
 describe("PDF compatibility layer — inert on a capable engine", () => {
   it("every polyfill is feature-detected, so a native implementation is never replaced", () => {
+    // Four: Promise.try, URL.parse, Uint8Array.prototype.toHex, Map.prototype.getOrInsertComputed.
     const guards = polyfillCode.match(/typeof [^\n]*!== "function"/g) ?? [];
-    expect(guards.length).toBe(3);
+    expect(guards.length).toBe(4);
   });
 
   it("does not touch the two built-ins measured at zero calls", () => {

@@ -174,19 +174,39 @@ pub fn run() {
     println!("[Sard] {BUILD_KIND_BANNER}");
 
     let builder = tauri::Builder::default()
-        // RAWY-173 (AUD-9): registered FIRST so a SECOND launch is intercepted before it opens a window
-        // or attaches the same WAL DB. The callback runs in the ALREADY-RUNNING instance — focus its
-        // window instead of starting a rival that would fight over the DB + per-session state. (A file
-        // arg could be routed here later; for now, just surface the existing window.)
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-            if let Some(w) = app.get_webview_window("main") {
-                let _ = w.unminimize();
-                let _ = w.show();
-                let _ = w.set_focus();
-            }
-        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init());
+
+    // SINGLE INSTANCE — DESKTOP ONLY, and not by preference.
+    //
+    // RAWY-173 (AUD-9): registered FIRST so a SECOND launch is intercepted before it opens a window
+    // or attaches the same WAL DB. The callback runs in the ALREADY-RUNNING instance — focus its
+    // window instead of starting a rival that would fight over the DB + per-session state. (A file
+    // arg could be routed here later; for now, just surface the existing window.)
+    //
+    // WHY IT MOVED OUT OF THE CHAIN ABOVE. `tauri-plugin-single-instance` opens with a CRATE-level
+    // `#![cfg(not(any(target_os = "android", target_os = "ios")))]`, so on mobile the crate compiles
+    // to nothing and this path does not resolve. Left in the chain it is not a plugin that misbehaves
+    // on a phone — it is a build that cannot start.
+    //
+    // The concept does not transfer either: an Android activity and an iOS app are single-instance by
+    // the platform's own lifecycle, so there is no rival process for this to intercept. A file handed
+    // in from another app arrives through an intent or a document URL, not a second argv.
+    //
+    // `cfg(desktop)` rather than `cfg(not(any(target_os = ...)))` because that alias is exactly what
+    // it means, tauri-build declares it (so no `unexpected_cfgs` warning), and this file already uses
+    // its counterpart at `#[cfg_attr(mobile, tauri::mobile_entry_point)]`.
+    //
+    // ORDERING NOTE: it is no longer literally first in the chain, but it is still registered before
+    // the window is created and before `setup()` opens the database, which is what RAWY-173 required.
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.unminimize();
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+    }));
 
     // THE READER-HOST ORIGIN (origin-isolation step 1) — NOT ON WINDOWS, DELIBERATELY.
     //
@@ -215,7 +235,15 @@ pub fn run() {
     // the binary has no update path at all — not a disabled one, none.
     //
     // `process` (relaunch-after-install) goes with it: it exists to serve the updater flow.
-    #[cfg(not(feature = "diag"))]
+    //
+    // AND DESKTOP ONLY, which is a second and independent reason. Unlike single-instance these two
+    // crates do compile for mobile, so nothing would fail loudly — they simply declare
+    // `platforms.support.{android,ios}.level = "none"` and do nothing, which is the worse failure:
+    // an update path that silently never updates. Both stores also forbid an application updating
+    // itself outside the store, so on mobile this is not a missing feature but a prohibited one.
+    // A mobile binary therefore has no update path at all — not a disabled one, none — exactly as a
+    // diagnostic build does, and for the same reason: the safest update mechanism is an absent one.
+    #[cfg(all(desktop, not(feature = "diag")))]
     let builder = builder
         // Everything the updater needs — the manifest endpoint, the minisign public key and the
         // Windows install mode — is declarative, in tauri.conf.json; there is no update command of

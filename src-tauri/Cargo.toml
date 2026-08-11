@@ -36,19 +36,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
-# The OFFICIAL in-app updater: fetches a signed manifest from GitHub Releases, verifies the
-# minisign signature against the public key in tauri.conf.json, then runs the NSIS installer with
-# `/UPDATE`. It replaces the hand-rolled check-only path this project carried before — one update
-# system, not two. Sard is desktop-only, so this needs no per-platform cfg guard.
-tauri-plugin-updater = "2"
-# `relaunch()` after an install. On Windows the NSIS installer restarts Sard itself (the plugin
-# passes `/ARGS`), so this is belt-and-braces there — but it is the documented path on macOS and
-# Linux, and having it means the frontend has one restart call that is correct everywhere.
-tauri-plugin-process = "2"
 tauri-plugin-dialog = "2"
-# RAWY-173 (AUD-9): a second launch focuses the existing window instead of starting a rival instance
-# that would attach the same WAL DB + fight over per-session state.
-tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # RAWY-178 (AUD-12): `functions` enables `create_scalar_function` for the `afold` Arabic search fold
@@ -75,6 +63,40 @@ msedge-tts = "0.4"
 # rustls, so `ClientConfig::builder()`'s auto-detection is ambiguous and PANICS (hanging the Edge WS
 # connect). We install aws-lc-rs as the explicit process default at startup to disambiguate.
 rustls = { version = "0.23", features = ["aws_lc_rs"] }
+
+# DESKTOP-ONLY PLUGINS. All three are unavailable on Android and iOS, and one of them does not merely
+# fail at run time — it fails to COMPILE:
+#
+#   single-instance   `src/lib.rs` opens with `#![cfg(not(any(target_os = "android", target_os =
+#                     "ios")))]`, a CRATE-level attribute. On mobile the crate compiles to nothing, so
+#                     `tauri_plugin_single_instance::init` does not exist and the call site is an
+#                     unresolved path. This is the hard blocker.
+#   updater           Compiles on mobile but declares `platforms.support.{android,ios}.level =
+#   process           "none"`, and both stores forbid an application updating itself outside the
+#                     store. The plugin's own README states the rule this section follows: "you can
+#                     add the dependencies on the `[dependencies]` section if you do not target
+#                     mobile". `process` travels with it because it exists to serve the updater flow.
+#
+# WHY A `target` SECTION AND NOT `cfg(desktop)`. Tauri's `desktop`/`mobile` aliases are emitted by
+# tauri-build at COMPILE time (tauri-build/src/lib.rs), so Cargo — which resolves dependencies before
+# any build script runs — cannot see them. Dependency gating has to use a built-in cfg; the call
+# sites in `lib.rs` use `cfg(desktop)`, which is the same set expressed where the alias does exist.
+#
+# Desktop resolution is unchanged: on Windows, macOS and Linux this predicate is true, so the three
+# crates are still ordinary dependencies and `Cargo.lock` does not move.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# RAWY-173 (AUD-9): a second launch focuses the existing window instead of starting a rival instance
+# that would attach the same WAL DB + fight over per-session state.
+tauri-plugin-single-instance = "2"
+# The OFFICIAL in-app updater: fetches a signed manifest from GitHub Releases, verifies the
+# minisign signature against the public key in tauri.conf.json, then runs the NSIS installer with
+# `/UPDATE`. It replaces the hand-rolled check-only path this project carried before — one update
+# system, not two.
+tauri-plugin-updater = "2"
+# `relaunch()` after an install. On Windows the NSIS installer restarts Sard itself (the plugin
+# passes `/ARGS`), so this is belt-and-braces there — but it is the documented path on macOS and
+# Linux, and having it means the frontend has one restart call that is correct everywhere.
+tauri-plugin-process = "2"
 
 # RAWY-196: reach WebView2's own settings to strip the browser chrome (find bar, reload, print,
 # context menu). Tauri exposes none of these, so they are set through `with_webview` -> the WebView2

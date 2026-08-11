@@ -16,6 +16,32 @@ dist-ssr
 /src-tauri/target
 /src-tauri/gen/schemas
 
+# GENERATED MOBILE PLATFORM PROJECTS — never committed, never published.
+#
+# `tauri android init` and `tauri ios init` write a Gradle project and an Xcode project under
+# `src-tauri/gen/`. Those trees are generated build scaffolding, not product source: they carry
+# absolute paths from the machine that ran the generator, and they are where a release keystore
+# reference or a team identifier ends up.
+#
+# `gen/schemas` above is already ignored for the same reason; these two lines complete the directory
+# rather than continuing to name one child of it.
+#
+# As with `/private/`, this is a LOCAL boundary and deliberately not the only one — the
+# production-tree gate refuses `src-tauri/gen/` independently, so a force-add or a stale index cannot
+# publish what this rule was the only thing stopping.
+/src-tauri/gen/android/
+/src-tauri/gen/apple/
+
+# Code-signing material. Nothing here is ever committed on any branch: a signing artifact that
+# reaches a public repository cannot be withdrawn from it.
+**/keystore.properties
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+*.provisioningprofile
+ExportOptions.plist
+
 # THE PRIVATE WORKSPACE — local only, never committed, never pushed, never published.
 #
 # Everything internal lives here: plans, reports, investigations, evidence, checkpoints and working

@@ -40,6 +40,18 @@ export const DEVELOPMENT_ONLY = [
   // been added yet; a force-add, a stale index or a rule someone edits would slip straight past it.
   // This is the second, independent control, and it is the one the release actually consults.
   { re: /^private\//, why: "the private workspace — internal material, local only" },
+  // GENERATED MOBILE PLATFORM PROJECTS. `tauri android init` and `tauri ios init` write a Gradle
+  // project and an Xcode project under `src-tauri/gen/`. They are generated build scaffolding, not
+  // product source, and they carry two things that must never be published: absolute paths from the
+  // machine that ran the generator, and the release signing configuration.
+  //
+  // Same shape of protection as `private/` above, and here for the same reason: `.gitignore` stops
+  // them being committed, and this stops them being PUBLISHED even if they were. `gen/schemas` has
+  // always been generated too, so the rule covers the directory rather than naming children of it.
+  //
+  // This rule is deliberately older than the code it guards — it exists before any generator has been
+  // run, because the cheapest moment to refuse a generated tree is before one exists.
+  { re: /^src-tauri\/gen\//, why: "a generated mobile platform project — build scaffolding carrying local machine paths and release signing configuration, not the product" },
   // Only the release workflow ships (PRODUCTION_ALWAYS below pins it, because CI runs it from `main`).
   // Every other workflow validates `develop`: it runs the unit suite, the harness rules and the gate
   // scripts, none of which the published tree carries, so on `main` it would be a workflow that could

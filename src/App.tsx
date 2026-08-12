@@ -10,6 +10,7 @@ import { initStyleScope } from "./lib/styleScope";
 import { diagStart } from "@diag"; // DIAGNOSTIC BUILD ONLY - observes, never intervenes
 import { registerOutcomeRecorder } from "./lib/listeningOutcomes"; // RAWY-263: the local outcome baseline
 import { initTheme, reapplyTitlebarTheme, useTheme, THEMES } from "./theme";
+import { initPresence } from "./lib/presence"; // DISC/RPC: load the Discord on/off switch
 import { LanguagePicker } from "./features/onboarding/LanguagePicker";
 import { Library, type OpenTarget } from "./features/library/Library";
 import { Reader } from "./features/reader/Reader";
@@ -70,6 +71,7 @@ function App() {
     // Applying it later would paint the themed ground first and then swap — the RAWY-118 class of flash.
     initBackground();
     registerOutcomeRecorder(); // RAWY-263: observe listening outcomes locally. Read-only; never writes while audio plays.
+    initPresence(); // DISC/RPC: load the persisted Discord on/off switch
   }, []);
 
   // RAWY-265 — the library background is re-derived whenever the LIBRARY theme or any of its own

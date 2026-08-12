@@ -21,6 +21,7 @@ import { BG_BLUR_MAX, BG_PRESENCE_MAX, bgSrcUrl, useBackground } from "../../lib
 import { BOOKMARK_COLORS, BOOKMARK_SHAPES, BOOKMARK_SIZE_MAX, BOOKMARK_SIZE_MIN, useBookmarkStyle } from "../../lib/bookmarkStyle";
 import { BookmarkShape } from "../reader/BookmarkShape";
 import { READ_MARKERS, useReadMarkerStyle } from "../../lib/readMarkerStyle"; // RAWY-256
+import { usePresence } from "../../lib/presence"; // DISC/RPC: the Discord on/off switch
 import { TtsTrackingControls } from "../reader/TtsTrackingControls"; // RAWY-200
 import { useStyleScope } from "../../lib/styleScope";
 import {
@@ -35,13 +36,14 @@ import { THEMES, THEME_ORDER, currentMode, useTheme, type ThemeMode } from "../.
 
 const STYLE_KEY = "reading_style";
 
-type Section = "appearance" | "fonts" | "reading" | "bookmark" | "language" | "about";
+type Section = "appearance" | "fonts" | "reading" | "bookmark" | "language" | "presence" | "about";
 const NAV: { key: Section; label: TKey; icon: string }[] = [
   { key: "appearance", label: "gs.nav.appearance", icon: "◑" },
   { key: "fonts", label: "gs.nav.fonts", icon: "A" },
   { key: "reading", label: "gs.nav.reading", icon: "▤" },
   { key: "bookmark", label: "gs.nav.bookmark", icon: "▸" },
   { key: "language", label: "gs.nav.language", icon: "⌘" },
+  { key: "presence", label: "gs.nav.presence", icon: "◉" },
   { key: "about", label: "gs.nav.about", icon: "ⓘ" },
 ];
 
@@ -91,6 +93,7 @@ export function GlobalSettings({ open, onClose }: { open: boolean; onClose: () =
             {section === "reading" && <ReadingDefaultsSection />}
             {section === "bookmark" && <BookmarkSection />}
             {section === "language" && <LanguageSection />}
+            {section === "presence" && <PresenceSection />}
             {section === "about" && <AboutSection />}
           </div>
         </div>
@@ -852,6 +855,54 @@ function LanguageSection() {
         <div className="gs-note">{t("gs.languageHint")}</div>
       </div>
       <TwoLevelCard />
+    </>
+  );
+}
+
+// DISC/RPC: the one switch. One row while off, one row while on — the smallest possible surface
+// for a feature whose whole point is "show me, unless I say stop". Reuses the house toggle idiom
+// (`rs-toggle-row` / `BgToggle`) so the knob, the RTL pin and the a11y wiring are the ones the
+// rest of the app already uses.
+function PresenceSection() {
+  const { t } = useI18n();
+  const enabled = usePresence((s) => s.enabled);
+  const setEnabled = usePresence((s) => s.setEnabled);
+  const showBook = usePresence((s) => s.showBook);
+  const setShowBook = usePresence((s) => s.setShowBook);
+  const showPosition = usePresence((s) => s.showPosition);
+  const setShowPosition = usePresence((s) => s.setShowPosition);
+  const showBrowsing = usePresence((s) => s.showBrowsing);
+  const setShowBrowsing = usePresence((s) => s.setShowBrowsing);
+  return (
+    <>
+      <SecHead>{t("gs.presence")}</SecHead>
+      <div className="gs-sec">
+        <BgToggle
+          label={t("gs.presence.enabled")}
+          hint={t("gs.presence.enabledHint")}
+          on={enabled}
+          onToggle={() => setEnabled(!enabled)}
+        />
+        <BgToggle
+          label={t("gs.presence.showBook")}
+          hint={t("gs.presence.showBookHint")}
+          on={showBook}
+          onToggle={() => setShowBook(!showBook)}
+        />
+        <BgToggle
+          label={t("gs.presence.showPosition")}
+          hint={t("gs.presence.showPositionHint")}
+          on={showPosition}
+          onToggle={() => setShowPosition(!showPosition)}
+        />
+        <BgToggle
+          label={t("gs.presence.showBrowsing")}
+          hint={t("gs.presence.showBrowsingHint")}
+          on={showBrowsing}
+          onToggle={() => setShowBrowsing(!showBrowsing)}
+        />
+      </div>
+      <div className="gs-note">{t("gs.presence.note")}</div>
     </>
   );
 }

@@ -37,7 +37,11 @@ use crate::db::AppState;
 use crate::settings;
 
 /// THE Discord application id — see the module note. Owner-supplied.
-const DISCORD_APPLICATION_ID: &str = "0000000000000000000";
+///
+/// Public by design: Discord requires every client to present it, so it ships in the binary and is
+/// visible to anyone who runs Sard. It is an identifier, not a credential — the application's secret
+/// and its interaction public key are NOT needed by Rich Presence and are deliberately absent here.
+const DISCORD_APPLICATION_ID: &str = "1537002783633448963";
 /// The Rich-Presence asset key for Sard's mark, registered under the Discord application above.
 const LARGE_IMAGE_KEY: &str = "sard";
 /// The app name as Discord shows it in the activity's hover text.

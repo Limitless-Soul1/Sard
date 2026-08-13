@@ -1,0 +1,226 @@
+# Sard — a macOS TEST build, produced on a real Mac.
+#
+# WHY THIS EXISTS AND WHAT IT IS NOT
+# `release.yml` runs on `windows-latest` and says so in its own comment: "Windows-only for now …
+# when macOS and Linux land, this becomes a matrix". Until that happens there is no way to obtain a
+# macOS artifact at all — the Rust side is compiled for a second platform by `pr-checks.yml`, but
+# that job is `cargo check` on Linux, which produces no application and never touches WKWebView.
+#
+# So this builds the `.app` and the `.dmg`, on Apple silicon, and hands them back as workflow
+# artifacts. It is NOT a release: it publishes nothing, creates no GitHub Release, writes no
+# `latest.json`, and cannot be reached by the updater. It exists so the macOS build can be TESTED on
+# a real Mac before anybody decides what shipping on macOS should look like.
+#
+# ---- BUILD IDENTITY: THIS IS A `beta`, NOT A `release` -------------------------------------------
+# `scripts/build-identity.mjs` defines exactly three kinds, and `beta` is the one this is: "PRIVATE
+# builds handed to a few testers … never published to GitHub Releases". Byte-for-byte a beta IS the
+# release build — same productName, identifier, version and updater — differing only in the build id
+# it carries, which begins `BETA-` and is shown in the About panel. That is precisely the property
+# wanted here: a tester runs the real application, and the artifact can still never be mistaken for
+# a public download. Stamping `REL-` on a build that was never cut from `main` is the mislabelling
+# the whole identity register was written to make impossible.
+#
+# ---- SIGNING: NONE IS AVAILABLE, AND THAT IS RECORDED RATHER THAN WORKED AROUND ------------------
+# Developer ID signing and notarisation need an Apple Developer Program account, a Developer ID
+# Application certificate and an app-specific password. This repository has neither the certificate
+# nor the credentials configured, so the build is left UNSIGNED (Apple silicon linkers apply an
+# ad-hoc signature of their own, which is not a Developer ID signature and satisfies no Gatekeeper
+# policy) and UNNOTARISED. Nothing here invents, imports or fabricates a signing identity. The
+# `codesign`/`spctl`/`stapler` steps below record exactly what the artifact's state actually is, so
+# the answer comes from the file rather than from an assumption.
+name: macOS test build
+
+on:
+  # `workflow_dispatch` only appears for workflows present on the DEFAULT branch, and this workflow
+  # is development-only — `scripts/production-tree-rules.mjs` keeps every workflow except
+  # `release.yml` out of the published tree, so it will never be on `main` to be dispatched from.
+  # The push trigger is therefore the one that actually fires; the dispatch entry is kept so the job
+  # can still be re-run by hand from a branch that does carry it.
+  workflow_dispatch:
+  push:
+    branches:
+      - "feature/macos-*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Apple silicon. `macos-latest` has been an arm64 image since macos-14 became the default, and
+    # the job prints `uname -m` below rather than trusting that — an artifact whose architecture is
+    # assumed is an artifact that gets tested on the wrong machine.
+    runs-on: macos-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Refuse to build with the diag feature on by default
+        run: |
+          # The same guard release.yml runs, for the same reason: if `diag` were a default feature
+          # every build would be a diagnostic build, including this one, and a tester would be
+          # handed instrumentation while being told it is the product.
+          if grep -qE '^[[:space:]]*default[[:space:]]*=[[:space:]]*\[[^]]*"diag"' src-tauri/Cargo.toml; then
+            echo "::error::the 'diag' Cargo feature is enabled by default in src-tauri/Cargo.toml."
+            exit 1
+          fi
+          echo "the diag feature is off by default"
+
+      # Node 20, matching release.yml. This job builds and does not run the unit suite, so it has no
+      # need of the Node 22 API that pins `pr-checks.yml` — and matching the version that actually
+      # produced the shipped Windows build is the point: the frontend bundle inside this `.app`
+      # should differ from the released one because of the platform, not because of the toolchain.
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # THE BUILD ID. Generated here for the same reason release.yml generates it there: `build.rs`
+      # and Vite both read `SARD_BUILD_ID` from the environment, and neither the Tauri CLI nor this
+      # workflow sets it otherwise — an unset variable is how the v1.2.1 artifact ended up unable to
+      # say which build it was.
+      - name: Generate the build id
+        run: |
+          ID=$(node -e "import('./scripts/build-identity.mjs').then(m => console.log(m.buildId(m.kindOf('beta'), { cwd: process.cwd() })))")
+          case "$ID" in
+            BETA-*) ;;
+            *) echo "::error::generated build id '$ID' is not a beta id"; exit 1 ;;
+          esac
+          echo "SARD_BUILD_ID=$ID" >> "$GITHUB_ENV"
+          echo "build id: $ID"
+
+      # NO UPDATER ARTIFACTS, and this override is the only change made to the build configuration.
+      #
+      # `tauri.conf.json` sets `createUpdaterArtifacts: true`, which makes the bundler produce a
+      # signed `.app.tar.gz` update payload and FAIL the build when `TAURI_SIGNING_PRIVATE_KEY` is
+      # absent. The key exists as a repository secret, but it is the production updater key: signing
+      # an update payload with it here would mint a genuine, installable update for a build that was
+      # never released, from a branch, on a platform the updater has never served. A test build has
+      # no business producing one.
+      #
+      # It affects the bundler's OUTPUT LIST only. The `.app` and the `.dmg` are byte-identical to
+      # what a build with the flag on would produce, so nothing about what the tester runs changes.
+      - name: Configuration override for a test build
+        run: |
+          cat > "$RUNNER_TEMP/no-updater-artifacts.json" <<'JSON'
+          { "bundle": { "createUpdaterArtifacts": false } }
+          JSON
+          cat "$RUNNER_TEMP/no-updater-artifacts.json"
+
+      - name: Build
+        run: npx tauri build --config "$RUNNER_TEMP/no-updater-artifacts.json"
+
+      # Locate the outputs rather than assuming their names: the dmg carries the version and the
+      # architecture in its filename, and both change without this workflow being edited.
+      - name: Locate the artifacts
+        id: find
+        run: |
+          BUNDLE="src-tauri/target/release/bundle"
+          APP="$(find "$BUNDLE/macos" -maxdepth 1 -name '*.app' -print -quit)"
+          DMG="$(find "$BUNDLE/dmg"   -maxdepth 1 -name '*.dmg' -print -quit)"
+          [ -n "$APP" ] || { echo "::error::no .app was produced under $BUNDLE/macos"; exit 1; }
+          [ -n "$DMG" ] || { echo "::error::no .dmg was produced under $BUNDLE/dmg"; exit 1; }
+          BIN="$(find "$APP/Contents/MacOS" -maxdepth 1 -type f -print -quit)"
+          [ -n "$BIN" ] || { echo "::error::no executable inside $APP/Contents/MacOS"; exit 1; }
+          {
+            echo "app=$APP"
+            echo "dmg=$DMG"
+            echo "bin=$BIN"
+          } >> "$GITHUB_OUTPUT"
+          ls -la "$BUNDLE/macos" "$BUNDLE/dmg"
+
+      # THE ARTIFACT VERIFIER, run against the Mach-O inside the bundle.
+      #
+      # `scripts/verify-artifact.mjs` is not Windows-only: the canary check, the forbidden-marker
+      # search, the build-id extraction, the updater-endpoint check and the whole web-bundle audit
+      # read bytes and run anywhere. The single part that cannot run here is `peVersionInfo()`, which
+      # reads a PE version resource and returns null off Windows — the script already reports that as
+      # "identity not verified here" rather than as a pass, which is the honest outcome and is
+      # printed in the log below.
+      - name: Verify the artifact
+        run: node scripts/verify-artifact.mjs --kind=beta --exe="${{ steps.find.outputs.bin }}"
+
+      # WHAT THE ARTIFACT ACTUALLY IS — measured, not asserted. Every line here is evidence for the
+      # report handed to whoever tests this: architecture, signature state, Gatekeeper's own verdict,
+      # and whether a notarisation ticket is stapled. The `|| true` is deliberate on the three that
+      # are EXPECTED to fail on an unsigned build: their failure is the finding.
+      - name: Record architecture, signature and notarisation state
+        run: |
+          APP="${{ steps.find.outputs.app }}"; DMG="${{ steps.find.outputs.dmg }}"; BIN="${{ steps.find.outputs.bin }}"
+          echo "runner architecture: $(uname -m)"
+          echo "macOS: $(sw_vers -productVersion)"
+          echo "--- binary ---"; file "$BIN"; lipo -archs "$BIN"
+          echo "--- codesign (binary) ---";      codesign -dvvv "$BIN" 2>&1 || true
+          echo "--- codesign (bundle) ---";      codesign --verify --strict --verbose=2 "$APP" 2>&1 || true
+          echo "--- spctl (Gatekeeper) ---";     spctl --assess --type execute --verbose=4 "$APP" 2>&1 || true
+          echo "--- stapler (notarisation) ---"; xcrun stapler validate "$DMG" 2>&1 || true
+
+      # `ditto`, not `zip`. A `.app` is a directory of symlinks, nested bundles and a code signature;
+      # `ditto -c -k --sequesterRsrc --keepParent` is Apple's own archiver and the form that survives
+      # a round trip. It is here as a SECOND download form because GitHub re-zips whatever it is
+      # given — a plain `.app` directory handed to upload-artifact would come back with its symlinks
+      # flattened and would not launch. The `.dmg` is a single file and is unaffected either way.
+      #
+      # Both are staged into ONE directory inside the workspace: upload-artifact derives the
+      # structure it uploads from the common ancestor of its paths, so mixing a workspace path with
+      # an absolute temp path is how an artifact ends up with a surprising layout.
+      - name: Stage the downloads
+        run: |
+          mkdir -p artifacts
+          cp "${{ steps.find.outputs.dmg }}" artifacts/
+          ditto -c -k --sequesterRsrc --keepParent "${{ steps.find.outputs.app }}" "artifacts/Sard-macos-app.zip"
+          ls -la artifacts
+
+      # Read back from the BUNDLE, not from the source config — the version and identifier a tester
+      # will see are the ones Info.plist declares, and a report that quotes the input instead of the
+      # output cannot notice when the two disagree.
+      - name: Summary
+        run: |
+          APP="${{ steps.find.outputs.app }}"; DMG="${{ steps.find.outputs.dmg }}"; BIN="${{ steps.find.outputs.bin }}"
+          PLIST="$APP/Contents/Info.plist"
+          {
+            echo "## Sard — macOS test build"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Source commit | \`${{ github.sha }}\` |"
+            echo "| Version (Info.plist) | $(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$PLIST") |"
+            echo "| Identifier | \`$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$PLIST")\` |"
+            echo "| Minimum macOS | $(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$PLIST" 2>/dev/null || echo 'not declared') |"
+            echo "| Build id | \`$SARD_BUILD_ID\` |"
+            echo "| Runner | $(uname -m), macOS $(sw_vers -productVersion) |"
+            echo "| Binary architecture | \`$(lipo -archs "$BIN")\` |"
+            echo "| DMG | \`$(basename "$DMG")\` ($(stat -f%z "$DMG") bytes) |"
+            echo "| DMG SHA-256 | \`$(shasum -a 256 "$DMG" | cut -d' ' -f1)\` |"
+            echo "| app.zip SHA-256 | \`$(shasum -a 256 artifacts/Sard-macos-app.zip | cut -d' ' -f1)\` |"
+            echo "| Signed | $(codesign -dvvv "$BIN" 2>&1 | grep -q 'Authority=Developer ID' && echo 'Developer ID' || echo 'NO — ad-hoc only, no Developer ID certificate is configured') |"
+            echo "| Notarised | $(xcrun stapler validate "$DMG" >/dev/null 2>&1 && echo 'yes, stapled' || echo 'NO — no notarisation credentials are configured') |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # `if: always()`, so a failed verification still leaves the artifact to be inspected. Nothing
+      # here is published or served to a user — a workflow artifact is reachable only by someone who
+      # can already read the repository's Actions — so keeping the evidence costs nothing, while
+      # discarding it would mean re-running a 20-minute build to look at the file that failed.
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sard-macos-${{ github.sha }}
+          # Already-compressed payloads; re-compressing them buys nothing and costs minutes.
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+          path: artifacts/*

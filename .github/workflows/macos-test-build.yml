@@ -142,16 +142,38 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           ls -la "$BUNDLE/macos" "$BUNDLE/dmg"
 
-      # THE ARTIFACT VERIFIER, run against the Mach-O inside the bundle.
+      # WHAT BUILD ID THE BINARY ACTUALLY CARRIES, asked separately from the verifier and reported
+      # with the bytes around it.
       #
-      # `scripts/verify-artifact.mjs` is not Windows-only: the canary check, the forbidden-marker
-      # search, the build-id extraction, the updater-endpoint check and the whole web-bundle audit
-      # read bytes and run anywhere. The single part that cannot run here is `peVersionInfo()`, which
-      # reads a PE version resource and returns null off Windows — the script already reports that as
-      # "identity not verified here" rather than as a pass, which is the honest outcome and is
-      # printed in the log below.
-      - name: Verify the artifact
-        run: node scripts/verify-artifact.mjs --kind=beta --exe="${{ steps.find.outputs.bin }}"
+      # The verifier answers this with one regex and a yes/no. When it says no, "the id was never
+      # compiled in" and "the id is there and the pattern could not reach it" are indistinguishable
+      # from its output — and those need opposite fixes. `BUILD_ID_RE` opens with `\b`, and the
+      # linker packs string literals adjacently with no separator, so whether that boundary holds
+      # depends on the last character of whichever literal happens to precede this one. The trailing
+      # `\b` was removed from that pattern for exactly this reason, documented in
+      # `scripts/build-identity.mjs`; the leading one was left.
+      #
+      # So this prints the unanchored match, its offset, and the bytes on either side. It asserts
+      # nothing and gates nothing — it makes the verifier's verdict readable.
+      - name: Report the build id the binary carries
+        run: |
+          cat > "$RUNNER_TEMP/probe.mjs" <<'JS'
+          import { readFileSync } from "node:fs";
+          const s = readFileSync(process.argv[2]).toString("latin1");
+          const bare = /(REL|DIAG|BETA)-\d{14}-[0-9a-f]{7,40}(?:\+\d+)?/;
+          const anchored = /\b(REL|DIAG|BETA)-\d{14}-[0-9a-f]{7,40}(?:\+\d+)?/;
+          const i = s.search(bare);
+          if (i < 0) {
+            console.log("build id: ABSENT — no such string anywhere in the binary");
+          } else {
+            console.log(`build id: PRESENT at offset ${i} -> ${s.match(bare)[0]}`);
+            console.log(`  24 bytes before: ${JSON.stringify(s.slice(Math.max(0, i - 24), i))}`);
+            console.log(`  24 bytes after:  ${JSON.stringify(s.slice(i + s.match(bare)[0].length, i + s.match(bare)[0].length + 24))}`);
+          }
+          console.log(`unanchored pattern matches: ${bare.test(s)}`);
+          console.log(`the \\b-anchored BUILD_ID_RE matches: ${anchored.test(s)}`);
+          JS
+          node "$RUNNER_TEMP/probe.mjs" "${{ steps.find.outputs.bin }}"
 
       # WHAT THE ARTIFACT ACTUALLY IS — measured, not asserted. Every line here is evidence for the
       # report handed to whoever tests this: architecture, signature state, Gatekeeper's own verdict,
@@ -184,6 +206,27 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "${{ steps.find.outputs.app }}" "artifacts/Sard-macos-app.zip"
           ls -la artifacts
 
+      # THE ARTIFACT VERIFIER, run against the Mach-O inside the bundle.
+      #
+      # `scripts/verify-artifact.mjs` is not Windows-only: the canary check, the forbidden-marker
+      # search, the build-id extraction, the updater-endpoint check and the whole web-bundle audit
+      # read bytes and run anywhere. The single part that cannot run here is `peVersionInfo()`, which
+      # reads a PE version resource and returns null off Windows — the script already reports that as
+      # "identity not verified here" rather than as a pass, which is the honest outcome.
+      #
+      # `continue-on-error`, and the job is failed deliberately at the end instead. This is NOT the
+      # gate being softened: a rejected build still turns the run red and still says so in the
+      # summary. What it buys is that the REJECTED FILE SURVIVES. The first run of this workflow was
+      # rejected here, and because the upload never ran there was nothing left to examine — the only
+      # way to see the bytes that failed was to spend another six minutes rebuilding them. A gate
+      # that destroys its own evidence makes the next diagnosis harder, not the product safer.
+      # Nothing is published either way: a workflow artifact is reachable only by someone who can
+      # already read this repository's Actions.
+      - name: Verify the artifact
+        id: verify
+        continue-on-error: true
+        run: node scripts/verify-artifact.mjs --kind=beta --exe="${{ steps.find.outputs.bin }}"
+
       # Read back from the BUNDLE, not from the source config — the version and identifier a tester
       # will see are the ones Info.plist declares, and a report that quotes the input instead of the
       # output cannot notice when the two disagree.
@@ -208,12 +251,9 @@ jobs:
             echo "| app.zip SHA-256 | \`$(shasum -a 256 artifacts/Sard-macos-app.zip | cut -d' ' -f1)\` |"
             echo "| Signed | $(codesign -dvvv "$BIN" 2>&1 | grep -q 'Authority=Developer ID' && echo 'Developer ID' || echo 'NO — ad-hoc only, no Developer ID certificate is configured') |"
             echo "| Notarised | $(xcrun stapler validate "$DMG" >/dev/null 2>&1 && echo 'yes, stapled' || echo 'NO — no notarisation credentials are configured') |"
+            echo "| Artifact verifier | **${{ steps.verify.outcome }}** |"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      # `if: always()`, so a failed verification still leaves the artifact to be inspected. Nothing
-      # here is published or served to a user — a workflow artifact is reachable only by someone who
-      # can already read the repository's Actions — so keeping the evidence costs nothing, while
-      # discarding it would mean re-running a 20-minute build to look at the file that failed.
       - name: Upload
         if: always()
         uses: actions/upload-artifact@v4
@@ -224,3 +264,12 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           path: artifacts/*
+
+      # The verifier's verdict, applied. It runs last so that everything above — the evidence, the
+      # summary and the artifact itself — exists regardless of the answer, and a rejected build is
+      # still unmistakably a failed run.
+      - name: Fail the run if the artifact was rejected
+        if: steps.verify.outcome == 'failure'
+        run: |
+          echo "::error::the artifact verifier REJECTED this build — see the 'Verify the artifact' step."
+          exit 1

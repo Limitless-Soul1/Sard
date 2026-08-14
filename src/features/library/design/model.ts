@@ -178,6 +178,7 @@ export function makeLooseShelf(name: string, count: number): ShelfNode {
   return {
     id: LOOSE_SHELF_ID,
     name,
+    ink: null,
     case_id: null,
     order_rule: "hand",
     auto_rule: null,

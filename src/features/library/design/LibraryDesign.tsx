@@ -24,6 +24,9 @@ import {
   shelfPlaceBook,
   shelfSetCollapsed,
   shelfSetOrder,
+  shelfSetInk,
+  caseSetInk,
+  shelfReorder,
   collectionRemoveBook,
   progressSave,
   type ShelfOrder,
@@ -45,6 +48,7 @@ import {
   isVirtualShelf,
   LOOSE_SHELF_ID,
   makeLooseShelf,
+  spineWidth,
   sortBooks,
   unshelvedBooks,
   type DesignSort,
@@ -102,6 +106,8 @@ export function LibraryDesign(props: LibraryDesignProps) {
   const [carry, setCarry] = useState<{ book: BookRow; fromShelf: string } | null>(null);
   const [orderMenuFor, setOrderMenuFor] = useState<string | null>(null);
   const [renamingShelf, setRenamingShelf] = useState<string | null>(null);
+  // Shelves the reader has expanded past the reference's two-row cap.
+  const [expandedShelves, setExpandedShelves] = useState<Set<string>>(new Set());
   const [manageMenuFor, setManageMenuFor] = useState<string | null>(null);
   const [renamingCase, setRenamingCase] = useState<string | null>(null);
   const [detailsFor, setDetailsFor] = useState<BookRow | null>(null);
@@ -400,12 +406,19 @@ export function LibraryDesign(props: LibraryDesignProps) {
         setTree(await shelfSetOrder(shelfId, order));
         await loadTree();
       },
+      move: async (shelfId: string, direction: number) => {
+        const entry = shelfById.get(shelfId);
+        const siblings = entry?.caseNode ? entry.caseNode.shelves : tree.loose;
+        const at = siblings.findIndex((s) => s.id === shelfId);
+        if (at < 0) return;
+        setTree(await shelfReorder(shelfId, Math.max(0, at + direction)));
+      },
       newCategory: async (shelfId: string) => {
         setTree(await categoryCreate(shelfId, t("lib.newCategory")));
         await loadTree();
       },
     }),
-    [loadTree, t],
+    [loadTree, t, shelfById, tree.loose],
   );
 
   // Esc cancels a carry, exactly as the design specifies.
@@ -465,6 +478,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
           onDeleteCase={caseOps.remove}
           onMoveCase={caseOps.move}
           onNewRuleShelf={async (caseId) => setTree(await shelfCreate(t("lib.rule.reading"), caseId, "reading"))}
+          onCaseInk={async (id, ink) => setTree(await caseSetInk(id, ink))}
           onRenameShelf={props.onRenameShelf}
           onSettings={props.onSettings}
           themeName={THEMES[themeId]?.name ?? ""}
@@ -511,6 +525,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
         onDeleteCase={caseOps.remove}
         onMoveCase={caseOps.move}
         onNewRuleShelf={async (caseId) => setTree(await shelfCreate(t("lib.rule.reading"), caseId, "reading"))}
+          onCaseInk={async (id, ink) => setTree(await caseSetInk(id, ink))}
         onRenameShelf={props.onRenameShelf}
         onSettings={props.onSettings}
         themeName={THEMES[themeId]?.name ?? ""}
@@ -691,6 +706,9 @@ export function LibraryDesign(props: LibraryDesignProps) {
               onNewRuleShelf={async (caseId) =>
                 setTree(await shelfCreate(t("lib.rule.reading"), caseId, "reading"))
               }
+              expandedShelves={expandedShelves}
+              onExpandShelf={(id) => setExpandedShelves((prev) => new Set(prev).add(id))}
+              carryWidth={carry ? spineWidth(carry.book, density) : 0}
               orderMenuFor={orderMenuFor}
               onOpenOrder={setOrderMenuFor}
               onSetOrder={shelfOps.setOrder}
@@ -702,6 +720,9 @@ export function LibraryDesign(props: LibraryDesignProps) {
               }}
               onDeleteShelf={props.onDeleteShelf}
               onNewCategory={shelfOps.newCategory}
+              onShelfInk={async (id, ink) => setTree(await shelfSetInk(id, ink))}
+              onCaseInk={async (id, ink) => setTree(await caseSetInk(id, ink))}
+              onMoveShelf={shelfOps.move}
               onPlace={place}
               libraryCoverMode={props.coverMode}
             />

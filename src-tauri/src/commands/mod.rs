@@ -443,6 +443,30 @@ pub fn shelf_place_book(
 }
 
 #[tauri::command]
+pub fn shelf_set_ink(id: String, ink: Option<String>, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_set_ink(&conn, &id, ink.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+pub fn case_set_ink(id: String, ink: Option<String>, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::case_set_ink(&conn, &id, ink.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_reorder(id: String, to_index: i64, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_reorder(&conn, &id, to_index).map_err(err)
+}
+
+#[tauri::command]
+pub fn category_reorder(id: String, to_index: i64, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::category_reorder(&conn, &id, to_index).map_err(err)
+}
+
+#[tauri::command]
 pub fn category_create(
     collection_id: String,
     name: String,

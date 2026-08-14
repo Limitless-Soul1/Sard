@@ -175,6 +175,8 @@ export const en = {
   "lib.openCase": "Open case",
   "lib.manage": "Manage",
   "lib.managing": "Managing case",
+  "lib.colour": "Colour",
+  "lib.inkNone": "No colour",
   "lib.moveCase": "Move this case",
   "lib.moveShelf": "Move this shelf",
   "lib.unfiled": "Not in a case",

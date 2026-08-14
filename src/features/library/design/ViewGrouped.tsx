@@ -8,6 +8,7 @@
 // reference files, so taking it from the base file is not merely correct by instruction but
 // unambiguous in fact.)
 
+import { Fragment } from "react";
 import type { BookRow, CaseNode, ShelfNode, ShelfOrder } from "../../../lib/ipc";
 import { useI18n } from "../../../i18n";
 import { localeNum } from "../../../lib/format";
@@ -66,11 +67,22 @@ export interface GroupedProps {
   onCommitRename: (shelfId: string, name: string) => void;
   onDeleteShelf: (shelfId: string) => void;
   onNewCategory: (shelfId: string) => void;
+  onShelfInk: (shelfId: string, ink: string | null) => void;
+  onCaseInk: (caseId: string, ink: string | null) => void;
+  onMoveShelf: (shelfId: string, direction: number) => void;
   /** Placement targets while a book is in hand. */
+  /** Shelves the reader has expanded past the two-row cap. */
+  expandedShelves: Set<string>;
+  onExpandShelf: (shelfId: string) => void;
+  /** Width of the book in hand, for the spine-shaped drop slot. */
+  carryWidth: number;
   /** The library Crop/Fit default, passed through to each tile. */
   libraryCoverMode: CoverMode;
   onPlace: (shelfId: string, categoryId: string | null, index: number) => void;
 }
+
+/** Spine heights per density step — the reference's numbers. */
+const SPINE_HEIGHTS = [104, 132, 168, 208];
 
 export function ViewGrouped(props: GroupedProps) {
   const { t, lang } = useI18n();
@@ -78,6 +90,12 @@ export function ViewGrouped(props: GroupedProps) {
   const spines = props.view === "spines";
   const iw = itemWidth(props.density, props.view, props.paneWidth);
   const carrying = props.carryId != null;
+  // How many covers fit across, and therefore how many the reference shows before it offers
+  // "Show all": Covers caps a shelf at TWO rows so a long shelf stays a shelf instead of
+  // sprawling down the page. `perRow` is the reference's own formula.
+  const perRow = Math.max(2, Math.floor((Math.max(320, props.paneWidth - 96) + 20) / (iw + 20)));
+  const capFor = (shelfId: string) =>
+    spines ? Number.MAX_SAFE_INTEGER : props.expandedShelves.has(shelfId) ? perRow * 99 : perRow * 2;
 
   const ruleLabel = (s: ShelfNode) =>
     s.auto_rule === "reading"
@@ -86,7 +104,12 @@ export function ViewGrouped(props: GroupedProps) {
         ? t("lib.rule.finished")
         : t("lib.rule.added");
 
-  /** A drop slot between two books, shown only while a book is in hand and the shelf can take one. */
+  /**
+   * The drop slot, as the reference draws it: a BOOK-SHAPED dashed placeholder that takes a
+   * cell in the grid, not a thin bar wedged between two covers. The reference's own style is
+   * `width:100%; aspect-ratio:2/3; border:2px dashed var(--acc); border-radius:3px;
+   * background:var(--act)`, which is why the row reads as opening a gap for the book in hand.
+   */
   const gap = (shelfId: string, categoryId: string | null, index: number, key: string) =>
     carrying && !isVirtualShelf(shelfId) ? (
       <button
@@ -94,20 +117,16 @@ export function ViewGrouped(props: GroupedProps) {
         onClick={() => props.onPlace(shelfId, categoryId, index)}
         title={t("lib.placeHere")}
         aria-label={t("lib.placeHere")}
-        style={{ width: 18, alignSelf: "stretch", display: "grid", placeItems: "center" }}
-      >
-        <span
-          style={{
-            display: "block",
-            width: 3,
-            height: "72%",
-            minHeight: 40,
-            borderRadius: 2,
-            background: "var(--acc)",
-            opacity: 0.55,
-          }}
-        />
-      </button>
+        style={{
+          display: "block",
+          width: spines ? props.carryWidth : "100%",
+          ...(spines ? { height: SPINE_HEIGHTS[props.density] } : { aspectRatio: "2/3" }),
+          border: "2px dashed var(--acc)",
+          borderRadius: 3,
+          background: "var(--act)",
+          animation: "sard-open .14s ease-out",
+        }}
+      />
     ) : null;
 
   return (
@@ -254,6 +273,8 @@ export function ViewGrouped(props: GroupedProps) {
                         onMoveDown={() => props.onMoveCase(c.node!.id, 1)}
                         onDelete={() => props.onDeleteCase(c.node!.id)}
                         onClose={() => props.onManageCase(null)}
+                        ink={c.node!.ink}
+                        onInk={(ink) => props.onCaseInk(c.node!.id, ink)}
                       />
                     )}
                   </span>
@@ -357,6 +378,8 @@ export function ViewGrouped(props: GroupedProps) {
                           onDelete={() => props.onDeleteShelf(shelf.id)}
                           onNewCategory={() => props.onNewCategory(shelf.id)}
                           onClose={() => props.onOpenOrder(null)}
+                          onInk={(ink) => props.onShelfInk(shelf.id, ink)}
+                          onMove={(d) => props.onMoveShelf(shelf.id, d)}
                         />
                       )}
                     </div>
@@ -427,87 +450,132 @@ export function ViewGrouped(props: GroupedProps) {
                       </span>
                     </button>
                   ) : total === 0 ? (
+                    // The reference's empty shelf: a dashed box that reads as a place waiting to
+                    // be filled, not a line of grey text.
                     <div
                       style={{
+                        border: "1px dashed var(--rule)",
+                        borderRadius: 9,
+                        padding: "16px 18px",
+                        background: "var(--soft)",
                         font: "400 .8125rem var(--ui)",
-                        color: "var(--faint)",
-                        padding: "10px 0 4px",
+                        color: "var(--mut)",
                       }}
                     >
                       {shelf.auto_rule ? t("lib.shelfRow.empty") : t("lib.emptyShelf")}
                     </div>
                   ) : (
-                    groups.map((g) => (
-                      <div key={g.categoryId ?? "__loose"}>
-                        {g.name && (
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 10,
-                              margin: "4px 0 10px",
-                              font: "600 .6875rem var(--ui)",
-                              letterSpacing: ".08em",
-                              textTransform: "uppercase",
-                              color: "var(--mut)",
-                            }}
-                          >
-                            <span>{g.name}</span>
-                            <span style={{ flex: 1, height: 1, background: "var(--rule)" }} />
-                            <span style={{ color: "var(--faint)" }}>{num(g.books.length)}</span>
-                          </div>
-                        )}
-                        <div
-                          style={
-                            spines
-                              ? {
+                    (() => {
+                      // A shelf shows at most two rows of covers before offering "Show all",
+                      // spending its budget across the category runs in order — the reference's
+                      // own rule, and what keeps a 40-book shelf a shelf rather than a page.
+                      let budget = capFor(shelf.id);
+                      return groups.map((g) => {
+                        const take = spines ? g.books.length : Math.max(0, Math.min(g.books.length, budget));
+                        if (!spines) budget -= take;
+                        const shownBooks = g.books.slice(0, take);
+                        if (shownBooks.length === 0 && !carrying) return null;
+                        return (
+                          <div key={g.categoryId ?? "__loose"}>
+                            {g.name && (
+                              <div
+                                style={{
                                   display: "flex",
-                                  alignItems: "flex-end",
-                                  gap: 3,
-                                  flexWrap: "wrap",
-                                  paddingBottom: 10,
-                                  borderBottom: "2px solid var(--rule)",
-                                  marginBottom: 14,
-                                }
-                              : {
-                                  display: "grid",
-                                  gridTemplateColumns: `repeat(auto-fill, minmax(${iw}px, 1fr))`,
-                                  gap: 20,
-                                  marginBottom: 14,
-                                }
-                          }
-                        >
-                          {g.books.map((b, i) => (
+                                  alignItems: "center",
+                                  gap: 10,
+                                  padding: "2px 0 8px",
+                                  font: "600 .625rem var(--ui)",
+                                  letterSpacing: ".13em",
+                                  textTransform: "uppercase",
+                                  color: "var(--mut)",
+                                }}
+                              >
+                                <span>{g.name}</span>
+                                <span style={{ flex: 1, height: 1, background: "var(--rule)" }} />
+                                <span style={{ color: "var(--faint)" }}>{num(g.books.length)}</span>
+                              </div>
+                            )}
                             <div
-                              key={b.id}
-                              style={spines ? { display: "flex", alignItems: "flex-end" } : undefined}
+                              style={
+                                spines
+                                  ? {
+                                      display: "flex",
+                                      alignItems: "flex-end",
+                                      flexWrap: "wrap",
+                                      gap: 6,
+                                      minHeight: SPINE_HEIGHTS[props.density],
+                                      ...(g.name ? { marginBottom: 16 } : {}),
+                                    }
+                                  : {
+                                      display: "grid",
+                                      gridTemplateColumns: `repeat(auto-fill, minmax(${iw}px, 1fr))`,
+                                      gap: 20,
+                                      ...(g.name ? { marginBottom: 16 } : {}),
+                                    }
+                              }
                             >
-                              {gap(shelf.id, g.categoryId, i, `gap-${b.id}`)}
-                              <BookTile
-                                book={b}
-                                view={props.view}
-                                density={props.density}
-                                itemW={iw}
-                                selected={props.selected.has(b.id)}
-                                inHand={props.carryId === b.id}
-                                arrangeOn={props.mode === "arrange"}
-                                selectOn={props.mode === "select"}
-                                onOpen={() => props.onOpenBook(b)}
-                                onEdit={() => props.onEditBook(b)}
-                                onToggleSelect={() => props.onToggleSelect(b.id)}
-                                onPickUp={(x, y) => props.onPickUp(b, shelf.id, x, y)}
-                                onRemoveFromShelf={
-                                  shelf.auto_rule ? null : () => props.onRemoveFromShelf(b.id, shelf.id)
-                                }
-                                onSetFinished={(f) => props.onSetFinished(b, f)}
-                                libraryCoverMode={props.libraryCoverMode}
-                              />
+                              {shownBooks.map((b, i) => (
+                                <Fragment key={b.id}>
+                                  {gap(shelf.id, g.categoryId, i, `gap-${b.id}`)}
+                                  <BookTile
+                                    book={b}
+                                    view={props.view}
+                                    density={props.density}
+                                    itemW={iw}
+                                    selected={props.selected.has(b.id)}
+                                    inHand={props.carryId === b.id}
+                                    arrangeOn={props.mode === "arrange"}
+                                    selectOn={props.mode === "select"}
+                                    onOpen={() => props.onOpenBook(b)}
+                                    onEdit={() => props.onEditBook(b)}
+                                    onToggleSelect={() => props.onToggleSelect(b.id)}
+                                    onPickUp={(x, y) => props.onPickUp(b, shelf.id, x, y)}
+                                    onRemoveFromShelf={
+                                      shelf.auto_rule ? null : () => props.onRemoveFromShelf(b.id, shelf.id)
+                                    }
+                                    onSetFinished={(f) => props.onSetFinished(b, f)}
+                                    libraryCoverMode={props.libraryCoverMode}
+                                  />
+                                </Fragment>
+                              ))}
+                              {gap(shelf.id, g.categoryId, shownBooks.length, "gap-end")}
                             </div>
-                          ))}
-                          {gap(shelf.id, g.categoryId, g.books.length, "gap-end")}
-                        </div>
-                      </div>
-                    ))
+                          </div>
+                        );
+                      });
+                    })()
+                  )}
+
+                  {/* The shelf's own rail — the line the books stand on. Covers only; Vista has
+                      its band instead. Without it a shelf reads as a grid, not a shelf. */}
+                  {!shelf.collapsed && !spines && (
+                    <div
+                      aria-hidden
+                      style={{
+                        height: 2,
+                        marginTop: 9,
+                        background: "var(--rule)",
+                        boxShadow: "0 3px 7px -4px rgba(0,0,0,.5)",
+                      }}
+                    />
+                  )}
+
+                  {!shelf.collapsed && !spines && total > capFor(shelf.id) && (
+                    <button
+                      className="libd-hov libd-hov-txt"
+                      onClick={() => props.onExpandShelf(shelf.id)}
+                      style={{
+                        marginTop: 11,
+                        font: "500 .75rem var(--ui)",
+                        color: "var(--mut)",
+                        border: "1px solid var(--brd)",
+                        background: "var(--soft)",
+                        borderRadius: 20,
+                        padding: "5px 14px",
+                      }}
+                    >
+                      {t("lib.showAll")} · {num(total)}
+                    </button>
                   )}
                 </div>
               ))}

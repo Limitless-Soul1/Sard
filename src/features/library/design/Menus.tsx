@@ -72,6 +72,8 @@ export function ShelfOrderMenu({
   onDelete,
   onNewCategory,
   onClose,
+  onInk,
+  onMove,
 }: {
   shelf: ShelfNode;
   onOrder: (o: ShelfOrder) => void;
@@ -79,6 +81,9 @@ export function ShelfOrderMenu({
   onDelete: () => void;
   onNewCategory: () => void;
   onClose: () => void;
+  onInk: (ink: string | null) => void;
+  /** -1 = earlier among its siblings, +1 = later. */
+  onMove: (direction: number) => void;
 }) {
   const { t } = useI18n();
   return (
@@ -102,6 +107,32 @@ export function ShelfOrderMenu({
             </span>
           </button>
         ))}
+        <div style={{ height: 1, background: "var(--brd)", margin: "5px 4px" }} />
+        <div style={{ ...legend, paddingTop: 0 }}>{t("lib.colour")}</div>
+        <InkPicker value={shelf.ink} onPick={onInk} />
+        <div style={{ height: 1, background: "var(--brd)", margin: "5px 4px" }} />
+        <div style={{ display: "flex", gap: 4, padding: "0 6px 4px" }}>
+          <button
+            className="libd-hov"
+            onClick={() => {
+              onMove(-1);
+              onClose();
+            }}
+            style={{ ...menuItem(false), justifyContent: "center", flex: 1 }}
+          >
+            ↑ {t("lib.moveShelf")}
+          </button>
+          <button
+            className="libd-hov"
+            onClick={() => {
+              onMove(1);
+              onClose();
+            }}
+            style={{ ...menuItem(false), justifyContent: "center", flex: 1 }}
+          >
+            ↓
+          </button>
+        </div>
         <div style={{ height: 1, background: "var(--brd)", margin: "5px 4px" }} />
         <button
           className="libd-hov"
@@ -142,6 +173,71 @@ export function ShelfOrderMenu({
 // Case management — the ⋯ beside a case.
 // ---------------------------------------------------------------------------
 
+/**
+ * The inks a case or shelf may carry — the reference's own case colours.
+ *
+ * A row of swatches inside the manage menu, opening with a struck-through "none" that clears the
+ * choice. Without this the `ink` column existed and nothing could ever set it, so every case and
+ * shelf drew with no colour at all — which is what "shelf colours are inconsistent" was.
+ */
+const INKS = ["#BFA8D6", "#8DC3BA", "#9DC0D6", "#E8C36A", "#D69C9C", "#A8C08D", "#C9A88D", "#9C8DC3"];
+
+export function InkPicker({
+  value,
+  onPick,
+}: {
+  value: string | null;
+  onPick: (ink: string | null) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div style={{ display: "flex", gap: 5, flexWrap: "wrap", padding: "6px 10px 8px", alignItems: "center" }}>
+      <button
+        title={t("lib.inkNone")}
+        aria-label={t("lib.inkNone")}
+        aria-pressed={!value}
+        onClick={() => onPick(null)}
+        style={{
+          position: "relative",
+          width: 18,
+          height: 18,
+          borderRadius: 4,
+          background: "var(--soft)",
+          boxShadow: !value ? "0 0 0 2px var(--chr), 0 0 0 3.5px var(--txt)" : "0 0 0 1px var(--brd)",
+          overflow: "hidden",
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            position: "absolute",
+            insetInline: -3,
+            top: "50%",
+            height: 1.5,
+            background: "var(--faint)",
+            transform: "rotate(-45deg)",
+          }}
+        />
+      </button>
+      {INKS.map((k) => (
+        <button
+          key={k}
+          aria-label={k}
+          aria-pressed={value === k}
+          onClick={() => onPick(k)}
+          style={{
+            width: 18,
+            height: 18,
+            borderRadius: 4,
+            background: k,
+            boxShadow: value === k ? "0 0 0 2px var(--chr), 0 0 0 3.5px var(--txt)" : "0 0 0 1px var(--brd)",
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
 export function CaseManageMenu({
   onRename,
   onNewShelf,
@@ -150,6 +246,8 @@ export function CaseManageMenu({
   onMoveDown,
   onDelete,
   onClose,
+  ink,
+  onInk,
 }: {
   onRename: () => void;
   onNewShelf: () => void;
@@ -158,6 +256,8 @@ export function CaseManageMenu({
   onMoveDown: () => void;
   onDelete: () => void;
   onClose: () => void;
+  ink: string | null;
+  onInk: (ink: string | null) => void;
 }) {
   const { t } = useI18n();
   const row = (label: string, run: () => void, danger?: boolean) => (
@@ -177,6 +277,9 @@ export function CaseManageMenu({
       <Backdrop onClose={onClose} />
       <div style={panel(220)}>
         <div style={legend}>{t("lib.managing")}</div>
+        <div style={{ ...legend, paddingTop: 0 }}>{t("lib.colour")}</div>
+        <InkPicker value={ink} onPick={onInk} />
+        <div style={{ height: 1, background: "var(--brd)", margin: "5px 4px" }} />
         {row(t("lib.shelf.rename"), onRename)}
         {row(t("lib.newShelf"), onNewShelf)}
         {row(`${t("lib.newShelf")} · ${t("lib.automatic")}`, onNewRuleShelf)}

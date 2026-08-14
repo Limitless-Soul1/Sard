@@ -260,6 +260,8 @@ export interface CategoryNode {
 export interface ShelfNode {
   id: string;
   name: string;
+  /** The shelf's own colour; null = fall back to its case's. */
+  ink: string | null;
   case_id: string | null;
   order_rule: ShelfOrder;
   /** Non-null = self-filling; placing a book on it is refused by the backend. */
@@ -325,6 +327,17 @@ export const shelfPlaceBook = (
   index: number,
 ): Promise<LibraryTree> =>
   invoke<LibraryTree>("shelf_place_book", { collectionId, bookId, categoryId, index });
+
+/** A shelf's own colour. `null` clears it, so it borrows its case's again. */
+export const shelfSetInk = (id: string, ink: string | null): Promise<LibraryTree> =>
+  invoke<LibraryTree>("shelf_set_ink", { id, ink });
+export const caseSetInk = (id: string, ink: string | null): Promise<LibraryTree> =>
+  invoke<LibraryTree>("case_set_ink", { id, ink });
+/** Move a shelf among its siblings — the shelves of its case, or the loose ones. */
+export const shelfReorder = (id: string, toIndex: number): Promise<LibraryTree> =>
+  invoke<LibraryTree>("shelf_reorder", { id, toIndex });
+export const categoryReorder = (id: string, toIndex: number): Promise<LibraryTree> =>
+  invoke<LibraryTree>("category_reorder", { id, toIndex });
 
 export const categoryCreate = (collectionId: string, name: string): Promise<LibraryTree> =>
   invoke<LibraryTree>("category_create", { collectionId, name });

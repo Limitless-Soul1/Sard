@@ -39,6 +39,7 @@ interface SidebarProps {
   /** Direction is -1 (earlier) or +1 (later) among the case's peers. */
   onMoveCase: (id: string, direction: number) => void;
   onNewRuleShelf: (caseId: string) => void;
+  onCaseInk: (caseId: string, ink: string | null) => void;
   /** RAWY-31's shelf rename, used by the sidebar's inline editor. */
   onRenameShelf: (id: string, name: string) => void;
   onSettings: () => void;
@@ -426,6 +427,8 @@ export function Sidebar(props: SidebarProps) {
                       onMoveDown={() => props.onMoveCase(c.id, 1)}
                       onDelete={() => props.onDeleteCase(c.id)}
                       onClose={() => setManaging(null)}
+                      ink={c.ink}
+                      onInk={(ink) => props.onCaseInk(c.id, ink)}
                     />
                   )}
                 </span>

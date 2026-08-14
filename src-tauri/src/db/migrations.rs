@@ -91,6 +91,11 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "library_cases",
         include_str!("migrations_sql/0017_library_cases.sql"),
     ),
+    (
+        18,
+        "shelf_ink",
+        include_str!("migrations_sql/0018_shelf_ink.sql"),
+    ),
 ];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.

@@ -177,6 +177,8 @@ export const ar: Record<TKey, string> = {
   "lib.openCase": "افتح الخزانة",
   "lib.manage": "إدارة",
   "lib.managing": "إدارة الخزانة",
+  "lib.colour": "اللون",
+  "lib.inkNone": "بلا لون",
   "lib.moveCase": "تحريك هذه الخزانة",
   "lib.moveShelf": "تحريك هذا الرفّ",
   "lib.unfiled": "خارج الخزائن",

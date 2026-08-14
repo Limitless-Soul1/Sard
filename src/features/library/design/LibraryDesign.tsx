@@ -447,8 +447,12 @@ export function LibraryDesign(props: LibraryDesignProps) {
           themeName={THEMES[themeId]?.name ?? ""}
           langName={t(lang === "ar" ? "lang.arabic" : "lang.english")}
         />
-        <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", background: "var(--pap)" }}>
-          {props.renderSection(props.section)}
+        {/* `.lib-main` + `.lib-pane` verbatim, because the section panes were written against that
+            contract: `.inbox` is `height:100%; overflow:hidden`, which needs an ancestor that is
+            both sized and allowed to shrink (`min-height: 0`). A hand-rolled wrapper without it
+            lets those panes grow past the window instead of scrolling inside it. */}
+        <div className="lib-main">
+          <div className="lib-pane">{props.renderSection(props.section)}</div>
         </div>
       </div>
     );

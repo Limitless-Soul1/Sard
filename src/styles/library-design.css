@@ -55,11 +55,13 @@
   /* Vista sets its captions over an image, so they carry a 1px lift off the ground. */
   --libd-cap-shadow: rgba(255, 252, 244, 0.75);
 
+  /* Geometry only. The BACKGROUND is deliberately left to `.lib-root` so that the
+     `:root[data-bg-library="on"]` rules — which out-specify a bare class — keep winning, and so a
+     chosen library image renders through this surface exactly as it did through the old one. */
   position: fixed;
   inset: 0;
   display: flex;
   overflow: hidden;
-  background: var(--app);
   color: var(--txt);
   font-family: var(--ui);
   font-size: 15px;

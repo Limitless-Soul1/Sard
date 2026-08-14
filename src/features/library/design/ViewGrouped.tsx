@@ -13,7 +13,7 @@ import { useI18n } from "../../../i18n";
 import { localeNum } from "../../../lib/format";
 import { BookTile } from "./BookTile";
 import { CaseManageMenu, ShelfOrderMenu } from "./Menus";
-import { type BookGroup, type DesignView, itemWidth } from "./model";
+import { type BookGroup, type DesignView, isVirtualShelf, itemWidth } from "./model";
 
 export interface ShelfRender {
   shelf: ShelfNode;
@@ -83,9 +83,9 @@ export function ViewGrouped(props: GroupedProps) {
         ? t("lib.rule.finished")
         : t("lib.rule.added");
 
-  /** A drop slot between two books, shown only while a book is in hand. */
+  /** A drop slot between two books, shown only while a book is in hand and the shelf can take one. */
   const gap = (shelfId: string, categoryId: string | null, index: number, key: string) =>
-    carrying ? (
+    carrying && !isVirtualShelf(shelfId) ? (
       <button
         key={key}
         onClick={() => props.onPlace(shelfId, categoryId, index)}
@@ -209,7 +209,7 @@ export function ViewGrouped(props: GroupedProps) {
                   </span>
                 )}
                 <span style={{ font: "500 .75rem var(--ui)", color: "var(--faint)" }}>
-                  {t("lib.shelfCount", { n: num(bookCount) })} · {num(shelfCount)}
+                  {t("lib.shelfCount", { n: num(bookCount) })} · {t("lib.shelvesCount", { n: num(shelfCount) })}
                 </span>
                 {!open && (
                   <span
@@ -299,7 +299,7 @@ export function ViewGrouped(props: GroupedProps) {
                       </span>
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, position: "relative" }}>
-                      {shelf.auto_rule ? (
+                      {isVirtualShelf(shelf.id) ? null : shelf.auto_rule ? (
                         <span
                           title={t("lib.ruleFixed")}
                           style={{

@@ -178,6 +178,8 @@ export const en = {
   "lib.moveCase": "Move this case",
   "lib.moveShelf": "Move this shelf",
   "lib.unfiled": "Not in a case",
+  "lib.unshelved": "Not on a shelf",
+  "lib.shelvesCount": "{n} shelves",
   "lib.searchWide": "Search titles, authors, shelves…",
   "lib.select": "Select",
   "lib.arrange": "Arrange by hand",

@@ -31,6 +31,7 @@ import {
 import { useI18n } from "../../../i18n";
 import { localeNum } from "../../../lib/format";
 import { useTheme, THEMES } from "../../../theme";
+import { useBackground } from "../../../lib/background";
 import { Header, Sidebar, type Scope, type Section } from "./Chrome";
 import { ViewGrouped, type CaseRender, type ShelfRender } from "./ViewGrouped";
 import { ViewDetails } from "./ViewDetails";
@@ -38,10 +39,12 @@ import { VistaEnvironment, VistaHero, ViewVista, type VistaBand } from "./ViewVi
 import { CarryGhost, SelectTray } from "./Menus";
 import {
   DESIGN_VIEWS,
-  bookMatches,
   groupShelf,
   isGroupedView,
+  isVirtualShelf,
+  makeLooseShelf,
   sortBooks,
+  unshelvedBooks,
   type DesignSort,
   type DesignView,
 } from "./model";
@@ -59,6 +62,9 @@ export interface LibraryDesignProps {
   /** Grid's own cover-fit control, which belongs to that view and only appears with it. */
   coverMode: "crop" | "fit";
   onCoverMode: () => void;
+  /** RAWY-15's EPUB/PDF filter — applied in SQL, so it belongs to the owner of the query. */
+  format: string | null;
+  onFormat: (f: string | null) => void;
   onOpenBook: (b: BookRow) => void;
   onEditBook: (b: BookRow) => void;
   onAddBooks: () => void;
@@ -75,6 +81,11 @@ export function LibraryDesign(props: LibraryDesignProps) {
   const { t, lang } = useI18n();
   const themeId = useTheme((s) => s.themeId);
   const dark = THEMES[themeId]?.dark ?? false;
+  // Whether a library background image is actually in force — the same two pieces of store state
+  // `applyBackgrounds` gates the `data-bg-library` attribute on.
+  const bgEnabled = useBackground((s) => s.enabled);
+  const bgLibrary = useBackground((s) => s.library);
+  const hasUserBackground = bgEnabled && !!bgLibrary;
   const num = (n: number) => localeNum(n, lang);
 
   const [tree, setTree] = useState<LibraryTree>(EMPTY_TREE);
@@ -188,15 +199,17 @@ export function LibraryDesign(props: LibraryDesignProps) {
     [items, byId],
   );
 
-  /** A shelf survives the search when its own name matches, or any of its books do. */
-  const filterShelf = useCallback(
-    (s: ShelfNode, list: BookRow[]): BookRow[] => {
-      if (!q) return list;
-      if (s.name.toLowerCase().includes(q)) return list;
-      return list.filter((b) => bookMatches(b, q));
-    },
-    [q],
-  );
+  /**
+   * The books a shelf shows.
+   *
+   * There is deliberately NO text matching here. `props.books` has already been filtered by
+   * `library_list_books`, whose search folds Arabic the way RAWY-178 requires — an unvocalized
+   * query finds a vocalized title, and hamza/alef variants match. A second, naive
+   * `toLowerCase().includes()` pass on top would DISCARD exactly the rows that folding had just
+   * matched, so the library would answer قراءة but not قِراءة. The membership lookup below
+   * already restricts every shelf to books that survived that query.
+   */
+  const filterShelf = useCallback((_s: ShelfNode, list: BookRow[]): BookRow[] => list, []);
 
   const rendered: CaseRender[] = useMemo(() => {
     const caseList: CaseRender[] = [];
@@ -220,10 +233,26 @@ export function LibraryDesign(props: LibraryDesignProps) {
         if (q && books.length === 0 && !s.name.toLowerCase().includes(q)) continue;
         shelves.push({ shelf: s, groups: groupShelf(s, items[s.id] ?? [], byId), total: books.length });
       }
+      // Books on no shelf at all. Without this run they would be invisible in every grouped
+      // view — which, on a library whose books have never been filed, is the whole library.
+      if (!scope.shelfId) {
+        const filed = new Set<string>();
+        for (const list of Object.values(items)) for (const i of list) filed.add(i.book_id);
+        const loose = unshelvedBooks(props.books, filed);
+        const shown = loose; // already narrowed by the folded SQL search — see `filterShelf`
+        if (shown.length) {
+          const shelf = makeLooseShelf(t("lib.unshelved"), shown.length);
+          shelves.push({
+            shelf,
+            groups: [{ categoryId: null, name: null, books: sortBooks(shown, sort) }],
+            total: shown.length,
+          });
+        }
+      }
       if (shelves.length) caseList.push({ node: null, shelves });
     }
     return caseList;
-  }, [tree, scope, items, byId, filterShelf, shelfBooks, q]);
+  }, [tree, scope, items, byId, filterShelf, shelfBooks, q, props.books, sort, t]);
 
   /** Details and the counts work off one flat, sorted list. */
   const flatBooks = useMemo(() => {
@@ -238,10 +267,10 @@ export function LibraryDesign(props: LibraryDesignProps) {
     const base = any && (scope.caseId || scope.shelfId)
       ? props.books.filter((b) => inScope.has(b.id))
       : props.books;
-    const filtered = q ? base.filter((b) => bookMatches(b, q)) : base;
-    return sortBooks(filtered, sort === "recent" ? "recent" : sort);
+    return sortBooks(base, sort === "recent" ? "recent" : sort);
   }, [rendered, props.books, q, sort, scope]);
 
+  // Vista reads the same runs the grouped views do, so the unshelved books appear there too.
   const vistaBands: VistaBand[] = useMemo(
     () =>
       rendered.flatMap((c) =>
@@ -249,7 +278,9 @@ export function LibraryDesign(props: LibraryDesignProps) {
           key: s.shelf.id,
           shelf: s.shelf,
           caseNode: c.node,
-          books: filterShelf(s.shelf, shelfBooks(s.shelf)),
+          books: isVirtualShelf(s.shelf.id)
+            ? s.groups.flatMap((g) => g.books)
+            : filterShelf(s.shelf, shelfBooks(s.shelf)),
           runName: null,
         })),
       ),
@@ -267,6 +298,11 @@ export function LibraryDesign(props: LibraryDesignProps) {
   const place = useCallback(
     async (shelfId: string, categoryId: string | null, index: number) => {
       if (!carry) return;
+      // The unshelved run is a render-time fiction, not a collection — nothing can be put into it.
+      if (isVirtualShelf(shelfId)) {
+        flash(t("lib.cannotPlace"));
+        return;
+      }
       const target = shelfById.get(shelfId);
       if (target?.shelf.auto_rule) {
         flash(t("lib.cannotPlace"));
@@ -374,7 +410,12 @@ export function LibraryDesign(props: LibraryDesignProps) {
 
   if (props.section !== "library") {
     return (
-      <div className="libd-root">
+      // BOTH classes, deliberately. `.lib-root` is the element the RAWY-265 background system hangs
+    // its two layers on (`::before` the image, `::after` the scrim), the element it gives
+    // `isolation: isolate`, and the element whose `--lib-faint` it re-grounds to hold the measured
+    // 3:1 floor over a photograph. Renaming the shell to `.libd-root` alone silently detached all
+    // three. `.libd-root` adds only the design's variable bindings on top.
+    <div className="lib-root libd-root">
         <Sidebar
           section={props.section}
           onSection={props.onSection}
@@ -414,7 +455,12 @@ export function LibraryDesign(props: LibraryDesignProps) {
   }
 
   return (
-    <div className="libd-root">
+    // BOTH classes, deliberately. `.lib-root` is the element the RAWY-265 background system hangs
+    // its two layers on (`::before` the image, `::after` the scrim), the element it gives
+    // `isolation: isolate`, and the element whose `--lib-faint` it re-grounds to hold the measured
+    // 3:1 floor over a photograph. Renaming the shell to `.libd-root` alone silently detached all
+    // three. `.libd-root` adds only the design's variable bindings on top.
+    <div className="lib-root libd-root">
       <Sidebar
         section={props.section}
         onSection={props.onSection}
@@ -451,10 +497,13 @@ export function LibraryDesign(props: LibraryDesignProps) {
           display: "flex",
           flexDirection: "column",
           position: "relative",
-          background: vista ? "transparent" : "var(--pap)",
+          // TRANSPARENT, always. The old `.lib-main` painted nothing for the same reason: the
+          // ground belongs to `.lib-root`, and a chosen background image lives between the two.
+          // Painting `--pap` here is what hid the image behind every non-Vista view.
+          background: "transparent",
         }}
       >
-        {vista && <VistaEnvironment dark={dark} />}
+        {vista && <VistaEnvironment dark={dark} hasUserBackground={hasUserBackground} />}
 
         <Header
           crumbs={crumbs}
@@ -482,6 +531,8 @@ export function LibraryDesign(props: LibraryDesignProps) {
           overEnvironment={vista}
           coverMode={props.coverMode}
           onCoverMode={props.onCoverMode}
+          format={props.format}
+          onFormat={props.onFormat}
         />
 
         {/* GRID is Sard's original grid, rendered as it always was: `.lib-grid` is itself

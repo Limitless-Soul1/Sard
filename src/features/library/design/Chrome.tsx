@@ -186,11 +186,15 @@ export function Sidebar(props: SidebarProps) {
   };
 
   return (
+    // `.lib-sidebar` carries the BACKGROUND only. RAWY-278 makes it translucent with a
+    // blur that follows the blur slider whenever a library image is set, and that rule cannot
+    // win against an inline `background`, so this one is not set inline. The design's geometry
+    // — 244px, its own padding — is inline and so still overrides the class's own 228px.
     <aside
+      className="lib-sidebar"
       style={{
         width: 244,
         flex: "none",
-        background: "var(--chr)",
         borderInlineEnd: "1px solid var(--brd)",
         display: "flex",
         flexDirection: "column",
@@ -544,6 +548,8 @@ interface HeaderProps {
   /** Grid's own control, shown only while Grid is the view — as it was before. */
   coverMode: "crop" | "fit";
   onCoverMode: () => void;
+  format: string | null;
+  onFormat: (f: string | null) => void;
 }
 
 const ctlBtn = (active: boolean): React.CSSProperties => ({
@@ -571,6 +577,7 @@ const VIEW_ICONS: Record<DesignView, string> = {
 export function Header(props: HeaderProps) {
   const { t } = useI18n();
   const [sortOpen, setSortOpen] = useState(false);
+  const [formatOpen, setFormatOpen] = useState(false);
 
   const views: { id: DesignView; label: string; hint: string }[] = [
     { id: "grid", label: t("lib.view.grid"), hint: t("lib.view.gridHint") },
@@ -794,6 +801,60 @@ export function Header(props: HeaderProps) {
             ))}
           </div>
         )}
+
+        {/* RAWY-15's format filter, carried over from the old toolbar. It filters in SQL. */}
+        <div style={{ position: "relative" }}>
+          <button
+            onClick={() => setFormatOpen((v) => !v)}
+            title={t("lib.filter")}
+            aria-label={t("lib.filter")}
+            style={ctlBtn(!!props.format)}
+          >
+            ⛛ {props.format ? props.format.toUpperCase() : t("lib.filter.all")}
+          </button>
+          {formatOpen && (
+            <>
+              <div onClick={() => setFormatOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 69 }} />
+              <div
+                style={{
+                  position: "absolute",
+                  insetInlineEnd: 0,
+                  top: "calc(100% + 6px)",
+                  zIndex: 70,
+                  width: 180,
+                  background: "var(--chr)",
+                  border: "1px solid var(--brd)",
+                  borderRadius: 12,
+                  boxShadow: "var(--sh4)",
+                  padding: 6,
+                  animation: "sard-rise .12s ease-out",
+                }}
+              >
+                {[null, "epub", "pdf"].map((f) => (
+                  <button
+                    key={f ?? "all"}
+                    className="libd-hov"
+                    onClick={() => {
+                      props.onFormat(f);
+                      setFormatOpen(false);
+                    }}
+                    style={{
+                      width: "100%",
+                      justifyContent: "flex-start",
+                      padding: "7px 10px",
+                      borderRadius: 8,
+                      font: "500 .8125rem var(--ui)",
+                      color: props.format === f ? "var(--txt)" : "var(--mut)",
+                      background: props.format === f ? "var(--act)" : "transparent",
+                    }}
+                  >
+                    {f ? f.toUpperCase() : t("lib.filter.all")}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
 
         <div style={{ position: "relative" }}>
           <button onClick={() => setSortOpen((v) => !v)} style={ctlBtn(false)}>

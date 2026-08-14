@@ -12,7 +12,7 @@ import { resolveBookMeta, displayTitle } from "../../../lib/bookMeta";
 import { AutoCover } from "../AutoCover";
 import { coverSrc } from "../coverSrc";
 import { BookTile } from "./BookTile";
-import { baseWidth, itemWidth, isFinished, progressPct } from "./model";
+import { baseWidth, itemWidth, isFinished, isVirtualShelf, progressPct } from "./model";
 
 /** The environment the library stands in — the design's own sky-to-ground gradient. */
 export const VISTA_GROUND =
@@ -20,18 +20,34 @@ export const VISTA_GROUND =
   "radial-gradient(120% 52% at 12% 62%, rgba(184,169,138,.55), transparent 68%)," +
   "linear-gradient(180deg, #BFD3D8 0%, #DCD3BC 40%, #D2AE84 64%, #9A7452 84%, #7A5B41 100%)";
 
-export function VistaEnvironment({ dark }: { dark: boolean }) {
+/**
+ * Vista's environment.
+ *
+ * When the reader has chosen a library background, THAT is the environment: the painted ground
+ * is skipped entirely and only the veil is drawn, so the image stays visible through Vista's
+ * layer instead of being replaced by it. The generated ground is the fallback for a library
+ * with no image of its own, not a substitute for one.
+ */
+export function VistaEnvironment({
+  dark,
+  hasUserBackground,
+}: {
+  dark: boolean;
+  hasUserBackground: boolean;
+}) {
   return (
     <>
-      <div
-        aria-hidden
-        style={{
-          position: "absolute",
-          inset: 0,
-          zIndex: 0,
-          background: VISTA_GROUND,
-        }}
-      />
+      {!hasUserBackground && (
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            inset: 0,
+            zIndex: 0,
+            background: VISTA_GROUND,
+          }}
+        />
+      )}
       <div
         aria-hidden
         style={{
@@ -188,7 +204,7 @@ export function ViewVista(props: VistaProps) {
             >
               {shown.map((b, i) => (
                 <div key={b.id} style={{ display: "contents" }}>
-                {carrying && !band.shelf.auto_rule && band.shelf.order_rule === "hand" && (
+                {carrying && !band.shelf.auto_rule && !isVirtualShelf(band.shelf.id) && band.shelf.order_rule === "hand" && (
                   <button
                     onClick={() => props.onPlace(band.shelf.id, null, i)}
                     title={t("lib.placeHere")}

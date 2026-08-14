@@ -266,7 +266,10 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const [coverMode, setCoverMode] = useState<CoverMode>(() => prefsCache?.cover ?? "crop");
   const [sort, setSort] = useState<SortKey>(() => prefsCache?.sort ?? "date_read");
   const [order, setOrder] = useState<SortOrder>(() => prefsCache?.order ?? "desc");
-  const [format] = useState<string | null>(null);
+  // RAWY-15's format filter. It drives `library_list_books` in SQL, so it must stay a real piece
+  // of state rather than a constant — dropping its control left this pinned at null and the filter
+  // unreachable.
+  const [format, setFormat] = useState<string | null>(null);
   const [shelf, setShelf] = useState<string | null>(() => prefsCache?.shelf ?? null);
   const [search, setSearch] = useState("");
   const [drag, setDrag] = useState<{ count: number } | null>(null);
@@ -667,6 +670,8 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         }
         coverMode={coverMode}
         onCoverMode={() => setCoverMode((m) => (m === "crop" ? "fit" : "crop"))}
+        format={format}
+        onFormat={setFormat}
         onOpenBook={open}
         onEditBook={setEditing}
         onAddBooks={addBooks}

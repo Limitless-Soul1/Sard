@@ -157,3 +157,32 @@ export function groupShelf(shelf: ShelfNode, items: ShelfItem[], byId: Map<strin
 export function allShelves(cases: CaseNode[], loose: ShelfNode[]): ShelfNode[] {
   return [...cases.flatMap((c) => c.shelves), ...loose];
 }
+
+/**
+ * The synthetic shelf that holds books on no shelf at all.
+ *
+ * Without it the grouped views show only what has already been filed, so a library whose
+ * books have never been put on a shelf renders as empty — which is what it did until this
+ * was added. It is not a row in `collections`: it exists only for the duration of a render,
+ * cannot be written to, and disappears as soon as every book has a home.
+ */
+export const LOOSE_SHELF_ID = "__unshelved";
+
+export const isVirtualShelf = (id: string) => id === LOOSE_SHELF_ID;
+
+export function unshelvedBooks(books: BookRow[], filed: Set<string>): BookRow[] {
+  return books.filter((b) => !filed.has(b.id));
+}
+
+export function makeLooseShelf(name: string, count: number): ShelfNode {
+  return {
+    id: LOOSE_SHELF_ID,
+    name,
+    case_id: null,
+    order_rule: "hand",
+    auto_rule: null,
+    collapsed: false,
+    count,
+    categories: [],
+  };
+}

@@ -180,6 +180,8 @@ export const ar: Record<TKey, string> = {
   "lib.moveCase": "تحريك هذه الخزانة",
   "lib.moveShelf": "تحريك هذا الرفّ",
   "lib.unfiled": "خارج الخزائن",
+  "lib.unshelved": "خارج الأرفف",
+  "lib.shelvesCount": "{n} أرفف",
   "lib.searchWide": "ابحث في العناوين والمؤلّفين والأرفف…",
   "lib.select": "تحديد",
   "lib.arrange": "ترتيب يدويّ",

@@ -10,6 +10,7 @@
 // binds the short variable names they use to Sard's theme tokens.
 
 import { useState } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import type { BookRow } from "../../../lib/ipc";
 import { useI18n } from "../../../i18n";
 import { AutoCover, autoCoverPaint } from "../AutoCover";
@@ -55,8 +56,11 @@ export function BookTile(props: BookTileProps) {
   const meta = resolveBookMeta(book);
   const title = displayTitle(meta, t);
   const arabic = book.dir === "rtl" || ARABIC.test(title);
-  const paint = autoCoverPaint(title);
-  const src = coverSrc(book);
+  // A chosen paint overrides the one derived from the title; the derived one is the default.
+  const derived = autoCoverPaint(title);
+  const paint = book.cover_paint ? { bg: book.cover_paint, ink: derived.ink } : derived;
+  const src = book.cover_mode === "typeset" ? null : coverSrc(book);
+  const spineSrc = book.spine_image ? convertFileSrc(book.spine_image) : null;
   const drawn = !src || imgFailed;
   const pct = progressPct(book);
   const finished = isFinished(book);
@@ -250,20 +254,29 @@ export function BookTile(props: BookTileProps) {
 
       <div style={coverStyle}>
         {spines ? (
-          <span
-            style={{
-              transform: "rotate(-90deg)",
-              transformOrigin: "center",
-              whiteSpace: "nowrap",
-              maxWidth: SPINE_LABEL_MAX[density],
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              color: paint.ink,
-              font: arabic ? "700 .8125rem var(--ar)" : "500 .75rem var(--ui)",
-            }}
-          >
-            {title}
-          </span>
+          spineSrc ? (
+            // A chosen spine image is the whole spine — the drawn label would sit on top of it.
+            <img
+              src={spineSrc}
+              alt=""
+              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+            />
+          ) : (
+            <span
+              style={{
+                transform: "rotate(-90deg)",
+                transformOrigin: "center",
+                whiteSpace: "nowrap",
+                maxWidth: SPINE_LABEL_MAX[density],
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                color: paint.ink,
+                font: arabic ? "700 .8125rem var(--ar)" : "500 .75rem var(--ui)",
+              }}
+            >
+              {title}
+            </span>
+          )
         ) : drawn ? (
           <AutoCover title={title} author={meta.author} dir={book.dir} />
         ) : (

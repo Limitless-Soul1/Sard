@@ -10,11 +10,15 @@
 
 import { useEffect, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import type { BookRow, CaseNode, ShelfNode } from "../../../lib/ipc";
 import {
+  bookClearSpine,
   bookCommitCover,
+  bookCommitSpine,
   bookRevertCover,
   bookStageCover,
+  bookStageSpine,
   bookUpdate,
   collectionRemoveBook,
   shelfPlaceBook,
@@ -61,15 +65,6 @@ const legend: React.CSSProperties = {
   marginBottom: 9,
 };
 
-const LANGS: [string, string][] = [
-  ["en", "English"],
-  ["ar", "العربية"],
-  ["zh", "中文"],
-  ["ja", "日本語"],
-  ["ko", "한국어"],
-  ["fr", "Français"],
-];
-
 export interface BookDetailsProps {
   book: BookRow;
   cases: CaseNode[];
@@ -105,6 +100,7 @@ export function BookDetails(props: BookDetailsProps) {
   const src = coverSrc(book);
   const typeset = book.cover_mode === "typeset" || !src;
   const spineMode = book.spine_mode ?? "typeset";
+  const spineSrc = book.spine_image ? convertFileSrc(book.spine_image) : null;
   const pct = progressPct(book);
   const done = isFinished(book);
 
@@ -137,6 +133,29 @@ export function BookDetails(props: BookDetailsProps) {
       /* the staging path reports its own failure; the dialog simply stays open */
     }
     setBusy(false);
+  };
+
+  const chooseSpine = async () => {
+    const sel = await openDialog({ multiple: false, filters: [{ name: "Image", extensions: IMAGE_EXTENSIONS }] });
+    if (typeof sel !== "string") return;
+    setBusy(true);
+    try {
+      const staged = await bookStageSpine(book.id, sel);
+      const next = await bookCommitSpine(book.id, staged.rel);
+      if (next) setBook(next);
+      props.onChanged();
+    } catch {
+      /* staging reports its own failure; the dialog stays open on the current spine */
+    }
+    setBusy(false);
+  };
+
+  const clearSpine = async () => {
+    setBusy(true);
+    const next = await bookClearSpine(book.id).catch(() => null);
+    if (next) setBook(next);
+    setBusy(false);
+    props.onChanged();
   };
 
   const revertCover = async () => {
@@ -289,10 +308,9 @@ export function BookDetails(props: BookDetailsProps) {
       }}
     >
       <div
-        className="libd-root"
+        className="libd-dialog"
         onClick={(e) => e.stopPropagation()}
         style={{
-          position: "static",
           display: "block",
           width: "min(640px,92%)",
           maxHeight: "88%",
@@ -387,22 +405,6 @@ export function BookDetails(props: BookDetailsProps) {
         </div>
 
         <div style={{ padding: "18px 24px 22px", display: "flex", flexDirection: "column", gap: 18 }}>
-          {/* ---- language ---- */}
-          <div>
-            <div style={legend}>{t("lib.language")}</div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {LANGS.map(([id, label]) => (
-                <button
-                  key={id}
-                  style={chip(book.language === id)}
-                  onClick={() => patch({ language: book.language === id ? "" : id })}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
           {/* ---- cover and spine ---- */}
           <div style={{ display: "flex", gap: 26, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 250 }}>
@@ -444,11 +446,48 @@ export function BookDetails(props: BookDetailsProps) {
                 </button>
               </div>
 
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                {/* The FIRST swatch is "no chosen paint" — it clears the override and returns the
+                    book to the colour Sard derives from its title. Without it the palette was a
+                    one-way door: every swatch set a paint and none could unset one. It shows that
+                    derived colour, struck through, so the state it returns to is legible. */}
+                <button
+                  title={t("lib.coverPaintNone")}
+                  aria-label={t("lib.coverPaintNone")}
+                  aria-pressed={!book.cover_paint}
+                  onClick={() => patch({ coverPaint: "" })}
+                  style={{
+                    position: "relative",
+                    width: 22,
+                    height: 30,
+                    borderRadius: 3,
+                    background: autoCoverPaint(shown).bg,
+                    boxShadow: !book.cover_paint
+                      ? "0 0 0 2px var(--chr), 0 0 0 3.5px var(--txt)"
+                      : "var(--sh1)",
+                    overflow: "hidden",
+                  }}
+                >
+                  <span
+                    aria-hidden
+                    style={{
+                      position: "absolute",
+                      insetInline: -4,
+                      top: "50%",
+                      height: 1.5,
+                      background: "rgba(255,255,255,.85)",
+                      transform: "rotate(-52deg)",
+                    }}
+                  />
+                </button>
+
+                <span style={{ width: 1, height: 22, background: "var(--brd)", flex: "none" }} />
+
                 {PALETTE.map((k) => (
                   <button
                     key={k}
                     aria-label={k}
+                    aria-pressed={book.cover_paint === k}
                     onClick={() => patch({ coverPaint: k, coverMode: "typeset" })}
                     style={{
                       width: 22,
@@ -484,27 +523,51 @@ export function BookDetails(props: BookDetailsProps) {
                     background: spineMode === "none" ? "var(--lbox)" : paint,
                   }}
                 >
-                  <span
-                    style={{
-                      transform: "rotate(-90deg)",
-                      whiteSpace: "nowrap",
-                      maxWidth: 168,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      color: spineMode === "none" ? "var(--faint)" : ink,
-                      font: arabic ? "700 .8125rem var(--ar)" : "500 .75rem var(--ui)",
-                    }}
-                  >
-                    {shown}
-                  </span>
+                  {spineSrc ? (
+                    <img
+                      src={spineSrc}
+                      alt=""
+                      style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+                    />
+                  ) : (
+                    <span
+                      style={{
+                        transform: "rotate(-90deg)",
+                        whiteSpace: "nowrap",
+                        maxWidth: 168,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        color: spineMode === "none" ? "var(--faint)" : ink,
+                        font: arabic ? "700 .8125rem var(--ar)" : "500 .75rem var(--ui)",
+                      }}
+                    >
+                      {shown}
+                    </span>
+                  )}
                 </div>
                 <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
-                  <button style={chip(spineMode === "typeset")} onClick={() => patch({ spineMode: "typeset" })}>
+                  <button
+                    style={chip(!spineSrc && spineMode === "typeset")}
+                    onClick={() => patch({ spineMode: "typeset" })}
+                  >
                     {t("lib.coverTypeset")}
                   </button>
-                  <button style={chip(spineMode === "none")} onClick={() => patch({ spineMode: "none" })}>
+                  <button
+                    style={chip(!spineSrc && spineMode === "none")}
+                    onClick={() => patch({ spineMode: "none" })}
+                  >
                     {t("lib.spinePlain")}
                   </button>
+                  {/* A chosen image OVERRIDES the two drawn modes, which is why it reads as
+                      selected while one is set and why removing it hands the spine back to them. */}
+                  <button style={chip(!!spineSrc)} onClick={chooseSpine}>
+                    {spineSrc ? t("lib.spineReplace") : t("lib.spineChoose")}
+                  </button>
+                  {spineSrc && (
+                    <button style={chip(false)} onClick={clearSpine}>
+                      {t("lib.spineRemove")}
+                    </button>
+                  )}
                   <span style={{ font: "400 .625rem/1.5 var(--ui)", color: "var(--faint)", textWrap: "pretty" }}>
                     {t("lib.spineNote")}
                   </span>

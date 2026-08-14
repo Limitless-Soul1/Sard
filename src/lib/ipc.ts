@@ -189,6 +189,8 @@ export interface BookRow {
   cover_mode: string | null;
   /** "typeset" | "none" */
   spine_mode: string | null;
+  /** A chosen spine image, absolute, or null. */
+  spine_image: string | null;
 }
 
 export type SortKey = "title" | "author" | "format" | "date_read" | "date_added";
@@ -404,6 +406,16 @@ export const bookCommitCover = (id: string, rel: string): Promise<BookRow | null
 /** Abandon a staged cover the renderer refused. Nothing was adopted, so nothing is undone. */
 export const bookDiscardCover = (rel: string): Promise<void> =>
   invoke<void>("book_discard_cover", { rel });
+
+// A spine image goes through the same two-stage custody as a cover — validated and
+// content-addressed on the way in, adopted only once it is known to render.
+export const bookStageSpine = (id: string, imagePath: string): Promise<StagedCover> =>
+  invoke<StagedCover>("book_stage_spine", { id, imagePath });
+export const bookCommitSpine = (id: string, rel: string): Promise<BookRow | null> =>
+  invoke<BookRow | null>("book_commit_spine", { id, rel });
+/** Remove a book's spine image and its file. */
+export const bookClearSpine = (id: string): Promise<BookRow | null> =>
+  invoke<BookRow | null>("book_clear_spine", { id });
 
 /** Revert to the extracted/auto cover. Returns the updated book. */
 export const bookRevertCover = (id: string): Promise<BookRow | null> =>

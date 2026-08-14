@@ -191,7 +191,7 @@ export function Sidebar(props: SidebarProps) {
     // win against an inline `background`, so this one is not set inline. The design's geometry
     // — 244px, its own padding — is inline and so still overrides the class's own 228px.
     <aside
-      className="lib-sidebar"
+      className="lib-sidebar libd-chrome"
       style={{
         width: 244,
         flex: "none",
@@ -606,14 +606,19 @@ export function Header(props: HeaderProps) {
   };
 
   return (
+    // NO background and NO border, in every view — the design's own header paints nothing.
+    // Giving the non-Vista views an opaque `--pap` band here is what drew a black strip across
+    // the top of a library with a background image: the header sat ON the photograph instead of
+    // over it. The ground belongs to `.lib-root`, and the scrim's own falloff already adds theme
+    // weight at exactly this height so the title and search stay legible.
     <header
+      className="libd-chrome"
       style={{
         flex: "none",
         position: "relative",
         zIndex: 3,
-        padding: "16px 32px 14px",
-        background: props.overEnvironment ? "transparent" : "var(--pap)",
-        borderBottom: props.overEnvironment ? "none" : "1px solid var(--brd)",
+        padding: "18px 30px 0",
+        backdropFilter: props.overEnvironment ? "blur(2px)" : undefined,
       }}
     >
       <div

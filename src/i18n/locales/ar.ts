@@ -254,6 +254,10 @@ export const ar: Record<TKey, string> = {
   "lib.coverSizeDefault": "الافتراضيّ",
   "lib.spine": "الكعب",
   "lib.spinePlain": "سادة",
+  "lib.spineChoose": "اختر صورة…",
+  "lib.spineReplace": "استبدل الصورة…",
+  "lib.spineRemove": "إزالة الصورة",
+  "lib.coverPaintNone": "بلا لون — استعمل ما يشتقّه سَرْد",
   "lib.spineUse": "الكعوب وعروض الأرفف",
   "lib.spineNote":
     "المقاس المقترح ٢٥٦ × ١٠٢٤ بكسل · ١:٤. تُقصّ الصور الأطول أو الأقصر من الوسط ولا تُمطّ.",

@@ -622,6 +622,47 @@ pub fn book_commit_cover(
     Ok(row)
 }
 
+/// Stage a spine image — same validation and custody as a cover, its own name prefix.
+#[tauri::command]
+pub fn book_stage_spine(
+    id: String,
+    image_path: String,
+    state: State<AppState>,
+) -> Result<library::StagedCover, String> {
+    safe_id(&id)?;
+    library::stage_spine(&state.app_data_dir, &id, &image_path)
+}
+
+/// Adopt a staged spine image.
+#[tauri::command]
+pub fn book_commit_spine(
+    id: String,
+    rel: String,
+    state: State<AppState>,
+) -> Result<Option<library::BookRow>, String> {
+    safe_id(&id)?;
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.conn();
+    let mut row = library::commit_spine(&conn, &app_data_dir, &id, &rel)?;
+    if let Some(r) = row.as_mut() {
+        library::resolve_row_cover(&app_data_dir, r);
+    }
+    Ok(row)
+}
+
+/// Remove a book's spine image and its file.
+#[tauri::command]
+pub fn book_clear_spine(id: String, state: State<AppState>) -> Result<Option<library::BookRow>, String> {
+    safe_id(&id)?;
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.conn();
+    let mut row = library::clear_spine(&conn, &app_data_dir, &id)?;
+    if let Some(r) = row.as_mut() {
+        library::resolve_row_cover(&app_data_dir, r);
+    }
+    Ok(row)
+}
+
 /// RAWY-19 — abandon a staged cover the renderer refused. Nothing was adopted, so nothing is undone.
 #[tauri::command]
 pub fn book_discard_cover(rel: String, state: State<AppState>) -> Result<(), String> {

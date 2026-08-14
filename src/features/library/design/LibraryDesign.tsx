@@ -43,6 +43,7 @@ import {
   groupShelf,
   isGroupedView,
   isVirtualShelf,
+  LOOSE_SHELF_ID,
   makeLooseShelf,
   sortBooks,
   unshelvedBooks,
@@ -252,7 +253,12 @@ export function LibraryDesign(props: LibraryDesignProps) {
       }
       // Books on no shelf at all. Without this run they would be invisible in every grouped
       // view — which, on a library whose books have never been filed, is the whole library.
-      if (!scope.shelfId) {
+      //
+      // It must survive being SCOPED TO, not just being listed. Focusing this run sets
+      // `scope.shelfId` to its synthetic id; no row in `collections` can match that, so the
+      // loop above yields nothing, and skipping the run here as well left the whole library
+      // blank — "not on a shelf" is a real place a reader can stand in, not an absence.
+      if (!scope.shelfId || scope.shelfId === LOOSE_SHELF_ID) {
         const filed = new Set<string>();
         for (const list of Object.values(items)) for (const i of list) filed.add(i.book_id);
         const loose = unshelvedBooks(props.books, filed);
@@ -561,12 +567,17 @@ export function LibraryDesign(props: LibraryDesignProps) {
             must NOT be nested inside the scroller the new views use — that would give it a
             second scrollbar and override the padding RAWY-170 set to clear the rosette. */}
         {view === "grid" ? (
-          <div ref={paneRef} style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", position: "relative", zIndex: 2 }}>
+          <div
+            ref={paneRef}
+            className="libd-stage"
+            style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", position: "relative", zIndex: 2 }}
+          >
             {props.renderGrid()}
           </div>
         ) : (
         <div
           ref={paneRef}
+          className="libd-stage"
           style={{
             flex: 1,
             minHeight: 0,

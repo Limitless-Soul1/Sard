@@ -102,6 +102,9 @@ pub struct BookRow {
     pub cover_mode: Option<String>,
     /// `"typeset"` | `"none"` — how the Spines view draws this book. NULL = typeset.
     pub spine_mode: Option<String>,
+    /// A chosen spine image, resolved to an absolute path on the way out exactly as `cover_path`
+    /// is. NULL = this book has none.
+    pub spine_image: Option<String>,
 }
 
 // Effective fields = a metadata_overrides value when present, else the extracted column.
@@ -161,7 +164,8 @@ fn book_select() -> String {
          b.meta_provenance, b.script_detected, b.toc_degenerate, b.spine_fragmented, b.size_bytes, \
          (SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='cover_paint'), \
          (SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='cover_mode'), \
-         (SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='spine_mode')"
+         (SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='spine_mode'), \
+         (SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='spine_image')"
     )
 }
 
@@ -188,6 +192,7 @@ fn row_from(r: &rusqlite::Row) -> rusqlite::Result<BookRow> {
         cover_paint: r.get(18)?,
         cover_mode: r.get(19)?,
         spine_mode: r.get(20)?,
+        spine_image: r.get(21)?,
     })
 }
 
@@ -466,6 +471,10 @@ pub fn resolve_row_cover(app_data_dir: &Path, row: &mut BookRow) {
     if let Some(c) = row.cover_path.as_deref() {
         row.cover_path = Some(resolve_cover(app_data_dir, c));
     }
+    // The spine image is stored and resolved by exactly the same rule.
+    if let Some(s) = row.spine_image.as_deref() {
+        row.spine_image = Some(resolve_cover(app_data_dir, s));
+    }
 }
 
 /// Remove every custom cover of this book except `keep` — the file just written, or `None` to remove
@@ -473,8 +482,15 @@ pub fn resolve_row_cover(app_data_dir: &Path, row: &mut BookRow) {
 /// fail the replacement the reader asked for. This also collects files left by earlier naming
 /// schemes, so covers/ converges on exactly one custom file per book without a migration.
 fn sweep_custom_covers(covers: &Path, id: &str, keep: Option<&Path>) {
-    let prefix = format!("{id}-custom");
-    let Ok(rd) = std::fs::read_dir(covers) else { return };
+    sweep_managed(covers, id, "custom", keep)
+}
+
+/// The same sweep, for one KIND of managed image. Covers are `{id}-custom-…` and spines are
+/// `{id}-spine-…`, so the two live in one directory and neither sweep can ever reach the other's
+/// file — which is why a spine survives replacing a cover, and vice versa.
+fn sweep_managed(dir: &Path, id: &str, kind: &str, keep: Option<&Path>) {
+    let prefix = format!("{id}-{kind}");
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
     for e in rd.flatten() {
         let p = e.path();
         if keep == Some(p.as_path()) {
@@ -497,6 +513,16 @@ fn sweep_custom_covers(covers: &Path, id: &str, keep: Option<&Path>) {
 /// damage, and fall through to the renderer for anything we simply do not know — which needs no
 /// allow-list and gains new formats for free as the engine does.
 pub fn stage_cover(app_data_dir: &Path, id: &str, image_path: &str) -> Result<StagedCover, String> {
+    stage_image(app_data_dir, id, image_path, "custom")
+}
+
+/// STAGE a spine image. Identical custody, validation and content-addressing to a cover — the
+/// only difference is the name prefix, which is what keeps the two sweeps from ever meeting.
+pub fn stage_spine(app_data_dir: &Path, id: &str, image_path: &str) -> Result<StagedCover, String> {
+    stage_image(app_data_dir, id, image_path, "spine")
+}
+
+fn stage_image(app_data_dir: &Path, id: &str, image_path: &str, kind: &str) -> Result<StagedCover, String> {
     let meta = std::fs::metadata(image_path).map_err(|e| format!("Couldn't read that image: {e}"))?;
     if !meta.is_file() {
         return Err("That is not a file.".into());
@@ -549,8 +575,8 @@ pub fn stage_cover(app_data_dir: &Path, id: &str, image_path: &str) -> Result<St
 
     let covers = app_data_dir.join(COVERS_REL);
     std::fs::create_dir_all(&covers).map_err(|e| e.to_string())?;
-    let name = format!("{id}-custom-{hash}.{ext}");
-    std::fs::write(covers.join(&name), &bytes).map_err(|e| format!("Couldn't save that cover: {e}"))?;
+    let name = format!("{id}-{kind}-{hash}.{ext}");
+    std::fs::write(covers.join(&name), &bytes).map_err(|e| format!("Couldn't save that image: {e}"))?;
 
     Ok(StagedCover {
         rel: format!("{COVERS_REL}/{name}"),
@@ -569,6 +595,25 @@ pub fn commit_cover(conn: &Connection, app_data_dir: &Path, id: &str, rel: &str)
     set_override(conn, id, "cover", rel).map_err(|e| e.to_string())?;
     // Only AFTER the new cover is recorded, and never the file just written.
     sweep_custom_covers(&covers, id, Some(dest.as_path()));
+    get_book(conn, id).map_err(|e| e.to_string())
+}
+
+/// Adopt a staged spine image, and drop the book's previous one.
+pub fn commit_spine(conn: &Connection, app_data_dir: &Path, id: &str, rel: &str) -> Result<Option<BookRow>, String> {
+    let dir = app_data_dir.join(COVERS_REL);
+    let dest = app_data_dir.join(rel);
+    if !dest.is_file() {
+        return Err("That spine image is no longer there.".into());
+    }
+    set_override(conn, id, "spine_image", rel).map_err(|e| e.to_string())?;
+    sweep_managed(&dir, id, "spine", Some(dest.as_path()));
+    get_book(conn, id).map_err(|e| e.to_string())
+}
+
+/// Remove a book's spine image entirely, returning it to whatever the spine mode derives.
+pub fn clear_spine(conn: &Connection, app_data_dir: &Path, id: &str) -> Result<Option<BookRow>, String> {
+    clear_override(conn, id, "spine_image").map_err(|e| e.to_string())?;
+    sweep_managed(&app_data_dir.join(COVERS_REL), id, "spine", None);
     get_book(conn, id).map_err(|e| e.to_string())
 }
 

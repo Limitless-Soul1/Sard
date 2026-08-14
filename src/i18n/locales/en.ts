@@ -252,6 +252,10 @@ export const en = {
   "lib.coverSizeDefault": "Default",
   "lib.spine": "Spine",
   "lib.spinePlain": "Plain",
+  "lib.spineChoose": "Choose an image…",
+  "lib.spineReplace": "Replace image…",
+  "lib.spineRemove": "Remove image",
+  "lib.coverPaintNone": "No colour — use the one Sard derives",
   "lib.spineUse": "Spines and shelf views",
   "lib.spineNote":
     "Recommended 256 × 1024 px · 1:4. Taller or shorter images are centre-cropped, never stretched.",

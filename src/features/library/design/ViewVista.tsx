@@ -84,6 +84,7 @@ export function ViewVista(props: VistaProps) {
     2,
     Math.floor((Math.max(320, props.paneWidth - 96) + 20) / (baseWidth(props.density) + 20)),
   );
+  const carrying = props.carryId != null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 30, padding: "0 32px" }}>
@@ -185,9 +186,24 @@ export function ViewVista(props: VistaProps) {
                     }
               }
             >
-              {shown.map((b) => (
+              {shown.map((b, i) => (
+                <div key={b.id} style={{ display: "contents" }}>
+                {carrying && !band.shelf.auto_rule && band.shelf.order_rule === "hand" && (
+                  <button
+                    onClick={() => props.onPlace(band.shelf.id, null, i)}
+                    title={t("lib.placeHere")}
+                    aria-label={t("lib.placeHere")}
+                    style={{
+                      width: "100%",
+                      aspectRatio: "2/3",
+                      border: "2px dashed var(--acc)",
+                      borderRadius: 3,
+                      background: "var(--act)",
+                      animation: "sard-open .14s ease-out",
+                    }}
+                  />
+                )}
                 <BookTile
-                  key={b.id}
                   book={b}
                   view="vista"
                   density={props.density}
@@ -205,7 +221,24 @@ export function ViewVista(props: VistaProps) {
                   }
                   onSetFinished={(f) => props.onSetFinished(b, f)}
                 />
+                </div>
               ))}
+
+              {carrying && !band.shelf.auto_rule && band.shelf.order_rule === "hand" && (
+                <button
+                  onClick={() => props.onPlace(band.shelf.id, null, shown.length)}
+                  title={t("lib.placeHere")}
+                  aria-label={t("lib.placeHere")}
+                  style={{
+                    width: "100%",
+                    aspectRatio: "2/3",
+                    border: "2px dashed var(--acc)",
+                    borderRadius: 3,
+                    background: "var(--act)",
+                    animation: "sard-open .14s ease-out",
+                  }}
+                />
+              )}
 
               {more && (
                 <button

@@ -176,6 +176,7 @@ export const ar: Record<TKey, string> = {
   "lib.deleteCase": "حذف الخزانة",
   "lib.openCase": "افتح الخزانة",
   "lib.manage": "إدارة",
+  "lib.managing": "إدارة الخزانة",
   "lib.moveCase": "تحريك هذه الخزانة",
   "lib.moveShelf": "تحريك هذا الرفّ",
   "lib.unfiled": "خارج الخزائن",

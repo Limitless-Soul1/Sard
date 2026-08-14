@@ -12,6 +12,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BookRow, CaseNode, LibraryTree, ShelfItem, ShelfNode } from "../../../lib/ipc";
 import {
   caseCreate,
+  caseDelete,
+  caseRename,
+  caseReorder,
+  categoryCreate,
   libraryShelfItems,
   libraryTree,
   settingsGet,
@@ -19,8 +23,10 @@ import {
   shelfCreate,
   shelfPlaceBook,
   shelfSetCollapsed,
+  shelfSetOrder,
   collectionRemoveBook,
   progressSave,
+  type ShelfOrder,
 } from "../../../lib/ipc";
 import { useI18n } from "../../../i18n";
 import { localeNum } from "../../../lib/format";
@@ -29,6 +35,7 @@ import { Header, Sidebar, type Scope, type Section } from "./Chrome";
 import { ViewGrouped, type CaseRender, type ShelfRender } from "./ViewGrouped";
 import { ViewDetails } from "./ViewDetails";
 import { VistaEnvironment, VistaHero, ViewVista, type VistaBand } from "./ViewVista";
+import { CarryGhost, SelectTray } from "./Menus";
 import {
   DESIGN_VIEWS,
   bookMatches,
@@ -49,6 +56,9 @@ export interface LibraryDesignProps {
   renderSection: (s: Section) => React.ReactNode;
   /** Sard's original Library grid, preserved intact and shown as the Grid view. */
   renderGrid: () => React.ReactNode;
+  /** Grid's own cover-fit control, which belongs to that view and only appears with it. */
+  coverMode: "crop" | "fit";
+  onCoverMode: () => void;
   onOpenBook: (b: BookRow) => void;
   onEditBook: (b: BookRow) => void;
   onAddBooks: () => void;
@@ -77,6 +87,10 @@ export function LibraryDesign(props: LibraryDesignProps) {
   const [mode, setMode] = useState<"browse" | "select" | "arrange">("browse");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [carry, setCarry] = useState<{ book: BookRow; fromShelf: string } | null>(null);
+  const [orderMenuFor, setOrderMenuFor] = useState<string | null>(null);
+  const [renamingShelf, setRenamingShelf] = useState<string | null>(null);
+  const [manageMenuFor, setManageMenuFor] = useState<string | null>(null);
+  const [renamingCase, setRenamingCase] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
   const [paneWidth, setPaneWidth] = useState(1180);
@@ -291,6 +305,50 @@ export function LibraryDesign(props: LibraryDesignProps) {
     [props],
   );
 
+  /** Move every selected book onto one shelf, then leave Select mode as the design does. */
+  const bulkMove = useCallback(
+    async (shelfId: string) => {
+      const ids = [...selected];
+      for (const id of ids) await shelfPlaceBook(shelfId, id, null, 0).catch(() => {});
+      await loadTree();
+      setSelected(new Set());
+      setMode("browse");
+      const target = shelfById.get(shelfId);
+      flash(`${t("lib.placed")} ${t("lib.on")} ${target?.shelf.name ?? ""}`);
+    },
+    [selected, loadTree, shelfById, flash, t],
+  );
+
+  const caseOps = useMemo(
+    () => ({
+      rename: async (id: string, name: string) => setTree(await caseRename(id, name)),
+      remove: async (id: string) => {
+        setTree(await caseDelete(id));
+        await loadTree();
+      },
+      move: async (id: string, direction: number) => {
+        const at = tree.cases.findIndex((c) => c.id === id);
+        if (at < 0) return;
+        setTree(await caseReorder(id, Math.max(0, at + direction)));
+      },
+    }),
+    [tree.cases, loadTree],
+  );
+
+  const shelfOps = useMemo(
+    () => ({
+      setOrder: async (shelfId: string, order: ShelfOrder) => {
+        setTree(await shelfSetOrder(shelfId, order));
+        await loadTree();
+      },
+      newCategory: async (shelfId: string) => {
+        setTree(await categoryCreate(shelfId, t("lib.newCategory")));
+        await loadTree();
+      },
+    }),
+    [loadTree, t],
+  );
+
   // Esc cancels a carry, exactly as the design specifies.
   useEffect(() => {
     if (!carry) return;
@@ -339,9 +397,11 @@ export function LibraryDesign(props: LibraryDesignProps) {
           }
           onNewCase={async (name) => setTree(await caseCreate(name))}
           onNewShelf={async (caseId, name) => setTree(await shelfCreate(name, caseId))}
-          onManageCase={() => {}}
+          onRenameCase={caseOps.rename}
+          onDeleteCase={caseOps.remove}
+          onMoveCase={caseOps.move}
+          onNewRuleShelf={async (caseId) => setTree(await shelfCreate(t("lib.rule.reading"), caseId, "reading"))}
           onRenameShelf={props.onRenameShelf}
-          onDeleteShelf={props.onDeleteShelf}
           onSettings={props.onSettings}
           themeName={THEMES[themeId]?.name ?? ""}
           langName={t(lang === "ar" ? "lang.arabic" : "lang.english")}
@@ -374,9 +434,11 @@ export function LibraryDesign(props: LibraryDesignProps) {
         }
         onNewCase={async (name) => setTree(await caseCreate(name))}
         onNewShelf={async (caseId, name) => setTree(await shelfCreate(name, caseId))}
-        onManageCase={() => {}}
+        onRenameCase={caseOps.rename}
+        onDeleteCase={caseOps.remove}
+        onMoveCase={caseOps.move}
+        onNewRuleShelf={async (caseId) => setTree(await shelfCreate(t("lib.rule.reading"), caseId, "reading"))}
         onRenameShelf={props.onRenameShelf}
-        onDeleteShelf={props.onDeleteShelf}
         onSettings={props.onSettings}
         themeName={THEMES[themeId]?.name ?? ""}
         langName={t(lang === "ar" ? "lang.arabic" : "lang.english")}
@@ -418,8 +480,19 @@ export function LibraryDesign(props: LibraryDesignProps) {
           sort={sort}
           onSort={setSort}
           overEnvironment={vista}
+          coverMode={props.coverMode}
+          onCoverMode={props.onCoverMode}
         />
 
+        {/* GRID is Sard's original grid, rendered as it always was: `.lib-grid` is itself
+            `flex:1; overflow:auto` with its own padding, so it must be a direct flex child and
+            must NOT be nested inside the scroller the new views use — that would give it a
+            second scrollbar and override the padding RAWY-170 set to clear the rosette. */}
+        {view === "grid" ? (
+          <div ref={paneRef} style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", position: "relative", zIndex: 2 }}>
+            {props.renderGrid()}
+          </div>
+        ) : (
         <div
           ref={paneRef}
           style={{
@@ -433,9 +506,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
             padding: vista ? "22px 0 46px" : "18px 0 110px",
           }}
         >
-          {view === "grid" ? (
-            props.renderGrid()
-          ) : view === "details" ? (
+          {view === "details" ? (
             <ViewDetails
               books={flatBooks}
               placeOf={placeOf}
@@ -523,13 +594,35 @@ export function LibraryDesign(props: LibraryDesignProps) {
               onRemoveFromShelf={removeFromShelf}
               onSetFinished={setFinished}
               onNewShelf={async (caseId) => setTree(await shelfCreate(t("lib.newShelf"), caseId))}
-              onManageCase={() => {}}
-              onOpenOrder={() => {}}
+              manageMenuFor={manageMenuFor}
+              onManageCase={setManageMenuFor}
+              renamingCase={renamingCase}
+              onRenameCase={setRenamingCase}
+              onCommitCaseRename={(id, name) => {
+                setRenamingCase(null);
+                if (name.trim()) caseOps.rename(id, name.trim());
+              }}
+              onDeleteCase={caseOps.remove}
+              onMoveCase={caseOps.move}
+              onNewRuleShelf={async (caseId) =>
+                setTree(await shelfCreate(t("lib.rule.reading"), caseId, "reading"))
+              }
+              orderMenuFor={orderMenuFor}
+              onOpenOrder={setOrderMenuFor}
+              onSetOrder={shelfOps.setOrder}
+              renamingShelf={renamingShelf}
+              onRenameShelf={setRenamingShelf}
+              onCommitRename={(id, name) => {
+                setRenamingShelf(null);
+                if (name.trim()) props.onRenameShelf(id, name.trim());
+              }}
+              onDeleteShelf={props.onDeleteShelf}
+              onNewCategory={shelfOps.newCategory}
               onPlace={place}
             />
           ) : null}
 
-          {flatBooks.length === 0 && view !== "grid" && (
+          {flatBooks.length === 0 && (
             <div style={{ maxWidth: 430, margin: "60px auto", textAlign: "center", padding: "0 20px" }}>
               <div
                 style={{
@@ -565,6 +658,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
             </div>
           )}
         </div>
+        )}
 
         {carry && (
           <div
@@ -618,6 +712,17 @@ export function LibraryDesign(props: LibraryDesignProps) {
           </div>
         )}
 
+        <SelectTray
+          selected={[...selected]}
+          byId={byId}
+          cases={tree.cases}
+          onMove={bulkMove}
+          onClear={() => {
+            setSelected(new Set());
+            setMode("browse");
+          }}
+        />
+
         {toast && (
           <div
             style={{
@@ -646,6 +751,8 @@ export function LibraryDesign(props: LibraryDesignProps) {
           </div>
         )}
       </div>
+
+      {carry && <CarryGhost book={carry.book} spines={view === "spines"} />}
     </div>
   );
 }

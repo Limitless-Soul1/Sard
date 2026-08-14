@@ -174,6 +174,7 @@ export const en = {
   "lib.deleteCase": "Delete case",
   "lib.openCase": "Open case",
   "lib.manage": "Manage",
+  "lib.managing": "Managing case",
   "lib.moveCase": "Move this case",
   "lib.moveShelf": "Move this shelf",
   "lib.unfiled": "Not in a case",

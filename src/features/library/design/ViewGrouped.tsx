@@ -8,10 +8,11 @@
 // reference files, so taking it from the base file is not merely correct by instruction but
 // unambiguous in fact.)
 
-import type { BookRow, CaseNode, ShelfNode } from "../../../lib/ipc";
+import type { BookRow, CaseNode, ShelfNode, ShelfOrder } from "../../../lib/ipc";
 import { useI18n } from "../../../i18n";
 import { localeNum } from "../../../lib/format";
 import { BookTile } from "./BookTile";
+import { CaseManageMenu, ShelfOrderMenu } from "./Menus";
 import { type BookGroup, type DesignView, itemWidth } from "./model";
 
 export interface ShelfRender {
@@ -46,8 +47,24 @@ export interface GroupedProps {
   onRemoveFromShelf: (bookId: string, shelfId: string) => void;
   onSetFinished: (b: BookRow, finished: boolean) => void;
   onNewShelf: (caseId: string) => void;
-  onManageCase: (id: string) => void;
-  onOpenOrder: (shelfId: string) => void;
+  manageMenuFor: string | null;
+  onManageCase: (id: string | null) => void;
+  renamingCase: string | null;
+  onRenameCase: (id: string | null) => void;
+  onCommitCaseRename: (id: string, name: string) => void;
+  onDeleteCase: (id: string) => void;
+  onMoveCase: (id: string, direction: number) => void;
+  onNewRuleShelf: (caseId: string) => void;
+  /** Which shelf's order popover is open, and how to open/close one. */
+  orderMenuFor: string | null;
+  onOpenOrder: (shelfId: string | null) => void;
+  onSetOrder: (shelfId: string, order: ShelfOrder) => void;
+  /** The shelf whose name is being edited inline, as the design shows it. */
+  renamingShelf: string | null;
+  onRenameShelf: (shelfId: string | null) => void;
+  onCommitRename: (shelfId: string, name: string) => void;
+  onDeleteShelf: (shelfId: string) => void;
+  onNewCategory: (shelfId: string) => void;
   /** Placement targets while a book is in hand. */
   onPlace: (shelfId: string, categoryId: string | null, index: number) => void;
 }
@@ -156,18 +173,41 @@ export function ViewGrouped(props: GroupedProps) {
                     }}
                   />
                 )}
-                <span
-                  dir="auto"
-                  style={{
-                    font: "600 1.0625rem var(--book)",
-                    color: "var(--txt)",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {c.node ? c.node.name : t("lib.unfiled")}
-                </span>
+                {c.node && props.renamingCase === c.node.id ? (
+                  <input
+                    autoFocus
+                    defaultValue={c.node.name}
+                    dir="auto"
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") props.onCommitCaseRename(c.node!.id, e.currentTarget.value);
+                      else if (e.key === "Escape") props.onRenameCase(null);
+                    }}
+                    onBlur={(e) => props.onCommitCaseRename(c.node!.id, e.currentTarget.value)}
+                    style={{
+                      width: 260,
+                      background: "var(--soft)",
+                      border: "1px solid var(--brd)",
+                      borderRadius: 7,
+                      padding: "5px 9px",
+                      font: "600 1rem var(--book)",
+                      outline: "none",
+                    }}
+                  />
+                ) : (
+                  <span
+                    dir="auto"
+                    style={{
+                      font: "600 1.0625rem var(--book)",
+                      color: "var(--txt)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {c.node ? c.node.name : t("lib.unfiled")}
+                  </span>
+                )}
                 <span style={{ font: "500 .75rem var(--ui)", color: "var(--faint)" }}>
                   {t("lib.shelfCount", { n: num(bookCount) })} · {num(shelfCount)}
                 </span>
@@ -186,13 +226,28 @@ export function ViewGrouped(props: GroupedProps) {
               </button>
               {c.node && (
                 <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                  <button
-                    className="libd-hov-txt"
-                    onClick={() => props.onManageCase(c.node!.id)}
-                    style={{ font: "500 .75rem var(--ui)", color: "var(--mut)" }}
-                  >
-                    {t("lib.manage")}
-                  </button>
+                  <span style={{ position: "relative" }}>
+                    <button
+                      className="libd-hov-txt"
+                      onClick={() =>
+                        props.onManageCase(props.manageMenuFor === c.node!.id ? null : c.node!.id)
+                      }
+                      style={{ font: "500 .75rem var(--ui)", color: "var(--mut)" }}
+                    >
+                      {t("lib.manage")}
+                    </button>
+                    {props.manageMenuFor === c.node!.id && (
+                      <CaseManageMenu
+                        onRename={() => props.onRenameCase(c.node!.id)}
+                        onNewShelf={() => props.onNewShelf(c.node!.id)}
+                        onNewRuleShelf={() => props.onNewRuleShelf(c.node!.id)}
+                        onMoveUp={() => props.onMoveCase(c.node!.id, -1)}
+                        onMoveDown={() => props.onMoveCase(c.node!.id, 1)}
+                        onDelete={() => props.onDeleteCase(c.node!.id)}
+                        onClose={() => props.onManageCase(null)}
+                      />
+                    )}
+                  </span>
                   <button
                     className="libd-hov-txt"
                     onClick={() => props.onNewShelf(c.node!.id)}
@@ -243,7 +298,7 @@ export function ViewGrouped(props: GroupedProps) {
                         {num(total)}
                       </span>
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, position: "relative" }}>
                       {shelf.auto_rule ? (
                         <span
                           title={t("lib.ruleFixed")}
@@ -279,12 +334,47 @@ export function ViewGrouped(props: GroupedProps) {
                             border: "1px solid var(--brd)",
                           }}
                         >
-                          {shelf.order_rule === "hand" ? t("lib.byHand") : t(`lib.sort.${shelf.order_rule}` as never)}
+                          {shelf.order_rule === "hand"
+                            ? t("lib.byHand")
+                            : `⇅ ${t(`lib.sort.${shelf.order_rule}` as never)}`}
                           <span style={{ color: "var(--faint)", fontSize: 9 }}>▾</span>
                         </button>
                       )}
+                      {props.orderMenuFor === shelf.id && (
+                        <ShelfOrderMenu
+                          shelf={shelf}
+                          onOrder={(o) => props.onSetOrder(shelf.id, o)}
+                          onRename={() => props.onRenameShelf(shelf.id)}
+                          onDelete={() => props.onDeleteShelf(shelf.id)}
+                          onNewCategory={() => props.onNewCategory(shelf.id)}
+                          onClose={() => props.onOpenOrder(null)}
+                        />
+                      )}
                     </div>
                   </div>
+
+                  {props.renamingShelf === shelf.id && (
+                    <input
+                      autoFocus
+                      defaultValue={shelf.name}
+                      dir="auto"
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") props.onCommitRename(shelf.id, e.currentTarget.value);
+                        else if (e.key === "Escape") props.onRenameShelf(null);
+                      }}
+                      onBlur={(e) => props.onCommitRename(shelf.id, e.currentTarget.value)}
+                      style={{
+                        margin: "0 0 10px",
+                        width: 260,
+                        background: "var(--soft)",
+                        border: "1px solid var(--brd)",
+                        borderRadius: 7,
+                        padding: "6px 9px",
+                        font: "500 .8125rem var(--ui)",
+                        outline: "none",
+                      }}
+                    />
+                  )}
 
                   {shelf.collapsed ? (
                     <button

@@ -11,6 +11,7 @@ import type { CaseNode, ShelfNode } from "../../../lib/ipc";
 import { useI18n } from "../../../i18n";
 import { localeNum } from "../../../lib/format";
 import { Hoopoe } from "../Hoopoe";
+import { CaseManageMenu } from "./Menus";
 import { DENSITY_STEPS, DESIGN_SORTS, type DesignSort, type DesignView } from "./model";
 
 export type Section = "library" | "inbox" | "cards" | "bookmarks";
@@ -33,10 +34,13 @@ interface SidebarProps {
   onToggleCase: (id: string) => void;
   onNewCase: (name: string) => void;
   onNewShelf: (caseId: string | null, name: string) => void;
-  onManageCase: (id: string) => void;
-  /** RAWY-31's shelf writes, kept reachable from the design's sidebar. */
+  onRenameCase: (id: string, name: string) => void;
+  onDeleteCase: (id: string) => void;
+  /** Direction is -1 (earlier) or +1 (later) among the case's peers. */
+  onMoveCase: (id: string, direction: number) => void;
+  onNewRuleShelf: (caseId: string) => void;
+  /** RAWY-31's shelf rename, used by the sidebar's inline editor. */
   onRenameShelf: (id: string, name: string) => void;
-  onDeleteShelf: (id: string) => void;
   onSettings: () => void;
   themeName: string;
   langName: string;
@@ -70,8 +74,8 @@ export function Sidebar(props: SidebarProps) {
   const [creatingCase, setCreatingCase] = useState(false);
   const [creatingShelfIn, setCreatingShelfIn] = useState<string | null | false>(false);
   const [renamingShelf, setRenamingShelf] = useState<string | null>(null);
-  // RAWY-76: deleting a shelf takes a two-step confirm — the ✕ becomes "Delete" for that row only.
-  const [confirmShelf, setConfirmShelf] = useState<string | null>(null);
+  const [renamingCase, setRenamingCase] = useState<string | null>(null);
+  const [managing, setManaging] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
 
   const num = (n: number) => localeNum(n, lang);
@@ -117,6 +121,8 @@ export function Sidebar(props: SidebarProps) {
     />
   );
 
+  // The design's shelf row: a mark, the name, the count. Shelf management lives in the shelf's
+  // own order popover in the main pane, which is where the design puts it — not here.
   const shelfRow = (s: ShelfNode) => {
     const active = props.scope.shelfId === s.id;
     if (renamingShelf === s.id) {
@@ -136,95 +142,46 @@ export function Sidebar(props: SidebarProps) {
       );
     }
     return (
-      <div
+      <button
         key={s.id}
-        className="libd-shelf-row"
+        className="libd-hov"
+        onClick={() => props.onScope({ caseId: s.case_id, shelfId: active ? null : s.id })}
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 2,
+          gap: 8,
+          width: "100%",
           height: 28,
-          paddingInlineEnd: 4,
+          padding: "0 10px",
           borderRadius: 7,
+          font: "500 .75rem var(--ui)",
+          color: active ? "var(--txt)" : "var(--mut)",
           background: active ? "var(--act)" : "transparent",
         }}
       >
-        <button
-          onClick={() => props.onScope({ caseId: s.case_id, shelfId: active ? null : s.id })}
+        <span
+          style={{
+            flex: "none",
+            width: 5,
+            height: 5,
+            borderRadius: s.auto_rule ? "50%" : 1,
+            background: active ? "var(--acc)" : "var(--faint)",
+          }}
+        />
+        <span
           style={{
             flex: 1,
             minWidth: 0,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            height: "100%",
-            padding: "0 10px",
-            font: "500 .75rem var(--ui)",
-            color: active ? "var(--txt)" : "var(--mut)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            textAlign: "start",
           }}
         >
-          <span
-            style={{
-              flex: "none",
-              width: 5,
-              height: 5,
-              borderRadius: s.auto_rule ? "50%" : 1,
-              background: active ? "var(--acc)" : "var(--faint)",
-            }}
-          />
-          <span
-            style={{
-              flex: 1,
-              minWidth: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              textAlign: "start",
-            }}
-          >
-            {s.name}
-          </span>
-          <span style={{ font: "500 .6875rem var(--ui)", color: "var(--faint)" }}>{num(s.count)}</span>
-        </button>
-        <span className="libd-shelf-acts" style={{ display: "flex", gap: 1 }}>
-          <button
-            className="libd-hov libd-hov-txt"
-            title={t("lib.shelf.rename")}
-            aria-label={t("lib.shelf.rename")}
-            onClick={() => {
-              setDraft(s.name);
-              setRenamingShelf(s.id);
-            }}
-            style={{ width: 20, height: 20, borderRadius: 5, color: "var(--faint)", fontSize: 11 }}
-          >
-            ✎
-          </button>
-          <button
-            className="libd-hov"
-            title={t("lib.shelf.delete")}
-            aria-label={t("lib.shelf.delete")}
-            onClick={() => {
-              if (confirmShelf === s.id) {
-                setConfirmShelf(null);
-                props.onDeleteShelf(s.id);
-              } else {
-                setConfirmShelf(s.id);
-              }
-            }}
-            style={{
-              minWidth: 20,
-              height: 20,
-              padding: confirmShelf === s.id ? "0 6px" : 0,
-              borderRadius: 5,
-              color: confirmShelf === s.id ? "#c0503a" : "var(--faint)",
-              font: confirmShelf === s.id ? "600 .625rem var(--ui)" : "inherit",
-              fontSize: confirmShelf === s.id ? undefined : 11,
-            }}
-          >
-            {confirmShelf === s.id ? t("lib.shelf.deleteYes") : "✕"}
-          </button>
+          {s.name}
         </span>
-      </div>
+        <span style={{ font: "500 .6875rem var(--ui)", color: "var(--faint)" }}>{num(s.count)}</span>
+      </button>
     );
   };
 
@@ -346,6 +303,22 @@ export function Sidebar(props: SidebarProps) {
         {props.cases.map((c) => {
           const open = props.openCases.has(c.id);
           const active = props.scope.caseId === c.id && !props.scope.shelfId;
+          if (renamingCase === c.id) {
+            return (
+              <span key={c.id}>
+                {draftInput(
+                  () => {
+                    const name = draft.trim();
+                    setRenamingCase(null);
+                    setDraft("");
+                    if (name) props.onRenameCase(c.id, name);
+                  },
+                  t("lib.caseName"),
+                  { margin: "4px 2px", borderRadius: 7, padding: "7px 9px", font: "500 .8125rem var(--ui)" },
+                )}
+              </span>
+            );
+          }
           return (
             <div key={c.id} style={{ position: "relative" }}>
               <div
@@ -417,23 +390,41 @@ export function Sidebar(props: SidebarProps) {
                     {num(c.count)}
                   </span>
                 </button>
-                <button
-                  className="libd-hov libd-hov-txt"
-                  title={t("lib.manage")}
-                  aria-label={t("lib.manage")}
-                  onClick={() => props.onManageCase(c.id)}
-                  style={{
-                    flex: "none",
-                    width: 22,
-                    height: 22,
-                    borderRadius: 6,
-                    color: "var(--faint)",
-                    fontSize: 13,
-                    lineHeight: 1,
-                  }}
-                >
-                  ⋯
-                </button>
+                <span style={{ position: "relative", flex: "none" }}>
+                  <button
+                    className="libd-hov libd-hov-txt"
+                    title={t("lib.manage")}
+                    aria-label={t("lib.manage")}
+                    onClick={() => setManaging((m) => (m === c.id ? null : c.id))}
+                    style={{
+                      width: 22,
+                      height: 22,
+                      borderRadius: 6,
+                      color: "var(--faint)",
+                      fontSize: 13,
+                      lineHeight: 1,
+                    }}
+                  >
+                    ⋯
+                  </button>
+                  {managing === c.id && (
+                    <CaseManageMenu
+                      onRename={() => {
+                        setDraft(c.name);
+                        setRenamingCase(c.id);
+                      }}
+                      onNewShelf={() => {
+                        setDraft("");
+                        setCreatingShelfIn(c.id);
+                      }}
+                      onNewRuleShelf={() => props.onNewRuleShelf(c.id)}
+                      onMoveUp={() => props.onMoveCase(c.id, -1)}
+                      onMoveDown={() => props.onMoveCase(c.id, 1)}
+                      onDelete={() => props.onDeleteCase(c.id)}
+                      onClose={() => setManaging(null)}
+                    />
+                  )}
+                </span>
               </div>
 
               {open && (
@@ -550,6 +541,9 @@ interface HeaderProps {
   onSort: (s: DesignSort) => void;
   /** Vista floats its header over the environment. */
   overEnvironment: boolean;
+  /** Grid's own control, shown only while Grid is the view — as it was before. */
+  coverMode: "crop" | "fit";
+  onCoverMode: () => void;
 }
 
 const ctlBtn = (active: boolean): React.CSSProperties => ({
@@ -765,7 +759,14 @@ export function Header(props: HeaderProps) {
           ))}
         </div>
 
-        {props.view !== "details" && (
+        {props.view === "grid" && (
+          <button onClick={props.onCoverMode} style={ctlBtn(false)}>
+            {t(props.coverMode === "crop" ? "lib.cover.crop" : "lib.cover.fit")}
+            <span style={{ color: "var(--faint)", fontSize: 9 }}>▾</span>
+          </button>
+        )}
+
+        {props.view !== "details" && props.view !== "grid" && (
           <div style={groupStyle}>
             {Array.from({ length: DENSITY_STEPS }, (_, i) => (
               <button

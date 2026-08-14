@@ -645,19 +645,28 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         section={navSection}
         onSection={goSection}
         renderSection={(s) => paneFor(s)}
-        renderGrid={() => (
-          <div className="lib-grid" style={{ padding: "0 32px" }}>
-            {books.map((b) => (
-              <BookCard
-                key={b.id}
-                book={b}
-                coverMode={coverMode}
-                onOpen={() => open(b)}
-                onEdit={() => setEditing(b)}
-              />
-            ))}
-          </div>
-        )}
+        // GRID — the original Library grid, unchanged: the same `.lib-grid` container (which owns
+        // its own scroll and RAWY-170's bottom padding), the same `BookCard`, the same cover mode,
+        // and the same empty state it has always shown.
+        renderGrid={() =>
+          isEmpty ? (
+            <EmptyState onBrowse={addBooks} onFolder={addFolder} />
+          ) : (
+            <div className="lib-grid">
+              {books.map((b) => (
+                <BookCard
+                  key={b.id}
+                  book={b}
+                  coverMode={coverMode}
+                  onOpen={() => open(b)}
+                  onEdit={() => setEditing(b)}
+                />
+              ))}
+            </div>
+          )
+        }
+        coverMode={coverMode}
+        onCoverMode={() => setCoverMode((m) => (m === "crop" ? "fit" : "crop"))}
         onOpenBook={open}
         onEditBook={setEditing}
         onAddBooks={addBooks}

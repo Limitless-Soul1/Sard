@@ -529,6 +529,10 @@ pub struct BookPatch {
     pub language: Option<String>,
     pub dir: Option<String>,
     pub cover_fit: Option<String>,
+    /// Book Details' jacket controls. Empty string clears the override.
+    pub cover_paint: Option<String>,
+    pub cover_mode: Option<String>,
+    pub spine_mode: Option<String>,
 }
 
 /// RESILIENCE-1 / WP-3 — read ONE book's authoritative row (effective title/author, i.e.
@@ -562,6 +566,9 @@ pub fn book_update(
         patch.language.as_deref(),
         patch.dir.as_deref(),
         patch.cover_fit.as_deref(),
+        patch.cover_paint.as_deref(),
+        patch.cover_mode.as_deref(),
+        patch.spine_mode.as_deref(),
     )
     .map_err(err)
 }

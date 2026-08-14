@@ -73,7 +73,7 @@ fn extraction_never_overwrites_a_readers_edit() {
     // opening it must not change what they see. Before WP-3D this path called `update_book`, which
     // wrote the override table — the rename was gone and the original was unrecoverable.
     let conn = db_with_book(None, None);
-    update_book(&conn, "b1", Some("My Own Title"), Some("My Own Author"), None, None, None).unwrap();
+    update_book(&conn, "b1", Some("My Own Title"), Some("My Own Author"), None, None, None, None, None, None).unwrap();
 
     set_extracted_metadata(&conn, "b1", Some("Embedded Title"), Some("Embedded Author")).unwrap();
 
@@ -90,10 +90,10 @@ fn a_reverted_override_falls_back_to_the_recorded_extraction() {
     // Because the extraction was stored in the base column rather than thrown away, clearing an
     // override reveals the book's own name instead of leaving the reader with nothing.
     let conn = db_with_book(None, None);
-    update_book(&conn, "b1", Some("My Own Title"), None, None, None, None).unwrap();
+    update_book(&conn, "b1", Some("My Own Title"), None, None, None, None, None, None, None).unwrap();
     set_extracted_metadata(&conn, "b1", Some("Embedded Title"), None).unwrap();
 
-    update_book(&conn, "b1", Some(""), None, None, None, None).unwrap(); // empty = clear the override
+    update_book(&conn, "b1", Some(""), None, None, None, None, None, None, None).unwrap(); // empty = clear the override
 
     let row = get_book(&conn, "b1").unwrap().unwrap();
     assert_eq!(row.title.as_deref(), Some("Embedded Title"));
@@ -152,7 +152,7 @@ fn a_readers_edit_is_trimmed_before_it_is_stored() {
     // trailing space. Surrounding whitespace is invisible, never intended, and made the stored value
     // differ from the displayed one — so it is stripped where the value ENTERS the database.
     let conn = db_with_book(None, None);
-    update_book(&conn, "b1", Some("  Padded  "), Some(" Author "), None, None, None).unwrap();
+    update_book(&conn, "b1", Some("  Padded  "), Some(" Author "), None, None, None, None, None, None).unwrap();
     let row = get_book(&conn, "b1").unwrap().unwrap();
     assert_eq!(row.title.as_deref(), Some("Padded"));
     assert_eq!(row.author.as_deref(), Some("Author"));
@@ -162,8 +162,8 @@ fn a_readers_edit_is_trimmed_before_it_is_stored() {
 fn a_whitespace_only_edit_clears_the_override_rather_than_storing_blanks() {
     // "  " is how a reader asks for the extracted value back; it must behave like an empty box.
     let conn = db_with_book(Some("Extracted"), None);
-    update_book(&conn, "b1", Some("Mine"), None, None, None, None).unwrap();
-    update_book(&conn, "b1", Some("   "), None, None, None, None).unwrap();
+    update_book(&conn, "b1", Some("Mine"), None, None, None, None, None, None, None).unwrap();
+    update_book(&conn, "b1", Some("   "), None, None, None, None, None, None, None).unwrap();
     assert!(overrides(&conn).is_empty());
     assert_eq!(get_book(&conn, "b1").unwrap().unwrap().title.as_deref(), Some("Extracted"));
 }
@@ -173,7 +173,7 @@ fn an_edit_matching_the_extracted_value_apart_from_spacing_stores_no_override() 
     // Retyping the same name with a stray space must not create a redundant override row that then
     // shadows the book's own metadata forever.
     let conn = db_with_book(Some("Alice"), None);
-    update_book(&conn, "b1", Some(" Alice "), None, None, None, None).unwrap();
+    update_book(&conn, "b1", Some(" Alice "), None, None, None, None, None, None, None).unwrap();
     assert!(overrides(&conn).is_empty());
 }
 
@@ -195,7 +195,7 @@ fn an_extraction_does_not_make_a_renamed_book_findable_under_the_old_name() {
     // embedded name in search results while the card shows the override — the same class of
     // disagreement WP-3 exists to end.
     let conn = db_with_book(None, None);
-    update_book(&conn, "b1", Some("Renamed"), None, None, None, None).unwrap();
+    update_book(&conn, "b1", Some("Renamed"), None, None, None, None, None, None, None).unwrap();
     set_extracted_metadata(&conn, "b1", Some("Embedded"), None).unwrap();
     assert_eq!(base(&conn, "title_fold").as_deref(), Some("renamed"));
 }
@@ -219,7 +219,7 @@ fn get_book_and_list_books_report_the_same_effective_values() {
     // has always called) must be the same book. They share `book_select()`; this proves the sharing
     // is real, so the reading chrome cannot drift from the shelf.
     let conn = db_with_book(Some("Extracted"), Some("Extracted Author"));
-    update_book(&conn, "b1", Some("Reader's Title"), None, None, None, None).unwrap();
+    update_book(&conn, "b1", Some("Reader's Title"), None, None, None, None, None, None, None).unwrap();
 
     let one = get_book(&conn, "b1").unwrap().unwrap();
     let listed = super::list_books(&conn, "title", "asc", None, None, None).unwrap();

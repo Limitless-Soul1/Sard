@@ -93,6 +93,15 @@ pub struct BookRow {
     /// is the only measure of a book's extent the library holds — there is no page count until a
     /// book has been opened and paginated at the reader's current type size.
     pub size_bytes: Option<i64>,
+    /// Book Details' jacket controls, all stored the way `cover_fit` already is: as overrides with
+    /// no extracted base, so clearing one returns the book to what Sard derives for it.
+    /// `cover_paint` is a hex from the dialog's palette; NULL = the colour derived from the title.
+    pub cover_paint: Option<String>,
+    /// `"file"` = show the embedded image, `"typeset"` = show Sard's drawn jacket. NULL = use the
+    /// embedded image when there is one.
+    pub cover_mode: Option<String>,
+    /// `"typeset"` | `"none"` — how the Spines view draws this book. NULL = typeset.
+    pub spine_mode: Option<String>,
 }
 
 // Effective fields = a metadata_overrides value when present, else the extracted column.
@@ -149,7 +158,10 @@ fn book_select() -> String {
          COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='cover'), b.cover_path), \
          b.added_at, b.last_opened_at, p.fraction, p.updated_at, \
          (SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='cover_fit'), \
-         b.meta_provenance, b.script_detected, b.toc_degenerate, b.spine_fragmented, b.size_bytes"
+         b.meta_provenance, b.script_detected, b.toc_degenerate, b.spine_fragmented, b.size_bytes, \
+         (SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='cover_paint'), \
+         (SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='cover_mode'), \
+         (SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='spine_mode')"
     )
 }
 
@@ -173,6 +185,9 @@ fn row_from(r: &rusqlite::Row) -> rusqlite::Result<BookRow> {
         toc_degenerate: r.get(15)?,
         spine_fragmented: r.get(16)?,
         size_bytes: r.get(17)?,
+        cover_paint: r.get(18)?,
+        cover_mode: r.get(19)?,
+        spine_mode: r.get(20)?,
     })
 }
 
@@ -348,16 +363,27 @@ pub fn update_book(
     language: Option<&str>,
     dir: Option<&str>,
     cover_fit: Option<&str>,
+    cover_paint: Option<&str>,
+    cover_mode: Option<&str>,
+    spine_mode: Option<&str>,
 ) -> rusqlite::Result<Option<BookRow>> {
     apply_field(conn, id, "title", "title", title)?;
     apply_field(conn, id, "author", "author", author)?;
     apply_field(conn, id, "language", "language", language)?;
     apply_field(conn, id, "dir", "dir", dir)?;
-    // cover_fit has no extracted base — set when given (crop/fit), clear when empty.
-    match cover_fit {
-        Some(v) if !v.is_empty() => set_override(conn, id, "cover_fit", v)?,
-        Some(_) => clear_override(conn, id, "cover_fit")?,
-        None => {}
+    // These four have no extracted base — set when given, clear when given empty, leave alone when
+    // absent. An empty string is therefore how a caller says "return this to Sard's own choice".
+    for (field, value) in [
+        ("cover_fit", cover_fit),
+        ("cover_paint", cover_paint),
+        ("cover_mode", cover_mode),
+        ("spine_mode", spine_mode),
+    ] {
+        match value {
+            Some(v) if !v.is_empty() => set_override(conn, id, field, v)?,
+            Some(_) => clear_override(conn, id, field)?,
+            None => {}
+        }
     }
     // RAWY-178 (AUD-12): a title/author edit changes the EFFECTIVE value, so refresh the folded search
     // shadow from the effective (override-or-base) value — whether the override was set OR cleared.

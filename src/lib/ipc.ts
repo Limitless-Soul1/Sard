@@ -183,6 +183,12 @@ export interface BookRow {
   spine_fragmented: number | null;
   /** Imported file size — the Spines view's only measure of how thick a book is. */
   size_bytes: number | null;
+  /** Book Details' jacket controls. Null = Sard's own choice for this book. */
+  cover_paint: string | null;
+  /** "file" | "typeset" */
+  cover_mode: string | null;
+  /** "typeset" | "none" */
+  spine_mode: string | null;
 }
 
 export type SortKey = "title" | "author" | "format" | "date_read" | "date_added";
@@ -360,6 +366,9 @@ export interface BookPatch {
   language?: string;
   dir?: string;
   coverFit?: string; // "crop" | "fit" | "" (clear)
+  coverPaint?: string; // "#RRGGBB" | "" (clear — back to the colour derived from the title)
+  coverMode?: string; // "file" | "typeset" | "" (clear)
+  spineMode?: string; // "typeset" | "none" | "" (clear)
 }
 
 /** Edit a book's metadata as overrides (never rewrites the source EPUB). Returns the book. */

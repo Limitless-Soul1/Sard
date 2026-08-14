@@ -1,0 +1,419 @@
+// Covers and Spines.
+//
+// SOURCE: `Sard Library (standalone).html`. Both are the design's `isGrouped` path — cases,
+// then shelves, then the category runs inside them, then the books — and the only difference
+// between them is how a book is drawn, which is `BookTile`'s `spines` branch.
+//
+// (Verified before porting: the block that produces this view is byte-identical in the two
+// reference files, so taking it from the base file is not merely correct by instruction but
+// unambiguous in fact.)
+
+import type { BookRow, CaseNode, ShelfNode } from "../../../lib/ipc";
+import { useI18n } from "../../../i18n";
+import { localeNum } from "../../../lib/format";
+import { BookTile } from "./BookTile";
+import { type BookGroup, type DesignView, itemWidth } from "./model";
+
+export interface ShelfRender {
+  shelf: ShelfNode;
+  groups: BookGroup[];
+  /** Total after the search filter, before the display cap. */
+  total: number;
+}
+
+export interface CaseRender {
+  node: CaseNode | null;
+  shelves: ShelfRender[];
+}
+
+export interface GroupedProps {
+  cases: CaseRender[];
+  view: DesignView;
+  density: number;
+  paneWidth: number;
+  mode: "browse" | "select" | "arrange";
+  selected: Set<string>;
+  carryId: string | null;
+  openCases: Set<string>;
+  onToggleCase: (id: string) => void;
+  onFocusCase: (id: string) => void;
+  onFocusShelf: (id: string) => void;
+  onToggleShelf: (s: ShelfNode) => void;
+  onOpenBook: (b: BookRow) => void;
+  onEditBook: (b: BookRow) => void;
+  onToggleSelect: (id: string) => void;
+  onPickUp: (b: BookRow, shelfId: string, x: number, y: number) => void;
+  onRemoveFromShelf: (bookId: string, shelfId: string) => void;
+  onSetFinished: (b: BookRow, finished: boolean) => void;
+  onNewShelf: (caseId: string) => void;
+  onManageCase: (id: string) => void;
+  onOpenOrder: (shelfId: string) => void;
+  /** Placement targets while a book is in hand. */
+  onPlace: (shelfId: string, categoryId: string | null, index: number) => void;
+}
+
+export function ViewGrouped(props: GroupedProps) {
+  const { t, lang } = useI18n();
+  const num = (n: number) => localeNum(n, lang);
+  const spines = props.view === "spines";
+  const iw = itemWidth(props.density, props.view, props.paneWidth);
+  const carrying = props.carryId != null;
+
+  const ruleLabel = (s: ShelfNode) =>
+    s.auto_rule === "reading"
+      ? t("lib.rule.reading")
+      : s.auto_rule === "finished"
+        ? t("lib.rule.finished")
+        : t("lib.rule.added");
+
+  /** A drop slot between two books, shown only while a book is in hand. */
+  const gap = (shelfId: string, categoryId: string | null, index: number, key: string) =>
+    carrying ? (
+      <button
+        key={key}
+        onClick={() => props.onPlace(shelfId, categoryId, index)}
+        title={t("lib.placeHere")}
+        aria-label={t("lib.placeHere")}
+        style={{ width: 18, alignSelf: "stretch", display: "grid", placeItems: "center" }}
+      >
+        <span
+          style={{
+            display: "block",
+            width: 3,
+            height: "72%",
+            minHeight: 40,
+            borderRadius: 2,
+            background: "var(--acc)",
+            opacity: 0.55,
+          }}
+        />
+      </button>
+    ) : null;
+
+  return (
+    <>
+      {props.cases.map((c) => {
+        const id = c.node?.id ?? "__loose";
+        const open = !c.node || props.openCases.has(c.node.id);
+        const shelfCount = c.shelves.length;
+        const bookCount = c.shelves.reduce((n, s) => n + s.total, 0);
+        return (
+          <section key={id} style={{ padding: "0 32px 26px" }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                padding: "14px 0 10px",
+                borderBottom: "1px solid var(--rule)",
+                marginBottom: 16,
+              }}
+            >
+              <button
+                className="libd-hov"
+                onClick={() => c.node && props.onToggleCase(c.node.id)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  minWidth: 0,
+                  padding: "4px 8px",
+                  borderRadius: 8,
+                  marginInlineStart: -8,
+                }}
+              >
+                <span
+                  style={{
+                    flex: "none",
+                    width: 16,
+                    height: 16,
+                    display: "grid",
+                    placeItems: "center",
+                    color: "var(--faint)",
+                  }}
+                >
+                  <span
+                    style={{
+                      width: 0,
+                      height: 0,
+                      borderInlineStart: "4px solid currentColor",
+                      borderBlockStart: "3.5px solid transparent",
+                      borderBlockEnd: "3.5px solid transparent",
+                      transform: open ? "rotate(90deg)" : undefined,
+                      transition: "transform .14s ease-out",
+                    }}
+                  />
+                </span>
+                {c.node?.ink && (
+                  <span
+                    style={{
+                      flex: "none",
+                      width: 8,
+                      height: 8,
+                      borderRadius: 2,
+                      background: c.node.ink,
+                    }}
+                  />
+                )}
+                <span
+                  dir="auto"
+                  style={{
+                    font: "600 1.0625rem var(--book)",
+                    color: "var(--txt)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {c.node ? c.node.name : t("lib.unfiled")}
+                </span>
+                <span style={{ font: "500 .75rem var(--ui)", color: "var(--faint)" }}>
+                  {t("lib.shelfCount", { n: num(bookCount) })} · {num(shelfCount)}
+                </span>
+                {!open && (
+                  <span
+                    style={{
+                      font: "500 .625rem var(--ui)",
+                      letterSpacing: ".1em",
+                      textTransform: "uppercase",
+                      color: "var(--faint)",
+                    }}
+                  >
+                    {t("lib.collapsed")}
+                  </span>
+                )}
+              </button>
+              {c.node && (
+                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                  <button
+                    className="libd-hov-txt"
+                    onClick={() => props.onManageCase(c.node!.id)}
+                    style={{ font: "500 .75rem var(--ui)", color: "var(--mut)" }}
+                  >
+                    {t("lib.manage")}
+                  </button>
+                  <button
+                    className="libd-hov-txt"
+                    onClick={() => props.onNewShelf(c.node!.id)}
+                    style={{ font: "500 .75rem var(--ui)", color: "var(--mut)" }}
+                  >
+                    {t("lib.newShelf")}
+                  </button>
+                  <button
+                    className="libd-hov-fade"
+                    onClick={() => props.onFocusCase(c.node!.id)}
+                    style={{ font: "500 .75rem var(--ui)", color: "var(--acc)" }}
+                  >
+                    {t("lib.openCase")}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {open &&
+              c.shelves.map(({ shelf, groups, total }) => (
+                <div key={shelf.id} style={{ padding: "0 0 22px" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      padding: "0 0 9px",
+                    }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                      <button
+                        onClick={() => props.onToggleShelf(shelf)}
+                        aria-label={shelf.name}
+                        style={{ color: "var(--faint)", fontSize: 9, width: 12 }}
+                      >
+                        {shelf.collapsed ? "▸" : "▾"}
+                      </button>
+                      <button
+                        className="libd-hov-txt"
+                        onClick={() => props.onFocusShelf(shelf.id)}
+                        dir="auto"
+                        style={{ font: "600 .9375rem var(--ui)", color: "var(--txt)" }}
+                      >
+                        {shelf.name}
+                      </button>
+                      <span style={{ font: "500 .75rem var(--ui)", color: "var(--faint)" }}>
+                        {num(total)}
+                      </span>
+                    </div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      {shelf.auto_rule ? (
+                        <span
+                          title={t("lib.ruleFixed")}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6,
+                            height: 26,
+                            padding: "0 10px",
+                            borderRadius: 20,
+                            font: "500 .6875rem var(--ui)",
+                            color: "var(--faint)",
+                            background: "var(--soft)",
+                            border: "1px solid var(--brd)",
+                          }}
+                        >
+                          {t("lib.automatic")} · {ruleLabel(shelf)}
+                        </span>
+                      ) : (
+                        <button
+                          className="libd-hov"
+                          onClick={() => props.onOpenOrder(shelf.id)}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 6,
+                            height: 26,
+                            padding: "0 10px",
+                            borderRadius: 20,
+                            font: "500 .6875rem var(--ui)",
+                            color: "var(--mut)",
+                            background: "var(--soft)",
+                            border: "1px solid var(--brd)",
+                          }}
+                        >
+                          {shelf.order_rule === "hand" ? t("lib.byHand") : t(`lib.sort.${shelf.order_rule}` as never)}
+                          <span style={{ color: "var(--faint)", fontSize: 9 }}>▾</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {shelf.collapsed ? (
+                    <button
+                      onClick={() => props.onToggleShelf(shelf)}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 2,
+                        padding: "8px 10px",
+                        borderRadius: 9,
+                        background: "var(--soft)",
+                        border: "1px solid var(--brd)",
+                        width: "100%",
+                        justifyContent: "flex-start",
+                      }}
+                    >
+                      {groups
+                        .flatMap((g) => g.books)
+                        .slice(0, 14)
+                        .map((b) => (
+                          <span
+                            key={b.id}
+                            style={{
+                              display: "block",
+                              width: 4,
+                              height: 22,
+                              borderRadius: 1,
+                              background: "var(--faint)",
+                              opacity: 0.7,
+                            }}
+                          />
+                        ))}
+                      <span
+                        style={{
+                          font: "500 .6875rem var(--ui)",
+                          color: "var(--faint)",
+                          marginInlineStart: 8,
+                        }}
+                      >
+                        {t("lib.collapsed")} · {num(total)}
+                      </span>
+                    </button>
+                  ) : total === 0 ? (
+                    <div
+                      style={{
+                        font: "400 .8125rem var(--ui)",
+                        color: "var(--faint)",
+                        padding: "10px 0 4px",
+                      }}
+                    >
+                      {shelf.auto_rule ? t("lib.shelfRow.empty") : t("lib.emptyShelf")}
+                    </div>
+                  ) : (
+                    groups.map((g) => (
+                      <div key={g.categoryId ?? "__loose"}>
+                        {g.name && (
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 10,
+                              margin: "4px 0 10px",
+                              font: "600 .6875rem var(--ui)",
+                              letterSpacing: ".08em",
+                              textTransform: "uppercase",
+                              color: "var(--mut)",
+                            }}
+                          >
+                            <span>{g.name}</span>
+                            <span style={{ flex: 1, height: 1, background: "var(--rule)" }} />
+                            <span style={{ color: "var(--faint)" }}>{num(g.books.length)}</span>
+                          </div>
+                        )}
+                        <div
+                          style={
+                            spines
+                              ? {
+                                  display: "flex",
+                                  alignItems: "flex-end",
+                                  gap: 3,
+                                  flexWrap: "wrap",
+                                  paddingBottom: 10,
+                                  borderBottom: "2px solid var(--rule)",
+                                  marginBottom: 14,
+                                }
+                              : {
+                                  display: "grid",
+                                  gridTemplateColumns: `repeat(auto-fill, minmax(${iw}px, 1fr))`,
+                                  gap: 20,
+                                  marginBottom: 14,
+                                }
+                          }
+                        >
+                          {g.books.map((b, i) => (
+                            <div
+                              key={b.id}
+                              style={spines ? { display: "flex", alignItems: "flex-end" } : undefined}
+                            >
+                              {gap(shelf.id, g.categoryId, i, `gap-${b.id}`)}
+                              <BookTile
+                                book={b}
+                                view={props.view}
+                                density={props.density}
+                                itemW={iw}
+                                selected={props.selected.has(b.id)}
+                                inHand={props.carryId === b.id}
+                                arrangeOn={props.mode === "arrange"}
+                                selectOn={props.mode === "select"}
+                                onOpen={() => props.onOpenBook(b)}
+                                onEdit={() => props.onEditBook(b)}
+                                onToggleSelect={() => props.onToggleSelect(b.id)}
+                                onPickUp={(x, y) => props.onPickUp(b, shelf.id, x, y)}
+                                onRemoveFromShelf={
+                                  shelf.auto_rule ? null : () => props.onRemoveFromShelf(b.id, shelf.id)
+                                }
+                                onSetFinished={(f) => props.onSetFinished(b, f)}
+                              />
+                            </div>
+                          ))}
+                          {gap(shelf.id, g.categoryId, g.books.length, "gap-end")}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              ))}
+          </section>
+        );
+      })}
+    </>
+  );
+}

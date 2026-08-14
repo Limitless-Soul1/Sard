@@ -337,6 +337,133 @@ pub fn collections_for_book(book_id: String, state: State<AppState>) -> Result<V
     library::collections_for_book(&conn, &book_id).map_err(err)
 }
 
+// ---------------------------------------------------------------------------
+// Library structure — cases, categories and hand order. Every write returns the
+// refreshed tree, the same one-round-trip contract the RAWY-31 shelf writes use.
+// ---------------------------------------------------------------------------
+
+use library::structure;
+
+#[tauri::command]
+pub fn library_tree(state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::tree(&conn).map_err(err)
+}
+
+/// One shelf's books in the shelf's own order, with their category.
+#[tauri::command]
+pub fn library_shelf_items(
+    collection_id: String,
+    state: State<AppState>,
+) -> Result<Vec<structure::ShelfItem>, String> {
+    let conn = state.conn();
+    structure::shelf_items(&conn, &collection_id).map_err(err)
+}
+
+#[tauri::command]
+pub fn case_create(
+    name: String,
+    ink: Option<String>,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::case_create(&conn, &name, ink.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+pub fn case_rename(id: String, name: String, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::case_rename(&conn, &id, &name).map_err(err)
+}
+
+#[tauri::command]
+pub fn case_delete(id: String, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::case_delete(&conn, &id).map_err(err)
+}
+
+#[tauri::command]
+pub fn case_reorder(id: String, to_index: i64, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::case_reorder(&conn, &id, to_index).map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_create(
+    name: String,
+    case_id: Option<String>,
+    auto_rule: Option<String>,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_create(&conn, &name, case_id.as_deref(), auto_rule.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_set_case(
+    id: String,
+    case_id: Option<String>,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_set_case(&conn, &id, case_id.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_set_order(
+    id: String,
+    order_rule: String,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_set_order(&conn, &id, &order_rule).map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_set_collapsed(
+    id: String,
+    collapsed: bool,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_set_collapsed(&conn, &id, collapsed).map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_place_book(
+    collection_id: String,
+    book_id: String,
+    category_id: Option<String>,
+    index: i64,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_place_book(&conn, &collection_id, &book_id, category_id.as_deref(), index)
+        .map_err(err)
+}
+
+#[tauri::command]
+pub fn category_create(
+    collection_id: String,
+    name: String,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::category_create(&conn, &collection_id, &name).map_err(err)
+}
+
+#[tauri::command]
+pub fn category_rename(id: String, name: String, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::category_rename(&conn, &id, &name).map_err(err)
+}
+
+#[tauri::command]
+pub fn category_delete(id: String, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::category_delete(&conn, &id).map_err(err)
+}
+
 /// RAWY-17 — import EPUB files into the library (copy-in, hash/dedup, extract metadata +
 /// cover). Returns one result per path so the UI can summarise imported/duplicate/
 /// unsupported/error. The only Rust↔JS path for adding books.

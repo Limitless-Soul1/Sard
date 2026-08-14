@@ -5,6 +5,8 @@
 #[cfg(test)]
 mod wp3_tests; // RESILIENCE-1 / WP-3 — the database is the single source of a book's name
 
+pub mod structure; // cases, categories and the hand order that sit on top of these tables
+
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -87,6 +89,10 @@ pub struct BookRow {
     /// `spine_fragmented` = many sections with a tiny median, so 6B defaults the book to scrolled
     /// flow (where arbitrary section breaks are invisible).
     pub spine_fragmented: Option<i64>,
+    /// The imported file's size. The Spines view draws each book at its own thickness, and this
+    /// is the only measure of a book's extent the library holds — there is no page count until a
+    /// book has been opened and paginated at the reader's current type size.
+    pub size_bytes: Option<i64>,
 }
 
 // Effective fields = a metadata_overrides value when present, else the extracted column.
@@ -143,7 +149,7 @@ fn book_select() -> String {
          COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='cover'), b.cover_path), \
          b.added_at, b.last_opened_at, p.fraction, p.updated_at, \
          (SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='cover_fit'), \
-         b.meta_provenance, b.script_detected, b.toc_degenerate, b.spine_fragmented"
+         b.meta_provenance, b.script_detected, b.toc_degenerate, b.spine_fragmented, b.size_bytes"
     )
 }
 
@@ -166,6 +172,7 @@ fn row_from(r: &rusqlite::Row) -> rusqlite::Result<BookRow> {
         script_detected: r.get(14)?,
         toc_degenerate: r.get(15)?,
         spine_fragmented: r.get(16)?,
+        size_bytes: r.get(17)?,
     })
 }
 

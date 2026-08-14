@@ -13,6 +13,7 @@ import { AutoCover } from "../AutoCover";
 import { coverSrc } from "../coverSrc";
 import { BookTile } from "./BookTile";
 import { baseWidth, itemWidth, isFinished, isVirtualShelf, progressPct } from "./model";
+import type { CoverMode } from "./coverPresentation";
 
 /** The environment the library stands in — the design's own sky-to-ground gradient. */
 export const VISTA_GROUND =
@@ -88,6 +89,8 @@ export interface VistaProps {
   onPickUp: (b: BookRow, shelfId: string, x: number, y: number) => void;
   onRemoveFromShelf: (bookId: string, shelfId: string) => void;
   onSetFinished: (b: BookRow, finished: boolean) => void;
+  /** The library Crop/Fit default, passed through to each tile. */
+  libraryCoverMode: CoverMode;
   onPlace: (shelfId: string, categoryId: string | null, index: number) => void;
 }
 
@@ -167,7 +170,10 @@ export function ViewVista(props: VistaProps) {
                   </span>
                 )}
               </span>
-              <span style={{ flex: 1 }} />
+              {/* Beside the shelf's own pill, not pinned to the far corner. The action belongs to
+                  this shelf, so it sits where the shelf is named — and because both are in the
+                  same flow, it stays adjacent in RTL and LTR alike instead of flying to the
+                  opposite edge. The spacer that used to push it away is gone. */}
               <button
                 onClick={() => props.onOpenShelf(props.focused ? null : band.shelf.id)}
                 style={{
@@ -183,6 +189,7 @@ export function ViewVista(props: VistaProps) {
               >
                 {props.focused ? t("lib.vista.allShelves") : t("lib.vista.openShelf")}
               </button>
+              <span style={{ flex: 1 }} />
             </div>
 
             <div
@@ -236,6 +243,7 @@ export function ViewVista(props: VistaProps) {
                     band.shelf.auto_rule ? null : () => props.onRemoveFromShelf(b.id, band.shelf.id)
                   }
                   onSetFinished={(f) => props.onSetFinished(b, f)}
+                  libraryCoverMode={props.libraryCoverMode}
                 />
                 </div>
               ))}

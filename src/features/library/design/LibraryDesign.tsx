@@ -638,6 +638,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
                 onRemoveFromShelf={removeFromShelf}
                 onSetFinished={setFinished}
                 onPlace={place}
+                libraryCoverMode={props.coverMode}
               />
             </>
           ) : isGroupedView(view) ? (
@@ -702,6 +703,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
               onDeleteShelf={props.onDeleteShelf}
               onNewCategory={shelfOps.newCategory}
               onPlace={place}
+              libraryCoverMode={props.coverMode}
             />
           ) : null}
 
@@ -845,6 +847,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
           cases={tree.cases}
           loose={tree.loose}
           placement={placementOf(detailsFor.id)}
+          libraryCoverMode={props.coverMode}
           onClose={() => setDetailsFor(null)}
           onChanged={() => {
             loadTree().catch(() => {});

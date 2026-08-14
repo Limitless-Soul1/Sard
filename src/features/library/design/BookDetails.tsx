@@ -30,6 +30,17 @@ import { resolveBookMeta, displayTitle } from "../../../lib/bookMeta";
 import { autoCoverPaint } from "../AutoCover";
 import { coverSrc } from "../coverSrc";
 import { isFinished, progressPct } from "./model";
+import { coverPresentation, type CoverMode } from "./coverPresentation";
+import {
+  draftFromBook,
+  draftWithNoPaint,
+  draftWithOriginalCover,
+  draftWithPaint,
+  isDirty,
+  patchFromDraft,
+  previewRow,
+  type BookDraft,
+} from "./bookEdits";
 
 const ARABIC = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
 
@@ -38,9 +49,6 @@ const PALETTE = [
   "#2C3A42", "#9C5A3C", "#B5727B", "#2E5A55", "#16140F", "#D8C29A",
   "#5E6B49", "#3E4C6B", "#7A4B2E", "#3A5A4F", "#8C2F39", "#4A3B5E",
 ];
-
-/** Light paints take dark ink; everything else takes the warm light ink. */
-const inkFor = (bg: string) => (bg === "#D8C29A" || bg === "#F1E4C8" ? "#3A2E14" : "#F1E7D4");
 
 const IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "gif", "avif", "svg", "bmp", "ico"];
 
@@ -56,6 +64,17 @@ const chip = (on: boolean): React.CSSProperties => ({
   color: on ? "var(--acc)" : "var(--mut)",
   background: on ? "var(--act)" : "var(--pap)",
 });
+
+/** A standing label above a field — visible whether or not the field has a value. */
+const fieldLabel: React.CSSProperties = {
+  display: "block",
+  marginBottom: 4,
+  font: "600 .625rem var(--ui)",
+  letterSpacing: ".1em",
+  textTransform: "uppercase",
+  color: "var(--faint)",
+  textAlign: "start",
+};
 
 const legend: React.CSSProperties = {
   font: "600 .625rem var(--ui)",
@@ -74,6 +93,8 @@ export interface BookDetailsProps {
   onClose: () => void;
   /** Re-read the library after any write. */
   onChanged: () => void;
+  /** The library's own Crop/Fit setting, which a book with no per-book fit follows. */
+  libraryCoverMode: CoverMode;
 }
 
 export function BookDetails(props: BookDetailsProps) {
@@ -81,41 +102,54 @@ export function BookDetails(props: BookDetailsProps) {
   const rtl = lang === "ar";
   const num = (n: number) => localeNum(n, lang);
   const [book, setBook] = useState<BookRow>(props.book);
-  const [title, setTitle] = useState("");
-  const [author, setAuthor] = useState("");
+  // Every field edit lands HERE, not in the database. Save writes the difference; Cancel throws
+  // it away. Image and shelf actions still act immediately — those move files and memberships,
+  // which is not something a buffer can hold honestly.
+  const [draft, setDraft] = useState<BookDraft>(() => draftFromBook(props.book));
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     setBook(props.book);
-    const m = resolveBookMeta(props.book);
-    setTitle(m.title ?? "");
-    setAuthor(m.author ?? "");
+    setDraft(draftFromBook(props.book));
   }, [props.book]);
 
-  const meta = resolveBookMeta(book);
+  const edit = (next: Partial<BookDraft>) => setDraft((d) => ({ ...d, ...next }));
+
+  // The dialog previews the DRAFT, so every control shows its effect before it is saved.
+  const preview = previewRow(book, draft);
+  const meta = resolveBookMeta(preview);
   const shown = displayTitle(meta, t);
   const arabic = book.dir === "rtl" || ARABIC.test(shown);
-  const paint = book.cover_paint ?? autoCoverPaint(shown).bg;
-  const ink = book.cover_paint ? inkFor(book.cover_paint) : autoCoverPaint(shown).ink;
+  const derived = autoCoverPaint(shown);
   const src = coverSrc(book);
-  const typeset = book.cover_mode === "typeset" || !src;
-  const spineMode = book.spine_mode ?? "typeset";
+  const jacketSrc = draft.coverMode === "typeset" ? null : src;
+  const pres = coverPresentation(preview, !!src, derived, props.libraryCoverMode);
+  const paint = pres.paint;
+  const ink = pres.ink;
+  const typeset = pres.kind === "typeset";
+  const spineMode = draft.spineMode;
   const spineSrc = book.spine_image ? convertFileSrc(book.spine_image) : null;
   const pct = progressPct(book);
   const done = isFinished(book);
+  const dirty = isDirty(draft, book);
 
-  const patch = async (p: Parameters<typeof bookUpdate>[1]) => {
+  const save = async () => {
+    const p = patchFromDraft(draft, book);
+    if (Object.keys(p).length === 0) {
+      props.onClose();
+      return;
+    }
     setBusy(true);
     const next = await bookUpdate(book.id, p).catch(() => null);
     setBusy(false);
     if (next) setBook(next);
     props.onChanged();
+    props.onClose();
   };
 
-  const commitText = () => {
-    const m = resolveBookMeta(book);
-    if (title.trim() !== (m.title ?? "")) patch({ title: title.trim() });
-    else if (author.trim() !== (m.author ?? "")) patch({ author: author.trim() });
+  const cancel = () => {
+    setDraft(draftFromBook(book));
+    props.onClose();
   };
 
   const chooseCover = async () => {
@@ -158,11 +192,19 @@ export function BookDetails(props: BookDetailsProps) {
     props.onChanged();
   };
 
-  const revertCover = async () => {
+  /**
+   * "Restore original" — the whole jacket, not just the file.
+   *
+   * It reverts the cover image to the one extracted from the book AND clears the chosen paint,
+   * mode and fit in the draft. Reverting only the file left those three still in force, so the
+   * jacket visibly did not return to its original state and the button read as doing nothing.
+   */
+  const restoreOriginal = async () => {
     setBusy(true);
     const next = await bookRevertCover(book.id).catch(() => null);
     if (next) setBook(next);
     setBusy(false);
+    setDraft((d) => draftWithOriginalCover(d));
     props.onChanged();
   };
 
@@ -225,7 +267,13 @@ export function BookDetails(props: BookDetailsProps) {
           </div>
         </>
       ) : (
-        <img src={src ?? undefined} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        // The PREVIEW honours the pending fit, which is what makes Crop / Contain / Default
+        // visibly different before Save rather than three buttons that look the same.
+        <img
+          src={jacketSrc ?? undefined}
+          alt=""
+          style={{ width: "100%", height: "100%", objectFit: pres.objectFit, display: "block" }}
+        />
       )}
     </div>
   );
@@ -336,12 +384,18 @@ export function BookDetails(props: BookDetailsProps) {
           {jacket(96, 144)}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ ...legend, marginBottom: 10 }}>{t("lib.bookDetails")}</div>
+            {/* Both fields carry a STANDING label, not a placeholder. A placeholder disappears the
+                moment the reader types and is absent again once they clear the field, which is
+                exactly when "which box is the author?" needs answering. `htmlFor`/`id` ties each
+                label to its box for a screen reader too, and both follow the UI direction. */}
+            <label htmlFor="bd-title" style={fieldLabel}>
+              {t("lib.fieldTitle")}
+            </label>
             <input
-              value={title}
+              id="bd-title"
+              value={draft.title}
               dir="auto"
-              onChange={(e) => setTitle(e.target.value)}
-              onBlur={commitText}
-              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+              onChange={(e) => edit({ title: e.target.value })}
               style={{
                 width: "100%",
                 background: "var(--soft)",
@@ -353,15 +407,16 @@ export function BookDetails(props: BookDetailsProps) {
                 color: "var(--txt)",
               }}
             />
+            <label htmlFor="bd-author" style={{ ...fieldLabel, marginTop: 9 }}>
+              {t("lib.fieldAuthor")}
+            </label>
             <input
-              value={author}
+              id="bd-author"
+              value={draft.author}
               dir="auto"
-              onChange={(e) => setAuthor(e.target.value)}
-              onBlur={commitText}
-              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+              onChange={(e) => edit({ author: e.target.value })}
               style={{
                 width: "100%",
-                marginTop: 7,
                 background: "var(--soft)",
                 border: "1px solid var(--brd)",
                 borderRadius: 8,
@@ -413,13 +468,13 @@ export function BookDetails(props: BookDetailsProps) {
                 {t("lib.coverUse")}
               </div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 9 }}>
-                <button style={chip(typeset)} onClick={() => patch({ coverMode: "typeset" })}>
+                <button style={chip(typeset)} onClick={() => edit({ coverMode: "typeset" })}>
                   {t("lib.coverTypeset")}
                 </button>
                 <button
                   style={{ ...chip(!typeset), opacity: src ? 1 : 0.5 }}
                   disabled={!src}
-                  onClick={() => patch({ coverMode: "file" })}
+                  onClick={() => edit({ coverMode: "file" })}
                 >
                   {t("lib.coverFromFile")}
                 </button>
@@ -427,7 +482,7 @@ export function BookDetails(props: BookDetailsProps) {
                   {t("lib.coverCustom")}
                 </button>
                 {src && (
-                  <button style={chip(false)} onClick={revertCover}>
+                  <button style={chip(false)} onClick={restoreOriginal}>
                     {t("edit.revertCover")}
                   </button>
                 )}
@@ -437,11 +492,13 @@ export function BookDetails(props: BookDetailsProps) {
               <div style={{ ...legend, marginTop: 4 }}>{t("lib.coverSizing")}</div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 9 }}>
                 {(["crop", "fit"] as const).map((m) => (
-                  <button key={m} style={chip(book.cover_fit === m)} onClick={() => patch({ coverFit: m })}>
+                  <button key={m} style={chip(draft.coverFit === m)} onClick={() => edit({ coverFit: m })}>
                     {t(m === "crop" ? "lib.cover.crop" : "lib.cover.fit")}
                   </button>
                 ))}
-                <button style={chip(!book.cover_fit)} onClick={() => patch({ coverFit: "" })}>
+                {/* Default is a real third state — no per-book fit, so the book follows the
+                    library's own Crop/Fit setting rather than pinning one of its own. */}
+                <button style={chip(draft.coverFit === null)} onClick={() => edit({ coverFit: null })}>
                   {t("lib.coverSizeDefault")}
                 </button>
               </div>
@@ -454,17 +511,18 @@ export function BookDetails(props: BookDetailsProps) {
                 <button
                   title={t("lib.coverPaintNone")}
                   aria-label={t("lib.coverPaintNone")}
-                  aria-pressed={!book.cover_paint}
-                  onClick={() => patch({ coverPaint: "" })}
+                  aria-pressed={draft.coverPaint === null}
+                  onClick={() => setDraft(draftWithNoPaint)}
                   style={{
                     position: "relative",
                     width: 22,
                     height: 30,
                     borderRadius: 3,
-                    background: autoCoverPaint(shown).bg,
-                    boxShadow: !book.cover_paint
-                      ? "0 0 0 2px var(--chr), 0 0 0 3.5px var(--txt)"
-                      : "var(--sh1)",
+                    background: derived.bg,
+                    boxShadow:
+                      draft.coverPaint === null
+                        ? "0 0 0 2px var(--chr), 0 0 0 3.5px var(--txt)"
+                        : "var(--sh1)",
                     overflow: "hidden",
                   }}
                 >
@@ -487,15 +545,15 @@ export function BookDetails(props: BookDetailsProps) {
                   <button
                     key={k}
                     aria-label={k}
-                    aria-pressed={book.cover_paint === k}
-                    onClick={() => patch({ coverPaint: k, coverMode: "typeset" })}
+                    aria-pressed={draft.coverPaint === k}
+                    onClick={() => setDraft((d) => draftWithPaint(d, k))}
                     style={{
                       width: 22,
                       height: 30,
                       borderRadius: 3,
                       background: k,
                       boxShadow:
-                        book.cover_paint === k
+                        draft.coverPaint === k
                           ? "0 0 0 2px var(--chr), 0 0 0 3.5px var(--txt)"
                           : "var(--sh1)",
                     }}
@@ -548,13 +606,13 @@ export function BookDetails(props: BookDetailsProps) {
                 <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
                   <button
                     style={chip(!spineSrc && spineMode === "typeset")}
-                    onClick={() => patch({ spineMode: "typeset" })}
+                    onClick={() => edit({ spineMode: "typeset" })}
                   >
                     {t("lib.coverTypeset")}
                   </button>
                   <button
                     style={chip(!spineSrc && spineMode === "none")}
-                    onClick={() => patch({ spineMode: "none" })}
+                    onClick={() => edit({ spineMode: "none" })}
                   >
                     {t("lib.spinePlain")}
                   </button>
@@ -649,6 +707,59 @@ export function BookDetails(props: BookDetailsProps) {
               {place ? t("lib.toggleHint") : t("lib.notFiledHint")}
             </div>
           </div>
+        </div>
+
+        {/* ---- the editing footer ----
+            An editor owes a reader two endings. Save writes only what changed; Cancel throws the
+            buffer away and leaves the book as it was. Shelf moves and image choices have already
+            been applied — they move files and memberships, which a buffer cannot hold honestly —
+            so the footer says which of its changes are still pending. */}
+        <div
+          style={{
+            position: "sticky",
+            bottom: 0,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "13px 24px",
+            borderTop: "1px solid var(--brd)",
+            background: "var(--chr)",
+          }}
+        >
+          <span style={{ flex: 1, font: "400 .75rem var(--ui)", color: "var(--faint)" }}>
+            {dirty ? t("lib.unsavedChanges") : t("lib.noChanges")}
+          </span>
+          <button
+            className="libd-hov libd-hov-txt"
+            onClick={cancel}
+            style={{
+              height: 32,
+              padding: "0 14px",
+              borderRadius: 9,
+              border: "1px solid var(--brd)",
+              font: "500 .8125rem var(--ui)",
+              color: "var(--mut)",
+            }}
+          >
+            {t("lib.cancel")}
+          </button>
+          <button
+            className="libd-hov-bright"
+            onClick={save}
+            disabled={busy}
+            style={{
+              height: 32,
+              padding: "0 18px",
+              borderRadius: 9,
+              background: dirty ? "var(--acc)" : "var(--soft)",
+              color: dirty ? "var(--pap)" : "var(--mut)",
+              border: dirty ? "none" : "1px solid var(--brd)",
+              font: "600 .8125rem var(--ui)",
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
+            {t("lib.save")}
+          </button>
         </div>
       </div>
     </div>

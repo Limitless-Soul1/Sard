@@ -11,12 +11,14 @@
 
 import { useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { BookRow } from "../../../lib/ipc";
 import { useI18n } from "../../../i18n";
 import { AutoCover, autoCoverPaint } from "../AutoCover";
 import { coverSrc } from "../coverSrc";
 import { resolveBookMeta, displayTitle } from "../../../lib/bookMeta";
 import { progressPct, isFinished, spineWidth, type DesignView } from "./model";
+import { coverPresentation, type CoverMode } from "./coverPresentation";
 
 /** Cover heights per density step, for Spines. The design's numbers. */
 const SPINE_HEIGHTS = [104, 132, 168, 208];
@@ -42,6 +44,8 @@ export interface BookTileProps {
   /** null when the shelf cannot give a book up (a rule shelf). */
   onRemoveFromShelf: (() => void) | null;
   onSetFinished: (finished: boolean) => void;
+  /** The library's Crop/Fit setting, which a book with no per-book fit follows. */
+  libraryCoverMode: CoverMode;
 }
 
 export function BookTile(props: BookTileProps) {
@@ -56,10 +60,12 @@ export function BookTile(props: BookTileProps) {
   const meta = resolveBookMeta(book);
   const title = displayTitle(meta, t);
   const arabic = book.dir === "rtl" || ARABIC.test(title);
-  // A chosen paint overrides the one derived from the title; the derived one is the default.
+  // One resolver decides the jacket, so the Book Details controls are wired to every view by
+  // construction — the crop/contain/default buttons used to persist a `cover_fit` no view read.
   const derived = autoCoverPaint(title);
-  const paint = book.cover_paint ? { bg: book.cover_paint, ink: derived.ink } : derived;
-  const src = book.cover_mode === "typeset" ? null : coverSrc(book);
+  const pres = coverPresentation(book, !!coverSrc(book), derived, props.libraryCoverMode);
+  const paint = { bg: pres.paint, ink: pres.ink };
+  const src = pres.kind === "image" ? coverSrc(book) : null;
   const spineSrc = book.spine_image ? convertFileSrc(book.spine_image) : null;
   const drawn = !src || imgFailed;
   const pct = progressPct(book);
@@ -67,7 +73,16 @@ export function BookTile(props: BookTileProps) {
   const w = spines ? spineWidth(book, density) : itemW;
 
   // The design shows the caption always in Covers, on hover/selection in Vista, never in Spines.
-  const showCap = vista ? hover || selected : !spines;
+  // The caption is always LAID OUT wherever it belongs, and only its visibility changes.
+  //
+  // Vista shows a caption on hover. Mounting it on hover grew the tile, and because the band is a
+  // grid with `align-items: end`, a taller tile raised the whole row and shoved every band below
+  // it — so running the pointer along a shelf made the page jump under the reader. Reserving the
+  // space keeps the design's behaviour (the caption appears when you point at a book) while the
+  // geometry stays fixed. `translateY` was never the problem: transforms are composited and do
+  // not reflow.
+  const capRendered = !spines;
+  const capVisible = vista ? hover || selected : true;
   const showDots = !selectOn && (hover || menuOpen);
 
   const press = (e: React.PointerEvent) => {
@@ -220,6 +235,9 @@ export function BookTile(props: BookTileProps) {
           {[
             { label: t("lib.editDetails"), run: props.onEdit },
             { label: t("lib.openBook"), run: props.onOpen },
+            // Distinct from Open, which opens the book INSIDE Sard. This hands the file to the
+            // OS file manager, revealing it where it actually lives on disk.
+            { label: t("lib.openInFolder"), run: () => revealItemInDir(book.file_path).catch(() => {}) },
             {
               label: finished ? t("lib.markUnread") : t("lib.markRead"),
               run: () => props.onSetFinished(!finished),
@@ -284,7 +302,7 @@ export function BookTile(props: BookTileProps) {
             src={src ?? undefined}
             alt=""
             onError={() => setImgFailed(true)}
-            style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+            style={{ width: "100%", height: "100%", objectFit: pres.objectFit, display: "block" }}
           />
         )}
 
@@ -339,8 +357,20 @@ export function BookTile(props: BookTileProps) {
         )}
       </div>
 
-      {showCap && (
-        <>
+      {capRendered && (
+        <div
+          aria-hidden={!capVisible}
+          style={{
+            // Occupies its space unconditionally; only the paint changes. `visibility` rather
+            // than unmounting is what holds the row's height steady under the pointer.
+            opacity: capVisible ? 1 : 0,
+            visibility: capVisible ? "visible" : "hidden",
+            transition: "opacity .14s ease-out",
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+          }}
+        >
           <div
             style={{
               font: arabic ? "600 .875rem/1.4 var(--ar)" : "500 .8125rem/1.3 var(--ui)",
@@ -361,11 +391,12 @@ export function BookTile(props: BookTileProps) {
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
+              minHeight: "1.2em",
             }}
           >
             {meta.author ?? ""}
           </div>
-        </>
+        </div>
       )}
     </div>
   );

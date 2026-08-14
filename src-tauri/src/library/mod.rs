@@ -485,6 +485,13 @@ fn sweep_custom_covers(covers: &Path, id: &str, keep: Option<&Path>) {
     sweep_managed(covers, id, "custom", keep)
 }
 
+/// Test-only door onto the sweep, so the cover/spine separation can be asserted without
+/// reaching into a private function from another module.
+#[cfg(test)]
+pub(crate) fn sweep_custom_covers_for_test(dir: &Path, id: &str, keep: Option<&Path>) {
+    sweep_custom_covers(dir, id, keep)
+}
+
 /// The same sweep, for one KIND of managed image. Covers are `{id}-custom-…` and spines are
 /// `{id}-spine-…`, so the two live in one directory and neither sweep can ever reach the other's
 /// file — which is why a spine survives replacing a cover, and vice versa.

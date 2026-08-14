@@ -555,6 +555,34 @@ mod tests {
         assert_eq!(items[0].category_id, None, "it simply lost its grouping");
     }
 
+    /// A spine image and a custom cover share one managed directory. They are told apart only by
+    /// their name prefix, and each sweep is scoped to its own — so replacing one must never delete
+    /// the other. This is the cheap test for an expensive mistake: silently losing a reader's file.
+    #[test]
+    fn a_cover_sweep_cannot_reach_a_spine_image() {
+        let dir = std::env::temp_dir().join("sard_spine_sweep");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let cover_old = dir.join("b1-custom-aaa.jpg");
+        let cover_new = dir.join("b1-custom-bbb.jpg");
+        let spine = dir.join("b1-spine-ccc.jpg");
+        let other_book = dir.join("b2-custom-ddd.jpg");
+        for p in [&cover_old, &cover_new, &spine, &other_book] {
+            std::fs::write(p, b"x").unwrap();
+        }
+
+        // Adopting `cover_new` sweeps this book's OTHER covers and nothing else.
+        crate::library::sweep_custom_covers_for_test(&dir, "b1", Some(&cover_new));
+
+        assert!(!cover_old.exists(), "the superseded cover is swept");
+        assert!(cover_new.exists(), "the adopted cover is kept");
+        assert!(spine.exists(), "the spine image survives a cover replacement");
+        assert!(other_book.exists(), "another book's cover is untouched");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn an_unknown_rule_is_refused_rather_than_stored() {
         let conn = db();

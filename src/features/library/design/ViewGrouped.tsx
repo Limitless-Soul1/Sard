@@ -14,6 +14,7 @@ import { localeNum } from "../../../lib/format";
 import { BookTile } from "./BookTile";
 import { CaseManageMenu, ShelfOrderMenu } from "./Menus";
 import { type BookGroup, type DesignView, isVirtualShelf, itemWidth } from "./model";
+import type { CoverMode } from "./coverPresentation";
 
 export interface ShelfRender {
   shelf: ShelfNode;
@@ -66,6 +67,8 @@ export interface GroupedProps {
   onDeleteShelf: (shelfId: string) => void;
   onNewCategory: (shelfId: string) => void;
   /** Placement targets while a book is in hand. */
+  /** The library Crop/Fit default, passed through to each tile. */
+  libraryCoverMode: CoverMode;
   onPlace: (shelfId: string, categoryId: string | null, index: number) => void;
 }
 
@@ -497,6 +500,7 @@ export function ViewGrouped(props: GroupedProps) {
                                   shelf.auto_rule ? null : () => props.onRemoveFromShelf(b.id, shelf.id)
                                 }
                                 onSetFinished={(f) => props.onSetFinished(b, f)}
+                                libraryCoverMode={props.libraryCoverMode}
                               />
                             </div>
                           ))}

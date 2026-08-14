@@ -113,7 +113,11 @@ export function ViewGrouped(props: GroupedProps) {
         const id = c.node?.id ?? "__loose";
         const open = !c.node || props.openCases.has(c.node.id);
         const shelfCount = c.shelves.length;
-        const bookCount = c.shelves.reduce((n, s) => n + s.total, 0);
+        // The case's OWN count, which the backend computes with DISTINCT — summing the shelf
+        // totals counts a book once per shelf it sits on, so a library of 42 books that had one
+        // book on two shelves reported 43.
+        const bookCount =
+          c.node?.count ?? c.shelves.reduce((n, s) => n + s.total, 0);
         return (
           <section key={id} style={{ padding: "0 32px 26px" }}>
             <div

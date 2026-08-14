@@ -1,12 +1,12 @@
 // The library surface: the Vista chrome, with five views drawn inside it.
 //
 // The five are Sard's original Grid plus the four from the references. Grid is NOT a new
-// rendering of the old idea â€” it delegates to the same `renderGrid` the previous Library
+// rendering of the old idea — it delegates to the same `renderGrid` the previous Library
 // used, so everything that view already did (cover fit mode, the edit dialog, its empty
 // state) keeps working unchanged.
 //
-// State that the design owns â€” the view, the density, the sort, the scope, which cases are
-// open â€” is persisted through the same `settings` IPC the Library has always used.
+// State that the design owns — the view, the density, the sort, the scope, which cases are
+// open — is persisted through the same `settings` IPC the Library has always used.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BookRow, CaseNode, LibraryTree, ShelfItem, ShelfNode } from "../../../lib/ipc";
@@ -63,7 +63,7 @@ export interface LibraryDesignProps {
   /** Grid's own cover-fit control, which belongs to that view and only appears with it. */
   coverMode: "crop" | "fit";
   onCoverMode: () => void;
-  /** RAWY-15's EPUB/PDF filter â€” applied in SQL, so it belongs to the owner of the query. */
+  /** RAWY-15's EPUB/PDF filter — applied in SQL, so it belongs to the owner of the query. */
   format: string | null;
   onFormat: (f: string | null) => void;
   onOpenBook: (b: BookRow) => void;
@@ -82,7 +82,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
   const { t, lang } = useI18n();
   const themeId = useTheme((s) => s.themeId);
   const dark = THEMES[themeId]?.dark ?? false;
-  // Whether a library background image is actually in force â€” the same two pieces of store state
+  // Whether a library background image is actually in force — the same two pieces of store state
   // `applyBackgrounds` gates the `data-bg-library` attribute on.
   const bgEnabled = useBackground((s) => s.enabled);
   const bgLibrary = useBackground((s) => s.library);
@@ -175,7 +175,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
     return m;
   }, [tree]);
 
-  /** The full placement of a book â€” case, shelf and category â€” for Book Details' assignment path. */
+  /** The full placement of a book — case, shelf and category — for Book Details' assignment path. */
   const placementOf = useCallback(
     (bookId: string) => {
       for (const [sid, list] of Object.entries(items)) {
@@ -197,7 +197,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
         if (list.some((i) => i.book_id === bookId)) {
           const entry = shelfById.get(sid);
           if (!entry) continue;
-          return entry.caseNode ? `${entry.caseNode.name} Â· ${entry.shelf.name}` : entry.shelf.name;
+          return entry.caseNode ? `${entry.caseNode.name} · ${entry.shelf.name}` : entry.shelf.name;
         }
       }
       return t("lib.unfiled");
@@ -220,10 +220,10 @@ export function LibraryDesign(props: LibraryDesignProps) {
    * The books a shelf shows.
    *
    * There is deliberately NO text matching here. `props.books` has already been filtered by
-   * `library_list_books`, whose search folds Arabic the way RAWY-178 requires â€” an unvocalized
+   * `library_list_books`, whose search folds Arabic the way RAWY-178 requires — an unvocalized
    * query finds a vocalized title, and hamza/alef variants match. A second, naive
    * `toLowerCase().includes()` pass on top would DISCARD exactly the rows that folding had just
-   * matched, so the library would answer Ù‚Ø±Ø§Ø¡Ø© but not Ù‚ÙØ±Ø§Ø¡Ø©. The membership lookup below
+   * matched, so the library would answer قراءة but not قِراءة. The membership lookup below
    * already restricts every shelf to books that survived that query.
    */
   const filterShelf = useCallback((_s: ShelfNode, list: BookRow[]): BookRow[] => list, []);
@@ -251,12 +251,12 @@ export function LibraryDesign(props: LibraryDesignProps) {
         shelves.push({ shelf: s, groups: groupShelf(s, items[s.id] ?? [], byId), total: books.length });
       }
       // Books on no shelf at all. Without this run they would be invisible in every grouped
-      // view â€” which, on a library whose books have never been filed, is the whole library.
+      // view — which, on a library whose books have never been filed, is the whole library.
       if (!scope.shelfId) {
         const filed = new Set<string>();
         for (const list of Object.values(items)) for (const i of list) filed.add(i.book_id);
         const loose = unshelvedBooks(props.books, filed);
-        const shown = loose; // already narrowed by the folded SQL search â€” see `filterShelf`
+        const shown = loose; // already narrowed by the folded SQL search — see `filterShelf`
         if (shown.length) {
           const shelf = makeLooseShelf(t("lib.unshelved"), shown.length);
           shelves.push({
@@ -315,7 +315,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
   const place = useCallback(
     async (shelfId: string, categoryId: string | null, index: number) => {
       if (!carry) return;
-      // The unshelved run is a render-time fiction, not a collection â€” nothing can be put into it.
+      // The unshelved run is a render-time fiction, not a collection — nothing can be put into it.
       if (isVirtualShelf(shelfId)) {
         flash(t("lib.cannotPlace"));
         return;
@@ -558,7 +558,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
 
         {/* GRID is Sard's original grid, rendered as it always was: `.lib-grid` is itself
             `flex:1; overflow:auto` with its own padding, so it must be a direct flex child and
-            must NOT be nested inside the scroller the new views use â€” that would give it a
+            must NOT be nested inside the scroller the new views use — that would give it a
             second scrollbar and override the padding RAWY-170 set to clear the rosette. */}
         {view === "grid" ? (
           <div ref={paneRef} style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", position: "relative", zIndex: 2 }}>

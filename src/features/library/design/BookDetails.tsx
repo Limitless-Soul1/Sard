@@ -1,6 +1,6 @@
 // Book Details.
 //
-// SOURCE: the `bookModel` block of the reference bundles â€” byte-identical in `Sard Library
+// SOURCE: the `bookModel` block of the reference bundles — byte-identical in `Sard Library
 // (standalone).html` and `Sard Library - Vista (standalone).html`, so this dialog has one
 // unambiguous source. It replaces Sard's older EditBook wherever the design's views open a book.
 //
@@ -246,7 +246,7 @@ export function BookDetails(props: BookDetailsProps) {
             const on = place?.shelf.id === s.id;
             return (
               <button key={s.id} style={chip(on)} onClick={() => (on ? unfile() : moveTo(s.id, null))}>
-                {on ? `${s.name}  âœ•` : s.name}
+                {on ? `${s.name}  ✕` : s.name}
               </button>
             );
           })}
@@ -365,9 +365,9 @@ export function BookDetails(props: BookDetailsProps) {
               }}
             >
               <span>{(book.format ?? "").toUpperCase()}</span>
-              <span>Â·</span>
+              <span>·</span>
               <span>{t("lib.pagesApprox", { n: num(Math.max(1, Math.round((book.size_bytes ?? 0) / 1400))) })}</span>
-              <span>Â·</span>
+              <span>·</span>
               <span style={{ color: done ? "var(--done)" : undefined }}>
                 {done ? t("lib.finished") : `${num(pct)}%`}
               </span>
@@ -382,7 +382,7 @@ export function BookDetails(props: BookDetailsProps) {
             aria-label={t("panel.close")}
             style={{ flex: "none", width: 30, height: 30, borderRadius: 9, color: "var(--mut)", fontSize: 14 }}
           >
-            âœ•
+            ✕
           </button>
         </div>
 
@@ -431,7 +431,7 @@ export function BookDetails(props: BookDetailsProps) {
                 )}
               </div>
 
-              {/* COVER SIZING â€” how a cover fills its frame. RAWY-19's per-book override. */}
+              {/* COVER SIZING — how a cover fills its frame. RAWY-19's per-book override. */}
               <div style={{ ...legend, marginTop: 4 }}>{t("lib.coverSizing")}</div>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 9 }}>
                 {(["crop", "fit"] as const).map((m) => (
@@ -532,17 +532,17 @@ export function BookDetails(props: BookDetailsProps) {
               <span style={{ font: "600 .8125rem var(--ui)", color: place ? "var(--txt)" : "var(--faint)" }}>
                 {place?.caseNode?.name ?? t("lib.unfiled")}
               </span>
-              <span style={{ color: "var(--faint)", fontSize: 10 }}>{rtl ? "â€¹" : "â€º"}</span>
+              <span style={{ color: "var(--faint)", fontSize: 10 }}>{rtl ? "‹" : "›"}</span>
               <span style={{ font: "500 .8125rem var(--ui)", color: place ? "var(--txt)" : "var(--faint)" }}>
-                {place?.shelf.name ?? "â€”"}
+                {place?.shelf.name ?? "—"}
               </span>
-              <span style={{ color: "var(--faint)", fontSize: 10 }}>{rtl ? "â€¹" : "â€º"}</span>
+              <span style={{ color: "var(--faint)", fontSize: 10 }}>{rtl ? "‹" : "›"}</span>
               <span style={{ font: "400 .8125rem var(--ui)", color: "var(--mut)" }}>
                 {place
                   ? place.shelf.categories.length
                     ? place.shelf.categories.find((k) => k.id === place.categoryId)?.name ?? t("lib.uncategorised")
-                    : "â€”"
-                  : "â€”"}
+                    : "—"
+                  : "—"}
               </span>
             </div>
 

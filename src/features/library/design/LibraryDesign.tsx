@@ -41,6 +41,7 @@ import { ViewDetails } from "./ViewDetails";
 import { VistaEnvironment, VistaHero, ViewVista, type VistaBand } from "./ViewVista";
 import { CarryGhost, SelectTray } from "./Menus";
 import { BookDetails } from "./BookDetails";
+import { CaseEditor } from "./CaseEditor";
 import {
   DESIGN_VIEWS,
   groupShelf,
@@ -108,9 +109,11 @@ export function LibraryDesign(props: LibraryDesignProps) {
   const [renamingShelf, setRenamingShelf] = useState<string | null>(null);
   // Shelves the reader has expanded past the reference's two-row cap.
   const [expandedShelves, setExpandedShelves] = useState<Set<string>>(new Set());
-  const [manageMenuFor, setManageMenuFor] = useState<string | null>(null);
+  const [manageMenuFor] = useState<string | null>(null);
   const [renamingCase, setRenamingCase] = useState<string | null>(null);
   const [detailsFor, setDetailsFor] = useState<BookRow | null>(null);
+  // Which case the management panel is open on — the reference's "Manage" destination.
+  const [editorFor, setEditorFor] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
   const [paneWidth, setPaneWidth] = useState(1180);
@@ -694,7 +697,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
               onSetFinished={setFinished}
               onNewShelf={async (caseId) => setTree(await shelfCreate(t("lib.newShelf"), caseId))}
               manageMenuFor={manageMenuFor}
-              onManageCase={setManageMenuFor}
+              onManageCase={(id) => setEditorFor(id)}
               renamingCase={renamingCase}
               onRenameCase={setRenamingCase}
               onCommitCaseRename={(id, name) => {
@@ -857,6 +860,21 @@ export function LibraryDesign(props: LibraryDesignProps) {
           </div>
         )}
       </div>
+
+      {editorFor && tree.cases.some((x) => x.id === editorFor) && (
+        <CaseEditor
+          caseNode={tree.cases.find((x) => x.id === editorFor)!}
+          byId={byId}
+          items={items}
+          onTree={setTree}
+          onChanged={() => {
+            loadTree().catch(() => {});
+            props.onReloadBooks();
+          }}
+          onClose={() => setEditorFor(null)}
+          onOpenBookDetails={setDetailsFor}
+        />
+      )}
 
       {carry && <CarryGhost book={carry.book} spines={view === "spines"} />}
 

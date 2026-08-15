@@ -44,8 +44,10 @@ interface SidebarProps {
   onCaseInk: (caseId: string, ink: string | null) => void;
   /** Place a lifted case at an index among its peers. */
   onPlaceCase: (id: string, toIndex: number) => void;
-  /** RAWY-31's shelf rename, used by the sidebar's inline editor. */
-  onRenameShelf: (id: string, name: string) => void;
+  /** Open the management panel over the shelves that belong to no case. */
+  onManageUnfiled: () => void;
+  /** Open the management panel over one case — reachable from every view, not just the cards. */
+  onManageCase: (id: string) => void;
   onSettings: () => void;
   themeName: string;
   langName: string;
@@ -81,7 +83,6 @@ export function Sidebar(props: SidebarProps) {
   const { t, lang } = useI18n();
   const [creatingCase, setCreatingCase] = useState(false);
   const [creatingShelfIn, setCreatingShelfIn] = useState<string | null | false>(false);
-  const [renamingShelf, setRenamingShelf] = useState<string | null>(null);
   const [renamingCase, setRenamingCase] = useState<string | null>(null);
   const [managing, setManaging] = useState<string | null>(null);
   // A case lifted by its grip, waiting for a rail to be clicked.
@@ -136,22 +137,6 @@ export function Sidebar(props: SidebarProps) {
   // own order popover in the main pane, which is where the design puts it — not here.
   const shelfRow = (s: ShelfNode) => {
     const active = props.scope.shelfId === s.id;
-    if (renamingShelf === s.id) {
-      return (
-        <span key={s.id}>
-          {draftInput(
-            () => {
-              const name = draft.trim();
-              setRenamingShelf(null);
-              setDraft("");
-              if (name) props.onRenameShelf(s.id, name);
-            },
-            t("lib.shelf.namePlaceholder"),
-            { margin: "3px 8px 3px 10px", borderRadius: 6, padding: "5px 8px", font: "500 .75rem var(--ui)" },
-          )}
-        </span>
-      );
-    }
     return (
       // The reference's shelf row: padded 6/8/6/10, radius 6, `500 .75rem` in `--mut`, and on
       // selection it takes `--act` and `--txt`. No height is set — the padding decides it.
@@ -469,6 +454,7 @@ export function Sidebar(props: SidebarProps) {
                   </button>
                   {managing === c.id && (
                     <CaseManageMenu
+                      onManage={() => props.onManageCase(c.id)}
                       onRename={() => {
                         setDraft(c.name);
                         setRenamingCase(c.id);
@@ -545,18 +531,41 @@ export function Sidebar(props: SidebarProps) {
             way to create a shelf at all: the affordance the old sidebar had was gone and its
             replacement was unreachable until a case existed first. */}
         <div style={{ display: "flex", flexDirection: "column", gap: 1, paddingTop: 8 }}>
+          {/* The heading carries the ⋯, not the shelf rows. A shelf row stays exactly what the
+              reference draws — mark, name, count — and the group it sits in gets the single
+              management entry, the same way a case row does. That keeps an unfiled shelf fully
+              manageable without adding one control to the row the design specifies. */}
           {props.loose.length > 0 && (
-            <span
-              style={{
-                font: "600 .625rem var(--ui)",
-                letterSpacing: ".14em",
-                textTransform: "uppercase",
-                color: "var(--faint)",
-                padding: "6px 10px 4px",
-              }}
-            >
-              {t("lib.unfiled")}
-            </span>
+            <div style={{ display: "flex", alignItems: "center", padding: "6px 4px 4px 10px" }}>
+              <span
+                style={{
+                  flex: 1,
+                  font: "600 .625rem var(--ui)",
+                  letterSpacing: ".14em",
+                  textTransform: "uppercase",
+                  color: "var(--faint)",
+                }}
+              >
+                {t("lib.unfiled")}
+              </span>
+              <button
+                className="libd-hov libd-hov-txt"
+                title={t("lib.manageUnfiled")}
+                aria-label={t("lib.manageUnfiled")}
+                onClick={props.onManageUnfiled}
+                style={{
+                  flex: "none",
+                  width: 22,
+                  height: 22,
+                  borderRadius: 6,
+                  color: "var(--faint)",
+                  fontSize: 13,
+                  lineHeight: 1,
+                }}
+              >
+                ⋯
+              </button>
+            </div>
           )}
           {props.loose.map(shelfRow)}
           {creatingShelfIn === null ? (

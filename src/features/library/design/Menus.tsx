@@ -52,6 +52,87 @@ function Backdrop({ onClose }: { onClose: () => void }) {
   return <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 59 }} />;
 }
 
+/**
+ * A destructive menu row, armed by the first click and acted on by the second — RAWY-76's
+ * two-step, which the sidebar had before the redesign and which every delete here now uses.
+ *
+ * Between the two clicks the reader is told the three things that matter: what is being deleted,
+ * what survives it, and what happens to the books. The backend already refuses to take a book
+ * with a shelf or a case, but a guarantee the reader cannot see is not a safeguard for them —
+ * so the sentence says it, and the second click is a separate target from the first.
+ */
+export function DangerRow({
+  label,
+  confirmText,
+  confirmLabel,
+  onConfirm,
+}: {
+  label: string;
+  confirmText: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+}) {
+  const { t } = useI18n();
+  const [armed, setArmed] = useState(false);
+
+  if (!armed) {
+    return (
+      <button
+        className="libd-hov"
+        onClick={() => setArmed(true)}
+        style={{ ...menuItem(false), justifyContent: "flex-start", color: "#c0503a" }}
+      >
+        {label}
+      </button>
+    );
+  }
+  return (
+    <div
+      style={{
+        margin: "2px 4px 4px",
+        padding: "8px 9px 9px",
+        borderRadius: 9,
+        border: "1px solid color-mix(in srgb, #c0503a 38%, var(--brd))",
+        background: "color-mix(in srgb, #c0503a 8%, transparent)",
+      }}
+    >
+      <div style={{ font: "400 .6875rem/1.45 var(--ui)", color: "var(--txt)", paddingBottom: 8 }}>
+        {confirmText}
+      </div>
+      <div style={{ display: "flex", gap: 6 }}>
+        <button
+          className="libd-hov"
+          onClick={() => setArmed(false)}
+          style={{
+            flex: 1,
+            height: 26,
+            borderRadius: 7,
+            border: "1px solid var(--brd)",
+            font: "500 .75rem var(--ui)",
+            color: "var(--mut)",
+          }}
+        >
+          {t("lib.cancel")}
+        </button>
+        <button
+          className="libd-hov"
+          onClick={onConfirm}
+          style={{
+            flex: 1,
+            height: 26,
+            borderRadius: 7,
+            border: "1px solid #c0503a",
+            font: "600 .75rem var(--ui)",
+            color: "#c0503a",
+          }}
+        >
+          {confirmLabel}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Shelf order — the design's own list, then Rename and Delete shelf.
 // ---------------------------------------------------------------------------
@@ -216,16 +297,15 @@ export function ShelfOrderMenu({
         >
           {t("lib.shelf.rename")}
         </button>
-        <button
-          className="libd-hov"
-          onClick={() => {
+        <DangerRow
+          label={t("lib.shelf.delete")}
+          confirmText={t("lib.shelf.deleteConfirm")}
+          confirmLabel={t("lib.shelf.deleteYes")}
+          onConfirm={() => {
             onDelete();
             onClose();
           }}
-          style={{ ...menuItem(false), justifyContent: "flex-start", color: "#c0503a" }}
-        >
-          {t("lib.shelf.delete")}
-        </button>
+        />
       </div>
     </>
   );
@@ -301,6 +381,7 @@ export function InkPicker({
 }
 
 export function CaseManageMenu({
+  onManage,
   onRename,
   onNewShelf,
   onNewRuleShelf,
@@ -311,6 +392,7 @@ export function CaseManageMenu({
   ink,
   onInk,
 }: {
+  onManage: () => void;
   onRename: () => void;
   onNewShelf: () => void;
   onNewRuleShelf: () => void;
@@ -322,14 +404,14 @@ export function CaseManageMenu({
   onInk: (ink: string | null) => void;
 }) {
   const { t } = useI18n();
-  const row = (label: string, run: () => void, danger?: boolean) => (
+  const row = (label: string, run: () => void) => (
     <button
       className="libd-hov"
       onClick={() => {
         run();
         onClose();
       }}
-      style={{ ...menuItem(false), justifyContent: "flex-start", color: danger ? "#c0503a" : undefined }}
+      style={{ ...menuItem(false), justifyContent: "flex-start" }}
     >
       {label}
     </button>
@@ -339,6 +421,12 @@ export function CaseManageMenu({
       <Backdrop onClose={onClose} />
       <div style={panel(220)}>
         <div style={legend}>{t("lib.managing")}</div>
+        {/* The management PANEL, from the sidebar. It used to be reachable only from a case card,
+            which exists in Covers and Spines — so in Grid, Details and Vista the categories, the
+            shelf grips and the move-books-out-first delete were all unreachable. The sidebar is
+            present in every view, so the entry belongs here too. */}
+        {row(t("lib.manage"), onManage)}
+        <div style={{ height: 1, background: "var(--brd)", margin: "5px 4px" }} />
         <div style={{ ...legend, paddingTop: 0 }}>{t("lib.colour")}</div>
         <InkPicker value={ink} onPick={onInk} />
         <div style={{ height: 1, background: "var(--brd)", margin: "5px 4px" }} />
@@ -349,7 +437,15 @@ export function CaseManageMenu({
         {row(`↑ ${t("lib.moveCase")}`, onMoveUp)}
         {row(`↓ ${t("lib.moveCase")}`, onMoveDown)}
         <div style={{ height: 1, background: "var(--brd)", margin: "5px 4px" }} />
-        {row(t("lib.deleteCase"), onDelete, true)}
+        <DangerRow
+          label={t("lib.deleteCase")}
+          confirmText={t("lib.case.deleteConfirm")}
+          confirmLabel={t("lib.case.deleteYes")}
+          onConfirm={() => {
+            onDelete();
+            onClose();
+          }}
+        />
       </div>
     </>
   );

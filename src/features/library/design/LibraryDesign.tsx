@@ -52,12 +52,17 @@ import {
   makeLooseShelf,
   spineWidth,
   sortBooks,
+  unfiledCase,
+  UNFILED_CASE_ID,
   unshelvedBooks,
   type DesignSort,
   type DesignView,
 } from "./model";
 
 const EMPTY_TREE: LibraryTree = { cases: [], loose: [] };
+
+/** `editorFor` sentinel: manage the shelves that belong to no case. */
+const UNFILED_EDITOR = UNFILED_CASE_ID;
 
 export interface LibraryDesignProps {
   books: BookRow[];
@@ -110,12 +115,15 @@ export function LibraryDesign(props: LibraryDesignProps) {
   const [renamingShelf, setRenamingShelf] = useState<string | null>(null);
   // Shelves the reader has expanded past the reference's two-row cap.
   const [expandedShelves, setExpandedShelves] = useState<Set<string>>(new Set());
-  const [manageMenuFor] = useState<string | null>(null);
-  const [renamingCase, setRenamingCase] = useState<string | null>(null);
   const [detailsFor, setDetailsFor] = useState<BookRow | null>(null);
   // Which case the management panel is open on — the reference's "Manage" destination.
+  // `UNFILED_EDITOR` opens the same panel over the shelves that belong to no case.
   const [editorFor, setEditorFor] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  // Which cases the reader had collapsed, restored before the tree is first grouped so a
+  // collapsed case never flashes open on the way in.
+  const closedCases = useRef<Set<string>>(new Set());
+  const [closedLoaded, setClosedLoaded] = useState(false);
   const paneRef = useRef<HTMLDivElement | null>(null);
   const [paneWidth, setPaneWidth] = useState(1180);
 
@@ -131,7 +139,13 @@ export function LibraryDesign(props: LibraryDesignProps) {
       const dn = Number(d);
       if (Number.isFinite(dn) && dn >= 0 && dn <= 3) setDensity(dn);
       if (s) setSort(s as DesignSort);
-    })().catch(() => {});
+      // CLOSED cases are what is stored, not open ones: a case made after this was written
+      // should appear open, which is the design's own default, and storing the closed set is
+      // what makes that true without special-casing anything.
+      const closed = await settingsGet("libd_closed_cases");
+      closedCases.current = new Set((closed ?? "").split(",").filter(Boolean));
+      setClosedLoaded(true);
+    })().catch(() => setClosedLoaded(true));
   }, []);
   useEffect(() => {
     settingsSet("libd_view", view).catch(() => {});
@@ -152,13 +166,24 @@ export function LibraryDesign(props: LibraryDesignProps) {
       shelves.map(async (s) => [s.id, await libraryShelfItems(s.id).catch(() => [])] as const),
     );
     setItems(Object.fromEntries(pairs));
-    // Cases start open, as the design shows them.
-    setOpenCases((prev) => (prev.size ? prev : new Set(next.cases.map((c) => c.id))));
+    // Cases start open, as the design shows them — except any the reader closed last time.
+    setOpenCases((prev) =>
+      prev.size ? prev : new Set(next.cases.map((c) => c.id).filter((id) => !closedCases.current.has(id))),
+    );
   }, []);
 
   useEffect(() => {
+    if (!closedLoaded) return; // else the first group runs before the closed set is known
     loadTree().catch(() => {});
-  }, [loadTree, props.books]);
+  }, [loadTree, props.books, closedLoaded]);
+
+  // Persist the collapsed cases, on the same `settings` path the view, density and sort use.
+  useEffect(() => {
+    if (!closedLoaded || !tree.cases.length) return;
+    const closed = tree.cases.map((c) => c.id).filter((id) => !openCases.has(id));
+    closedCases.current = new Set(closed);
+    settingsSet("libd_closed_cases", closed.join(",")).catch(() => {});
+  }, [openCases, tree.cases, closedLoaded]);
 
   // ---- pane width, for Vista's fitted columns --------------------------------
   useEffect(() => {
@@ -179,11 +204,45 @@ export function LibraryDesign(props: LibraryDesignProps) {
 
   const byId = useMemo(() => new Map(props.books.map((b) => [b.id, b])), [props.books]);
 
+  /**
+   * EVERY structure write goes through here.
+   *
+   * These commands all answer with the whole tree, so the happy path was written as
+   * `setTree(await thing())` — which means a rejected promise produced an unhandled rejection and
+   * absolutely nothing on screen. A rename that failed looked exactly like a rename the reader had
+   * not made. Now a failure is said out loud, and the tree is re-read from the database afterwards
+   * so what is on screen is what was actually stored rather than an optimistic guess.
+   */
+  const write = useCallback(
+    async (fn: () => Promise<LibraryTree>): Promise<boolean> => {
+      try {
+        setTree(await fn());
+        return true;
+      } catch (e) {
+        console.error(e);
+        flash(t("lib.writeFailed"));
+        await loadTree().catch(() => {});
+        return false;
+      }
+    },
+    [flash, t, loadTree],
+  );
+
+
   // Started and not finished — the number the reference prints beside "Reading now".
   const readingCount = useMemo(
     () => props.books.filter((b) => (b.fraction ?? 0) > 0 && (b.fraction ?? 0) < 1).length,
     [props.books],
   );
+
+  // The node the management panel is standing over: a real case, or the synthesised group that
+  // holds every shelf belonging to no case. Its count is DISTINCT books, matching a real case's.
+  const editorNode = useMemo<CaseNode | null>(() => {
+    if (!editorFor) return null;
+    if (editorFor !== UNFILED_EDITOR) return tree.cases.find((x) => x.id === editorFor) ?? null;
+    if (!tree.loose.length) return null;
+    return unfiledCase(t("lib.unfiled"), tree.loose, items);
+  }, [editorFor, tree.cases, tree.loose, items, t]);
 
   const shelfById = useMemo(() => {
     const m = new Map<string, { shelf: ShelfNode; caseNode: CaseNode | null }>();
@@ -352,7 +411,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
         return;
       }
       try {
-        setTree(await shelfPlaceBook(shelfId, carry.book.id, categoryId, index));
+        if (!(await write(() => shelfPlaceBook(shelfId, carry.book.id, categoryId, index)))) return;
         setItems((prev) => ({ ...prev }));
         await loadTree();
         flash(`${t("lib.placed")} ${t("lib.on")} ${target?.shelf.name ?? ""}`);
@@ -361,53 +420,78 @@ export function LibraryDesign(props: LibraryDesignProps) {
       }
       setCarry(null);
     },
-    [carry, shelfById, flash, t, loadTree],
+    [carry, shelfById, flash, t, loadTree, write],
   );
 
   const removeFromShelf = useCallback(
     async (bookId: string, shelfId: string) => {
-      await collectionRemoveBook(shelfId, bookId).catch(() => {});
+      try {
+        await collectionRemoveBook(shelfId, bookId);
+      } catch (e) {
+        console.error(e);
+        flash(t("lib.writeFailed"));
+      }
       await loadTree();
     },
-    [loadTree],
+    [loadTree, flash, t],
   );
 
   const setFinished = useCallback(
     async (b: BookRow, finished: boolean) => {
-      await progressSave(b.id, "", finished ? 1 : 0).catch(() => {});
+      try {
+        await progressSave(b.id, "", finished ? 1 : 0);
+      } catch (e) {
+        console.error(e);
+        flash(t("lib.writeFailed"));
+      }
       props.onReloadBooks();
     },
-    [props],
+    [props, flash, t],
   );
 
   /** Move every selected book onto one shelf, then leave Select mode as the design does. */
   const bulkMove = useCallback(
     async (shelfId: string) => {
       const ids = [...selected];
-      for (const id of ids) await shelfPlaceBook(shelfId, id, null, 0).catch(() => {});
+      let placed = 0;
+      let failed = 0;
+      for (const id of ids) {
+        try {
+          await shelfPlaceBook(shelfId, id, null, 0);
+          placed++;
+        } catch (e) {
+          console.error(e);
+          failed++;
+        }
+      }
       await loadTree();
       setSelected(new Set());
       setMode("browse");
       const target = shelfById.get(shelfId);
-      flash(`${t("lib.placed")} ${t("lib.on")} ${target?.shelf.name ?? ""}`);
+      // Never announce a move that did not happen. A loop of swallowed rejections used to end in
+      // "Placed on <shelf>" whether one book moved or none did.
+      if (failed && !placed) flash(t("lib.writeFailed"));
+      else if (failed) flash(t("lib.placedSome", { n: num(placed), failed: num(failed) }));
+      else flash(`${t("lib.placed")} ${t("lib.on")} ${target?.shelf.name ?? ""}`);
     },
-    [selected, loadTree, shelfById, flash, t],
+    [selected, loadTree, shelfById, flash, t, num],
   );
 
   const caseOps = useMemo(
     () => ({
-      rename: async (id: string, name: string) => setTree(await caseRename(id, name)),
+      rename: (id: string, name: string) => write(() => caseRename(id, name)),
       remove: async (id: string) => {
-        setTree(await caseDelete(id));
+        const name = tree.cases.find((c) => c.id === id)?.name ?? "";
+        if (await write(() => caseDelete(id))) flash(t("lib.case.deleted", { name }));
         await loadTree();
       },
       move: async (id: string, direction: number) => {
         const at = tree.cases.findIndex((c) => c.id === id);
         if (at < 0) return;
-        setTree(await caseReorder(id, Math.max(0, at + direction)));
+        await write(() => caseReorder(id, Math.max(0, at + direction)));
       },
     }),
-    [tree.cases, loadTree],
+    [tree.cases, loadTree, write, flash, t],
   );
 
   // RAWY-31's rename and delete still belong to the Library above — but they write through the
@@ -433,7 +517,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
   const shelfOps = useMemo(
     () => ({
       setOrder: async (shelfId: string, order: ShelfOrder) => {
-        setTree(await shelfSetOrder(shelfId, order));
+        await write(() => shelfSetOrder(shelfId, order));
         await loadTree();
       },
       move: async (shelfId: string, direction: number) => {
@@ -441,10 +525,10 @@ export function LibraryDesign(props: LibraryDesignProps) {
         const siblings = entry?.caseNode ? entry.caseNode.shelves : tree.loose;
         const at = siblings.findIndex((s) => s.id === shelfId);
         if (at < 0) return;
-        setTree(await shelfReorder(shelfId, Math.max(0, at + direction)));
+        await write(() => shelfReorder(shelfId, Math.max(0, at + direction)));
       },
       newCategory: async (shelfId: string) => {
-        setTree(await categoryCreate(shelfId, t("lib.newCategory")));
+        await write(() => categoryCreate(shelfId, t("lib.newCategory")));
         await loadTree();
       },
     }),
@@ -503,15 +587,16 @@ export function LibraryDesign(props: LibraryDesignProps) {
               return next;
             })
           }
-          onNewCase={async (name) => setTree(await caseCreate(name))}
-          onNewShelf={async (caseId, name) => setTree(await shelfCreate(name, caseId))}
+          onNewCase={(name) => write(() => caseCreate(name))}
+          onNewShelf={(caseId, name) => write(() => shelfCreate(name, caseId))}
           onRenameCase={caseOps.rename}
           onDeleteCase={caseOps.remove}
           onMoveCase={caseOps.move}
-          onNewRuleShelf={async (caseId) => setTree(await shelfCreate(t("lib.rule.reading"), caseId, "reading"))}
-          onCaseInk={async (id, ink) => setTree(await caseSetInk(id, ink))}
-          onPlaceCase={async (id, at) => setTree(await caseReorder(id, at))}
-          onRenameShelf={renameShelf}
+          onNewRuleShelf={(caseId) => write(() => shelfCreate(t("lib.rule.reading"), caseId, "reading"))}
+          onCaseInk={(id, ink) => write(() => caseSetInk(id, ink))}
+          onPlaceCase={(id, at) => write(() => caseReorder(id, at))}
+          onManageUnfiled={() => setEditorFor(UNFILED_EDITOR)}
+          onManageCase={setEditorFor}
           onSettings={props.onSettings}
           themeName={THEMES[themeId]?.name ?? ""}
           langName={t(lang === "ar" ? "lang.arabic" : "lang.english")}
@@ -552,15 +637,16 @@ export function LibraryDesign(props: LibraryDesignProps) {
             return next;
           })
         }
-        onNewCase={async (name) => setTree(await caseCreate(name))}
-        onNewShelf={async (caseId, name) => setTree(await shelfCreate(name, caseId))}
+        onNewCase={(name) => write(() => caseCreate(name))}
+        onNewShelf={(caseId, name) => write(() => shelfCreate(name, caseId))}
         onRenameCase={caseOps.rename}
         onDeleteCase={caseOps.remove}
         onMoveCase={caseOps.move}
-        onNewRuleShelf={async (caseId) => setTree(await shelfCreate(t("lib.rule.reading"), caseId, "reading"))}
-          onCaseInk={async (id, ink) => setTree(await caseSetInk(id, ink))}
-          onPlaceCase={async (id, at) => setTree(await caseReorder(id, at))}
-        onRenameShelf={renameShelf}
+        onNewRuleShelf={(caseId) => write(() => shelfCreate(t("lib.rule.reading"), caseId, "reading"))}
+          onCaseInk={(id, ink) => write(() => caseSetInk(id, ink))}
+          onPlaceCase={(id, at) => write(() => caseReorder(id, at))}
+          onManageUnfiled={() => setEditorFor(UNFILED_EDITOR)}
+          onManageCase={setEditorFor}
         onSettings={props.onSettings}
         themeName={THEMES[themeId]?.name ?? ""}
         langName={t(lang === "ar" ? "lang.arabic" : "lang.english")}
@@ -711,7 +797,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
               onFocusCase={(id) => setScope({ caseId: id, shelfId: null })}
               onFocusShelf={(id) => setScope((s) => ({ ...s, shelfId: id }))}
               onToggleShelf={async (s) => {
-                setTree(await shelfSetCollapsed(s.id, !s.collapsed));
+                await write(() => shelfSetCollapsed(s.id, !s.collapsed));
               }}
               onOpenBook={props.onOpenBook}
               onEditBook={setDetailsFor}
@@ -726,20 +812,8 @@ export function LibraryDesign(props: LibraryDesignProps) {
               onPickUp={(b, shelfId) => setCarry({ book: b, fromShelf: shelfId })}
               onRemoveFromShelf={removeFromShelf}
               onSetFinished={setFinished}
-              onNewShelf={async (caseId) => setTree(await shelfCreate(t("lib.shelf.untitled"), caseId))}
-              manageMenuFor={manageMenuFor}
+              onNewShelf={(caseId) => write(() => shelfCreate(t("lib.shelf.untitled"), caseId))}
               onManageCase={(id) => setEditorFor(id)}
-              renamingCase={renamingCase}
-              onRenameCase={setRenamingCase}
-              onCommitCaseRename={(id, name) => {
-                setRenamingCase(null);
-                if (name.trim()) caseOps.rename(id, name.trim());
-              }}
-              onDeleteCase={caseOps.remove}
-              onMoveCase={caseOps.move}
-              onNewRuleShelf={async (caseId) =>
-                setTree(await shelfCreate(t("lib.rule.reading"), caseId, "reading"))
-              }
               expandedShelves={expandedShelves}
               onExpandShelf={(id) => setExpandedShelves((prev) => new Set(prev).add(id))}
               carryWidth={carry ? spineWidth(carry.book, density) : 0}
@@ -750,13 +824,15 @@ export function LibraryDesign(props: LibraryDesignProps) {
               onRenameShelf={setRenamingShelf}
               onCommitRename={(id, name) => {
                 setRenamingShelf(null);
-                if (name.trim()) props.onRenameShelf(id, name.trim());
+                // `renameShelf`, not `props.onRenameShelf`: the wrapper is what re-reads the tree
+                // afterwards. Calling the raw prop here left the renamed shelf showing its old
+                // name in this very view until something else happened to reload.
+                if (name.trim()) renameShelf(id, name.trim());
               }}
               onDeleteShelf={deleteShelf}
               onNewCategory={shelfOps.newCategory}
-              onShelfInk={async (id, ink) => setTree(await shelfSetInk(id, ink))}
-              onSetShelfCase={async (id, caseId) => { setTree(await shelfSetCase(id, caseId)); await loadTree(); }}
-              onCaseInk={async (id, ink) => setTree(await caseSetInk(id, ink))}
+              onShelfInk={(id, ink) => write(() => shelfSetInk(id, ink))}
+              onSetShelfCase={async (id, caseId) => { await write(() => shelfSetCase(id, caseId)); await loadTree(); }}
               onMoveShelf={shelfOps.move}
               onPlace={place}
               libraryCoverMode={props.coverMode}
@@ -894,9 +970,15 @@ export function LibraryDesign(props: LibraryDesignProps) {
         )}
       </div>
 
-      {editorFor && tree.cases.some((x) => x.id === editorFor) && (
+      {/* The management panel. A real case supplies its own node; the unfiled group is given a
+          synthesised one carrying the loose shelves, so an un-cased shelf can be renamed, ordered,
+          coloured, reordered, filed into a case and deleted through exactly the same panel — and
+          the sidebar shelf row stays the mark/name/count the reference draws. */}
+      {editorNode && (
         <CaseEditor
-          caseNode={tree.cases.find((x) => x.id === editorFor)!}
+          caseNode={editorNode}
+          unfiled={editorFor === UNFILED_EDITOR}
+          cases={tree.cases}
           byId={byId}
           items={items}
           onTree={setTree}
@@ -906,6 +988,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
           }}
           onClose={() => setEditorFor(null)}
           onOpenBookDetails={setDetailsFor}
+          notify={flash}
         />
       )}
 

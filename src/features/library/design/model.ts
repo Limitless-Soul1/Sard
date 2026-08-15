@@ -187,3 +187,19 @@ export function makeLooseShelf(name: string, count: number): ShelfNode {
     categories: [],
   };
 }
+
+/** The management panel's `caseNode` id when it is standing over the unfiled shelves. */
+export const UNFILED_CASE_ID = "__unfiled";
+
+/**
+ * The synthesised case that lets the management panel stand over shelves belonging to no case.
+ *
+ * The count is DISTINCT books, matching what the backend reports for a real case: a book sitting
+ * on two unfiled shelves is one book, not two. Summing the shelf counts is the mistake that once
+ * had a 42-book library reporting 43.
+ */
+export function unfiledCase(name: string, loose: ShelfNode[], items: Record<string, ShelfItem[]>): CaseNode {
+  const ids = new Set<string>();
+  for (const s of loose) for (const i of items[s.id] ?? []) ids.add(i.book_id);
+  return { id: UNFILED_CASE_ID, name, ink: null, count: ids.size, shelves: loose };
+}

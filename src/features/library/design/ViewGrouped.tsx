@@ -13,7 +13,7 @@ import type { BookRow, CaseNode, ShelfNode, ShelfOrder } from "../../../lib/ipc"
 import { useI18n } from "../../../i18n";
 import { localeNum } from "../../../lib/format";
 import { BookTile } from "./BookTile";
-import { CaseManageMenu, ShelfOrderMenu } from "./Menus";
+import { ShelfOrderMenu } from "./Menus";
 import { type BookGroup, type DesignView, isVirtualShelf, itemWidth } from "./model";
 import type { CoverMode } from "./coverPresentation";
 
@@ -49,14 +49,7 @@ export interface GroupedProps {
   onRemoveFromShelf: (bookId: string, shelfId: string) => void;
   onSetFinished: (b: BookRow, finished: boolean) => void;
   onNewShelf: (caseId: string) => void;
-  manageMenuFor: string | null;
   onManageCase: (id: string | null) => void;
-  renamingCase: string | null;
-  onRenameCase: (id: string | null) => void;
-  onCommitCaseRename: (id: string, name: string) => void;
-  onDeleteCase: (id: string) => void;
-  onMoveCase: (id: string, direction: number) => void;
-  onNewRuleShelf: (caseId: string) => void;
   /** Which shelf's order popover is open, and how to open/close one. */
   orderMenuFor: string | null;
   onOpenOrder: (shelfId: string | null) => void;
@@ -69,7 +62,6 @@ export interface GroupedProps {
   onNewCategory: (shelfId: string) => void;
   onShelfInk: (shelfId: string, ink: string | null) => void;
   onSetShelfCase: (shelfId: string, caseId: string | null) => void;
-  onCaseInk: (caseId: string, ink: string | null) => void;
   onMoveShelf: (shelfId: string, direction: number) => void;
   /** Placement targets while a book is in hand. */
   /** Shelves the reader has expanded past the two-row cap. */
@@ -230,47 +222,25 @@ export function ViewGrouped(props: GroupedProps) {
                     }}
                   />
                 </span>
-                {c.node && props.renamingCase === c.node.id ? (
-                  <input
-                    autoFocus
-                    defaultValue={c.node.name}
-                    dir="auto"
-                    onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") props.onCommitCaseRename(c.node!.id, e.currentTarget.value);
-                      else if (e.key === "Escape") props.onRenameCase(null);
-                    }}
-                    onBlur={(e) => props.onCommitCaseRename(c.node!.id, e.currentTarget.value)}
-                    style={{
-                      width: 260,
-                      background: "var(--soft)",
-                      border: "1px solid var(--brd)",
-                      borderRadius: 7,
-                      padding: "5px 9px",
-                      font: "600 1rem var(--book)",
-                      outline: "none",
-                    }}
-                  />
-                ) : (
-                  // The name carries the case's colour as an inset underline — the reference's
-                  // own `box-shadow: inset 0 -6px 0 -2px {ink}55`.
-                  <span
-                    dir="auto"
-                    style={{
-                      flex: "none",
-                      font: rtl ? "700 1.125rem var(--ar)" : "600 1.0625rem var(--book)",
-                      color: "var(--txt)",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      boxShadow: c.node
-                        ? `inset 0 -6px 0 -2px color-mix(in srgb, ${ink} 33%, transparent)`
-                        : undefined,
-                    }}
-                  >
-                    {c.node ? c.node.name : t("lib.unfiled")}
-                  </span>
-                )}
+                {/* The name carries the case's colour as an inset underline — the reference's
+                    own `box-shadow: inset 0 -6px 0 -2px {ink}55`. Renaming happens in the
+                    management panel that "Manage" opens, which is where the reference puts it. */}
+                <span
+                  dir="auto"
+                  style={{
+                    flex: "none",
+                    font: rtl ? "700 1.125rem var(--ar)" : "600 1.0625rem var(--book)",
+                    color: "var(--txt)",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    boxShadow: c.node
+                      ? `inset 0 -6px 0 -2px color-mix(in srgb, ${ink} 33%, transparent)`
+                      : undefined,
+                  }}
+                >
+                  {c.node ? c.node.name : t("lib.unfiled")}
+                </span>
                 <span
                   style={{
                     flex: "none",
@@ -302,30 +272,17 @@ export function ViewGrouped(props: GroupedProps) {
               </button>
               {c.node && (
                 <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                  <span style={{ position: "relative" }}>
-                    <button
-                      className="libd-hov-txt"
-                      onClick={() =>
-                        props.onManageCase(props.manageMenuFor === c.node!.id ? null : c.node!.id)
-                      }
-                      style={{ font: "500 .75rem var(--ui)", color: "var(--mut)" }}
-                    >
-                      {t("lib.manage")}
-                    </button>
-                    {props.manageMenuFor === c.node!.id && (
-                      <CaseManageMenu
-                        onRename={() => props.onRenameCase(c.node!.id)}
-                        onNewShelf={() => props.onNewShelf(c.node!.id)}
-                        onNewRuleShelf={() => props.onNewRuleShelf(c.node!.id)}
-                        onMoveUp={() => props.onMoveCase(c.node!.id, -1)}
-                        onMoveDown={() => props.onMoveCase(c.node!.id, 1)}
-                        onDelete={() => props.onDeleteCase(c.node!.id)}
-                        onClose={() => props.onManageCase(null)}
-                        ink={c.node!.ink}
-                        onInk={(ink) => props.onCaseInk(c.node!.id, ink)}
-                      />
-                    )}
-                  </span>
+                  {/* "Manage" opens the management PANEL — the reference's own destination for
+                      it. There used to be a context menu behind a `manageMenuFor` that nothing
+                      ever set, so every control inside it was unreachable: rename, colour, move
+                      and delete all lived in a menu that could not open. They live in the panel. */}
+                  <button
+                    className="libd-hov-txt"
+                    onClick={() => props.onManageCase(c.node!.id)}
+                    style={{ font: "500 .75rem var(--ui)", color: "var(--mut)" }}
+                  >
+                    {t("lib.manage")}
+                  </button>
                   <button
                     className="libd-hov-txt"
                     onClick={() => props.onNewShelf(c.node!.id)}

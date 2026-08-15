@@ -26,6 +26,7 @@ import {
   shelfCreate,
   shelfPlaceBook,
   shelfReorder,
+  shelfSetCase,
   shelfSetOrder,
   type ShelfOrder,
 } from "../../../lib/ipc";
@@ -55,6 +56,19 @@ interface Target {
 
 export interface CaseEditorProps {
   caseNode: CaseNode;
+  /**
+   * True when `caseNode` is the synthesised "Not in a case" group rather than a real case.
+   *
+   * An unfiled shelf is still a shelf the reader made and has to be able to manage. The reference
+   * sidebar deliberately gives a shelf row no ⋯ — management belongs to this panel — but it also
+   * has no un-cased shelves at all, so it says nothing about them. Rather than bolt controls onto
+   * the sidebar row and break the design that was just matched to the reference, the Unfiled
+   * heading opens THIS panel over its own shelves. The case-specific parts (name, colour, delete)
+   * stand down, because there is no case here to name, colour or delete.
+   */
+  unfiled?: boolean;
+  /** The real cases, so a shelf can be filed into one from here. */
+  cases: CaseNode[];
   /** Every book, by id, for the chips. */
   byId: Map<string, BookRow>;
   /** Each shelf's ordered membership. */
@@ -64,6 +78,8 @@ export interface CaseEditorProps {
   onChanged: () => void;
   onClose: () => void;
   onOpenBookDetails: (b: BookRow) => void;
+  /** The Library's toast — every deletion and every failed write is announced through it. */
+  notify: (msg: string) => void;
 }
 
 export function CaseEditor(props: CaseEditorProps) {
@@ -78,6 +94,10 @@ export function CaseEditor(props: CaseEditorProps) {
   const [creatingCatIn, setCreatingCatIn] = useState<string | null>(null);
   const [confirmShelf, setConfirmShelf] = useState<string | null>(null);
   const [confirmCat, setConfirmCat] = useState<{ shelf: string; cat: string } | null>(null);
+  // Deleting a case is two clicks, on two different targets, with the consequences in between.
+  const [confirmCase, setConfirmCase] = useState(false);
+  /** Which shelf is choosing the case it belongs to. */
+  const [movingShelf, setMovingShelf] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [name, setName] = useState(c.name);
   const [busy, setBusy] = useState(false);
@@ -191,40 +211,66 @@ export function CaseEditor(props: CaseEditorProps) {
   }, [hand, props]);
 
   // ---- writes ----------------------------------------------------------------
-  const run = async (fn: () => Promise<LibraryTree>) => {
+  // Every write goes through here, and a write that fails SAYS SO. Swallowing the rejection made
+  // a failed rename or reorder indistinguishable from one the reader had not actually performed —
+  // the panel simply sat there. `notify` is the Library's own toast.
+  const run = async (fn: () => Promise<LibraryTree>): Promise<boolean> => {
     setBusy(true);
-    const tree = await fn().catch(() => null);
+    let tree: LibraryTree | null = null;
+    let ok = true;
+    try {
+      tree = await fn();
+    } catch (e) {
+      console.error(e);
+      ok = false;
+      props.notify(t("lib.writeFailed"));
+    }
     setBusy(false);
     if (tree) props.onTree(tree);
     props.onChanged();
+    return ok;
   };
 
   /** Delete a shelf, first moving its books to another shelf when one is chosen. */
   const removeShelf = async (s: ShelfNode, moveTo: string | null) => {
     setBusy(true);
-    if (moveTo) {
-      for (const g of shelfBooks(s)) {
-        for (const b of g.books) await shelfPlaceBook(moveTo, b.id, null, 0).catch(() => {});
+    let ok = true;
+    try {
+      if (moveTo) {
+        for (const g of shelfBooks(s)) {
+          for (const b of g.books) await shelfPlaceBook(moveTo, b.id, null, 0);
+        }
       }
+      await collectionDelete(s.id);
+    } catch (e) {
+      console.error(e);
+      ok = false;
     }
-    const tree = await collectionDelete(s.id).catch(() => null);
     setBusy(false);
     setConfirmShelf(null);
-    if (tree) props.onChanged();
+    props.notify(ok ? t("lib.shelf.deleted", { name: s.name }) : t("lib.writeFailed"));
     props.onChanged();
   };
 
   /** Delete a category, moving its books into another category of the same shelf. */
   const removeCategory = async (s: ShelfNode, catId: string, moveTo: string | null) => {
     setBusy(true);
-    const run2 = shelfBooks(s).find((g) => g.categoryId === catId);
-    if (run2) {
-      for (const b of run2.books) await shelfPlaceBook(s.id, b.id, moveTo, 0).catch(() => {});
+    let tree: LibraryTree | null = null;
+    let ok = true;
+    try {
+      const run2 = shelfBooks(s).find((g) => g.categoryId === catId);
+      if (run2) {
+        for (const b of run2.books) await shelfPlaceBook(s.id, b.id, moveTo, 0);
+      }
+      tree = await categoryDelete(catId);
+    } catch (e) {
+      console.error(e);
+      ok = false;
     }
-    const tree = await categoryDelete(catId).catch(() => null);
     setBusy(false);
     setConfirmCat(null);
     if (tree) props.onTree(tree);
+    props.notify(ok ? t("lib.category.deleted") : t("lib.writeFailed"));
     props.onChanged();
   };
 
@@ -304,31 +350,45 @@ export function CaseEditor(props: CaseEditorProps) {
                 marginBottom: 7,
               }}
             >
-              {t("lib.managing")}
+              {props.unfiled ? t("lib.managingUnfiled") : t("lib.managing")}
             </div>
-            <input
-              value={name}
-              dir="auto"
-              onChange={(e) => setName(e.target.value)}
-              onBlur={() => name.trim() && name !== c.name && run(() => caseRename(c.id, name.trim()))}
-              onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-              style={{
-                width: "100%",
-                background: "var(--soft)",
-                border: "1px solid var(--brd)",
-                borderRadius: 8,
-                padding: "7px 10px",
-                font: rtl ? "700 1.125rem var(--ar)" : "600 1.0625rem var(--book)",
-                color: "var(--txt)",
-                outline: "none",
-              }}
-            />
+            {props.unfiled ? (
+              // Nothing to rename: "Not in a case" is a place, not an object the reader owns.
+              <div
+                style={{
+                  padding: "7px 0",
+                  font: rtl ? "700 1.125rem var(--ar)" : "600 1.0625rem var(--book)",
+                  color: "var(--txt)",
+                }}
+              >
+                {t("lib.unfiled")}
+              </div>
+            ) : (
+              <input
+                value={name}
+                dir="auto"
+                onChange={(e) => setName(e.target.value)}
+                onBlur={() => name.trim() && name !== c.name && run(() => caseRename(c.id, name.trim()))}
+                onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                style={{
+                  width: "100%",
+                  background: "var(--soft)",
+                  border: "1px solid var(--brd)",
+                  borderRadius: 8,
+                  padding: "7px 10px",
+                  font: rtl ? "700 1.125rem var(--ar)" : "600 1.0625rem var(--book)",
+                  color: "var(--txt)",
+                  outline: "none",
+                }}
+              />
+            )}
             <div style={{ display: "flex", alignItems: "center", gap: 14, marginTop: 9, flexWrap: "wrap" }}>
               <span style={{ font: "500 .75rem var(--ui)", color: "var(--faint)" }}>
                 {t("lib.shelfCount", { n: num(c.count) })} ·{" "}
                 {t("lib.shelvesCount", { n: num(c.shelves.length) })}
               </span>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {/* No colour picker here: an unfiled group has no ink of its own to set. */}
+              <div style={{ display: props.unfiled ? "none" : "flex", alignItems: "center", gap: 6 }}>
                 <button
                   title={t("lib.inkNone")}
                   aria-label={t("lib.inkNone")}
@@ -439,15 +499,47 @@ export function CaseEditor(props: CaseEditorProps) {
                       {s.order_rule === "hand" ? t("lib.byHand") : `⇅ ${t(`lib.sort.${s.order_rule}` as never)}`}
                     </button>
                   )}
+                  {/* WHICH CASE HOLDS THIS SHELF. The one control that stops a shelf becoming an
+                      object the reader can see but not file — and the only place it is needed,
+                      since this panel is now reachable for cased and unfiled shelves alike. */}
+                  <button
+                    className="libd-hov"
+                    title={t("lib.moveShelfToCase")}
+                    onClick={() => {
+                      setConfirmShelf(null);
+                      setMovingShelf(movingShelf === s.id ? null : s.id);
+                    }}
+                    style={chip(movingShelf === s.id)}
+                  >
+                    {s.case_id ? (props.cases.find((x) => x.id === s.case_id)?.name ?? c.name) : t("lib.unfiled")}
+                  </button>
                   <button
                     title={t("lib.shelf.delete")}
                     aria-label={t("lib.shelf.delete")}
-                    onClick={() => setConfirmShelf(confirmShelf === s.id ? null : s.id)}
+                    onClick={() => {
+                      setMovingShelf(null);
+                      setConfirmShelf(confirmShelf === s.id ? null : s.id);
+                    }}
                     style={{ width: 24, height: 24, borderRadius: 7, color: "var(--faint)", fontSize: 12 }}
                   >
                     ✕
                   </button>
                 </div>
+
+                {movingShelf === s.id && (
+                  <ConfirmBar
+                    text={t("lib.moveShelfToCase")}
+                    targets={[
+                      { id: "", label: t("lib.unfiled") },
+                      ...props.cases.filter((x) => x.id !== s.case_id).map((x) => ({ id: x.id, label: x.name })),
+                    ].filter((x) => !(x.id === "" && !s.case_id))}
+                    onPick={async (id) => {
+                      setMovingShelf(null);
+                      await run(() => shelfSetCase(s.id, id || null));
+                    }}
+                    onCancel={() => setMovingShelf(null)}
+                  />
+                )}
 
                 {s.auto_rule && (
                   <div style={{ font: "400 .6875rem var(--ui)", color: "var(--faint)", padding: "0 0 9px" }}>
@@ -684,7 +776,7 @@ export function CaseEditor(props: CaseEditorProps) {
                 const v = draft.trim();
                 setCreatingShelf(false);
                 setDraft("");
-                if (v) run(() => shelfCreate(v, c.id));
+                if (v) run(() => shelfCreate(v, props.unfiled ? null : c.id));
               }}
               style={{
                 marginTop: 12,
@@ -728,12 +820,20 @@ export function CaseEditor(props: CaseEditorProps) {
           >
             {t("lib.newShelf")}
           </button>
-          <span style={{ flex: 1, font: "400 .75rem var(--ui)", color: hand ? "var(--acc)" : "var(--faint)" }}>
-            {hand?.kind === "book"
-              ? `${t("lib.inHand")} · ${t("lib.editorHint")}`
-              : hand
-                ? `${t("lib.inHand")} · ${t("lib.pickRow")}`
-                : t("lib.editorHint")}
+          <span
+            style={{
+              flex: 1,
+              font: "400 .75rem/1.4 var(--ui)",
+              color: confirmCase ? "#c0503a" : hand ? "var(--acc)" : "var(--faint)",
+            }}
+          >
+            {confirmCase
+              ? t("lib.case.deleteConfirm")
+              : hand?.kind === "book"
+                ? `${t("lib.inHand")} · ${t("lib.editorHint")}`
+                : hand
+                  ? `${t("lib.inHand")} · ${t("lib.pickRow")}`
+                  : t("lib.editorHint")}
           </span>
           {hand && (
             <button
@@ -754,17 +854,60 @@ export function CaseEditor(props: CaseEditorProps) {
               {t("lib.cancel")}
             </button>
           )}
-          <button
-            className="libd-hov"
-            onClick={async () => {
-              await caseDelete(c.id).catch(() => {});
-              props.onChanged();
-              props.onClose();
-            }}
-            style={{ height: 30, padding: "0 12px", borderRadius: 9, font: "500 .75rem var(--ui)", color: "#c0503a" }}
-          >
-            {t("lib.deleteCase")}
-          </button>
+          {/* No case to delete when this panel is standing in for the unfiled group. */}
+          {!props.unfiled &&
+            (confirmCase ? (
+              <>
+                <button
+                  className="libd-hov"
+                  onClick={() => setConfirmCase(false)}
+                  style={{
+                    height: 30,
+                    padding: "0 12px",
+                    borderRadius: 9,
+                    border: "1px solid var(--brd)",
+                    font: "500 .75rem var(--ui)",
+                    color: "var(--mut)",
+                  }}
+                >
+                  {t("lib.cancel")}
+                </button>
+                <button
+                  className="libd-hov"
+                  onClick={async () => {
+                    let ok = true;
+                    try {
+                      await caseDelete(c.id);
+                    } catch (e) {
+                      console.error(e);
+                      ok = false;
+                    }
+                    props.notify(ok ? t("lib.case.deleted", { name: c.name }) : t("lib.writeFailed"));
+                    props.onChanged();
+                    if (ok) props.onClose();
+                    else setConfirmCase(false);
+                  }}
+                  style={{
+                    height: 30,
+                    padding: "0 12px",
+                    borderRadius: 9,
+                    border: "1px solid #c0503a",
+                    font: "600 .75rem var(--ui)",
+                    color: "#c0503a",
+                  }}
+                >
+                  {t("lib.case.deleteYes")}
+                </button>
+              </>
+            ) : (
+              <button
+                className="libd-hov"
+                onClick={() => setConfirmCase(true)}
+                style={{ height: 30, padding: "0 12px", borderRadius: 9, font: "500 .75rem var(--ui)", color: "#c0503a" }}
+              >
+                {t("lib.deleteCase")}
+              </button>
+            ))}
           <button
             className="libd-hov-bright"
             onClick={props.onClose}

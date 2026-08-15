@@ -50,7 +50,6 @@ export function spineWidth(book: BookRow, density: number): number {
 
 export const progressPct = (b: BookRow) => Math.round((b.fraction ?? 0) * 100);
 export const isFinished = (b: BookRow) => (b.fraction ?? 0) >= 0.995;
-export const isStarted = (b: BookRow) => (b.fraction ?? 0) > 0.001;
 
 /** The design's progress label: a percentage, "Finished", or an em dash. */
 export function pctText(b: BookRow, finishedLabel: string): string {
@@ -99,21 +98,12 @@ export function sortBooks(list: BookRow[], key: ShelfOrder): BookRow[] {
 export type DesignSort = "recent" | "added" | "title" | "author" | "progress";
 export const DESIGN_SORTS: DesignSort[] = ["recent", "added", "title", "author", "progress"];
 
-/**
- * Does this book match the query?
- *
- * The design searches titles and authors. Case and shelf names are matched by the caller,
- * which knows the structure — a hit on a shelf name shows the whole shelf.
- */
-export function bookMatches(b: BookRow, q: string): boolean {
-  if (!q) return true;
-  const needle = q.trim().toLowerCase();
-  if (!needle) return true;
-  return (
-    (b.title ?? "").toLowerCase().includes(needle) ||
-    (b.author ?? "").toLowerCase().includes(needle)
-  );
-}
+// There is deliberately no title/author matcher here. The design's own file had one, but Sard
+// searches in SQL, where `library_list_books` folds Arabic the way RAWY-178 requires — an
+// unvocalized query finds a vocalized title, and hamza/alef variants match. A naive
+// `toLowerCase().includes()` on top would DISCARD exactly the rows folding had just matched, so
+// the library would answer قراءة but not قِراءة. Anything reaching a view has already passed the
+// folded search; a second pass is not a refinement, it is a regression waiting to be wired up.
 
 /** One run of books under an optional category heading, in the order the shelf gives. */
 export interface BookGroup {
@@ -438,6 +428,18 @@ export function closedGroups(caseIds: string[], open: ReadonlySet<string>): stri
  * nothing to click, and no message anywhere. Checking the shape turns that into an ordinary
  * reported write failure instead of a dead window.
  */
+/**
+ * The translation key naming a shelf's sort rule.
+ *
+ * "By hand" is not a sort and has no `lib.sort.*` entry — it is the absence of one — so the type
+ * excludes it rather than letting a template literal ask for a key that was never written. The
+ * call sites already branched on it; this makes the compiler agree, and removes the cast that was
+ * hiding the gap.
+ */
+export type SortKey = `lib.sort.${Exclude<ShelfOrder, "hand">}`;
+
+export const sortKey = (rule: Exclude<ShelfOrder, "hand">): SortKey => `lib.sort.${rule}`;
+
 export function isLibraryTree(v: unknown): v is LibraryTree {
   if (!v || typeof v !== "object") return false;
   const t = v as Partial<LibraryTree>;

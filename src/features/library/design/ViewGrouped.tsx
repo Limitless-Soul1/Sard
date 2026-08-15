@@ -14,7 +14,7 @@ import { useI18n } from "../../../i18n";
 import { localeNum } from "../../../lib/format";
 import { BookTile } from "./BookTile";
 import { ShelfOrderMenu } from "./Menus";
-import { type BookGroup, type DesignView, isVirtualShelf, itemWidth, UNFILED_CASE_ID } from "./model";
+import { type BookGroup, type DesignView, isVirtualShelf, itemWidth, sortKey, UNFILED_CASE_ID } from "./model";
 import type { CoverMode } from "./coverPresentation";
 
 export interface ShelfRender {
@@ -410,7 +410,7 @@ export function ViewGrouped(props: GroupedProps) {
                         >
                           {shelf.order_rule === "hand"
                             ? t("lib.byHand")
-                            : `⇅ ${t(`lib.sort.${shelf.order_rule}` as never)}`}
+                            : `⇅ ${t(sortKey(shelf.order_rule))}`}
                           <span style={{ color: "var(--faint)", fontSize: 9 }}>▾</span>
                         </button>
                       )}

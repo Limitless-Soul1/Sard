@@ -35,7 +35,7 @@ import { useI18n } from "../../../i18n";
 import { localeNum } from "../../../lib/format";
 import { resolveBookMeta, displayTitle } from "../../../lib/bookMeta";
 import { autoCoverPaint } from "../AutoCover";
-import { dropIndex, isFinished, pctText, groupShelf, placementPlan, type BookGroup } from "./model";
+import { dropIndex, isFinished, pctText, groupShelf, placementPlan, sortKey, type BookGroup } from "./model";
 import { createEdgeScroller, type EdgeScroller } from "./dragScroll";
 
 /** The case inks, shared with the sidebar's picker. */
@@ -720,7 +720,7 @@ export function CaseEditor(props: CaseEditorProps) {
                       }}
                       style={chip(s.order_rule === "hand")}
                     >
-                      {s.order_rule === "hand" ? t("lib.byHand") : `⇅ ${t(`lib.sort.${s.order_rule}` as never)}`}
+                      {s.order_rule === "hand" ? t("lib.byHand") : `⇅ ${t(sortKey(s.order_rule))}`}
                     </button>
                   )}
                   {/* WHICH CASE HOLDS THIS SHELF. The one control that stops a shelf becoming an

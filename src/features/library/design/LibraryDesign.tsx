@@ -379,17 +379,13 @@ export function LibraryDesign(props: LibraryDesignProps) {
     [items, byId],
   );
 
-  /**
-   * The books a shelf shows.
-   *
-   * There is deliberately NO text matching here. `props.books` has already been filtered by
-   * `library_list_books`, whose search folds Arabic the way RAWY-178 requires — an unvocalized
-   * query finds a vocalized title, and hamza/alef variants match. A second, naive
-   * `toLowerCase().includes()` pass on top would DISCARD exactly the rows that folding had just
-   * matched, so the library would answer قراءة but not قِراءة. The membership lookup below
-   * already restricts every shelf to books that survived that query.
-   */
-  const filterShelf = useCallback((_s: ShelfNode, list: BookRow[]): BookRow[] => list, []);
+  // A shelf's books are NOT text-matched here, deliberately. `props.books` has already been
+  // filtered by `library_list_books`, whose search folds Arabic the way RAWY-178 requires — an
+  // unvocalized query finds a vocalized title, and hamza/alef variants match. A second, naive
+  // `toLowerCase().includes()` pass on top would DISCARD exactly the rows that folding had just
+  // matched, so the library would answer قراءة but not قِراءة. The membership lookup below already
+  // restricts every shelf to books that survived that query — which is why nothing sits between
+  // `shelfBooks` and the render.
 
   const rendered: CaseRender[] = useMemo(() => {
     const caseList: CaseRender[] = [];
@@ -401,7 +397,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
       const shelves: ShelfRender[] = [];
       for (const s of c.shelves) {
         if (scope.shelfId && scope.shelfId !== s.id) continue;
-        const books = filterShelf(s, shelfBooks(s));
+        const books = shelfBooks(s);
         if (q && books.length === 0 && !s.name.toLowerCase().includes(q)) continue;
         shelves.push({ shelf: s, groups: groupShelf(s, items[s.id] ?? [], byId), total: books.length });
       }
@@ -411,7 +407,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
       const shelves: ShelfRender[] = [];
       for (const s of tree.loose) {
         if (scope.shelfId && scope.shelfId !== s.id) continue;
-        const books = filterShelf(s, shelfBooks(s));
+        const books = shelfBooks(s);
         if (q && books.length === 0 && !s.name.toLowerCase().includes(q)) continue;
         shelves.push({ shelf: s, groups: groupShelf(s, items[s.id] ?? [], byId), total: books.length });
       }
@@ -426,7 +422,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
         const filed = new Set<string>();
         for (const list of Object.values(items)) for (const i of list) filed.add(i.book_id);
         const loose = unshelvedBooks(props.books, filed);
-        const shown = loose; // already narrowed by the folded SQL search — see `filterShelf`
+        const shown = loose; // already narrowed by the folded SQL search — see the note above
         if (shown.length) {
           const shelf = makeLooseShelf(t("lib.unshelved"), shown.length);
           shelves.push({
@@ -439,7 +435,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
       if (shelves.length) caseList.push({ node: null, shelves });
     }
     return caseList;
-  }, [tree, scope, items, byId, filterShelf, shelfBooks, q, props.books, sort, t]);
+  }, [tree, scope, items, byId, shelfBooks, q, props.books, sort, t]);
 
   /** Details and the counts work off one flat, sorted list. */
   const flatBooks = useMemo(() => {
@@ -467,11 +463,11 @@ export function LibraryDesign(props: LibraryDesignProps) {
           caseNode: c.node,
           books: isVirtualShelf(s.shelf.id)
             ? s.groups.flatMap((g) => g.books)
-            : filterShelf(s.shelf, shelfBooks(s.shelf)),
+            : shelfBooks(s.shelf),
           runName: null,
         })),
       ),
-    [rendered, filterShelf, shelfBooks],
+    [rendered, shelfBooks],
   );
 
   const heroBook = useMemo(() => {

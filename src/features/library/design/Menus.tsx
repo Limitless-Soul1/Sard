@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { BookRow, CaseNode, ShelfNode, ShelfOrder } from "../../../lib/ipc";
 import { useI18n } from "../../../i18n";
+import type { TKey } from "../../../i18n/locales/en";
 import { autoCoverPaint } from "../AutoCover";
 import { resolveBookMeta, displayTitle } from "../../../lib/bookMeta";
 import type { SelectionSource } from "./model";
@@ -138,7 +139,7 @@ export function DangerRow({
 // Shelf order — the design's own list, then Rename and Delete shelf.
 // ---------------------------------------------------------------------------
 
-const ORDER_DEFS: { id: ShelfOrder; key: string }[] = [
+const ORDER_DEFS: { id: ShelfOrder; key: TKey }[] = [
   { id: "hand", key: "lib.byHand" },
   { id: "title", key: "lib.sort.title" },
   { id: "author", key: "lib.sort.author" },
@@ -187,7 +188,7 @@ export function ShelfOrderMenu({
             }}
             style={menuItem(shelf.order_rule === o.id)}
           >
-            <span>{t(o.key as never)}</span>
+            <span>{t(o.key)}</span>
             <span style={{ color: "var(--acc)", fontSize: 11 }}>
               {shelf.order_rule === o.id ? "✓" : ""}
             </span>

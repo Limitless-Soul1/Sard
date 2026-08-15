@@ -341,3 +341,26 @@ export function reconcileScope(scope: NavScope, cases: CaseNode[], loose: ShelfN
   }
   return scope;
 }
+
+/**
+ * Where a vertically dragged row would land, given the rows' midpoints.
+ *
+ * The pointer is above a row's midpoint → it goes before that row; below the last midpoint → it
+ * goes to the end. Expressed over midpoints rather than edges because that is what makes the
+ * insertion bar track the pointer without flickering between two positions at a boundary.
+ *
+ * `from` is the row being carried. Removing it first and reinserting is what makes "drop just
+ * below where I started" a no-op rather than an off-by-one — the reference does the same
+ * correction inline (`at > from ? at - 1 : at`) and getting it wrong is how a case appears to
+ * refuse to move down by one.
+ */
+export function dropIndex(pointerY: number, midpoints: number[], from: number): number {
+  let at = midpoints.length;
+  for (let i = 0; i < midpoints.length; i++) {
+    if (pointerY < midpoints[i]) {
+      at = i;
+      break;
+    }
+  }
+  return at > from ? at - 1 : at;
+}

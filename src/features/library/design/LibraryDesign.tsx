@@ -611,6 +611,24 @@ export function LibraryDesign(props: LibraryDesignProps) {
     [selected, loadTree, shelfById, flash, t, num],
   );
 
+  /**
+   * Drop a case at a position, and SAY where it landed.
+   *
+   * The reference announces the new position after every case move (`this.say(...)`) and the port
+   * had never carried that across — so a reorder was a silent rearrangement of a list the reader
+   * was in the middle of looking at, which is a large part of why the grip felt like it did
+   * nothing in particular.
+   */
+  const placeCase = useCallback(
+    async (id: string, at: number) => {
+      const name = tree.cases.find((c) => c.id === id)?.name ?? "";
+      if (await write(() => caseReorder(id, at))) {
+        flash(t("lib.caseMoved", { name, n: num(at + 1) }));
+      }
+    },
+    [tree.cases, write, flash, t, num],
+  );
+
   const caseOps = useMemo(
     () => ({
       rename: (id: string, name: string) => write(() => caseRename(id, name)),
@@ -736,7 +754,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
           onMoveCase={caseOps.move}
           onNewRuleShelf={(caseId) => write(() => shelfCreate(t("lib.rule.reading"), caseId, "reading"))}
           onCaseInk={(id, ink) => write(() => caseSetInk(id, ink))}
-          onPlaceCase={(id, at) => write(() => caseReorder(id, at))}
+          onPlaceCase={placeCase}
           onManageUnfiled={() => setEditorFor(UNFILED_EDITOR)}
           onManageCase={setEditorFor}
           onSettings={props.onSettings}
@@ -787,7 +805,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
         onMoveCase={caseOps.move}
         onNewRuleShelf={(caseId) => write(() => shelfCreate(t("lib.rule.reading"), caseId, "reading"))}
           onCaseInk={(id, ink) => write(() => caseSetInk(id, ink))}
-          onPlaceCase={(id, at) => write(() => caseReorder(id, at))}
+          onPlaceCase={placeCase}
           onManageUnfiled={() => setEditorFor(UNFILED_EDITOR)}
           onManageCase={setEditorFor}
         onSettings={props.onSettings}

@@ -6,13 +6,13 @@
 // row with search, the view switcher, the density steps and the sort menu — all carried over
 // with the design's own measurements.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CaseNode, ShelfNode } from "../../../lib/ipc";
 import { useI18n } from "../../../i18n";
 import { localeNum } from "../../../lib/format";
 import { Hoopoe } from "../Hoopoe";
 import { CaseManageMenu } from "./Menus";
-import { DENSITY_STEPS, DESIGN_SORTS, type DesignSort, type DesignView } from "./model";
+import { DENSITY_STEPS, DESIGN_SORTS, dropIndex, type DesignSort, type DesignView } from "./model";
 
 export type Section = "library" | "inbox" | "cards" | "bookmarks";
 
@@ -96,7 +96,68 @@ export function Sidebar(props: SidebarProps) {
   const [managing, setManaging] = useState<string | null>(null);
   // A case lifted by its grip, waiting for a rail to be clicked.
   const [caseHand, setCaseHand] = useState<string | null>(null);
+  // A case being DRAGGED by its grip right now, and where it would land.
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [dropAt, setDropAt] = useState<number | null>(null);
+  const dragStart = useRef<{ id: string; y: number; moved: boolean } | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLElement>());
+  const ghostRef = useRef<HTMLDivElement | null>(null);
   const [draft, setDraft] = useState("");
+
+  /**
+   * The grip's drag.
+   *
+   * Bound to the window rather than the button because a pointer that leaves the 20px grip must
+   * not end the drag — which is what "it looks like a handle but I cannot drag it" feels like from
+   * the outside. A few pixels of movement is what separates a drag from a click, so a click can
+   * still lift the case the way the reference does.
+   */
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      const st = dragStart.current;
+      if (!st) return;
+      if (!st.moved && Math.abs(e.clientY - st.y) < 4) return;
+      if (!st.moved) {
+        st.moved = true;
+        setDragging(st.id);
+        setCaseHand(null); // a drag supersedes any lift
+      }
+      const order = props.cases.map((c) => c.id);
+      const from = order.indexOf(st.id);
+      const mids = order.map((id) => {
+        const el = rowRefs.current.get(id);
+        if (!el) return Number.POSITIVE_INFINITY;
+        const r = el.getBoundingClientRect();
+        return r.top + r.height / 2;
+      });
+      setDropAt(dropIndex(e.clientY, mids, from));
+      const g = ghostRef.current;
+      if (g) g.style.transform = `translate(${e.clientX + 12}px, ${e.clientY - 10}px)`;
+    };
+    const up = () => {
+      // `pointerup` on the grip does the placing; this only catches a release elsewhere.
+      if (dragStart.current?.moved) {
+        setDragging(null);
+        setDropAt(null);
+      }
+      dragStart.current = null;
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      dragStart.current = null;
+      setDragging(null);
+      setDropAt(null);
+      setCaseHand(null);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointercancel", up);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointercancel", up);
+      window.removeEventListener("keydown", key);
+    };
+  }, [props.cases]);
 
   const num = (n: number) => localeNum(n, lang);
   const rtl = lang === "ar";
@@ -315,7 +376,7 @@ export function Sidebar(props: SidebarProps) {
           paddingBottom: 8,
         }}
       >
-        {props.cases.map((c) => {
+        {props.cases.map((c, ci) => {
           const open = props.openCases.has(c.id);
           const active = props.scope.caseId === c.id && !props.scope.shelfId;
           if (renamingCase === c.id) {
@@ -338,6 +399,21 @@ export function Sidebar(props: SidebarProps) {
           const lifted = caseHand === c.id;
           return (
             <div key={c.id} style={{ position: "relative" }}>
+              {/* THE INSERTION BAR while a case is being dragged — the answer to "where will this
+                  land if I let go now". It is the same accent rail the lift-and-place path uses,
+                  so both routes show the reader the same thing. */}
+              {dragging && dropAt === ci && (
+                <span
+                  style={{
+                    display: "block",
+                    height: 2,
+                    margin: "3px 0",
+                    borderRadius: 1,
+                    background: "var(--acc)",
+                    boxShadow: "0 0 0 3px color-mix(in srgb, var(--acc) 22%, transparent)",
+                  }}
+                />
+              )}
               {/* A place-here rail above each other case while one is lifted by its grip. */}
               {caseHand && caseHand !== c.id && (
                 <button
@@ -356,6 +432,10 @@ export function Sidebar(props: SidebarProps) {
                   read as a case at a glance, and it is why the shelf rows below (which have no
                   bar) read as children. */}
               <div
+                ref={(el) => {
+                  if (el) rowRefs.current.set(c.id, el);
+                  else rowRefs.current.delete(c.id);
+                }}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -363,7 +443,7 @@ export function Sidebar(props: SidebarProps) {
                   paddingInlineEnd: 2,
                   borderInlineStart: `3px solid ${ink}`,
                   background: active ? "var(--act)" : "transparent",
-                  opacity: lifted ? 0.4 : 1,
+                  opacity: lifted || dragging === c.id ? 0.4 : 1,
                 }}
               >
                 <button
@@ -425,13 +505,35 @@ export function Sidebar(props: SidebarProps) {
                     {num(c.count)}
                   </span>
                 </button>
-                {/* The grip lifts the case; a rail then appears above every other one. */}
+                {/* THE GRIP — one meaning: this is how you move a case.
+                    Drag it and the case follows the pointer with a live insertion bar; release
+                    to drop. A plain click still lifts the case and shows the same rails, for
+                    anyone who would rather not drag — the two are the same operation reached two
+                    ways, which is exactly how the management panel already treats a book. What it
+                    must never be is a control that LOOKS like a handle and only highlights. */}
                 <button
-                  title={t("lib.moveCase")}
-                  aria-label={t("lib.moveCase")}
-                  onClick={(e) => {
+                  title={t("lib.moveCaseHint")}
+                  aria-label={t("lib.moveCaseHint")}
+                  onPointerDown={(e) => {
                     e.stopPropagation();
-                    setCaseHand(lifted ? null : c.id);
+                    e.preventDefault();
+                    dragStart.current = { id: c.id, y: e.clientY, moved: false };
+                    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+                  }}
+                  onPointerUp={(e) => {
+                    e.stopPropagation();
+                    const st = dragStart.current;
+                    dragStart.current = null;
+                    if (st?.moved) {
+                      // A real drag: drop where the bar is showing.
+                      if (dropAt != null) props.onPlaceCase(c.id, dropAt);
+                      setDragging(null);
+                      setDropAt(null);
+                      setCaseHand(null);
+                    } else {
+                      // A click: lift, or put back down.
+                      setCaseHand(lifted ? null : c.id);
+                    }
                   }}
                   style={{
                     flex: "none",
@@ -440,8 +542,10 @@ export function Sidebar(props: SidebarProps) {
                     borderRadius: 6,
                     fontSize: 11,
                     lineHeight: 1,
-                    color: lifted ? "var(--acc)" : "var(--faint)",
-                    background: lifted ? "var(--act)" : "transparent",
+                    cursor: dragging === c.id ? "grabbing" : "grab",
+                    touchAction: "none",
+                    color: lifted || dragging === c.id ? "var(--acc)" : "var(--faint)",
+                    background: lifted || dragging === c.id ? "var(--act)" : "transparent",
                   }}
                 >
                   ⠿
@@ -513,6 +617,21 @@ export function Sidebar(props: SidebarProps) {
             </div>
           );
         })}
+
+        {/* The bar's last position: after every case. Without it the bottom of the list would be
+            the one place a drag could not reach. */}
+        {dragging && dropAt === props.cases.length - 1 && (
+          <span
+            style={{
+              display: "block",
+              height: 2,
+              margin: "3px 0",
+              borderRadius: 1,
+              background: "var(--acc)",
+              boxShadow: "0 0 0 3px color-mix(in srgb, var(--acc) 22%, transparent)",
+            }}
+          />
+        )}
 
         {/* The tail rail. Without it a lifted case could be dropped ABOVE any other case but
             never after the last one, so the bottom position was unreachable. */}
@@ -618,6 +737,33 @@ export function Sidebar(props: SidebarProps) {
           the padding, the radius, the accent gear and the hover come from the same place every
           other Sard control gets them, and they follow the writing direction because the class
           uses `text-align: start`. */}
+      {/* The case in hand, following the pointer — the thing that makes a drag read as carrying
+          something rather than as the list rearranging itself for reasons of its own. */}
+      {dragging && (
+        <div
+          ref={ghostRef}
+          aria-hidden
+          style={{
+            position: "fixed",
+            insetBlockStart: 0,
+            insetInlineStart: 0,
+            zIndex: 200,
+            pointerEvents: "none",
+            padding: "5px 11px",
+            borderRadius: 7,
+            border: "1px solid var(--brd)",
+            borderInlineStart: `3px solid ${props.cases.find((c) => c.id === dragging)?.ink ?? "var(--acc)"}`,
+            background: "var(--chr)",
+            boxShadow: "var(--sh3)",
+            font: "600 .8125rem var(--ui)",
+            color: "var(--txt)",
+            opacity: 0.95,
+          }}
+        >
+          {props.cases.find((c) => c.id === dragging)?.name}
+        </div>
+      )}
+
       <div className="lib-sidefoot" style={{ display: "block", paddingTop: 10, borderTop: "1px solid var(--brd)" }}>
         <button
           className="lib-settings-btn"

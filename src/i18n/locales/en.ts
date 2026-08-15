@@ -199,6 +199,8 @@ export const en = {
   "lib.deleteShelfQ": "Delete this shelf. Where do its books go?",
   "lib.keepInLibrary": "Leave them out of the case",
   "lib.moveCase": "Move this case",
+  "lib.moveCaseHint": "Drag to reorder this case",
+  "lib.caseMoved": "“{name}” moved to position {n}.",
   "lib.moveShelf": "Move this shelf",
   "lib.moveCategory": "Move this category",
   "lib.unfiled": "Not in a case",

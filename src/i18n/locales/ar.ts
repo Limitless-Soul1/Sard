@@ -198,6 +198,8 @@ export const ar: Record<TKey, string> = {
   "lib.deleteShelfQ": "حذف هذا الرفّ. أين تذهب كتبه؟",
   "lib.keepInLibrary": "أخرِجها من الخزانة",
   "lib.moveCase": "تحريك هذه الخزانة",
+  "lib.moveCaseHint": "اسحب لإعادة ترتيب هذه الخزانة",
+  "lib.caseMoved": "نُقلت «{name}» إلى الموضع {n}.",
   "lib.moveShelf": "تحريك هذا الرفّ",
   "lib.moveCategory": "تحريك هذه الفئة",
   "lib.unfiled": "خارج الخزائن",

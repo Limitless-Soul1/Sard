@@ -10,6 +10,7 @@ import { initStyleScope } from "./lib/styleScope";
 import { diagStart } from "@diag"; // DIAGNOSTIC BUILD ONLY - observes, never intervenes
 import { registerOutcomeRecorder } from "./lib/listeningOutcomes"; // RAWY-263: the local outcome baseline
 import { initTheme, reapplyTitlebarTheme, resolveTheme, useTheme } from "./theme";
+import { initProfiles } from "./features/profiles/store"; // PROFILES: register authored themes first
 import { initPresence } from "./lib/presence"; // DISC/RPC: load the Discord on/off switch
 import { LanguagePicker } from "./features/onboarding/LanguagePicker";
 import { Library, type OpenTarget } from "./features/library/Library";
@@ -58,7 +59,14 @@ function Root() {
 
 function App() {
   useEffect(() => {
-    initTheme(); // load + apply persisted theme/override/hide-titles/mode (RAWY-39)
+    // PROFILES: register reader-authored themes BEFORE the persisted theme id is resolved. A
+    // `theme_id` naming a profile can only resolve once that profile's theme is registered, so
+    // resolving it first would paint the fallback and correct itself a frame later — a visible
+    // flash of the wrong paper. This is the one ordering constraint Profiles introduces.
+    initProfiles().then(
+      () => initTheme(), // load + apply persisted theme/override/hide-titles/mode (RAWY-39)
+      () => initTheme(), // a failed profile load must never stop the theme from being applied
+    );
     initFonts(); // load + apply persisted UI font + register imported @font-faces (RAWY-39)
     initBookmarkStyle(); // load persisted bookmark shape/colour/position (RAWY-41)
     initReadMarkerStyle(); // RAWY-256: persisted chapter read-marker variant (global, like bookmark shape)

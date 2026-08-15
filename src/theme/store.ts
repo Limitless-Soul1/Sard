@@ -6,7 +6,7 @@ import { create } from "zustand";
 
 import { settingsGet, settingsSet } from "../lib/ipc";
 import { applyTheme } from "./applyTheme";
-import { DEFAULT_DARK, DEFAULT_LIGHT, isBuiltinThemeId } from "./themes";
+import { DEFAULT_DARK, DEFAULT_LIGHT, isThemeId } from "./themes";
 import { resolveTheme } from "./resolve";
 import type { ThemeId } from "./tokens";
 
@@ -144,11 +144,19 @@ export async function initTheme(): Promise<void> {
   const auto = mode === "auto";
   // The LIBRARY theme drives the app chrome (and is what Follow-OS swaps). It is NOT affected by
   // any book theme (RAWY-48/D29) — only Global Settings → Appearance changes it.
-  const libraryTheme = isBuiltinThemeId(tid) ? tid : DEFAULT_LIGHT;
+  // PROFILES (stage 3): `isThemeId`, not `isBuiltinThemeId`. `theme_id` may now name a
+  // reader-authored theme carried by a profile, and rejecting it here would drop the reader's whole
+  // look on every launch. Admitting it is safe because `resolveTheme` — not this line — decides what
+  // an id renders as: a profile that has since been deleted resolves to the default, which is the
+  // same place this guard sent it before.
+  //
+  // ⚠ ORDERING: `initProfiles()` must have registered the profile themes before this runs, or the
+  // first paint is the fallback and the correct paper arrives a frame later. App.tsx sequences them.
+  const libraryTheme = isThemeId(tid) ? tid : DEFAULT_LIGHT;
   const themeId = auto ? (osPrefersDark() ? DEFAULT_DARK : DEFAULT_LIGHT) : libraryTheme;
   // The shared/default BOOK theme (unified + per-book fallback). Migration: a missing key inherits
   // the library theme so existing books keep their look; thereafter the two move independently.
-  const bookThemeId = isBuiltinThemeId(btid) ? btid : libraryTheme;
+  const bookThemeId = isThemeId(btid) ? btid : libraryTheme;
   applyTheme(resolveTheme(themeId));
   useTheme.setState({
     themeId,

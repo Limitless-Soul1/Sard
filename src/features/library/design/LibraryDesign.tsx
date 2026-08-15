@@ -175,7 +175,13 @@ export function LibraryDesign(props: LibraryDesignProps) {
     // it is what made every case in a real profile come up folded.
     setTree(next);
     setOpenCases((prev) =>
-      prev.size ? prev : new Set(next.cases.map((c) => c.id).filter((id) => !closedCases.current.has(id))),
+      prev.size
+        ? prev
+        : new Set(
+            // The unfiled group collapses like any other top-level group, so it is seeded and
+            // stored with them rather than being a permanently-open exception.
+            [...next.cases.map((c) => c.id), UNFILED_EDITOR].filter((id) => !closedCases.current.has(id)),
+          ),
     );
     seeded.current = true;
     const shelves = [...next.cases.flatMap((c) => c.shelves), ...next.loose];
@@ -192,8 +198,8 @@ export function LibraryDesign(props: LibraryDesignProps) {
 
   // Persist the collapsed cases, on the same `settings` path the view, density and sort use.
   useEffect(() => {
-    if (!closedLoaded || !seeded.current || !tree.cases.length) return;
-    const closed = tree.cases.map((c) => c.id).filter((id) => !openCases.has(id));
+    if (!closedLoaded || !seeded.current) return;
+    const closed = [...tree.cases.map((c) => c.id), UNFILED_EDITOR].filter((id) => !openCases.has(id));
     closedCases.current = new Set(closed);
     settingsSet("libd_closed_cases", closed.join(",")).catch(() => {});
   }, [openCases, tree.cases, closedLoaded]);

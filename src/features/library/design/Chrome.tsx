@@ -12,7 +12,7 @@ import { useI18n } from "../../../i18n";
 import { localeNum } from "../../../lib/format";
 import { Hoopoe } from "../Hoopoe";
 import { CaseManageMenu } from "./Menus";
-import { DENSITY_STEPS, DESIGN_SORTS, dropIndex, type DesignSort, type DesignView } from "./model";
+import { DENSITY_STEPS, DESIGN_SORTS, dropIndex, UNFILED_CASE_ID, type DesignSort, type DesignView } from "./model";
 
 export type Section = "library" | "inbox" | "cards" | "bookmarks";
 
@@ -161,6 +161,8 @@ export function Sidebar(props: SidebarProps) {
 
   const num = (n: number) => localeNum(n, lang);
   const rtl = lang === "ar";
+  // The unfiled group answers to the same open set as the cases, under the shared synthetic id.
+  const looseOpen = props.openCases.has(UNFILED_CASE_ID);
 
   const nav: { id: Section | "reading"; label: string; count?: number }[] = [
     { id: "library", label: t("lib.nav.library"), count: props.bookCount },
@@ -667,17 +669,43 @@ export function Sidebar(props: SidebarProps) {
               manageable without adding one control to the row the design specifies. */}
           {props.loose.length > 0 && (
             <div style={{ display: "flex", alignItems: "center", padding: "6px 4px 4px 10px" }}>
-              <span
+              {/* The heading collapses the group, the way a case's disc collapses a case. The
+                  caret is the case row's own — same 7px box, same 1.6px strokes, same rotation
+                  and the same RTL flip — sized to sit against a small uppercase label rather
+                  than inside a disc, because this is a heading and not a case row. */}
+              <button
+                className="libd-hov-txt"
+                onClick={() => props.onToggleCase(UNFILED_CASE_ID)}
+                title={t("lib.unfiled")}
+                aria-label={t("lib.unfiled")}
+                aria-expanded={looseOpen}
                 style={{
                   flex: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  justifyContent: "flex-start",
+                  textAlign: "start",
                   font: "600 .625rem var(--ui)",
                   letterSpacing: ".14em",
                   textTransform: "uppercase",
                   color: "var(--faint)",
                 }}
               >
-                {t("lib.unfiled")}
-              </span>
+                <span
+                  style={{
+                    flex: "none",
+                    display: "block",
+                    width: 6,
+                    height: 6,
+                    borderRight: "1.6px solid var(--faint)",
+                    borderBottom: "1.6px solid var(--faint)",
+                    transform: `rotate(${looseOpen ? "45deg" : rtl ? "135deg" : "-45deg"}) translate(-1px,-1px)`,
+                    transition: "transform .18s ease-out",
+                  }}
+                />
+                <span style={{ flex: 1 }}>{t("lib.unfiled")}</span>
+              </button>
               <button
                 className="libd-hov libd-hov-txt"
                 title={t("lib.manageUnfiled")}
@@ -697,8 +725,9 @@ export function Sidebar(props: SidebarProps) {
               </button>
             </div>
           )}
-          {props.loose.map(shelfRow)}
-          {creatingShelfIn === null ? (
+          {(looseOpen || props.loose.length === 0) && props.loose.map(shelfRow)}
+          {(looseOpen || props.loose.length === 0) &&
+            (creatingShelfIn === null ? (
             draftInput(() => commit((n) => props.onNewShelf(null, n)), t("lib.shelf.namePlaceholder"), {
               margin: "3px 8px 3px 10px",
               borderRadius: 6,
@@ -721,7 +750,7 @@ export function Sidebar(props: SidebarProps) {
             >
               {t("lib.newShelf")}
             </button>
-          )}
+            ))}
         </div>
       </div>
 

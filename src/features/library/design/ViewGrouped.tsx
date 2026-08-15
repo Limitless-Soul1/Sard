@@ -14,7 +14,7 @@ import { useI18n } from "../../../i18n";
 import { localeNum } from "../../../lib/format";
 import { BookTile } from "./BookTile";
 import { ShelfOrderMenu } from "./Menus";
-import { type BookGroup, type DesignView, isVirtualShelf, itemWidth } from "./model";
+import { type BookGroup, type DesignView, isVirtualShelf, itemWidth, UNFILED_CASE_ID } from "./model";
 import type { CoverMode } from "./coverPresentation";
 
 export interface ShelfRender {
@@ -142,8 +142,11 @@ export function ViewGrouped(props: GroupedProps) {
   return (
     <>
       {props.cases.map((c) => {
-        const id = c.node?.id ?? "__loose";
-        const open = !c.node || props.openCases.has(c.node.id);
+        // The unfiled group is a top-level group like any other, so it answers to the same open
+        // set under a synthetic id. It used to render the same disc and caret as a case and then
+        // ignore the click — a control that looked collapsible and was not.
+        const id = c.node?.id ?? UNFILED_CASE_ID;
+        const open = props.openCases.has(id);
         const shelfCount = c.shelves.length;
         // DISTINCT books, never the sum of the shelf totals — a book on two shelves of the same
         // case would otherwise be counted twice, which is how a 42-book library reported 43.
@@ -192,7 +195,7 @@ export function ViewGrouped(props: GroupedProps) {
             >
               <button
                 className="libd-hov"
-                onClick={() => c.node && props.onToggleCase(c.node.id)}
+                onClick={() => props.onToggleCase(id)}
                 style={{
                   display: "flex",
                   alignItems: "center",

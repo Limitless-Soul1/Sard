@@ -143,6 +143,7 @@ export const en = {
   "lib.newShelf": "+ New shelf",
   "lib.noShelves": "No shelves yet",
   "lib.shelf.namePlaceholder": "Shelf name",
+  "lib.shelf.untitled": "New shelf", // the name a shelf is born with, without the button's "+"
   "lib.shelf.rename": "Rename",
   "lib.shelf.delete": "Delete shelf",
   "lib.shelf.deleteConfirm": "Delete this shelf? Your books stay in the library.",

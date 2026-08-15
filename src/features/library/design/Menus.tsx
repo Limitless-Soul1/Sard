@@ -74,8 +74,12 @@ export function ShelfOrderMenu({
   onClose,
   onInk,
   onMove,
+  cases,
+  onSetCase,
 }: {
   shelf: ShelfNode;
+  cases: CaseNode[];
+  onSetCase: (caseId: string | null) => void;
   onOrder: (o: ShelfOrder) => void;
   onRename: () => void;
   onDelete: () => void;
@@ -133,6 +137,64 @@ export function ShelfOrderMenu({
             ↓
           </button>
         </div>
+        {/* WHICH CASE HOLDS THIS SHELF. Without this a shelf could be created inside a case but
+            never moved into or out of one afterwards — `shelf_set_case` existed on the backend
+            and nothing in the UI could reach it, so an existing library could not be filed. */}
+        {cases.length > 0 && (
+          <>
+            <div style={{ height: 1, background: "var(--brd)", margin: "5px 4px" }} />
+            <div style={{ ...legend, paddingTop: 0 }}>{t("lib.caseWord")}</div>
+            <button
+              className="libd-hov"
+              onClick={() => {
+                onSetCase(null);
+                onClose();
+              }}
+              style={menuItem(!shelf.case_id)}
+            >
+              <span>{t("lib.unfiled")}</span>
+              <span style={{ color: "var(--acc)", fontSize: 11 }}>{!shelf.case_id ? "✓" : ""}</span>
+            </button>
+            {cases.map((cs) => (
+              <button
+                key={cs.id}
+                className="libd-hov"
+                onClick={() => {
+                  onSetCase(cs.id);
+                  onClose();
+                }}
+                style={menuItem(shelf.case_id === cs.id)}
+              >
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    minWidth: 0,
+                    overflow: "hidden",
+                  }}
+                >
+                  <span
+                    style={{
+                      flex: "none",
+                      width: 7,
+                      height: 7,
+                      borderRadius: 2,
+                      background: cs.ink ?? "var(--faint)",
+                    }}
+                  />
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {cs.name}
+                  </span>
+                </span>
+                <span style={{ color: "var(--acc)", fontSize: 11 }}>
+                  {shelf.case_id === cs.id ? "✓" : ""}
+                </span>
+              </button>
+            ))}
+          </>
+        )}
+
         <div style={{ height: 1, background: "var(--brd)", margin: "5px 4px" }} />
         <button
           className="libd-hov"
@@ -351,12 +413,14 @@ export function SelectTray({
   selected,
   byId,
   cases,
+  loose,
   onMove,
   onClear,
 }: {
   selected: string[];
   byId: Map<string, BookRow>;
   cases: CaseNode[];
+  loose: ShelfNode[];
   onMove: (shelfId: string) => void;
   onClear: () => void;
 }) {
@@ -364,12 +428,19 @@ export function SelectTray({
   const [open, setOpen] = useState(false);
   if (!selected.length) return null;
 
+  // EVERY hand shelf is a target, including the ones in no case. Listing only the shelves
+  // inside cases left this menu empty on a library that has no cases — which is every library
+  // until someone makes one, and Select's whole purpose is to move books somewhere.
   const targets: { id: string; name: string; ink: string | null }[] = [];
   for (const c of cases) {
     for (const s of c.shelves) {
-      if (s.auto_rule) continue; // a rule shelf cannot be moved into
-      targets.push({ id: s.id, name: `${c.name} · ${s.name}`, ink: c.ink });
+      if (s.auto_rule) continue; // a rule shelf fills itself; it cannot be moved into
+      targets.push({ id: s.id, name: `${c.name} · ${s.name}`, ink: s.ink ?? c.ink });
     }
+  }
+  for (const s of loose) {
+    if (s.auto_rule) continue;
+    targets.push({ id: s.id, name: s.name, ink: s.ink });
   }
 
   return (

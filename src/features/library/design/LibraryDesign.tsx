@@ -27,6 +27,7 @@ import {
   shelfSetInk,
   caseSetInk,
   shelfReorder,
+  shelfSetCase,
   collectionRemoveBook,
   progressSave,
   type ShelfOrder,
@@ -177,6 +178,12 @@ export function LibraryDesign(props: LibraryDesignProps) {
   }, []);
 
   const byId = useMemo(() => new Map(props.books.map((b) => [b.id, b])), [props.books]);
+
+  // Started and not finished — the number the reference prints beside "Reading now".
+  const readingCount = useMemo(
+    () => props.books.filter((b) => (b.fraction ?? 0) > 0 && (b.fraction ?? 0) < 1).length,
+    [props.books],
+  );
 
   const shelfById = useMemo(() => {
     const m = new Map<string, { shelf: ShelfNode; caseNode: CaseNode | null }>();
@@ -403,6 +410,26 @@ export function LibraryDesign(props: LibraryDesignProps) {
     [tree.cases, loadTree],
   );
 
+  // RAWY-31's rename and delete still belong to the Library above — but they write through the
+  // OLD flat `shelves` state, which the design's tree knows nothing about. Without reloading the
+  // tree afterwards a renamed shelf kept its old name and a deleted one stayed on screen until
+  // some unrelated book reload happened to refresh it.
+  const renameShelf = useCallback(
+    async (id: string, name: string) => {
+      props.onRenameShelf(id, name);
+      await loadTree();
+    },
+    [props, loadTree],
+  );
+  const deleteShelf = useCallback(
+    async (id: string) => {
+      props.onDeleteShelf(id);
+      if (scope.shelfId === id) setScope({ caseId: scope.caseId, shelfId: null });
+      await loadTree();
+    },
+    [props, loadTree, scope],
+  );
+
   const shelfOps = useMemo(
     () => ({
       setOrder: async (shelfId: string, order: ShelfOrder) => {
@@ -461,6 +488,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
           cases={tree.cases}
           loose={tree.loose}
           bookCount={props.books.length}
+          readingCount={readingCount}
           scope={scope}
           onScope={(s) => {
             setScope(s);
@@ -483,7 +511,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
           onNewRuleShelf={async (caseId) => setTree(await shelfCreate(t("lib.rule.reading"), caseId, "reading"))}
           onCaseInk={async (id, ink) => setTree(await caseSetInk(id, ink))}
           onPlaceCase={async (id, at) => setTree(await caseReorder(id, at))}
-          onRenameShelf={props.onRenameShelf}
+          onRenameShelf={renameShelf}
           onSettings={props.onSettings}
           themeName={THEMES[themeId]?.name ?? ""}
           langName={t(lang === "ar" ? "lang.arabic" : "lang.english")}
@@ -512,6 +540,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
         cases={tree.cases}
         loose={tree.loose}
         bookCount={props.books.length}
+        readingCount={readingCount}
         scope={scope}
         onScope={setScope}
         openCases={openCases}
@@ -531,7 +560,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
         onNewRuleShelf={async (caseId) => setTree(await shelfCreate(t("lib.rule.reading"), caseId, "reading"))}
           onCaseInk={async (id, ink) => setTree(await caseSetInk(id, ink))}
           onPlaceCase={async (id, at) => setTree(await caseReorder(id, at))}
-        onRenameShelf={props.onRenameShelf}
+        onRenameShelf={renameShelf}
         onSettings={props.onSettings}
         themeName={THEMES[themeId]?.name ?? ""}
         langName={t(lang === "ar" ? "lang.arabic" : "lang.english")}
@@ -697,7 +726,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
               onPickUp={(b, shelfId) => setCarry({ book: b, fromShelf: shelfId })}
               onRemoveFromShelf={removeFromShelf}
               onSetFinished={setFinished}
-              onNewShelf={async (caseId) => setTree(await shelfCreate(t("lib.newShelf"), caseId))}
+              onNewShelf={async (caseId) => setTree(await shelfCreate(t("lib.shelf.untitled"), caseId))}
               manageMenuFor={manageMenuFor}
               onManageCase={(id) => setEditorFor(id)}
               renamingCase={renamingCase}
@@ -723,9 +752,10 @@ export function LibraryDesign(props: LibraryDesignProps) {
                 setRenamingShelf(null);
                 if (name.trim()) props.onRenameShelf(id, name.trim());
               }}
-              onDeleteShelf={props.onDeleteShelf}
+              onDeleteShelf={deleteShelf}
               onNewCategory={shelfOps.newCategory}
               onShelfInk={async (id, ink) => setTree(await shelfSetInk(id, ink))}
+              onSetShelfCase={async (id, caseId) => { setTree(await shelfSetCase(id, caseId)); await loadTree(); }}
               onCaseInk={async (id, ink) => setTree(await caseSetInk(id, ink))}
               onMoveShelf={shelfOps.move}
               onPlace={place}
@@ -827,6 +857,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
           selected={[...selected]}
           byId={byId}
           cases={tree.cases}
+          loose={tree.loose}
           onMove={bulkMove}
           onClear={() => {
             setSelected(new Set());

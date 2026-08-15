@@ -28,6 +28,8 @@ interface SidebarProps {
   cases: CaseNode[];
   loose: ShelfNode[];
   bookCount: number;
+  /** Books started and not finished — the count the reference shows beside "Reading now". */
+  readingCount: number;
   scope: Scope;
   onScope: (s: Scope) => void;
   openCases: Set<string>;
@@ -58,17 +60,20 @@ const navGlyph = (id: string): React.CSSProperties => ({
   opacity: 0.85,
 });
 
+// The reference's own numbers: gap 11, padding 8/10, radius 6, and — the part that reads as
+// depth rather than a flat tint — a 1px inset ring on the selected row. The height is decided by
+// the padding, not fixed, so a wrapped label cannot be clipped.
 const navRow = (active: boolean): React.CSSProperties => ({
   display: "flex",
   alignItems: "center",
-  gap: 10,
+  gap: 11,
   width: "100%",
-  height: 34,
-  padding: "0 10px",
-  borderRadius: 8,
+  padding: "8px 10px",
+  borderRadius: 6,
   font: "500 .8125rem var(--ui)",
   color: active ? "var(--txt)" : "var(--mut)",
   background: active ? "var(--act)" : "transparent",
+  boxShadow: active ? "inset 0 0 0 1px var(--brd)" : undefined,
   textAlign: "start",
 });
 
@@ -88,7 +93,7 @@ export function Sidebar(props: SidebarProps) {
 
   const nav: { id: Section | "reading"; label: string; count?: number }[] = [
     { id: "library", label: t("lib.nav.library"), count: props.bookCount },
-    { id: "reading", label: t("lib.nav.readingNow") },
+    { id: "reading", label: t("lib.nav.readingNow"), count: props.readingCount },
     { id: "inbox", label: t("lib.nav.highlights") },
     { id: "bookmarks", label: t("lib.nav.bookmarks") },
     { id: "cards", label: t("lib.nav.cards") },
@@ -496,35 +501,36 @@ export function Sidebar(props: SidebarProps) {
                   }}
                 >
                   {c.shelves.map(shelfRow)}
-                  {creatingShelfIn === c.id
-                    ? draftInput(() => commit((n) => props.onNewShelf(c.id, n)), t("lib.shelf.namePlaceholder"), {
-                        margin: "3px 8px 3px 10px",
-                        borderRadius: 6,
-                        padding: "5px 8px",
-                        font: "500 .75rem var(--ui)",
-                      })
-                    : (
-                      <button
-                        className="libd-hov-txt"
-                        onClick={() => {
-                          setDraft("");
-                          setCreatingShelfIn(c.id);
-                        }}
-                        style={{
-                          justifyContent: "flex-start",
-                          padding: "5px 10px",
-                          font: "500 .6875rem var(--ui)",
-                          color: "var(--faint)",
-                        }}
-                      >
-                        + {t("lib.newShelf")}
-                      </button>
-                    )}
+                  {/* The reference reaches "new shelf" through the case's own ⋯ menu, which is
+                      what opens this input — there is no standing button in the list, and adding
+                      one duplicated an affordance the case row already carries. */}
+                  {creatingShelfIn === c.id &&
+                    draftInput(() => commit((n) => props.onNewShelf(c.id, n)), t("lib.shelf.namePlaceholder"), {
+                      margin: "3px 8px 3px 10px",
+                      borderRadius: 6,
+                      padding: "5px 8px",
+                      font: "500 .75rem var(--ui)",
+                    })}
                 </div>
               )}
             </div>
           );
         })}
+
+        {/* The tail rail. Without it a lifted case could be dropped ABOVE any other case but
+            never after the last one, so the bottom position was unreachable. */}
+        {caseHand && props.cases.length > 0 && props.cases[props.cases.length - 1].id !== caseHand && (
+          <button
+            onClick={() => {
+              props.onPlaceCase(caseHand, props.cases.length - 1);
+              setCaseHand(null);
+            }}
+            aria-label={t("lib.placeHere")}
+            style={{ display: "block", width: "100%", padding: "5px 0 2px" }}
+          >
+            <span style={{ display: "block", height: 2, borderRadius: 1, background: "var(--acc)" }} />
+          </button>
+        )}
 
         {creatingCase &&
           draftInput(() => commit(props.onNewCase), t("lib.caseName"), {
@@ -534,8 +540,12 @@ export function Sidebar(props: SidebarProps) {
             font: "500 .8125rem var(--ui)",
           })}
 
-        {props.loose.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 1, paddingTop: 8 }}>
+        {/* Shelves in no case, and — importantly — the ONLY way to make one.
+            "New shelf" previously lived only inside a case, so a library with no cases had no
+            way to create a shelf at all: the affordance the old sidebar had was gone and its
+            replacement was unreachable until a case existed first. */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 1, paddingTop: 8 }}>
+          {props.loose.length > 0 && (
             <span
               style={{
                 font: "600 .625rem var(--ui)",
@@ -547,9 +557,33 @@ export function Sidebar(props: SidebarProps) {
             >
               {t("lib.unfiled")}
             </span>
-            {props.loose.map(shelfRow)}
-          </div>
-        )}
+          )}
+          {props.loose.map(shelfRow)}
+          {creatingShelfIn === null ? (
+            draftInput(() => commit((n) => props.onNewShelf(null, n)), t("lib.shelf.namePlaceholder"), {
+              margin: "3px 8px 3px 10px",
+              borderRadius: 6,
+              padding: "5px 8px",
+              font: "500 .75rem var(--ui)",
+            })
+          ) : (
+            <button
+              className="libd-hov-txt"
+              onClick={() => {
+                setDraft("");
+                setCreatingShelfIn(null);
+              }}
+              style={{
+                justifyContent: "flex-start",
+                padding: "6px 10px",
+                font: "500 .6875rem var(--ui)",
+                color: "var(--faint)",
+              }}
+            >
+              {t("lib.newShelf")}
+            </button>
+          )}
+        </div>
       </div>
 
       <div

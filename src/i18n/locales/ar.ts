@@ -146,6 +146,7 @@ export const ar: Record<TKey, string> = {
   "lib.newShelf": "+ رفّ جديد",
   "lib.noShelves": "لا أرفف بعد",
   "lib.shelf.namePlaceholder": "اسم الرفّ",
+  "lib.shelf.untitled": "رفّ جديد",
   "lib.shelf.rename": "إعادة تسمية",
   "lib.shelf.delete": "حذف الرفّ",
   "lib.shelf.deleteConfirm": "حذف هذا الرفّ؟ تبقى كتبك في المكتبة.",

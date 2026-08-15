@@ -68,6 +68,7 @@ export interface GroupedProps {
   onDeleteShelf: (shelfId: string) => void;
   onNewCategory: (shelfId: string) => void;
   onShelfInk: (shelfId: string, ink: string | null) => void;
+  onSetShelfCase: (shelfId: string, caseId: string | null) => void;
   onCaseInk: (caseId: string, ink: string | null) => void;
   onMoveShelf: (shelfId: string, direction: number) => void;
   /** Placement targets while a book is in hand. */
@@ -440,6 +441,8 @@ export function ViewGrouped(props: GroupedProps) {
                           onDelete={() => props.onDeleteShelf(shelf.id)}
                           onNewCategory={() => props.onNewCategory(shelf.id)}
                           onClose={() => props.onOpenOrder(null)}
+                          cases={props.cases.map((x) => x.node).filter((x): x is CaseNode => !!x)}
+                          onSetCase={(caseId) => props.onSetShelfCase(shelf.id, caseId)}
                           onInk={(ink) => props.onShelfInk(shelf.id, ink)}
                           onMove={(d) => props.onMoveShelf(shelf.id, d)}
                         />

@@ -90,6 +90,8 @@ export interface BookDetailsProps {
   loose: ShelfNode[];
   /** Which shelf currently holds this book, and the case above it. */
   placement: { caseNode: CaseNode | null; shelf: ShelfNode; categoryId: string | null } | null;
+  /** The Library toast — a failed organisation write says so rather than doing nothing visible. */
+  notify: (msg: string) => void;
   onClose: () => void;
   /** Re-read the library after any write. */
   onChanged: () => void;
@@ -209,17 +211,51 @@ export function BookDetails(props: BookDetailsProps) {
   };
 
   // ---- the assignment path -------------------------------------------------
+  //
+  // Case → Shelf → Category, and the first of those three needs A STATE OF ITS OWN.
+  //
+  // It had none: every level read straight off `placement`, i.e. off where the book ALREADY sat.
+  // So choosing a case could not be a step — it had to be a write, and the code made it one by
+  // silently filing the book onto whatever shelf happened to be first in that case. Which meant a
+  // case with no shelves yet (or only rule shelves) had no first shelf, the click did nothing at
+  // all, and the case was rendered but not selectable. It also meant the shelf list could never
+  // show a case's shelves until the book was already in that case — the dependency ran backwards.
+  //
+  // `pickedCase` is that missing step: `undefined` follows the book, `null` means "not in a case",
+  // a string names one. Choosing a case only narrows the shelf list; the write happens when a
+  // SHELF is chosen, which is the level that actually corresponds to a membership row.
   const place = props.placement;
+  const [pickedCase, setPickedCase] = useState<string | null | undefined>(undefined);
+  useEffect(() => setPickedCase(undefined), [book.id]);
+
+  const effectiveCaseId = pickedCase !== undefined ? pickedCase : (place?.caseNode?.id ?? null);
+  const effectiveCase = effectiveCaseId ? (props.cases.find((c) => c.id === effectiveCaseId) ?? null) : null;
+  // A rule shelf fills itself, so it can never be a destination — at any level.
   const shelvesOf = (c: CaseNode | null) =>
     (c ? c.shelves : props.loose).filter((s) => !s.auto_rule);
 
   const moveTo = async (shelfId: string, categoryId: string | null) => {
     setBusy(true);
-    // Leave every hand shelf this book currently sits on, then join the target.
-    if (place && place.shelf.id !== shelfId) {
-      await collectionRemoveBook(place.shelf.id, book.id).catch(() => {});
+    // Join the target FIRST: if that fails the book is still where it was, rather than nowhere.
+    try {
+      await shelfPlaceBook(shelfId, book.id, categoryId, 0);
+    } catch (e) {
+      console.error(e);
+      setBusy(false);
+      props.notify(t("lib.writeFailed"));
+      props.onChanged();
+      return;
     }
-    await shelfPlaceBook(shelfId, book.id, categoryId, 0).catch(() => {});
+    // Leave ONLY the shelf this book was shown as sitting on. Any other shelf it belongs to is a
+    // placement someone made deliberately and is none of this move's business.
+    if (place && place.shelf.id !== shelfId) {
+      try {
+        await collectionRemoveBook(place.shelf.id, book.id);
+      } catch (e) {
+        console.error(e);
+        props.notify(t("lib.movedButNotRemoved"));
+      }
+    }
     setBusy(false);
     props.onChanged();
   };
@@ -227,7 +263,12 @@ export function BookDetails(props: BookDetailsProps) {
   const unfile = async () => {
     if (!place) return;
     setBusy(true);
-    await collectionRemoveBook(place.shelf.id, book.id).catch(() => {});
+    try {
+      await collectionRemoveBook(place.shelf.id, book.id);
+    } catch (e) {
+      console.error(e);
+      props.notify(t("lib.writeFailed"));
+    }
     setBusy(false);
     props.onChanged();
   };
@@ -281,35 +322,35 @@ export function BookDetails(props: BookDetailsProps) {
   const levels: { label: string; options: React.ReactNode; empty: string | null }[] = [
     {
       label: t("lib.caseWord"),
-      empty: null,
+      // Choosing a case does NOT write. It narrows the level below it, which is what makes
+      // Case → Shelf → Category a hierarchy rather than three independent guesses.
+      empty: props.cases.length ? null : t("lib.noCasesYet"),
       options: (
         <>
-          {props.cases.map((c) => {
-            const on = place?.caseNode?.id === c.id;
-            return (
-              <button
-                key={c.id}
-                style={chip(on)}
-                onClick={() => {
-                  if (on) return unfile();
-                  const first = shelvesOf(c)[0];
-                  if (first) moveTo(first.id, null);
-                }}
-              >
-                {c.ink && <span style={{ width: 7, height: 7, borderRadius: 2, background: c.ink }} />}
-                {c.name}
-              </button>
-            );
-          })}
+          <button style={chip(effectiveCaseId === null)} onClick={() => setPickedCase(null)}>
+            {t("lib.unfiled")}
+          </button>
+          {props.cases.map((c) => (
+            <button key={c.id} style={chip(effectiveCaseId === c.id)} onClick={() => setPickedCase(c.id)}>
+              {c.ink && <span style={{ width: 7, height: 7, borderRadius: 2, background: c.ink }} />}
+              {c.name}
+            </button>
+          ))}
         </>
       ),
     },
     {
       label: t("lib.shelfWord"),
-      empty: shelvesOf(place?.caseNode ?? null).length ? null : t("lib.chooseCaseFirst"),
+      // The shelves OF THE CHOSEN CASE — so "Case A + a shelf of Case B" cannot be expressed.
+      // A case with nothing in it says so, instead of leaving a level that looks broken.
+      empty: shelvesOf(effectiveCase).length
+        ? null
+        : effectiveCase
+          ? t("lib.caseHasNoShelves")
+          : t("lib.noShelves"),
       options: (
         <>
-          {shelvesOf(place?.caseNode ?? null).map((s) => {
+          {shelvesOf(effectiveCase).map((s) => {
             const on = place?.shelf.id === s.id;
             return (
               <button key={s.id} style={chip(on)} onClick={() => (on ? unfile() : moveTo(s.id, null))}>

@@ -238,3 +238,52 @@ export function placementPlan(fromShelf: string, toShelf: string): PlacementPlan
   if (isVirtualShelf(fromShelf)) return { kind: "add", shelfId: toShelf };
   return { kind: "move", shelfId: toShelf, removeFrom: fromShelf };
 }
+
+/**
+ * Where a Select-mode move should take its books OUT of.
+ *
+ * "Move to…" used to only add: the destination gained the books and every source kept them, so a
+ * move quietly became a copy. Fixing it by stripping every other membership would be worse —
+ * `book_collections` is many-to-many on purpose and a book may legitimately sit on several
+ * shelves, so a naive strip would destroy placements the reader made deliberately.
+ *
+ * The source therefore has to be derived from what the reader is actually working in, and the
+ * answer is allowed to be "I cannot tell":
+ *
+ *   - `scoped`    — the pane is scoped to one shelf, so that shelf IS the context and the books
+ *                   are being moved out of it.
+ *   - `single`    — unscoped, but every selected book sits on exactly the same one shelf. There
+ *                   is only one thing the move could mean.
+ *   - `ambiguous` — the selection spans several shelves. Nothing is assumed; the caller must ask.
+ *   - `none`      — nothing selected sits on any real shelf, so there is nothing to leave.
+ */
+export interface SelectionSource {
+  kind: "scoped" | "single" | "ambiguous" | "none";
+  /** The shelf to leave, when it is known beyond doubt. */
+  shelfId: string | null;
+  /** Every real shelf the selection currently occupies — what an "out of which?" chooser offers. */
+  shelves: string[];
+}
+
+export function selectionSource(
+  selected: ReadonlySet<string>,
+  items: Record<string, ShelfItem[]>,
+  scopedShelfId: string | null,
+): SelectionSource {
+  const occupied = new Set<string>();
+  for (const [shelfId, list] of Object.entries(items)) {
+    if (isVirtualShelf(shelfId)) continue; // not a collection; nothing to leave
+    if (list.some((i) => selected.has(i.book_id))) occupied.add(shelfId);
+  }
+  const shelves = [...occupied].sort();
+
+  // A scope is an explicit statement of context, so it wins — even over a selection that happens
+  // to be unanimous, and even if some selected book is not on the scoped shelf at all (removing
+  // it from a shelf it was never on is a no-op, not a wrong guess).
+  if (scopedShelfId && !isVirtualShelf(scopedShelfId)) {
+    return { kind: "scoped", shelfId: scopedShelfId, shelves };
+  }
+  if (shelves.length === 0) return { kind: "none", shelfId: null, shelves };
+  if (shelves.length === 1) return { kind: "single", shelfId: shelves[0], shelves };
+  return { kind: "ambiguous", shelfId: null, shelves };
+}

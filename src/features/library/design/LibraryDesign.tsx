@@ -52,6 +52,7 @@ import {
   makeLooseShelf,
   placementPlan,
   spineWidth,
+  selectionSource,
   sortBooks,
   unfiledCase,
   UNFILED_CASE_ID,
@@ -124,6 +125,9 @@ export function LibraryDesign(props: LibraryDesignProps) {
   // Which cases the reader had collapsed, restored before the tree is first grouped so a
   // collapsed case never flashes open on the way in.
   const closedCases = useRef<Set<string>>(new Set());
+  // Set once the open/closed set has actually been seeded from the tree, so the persistence
+  // effect below can never write before there is anything true to write.
+  const seeded = useRef(false);
   const [closedLoaded, setClosedLoaded] = useState(false);
   const paneRef = useRef<HTMLDivElement | null>(null);
   const [paneWidth, setPaneWidth] = useState(1180);
@@ -161,16 +165,23 @@ export function LibraryDesign(props: LibraryDesignProps) {
   // ---- the structure, and every shelf's own order ----------------------------
   const loadTree = useCallback(async () => {
     const next = await libraryTree().catch(() => EMPTY_TREE);
+    // Cases start open, as the design shows them — except any the reader closed last time.
+    //
+    // SEEDED IN THE SAME BATCH AS THE TREE, and this is not a style choice. Seeding after the
+    // `shelf_items` await left a render in which `tree.cases` was full and `openCases` was still
+    // empty; the effect below reads exactly that pair and concluded every case was closed, wrote
+    // that, and the next launch opened with the whole library collapsed. Measured, not theorised:
+    // it is what made every case in a real profile come up folded.
     setTree(next);
+    setOpenCases((prev) =>
+      prev.size ? prev : new Set(next.cases.map((c) => c.id).filter((id) => !closedCases.current.has(id))),
+    );
+    seeded.current = true;
     const shelves = [...next.cases.flatMap((c) => c.shelves), ...next.loose];
     const pairs = await Promise.all(
       shelves.map(async (s) => [s.id, await libraryShelfItems(s.id).catch(() => [])] as const),
     );
     setItems(Object.fromEntries(pairs));
-    // Cases start open, as the design shows them — except any the reader closed last time.
-    setOpenCases((prev) =>
-      prev.size ? prev : new Set(next.cases.map((c) => c.id).filter((id) => !closedCases.current.has(id))),
-    );
   }, []);
 
   useEffect(() => {
@@ -180,7 +191,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
 
   // Persist the collapsed cases, on the same `settings` path the view, density and sort use.
   useEffect(() => {
-    if (!closedLoaded || !tree.cases.length) return;
+    if (!closedLoaded || !seeded.current || !tree.cases.length) return;
     const closed = tree.cases.map((c) => c.id).filter((id) => !openCases.has(id));
     closedCases.current = new Set(closed);
     settingsSet("libd_closed_cases", closed.join(",")).catch(() => {});
@@ -484,30 +495,65 @@ export function LibraryDesign(props: LibraryDesignProps) {
     [props, flash, t],
   );
 
-  /** Move every selected book onto one shelf, then leave Select mode as the design does. */
+  // Where a Select-mode move should take its books OUT of, decided from the reader's actual
+  // context rather than assumed. `ambiguous` is a real answer, and the tray asks rather than
+  // guessing — guessing is what would destroy a second placement someone made on purpose.
+  const moveSource = useMemo(
+    () => selectionSource(selected, items, scope.shelfId),
+    [selected, items, scope.shelfId],
+  );
+
+  /**
+   * Select mode's "Move to…" — a MOVE, which means the books also LEAVE somewhere.
+   *
+   * `removeFrom` is the shelf the tray resolved as the source: the scoped shelf, the one shelf the
+   * whole selection shares, or the one the reader named when it spanned several. It is `null` only
+   * when there is genuinely nothing to leave (the books were on no shelf) or when the reader chose
+   * to add without moving. NOTHING ELSE is touched — a book that also sits on two other shelves
+   * keeps both, because that is a placement someone made on purpose.
+   *
+   * Each book is placed first and only then removed from the source, so a failure at either step
+   * leaves the book somewhere rather than nowhere; a book whose placement failed is never removed
+   * from where it already was.
+   */
   const bulkMove = useCallback(
-    async (shelfId: string) => {
+    async (shelfId: string, categoryId: string | null, removeFrom: string | null) => {
       const ids = [...selected];
       let placed = 0;
-      let failed = 0;
+      let failedPlace = 0;
+      let failedRemove = 0;
       for (const id of ids) {
         try {
-          await shelfPlaceBook(shelfId, id, null, 0);
-          placed++;
+          await shelfPlaceBook(shelfId, id, categoryId, 0);
         } catch (e) {
           console.error(e);
-          failed++;
+          failedPlace++;
+          continue; // it never arrived, so it must not be taken away from where it is
         }
+        if (removeFrom && removeFrom !== shelfId) {
+          try {
+            await collectionRemoveBook(removeFrom, id);
+          } catch (e) {
+            console.error(e);
+            failedRemove++;
+            continue; // arrived but did not leave: this book is now on both
+          }
+        }
+        placed++;
       }
       await loadTree();
       setSelected(new Set());
       setMode("browse");
       const target = shelfById.get(shelfId);
-      // Never announce a move that did not happen. A loop of swallowed rejections used to end in
-      // "Placed on <shelf>" whether one book moved or none did.
-      if (failed && !placed) flash(t("lib.writeFailed"));
-      else if (failed) flash(t("lib.placedSome", { n: num(placed), failed: num(failed) }));
-      else flash(`${t("lib.placed")} ${t("lib.on")} ${target?.shelf.name ?? ""}`);
+      const name = target?.shelf.name ?? "";
+      // Never announce a move that did not happen, and never call a half-move a move. A loop of
+      // swallowed rejections used to end in "Placed on <shelf>" whether one book moved or none.
+      if (failedPlace && !placed && !failedRemove) flash(t("lib.writeFailed"));
+      else if (failedRemove) flash(t("lib.movedButNotRemoved"));
+      else if (failedPlace) flash(t("lib.placedSome", { n: num(placed), failed: num(failedPlace) }));
+      else if (removeFrom && removeFrom !== shelfId)
+        flash(t("lib.movedOut", { n: num(placed), name: shelfById.get(removeFrom)?.shelf.name ?? "" }));
+      else flash(t("lib.addedTo", { n: num(placed), name }));
     },
     [selected, loadTree, shelfById, flash, t, num],
   );
@@ -970,6 +1016,8 @@ export function LibraryDesign(props: LibraryDesignProps) {
           byId={byId}
           cases={tree.cases}
           loose={tree.loose}
+          source={moveSource}
+          shelfName={(id) => shelfById.get(id)?.shelf.name ?? id}
           onMove={bulkMove}
           onClear={() => {
             setSelected(new Set());
@@ -1038,6 +1086,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
           cases={tree.cases}
           loose={tree.loose}
           placement={placementOf(detailsFor.id)}
+          notify={flash}
           libraryCoverMode={props.coverMode}
           onClose={() => setDetailsFor(null)}
           onChanged={() => {

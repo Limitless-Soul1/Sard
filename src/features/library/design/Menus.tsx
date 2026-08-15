@@ -9,6 +9,7 @@ import type { BookRow, CaseNode, ShelfNode, ShelfOrder } from "../../../lib/ipc"
 import { useI18n } from "../../../i18n";
 import { autoCoverPaint } from "../AutoCover";
 import { resolveBookMeta, displayTitle } from "../../../lib/bookMeta";
+import type { SelectionSource } from "./model";
 
 /** The design's menu row, active and inactive. */
 export const menuItem = (active: boolean): React.CSSProperties => ({
@@ -510,6 +511,8 @@ export function SelectTray({
   byId,
   cases,
   loose,
+  source,
+  shelfName,
   onMove,
   onClear,
 }: {
@@ -517,27 +520,70 @@ export function SelectTray({
   byId: Map<string, BookRow>;
   cases: CaseNode[];
   loose: ShelfNode[];
-  onMove: (shelfId: string) => void;
+  /** Which shelf this move should take the books OUT of, and whether that is even knowable. */
+  source: SelectionSource;
+  /** Names the shelves in `source.shelves`, for the "out of which?" question. */
+  shelfName: (id: string) => string;
+  onMove: (shelfId: string, categoryId: string | null, removeFrom: string | null) => void;
   onClear: () => void;
 }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
+  // When the selection spans several shelves, the move waits here until the reader says which
+  // one it is leaving — or says to leave none.
+  const [pendingTarget, setPendingTarget] = useState<{ shelfId: string; categoryId: string | null } | null>(null);
   if (!selected.length) return null;
+
+  const close = () => {
+    setOpen(false);
+    setPendingTarget(null);
+  };
 
   // EVERY hand shelf is a target, including the ones in no case. Listing only the shelves
   // inside cases left this menu empty on a library that has no cases — which is every library
   // until someone makes one, and Select's whole purpose is to move books somewhere.
-  const targets: { id: string; name: string; ink: string | null }[] = [];
-  for (const c of cases) {
-    for (const s of c.shelves) {
-      if (s.auto_rule) continue; // a rule shelf fills itself; it cannot be moved into
-      targets.push({ id: s.id, name: `${c.name} · ${s.name}`, ink: s.ink ?? c.ink });
+  //
+  // A shelf's CATEGORIES are targets in their own right, so "move these into Category Y" is one
+  // action rather than a move followed by a second pass in the management panel.
+  type Target = { key: string; shelfId: string; categoryId: string | null; name: string; ink: string | null; sub: boolean };
+  const targets: Target[] = [];
+  const addShelf = (s: ShelfNode, prefix: string, ink: string | null) => {
+    if (s.auto_rule) return; // a rule shelf fills itself; it cannot be moved into
+    targets.push({ key: s.id, shelfId: s.id, categoryId: null, name: prefix + s.name, ink, sub: false });
+    for (const k of s.categories) {
+      targets.push({ key: `${s.id}::${k.id}`, shelfId: s.id, categoryId: k.id, name: k.name, ink, sub: true });
     }
-  }
-  for (const s of loose) {
-    if (s.auto_rule) continue;
-    targets.push({ id: s.id, name: s.name, ink: s.ink });
-  }
+  };
+  for (const c of cases) for (const s of c.shelves) addShelf(s, `${c.name} · `, s.ink ?? c.ink);
+  for (const s of loose) addShelf(s, "", s.ink);
+
+  /** Decide what to do with a chosen destination, given how well the source is known. */
+  const choose = (target: Target) => {
+    if (source.kind === "ambiguous") {
+      // DO NOT GUESS. Two shelves' worth of books were selected; stripping "the other one" is
+      // how a deliberate second placement gets destroyed. Ask instead.
+      setPendingTarget({ shelfId: target.shelfId, categoryId: target.categoryId });
+      return;
+    }
+    onMove(target.shelfId, target.categoryId, source.shelfId);
+    close();
+  };
+
+  const panel: React.CSSProperties = {
+    position: "absolute",
+    bottom: "calc(100% + 8px)",
+    insetInlineEnd: 0,
+    zIndex: 60,
+    width: 268,
+    maxHeight: 300,
+    overflowY: "auto",
+    background: "var(--chr)",
+    border: "1px solid var(--brd)",
+    borderRadius: 12,
+    boxShadow: "var(--sh4)",
+    padding: 6,
+    animation: "sard-rise .12s ease-out",
+  };
 
   return (
     <div
@@ -589,7 +635,7 @@ export function SelectTray({
         <div style={{ width: 1, height: 22, background: "var(--brd)" }} />
         <div style={{ position: "relative" }}>
           <button
-            onClick={() => setOpen((v) => !v)}
+            onClick={() => (open ? close() : setOpen(true))}
             style={{
               height: 30,
               padding: "0 13px",
@@ -603,62 +649,87 @@ export function SelectTray({
           </button>
           {open && (
             <>
-              <Backdrop onClose={() => setOpen(false)} />
-              <div
-                style={{
-                  position: "absolute",
-                  bottom: "calc(100% + 8px)",
-                  insetInlineEnd: 0,
-                  zIndex: 60,
-                  width: 250,
-                  maxHeight: 260,
-                  overflowY: "auto",
-                  background: "var(--chr)",
-                  border: "1px solid var(--brd)",
-                  borderRadius: 12,
-                  boxShadow: "var(--sh4)",
-                  padding: 6,
-                  animation: "sard-rise .12s ease-out",
-                }}
-              >
-                {targets.map((m) => (
+              <Backdrop onClose={close} />
+              {pendingTarget ? (
+                // THE AMBIGUOUS CASE, asked rather than assumed. The books came from more than one
+                // shelf, so the reader names the one they are leaving — or chooses to leave none,
+                // which is an honest "add" and is labelled as one.
+                <div style={panel}>
+                  <div style={{ ...legend, textTransform: "none", letterSpacing: 0, lineHeight: 1.45 }}>
+                    {t("lib.moveOutOfWhich", { n: String(source.shelves.length) })}
+                  </div>
+                  {source.shelves.map((id) => (
+                    <button
+                      key={id}
+                      className="libd-hov"
+                      onClick={() => {
+                        onMove(pendingTarget.shelfId, pendingTarget.categoryId, id);
+                        close();
+                      }}
+                      style={{ ...menuItem(false), justifyContent: "flex-start" }}
+                    >
+                      {shelfName(id)}
+                    </button>
+                  ))}
+                  <div style={{ height: 1, background: "var(--brd)", margin: "5px 4px" }} />
                   <button
-                    key={m.id}
                     className="libd-hov"
                     onClick={() => {
-                      onMove(m.id);
-                      setOpen(false);
+                      onMove(pendingTarget.shelfId, pendingTarget.categoryId, null);
+                      close();
                     }}
-                    style={{ ...menuItem(false), justifyContent: "flex-start" }}
+                    style={{ ...menuItem(false), justifyContent: "flex-start", color: "var(--mut)" }}
                   >
-                    <span
+                    {t("lib.keepWhereTheyAre")}
+                  </button>
+                </div>
+              ) : (
+                <div style={panel}>
+                  {source.shelfId && (
+                    <div style={{ ...legend, textTransform: "none", letterSpacing: 0, lineHeight: 1.45 }}>
+                      {t("lib.movingOutOf", { name: shelfName(source.shelfId) })}
+                    </div>
+                  )}
+                  {targets.map((m) => (
+                    <button
+                      key={m.key}
+                      className="libd-hov"
+                      onClick={() => choose(m)}
                       style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: 2,
-                        background: m.ink ?? "var(--faint)",
-                        flex: "none",
-                      }}
-                    />
-                    <span
-                      style={{
-                        flex: 1,
-                        textAlign: "start",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
+                        ...menuItem(false),
+                        justifyContent: "flex-start",
+                        ...(m.sub ? { paddingInlineStart: 26 } : {}),
                       }}
                     >
-                      {m.name}
-                    </span>
-                  </button>
-                ))}
-                {targets.length === 0 && (
-                  <div style={{ ...legend, textTransform: "none", letterSpacing: 0 }}>
-                    {t("lib.noShelves")}
-                  </div>
-                )}
-              </div>
+                      <span
+                        style={{
+                          width: m.sub ? 5 : 8,
+                          height: m.sub ? 5 : 8,
+                          borderRadius: m.sub ? "50%" : 2,
+                          background: m.ink ?? "var(--faint)",
+                          flex: "none",
+                        }}
+                      />
+                      <span
+                        style={{
+                          flex: 1,
+                          textAlign: "start",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {m.name}
+                      </span>
+                    </button>
+                  ))}
+                  {targets.length === 0 && (
+                    <div style={{ ...legend, textTransform: "none", letterSpacing: 0 }}>
+                      {t("lib.noShelves")}
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           )}
         </div>

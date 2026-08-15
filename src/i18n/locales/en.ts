@@ -213,6 +213,12 @@ export const en = {
   "lib.orderOfThisShelf": "Order of this shelf",
   "lib.byHand": "By hand",
   "lib.moveTo": "Move to…",
+  // Select-mode move. The source is derived from context, and when it cannot be, it is asked.
+  "lib.movingOutOf": "Moving them out of {name}",
+  "lib.moveOutOfWhich": "These books sit on {n} shelves. Which one are they leaving?",
+  "lib.keepWhereTheyAre": "Leave them on all of them — just add",
+  "lib.movedOut": "{n} moved out of {name}.",
+  "lib.addedTo": "{n} added to {name}.",
   "lib.done": "Done",
   "lib.undo": "Undo",
   "lib.cancel": "Cancel",
@@ -291,6 +297,8 @@ export const en = {
   "lib.spineNote":
     "Recommended 256 × 1024 px · 1:4. Taller or shorter images are centre-cropped, never stretched.",
   "lib.pagesApprox": "≈{n} pp",
+  "lib.caseHasNoShelves": "This case has no shelves yet — make one from its ⋯ menu.",
+  "lib.noCasesYet": "No cases yet — make one in the sidebar.",
   "lib.chooseCaseFirst": "Choose a case first",
   "lib.shelfHasNoCategories": "This shelf has no categories",
   "lib.toggleHint": "Click the shelf it is on to take it off.",

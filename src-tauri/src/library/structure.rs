@@ -1159,4 +1159,209 @@ mod tests {
         assert_eq!(on_shelf(&conn, &a), vec!["x"], "still on the shelf it started on");
         assert_eq!(memberships(&conn, "x"), 1);
     }
+
+    // -----------------------------------------------------------------------
+    // Select mode's "Move to…" — a move that must not eat memberships it was not asked about.
+    //
+    // The tray resolves ONE source shelf and the operation leaves only that one. A book that also
+    // sits on a third shelf keeps it: `book_collections` is many-to-many on purpose, and the naive
+    // repair for the copy bug — strip everything else — would destroy placements someone made
+    // deliberately.
+    // -----------------------------------------------------------------------
+
+    /// What the tray does per book: join the destination, then leave the resolved source only.
+    fn bulk_move(conn: &Connection, remove_from: Option<&str>, to: &str, cat: Option<&str>, books: &[&str]) {
+        for b in books {
+            shelf_place_book(conn, to, b, cat, 0).unwrap();
+            if let Some(from) = remove_from {
+                if from != to {
+                    crate::library::collection_remove_book(conn, from, b).unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_bulk_move_empties_the_source_and_fills_the_destination() {
+        let conn = db();
+        for b in ["b1", "b2", "b3"] {
+            add_book(&conn, b);
+        }
+        let t = shelf_create(&conn, "A", None, None).unwrap();
+        let a = t.loose[0].id.clone();
+        let t = shelf_create(&conn, "B", None, None).unwrap();
+        let b = t.loose.iter().find(|s| s.name == "B").unwrap().id.clone();
+        for (i, x) in ["b1", "b2", "b3"].iter().enumerate() {
+            shelf_place_book(&conn, &a, x, None, i as i64).unwrap();
+        }
+
+        bulk_move(&conn, Some(&a), &b, None, &["b1", "b2", "b3"]);
+
+        assert!(on_shelf(&conn, &a).is_empty(), "every one of them left the source");
+        let mut got = on_shelf(&conn, &b);
+        got.sort();
+        assert_eq!(got, vec!["b1", "b2", "b3"]);
+        for x in ["b1", "b2", "b3"] {
+            assert_eq!(memberships(&conn, x), 1, "{x} has one membership, not two");
+        }
+    }
+
+    #[test]
+    fn a_bulk_move_leaves_a_books_other_shelves_completely_alone() {
+        // THE POINT OF THE WHOLE DESIGN. b2 also sits on a third shelf, deliberately. Moving it
+        // out of A must not touch that.
+        let conn = db();
+        for b in ["b1", "b2"] {
+            add_book(&conn, b);
+        }
+        let t = shelf_create(&conn, "A", None, None).unwrap();
+        let a = t.loose[0].id.clone();
+        let t = shelf_create(&conn, "B", None, None).unwrap();
+        let b = t.loose.iter().find(|s| s.name == "B").unwrap().id.clone();
+        let t = shelf_create(&conn, "Keep", None, None).unwrap();
+        let keep = t.loose.iter().find(|s| s.name == "Keep").unwrap().id.clone();
+        shelf_place_book(&conn, &a, "b1", None, 0).unwrap();
+        shelf_place_book(&conn, &a, "b2", None, 1).unwrap();
+        shelf_place_book(&conn, &keep, "b2", None, 0).unwrap();
+
+        bulk_move(&conn, Some(&a), &b, None, &["b1", "b2"]);
+
+        assert!(on_shelf(&conn, &a).is_empty());
+        assert_eq!(on_shelf(&conn, &keep), vec!["b2"], "the deliberate second placement survives");
+        assert_eq!(memberships(&conn, "b2"), 2, "destination + the shelf it was already on");
+        assert_eq!(memberships(&conn, "b1"), 1);
+    }
+
+    #[test]
+    fn a_bulk_move_into_a_category_files_every_book_into_it() {
+        // Category → Category, as the tray offers it: the destination is a shelf AND a category.
+        let conn = db();
+        for b in ["b1", "b2"] {
+            add_book(&conn, b);
+        }
+        let t = shelf_create(&conn, "S", None, None).unwrap();
+        let s = t.loose[0].id.clone();
+        let t = category_create(&conn, &s, "X").unwrap();
+        let x = t.loose[0].categories[0].id.clone();
+        let t = category_create(&conn, &s, "Y").unwrap();
+        let y = t.loose[0].categories.iter().find(|k| k.name == "Y").unwrap().id.clone();
+        shelf_place_book(&conn, &s, "b1", Some(&x), 0).unwrap();
+        shelf_place_book(&conn, &s, "b2", Some(&x), 1).unwrap();
+
+        // Same shelf, so nothing is removed — only the category changes.
+        bulk_move(&conn, Some(&s), &s, Some(&y), &["b1", "b2"]);
+
+        let it = shelf_items(&conn, &s).unwrap();
+        assert_eq!(it.len(), 2, "still two memberships, not four");
+        for i in &it {
+            assert_eq!(i.category_id.as_deref(), Some(y.as_str()));
+        }
+    }
+
+    #[test]
+    fn a_bulk_move_with_no_source_is_an_add_and_removes_nothing() {
+        // Unfiled → Shelf. The books were on nothing, so there is nothing to leave.
+        let conn = db();
+        add_book(&conn, "b1");
+        let t = shelf_create(&conn, "B", None, None).unwrap();
+        let b = t.loose[0].id.clone();
+
+        bulk_move(&conn, None, &b, None, &["b1"]);
+
+        assert_eq!(on_shelf(&conn, &b), vec!["b1"]);
+        assert_eq!(memberships(&conn, "b1"), 1);
+    }
+
+    #[test]
+    fn leaving_a_shelf_a_book_was_never_on_is_a_no_op() {
+        // The scoped case: the pane's shelf is the stated source even if some selected book is
+        // not on it. Removing a membership that does not exist must not disturb the one that does.
+        let conn = db();
+        add_book(&conn, "b1");
+        let t = shelf_create(&conn, "Scoped", None, None).unwrap();
+        let scoped = t.loose[0].id.clone();
+        let t = shelf_create(&conn, "B", None, None).unwrap();
+        let b = t.loose.iter().find(|s| s.name == "B").unwrap().id.clone();
+        let t = shelf_create(&conn, "Elsewhere", None, None).unwrap();
+        let elsewhere = t.loose.iter().find(|s| s.name == "Elsewhere").unwrap().id.clone();
+        shelf_place_book(&conn, &elsewhere, "b1", None, 0).unwrap();
+
+        bulk_move(&conn, Some(&scoped), &b, None, &["b1"]);
+
+        assert_eq!(on_shelf(&conn, &b), vec!["b1"], "it arrived");
+        assert_eq!(on_shelf(&conn, &elsewhere), vec!["b1"], "and its real shelf is untouched");
+        assert_eq!(memberships(&conn, "b1"), 2);
+    }
+
+    #[test]
+    fn a_bulk_move_across_cases_survives_a_re_read() {
+        let conn = db();
+        for b in ["b1", "b2"] {
+            add_book(&conn, b);
+        }
+        let t = case_create(&conn, "Left", None).unwrap();
+        let left = t.cases[0].id.clone();
+        let t = case_create(&conn, "Right", None).unwrap();
+        let right = t.cases.iter().find(|c| c.name == "Right").unwrap().id.clone();
+        let t = shelf_create(&conn, "A", Some(&left), None).unwrap();
+        let a = t.cases.iter().find(|c| c.id == left).unwrap().shelves[0].id.clone();
+        let t = shelf_create(&conn, "B", Some(&right), None).unwrap();
+        let b = t.cases.iter().find(|c| c.id == right).unwrap().shelves[0].id.clone();
+        shelf_place_book(&conn, &a, "b1", None, 0).unwrap();
+        shelf_place_book(&conn, &a, "b2", None, 1).unwrap();
+
+        bulk_move(&conn, Some(&a), &b, None, &["b1", "b2"]);
+
+        let t = tree(&conn).unwrap();
+        let sa = &t.cases.iter().find(|c| c.id == left).unwrap().shelves[0];
+        let sb = &t.cases.iter().find(|c| c.id == right).unwrap().shelves[0];
+        assert_eq!(sa.count, 0);
+        assert_eq!(sb.count, 2);
+    }
+
+    #[test]
+    fn a_book_details_case_change_moves_it_between_the_cases_shelves() {
+        // Book Details assigns Case → Shelf: choosing a case narrows the shelf list, choosing the
+        // SHELF is the write. Re-assigning to another case's shelf must leave the first.
+        let conn = db();
+        add_book(&conn, "b1");
+        let t = case_create(&conn, "One", None).unwrap();
+        let c1 = t.cases[0].id.clone();
+        let t = case_create(&conn, "Two", None).unwrap();
+        let c2 = t.cases.iter().find(|c| c.name == "Two").unwrap().id.clone();
+        let t = shelf_create(&conn, "S1", Some(&c1), None).unwrap();
+        let s1 = t.cases.iter().find(|c| c.id == c1).unwrap().shelves[0].id.clone();
+        let t = shelf_create(&conn, "S2", Some(&c2), None).unwrap();
+        let s2 = t.cases.iter().find(|c| c.id == c2).unwrap().shelves[0].id.clone();
+
+        // assign
+        shelf_place_book(&conn, &s1, "b1", None, 0).unwrap();
+        assert_eq!(on_shelf(&conn, &s1), vec!["b1"]);
+
+        // re-assign to the other case's shelf, the way the dialog does it
+        shelf_place_book(&conn, &s2, "b1", None, 0).unwrap();
+        crate::library::collection_remove_book(&conn, &s1, "b1").unwrap();
+
+        assert!(on_shelf(&conn, &s1).is_empty(), "it left the first case's shelf");
+        assert_eq!(on_shelf(&conn, &s2), vec!["b1"]);
+        assert_eq!(memberships(&conn, "b1"), 1, "no duplicate membership was created");
+
+        // and a re-read — what reopening Book Details and the sidebar both do — agrees.
+        let t = tree(&conn).unwrap();
+        assert_eq!(t.cases.iter().find(|c| c.id == c1).unwrap().count, 0);
+        assert_eq!(t.cases.iter().find(|c| c.id == c2).unwrap().count, 1);
+    }
+
+    #[test]
+    fn a_case_with_no_shelves_offers_nowhere_to_put_a_book() {
+        // The Book Details bug in one assertion: a case can exist with no shelf under it, so
+        // "choose a case" cannot mean "file the book on its first shelf" — there may not be one.
+        let conn = db();
+        let t = case_create(&conn, "Empty", None).unwrap();
+        assert_eq!(t.cases[0].shelves.len(), 0);
+        // And a case holding only a rule shelf is the same story: nothing manual to place into.
+        let t = shelf_create(&conn, "Reading", Some(&t.cases[0].id), Some("reading")).unwrap();
+        let c = t.cases.iter().find(|c| c.name == "Empty").unwrap();
+        assert_eq!(c.shelves.iter().filter(|s| s.auto_rule.is_none()).count(), 0);
+    }
 }

@@ -87,6 +87,7 @@ const SPINE_HEIGHTS = [104, 132, 168, 208];
 export function ViewGrouped(props: GroupedProps) {
   const { t, lang } = useI18n();
   const num = (n: number) => localeNum(n, lang);
+  const rtl = lang === "ar";
   const spines = props.view === "spines";
   const iw = itemWidth(props.density, props.view, props.paneWidth);
   const carrying = props.carryId != null;
@@ -142,17 +143,36 @@ export function ViewGrouped(props: GroupedProps) {
         const bookCount =
           c.node?.count ??
           new Set(c.shelves.flatMap((s) => s.groups.flatMap((g) => g.books.map((b) => b.id)))).size;
+        // A CASE IS A CARD, not a heading with a rule under it. The reference gives it a chrome
+        // panel with a 4px spine of its own colour down the leading edge and its shelves banded
+        // inside — which is the whole reason the hierarchy reads as Case → Shelves → Books
+        // rather than as shelves floating in a page. Rendering it as a bare section, which is
+        // what this did, removed the case layer in everything but name.
+        //
+        // `color-mix` rather than the reference's hex suffixes (`ink + "55"`), so a case that has
+        // not been given a colour yet falls back to the accent instead of composing "null55".
+        const ink = c.node?.ink ?? "var(--acc)";
+        const spine = c.node ? ink : "var(--brd)";
         return (
-          <section key={id} style={{ padding: "0 32px 26px" }}>
+          <section
+            key={id}
+            style={{
+              margin: "0 24px 22px",
+              background: "var(--chr)",
+              border: "1px solid var(--brd)",
+              borderInlineStart: `4px solid ${spine}`,
+              borderRadius: "4px 14px 14px 4px",
+              boxShadow: "var(--sh1)",
+              overflow: "hidden",
+            }}
+          >
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
-                gap: 12,
-                padding: "14px 0 10px",
-                borderBottom: "1px solid var(--rule)",
-                marginBottom: 16,
+                gap: 14,
+                padding: "15px 22px 14px",
               }}
             >
               <button
@@ -161,46 +181,42 @@ export function ViewGrouped(props: GroupedProps) {
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 10,
+                  gap: 12,
                   minWidth: 0,
-                  padding: "4px 8px",
-                  borderRadius: 8,
-                  marginInlineStart: -8,
+                  flex: 1,
+                  margin: "-7px 0 -7px -8px",
+                  padding: "7px 12px 7px 8px",
+                  borderRadius: 10,
+                  textAlign: "start",
                 }}
               >
+                {/* The disc takes the case's colour while it is open — the clearest signal that
+                    everything below belongs to this case. */}
                 <span
                   style={{
                     flex: "none",
-                    width: 16,
-                    height: 16,
                     display: "grid",
                     placeItems: "center",
-                    color: "var(--faint)",
+                    width: 26,
+                    height: 26,
+                    borderRadius: 8,
+                    background: open ? `color-mix(in srgb, ${ink} 20%, transparent)` : "var(--soft)",
+                    border: `1px solid ${open ? `color-mix(in srgb, ${ink} 53%, transparent)` : "var(--brd)"}`,
+                    transition: "background .14s ease-out",
                   }}
                 >
                   <span
                     style={{
-                      width: 0,
-                      height: 0,
-                      borderInlineStart: "4px solid currentColor",
-                      borderBlockStart: "3.5px solid transparent",
-                      borderBlockEnd: "3.5px solid transparent",
-                      transform: open ? "rotate(90deg)" : undefined,
-                      transition: "transform .14s ease-out",
+                      display: "block",
+                      width: 8,
+                      height: 8,
+                      borderRight: "1.7px solid var(--txt)",
+                      borderBottom: "1.7px solid var(--txt)",
+                      transform: `rotate(${open ? "45deg" : rtl ? "135deg" : "-45deg"}) translate(-1.4px,-1.4px)`,
+                      transition: "transform .18s ease-out",
                     }}
                   />
                 </span>
-                {c.node?.ink && (
-                  <span
-                    style={{
-                      flex: "none",
-                      width: 8,
-                      height: 8,
-                      borderRadius: 2,
-                      background: c.node.ink,
-                    }}
-                  />
-                )}
                 {c.node && props.renamingCase === c.node.id ? (
                   <input
                     autoFocus
@@ -223,29 +239,48 @@ export function ViewGrouped(props: GroupedProps) {
                     }}
                   />
                 ) : (
+                  // The name carries the case's colour as an inset underline — the reference's
+                  // own `box-shadow: inset 0 -6px 0 -2px {ink}55`.
                   <span
                     dir="auto"
                     style={{
-                      font: "600 1.0625rem var(--book)",
+                      flex: "none",
+                      font: rtl ? "700 1.125rem var(--ar)" : "600 1.0625rem var(--book)",
                       color: "var(--txt)",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
+                      boxShadow: c.node
+                        ? `inset 0 -6px 0 -2px color-mix(in srgb, ${ink} 33%, transparent)`
+                        : undefined,
                     }}
                   >
                     {c.node ? c.node.name : t("lib.unfiled")}
                   </span>
                 )}
-                <span style={{ font: "500 .75rem var(--ui)", color: "var(--faint)" }}>
+                <span
+                  style={{
+                    flex: "none",
+                    whiteSpace: "nowrap",
+                    font: "500 .75rem var(--ui)",
+                    color: "var(--faint)",
+                  }}
+                >
                   {t("lib.shelfCount", { n: num(bookCount) })} · {t("lib.shelvesCount", { n: num(shelfCount) })}
                 </span>
                 {!open && (
+                  // A collapsed case still says so, as a pill rather than bare text.
                   <span
                     style={{
-                      font: "500 .625rem var(--ui)",
-                      letterSpacing: ".1em",
+                      flex: "none",
+                      whiteSpace: "nowrap",
+                      font: "600 .625rem var(--ui)",
+                      letterSpacing: ".12em",
                       textTransform: "uppercase",
                       color: "var(--faint)",
+                      border: "1px solid var(--brd)",
+                      borderRadius: 20,
+                      padding: "3px 9px",
                     }}
                   >
                     {t("lib.collapsed")}
@@ -298,7 +333,22 @@ export function ViewGrouped(props: GroupedProps) {
 
             {open &&
               c.shelves.map(({ shelf, groups, total }) => (
-                <div key={shelf.id} style={{ padding: "0 0 22px" }}>
+                // Each shelf is a BAND inside the case card, divided by a rule — which is what
+                // makes "these shelves belong to this case" legible without reading a word.
+                // While a book is in hand the band says whether it can take it.
+                <div
+                  key={shelf.id}
+                  style={{
+                    padding: "14px 22px 16px",
+                    borderTop: "1px solid var(--brd)",
+                    ...(carrying && !shelf.auto_rule && shelf.order_rule === "hand" && !isVirtualShelf(shelf.id)
+                      ? { background: "var(--soft)" }
+                      : {}),
+                    ...(carrying && (shelf.auto_rule || shelf.order_rule !== "hand")
+                      ? { opacity: 0.45 }
+                      : {}),
+                  }}
+                >
                   <div
                     style={{
                       display: "flex",
@@ -320,7 +370,7 @@ export function ViewGrouped(props: GroupedProps) {
                         className="libd-hov-txt"
                         onClick={() => props.onFocusShelf(shelf.id)}
                         dir="auto"
-                        style={{ font: "600 .9375rem var(--ui)", color: "var(--txt)" }}
+                        style={{ font: rtl ? "700 .9375rem var(--ar)" : "600 .875rem var(--ui)", color: "var(--txt)" }}
                       >
                         {shelf.name}
                       </button>

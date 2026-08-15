@@ -377,7 +377,9 @@ export function LibraryDesign(props: LibraryDesignProps) {
 
   const rendered: CaseRender[] = useMemo(() => {
     const caseList: CaseRender[] = [];
-    const wanted = (c: CaseNode) => !scope.caseId || scope.caseId === c.id;
+    // "Not in a case" is a scope in its own right: it shows the un-cased group and no case.
+    const unfiledOnly = scope.caseId === UNFILED_CASE_ID;
+    const wanted = (c: CaseNode) => !unfiledOnly && (!scope.caseId || scope.caseId === c.id);
     for (const c of tree.cases) {
       if (!wanted(c)) continue;
       const shelves: ShelfRender[] = [];
@@ -389,7 +391,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
       }
       if (shelves.length) caseList.push({ node: c, shelves });
     }
-    if (!scope.caseId) {
+    if (!scope.caseId || unfiledOnly) {
       const shelves: ShelfRender[] = [];
       for (const s of tree.loose) {
         if (scope.shelfId && scope.shelfId !== s.id) continue;
@@ -704,7 +706,12 @@ export function LibraryDesign(props: LibraryDesignProps) {
   }, [carry]);
 
   // ---- chrome inputs ---------------------------------------------------------
-  const scopedCase = scope.caseId ? tree.cases.find((c) => c.id === scope.caseId) ?? null : null;
+  const unfiledScoped = scope.caseId === UNFILED_CASE_ID;
+  const scopedCase: { id: string; name: string } | null = unfiledScoped
+    ? { id: UNFILED_CASE_ID, name: t("lib.unfiled") }
+    : scope.caseId
+      ? (tree.cases.find((c) => c.id === scope.caseId) ?? null)
+      : null;
   // The unshelved run is a real place to stand but not a row in `collections`, so it resolves
   // here rather than through `shelfById` — without this, focusing it left the heading and the
   // breadcrumb both claiming "Library" while the pane showed one filtered run.

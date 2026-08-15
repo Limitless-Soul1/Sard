@@ -10,9 +10,8 @@ import { localeNum } from "../../../lib/format";
 import { resolveBookMeta, displayTitle } from "../../../lib/bookMeta";
 import { autoCoverPaint } from "../AutoCover";
 import { coverSrc } from "../coverSrc";
+import { fieldScript, fieldStyle } from "./bidi";
 import { daysAgo, isFinished, pctText, progressPct, type DesignSort } from "./model";
-
-const ARABIC = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
 
 const COLUMNS = "44px minmax(0,1.6fr) minmax(0,1fr) 54px 118px 68px";
 
@@ -41,6 +40,11 @@ export function ViewDetails(props: DetailsProps) {
     { key: "progress", label: t("lib.col.progress") },
     { key: "recent", label: t("lib.col.read"), align: "end" },
   ];
+
+  // ALIGNMENT FROM THE INTERFACE, direction from the content. `text-align: start` would follow
+  // each cell's own auto-direction, which is what let an English title and an Arabic author drift
+  // to opposite ends of their columns and read as though they had swapped places.
+  const cell = fieldStyle(lang === "ar");
 
   const lastReadLabel = (b: BookRow) => {
     const d = daysAgo(b.read_at);
@@ -86,7 +90,11 @@ export function ViewDetails(props: DetailsProps) {
       {props.books.map((b) => {
         const meta = resolveBookMeta(b);
         const title = displayTitle(meta, t);
-        const arabic = b.dir === "rtl" || ARABIC.test(title);
+        // Each field is judged on its OWN script. One flag taken from the title used to set the
+        // author's face too, so an Arabic book by an English author got the English name in the
+        // Arabic face, and the reverse pair got the Arabic name in the Latin one.
+        const titleAr = fieldScript(title, b.dir) === "arabic";
+        const authorAr = fieldScript(meta.author) === "arabic";
         const paint = autoCoverPaint(title);
         const src = coverSrc(b);
         const pct = progressPct(b);
@@ -130,7 +138,8 @@ export function ViewDetails(props: DetailsProps) {
               <div
                 dir="auto"
                 style={{
-                  font: arabic ? "700 1rem var(--ar)" : "500 .9375rem var(--ui)",
+                  font: titleAr ? "700 1rem var(--ar)" : "500 .9375rem var(--ui)",
+                  ...cell,
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
@@ -139,12 +148,14 @@ export function ViewDetails(props: DetailsProps) {
                 {title}
               </div>
               <div
+                dir="auto"
                 style={{
                   font: "400 .6875rem var(--ui)",
                   color: "var(--faint)",
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
+                  ...cell,
                 }}
               >
                 {props.placeOf(b.id)}
@@ -153,7 +164,8 @@ export function ViewDetails(props: DetailsProps) {
             <div
               dir="auto"
               style={{
-                font: arabic ? "400 .9375rem var(--ar)" : "400 .8125rem var(--ui)",
+                font: authorAr ? "400 .9375rem var(--ar)" : "400 .8125rem var(--ui)",
+                ...cell,
                 color: "var(--mut)",
                 overflow: "hidden",
                 textOverflow: "ellipsis",

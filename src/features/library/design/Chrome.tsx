@@ -163,6 +163,8 @@ export function Sidebar(props: SidebarProps) {
   const rtl = lang === "ar";
   // The unfiled group answers to the same open set as the cases, under the shared synthetic id.
   const looseOpen = props.openCases.has(UNFILED_CASE_ID);
+  // Standing IN the unfiled group — a scope, not a case selection.
+  const unfiledActive = props.scope.caseId === UNFILED_CASE_ID && !props.scope.shelfId;
 
   const nav: { id: Section | "reading"; label: string; count?: number }[] = [
     { id: "library", label: t("lib.nav.library"), count: props.bookCount },
@@ -215,7 +217,7 @@ export function Sidebar(props: SidebarProps) {
       <button
         key={s.id}
         className="libd-hov"
-        onClick={() => props.onScope({ caseId: s.case_id, shelfId: active ? null : s.id })}
+        onClick={() => props.onScope({ caseId: s.case_id ?? UNFILED_CASE_ID, shelfId: active ? null : s.id })}
         style={{
           display: "flex",
           alignItems: "center",
@@ -673,28 +675,19 @@ export function Sidebar(props: SidebarProps) {
                   caret is the case row's own — same 7px box, same 1.6px strokes, same rotation
                   and the same RTL flip — sized to sit against a small uppercase label rather
                   than inside a disc, because this is a heading and not a case row. */}
+              {/* The caret collapses; the NAME navigates. Exactly the division a case row makes
+                  between its disc and its title, so the two behave alike without this heading
+                  pretending to be a case: no colour bar, no grip, no disc. */}
               <button
                 className="libd-hov-txt"
                 onClick={() => props.onToggleCase(UNFILED_CASE_ID)}
-                title={t("lib.unfiled")}
-                aria-label={t("lib.unfiled")}
+                title={looseOpen ? t("lib.collapse") : t("lib.expand")}
+                aria-label={looseOpen ? t("lib.collapse") : t("lib.expand")}
                 aria-expanded={looseOpen}
-                style={{
-                  flex: 1,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  justifyContent: "flex-start",
-                  textAlign: "start",
-                  font: "600 .625rem var(--ui)",
-                  letterSpacing: ".14em",
-                  textTransform: "uppercase",
-                  color: "var(--faint)",
-                }}
+                style={{ flex: "none", width: 16, height: 16, borderRadius: 4, display: "grid", placeItems: "center" }}
               >
                 <span
                   style={{
-                    flex: "none",
                     display: "block",
                     width: 6,
                     height: 6,
@@ -704,7 +697,28 @@ export function Sidebar(props: SidebarProps) {
                     transition: "transform .18s ease-out",
                   }}
                 />
-                <span style={{ flex: 1 }}>{t("lib.unfiled")}</span>
+              </button>
+              <button
+                className="libd-hov-txt"
+                onClick={() => props.onScope({ caseId: UNFILED_CASE_ID, shelfId: null })}
+                title={t("lib.openUnfiled")}
+                style={{
+                  flex: 1,
+                  justifyContent: "flex-start",
+                  textAlign: "start",
+                  padding: "2px 6px",
+                  marginInlineStart: 2,
+                  borderRadius: 5,
+                  font: "600 .625rem var(--ui)",
+                  letterSpacing: ".14em",
+                  textTransform: "uppercase",
+                  // Active, but not the way a case is: the accent alone, with no case's colour bar
+                  // behind it, so "not in a case" can never be mistaken for one.
+                  color: unfiledActive ? "var(--acc)" : "var(--faint)",
+                  background: unfiledActive ? "var(--act)" : "transparent",
+                }}
+              >
+                {t("lib.unfiled")}
               </button>
               <button
                 className="libd-hov libd-hov-txt"

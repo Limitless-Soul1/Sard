@@ -372,7 +372,9 @@ export function BookTile(props: BookTileProps) {
           }}
         >
           <div
+            dir="auto"
             style={{
+              unicodeBidi: "isolate",
               font: arabic ? "600 .875rem/1.4 var(--ar)" : "500 .8125rem/1.3 var(--ui)",
               color: "var(--txt)",
               display: "-webkit-box",
@@ -385,7 +387,9 @@ export function BookTile(props: BookTileProps) {
             {title}
           </div>
           <div
+            dir="auto"
             style={{
+              unicodeBidi: "isolate",
               font: "400 .6875rem var(--ui)",
               color: "var(--faint)",
               overflow: "hidden",

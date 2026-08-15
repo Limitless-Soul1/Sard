@@ -306,6 +306,18 @@ export interface NavScope {
 
 export const ROOT_SCOPE: NavScope = { caseId: null, shelfId: null };
 
+/**
+ * `scope.caseId` when the reader is standing in "not in a case".
+ *
+ * A UI-ONLY value. It names a place to stand, not a row: no case with this id exists, nothing
+ * writes it to `collections.case_id`, and the only thing that ever sets a shelf's case is the
+ * picker, which offers real cases and null. Reusing the id the open-set and the management panel
+ * already answer to keeps one name for one concept rather than inventing a third.
+ */
+export const UNFILED_SCOPE: NavScope = { caseId: UNFILED_CASE_ID, shelfId: null };
+
+export const isUnfiledScope = (s: NavScope) => s.caseId === UNFILED_CASE_ID;
+
 export const isRootScope = (s: NavScope) => !s.caseId && !s.shelfId;
 
 /**
@@ -325,17 +337,21 @@ export function reconcileScope(scope: NavScope, cases: CaseNode[], loose: ShelfN
   if (scope.shelfId && !isVirtualShelf(scope.shelfId)) {
     const inCase = cases.find((c) => c.shelves.some((s) => s.id === scope.shelfId));
     const isLoose = loose.some((s) => s.id === scope.shelfId);
-    // The shelf is gone: stay in the case if that still exists, else go to the root.
+    // The shelf is gone: stay in the group it was in if that still exists, else go to the root.
     if (!inCase && !isLoose) {
-      const caseStillThere = scope.caseId && cases.some((c) => c.id === scope.caseId);
-      return { caseId: caseStillThere ? scope.caseId : null, shelfId: null };
+      const groupStands = isUnfiledScope(scope) || (scope.caseId && cases.some((c) => c.id === scope.caseId));
+      return { caseId: groupStands ? scope.caseId : null, shelfId: null };
     }
-    // The shelf may have been filed into a different case — follow it rather than show a case
-    // that no longer contains the shelf being displayed.
-    const owner = inCase?.id ?? null;
+    // A shelf's parent is whatever holds it — a case, or "not in a case". Following it here is
+    // what keeps the breadcrumb honest when a shelf is filed into a case, or taken out of one,
+    // while the reader is looking at it.
+    const owner = inCase?.id ?? UNFILED_CASE_ID;
     return owner === scope.caseId ? scope : { caseId: owner, shelfId: scope.shelfId };
   }
 
+  // "Not in a case" names no row, so no tree can vouch for it — and it must survive reconciling,
+  // or the reader is thrown out of a place they legitimately stand in.
+  if (isUnfiledScope(scope)) return scope;
   if (scope.caseId && !cases.some((c) => c.id === scope.caseId)) {
     return { caseId: null, shelfId: scope.shelfId };
   }

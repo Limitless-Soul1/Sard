@@ -13,6 +13,7 @@ import { localeNum } from "../../../lib/format";
 import { Hoopoe } from "../Hoopoe";
 import { CaseManageMenu } from "./Menus";
 import { DENSITY_STEPS, DESIGN_SORTS, dropIndex, UNFILED_CASE_ID, type DesignSort, type DesignView } from "./model";
+import { createEdgeScroller, type EdgeScroller } from "./dragScroll";
 
 export type Section = "library" | "inbox" | "cards" | "bookmarks";
 
@@ -102,6 +103,9 @@ export function Sidebar(props: SidebarProps) {
   const dragStart = useRef<{ id: string; y: number; moved: boolean } | null>(null);
   const rowRefs = useRef(new Map<string, HTMLElement>());
   const ghostRef = useRef<HTMLDivElement | null>(null);
+  // One scroller for the sidebar, kept across renders so a re-render cannot cancel a live drag.
+  const scrollerRef = useRef<EdgeScroller | null>(null);
+  if (!scrollerRef.current) scrollerRef.current = createEdgeScroller();
   const [draft, setDraft] = useState("");
 
   /**
@@ -113,6 +117,23 @@ export function Sidebar(props: SidebarProps) {
    * still lift the case the way the reference does.
    */
   useEffect(() => {
+    // Recomputing the landing place from a bare pointer position, so an auto-scroll can ask for
+    // it again without a pointermove — the reader holds still at the edge while the list moves.
+    const retarget = (y: number) => {
+      const st = dragStart.current;
+      if (!st?.moved) return;
+      const order = props.cases.map((c) => c.id);
+      const from = order.indexOf(st.id);
+      const mids = order.map((id) => {
+        const el = rowRefs.current.get(id);
+        if (!el) return Number.POSITIVE_INFINITY;
+        const r = el.getBoundingClientRect();
+        return r.top + r.height / 2;
+      });
+      setDropAt(dropIndex(y, mids, from));
+    };
+    const scroller = scrollerRef.current!;
+    scroller.onScrolled = (_x, y) => retarget(y);
     const move = (e: PointerEvent) => {
       const st = dragStart.current;
       if (!st) return;
@@ -122,20 +143,14 @@ export function Sidebar(props: SidebarProps) {
         setDragging(st.id);
         setCaseHand(null); // a drag supersedes any lift
       }
-      const order = props.cases.map((c) => c.id);
-      const from = order.indexOf(st.id);
-      const mids = order.map((id) => {
-        const el = rowRefs.current.get(id);
-        if (!el) return Number.POSITIVE_INFINITY;
-        const r = el.getBoundingClientRect();
-        return r.top + r.height / 2;
-      });
-      setDropAt(dropIndex(e.clientY, mids, from));
+      retarget(e.clientY);
+      scroller.update(e.clientX, e.clientY);
       const g = ghostRef.current;
       if (g) g.style.transform = `translate(${e.clientX + 12}px, ${e.clientY - 10}px)`;
     };
     const up = () => {
       // `pointerup` on the grip does the placing; this only catches a release elsewhere.
+      scroller.stop();
       if (dragStart.current?.moved) {
         setDragging(null);
         setDropAt(null);
@@ -144,16 +159,20 @@ export function Sidebar(props: SidebarProps) {
     };
     const key = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      scroller.stop();
       dragStart.current = null;
       setDragging(null);
       setDropAt(null);
       setCaseHand(null);
     };
     window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
     window.addEventListener("keydown", key);
     return () => {
+      scroller.stop();
       window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
       window.removeEventListener("keydown", key);
     };
@@ -522,6 +541,7 @@ export function Sidebar(props: SidebarProps) {
                     e.stopPropagation();
                     e.preventDefault();
                     dragStart.current = { id: c.id, y: e.clientY, moved: false };
+                    scrollerRef.current?.setContainer(e.currentTarget as Element);
                     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
                   }}
                   onPointerUp={(e) => {

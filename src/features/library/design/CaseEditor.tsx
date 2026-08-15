@@ -35,6 +35,7 @@ import { localeNum } from "../../../lib/format";
 import { resolveBookMeta, displayTitle } from "../../../lib/bookMeta";
 import { autoCoverPaint } from "../AutoCover";
 import { dropIndex, isFinished, pctText, groupShelf, placementPlan, type BookGroup } from "./model";
+import { createEdgeScroller, type EdgeScroller } from "./dragScroll";
 
 /** The case inks, shared with the sidebar's picker. */
 const INKS = ["#BFA8D6", "#8DC3BA", "#9DC0D6", "#E8C36A", "#D69C9C", "#A8C08D", "#C9A88D", "#9C8DC3"];
@@ -114,6 +115,11 @@ export function CaseEditor(props: CaseEditorProps) {
   const [rowDropAt, setRowDropAt] = useState<number | null>(null);
   const rowRefs = useRef(new Map<string, HTMLElement>());
   const rowGhost = useRef<HTMLDivElement | null>(null);
+  // One scroller per drag kind, kept across renders so a re-render cannot cancel a live drag.
+  const rowScroll = useRef<EdgeScroller | null>(null);
+  if (!rowScroll.current) rowScroll.current = createEdgeScroller();
+  const bookScroll = useRef<EdgeScroller | null>(null);
+  if (!bookScroll.current) bookScroll.current = createEdgeScroller();
 
   useEffect(() => setName(c.name), [c.id, c.name]);
 
@@ -226,13 +232,19 @@ export function CaseEditor(props: CaseEditorProps) {
   // Window-level pointer handling, so a drag that leaves the book still tracks and still lands.
   useEffect(() => {
     if (!hand || hand.kind !== "book") return;
+    // While the panel scrolls under a held book, the drop target has to keep up: no pointermove
+    // arrives, so the scroller asks for it directly.
+    const scroller = bookScroll.current!;
+    scroller.onScrolled = (x, y) => setTarget(hitTest(x, y));
     const move = (e: PointerEvent) => {
       draggedRef.current = true;
       const g = ghostRef.current;
       if (g) g.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 10}px) rotate(-3deg)`;
       setTarget(hitTest(e.clientX, e.clientY));
+      scroller.update(e.clientX, e.clientY);
     };
     const up = (e: PointerEvent) => {
+      scroller.stop();
       if (draggedRef.current) {
         draggedRef.current = false;
         place(hitTest(e.clientX, e.clientY));
@@ -241,6 +253,7 @@ export function CaseEditor(props: CaseEditorProps) {
     window.addEventListener("pointermove", move, true);
     window.addEventListener("pointerup", up, false);
     return () => {
+      scroller.stop();
       window.removeEventListener("pointermove", move, true);
       window.removeEventListener("pointerup", up, false);
     };
@@ -352,6 +365,23 @@ export function CaseEditor(props: CaseEditorProps) {
   );
 
   useEffect(() => {
+    // Recomputed from a bare pointer position so an auto-scroll can ask again without a
+    // pointermove — the reader holds still at the edge while the list moves under them.
+    const retarget = (y: number) => {
+      const st = rowStart.current;
+      if (!st?.moved) return;
+      const ids = siblingsOf(st);
+      const from = ids.indexOf(st.id);
+      const mids = ids.map((id) => {
+        const el = rowRefs.current.get(`${st.kind}:${id}`);
+        if (!el) return Number.POSITIVE_INFINITY;
+        const r = el.getBoundingClientRect();
+        return r.top + r.height / 2;
+      });
+      setRowDropAt(dropIndex(y, mids, from));
+    };
+    const scroller = rowScroll.current!;
+    scroller.onScrolled = (_x, y) => retarget(y);
     const move = (e: PointerEvent) => {
       const st = rowStart.current;
       if (!st) return;
@@ -361,19 +391,13 @@ export function CaseEditor(props: CaseEditorProps) {
         setRowDrag({ kind: st.kind, id: st.id, shelf: st.shelf });
         setHand(null); // a drag supersedes any lift
       }
-      const ids = siblingsOf(st);
-      const from = ids.indexOf(st.id);
-      const mids = ids.map((id) => {
-        const el = rowRefs.current.get(`${st.kind}:${id}`);
-        if (!el) return Number.POSITIVE_INFINITY;
-        const r = el.getBoundingClientRect();
-        return r.top + r.height / 2;
-      });
-      setRowDropAt(dropIndex(e.clientY, mids, from));
+      retarget(e.clientY);
+      scroller.update(e.clientX, e.clientY);
       const g = rowGhost.current;
       if (g) g.style.transform = `translate(${e.clientX + 12}px, ${e.clientY - 10}px)`;
     };
     const cancel = () => {
+      scroller.stop();
       rowStart.current = null;
       setRowDrag(null);
       setRowDropAt(null);
@@ -384,14 +408,19 @@ export function CaseEditor(props: CaseEditorProps) {
       // the window, their order is registration-dependent, and clearing the ref here let the
       // panel conclude no drag was running and close itself.  clears it.
       rowStart.current.cancelled = true;
+      scroller.stop();
       setRowDrag(null);
       setRowDropAt(null);
     };
+    const endScroll = () => scroller.stop();
     window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", endScroll);
     window.addEventListener("pointercancel", cancel);
     window.addEventListener("keydown", key);
     return () => {
+      scroller.stop();
       window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", endScroll);
       window.removeEventListener("pointercancel", cancel);
       window.removeEventListener("keydown", key);
     };
@@ -408,6 +437,7 @@ export function CaseEditor(props: CaseEditorProps) {
       e.stopPropagation();
       e.preventDefault(); // no text selection, and no click reaching the row beneath
       rowStart.current = { kind, id, shelf, y: e.clientY, moved: false };
+      rowScroll.current?.setContainer(e.currentTarget as Element);
       (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     },
     onPointerUp: async (e: React.PointerEvent) => {
@@ -870,7 +900,11 @@ export function CaseEditor(props: CaseEditorProps) {
                               draggedRef.current = false;
                               setHand({ kind: "book", id: b.id, fromShelf: s.id });
                             }}
-                            onHold={(ms) => {
+                            onHold={(ms, el) => {
+                              // The panel body this book sits in is the thing that should follow
+                              // the pointer to an edge, named from the chip rather than from a
+                              // point that may be scrolled out of view.
+                              bookScroll.current?.setContainer(el);
                               if (holdRef.current) window.clearTimeout(holdRef.current);
                               holdRef.current = window.setTimeout(() => {
                                 holdRef.current = null;
@@ -1221,7 +1255,7 @@ function Chip({
   held: boolean;
   slotBefore: boolean;
   onLift: () => void;
-  onHold: (ms: number) => void;
+  onHold: (ms: number, el: Element) => void;
   onRelease: () => void;
   onDetails: () => void;
 }) {
@@ -1239,7 +1273,7 @@ function Chip({
           setHover(false);
           onRelease();
         }}
-        onPointerDown={() => takeable && onHold(180)}
+        onPointerDown={(e) => takeable && onHold(180, e.currentTarget as Element)}
         onPointerUp={onRelease}
         onClick={(e) => {
           if (!takeable) return;

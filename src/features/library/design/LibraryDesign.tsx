@@ -61,6 +61,7 @@ import {
   type DesignSort,
   type DesignView,
 } from "./model";
+import { createEdgeScroller, type EdgeScroller } from "./dragScroll";
 
 const EMPTY_TREE: LibraryTree = { cases: [], loose: [] };
 
@@ -710,19 +711,34 @@ export function LibraryDesign(props: LibraryDesignProps) {
    * clickable, so the older route still works for anyone who prefers it.
    */
   const bookDrag = useRef<{ book: BookRow; fromShelf: string; x: number; y: number; moved: boolean } | null>(null);
-  const armBookDrag = useCallback((book: BookRow, fromShelf: string, x: number, y: number) => {
+  // ONE scroller for the component's lifetime. Building it inside the effect meant it was torn
+  // down and rebuilt on every render the effect's dependencies changed — which, during a drag, is
+  // most of them — so it was destroyed before a single frame could scroll anything.
+  const bookScroll = useRef<EdgeScroller | null>(null);
+  if (!bookScroll.current) bookScroll.current = createEdgeScroller();
+  const armBookDrag = useCallback((book: BookRow, fromShelf: string, x: number, y: number, el: Element) => {
     bookDrag.current = { book, fromShelf, x, y, moved: false };
+    // The pane to follow is decided by where the press happened, not by hit-testing a point that
+    // may be off screen — a tile can be pressed while its own centre is below the fold.
+    bookScroll.current?.setContainer(el);
   }, []);
 
   useEffect(() => {
+    // The drop slots are all on screen at once, so nothing needs recomputing as the pane scrolls —
+    // but the pane DOES need to scroll, or a shelf below the fold cannot be reached at all.
+    const scroller = bookScroll.current!;
     const move = (e: PointerEvent) => {
       const st = bookDrag.current;
-      if (!st || st.moved) return;
-      if (Math.abs(e.clientX - st.x) < 5 && Math.abs(e.clientY - st.y) < 5) return;
-      st.moved = true;
-      setCarry({ book: st.book, fromShelf: st.fromShelf });
+      if (!st) return;
+      if (!st.moved) {
+        if (Math.abs(e.clientX - st.x) < 5 && Math.abs(e.clientY - st.y) < 5) return;
+        st.moved = true;
+        setCarry({ book: st.book, fromShelf: st.fromShelf });
+      }
+      scroller.update(e.clientX, e.clientY);
     };
     const up = (e: PointerEvent) => {
+      scroller.stop();
       const st = bookDrag.current;
       bookDrag.current = null;
       if (!st?.moved) return;
@@ -753,7 +769,11 @@ export function LibraryDesign(props: LibraryDesignProps) {
   useEffect(() => {
     if (!carry) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setCarry(null);
+      if (e.key !== "Escape") return;
+      // Also forget the press that started it, so the release does not then place the book at
+      // whatever happens to be under the pointer.
+      bookDrag.current = null;
+      setCarry(null);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -998,7 +1018,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
                   })
                 }
                 onPickUp={(b, shelfId) => setCarry({ book: b, fromShelf: shelfId })}
-              onArrangeDown={(b, shelfId, x, y) => armBookDrag(b, shelfId, x, y)}
+              onArrangeDown={(b, shelfId, x, y, el) => armBookDrag(b, shelfId, x, y, el)}
                 onRemoveFromShelf={removeFromShelf}
                 onSetFinished={setFinished}
                 onPlace={place}
@@ -1039,7 +1059,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
                 })
               }
               onPickUp={(b, shelfId) => setCarry({ book: b, fromShelf: shelfId })}
-              onArrangeDown={(b, shelfId, x, y) => armBookDrag(b, shelfId, x, y)}
+              onArrangeDown={(b, shelfId, x, y, el) => armBookDrag(b, shelfId, x, y, el)}
               onRemoveFromShelf={removeFromShelf}
               onSetFinished={setFinished}
               onNewShelf={(caseId) => write(() => shelfCreate(t("lib.shelf.untitled"), caseId))}

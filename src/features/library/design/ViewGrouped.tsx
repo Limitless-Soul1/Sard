@@ -47,7 +47,7 @@ export interface GroupedProps {
   onToggleSelect: (id: string) => void;
   onPickUp: (b: BookRow, shelfId: string, x: number, y: number) => void;
   /** Arrange mode: the pointer went down on a book. The surface decides when it becomes a drag. */
-  onArrangeDown: (b: BookRow, shelfId: string, x: number, y: number) => void;
+  onArrangeDown: (b: BookRow, shelfId: string, x: number, y: number, el: Element) => void;
   onRemoveFromShelf: (bookId: string, shelfId: string) => void;
   onSetFinished: (b: BookRow, finished: boolean) => void;
   onNewShelf: (caseId: string) => void;
@@ -584,7 +584,7 @@ export function ViewGrouped(props: GroupedProps) {
                                     onEdit={() => props.onEditBook(b)}
                                     onToggleSelect={() => props.onToggleSelect(b.id)}
                                     onPickUp={(x, y) => props.onPickUp(b, shelf.id, x, y)}
-                                    onArrangeDown={(x, y) => props.onArrangeDown(b, shelf.id, x, y)}
+                                    onArrangeDown={(x, y, el) => props.onArrangeDown(b, shelf.id, x, y, el)}
                                     onRemoveFromShelf={
                                       // A rule shelf fills itself, and the unshelved run is not a
                                       // collection — offering "remove from shelf" on either is a

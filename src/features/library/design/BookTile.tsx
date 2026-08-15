@@ -42,7 +42,7 @@ export interface BookTileProps {
   onToggleSelect: () => void;
   onPickUp: (clientX: number, clientY: number) => void;
   /** Arrange mode: the pointer went down on this book. The surface decides when it becomes a drag. */
-  onArrangeDown: (clientX: number, clientY: number) => void;
+  onArrangeDown: (clientX: number, clientY: number, el: Element) => void;
   /** null when the shelf cannot give a book up (a rule shelf). */
   onRemoveFromShelf: (() => void) | null;
   onSetFinished: (finished: boolean) => void;
@@ -95,7 +95,7 @@ export function BookTile(props: BookTileProps) {
     // manipulation from the one every other level of the hierarchy uses.
     if (arrangeOn) {
       e.preventDefault(); // no text selection, and no click reaching the cover underneath
-      props.onArrangeDown(e.clientX, e.clientY);
+      props.onArrangeDown(e.clientX, e.clientY, e.currentTarget as Element);
       return;
     }
     // Press-and-hold picks a book up outside arrange mode — the design's own affordance.

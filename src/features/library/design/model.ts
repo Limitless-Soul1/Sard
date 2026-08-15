@@ -130,7 +130,20 @@ export interface BookGroup {
  * into a trailing unnamed run. A shelf with no categories yields exactly one unnamed run,
  * which is what makes the grouped renderer identical for both cases.
  */
-export function groupShelf(shelf: ShelfNode, items: ShelfItem[], byId: Map<string, BookRow>): BookGroup[] {
+export function groupShelf(
+  shelf: ShelfNode,
+  items: ShelfItem[],
+  byId: Map<string, BookRow>,
+  /**
+   * Keep categories that hold nothing.
+   *
+   * A browsing view has no use for an empty run and drops it. The MANAGEMENT panel must not: an
+   * empty category that cannot be seen cannot be renamed, reordered or deleted either, so making
+   * one and not filling it immediately left an object stranded in the database with no way back
+   * to it.
+   */
+  keepEmpty = false,
+): BookGroup[] {
   const ordered = items.map((i) => byId.get(i.book_id)).filter((b): b is BookRow => !!b);
   if (!shelf.categories.length) {
     return [{ categoryId: null, name: null, books: ordered }];
@@ -150,7 +163,7 @@ export function groupShelf(shelf: ShelfNode, items: ShelfItem[], byId: Map<strin
     else loose.push(b);
   }
   if (loose.length) groups.push({ categoryId: null, name: null, books: loose });
-  return groups.filter((g) => g.books.length > 0);
+  return keepEmpty ? groups : groups.filter((g) => g.books.length > 0);
 }
 
 /** Every shelf in the tree, cases first then loose, as one flat list. */

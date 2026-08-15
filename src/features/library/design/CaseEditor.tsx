@@ -34,7 +34,7 @@ import { useI18n } from "../../../i18n";
 import { localeNum } from "../../../lib/format";
 import { resolveBookMeta, displayTitle } from "../../../lib/bookMeta";
 import { autoCoverPaint } from "../AutoCover";
-import { isFinished, pctText, groupShelf, type BookGroup } from "./model";
+import { dropIndex, isFinished, pctText, groupShelf, type BookGroup } from "./model";
 
 /** The case inks, shared with the sidebar's picker. */
 const INKS = ["#BFA8D6", "#8DC3BA", "#9DC0D6", "#E8C36A", "#D69C9C", "#A8C08D", "#C9A88D", "#9C8DC3"];
@@ -107,13 +107,22 @@ export function CaseEditor(props: CaseEditorProps) {
   const holdRef = useRef<number | null>(null);
   const draggedRef = useRef(false);
   const ghostRef = useRef<HTMLDivElement | null>(null);
+  // The shelf/category drag: declared here, with the other pointer state, because the panel's
+  // own Escape handler has to be able to see it.
+  const rowStart = useRef<{ kind: "shelf" | "category"; id: string; shelf?: string; y: number; moved: boolean; cancelled?: boolean } | null>(null);
+  const [rowDrag, setRowDrag] = useState<{ kind: "shelf" | "category"; id: string; shelf?: string } | null>(null);
+  const [rowDropAt, setRowDropAt] = useState<number | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLElement>());
+  const rowGhost = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => setName(c.name), [c.id, c.name]);
 
   const key = (shelfId: string, catId: string | null) => `${shelfId}::${catId ?? ""}`;
 
   const shelfBooks = useCallback(
-    (s: ShelfNode): BookGroup[] => groupShelf(s, props.items[s.id] ?? [], props.byId),
+    // `keepEmpty`: this is the panel where a category is managed, so one holding nothing still
+    // has to appear — otherwise it exists, is unreachable, and cannot even be deleted.
+    (s: ShelfNode): BookGroup[] => groupShelf(s, props.items[s.id] ?? [], props.byId, true),
     [props.items, props.byId],
   );
 
@@ -200,6 +209,12 @@ export function CaseEditor(props: CaseEditorProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      // A drag in progress consumes Escape — cancelling the drag, not closing the panel. Without
+      // this, cancelling a shelf drag threw the reader out of the panel they were working in.
+      if (rowStart.current) {
+        e.preventDefault();
+        return;
+      }
       if (hand) {
         e.preventDefault();
         setHand(null);
@@ -273,6 +288,119 @@ export function CaseEditor(props: CaseEditorProps) {
     props.notify(ok ? t("lib.category.deleted") : t("lib.writeFailed"));
     props.onChanged();
   };
+
+  /**
+   * The shelf and category grips, dragged rather than clicked-and-clicked.
+   *
+   * Identical in behaviour to the case grip in the sidebar, and for the same reason: ⠿ means
+   * "take hold of this" everywhere it appears, so it must not mean lift-and-then-find-a-rail on
+   * one level of the hierarchy and press-and-drag on another. A plain click still lifts, exactly
+   * as before — the two are the same operation reached two ways, and neither is taken away.
+   *
+   * Rows are measured from their own elements, so the insertion bar tracks the pointer even
+   * though shelves are tall blocks of very different heights.
+   */
+
+  /** The ids a dragged row is ordered among — its siblings, and only those. */
+  const siblingsOf = useCallback(
+    (st: { kind: "shelf" | "category"; id: string; shelf?: string }): string[] => {
+      if (st.kind === "shelf") return c.shelves.map((x) => x.id);
+      const sh = c.shelves.find((x) => x.id === st.shelf);
+      return sh ? sh.categories.map((k) => k.id) : [];
+    },
+    [c.shelves],
+  );
+
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      const st = rowStart.current;
+      if (!st) return;
+      if (!st.moved && Math.abs(e.clientY - st.y) < 4) return;
+      if (!st.moved) {
+        st.moved = true;
+        setRowDrag({ kind: st.kind, id: st.id, shelf: st.shelf });
+        setHand(null); // a drag supersedes any lift
+      }
+      const ids = siblingsOf(st);
+      const from = ids.indexOf(st.id);
+      const mids = ids.map((id) => {
+        const el = rowRefs.current.get(`${st.kind}:${id}`);
+        if (!el) return Number.POSITIVE_INFINITY;
+        const r = el.getBoundingClientRect();
+        return r.top + r.height / 2;
+      });
+      setRowDropAt(dropIndex(e.clientY, mids, from));
+      const g = rowGhost.current;
+      if (g) g.style.transform = `translate(${e.clientX + 12}px, ${e.clientY - 10}px)`;
+    };
+    const cancel = () => {
+      rowStart.current = null;
+      setRowDrag(null);
+      setRowDropAt(null);
+    };
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !rowStart.current) return;
+      // Mark it cancelled but KEEP the ref: both this and the panel's own Escape handler are on
+      // the window, their order is registration-dependent, and clearing the ref here let the
+      // panel conclude no drag was running and close itself.  clears it.
+      rowStart.current.cancelled = true;
+      setRowDrag(null);
+      setRowDropAt(null);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointercancel", cancel);
+    window.addEventListener("keydown", key);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointercancel", cancel);
+      window.removeEventListener("keydown", key);
+    };
+  }, [siblingsOf]);
+
+  /** What a grip does on press and on release. `onLift` is the unchanged click behaviour. */
+  const gripHandlers = (
+    kind: "shelf" | "category",
+    id: string,
+    onLift: () => void,
+    shelf?: string,
+  ) => ({
+    onPointerDown: (e: React.PointerEvent) => {
+      e.stopPropagation();
+      e.preventDefault(); // no text selection, and no click reaching the row beneath
+      rowStart.current = { kind, id, shelf, y: e.clientY, moved: false };
+      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    },
+    onPointerUp: async (e: React.PointerEvent) => {
+      e.stopPropagation();
+      const st = rowStart.current;
+      rowStart.current = null;
+      if (st?.cancelled) return; // Escape already put it back
+      if (!st?.moved) {
+        onLift();
+        return;
+      }
+      const at = rowDropAt;
+      setRowDrag(null);
+      setRowDropAt(null);
+      if (at == null) return;
+      if (kind === "shelf") await run(() => shelfReorder(id, at));
+      else await run(() => categoryReorder(id, at));
+    },
+  });
+
+  /** The insertion bar, shared by both levels so they read identically. */
+  const insertionBar = (
+    <span
+      style={{
+        display: "block",
+        height: 2,
+        margin: "4px 0",
+        borderRadius: 1,
+        background: "var(--acc)",
+        boxShadow: "0 0 0 3px color-mix(in srgb, var(--acc) 22%, transparent)",
+      }}
+    />
+  );
 
   const grip = (active: boolean, hidden?: boolean): React.CSSProperties => ({
     flex: "none",
@@ -453,13 +581,19 @@ export function CaseEditor(props: CaseEditorProps) {
             return (
               <div
                 key={s.id}
+                ref={(el) => {
+                  if (el) rowRefs.current.set(`shelf:${s.id}`, el);
+                  else rowRefs.current.delete(`shelf:${s.id}`);
+                }}
                 style={{
                   padding: "10px 0 14px",
                   borderBottom: "1px solid var(--brd)",
-                  opacity: shelfHeld ? 0.4 : 1,
+                  opacity: shelfHeld || (rowDrag?.kind === "shelf" && rowDrag.id === s.id) ? 0.4 : 1,
                   ...(s.auto_rule ? { background: "var(--soft)", borderRadius: 10, paddingInline: 12 } : {}),
                 }}
               >
+                {/* where a dragged shelf would land */}
+                {rowDrag?.kind === "shelf" && rowDropAt === gi && insertionBar}
                 {/* a place-here rail while another shelf is in hand */}
                 {hand?.kind === "shelf" && hand.id !== s.id && (
                   <button
@@ -473,10 +607,16 @@ export function CaseEditor(props: CaseEditorProps) {
 
                 <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "2px 0 9px" }}>
                   <button
-                    title={t("lib.moveShelf")}
-                    aria-label={t("lib.moveShelf")}
-                    onClick={() => setHand(shelfHeld ? null : { kind: "shelf", id: s.id })}
-                    style={grip(shelfHeld)}
+                    title={t("lib.moveShelfHint")}
+                    aria-label={t("lib.moveShelfHint")}
+                    {...gripHandlers("shelf", s.id, () =>
+                      setHand(shelfHeld ? null : { kind: "shelf", id: s.id }),
+                    )}
+                    style={{
+                      ...grip(shelfHeld || (rowDrag?.kind === "shelf" && rowDrag.id === s.id)),
+                      cursor: rowDrag?.kind === "shelf" && rowDrag.id === s.id ? "grabbing" : "grab",
+                      touchAction: "none",
+                    }}
                   >
                     ⠿
                   </button>
@@ -561,11 +701,29 @@ export function CaseEditor(props: CaseEditorProps) {
 
                 {groups.map((g, ki) => {
                   const k = key(s.id, g.categoryId);
+                  // Ordered among CATEGORIES, not among groups: `ki` counts the un-categorised run as
+                  // well, and that run is not a category the backend can place anything next to.
+                  const catIndex = g.categoryId ? s.categories.findIndex((x) => x.id === g.categoryId) : -1;
                   const held = hand?.kind === "category" && hand.id === g.categoryId && hand.shelf === s.id;
                   const showSlot =
                     hand?.kind === "category" && hand.shelf === s.id && hand.id !== g.categoryId && !!g.categoryId;
                   return (
-                    <div key={g.categoryId ?? "__loose"}>
+                    <div
+                      key={g.categoryId ?? "__loose"}
+                      ref={(el) => {
+                        if (!g.categoryId) return;
+                        if (el) rowRefs.current.set(`category:${g.categoryId}`, el);
+                        else rowRefs.current.delete(`category:${g.categoryId}`);
+                      }}
+                      style={
+                        rowDrag?.kind === "category" && rowDrag.id === g.categoryId ? { opacity: 0.4 } : undefined
+                      }
+                    >
+                      {/* where a dragged category would land, among this shelf's categories only */}
+                      {rowDrag?.kind === "category" &&
+                        rowDrag.shelf === s.id &&
+                        rowDropAt === catIndex &&
+                        insertionBar}
                       {showSlot && (
                         <button
                           onClick={() =>
@@ -580,12 +738,20 @@ export function CaseEditor(props: CaseEditorProps) {
                       {g.name != null && (
                         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0 7px" }}>
                           <button
-                            title={t("lib.moveCategory")}
-                            aria-label={t("lib.moveCategory")}
-                            onClick={() =>
-                              setHand(held ? null : { kind: "category", id: g.categoryId!, shelf: s.id })
-                            }
-                            style={grip(held, !g.categoryId)}
+                            title={t("lib.moveCategoryHint")}
+                            aria-label={t("lib.moveCategoryHint")}
+                            {...gripHandlers(
+                              "category",
+                              g.categoryId ?? "",
+                              () => setHand(held ? null : { kind: "category", id: g.categoryId!, shelf: s.id }),
+                              s.id,
+                            )}
+                            style={{
+                              ...grip(held || (rowDrag?.kind === "category" && rowDrag.id === g.categoryId), !g.categoryId),
+                              cursor:
+                                rowDrag?.kind === "category" && rowDrag.id === g.categoryId ? "grabbing" : "grab",
+                              touchAction: "none",
+                            }}
                           >
                             ⠿
                           </button>
@@ -748,6 +914,9 @@ export function CaseEditor(props: CaseEditorProps) {
             );
           })}
 
+          {/* The bar's last position: after every shelf. Without it the bottom of the list is the
+              one place a drag cannot reach. */}
+          {rowDrag?.kind === "shelf" && rowDropAt === c.shelves.length - 1 && insertionBar}
           {hand?.kind === "shelf" && (
             <button
               onClick={() => run(() => shelfReorder(hand.id, c.shelves.length)).then(() => setHand(null))}
@@ -924,6 +1093,37 @@ export function CaseEditor(props: CaseEditorProps) {
           </button>
         </div>
       </div>
+
+      {/* The shelf or category in hand, following the pointer — the same ghost the case grip
+          shows in the sidebar, so a drag reads as carrying something at every level. */}
+      {rowDrag && (
+        <div
+          ref={rowGhost}
+          aria-hidden
+          style={{
+            position: "fixed",
+            insetBlockStart: 0,
+            insetInlineStart: 0,
+            zIndex: 210,
+            pointerEvents: "none",
+            padding: "5px 11px",
+            borderRadius: 7,
+            border: "1px solid var(--brd)",
+            borderInlineStart: "3px solid var(--acc)",
+            background: "var(--chr)",
+            boxShadow: "var(--sh3)",
+            font: "600 .8125rem var(--ui)",
+            color: "var(--txt)",
+            opacity: 0.95,
+          }}
+        >
+          {rowDrag.kind === "shelf"
+            ? (c.shelves.find((x) => x.id === rowDrag.id)?.name ?? "")
+            : (c.shelves
+                .find((x) => x.id === rowDrag.shelf)
+                ?.categories.find((k) => k.id === rowDrag.id)?.name ?? "")}
+        </div>
+      )}
 
       {/* the ghost that follows the pointer while a book is carried */}
       {handBook && (

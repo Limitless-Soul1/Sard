@@ -158,7 +158,13 @@ export function ViewGrouped(props: GroupedProps) {
             key={id}
             style={{
               margin: "0 24px 22px",
-              background: "var(--chr)",
+              // Slightly translucent, so a library background reads faintly through the case
+              // without the card becoming glass. 88% is the same register as the sidebar's own
+              // 85% floor (RAWY-278) and stays well clear of it, and there is deliberately no
+              // backdrop-filter: the blur is what turns a translucent panel into a glass one,
+              // and it is not wanted here. With no background image this simply carries the
+              // chrome a little toward the paper, which is the intended restraint.
+              background: "color-mix(in srgb, var(--chr) 88%, transparent)",
               border: "1px solid var(--brd)",
               borderInlineStart: `4px solid ${spine}`,
               borderRadius: "4px 14px 14px 4px",
@@ -181,6 +187,12 @@ export function ViewGrouped(props: GroupedProps) {
                 style={{
                   display: "flex",
                   alignItems: "center",
+                  // START, explicitly. This button is `flex: 1` so it spans the header, and the
+                  // surface's own button reset sets `justify-content: center` — which pushed the
+                  // disc, the name and the counts into the middle of the case and made the header
+                  // read as a centred title. The reference's `headBtn` sets no justification at
+                  // all, i.e. start, and mirrors with the UI direction on its own.
+                  justifyContent: "flex-start",
                   gap: 12,
                   minWidth: 0,
                   flex: 1,

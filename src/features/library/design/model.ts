@@ -287,3 +287,57 @@ export function selectionSource(
   if (shelves.length === 1) return { kind: "single", shelfId: shelves[0], shelves };
   return { kind: "ambiguous", shelfId: null, shelves };
 }
+
+// ---------------------------------------------------------------------------
+// Navigation
+// ---------------------------------------------------------------------------
+
+/**
+ * Where in the library the reader is standing.
+ *
+ * Two fields and no more. `ROOT` — both null — is the whole library, and it is a real place, not
+ * the absence of one: "Library" must mean the complete collection every time it is clicked, never
+ * "the last case I happened to open".
+ */
+export interface NavScope {
+  caseId: string | null;
+  shelfId: string | null;
+}
+
+export const ROOT_SCOPE: NavScope = { caseId: null, shelfId: null };
+
+export const isRootScope = (s: NavScope) => !s.caseId && !s.shelfId;
+
+/**
+ * Pull a scope back to somewhere that still exists.
+ *
+ * Deleting the case you are standing in used to leave its id in the scope: nothing matched the
+ * filter, so the pane rendered empty while the breadcrumb said "Library" — an empty library with
+ * no visible cause. A shelf moved into another case left the two halves disagreeing, which is the
+ * same failure wearing a different hat.
+ *
+ * Reconciling against the tree, rather than remembering to clear the scope at each of the sites
+ * that can invalidate it, is what makes that class of bug impossible instead of merely fixed.
+ */
+export function reconcileScope(scope: NavScope, cases: CaseNode[], loose: ShelfNode[]): NavScope {
+  if (isRootScope(scope)) return scope;
+
+  if (scope.shelfId && !isVirtualShelf(scope.shelfId)) {
+    const inCase = cases.find((c) => c.shelves.some((s) => s.id === scope.shelfId));
+    const isLoose = loose.some((s) => s.id === scope.shelfId);
+    // The shelf is gone: stay in the case if that still exists, else go to the root.
+    if (!inCase && !isLoose) {
+      const caseStillThere = scope.caseId && cases.some((c) => c.id === scope.caseId);
+      return { caseId: caseStillThere ? scope.caseId : null, shelfId: null };
+    }
+    // The shelf may have been filed into a different case — follow it rather than show a case
+    // that no longer contains the shelf being displayed.
+    const owner = inCase?.id ?? null;
+    return owner === scope.caseId ? scope : { caseId: owner, shelfId: scope.shelfId };
+  }
+
+  if (scope.caseId && !cases.some((c) => c.id === scope.caseId)) {
+    return { caseId: null, shelfId: scope.shelfId };
+  }
+  return scope;
+}

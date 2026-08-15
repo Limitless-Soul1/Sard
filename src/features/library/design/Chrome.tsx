@@ -32,6 +32,15 @@ interface SidebarProps {
   readingCount: number;
   scope: Scope;
   onScope: (s: Scope) => void;
+  /**
+   * True when the library is showing EVERYTHING — no case and no shelf focused.
+   *
+   * The Library row is a root, not a section marker: it may only look active when the pane really
+   * is the whole library. Without this it lit up while a case was focused, so the sidebar showed
+   * two active rows at once and told the reader they were at the root when they were not. The
+   * reference states the same rule — `S.nav === id && !S.scope` — and the port had dropped it.
+   */
+  atRoot: boolean;
   openCases: Set<string>;
   onToggleCase: (id: string) => void;
   onNewCase: (name: string) => void;
@@ -226,7 +235,9 @@ export function Sidebar(props: SidebarProps) {
             disabled={n.id === "reading"}
             onClick={() => n.id !== "reading" && props.onSection(n.id as Section)}
             style={{
-              ...navRow(n.id === props.section),
+              // Library is active only AT the root. Every other section is active whenever it is
+              // the section, because none of them can be focused into.
+              ...navRow(n.id === props.section && (n.id !== "library" || props.atRoot)),
               opacity: n.id === "reading" ? 0.6 : undefined,
               cursor: n.id === "reading" ? "default" : "pointer",
             }}

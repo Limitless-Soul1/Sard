@@ -51,6 +51,7 @@ import {
   LOOSE_SHELF_ID,
   makeLooseShelf,
   placementPlan,
+  reconcileScope,
   spineWidth,
   selectionSource,
   sortBooks,
@@ -216,6 +217,31 @@ export function LibraryDesign(props: LibraryDesignProps) {
 
   const byId = useMemo(() => new Map(props.books.map((b) => [b.id, b])), [props.books]);
 
+  // ---- navigation -------------------------------------------------------------
+  //
+  // THE MODEL, in two pieces and no more: `section` says which pane, `scope` says how far into
+  // the library the reader has walked. `scope` is meaningful ONLY inside the library section, and
+  // the library section has exactly one root.
+  //
+  //   root      section = library, scope = { null, null }   — everything
+  //   case      section = library, scope = { caseId, null } — one case
+  //   shelf     section = library, scope = { …, shelfId }   — one shelf
+  //
+  // The rule that was missing: GOING TO A SECTION IS GOING TO ITS ROOT. Clicking Library set the
+  // section and left `scope` alone, so "Library" meant "the case I last opened" and the pane kept
+  // filtering. Leaving for Highlights and coming back restored the old case too. One helper now
+  // owns that transition so no call site can forget it — which is exactly how it was forgotten.
+  const atRoot = !scope.caseId && !scope.shelfId;
+  const goRoot = useCallback(() => setScope({ caseId: null, shelfId: null }), []);
+
+  const goSection = useCallback(
+    (s: Section) => {
+      goRoot();
+      props.onSection(s);
+    },
+    [goRoot, props],
+  );
+
   /**
    * EVERY structure write goes through here.
    *
@@ -262,6 +288,33 @@ export function LibraryDesign(props: LibraryDesignProps) {
     for (const s of tree.loose) m.set(s.id, { shelf: s, caseNode: null });
     return m;
   }, [tree]);
+
+  /**
+   * A scope must always name somewhere that exists.
+   *
+   * Delete the case you are standing in and `scope.caseId` kept pointing at it: no case matched
+   * the filter any more, so the pane rendered EMPTY while the breadcrumb said "Library" — an empty
+   * library with no visible reason for being empty. The same happened to a deleted shelf, and to a
+   * shelf moved into a different case, which left the case and the shelf disagreeing.
+   *
+   * Rather than remember to clear the scope at each of the half-dozen sites that can invalidate
+   * it, the scope is reconciled against the tree whenever the tree changes. A location that has
+   * gone falls back to the nearest one that still exists, and in the worst case to the root.
+   */
+  useEffect(() => {
+    if (!seeded.current) return; // nothing loaded yet; the initial scope is already the root
+    setScope((s) => reconcileScope(s, tree.cases, tree.loose));
+  }, [tree]);
+
+  // Moving somewhere else drops a selection made where you were.
+  //
+  // Otherwise the tray goes on reporting "3 selected" over books that are no longer on screen, and
+  // the next action operates on things the reader can no longer see. A carried book is deliberately
+  // NOT dropped: picking one up in one case and carrying it to another is the point of carrying.
+  useEffect(() => {
+    setSelected((prev) => (prev.size ? new Set<string>() : prev));
+    setOrderMenuFor(null);
+  }, [scope.caseId, scope.shelfId]);
 
   /** The full placement of a book — case, shelf and category — for Book Details' assignment path. */
   const placementOf = useCallback(
@@ -330,7 +383,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
       }
       if (shelves.length) caseList.push({ node: c, shelves });
     }
-    if (!scope.caseId || scope.caseId === "__loose") {
+    if (!scope.caseId) {
       const shelves: ShelfRender[] = [];
       for (const s of tree.loose) {
         if (scope.shelfId && scope.shelfId !== s.id) continue;
@@ -628,10 +681,17 @@ export function LibraryDesign(props: LibraryDesignProps) {
 
   // ---- chrome inputs ---------------------------------------------------------
   const scopedCase = scope.caseId ? tree.cases.find((c) => c.id === scope.caseId) ?? null : null;
-  const scopedShelf = scope.shelfId ? shelfById.get(scope.shelfId)?.shelf ?? null : null;
+  // The unshelved run is a real place to stand but not a row in `collections`, so it resolves
+  // here rather than through `shelfById` — without this, focusing it left the heading and the
+  // breadcrumb both claiming "Library" while the pane showed one filtered run.
+  const scopedShelf: { id: string; name: string } | null = !scope.shelfId
+    ? null
+    : isVirtualShelf(scope.shelfId)
+      ? { id: scope.shelfId, name: t("lib.unshelved") }
+      : (shelfById.get(scope.shelfId)?.shelf ?? null);
 
   const crumbs = [
-    { label: t("lib.nav.library"), go: () => setScope({ caseId: null, shelfId: null }) },
+    { label: t("lib.nav.library"), go: goRoot },
     ...(scopedCase ? [{ label: scopedCase.name, go: () => setScope({ caseId: scopedCase.id, shelfId: null }) }] : []),
     ...(scopedShelf ? [{ label: scopedShelf.name, go: () => {} }] : []),
   ];
@@ -649,12 +709,13 @@ export function LibraryDesign(props: LibraryDesignProps) {
     <div className="lib-root libd-root">
         <Sidebar
           section={props.section}
-          onSection={props.onSection}
+          onSection={goSection}
           cases={tree.cases}
           loose={tree.loose}
           bookCount={props.books.length}
           readingCount={readingCount}
           scope={scope}
+          atRoot={atRoot}
           onScope={(s) => {
             setScope(s);
             props.onSection("library");
@@ -702,12 +763,13 @@ export function LibraryDesign(props: LibraryDesignProps) {
     <div className="lib-root libd-root">
       <Sidebar
         section={props.section}
-        onSection={props.onSection}
+        onSection={goSection}
         cases={tree.cases}
         loose={tree.loose}
         bookCount={props.books.length}
         readingCount={readingCount}
         scope={scope}
+        atRoot={atRoot}
         onScope={setScope}
         openCases={openCases}
         onToggleCase={(id) =>

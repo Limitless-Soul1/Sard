@@ -469,7 +469,10 @@ export function LibraryDesign(props: LibraryDesignProps) {
   const place = useCallback(
     async (shelfId: string, categoryId: string | null, index: number) => {
       if (!carry) return;
-      const plan = placementPlan(carry.fromShelf, shelfId);
+      // A rule shelf holds no membership rows, so a book leaving one is an ADD: it goes on
+      // appearing there until the reading state that put it there changes.
+      const sourceIsRule = !!shelfById.get(carry.fromShelf)?.shelf.auto_rule;
+      const plan = placementPlan(carry.fromShelf, shelfId, { sourceIsRule });
       if (plan.kind === "none") {
         setCarry(null);
         return;
@@ -496,10 +499,6 @@ export function LibraryDesign(props: LibraryDesignProps) {
         flash(t("lib.cannotPlace"));
         return;
       }
-      if (target && target.shelf.order_rule !== "hand") {
-        flash(t("lib.cannotPlaceSorted"));
-        return;
-      }
 
       // A MOVE, not a copy. The destination is written first: if it refuses — a rule shelf, a
       // sorted shelf, a failed write — the book is still on the shelf it started on, which is
@@ -524,8 +523,11 @@ export function LibraryDesign(props: LibraryDesignProps) {
         }
       }
       await loadTree();
+      const fromName = shelfById.get(carry.fromShelf)?.shelf.name ?? "";
       setCarry(null);
-      flash(`${t("lib.placed")} ${t("lib.on")} ${target?.shelf.name ?? ""}`);
+      // A book taken out of a rule shelf did not leave it, and saying "moved" would be a lie.
+      if (sourceIsRule) flash(t("lib.copiedFromRuleShelf", { name: fromName }));
+      else flash(`${t("lib.placed")} ${t("lib.on")} ${target?.shelf.name ?? ""}`);
     },
     [carry, shelfById, flash, t, loadTree, write],
   );
@@ -694,6 +696,58 @@ export function LibraryDesign(props: LibraryDesignProps) {
     }),
     [loadTree, t, shelfById, tree.loose],
   );
+
+  /**
+   * ARRANGE IS A DRAG, in the main views as everywhere else.
+   *
+   * A book used to be picked up by a click and put down by a click on a slot. That is a different
+   * manipulation from the one a case, a shelf, a category and a book-in-the-panel all use, and it
+   * is the one interaction left that the reader had to learn separately.
+   *
+   * The pointer going down on a book only records it. The carry begins once the pointer has
+   * actually travelled — which is what keeps a click a click — and the release is hit-tested
+   * against the drop slots, each of which names its own destination. Those same slots stay
+   * clickable, so the older route still works for anyone who prefers it.
+   */
+  const bookDrag = useRef<{ book: BookRow; fromShelf: string; x: number; y: number; moved: boolean } | null>(null);
+  const armBookDrag = useCallback((book: BookRow, fromShelf: string, x: number, y: number) => {
+    bookDrag.current = { book, fromShelf, x, y, moved: false };
+  }, []);
+
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      const st = bookDrag.current;
+      if (!st || st.moved) return;
+      if (Math.abs(e.clientX - st.x) < 5 && Math.abs(e.clientY - st.y) < 5) return;
+      st.moved = true;
+      setCarry({ book: st.book, fromShelf: st.fromShelf });
+    };
+    const up = (e: PointerEvent) => {
+      const st = bookDrag.current;
+      bookDrag.current = null;
+      if (!st?.moved) return;
+      // Which slot is under the pointer? The slot carries its own destination, so this needs no
+      // second geometry model — it reads the answer the view already rendered.
+      const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+      const slot = el?.closest?.("[data-drop-shelf]") as HTMLElement | null;
+      if (!slot) {
+        setCarry(null); // released over nothing: put it back
+        return;
+      }
+      const shelfId = slot.dataset.dropShelf!;
+      const cat = slot.dataset.dropCat || null;
+      const index = Number(slot.dataset.dropIndex ?? 0);
+      place(shelfId, cat, Number.isFinite(index) ? index : 0);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+  }, [place]);
 
   // Esc cancels a carry, exactly as the design specifies.
   useEffect(() => {
@@ -944,6 +998,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
                   })
                 }
                 onPickUp={(b, shelfId) => setCarry({ book: b, fromShelf: shelfId })}
+              onArrangeDown={(b, shelfId, x, y) => armBookDrag(b, shelfId, x, y)}
                 onRemoveFromShelf={removeFromShelf}
                 onSetFinished={setFinished}
                 onPlace={place}
@@ -984,6 +1039,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
                 })
               }
               onPickUp={(b, shelfId) => setCarry({ book: b, fromShelf: shelfId })}
+              onArrangeDown={(b, shelfId, x, y) => armBookDrag(b, shelfId, x, y)}
               onRemoveFromShelf={removeFromShelf}
               onSetFinished={setFinished}
               onNewShelf={(caseId) => write(() => shelfCreate(t("lib.shelf.untitled"), caseId))}

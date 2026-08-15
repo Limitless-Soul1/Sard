@@ -241,14 +241,24 @@ export type PlacementPlan =
   | { kind: "unshelve"; removeFrom: string }
   | { kind: "none" };
 
-export function placementPlan(fromShelf: string, toShelf: string): PlacementPlan {
+export function placementPlan(
+  fromShelf: string,
+  toShelf: string,
+  opts: { sourceIsRule?: boolean } = {},
+): PlacementPlan {
   if (isVirtualShelf(toShelf)) {
     // Dropping onto the unshelved run means "take this off its shelf". A book that was already
-    // unshelved has nothing to leave.
-    return isVirtualShelf(fromShelf) ? { kind: "none" } : { kind: "unshelve", removeFrom: fromShelf };
+    // unshelved has nothing to leave, and neither has one whose shelf is a rule.
+    return isVirtualShelf(fromShelf) || opts.sourceIsRule
+      ? { kind: "none" }
+      : { kind: "unshelve", removeFrom: fromShelf };
   }
   if (fromShelf === toShelf) return { kind: "reorder", shelfId: toShelf };
-  if (isVirtualShelf(fromShelf)) return { kind: "add", shelfId: toShelf };
+  // A RULE SHELF IS A VIEW, NOT A LOCATION. Its contents are a live query — there is no
+  // membership row to delete — so a book leaving one is an ADD, and the book goes on appearing
+  // there for exactly as long as the rule still describes it. Treating it as a move would
+  // promise a removal that cannot happen.
+  if (isVirtualShelf(fromShelf) || opts.sourceIsRule) return { kind: "add", shelfId: toShelf };
   return { kind: "move", shelfId: toShelf, removeFrom: fromShelf };
 }
 

@@ -68,3 +68,44 @@ describe("what a manual placement does", () => {
     }
   });
 });
+
+describe("a rule shelf is a view, not a location", () => {
+  // Its contents are a live query — `auto_sql` — so there are no `book_collections` rows for it.
+  // That is why a book cannot "leave" one: there is nothing to delete, and the book goes on
+  // appearing there for exactly as long as the rule still describes it.
+  it("dragging a book OUT of a rule shelf is an add, not a move", () => {
+    expect(placementPlan("reading-shelf", "b", { sourceIsRule: true })).toEqual({
+      kind: "add",
+      shelfId: "b",
+    });
+  });
+
+  it("names no source to remove, so nothing can be deleted by mistake", () => {
+    const plan = placementPlan("reading-shelf", "b", { sourceIsRule: true });
+    expect("removeFrom" in plan).toBe(false);
+  });
+
+  it("the same two shelves are a real move when the source is NOT a rule", () => {
+    // The asymmetry the reader hit: the source's own kind decided this, and a SORTED shelf was
+    // wrongly treated as unable to give a book up. Only a rule shelf is.
+    expect(placementPlan("reading-shelf", "b", { sourceIsRule: false })).toEqual({
+      kind: "move",
+      shelfId: "b",
+      removeFrom: "reading-shelf",
+    });
+    expect(placementPlan("reading-shelf", "b")).toEqual({
+      kind: "move",
+      shelfId: "b",
+      removeFrom: "reading-shelf",
+    });
+  });
+
+  it("dropping a rule shelf's book on the unshelved run does nothing", () => {
+    // There is no membership to take away, so "take it off its shelf" has nothing to act on.
+    expect(placementPlan("reading-shelf", LOOSE_SHELF_ID, { sourceIsRule: true })).toEqual({ kind: "none" });
+  });
+
+  it("reordering within a rule shelf is still just a reorder", () => {
+    expect(placementPlan("r", "r", { sourceIsRule: true })).toEqual({ kind: "reorder", shelfId: "r" });
+  });
+});

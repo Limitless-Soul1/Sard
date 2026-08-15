@@ -262,6 +262,7 @@ export const ar: Record<TKey, string> = {
     "انقر كتابًا لالتقاطه، حرّكه إلى الموضع الذي تريد، ثم انقر لتضعه. Esc للإلغاء. وخارج هذا الوضع اضغط مطوّلًا على الكتاب.",
   "lib.placeHere": "ضعه هنا",
   "lib.takeOffShelf": "أخرِجه من رفّه",
+  "lib.copiedFromRuleShelf": "أُضيف هنا. ويبقى في «{name}» ما دام الوصف منطبقًا.",
   "lib.cannotPlace": "رفّ بقاعدة — الترتيب تلقائيّ",
   "lib.cannotPlaceSorted": "رفّ مفروز — حوّله إلى «يدويّ» لتضع فيه",
   "lib.placed": "وُضع",

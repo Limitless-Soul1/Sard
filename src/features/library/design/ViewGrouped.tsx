@@ -46,6 +46,8 @@ export interface GroupedProps {
   onEditBook: (b: BookRow) => void;
   onToggleSelect: (id: string) => void;
   onPickUp: (b: BookRow, shelfId: string, x: number, y: number) => void;
+  /** Arrange mode: the pointer went down on a book. The surface decides when it becomes a drag. */
+  onArrangeDown: (b: BookRow, shelfId: string, x: number, y: number) => void;
   onRemoveFromShelf: (bookId: string, shelfId: string) => void;
   onSetFinished: (b: BookRow, finished: boolean) => void;
   onNewShelf: (caseId: string) => void;
@@ -100,8 +102,10 @@ export function ViewGrouped(props: GroupedProps) {
    * The unshelved run counts: dropping there means "take it off its shelf", so it is a target for
    * anything that came from a real shelf, and for nothing that was already unshelved.
    */
+  // A SORTED shelf can take a book — the sort simply decides where it sits once it arrives. Only
+  // a rule shelf cannot, because its contents are a query rather than a list.
   const canTake = (s: ShelfNode) =>
-    isVirtualShelf(s.id) ? !props.carryFromUnshelved : !s.auto_rule && s.order_rule === "hand";
+    isVirtualShelf(s.id) ? !props.carryFromUnshelved : !s.auto_rule;
 
   const ruleLabel = (s: ShelfNode) =>
     s.auto_rule === "reading"
@@ -124,6 +128,11 @@ export function ViewGrouped(props: GroupedProps) {
     carrying && !(isVirtualShelf(shelfId) && props.carryFromUnshelved) ? (
       <button
         key={key}
+        // The slot names its own destination, so a RELEASE can find it by hit-testing the point
+        // under the pointer. Clicking it still works and does the same thing.
+        data-drop-shelf={shelfId}
+        data-drop-cat={categoryId ?? ""}
+        data-drop-index={index}
         onClick={() => props.onPlace(shelfId, categoryId, index)}
         title={isVirtualShelf(shelfId) ? t("lib.takeOffShelf") : t("lib.placeHere")}
         aria-label={isVirtualShelf(shelfId) ? t("lib.takeOffShelf") : t("lib.placeHere")}
@@ -575,6 +584,7 @@ export function ViewGrouped(props: GroupedProps) {
                                     onEdit={() => props.onEditBook(b)}
                                     onToggleSelect={() => props.onToggleSelect(b.id)}
                                     onPickUp={(x, y) => props.onPickUp(b, shelf.id, x, y)}
+                                    onArrangeDown={(x, y) => props.onArrangeDown(b, shelf.id, x, y)}
                                     onRemoveFromShelf={
                                       // A rule shelf fills itself, and the unshelved run is not a
                                       // collection — offering "remove from shelf" on either is a

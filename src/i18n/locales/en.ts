@@ -264,6 +264,7 @@ export const en = {
     "Click a book to pick it up, move to the slot you want, click to place. Esc cancels. Outside this mode, press and hold a book.",
   "lib.placeHere": "place here",
   "lib.takeOffShelf": "take off its shelf",
+  "lib.copiedFromRuleShelf": "Added here. It stays in “{name}” while that still describes it.",
   "lib.cannotPlace": "ruled shelf — order is automatic",
   "lib.cannotPlaceSorted": "sorted shelf — switch it to By hand to place",
   "lib.placed": "Placed",

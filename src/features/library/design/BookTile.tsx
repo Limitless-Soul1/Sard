@@ -41,6 +41,8 @@ export interface BookTileProps {
   onEdit: () => void;
   onToggleSelect: () => void;
   onPickUp: (clientX: number, clientY: number) => void;
+  /** Arrange mode: the pointer went down on this book. The surface decides when it becomes a drag. */
+  onArrangeDown: (clientX: number, clientY: number) => void;
   /** null when the shelf cannot give a book up (a rule shelf). */
   onRemoveFromShelf: (() => void) | null;
   onSetFinished: (finished: boolean) => void;
@@ -86,7 +88,16 @@ export function BookTile(props: BookTileProps) {
   const showDots = !selectOn && (hover || menuOpen);
 
   const press = (e: React.PointerEvent) => {
-    if (arrangeOn || selectOn) return;
+    if (selectOn) return;
+    // ARRANGE MODE IS A DRAG. Pressing a book takes hold of it immediately; the surface starts
+    // carrying it once the pointer has actually travelled, and releasing over a slot places it.
+    // It used to be a click to pick up and a second click on a destination, which is a different
+    // manipulation from the one every other level of the hierarchy uses.
+    if (arrangeOn) {
+      e.preventDefault(); // no text selection, and no click reaching the cover underneath
+      props.onArrangeDown(e.clientX, e.clientY);
+      return;
+    }
     // Press-and-hold picks a book up outside arrange mode — the design's own affordance.
     const x = e.clientX;
     const y = e.clientY;
@@ -104,9 +115,10 @@ export function BookTile(props: BookTileProps) {
   const holdRef = useHoldRef();
 
   const click = (e: React.MouseEvent) => {
+    // Arrange is handled by the pointer handlers; a click here would pick the book up a second
+    // time at the end of every drag.
     if (arrangeOn) {
       e.stopPropagation();
-      props.onPickUp(e.clientX, e.clientY);
       return;
     }
     if (selectOn) {
@@ -177,7 +189,7 @@ export function BookTile(props: BookTileProps) {
 
   return (
     <div
-      style={cardStyle}
+      style={{ ...cardStyle, ...(arrangeOn ? { cursor: inHand ? "grabbing" : "grab", touchAction: "none" } : {}) }}
       onPointerEnter={() => setHover(true)}
       onPointerLeave={() => {
         setHover(false);

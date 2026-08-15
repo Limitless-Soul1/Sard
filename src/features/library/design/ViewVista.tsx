@@ -87,6 +87,7 @@ export interface VistaProps {
   onEditBook: (b: BookRow) => void;
   onToggleSelect: (id: string) => void;
   onPickUp: (b: BookRow, shelfId: string, x: number, y: number) => void;
+  onArrangeDown: (b: BookRow, shelfId: string, x: number, y: number) => void;
   onRemoveFromShelf: (bookId: string, shelfId: string) => void;
   onSetFinished: (b: BookRow, finished: boolean) => void;
   /** The library Crop/Fit default, passed through to each tile. */
@@ -211,8 +212,11 @@ export function ViewVista(props: VistaProps) {
             >
               {shown.map((b, i) => (
                 <div key={b.id} style={{ display: "contents" }}>
-                {carrying && !band.shelf.auto_rule && !isVirtualShelf(band.shelf.id) && band.shelf.order_rule === "hand" && (
+                {carrying && !band.shelf.auto_rule && !isVirtualShelf(band.shelf.id) && (
                   <button
+                    data-drop-shelf={band.shelf.id}
+                    data-drop-cat=""
+                    data-drop-index={i}
                     onClick={() => props.onPlace(band.shelf.id, null, i)}
                     title={t("lib.placeHere")}
                     aria-label={t("lib.placeHere")}
@@ -239,6 +243,7 @@ export function ViewVista(props: VistaProps) {
                   onEdit={() => props.onEditBook(b)}
                   onToggleSelect={() => props.onToggleSelect(b.id)}
                   onPickUp={(x, y) => props.onPickUp(b, band.shelf.id, x, y)}
+                  onArrangeDown={(x, y) => props.onArrangeDown(b, band.shelf.id, x, y)}
                   onRemoveFromShelf={
                     band.shelf.auto_rule ? null : () => props.onRemoveFromShelf(b.id, band.shelf.id)
                   }
@@ -248,8 +253,11 @@ export function ViewVista(props: VistaProps) {
                 </div>
               ))}
 
-              {carrying && !band.shelf.auto_rule && band.shelf.order_rule === "hand" && (
+              {carrying && !band.shelf.auto_rule && !isVirtualShelf(band.shelf.id) && (
                 <button
+                  data-drop-shelf={band.shelf.id}
+                  data-drop-cat=""
+                  data-drop-index={shown.length}
                   onClick={() => props.onPlace(band.shelf.id, null, shown.length)}
                   title={t("lib.placeHere")}
                   aria-label={t("lib.placeHere")}

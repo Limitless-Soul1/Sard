@@ -34,7 +34,7 @@ import { useI18n } from "../../../i18n";
 import { localeNum } from "../../../lib/format";
 import { resolveBookMeta, displayTitle } from "../../../lib/bookMeta";
 import { autoCoverPaint } from "../AutoCover";
-import { dropIndex, isFinished, pctText, groupShelf, type BookGroup } from "./model";
+import { dropIndex, isFinished, pctText, groupShelf, placementPlan, type BookGroup } from "./model";
 
 /** The case inks, shared with the sidebar's picker. */
 const INKS = ["#BFA8D6", "#8DC3BA", "#9DC0D6", "#E8C36A", "#D69C9C", "#A8C08D", "#C9A88D", "#9C8DC3"];
@@ -126,7 +126,22 @@ export function CaseEditor(props: CaseEditorProps) {
     [props.items, props.byId],
   );
 
-  const canTake = (s: ShelfNode) => !s.auto_rule && s.order_rule === "hand";
+  /**
+   * Whether a book may be LIFTED from this shelf.
+   *
+   * This used to also require `order_rule === "hand"`, which conflated two unrelated questions
+   * and produced exactly the asymmetry that was reported: a sorted shelf would ACCEPT a book and
+   * then refuse to give it up. A sort decides where a book sits WITHIN a shelf; it has nothing to
+   * say about whether the book may leave, and removing one disturbs no ordering at all.
+   *
+   * A rule shelf is the real exception, and for a reason that is not a restriction: it holds no
+   * membership rows, so there is nothing to take away. A book can still be dragged out of one —
+   * that adds it where it lands — and it goes on appearing in the rule shelf until the reading
+   * state that put it there changes.
+   */
+  const canTakeFrom = (s: ShelfNode) => !s.auto_rule;
+  /** Whether a book may be dropped ONTO this shelf at a chosen position. */
+  const canDropOn = (s: ShelfNode) => !s.auto_rule;
 
   // ---- drag ------------------------------------------------------------------
   /** Turn a pointer position into the nearest list and an insertion index within it. */
@@ -170,17 +185,42 @@ export function CaseEditor(props: CaseEditorProps) {
       setHand(null);
       setTarget(null);
       if (!h || h.kind !== "book" || !to) return;
-      setBusy(true);
-      // Leaving another shelf is a real move, not a copy.
-      if (h.fromShelf !== to.shelfId) {
-        await collectionRemoveBook(h.fromShelf, h.id).catch(() => {});
+      const dest = c.shelves.find((x) => x.id === to.shelfId);
+      if (dest && !canDropOn(dest)) {
+        // A rule shelf decides its own contents; nothing can be filed into one.
+        props.notify(t("lib.cannotPlace"));
+        return;
       }
-      const tree = await shelfPlaceBook(to.shelfId, h.id, to.catId, to.index).catch(() => null);
+      const src = c.shelves.find((x) => x.id === h.fromShelf);
+      const plan = placementPlan(h.fromShelf, to.shelfId, { sourceIsRule: !!src?.auto_rule });
+      setBusy(true);
+      // The destination first: if it refuses, the book is still where it was.
+      let ok = true;
+      try {
+        const tree = await shelfPlaceBook(to.shelfId, h.id, to.catId, to.index);
+        props.onTree(tree);
+      } catch (e) {
+        console.error(e);
+        ok = false;
+        props.notify(t("lib.writeFailed"));
+      }
+      // Only a real move leaves anything behind. A book dragged out of a RULE shelf has no
+      // membership to delete — it goes on appearing there until its reading state changes — so
+      // saying so is the honest report, rather than claiming a removal that cannot happen.
+      if (ok && plan.kind === "move") {
+        try {
+          await collectionRemoveBook(plan.removeFrom, h.id);
+        } catch (e) {
+          console.error(e);
+          props.notify(t("lib.movedButNotRemoved"));
+        }
+      } else if (ok && plan.kind === "add" && src?.auto_rule) {
+        props.notify(t("lib.copiedFromRuleShelf", { name: src.name }));
+      }
       setBusy(false);
-      if (tree) props.onTree(tree);
       props.onChanged();
     },
-    [hand, props],
+    [hand, props, c.shelves, t],
   );
 
   // Window-level pointer handling, so a drag that leaves the book still tracks and still lands.
@@ -574,7 +614,7 @@ export function CaseEditor(props: CaseEditorProps) {
         {/* ---- body: shelves, their categories, their books ---- */}
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "6px 24px 18px" }}>
           {c.shelves.map((s, gi) => {
-            const takeable = canTake(s);
+            const takeable = canTakeFrom(s);
             const groups = shelfBooks(s);
             const total = groups.reduce((n, g) => n + g.books.length, 0);
             const shelfHeld = hand?.kind === "shelf" && hand.id === s.id;

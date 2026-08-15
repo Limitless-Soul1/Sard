@@ -1,0 +1,239 @@
+// The Profiles area — a section of Global Settings, per the design.
+//
+// "Global Settings is already the sovereign surface for app-wide appearance — the bookmark and the
+// read marker live there today. Profiles take a nav row beside them."
+//
+// NOTHING ELSE IN GLOBAL SETTINGS MOVES. The design package draws a restructured settings window
+// (seven rows, Fonts and Bookmark gone, three new entries); that restructure is not this feature and
+// is not implemented. One row is added, and the sections that already exist keep working exactly as
+// they did — which is also what keeps this stage inert for anyone who never opens it.
+
+import { useState } from "react";
+
+import { useI18n } from "../../i18n";
+import { localeDigits } from "../../lib/format";
+import { THEMES, isBuiltinThemeId } from "../../theme/themes";
+import { SardMini } from "./SardMini";
+import { miniOfTheme } from "./mini";
+import { ProfileCard } from "./ProfileCard";
+import { ProfileEditor } from "./ProfileEditor";
+import {
+  applyProfile,
+  captureCurrent,
+  createProfile,
+  duplicateProfile,
+  removeProfile,
+  useProfiles,
+} from "./store";
+import type { Profile } from "./model/profile";
+
+type Dialog =
+  | { kind: "none" }
+  | { kind: "create" }
+  | { kind: "delete"; profile: Profile }
+  | { kind: "edit"; profile: Profile };
+
+export function ProfilesSection() {
+  const { t, lang } = useI18n();
+  const profiles = useProfiles((s) => s.profiles);
+  const activeId = useProfiles((s) => s.activeId);
+  const [dialog, setDialog] = useState<Dialog>({ kind: "none" });
+  const [busy, setBusy] = useState(false);
+
+  const num = (n: number) => localeDigits(String(n), lang);
+
+  const themeNameOf = (p: Profile): string => {
+    const base = p.data.theme.base;
+    return isBuiltinThemeId(base) ? t(`theme.${base}`) : t("profiles.theme.custom");
+  };
+
+  const create = async (name: string) => {
+    setBusy(true);
+    try {
+      const data = await captureCurrent();
+      const p = await createProfile(name, data, null);
+      await applyProfile(p);
+      setDialog({ kind: "edit", profile: p });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const duplicate = async (p: Profile) => {
+    const name = t("profiles.duplicateSuffix", { name: p.name ?? "—" });
+    const copy = await duplicateProfile(p, name);
+    setDialog({ kind: "edit", profile: copy });
+  };
+
+  const remove = async (p: Profile) => {
+    await removeProfile(p, "ivory");
+    setDialog({ kind: "none" });
+  };
+
+  return (
+    <>
+      <div className="gs-h1">{t("profiles.title")}</div>
+      <div className="gs-note">{t("profiles.subtitle")}</div>
+
+      <div className="pf-actions">
+        <button className="pf-btn primary" disabled={busy} onClick={() => setDialog({ kind: "create" })}>
+          {t("profiles.new")}
+        </button>
+        {/* Import arrives with the package format (a later stage). Shown disabled rather than
+            hidden, because the design's list has it and a control that appears later moves the
+            furniture under the reader. */}
+        <button className="pf-btn" disabled title={t("profiles.import")}>
+          {t("profiles.import")}
+        </button>
+        {profiles.length > 0 && (
+          <span className="pf-count">{t("profiles.count", { n: num(profiles.length) })}</span>
+        )}
+      </div>
+
+      {profiles.length === 0 ? (
+        <FirstRun onCreate={() => setDialog({ kind: "create" })} />
+      ) : (
+        <div className="pf-grid">
+          {profiles.map((p) => (
+            <ProfileCard
+              key={p.id}
+              profile={p}
+              active={p.id === activeId}
+              themeName={themeNameOf(p)}
+              actions={{
+                onUse: () => void applyProfile(p),
+                onEdit: () => setDialog({ kind: "edit", profile: p }),
+                onDuplicate: () => void duplicate(p),
+                onDelete: () => setDialog({ kind: "delete", profile: p }),
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      {dialog.kind === "create" && (
+        <CreateDialog busy={busy} onCancel={() => setDialog({ kind: "none" })} onCreate={create} />
+      )}
+      {dialog.kind === "delete" && (
+        <DeleteDialog
+          profile={dialog.profile}
+          onCancel={() => setDialog({ kind: "none" })}
+          onConfirm={() => void remove(dialog.profile)}
+        />
+      )}
+      {dialog.kind === "edit" && (
+        <ProfileEditor profile={dialog.profile} onClose={() => setDialog({ kind: "none" })} />
+      )}
+    </>
+  );
+}
+
+/**
+ * First run — absence drawn, not described.
+ *
+ * The design: "The empty state shows the default Sard as a miniature … with a mark, a title, one
+ * sentence and two real actions." So the reader sees what Sard looks like right now, and the
+ * reassurance that making a profile costs them nothing.
+ */
+function FirstRun({ onCreate }: { onCreate: () => void }) {
+  const { t } = useI18n();
+  return (
+    <div className="pf-empty">
+      <div className="pf-empty-mini">
+        <SardMini p={miniOfTheme(THEMES.ivory, "سَرْد")} />
+      </div>
+      <div className="pf-empty-title">{t("profiles.empty.title")}</div>
+      <p className="pf-empty-body">{t("profiles.empty.body")}</p>
+      <div className="pf-empty-actions">
+        <button className="pf-btn primary" onClick={onCreate}>
+          {t("profiles.new")}
+        </button>
+        <button className="pf-btn" disabled>
+          {t("profiles.import")}
+        </button>
+      </div>
+      <div className="pf-empty-reassure">{t("profiles.empty.reassure")}</div>
+    </div>
+  );
+}
+
+/** New profile: a name, and where it starts from. */
+function CreateDialog({
+  busy,
+  onCancel,
+  onCreate,
+}: {
+  busy: boolean;
+  onCancel: () => void;
+  onCreate: (name: string) => void;
+}) {
+  const { t } = useI18n();
+  const [name, setName] = useState("");
+  return (
+    <div className="pf-dialog-scrim" onClick={onCancel}>
+      <div className="pf-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="pf-dialog-title">{t("profiles.create.title")}</div>
+
+        <label className="pf-field">
+          <span className="pf-field-label">{t("profiles.create.name")}</span>
+          <input
+            className="pf-input"
+            value={name}
+            autoFocus
+            dir="auto"
+            placeholder={t("profiles.create.namePlaceholder")}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && !busy && onCreate(name)}
+          />
+        </label>
+
+        {/* "Start from" — the design offers three. Only the first is live in this stage: the other
+            two need the custom-paper dialog, which arrives with the theme editor's colour path. */}
+        <div className="pf-field">
+          <span className="pf-field-label">{t("profiles.create.startFrom")}</span>
+          <div className="pf-startfrom">{t("profiles.create.fromCurrent")}</div>
+        </div>
+
+        <div className="pf-dialog-actions">
+          <button className="pf-btn" onClick={onCancel}>
+            {t("profiles.theme.cancel")}
+          </button>
+          <button className="pf-btn primary" disabled={busy} onClick={() => onCreate(name)}>
+            {t("profiles.create.submit")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Delete, two-step — and the copy promises exactly what is and is not lost. */
+function DeleteDialog({
+  profile,
+  onCancel,
+  onConfirm,
+}: {
+  profile: Profile;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <div className="pf-dialog-scrim" onClick={onCancel}>
+      <div className="pf-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="pf-dialog-title">
+          {t("profiles.delete.title", { name: profile.name ?? "—" })}
+        </div>
+        <p className="pf-dialog-body">{t("profiles.delete.body")}</p>
+        <div className="pf-dialog-actions">
+          <button className="pf-btn" onClick={onCancel}>
+            {t("profiles.delete.cancel")}
+          </button>
+          <button className="pf-btn danger" onClick={onConfirm}>
+            {t("profiles.delete.confirm")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

@@ -859,6 +859,137 @@ export const en = {
   "meta.titleFrom.inferred": "Taken from the book’s first heading.",
   "meta.titleFrom.filename": "Taken from the file name.",
   "meta.titleFrom.default": "This book gave no usable title.",
+
+  // ---- PROFILES ----
+  // A profile carries how Sard LOOKS. The reader's own layout — line spacing, measure, margins,
+  // diacritics, alignment, size — is not part of one, and the design states that exactly once, in
+  // the editor rail, rather than repeating it. `profiles.notPart` is that sentence.
+  "gs.nav.profiles": "Profiles",
+  "profiles.title": "Profiles",
+  "profiles.subtitle":
+    "A profile carries how Sard looks: its paper, colours, backgrounds, faces and marks. Your reading settings are not part of it.",
+  "profiles.new": "New profile",
+  "profiles.import": "Import a profile",
+  "profiles.active": "Active",
+  "profiles.count": "{n} profiles",
+
+  // First run — the design draws absence rather than describing it: the default Sard as a
+  // miniature, a title, one sentence and two real actions.
+  "profiles.empty.title": "Sard is on its default look",
+  "profiles.empty.body":
+    "Make a profile to keep your paper, colours, backgrounds and faces in one place — or import one a friend sent you.",
+  "profiles.empty.reassure": "Your reading settings stay as they are, either way.",
+
+  // Card menu
+  "profiles.card.edit": "Edit",
+  "profiles.card.use": "Use this profile",
+  "profiles.card.duplicate": "Duplicate",
+  "profiles.card.share": "Share…",
+  "profiles.card.delete": "Delete",
+  "profiles.card.menu": "More",
+
+  // Delete, two-step. The promise is specific: nothing of the reader's is lost.
+  "profiles.delete.title": "Delete “{name}”?",
+  "profiles.delete.body":
+    "No book or quote is deleted, and your reading settings do not change. If this is the active profile, Sard returns to its default look.",
+  "profiles.delete.confirm": "Delete",
+  "profiles.delete.cancel": "Cancel",
+
+  // Create
+  "profiles.create.title": "New profile",
+  "profiles.create.name": "Name",
+  "profiles.create.namePlaceholder": "Name it…",
+  "profiles.create.startFrom": "Start from",
+  "profiles.create.fromCurrent": "How Sard looks now",
+  "profiles.create.fromTheme": "One of the sixteen papers",
+  "profiles.create.submit": "Create and edit",
+  "profiles.duplicateSuffix": "{name} 2",
+
+  // Editor
+  "profiles.editor.title": "Edit profile",
+  "profiles.editor.unsaved": "Unsaved change",
+  "profiles.editor.save": "Save",
+  "profiles.editor.close": "Close",
+  "profiles.editor.sectionsHint": "Six sections. What you see on the left is what you will see in Sard.",
+  "profiles.editor.stageLibrary": "Library",
+  "profiles.editor.stageBook": "Book",
+
+  "profiles.section.identity": "Identity",
+  "profiles.section.theme": "Paper and colours",
+  "profiles.section.libraryBg": "Library background",
+  "profiles.section.bookBg": "Book background",
+  "profiles.section.fonts": "Fonts",
+  "profiles.section.marks": "Marks and texture",
+
+  "profiles.identity.name": "Name",
+  "profiles.identity.icon": "Icon",
+  "profiles.identity.iconSeal": "Initial",
+  "profiles.identity.iconColour": "Colour",
+  "profiles.identity.sealHint":
+    "With no image, the first letter of the name is drawn in the profile’s own face, on its own paper.",
+
+  "profiles.theme.papers": "{n} papers",
+  "profiles.theme.customise": "Customise the colours",
+  "profiles.theme.custom": "A paper of your own",
+  "profiles.theme.paper": "Paper",
+  "profiles.theme.touch": "Touch",
+  "profiles.theme.harmony": "Harmony",
+  "profiles.theme.harmonyHint": "Four complete Sards from these two colours. Choose by eye.",
+  "profiles.theme.advanced": "Finer control over the colours",
+  "profiles.theme.apply": "Apply",
+  "profiles.theme.cancel": "Cancel",
+  "profiles.theme.dayNight": "Day / Night",
+  "profiles.harmony.calm": "Calm",
+  "profiles.harmony.calmNote": "A light paper and an earthen touch",
+  "profiles.harmony.warm": "Warm",
+  "profiles.harmony.warmNote": "A deeper paper and a frank copper",
+  "profiles.harmony.cool": "Cool",
+  "profiles.harmony.coolNote": "A neutral paper and a sea green",
+  "profiles.harmony.contrast": "Contrast",
+  "profiles.harmony.contrastNote": "A frank white and a black letter",
+
+  // The eight roles, named for what they paint — never for the token behind them.
+  "profiles.role.paper": "Paper",
+  "profiles.role.paperNote": "The book’s page, and fields",
+  "profiles.role.desk": "Desk",
+  "profiles.role.deskNote": "Around the page, and the library’s ground",
+  "profiles.role.chrome": "Panels",
+  "profiles.role.chromeNote": "Bars, menus and sides",
+  "profiles.role.border": "Dividing line",
+  "profiles.role.borderNote": "Every hairline, always translucent",
+  "profiles.role.text": "Letter",
+  "profiles.role.textNote": "The first text",
+  "profiles.role.muted": "Quiet letter",
+  "profiles.role.mutedNote": "Small titles and counts",
+  "profiles.role.accent": "Touch",
+  "profiles.role.accentNote": "The first action, progress, selection",
+  "profiles.role.selection": "Selection",
+  "profiles.role.selectionNote": "Under selected text",
+  "profiles.roles.hint":
+    "The numbers point to what each colour paints. Move one and you see its place change here.",
+  "profiles.contrast.ok": "{ratio}:1 — enough",
+  "profiles.contrast.low": "{ratio}:1 — hard to read",
+  "profiles.contrast.fix": "Use the nearest colour that clears",
+
+  "profiles.fonts.interface": "Sard’s interface",
+  "profiles.fonts.arabic": "Arabic book font",
+  "profiles.fonts.latin": "Latin book font",
+  "profiles.fonts.add": "Add a font from this device",
+  "profiles.fonts.three": "Three fonts",
+
+  "profiles.marks.bookmark": "Page mark",
+  "profiles.marks.readMarker": "Finished-chapter mark",
+  "profiles.marks.texture": "Interface texture",
+  "profiles.marks.textureHint":
+    "Applies to panels, menus and the reading bar. The page itself is not made translucent from here.",
+  "profiles.texture.opaque": "Opaque",
+  "profiles.texture.light": "Light",
+  "profiles.texture.glass": "Glass",
+
+  // The firewall, stated once — the rail's last block.
+  "profiles.notPart.title": "Not part of a profile",
+  "profiles.notPart.body":
+    "Line spacing, page width, margins, diacritics, alignment and size are your reading settings. They stay yours in every profile.",
 } as const;
 
 export type TKey = keyof typeof en;

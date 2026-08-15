@@ -13,6 +13,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { appInfo } from "../../lib/ipc"; // BETA identification in About (build id)
 
 import { Hoopoe } from "../library/Hoopoe";
+import { ProfilesSection } from "../profiles/ProfilesSection";
 import { settingsGet, settingsSet } from "../../lib/ipc";
 import { useUpdater } from "../../lib/updater";
 import { FONT_CATALOGUE, UI_SCALE_MAX, UI_SCALE_MIN, useFonts } from "../../lib/fonts";
@@ -36,9 +37,14 @@ import { THEMES, THEME_ORDER, currentMode, resolveTheme, useTheme, type ThemeMod
 
 const STYLE_KEY = "reading_style";
 
-type Section = "appearance" | "fonts" | "reading" | "bookmark" | "language" | "presence" | "about";
+type Section = "appearance" | "profiles" | "fonts" | "reading" | "bookmark" | "language" | "presence" | "about";
 const NAV: { key: Section; label: TKey; icon: string }[] = [
   { key: "appearance", label: "gs.nav.appearance", icon: "◑" },
+  // PROFILES: one row added, beside the bookmark and read-marker that already live here. The design
+  // package draws a RESTRUCTURED settings window — Fonts, Bookmark and Language gone, three new
+  // entries in their place — and that restructure is a different piece of work, deliberately not
+  // done here. Every existing section keeps working exactly as it did.
+  { key: "profiles", label: "gs.nav.profiles", icon: "◈" },
   { key: "fonts", label: "gs.nav.fonts", icon: "A" },
   { key: "reading", label: "gs.nav.reading", icon: "▤" },
   { key: "bookmark", label: "gs.nav.bookmark", icon: "▸" },
@@ -89,6 +95,7 @@ export function GlobalSettings({ open, onClose }: { open: boolean; onClose: () =
           </div>
           <div className="gs-body">
             {section === "appearance" && <AppearanceSection />}
+            {section === "profiles" && <ProfilesSection />}
             {section === "fonts" && <FontsSection />}
             {section === "reading" && <ReadingDefaultsSection />}
             {section === "bookmark" && <BookmarkSection />}

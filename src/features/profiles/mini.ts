@@ -1,0 +1,78 @@
+// Turning a profile — or one of the sixteen — into the miniature's props.
+//
+// One place, because the card, the first-run state, the switcher and the editor's stage all draw
+// the same picture and must never disagree about what a profile looks like.
+
+import { FONT_CATALOGUE } from "../../lib/fonts";
+import type { Theme } from "../../theme/tokens";
+import type { MiniProfile } from "./SardMini";
+import type { Profile } from "./model/profile";
+
+/**
+ * A book-font key → the CSS family that renders it.
+ *
+ * Built-in keys resolve through the shared catalogue rather than a second table, so a face added
+ * there appears here without anyone remembering to. An IMPORTED font is stored by its own family
+ * name and is already a CSS family, so it passes through — which is also why the fallback is the
+ * value itself rather than a default: an unrecognised key is far more likely to be an imported
+ * family than a mistake.
+ */
+export function bookFaceCss(key: string): string {
+  const cat = FONT_CATALOGUE.find((f) => f.bookArabic === key || f.bookLatin === key);
+  if (!cat) return `"${key}", serif`;
+  // An empty `css` is the catalogue's way of saying "the default Plex pair", which the app font
+  // stack already provides.
+  return cat.css ? `"${cat.css}", serif` : `"SardUIArabic", "SardUILatin", serif`;
+}
+
+/** The word a profile's page shows: its own name, or a word of Sard when it has none. */
+export const miniGlyph = (name: string | null): string => {
+  const n = (name ?? "").trim();
+  return n ? n.slice(0, 12) : "سَرْد";
+};
+
+/** The miniature for a saved profile. */
+export function miniOf(p: Profile): MiniProfile {
+  const c = p.data.theme.colors;
+  return {
+    paper: c.paperBg,
+    desk: c.surfaceBg,
+    chrome: c.chromeBg,
+    border: c.chromeBorder,
+    text: c.text,
+    muted: c.muted,
+    accent: c.accent,
+    ink: p.data.theme.bookmark ?? c.accent,
+    // Backgrounds enter a profile in stage 4; until then a profile shows its own colours, and
+    // showing an image it does not yet carry would be a picture of something that is not true.
+    bgImg: "none",
+    bgOn: 0,
+    scrim: 0,
+    blur: "0px",
+    trans: 1,
+    face: bookFaceCss(p.data.type.arabic),
+    glyph: miniGlyph(p.name),
+  };
+}
+
+/** The miniature for one of the sixteen — used for the starting profiles and the first-run state. */
+export function miniOfTheme(t: Theme, name: string, face = "amiri"): MiniProfile {
+  const c = t.colors;
+  return {
+    paper: c.paperBg,
+    desk: c.surfaceBg,
+    chrome: c.chromeBg,
+    border: c.chromeBorder,
+    text: c.text,
+    muted: c.muted,
+    accent: c.accent,
+    ink: c.accent,
+    bgImg: "none",
+    bgOn: 0,
+    scrim: 0,
+    blur: "0px",
+    trans: 1,
+    face: bookFaceCss(face),
+    glyph: miniGlyph(name),
+  };
+}

@@ -1,0 +1,252 @@
+/* ================================================================================================
+   PROFILES — the visual-identity area and its editor.
+
+   A FILE OF ITS OWN, deliberately. `global.css` is 4,700 lines that every surface depends on; a
+   feature that can be added without editing one of them should be. Nothing here overrides an
+   existing rule, so a reader who never opens Profiles renders exactly as before.
+
+   GEOMETRY IS THE DESIGN PACKAGE'S, NOT INVENTED:
+     · a 344px rail — the shape `.pc-panel` already uses for the photo composer, which is what the
+       design means by "it borrows the shape Sard already uses for its one creative surface";
+     · a 256px menu at 13px radius with 9px padding and a 0 14px 34px shadow;
+     · selection as 2px of accent with 4px of the surrounding ground between it and the card — the
+       swatch grid's own idiom, which reads on a pale card and a black one alike.
+
+   EVERY COLOUR IS A TOKEN. The only literals are shadows and the danger red, both of which are a
+   PAINT rather than a colour — the same exception the rest of Sard makes.
+   ================================================================================================ */
+
+.pf-actions { display: flex; align-items: center; gap: 8px; margin: 14px 0 18px; }
+.pf-count { margin-inline-start: auto; font: 400 0.75rem var(--ui-font); color: var(--muted); }
+
+.pf-btn {
+  padding: 7px 14px; border-radius: 8px; border: 1px solid var(--chrome-border);
+  background: color-mix(in srgb, var(--text) 4%, transparent); color: var(--text);
+  font: 500 0.8125rem var(--ui-font); cursor: pointer;
+}
+.pf-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.pf-btn:disabled { opacity: 0.45; cursor: default; }
+.pf-btn.primary { background: var(--accent); border-color: transparent; color: var(--paper-bg); }
+.pf-btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 86%, black); }
+.pf-btn.danger { color: #9c3b3b; border-color: color-mix(in srgb, #9c3b3b 34%, transparent); }
+.pf-btn.danger:hover { background: color-mix(in srgb, #9c3b3b 10%, transparent); }
+
+/* ---- the grid: it wraps, so twelve profiles look the same as three ---- */
+.pf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 14px; }
+
+.pf-card {
+  position: relative; border-radius: 11px; background: var(--chrome-bg);
+  border: 1px solid var(--chrome-border);
+}
+.pf-card.on {
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 6px var(--chrome-bg), 0 1px 2px rgba(40, 28, 14, 0.06);
+}
+.pf-card-face {
+  display: block; width: 100%; padding: 0; border: 0; background: none; cursor: pointer;
+  border-radius: 11px 11px 0 0; overflow: hidden;
+}
+.pf-card-foot { display: flex; align-items: center; gap: 9px; padding: 9px 10px; }
+
+/* The seal: the profile's initial, in the profile's OWN face on its OWN paper — a type specimen
+   rather than clip art, which is what makes two profiles tell apart at a glance. */
+.pf-seal {
+  width: 30px; height: 30px; flex: none; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 0.9375rem; line-height: 1; box-shadow: inset 0 0 0 1px var(--chrome-border);
+}
+.pf-seal-dot { width: 15px; height: 15px; border-radius: 50%; }
+
+.pf-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pf-card-name {
+  font: 600 0.875rem/1.35 var(--ui-font); color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pf-card-sub {
+  font: 400 0.6875rem/1.35 var(--ui-font); color: var(--lib-faint, var(--muted));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pf-badge {
+  flex: none; padding: 2px 7px; border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent); font: 600 0.625rem var(--ui-font);
+}
+.pf-card-more {
+  flex: none; width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent;
+  color: var(--muted); font-size: 0.8125rem; line-height: 1; cursor: pointer;
+}
+.pf-card-more:hover { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
+
+/* ---- the card menu ---- */
+.pf-menu {
+  position: absolute; inset-block-start: calc(100% - 6px); inset-inline-end: 6px; z-index: 6;
+  width: 256px; max-width: calc(100% - 12px); padding: 9px; border-radius: 13px;
+  background: var(--chrome-bg); border: 1px solid var(--chrome-border);
+  box-shadow: 0 14px 34px rgba(20, 14, 6, 0.3); display: flex; flex-direction: column; gap: 2px;
+}
+.pf-menu button {
+  display: block; width: 100%; text-align: start; padding: 7px 9px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--text); font: 500 0.8125rem var(--ui-font); cursor: pointer;
+}
+.pf-menu button:hover { background: color-mix(in srgb, var(--text) 7%, transparent); }
+.pf-menu button.danger { color: #9c3b3b; }
+.pf-menu-rule { height: 1px; background: var(--chrome-border); margin: 4px 2px; }
+
+/* ---- first run: absence drawn, not described ---- */
+.pf-empty { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 22px 16px 8px; }
+.pf-empty-mini {
+  width: 260px; max-width: 100%; border-radius: 10px; overflow: hidden;
+  box-shadow: 0 8px 22px rgba(20, 14, 6, 0.18); margin-bottom: 20px;
+}
+.pf-empty-title { font: 600 1rem var(--ui-font); color: var(--text); margin-bottom: 8px; }
+.pf-empty-body { max-width: 46ch; margin: 0 0 18px; font: 400 0.84375rem/1.7 var(--ui-font); color: var(--muted); }
+.pf-empty-actions { display: flex; gap: 8px; margin-bottom: 16px; }
+.pf-empty-reassure { font: 400 0.75rem var(--ui-font); color: var(--lib-faint, var(--muted)); }
+
+/* ---- dialogs ---- */
+.pf-dialog-scrim {
+  position: fixed; inset: 0; z-index: 60; background: rgba(20, 14, 6, 0.42);
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+  display: flex; align-items: center; justify-content: center;
+}
+.pf-dialog {
+  width: 420px; max-width: calc(100vw - 32px); padding: 18px; border-radius: 13px;
+  background: var(--chrome-bg); border: 1px solid var(--chrome-border);
+  box-shadow: 0 18px 40px rgba(20, 14, 6, 0.3);
+}
+.pf-dialog-title { font: 600 0.9375rem/1.5 var(--ui-font); color: var(--text); margin-bottom: 8px; }
+.pf-dialog-body { margin: 0 0 16px; font: 400 0.8125rem/1.7 var(--ui-font); color: var(--muted); }
+.pf-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+.pf-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.pf-field-label { font: 600 0.75rem var(--ui-font); color: var(--muted); }
+.pf-input,
+.pf-select {
+  width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--chrome-border);
+  background: var(--paper-bg); color: var(--text); font: 400 0.875rem var(--ui-font);
+}
+.pf-input:focus, .pf-select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pf-startfrom {
+  padding: 8px 10px; border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text); font: 500 0.8125rem var(--ui-font);
+}
+.pf-hint { font: 400 0.75rem/1.6 var(--ui-font); color: var(--lib-faint, var(--muted)); margin-top: 8px; }
+.pf-deferred { font: 400 0.8125rem/1.7 var(--ui-font); color: var(--muted); }
+
+/* ---- the editor: a stage and a 344px rail ---- */
+.pf-editor { position: fixed; inset: 0; z-index: 70; background: var(--app-bg); display: flex; flex-direction: column; }
+.pf-editor-head {
+  display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+  border-bottom: 1px solid var(--chrome-border); background: var(--chrome-bg);
+}
+.pf-editor-title { font: 600 0.9375rem var(--ui-font); color: var(--text); }
+.pf-editor-dirty { font: 400 0.75rem var(--ui-font); color: var(--accent); }
+.pf-editor-spacer { flex: 1; }
+.pf-editor-x {
+  width: 28px; height: 28px; border: 0; border-radius: 7px; background: transparent;
+  color: var(--muted); font-size: 0.9375rem; cursor: pointer;
+}
+.pf-editor-x:hover { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
+.pf-editor-body { flex: 1; min-height: 0; display: flex; }
+
+.pf-stage {
+  flex: 1; min-width: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 14px; padding: 24px; overflow-y: auto;
+}
+.pf-stage-seg { display: inline-flex; padding: 3px; border-radius: 9px; background: color-mix(in srgb, var(--text) 6%, transparent); }
+.pf-stage-seg button {
+  padding: 6px 14px; border: 0; border-radius: 7px; background: transparent;
+  color: var(--muted); font: 500 0.78125rem var(--ui-font); cursor: pointer;
+}
+.pf-stage-seg button.on { background: var(--paper-bg); color: var(--text); }
+.pf-stage-frame { width: min(560px, 100%); border-radius: 12px; overflow: hidden; box-shadow: 0 14px 34px rgba(20, 14, 6, 0.22); }
+.pf-stage-hint { font: 400 0.75rem var(--ui-font); color: var(--lib-faint, var(--muted)); text-align: center; max-width: 46ch; }
+
+.pf-rail {
+  width: 344px; flex: none; background: var(--chrome-bg);
+  border-inline-start: 1px solid var(--chrome-border); overflow-y: auto; padding: 10px;
+}
+.pf-sec { border-bottom: 1px solid var(--chrome-border); }
+.pf-sec-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px; width: 100%;
+  padding: 12px 6px; border: 0; background: transparent; cursor: pointer; text-align: start;
+}
+.pf-sec-label { font: 600 0.84375rem var(--ui-font); color: var(--text); }
+.pf-sec-value {
+  font: 400 0.75rem var(--ui-font); color: var(--lib-faint, var(--muted));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pf-sec.open .pf-sec-label { color: var(--accent); }
+.pf-sec-body { padding: 2px 6px 16px; }
+
+.pf-swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.pf-swatch-cell { display: flex; flex-direction: column; align-items: center; gap: 4px; border: 0; background: none; padding: 0; cursor: pointer; }
+.pf-swatch {
+  width: 100%; aspect-ratio: 3 / 2; border-radius: 7px; display: flex;
+  align-items: center; justify-content: center; font: 500 0.75rem var(--ui-font);
+  box-shadow: inset 0 0 0 1px var(--chrome-border);
+}
+.pf-swatch-cell.on .pf-swatch { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg); }
+.pf-swatch-name { font: 400 0.625rem var(--ui-font); color: var(--muted); text-align: center; }
+
+/* The measured verdict, shown as a NUMBER rather than a badge: the reader can see what a choice
+   actually buys, and the repair is offered rather than imposed. */
+.pf-contrast {
+  margin-top: 12px; padding: 7px 9px; border-radius: 8px; font: 500 0.75rem var(--ui-font);
+  background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--muted);
+}
+.pf-contrast.warn { background: color-mix(in srgb, #9c3b3b 12%, transparent); color: #9c3b3b; }
+
+.pf-specimen {
+  margin: -6px 0 14px; padding: 10px; border-radius: 8px; background: var(--paper-bg);
+  color: var(--text); font-size: 1.25rem; line-height: 1.6; text-align: center;
+}
+
+.pf-bm-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin: 8px 0 12px; }
+.pf-bm-cell {
+  display: flex; align-items: flex-start; justify-content: center; height: 40px; padding: 2px;
+  border: 1px solid var(--chrome-border); border-radius: 7px; background: transparent;
+  cursor: pointer; overflow: hidden;
+}
+.pf-bm-cell.on {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.pf-bm-colors { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.pf-bm-color { width: 22px; height: 22px; border: 0; border-radius: 50%; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08); }
+.pf-bm-color.on { box-shadow: 0 0 0 2px var(--chrome-bg), 0 0 0 3.5px var(--text); }
+
+.pf-rm-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.pf-rm-cell {
+  display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 1px solid transparent;
+  border-radius: 8px; background: transparent; cursor: pointer; text-align: start;
+}
+.pf-rm-cell.on {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.pf-rm-name { font: 500 0.78125rem var(--ui-font); color: var(--text); }
+
+/* The firewall: the rail's last block, and not a control. */
+.pf-firewall { margin-top: 18px; padding: 12px 8px 6px; border-top: 1px solid var(--chrome-border); }
+.pf-firewall-title { font: 600 0.75rem var(--ui-font); color: var(--muted); margin-bottom: 6px; }
+.pf-firewall-body { margin: 0; font: 400 0.71875rem/1.7 var(--ui-font); color: var(--lib-faint, var(--muted)); }
+
+/* ---- the stage's book face: a real passage, both scripts, the real marks ---- */
+.pf-book { padding: 26px; display: flex; align-items: center; justify-content: center; aspect-ratio: 16 / 10; }
+.pf-book-sheet {
+  position: relative; width: 100%; height: 100%; border-radius: 4px; padding: 22px 24px;
+  box-shadow: 0 8px 22px rgba(20, 14, 6, 0.3); overflow: hidden;
+}
+.pf-book-title { font-size: 0.9375rem; margin-bottom: 10px; opacity: 0.8; }
+.pf-book-p { margin: 0 0 10px; font-size: 0.875rem; line-height: 1.9; }
+.pf-book-p.latin { font-size: 0.8125rem; line-height: 1.6; }
+.pf-book-mark { position: absolute; inset-block-start: 0; inset-inline-end: 30px; }
+
+/* ---- accessibility: the same rule the background system already applies ----
+   A reader who has asked the OS for reduced transparency has stated a requirement, not a
+   preference. The dialog scrim is the only translucent surface Profiles adds. */
+@media (prefers-reduced-transparency: reduce) {
+  .pf-dialog-scrim { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(20, 14, 6, 0.62); }
+}

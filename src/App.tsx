@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./styles/global.css";
+// PROFILES: its own sheet. Nothing in it overrides an existing rule, so a reader who never opens
+// Profiles renders exactly as before — and `global.css` is untouched by this feature.
+import "./styles/profiles.css";
 import { I18nProvider, useI18n } from "./i18n";
 import { initBookmarkStyle } from "./lib/bookmarkStyle";
 import { initReadMarkerStyle } from "./lib/readMarkerStyle"; // RAWY-256: persisted read-marker variant

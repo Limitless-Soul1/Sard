@@ -6,7 +6,8 @@ import { create } from "zustand";
 
 import { settingsGet, settingsSet } from "../lib/ipc";
 import { applyTheme } from "./applyTheme";
-import { DEFAULT_DARK, DEFAULT_LIGHT, THEMES, isThemeId } from "./themes";
+import { DEFAULT_DARK, DEFAULT_LIGHT, isBuiltinThemeId } from "./themes";
+import { resolveTheme } from "./resolve";
 import type { ThemeId } from "./tokens";
 
 const K_THEME = "theme_id"; // the LIBRARY (app chrome) theme — independent of books (RAWY-48/D29)
@@ -57,7 +58,7 @@ interface ThemeState {
 
 // Apply + persist a theme id WITHOUT touching the auto flag (used by Follow-OS too).
 function applyThemeId(set: (p: Partial<ThemeState>) => void, id: ThemeId): void {
-  applyTheme(THEMES[id]);
+  applyTheme(resolveTheme(id));
   set({ themeId: id });
   settingsSet(K_THEME, id).catch(console.error);
 }
@@ -91,7 +92,7 @@ export const useTheme = create<ThemeState>((set, get) => ({
     settingsSet(K_BOOK_THEME, id).catch(console.error);
   },
   toggleDayNight: () => {
-    const next = THEMES[get().themeId].dark ? DEFAULT_LIGHT : DEFAULT_DARK;
+    const next = resolveTheme(get().themeId).dark ? DEFAULT_LIGHT : DEFAULT_DARK;
     get().setTheme(next);
   },
   setMode: (m) => {
@@ -126,7 +127,7 @@ export const useTheme = create<ThemeState>((set, get) => ({
 /** The Band-H MODE value for the current state. */
 export function currentMode(s: Pick<ThemeState, "autoMode" | "themeId">): ThemeMode {
   if (s.autoMode) return "auto";
-  return THEMES[s.themeId].dark ? "night" : "day";
+  return resolveTheme(s.themeId).dark ? "night" : "day";
 }
 
 /** Load persisted theme settings and apply them. Call once at startup. */
@@ -143,12 +144,12 @@ export async function initTheme(): Promise<void> {
   const auto = mode === "auto";
   // The LIBRARY theme drives the app chrome (and is what Follow-OS swaps). It is NOT affected by
   // any book theme (RAWY-48/D29) — only Global Settings → Appearance changes it.
-  const libraryTheme = isThemeId(tid) ? tid : DEFAULT_LIGHT;
+  const libraryTheme = isBuiltinThemeId(tid) ? tid : DEFAULT_LIGHT;
   const themeId = auto ? (osPrefersDark() ? DEFAULT_DARK : DEFAULT_LIGHT) : libraryTheme;
   // The shared/default BOOK theme (unified + per-book fallback). Migration: a missing key inherits
   // the library theme so existing books keep their look; thereafter the two move independently.
-  const bookThemeId = isThemeId(btid) ? btid : libraryTheme;
-  applyTheme(THEMES[themeId]);
+  const bookThemeId = isBuiltinThemeId(btid) ? btid : libraryTheme;
+  applyTheme(resolveTheme(themeId));
   useTheme.setState({
     themeId,
     bookThemeId,
@@ -166,7 +167,7 @@ export async function initTheme(): Promise<void> {
     mq.addEventListener("change", (e) => {
       if (!useTheme.getState().autoMode) return;
       const id = e.matches ? DEFAULT_DARK : DEFAULT_LIGHT;
-      applyTheme(THEMES[id]);
+      applyTheme(resolveTheme(id));
       useTheme.setState({ themeId: id });
       settingsSet(K_THEME, id).catch(console.error);
     });

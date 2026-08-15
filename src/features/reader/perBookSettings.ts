@@ -8,7 +8,7 @@
 
 import { settingsGet, settingsSet } from "../../lib/ipc";
 import { defaultsForDir, type ReadingStyle } from "../../reader-engine/injectedCss";
-import { isThemeId, type ThemeId } from "../../theme";
+import { isBuiltinThemeId, type ThemeId } from "../../theme";
 
 const GLOBAL_KEY = "reading_style";
 const bookKey = (bookId: string) => `book_style:${bookId}`;
@@ -65,7 +65,11 @@ export async function loadBookOverride(bookId: string): Promise<BookOverride> {
     // picker); it becomes reachable the first time a theme is renamed or retired in an update, which
     // is an ordinary thing for a shipping app to do. Dropping an unknown id makes the book fall back
     // to the shared book theme — the same thing "Reset to app default" produces.
-    return isThemeId(o.themeId) ? o : { ...o, themeId: undefined };
+    // RAWY-PROFILES (stage 1): `isBuiltinThemeId`, NOT the widened `isThemeId`. A per-book override
+    // still names one of the SHIPPED sixteen, which is exactly what it meant before the widening —
+    // so this loader's behaviour is unchanged. Admitting a `u:` id here is a Profiles-stage decision
+    // about whether a book may pin a reader-authored theme, and it is not this stage's to make.
+    return isBuiltinThemeId(o.themeId) ? o : { ...o, themeId: undefined };
   } catch {
     return {};
   }

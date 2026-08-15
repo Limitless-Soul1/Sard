@@ -24,7 +24,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 import { useI18n } from "../../i18n";
-import { THEMES, useTheme } from "../../theme";
+import { resolveTheme, useTheme } from "../../theme";
 import { useReader } from "../../reader-engine/store";
 import { useAnnotations } from "./annotationsStore";
 import { useBookmarks } from "./bookmarksStore";
@@ -60,7 +60,7 @@ type Source = string;
 
 function useHl() {
   const id = useTheme((s) => s.themeId);
-  return THEMES[id].colors.highlight;
+  return resolveTheme(id).colors.highlight;
 }
 
 interface Props {

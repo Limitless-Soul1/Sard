@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
 
 import { useI18n } from "../../i18n";
-import { THEMES, useTheme } from "../../theme";
+import { resolveTheme, useTheme } from "../../theme";
 import type { AnchorRect, AnnotationHit, FoliateController, SelectionInfo } from "../../reader-engine/FoliateController";
 import { useAnnotations } from "./annotationsStore";
 import { useReader } from "../../reader-engine/store"; // RAWY-259: the book title for the metadata block
@@ -33,7 +33,7 @@ import { noteTagsFor, noteTagsSet, type HighlightColor, type HighlightRow, type 
 
 function useHl() {
   const id = useTheme((s) => s.themeId);
-  return THEMES[id].colors.highlight;
+  return resolveTheme(id).colors.highlight;
 }
 
 // The "+" affordance (an SVG, perfectly centred — RAWY-122 ISSUE C) and the back chevron.
@@ -358,8 +358,8 @@ function NoteEditorModal({
 
   const hl = useHl();
   const themeId = useTheme((s) => s.themeId);
-  const themeDark = THEMES[themeId].dark;
-  const themePaper = THEMES[themeId].colors.paperBg;
+  const themeDark = resolveTheme(themeId).dark;
+  const themePaper = resolveTheme(themeId).colors.paperBg;
   const inkHex = isHex(hi.color) ? hi.color : (hl[hi.color as keyof typeof hl] ?? hi.color);
   // The preview ink comes from the SHARED resolver the page renderer uses, with the density being dragged —
   // so this is the mark itself, not a representation of it.

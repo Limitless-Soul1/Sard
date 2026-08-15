@@ -27,7 +27,7 @@ import {
   type ReadingStyle,
 } from "../../reader-engine/injectedCss";
 import type { TKey } from "../../i18n/locales/en";
-import { DEFAULT_DARK, DEFAULT_LIGHT, THEMES, THEME_ORDER, useTheme, type ThemeId } from "../../theme";
+import { DEFAULT_DARK, DEFAULT_LIGHT, THEMES, THEME_ORDER, isBuiltinThemeId, resolveTheme, useTheme, type ThemeId } from "../../theme";
 import { contrastIsReadable, effectivePaper } from "../../lib/contrast";
 import { TtsTrackingControls } from "./TtsTrackingControls"; // RAWY-200
 // RAWY-281: the reference twin rule's geometry — the SAME resolver FoliateController draws with, so the
@@ -276,7 +276,7 @@ function ReadingBackgroundSection() {
   // also the ground the "arrive correct" presence is solved against (a desk-coloured image can be
   // shown boldly; one that fights the desk arrives restrained).
   const bookThemeId = useTheme((s) => s.bookThemeId);
-  const deskGround = THEMES[bookThemeId].colors.surfaceBg;
+  const deskGround = resolveTheme(bookThemeId).colors.surfaceBg;
   // RAWY-278: the immersive blur step only exists while immersive mode is on, so its toggle follows
   // the same disabled + inert-note treatment the other immersive sub-options already use.
   const immersive = useTheme((s) => s.immersive);
@@ -709,7 +709,11 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
   // THEME is per-book. RAWY-69 split hide-chapter-title/hide-first-line into two independent flags.
   const { overrideBookColor, hideChapterTitles, hideFirstLine, immersive, setOverride, setHideTitles, setHideFirstLine, setImmersive } = useTheme();
   const customFonts = useFonts((s) => s.custom); // RAWY-44 — imported fonts for the book pickers
-  const theme = THEMES[bookThemeId];
+  const theme = resolveTheme(bookThemeId);
+  // The theme's DISPLAYED name. The sixteen Sard ships are localised (`theme.<id>`); a
+  // reader-authored theme carries text the reader typed, which is not translatable and is shown as
+  // written — the same rule a Profile's own name follows.
+  const themeName = isBuiltinThemeId(theme.id) ? t(`theme.${theme.id}`) : theme.name;
   const dark = theme.dark;
   // RAWY-201: the EFFECTIVE page colour (custom, else the theme's) — the contrast guard checks the ink
   // against the surface the text ACTUALLY sits on, so a custom page colour is what an unreadable pair is
@@ -876,7 +880,7 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
       {/* ---- TEXT COLOUR (RAWY-40, Band I) — per-book ink within the active theme ---- */}
       <div className="rs-sec-head">
         <span className="rs-label">{t("color.text")}</span>
-        <span className="rs-value rs-na">{t("color.within", { theme: t(`theme.${theme.id}`) })}</span>
+        <span className="rs-value rs-na">{t("color.within", { theme: themeName })}</span>
       </div>
       <div className="rs-inks">
         {/* Default = follow the theme ink (textColor null) */}
@@ -909,7 +913,7 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
       </div>
       <div className={`rs-contrast${readable ? "" : " warn"}`}>
         <span aria-hidden>{readable ? "✓" : "⚠"}</span>
-        <span>{readable ? t("color.contrastOk") : t("color.contrastWarn", { theme: t(`theme.${theme.id}`) })}</span>
+        <span>{readable ? t("color.contrastOk") : t("color.contrastWarn", { theme: themeName })}</span>
       </div>
 
       {/* ---- PAGE COLOUR (RAWY-201) — the reading surface, per-book; null = the theme's own paper ---- */}

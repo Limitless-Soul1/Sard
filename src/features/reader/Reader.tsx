@@ -41,7 +41,7 @@ import { openWebView2Help } from "../../lib/webview2";
 import { ErrorCard } from "../../app/ErrorCard";
 import { useI18n } from "../../i18n";
 import { extractChapterNumber, localeNum } from "../../lib/format";
-import { applyTheme, THEMES, useTheme, type ThemeId } from "../../theme";
+import { applyTheme, resolveTheme, useTheme, type ThemeId } from "../../theme";
 import {
   clearBookOverride,
   effectiveStyle,
@@ -605,12 +605,12 @@ export function Reader({
 
       // The whole reader (chrome + page) takes the book's effective theme while reading; the
       // Library keeps the global default (restored on exit). The global store is NOT mutated.
-      applyTheme(THEMES[effTheme]);
+      applyTheme(resolveTheme(effTheme));
       await ctrl.open(url, stageRef.current!, {
         resumeCfi,
         resumeFraction, // RAWY-85: PDFs resume by page fraction
         style: initialStyle,
-        theme: THEMES[effTheme],
+        theme: resolveTheme(effTheme),
         flags: { overrideBookColor: ts.overrideBookColor, hideChapterTitles: ts.hideChapterTitles, hideFirstLine: ts.hideFirstLine, pageOpacity: effectivePageOpacity(), deskScrim: currentDeskScrim() },
         dir: target.dir ?? undefined, // RAWY-85: a PDF's manual RTL override lives in books.dir too
         flow: initialStyle.flowMode, // scrolled (default) or paged — RAWY-25
@@ -818,7 +818,7 @@ export function Reader({
       endReadingSession();
       // Restore the LIBRARY theme to the chrome on exit (RAWY-40/48) — the book theme was only
       // for this reading session; the Library shows its own independent theme again.
-      applyTheme(THEMES[libraryThemeRef.current]);
+      applyTheme(resolveTheme(libraryThemeRef.current));
     };
     // Open the book the Library handed us; re-open if the selection changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -893,7 +893,7 @@ export function Reader({
   // this repaints in place with no reflow.
   useEffect(() => {
     if (status !== "ready") return;
-    ctrlRef.current?.applyTheme(THEMES[bookThemeId], { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
+    ctrlRef.current?.applyTheme(resolveTheme(bookThemeId), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim]);
 
@@ -919,8 +919,8 @@ export function Reader({
     useReader.getState().set({ style: effStyle });
     setBookThemeId(effTheme);
     setHasOv(!unified && calcHasOverride(override));
-    applyTheme(THEMES[effTheme]);
-    ctrlRef.current?.applyTheme(THEMES[effTheme], { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
+    applyTheme(resolveTheme(effTheme));
+    ctrlRef.current?.applyTheme(resolveTheme(effTheme), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
     ctrlRef.current?.applyStyle(effStyle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
@@ -1252,7 +1252,7 @@ export function Reader({
       ctrlRef.current?.open(convertFileSrc(initial.filePath), stageRef.current!, {
         resumeCfi: cfi,
         style: next,
-        theme: THEMES[bookThemeId],
+        theme: resolveTheme(bookThemeId),
         flags: {
           overrideBookColor: useTheme.getState().overrideBookColor,
           hideChapterTitles: useTheme.getState().hideChapterTitles,
@@ -1294,8 +1294,8 @@ export function Reader({
   // untouched, so returning to the Library still shows its own theme.
   const setBookTheme = (id: ThemeId) => {
     setBookThemeId(id);
-    applyTheme(THEMES[id]);
-    ctrlRef.current?.applyTheme(THEMES[id], { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
+    applyTheme(resolveTheme(id));
+    ctrlRef.current?.applyTheme(resolveTheme(id), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
     if (useStyleScope.getState().scope === "unified") {
       useTheme.getState().setBookTheme(id); // shared BOOK theme — persists book_theme_id, not the Library
     } else {
@@ -1316,8 +1316,8 @@ export function Reader({
     // Reset → follow the shared BOOK theme (D29), not the Library theme.
     const bookDefault = useTheme.getState().bookThemeId;
     setBookThemeId(bookDefault);
-    applyTheme(THEMES[bookDefault]);
-    ctrlRef.current?.applyTheme(THEMES[bookDefault], { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
+    applyTheme(resolveTheme(bookDefault));
+    ctrlRef.current?.applyTheme(resolveTheme(bookDefault), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
     ctrlRef.current?.applyStyle(global);
   };
 

@@ -9,7 +9,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 
 import { useI18n } from "../../i18n";
 import { localeNum, uiDateTimeFormat } from "../../lib/format";
-import { THEMES, useTheme, type ThemeId } from "../../theme";
+import { isBuiltinThemeId, resolveTheme, useTheme, type ThemeId } from "../../theme";
 import { photocardDelete, photocardsList, savePhotoCardFile, type PhotoCardRow } from "../../lib/ipc";
 import { PhotoComposer } from "./PhotoComposer";
 import { DEFAULT_META, FORMATS, type CardData, type CardFormat, type CardPassage } from "./photo";
@@ -43,14 +43,17 @@ function rowToCardData(row: PhotoCardRow): CardData {
     date: new Date(row.created_at * 1000),
   };
 }
-const validTheme = (id: string | null): ThemeId | null => (id && id in THEMES ? (id as ThemeId) : null);
+// `isBuiltinThemeId` is exactly what `id in THEMES` meant, without the cast. A saved card keeps
+// naming one of the SHIPPED sixteen: a card is an exported artefact, so resolving it against a
+// theme the reader may since have edited or deleted would change an image already made.
+const validTheme = (id: string | null): ThemeId | null => (isBuiltinThemeId(id) ? id : null);
 
 // The lightbox backdrop + pill follow the SAVED CARD's polarity (RAWY-58), not the Library theme:
 // a light-theme card → the warm backdrop; a dark-theme card → the near-black one. An unknown
 // theme falls back to light.
 const cardIsDark = (themeId: string | null): boolean => {
   const t = validTheme(themeId);
-  return t ? THEMES[t].dark : false;
+  return t ? resolveTheme(t).dark : false;
 };
 const validFormat = (f: string | null): CardFormat | undefined => FORMATS.find((x) => x.key === f)?.key;
 

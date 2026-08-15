@@ -9,7 +9,7 @@ import { applyBackgrounds, initBackground, useBackground } from "./lib/backgroun
 import { initStyleScope } from "./lib/styleScope";
 import { diagStart } from "@diag"; // DIAGNOSTIC BUILD ONLY - observes, never intervenes
 import { registerOutcomeRecorder } from "./lib/listeningOutcomes"; // RAWY-263: the local outcome baseline
-import { initTheme, reapplyTitlebarTheme, useTheme, THEMES } from "./theme";
+import { initTheme, reapplyTitlebarTheme, resolveTheme, useTheme } from "./theme";
 import { initPresence } from "./lib/presence"; // DISC/RPC: load the Discord on/off switch
 import { LanguagePicker } from "./features/onboarding/LanguagePicker";
 import { Library, type OpenTarget } from "./features/library/Library";
@@ -96,7 +96,7 @@ function App() {
   const bgReading = useBackground((s) => s.reading);
   const bgReadParams = useBackground((s) => s.readingParams);
   useEffect(() => {
-    applyBackgrounds(THEMES[bgThemeId].colors);
+    applyBackgrounds(resolveTheme(bgThemeId).colors);
   }, [bgThemeId, bgReady, bgEnabled, bgLibrary, bgLibParams, bgReading, bgReadParams]);
 
   // RAWY-118: WebView2 re-themes the native title-bar caption during its own startup, AFTER our first

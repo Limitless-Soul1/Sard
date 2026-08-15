@@ -32,6 +32,7 @@ pub mod photocards; // saved photo cards: PNG store + DB rows (RAWY-52, Photo Mo
 #[cfg(not(target_os = "windows"))]
 pub mod bookhost;
 pub mod presence; // DISC/RPC: Discord Rich Presence worker thread + the on/off gate
+pub mod profiles; // PROFILES: the visual-identity registry (storage only)
 pub mod settings; // key/value settings persistence
 pub mod sync; // FUTURE seam: backend trait only (placeholder)
 pub mod tts; // read-aloud over the Edge Read-Aloud neural voices
@@ -100,6 +101,11 @@ macro_rules! sard_invoke_handler {
             commands::db_health,
             commands::settings_get,
             commands::settings_set,
+            // PROFILES (stage 1): storage only — no UI reaches these yet.
+            commands::profiles_list,
+            commands::profile_get,
+            commands::profile_save,
+            commands::profile_delete,
             commands::book_register,
             commands::progress_save,
             commands::progress_get,

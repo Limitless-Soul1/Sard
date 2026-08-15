@@ -32,7 +32,7 @@ import {
   type LatinFont,
   type ReadingStyle,
 } from "../../reader-engine/injectedCss";
-import { THEMES, THEME_ORDER, currentMode, useTheme, type ThemeMode } from "../../theme";
+import { THEMES, THEME_ORDER, currentMode, resolveTheme, useTheme, type ThemeMode } from "../../theme";
 
 const STYLE_KEY = "reading_style";
 
@@ -183,7 +183,7 @@ function AppearanceSection() {
 function LibraryBackgroundSection() {
   const { t, lang } = useI18n();
   const themeId = useTheme((s) => s.themeId);
-  const theme = THEMES[themeId];
+  const theme = resolveTheme(themeId);
   const { enabled, library, libraryParams, setEnabled, setParams, choose, clear, resetParams } = useBackground();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -662,7 +662,7 @@ function NewBookDefaults() {
   // The tracking preview + contrast guard use the shared BOOK theme (D29) — the one a new book opens in
   // — so the swatches show the real per-theme terracotta and warn against the real paper. Theme choice
   // does NOT affect what is persisted (the track values are theme-independent); it is preview only.
-  const gTheme = THEMES[bookThemeId];
+  const gTheme = resolveTheme(bookThemeId);
   const [style, setStyle] = useState<ReadingStyle | null>(null);
 
   useEffect(() => {

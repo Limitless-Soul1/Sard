@@ -19,7 +19,7 @@ import { photocardSave, savePhotoCardFile } from "../../lib/ipc";
 import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
 import { useFonts } from "../../lib/fonts";
-import { THEMES, THEME_ORDER, type ThemeId } from "../../theme";
+import { THEMES, THEME_ORDER, resolveTheme, type ThemeId } from "../../theme";
 import {
   cardSeparator,
   CARD_STYLES,
@@ -101,8 +101,8 @@ function PhotoCard({
   const dim = formatDims(format);
   const W = dim.w / EXPORT_RATIO;
   const H = dim.h / EXPORT_RATIO;
-  const c = THEMES[themeId].colors;
-  const dark = THEMES[themeId].dark; // RAWY-152: the Moonlit style's night ornaments only make sense on dark papers
+  const c = resolveTheme(themeId).colors;
+  const dark = resolveTheme(themeId).dark; // RAWY-152: the Moonlit style's night ornaments only make sense on dark papers
   const crescentId = `pc-crescent-${useId().replace(/[^a-zA-Z0-9]/g, "")}`; // RAWY-152: unique mask id for the SVG crescent
   const arabic = data.dir === "rtl";
   const bookFont = arabic ? "'Amiri', serif" : "'Literata', serif";
@@ -583,7 +583,7 @@ export function PhotoComposer({
     const blob = await toBlob(node, {
       pixelRatio: EXPORT_RATIO,
       cacheBust: true,
-      backgroundColor: THEMES[themeId].colors.paperBg,
+      backgroundColor: resolveTheme(themeId).colors.paperBg,
     });
     if (!blob) throw new Error("render produced no image");
     return blob;
@@ -658,7 +658,7 @@ export function PhotoComposer({
     }
   };
 
-  const dark = THEMES[themeId].dark;
+  const dark = resolveTheme(themeId).dark;
   // RAWY-154: which alignment the current style uses by default — so the ALIGNMENT control shows the
   // effective selection while `quoteAlign` is "auto" (mirrors PhotoCard's per-style `align`: Editorial
   // and LTR-Minimal read from the start, every other style centres).

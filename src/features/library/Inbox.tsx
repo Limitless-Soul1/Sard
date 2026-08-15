@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 import { useI18n } from "../../i18n";
 import { localeDigits, uiDateTimeFormat, uiRelativeTimeFormat } from "../../lib/format";
-import { THEMES, useTheme } from "../../theme";
+import { resolveTheme, useTheme } from "../../theme";
 import { colorValue, HIGHLIGHT_SLOTS, isHex } from "../reader/highlightColors";
 import { annoIsHighlight, annoIsNote, annotationsAll, tagsList, type AnnoItem } from "../../lib/ipc";
 import type { OpenTarget } from "./Library";
@@ -27,7 +27,7 @@ function relTime(sec: number | null, lang: string): string {
 
 export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const { t, lang } = useI18n();
-  const hl = THEMES[useTheme((s) => s.themeId)].colors.highlight;
+  const hl = resolveTheme(useTheme((s) => s.themeId)).colors.highlight;
   const [items, setItems] = useState<AnnoItem[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");

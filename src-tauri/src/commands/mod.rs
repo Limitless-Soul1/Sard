@@ -7,7 +7,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::db::{self, AppState};
-use crate::{backgrounds, books, fonts, library, photocards, settings};
+use crate::{backgrounds, books, fonts, library, photocards, profiles, settings};
 
 #[derive(Serialize)]
 pub struct AppInfo {
@@ -217,6 +217,43 @@ pub fn settings_get(key: String, state: State<AppState>) -> Result<Option<String
 pub fn settings_set(key: String, value: String, state: State<AppState>) -> Result<bool, String> {
     let conn = state.conn();
     settings::set(&conn, &key, &value).map_err(err)?;
+    Ok(true)
+}
+
+// ---- PROFILES (stage 1) — storage only ------------------------------------------------------
+//
+// CRUD over the `profiles` table and nothing else. None of these applies a profile, resolves a
+// theme, or touches `reading_style` or any `book_style:<id>` row — a profile carries how Sard
+// LOOKS, never how the reader READS, and that boundary is kept by there being no code here capable
+// of crossing it.
+//
+// The active profile is a plain settings key (`profile_active`) read through `settings_get`, not a
+// column here: it is one value for the installation, it is exactly the shape `settings` exists for,
+// and keeping it there means no schema change when the reader switches.
+
+#[tauri::command]
+pub fn profiles_list(state: State<AppState>) -> Result<Vec<profiles::Profile>, String> {
+    let conn = state.conn();
+    profiles::list(&conn).map_err(err)
+}
+
+#[tauri::command]
+pub fn profile_get(id: String, state: State<AppState>) -> Result<Option<profiles::Profile>, String> {
+    let conn = state.conn();
+    profiles::get(&conn, &id).map_err(err)
+}
+
+#[tauri::command]
+pub fn profile_save(profile: profiles::Profile, state: State<AppState>) -> Result<bool, String> {
+    let conn = state.conn();
+    profiles::save(&conn, &profile).map_err(err)?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn profile_delete(id: String, state: State<AppState>) -> Result<bool, String> {
+    let conn = state.conn();
+    profiles::delete(&conn, &id).map_err(err)?;
     Ok(true)
 }
 

@@ -84,6 +84,17 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "book_compat",
         include_str!("migrations_sql/0015_book_compat.sql"),
     ),
+    // 16 is the RESILIENCE-1 / WP-2 *code* migration (run_compat_backfill, below) — not a SQL file,
+    // and NOT AVAILABLE. The runner's high-water mark is MAX(version), so a SQL migration numbered
+    // 16 would be skipped forever on every install that had already recorded the backfill, and
+    // would suppress the backfill on every install that had not.
+    // PROFILES (stage 1): the visual-identity registry. CREATE only — no row is written, so an
+    // installation that never opens Profiles is unchanged by it.
+    (
+        17,
+        "profiles",
+        include_str!("migrations_sql/0017_profiles.sql"),
+    ),
 ];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.

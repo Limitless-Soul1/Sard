@@ -554,3 +554,56 @@ export const refSave = (
   invoke<RefRow | null>("ref_save", { bookId, phrase, phraseFold, wordCount, note });
 
 export const refDelete = (id: string): Promise<boolean> => invoke<boolean>("ref_delete", { id });
+
+// ---- Profiles (stage 1): the visual-identity registry. Storage only — no UI reaches these yet. ----
+//
+// A profile carries how Sard LOOKS: paper and colours, the interface and book faces, both
+// backgrounds and their treatment, the bookmark and read-marker, and the interface texture. It does
+// NOT carry how the reader READS — line spacing, measure, margins, paragraph spacing, tracking,
+// alignment, diacritics and zoom stay in `reading_style` / `book_style:<id>`, are never written from
+// a profile, and never travel in a shared package.
+//
+// Mirrors `profiles::Profile`. `data` is the profile itself as JSON and is OPAQUE to Rust, which is
+// what keeps adding a visual field a code change rather than a migration — the same rule the
+// background params blob follows. The three asset columns are lifted OUT of that JSON so the
+// background collector can see live references without parsing frontend-owned data.
+export interface ProfileRow {
+  id: string;
+  name: string | null;
+  description: string | null;
+  author: string | null;
+  icon_kind: string | null;
+  icon_ref: string | null;
+  data: string;
+  derived_from: string | null;
+  created_at: number;
+  updated_at: number;
+  bg_library: string | null;
+  bg_reading: string | null;
+}
+
+/** Every profile, most-recently-edited first. */
+export const profilesList = (): Promise<ProfileRow[]> => invoke<ProfileRow[]>("profiles_list");
+
+/** One profile by id, or null when it does not exist. */
+export const profileGet = (id: string): Promise<ProfileRow | null> =>
+  invoke<ProfileRow | null>("profile_get", { id });
+
+/** Insert or update. `created_at` is preserved on update; `updated_at` is stamped by the core. */
+export const profileSave = (profile: ProfileRow): Promise<boolean> =>
+  invoke<boolean>("profile_save", { profile });
+
+/** Remove a profile. Deleting one that does not exist is not an error. */
+export const profileDelete = (id: string): Promise<boolean> =>
+  invoke<boolean>("profile_delete", { id });
+
+/**
+ * The settings key naming the active profile.
+ *
+ * ABSENT MEANS "no profile is active", and that is the state every existing installation is in
+ * after this stage: the resolver reads today's individual settings keys exactly as it always has,
+ * so nothing changes until the reader creates or edits a profile. Read and written through
+ * `settingsGet` / `settingsSet` — it is one value for the installation, which is precisely what the
+ * settings table is for, and keeping it there means switching profiles needs no schema change.
+ */
+export const PROFILE_ACTIVE_KEY = "profile_active";

@@ -482,6 +482,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
           onMoveCase={caseOps.move}
           onNewRuleShelf={async (caseId) => setTree(await shelfCreate(t("lib.rule.reading"), caseId, "reading"))}
           onCaseInk={async (id, ink) => setTree(await caseSetInk(id, ink))}
+          onPlaceCase={async (id, at) => setTree(await caseReorder(id, at))}
           onRenameShelf={props.onRenameShelf}
           onSettings={props.onSettings}
           themeName={THEMES[themeId]?.name ?? ""}
@@ -529,6 +530,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
         onMoveCase={caseOps.move}
         onNewRuleShelf={async (caseId) => setTree(await shelfCreate(t("lib.rule.reading"), caseId, "reading"))}
           onCaseInk={async (id, ink) => setTree(await caseSetInk(id, ink))}
+          onPlaceCase={async (id, at) => setTree(await caseReorder(id, at))}
         onRenameShelf={props.onRenameShelf}
         onSettings={props.onSettings}
         themeName={THEMES[themeId]?.name ?? ""}

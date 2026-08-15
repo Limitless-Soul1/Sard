@@ -40,6 +40,8 @@ interface SidebarProps {
   onMoveCase: (id: string, direction: number) => void;
   onNewRuleShelf: (caseId: string) => void;
   onCaseInk: (caseId: string, ink: string | null) => void;
+  /** Place a lifted case at an index among its peers. */
+  onPlaceCase: (id: string, toIndex: number) => void;
   /** RAWY-31's shelf rename, used by the sidebar's inline editor. */
   onRenameShelf: (id: string, name: string) => void;
   onSettings: () => void;
@@ -77,9 +79,12 @@ export function Sidebar(props: SidebarProps) {
   const [renamingShelf, setRenamingShelf] = useState<string | null>(null);
   const [renamingCase, setRenamingCase] = useState<string | null>(null);
   const [managing, setManaging] = useState<string | null>(null);
+  // A case lifted by its grip, waiting for a rail to be clicked.
+  const [caseHand, setCaseHand] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
 
   const num = (n: number) => localeNum(n, lang);
+  const rtl = lang === "ar";
 
   const nav: { id: Section | "reading"; label: string; count?: number }[] = [
     { id: "library", label: t("lib.nav.library"), count: props.bookCount },
@@ -143,6 +148,8 @@ export function Sidebar(props: SidebarProps) {
       );
     }
     return (
+      // The reference's shelf row: padded 6/8/6/10, radius 6, `500 .75rem` in `--mut`, and on
+      // selection it takes `--act` and `--txt`. No height is set — the padding decides it.
       <button
         key={s.id}
         className="libd-hov"
@@ -152,21 +159,23 @@ export function Sidebar(props: SidebarProps) {
           alignItems: "center",
           gap: 8,
           width: "100%",
-          height: 28,
-          padding: "0 10px",
-          borderRadius: 7,
+          padding: "6px 8px 6px 10px",
+          borderRadius: 6,
           font: "500 .75rem var(--ui)",
           color: active ? "var(--txt)" : "var(--mut)",
           background: active ? "var(--act)" : "transparent",
         }}
       >
+        {/* A rule shelf is an OUTLINED circle; a hand shelf is a filled square. The mark says
+            which kind of shelf it is, and stays `--faint` in both states. */}
         <span
           style={{
             flex: "none",
-            width: 5,
-            height: 5,
-            borderRadius: s.auto_rule ? "50%" : 1,
-            background: active ? "var(--acc)" : "var(--faint)",
+            width: 6,
+            height: 6,
+            ...(s.auto_rule
+              ? { borderRadius: "50%", border: "1.5px solid var(--faint)" }
+              : { borderRadius: 1, background: "var(--faint)" }),
           }}
         />
         <span
@@ -324,34 +333,64 @@ export function Sidebar(props: SidebarProps) {
               </span>
             );
           }
+          const ink = c.ink ?? "var(--acc)";
+          const lifted = caseHand === c.id;
           return (
             <div key={c.id} style={{ position: "relative" }}>
+              {/* A place-here rail above each other case while one is lifted by its grip. */}
+              {caseHand && caseHand !== c.id && (
+                <button
+                  onClick={() => {
+                    props.onPlaceCase(caseHand, props.cases.findIndex((x) => x.id === c.id));
+                    setCaseHand(null);
+                  }}
+                  aria-label={t("lib.placeHere")}
+                  style={{ display: "block", width: "100%", padding: "4px 0 3px" }}
+                >
+                  <span style={{ display: "block", height: 2, borderRadius: 1, background: "var(--acc)" }} />
+                </button>
+              )}
+              {/* THE CASE'S COLOUR IS A 3px BAR down the row's leading edge — the reference's
+                  own marker, not a small square beside the name. It is what makes a case row
+                  read as a case at a glance, and it is why the shelf rows below (which have no
+                  bar) read as children. */}
               <div
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 2,
-                  borderRadius: 8,
-                  padding: "0 6px 0 2px",
+                  borderRadius: 7,
+                  paddingInlineEnd: 2,
+                  borderInlineStart: `3px solid ${ink}`,
                   background: active ? "var(--act)" : "transparent",
+                  opacity: lifted ? 0.4 : 1,
                 }}
               >
                 <button
                   className="libd-hov"
                   onClick={() => props.onToggleCase(c.id)}
                   aria-label={c.name}
-                  style={{ flex: "none", width: 20, height: 24, borderRadius: 6 }}
+                  style={{
+                    flex: "none",
+                    display: "grid",
+                    placeItems: "center",
+                    width: 22,
+                    height: 22,
+                    marginInlineEnd: 2,
+                    borderRadius: 7,
+                    // The disc fills with the case's own colour once it is open.
+                    border: `1px solid ${open ? "var(--brd)" : "transparent"}`,
+                    background: open ? `color-mix(in srgb, ${ink} 18%, transparent)` : "transparent",
+                  }}
                 >
                   <span
                     style={{
-                      width: 0,
-                      height: 0,
-                      borderInlineStart: "4px solid currentColor",
-                      borderBlockStart: "3.5px solid transparent",
-                      borderBlockEnd: "3.5px solid transparent",
-                      color: "var(--faint)",
-                      transform: open ? "rotate(90deg)" : undefined,
-                      transition: "transform .14s ease-out",
+                      display: "block",
+                      width: 7,
+                      height: 7,
+                      borderRight: "1.6px solid var(--mut)",
+                      borderBottom: "1.6px solid var(--mut)",
+                      transform: `rotate(${open ? "45deg" : rtl ? "135deg" : "-45deg"}) translate(-1.2px,-1.2px)`,
+                      transition: "transform .18s ease-out",
                     }}
                   />
                 </button>
@@ -367,17 +406,7 @@ export function Sidebar(props: SidebarProps) {
                     padding: "6px 0",
                   }}
                 >
-                  {c.ink && (
-                    <span
-                      style={{
-                        flex: "none",
-                        width: 7,
-                        height: 7,
-                        borderRadius: 2,
-                        background: c.ink,
-                      }}
-                    />
-                  )}
+                  {/* No dot here — the row's leading bar is the case's colour. */}
                   <span
                     style={{
                       flex: 1,
@@ -386,7 +415,7 @@ export function Sidebar(props: SidebarProps) {
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
                       font: "600 .8125rem var(--ui)",
-                      color: active ? "var(--txt)" : "var(--txt)",
+                      color: "var(--txt)",
                     }}
                   >
                     {c.name}
@@ -394,6 +423,27 @@ export function Sidebar(props: SidebarProps) {
                   <span style={{ font: "500 .6875rem var(--ui)", color: "var(--faint)" }}>
                     {num(c.count)}
                   </span>
+                </button>
+                {/* The grip lifts the case; a rail then appears above every other one. */}
+                <button
+                  title={t("lib.moveCase")}
+                  aria-label={t("lib.moveCase")}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCaseHand(lifted ? null : c.id);
+                  }}
+                  style={{
+                    flex: "none",
+                    width: 20,
+                    height: 22,
+                    borderRadius: 6,
+                    fontSize: 11,
+                    lineHeight: 1,
+                    color: lifted ? "var(--acc)" : "var(--faint)",
+                    background: lifted ? "var(--act)" : "transparent",
+                  }}
+                >
+                  ⠿
                 </button>
                 <span style={{ position: "relative", flex: "none" }}>
                   <button

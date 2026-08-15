@@ -454,6 +454,32 @@ pub fn shelf_place_book(
         ));
     }
 
+    // A CATEGORY BELONGS TO ONE SHELF, and a membership may only name its own shelf's category.
+    //
+    // Without this the row is written anyway: the shelf then reports an item whose category is not
+    // among its own, every view falls back to showing it as uncategorised, and deleting the real
+    // owner's category leaves the row pointing at something that no longer exists. No caller does
+    // this today — the drop slots and the pickers all take the category from the shelf they are
+    // drawing — so the check costs nothing and closes the hole at the boundary rather than relying
+    // on every future caller to remember.
+    if let Some(cat) = category_id {
+        let owner: Option<String> = conn
+            .query_row(
+                "SELECT collection_id FROM collection_categories WHERE id = ?1",
+                [cat],
+                |r| r.get(0),
+            )
+            .optional()?;
+        match owner.as_deref() {
+            Some(o) if o == collection_id => {}
+            _ => {
+                return Err(rusqlite::Error::InvalidParameterName(
+                    "that category belongs to a different shelf".into(),
+                ))
+            }
+        }
+    }
+
     let tx = conn.unchecked_transaction()?;
     let mut ids: Vec<String> = {
         let mut stmt = tx.prepare(
@@ -1363,5 +1389,412 @@ mod tests {
         let t = shelf_create(&conn, "Reading", Some(&t.cases[0].id), Some("reading")).unwrap();
         let c = t.cases.iter().find(|c| c.name == "Empty").unwrap();
         assert_eq!(c.shelves.iter().filter(|s| s.auto_rule.is_none()).count(), 0);
+    }
+
+    // =======================================================================
+    // ADVERSARIAL. These do not ask whether the happy path works — the tests above already
+    // answer that. They ask what happens under repetition, at the boundaries, and in the
+    // orders a reader would only reach by being impatient.
+    //
+    // Every one of them runs against an in-memory database, which is the only place this kind
+    // of hammering can safely happen: the real library cannot be isolated from the running app,
+    // so it is never touched here.
+    // =======================================================================
+
+    /// Every membership row in the database, as (collection, book) pairs.
+    fn all_memberships(conn: &Connection) -> Vec<(String, String)> {
+        let mut stmt = conn
+            .prepare("SELECT collection_id, book_id FROM book_collections ORDER BY collection_id, book_id")
+            .unwrap();
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        rows
+    }
+
+    /// Positions on one shelf, in stored order. A healthy shelf is 0..n with no gaps or repeats.
+    fn positions(conn: &Connection, shelf: &str) -> Vec<i64> {
+        shelf_items(conn, shelf).unwrap().into_iter().map(|i| i.position).collect()
+    }
+
+    #[test]
+    fn many_cases_keep_a_stable_total_order_through_repeated_reordering() {
+        let conn = db();
+        for i in 0..12 {
+            case_create(&conn, &format!("C{i:02}"), None).unwrap();
+        }
+        // Walk the first case to the end, one step at a time, then walk it back.
+        for target in 1..12 {
+            let t = tree(&conn).unwrap();
+            let first = t.cases[0].id.clone();
+            case_reorder(&conn, &first, target).unwrap();
+            let after = tree(&conn).unwrap();
+            assert_eq!(after.cases.len(), 12, "a reorder must never lose or duplicate a case");
+            let names: std::collections::HashSet<_> = after.cases.iter().map(|c| c.name.clone()).collect();
+            assert_eq!(names.len(), 12, "every case is still distinct");
+        }
+        // And out-of-range indices must clamp rather than corrupt.
+        let t = tree(&conn).unwrap();
+        let id = t.cases[0].id.clone();
+        case_reorder(&conn, &id, 999).unwrap();
+        assert_eq!(tree(&conn).unwrap().cases.len(), 12);
+        case_reorder(&conn, &id, 0).unwrap();
+        assert_eq!(tree(&conn).unwrap().cases.first().unwrap().id, id);
+    }
+
+    #[test]
+    fn deleting_every_case_in_turn_leaves_every_shelf_and_book_alive() {
+        let conn = db();
+        for b in ["b1", "b2", "b3"] {
+            add_book(&conn, b);
+        }
+        let mut shelves = Vec::new();
+        for i in 0..4 {
+            let t = case_create(&conn, &format!("C{i}"), None).unwrap();
+            let cid = t.cases.iter().find(|c| c.name == format!("C{i}")).unwrap().id.clone();
+            let t = shelf_create(&conn, &format!("S{i}"), Some(&cid), None).unwrap();
+            let sid = t.cases.iter().find(|c| c.id == cid).unwrap().shelves[0].id.clone();
+            shelf_place_book(&conn, &sid, "b1", None, 0).unwrap();
+            shelves.push(sid);
+        }
+        loop {
+            let t = tree(&conn).unwrap();
+            let Some(c) = t.cases.first() else { break };
+            let id = c.id.clone();
+            case_delete(&conn, &id).unwrap();
+        }
+        let t = tree(&conn).unwrap();
+        assert!(t.cases.is_empty());
+        assert_eq!(t.loose.len(), 4, "every shelf survived, now un-cased");
+        for s in &shelves {
+            assert_eq!(shelf_items(&conn, s).unwrap().len(), 1, "and kept its book");
+        }
+        let books: i64 = conn.query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0)).unwrap();
+        assert_eq!(books, 3);
+    }
+
+    #[test]
+    fn repeated_renaming_never_multiplies_or_loses_a_case() {
+        let conn = db();
+        let t = case_create(&conn, "One", Some("#E8C36A")).unwrap();
+        let id = t.cases[0].id.clone();
+        for i in 0..50 {
+            case_rename(&conn, &id, &format!("Name {i}")).unwrap();
+        }
+        let t = tree(&conn).unwrap();
+        assert_eq!(t.cases.len(), 1);
+        assert_eq!(t.cases[0].name, "Name 49");
+        assert_eq!(t.cases[0].ink.as_deref(), Some("#E8C36A"), "renaming never disturbs the colour");
+    }
+
+    #[test]
+    fn a_shelf_walked_up_and_down_its_case_keeps_every_sibling() {
+        let conn = db();
+        let t = case_create(&conn, "C", None).unwrap();
+        let cid = t.cases[0].id.clone();
+        for i in 0..8 {
+            shelf_create(&conn, &format!("S{i}"), Some(&cid), None).unwrap();
+        }
+        let ids: Vec<String> = tree(&conn).unwrap().cases[0].shelves.iter().map(|s| s.id.clone()).collect();
+        for step in 0..8 {
+            shelf_reorder(&conn, &ids[0], step).unwrap();
+            let now = tree(&conn).unwrap();
+            assert_eq!(now.cases[0].shelves.len(), 8, "no shelf lost at step {step}");
+            let distinct: std::collections::HashSet<_> = now.cases[0].shelves.iter().map(|s| &s.id).collect();
+            assert_eq!(distinct.len(), 8, "no shelf duplicated at step {step}");
+        }
+    }
+
+    #[test]
+    fn a_shelf_moved_between_cases_repeatedly_never_lands_in_two_at_once() {
+        let conn = db();
+        add_book(&conn, "b1");
+        let t = case_create(&conn, "A", None).unwrap();
+        let a = t.cases[0].id.clone();
+        let t = case_create(&conn, "B", None).unwrap();
+        let b = t.cases.iter().find(|c| c.name == "B").unwrap().id.clone();
+        let t = shelf_create(&conn, "S", Some(&a), None).unwrap();
+        let sid = t.cases.iter().find(|c| c.id == a).unwrap().shelves[0].id.clone();
+        shelf_place_book(&conn, &sid, "b1", None, 0).unwrap();
+
+        for i in 0..20 {
+            let to = if i % 3 == 0 { None } else if i % 3 == 1 { Some(a.as_str()) } else { Some(b.as_str()) };
+            shelf_set_case(&conn, &sid, to).unwrap();
+            let t = tree(&conn).unwrap();
+            let appearances = t.cases.iter().filter(|c| c.shelves.iter().any(|s| s.id == sid)).count()
+                + usize::from(t.loose.iter().any(|s| s.id == sid));
+            assert_eq!(appearances, 1, "the shelf is in exactly one place after step {i}");
+            assert_eq!(shelf_items(&conn, &sid).unwrap().len(), 1, "and keeps its book");
+        }
+    }
+
+    #[test]
+    fn a_book_shuttled_between_two_shelves_never_accumulates_memberships() {
+        let conn = db();
+        add_book(&conn, "b1");
+        let t = shelf_create(&conn, "A", None, None).unwrap();
+        let a = t.loose[0].id.clone();
+        let t = shelf_create(&conn, "B", None, None).unwrap();
+        let b = t.loose.iter().find(|s| s.name == "B").unwrap().id.clone();
+        shelf_place_book(&conn, &a, "b1", None, 0).unwrap();
+
+        for i in 0..30 {
+            let (from, to) = if i % 2 == 0 { (&a, &b) } else { (&b, &a) };
+            shelf_place_book(&conn, to, "b1", None, 0).unwrap();
+            crate::library::collection_remove_book(&conn, from, "b1").unwrap();
+            assert_eq!(memberships(&conn, "b1"), 1, "exactly one membership after step {i}");
+        }
+        assert_eq!(all_memberships(&conn).len(), 1);
+    }
+
+    #[test]
+    fn positions_stay_dense_however_a_shelf_is_churned() {
+        let conn = db();
+        for i in 0..10 {
+            add_book(&conn, &format!("b{i}"));
+        }
+        let t = shelf_create(&conn, "S", None, None).unwrap();
+        let s = t.loose[0].id.clone();
+        for i in 0..10 {
+            shelf_place_book(&conn, &s, &format!("b{i}"), None, i as i64).unwrap();
+        }
+        // Move things about at every index, including out of range.
+        for (book, at) in [("b0", 9), ("b9", 0), ("b5", 5), ("b3", 99), ("b7", 0), ("b2", 4)] {
+            shelf_place_book(&conn, &s, book, None, at).unwrap();
+            let p = positions(&conn, &s);
+            assert_eq!(p, (0..p.len() as i64).collect::<Vec<_>>(), "positions dense after moving {book} to {at}");
+        }
+        // Remove a few and the remainder must still renumber densely on the next write.
+        for b in ["b1", "b4", "b6"] {
+            crate::library::collection_remove_book(&conn, &s, b).unwrap();
+        }
+        shelf_place_book(&conn, &s, "b0", None, 0).unwrap();
+        let p = positions(&conn, &s);
+        assert_eq!(p, (0..p.len() as i64).collect::<Vec<_>>(), "and after removals");
+    }
+
+    #[test]
+    fn deleting_a_category_that_holds_every_book_on_the_shelf_keeps_them_all() {
+        let conn = db();
+        for i in 0..6 {
+            add_book(&conn, &format!("b{i}"));
+        }
+        let t = shelf_create(&conn, "S", None, None).unwrap();
+        let s = t.loose[0].id.clone();
+        let t = category_create(&conn, &s, "K").unwrap();
+        let k = t.loose[0].categories[0].id.clone();
+        for i in 0..6 {
+            shelf_place_book(&conn, &s, &format!("b{i}"), Some(&k), i as i64).unwrap();
+        }
+        category_delete(&conn, &k).unwrap();
+        assert_eq!(shelf_items(&conn, &s).unwrap().len(), 6, "every book stayed on the shelf");
+        for it in shelf_items(&conn, &s).unwrap() {
+            assert_eq!(it.category_id, None, "and is simply uncategorised now");
+        }
+    }
+
+    #[test]
+    fn categories_survive_repeated_reordering_with_no_loss_or_duplication() {
+        let conn = db();
+        let t = shelf_create(&conn, "S", None, None).unwrap();
+        let s = t.loose[0].id.clone();
+        for i in 0..6 {
+            category_create(&conn, &s, &format!("K{i}")).unwrap();
+        }
+        let ids: Vec<String> = tree(&conn).unwrap().loose[0].categories.iter().map(|k| k.id.clone()).collect();
+        for round in 0..6 {
+            category_reorder(&conn, &ids[round % ids.len()], ((round * 2) % 6) as i64).unwrap();
+            let now = tree(&conn).unwrap();
+            let cats = &now.loose[0].categories;
+            assert_eq!(cats.len(), 6, "no category lost in round {round}");
+            let distinct: std::collections::HashSet<_> = cats.iter().map(|k| &k.id).collect();
+            assert_eq!(distinct.len(), 6, "no category duplicated in round {round}");
+        }
+    }
+
+    #[test]
+    fn a_category_cannot_be_used_across_shelves() {
+        // A book placed on shelf B carrying shelf A's category id is an inconsistent row: the
+        // category belongs to another shelf, every view falls back to showing the book as
+        // uncategorised, and deleting A's category leaves the row pointing at nothing at all.
+        //
+        // No caller does this today — the drop slots and the pickers all take the category from
+        // the shelf they are drawing — which is exactly why the hole went unnoticed until it was
+        // looked for deliberately.
+        let conn = db();
+        add_book(&conn, "b1");
+        let t = shelf_create(&conn, "A", None, None).unwrap();
+        let a = t.loose[0].id.clone();
+        let t = shelf_create(&conn, "B", None, None).unwrap();
+        let b = t.loose.iter().find(|s| s.name == "B").unwrap().id.clone();
+        let t = category_create(&conn, &a, "K").unwrap();
+        let k = t.loose.iter().find(|s| s.id == a).unwrap().categories[0].id.clone();
+
+        assert!(
+            shelf_place_book(&conn, &b, "b1", Some(&k), 0).is_err(),
+            "a foreign category must be refused, not stored"
+        );
+        assert!(all_memberships(&conn).is_empty(), "and the refusal leaves no partial row behind");
+
+        // A category that does not exist at all is refused for the same reason.
+        assert!(shelf_place_book(&conn, &b, "b1", Some("nope"), 0).is_err());
+        assert!(all_memberships(&conn).is_empty());
+
+        // The shelf's OWN category is of course accepted.
+        let t = category_create(&conn, &b, "L").unwrap();
+        let l = t.loose.iter().find(|s| s.id == b).unwrap().categories[0].id.clone();
+        shelf_place_book(&conn, &b, "b1", Some(&l), 0).unwrap();
+        assert_eq!(shelf_items(&conn, &b).unwrap()[0].category_id.as_deref(), Some(l.as_str()));
+
+        // And placing with no category remains fine.
+        shelf_place_book(&conn, &b, "b1", None, 0).unwrap();
+        assert_eq!(shelf_items(&conn, &b).unwrap()[0].category_id, None);
+    }
+
+    #[test]
+    fn an_empty_library_answers_every_read_without_failing() {
+        let conn = db();
+        let t = tree(&conn).unwrap();
+        assert!(t.cases.is_empty() && t.loose.is_empty());
+        // Reads against ids that do not exist must be empty, not errors.
+        assert!(shelf_items(&conn, "nope").unwrap().is_empty());
+        assert!(case_delete(&conn, "nope").is_ok());
+        assert!(collection_delete_ok(&conn, "nope"));
+    }
+
+    fn collection_delete_ok(conn: &Connection, id: &str) -> bool {
+        crate::library::collection_delete(conn, id).is_ok()
+    }
+
+    #[test]
+    fn a_rule_shelf_reports_its_query_and_owns_no_rows() {
+        let conn = db();
+        for b in ["b1", "b2"] {
+            add_book(&conn, b);
+        }
+        conn.execute(
+            "INSERT INTO reading_progress(book_id, fraction, updated_at) VALUES('b1', 0.5, 1)",
+            [],
+        )
+        .unwrap();
+        let t = shelf_create(&conn, "Reading", None, Some("reading")).unwrap();
+        let r = t.loose[0].id.clone();
+        assert_eq!(shelf_items(&conn, &r).unwrap().len(), 1, "the query finds the started book");
+        assert!(
+            all_memberships(&conn).is_empty(),
+            "and stores nothing — a rule shelf owns no membership rows"
+        );
+        // It refuses a placement, and refusing must not leave a partial row behind.
+        assert!(shelf_place_book(&conn, &r, "b2", None, 0).is_err());
+        assert!(all_memberships(&conn).is_empty());
+        // Removing from it is a no-op rather than an error, so a UI that tries cannot corrupt.
+        assert!(crate::library::collection_remove_book(&conn, &r, "b1").is_ok());
+        assert_eq!(shelf_items(&conn, &r).unwrap().len(), 1, "the rule still describes the book");
+    }
+
+    #[test]
+    fn deleting_a_shelf_takes_its_categories_and_no_books() {
+        let conn = db();
+        for b in ["b1", "b2"] {
+            add_book(&conn, b);
+        }
+        let t = shelf_create(&conn, "S", None, None).unwrap();
+        let s = t.loose[0].id.clone();
+        let t = category_create(&conn, &s, "K").unwrap();
+        let k = t.loose[0].categories[0].id.clone();
+        shelf_place_book(&conn, &s, "b1", Some(&k), 0).unwrap();
+        shelf_place_book(&conn, &s, "b2", None, 1).unwrap();
+
+        crate::library::collection_delete(&conn, &s).unwrap();
+
+        let books: i64 = conn.query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0)).unwrap();
+        assert_eq!(books, 2, "the books are untouched");
+        assert!(all_memberships(&conn).is_empty(), "its memberships went with it");
+        let cats: i64 = conn
+            .query_row("SELECT COUNT(*) FROM collection_categories WHERE id = ?1", [&k], |r| r.get(0))
+            .unwrap();
+        assert_eq!(cats, 0, "and so did its categories, rather than being orphaned");
+    }
+
+    #[test]
+    fn a_book_on_several_shelves_loses_only_the_one_it_is_moved_out_of() {
+        let conn = db();
+        add_book(&conn, "b1");
+        let mut ids = Vec::new();
+        for n in ["A", "B", "C", "D"] {
+            let t = shelf_create(&conn, n, None, None).unwrap();
+            ids.push(t.loose.iter().find(|s| s.name == n).unwrap().id.clone());
+        }
+        for id in &ids {
+            shelf_place_book(&conn, id, "b1", None, 0).unwrap();
+        }
+        assert_eq!(memberships(&conn, "b1"), 4);
+
+        // Move out of exactly one of them.
+        let t = shelf_create(&conn, "E", None, None).unwrap();
+        let e = t.loose.iter().find(|s| s.name == "E").unwrap().id.clone();
+        shelf_place_book(&conn, &e, "b1", None, 0).unwrap();
+        crate::library::collection_remove_book(&conn, &ids[1], "b1").unwrap();
+
+        assert_eq!(memberships(&conn, "b1"), 4, "three deliberate placements plus the new one");
+        assert!(shelf_items(&conn, &ids[0]).unwrap().iter().any(|i| i.book_id == "b1"));
+        assert!(!shelf_items(&conn, &ids[1]).unwrap().iter().any(|i| i.book_id == "b1"));
+        assert!(shelf_items(&conn, &ids[2]).unwrap().iter().any(|i| i.book_id == "b1"));
+        assert!(shelf_items(&conn, &ids[3]).unwrap().iter().any(|i| i.book_id == "b1"));
+    }
+
+    #[test]
+    fn a_shelf_with_sixty_books_survives_being_shuffled_end_to_end() {
+        let conn = db();
+        for i in 0..60 {
+            add_book(&conn, &format!("b{i:02}"));
+        }
+        let t = shelf_create(&conn, "S", None, None).unwrap();
+        let s = t.loose[0].id.clone();
+        for i in 0..60 {
+            shelf_place_book(&conn, &s, &format!("b{i:02}"), None, i as i64).unwrap();
+        }
+        // Deterministic churn: take the last to the front, the front to the middle, repeatedly.
+        for round in 0..20 {
+            let items = shelf_items(&conn, &s).unwrap();
+            let last = items.last().unwrap().book_id.clone();
+            shelf_place_book(&conn, &s, &last, None, 0).unwrap();
+            let first = shelf_items(&conn, &s).unwrap()[0].book_id.clone();
+            shelf_place_book(&conn, &s, &first, None, 30).unwrap();
+            let p = positions(&conn, &s);
+            assert_eq!(p.len(), 60, "still sixty books in round {round}");
+            assert_eq!(p, (0..60).collect::<Vec<_>>(), "and still densely numbered");
+        }
+        let distinct: std::collections::HashSet<_> =
+            shelf_items(&conn, &s).unwrap().into_iter().map(|i| i.book_id).collect();
+        assert_eq!(distinct.len(), 60, "no book was duplicated or lost");
+    }
+
+    #[test]
+    fn names_that_would_break_a_query_are_stored_and_read_back_intact() {
+        // Quotes, percent signs and Arabic all go through the same parameterised path; a name is
+        // data, never SQL.
+        let conn = db();
+        let awkward = [
+            "O'Brien's shelf",
+            "100% done",
+            "a; DROP TABLE collections;--",
+            "الرفّ العربي",
+            "  leading and trailing  ",
+        ];
+        for n in awkward {
+            shelf_create(&conn, n, None, None).unwrap();
+        }
+        let t = tree(&conn).unwrap();
+        assert_eq!(t.loose.len(), awkward.len(), "every one was stored");
+        for n in awkward {
+            assert!(t.loose.iter().any(|s| s.name == n), "{n:?} came back unchanged");
+        }
+        let still_there: i64 = conn
+            .query_row("SELECT COUNT(*) FROM collections", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(still_there, awkward.len() as i64, "and the table survived");
     }
 }

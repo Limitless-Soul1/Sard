@@ -23,6 +23,7 @@ import {
   collectionDelete,
   collectionRemoveBook,
   collectionRename,
+  libraryTree,
   shelfCreate,
   shelfPlaceBook,
   shelfReorder,
@@ -284,17 +285,17 @@ export function CaseEditor(props: CaseEditorProps) {
   // the panel simply sat there. `notify` is the Library's own toast.
   const run = async (fn: () => Promise<LibraryTree>): Promise<boolean> => {
     setBusy(true);
-    let tree: LibraryTree | null = null;
     let ok = true;
     try {
-      tree = await fn();
+      // Handing the answer on is part of the write, not something that happens after it: when it
+      // threw out here instead, the throw escaped the event handler and took the window with it.
+      props.onTree(await fn());
     } catch (e) {
       console.error(e);
       ok = false;
       props.notify(t("lib.writeFailed"));
     }
     setBusy(false);
-    if (tree) props.onTree(tree);
     props.onChanged();
     return ok;
   };
@@ -690,7 +691,20 @@ export function CaseEditor(props: CaseEditorProps) {
                   >
                     ⠿
                   </button>
-                  <ShelfName shelf={s} onRename={(v) => run(() => collectionRename(s.id, v) as never)} />
+                  {/* `collection_rename` answers with the collection ROWS, not the tree — every
+                      other write here answers with the tree. The cast that used to bridge that
+                      handed an array to `onTree`, and reading `.cases` off an array blanked the
+                      whole window: an empty React root, no sidebar, nothing to click. Rename, then
+                      re-read the structure, so what `run` receives is what it is declared to. */}
+                  <ShelfName
+                    shelf={s}
+                    onRename={(v) =>
+                      run(async () => {
+                        await collectionRename(s.id, v);
+                        return libraryTree();
+                      })
+                    }
+                  />
                   <span style={{ font: "500 .6875rem var(--ui)", color: "var(--faint)", whiteSpace: "nowrap" }}>
                     {num(total)}
                   </span>

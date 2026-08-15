@@ -4,7 +4,7 @@
 // steps, the fitted Vista width, the spine thickness curve, the progress thresholds. Where
 // the design read a field Sard does not have, the substitution is named at the site.
 
-import type { BookRow, CaseNode, ShelfItem, ShelfNode, ShelfOrder } from "../../../lib/ipc";
+import type { BookRow, CaseNode, LibraryTree, ShelfItem, ShelfNode, ShelfOrder } from "../../../lib/ipc";
 
 /** The five views. `grid` is Sard's original Library grid, kept alongside the four new ones. */
 export type DesignView = "grid" | "covers" | "spines" | "details" | "vista";
@@ -402,4 +402,44 @@ export function dropIndex(pointerY: number, midpoints: number[], from: number): 
     }
   }
   return at > from ? at - 1 : at;
+}
+
+/**
+ * Which top-level groups are open, given the ones the reader deliberately closed.
+ *
+ * Open is the default and closed is the exception, so the stored set records collapses rather
+ * than expansions. Deriving the open set on every load — rather than seeding it once — is what
+ * makes a case created later appear open like every other: seeded once, it belonged to no set at
+ * all and drew collapsed, and a collapsed case renders no shelf list, so "New shelf" from its own
+ * menu had nowhere to put its input and looked like a control that did nothing.
+ */
+export function openGroups(caseIds: string[], closed: ReadonlySet<string>): Set<string> {
+  return new Set([...caseIds, UNFILED_CASE_ID].filter((id) => !closed.has(id)));
+}
+
+/**
+ * The inverse: which groups to store as closed, given what is open.
+ *
+ * The pair has to be read from a tree and an open set that describe the same moment. When they did
+ * not — a tree carrying a case the open set predated — this recorded that case as a deliberate
+ * collapse, and it stayed folded from then on. Keeping both halves here makes the round trip
+ * testable: closing nothing must store nothing, whatever ids arrive.
+ */
+export function closedGroups(caseIds: string[], open: ReadonlySet<string>): string[] {
+  return [...caseIds, UNFILED_CASE_ID].filter((id) => !open.has(id));
+}
+
+/**
+ * Is this actually the structure?
+ *
+ * Most library commands answer with the whole tree, but not all of them do — `collection_rename`
+ * answers with the collection ROWS. One call site bridged that difference with a cast, so an array
+ * reached the code that reads `.cases`, and the window went blank: an empty React root, no sidebar,
+ * nothing to click, and no message anywhere. Checking the shape turns that into an ordinary
+ * reported write failure instead of a dead window.
+ */
+export function isLibraryTree(v: unknown): v is LibraryTree {
+  if (!v || typeof v !== "object") return false;
+  const t = v as Partial<LibraryTree>;
+  return Array.isArray(t.cases) && Array.isArray(t.loose);
 }

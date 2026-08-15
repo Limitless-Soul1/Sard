@@ -9,9 +9,12 @@
 import { describe, it, expect } from "vitest";
 import type { CaseNode, ShelfNode } from "../../src/lib/ipc";
 import {
+  isLibraryTree,
   isRootScope,
   isUnfiledScope,
   LOOSE_SHELF_ID,
+  closedGroups,
+  openGroups,
   reconcileScope,
   ROOT_SCOPE,
   UNFILED_CASE_ID,
@@ -180,5 +183,101 @@ describe('"not in a case" as a place to stand', () => {
   it("is not an id any real case could have", () => {
     // Nothing writes it to `collections.case_id`; the sentinel is deliberately not a row id.
     expect(UNFILED_CASE_ID.startsWith("__")).toBe(true);
+  });
+});
+
+describe("which groups are open", () => {
+  it("opens a case that has never been closed", () => {
+    // The reported symptom: a case created after the first load belonged to no set and drew
+    // collapsed, so "New shelf" from its own menu had nowhere to put its input.
+    expect(openGroups(["a", "b"], new Set())).toEqual(new Set(["a", "b", UNFILED_CASE_ID]));
+  });
+
+  it("keeps a case the reader deliberately closed", () => {
+    expect(openGroups(["a", "b"], new Set(["a"]))).toEqual(new Set(["b", UNFILED_CASE_ID]));
+  });
+
+  it("opens a NEW case even while others are closed", () => {
+    const closed = new Set(["old"]);
+    expect(openGroups(["old", "brandNew"], closed).has("brandNew")).toBe(true);
+    expect(openGroups(["old", "brandNew"], closed).has("old")).toBe(false);
+  });
+
+  it("treats the unfiled group exactly like a case", () => {
+    expect(openGroups([], new Set()).has(UNFILED_CASE_ID)).toBe(true);
+    expect(openGroups([], new Set([UNFILED_CASE_ID])).has(UNFILED_CASE_ID)).toBe(false);
+  });
+
+  it("is idempotent, so repeated loads do not flap", () => {
+    const closed = new Set(["a"]);
+    const once = openGroups(["a", "b"], closed);
+    expect(openGroups(["a", "b"], closed)).toEqual(once);
+  });
+});
+
+describe("which groups are stored as closed", () => {
+  it("round-trips: what openGroups opened is not written back as closed", () => {
+    const stored = ["a"];
+    const ids = ["a", "b", "c"];
+    const open = openGroups(ids, new Set(stored));
+    expect(closedGroups(ids, open).sort()).toEqual(stored.sort());
+  });
+
+  it("stores nothing when nothing is closed", () => {
+    const ids = ["a", "b"];
+    expect(closedGroups(ids, openGroups(ids, new Set()))).toEqual([]);
+  });
+
+  it("does NOT record a case the open set predates", () => {
+    // The measured bug: `write()` set the tree alone, so this effect ran with a tree carrying a
+    // case the open set was computed before. It read that pair as a deliberate collapse and stored
+    // it, and the brand-new case came up folded — with no shelf list, so "New shelf" did nothing.
+    // Reconciling the pair in one batch is what makes this hold.
+    const before = ["a"];
+    const after = ["a", "fresh"];
+    const stale = openGroups(before, new Set());
+    expect(closedGroups(after, stale)).toContain("fresh"); // what the bug did
+    const reconciled = openGroups(after, new Set());
+    expect(closedGroups(after, reconciled)).toEqual([]); // what applyTree guarantees
+  });
+
+  it("keeps the unfiled group in the record like any case", () => {
+    expect(closedGroups(["a"], new Set(["a"]))).toEqual([UNFILED_CASE_ID]);
+  });
+
+  it("drops a deleted case from the record rather than carrying it forever", () => {
+    const open = openGroups(["a", "b"], new Set(["a", "gone"]));
+    expect(closedGroups(["a", "b"], open)).toEqual(["a"]);
+  });
+});
+
+describe("what may be accepted as the structure", () => {
+  it("accepts a tree, including an empty one", () => {
+    expect(isLibraryTree({ cases: [], loose: [] })).toBe(true);
+    expect(isLibraryTree({ cases: [kase("a", [shelf("s1", "a")])], loose: [shelf("s2")] })).toBe(true);
+  });
+
+  it("REJECTS the collection rows one rename command answers with", () => {
+    // The measured crash: `collection_rename` answers with the rows, not the tree, and a cast let
+    // that array reach the code that reads `.cases`. `[].cases` is undefined, `.map` of undefined
+    // throws during render, and the window went blank — empty root, no sidebar, no message.
+    expect(isLibraryTree([{ id: "s1", name: "Shelf" }])).toBe(false);
+    expect(isLibraryTree([])).toBe(false);
+  });
+
+  it("rejects nothing at all, rather than letting it through as an empty library", () => {
+    expect(isLibraryTree(undefined)).toBe(false);
+    expect(isLibraryTree(null)).toBe(false);
+  });
+
+  it("rejects a half tree, which would render one side and lose the other", () => {
+    expect(isLibraryTree({ cases: [] })).toBe(false);
+    expect(isLibraryTree({ loose: [] })).toBe(false);
+    expect(isLibraryTree({ cases: [], loose: "no" })).toBe(false);
+  });
+
+  it("rejects a string, which is what an error message arrives as", () => {
+    expect(isLibraryTree("that category belongs to a different shelf")).toBe(false);
+    expect(isLibraryTree(42)).toBe(false);
   });
 });

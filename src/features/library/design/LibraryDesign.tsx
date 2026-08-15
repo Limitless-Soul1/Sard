@@ -47,9 +47,12 @@ import {
   DESIGN_VIEWS,
   groupShelf,
   isGroupedView,
+  isLibraryTree,
   isVirtualShelf,
   LOOSE_SHELF_ID,
   makeLooseShelf,
+  closedGroups,
+  openGroups,
   placementPlan,
   reconcileScope,
   spineWidth,
@@ -165,32 +168,41 @@ export function LibraryDesign(props: LibraryDesignProps) {
   }, [sort]);
 
   // ---- the structure, and every shelf's own order ----------------------------
+  /**
+   * The ONLY way the tree reaches state.
+   *
+   * The tree and the open/closed set have to move together, in one batch. The persistence effect
+   * below reads exactly that pair, so any render where they disagree is written to the database as
+   * fact — and it was: `write()` used to call `setTree` alone, so a case created through the UI
+   * arrived in `tree.cases` while `openCases` still held the set from before it existed. The effect
+   * read that pair, concluded the new case was closed, and stored it. The case then drew collapsed,
+   * and a collapsed case renders no shelf list, so "New shelf" from its own menu had nowhere to put
+   * its input and appeared to do nothing.
+   *
+   * A case is open unless the reader closed it. The closed set is the record of deliberate
+   * collapses, so consulting it on every tree is both simpler and correct: a new case opens, a
+   * folded one stays folded.
+   */
+  const applyTree = useCallback((next: LibraryTree) => {
+    // A command that answers with something other than a tree used to reach here and blank the
+    // window — an empty React root, no sidebar, nothing to click, and the only clue in a console
+    // nobody has open. Refusing it turns that into an ordinary reported write failure, which the
+    // callers already know how to show and recover from by re-reading the structure.
+    if (!isLibraryTree(next)) throw new Error("library write answered with something that is not a tree");
+    setTree(next);
+    setOpenCases(() => openGroups(next.cases.map((c) => c.id), closedCases.current));
+    seeded.current = true;
+  }, []);
+
   const loadTree = useCallback(async () => {
     const next = await libraryTree().catch(() => EMPTY_TREE);
-    // Cases start open, as the design shows them — except any the reader closed last time.
-    //
-    // SEEDED IN THE SAME BATCH AS THE TREE, and this is not a style choice. Seeding after the
-    // `shelf_items` await left a render in which `tree.cases` was full and `openCases` was still
-    // empty; the effect below reads exactly that pair and concluded every case was closed, wrote
-    // that, and the next launch opened with the whole library collapsed. Measured, not theorised:
-    // it is what made every case in a real profile come up folded.
-    setTree(next);
-    setOpenCases((prev) =>
-      prev.size
-        ? prev
-        : new Set(
-            // The unfiled group collapses like any other top-level group, so it is seeded and
-            // stored with them rather than being a permanently-open exception.
-            [...next.cases.map((c) => c.id), UNFILED_EDITOR].filter((id) => !closedCases.current.has(id)),
-          ),
-    );
-    seeded.current = true;
+    applyTree(next);
     const shelves = [...next.cases.flatMap((c) => c.shelves), ...next.loose];
     const pairs = await Promise.all(
       shelves.map(async (s) => [s.id, await libraryShelfItems(s.id).catch(() => [])] as const),
     );
     setItems(Object.fromEntries(pairs));
-  }, []);
+  }, [applyTree]);
 
   useEffect(() => {
     if (!closedLoaded) return; // else the first group runs before the closed set is known
@@ -200,7 +212,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
   // Persist the collapsed cases, on the same `settings` path the view, density and sort use.
   useEffect(() => {
     if (!closedLoaded || !seeded.current) return;
-    const closed = [...tree.cases.map((c) => c.id), UNFILED_EDITOR].filter((id) => !openCases.has(id));
+    const closed = closedGroups(tree.cases.map((c) => c.id), openCases);
     closedCases.current = new Set(closed);
     settingsSet("libd_closed_cases", closed.join(",")).catch(() => {});
   }, [openCases, tree.cases, closedLoaded]);
@@ -257,11 +269,14 @@ export function LibraryDesign(props: LibraryDesignProps) {
    * absolutely nothing on screen. A rename that failed looked exactly like a rename the reader had
    * not made. Now a failure is said out loud, and the tree is re-read from the database afterwards
    * so what is on screen is what was actually stored rather than an optimistic guess.
+   *
+   * The answer goes through `applyTree`, never `setTree`: see the note there for what a bare
+   * `setTree` did to a case created through the UI.
    */
   const write = useCallback(
     async (fn: () => Promise<LibraryTree>): Promise<boolean> => {
       try {
-        setTree(await fn());
+        applyTree(await fn());
         return true;
       } catch (e) {
         console.error(e);
@@ -270,7 +285,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
         return false;
       }
     },
-    [flash, t, loadTree],
+    [flash, t, loadTree, applyTree],
   );
 
 
@@ -1234,7 +1249,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
           cases={tree.cases}
           byId={byId}
           items={items}
-          onTree={setTree}
+          onTree={applyTree}
           onChanged={() => {
             loadTree().catch(() => {});
             props.onReloadBooks();

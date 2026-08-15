@@ -182,6 +182,8 @@ export const ar: Record<TKey, string> = {
   "lib.category.deleted": "حُذفت الفئة — كتبها لا تزال على الرفّ.",
   "lib.writeFailed": "تعذّر حفظ هذا التغيير. لم يتغيّر شيء.",
   "lib.placedSome": "نُقل {n} — وتعذّر نقل {failed}.",
+  "lib.tookOffShelf": "أُخرِج من رفّه — ولا يزال في مكتبتك.",
+  "lib.movedButNotRemoved": "أُضيف إلى الرفّ الجديد، لكن تعذّر إخراجه من القديم — فهو الآن على الاثنين.",
   "lib.openCase": "افتح الخزانة",
   "lib.manage": "إدارة",
   "lib.managing": "إدارة الخزانة",
@@ -247,6 +249,7 @@ export const ar: Record<TKey, string> = {
   "lib.arrangeHintOn":
     "انقر كتابًا لالتقاطه، حرّكه إلى الموضع الذي تريد، ثم انقر لتضعه. Esc للإلغاء. وخارج هذا الوضع اضغط مطوّلًا على الكتاب.",
   "lib.placeHere": "ضعه هنا",
+  "lib.takeOffShelf": "أخرِجه من رفّه",
   "lib.cannotPlace": "رفّ بقاعدة — الترتيب تلقائيّ",
   "lib.cannotPlaceSorted": "رفّ مفروز — حوّله إلى «يدويّ» لتضع فيه",
   "lib.placed": "وُضع",

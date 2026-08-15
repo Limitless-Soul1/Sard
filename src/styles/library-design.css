@@ -101,8 +101,14 @@
 }
 
 /* The design supplies each of its own buttons' styles inline, exactly as authored; this only
-   removes the user-agent chrome from them. */
-.libd-chrome button,
+   removes the user-agent chrome from them.
+
+   `.lib-settings-btn` is EXEMPT. It is Sard's own control, styled by the main stylesheet, and it
+   happens to sit inside the design's chrome. A bare class is (0,1,0) and loses to the (0,1,1) of
+   `.libd-chrome button`, so without this exclusion the reset would strip its padding, its font
+   and its start alignment — the same way `.libd-root button` once flattened the Highlights
+   screen. Any further Sard-owned control placed in here needs adding to this list. */
+.libd-chrome button:not(.lib-settings-btn),
 .libd-stage button,
 .libd-dialog button {
   border: 0;

@@ -183,6 +183,8 @@ export const en = {
   // A structure write that failed. The reader gets told, rather than watching nothing happen.
   "lib.writeFailed": "That change could not be saved. Nothing was altered.",
   "lib.placedSome": "{n} moved — {failed} could not be.",
+  "lib.tookOffShelf": "Taken off its shelf — still in your library.",
+  "lib.movedButNotRemoved": "Added to the new shelf, but it could not be taken off the old one — it is on both.",
   "lib.openCase": "Open case",
   "lib.manage": "Manage",
   "lib.managing": "Managing case",
@@ -248,6 +250,7 @@ export const en = {
   "lib.arrangeHintOn":
     "Click a book to pick it up, move to the slot you want, click to place. Esc cancels. Outside this mode, press and hold a book.",
   "lib.placeHere": "place here",
+  "lib.takeOffShelf": "take off its shelf",
   "lib.cannotPlace": "ruled shelf — order is automatic",
   "lib.cannotPlaceSorted": "sorted shelf — switch it to By hand to place",
   "lib.placed": "Placed",

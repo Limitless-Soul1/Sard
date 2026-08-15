@@ -964,4 +964,199 @@ mod tests {
         let t = shelf_create(&conn, "S", None, None).unwrap();
         assert!(shelf_set_order(&conn, &t.loose[0].id, "sideways").is_err());
     }
+
+    // -----------------------------------------------------------------------
+    // MOVE, not copy.
+    //
+    // `shelf_place_book` is a JOIN by design — `book_collections` is many-to-many and a book may
+    // legitimately sit on several shelves. What Arrange means by a drag is narrower: leave where
+    // you were, arrive where you were dropped. That is two calls, and the bug was that the
+    // library surface only ever made the first one, so every drag between shelves copied.
+    //
+    // These pin the resulting DATABASE state for each direction the reader can drag, read back
+    // through `shelf_items` and `tree` — which is what a view switch, a reopen and a restart all
+    // read too.
+    // -----------------------------------------------------------------------
+
+    /// Exactly what the library surface does for a manual placement: arrive, then leave the source.
+    fn move_book(conn: &Connection, from: &str, to: &str, cat: Option<&str>, index: i64, book: &str) {
+        shelf_place_book(conn, to, book, cat, index).unwrap();
+        if from != to {
+            crate::library::collection_remove_book(conn, from, book).unwrap();
+        }
+    }
+
+    fn on_shelf(conn: &Connection, shelf: &str) -> Vec<String> {
+        shelf_items(conn, shelf).unwrap().into_iter().map(|i| i.book_id).collect()
+    }
+
+    fn memberships(conn: &Connection, book: &str) -> i64 {
+        conn.query_row(
+            "SELECT COUNT(*) FROM book_collections WHERE book_id = ?1",
+            [book],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn shelf_to_shelf_moves_the_book_and_does_not_copy_it() {
+        let conn = db();
+        add_book(&conn, "x");
+        add_book(&conn, "y");
+        let t = shelf_create(&conn, "A", None, None).unwrap();
+        let a = t.loose[0].id.clone();
+        let t = shelf_create(&conn, "B", None, None).unwrap();
+        let b = t.loose.iter().find(|s| s.name == "B").unwrap().id.clone();
+        shelf_place_book(&conn, &a, "x", None, 0).unwrap();
+        shelf_place_book(&conn, &b, "y", None, 0).unwrap();
+
+        move_book(&conn, &a, &b, None, 0, "x");
+
+        assert!(on_shelf(&conn, &a).is_empty(), "the source no longer holds it");
+        assert_eq!(on_shelf(&conn, &b), vec!["x", "y"], "the destination holds it, at the index given");
+        assert_eq!(memberships(&conn, "x"), 1, "one membership, not two");
+        let books: i64 = conn.query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0)).unwrap();
+        assert_eq!(books, 2, "the book itself is untouched");
+    }
+
+    #[test]
+    fn category_to_category_moves_within_one_shelf_without_dropping_membership() {
+        let conn = db();
+        add_book(&conn, "x");
+        let t = shelf_create(&conn, "S", None, None).unwrap();
+        let s = t.loose[0].id.clone();
+        let t = category_create(&conn, &s, "One").unwrap();
+        let c1 = t.loose[0].categories[0].id.clone();
+        let t = category_create(&conn, &s, "Two").unwrap();
+        let c2 = t.loose[0].categories.iter().find(|k| k.name == "Two").unwrap().id.clone();
+        shelf_place_book(&conn, &s, "x", Some(&c1), 0).unwrap();
+
+        // Same shelf: the plan is a reorder, so nothing is removed. Removing and re-adding would
+        // briefly take the book off a shelf it never left.
+        move_book(&conn, &s, &s, Some(&c2), 0, "x");
+
+        let it = shelf_items(&conn, &s).unwrap();
+        assert_eq!(it.len(), 1, "still exactly one membership");
+        assert_eq!(it[0].category_id.as_deref(), Some(c2.as_str()), "now in the second category");
+    }
+
+    #[test]
+    fn category_to_another_shelf_moves_and_does_not_carry_the_old_category() {
+        let conn = db();
+        add_book(&conn, "x");
+        let t = shelf_create(&conn, "A", None, None).unwrap();
+        let a = t.loose[0].id.clone();
+        let t = shelf_create(&conn, "B", None, None).unwrap();
+        let b = t.loose.iter().find(|s| s.name == "B").unwrap().id.clone();
+        let t = category_create(&conn, &a, "One").unwrap();
+        let c1 = t.loose.iter().find(|s| s.id == a).unwrap().categories[0].id.clone();
+        shelf_place_book(&conn, &a, "x", Some(&c1), 0).unwrap();
+
+        move_book(&conn, &a, &b, None, 0, "x");
+
+        assert!(on_shelf(&conn, &a).is_empty());
+        let it = shelf_items(&conn, &b).unwrap();
+        assert_eq!(it.len(), 1);
+        assert_eq!(it[0].category_id, None, "the old shelf's category does not follow it");
+        // The category row survives: taking a book out of it is not deleting it.
+        let cats: i64 = conn
+            .query_row("SELECT COUNT(*) FROM collection_categories", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(cats, 1);
+    }
+
+    #[test]
+    fn moving_across_cases_moves_the_book_not_the_shelf() {
+        let conn = db();
+        add_book(&conn, "x");
+        let t = case_create(&conn, "Left", None).unwrap();
+        let left = t.cases[0].id.clone();
+        let t = case_create(&conn, "Right", None).unwrap();
+        let right = t.cases.iter().find(|c| c.name == "Right").unwrap().id.clone();
+        let t = shelf_create(&conn, "A", Some(&left), None).unwrap();
+        let a = t.cases.iter().find(|c| c.id == left).unwrap().shelves[0].id.clone();
+        let t = shelf_create(&conn, "B", Some(&right), None).unwrap();
+        let b = t.cases.iter().find(|c| c.id == right).unwrap().shelves[0].id.clone();
+        shelf_place_book(&conn, &a, "x", None, 0).unwrap();
+
+        move_book(&conn, &a, &b, None, 0, "x");
+
+        assert!(on_shelf(&conn, &a).is_empty());
+        assert_eq!(on_shelf(&conn, &b), vec!["x"]);
+        assert_eq!(memberships(&conn, "x"), 1);
+        let t = tree(&conn).unwrap();
+        assert_eq!(t.cases.iter().find(|c| c.id == left).unwrap().shelves.len(), 1, "shelf A stays put");
+        assert_eq!(t.cases.iter().find(|c| c.id == right).unwrap().shelves.len(), 1, "shelf B stays put");
+    }
+
+    #[test]
+    fn an_unshelved_book_joins_a_shelf_and_stops_being_unshelved() {
+        let conn = db();
+        add_book(&conn, "x");
+        let t = shelf_create(&conn, "A", None, None).unwrap();
+        let a = t.loose[0].id.clone();
+        // "Unshelved" is not a collection: it is the set of books with no membership at all,
+        // so there is nothing to remove the book from on the way in.
+        assert_eq!(memberships(&conn, "x"), 0);
+
+        shelf_place_book(&conn, &a, "x", None, 0).unwrap();
+
+        assert_eq!(on_shelf(&conn, &a), vec!["x"]);
+        assert_eq!(memberships(&conn, "x"), 1, "exactly one membership, so no longer unshelved");
+    }
+
+    #[test]
+    fn taking_a_book_off_its_shelf_leaves_it_in_the_library_and_unshelved() {
+        let conn = db();
+        add_book(&conn, "x");
+        let t = shelf_create(&conn, "A", None, None).unwrap();
+        let a = t.loose[0].id.clone();
+        shelf_place_book(&conn, &a, "x", None, 0).unwrap();
+
+        crate::library::collection_remove_book(&conn, &a, "x").unwrap();
+
+        assert!(on_shelf(&conn, &a).is_empty());
+        assert_eq!(memberships(&conn, "x"), 0, "unshelved again");
+        let books: i64 = conn.query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0)).unwrap();
+        assert_eq!(books, 1, "and still in the library");
+    }
+
+    #[test]
+    fn a_move_survives_being_read_back_from_scratch() {
+        // The library reads `tree` + `shelf_items` after every write, on every view switch, and
+        // on a fresh launch. If the move is in the database, all three see it; this asserts the
+        // re-read, through the same functions a restart uses.
+        let conn = db();
+        add_book(&conn, "x");
+        let t = shelf_create(&conn, "A", None, None).unwrap();
+        let a = t.loose[0].id.clone();
+        let t = shelf_create(&conn, "B", None, None).unwrap();
+        let b = t.loose.iter().find(|s| s.name == "B").unwrap().id.clone();
+        shelf_place_book(&conn, &a, "x", None, 0).unwrap();
+        move_book(&conn, &a, &b, None, 0, "x");
+
+        let reread = tree(&conn).unwrap();
+        assert_eq!(reread.loose.iter().find(|s| s.id == a).unwrap().count, 0, "the source counts none");
+        assert_eq!(reread.loose.iter().find(|s| s.id == b).unwrap().count, 1, "the destination counts one");
+        assert!(on_shelf(&conn, &a).is_empty());
+        assert_eq!(on_shelf(&conn, &b), vec!["x"]);
+    }
+
+    #[test]
+    fn a_move_onto_a_rule_shelf_is_refused_before_anything_is_removed() {
+        // Order matters: the destination is written FIRST, so a refusal leaves the book exactly
+        // where it was rather than losing it from both.
+        let conn = db();
+        add_book(&conn, "x");
+        let t = shelf_create(&conn, "A", None, None).unwrap();
+        let a = t.loose[0].id.clone();
+        let t = shelf_create(&conn, "Reading", None, Some("reading")).unwrap();
+        let rule = t.loose.iter().find(|s| s.name == "Reading").unwrap().id.clone();
+        shelf_place_book(&conn, &a, "x", None, 0).unwrap();
+
+        assert!(shelf_place_book(&conn, &rule, "x", None, 0).is_err());
+        assert_eq!(on_shelf(&conn, &a), vec!["x"], "still on the shelf it started on");
+        assert_eq!(memberships(&conn, "x"), 1);
+    }
 }

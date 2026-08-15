@@ -203,3 +203,38 @@ export function unfiledCase(name: string, loose: ShelfNode[], items: Record<stri
   for (const s of loose) for (const i of items[s.id] ?? []) ids.add(i.book_id);
   return { id: UNFILED_CASE_ID, name, ink: null, count: ids.size, shelves: loose };
 }
+
+/**
+ * What a manual placement actually has to do to the database.
+ *
+ * Arrange used to call `shelfPlaceBook(destination, …)` and stop there. That adds a membership
+ * without removing the one the book came from, so dragging a book from shelf A to shelf B left it
+ * on BOTH — a copy wearing the clothes of a move. `book_collections` is a many-to-many table and
+ * the backend's placement only ever touches rows for the destination collection, so nothing
+ * underneath was going to notice.
+ *
+ * The source is known at pick-up, so the decision is a pure one:
+ *
+ *   - the same shelf          → reorder in place; removing first would only delete and re-add
+ *   - the unshelved run       → nothing to remove, because it is not a collection: it is the
+ *                               render-time set of books that are on no shelf at all
+ *   - anything else           → a real move: leave the source, join the destination
+ *   - dropped on the unshelved run → leave the source and join nothing
+ */
+export type PlacementPlan =
+  | { kind: "reorder"; shelfId: string }
+  | { kind: "move"; shelfId: string; removeFrom: string }
+  | { kind: "add"; shelfId: string }
+  | { kind: "unshelve"; removeFrom: string }
+  | { kind: "none" };
+
+export function placementPlan(fromShelf: string, toShelf: string): PlacementPlan {
+  if (isVirtualShelf(toShelf)) {
+    // Dropping onto the unshelved run means "take this off its shelf". A book that was already
+    // unshelved has nothing to leave.
+    return isVirtualShelf(fromShelf) ? { kind: "none" } : { kind: "unshelve", removeFrom: fromShelf };
+  }
+  if (fromShelf === toShelf) return { kind: "reorder", shelfId: toShelf };
+  if (isVirtualShelf(fromShelf)) return { kind: "add", shelfId: toShelf };
+  return { kind: "move", shelfId: toShelf, removeFrom: fromShelf };
+}

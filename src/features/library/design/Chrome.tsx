@@ -595,24 +595,48 @@ export function Sidebar(props: SidebarProps) {
         </div>
       </div>
 
-      <div
-        style={{
-          marginTop: "auto",
-          paddingTop: 10,
-          borderTop: "1px solid var(--brd)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          font: "500 .75rem var(--ui)",
-          color: "var(--mut)",
-        }}
-      >
-        <button className="libd-hov-txt" onClick={props.onSettings} style={{ padding: "6px 8px" }}>
-          {props.langName}
+      {/* THE SIDEBAR FOOT.
+          The reference's band — pushed to the bottom, ruled off, `500 .75rem` in `--mut` — but
+          the thing inside it is Sard's own Settings entry, not two pieces of text. The theme and
+          the language named on their own do not tell anyone that this is where Settings lives;
+          they read as a status line, which is what they are. So the band now carries the gear
+          and the word, in the `.lib-settings-btn` the Library has always used (RAWY-39), with
+          the theme and language beneath it as the caption they always were.
+
+          `.lib-sidefoot` and `.lib-settings-btn` are the existing stylesheet's own classes, so
+          the padding, the radius, the accent gear and the hover come from the same place every
+          other Sard control gets them, and they follow the writing direction because the class
+          uses `text-align: start`. */}
+      <div className="lib-sidefoot" style={{ display: "block", paddingTop: 10, borderTop: "1px solid var(--brd)" }}>
+        <button
+          className="lib-settings-btn"
+          onClick={props.onSettings}
+          title={t("gs.open")}
+          aria-label={t("gs.open")}
+        >
+          <span className="lib-settings-ico" aria-hidden>
+            ⚙
+          </span>
+          <span>{t("gs.open")}</span>
         </button>
-        <button className="libd-hov-txt" onClick={props.onSettings} style={{ padding: "6px 8px" }}>
-          {props.themeName}
-        </button>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            gap: 8,
+            padding: "2px 11px 4px",
+            font: "500 .6875rem var(--ui)",
+            color: "var(--faint)",
+          }}
+        >
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {props.langName}
+          </span>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {props.themeName}
+          </span>
+        </div>
       </div>
     </aside>
   );

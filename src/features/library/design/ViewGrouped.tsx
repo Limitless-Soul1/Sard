@@ -69,6 +69,8 @@ export interface GroupedProps {
   onExpandShelf: (shelfId: string) => void;
   /** Width of the book in hand, for the spine-shaped drop slot. */
   carryWidth: number;
+  /** True when the book in hand came from the unshelved run, which it cannot be dropped back into. */
+  carryFromUnshelved: boolean;
   /** The library Crop/Fit default, passed through to each tile. */
   libraryCoverMode: CoverMode;
   onPlace: (shelfId: string, categoryId: string | null, index: number) => void;
@@ -91,6 +93,16 @@ export function ViewGrouped(props: GroupedProps) {
   const capFor = (shelfId: string) =>
     spines ? Number.MAX_SAFE_INTEGER : props.expandedShelves.has(shelfId) ? perRow * 99 : perRow * 2;
 
+  /**
+   * Whether this band can take the book currently in hand — which is what decides whether it
+   * lights up or dims while a drag is live.
+   *
+   * The unshelved run counts: dropping there means "take it off its shelf", so it is a target for
+   * anything that came from a real shelf, and for nothing that was already unshelved.
+   */
+  const canTake = (s: ShelfNode) =>
+    isVirtualShelf(s.id) ? !props.carryFromUnshelved : !s.auto_rule && s.order_rule === "hand";
+
   const ruleLabel = (s: ShelfNode) =>
     s.auto_rule === "reading"
       ? t("lib.rule.reading")
@@ -104,13 +116,17 @@ export function ViewGrouped(props: GroupedProps) {
    * `width:100%; aspect-ratio:2/3; border:2px dashed var(--acc); border-radius:3px;
    * background:var(--act)`, which is why the row reads as opening a gap for the book in hand.
    */
+  //
+  // The unshelved run takes a drop too, and it means the opposite: the book leaves the shelf it
+  // came from and joins nothing. Without it there was no way to drag a book OFF a shelf — only
+  // the book's own ⋯ could do that — so a drag could file a book and never unfile one.
   const gap = (shelfId: string, categoryId: string | null, index: number, key: string) =>
-    carrying && !isVirtualShelf(shelfId) ? (
+    carrying && !(isVirtualShelf(shelfId) && props.carryFromUnshelved) ? (
       <button
         key={key}
         onClick={() => props.onPlace(shelfId, categoryId, index)}
-        title={t("lib.placeHere")}
-        aria-label={t("lib.placeHere")}
+        title={isVirtualShelf(shelfId) ? t("lib.takeOffShelf") : t("lib.placeHere")}
+        aria-label={isVirtualShelf(shelfId) ? t("lib.takeOffShelf") : t("lib.placeHere")}
         style={{
           display: "block",
           width: spines ? props.carryWidth : "100%",
@@ -311,12 +327,8 @@ export function ViewGrouped(props: GroupedProps) {
                   style={{
                     padding: "14px 22px 16px",
                     borderTop: "1px solid var(--brd)",
-                    ...(carrying && !shelf.auto_rule && shelf.order_rule === "hand" && !isVirtualShelf(shelf.id)
-                      ? { background: "var(--soft)" }
-                      : {}),
-                    ...(carrying && (shelf.auto_rule || shelf.order_rule !== "hand")
-                      ? { opacity: 0.45 }
-                      : {}),
+                    ...(carrying && canTake(shelf) ? { background: "var(--soft)" } : {}),
+                    ...(carrying && !canTake(shelf) ? { opacity: 0.45 } : {}),
                   }}
                 >
                   <div
@@ -471,9 +483,14 @@ export function ViewGrouped(props: GroupedProps) {
                         {t("lib.collapsed")} · {num(total)}
                       </span>
                     </button>
-                  ) : total === 0 ? (
+                  ) : total === 0 && !(carrying && canTake(shelf)) ? (
                     // The reference's empty shelf: a dashed box that reads as a place waiting to
                     // be filled, not a line of grey text.
+                    //
+                    // While a book is in hand this branch stands aside, because it used to be a
+                    // dead end: an empty shelf drew this box INSTEAD of any drop slot, so a book
+                    // could never be dragged onto a shelf that had nothing on it yet — which is
+                    // exactly the shelf someone has just made in order to put something on it.
                     <div
                       style={{
                         border: "1px dashed var(--rule)",
@@ -492,6 +509,9 @@ export function ViewGrouped(props: GroupedProps) {
                       // spending its budget across the category runs in order — the reference's
                       // own rule, and what keeps a 40-book shelf a shelf rather than a page.
                       let budget = capFor(shelf.id);
+                      // A shelf whose only categories are empty groups to NOTHING, so there is no
+                      // run to hang a slot off. Give the drop somewhere to land.
+                      if (!groups.length) return gap(shelf.id, null, 0, "gap-empty");
                       return groups.map((g) => {
                         const take = spines ? g.books.length : Math.max(0, Math.min(g.books.length, budget));
                         if (!spines) budget -= take;
@@ -553,7 +573,12 @@ export function ViewGrouped(props: GroupedProps) {
                                     onToggleSelect={() => props.onToggleSelect(b.id)}
                                     onPickUp={(x, y) => props.onPickUp(b, shelf.id, x, y)}
                                     onRemoveFromShelf={
-                                      shelf.auto_rule ? null : () => props.onRemoveFromShelf(b.id, shelf.id)
+                                      // A rule shelf fills itself, and the unshelved run is not a
+                                      // collection — offering "remove from shelf" on either is a
+                                      // control that would look real and do nothing.
+                                      shelf.auto_rule || isVirtualShelf(shelf.id)
+                                        ? null
+                                        : () => props.onRemoveFromShelf(b.id, shelf.id)
                                     }
                                     onSetFinished={(f) => props.onSetFinished(b, f)}
                                     libraryCoverMode={props.libraryCoverMode}

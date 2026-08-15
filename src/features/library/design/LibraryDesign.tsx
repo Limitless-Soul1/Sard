@@ -50,6 +50,7 @@ import {
   isVirtualShelf,
   LOOSE_SHELF_ID,
   makeLooseShelf,
+  placementPlan,
   spineWidth,
   sortBooks,
   unfiledCase,
@@ -396,11 +397,28 @@ export function LibraryDesign(props: LibraryDesignProps) {
   const place = useCallback(
     async (shelfId: string, categoryId: string | null, index: number) => {
       if (!carry) return;
-      // The unshelved run is a render-time fiction, not a collection — nothing can be put into it.
-      if (isVirtualShelf(shelfId)) {
-        flash(t("lib.cannotPlace"));
+      const plan = placementPlan(carry.fromShelf, shelfId);
+      if (plan.kind === "none") {
+        setCarry(null);
         return;
       }
+
+      // Dropping onto the unshelved run takes the book off the shelf it came from and puts it
+      // nowhere — the run is not a collection, so there is nothing to join.
+      if (plan.kind === "unshelve") {
+        setCarry(null);
+        let ok = true;
+        try {
+          await collectionRemoveBook(plan.removeFrom, carry.book.id);
+        } catch (e) {
+          console.error(e);
+          ok = false;
+        }
+        await loadTree();
+        flash(ok ? t("lib.tookOffShelf") : t("lib.writeFailed"));
+        return;
+      }
+
       const target = shelfById.get(shelfId);
       if (target?.shelf.auto_rule) {
         flash(t("lib.cannotPlace"));
@@ -410,15 +428,32 @@ export function LibraryDesign(props: LibraryDesignProps) {
         flash(t("lib.cannotPlaceSorted"));
         return;
       }
-      try {
-        if (!(await write(() => shelfPlaceBook(shelfId, carry.book.id, categoryId, index)))) return;
-        setItems((prev) => ({ ...prev }));
-        await loadTree();
-        flash(`${t("lib.placed")} ${t("lib.on")} ${target?.shelf.name ?? ""}`);
-      } catch (e) {
-        flash(String(e));
+
+      // A MOVE, not a copy. The destination is written first: if it refuses — a rule shelf, a
+      // sorted shelf, a failed write — the book is still on the shelf it started on, which is
+      // the state the reader can recover from. Removing first and then failing would lose it
+      // from both.
+      const bookId = carry.book.id;
+      if (!(await write(() => shelfPlaceBook(shelfId, bookId, categoryId, index)))) {
+        setCarry(null);
+        return;
       }
+      if (plan.kind === "move") {
+        try {
+          await collectionRemoveBook(plan.removeFrom, bookId);
+        } catch (e) {
+          // The book reached its destination but did not leave the source, so it is now on both.
+          // Say so rather than report a clean move.
+          console.error(e);
+          await loadTree();
+          setCarry(null);
+          flash(t("lib.movedButNotRemoved"));
+          return;
+        }
+      }
+      await loadTree();
       setCarry(null);
+      flash(`${t("lib.placed")} ${t("lib.on")} ${target?.shelf.name ?? ""}`);
     },
     [carry, shelfById, flash, t, loadTree, write],
   );
@@ -817,6 +852,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
               expandedShelves={expandedShelves}
               onExpandShelf={(id) => setExpandedShelves((prev) => new Set(prev).add(id))}
               carryWidth={carry ? spineWidth(carry.book, density) : 0}
+              carryFromUnshelved={!!carry && isVirtualShelf(carry.fromShelf)}
               orderMenuFor={orderMenuFor}
               onOpenOrder={setOrderMenuFor}
               onSetOrder={shelfOps.setOrder}

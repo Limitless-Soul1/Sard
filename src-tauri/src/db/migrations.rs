@@ -99,9 +99,25 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
     // Profiles command failing with "no such table: profiles". Measured on a live database at
     // user_version 18.
     //
-    // 19 assumes `feature/library-design` lands first. If that order changes, this has to move above
-    // whatever the other branch finally occupies — the two branches cannot both be right about a
-    // number, and the one that merges second is the one that renumbers.
+    // 19 ASSUMES `feature/library-design` LANDS FIRST, and the assumption is load-bearing in BOTH
+    // directions. Read this before merging either branch:
+    //
+    //   · library-design first, then Profiles — correct, and the order this number is chosen for.
+    //     A database at 16 takes 17 and 18, then 19 here. Nothing is skipped.
+    //
+    //   · Profiles first, then library-design — BREAKS THE OTHER BRANCH, and does so silently. A
+    //     database at 16 would take 19 and record it; 17 and 18 are then below the high-water mark
+    //     forever, so `library_cases` and `shelf_ink` never run and that feature fails the same way
+    //     this one did. The damage lands on the branch that merges second, which is the branch
+    //     nobody is looking at while merging the first.
+    //
+    // Whichever merges second is the one that renumbers, and it must renumber ABOVE the highest
+    // version the other branch actually shipped — not merely to the next free-looking slot. Numbering
+    // cannot make both orders safe on its own: the runner takes MAX(version) once and compares every
+    // migration against it, so a lower number is never revisited. The only change that would remove
+    // this constraint entirely is per-version tracking in the runner (apply when a version is absent
+    // from `schema_migrations` rather than when it exceeds the maximum), which is a change to shared
+    // machinery that every shipped install would feel, and is not made here.
     (
         19,
         "profiles",

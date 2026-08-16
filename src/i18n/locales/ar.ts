@@ -859,6 +859,7 @@ export const ar: Record<TKey, string> = {
   "profiles.create.fromCurrent": "شكل سَرْد الآن",
   "profiles.create.fromTheme": "ورقةٌ من الستّة عشر",
   "profiles.create.submit": "إنشاء وتعديل",
+  "profiles.create.customHint": "اختر الوَرَق واللمسة في المحرِّر، ثمّ اختر من أربعة سَرْدٍ كاملة.",
   "profiles.duplicateSuffix": "{name} ٢",
 
   "profiles.editor.title": "تعديل هيئة",
@@ -886,6 +887,7 @@ export const ar: Record<TKey, string> = {
   "profiles.theme.papers": "{n} ورقة",
   "profiles.theme.customise": "تخصيص الألوان",
   "profiles.theme.custom": "ورقةٌ من عندك",
+  "profiles.theme.startsFrom": "تبدأ من «{name}»",
   "profiles.theme.paper": "الوَرَق",
   "profiles.theme.touch": "اللمسة",
   "profiles.theme.harmony": "الانسجام",

@@ -12,7 +12,11 @@ import { useState } from "react";
 
 import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
-import { THEMES, isBuiltinThemeId } from "../../theme/themes";
+import { THEMES, THEME_ORDER, isBuiltinThemeId } from "../../theme/themes";
+import type { BuiltinThemeId } from "../../theme/tokens";
+
+/** The design's three: how Sard looks now, one of the sixteen, or a paper of your own. */
+type StartFrom = "current" | "theme" | "custom";
 import { SardMini } from "./SardMini";
 import { miniOfTheme } from "./mini";
 import { ProfileCard } from "./ProfileCard";
@@ -47,11 +51,21 @@ export function ProfilesSection() {
     return isBuiltinThemeId(base) ? t(`theme.${base}`) : t("profiles.theme.custom");
   };
 
-  const create = async (name: string) => {
+  const create = async (name: string, start: StartFrom, base: BuiltinThemeId) => {
     setBusy(true);
     try {
       const data = await captureCurrent();
-      const p = await createProfile(name, data, null);
+      if (start !== "current") {
+        // Start from one of the sixteen. "A paper of your own" also begins here — it opens the
+        // editor on this base, where the custom-paper dialog and its four previews live, rather
+        // than making the reader choose colours before the profile exists.
+        data.theme.base = base;
+        data.theme.dark = THEMES[base].dark;
+        data.theme.colors = structuredClone(THEMES[base].colors);
+        data.theme.highlightAlpha = THEMES[base].highlightAlpha;
+        data.theme.bookmark = null;
+      }
+      const p = await createProfile(name, data, start === "current" ? null : base);
       await applyProfile(p);
       setDialog({ kind: "edit", profile: p });
     } finally {
@@ -165,10 +179,12 @@ function CreateDialog({
 }: {
   busy: boolean;
   onCancel: () => void;
-  onCreate: (name: string) => void;
+  onCreate: (name: string, start: StartFrom, base: BuiltinThemeId) => void;
 }) {
   const { t } = useI18n();
   const [name, setName] = useState("");
+  const [start, setStart] = useState<StartFrom>("current");
+  const [base, setBase] = useState<BuiltinThemeId>("ivory");
   return (
     <div className="pf-dialog-scrim" onClick={onCancel}>
       <div className="pf-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
@@ -183,22 +199,61 @@ function CreateDialog({
             dir="auto"
             placeholder={t("profiles.create.namePlaceholder")}
             onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !busy && onCreate(name)}
+            onKeyDown={(e) => e.key === "Enter" && !busy && onCreate(name, start, base)}
           />
         </label>
 
-        {/* "Start from" — the design offers three. Only the first is live in this stage: the other
-            two need the custom-paper dialog, which arrives with the theme editor's colour path. */}
+        {/* "Start from" — the design's three. The third opens the custom-paper dialog from inside
+            the editor, which is where the four harmonies and their previews live. */}
         <div className="pf-field">
           <span className="pf-field-label">{t("profiles.create.startFrom")}</span>
-          <div className="pf-startfrom">{t("profiles.create.fromCurrent")}</div>
+          <div className="pf-startfrom-list" role="radiogroup">
+            {(["current", "theme", "custom"] as const).map((k) => (
+              <button
+                key={k}
+                role="radio"
+                aria-checked={start === k}
+                className={`pf-startfrom-opt${start === k ? " on" : ""}`}
+                onClick={() => setStart(k)}
+              >
+                {k === "current"
+                  ? t("profiles.create.fromCurrent")
+                  : k === "theme"
+                    ? t("profiles.create.fromTheme")
+                    : t("profiles.theme.custom")}
+              </button>
+            ))}
+          </div>
+          {start === "theme" && (
+            <div className="pf-swatches pf-startfrom-swatches">
+              {THEME_ORDER.map((id) => (
+                <button
+                  key={id}
+                  className={`pf-swatch-cell${base === id ? " on" : ""}`}
+                  onClick={() => setBase(id)}
+                  title={t(`theme.${id}`)}
+                >
+                  <span
+                    className="pf-swatch"
+                    style={{ background: THEMES[id].colors.paperBg, color: THEMES[id].colors.text }}
+                  >
+                    Aa
+                  </span>
+                  <span className="pf-swatch-name">{t(`theme.${id}`)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {start === "custom" && (
+            <div className="pf-hint">{t("profiles.create.customHint")}</div>
+          )}
         </div>
 
         <div className="pf-dialog-actions">
           <button className="pf-btn" onClick={onCancel}>
             {t("profiles.theme.cancel")}
           </button>
-          <button className="pf-btn primary" disabled={busy} onClick={() => onCreate(name)}>
+          <button className="pf-btn primary" disabled={busy} onClick={() => onCreate(name, start, base)}>
             {t("profiles.create.submit")}
           </button>
         </div>

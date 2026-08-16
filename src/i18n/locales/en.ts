@@ -903,6 +903,7 @@ export const en = {
   "profiles.create.fromCurrent": "How Sard looks now",
   "profiles.create.fromTheme": "One of the sixteen papers",
   "profiles.create.submit": "Create and edit",
+  "profiles.create.customHint": "Choose a paper and a touch in the editor, and pick from four whole Sards.",
   "profiles.duplicateSuffix": "{name} 2",
 
   // Editor
@@ -931,6 +932,7 @@ export const en = {
   "profiles.theme.papers": "{n} papers",
   "profiles.theme.customise": "Customise the colours",
   "profiles.theme.custom": "A paper of your own",
+  "profiles.theme.startsFrom": "Starts from “{name}”",
   "profiles.theme.paper": "Paper",
   "profiles.theme.touch": "Touch",
   "profiles.theme.harmony": "Harmony",

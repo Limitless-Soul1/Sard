@@ -132,6 +132,58 @@
   color: var(--text); font: 500 0.8125rem var(--ui-font);
 }
 .pf-hint { font: 400 0.75rem/1.6 var(--ui-font); color: var(--lib-faint, var(--muted)); margin-top: 8px; }
+
+/* ---- "Start from": the design's three ---- */
+.pf-startfrom-list { display: flex; flex-direction: column; gap: 4px; }
+.pf-startfrom-opt {
+  padding: 8px 10px; border-radius: 8px; border: 1px solid var(--chrome-border);
+  background: transparent; color: var(--text); font: 500 0.8125rem var(--ui-font);
+  cursor: pointer; text-align: start;
+}
+.pf-startfrom-opt.on {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.pf-startfrom-swatches { margin-top: 10px; grid-template-columns: repeat(8, 1fr); }
+
+/* ---- a paper of your own: two colours, four whole Sards ---- */
+.pf-cp { width: 560px; max-height: calc(100vh - 64px); overflow-y: auto; }
+.pf-cp-from { font: 400 0.75rem var(--ui-font); color: var(--lib-faint, var(--muted)); margin-bottom: 14px; }
+.pf-cp-row { margin-bottom: 14px; }
+.pf-cp-swatches { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.pf-cp-swatch { width: 26px; height: 26px; border: 0; border-radius: 7px; cursor: pointer; box-shadow: inset 0 0 0 1px var(--chrome-border); }
+.pf-cp-swatch.on { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg); }
+/* The hue strip: a free colour without a platform picker, per the design. */
+.pf-cp-hue {
+  height: 14px; border-radius: 7px; cursor: ew-resize; touch-action: none;
+  box-shadow: inset 0 0 0 1px var(--chrome-border);
+  background: linear-gradient(to right in srgb, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);
+}
+[dir="rtl"] .pf-cp-hue { background: linear-gradient(to left in srgb, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%); }
+.pf-cp-hex { font: 400 0.6875rem var(--ui-font); color: var(--lib-faint, var(--muted)); margin-top: 5px; font-variant-numeric: tabular-nums; }
+.pf-cp-flip {
+  margin: -6px 0 14px; padding: 5px 10px; border-radius: 7px; border: 1px solid var(--chrome-border);
+  background: transparent; color: var(--muted); font: 500 0.71875rem var(--ui-font); cursor: pointer;
+}
+.pf-cp-flip:hover { background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
+
+.pf-cp-harmony-label { margin-top: 4px; }
+.pf-cp-harmony-hint { margin: 2px 0 10px; }
+.pf-cp-harmonies { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+.pf-cp-harmony {
+  display: flex; flex-direction: column; gap: 4px; padding: 6px; border-radius: 10px;
+  border: 1px solid var(--chrome-border); background: transparent; cursor: pointer; text-align: start;
+}
+.pf-cp-harmony.on { border-color: transparent; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg); }
+.pf-cp-harmony-mini { display: block; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 2px rgba(40, 28, 14, 0.18); }
+.pf-cp-harmony-name { font: 600 0.78125rem var(--ui-font); color: var(--text); }
+.pf-cp-harmony-note { font: 400 0.6875rem/1.5 var(--ui-font); color: var(--lib-faint, var(--muted)); }
+
+.pf-cp-open {
+  margin-top: 12px; padding: 0; border: 0; background: transparent;
+  color: var(--accent); font: 600 0.78125rem var(--ui-font); cursor: pointer;
+}
+.pf-cp-open:hover { text-decoration: underline; text-underline-offset: 3px; }
 .pf-deferred { font: 400 0.8125rem/1.7 var(--ui-font); color: var(--muted); }
 
 /* ---- the editor: a stage and a 344px rail ---- */

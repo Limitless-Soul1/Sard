@@ -21,6 +21,7 @@ import { FONT_CATALOGUE, useFonts } from "../../lib/fonts";
 import { ARABIC_FONTS, LATIN_FONTS } from "../../reader-engine/injectedCss";
 import { THEMES, THEME_ORDER } from "../../theme/themes";
 import { BookmarkShape } from "../reader/BookmarkShape";
+import { CustomPaper } from "./CustomPaper";
 import { SardMini } from "./SardMini";
 import { bookFaceCss, miniOf } from "./mini";
 import { saveProfile, useProfiles } from "./store";
@@ -250,6 +251,7 @@ function ThemeSection({
   patch: (f: (d: ProfileData) => void) => void;
 }) {
   const { t } = useI18n();
+  const [custom, setCustom] = useState(false);
   const verdicts = judgePalette(draft.data.theme.colors);
   return (
     <>
@@ -290,6 +292,37 @@ function ThemeSection({
           ? t("profiles.contrast.ok", { ratio: verdicts.textOnPaper.ratio.toFixed(1) })
           : t("profiles.contrast.low", { ratio: verdicts.textOnPaper.ratio.toFixed(1) })}
       </div>
+
+      {/* The way out of the sixteen. The design puts it exactly here, as a link under the grid. */}
+      <button className="pf-cp-open" onClick={() => setCustom(true)}>
+        {t("profiles.theme.customise")} ←
+      </button>
+
+      {custom && (
+        <CustomPaper
+          startFrom={
+            draft.data.theme.base
+              ? t("profiles.theme.startsFrom", { name: t(`theme.${draft.data.theme.base}`) })
+              : t("profiles.theme.custom")
+          }
+          initialPaper={draft.data.theme.colors.paperBg}
+          initialAccent={draft.data.theme.colors.accent}
+          arabicFace={draft.data.type.arabic}
+          name={draft.name}
+          onCancel={() => setCustom(false)}
+          onApply={({ dark, colors }) => {
+            patch((d) => {
+              // A paper of the reader's own is no longer one of the sixteen: `base` becomes null,
+              // which is what makes the card read "a paper of your own" rather than naming a preset
+              // it no longer resembles.
+              d.theme.base = null;
+              d.theme.dark = dark;
+              d.theme.colors = colors;
+            });
+            setCustom(false);
+          }}
+        />
+      )}
     </>
   );
 }

@@ -1202,7 +1202,7 @@ export const en = {
   "profiles.share.always": "Always",
   "profiles.share.size": "Approximate size",
   "profiles.share.kb": "{n} KB",
-  "profiles.share.export": "Export the package",
+  "profiles.share.export": "Export",
   "profiles.share.packing": "Packing…",
   "profiles.share.packed": "Packed “{name}”",
   "profiles.share.sendIt":
@@ -1216,6 +1216,17 @@ export const en = {
   "pkg.err.noData": "This package carries no profile.",
   "pkg.err.tooLarge": "This package is too large to be a profile.",
   "pkg.err.carriesReadingSettings": "This package tries to carry reading settings, which a profile never does.",
+
+  "profiles.import.title": "A profile has reached you",
+  "profiles.import.settingsSafe": "Your reading settings will not change",
+  "profiles.import.additive": "It is added to your profiles, and it is yours to edit however you like.",
+  "profiles.import.confirm": "Import",
+  "profiles.import.added": "Added “{name}”",
+  "profiles.import.yoursNow": "It is your profile now — yours to edit and to rename.",
+  "profiles.import.useNow": "Use it now",
+  "profiles.import.refusedTitle": "Sard could not read this package",
+  "profiles.import.nothingChanged": "Nothing on your side has changed.",
+  "profiles.import.chooseAnother": "Choose another file",
 
   "profiles.notPart.title": "Not part of a profile",
   "profiles.notPart.body":

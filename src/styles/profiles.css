@@ -462,3 +462,20 @@
   font: 500 0.75rem/1.5 var(--ui-font); color: var(--text);
   overflow-wrap: anywhere;
 }
+
+/* ---- frames 14 / 15 / 17: the import sheet ---- */
+.pf-import-name { font: 600 1.0625rem/1.4 var(--ui-font); color: var(--text); margin-bottom: 2px; }
+.pf-import-author { font: 400 0.75rem var(--ui-font); color: var(--lib-faint, var(--muted)); margin-bottom: 14px; }
+/* The firewall, restated where someone else's profile is arriving — the moment it matters most. */
+.pf-import-firewall {
+  margin-top: 12px; padding: 11px 12px; border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.pf-import-firewall-title { font: 600 0.75rem var(--ui-font); color: var(--text); margin-bottom: 4px; }
+.pf-import-firewall-body { margin: 0; font: 400 0.6875rem/1.6 var(--ui-font); color: var(--muted); }
+.pf-refused-mark {
+  width: 30px; height: 30px; border-radius: 50%; margin-bottom: 10px;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, #9c3b3b 14%, transparent);
+  color: #9c3b3b; font: 700 1rem var(--ui-font);
+}

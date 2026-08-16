@@ -1144,7 +1144,7 @@ export const ar: Record<TKey, string> = {
   "profiles.share.always": "دائماً",
   "profiles.share.size": "الحجم التقريبي",
   "profiles.share.kb": "{n} ك.ب",
-  "profiles.share.export": "تصدير الحزمة",
+  "profiles.share.export": "تصدير",
   "profiles.share.packing": "تُجمَع الحزمة…",
   "profiles.share.packed": "حُزِمت هيئة «{name}»",
   "profiles.share.sendIt":
@@ -1158,6 +1158,17 @@ export const ar: Record<TKey, string> = {
   "pkg.err.noData": "لا تحمل هذه الحزمة أيّ هيئة.",
   "pkg.err.tooLarge": "هذه الحزمة أكبر من أن تكون هيئة.",
   "pkg.err.carriesReadingSettings": "تحاول هذه الحزمة حمل إعدادات قراءة، والهيئة لا تحملها أبداً.",
+
+  "profiles.import.title": "هيئة وصلتك",
+  "profiles.import.settingsSafe": "إعدادات قراءتك لن تتغيّر.",
+  "profiles.import.additive": "تُضاف إلى هيئاتك، ولك تعديلها كما تشاء.",
+  "profiles.import.confirm": "استيراد",
+  "profiles.import.added": "أُضيفت هيئة «{name}»",
+  "profiles.import.yoursNow": "هي الآن هيئتك، لك تعديلها وإعادة تسميتها.",
+  "profiles.import.useNow": "استعملها الآن",
+  "profiles.import.refusedTitle": "لم نتمكّن من قراءة هذه الحزمة",
+  "profiles.import.nothingChanged": "لم يتغيّر شيءٌ عندك.",
+  "profiles.import.chooseAnother": "اختيار ملفٍّ آخر",
 
   "profiles.notPart.title": "ليست من الهيئة",
   "profiles.notPart.body":

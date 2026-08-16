@@ -14,6 +14,7 @@ import { create } from "zustand";
 import {
   PROFILE_ACTIVE_KEY,
   profileDelete,
+  profileImportCommit,
   profileSave,
   profilesList,
   settingsGet,
@@ -341,6 +342,19 @@ export async function saveProfile(p: Profile): Promise<void> {
   await profileSave(toRow(p));
   await refreshProfiles();
   if (useProfiles.getState().activeId === p.id) await applyProfile(p);
+}
+
+/**
+ * Commit an inspected package as a new local profile.
+ *
+ * THE ID IS MINTED HERE, beside every other id this app makes, and handed to Rust rather than
+ * generated there — one place decides what a profile id looks like. Rust re-checks the manifest
+ * regardless: `commit` is the boundary, and it does not trust that inspection happened.
+ */
+export async function importProfile(manifestJson: string): Promise<Profile> {
+  const row = await profileImportCommit(manifestJson, newId());
+  await refreshProfiles();
+  return toProfile(row);
 }
 
 export async function duplicateProfile(p: Profile, name: string): Promise<Profile> {

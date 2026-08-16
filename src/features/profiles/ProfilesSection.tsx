@@ -22,6 +22,7 @@ import { SardMini } from "./SardMini";
 import { miniOfTheme } from "./mini";
 import { ProfileCard } from "./ProfileCard";
 import { ShareSheet } from "./ShareSheet";
+import { ImportSheet } from "./ImportSheet";
 import { ProfileEditor } from "./ProfileEditor";
 import {
   applyProfile,
@@ -37,6 +38,7 @@ type Dialog =
   | { kind: "none" }
   | { kind: "create" }
   | { kind: "share"; profile: Profile }
+  | { kind: "import" }
   | { kind: "delete"; profile: Profile }
   | { kind: "edit"; profile: Profile };
 
@@ -99,7 +101,7 @@ export function ProfilesSection() {
         {/* Import arrives with the package format (a later stage). Shown disabled rather than
             hidden, because the design's list has it and a control that appears later moves the
             furniture under the reader. */}
-        <button className="pf-btn" disabled title={t("profiles.import")}>
+        <button className="pf-btn" onClick={() => setDialog({ kind: "import" })}>
           {t("profiles.import")}
         </button>
         {profiles.length > 0 && (
@@ -108,7 +110,7 @@ export function ProfilesSection() {
       </div>
 
       {profiles.length === 0 ? (
-        <FirstRun onCreate={() => setDialog({ kind: "create" })} />
+        <FirstRun onImport={() => setDialog({ kind: "import" })} onCreate={() => setDialog({ kind: "create" })} />
       ) : (
         <div className="pf-grid">
           {profiles.map((p) => (
@@ -139,6 +141,13 @@ export function ProfilesSection() {
           onConfirm={() => void remove(dialog.profile)}
         />
       )}
+      {dialog.kind === "import" && (
+        <ImportSheet
+          onClose={() => setDialog({ kind: "none" })}
+          onEdit={(p) => setDialog({ kind: "edit", profile: p })}
+        />
+      )}
+
       {dialog.kind === "share" && (
         <ShareSheet profile={dialog.profile} onClose={() => setDialog({ kind: "none" })} />
       )}
@@ -157,7 +166,7 @@ export function ProfilesSection() {
  * sentence and two real actions." So the reader sees what Sard looks like right now, and the
  * reassurance that making a profile costs them nothing.
  */
-function FirstRun({ onCreate }: { onCreate: () => void }) {
+function FirstRun({ onCreate, onImport }: { onCreate: () => void; onImport: () => void }) {
   const { t } = useI18n();
   return (
     <div className="pf-empty">
@@ -170,7 +179,7 @@ function FirstRun({ onCreate }: { onCreate: () => void }) {
         <button className="pf-btn primary" onClick={onCreate}>
           {t("profiles.new")}
         </button>
-        <button className="pf-btn" disabled>
+        <button className="pf-btn" onClick={onImport}>
           {t("profiles.import")}
         </button>
       </div>

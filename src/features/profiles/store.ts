@@ -132,6 +132,30 @@ export async function initProfiles(): Promise<void> {
   // restore it, and a `glass` profile would come back opaque after a restart. Caught by running it.
   const activeProfile = activeId ? profiles.find((p) => p.id === activeId) : undefined;
   if (activeProfile) applyTexture(activeProfile.data.texture, profileTheme(activeProfile).colors);
+
+  // THE SESSION LAYER'S GUARANTEE, KEPT HERE. A value the reader changed outside the editor and
+  // chose to keep "for this session only" was written to settings by the ordinary setter — the
+  // shared setters are deliberately untouched, because a reader with no profiles must behave exactly
+  // as before. So the drift is undone at the START of the next session instead: the active profile
+  // re-asserts its own four values, and whatever the last sitting drifted to is simply not there.
+  //
+  // AT STARTUP RATHER THAN AT SHUTDOWN, deliberately. A quit hook cannot survive a crash or a kill,
+  // and a guarantee that holds only on a clean exit is not one. This runs before `initTheme`, whose
+  // reads then see the profile's values rather than the drift.
+  if (activeProfile) await reassertProfileValues(activeProfile);
+}
+
+/**
+ * Write the active profile's four externally-changeable values back over any session drift.
+ *
+ * Only those four. Everything else a profile owns is unreachable from outside its editor, so there
+ * is nothing to re-assert — and rewriting more would turn a targeted guarantee into a broad one
+ * nobody asked for.
+ */
+async function reassertProfileValues(p: Profile): Promise<void> {
+  await settingsSet("theme_id", p.id).catch(console.error);
+  await settingsSet("book_theme_id", p.id).catch(console.error);
+  await patchReadingFonts(p.data.type.arabic, p.data.type.latin);
 }
 
 /** Re-read from the database. Used after any write, so the store is never a second source of truth. */

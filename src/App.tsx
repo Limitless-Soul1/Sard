@@ -14,6 +14,7 @@ import { diagStart } from "@diag"; // DIAGNOSTIC BUILD ONLY - observes, never in
 import { registerOutcomeRecorder } from "./lib/listeningOutcomes"; // RAWY-263: the local outcome baseline
 import { initTheme, reapplyTitlebarTheme, resolveTheme, useTheme } from "./theme";
 import { initProfiles } from "./features/profiles/store"; // PROFILES: register authored themes first
+import { UnsavedChange, useUnsavedChangeWatch } from "./features/profiles/UnsavedChange";
 import { initPresence } from "./lib/presence"; // DISC/RPC: load the Discord on/off switch
 import { LanguagePicker } from "./features/onboarding/LanguagePicker";
 import { Library, type OpenTarget } from "./features/library/Library";
@@ -26,6 +27,7 @@ import { libraryListBooks, settingsGet, settingsSet } from "./lib/ipc";
 // picker; afterwards the saved language/theme drive the UI and the Library is the home
 // screen. Selecting a book opens the Reading View; its back button returns here.
 function Root() {
+  useUnsavedChangeWatch();
   const { ready: i18nReady, hasLang } = useI18n();
   const themeReady = useTheme((s) => s.ready);
   const [open, setOpen] = useState<OpenTarget | null>(null);
@@ -53,10 +55,19 @@ function Root() {
   if (!hasLang) return <LanguagePicker />;
   // RAWY-206: `onOpenBook` is the SAME `setOpen` the Library hands a book to — the reader's Notes panel
   // uses it to open another book at a note's locator, so there is one open path, not two.
-  return open ? (
-    <Reader book={open} onExit={() => setOpen(null)} onOpenBook={setOpen} />
-  ) : (
-    <Library onOpen={setOpen} />
+  return (
+    <>
+      {open ? (
+        <Reader book={open} onExit={() => setOpen(null)} onOpenBook={setOpen} />
+      ) : (
+        <Library onOpen={setOpen} />
+      )}
+      {/* PROFILES (stage 5): a profile-owned value changed outside the editor has three honest
+          destinations, and Sard asks rather than guessing. Mounted here because the change can come
+          from either surface — Global Settings on the Library side, the theme picker and the faces
+          on the reader's. It renders nothing until there is something to ask about. */}
+      <UnsavedChange />
+    </>
   );
 }
 

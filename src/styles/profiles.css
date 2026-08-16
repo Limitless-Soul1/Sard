@@ -405,3 +405,31 @@
 .pf-switch-check { flex: none; color: var(--accent); }
 .pf-switch-count { flex: none; font: 400 0.6875rem var(--ui-font); color: var(--lib-faint, var(--muted)); }
 .pf-switch-rule { height: 1px; background: var(--chrome-border); margin: 4px 2px; }
+
+/* ---- frame 21: where an unsaved change goes ---- */
+.pf-dest-list { display: flex; flex-direction: column; gap: 6px; }
+.pf-dest {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 11px 12px;
+  border-radius: 9px; border: 1px solid var(--chrome-border); background: transparent;
+  color: var(--text); font: 500 0.8125rem var(--ui-font); cursor: pointer; text-align: start;
+}
+.pf-dest:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 6%, transparent); border-color: var(--accent); }
+.pf-dest:disabled { opacity: 0.5; cursor: default; }
+.pf-dest-name { flex: 1; min-width: 0; }
+.pf-dest-tag {
+  flex: none; padding: 2px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent); font: 600 0.625rem var(--ui-font);
+}
+/* ---- frame 22: saved, with a way back ---- */
+.pf-saved {
+  position: fixed; inset-block-end: 22px; inset-inline-start: 50%; transform: translateX(-50%);
+  z-index: 80; display: flex; align-items: center; gap: 14px; padding: 10px 14px;
+  border-radius: 11px; background: var(--chrome-bg); border: 1px solid var(--chrome-border);
+  box-shadow: 0 14px 34px rgba(20, 14, 6, 0.3);
+  font: 500 0.8125rem var(--ui-font); color: var(--text);
+}
+.pf-saved-undo {
+  border: 0; background: transparent; color: var(--accent);
+  font: 600 0.8125rem var(--ui-font); cursor: pointer; padding: 2px 4px;
+}

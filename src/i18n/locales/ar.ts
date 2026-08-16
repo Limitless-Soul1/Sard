@@ -1116,6 +1116,23 @@ export const ar: Record<TKey, string> = {
   "profiles.texture.light": "خفيف",
   "profiles.texture.glass": "زجاجي",
 
+  "profiles.unsaved.changed": "غيّرت {what}",
+  "profiles.unsaved.where": "أين يذهب هذا التغيير؟",
+  "profiles.unsaved.intoActive": "احفظه في «{name}»",
+  "profiles.unsaved.intoActiveUnnamed": "احفظه في الهيئة التي تستعملها",
+  "profiles.unsaved.recommended": "مستحسن",
+  "profiles.unsaved.intoNew": "هيئة جديدة من هذا الشكل",
+  "profiles.unsaved.sessionOnly": "أبقِه للجلسة فقط",
+  "profiles.unsaved.sessionHint":
+    "يبقى للجلسة وحدها ولا يُحفَظ في أيّ هيئة — ويعود سَرْد إلى شكل الهيئة نفسها حين تفتحه في المرّة القادمة.",
+  "profiles.unsaved.newName": "{name} — شكل جديد",
+  "profiles.unsaved.what.theme": "الورق",
+  "profiles.unsaved.what.bookTheme": "ورق الكتاب",
+  "profiles.unsaved.what.arabicFont": "الخطّ العربي",
+  "profiles.unsaved.what.latinFont": "الخطّ اللاتيني",
+  "profiles.saved.applied": "حُفِظت «{name}» وطُبِّقت",
+  "profiles.saved.undo": "تراجع",
+
   "profiles.notPart.title": "ليست من الهيئة",
   "profiles.notPart.body":
     "تباعد الأسطر، عرض الصفحة، الهوامش، التشكيل، المحاذاة، التكبير — إعداداتُ قراءتك، تبقى لك في كلّ هيئة.",

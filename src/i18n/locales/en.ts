@@ -1171,6 +1171,24 @@ export const en = {
   "profiles.texture.glass": "Glass",
 
   // The firewall, stated once — the rail's last block.
+  // FRAME 21 — where an unsaved change goes, and FRAME 22 — that it went there.
+  "profiles.unsaved.changed": "You changed {what}",
+  "profiles.unsaved.where": "Where does this change go?",
+  "profiles.unsaved.intoActive": "Save it into “{name}”",
+  "profiles.unsaved.intoActiveUnnamed": "Save it into the profile you are using",
+  "profiles.unsaved.recommended": "Recommended",
+  "profiles.unsaved.intoNew": "A new profile from this look",
+  "profiles.unsaved.sessionOnly": "Keep it for this session only",
+  "profiles.unsaved.sessionHint":
+    "Kept for this session, nothing is saved to any profile — Sard returns to the profile’s own look next time you open it.",
+  "profiles.unsaved.newName": "{name} — new look",
+  "profiles.unsaved.what.theme": "the paper",
+  "profiles.unsaved.what.bookTheme": "the book’s paper",
+  "profiles.unsaved.what.arabicFont": "the Arabic face",
+  "profiles.unsaved.what.latinFont": "the Latin face",
+  "profiles.saved.applied": "Saved “{name}” and applied it",
+  "profiles.saved.undo": "Undo",
+
   "profiles.notPart.title": "Not part of a profile",
   "profiles.notPart.body":
     "Line spacing, page width, margins, diacritics, alignment and size are your reading settings. They stay yours in every profile.",

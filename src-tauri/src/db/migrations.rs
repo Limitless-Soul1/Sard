@@ -10,6 +10,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rusqlite::Connection;
 
+/// The last migration that was numbered by hand. Everything added after this carries a UTC
+/// `YYYYMMDDHHMMSS` timestamp instead — see the module documentation above for why, and
+/// `docs/WORKFLOW.md` for how to allocate one.
+pub const LAST_SEQUENTIAL_VERSION: i64 = 19;
+
+/// The smallest value a timestamp version may take (`2000-01-01 00:00:00`). Anything at or above
+/// this is read as `YYYYMMDDHHMMSS`; anything below it is a hand-numbered legacy version.
+pub const TIMESTAMP_FLOOR: i64 = 20_000_101_000_000;
+
 /// Ordered list of `(version, name, sql)`. Append-only.
 pub const MIGRATIONS: &[(i64, &str, &str)] = &[
     (
@@ -278,7 +287,7 @@ fn now_unix() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::MIGRATIONS;
+    use super::{LAST_SEQUENTIAL_VERSION, MIGRATIONS, TIMESTAMP_FLOOR};
 
     // RAWY-178 (AUD-12): the v6→v7 upgrade path — an EXISTING library (books present before the
     // migration) gains `title_fold`/`author_fold`, backfilled by folding the effective title/author,
@@ -354,5 +363,121 @@ mod tests {
 
         drop(conn);
         let _ = std::fs::remove_file(&path);
+    }
+
+    // ---- the numbering guards -------------------------------------------------------------------
+    //
+    // These exist because a migration that is never applied is INVISIBLE: a skipped migration and an
+    // applied one leave the same evidence behind (nothing), so the failure surfaces later as "no such
+    // table" in a feature nobody was working on. Two branches allocating in parallel is the ordinary
+    // case, not the exotic one, so the rules that keep them from colliding are enforced here rather
+    // than remembered. CI runs `cargo test` on every pull request into `develop`, on two platforms,
+    // which is what makes these gates and not suggestions.
+
+    /// Every version the project has SHIPPED. These have run on real databases; renumbering or
+    /// removing one silently changes what an upgrade does, so the list is pinned rather than derived.
+    /// Growing it is a deliberate act — appending here is how a version becomes immutable.
+    const SHIPPED_VERSIONS: &[i64] = &[1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15];
+
+    /// Is `v` a plausible UTC `YYYYMMDDHHMMSS`? Field ranges only — this rejects a hand-typed number
+    /// or a truncated timestamp, which is all it needs to do.
+    fn is_utc_timestamp(v: i64) -> bool {
+        if !(TIMESTAMP_FLOOR..=99_991_231_235_959).contains(&v) {
+            return false;
+        }
+        let (sec, min, hour) = (v % 100, (v / 100) % 100, (v / 10_000) % 100);
+        let (day, month) = ((v / 1_000_000) % 100, (v / 100_000_000) % 100);
+        sec < 60 && min < 60 && hour < 24 && (1..=31).contains(&day) && (1..=12).contains(&month)
+    }
+
+    /// THE ONE THAT MATTERS. Two branches that both allocate the same number would otherwise produce
+    /// a silent skip — the second migration is "already applied" and never runs. Combining them must
+    /// fail the build instead, and a merge is exactly when both first exist in one tree.
+    #[test]
+    fn migration_versions_are_unique() {
+        let mut seen = std::collections::HashMap::new();
+        for (v, name, _) in MIGRATIONS {
+            if let Some(prev) = seen.insert(*v, *name) {
+                panic!(
+                    "duplicate migration version {v}: '{prev}' and '{name}'.\n\
+                     Two migrations cannot share a version — the second would be treated as already \
+                     applied and would never run.\n\
+                     Give the newer one a fresh UTC timestamp:  date -u +%Y%m%d%H%M%S"
+                );
+            }
+        }
+    }
+
+    /// The list reads in the order things were written. Timestamps make this true across branches
+    /// too, since a later authoring time is a larger number whoever produced it.
+    #[test]
+    fn migration_versions_ascend() {
+        for w in MIGRATIONS.windows(2) {
+            assert!(
+                w[0].0 < w[1].0,
+                "migrations must be listed in ascending version order, but {} ('{}') precedes {} ('{}')",
+                w[0].0, w[0].1, w[1].0, w[1].1,
+            );
+        }
+    }
+
+    /// A shipped migration is immutable. If this fails, a version that has already run on real
+    /// databases was renumbered or removed — which changes what an upgrade does, retroactively.
+    #[test]
+    fn shipped_versions_are_pinned() {
+        let present: Vec<i64> = MIGRATIONS.iter().map(|(v, _, _)| *v).collect();
+        for v in SHIPPED_VERSIONS {
+            assert!(
+                present.contains(v),
+                "shipped migration {v} is missing from MIGRATIONS. Shipped versions are immutable: \
+                 they have already run on real databases."
+            );
+        }
+    }
+
+    /// New migrations must be UTC timestamps. Sequential numbers are what let two branches collide,
+    /// so the convention is enforced rather than documented.
+    #[test]
+    fn new_versions_are_utc_timestamps() {
+        for (v, name, _) in MIGRATIONS {
+            if *v <= LAST_SEQUENTIAL_VERSION {
+                continue; // hand-numbered, from before the convention
+            }
+            assert!(
+                is_utc_timestamp(*v),
+                "migration {v} ('{name}') is not a valid UTC YYYYMMDDHHMMSS timestamp.\n\
+                 Versions above {LAST_SEQUENTIAL_VERSION} must be allocated with:  date -u +%Y%m%d%H%M%S"
+            );
+        }
+    }
+
+    /// A `.sql` file that nobody registered is a migration that never runs — the same silent failure
+    /// from the other direction. The file set and the list must agree exactly.
+    #[test]
+    fn sql_files_and_the_list_agree() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/src/db/migrations_sql");
+        let mut on_disk: Vec<i64> = std::fs::read_dir(dir)
+            .unwrap_or_else(|e| panic!("read {dir}: {e}"))
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".sql"))
+            .map(|n| {
+                let digits: String = n.chars().take_while(char::is_ascii_digit).collect();
+                digits
+                    .parse::<i64>()
+                    .unwrap_or_else(|_| panic!("migration file '{n}' does not begin with its version"))
+            })
+            .collect();
+        on_disk.sort_unstable();
+
+        let mut listed: Vec<i64> = MIGRATIONS.iter().map(|(v, _, _)| *v).collect();
+        listed.sort_unstable();
+
+        assert_eq!(
+            on_disk, listed,
+            "the migration files on disk and the MIGRATIONS list disagree.\n\
+             A file that is not listed never runs; an entry with no file will not compile.\n\
+             (Code migrations 8 and 16 have no .sql file and are deliberately absent from both.)"
+        );
     }
 }

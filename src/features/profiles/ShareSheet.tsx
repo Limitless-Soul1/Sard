@@ -30,10 +30,17 @@ import { profileExport } from "../../lib/ipc";
 import { manifestText, serialiseProfile } from "./model/package";
 import type { Profile } from "./model/profile";
 
-/** A filename a reader can recognise in a downloads folder, from a name that may be any script. */
+/**
+ * A filename a reader can recognise in a downloads folder, from a name that may be any script.
+ *
+ * `.zip`, NOT a private extension. The package always WAS a zip; the custom suffix only hid that
+ * from the operating system, from the reader, and from every tool that already knows how to open
+ * one. The safety was never in the extension — it is in the validation the import path performs, and
+ * that is unchanged.
+ */
 function fileNameFor(p: Profile): string {
   const base = (p.name ?? "").trim().replace(/[\\/:*?"<>|]+/g, "").slice(0, 40);
-  return `${base || "profile"}.sardprofile`;
+  return `${base || "profile"}.zip`;
 }
 
 export function ShareSheet({ profile, onClose }: { profile: Profile; onClose: () => void }) {
@@ -60,7 +67,7 @@ export function ShareSheet({ profile, onClose }: { profile: Profile; onClose: ()
     const { save } = await import("@tauri-apps/plugin-dialog");
     const picked = await save({
       defaultPath: fileNameFor(profile),
-      filters: [{ name: "Sard profile", extensions: ["sardprofile"] }],
+      filters: [{ name: "Sard profile", extensions: ["zip"] }],
     });
     if (typeof picked !== "string") return;
     setBusy(true);

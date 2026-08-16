@@ -49,7 +49,7 @@ export function ImportSheet({
     const { open } = await import("@tauri-apps/plugin-dialog");
     const picked = await open({
       multiple: false,
-      filters: [{ name: "Sard profile", extensions: ["sardprofile"] }],
+      filters: [{ name: "Sard profile", extensions: ["zip"] }],
     });
     if (typeof picked !== "string") {
       onClose();

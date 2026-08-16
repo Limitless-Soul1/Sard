@@ -59,7 +59,7 @@ pub fn export(path: &str, manifest_json: &str) -> Result<(), String> {
     // Written to a temp beside the destination and renamed, so an interrupted write never leaves a
     // half-file where the reader will later look for a package.
     let dest = Path::new(path);
-    let tmp = dest.with_extension("sardprofile.part");
+    let tmp = dest.with_extension("zip.part");
     {
         let file = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
         let mut zip = zip::ZipWriter::new(file);
@@ -207,7 +207,7 @@ mod tests {
     fn a_package_round_trips_through_a_real_file() {
         let dir = std::env::temp_dir().join(format!("sard-pkg-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("x.sardprofile");
+        let path = dir.join("x.zip");
         let text = manifest("");
         export(path.to_str().unwrap(), &text).unwrap();
         assert!(path.exists(), "the archive is written under the chosen name");
@@ -219,7 +219,7 @@ mod tests {
     fn export_leaves_no_part_file_behind() {
         let dir = std::env::temp_dir().join(format!("sard-pkg-part-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("y.sardprofile");
+        let path = dir.join("y.zip");
         export(path.to_str().unwrap(), &manifest("")).unwrap();
         let strays: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
@@ -284,7 +284,7 @@ mod tests {
     fn inspect_refuses_an_archive_with_no_manifest() {
         let dir = std::env::temp_dir().join(format!("sard-pkg-empty-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("z.sardprofile");
+        let path = dir.join("z.zip");
         {
             let f = std::fs::File::create(&path).unwrap();
             let mut zip = zip::ZipWriter::new(f);
@@ -301,7 +301,7 @@ mod tests {
     fn inspect_refuses_a_file_that_is_not_an_archive() {
         let dir = std::env::temp_dir().join(format!("sard-pkg-raw-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("plain.sardprofile");
+        let path = dir.join("plain.zip");
         std::fs::write(&path, b"just some bytes").unwrap();
         assert_eq!(inspect(path.to_str().unwrap()).unwrap_err(), "pkg.err.unreadable");
         let _ = std::fs::remove_dir_all(&dir);

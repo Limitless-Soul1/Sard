@@ -90,10 +90,22 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
     // would suppress the backfill on every install that had not.
     // PROFILES (stage 1): the visual-identity registry. CREATE only — no row is written, so an
     // installation that never opens Profiles is unchanged by it.
+    //
+    // NUMBERED 19, NOT 17, AND THE GAP IS DELIBERATE. The runner's high-water mark is MAX(version),
+    // so a version that another in-flight branch has already recorded is skipped forever — silently,
+    // because a skipped migration is indistinguishable from an applied one. `feature/library-design`
+    // occupies 17 (`0017_library_cases.sql`) and 18 (`0018_shelf_ink.sql`); this migration sat on 17
+    // and was therefore never applied on any database that had seen that branch, leaving every
+    // Profiles command failing with "no such table: profiles". Measured on a live database at
+    // user_version 18.
+    //
+    // 19 assumes `feature/library-design` lands first. If that order changes, this has to move above
+    // whatever the other branch finally occupies — the two branches cannot both be right about a
+    // number, and the one that merges second is the one that renumbers.
     (
-        17,
+        19,
         "profiles",
-        include_str!("migrations_sql/0017_profiles.sql"),
+        include_str!("migrations_sql/0019_profiles.sql"),
     ),
 ];
 

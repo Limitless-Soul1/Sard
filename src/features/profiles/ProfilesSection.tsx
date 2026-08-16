@@ -9,6 +9,7 @@
 // they did — which is also what keeps this stage inert for anyone who never opens it.
 
 import { useState } from "react";
+import { createPortal } from "react-dom";
 
 import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
@@ -185,7 +186,10 @@ function CreateDialog({
   const [name, setName] = useState("");
   const [start, setStart] = useState<StartFrom>("current");
   const [base, setBase] = useState<BuiltinThemeId>("ivory");
-  return (
+  // Portalled for the same reason the editor is: `.gs` carries a transform, which makes it the
+  // containing block for `position: fixed`, so a dialog rendered in place is centred on the
+  // settings window and clipped by its `overflow: hidden` rather than centred on Sard.
+  return createPortal(
     <div className="pf-dialog-scrim" onClick={onCancel}>
       <div className="pf-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="pf-dialog-title">{t("profiles.create.title")}</div>
@@ -258,7 +262,8 @@ function CreateDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -273,7 +278,10 @@ function DeleteDialog({
   onConfirm: () => void;
 }) {
   const { t } = useI18n();
-  return (
+  // Portalled for the same reason the editor is: `.gs` carries a transform, which makes it the
+  // containing block for `position: fixed`, so a dialog rendered in place is centred on the
+  // settings window and clipped by its `overflow: hidden` rather than centred on Sard.
+  return createPortal(
     <div className="pf-dialog-scrim" onClick={onCancel}>
       <div className="pf-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="pf-dialog-title">
@@ -289,6 +297,7 @@ function DeleteDialog({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

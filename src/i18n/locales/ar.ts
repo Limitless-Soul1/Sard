@@ -860,13 +860,27 @@ export const ar: Record<TKey, string> = {
   "profiles.create.fromTheme": "ورقةٌ من الستّة عشر",
   "profiles.create.submit": "إنشاء وتعديل",
   "profiles.create.customHint": "اختر الوَرَق واللمسة في المحرِّر، ثمّ اختر من أربعة سَرْدٍ كاملة.",
-  "profiles.duplicateSuffix": "{name} ٢",
+  "profiles.duplicateSuffix": "{name} 2",
 
   "profiles.editor.title": "تعديل هيئة",
   "profiles.editor.unsaved": "تعديلٌ غير محفوظ",
   "profiles.editor.save": "حفظ",
   "profiles.editor.close": "إغلاق",
-  "profiles.editor.sectionsHint": "ستّة أقسام. ما تراه إلى جانبك هو ما ستراه في سَرْد.",
+  "profiles.editor.railTitle": "هيئة سَرْد",
+  "profiles.editor.sectionsHint": "ستّة أقسام. ما تراه على اليسار هو ما ستراه في سَرْد.",
+  // أسماء الأشكال الاثني عشر، من ملفّ التصميم نفسه.
+  "profiles.shape.ribbon": "شريط",
+  "profiles.shape.pointed": "مُدبَّب",
+  "profiles.shape.corner": "زاوية",
+  "profiles.shape.tab": "لسان",
+  "profiles.shape.marker": "مِعلَم",
+  "profiles.shape.feather": "ريشة",
+  "profiles.shape.tassel": "شُرّابة",
+  "profiles.shape.double": "مزدوج",
+  "profiles.shape.seal": "خاتم شَمْع",
+  "profiles.shape.clip": "مِشبك نحاسي",
+  "profiles.shape.cord": "جديلة",
+  "profiles.shape.leaf": "ورقة مكبوسة",
   "profiles.editor.stageLibrary": "المكتبة",
   "profiles.editor.stageBook": "الكتاب",
 
@@ -922,8 +936,11 @@ export const ar: Record<TKey, string> = {
   "profiles.role.selection": "التظليل",
   "profiles.role.selectionNote": "ما تحت النصّ المحدَّد",
   "profiles.roles.hint": "الأرقام تشير إلى ما يصبغه كلّ لون. حرّك لوناً واحداً فترى موضعه يتغيّر هنا.",
-  "profiles.contrast.ok": "{ratio}:١ — كافية",
-  "profiles.contrast.low": "{ratio}:١ — يصعب قراءتها",
+  // أرقام لاتينيّة، لا هنديّة: هذه سياسة معلنة في `lib/format.ts` — `UI_NUMBERING_SYSTEM = "latn"`
+  // مثبّتة لأنّ نظام الأرقام الافتراضي لـ `ar` يختلف بين إصدارات ICU، وسَرْد يعمل على أيّ WebView2
+  // مثبَّت. كتابة «١» هنا تعيد جدول الاستبدال الذي أُزيل عمدًا.
+  "profiles.contrast.ok": "{ratio}:1 — كافية",
+  "profiles.contrast.low": "{ratio}:1 — يصعب قراءتها",
   "profiles.contrast.fix": "استعمل أقرب لونٍ يكفي",
 
   "profiles.fonts.interface": "واجهة سَرْد",

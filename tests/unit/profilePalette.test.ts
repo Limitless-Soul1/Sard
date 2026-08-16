@@ -191,14 +191,36 @@ describe("the harmonies are four distinct whole Sards", () => {
     }
   });
 
-  it("every candidate keeps the reader's two colours exactly", () => {
-    // The paper and the accent are what the reader chose. Nothing may quietly adjust them.
+  it("keeps the reader's ACCENT exactly — the touch is theirs", () => {
+    for (const dark of [false, true]) {
+      const accent = "#5FA8A8";
+      for (const h of harmonies(dark ? "#122023" : "#F0E2BE", accent, dark)) {
+        expect(h.colors.accent.toLowerCase()).toBe(accent.toLowerCase());
+      }
+    }
+  });
+
+  it("'calm' returns the reader's own paper untouched — their pick is always on offer", () => {
     for (const dark of [false, true]) {
       const paper = dark ? "#122023" : "#F0E2BE";
-      const accent = "#5FA8A8";
-      for (const h of harmonies(paper, accent, dark)) {
-        expect(h.colors.paperBg.toLowerCase()).toBe(paper.toLowerCase());
-        expect(h.colors.accent.toLowerCase()).toBe(accent.toLowerCase());
+      const calm = harmonies(paper, "#5FA8A8", dark).find((h) => h.id === "calm")!;
+      expect(calm.colors.paperBg.toLowerCase()).toBe(paper.toLowerCase());
+    }
+  });
+
+  it("the four are visibly distinct — the design's one instruction is 'choose by eye'", () => {
+    // MEASURED IN THE RUNNING APP: with the paper held fixed, the four candidates on a dark theme
+    // were nearly indistinguishable at card size. The design's own harmonies carry four different
+    // papers (#F2E9D8 / #F4E3C8 / #F1F1EA / #FFFFFF), which is what makes the choice possible.
+    for (const dark of [false, true]) {
+      const hs = harmonies(dark ? "#122023" : "#F0E2BE", "#5FA8A8", dark);
+      const papers = new Set(hs.map((h) => h.colors.paperBg.toLowerCase()));
+      expect(papers.size, "four distinct papers").toBe(4);
+      // And each is still recognisably the reader's paper, not a different one: within 0.09 of its
+      // lightness. Interpretation, not replacement.
+      const base = luminance(dark ? "#122023" : "#F0E2BE");
+      for (const h of hs) {
+        expect(Math.abs(luminance(h.colors.paperBg) - base), h.id).toBeLessThan(0.18);
       }
     }
   });

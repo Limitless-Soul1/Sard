@@ -13,8 +13,10 @@
 // control — it is the answer to the question the editor otherwise invites.
 
 import { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { useI18n } from "../../i18n";
+import { localeDigits } from "../../lib/format";
 import { BOOKMARK_COLORS, BOOKMARK_SHAPES } from "../../lib/bookmarkStyle";
 import { READ_MARKERS } from "../../lib/readMarkerStyle";
 import { FONT_CATALOGUE, useFonts } from "../../lib/fonts";
@@ -65,7 +67,12 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
     ? t(`theme.${draft.data.theme.base}`)
     : t("profiles.theme.custom");
 
-  return (
+  // PORTALLED TO `document.body`, and it has to be. `.gs` (the settings window) carries
+  // `transform: translate(-50%,-50%)`, and a transform makes an element the containing block for
+  // every `position: fixed` descendant — so rendered in place this full-surface editor was confined
+  // to the 960x660 settings window and clipped by its `overflow: hidden`. Measured in the running
+  // app before this was added.
+  return createPortal(
     <div className="pf-editor" role="dialog" aria-modal="true">
       <div className="pf-editor-head">
         <span className="pf-editor-title" dir="auto">
@@ -81,29 +88,16 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
         </button>
       </div>
 
+      {/* RAIL FIRST, then the stage — the design's own order. Its rail carries `border-inline-end`,
+          which puts it at the inline START: the right in Arabic, the left in English. That is what
+          makes its own caption true — "what you see on the left is what you will see in Sard". */}
       <div className="pf-editor-body">
-        {/* THE STAGE — what you see on one side is what you will see in Sard. */}
-        <div className="pf-stage">
-          <div className="pf-stage-seg" role="group">
-            <button className={face === "library" ? "on" : ""} onClick={() => setFace("library")}>
-              {t("profiles.editor.stageLibrary")}
-            </button>
-            <button className={face === "book" ? "on" : ""} onClick={() => setFace("book")}>
-              {t("profiles.editor.stageBook")}
-            </button>
-          </div>
-          <div className="pf-stage-frame">
-            {face === "library" ? (
-              <SardMini p={miniOf(draft)} />
-            ) : (
-              <BookStage profile={draft} />
-            )}
-          </div>
-          <div className="pf-stage-hint">{t("profiles.editor.sectionsHint")}</div>
-        </div>
-
         {/* THE RAIL — 344px, six sections, one open at a time. */}
         <div className="pf-rail">
+          <div className="pf-rail-head">
+            <span className="pf-rail-head-title">{t("profiles.editor.railTitle")}</span>
+            <span className="pf-rail-head-sub">{t("profiles.editor.sectionsHint")}</span>
+          </div>
           {section(
             "identity",
             t("profiles.section.identity"),
@@ -142,7 +136,7 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
           {section(
             "marks",
             t("profiles.section.marks"),
-            `${BOOKMARK_SHAPES.find((s) => s.key === draft.data.marks.bookmarkShape)?.label ?? ""}`,
+            t(`profiles.shape.${draft.data.marks.bookmarkShape}`),
             <MarksSection draft={draft} patch={patch} />,
           )}
 
@@ -152,8 +146,24 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
             <p className="pf-firewall-body">{t("profiles.notPart.body")}</p>
           </div>
         </div>
+
+        {/* THE STAGE — what you see here is what you will see in Sard. */}
+        <div className="pf-stage">
+          <div className="pf-stage-seg" role="group">
+            <button className={face === "library" ? "on" : ""} onClick={() => setFace("library")}>
+              {t("profiles.editor.stageLibrary")}
+            </button>
+            <button className={face === "book" ? "on" : ""} onClick={() => setFace("book")}>
+              {t("profiles.editor.stageBook")}
+            </button>
+          </div>
+          <div className="pf-stage-frame">
+            {face === "library" ? <SardMini p={miniOf(draft)} /> : <BookStage profile={draft} />}
+          </div>
+        </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -250,7 +260,7 @@ function ThemeSection({
   draft: Profile;
   patch: (f: (d: ProfileData) => void) => void;
 }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const [custom, setCustom] = useState(false);
   const verdicts = judgePalette(draft.data.theme.colors);
   return (
@@ -283,14 +293,18 @@ function ThemeSection({
           );
         })}
       </div>
-      <div className="pf-hint">{t("profiles.theme.papers", { n: String(THEME_ORDER.length) })}</div>
+      <div className="pf-hint">
+        {t("profiles.theme.papers", { n: localeDigits(String(THEME_ORDER.length), lang) })}
+      </div>
 
       {/* The measured verdict, shown as a number rather than a badge — the reader can see what a
-          choice actually buys. Repair is offered, never imposed. */}
+          choice actually buys. Repair is offered, never imposed. The RATIO is localised too: an
+          Arabic interface shows Eastern-Arabic numerals throughout, and a half-converted "14.2:١"
+          is worse than either alone. */}
       <div className={`pf-contrast${verdicts.textOnPaper.passes ? "" : " warn"}`}>
-        {verdicts.textOnPaper.passes
-          ? t("profiles.contrast.ok", { ratio: verdicts.textOnPaper.ratio.toFixed(1) })
-          : t("profiles.contrast.low", { ratio: verdicts.textOnPaper.ratio.toFixed(1) })}
+        {t(verdicts.textOnPaper.passes ? "profiles.contrast.ok" : "profiles.contrast.low", {
+          ratio: localeDigits(verdicts.textOnPaper.ratio.toFixed(1), lang),
+        })}
       </div>
 
       {/* The way out of the sixteen. The design puts it exactly here, as a link under the grid. */}
@@ -300,10 +314,12 @@ function ThemeSection({
 
       {custom && (
         <CustomPaper
+          // "Starts from X" only when there IS an X. A profile already carrying its own paper has
+          // nothing to start from, and repeating the dialog's own title under it says nothing.
           startFrom={
             draft.data.theme.base
               ? t("profiles.theme.startsFrom", { name: t(`theme.${draft.data.theme.base}`) })
-              : t("profiles.theme.custom")
+              : ""
           }
           initialPaper={draft.data.theme.colors.paperBg}
           initialAccent={draft.data.theme.colors.accent}
@@ -427,8 +443,11 @@ function MarksSection({
             key={s.key}
             className={`pf-bm-cell${draft.data.marks.bookmarkShape === s.key ? " on" : ""}`}
             onClick={() => patch((d) => { d.marks.bookmarkShape = s.key; })}
-            title={s.label}
-            aria-label={s.label}
+            // `BOOKMARK_SHAPES[].label` is a hard-coded English string on a shared constant. Rather
+            // than change that constant — and with it the existing Bookmark settings section — the
+            // twelve names are localised here, in the feature that needs them.
+            title={t(`profiles.shape.${s.key}`)}
+            aria-label={t(`profiles.shape.${s.key}`)}
           >
             <BookmarkShape shape={s.key} color={colour} h={26} />
           </button>

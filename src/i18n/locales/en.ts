@@ -911,7 +911,23 @@ export const en = {
   "profiles.editor.unsaved": "Unsaved change",
   "profiles.editor.save": "Save",
   "profiles.editor.close": "Close",
-  "profiles.editor.sectionsHint": "Six sections. What you see on the left is what you will see in Sard.",
+  "profiles.editor.railTitle": "A Sard profile",
+  "profiles.editor.sectionsHint": "Six sections. What you see beside this is what you will see in Sard.",
+  // The twelve bookmark shapes. `BOOKMARK_SHAPES` carries hard-coded English labels on a shared
+  // constant; these localise them without changing it, and so without touching the existing
+  // Bookmark settings section.
+  "profiles.shape.ribbon": "Ribbon",
+  "profiles.shape.pointed": "Pointed",
+  "profiles.shape.corner": "Corner",
+  "profiles.shape.tab": "Tab",
+  "profiles.shape.marker": "Marker",
+  "profiles.shape.feather": "Feather",
+  "profiles.shape.tassel": "Tassel",
+  "profiles.shape.double": "Double",
+  "profiles.shape.seal": "Wax seal",
+  "profiles.shape.clip": "Brass clip",
+  "profiles.shape.cord": "Braided cord",
+  "profiles.shape.leaf": "Pressed leaf",
   "profiles.editor.stageLibrary": "Library",
   "profiles.editor.stageBook": "Book",
 

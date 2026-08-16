@@ -134,18 +134,45 @@ export type HarmonyId = "calm" | "warm" | "cool" | "contrast";
 export const HARMONY_IDS: readonly HarmonyId[] = ["calm", "warm", "cool", "contrast"] as const;
 
 /**
- * How each stance builds its ink, as (hue shift from the paper, saturation, target contrast).
+ * What each stance does, to the INK and to the PAPER.
  *
- * The contrast targets sit inside the measured corpus band (light 8.1–19.4, dark 9.6–14.2) rather
- * than at its edges: a generated theme should look like it belongs beside the sixteen, not like an
- * argument with them.
+ * THE PAPER MOVES TOO, and that is taken from the design rather than invented. Its own four
+ * harmonies carry four different papers — `#F2E9D8` calm, `#F4E3C8` warm, `#F1F1EA` cool,
+ * `#FFFFFF` contrast — so "four complete Sards from these two colours" means the pair is the INPUT,
+ * not four labels over one identical ground. Measured in the running app before this was added:
+ * with the paper held fixed on a dark theme the four candidates were nearly indistinguishable at
+ * card size, which defeats the one instruction the design gives the reader — choose by eye.
+ *
+ * `calm` leaves the reader's paper EXACTLY as they chose it, so their own pick is always one of the
+ * four. The other three interpret it: deeper and warmer, neutralised and cooler, or pushed to the
+ * extreme. `dL` is a lightness delta toward white, `dS` scales saturation, `dH` shifts hue.
+ *
+ * The ink's contrast targets sit inside the measured corpus band (light 8.1–19.4, dark 9.6–14.2)
+ * rather than at its edges: a generated theme should look like it belongs beside the sixteen.
  */
-const STANCE: Record<HarmonyId, { hue: number; sat: number; target: number }> = {
-  calm: { hue: 0, sat: 0.18, target: 11 },
-  warm: { hue: -18, sat: 0.30, target: 10 },
-  cool: { hue: +22, sat: 0.22, target: 12 },
-  contrast: { hue: 0, sat: 0.06, target: 16 },
+const STANCE: Record<
+  HarmonyId,
+  { hue: number; sat: number; target: number; dL: number; dS: number; dH: number }
+> = {
+  calm: { hue: 0, sat: 0.18, target: 11, dL: 0, dS: 1, dH: 0 },
+  warm: { hue: -18, sat: 0.3, target: 10, dL: -0.035, dS: 1.45, dH: -6 },
+  cool: { hue: +22, sat: 0.22, target: 12, dL: +0.01, dS: 0.5, dH: +14 },
+  contrast: { hue: 0, sat: 0.06, target: 16, dL: +0.05, dS: 0.12, dH: 0 },
 };
+
+/**
+ * The paper a stance proposes, from the paper the reader chose.
+ *
+ * On a DARK ground the lightness deltas invert: "deeper and warmer" means further from the ink,
+ * which is darker on a light page and lighter on a dark one. Without that, `contrast` on a night
+ * paper would lift the page toward grey — the opposite of what the word promises.
+ */
+export function paperFor(paper: string, harmony: HarmonyId, dark: boolean): string {
+  const s = STANCE[harmony];
+  const [h, sat, l] = rgbToHsl(toRgb(paper));
+  const dl = dark ? -s.dL : s.dL;
+  return toHex(hslToRgb([h + s.dH, clamp(sat * s.dS, 0, 1), clamp(l + dl, 0, 1)]));
+}
 
 /**
  * Solve for the ink lightness that hits a target contrast against the paper.
@@ -268,8 +295,11 @@ export interface Harmony {
  */
 export function harmonies(paper: string, accent: string, dark: boolean): Harmony[] {
   return HARMONY_IDS.map((id) => {
-    const ink = inkFor(paper, id, dark);
-    return { id, colors: deriveColors(paper, ink, accent, dark), inkContrast: contrast(ink, paper) };
+    // Each stance interprets the paper as well as the ink — see STANCE. `calm` returns the reader's
+    // own paper untouched, so the pair they picked is always one of the four on offer.
+    const p = paperFor(paper, id, dark);
+    const ink = inkFor(p, id, dark);
+    return { id, colors: deriveColors(p, ink, accent, dark), inkContrast: contrast(ink, p) };
   });
 }
 

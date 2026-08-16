@@ -17,6 +17,7 @@
 import { useRef, useState } from "react";
 
 import { useI18n } from "../../i18n";
+import { localeDigits } from "../../lib/format";
 import { SardMini } from "./SardMini";
 import { bookFaceCss, miniGlyph } from "./mini";
 import { HARMONY_IDS, harmonies, isHex, suggestsDark, type HarmonyId } from "./model/palette";
@@ -130,7 +131,7 @@ export function CustomPaper({
   onCancel: () => void;
   onApply: (theme: Pick<ProfileTheme, "dark" | "colors">) => void;
 }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const [paper, setPaper] = useState(isHex(initialPaper) ? initialPaper : "#F5EEDD");
   const [accent, setAccent] = useState(isHex(initialAccent) ? initialAccent : "#9C5A3C");
   const [chosen, setChosen] = useState<HarmonyId>("calm");
@@ -165,7 +166,7 @@ export function CustomPaper({
     <div className="pf-dialog-scrim" onClick={onCancel}>
       <div className="pf-dialog pf-cp" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="pf-dialog-title">{t("profiles.theme.custom")}</div>
-        <div className="pf-cp-from">{startFrom}</div>
+        {startFrom && <div className="pf-cp-from">{startFrom}</div>}
 
         <ColourRow
           label={t("profiles.theme.paper")}
@@ -217,9 +218,13 @@ export function CustomPaper({
             page by construction, so this reassures rather than warns — but it is shown as a real
             number, because that is the house rule: report, never merely badge. */}
         <div className={`pf-contrast${verdict.textOnPaper.passes ? "" : " warn"}`}>
-          {verdict.textOnPaper.passes
-            ? t("profiles.contrast.ok", { ratio: verdict.textOnPaper.ratio.toFixed(1) })
-            : t("profiles.contrast.low", { ratio: verdict.textOnPaper.ratio.toFixed(1) })}
+          {t(verdict.textOnPaper.passes ? "profiles.contrast.ok" : "profiles.contrast.low", {
+            // Through `localeDigits`, which is the project's one funnel for an already-composed
+            // numeric string. It normalises to WESTERN digits — `lib/format.ts` pins the UI
+            // numbering system to `latn` deliberately, because CLDR's default for `ar` moves
+            // between ICU versions and Sard runs on whatever WebView2 is installed.
+            ratio: localeDigits(verdict.textOnPaper.ratio.toFixed(1), lang),
+          })}
         </div>
 
         <div className="pf-dialog-actions">

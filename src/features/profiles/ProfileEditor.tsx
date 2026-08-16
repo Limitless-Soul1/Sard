@@ -158,7 +158,9 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
   const chapterBody = (id: ChapterId): React.ReactNode => {
     switch (id) {
       case "identity":
-        return <IdentitySection draft={draft} setDraft={setDraft} />;
+        return (
+          <IdentitySection draft={draft} setDraft={setDraft} rows={bgRows} onImported={addBgRow} />
+        );
       case "paper":
         return <ThemeSection draft={draft} patch={patch} />;
       case "background":
@@ -359,13 +361,55 @@ function BookStage({ profile }: { profile: Profile }) {
 function IdentitySection({
   draft,
   setDraft,
+  rows,
+  onImported,
 }: {
   draft: Profile;
   setDraft: React.Dispatch<React.SetStateAction<Profile>>;
+  rows: BackgroundRow[];
+  onImported: (row: BackgroundRow) => void;
 }) {
   const { t } = useI18n();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const seal = (draft.name ?? "").trim().slice(0, 1) || "س";
   const colour = draft.iconKind === "color";
+  const image = draft.iconKind === "image";
+  const sealKind = !colour && !image;
+  // `iconRef` is overloaded — a hex for a colour icon, a content hash for an image — so the row is
+  // only looked up when the kind says there is one to find.
+  const iconRow = image && draft.iconRef ? rows.find((r) => r.id === draft.iconRef) ?? null : null;
+
+  /**
+   * THE MANAGED PIPELINE, NOT A SECOND ONE. An icon is an image like any other: `background_import`
+   * copies it into the managed directory, dedupes it by content and records the row, which is what
+   * makes it collectable — and, once the draft is saved and `icon_ref` reaches the column, what makes
+   * it survive collection. `backgrounds::gc()` counts that column as its fourth reference source.
+   *
+   * IMPORT ONLY, exactly as the background sections do. The reference reaches the collector when the
+   * draft is SAVED; until then the row is unreferenced, which is the same window a chosen background
+   * already lives in.
+   */
+  const pickIcon = async () => {
+    setError(null);
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const picked = await open({
+      multiple: false,
+      filters: [{ name: "Image", extensions: ["jpg", "jpeg", "png", "webp"] }],
+    });
+    if (typeof picked !== "string") return;
+    setBusy(true);
+    try {
+      const imported = await backgroundImport(picked);
+      onImported(imported);
+      setDraft((d) => ({ ...d, iconKind: "image", iconRef: imported.id }));
+    } catch (e) {
+      const code = String(e);
+      setError(code.startsWith("bg.err.") ? t(code as TKey) : code);
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <>
@@ -379,17 +423,19 @@ function IdentitySection({
         />
       </label>
 
-      {/* THE ICON. Two kinds, not three: 'image' needs the asset pipeline the backgrounds need, and
-          that arrives with them. The seal is not a placeholder for it — the design calls the initial
-          "a type specimen, not clip art", so it is a real choice a reader may prefer to keep.
-          The preview is drawn exactly as the card draws it, because it IS the card's seal. */}
+      {/* THE ICON — three kinds now that the managed-image pipeline is reachable from here. The seal
+          is not a placeholder for the image: the design calls the initial "a type specimen, not clip
+          art", so it stays a real choice a reader may prefer to keep. The preview is drawn exactly as
+          the card draws it, because it IS the card's seal.
+          EACH KIND TESTS FOR ITSELF. While there were two, the seal could be inferred as "not the
+          colour"; with three that inference quietly claimed the image's selection too. */}
       <div className="pf-field">
         <span className="pf-field-label">{t("profiles.identity.icon")}</span>
         <div className="pf-icon-kinds" role="radiogroup">
           <button
             role="radio"
-            aria-checked={!colour}
-            className={`pf-icon-kind${!colour ? " on" : ""}`}
+            aria-checked={sealKind}
+            className={`pf-icon-kind${sealKind ? " on" : ""}`}
             onClick={() => setDraft((d) => ({ ...d, iconKind: "seal", iconRef: null }))}
           >
             <span
@@ -412,19 +458,73 @@ function IdentitySection({
               setDraft((d) => ({
                 ...d,
                 iconKind: "color",
-                iconRef: d.iconRef ?? d.data.theme.colors.accent,
+                // Switching AWAY from an image must not carry its hash into the colour slot — the
+                // column means something different for each kind.
+                iconRef: d.iconKind === "color" && d.iconRef ? d.iconRef : d.data.theme.colors.accent,
               }))
             }
           >
             <span className="pf-seal" style={{ background: draft.data.theme.colors.paperBg }}>
               <span
                 className="pf-seal-dot"
-                style={{ background: draft.iconRef ?? draft.data.theme.colors.accent }}
+                style={{
+                  background: colour && draft.iconRef ? draft.iconRef : draft.data.theme.colors.accent,
+                }}
               />
             </span>
             {t("profiles.identity.iconColour")}
           </button>
+
+          {/* THE THIRD KIND. The seal is not a placeholder for it — the design calls the initial
+              "a type specimen, not clip art" — so choosing an image is a choice, not an upgrade. */}
+          <button
+            role="radio"
+            aria-checked={image}
+            className={`pf-icon-kind${image ? " on" : ""}`}
+            onClick={() => {
+              if (image) return;
+              if (draft.iconRef && rows.some((r) => r.id === draft.iconRef)) {
+                setDraft((d) => ({ ...d, iconKind: "image" }));
+              } else {
+                void pickIcon();
+              }
+            }}
+          >
+            <span
+              className="pf-seal"
+              style={
+                iconRow
+                  ? {
+                      backgroundImage: `url("${bgSrcUrl(iconRow)}")`,
+                      backgroundSize: "cover",
+                      backgroundPosition: "center",
+                    }
+                  : { background: draft.data.theme.colors.paperBg, color: draft.data.theme.colors.muted }
+              }
+            >
+              {!iconRow && "▣"}
+            </span>
+            {t("profiles.identity.iconImage")}
+          </button>
         </div>
+
+        {image && (
+          <div className="pf-icon-image-row">
+            <button className="pf-btn" disabled={busy} onClick={() => void pickIcon()}>
+              {busy ? t("gs.bg.preparing") : iconRow ? t("gs.bg.replace") : t("gs.bg.choose")}
+            </button>
+            {iconRow && (
+              <button
+                className="pf-btn"
+                onClick={() => setDraft((d) => ({ ...d, iconKind: "seal", iconRef: null }))}
+              >
+                {t("gs.bg.remove")}
+              </button>
+            )}
+          </div>
+        )}
+        {image && !iconRow && <div className="pf-hint">{t("gs.bg.formats")}</div>}
+        {error && <div className="pf-contrast warn">{error}</div>}
 
         {colour && (
           <div className="pf-bm-colors">
@@ -444,7 +544,7 @@ function IdentitySection({
         )}
       </div>
 
-      {!colour && <div className="pf-hint">{t("profiles.identity.sealHint")}</div>}
+      {sealKind && <div className="pf-hint">{t("profiles.identity.sealHint")}</div>}
     </>
   );
 }

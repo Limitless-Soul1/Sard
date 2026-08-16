@@ -151,6 +151,21 @@ pub fn referenced_backgrounds(conn: &Connection) -> rusqlite::Result<Vec<String>
     rows.collect()
 }
 
+/// Every image a profile ICON currently references — the collector's FOURTH reference source.
+///
+/// SEPARATE FROM `referenced_backgrounds`, and filtered on `icon_kind`, because `icon_ref` is an
+/// OVERLOADED column: it carries a hex colour for a `color` icon, nothing for a `seal`, and a
+/// content hash only for an `image`. Unfiltered, this would feed `#B8893C` into the keep-list —
+/// meaningless today, and exactly the kind of thing that stops being harmless without anyone
+/// noticing. Like its sibling it reads COLUMNS, never `data`.
+pub fn referenced_icons(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT icon_ref FROM profiles WHERE icon_kind = 'image' AND icon_ref IS NOT NULL",
+    )?;
+    let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+    rows.collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

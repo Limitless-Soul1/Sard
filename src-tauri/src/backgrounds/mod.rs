@@ -571,6 +571,12 @@ pub fn gc(conn: &Connection, app_data_dir: &Path) -> Result<usize, String> {
     // enter a profile. That moment is now. It reads the `bg_library` / `bg_reading` COLUMNS, never
     // `data`, so the collector still answers this question without parsing frontend-owned JSON.
     keep.extend(crate::profiles::referenced_backgrounds(conn).map_err(|e| e.to_string())?);
+    // THE FOURTH REFERENCE SOURCE — a profile's ICON. Named separately rather than folded into the
+    // query above, because it asks a different question of a different, OVERLOADED column: only an
+    // `image` icon holds a content hash at all. An icon this did not count would not merely leak —
+    // it would be DELETED on the next surface bind, because the sweep below removes any managed file
+    // no row claims, and `choose()` collects inline.
+    keep.extend(crate::profiles::referenced_icons(conn).map_err(|e| e.to_string())?);
     let mut removed = 0usize;
     for row in list(conn)? {
         if keep.iter().any(|k| *k == row.id) {
@@ -815,6 +821,73 @@ mod tests {
             rusqlite::params![id, lib, read],
         )
         .unwrap();
+    }
+
+    /// A profile whose ICON names an image, and which names no background at all — so the only thing
+    /// that can save the image is the fourth reference source.
+    fn profile_with_icon(conn: &Connection, id: &str, kind: &str, icon: Option<&str>) {
+        conn.execute(
+            "INSERT INTO profiles(id, name, description, author, icon_kind, icon_ref, data, \
+             derived_from, created_at, updated_at, bg_library, bg_reading) \
+             VALUES(?1, 'p', NULL, NULL, ?2, ?3, '{}', NULL, 0, 0, NULL, NULL)",
+            rusqlite::params![id, kind, icon],
+        )
+        .unwrap();
+    }
+
+    // THE REGRESSION TEST FOR THE FOURTH REFERENCE SOURCE.
+    //
+    // Delete the `referenced_icons` line from `gc()` and this fails: the icon is imported, named by
+    // nothing but the profile's `icon_ref`, and the next surface bind collects it — row, file and
+    // all — because `choose()` runs the collector inline and the sweep removes unclaimed files.
+    #[test]
+    fn an_image_a_profile_icon_names_survives_collection() {
+        let (conn, dir) = fresh("gcicon");
+        let icon = write_png(&dir, "icon.png", 320, 320, 90);
+        let other = write_png(&dir, "other.png", 240, 160, 200);
+
+        let row = import(&conn, &dir, &icon).unwrap();
+        profile_with_icon(&conn, "u:iconholder", "image", Some(&row.id));
+
+        // The exact moment an uncounted icon would die.
+        let bound = choose(&conn, &dir, KEY_LIBRARY_ID, &other).unwrap();
+
+        assert!(
+            get(&conn, &row.id).unwrap().is_some(),
+            "an image named by a profile ICON must survive the collector",
+        );
+        assert!(
+            Path::new(&row.original_path).exists(),
+            "and its file must survive the managed-directory sweep",
+        );
+        assert!(get(&conn, &bound.id).unwrap().is_some(), "the surface-bound row survives too");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // `icon_ref` is overloaded: a COLOUR icon stores a hex string there, and a seal stores nothing.
+    // Neither is a reference, and neither may pin an image.
+    #[test]
+    fn a_colour_or_seal_icon_pins_nothing() {
+        let (conn, dir) = fresh("gciconkind");
+        let loose = write_png(&dir, "loose.png", 200, 120, 44);
+        let other = write_png(&dir, "other.png", 240, 160, 200);
+
+        let row = import(&conn, &dir, &loose).unwrap();
+        // A colour icon that happens to carry a string, and a seal that carries none.
+        profile_with_icon(&conn, "u:colour", "color", Some("#B8893C"));
+        profile_with_icon(&conn, "u:seal", "seal", None);
+
+        choose(&conn, &dir, KEY_LIBRARY_ID, &other).unwrap();
+
+        assert!(
+            get(&conn, &row.id).unwrap().is_none(),
+            "an unreferenced image must still be collected — a colour icon is not a reference",
+        );
+        assert!(
+            crate::profiles::referenced_icons(&conn).unwrap().is_empty(),
+            "neither a colour nor a seal icon may appear in the keep-list",
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // THE REGRESSION TEST FOR THE THIRD REFERENCE SOURCE. Before `gc()` learned to read the profiles

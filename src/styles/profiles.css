@@ -56,6 +56,12 @@
   font-size: 0.9375rem; line-height: 1; box-shadow: inset 0 0 0 1px var(--chrome-border);
 }
 .pf-seal-dot { width: 15px; height: 15px; border-radius: 50%; }
+/* An image icon fills the seal's own box, so the three kinds are interchangeable wherever a profile
+   names itself — same size, same corner, same ring. */
+.pf-seal-img {
+  width: 100%; height: 100%; border-radius: inherit;
+  background-size: cover; background-position: center;
+}
 
 .pf-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .pf-card-name {
@@ -147,6 +153,7 @@
 .pf-icon-kind:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
 .pf-icon-kind.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .pf-icon-kind .pf-seal { width: 26px; height: 26px; font-size: 0.8125rem; }
+.pf-icon-image-row { display: flex; gap: 8px; margin-top: 10px; }
 
 /* ---- "Start from": the design's three ---- */
 .pf-startfrom-list { display: flex; flex-direction: column; gap: 4px; }

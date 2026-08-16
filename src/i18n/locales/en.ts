@@ -1108,6 +1108,7 @@ export const en = {
   "profiles.identity.icon": "Icon",
   "profiles.identity.iconSeal": "Initial",
   "profiles.identity.iconColour": "Colour",
+  "profiles.identity.iconImage": "Image",
   "profiles.identity.sealHint":
     "With no image, the first letter of the name is drawn in the profile’s own face, on its own paper.",
 

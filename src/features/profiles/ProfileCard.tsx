@@ -31,12 +31,15 @@ export function ProfileCard({
   profile,
   active,
   themeName,
+  iconUrl,
   actions,
 }: {
   profile: Profile;
   active: boolean;
   /** The name of the theme this profile started from, when it started from one. */
   themeName: string;
+  /** The profile's icon image, resolved by the section that already holds the managed rows. */
+  iconUrl?: string | null;
   actions: CardActions;
 }) {
   const { t } = useI18n();
@@ -86,7 +89,11 @@ export function ProfileCard({
         >
           {profile.iconKind === "color" && profile.iconRef ? (
             <span className="pf-seal-dot" style={{ background: profile.iconRef }} />
+          ) : profile.iconKind === "image" && iconUrl ? (
+            <span className="pf-seal-img" style={{ backgroundImage: `url("${iconUrl}")` }} />
           ) : (
+            // An image icon whose row has not loaded yet — or has gone — falls back to the initial
+            // rather than to a hole. The seal is a real choice, so it is never a broken state.
             seal
           )}
         </span>

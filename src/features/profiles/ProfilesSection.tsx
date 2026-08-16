@@ -8,11 +8,13 @@
 // is not implemented. One row is added, and the sections that already exist keep working exactly as
 // they did — which is also what keeps this stage inert for anyone who never opens it.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
+import { bgSrcUrl } from "../../lib/background";
+import { backgroundsList, type BackgroundRow } from "../../lib/ipc";
 import { THEMES, THEME_ORDER, isBuiltinThemeId } from "../../theme/themes";
 import type { BuiltinThemeId } from "../../theme/tokens";
 
@@ -49,6 +51,22 @@ export function ProfilesSection() {
   const activeId = useProfiles((s) => s.activeId);
   const [dialog, setDialog] = useState<Dialog>({ kind: "none" });
   const [busy, setBusy] = useState(false);
+
+  // The managed rows, so a card can draw an image icon. Re-read whenever the profile list changes,
+  // because the only way a new icon reaches a card is a profile being saved with one.
+  const [bgRows, setBgRows] = useState<BackgroundRow[]>([]);
+  useEffect(() => {
+    let alive = true;
+    backgroundsList()
+      .then((r) => alive && setBgRows(r))
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, [profiles]);
+  const iconUrlOf = (p: Profile): string | null => {
+    if (p.iconKind !== "image" || !p.iconRef) return null;
+    const row = bgRows.find((r) => r.id === p.iconRef);
+    return row ? bgSrcUrl(row) : null;
+  };
 
   const num = (n: number) => localeDigits(String(n), lang);
 
@@ -120,6 +138,7 @@ export function ProfilesSection() {
               profile={p}
               active={p.id === activeId}
               themeName={themeNameOf(p)}
+              iconUrl={iconUrlOf(p)}
               actions={{
                 onUse: () => void applyProfile(p),
                 onEdit: () => setDialog({ kind: "edit", profile: p }),

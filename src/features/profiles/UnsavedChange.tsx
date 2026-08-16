@@ -11,22 +11,33 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useI18n } from "../../i18n";
+import type { TKey } from "../../i18n/locales/en";
 import { applyProfile, captureCurrent, createProfile, saveProfile, useProfiles } from "./store";
 import { THEMES, isBuiltinThemeId } from "../../theme/themes";
+import { useTheme } from "../../theme/store";
 import { driftOf, liveValues, useSession, type SessionKey } from "./session";
 import type { Profile } from "./model/profile";
 
-/** What the reader changed, in their own words — the design names the value, not the key. */
-function describe(keys: SessionKey[], t: (k: never) => string): string {
+/**
+ * What the reader changed, in their own words — the design names the value, not the key.
+ *
+ * THE SEPARATOR IS TRANSLATED, not a literal. It used to be a hardcoded «، » (U+060C, the ARABIC
+ * comma), which is correct Arabic and wrong English: an English reader was told "You changed the
+ * paper، the book's paper". Punctuation belongs to the script it is set in, so it comes from the
+ * locale like every other word here.
+ *
+ * Exported so the joining can be tested in both languages without rendering the dialog.
+ */
+export function describe(keys: SessionKey[], t: (k: TKey) => string): string {
   const label = (k: SessionKey) =>
     k === "theme_id"
-      ? t("profiles.unsaved.what.theme" as never)
+      ? t("profiles.unsaved.what.theme")
       : k === "book_theme_id"
-        ? t("profiles.unsaved.what.bookTheme" as never)
+        ? t("profiles.unsaved.what.bookTheme")
         : k === "arabicFont"
-          ? t("profiles.unsaved.what.arabicFont" as never)
-          : t("profiles.unsaved.what.latinFont" as never);
-  return keys.map(label).join("، ");
+          ? t("profiles.unsaved.what.arabicFont")
+          : t("profiles.unsaved.what.latinFont");
+  return keys.map(label).join(t("profiles.unsaved.listSep"));
 }
 
 export function UnsavedChange() {
@@ -126,7 +137,7 @@ export function UnsavedChange() {
     <div className="pf-dialog-scrim" onClick={() => keepForSession(pending)}>
       <div className="pf-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="pf-dialog-title">
-          {t("profiles.unsaved.changed", { what: describe(pending, t as never) })}
+          {t("profiles.unsaved.changed", { what: describe(pending, t) })}
         </div>
         <p className="pf-dialog-body">{t("profiles.unsaved.where")}</p>
 
@@ -169,11 +180,27 @@ export function useUnsavedChangeWatch(): void {
   const accepted = useSession((s) => s.accepted);
   const pending = useSession((s) => s.pending);
   const ask = useSession((s) => s.ask);
+  /**
+   * NOTHING HERE MEANS ANYTHING UNTIL THE THEME LAYER HAS LOADED.
+   *
+   * `useTheme` starts at `DEFAULT_LIGHT` for BOTH ids, and `initTheme()` runs only after
+   * `initProfiles()` resolves — App.tsx sequences them that way so profile themes are registered
+   * before one is applied. Between those two moments `activeId` already names the profile while the
+   * theme store still holds Sard's defaults, so a check there compares the profile against values
+   * nobody has read yet, concludes that `theme_id` and `book_theme_id` both "changed", and asks the
+   * reader where a change they never made should go. `pending` latches, so the question outlives the
+   * correction that lands a few milliseconds later.
+   *
+   * Measured before this guard: on a clean reload with no user action the dialog appeared 166 ms in,
+   * naming exactly those two values, while `theme_id`, `book_theme_id` and `profile_active` on disk
+   * all agreed with each other. Nothing had drifted.
+   */
+  const themeReady = useTheme((s) => s.ready);
 
   const active = profiles.find((p) => p.id === activeId) ?? null;
 
   useEffect(() => {
-    if (!active) return;
+    if (!active || !themeReady) return;
     const check = () => {
       // A key stays silent only while it still holds the value the reader accepted. Change it
       // again and it is a new decision, so the question comes back.
@@ -187,5 +214,5 @@ export function useUnsavedChangeWatch(): void {
     // the threshold where a reader would notice, and the check is three string comparisons.
     const id = setInterval(check, 1000);
     return () => clearInterval(id);
-  }, [active, accepted, pending, ask]);
+  }, [active, themeReady, accepted, pending, ask]);
 }

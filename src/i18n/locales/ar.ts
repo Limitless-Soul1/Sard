@@ -1133,6 +1133,7 @@ export const ar: Record<TKey, string> = {
   "profiles.unsaved.what.bookTheme": "ورق الكتاب",
   "profiles.unsaved.what.arabicFont": "الخطّ العربي",
   "profiles.unsaved.what.latinFont": "الخطّ اللاتيني",
+  "profiles.unsaved.listSep": "، ",
   "profiles.saved.applied": "حُفِظت «{name}» وطُبِّقت",
   "profiles.saved.undo": "تراجع",
 

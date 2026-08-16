@@ -1189,6 +1189,10 @@ export const en = {
   "profiles.unsaved.what.bookTheme": "the book’s paper",
   "profiles.unsaved.what.arabicFont": "the Arabic face",
   "profiles.unsaved.what.latinFont": "the Latin face",
+  // The separator between the named values, when more than one changed at once. It is a
+  // TRANSLATED string because the comma itself differs by script: Arabic sets «،» (U+060C),
+  // English «,». Hardcoding either one puts the wrong script's punctuation in the other's sentence.
+  "profiles.unsaved.listSep": ", ",
   "profiles.saved.applied": "Saved “{name}” and applied it",
   "profiles.saved.undo": "Undo",
 

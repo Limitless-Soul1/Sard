@@ -22,6 +22,7 @@ import {
 } from "../../lib/ipc";
 import { useBookmarkStyle } from "../../lib/bookmarkStyle";
 import { useBackground } from "../../lib/background";
+import { applyTexture } from "../../lib/texture";
 import { useFonts } from "../../lib/fonts";
 import { useReadMarkerStyle } from "../../lib/readMarkerStyle";
 import { useReader } from "../../reader-engine/store";
@@ -124,6 +125,13 @@ export async function initProfiles(): Promise<void> {
   registerThemes(profiles);
   const activeId = profiles.some((p) => p.id === active) ? (active as CustomThemeId) : null;
   useProfiles.setState({ ready: true, profiles, activeId });
+
+  // TEXTURE IS DERIVED, SO IT HAS TO BE RE-DERIVED HERE. Every other profile-owned value is a
+  // persisted setting whose own store reads it back at startup; the texture ALPHA is deliberately
+  // not persisted — it depends on the live scrim and the active theme — so nothing else would
+  // restore it, and a `glass` profile would come back opaque after a restart. Caught by running it.
+  const activeProfile = activeId ? profiles.find((p) => p.id === activeId) : undefined;
+  if (activeProfile) applyTexture(activeProfile.data.texture, profileTheme(activeProfile).colors);
 }
 
 /** Re-read from the database. Used after any write, so the store is never a second source of truth. */
@@ -186,6 +194,11 @@ export async function applyProfile(p: Profile): Promise<void> {
     size: p.data.marks.bookmarkSize,
   });
   useReadMarkerStyle.setState({ marker: p.data.marks.readMarker });
+
+  // TEXTURE, derived rather than stored. The profile carries the STEP; what it renders as depends on
+  // the live desk scrim and the active theme, so the alpha is computed here on every application and
+  // never persisted. `opaque` removes the variable entirely.
+  applyTexture(p.data.texture, theme.colors);
 
   useProfiles.setState({ activeId: p.id });
 }

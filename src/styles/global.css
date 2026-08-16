@@ -367,7 +367,7 @@ html, body, #root {
   height: 42px;
   border-radius: 50%;
   border: 1px solid var(--chrome-border);
-  background: color-mix(in srgb, var(--chrome-bg) 92%, transparent);
+  background: color-mix(in srgb, var(--chrome-bg) calc(92% * var(--ui-texture-scale, 1)), transparent);
   backdrop-filter: blur(6px);
   box-shadow: 0 3px 10px rgba(40, 28, 14, 0.12);
   color: var(--text);
@@ -431,7 +431,7 @@ html, body, #root {
      backdrop-blur re-blurred the whole column on every scroll (the RAWY-169 compositor cost, the pill
      already fixed). A more-opaque ground (88% → 96%) + a small blur (8px → 4px) keeps the frosted feel
      for a fraction of the GPU work. */
-  background: color-mix(in srgb, var(--chrome-bg) 96%, transparent);
+  background: color-mix(in srgb, var(--chrome-bg) calc(96% * var(--ui-texture-scale, 1)), transparent);
   backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
   transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
   /* PINNED (RAWY-32/D21): force LTR so nav stays physical-LEFT and the control cluster stays
@@ -1416,7 +1416,7 @@ html, body, #root {
   width: min(380px, calc(100vw - 28px)); /* RAWY-115: modest bump from 330 for breathing room */
   display: flex; flex-direction: column; gap: 4px;
   padding: 8px 10px 10px; border-radius: 16px; border: 1px solid var(--chrome-border);
-  background: color-mix(in srgb, var(--chrome-bg) 96%, transparent);
+  background: color-mix(in srgb, var(--chrome-bg) calc(96% * var(--ui-texture-scale, 1)), transparent);
   /* RAWY-169/181: the ground is 96% opaque, so a heavy blur barely showed yet cost the compositor a full
      re-blur of the reading area on every size toggle AND on every reading-area repaint behind it during
      playback (BUG 2). Trimmed 7px → 4px (matching the RAWY-177 bars) — same frosted feel, far less GPU. */
@@ -1520,7 +1520,7 @@ html, body, #root {
   min-width: 104px; max-height: 246px; overflow-y: auto; overscroll-behavior: contain;
   padding: 5px; border-radius: 13px; border: 1px solid var(--chrome-border);
   /* Matches `.tts-pill`'s 96% ground; the pill's own 4px blur already frosts what is behind both. */
-  background: color-mix(in srgb, var(--chrome-bg) 96%, transparent);
+  background: color-mix(in srgb, var(--chrome-bg) calc(96% * var(--ui-texture-scale, 1)), transparent);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
   animation: tts-speed-in 0.13s cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -1865,7 +1865,7 @@ html, body, #root {
   transform: translateX(calc(-50% + var(--reading-shift, 0px)));
   width: min(380px, calc(100vw - 28px)); max-height: min(42vh, 340px); /* RAWY-115: match the wider pill */
   display: flex; flex-direction: column; border-radius: 14px; border: 1px solid var(--chrome-border);
-  background: color-mix(in srgb, var(--chrome-bg) 98%, transparent);
+  background: color-mix(in srgb, var(--chrome-bg) calc(98% * var(--ui-texture-scale, 1)), transparent);
   /* RAWY-177 (AUD-11): the ground is 98% opaque, so blur(16px) barely showed yet cost a heavy re-blur;
      a small blur keeps the frost for far less GPU work (the RAWY-169 recipe). */
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
@@ -1881,7 +1881,7 @@ html, body, #root {
   position: sticky; top: 0; z-index: 1; text-align: start;
   padding: 8px 8px 4px; margin-top: 6px;
   font: 800 0.6875rem var(--ui-font); letter-spacing: 0.04em; color: var(--accent);
-  background: color-mix(in srgb, var(--chrome-bg) 96%, transparent);
+  background: color-mix(in srgb, var(--chrome-bg) calc(96% * var(--ui-texture-scale, 1)), transparent);
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
 }
 .tts-menu-group:first-child .tts-menu-section { margin-top: 0; }
@@ -2013,7 +2013,7 @@ html, body, #root {
   padding: 9px 15px; border-radius: 18px; cursor: pointer;
   /* RAWY-169: a MORE OPAQUE ground + a SMALL blur (was blur(9px)) — the frosted look is kept but the
      compositor re-blurs far less area on each size toggle, so switching sizes no longer hitches. */
-  background: color-mix(in srgb, var(--chrome-bg) 90%, transparent);
+  background: color-mix(in srgb, var(--chrome-bg) calc(90% * var(--ui-texture-scale, 1)), transparent);
   border: 1px solid color-mix(in srgb, var(--chrome-border) 70%, transparent);
   backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
   box-shadow: 0 8px 22px rgba(40, 28, 14, 0.22);
@@ -3120,7 +3120,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .upd-latest {
   position: absolute; bottom: calc(100% + 12px); inset-inline-end: 0; width: max-content; max-width: 280px;
   display: flex; align-items: center; gap: 9px; padding: 10px 14px; border-radius: 13px;
-  background: color-mix(in srgb, var(--chrome-bg) 96%, transparent);
+  background: color-mix(in srgb, var(--chrome-bg) calc(96% * var(--ui-texture-scale, 1)), transparent);
   border: 1px solid var(--chrome-border); box-shadow: 0 14px 34px rgba(40, 28, 14, 0.24);
   backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px); animation: upd-card-in 0.18s ease;
 }
@@ -4995,3 +4995,36 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .gs-about-build { margin-top: 4px; font: 500 0.6875rem var(--ui-font); color: var(--muted); direction: ltr; text-align: start; }
 .gs-about-build-lbl { display: block; opacity: 0.8; }
 .gs-about-build code { font-family: ui-monospace, Consolas, monospace; font-size: 0.6875rem; }
+
+/* ================================================================================================
+   INTERFACE TEXTURE — the three named steps, suppressed under the three accessibility preferences.
+   ================================================================================================
+   The eight chrome surfaces above read `--ui-texture-scale`, which a profile sets to a value below 1
+   for `light` and `glass`. It is a SCALE rather than an alpha so each surface keeps its own place in
+   the hierarchy — a drawer is deliberately not a toolbar — while the lowest of them lands on the
+   0.78 the design draws. `opaque` removes the property, so the fallback `1` restores the shipped
+   values exactly and a reader who never touches texture has no declaration in the tree at all.
+
+   THESE SUPPRESSIONS ARE NEW, AND THEY HAD TO BE. The three existing accessibility blocks are scoped
+   to `.lib-sidebar`, `.lib-root`, `.reader-desk` and `.page-sheet`; none of them names any of the
+   eight. Those surfaces were never suppressed because at 90–98% they were never really translucent
+   and needed no protection. Driving them from a texture variable makes them translucent for the
+   first time, so the protection has to be extended or the preference would silently stop being
+   honoured. Same contract as everywhere else in this file: SUPPRESS the feature, never soften it —
+   a reader who asked the OS for high contrast, forced colours or reduced transparency has stated a
+   requirement, not a preference. The stored step is untouched; only the rendering stops.
+
+   THE PAGE IS DELIBERATELY ABSENT. Page translucency belongs to the book background and is floored
+   separately at 0.84; the design states that the page is outside texture's reach, and it is. */
+@media (forced-colors: active), (prefers-contrast: more), (prefers-reduced-transparency: reduce) {
+  :root[data-ui-texture] .page-chevron,
+  :root[data-ui-texture] .rc-bottom,
+  :root[data-ui-texture] .tts-pill,
+  :root[data-ui-texture] .tts-speed-menu,
+  :root[data-ui-texture] .tts-menu,
+  :root[data-ui-texture] .tts-menu-section,
+  :root[data-ui-texture] .tts-mini--kashida,
+  :root[data-ui-texture] .upd-latest {
+    background: var(--chrome-bg);
+  }
+}

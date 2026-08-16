@@ -36,7 +36,7 @@ import { CustomPaper } from "./CustomPaper";
 import { SardMini } from "./SardMini";
 import { bookFaceCss, miniOf } from "./mini";
 import { saveProfile, useProfiles } from "./store";
-import type { Profile, ProfileData } from "./model/profile";
+import { TEXTURE_STEPS, type Profile, type ProfileData } from "./model/profile";
 import { judgePalette } from "./model/guidance";
 
 type SectionId = "identity" | "theme" | "libbg" | "bookbg" | "fonts" | "marks";
@@ -747,6 +747,27 @@ function MarksSection({
           />
         ))}
       </div>
+
+      {/* INTERFACE TEXTURE — three named steps, never a percentage. The design is explicit, and an
+          enum cannot drift below the measured floor the way a stored number could. The page is
+          deliberately unreachable from here: its translucency lives in the book-background section,
+          against its own AAA floor. */}
+      <div className="pf-field-label">{t("profiles.marks.texture")}</div>
+      <div className="pf-texture" role="radiogroup">
+        {TEXTURE_STEPS.map((s) => (
+          <button
+            key={s}
+            role="radio"
+            aria-checked={draft.data.texture === s}
+            className={`pf-texture-step${draft.data.texture === s ? " on" : ""}`}
+            onClick={() => patch((d) => { d.texture = s; })}
+          >
+            <span className="pf-texture-swatch" data-step={s} aria-hidden />
+            {t(`profiles.texture.${s}`)}
+          </button>
+        ))}
+      </div>
+      <div className="pf-hint">{t("profiles.marks.textureHint")}</div>
 
       <div className="pf-field-label">{t("profiles.marks.readMarker")}</div>
       <div className="pf-rm-list">

@@ -333,3 +333,25 @@
 @media (prefers-reduced-transparency: reduce) {
   .pf-dialog-scrim { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(20, 14, 6, 0.62); }
 }
+
+/* ---- interface texture: three named steps ---- */
+.pf-texture { display: flex; gap: 6px; }
+.pf-texture-step {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 9px 6px; border-radius: 9px; border: 1px solid var(--chrome-border);
+  background: transparent; color: var(--text); font: 500 0.75rem var(--ui-font); cursor: pointer;
+}
+.pf-texture-step:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.pf-texture-step.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+/* The swatch shows the step itself: a chrome panel over a striped ground, so "solid" hides the
+   stripes entirely and "glass" lets them through. It is the control's own preview, not a colour. */
+.pf-texture-swatch {
+  width: 100%; height: 26px; border-radius: 6px; position: relative; overflow: hidden;
+  background-image: repeating-linear-gradient(
+    45deg, var(--accent) 0 5px, color-mix(in srgb, var(--accent) 30%, transparent) 5px 10px);
+}
+.pf-texture-swatch::after {
+  content: ""; position: absolute; inset: 0; background: var(--chrome-bg);
+}
+.pf-texture-swatch[data-step="light"]::after { background: color-mix(in srgb, var(--chrome-bg) 85%, transparent); }
+.pf-texture-swatch[data-step="glass"]::after { background: color-mix(in srgb, var(--chrome-bg) 70%, transparent); }

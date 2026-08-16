@@ -48,6 +48,7 @@ import { LibraryDesign } from "./design/LibraryDesign";
 import "../../styles/library-design.css";
 import { displayTitle, resolveBookMeta, titleIsGuess, titleProvenanceKey } from "../../lib/bookMeta"; // WP-3
 import { Inbox } from "./Inbox";
+import { routeDroppedPaths } from "../profiles/dropRoute";
 import { BookmarksShelf } from "./BookmarksShelf";
 import { PhotoGallery } from "../photo/PhotoGallery";
 
@@ -378,7 +379,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
           else if (p.type === "leave") setDrag(null);
           else if (p.type === "drop") {
             setDrag(null);
-            runImportRef.current(p.paths);
+            void routeDroppedPaths(p.paths, runImportRef.current);
           }
         });
       } catch {

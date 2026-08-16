@@ -355,3 +355,53 @@
 }
 .pf-texture-swatch[data-step="light"]::after { background: color-mix(in srgb, var(--chrome-bg) 85%, transparent); }
 .pf-texture-swatch[data-step="glass"]::after { background: color-mix(in srgb, var(--chrome-bg) 70%, transparent); }
+
+/* ================================================================================================
+   THE LIBRARY ACCESS POINT — one row in the sidebar foot.
+   ================================================================================================
+   The row sits above `.lib-settings-btn` inside the existing `.lib-sidefoot`, and the theme/language
+   caption beneath it is untouched. The menu opens UPWARD by the same idiom the foot's other menus
+   use (`top: auto; bottom: calc(100% + 8px)`), at the design's 256px, and it hangs off `.lib-menu`
+   so its ground, border, radius and shadow come from the same place every other sidebar menu gets
+   them rather than being restated here. */
+.pf-switch { position: relative; }
+.lib-sidefoot .pf-switch-btn {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 6px 9px; margin-bottom: 2px; border: none; border-radius: 7px;
+  background: transparent; color: var(--muted); cursor: pointer; text-align: start;
+}
+.lib-sidefoot .pf-switch-btn:hover { background: var(--lib-hover); color: var(--text); }
+.lib-sidefoot .pf-switch-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* The live miniature the design asks for, at the row's own scale. */
+.pf-switch-mini { flex: none; width: 34px; border-radius: 4px; overflow: hidden; box-shadow: 0 1px 3px rgba(20, 14, 6, 0.28); }
+.pf-switch-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.pf-switch-name {
+  font: 600 0.75rem/1.3 var(--ui-font); color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pf-switch-sub {
+  font: 400 0.625rem/1.3 var(--ui-font); color: var(--lib-faint, var(--muted));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* UPWARD, at the design's 256px. Higher specificity than `.lib-menu`'s own `top`, the same way
+   `.lib-sidefoot .lib-lang-menu` already overrides it for the language menu. */
+.lib-sidefoot .pf-switch-menu {
+  top: auto; bottom: calc(100% + 8px); inset-inline-start: 0; width: 256px; min-width: 256px;
+}
+/* The rows carry a miniature, so they need more room than `.lib-menu`'s plain text rows — and the
+   padding is stated here, and the selectors carry `.lib-sidefoot`, because the Library's own chrome
+   resets it: `.libd-chrome button:not(.lib-settings-btn) { padding: 0 }` outranks a bare `.pf-*`
+   rule and left these rows at 19px — the exact height of the miniature, with no breathing space at
+   all. Its specificity TIES this file's, and profiles.css loads first, so the tie goes to the reset —
+   hence the extra class rather than a bare one. The Library's reset is left alone. Measured. */
+.lib-sidefoot .pf-switch .pf-switch-menu button {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 7px 9px; border-radius: 7px; color: var(--text);
+  font: 500 0.8125rem var(--ui-font);
+}
+.lib-sidefoot .pf-switch .pf-switch-menu button:hover { background: var(--lib-hover, color-mix(in srgb, var(--text) 7%, transparent)); }
+.pf-switch-row-mini { flex: none; width: 30px; border-radius: 3px; overflow: hidden; }
+.pf-switch-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-switch-check { flex: none; color: var(--accent); }
+.pf-switch-count { flex: none; font: 400 0.6875rem var(--ui-font); color: var(--lib-faint, var(--muted)); }
+.pf-switch-rule { height: 1px; background: var(--chrome-border); margin: 4px 2px; }

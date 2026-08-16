@@ -9,6 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { CaseNode, ShelfNode } from "../../../lib/ipc";
 import { useI18n } from "../../../i18n";
+import { ProfileSwitcher } from "../../profiles/ProfileSwitcher";
 import { localeNum } from "../../../lib/format";
 import { Hoopoe } from "../Hoopoe";
 import { CaseManageMenu } from "./Menus";
@@ -828,6 +829,10 @@ export function Sidebar(props: SidebarProps) {
       )}
 
       <div className="lib-sidefoot" style={{ display: "block", paddingTop: 10, borderTop: "1px solid var(--brd)" }}>
+        {/* PROFILES: the active profile joins the theme and the language in the foot. One row,
+            above Settings; the caption below is left exactly as it is. Self-contained — it reads
+            its own store, so the Library learns nothing about profiles by mounting it. */}
+        <ProfileSwitcher onManage={props.onSettings} />
         <button
           className="lib-settings-btn"
           onClick={props.onSettings}

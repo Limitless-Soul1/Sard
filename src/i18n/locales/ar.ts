@@ -988,6 +988,7 @@ export const ar: Record<TKey, string> = {
   "profiles.import": "استيراد هيئة",
   "profiles.active": "نشِطة",
   "profiles.count": "{n} هيئات",
+  "profiles.manage": "إدارة الهيئات",
 
   "profiles.empty.title": "سَرْد الآن على هيئته الافتراضيّة",
   "profiles.empty.body":

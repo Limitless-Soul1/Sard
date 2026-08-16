@@ -1032,6 +1032,7 @@ export const en = {
   "profiles.import": "Import a profile",
   "profiles.active": "Active",
   "profiles.count": "{n} profiles",
+  "profiles.manage": "Manage profiles",
 
   // First run — the design draws absence rather than describing it: the default Sard as a
   // miniature, a title, one sentence and two real actions.

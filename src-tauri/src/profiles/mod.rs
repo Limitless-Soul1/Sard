@@ -137,9 +137,8 @@ pub fn delete(conn: &Connection, id: &str) -> rusqlite::Result<()> {
 ///
 /// FOR THE BACKGROUND COLLECTOR. Profiles are a third reference source alongside the
 /// `bg_library_id` / `bg_reading_id` settings keys, and the collector must be able to ask this
-/// WITHOUT parsing `data` — see the migration's note. Not yet wired: the collector gains this
-/// source when backgrounds enter profiles (stage 4), and wiring it before then would claim a
-/// protection that nothing exercises.
+/// WITHOUT parsing `data` — see the migration's note. Wired into `backgrounds::gc()`: a background
+/// a profile names survives collection, and is released the moment the profile stops naming it.
 pub fn referenced_backgrounds(conn: &Connection) -> rusqlite::Result<Vec<String>> {
     let mut stmt = conn.prepare(
         "SELECT bg_library FROM profiles WHERE bg_library IS NOT NULL \

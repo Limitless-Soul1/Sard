@@ -73,8 +73,15 @@ export function driftOf(p: Profile): SessionKey[] {
 }
 
 interface SessionState {
-  /** The keys the reader has explicitly chosen to keep for this session only. */
-  accepted: SessionKey[];
+  /**
+   * What the reader chose to keep for this session, as key -> the VALUE they accepted.
+   *
+   * THE VALUE, NOT JUST THE KEY. Accepting "keep this paper for now" is a decision about one paper,
+   * not a standing waiver on the paper slot: changing it again later is a new change and deserves
+   * the question again. Recording only the key would silence that second change for the rest of the
+   * session, which is exactly the "permanently accepted" behaviour this layer must not have.
+   */
+  accepted: Partial<Record<SessionKey, string>>;
   /** The drift currently awaiting an answer, or null when there is nothing to ask about. */
   pending: SessionKey[] | null;
   ask: (keys: SessionKey[]) => void;
@@ -84,13 +91,18 @@ interface SessionState {
 }
 
 export const useSession = create<SessionState>((set) => ({
-  accepted: [],
+  accepted: {},
   pending: null,
   ask: (keys) => set({ pending: keys.length ? keys : null }),
   dismiss: () => set({ pending: null }),
   // Accepting is the whole of "session only": nothing is written anywhere, and the key is remembered
   // so the reader is not asked about the same drift again this sitting.
   keepForSession: (keys) =>
-    set((s) => ({ accepted: [...new Set([...s.accepted, ...keys])], pending: null })),
-  reset: () => set({ accepted: [], pending: null }),
+    set((s) => {
+      const live = liveValues();
+      const accepted = { ...s.accepted };
+      for (const k of keys) accepted[k] = live[k];
+      return { accepted, pending: null };
+    }),
+  reset: () => set({ accepted: {}, pending: null }),
 }));

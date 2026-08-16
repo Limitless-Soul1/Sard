@@ -11,8 +11,9 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useI18n } from "../../i18n";
-import { captureCurrent, createProfile, saveProfile, useProfiles } from "./store";
-import { driftOf, useSession, type SessionKey } from "./session";
+import { applyProfile, captureCurrent, createProfile, saveProfile, useProfiles } from "./store";
+import { THEMES, isBuiltinThemeId } from "../../theme/themes";
+import { driftOf, liveValues, useSession, type SessionKey } from "./session";
 import type { Profile } from "./model/profile";
 
 /** What the reader changed, in their own words — the design names the value, not the key. */
@@ -39,6 +40,23 @@ export function UnsavedChange() {
   const [saved, setSaved] = useState<{ name: string; before: Profile } | null>(null);
 
   const active = profiles.find((p) => p.id === activeId) ?? null;
+
+  /**
+   * What was captured, with the drifted APP paper folded in.
+   *
+   * `captureCurrent` reads the BOOK theme, which is right for "how Sard looks now" but wrong here
+   * when the value that drifted was the app paper: a profile writes one id to both keys, so a
+   * profile made from a changed app paper must carry THAT paper, not the book one it never touched.
+   */
+  const capturedWithDrift = async () => {
+    const data = await captureCurrent();
+    const live = liveValues();
+    if (isBuiltinThemeId(live.theme_id)) {
+      const th = THEMES[live.theme_id];
+      data.theme = { ...data.theme, base: live.theme_id, dark: th.dark, colors: th.colors };
+    }
+    return data;
+  };
 
   // Frame 22 fades on its own — a confirmation that has to be dismissed is a second decision.
   useEffect(() => {
@@ -74,7 +92,7 @@ export function UnsavedChange() {
   const intoActive = async () => {
     setBusy(true);
     const before = structuredClone(active);
-    const data = await captureCurrent();
+    const data = await capturedWithDrift();
     // ONLY the four. Everything else the profile holds is left exactly as saved — this dialog is
     // about a change made outside the editor, not a re-capture of the whole look.
     const next: Profile = {
@@ -94,8 +112,12 @@ export function UnsavedChange() {
   // 2 · a new profile carrying this look; the original is untouched.
   const intoNew = async () => {
     setBusy(true);
-    const data = await captureCurrent();
-    await createProfile(t("profiles.unsaved.newName", { name: active.name ?? "" }), data, active.id);
+    const data = await capturedWithDrift();
+    const made = await createProfile(t("profiles.unsaved.newName", { name: active.name ?? "" }), data, active.id);
+    // AND IT BECOMES THE ONE IN USE. A profile made FROM this look is the look the reader is
+    // wearing; leaving the old one active would leave the same drift in place and ask again a
+    // second later, which reads as the question being ignored.
+    await applyProfile(made);
     setBusy(false);
     dismiss();
   };
@@ -153,7 +175,10 @@ export function useUnsavedChangeWatch(): void {
   useEffect(() => {
     if (!active) return;
     const check = () => {
-      const drift = driftOf(active).filter((k) => !accepted.includes(k));
+      // A key stays silent only while it still holds the value the reader accepted. Change it
+      // again and it is a new decision, so the question comes back.
+      const live = liveValues();
+      const drift = driftOf(active).filter((k) => accepted[k] !== live[k]);
       if (drift.length && !pending) ask(drift);
     };
     check();

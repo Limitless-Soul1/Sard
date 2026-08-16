@@ -159,18 +159,28 @@ export function SardMini({ p }: { p: MiniProfile }) {
           boxShadow: "0 8px 22px rgba(20,14,6,.30)",
           padding: "9% 8% 0",
           overflow: "hidden",
+          // The glyph is sized against THIS box, not the whole miniature. Sizing it against the
+          // miniature made it 17% of a width it does not occupy — the page is 36% of the frame — so
+          // at card size a 26px word sat in a 64px box and was clipped to its tail ("Evening" read
+          // as "ning"). Measured at 212px card and 560px stage.
+          containerType: "inline-size",
         })}
       >
         {/* the seal: the profile's own word, in its own face, on its own paper — a type specimen
             rather than clip art, which is what makes one profile recognisable beside another */}
         <div
+          // `dir="auto"` so a Latin name reads left-to-right on a page that itself never mirrors.
+          dir="auto"
           style={{
             fontFamily: p.face,
-            fontSize: "clamp(9px, 17cqw, 26px)",
+            fontSize: "clamp(7px, 22cqw, 26px)",
             lineHeight: 1,
             color: p.text,
             marginBottom: "8%",
             whiteSpace: "nowrap",
+            // A name longer than the page ends in an ellipsis rather than bleeding off the edge.
+            overflow: "hidden",
+            textOverflow: "ellipsis",
           }}
         >
           {p.glyph}

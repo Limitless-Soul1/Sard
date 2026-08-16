@@ -91,7 +91,8 @@
   display: block; width: 100%; text-align: start; padding: 7px 9px; border: 0; border-radius: 8px;
   background: transparent; color: var(--text); font: 500 0.8125rem var(--ui-font); cursor: pointer;
 }
-.pf-menu button:hover { background: color-mix(in srgb, var(--text) 7%, transparent); }
+.pf-menu button:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 7%, transparent); }
+.pf-menu button:disabled { color: var(--muted); opacity: 0.5; cursor: default; }
 .pf-menu button.danger { color: #9c3b3b; }
 .pf-menu-rule { height: 1px; background: var(--chrome-border); margin: 4px 2px; }
 
@@ -135,6 +136,17 @@
   color: var(--text); font: 500 0.8125rem var(--ui-font);
 }
 .pf-hint { font: 400 0.75rem/1.6 var(--ui-font); color: var(--lib-faint, var(--muted)); margin-top: 8px; }
+
+/* ---- the icon: the two kinds a profile can carry without the asset pipeline ---- */
+.pf-icon-kinds { display: flex; gap: 8px; }
+.pf-icon-kind {
+  flex: 1; display: flex; align-items: center; gap: 8px; padding: 7px 9px;
+  border-radius: 9px; border: 1px solid var(--chrome-border); background: transparent;
+  color: var(--text); font: 500 0.8125rem var(--ui-font); cursor: pointer; text-align: start;
+}
+.pf-icon-kind:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.pf-icon-kind.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.pf-icon-kind .pf-seal { width: 26px; height: 26px; font-size: 0.8125rem; }
 
 /* ---- "Start from": the design's three ---- */
 .pf-startfrom-list { display: flex; flex-direction: column; gap: 4px; }
@@ -221,7 +233,6 @@
 }
 .pf-stage-seg button.on { background: var(--paper-bg); color: var(--text); }
 .pf-stage-frame { width: min(560px, 100%); border-radius: 12px; overflow: hidden; box-shadow: 0 14px 34px rgba(20, 14, 6, 0.22); }
-.pf-stage-hint { font: 400 0.75rem var(--ui-font); color: var(--lib-faint, var(--muted)); text-align: center; max-width: 46ch; }
 
 /* `border-inline-END`, matching the design's own markup: the rail sits at the inline START — the
    right in Arabic, the left in English — and the stage takes the rest. That is what makes the

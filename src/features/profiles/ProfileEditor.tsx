@@ -80,6 +80,10 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
         </span>
         {dirty && <span className="pf-editor-dirty">{t("profiles.editor.unsaved")}</span>}
         <span className="pf-editor-spacer" />
+        {/* Sharing arrives with the package format; the design's own head carries it beside Save. */}
+        <button className="pf-btn" disabled>
+          {t("profiles.card.share")}
+        </button>
         <button className="pf-btn primary" disabled={!dirty} onClick={() => void save()}>
           {t("profiles.editor.save")}
         </button>
@@ -116,14 +120,14 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
             "libbg",
             t("profiles.section.libraryBg"),
             "—",
-            <div className="pf-deferred">{t("profiles.notPart.body")}</div>,
+            <div className="pf-deferred">{t("profiles.section.notReady")}</div>,
           )}
 
           {section(
             "bookbg",
             t("profiles.section.bookBg"),
             "—",
-            <div className="pf-deferred">{t("profiles.notPart.body")}</div>,
+            <div className="pf-deferred">{t("profiles.section.notReady")}</div>,
           )}
 
           {section(
@@ -237,6 +241,9 @@ function IdentitySection({
   setDraft: React.Dispatch<React.SetStateAction<Profile>>;
 }) {
   const { t } = useI18n();
+  const seal = (draft.name ?? "").trim().slice(0, 1) || "س";
+  const colour = draft.iconKind === "color";
+
   return (
     <>
       <label className="pf-field">
@@ -248,7 +255,73 @@ function IdentitySection({
           onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
         />
       </label>
-      <div className="pf-hint">{t("profiles.identity.sealHint")}</div>
+
+      {/* THE ICON. Two kinds, not three: 'image' needs the asset pipeline the backgrounds need, and
+          that arrives with them. The seal is not a placeholder for it — the design calls the initial
+          "a type specimen, not clip art", so it is a real choice a reader may prefer to keep.
+          The preview is drawn exactly as the card draws it, because it IS the card's seal. */}
+      <div className="pf-field">
+        <span className="pf-field-label">{t("profiles.identity.icon")}</span>
+        <div className="pf-icon-kinds" role="radiogroup">
+          <button
+            role="radio"
+            aria-checked={!colour}
+            className={`pf-icon-kind${!colour ? " on" : ""}`}
+            onClick={() => setDraft((d) => ({ ...d, iconKind: "seal", iconRef: null }))}
+          >
+            <span
+              className="pf-seal"
+              style={{
+                background: draft.data.theme.colors.paperBg,
+                color: draft.data.theme.colors.text,
+                fontFamily: bookFaceCss(draft.data.type.arabic),
+              }}
+            >
+              {seal}
+            </span>
+            {t("profiles.identity.iconSeal")}
+          </button>
+          <button
+            role="radio"
+            aria-checked={colour}
+            className={`pf-icon-kind${colour ? " on" : ""}`}
+            onClick={() =>
+              setDraft((d) => ({
+                ...d,
+                iconKind: "color",
+                iconRef: d.iconRef ?? d.data.theme.colors.accent,
+              }))
+            }
+          >
+            <span className="pf-seal" style={{ background: draft.data.theme.colors.paperBg }}>
+              <span
+                className="pf-seal-dot"
+                style={{ background: draft.iconRef ?? draft.data.theme.colors.accent }}
+              />
+            </span>
+            {t("profiles.identity.iconColour")}
+          </button>
+        </div>
+
+        {colour && (
+          <div className="pf-bm-colors">
+            {BOOKMARK_COLORS.map((c) => (
+              <button
+                key={c.key}
+                className={`pf-bm-color${
+                  (draft.iconRef ?? "").toLowerCase() === c.hex.toLowerCase() ? " on" : ""
+                }`}
+                style={{ background: c.hex }}
+                onClick={() => setDraft((d) => ({ ...d, iconRef: c.hex }))}
+                title={c.name}
+                aria-label={c.name}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+
+      {!colour && <div className="pf-hint">{t("profiles.identity.sealHint")}</div>}
     </>
   );
 }

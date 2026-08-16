@@ -124,6 +124,12 @@ export function ProfileCard({
           <button role="menuitem" onClick={() => { setMenu(false); actions.onDuplicate(); }}>
             {t("profiles.card.duplicate")}
           </button>
+          {/* Sharing arrives with the package format. Shown disabled rather than hidden, for the
+              same reason the Import button is: the design's own menu carries five entries, and a
+              control that appears later moves the furniture under the reader. */}
+          <button role="menuitem" disabled>
+            {t("profiles.card.share")}
+          </button>
           <div className="pf-menu-rule" />
           <button
             role="menuitem"

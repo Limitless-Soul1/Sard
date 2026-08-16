@@ -43,7 +43,9 @@ type Dialog =
   | { kind: "share"; profile: Profile }
   | { kind: "import" }
   | { kind: "delete"; profile: Profile }
-  | { kind: "edit"; profile: Profile };
+  // `fresh` marks a profile that has just been made, so the editor opens on its identity
+  // rather than on its colours — the name is the unanswered question.
+  | { kind: "edit"; profile: Profile; fresh?: boolean };
 
 export function ProfilesSection() {
   const { t, lang } = useI18n();
@@ -65,6 +67,11 @@ export function ProfilesSection() {
   const iconUrlOf = (p: Profile): string | null => {
     if (p.iconKind !== "image" || !p.iconRef) return null;
     const row = bgRows.find((r) => r.id === p.iconRef);
+    return row ? bgSrcUrl(row) : null;
+  };
+  /** A card's own library image, so the miniature on it is the picture the profile actually makes. */
+  const libUrlOf = (p: Profile): string | null => {
+    const row = p.data.bg.library.ref ? bgRows.find((r) => r.id === p.data.bg.library.ref) : null;
     return row ? bgSrcUrl(row) : null;
   };
 
@@ -91,7 +98,7 @@ export function ProfilesSection() {
       }
       const p = await createProfile(name, data, start === "current" ? null : base);
       await applyProfile(p);
-      setDialog({ kind: "edit", profile: p });
+      setDialog({ kind: "edit", profile: p, fresh: true });
     } finally {
       setBusy(false);
     }
@@ -100,7 +107,7 @@ export function ProfilesSection() {
   const duplicate = async (p: Profile) => {
     const name = t("profiles.duplicateSuffix", { name: p.name ?? "—" });
     const copy = await duplicateProfile(p, name);
-    setDialog({ kind: "edit", profile: copy });
+    setDialog({ kind: "edit", profile: copy, fresh: true });
   };
 
   const remove = async (p: Profile) => {
@@ -139,6 +146,7 @@ export function ProfilesSection() {
               active={p.id === activeId}
               themeName={themeNameOf(p)}
               iconUrl={iconUrlOf(p)}
+              libUrl={libUrlOf(p)}
               actions={{
                 onUse: () => void applyProfile(p),
                 onEdit: () => setDialog({ kind: "edit", profile: p }),
@@ -173,7 +181,11 @@ export function ProfilesSection() {
       )}
 
       {dialog.kind === "edit" && (
-        <ProfileEditor profile={dialog.profile} onClose={() => setDialog({ kind: "none" })} />
+        <ProfileEditor
+          profile={dialog.profile}
+          fresh={dialog.fresh}
+          onClose={() => setDialog({ kind: "none" })}
+        />
       )}
     </>
   );

@@ -1053,7 +1053,7 @@ export const ar: Record<TKey, string> = {
   "profiles.identity.icon": "الرمز",
   "profiles.identity.iconSeal": "أوّل الاسم",
   "profiles.identity.iconColour": "لون",
-  "profiles.identity.iconImage": "صورة",
+  "profiles.identity.iconImage": "＋ اختيار صورة",
   "profiles.identity.sealHint":
     "من غير صورة، يُرسَم أوّل حرفٍ من الاسم بخطّ الهيئة نفسه وعلى ورقها.",
 

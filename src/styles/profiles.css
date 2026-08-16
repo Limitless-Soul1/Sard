@@ -87,8 +87,13 @@
 /* 256px, the design's own width — and deliberately allowed to be WIDER than the card it hangs off,
    which is why there is no max-width clamp. Clamping it to the card gave 199px and quietly lost the
    measurement. `.pf-card` has no `overflow: hidden`, so it can overhang. */
+/* FIXED, AND PORTALLED OUT OF THE CARD. Absolute positioning put it inside `.gs-body`, which
+   scrolls, and an ancestor's `overflow` clips a descendant no matter what its `z-index` says — the
+   menu on the fourth card was measured running 130px past the pane and disappearing entirely.
+   z-index 50 sits ABOVE the settings window (41) and deliberately BELOW the dialog scrim (60), so a
+   modal still covers the menu rather than the other way round. */
 .pf-menu {
-  position: absolute; inset-block-start: calc(100% - 6px); inset-inline-end: 6px; z-index: 6;
+  position: fixed; z-index: 50;
   width: 256px; padding: 9px; border-radius: 13px;
   background: var(--chrome-bg); border: 1px solid var(--chrome-border);
   box-shadow: 0 14px 34px rgba(20, 14, 6, 0.3); display: flex; flex-direction: column; gap: 2px;
@@ -385,6 +390,14 @@
   padding: 1.625em; display: flex; align-items: center; justify-content: center;
   aspect-ratio: 16 / 10;
 }
+/* The image behind the page, and the theme-coloured scrim over it — the two layers the real reading
+   surface puts between the desk and the sheet. Inset so a blur samples beyond the frame instead of
+   fading to nothing at the edges, exactly as the miniature does it. */
+.pf-book-bg {
+  position: absolute; inset: -8%; background-size: cover; background-position: center;
+  border-radius: inherit;
+}
+.pf-book-scrim { position: absolute; inset: 0; }
 .pf-book-sheet {
   position: relative; width: 100%; height: 100%; border-radius: 0.25em; padding: 1.375em 1.5em;
   box-shadow: 0 0.5em 1.375em rgba(20, 14, 6, 0.3); overflow: hidden;

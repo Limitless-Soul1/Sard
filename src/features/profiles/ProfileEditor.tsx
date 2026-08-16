@@ -28,6 +28,7 @@ import {
   PAGE_OPACITY_MIN,
   bgSrcUrl,
   presenceMaxFor,
+  scrimAlpha,
   type BgSurface,
 } from "../../lib/background";
 import { localeDigits } from "../../lib/format";
@@ -85,12 +86,29 @@ function chapterSlice(p: Profile, id: ChapterId): unknown {
   }
 }
 
-export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose: () => void }) {
+export function ProfileEditor({
+  profile,
+  fresh = false,
+  onClose,
+}: {
+  profile: Profile;
+  /**
+   * This profile has just been made, so nothing about it has been answered yet.
+   *
+   * WHICH CHAPTER OPENS IS NOT ONE RULE. The design's own state opens on `paper` — that is the
+   * chapter a reader returns to when adjusting a profile that already exists, and it is what the
+   * accordion did before the rail. But a profile created seconds ago has an untouched name, and
+   * opening on its colours asks the second question first. So the flow decides: `create` and
+   * `duplicate` pass this, plain editing does not.
+   */
+  fresh?: boolean;
+  onClose: () => void;
+}) {
   const { t, dir } = useI18n();
   const live = useProfiles((s) => s.profiles.find((p) => p.id === profile.id)) ?? profile;
 
   const [draft, setDraft] = useState<Profile>(() => structuredClone(live));
-  const [chapter, setChapter] = useState<ChapterId>("paper");
+  const [chapter, setChapter] = useState<ChapterId>(fresh ? "identity" : "paper");
   const [face, setFace] = useState<"library" | "book">("library");
   const [share, setShare] = useState(false);
   // The managed rows, so a ref can be shown as a thumbnail and a name. Loaded once; anything the
@@ -125,6 +143,17 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
     : t("profiles.theme.custom");
 
   const bgName = (ref: string | null) => bgRows.find((r) => r.id === ref)?.source_name ?? null;
+
+  // THE DRAFT'S OWN IMAGES, resolved for the specimens. Taken from the DRAFT rather than the saved
+  // profile, which is what makes the preview answer while a control is still moving.
+  const urlOf = (ref: string | null): string | null => {
+    const row = ref ? bgRows.find((r) => r.id === ref) : null;
+    return row ? bgSrcUrl(row) : null;
+  };
+  const libUrl = urlOf(draft.data.bg.library.ref);
+  const bookUrl = urlOf(
+    draft.data.bg.reading.sameAsLibrary ? draft.data.bg.library.ref : draft.data.bg.reading.ref,
+  );
 
   /** Each chapter's current answer, under its name in the rail. */
   const chapterValue = (id: ChapterId): string => {
@@ -262,7 +291,11 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
                   which is what lets the specimen grow with the window. */}
               <div className="pf-stage-area">
                 <div className="pf-stage-frame">
-                  {face === "library" ? <SardMini p={miniOf(draft)} /> : <BookStage profile={draft} />}
+                  {face === "library" ? (
+                    <SardMini p={miniOf(draft, libUrl)} />
+                  ) : (
+                    <BookStage profile={draft} bgUrl={bookUrl} />
+                  )}
                 </div>
               </div>
               {/* WHAT THIS CHAPTER GOVERNS, named. The design frames the exact region with a
@@ -298,12 +331,43 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
  * Both scripts, always — a profile authored by a Latin reader still ships an Arabic face, and the
  * only way to see that is to show it.
  */
-function BookStage({ profile }: { profile: Profile }) {
+function BookStage({ profile, bgUrl }: { profile: Profile; bgUrl?: string | null }) {
   const c = profile.data.theme.colors;
   const dark = profile.data.theme.dark;
+  const rd = profile.data.bg.reading.params;
+  // THE PAGE OVER THE IMAGE — the relationship the background chapter exists to let a reader
+  // balance, and which this stage could not show at all: it drew a solid desk colour and no image,
+  // so page translucency had nothing to be translucent against.
+  //
+  // Both expressions are production's: `scrimAlpha(..., "reading")` is the reading surface's own
+  // presence→scrim function, and the page is composited exactly as `global.css` composites it —
+  // `color-mix(paper <opacity>, transparent)` on the BACKGROUND only, so the text stays fully
+  // opaque while the paper thins.
+  const page = bgUrl
+    ? `color-mix(in srgb, ${c.paperBg} ${(rd.pageOpacity * 100).toFixed(1)}%, transparent)`
+    : c.paperBg;
   return (
     <div className="pf-book" style={{ background: c.surfaceBg }}>
-      <div className="pf-book-sheet" style={{ background: c.paperBg, color: c.text }}>
+      {bgUrl && (
+        <>
+          <span
+            className="pf-book-bg"
+            style={{
+              backgroundImage: `url("${bgUrl}")`,
+              backgroundPosition: `${rd.focalX}% ${rd.focalY}%`,
+              filter: `blur(${rd.blur}px)`,
+              transform: `scaleX(${rd.flip ? -1 : 1})`,
+            }}
+            aria-hidden
+          />
+          <span
+            className="pf-book-scrim"
+            style={{ background: c.surfaceBg, opacity: scrimAlpha(rd.presence, "reading") }}
+            aria-hidden
+          />
+        </>
+      )}
+      <div className="pf-book-sheet" style={{ background: page, color: c.text }}>
         <div
           className="pf-book-title"
           style={{ fontFamily: bookFaceCss(profile.data.type.arabic) }}

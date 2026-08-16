@@ -3,10 +3,11 @@
 // One place, because the card, the first-run state, the switcher and the editor's stage all draw
 // the same picture and must never disagree about what a profile looks like.
 
+import { scrimAlpha } from "../../lib/background";
 import { FONT_CATALOGUE } from "../../lib/fonts";
 import type { Theme } from "../../theme/tokens";
 import type { MiniProfile } from "./SardMini";
-import type { Profile } from "./model/profile";
+import { TEXTURE_ALPHA, type Profile } from "./model/profile";
 
 /**
  * A book-font key → the CSS family that renders it.
@@ -31,9 +32,25 @@ export const miniGlyph = (name: string | null): string => {
   return n ? n.slice(0, 12) : "سَرْد";
 };
 
-/** The miniature for a saved profile. */
-export function miniOf(p: Profile): MiniProfile {
+/**
+ * The miniature for a saved profile.
+ *
+ * `bgUrl` is the profile's LIBRARY image, already resolved to a URL by whoever holds the managed
+ * rows — the miniature is a pure component and does not go looking for files.
+ *
+ * THE BACKGROUND AND THE TEXTURE USED TO BE STUBBED OUT HERE. The note said "backgrounds enter a
+ * profile in stage 4; until then a profile shows its own colours" — and they did enter, but this
+ * never caught up, so `SardMini` was handed `bgImg: "none"` and `trans: 1` however the profile was
+ * actually configured. The miniature has carried these four props since it was written; it was the
+ * caller that had nothing to put in them. Measured before the fix: zero elements with a background
+ * image anywhere in the library specimen, whatever the profile said.
+ *
+ * The numbers are PRODUCTION'S OWN. `scrimAlpha` is the function the real library surface uses to
+ * turn a presence slider into a scrim, so the miniature and the thing it depicts cannot drift.
+ */
+export function miniOf(p: Profile, bgUrl?: string | null): MiniProfile {
   const c = p.data.theme.colors;
+  const lib = p.data.bg.library.params;
   return {
     paper: c.paperBg,
     desk: c.surfaceBg,
@@ -43,13 +60,13 @@ export function miniOf(p: Profile): MiniProfile {
     muted: c.muted,
     accent: c.accent,
     ink: p.data.theme.bookmark ?? c.accent,
-    // Backgrounds enter a profile in stage 4; until then a profile shows its own colours, and
-    // showing an image it does not yet carry would be a picture of something that is not true.
-    bgImg: "none",
-    bgOn: 0,
-    scrim: 0,
-    blur: "0px",
-    trans: 1,
+    bgImg: bgUrl ? `url("${bgUrl}")` : "none",
+    // The image is drawn in full and the SCRIM is what the presence slider moves — the same
+    // division of labour the real surface uses, rather than a second interpretation of "presence".
+    bgOn: bgUrl ? 1 : 0,
+    scrim: bgUrl ? scrimAlpha(lib.presence, "library") : 0,
+    blur: `${bgUrl ? lib.blur : 0}px`,
+    trans: TEXTURE_ALPHA[p.data.texture],
     face: bookFaceCss(p.data.type.arabic),
     glyph: miniGlyph(p.name),
   };

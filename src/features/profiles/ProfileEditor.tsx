@@ -81,7 +81,7 @@ function chapterSlice(p: Profile, id: ChapterId): unknown {
 }
 
 export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose: () => void }) {
-  const { t } = useI18n();
+  const { t, dir } = useI18n();
   const live = useProfiles((s) => s.profiles.find((p) => p.id === profile.id)) ?? profile;
 
   const [draft, setDraft] = useState<Profile>(() => structuredClone(live));
@@ -237,6 +237,8 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
           onSelect={openChapter}
           value={chapterValue}
           dirty={chapterDirty}
+          // The frame is Arabic and stays RTL; these controls are translated, so they follow the app.
+          bodyDir={dir}
           preview={(focus: Focus) => (
             /* THE PREVIEW — what you see here is what you will see in Sard. */
             <div className="pf-stage">

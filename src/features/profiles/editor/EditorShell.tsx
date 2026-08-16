@@ -7,6 +7,12 @@
 //
 // ADDITIVE ON PURPOSE. This is the shell only. Chapter bodies still live in the existing editor and
 // move in one at a time, so every commit in between builds and the old editor keeps working.
+//
+// WHY THE SHELL IS `rtl` BUT THE BODY IS NOT. The chapter names and questions are the design's
+// Arabic verbatim (see `chapters.ts`), so the frame they sit in has to be RTL whatever the interface
+// language is. The controls inside a chapter are not: they are the app's own translated strings, and
+// laying English out RTL is simply wrong. So the direction is set twice — `rtl` on the frame, the
+// app's own direction on the body — rather than once at the top where it would catch both.
 import type { ReactNode } from "react";
 
 import { CHAPTERS, FOCUS, type ChapterId, type Focus } from "./chapters";
@@ -17,6 +23,7 @@ export function EditorShell({
   value,
   dirty,
   children,
+  bodyDir,
   preview,
   railFooter,
 }: {
@@ -28,6 +35,14 @@ export function EditorShell({
   dirty: (id: ChapterId) => boolean;
   /** The open chapter's controls. */
   children: ReactNode;
+  /**
+   * The interface direction, for the chapter body ONLY.
+   *
+   * The frame stays `rtl` because its words are Arabic; the controls inside it are translated, so
+   * they follow the app. Passed in rather than read from i18n here, which keeps the shell a pure
+   * layout component that renders the same way wherever it is mounted.
+   */
+  bodyDir: "ltr" | "rtl";
   /** The live faces. Receives the focus so it can draw the hairline frame. */
   preview: (focus: Focus) => ReactNode;
   /**
@@ -65,7 +80,7 @@ export function EditorShell({
       <section className="pfe-chapter" aria-labelledby="pfe-ch-title">
         <h2 className="pfe-ch-title" id="pfe-ch-title">{open.ar}</h2>
         <p className="pfe-ch-q">{open.q}</p>
-        <div className="pfe-ch-body">{children}</div>
+        <div className="pfe-ch-body" dir={bodyDir}>{children}</div>
       </section>
 
       <aside className="pfe-preview">{preview(FOCUS[open.id])}</aside>

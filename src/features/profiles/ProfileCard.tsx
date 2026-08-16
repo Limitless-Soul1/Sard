@@ -23,6 +23,7 @@ export interface CardActions {
   onUse: () => void;
   onEdit: () => void;
   onDuplicate: () => void;
+  onShare: () => void;
   onDelete: () => void;
 }
 
@@ -127,7 +128,7 @@ export function ProfileCard({
           {/* Sharing arrives with the package format. Shown disabled rather than hidden, for the
               same reason the Import button is: the design's own menu carries five entries, and a
               control that appears later moves the furniture under the reader. */}
-          <button role="menuitem" disabled>
+          <button role="menuitem" onClick={() => { setMenu(false); actions.onShare(); }}>
             {t("profiles.card.share")}
           </button>
           <div className="pf-menu-rule" />

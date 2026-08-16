@@ -1189,6 +1189,34 @@ export const en = {
   "profiles.saved.applied": "Saved “{name}” and applied it",
   "profiles.saved.undo": "Undo",
 
+  // FRAME 10 / 12 — the share sheet. Settings only: no asset rows, and no licensing row, because
+  // Sard does not determine redistribution rights.
+  "profiles.share.title": "Share “{name}”",
+  "profiles.share.sub": "Packed into one file you can send however you like.",
+  "profiles.share.row.paper": "Paper and colours",
+  "profiles.share.row.paperNote": "The whole look — the sixteen, or one of your own",
+  "profiles.share.row.fonts": "Fonts",
+  "profiles.share.row.fontsNote": "Their names. Sard reads with what the recipient has installed",
+  "profiles.share.row.marks": "Marks and texture",
+  "profiles.share.row.marksNote": "The page mark, the finished-chapter mark, the interface texture",
+  "profiles.share.always": "Always",
+  "profiles.share.size": "Approximate size",
+  "profiles.share.kb": "{n} KB",
+  "profiles.share.export": "Export the package",
+  "profiles.share.packing": "Packing…",
+  "profiles.share.packed": "Packed “{name}”",
+  "profiles.share.sendIt":
+    "Send it as you would any file. Whoever receives it opens it in Sard and it becomes theirs — to edit however they like.",
+  "profiles.share.copyPath": "Copy path",
+  "profiles.share.copied": "Copied",
+  "profiles.share.close": "Done",
+  "pkg.err.unreadable": "Sard could not read this package.",
+  "pkg.err.notSard": "This file is not a Sard profile.",
+  "pkg.err.newer": "This package was made by a newer Sard.",
+  "pkg.err.noData": "This package carries no profile.",
+  "pkg.err.tooLarge": "This package is too large to be a profile.",
+  "pkg.err.carriesReadingSettings": "This package tries to carry reading settings, which a profile never does.",
+
   "profiles.notPart.title": "Not part of a profile",
   "profiles.notPart.body":
     "Line spacing, page width, margins, diacritics, alignment and size are your reading settings. They stay yours in every profile.",

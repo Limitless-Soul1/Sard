@@ -21,6 +21,7 @@ type StartFrom = "current" | "theme" | "custom";
 import { SardMini } from "./SardMini";
 import { miniOfTheme } from "./mini";
 import { ProfileCard } from "./ProfileCard";
+import { ShareSheet } from "./ShareSheet";
 import { ProfileEditor } from "./ProfileEditor";
 import {
   applyProfile,
@@ -35,6 +36,7 @@ import type { Profile } from "./model/profile";
 type Dialog =
   | { kind: "none" }
   | { kind: "create" }
+  | { kind: "share"; profile: Profile }
   | { kind: "delete"; profile: Profile }
   | { kind: "edit"; profile: Profile };
 
@@ -119,6 +121,7 @@ export function ProfilesSection() {
                 onUse: () => void applyProfile(p),
                 onEdit: () => setDialog({ kind: "edit", profile: p }),
                 onDuplicate: () => void duplicate(p),
+                onShare: () => setDialog({ kind: "share", profile: p }),
                 onDelete: () => setDialog({ kind: "delete", profile: p }),
               }}
             />
@@ -136,6 +139,10 @@ export function ProfilesSection() {
           onConfirm={() => void remove(dialog.profile)}
         />
       )}
+      {dialog.kind === "share" && (
+        <ShareSheet profile={dialog.profile} onClose={() => setDialog({ kind: "none" })} />
+      )}
+
       {dialog.kind === "edit" && (
         <ProfileEditor profile={dialog.profile} onClose={() => setDialog({ kind: "none" })} />
       )}

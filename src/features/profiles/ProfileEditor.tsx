@@ -33,6 +33,7 @@ import { ARABIC_FONTS, LATIN_FONTS } from "../../reader-engine/injectedCss";
 import { THEMES, THEME_ORDER } from "../../theme/themes";
 import { BookmarkShape } from "../reader/BookmarkShape";
 import { CustomPaper } from "./CustomPaper";
+import { ShareSheet } from "./ShareSheet";
 import { SardMini } from "./SardMini";
 import { bookFaceCss, miniOf } from "./mini";
 import { saveProfile, useProfiles } from "./store";
@@ -48,6 +49,7 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
   const [draft, setDraft] = useState<Profile>(() => structuredClone(live));
   const [open, setOpen] = useState<SectionId>("theme");
   const [face, setFace] = useState<"library" | "book">("library");
+  const [share, setShare] = useState(false);
   // The managed rows, so a ref can be shown as a thumbnail and a name. Loaded once; anything the
   // editor imports is appended, so a freshly chosen image renders without a round trip.
   const [bgRows, setBgRows] = useState<BackgroundRow[]>([]);
@@ -92,6 +94,8 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
   // to the 960x660 settings window and clipped by its `overflow: hidden`. Measured in the running
   // app before this was added.
   return createPortal(
+    <>
+    {share && <ShareSheet profile={live} onClose={() => setShare(false)} />}
     <div className="pf-editor" role="dialog" aria-modal="true">
       <div className="pf-editor-head">
         <span className="pf-editor-title" dir="auto">
@@ -99,8 +103,11 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
         </span>
         {dirty && <span className="pf-editor-dirty">{t("profiles.editor.unsaved")}</span>}
         <span className="pf-editor-spacer" />
-        {/* Sharing arrives with the package format; the design's own head carries it beside Save. */}
-        <button className="pf-btn" disabled>
+        {/* The design's own head carries sharing beside Save. Disabled while the draft is dirty:
+            a package is made from the SAVED profile, and exporting one that does not match what is
+            on screen would send something the reader never saw. */}
+        <button className="pf-btn" disabled={dirty} title={dirty ? t("profiles.editor.unsaved") : undefined}
+          onClick={() => setShare(true)}>
           {t("profiles.card.share")}
         </button>
         <button className="pf-btn primary" disabled={!dirty} onClick={() => void save()}>
@@ -199,7 +206,8 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
           </div>
         </div>
       </div>
-    </div>,
+    </div>
+    </>,
     document.body,
   );
 }

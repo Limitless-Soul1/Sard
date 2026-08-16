@@ -433,3 +433,32 @@
   border: 0; background: transparent; color: var(--accent);
   font: 600 0.8125rem var(--ui-font); cursor: pointer; padding: 2px 4px;
 }
+
+/* ---- frame 10 / 12: the share sheet ---- */
+.pf-share-rows { display: flex; flex-direction: column; gap: 2px; margin-bottom: 14px; }
+.pf-share-row {
+  display: flex; align-items: center; gap: 10px; padding: 9px 2px;
+  border-bottom: 1px solid var(--chrome-border);
+}
+.pf-share-row:last-child { border-bottom: 0; }
+.pf-share-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pf-share-row-name { font: 600 0.8125rem var(--ui-font); color: var(--text); }
+.pf-share-row-note { font: 400 0.6875rem/1.5 var(--ui-font); color: var(--lib-faint, var(--muted)); }
+/* No switch: a profile without its paper is not a profile, and nothing here can be excluded. */
+.pf-share-always {
+  flex: none; padding: 2px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--muted); font: 600 0.625rem var(--ui-font);
+}
+.pf-share-size {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding-top: 10px; border-top: 1px solid var(--chrome-border);
+  font: 400 0.75rem var(--ui-font); color: var(--muted);
+}
+.pf-share-size-v { font: 600 0.875rem var(--ui-font); color: var(--text); }
+.pf-share-file {
+  margin: 4px 0 12px; padding: 8px 10px; border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  font: 500 0.75rem/1.5 var(--ui-font); color: var(--text);
+  overflow-wrap: anywhere;
+}

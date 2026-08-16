@@ -84,6 +84,18 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "book_compat",
         include_str!("migrations_sql/0015_book_compat.sql"),
     ),
+    // 16 is the RESILIENCE-1 / WP-2 *code* migration (run_compat_backfill, below) — not a SQL
+    // file — which is why the library structure lands on 17.
+    (
+        17,
+        "library_cases",
+        include_str!("migrations_sql/0017_library_cases.sql"),
+    ),
+    (
+        18,
+        "shelf_ink",
+        include_str!("migrations_sql/0018_shelf_ink.sql"),
+    ),
 ];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.

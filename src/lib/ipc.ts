@@ -181,6 +181,16 @@ export interface BookRow {
   toc_degenerate: number | null;
   /** WP-6: 1 when the spine is many tiny sections (the book defaults to scrolled flow). */
   spine_fragmented: number | null;
+  /** Imported file size — the Spines view's only measure of how thick a book is. */
+  size_bytes: number | null;
+  /** Book Details' jacket controls. Null = Sard's own choice for this book. */
+  cover_paint: string | null;
+  /** "file" | "typeset" */
+  cover_mode: string | null;
+  /** "typeset" | "none" */
+  spine_mode: string | null;
+  /** A chosen spine image, absolute, or null. */
+  spine_image: string | null;
 }
 
 export type SortKey = "title" | "author" | "format" | "date_read" | "date_added";
@@ -229,6 +239,114 @@ export const collectionRemoveBook = (collectionId: string, bookId: string): Prom
 export const collectionsForBook = (bookId: string): Promise<string[]> =>
   invoke<string[]>("collections_for_book", { bookId });
 
+// ---------------------------------------------------------------------------
+// Library structure — cases above shelves, categories inside them, hand order.
+// Layered on the SAME `collections`/`book_collections` tables the calls above use, so a
+// shelf read here is the shelf read there. Every write returns the refreshed tree, which
+// is why none of these need a follow-up read.
+// ---------------------------------------------------------------------------
+
+/** How a shelf orders what it shows. `hand` = the reader's own arrangement. */
+export type ShelfOrder = "hand" | "title" | "author" | "added" | "recent" | "progress";
+/** A shelf that fills itself from the library instead of holding membership. */
+export type ShelfRule = "reading" | "finished" | "added";
+
+export interface CategoryNode {
+  id: string;
+  name: string;
+  count: number;
+}
+
+export interface ShelfNode {
+  id: string;
+  name: string;
+  /** The shelf's own colour; null = fall back to its case's. */
+  ink: string | null;
+  case_id: string | null;
+  order_rule: ShelfOrder;
+  /** Non-null = self-filling; placing a book on it is refused by the backend. */
+  auto_rule: ShelfRule | null;
+  collapsed: boolean;
+  count: number;
+  categories: CategoryNode[];
+}
+
+export interface CaseNode {
+  id: string;
+  name: string;
+  ink: string | null;
+  /** Distinct books across the case's shelves — not the sum of shelf counts. */
+  count: number;
+  shelves: ShelfNode[];
+}
+
+export interface LibraryTree {
+  cases: CaseNode[];
+  /** Shelves belonging to no case. */
+  loose: ShelfNode[];
+}
+
+/** One membership row in the shelf's own order. */
+export interface ShelfItem {
+  book_id: string;
+  position: number;
+  category_id: string | null;
+}
+
+export const libraryTree = (): Promise<LibraryTree> => invoke<LibraryTree>("library_tree");
+export const libraryShelfItems = (collectionId: string): Promise<ShelfItem[]> =>
+  invoke<ShelfItem[]>("library_shelf_items", { collectionId });
+
+export const caseCreate = (name: string, ink?: string | null): Promise<LibraryTree> =>
+  invoke<LibraryTree>("case_create", { name, ink: ink ?? null });
+export const caseRename = (id: string, name: string): Promise<LibraryTree> =>
+  invoke<LibraryTree>("case_rename", { id, name });
+/** Deleting a case frees its shelves rather than deleting them. */
+export const caseDelete = (id: string): Promise<LibraryTree> =>
+  invoke<LibraryTree>("case_delete", { id });
+export const caseReorder = (id: string, toIndex: number): Promise<LibraryTree> =>
+  invoke<LibraryTree>("case_reorder", { id, toIndex });
+
+export const shelfCreate = (
+  name: string,
+  caseId?: string | null,
+  autoRule?: ShelfRule | null,
+): Promise<LibraryTree> =>
+  invoke<LibraryTree>("shelf_create", { name, caseId: caseId ?? null, autoRule: autoRule ?? null });
+export const shelfSetCase = (id: string, caseId: string | null): Promise<LibraryTree> =>
+  invoke<LibraryTree>("shelf_set_case", { id, caseId });
+export const shelfSetOrder = (id: string, orderRule: ShelfOrder): Promise<LibraryTree> =>
+  invoke<LibraryTree>("shelf_set_order", { id, orderRule });
+export const shelfSetCollapsed = (id: string, collapsed: boolean): Promise<LibraryTree> =>
+  invoke<LibraryTree>("shelf_set_collapsed", { id, collapsed });
+/** Place a book at `index` on a shelf, optionally inside one of its categories. */
+export const shelfPlaceBook = (
+  collectionId: string,
+  bookId: string,
+  categoryId: string | null,
+  index: number,
+): Promise<LibraryTree> =>
+  invoke<LibraryTree>("shelf_place_book", { collectionId, bookId, categoryId, index });
+
+/** A shelf's own colour. `null` clears it, so it borrows its case's again. */
+export const shelfSetInk = (id: string, ink: string | null): Promise<LibraryTree> =>
+  invoke<LibraryTree>("shelf_set_ink", { id, ink });
+export const caseSetInk = (id: string, ink: string | null): Promise<LibraryTree> =>
+  invoke<LibraryTree>("case_set_ink", { id, ink });
+/** Move a shelf among its siblings — the shelves of its case, or the loose ones. */
+export const shelfReorder = (id: string, toIndex: number): Promise<LibraryTree> =>
+  invoke<LibraryTree>("shelf_reorder", { id, toIndex });
+export const categoryReorder = (id: string, toIndex: number): Promise<LibraryTree> =>
+  invoke<LibraryTree>("category_reorder", { id, toIndex });
+
+export const categoryCreate = (collectionId: string, name: string): Promise<LibraryTree> =>
+  invoke<LibraryTree>("category_create", { collectionId, name });
+export const categoryRename = (id: string, name: string): Promise<LibraryTree> =>
+  invoke<LibraryTree>("category_rename", { id, name });
+/** Deleting a category ungroups its books; they stay on the shelf. */
+export const categoryDelete = (id: string): Promise<LibraryTree> =>
+  invoke<LibraryTree>("category_delete", { id });
+
 export type ImportStatus = "imported" | "duplicate" | "unsupported" | "error";
 
 export interface ImportResult {
@@ -263,6 +381,9 @@ export interface BookPatch {
   language?: string;
   dir?: string;
   coverFit?: string; // "crop" | "fit" | "" (clear)
+  coverPaint?: string; // "#RRGGBB" | "" (clear — back to the colour derived from the title)
+  coverMode?: string; // "file" | "typeset" | "" (clear)
+  spineMode?: string; // "typeset" | "none" | "" (clear)
 }
 
 /** Edit a book's metadata as overrides (never rewrites the source EPUB). Returns the book. */
@@ -298,6 +419,16 @@ export const bookCommitCover = (id: string, rel: string): Promise<BookRow | null
 /** Abandon a staged cover the renderer refused. Nothing was adopted, so nothing is undone. */
 export const bookDiscardCover = (rel: string): Promise<void> =>
   invoke<void>("book_discard_cover", { rel });
+
+// A spine image goes through the same two-stage custody as a cover — validated and
+// content-addressed on the way in, adopted only once it is known to render.
+export const bookStageSpine = (id: string, imagePath: string): Promise<StagedCover> =>
+  invoke<StagedCover>("book_stage_spine", { id, imagePath });
+export const bookCommitSpine = (id: string, rel: string): Promise<BookRow | null> =>
+  invoke<BookRow | null>("book_commit_spine", { id, rel });
+/** Remove a book's spine image and its file. */
+export const bookClearSpine = (id: string): Promise<BookRow | null> =>
+  invoke<BookRow | null>("book_clear_spine", { id });
 
 /** Revert to the extracted/auto cover. Returns the updated book. */
 export const bookRevertCover = (id: string): Promise<BookRow | null> =>

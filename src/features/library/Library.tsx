@@ -3,7 +3,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { appDataDir, join } from "@tauri-apps/api/path";
 
 import { useI18n } from "../../i18n";
-import { localeDigits, localeNum, uiDateTimeFormat } from "../../lib/format";
+import { localeDigits, localeNum } from "../../lib/format";
 import {
   bookCommitCover,
   bookDelete,
@@ -12,7 +12,6 @@ import {
   bookStageCover,
   bookUpdate,
   collectionAddBook,
-  collectionCreate,
   collectionDelete,
   collectionRemoveBook,
   collectionRename,
@@ -45,8 +44,9 @@ const IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "gif", "avif", "svg", "b
 import { GlobalSettings } from "../settings/GlobalSettings";
 import { UpdateRosette } from "../updater/UpdateRosette";
 import { UpdateDialog } from "../updater/UpdateDialog";
-import { Hoopoe } from "./Hoopoe";
-import { displayAuthorOrUnknown, displayTitle, resolveBookMeta, titleIsGuess, titleProvenanceKey } from "../../lib/bookMeta"; // WP-3
+import { LibraryDesign } from "./design/LibraryDesign";
+import "../../styles/library-design.css";
+import { displayTitle, resolveBookMeta, titleIsGuess, titleProvenanceKey } from "../../lib/bookMeta"; // WP-3
 import { Inbox } from "./Inbox";
 import { BookmarksShelf } from "./BookmarksShelf";
 import { PhotoGallery } from "../photo/PhotoGallery";
@@ -72,15 +72,6 @@ type CoverMode = "crop" | "fit";
 type Section = "library" | "inbox" | "cards" | "bookmarks";
 
 const SORTS: SortKey[] = ["title", "author", "format", "date_read", "date_added"];
-const SORT_KEY = { title: "lib.sort.title", author: "lib.sort.author", format: "lib.sort.format", date_read: "lib.sort.dateRead", date_added: "lib.sort.dateAdded" } as const;
-
-// RAWY-261: shelf/section counts route through the ONE formatter in lib/format (they used to
-// carry a private Arabic-Indic substitution table — a second source of truth for UI digits).
-const num = localeNum;
-
-function sameDay(a: Date, b: Date) {
-  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
-}
 
 // RAWY-82 (#16): search input → book-list reload delay. Short enough to stay snappy, long enough
 // that a fast typist fires ONE query at the end rather than one per keystroke.
@@ -113,8 +104,6 @@ let prefsCache: LibPrefs | null = null;
 // empty state honest on a genuinely empty library and impossible before the first answer arrives.
 let booksCache: BookRow[] | null = null;
 let shelvesCache: CollectionRow[] = [];
-// The rows view's equivalent, tagged with the query it came from — see `ShelfRows`.
-let rowsCache: { sig: string; reading: BookRow[]; books: Record<string, BookRow[]> } | null = null;
 
 // RAWY-269 (1) — the longest a section swap may wait for the incoming pane before it is shown
 // anyway. This is a SAFETY CAP, not a delay: a healthy section reports ready in 15-160 ms. Its only
@@ -277,17 +266,12 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const [coverMode, setCoverMode] = useState<CoverMode>(() => prefsCache?.cover ?? "crop");
   const [sort, setSort] = useState<SortKey>(() => prefsCache?.sort ?? "date_read");
   const [order, setOrder] = useState<SortOrder>(() => prefsCache?.order ?? "desc");
+  // RAWY-15's format filter. It drives `library_list_books` in SQL, so it must stay a real piece
+  // of state rather than a constant — dropping its control left this pinned at null and the filter
+  // unreachable.
   const [format, setFormat] = useState<string | null>(null);
   const [shelf, setShelf] = useState<string | null>(() => prefsCache?.shelf ?? null);
-  // Shelf management (RAWY-31): inline create + rename, driven from the sidebar.
-  const [creating, setCreating] = useState(false);
-  const [draftName, setDraftName] = useState("");
-  const [renaming, setRenaming] = useState<string | null>(null);
-  // RAWY-76: shelf delete now takes a two-step confirm (was instant — #6). Holds the shelf id
-  // awaiting confirmation; the ✕ morphs into a small "Delete?" prompt for that row only.
-  const [confirmShelf, setConfirmShelf] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [menu, setMenu] = useState<null | "sort" | "format">(null);
   const [drag, setDrag] = useState<{ count: number } | null>(null);
   const [forceEmpty, setForceEmpty] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -360,15 +344,6 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
       .finally(() => { libLoads.inFlight--; });
   }, [sort, order, format, shelf, search, setBooks]);
 
-  // Pick a sort column with a sensible default order (RAWY-30): date columns default to
-  // DESCENDING (newest first) so the most-recent book is the FIRST item — which the grid then
-  // places where the reading eye starts (top-right in an Arabic RTL UI, top-left in LTR). Text
-  // columns default to ascending (A→Z). Clicking the already-active column toggles the order.
-  const pickSort = useCallback((k: SortKey) => {
-    if (k === sort) { setOrder((o) => (o === "asc" ? "desc" : "asc")); return; }
-    setSort(k);
-    setOrder(k === "date_read" || k === "date_added" ? "desc" : "asc");
-  }, [sort]);
   useEffect(() => loadShelves(), [loadShelves]);
   // Discrete filter/sort picks reload IMMEDIATELY (they're single clicks, not typing).
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -441,7 +416,6 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   // the OUTSIDE (the pane has content, and every in-viewport image has decoded), which is why not
   // one section component needed a new prop or a new contract.
   const goSection = useCallback((s: Section) => {
-    setMenu(null);
     setWanted((w) => (s === section ? null : s === w ? w : s));
   }, [section]);
 
@@ -642,620 +616,125 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   // RAWY-269 (2): `booksLoaded` is what stops the empty state being shown before the first query has
   // ever answered — "I have not looked yet" is not the same claim as "there is nothing here".
   const isEmpty = forceEmpty || (booksLoaded && books.length === 0 && !search && !format && !shelf);
-  const count = books.length;
 
-  const pickShelf = (id: string | null) => {
-    setShelf(id);
-    setMenu(null);
-    setConfirmShelf(null); // RAWY-76: navigating away backs out of a pending shelf-delete confirm
-  };
+  const pickShelf = (id: string | null) => setShelf(id);
   // WP-3: the card passes what it is displaying as a hint, so a failed row read still shows the same
   // name the reader just clicked — never as the authority (the reader re-reads the row by id).
   const open = (b: BookRow) =>
     onOpen({ id: b.id, filePath: b.file_path, dir: b.dir, format: b.format, title: b.title, author: b.author });
 
-  // Shelf writes (RAWY-31): each returns the refreshed shelf list (names + counts).
-  const commitCreate = async () => {
-    const name = draftName.trim();
-    setCreating(false);
-    setDraftName("");
-    if (!name) return;
-    setShelves(await collectionCreate(name).catch((e) => { console.error(e); return shelves; }));
+  // Shelf writes (RAWY-31): still the only Rust↔JS path for renaming and deleting a shelf. The
+  // design's sidebar drives them now instead of the old shelf row, but the calls — and the rule
+  // that deleting a shelf leaves its BOOKS alone — are unchanged.
+  const renameShelf = async (id: string, name: string) => {
+    if (!name.trim()) return;
+    setShelves(await collectionRename(id, name.trim()).catch((e) => { console.error(e); return shelves; }));
   };
-  const commitRename = async (id: string) => {
-    const name = draftName.trim();
-    setRenaming(null);
-    setDraftName("");
-    if (!name) return;
-    setShelves(await collectionRename(id, name).catch((e) => { console.error(e); return shelves; }));
+  const removeShelf = async (id: string) => {
+    const s = shelves.find((x) => x.id === id);
+    if (shelf === id) pickShelf(null); // leave a filtered view we're about to delete
+    setShelves(await collectionDelete(id).catch((e) => { console.error(e); return shelves; }));
+    if (s) flashToast(t("lib.shelf.deleted", { name: s.name }));
   };
-  const removeShelf = async (s: CollectionRow) => {
-    setConfirmShelf(null);
-    if (shelf === s.id) pickShelf(null); // leave a filtered view we're about to delete
-    setShelves(await collectionDelete(s.id).catch((e) => { console.error(e); return shelves; }));
-    flashToast(t("lib.shelf.deleted", { name: s.name }));
-  };
-  const activeShelf = shelf ? shelves.find((s) => s.id === shelf) ?? null : null;
   const navSection: Section = wanted ?? section;
 
+  // The library design owns the chrome and the view switcher. Everything below it — the
+  // import path, the edit dialog, the toast, the settings and update surfaces, and the GRID
+  // renderer itself — is the existing Library, handed in rather than reimplemented.
   return (
-    <div className="lib-root">
-      <aside className="lib-sidebar">
-        {/* RAWY-95 — app wordmark, design variant 2b (D34): a FIXED IBM-Plex lockup —
-            hoopoe · "Sard" · quiet ink bar · "سَرْد" (with tashkīl), fully monochrome (the bird
-            carries the only colour). LTR-pinned so the internal order never mirrors in the RTL UI. */}
-        <div className="lib-brand">
-          <span className="lib-lockup">
-            <Hoopoe size={28} className="lib-brand-bird" />
-            <span className="lib-wordmark">
-              <span className="lib-word-latin">Sard</span>
-              <span className="lib-word-sep" aria-hidden />
-              <span className="lib-word-ar">سَرْد</span>
-            </span>
-          </span>
-        </div>
-
-        {/* RAWY-269: the nav highlights `navSection` (= what was ASKED for), so the click reads as
-            instant even while the pane is still preparing off-screen. */}
-        <nav className="lib-nav">
-          <button
-            className={`lib-nav-item${navSection === "library" ? " active" : ""}`}
-            onClick={() => { goSection("library"); pickShelf(null); }}
-          >
-            <span className="lib-nav-ico lib-ico-library" />
-            {t("lib.nav.library")}
-          </button>
-          <button
-            className={`lib-nav-item${navSection === "inbox" ? " active" : ""}`}
-            onClick={() => goSection("inbox")}
-          >
-            <span className="lib-nav-ico lib-ico-highlights" />
-            {t("lib.nav.highlights")}
-          </button>
-          <button
-            className={`lib-nav-item${navSection === "bookmarks" ? " active" : ""}`}
-            onClick={() => goSection("bookmarks")}
-          >
-            <span className="lib-nav-ico lib-ico-bookmarks" />
-            {t("lib.nav.bookmarks")}
-          </button>
-          <button
-            className={`lib-nav-item${navSection === "cards" ? " active" : ""}`}
-            onClick={() => goSection("cards")}
-          >
-            <span className="lib-nav-ico lib-ico-cards" />
-            {t("lib.nav.cards")}
-          </button>
-          <button className="lib-nav-item" disabled>
-            <span className="lib-nav-ico lib-ico-reading" />
-            {t("lib.nav.readingNow")}
-          </button>
-        </nav>
-
-        <div className="lib-shelves-label">{t("lib.shelves")}</div>
-        <div className="lib-shelves">
-          {shelves.length === 0 && !creating && <div className="lib-shelf-empty">{t("lib.noShelves")}</div>}
-          {shelves.map((s) =>
-            renaming === s.id ? (
-              <input
-                key={s.id}
-                className="lib-shelf-input"
-                autoFocus
-                value={draftName}
-                dir="auto"
-                placeholder={t("lib.shelf.namePlaceholder")}
-                onChange={(e) => setDraftName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") commitRename(s.id);
-                  else if (e.key === "Escape") { setRenaming(null); setDraftName(""); }
-                }}
-                onBlur={() => commitRename(s.id)}
-              />
-            ) : (
-              <div key={s.id} className={`lib-shelf${shelf === s.id ? " active" : ""}`}>
-                <button className="lib-shelf-main" onClick={() => pickShelf(shelf === s.id ? null : s.id)}>
-                  <span className="lib-shelf-name" dir="auto">{s.name}</span>
-                </button>
-                {/* RAWY-269 (4): count and actions share ONE fixed trailing cell (a 1x1 grid), so
-                    revealing the actions on hover cannot resize the row. They used to swap
-                    `display`, which moved `.lib-shelf-main` 161px -> 125px on every row the pointer
-                    crossed — a 36px jolt per row, right where you aim to pick a shelf. */}
-                <span className={`lib-shelf-trail${confirmShelf === s.id ? " confirming" : ""}`}>
-                  <span className="lib-shelf-count">{num(s.count, lang)}</span>
-                  <span className="lib-shelf-actions">
-                    <button
-                      className="lib-shelf-act"
-                      title={t("lib.shelf.rename")}
-                      aria-label={t("lib.shelf.rename")}
-                      onClick={() => { setRenaming(s.id); setDraftName(s.name); }}
-                    >
-                      ✎
-                    </button>
-                    {confirmShelf === s.id ? (
-                      <button
-                        className="lib-shelf-act danger"
-                        title={t("lib.shelf.deleteConfirm")}
-                        onClick={() => removeShelf(s)}
-                      >
-                        {t("lib.shelf.deleteYes")}
-                      </button>
-                    ) : (
-                      <button
-                        className="lib-shelf-act"
-                        title={t("lib.shelf.delete")}
-                        aria-label={t("lib.shelf.delete")}
-                        onClick={() => setConfirmShelf(s.id)}
-                      >
-                        ✕
-                      </button>
-                    )}
-                  </span>
-                </span>
-              </div>
-            )
-          )}
-          {creating ? (
-            <input
-              className="lib-shelf-input"
-              autoFocus
-              value={draftName}
-              dir="auto"
-              placeholder={t("lib.shelf.namePlaceholder")}
-              onChange={(e) => setDraftName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") commitCreate();
-                else if (e.key === "Escape") { setCreating(false); setDraftName(""); }
-              }}
-              onBlur={commitCreate}
-            />
+    <>
+      <LibraryDesign
+        books={books}
+        section={navSection}
+        onSection={goSection}
+        renderSection={(s) => paneFor(s)}
+        // GRID — the original Library grid, unchanged: the same `.lib-grid` container (which owns
+        // its own scroll and RAWY-170's bottom padding), the same `BookCard`, the same cover mode,
+        // and the same empty state it has always shown.
+        renderGrid={() =>
+          isEmpty ? (
+            <EmptyState onBrowse={addBooks} onFolder={addFolder} />
           ) : (
-            <button
-              className="lib-shelf-new"
-              onClick={() => { setRenaming(null); setDraftName(""); setCreating(true); }}
-            >
-              {t("lib.newShelf")}
-            </button>
-          )}
-        </div>
-
-        {/* RAWY-39: the Library foot opens GLOBAL app settings (theme, UI font, reading
-            defaults, language). The single language control now lives there (D22). */}
-        <div className="lib-sidefoot">
-          <button className="lib-settings-btn" onClick={() => setSettingsOpen(true)} title={t("gs.open")}>
-            <span className="lib-settings-ico" aria-hidden>⚙</span>
-            <span>{t("gs.open")}</span>
-          </button>
-        </div>
-      </aside>
-
-      <main className="lib-main">
-        {/* RAWY-269 (1): the live panes, KEYED BY SECTION. The key is what makes this work at all:
-            on commit the list goes from [outgoing, incoming] to [incoming], and because the
-            incoming pane keeps its key React keeps its INSTANCE and its DOM — the swap is a class
-            change on an already-loaded, already-decoded subtree. Keyless (or in two different JSX
-            slots) React would tear the preloaded pane down and mount a fresh one, which is exactly
-            the blank frame this is here to remove: measured at that intermediate stage,
-            `.lib-main` still hit `kids:0 html:0` and the pane still flashed to 22.69 luma. */}
-        {(wanted && wanted !== section ? [section, wanted] : [section]).map((s) => (
-          <div
-            key={s}
-            className={s === section ? "lib-pane" : "lib-pane-preload"}
-            ref={s === wanted ? preloadRef : undefined}
-            aria-hidden={s === wanted ? true : undefined}
-          >
-            {paneFor(s)}
-          </div>
-        ))}
-        {drag && <DropOverlay count={drag.count} t={t} lang={lang} />}
-      </main>
-
+            <div className="lib-grid">
+              {books.map((b) => (
+                <BookCard
+                  key={b.id}
+                  book={b}
+                  coverMode={coverMode}
+                  onOpen={() => open(b)}
+                  onEdit={() => setEditing(b)}
+                />
+              ))}
+            </div>
+          )
+        }
+        coverMode={coverMode}
+        onCoverMode={() => setCoverMode((m) => (m === "crop" ? "fit" : "crop"))}
+        format={format}
+        onFormat={setFormat}
+        onOpenBook={open}
+        onEditBook={setEditing}
+        onAddBooks={addBooks}
+        importing={importing}
+        onSettings={() => setSettingsOpen(true)}
+        onReloadBooks={loadBooks}
+        query={search}
+        onQuery={setSearch}
+        onRenameShelf={renameShelf}
+        onDeleteShelf={removeShelf}
+      />
       {editing && (
         <EditBook
           book={editing}
           shelves={shelves}
           onShelves={(rows) => {
             setShelves(rows);
-            loadBooks(); // a chip toggle can add/remove the open book from the active shelf filter
+            loadBooks();
           }}
           onClose={() => setEditing(null)}
           onSaved={(b) => {
             loadBooks();
             loadShelves();
-            if (b) setEditing(b); // keep open with refreshed cover after replace/revert
+            if (b) setEditing(b);
           }}
           onDeleted={() => {
-            const title = displayTitle(resolveBookMeta(editing), t); // capture before we clear `editing`
-            setEditing(null); // RAWY-76: close the dialog and refresh the library + shelf counts
+            const title = displayTitle(resolveBookMeta(editing), t);
+            setEditing(null);
             loadBooks();
             loadShelves();
             flashToast(t("lib.book.deleted", { title }));
           }}
         />
       )}
+      {drag && <DropOverlay count={drag.count} t={t} lang={lang} />}
       {toast && <div className="lib-toast">{toast}</div>}
       {importReport && (
         <ImportResultsPanel report={importReport} onDismiss={() => setImportReport(null)} t={t} lang={lang} />
       )}
       <GlobalSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
       <UpdateRosette />
-      {/* RAWY-290: the update conversation is one dialog, mounted once beside the rosette. Both the
-          rosette and Settings → About feed the same store, so it renders wherever the check began. */}
       <UpdateDialog />
-    </div>
+    </>
   );
+
 
   // RAWY-269 (1): one pane per section, so the visible slot and the preload slot render through the
   // SAME code path — a preloaded pane is byte-for-byte the pane that will be shown, never a
   // lookalike. Declared after the return as a hoisted function so the JSX above stays in reading
   // order; it closes over the render's own values, like the JSX does.
+  //
+  // The LIBRARY section is no longer one of these: the design surface renders it, and the Grid view
+  // inside it is the same `BookCard` grid this used to draw.
   function paneFor(s: Section) {
     if (s === "cards") return <PhotoGallery />;
     if (s === "inbox") return <Inbox onOpen={onOpen} />;
     if (s === "bookmarks") return <BookmarksShelf onOpen={onOpen} />;
     if (isEmpty) return <EmptyState onBrowse={addBooks} onFolder={addFolder} />;
-    return (
-      <>
-        <header className="lib-head">
-              <div className="lib-head-top">
-                <div className="lib-title-wrap">
-                  <h1 className="lib-title" dir="auto">{activeShelf ? activeShelf.name : t("lib.title")}</h1>
-                  <span className="lib-title-count">{t("lib.count", { n: num(count, lang) })}</span>
-                </div>
-                <label className="lib-search">
-                  <span className="lib-search-ico" aria-hidden>⌕</span>
-                  {/* RAWY-288: the <label> wrapper alone does NOT name this field — its only content is
-                      the magnifier span, which is aria-hidden and therefore contributes nothing to the
-                      accessible name. Measured via the CDP Accessibility domain: this textbox resolved
-                      to an EMPTY name, the only unnamed control on the Library surface. An explicit
-                      aria-label is what a screen reader actually reads; the placeholder stays for
-                      sighted users and is not relied on as the name. */}
-                  <input
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder={t("lib.search")}
-                    aria-label={t("lib.search")}
-                  />
-                </label>
-              </div>
-
-              <div className="lib-toolbar">
-                <div className="lib-pills">
-                  <button className={`lib-pill${shelf === null ? " active" : ""}`} onClick={() => pickShelf(null)}>
-                    {t("lib.all")}
-                  </button>
-                  {shelves.slice(0, 3).map((s) => (
-                    <button
-                      key={s.id}
-                      className={`lib-pill${shelf === s.id ? " active" : ""}`}
-                      onClick={() => pickShelf(shelf === s.id ? null : s.id)}
-                    >
-                      {s.name}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="lib-controls">
-                  <button className="lib-add" onClick={addBooks} disabled={importing}>
-                    + {t(importing ? "lib.importing" : "lib.add")}
-                  </button>
-                  <div className="lib-viewtoggle" role="tablist">
-                    <button
-                      className={view === "grid" ? "active" : ""}
-                      onClick={() => setView("grid")}
-                      title={t("lib.view.grid")}
-                      aria-label={t("lib.view.grid")}
-                    >
-                      <span className="ico-grid" />
-                    </button>
-                    <button
-                      className={view === "list" ? "active" : ""}
-                      onClick={() => setView("list")}
-                      title={t("lib.view.list")}
-                      aria-label={t("lib.view.list")}
-                    >
-                      <span className="ico-list" />
-                    </button>
-                    <button
-                      className={view === "rows" ? "active" : ""}
-                      onClick={() => setView("rows")}
-                      title={t("lib.view.rows")}
-                      aria-label={t("lib.view.rows")}
-                    >
-                      <span className="ico-rows"><span /><span /></span>
-                    </button>
-                  </div>
-
-                  {view === "grid" && (
-                    <button
-                      className="lib-ctl"
-                      onClick={() => setCoverMode((m) => (m === "crop" ? "fit" : "crop"))}
-                    >
-                      {t(coverMode === "crop" ? "lib.cover.crop" : "lib.cover.fit")} ▾
-                    </button>
-                  )}
-
-                  <div className="lib-ctl-wrap">
-                    <button className="lib-ctl" onClick={() => setMenu(menu === "sort" ? null : "sort")}>
-                      {t(SORT_KEY[sort])}{" "}
-                      <span
-                        className="lib-order"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setOrder((o) => (o === "asc" ? "desc" : "asc"));
-                        }}
-                      >
-                        {order === "asc" ? "↑" : "↓"}
-                      </span>
-                    </button>
-                    {menu === "sort" && (
-                      <div className="lib-menu">
-                        {SORTS.map((k) => (
-                          <button
-                            key={k}
-                            className={k === sort ? "active" : ""}
-                            onClick={() => {
-                              pickSort(k);
-                              setMenu(null);
-                            }}
-                          >
-                            {t(SORT_KEY[k])}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="lib-ctl-wrap">
-                    <button
-                      className={`lib-ctl lib-ctl-ico${format ? " active" : ""}`}
-                      onClick={() => setMenu(menu === "format" ? null : "format")}
-                      title={t("lib.filter")}
-                    >
-                      ⛛
-                    </button>
-                    {menu === "format" && (
-                      <div className="lib-menu lib-menu-end">
-                        {[null, "epub", "pdf"].map((f) => (
-                          <button
-                            key={f ?? "all"}
-                            className={format === f ? "active" : ""}
-                            onClick={() => {
-                              setFormat(f);
-                              setMenu(null);
-                            }}
-                          >
-                            {f ? f.toUpperCase() : t("lib.filter.all")}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </header>
-
-            {menu && <div className="lib-clickaway" onClick={() => setMenu(null)} />}
-
-            {/* ROWS is checked FIRST so the toggle always switches to it (RAWY-51): ShelfRows has
-                its own per-shelf "empty" handling, so it must NOT be pre-empted by the flat
-                empty-shelf state below — otherwise, with an empty shelf/filter selected, clicking
-                Rows appeared to do nothing (the empty-state stayed). The empty-state now guards
-                only the flat grid/list. */}
-            {view === "rows" ? (
-              <ShelfRows
-                shelves={shelves}
-                activeShelf={shelf}
-                sort={sort}
-                order={order}
-                coverMode={coverMode}
-                lang={lang}
-                t={t}
-                onOpen={open}
-                onEdit={setEditing}
-                onSeeAll={(id) => { pickShelf(id); setView("grid"); }}
-                onAddBooks={addBooks}
-              />
-            ) : activeShelf && count === 0 && !search ? (
-              <div className="lib-shelf-empty-state">
-                <div className="lib-shelf-empty-title">{t("lib.shelfEmpty.title")}</div>
-                <div className="lib-shelf-empty-hint">{t("lib.shelfEmpty.hint")}</div>
-              </div>
-            ) : view === "grid" ? (
-              <div className="lib-grid">
-                {books.map((b) => (
-                  <BookCard
-                    key={b.id}
-                    book={b}
-                    coverMode={coverMode}
-                    onOpen={() => open(b)}
-                    onEdit={() => setEditing(b)}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="lib-list">
-                <div className="lib-list-head">
-                  <span aria-hidden />
-                  <button className={`ll-title sortable${sort === "title" ? " active" : ""}`} onClick={() => pickSort("title")}>
-                    {t("lib.col.title")} {sort === "title" && (order === "asc" ? "↑" : "↓")}
-                  </button>
-                  <button className={`ll-author sortable${sort === "author" ? " active" : ""}`} onClick={() => pickSort("author")}>
-                    {t("lib.col.author")} {sort === "author" && (order === "asc" ? "↑" : "↓")}
-                  </button>
-                  <button className={`ll-format sortable${sort === "format" ? " active" : ""}`} onClick={() => pickSort("format")}>
-                    {t("lib.col.format")} {sort === "format" && (order === "asc" ? "↑" : "↓")}
-                  </button>
-                  <span className="ll-progress">{t("lib.col.progress")}</span>
-                  <button className={`ll-read sortable${sort === "date_read" ? " active" : ""}`} onClick={() => pickSort("date_read")}>
-                    {t("lib.col.read")} {sort === "date_read" && (order === "asc" ? "↑" : "↓")}
-                  </button>
-                </div>
-                {books.map((b) => (
-                  <ListRow key={b.id} book={b} onOpen={() => open(b)} lang={lang} t={t} />
-                ))}
-              </div>
-            )}
-      </>
-    );
+    return null;
   }
 }
 
 type TFn = ReturnType<typeof useI18n>["t"];
-
-// Shelf-rows view (RAWY-46, design Band E-II): the Library as bookstore/streaming-style horizontal
-// shelf rows — a built-in "Currently Reading" row + one row per user shelf. Reuses the existing
-// shelves (collections_list) + per-shelf book query + the BookCard; a third option beside Grid/List.
-// Rows read + scroll sideways and mirror in RTL (the container inherits the UI direction). "See all"
-// hands off to the flat grid filtered to that shelf (the best all-books view — the design's note).
-function ShelfRows({
-  shelves,
-  activeShelf,
-  sort,
-  order,
-  coverMode,
-  lang,
-  t,
-  onOpen,
-  onEdit,
-  onSeeAll,
-  onAddBooks,
-}: {
-  shelves: CollectionRow[];
-  activeShelf: string | null;
-  sort: SortKey;
-  order: SortOrder;
-  coverMode: CoverMode;
-  lang: string;
-  t: TFn;
-  onOpen: (b: BookRow) => void;
-  onEdit: (b: BookRow) => void;
-  onSeeAll: (id: string) => void;
-  onAddBooks: () => void;
-}) {
-  // RAWY-269 (2): the rows view carries its OWN copy of the library, so it needs the same re-mount
-  // cache as the flat views — otherwise returning from the reader in rows view showed every shelf
-  // row as its dashed "this shelf is empty" box until the queries landed. The signature makes the
-  // cache safe to reuse: it is consulted only when the query it came from would be identical.
-  const sig = `${shelves.map((s) => s.id + ":" + s.count).join(",")}|${activeShelf}|${sort}|${order}`;
-  const [reading, setReading] = useState<BookRow[]>(() => (rowsCache?.sig === sig ? rowsCache.reading : []));
-  const [shelfBooks, setShelfBooks] = useState<Record<string, BookRow[]>>(() =>
-    rowsCache?.sig === sig ? rowsCache.books : {},
-  );
-
-  useEffect(() => {
-    let cancel = false;
-    libLoads.inFlight++; // RAWY-269 (1): the rows view is the OTHER library-pane loader
-    (async () => {
-      // "Currently Reading" is a DERIVED row (books with in-progress reading) — not a new shelf.
-      const all = await libraryListBooks({ sort: "date_read", order: "desc" }).catch(() => [] as BookRow[]);
-      const inProgress = all.filter((b) => {
-        const f = b.fraction ?? 0;
-        return f > 0 && f < 0.999;
-      });
-      const targets = activeShelf ? shelves.filter((s) => s.id === activeShelf) : shelves;
-      const lists = await Promise.all(
-        targets.map((s) => libraryListBooks({ sort, order, collection: s.id }).catch(() => [] as BookRow[])),
-      );
-      if (cancel) return;
-      // RAWY-269 (5): same rule as the flat grid — the covers are decoded before the rows are
-      // published, so switching shelf in rows view is one atomic swap, not a layout that fills in.
-      await warmCovers([...inProgress, ...lists.flat()]);
-      if (cancel) return;
-      setReading(inProgress);
-      const map: Record<string, BookRow[]> = {};
-      targets.forEach((s, i) => (map[s.id] = lists[i]));
-      setShelfBooks(map);
-      rowsCache = { sig, reading: inProgress, books: map }; // RAWY-269 (2)
-    })().finally(() => { libLoads.inFlight--; }); // RAWY-269 (1)
-    return () => {
-      cancel = true;
-    };
-  }, [shelves, activeShelf, sort, order]);
-
-  const rowShelves = activeShelf ? shelves.filter((s) => s.id === activeShelf) : shelves;
-  const showReading = !activeShelf && reading.length > 0;
-
-  return (
-    <div className="lib-rows">
-      {showReading && (
-        <ShelfRow title={t("lib.row.reading")} count={reading.length} books={reading} coverMode={coverMode} lang={lang} t={t} onOpen={onOpen} onEdit={onEdit} />
-      )}
-      {rowShelves.map((s) => (
-        <ShelfRow
-          key={s.id}
-          title={s.name}
-          count={s.count}
-          books={shelfBooks[s.id] ?? []}
-          coverMode={coverMode}
-          lang={lang}
-          t={t}
-          onOpen={onOpen}
-          onEdit={onEdit}
-          onSeeAll={() => onSeeAll(s.id)}
-          emptyMsg={t("lib.shelfRow.empty")}
-        />
-      ))}
-      {shelves.length === 0 && (
-        <div className="lib-rows-noshelves">
-          <div className="lib-rows-noshelves-title">{t("lib.rows.noShelvesTitle")}</div>
-          <div className="lib-rows-noshelves-hint">{t("lib.rows.noShelvesHint")}</div>
-          <button className="lib-btn-primary" onClick={onAddBooks}>+ {t("lib.add")}</button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ShelfRow({
-  title,
-  count,
-  books,
-  coverMode,
-  lang,
-  t,
-  onOpen,
-  onEdit,
-  onSeeAll,
-  emptyMsg,
-}: {
-  title: string;
-  count: number;
-  books: BookRow[];
-  coverMode: CoverMode;
-  lang: string;
-  t: TFn;
-  onOpen: (b: BookRow) => void;
-  onEdit: (b: BookRow) => void;
-  onSeeAll?: () => void;
-  emptyMsg?: string;
-}) {
-  return (
-    <section className="lib-shelfrow">
-      <div className="lib-shelfrow-head">
-        <div className="lib-shelfrow-title">
-          <span className="lib-shelfrow-name" dir="auto">{title}</span>
-          <span className="lib-shelfrow-count">{num(count, lang)}</span>
-        </div>
-        {onSeeAll && (
-          <button className="lib-shelfrow-seeall" onClick={onSeeAll}>
-            {t("lib.seeAll")} <span className="lib-seeall-arrow" aria-hidden>→</span>
-          </button>
-        )}
-      </div>
-      {books.length ? (
-        <div className="lib-shelfrow-scroll">
-          {books.map((b) => (
-            <div key={b.id} className="lib-rowitem">
-              <BookCard book={b} coverMode={coverMode} onOpen={() => onOpen(b)} onEdit={() => onEdit(b)} />
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="lib-shelfrow-empty">{emptyMsg}</div>
-      )}
-    </section>
-  );
-}
 
 function progressInfo(b: BookRow) {
   const f = b.fraction ?? 0;
@@ -1549,61 +1028,6 @@ function EditBook({
         )}
       </div>
     </>
-  );
-}
-
-function ListRow({ book, onOpen, lang, t }: { book: BookRow; onOpen: () => void; lang: string; t: TFn }) {
-  const p = progressInfo(book);
-  const rtl = book.dir === "rtl";
-  const meta = resolveBookMeta(book); // WP-3: one resolver, so this row cannot drift from the card
-  const readLabel = (() => {
-    if (!book.read_at) return t("lib.date.none");
-    const d = new Date(book.read_at * 1000);
-    if (sameDay(d, new Date())) return t("lib.date.today");
-    return uiDateTimeFormat(lang, { month: "short", day: "numeric" }).format(d);
-  })();
-  return (
-    <button className="lib-row" onClick={onOpen}>
-      {/* RAWY-280: List view now shows the REAL cover, same rule as the grid card and the edit dialog
-          — `cover_path` when the book has one, the generated AutoCover only as the fallback. It was
-          not a regression: this thumb has always rendered `variant="mini"`, which is a flat colour
-          swatch (`.ac-mini` is a bare div with a background), so a book with a perfectly good cover
-          still showed a plain rectangle here while the grid showed the artwork. */}
-      <span className="ll-thumb">
-        {book.cover_path ? (
-          <img className="real" src={coverSrc(book)!} alt="" decoding="sync" />
-        ) : (
-          <AutoCover title={displayTitle(meta, t)} dir={book.dir} variant="mini" />
-        )}
-      </span>
-      {/* dir="auto" so a mixed AR title / Latin author each render + ellipsis-truncate on the
-          correct side (design "Sard Library List Row"); block alignment follows the view direction. */}
-      {/* RESILIENCE-1 / WP-3: these two are fixed COLUMNS — a blank cell reads as a broken row, not
-          as "nothing is known". Both fall back to chrome, which is never stored, so the database
-          keeps telling the truth (NULL) while the row stays legible. The grid caption above makes
-          the opposite call deliberately: it has no reserved slot, so it simply omits the line. */}
-      <span className={`ll-title${rtl ? " ar" : ""}`} dir="auto">
-        {displayTitle(meta, t)}
-      </span>
-      <span className={`ll-author${rtl ? " ar" : ""}`} dir="auto">
-        {displayAuthorOrUnknown(meta, t)}
-      </span>
-      <span className="ll-format">
-        {book.format && <span className="ll-badge">{book.format.toUpperCase()}</span>}
-      </span>
-      <span className="ll-progress">
-        <span className="ll-bar">
-          <span
-            className={`ll-bar-fill${p.state === "done" ? " done" : ""}`}
-            style={{ width: `${p.state === "none" ? 0 : p.pct}%` }}
-          />
-        </span>
-        <span className={`ll-pct${p.state === "done" ? " done" : ""}`}>
-          {p.state === "done" ? t("lib.progress.done") : p.state === "none" ? t("lib.progress.none") : localeDigits(`${p.pct}%`, lang)}
-        </span>
-      </span>
-      <span className="ll-read">{readLabel}</span>
-    </button>
   );
 }
 

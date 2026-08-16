@@ -1,16 +1,22 @@
 // The profile editor — a composer, not a settings form.
 //
-// The design: "It borrows the shape Sard already uses for its one creative surface — the photo
-// composer's stage plus a 344px rail. One section is open at a time; the stage answers immediately,
-// and it can be shown as the Library or as the open book, because a background belongs to one of
-// them and a reading face belongs to the other."
+// SIX QUESTIONS, ALWAYS VISIBLE. The editor is laid out by `EditorShell`: a permanent chapter rail,
+// one chapter's controls, and the live preview. The accordion this replaced hid five answers to show
+// one, so the editor could never say where you were; the rail keeps all six on screen with their
+// current values and marks the ones that have moved.
 //
-// So the geometry here is not invented: `.pc-stage` / `.pc-panel` (344px) is the shape the photo
-// composer already uses, and the classes below sit beside it rather than replacing it.
+// THE BODIES ARE THE OLD SECTIONS, UNCHANGED. Only their routing moved. Two of them had to be
+// re-cut to match the six chapters, and only those two:
+//   · `background` is one chapter over both surfaces — the old `libbg` and `bookbg` sections render
+//     inside it, in that order, because the question is "where do you want the image" and a reader
+//     answering it is thinking about one image, not two sections.
+//   · `texture` becomes its own chapter, so the block that used to close Marks is lifted out into
+//     `TextureSection`. Nothing about the control changed; it is the same three named steps.
 //
 // THE RAIL'S LAST BLOCK IS THE FIREWALL, stated once and never repeated: line spacing, measure,
 // margins, diacritics, alignment and size are the reader's own, in every profile. It is not a
-// control — it is the answer to the question the editor otherwise invites.
+// control — it is the answer to the question the editor otherwise invites. It rides in the shell's
+// `railFooter` slot rather than becoming a seventh chapter.
 
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
@@ -33,6 +39,8 @@ import { ARABIC_FONTS, LATIN_FONTS } from "../../reader-engine/injectedCss";
 import { THEMES, THEME_ORDER } from "../../theme/themes";
 import { BookmarkShape } from "../reader/BookmarkShape";
 import { CustomPaper } from "./CustomPaper";
+import { EditorShell } from "./editor/EditorShell";
+import { FOCUS, type ChapterId, type Focus } from "./editor/chapters";
 import { ShareSheet } from "./ShareSheet";
 import { profileChangePending } from "./session";
 import { SardMini } from "./SardMini";
@@ -41,14 +49,43 @@ import { saveProfile, useProfiles } from "./store";
 import { TEXTURE_STEPS, type Profile, type ProfileData } from "./model/profile";
 import { judgePalette } from "./model/guidance";
 
-type SectionId = "identity" | "theme" | "libbg" | "bookbg" | "fonts" | "marks";
+/**
+ * What each chapter owns, as a value that can be compared.
+ *
+ * The rail's dot answers "what have I changed", so a chapter is dirty when ITS OWN slice of the
+ * draft differs from the SAVED profile — the head's single `unsaved` badge, decomposed into the six
+ * places it could have come from.
+ *
+ * The slices PARTITION the profile: every editable field belongs to exactly one, so a change lights
+ * exactly one dot. That is why `theme.bookmark` is counted under `marks` and subtracted from
+ * `paper` — the bookmark colour is set in Marks, and a field counted twice would light two.
+ */
+function chapterSlice(p: Profile, id: ChapterId): unknown {
+  const d = p.data;
+  switch (id) {
+    case "identity":
+      return { name: p.name, iconKind: p.iconKind, iconRef: p.iconRef };
+    case "paper": {
+      const { bookmark: _bookmark, ...paper } = d.theme;
+      return paper;
+    }
+    case "background":
+      return d.bg;
+    case "fonts":
+      return d.type;
+    case "marks":
+      return { ...d.marks, bookmark: d.theme.bookmark };
+    case "texture":
+      return d.texture;
+  }
+}
 
 export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose: () => void }) {
   const { t } = useI18n();
   const live = useProfiles((s) => s.profiles.find((p) => p.id === profile.id)) ?? profile;
 
   const [draft, setDraft] = useState<Profile>(() => structuredClone(live));
-  const [open, setOpen] = useState<SectionId>("theme");
+  const [chapter, setChapter] = useState<ChapterId>("paper");
   const [face, setFace] = useState<"library" | "book">("library");
   const [share, setShare] = useState(false);
   // The managed rows, so a ref can be shown as a thumbnail and a name. Loaded once; anything the
@@ -61,6 +98,9 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
       .catch(() => undefined);
     return () => { alive = false; };
   }, []);
+  // Both background surfaces append to the same list, so the append is written once.
+  const addBgRow = (r: BackgroundRow) =>
+    setBgRows((cur) => (cur.some((x) => x.id === r.id) ? cur : [...cur, r]));
   const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(live), [draft, live]);
 
   const patch = (f: (d: ProfileData) => void) =>
@@ -75,19 +115,88 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
     onClose();
   };
 
-  const section = (id: SectionId, label: string, value: string, body: React.ReactNode) => (
-    <div className={`pf-sec${open === id ? " open" : ""}`}>
-      <button className="pf-sec-head" onClick={() => setOpen(id)} aria-expanded={open === id}>
-        <span className="pf-sec-label">{label}</span>
-        <span className="pf-sec-value">{value}</span>
-      </button>
-      {open === id && <div className="pf-sec-body">{body}</div>}
-    </div>
-  );
-
   const themeName = draft.data.theme.base
     ? t(`theme.${draft.data.theme.base}`)
     : t("profiles.theme.custom");
+
+  const bgName = (ref: string | null) => bgRows.find((r) => r.id === ref)?.source_name ?? null;
+
+  /** Each chapter's current answer, under its name in the rail. */
+  const chapterValue = (id: ChapterId): string => {
+    switch (id) {
+      case "identity":
+        return draft.name?.trim() || "—";
+      case "paper":
+        return themeName;
+      case "background": {
+        // One line for both surfaces, because the chapter covers both. The library names the image;
+        // the book adds itself only when it carries one the library does not.
+        const lib = bgName(draft.data.bg.library.ref);
+        const book = draft.data.bg.reading.sameAsLibrary
+          ? t("profiles.bg.sameAsLibraryShort")
+          : bgName(draft.data.bg.reading.ref);
+        if (!lib && !book) return "—";
+        return [lib, book].filter(Boolean).join(" · ");
+      }
+      case "fonts":
+        return t("profiles.fonts.three");
+      case "marks":
+        return t(`profiles.shape.${draft.data.marks.bookmarkShape}`);
+      case "texture":
+        return t(`profiles.texture.${draft.data.texture}`);
+    }
+  };
+
+  const chapterDirty = (id: ChapterId): boolean =>
+    JSON.stringify(chapterSlice(draft, id)) !== JSON.stringify(chapterSlice(live, id));
+
+  const chapterBody = (id: ChapterId): React.ReactNode => {
+    switch (id) {
+      case "identity":
+        return <IdentitySection draft={draft} setDraft={setDraft} />;
+      case "paper":
+        return <ThemeSection draft={draft} patch={patch} />;
+      case "background":
+        return (
+          <>
+            <div className="pf-field-label">{t("profiles.section.libraryBg")}</div>
+            <BackgroundSection
+              surface="library"
+              draft={draft}
+              patch={patch}
+              rows={bgRows}
+              onImported={addBgRow}
+            />
+            <div className="pfe-ch-rule" role="separator" />
+            <div className="pf-field-label">{t("profiles.section.bookBg")}</div>
+            <BackgroundSection
+              surface="reading"
+              draft={draft}
+              patch={patch}
+              rows={bgRows}
+              onImported={addBgRow}
+            />
+          </>
+        );
+      case "fonts":
+        return <FontsSection draft={draft} patch={patch} />;
+      case "marks":
+        return <MarksSection draft={draft} patch={patch} />;
+      case "texture":
+        return <TextureSection draft={draft} patch={patch} />;
+    }
+  };
+
+  /**
+   * Opening a chapter turns the preview to the face that chapter governs. The segmented control
+   * stays: the focus is where the chapter POINTS, not a cage, and `background` governs both faces
+   * at once so it moves nothing.
+   */
+  const openChapter = (id: ChapterId) => {
+    setChapter(id);
+    const f = FOCUS[id].face;
+    if (f) setFace(f);
+  };
 
   // PORTALLED TO `document.body`, and it has to be. `.gs` (the settings window) carries
   // `transform: translate(-50%,-50%)`, and a transform makes an element the containing block for
@@ -119,93 +228,46 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
         </button>
       </div>
 
-      {/* RAIL FIRST, then the stage — the design's own order. Its rail carries `border-inline-end`,
-          which puts it at the inline START: the right in Arabic, the left in English. That is what
-          makes its own caption true — "what you see on the left is what you will see in Sard". */}
+      {/* RAIL FIRST, then the chapter, then the preview — the design's own order. The rail carries
+          `border-inline-end`, which puts it at the inline START: the right in Arabic, the left in
+          English. */}
       <div className="pf-editor-body">
-        {/* THE RAIL — 344px, six sections, one open at a time. */}
-        <div className="pf-rail">
-          <div className="pf-rail-head">
-            <span className="pf-rail-head-title">{t("profiles.editor.railTitle")}</span>
-            <span className="pf-rail-head-sub">{t("profiles.editor.sectionsHint")}</span>
-          </div>
-          {section(
-            "identity",
-            t("profiles.section.identity"),
-            draft.name ?? "—",
-            <IdentitySection draft={draft} setDraft={setDraft} />,
+        <EditorShell
+          active={chapter}
+          onSelect={openChapter}
+          value={chapterValue}
+          dirty={chapterDirty}
+          preview={(focus: Focus) => (
+            /* THE PREVIEW — what you see here is what you will see in Sard. */
+            <div className="pf-stage">
+              <div className="pf-stage-seg" role="group">
+                <button className={face === "library" ? "on" : ""} onClick={() => setFace("library")}>
+                  {t("profiles.editor.stageLibrary")}
+                </button>
+                <button className={face === "book" ? "on" : ""} onClick={() => setFace("book")}>
+                  {t("profiles.editor.stageBook")}
+                </button>
+              </div>
+              <div className="pf-stage-frame">
+                {face === "library" ? <SardMini p={miniOf(draft)} /> : <BookStage profile={draft} />}
+              </div>
+              {/* WHAT THIS CHAPTER GOVERNS, named. The design frames the exact region with a
+                  hairline; `FOCUS` here carries the face and the name but deliberately not the
+                  design's pixel insets, which were measured against the mock's own geometry and
+                  would be a lie against SardMini. So the region is named rather than drawn. */}
+              {focus.label && <div className="pfe-focus-label">{focus.label}</div>}
+            </div>
           )}
-
-          {section(
-            "theme",
-            t("profiles.section.theme"),
-            themeName,
-            <ThemeSection draft={draft} patch={patch} />,
-          )}
-
-          {section(
-            "libbg",
-            t("profiles.section.libraryBg"),
-            bgRows.find((r) => r.id === draft.data.bg.library.ref)?.source_name ?? "—",
-            <BackgroundSection
-              surface="library"
-              draft={draft}
-              patch={patch}
-              rows={bgRows}
-              onImported={(r) => setBgRows((cur) => (cur.some((x) => x.id === r.id) ? cur : [...cur, r]))}
-            />,
-          )}
-
-          {section(
-            "bookbg",
-            t("profiles.section.bookBg"),
-            draft.data.bg.reading.sameAsLibrary
-              ? t("profiles.bg.sameAsLibraryShort")
-              : bgRows.find((r) => r.id === draft.data.bg.reading.ref)?.source_name ?? "—",
-            <BackgroundSection
-              surface="reading"
-              draft={draft}
-              patch={patch}
-              rows={bgRows}
-              onImported={(r) => setBgRows((cur) => (cur.some((x) => x.id === r.id) ? cur : [...cur, r]))}
-            />,
-          )}
-
-          {section(
-            "fonts",
-            t("profiles.section.fonts"),
-            t("profiles.fonts.three"),
-            <FontsSection draft={draft} patch={patch} />,
-          )}
-
-          {section(
-            "marks",
-            t("profiles.section.marks"),
-            t(`profiles.shape.${draft.data.marks.bookmarkShape}`),
-            <MarksSection draft={draft} patch={patch} />,
-          )}
-
-          {/* The firewall. Not a control — the one place the boundary is stated. */}
-          <div className="pf-firewall">
-            <div className="pf-firewall-title">{t("profiles.notPart.title")}</div>
-            <p className="pf-firewall-body">{t("profiles.notPart.body")}</p>
-          </div>
-        </div>
-
-        {/* THE STAGE — what you see here is what you will see in Sard. */}
-        <div className="pf-stage">
-          <div className="pf-stage-seg" role="group">
-            <button className={face === "library" ? "on" : ""} onClick={() => setFace("library")}>
-              {t("profiles.editor.stageLibrary")}
-            </button>
-            <button className={face === "book" ? "on" : ""} onClick={() => setFace("book")}>
-              {t("profiles.editor.stageBook")}
-            </button>
-          </div>
-          <div className="pf-stage-frame">
-            {face === "library" ? <SardMini p={miniOf(draft)} /> : <BookStage profile={draft} />}
-          </div>
-        </div>
+          railFooter={
+            /* The firewall. Not a control, and not a chapter — the one place the boundary is stated. */
+            <div className="pf-firewall">
+              <div className="pf-firewall-title">{t("profiles.notPart.title")}</div>
+              <p className="pf-firewall-body">{t("profiles.notPart.body")}</p>
+            </div>
+          }
+        >
+          {chapterBody(chapter)}
+        </EditorShell>
       </div>
     </div>
     </>,
@@ -757,27 +819,6 @@ function MarksSection({
         ))}
       </div>
 
-      {/* INTERFACE TEXTURE — three named steps, never a percentage. The design is explicit, and an
-          enum cannot drift below the measured floor the way a stored number could. The page is
-          deliberately unreachable from here: its translucency lives in the book-background section,
-          against its own AAA floor. */}
-      <div className="pf-field-label">{t("profiles.marks.texture")}</div>
-      <div className="pf-texture" role="radiogroup">
-        {TEXTURE_STEPS.map((s) => (
-          <button
-            key={s}
-            role="radio"
-            aria-checked={draft.data.texture === s}
-            className={`pf-texture-step${draft.data.texture === s ? " on" : ""}`}
-            onClick={() => patch((d) => { d.texture = s; })}
-          >
-            <span className="pf-texture-swatch" data-step={s} aria-hidden />
-            {t(`profiles.texture.${s}`)}
-          </button>
-        ))}
-      </div>
-      <div className="pf-hint">{t("profiles.marks.textureHint")}</div>
-
       <div className="pf-field-label">{t("profiles.marks.readMarker")}</div>
       <div className="pf-rm-list">
         {READ_MARKERS.map((m) => (
@@ -795,6 +836,46 @@ function MarksSection({
           </button>
         ))}
       </div>
+    </>
+  );
+}
+
+/**
+ * INTERFACE TEXTURE — three named steps, never a percentage.
+ *
+ * The design is explicit about that, and an enum cannot drift below the measured floor the way a
+ * stored number could. The page is deliberately unreachable from here: its translucency lives in the
+ * background chapter, against its own AAA floor.
+ *
+ * LIFTED OUT OF MARKS, NOT REWRITTEN. It used to close the Marks section; the six chapters give it
+ * its own, so it moved as it was.
+ */
+function TextureSection({
+  draft,
+  patch,
+}: {
+  draft: Profile;
+  patch: (f: (d: ProfileData) => void) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <>
+      <div className="pf-field-label">{t("profiles.marks.texture")}</div>
+      <div className="pf-texture" role="radiogroup">
+        {TEXTURE_STEPS.map((s) => (
+          <button
+            key={s}
+            role="radio"
+            aria-checked={draft.data.texture === s}
+            className={`pf-texture-step${draft.data.texture === s ? " on" : ""}`}
+            onClick={() => patch((d) => { d.texture = s; })}
+          >
+            <span className="pf-texture-swatch" data-step={s} aria-hidden />
+            {t(`profiles.texture.${s}`)}
+          </button>
+        ))}
+      </div>
+      <div className="pf-hint">{t("profiles.marks.textureHint")}</div>
     </>
   );
 }

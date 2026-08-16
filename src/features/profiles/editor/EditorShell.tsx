@@ -18,6 +18,7 @@ export function EditorShell({
   dirty,
   children,
   preview,
+  railFooter,
 }: {
   active: ChapterId;
   onSelect: (id: ChapterId) => void;
@@ -29,6 +30,12 @@ export function EditorShell({
   children: ReactNode;
   /** The live faces. Receives the focus so it can draw the hairline frame. */
   preview: (focus: Focus) => ReactNode;
+  /**
+   * The block that closes the rail below the six chapters — Sard's firewall, which states once what
+   * a profile does NOT carry. It is not a chapter and must never become one, so it arrives as a slot
+   * rather than a seventh entry in CHAPTERS.
+   */
+  railFooter?: ReactNode;
 }) {
   const open = CHAPTERS.find((c) => c.id === active) ?? CHAPTERS[0];
 
@@ -51,6 +58,7 @@ export function EditorShell({
             <span className="pfe-rail-value">{value(c.id)}</span>
           </button>
         ))}
+        {railFooter}
       </nav>
 
       {/* One chapter at a time, with room for real specimens. */}

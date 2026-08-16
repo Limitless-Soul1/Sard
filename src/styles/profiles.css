@@ -230,11 +230,6 @@
   flex: 1; min-width: 0; display: flex; flex-direction: column;
   align-items: center; justify-content: center; gap: 14px; padding: 24px; overflow-y: auto;
 }
-/* The rail's own head, as the design has it: the feature named, then the one line that says what
-   the stage beside it is for. */
-.pf-rail-head { display: flex; flex-direction: column; gap: 3px; padding: 4px 6px 12px; }
-.pf-rail-head-title { font: 600 0.6875rem var(--ui-font); letter-spacing: 0.02em; color: var(--muted); }
-.pf-rail-head-sub { font: 400 0.75rem/1.6 var(--ui-font); color: var(--lib-faint, var(--muted)); }
 .pf-stage-seg { display: inline-flex; padding: 3px; border-radius: 9px; background: color-mix(in srgb, var(--text) 6%, transparent); }
 .pf-stage-seg button {
   padding: 6px 14px; border: 0; border-radius: 7px; background: transparent;
@@ -243,25 +238,54 @@
 .pf-stage-seg button.on { background: var(--paper-bg); color: var(--text); }
 .pf-stage-frame { width: min(560px, 100%); border-radius: 12px; overflow: hidden; box-shadow: 0 14px 34px rgba(20, 14, 6, 0.22); }
 
-/* `border-inline-END`, matching the design's own markup: the rail sits at the inline START — the
-   right in Arabic, the left in English — and the stage takes the rest. That is what makes the
-   design's own caption true, "what you see on the left is what you will see in Sard". */
-.pf-rail {
-  width: 344px; flex: none; background: var(--chrome-bg);
+/* ---- the shell: rail · chapter · preview ----
+   Three columns, because the editor has three jobs and they do not take turns: the rail says where
+   you are, the chapter holds one set of controls, and the preview answers. The rail sits at the
+   inline START — the right in Arabic, the left in English — and the preview takes what is left.
+   The chapter column is fixed at 380px so a specimen is read at a stable measure rather than
+   reflowing every time the window moves. */
+.pfe { flex: 1; min-height: 0; display: flex; }
+
+.pfe-rail {
+  width: 268px; flex: none; background: var(--chrome-bg);
   border-inline-end: 1px solid var(--chrome-border); overflow-y: auto; padding: 10px;
+  display: flex; flex-direction: column; gap: 2px;
 }
-.pf-sec { border-bottom: 1px solid var(--chrome-border); }
-.pf-sec-head {
-  display: flex; align-items: baseline; justify-content: space-between; gap: 10px; width: 100%;
-  padding: 12px 6px; border: 0; background: transparent; cursor: pointer; text-align: start;
+.pfe-rail-item {
+  display: flex; flex-direction: column; align-items: stretch; gap: 3px; width: 100%;
+  padding: 9px 10px; border: 0; border-radius: 9px; background: transparent;
+  cursor: pointer; text-align: start;
 }
-.pf-sec-label { font: 600 0.84375rem var(--ui-font); color: var(--text); }
-.pf-sec-value {
+.pfe-rail-item:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.pfe-rail-item.is-open { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.pfe-rail-name {
+  display: flex; align-items: center; gap: 6px;
+  font: 600 0.84375rem var(--ui-font); color: var(--text);
+}
+.pfe-rail-item.is-open .pfe-rail-name { color: var(--accent); }
+/* The dot is the whole point of the rail: "what have I changed", seen rather than remembered. */
+.pfe-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); flex: none; }
+.pfe-rail-value {
   font: 400 0.75rem var(--ui-font); color: var(--lib-faint, var(--muted));
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.pf-sec.open .pf-sec-label { color: var(--accent); }
-.pf-sec-body { padding: 2px 6px 16px; }
+
+.pfe-chapter {
+  width: 380px; flex: none; overflow-y: auto; padding: 18px 18px 24px;
+  border-inline-end: 1px solid var(--chrome-border);
+}
+.pfe-ch-title { margin: 0; font: 600 1.0625rem var(--ui-font); color: var(--text); }
+.pfe-ch-q { margin: 4px 0 16px; font: 400 0.8125rem/1.6 var(--ui-font); color: var(--muted); }
+.pfe-ch-body { min-width: 0; }
+/* Between two surfaces inside one chapter — the only place a chapter body needs an internal break. */
+.pfe-ch-rule {
+  height: 1px; margin: 18px 0 14px; background: var(--chrome-border); border: 0;
+}
+
+.pfe-preview { flex: 1; min-width: 0; display: flex; }
+/* What the open chapter governs, named. Not the design's pixel hairline: `FOCUS` carries the face
+   and the label, and the insets it dropped were measured against the mock, not against SardMini. */
+.pfe-focus-label { font: 500 0.75rem var(--ui-font); color: var(--muted); }
 
 .pf-swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .pf-swatch-cell { display: flex; flex-direction: column; align-items: center; gap: 4px; border: 0; background: none; padding: 0; cursor: pointer; }

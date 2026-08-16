@@ -15,6 +15,7 @@ import { registerOutcomeRecorder } from "./lib/listeningOutcomes"; // RAWY-263: 
 import { initTheme, reapplyTitlebarTheme, resolveTheme, useTheme } from "./theme";
 import { initProfiles } from "./features/profiles/store"; // PROFILES: register authored themes first
 import { UnsavedChange, useUnsavedChangeWatch } from "./features/profiles/UnsavedChange";
+import { DroppedProfile } from "./features/profiles/DroppedProfile";
 import { initPresence } from "./lib/presence"; // DISC/RPC: load the Discord on/off switch
 import { LanguagePicker } from "./features/onboarding/LanguagePicker";
 import { Library, type OpenTarget } from "./features/library/Library";
@@ -67,6 +68,9 @@ function Root() {
           from either surface — Global Settings on the Library side, the theme picker and the faces
           on the reader's. It renders nothing until there is something to ask about. */}
       <UnsavedChange />
+      {/* A profile dropped onto the window. The Library's drop listener already ran it through the
+          import gate; this shows the ordinary preview so the drop and the picker end in one place. */}
+      <DroppedProfile />
     </>
   );
 }

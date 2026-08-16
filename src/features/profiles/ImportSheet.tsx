@@ -37,12 +37,29 @@ type Stage =
 export function ImportSheet({
   onClose,
   onEdit,
+  initialText,
 }: {
   onClose: () => void;
   onEdit: (p: Profile) => void;
+  /**
+   * A manifest ALREADY returned by `profile_import_inspect` — the drag-and-drop path.
+   *
+   * It still goes through `inspectPackage` here, exactly as a picked file does: the drop reused the
+   * Rust gate, and this is the second gate. Nothing skips validation; only the file CHOOSER is
+   * skipped, because the reader already chose by dropping.
+   */
+  initialText?: string;
 }) {
   const { t } = useI18n();
-  const [stage, setStage] = useState<Stage>({ at: "picking" });
+  const [stage, setStage] = useState<Stage>(() => {
+    if (!initialText) return { at: "picking" };
+    const seen = inspectPackage(initialText);
+    return seen.ok
+      ? { at: "preview", text: initialText, sum: summarise(seen),
+          bytes: new TextEncoder().encode(initialText).length }
+      : { at: "refused", code: seen.refusal.code,
+          detail: "field" in seen.refusal ? seen.refusal.field : null };
+  });
   const [busy, setBusy] = useState(false);
 
   const pick = async () => {
@@ -89,7 +106,7 @@ export function ImportSheet({
   };
 
   // The picker opens as soon as the sheet does — the sheet IS the import, not a step before it.
-  if (stage.at === "picking" && !busy) {
+  if (stage.at === "picking" && !busy && !initialText) {
     void pick();
     setBusy(true);
     return null;

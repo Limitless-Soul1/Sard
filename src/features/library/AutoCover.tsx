@@ -37,6 +37,17 @@ function titleSize(len: number, arabic: boolean): number {
   return len <= 8 ? 29 : len <= 16 ? 23 : len <= 26 ? 18 : 15;
 }
 
+/**
+ * The paints this title resolves to — the SAME deterministic choice the component draws with.
+ *
+ * Exported so surfaces that show a book as something other than a full cover (the Spines
+ * view's spine, the Details row's thumbnail) can carry the book's own colour instead of
+ * inventing a second palette that would drift from this one.
+ */
+export function autoCoverPaint(title: string): { bg: string; ink: string } {
+  return PALETTE[hashIndex(title, PALETTE.length)];
+}
+
 interface Props {
   title: string;
   author?: string | null;

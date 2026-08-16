@@ -147,17 +147,27 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
     // treated as already applied on every install that had recorded the backfill, and would suppress
     // the backfill on every install that had not. The same is true of 8. Neither is a free slot, and
     // the timestamp convention means nothing will ever want them again.
+    (
+        17,
+        "library_cases",
+        include_str!("migrations_sql/0017_library_cases.sql"),
+    ),
+    (
+        18,
+        "shelf_ink",
+        include_str!("migrations_sql/0018_shelf_ink.sql"),
+    ),
     // PROFILES (stage 1): the visual-identity registry. CREATE only — no row is written, so an
     // installation that never opens Profiles is unchanged by it.
     //
-    // NUMBERED 19 BECAUSE IT WAS ALLOCATED BEFORE THE TIMESTAMP CONVENTION, and it keeps that number
-    // now that it has one: 17 and 18 belong to `feature/library-design`, and under presence-tracking
-    // all three apply on their own account in whichever order the branches land. Nothing here needs
-    // renumbering, and nothing here depends on 17 or 18 having run — the table it creates stands
-    // alone, which is the rule every migration now has to satisfy.
+    // NUMBERED 19 BECAUSE IT WAS ALLOCATED BEFORE THE TIMESTAMP CONVENTION, and it kept that number
+    // through the merge that brought 17 and 18 in beside it. Nothing was renumbered on either side,
+    // which is the whole point: under presence-tracking each migration applies on its own account,
+    // so the order the two lines of work landed in never mattered. Nothing here depends on 17 or 18
+    // having run — the table it creates stands alone, which is the rule every migration must satisfy.
     //
-    // This migration is why the runner changed. It originally sat on 17, collided with the other
-    // branch, and was silently never applied on any database that had seen it.
+    // This migration is why the runner changed. It originally sat on 17, collided head-on with the
+    // library work, and was silently never applied on any database that had seen that branch.
     (
         19,
         "profiles",

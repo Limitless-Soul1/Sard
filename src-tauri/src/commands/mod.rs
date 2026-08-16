@@ -374,6 +374,157 @@ pub fn collections_for_book(book_id: String, state: State<AppState>) -> Result<V
     library::collections_for_book(&conn, &book_id).map_err(err)
 }
 
+// ---------------------------------------------------------------------------
+// Library structure — cases, categories and hand order. Every write returns the
+// refreshed tree, the same one-round-trip contract the RAWY-31 shelf writes use.
+// ---------------------------------------------------------------------------
+
+use library::structure;
+
+#[tauri::command]
+pub fn library_tree(state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::tree(&conn).map_err(err)
+}
+
+/// One shelf's books in the shelf's own order, with their category.
+#[tauri::command]
+pub fn library_shelf_items(
+    collection_id: String,
+    state: State<AppState>,
+) -> Result<Vec<structure::ShelfItem>, String> {
+    let conn = state.conn();
+    structure::shelf_items(&conn, &collection_id).map_err(err)
+}
+
+#[tauri::command]
+pub fn case_create(
+    name: String,
+    ink: Option<String>,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::case_create(&conn, &name, ink.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+pub fn case_rename(id: String, name: String, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::case_rename(&conn, &id, &name).map_err(err)
+}
+
+#[tauri::command]
+pub fn case_delete(id: String, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::case_delete(&conn, &id).map_err(err)
+}
+
+#[tauri::command]
+pub fn case_reorder(id: String, to_index: i64, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::case_reorder(&conn, &id, to_index).map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_create(
+    name: String,
+    case_id: Option<String>,
+    auto_rule: Option<String>,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_create(&conn, &name, case_id.as_deref(), auto_rule.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_set_case(
+    id: String,
+    case_id: Option<String>,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_set_case(&conn, &id, case_id.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_set_order(
+    id: String,
+    order_rule: String,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_set_order(&conn, &id, &order_rule).map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_set_collapsed(
+    id: String,
+    collapsed: bool,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_set_collapsed(&conn, &id, collapsed).map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_place_book(
+    collection_id: String,
+    book_id: String,
+    category_id: Option<String>,
+    index: i64,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_place_book(&conn, &collection_id, &book_id, category_id.as_deref(), index)
+        .map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_set_ink(id: String, ink: Option<String>, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_set_ink(&conn, &id, ink.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+pub fn case_set_ink(id: String, ink: Option<String>, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::case_set_ink(&conn, &id, ink.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_reorder(id: String, to_index: i64, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_reorder(&conn, &id, to_index).map_err(err)
+}
+
+#[tauri::command]
+pub fn category_reorder(id: String, to_index: i64, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::category_reorder(&conn, &id, to_index).map_err(err)
+}
+
+#[tauri::command]
+pub fn category_create(
+    collection_id: String,
+    name: String,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::category_create(&conn, &collection_id, &name).map_err(err)
+}
+
+#[tauri::command]
+pub fn category_rename(id: String, name: String, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::category_rename(&conn, &id, &name).map_err(err)
+}
+
+#[tauri::command]
+pub fn category_delete(id: String, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::category_delete(&conn, &id).map_err(err)
+}
+
 /// RAWY-17 — import EPUB files into the library (copy-in, hash/dedup, extract metadata +
 /// cover). Returns one result per path so the UI can summarise imported/duplicate/
 /// unsupported/error. The only Rust↔JS path for adding books.
@@ -439,6 +590,10 @@ pub struct BookPatch {
     pub language: Option<String>,
     pub dir: Option<String>,
     pub cover_fit: Option<String>,
+    /// Book Details' jacket controls. Empty string clears the override.
+    pub cover_paint: Option<String>,
+    pub cover_mode: Option<String>,
+    pub spine_mode: Option<String>,
 }
 
 /// RESILIENCE-1 / WP-3 — read ONE book's authoritative row (effective title/author, i.e.
@@ -472,6 +627,9 @@ pub fn book_update(
         patch.language.as_deref(),
         patch.dir.as_deref(),
         patch.cover_fit.as_deref(),
+        patch.cover_paint.as_deref(),
+        patch.cover_mode.as_deref(),
+        patch.spine_mode.as_deref(),
     )
     .map_err(err)
 }
@@ -519,6 +677,47 @@ pub fn book_commit_cover(
     let app_data_dir = state.app_data_dir.clone();
     let conn = state.conn();
     let mut row = library::commit_cover(&conn, &app_data_dir, &id, &rel)?;
+    if let Some(r) = row.as_mut() {
+        library::resolve_row_cover(&app_data_dir, r);
+    }
+    Ok(row)
+}
+
+/// Stage a spine image — same validation and custody as a cover, its own name prefix.
+#[tauri::command]
+pub fn book_stage_spine(
+    id: String,
+    image_path: String,
+    state: State<AppState>,
+) -> Result<library::StagedCover, String> {
+    safe_id(&id)?;
+    library::stage_spine(&state.app_data_dir, &id, &image_path)
+}
+
+/// Adopt a staged spine image.
+#[tauri::command]
+pub fn book_commit_spine(
+    id: String,
+    rel: String,
+    state: State<AppState>,
+) -> Result<Option<library::BookRow>, String> {
+    safe_id(&id)?;
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.conn();
+    let mut row = library::commit_spine(&conn, &app_data_dir, &id, &rel)?;
+    if let Some(r) = row.as_mut() {
+        library::resolve_row_cover(&app_data_dir, r);
+    }
+    Ok(row)
+}
+
+/// Remove a book's spine image and its file.
+#[tauri::command]
+pub fn book_clear_spine(id: String, state: State<AppState>) -> Result<Option<library::BookRow>, String> {
+    safe_id(&id)?;
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.conn();
+    let mut row = library::clear_spine(&conn, &app_data_dir, &id)?;
     if let Some(r) = row.as_mut() {
         library::resolve_row_cover(&app_data_dir, r);
     }

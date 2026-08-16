@@ -1,0 +1,144 @@
+/* The library design surface.
+ *
+ * The design was authored against a small set of short variable names (--pap, --chr, --acc,
+ * --faint, --sh2 …). Rather than translate every one of its rules into Sard's own token
+ * names — which is where a faithful design quietly becomes an approximate one — this file
+ * BINDS those names to Sard's existing tokens once, here. The components can then carry the
+ * design's declarations verbatim.
+ *
+ * Two consequences worth stating:
+ *
+ *  - The design inherits all 16 Sard themes instead of the three it shipped with. Every
+ *    colour below resolves from the 8 authored theme colours, so a theme change repaints
+ *    this surface with no work of its own.
+ *  - The derived tokens are the ONES THAT ALREADY EXIST on `.lib-root` (RAWY-265 and the
+ *    library CSS), not new ones with the same meaning. `--faint` in particular binds to
+ *    `--lib-faint`, which `background.ts` re-grounds against the worst-case composited
+ *    library ground to hold its measured 3:1 floor when a background image is set. Defining
+ *    a private faint here would have silently escaped that floor.
+ */
+
+.libd-root {
+  /* the same derivations `.lib-root` uses, so both chromes agree */
+  --lib-faint: color-mix(in srgb, var(--muted) 62%, var(--paper-bg));
+  --lib-hover: color-mix(in srgb, var(--text) 6%, transparent);
+  --lib-active: color-mix(in srgb, var(--accent) 12%, var(--chrome-bg));
+  --lib-soft: color-mix(in srgb, var(--text) 4%, var(--paper-bg));
+  --lib-letterbox: color-mix(in srgb, var(--text) 8%, var(--chrome-bg));
+
+  /* the design's names, bound to Sard's */
+  --pap: var(--paper-bg);
+  --app: var(--app-bg);
+  --chr: var(--chrome-bg);
+  --brd: var(--chrome-border);
+  --txt: var(--text);
+  --mut: var(--muted);
+  --acc: var(--accent);
+  --faint: var(--lib-faint);
+  --hov: var(--lib-hover);
+  --act: var(--lib-active);
+  --soft: var(--lib-soft);
+  --lbox: var(--lib-letterbox);
+  --rule: color-mix(in srgb, var(--text) 13%, transparent);
+  --done: color-mix(in srgb, #6f8a5e 82%, var(--text));
+
+  /* light-theme shadow set, as authored */
+  --sh1: 0 1px 2px rgba(40, 28, 14, 0.06);
+  --sh2: 0 3px 10px rgba(40, 28, 14, 0.12);
+  --sh3: 0 14px 34px rgba(40, 28, 14, 0.22);
+  --sh4: 0 18px 44px rgba(20, 14, 6, 0.22);
+
+  --ui: var(--ui-font);
+  --book: "Literata", Georgia, serif;
+  --ar: "Amiri", serif;
+
+  /* Vista sets its captions over an image, so they carry a 1px lift off the ground. */
+  --libd-cap-shadow: rgba(255, 252, 244, 0.75);
+
+  /* Geometry only. The BACKGROUND is deliberately left to `.lib-root` so that the
+     `:root[data-bg-library="on"]` rules — which out-specify a bare class — keep winning, and so a
+     chosen library image renders through this surface exactly as it did through the old one. */
+  position: fixed;
+  inset: 0;
+  display: flex;
+  overflow: hidden;
+  color: var(--txt);
+  font-family: var(--ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The dark shadow set. Keyed on `data-dark`, which applyTheme already stamps on :root for
+   every theme, so this follows the theme rather than naming particular themes. */
+:root[data-dark="true"] .libd-root {
+  --sh1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --sh2: 0 3px 10px rgba(0, 0, 0, 0.55);
+  --sh3: 0 14px 34px rgba(0, 0, 0, 0.6);
+  --sh4: 0 18px 44px rgba(0, 0, 0, 0.65);
+  --libd-cap-shadow: rgba(0, 0, 0, 0.7);
+}
+
+@keyframes sard-rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes sard-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes sard-open { from { opacity: 0; transform: scaleX(0.2); } to { opacity: 1; transform: none; } }
+
+/* ============================================================================================
+   SCOPING. Everything below applies ONLY to the design's own three surfaces — the chrome
+   (sidebar + header), the stage (the five views), and the Book Details dialog.
+   It must NEVER reach `.lib-pane`, which is where Highlights & Notes, Bookmarks and Photo
+   cards render.
+
+   This is not tidiness. `.libd-root button` is specificity (0,1,1) and `.inbox-dot` is
+   (0,1,0), so a blanket reset on the shell WINS against those panes' own rules: every button
+   in Highlights & Notes lost its padding, its background and its layout — which is precisely
+   how the colour dots stopped reading as colours. The redesign of the library must not be
+   able to restyle a screen it does not own.
+   ============================================================================================ */
+.libd-chrome,
+.libd-stage,
+.libd-dialog {
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+/* The design supplies each of its own buttons' styles inline, exactly as authored; this only
+   removes the user-agent chrome from them.
+
+   `.lib-settings-btn` is EXEMPT. It is Sard's own control, styled by the main stylesheet, and it
+   happens to sit inside the design's chrome. A bare class is (0,1,0) and loses to the (0,1,1) of
+   `.libd-chrome button`, so without this exclusion the reset would strip its padding, its font
+   and its start alignment — the same way `.libd-root button` once flattened the Highlights
+   screen. Any further Sard-owned control placed in here needs adding to this list. */
+.libd-chrome button:not(.lib-settings-btn),
+.libd-stage button,
+.libd-dialog button {
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.libd-chrome input,
+.libd-stage input,
+.libd-dialog input {
+  color: inherit;
+  font-family: inherit;
+}
+.libd-stage::-webkit-scrollbar { width: 10px; height: 10px; }
+.libd-stage::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--txt) 22%, transparent);
+  border-radius: 6px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+/* Hover states are authored as a `style-hover` attribute in the design's own template
+   dialect. Here they are one data attribute, so a hovered element can carry declarations
+   that the base style does not — without a rule per component. */
+.libd-hov:hover { background: var(--hov); }
+.libd-hov-txt:hover { color: var(--txt); }
+.libd-hov-bright:hover { filter: brightness(1.08); }
+.libd-hov-fade:hover { opacity: 0.75; }

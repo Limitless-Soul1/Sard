@@ -34,6 +34,7 @@ import { THEMES, THEME_ORDER } from "../../theme/themes";
 import { BookmarkShape } from "../reader/BookmarkShape";
 import { CustomPaper } from "./CustomPaper";
 import { ShareSheet } from "./ShareSheet";
+import { profileChangePending } from "./session";
 import { SardMini } from "./SardMini";
 import { bookFaceCss, miniOf } from "./mini";
 import { saveProfile, useProfiles } from "./store";
@@ -107,7 +108,7 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
             a package is made from the SAVED profile, and exporting one that does not match what is
             on screen would send something the reader never saw. */}
         <button className="pf-btn" disabled={dirty} title={dirty ? t("profiles.editor.unsaved") : undefined}
-          onClick={() => setShare(true)}>
+          onClick={() => { if (!profileChangePending()) setShare(true); }}>
           {t("profiles.card.share")}
         </button>
         <button className="pf-btn primary" disabled={!dirty} onClick={() => void save()}>

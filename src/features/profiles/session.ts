@@ -106,3 +106,16 @@ export const useSession = create<SessionState>((set) => ({
     }),
   reset: () => set({ accepted: {}, pending: null }),
 }));
+
+/**
+ * Is a profile-owned change waiting to be answered?
+ *
+ * THE PRECEDENCE RULE, IN ONE PLACE. The unsaved-change question outranks Share and Import: both of
+ * those act on a profile whose saved state is exactly what is in doubt while it is pending. Sharing
+ * a profile mid-question would package a look the reader has not decided to keep, and importing
+ * would add a second decision on top of an unanswered one.
+ *
+ * It BLOCKS rather than dismisses. The pending decision is never resolved on the reader's behalf —
+ * they answer it, and then the action they asked for is available again.
+ */
+export const profileChangePending = (): boolean => useSession.getState().pending !== null;

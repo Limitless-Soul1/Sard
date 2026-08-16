@@ -23,6 +23,7 @@ import { miniOfTheme } from "./mini";
 import { ProfileCard } from "./ProfileCard";
 import { ShareSheet } from "./ShareSheet";
 import { ImportSheet } from "./ImportSheet";
+import { profileChangePending } from "./session";
 import { ProfileEditor } from "./ProfileEditor";
 import {
   applyProfile,
@@ -101,7 +102,7 @@ export function ProfilesSection() {
         {/* Import arrives with the package format (a later stage). Shown disabled rather than
             hidden, because the design's list has it and a control that appears later moves the
             furniture under the reader. */}
-        <button className="pf-btn" onClick={() => setDialog({ kind: "import" })}>
+        <button className="pf-btn" onClick={() => { if (!profileChangePending()) setDialog({ kind: "import" }); }}>
           {t("profiles.import")}
         </button>
         {profiles.length > 0 && (
@@ -110,7 +111,7 @@ export function ProfilesSection() {
       </div>
 
       {profiles.length === 0 ? (
-        <FirstRun onImport={() => setDialog({ kind: "import" })} onCreate={() => setDialog({ kind: "create" })} />
+        <FirstRun onImport={() => { if (!profileChangePending()) setDialog({ kind: "import" }); }} onCreate={() => setDialog({ kind: "create" })} />
       ) : (
         <div className="pf-grid">
           {profiles.map((p) => (
@@ -123,7 +124,7 @@ export function ProfilesSection() {
                 onUse: () => void applyProfile(p),
                 onEdit: () => setDialog({ kind: "edit", profile: p }),
                 onDuplicate: () => void duplicate(p),
-                onShare: () => setDialog({ kind: "share", profile: p }),
+                onShare: () => { if (!profileChangePending()) setDialog({ kind: "share", profile: p }); },
                 onDelete: () => setDialog({ kind: "delete", profile: p }),
               }}
             />

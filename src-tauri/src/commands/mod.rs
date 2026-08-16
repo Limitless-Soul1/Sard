@@ -1068,6 +1068,40 @@ pub async fn background_import(
     backgrounds::commit(&conn, &app_data_dir, mat)
 }
 
+/// PROFILES (stage 6) — write a package to the path the reader chose.
+///
+/// The manifest text is produced and shown by the frontend, and written verbatim: what the reader
+/// inspected before sending is byte-for-byte what leaves. Settings only — assets travel later.
+#[tauri::command]
+pub fn profile_export(path: String, manifest_json: String) -> Result<(), String> {
+    profiles::package::export(&path, &manifest_json)
+}
+
+/// Read a package's manifest and change NOTHING. The reader sees the profile before it enters, and
+/// the same refusal codes reach them here as from the frontend validator.
+#[tauri::command]
+pub fn profile_import_inspect(path: String) -> Result<String, String> {
+    profiles::package::inspect(&path)
+}
+
+/// Commit an inspected package as a new profile.
+///
+/// SEPARATE FROM `profile_save` DELIBERATELY, even though a settings-only import overlaps with it.
+/// This is the import BOUNDARY: it re-checks the manifest rather than trusting that inspection
+/// happened, assigns a fresh id so a sender's id can never collide with or overwrite a local row,
+/// and drops provenance. When assets arrive, unpacking and registering them belongs here — beside
+/// the row write, in one place — rather than being retrofitted into a general-purpose save.
+#[tauri::command]
+pub fn profile_import_commit(
+    manifest_json: String,
+    new_id: String,
+    state: State<AppState>,
+) -> Result<profiles::Profile, String> {
+    safe_id(new_id.trim_start_matches("u:"))?;
+    let conn = state.conn();
+    profiles::package::commit(&conn, &manifest_json, &new_id)
+}
+
 #[tauri::command]
 pub fn backgrounds_list(state: State<AppState>) -> Result<Vec<backgrounds::Background>, String> {
     let conn = state.conn();

@@ -15,6 +15,8 @@
 //! can be fooled by it. When import arrives (stage 6) the validating parser is the frontend's typed
 //! struct, and the columns below stay the only Rust-visible facts.
 
+pub mod package; // PROFILES (stage 6): the shareable package — export, inspect, commit
+
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};

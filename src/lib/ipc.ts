@@ -95,6 +95,18 @@ export const backgroundChoose = (surface: "library" | "reading", path: string): 
  *  `applyProfile` does; a draft must not repaint the running app or write a global binding.
  *  The row is unreferenced until the profile is saved, which is correct: an abandoned draft's
  *  image IS an orphan. See `background_import` for why that direction is the safe one. */
+/** PROFILES (stage 6) — write a package to a path the reader chose. Settings only. */
+export const profileExport = (path: string, manifestJson: string): Promise<void> =>
+  invoke<void>("profile_export", { path, manifestJson });
+
+/** Read a package's manifest, changing nothing. Rejects with a `pkg.err.*` code. */
+export const profileImportInspect = (path: string): Promise<string> =>
+  invoke<string>("profile_import_inspect", { path });
+
+/** Commit an inspected package under a fresh id. Re-checks the manifest rather than trusting it. */
+export const profileImportCommit = (manifestJson: string, newId: string): Promise<ProfileRow> =>
+  invoke<ProfileRow>("profile_import_commit", { manifestJson, newId });
+
 export const backgroundImport = (path: string): Promise<BackgroundRow> =>
   invoke<BackgroundRow>("background_import", { path });
 

@@ -250,8 +250,13 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
                   {t("profiles.editor.stageBook")}
                 </button>
               </div>
-              <div className="pf-stage-frame">
-                {face === "library" ? <SardMini p={miniOf(draft)} /> : <BookStage profile={draft} />}
+              {/* The frame is sized against THIS area, not against a constant: it is what the
+                  column has left once the segmented control and the focus label have taken theirs,
+                  which is what lets the specimen grow with the window. */}
+              <div className="pf-stage-area">
+                <div className="pf-stage-frame">
+                  {face === "library" ? <SardMini p={miniOf(draft)} /> : <BookStage profile={draft} />}
+                </div>
               </div>
               {/* WHAT THIS CHAPTER GOVERNS, named. The design frames the exact region with a
                   hairline; `FOCUS` here carries the face and the name but deliberately not the

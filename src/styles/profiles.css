@@ -228,7 +228,16 @@
 
 .pf-stage {
   flex: 1; min-width: 0; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; gap: 14px; padding: 24px; overflow-y: auto;
+  align-items: center; justify-content: center; gap: 14px; padding: 24px; overflow: hidden;
+}
+/* THE ROOM THE SPECIMEN ACTUALLY HAS — the column, less the segmented control and the focus label.
+   The specimen is sized against THIS rather than against a constant, which is what lets it grow with
+   the window without anyone choosing a number. */
+.pf-stage-area {
+  flex: 1 1 auto; min-height: 0; width: 100%;
+  display: flex; align-items: center; justify-content: center;
+  /* `size`, not `inline-size`: the frame is bounded by this area's HEIGHT as well as its width. */
+  container-type: size;
 }
 .pf-stage-seg { display: inline-flex; padding: 3px; border-radius: 9px; background: color-mix(in srgb, var(--text) 6%, transparent); }
 .pf-stage-seg button {
@@ -236,7 +245,18 @@
   color: var(--muted); font: 500 0.78125rem var(--ui-font); cursor: pointer;
 }
 .pf-stage-seg button.on { background: var(--paper-bg); color: var(--text); }
-.pf-stage-frame { width: min(560px, 100%); border-radius: 12px; overflow: hidden; box-shadow: 0 14px 34px rgba(20, 14, 6, 0.22); }
+/* NO PIXEL CAP. `min(560px, 100%)` meant the specimen stopped growing at a viewport of about
+   1208 px: measured 560 px wide inside a 1912 px column, using 29 % of the space it was given.
+   The specimen is 16:10, so it takes the SMALLER of what the area offers on each axis — the column's
+   width, or the height re-expressed as a width through the ratio — and `aspect-ratio` derives the
+   other side. Expressed as one `min()` rather than `height: 100%` + `max-width`, because that pair
+   leaves the frame at full height when the WIDTH binds: measured as a 404 × 714 frame around a
+   404 × 253 page, i.e. 461 px of shadowed emptiness. Both bounds come from the layout; neither is a
+   new constant, and 16/10 is the specimen's own ratio. */
+.pf-stage-frame {
+  width: min(100cqw, calc(100cqh * 16 / 10)); aspect-ratio: 16 / 10;
+  border-radius: 12px; overflow: hidden; box-shadow: 0 14px 34px rgba(20, 14, 6, 0.22);
+}
 
 /* ---- the shell: rail · chapter · preview ----
    Three columns, because the editor has three jobs and they do not take turns: the rail says where
@@ -341,15 +361,41 @@
 .pf-firewall-body { margin: 0; font: 400 0.71875rem/1.7 var(--ui-font); color: var(--lib-faint, var(--muted)); }
 
 /* ---- the stage's book face: a real passage, both scripts, the real marks ---- */
-.pf-book { padding: 26px; display: flex; align-items: center; justify-content: center; aspect-ratio: 16 / 10; }
-.pf-book-sheet {
-  position: relative; width: 100%; height: 100%; border-radius: 4px; padding: 22px 24px;
-  box-shadow: 0 8px 22px rgba(20, 14, 6, 0.3); overflow: hidden;
+/* THE BOOK SPECIMEN SCALES WITH ITS FRAME, not with the application's root font.
+   It used to do the opposite: the sheet froze at 508 px while `rem` type kept growing with the app
+   scale (measured 12.6 → 17.6 px across four viewports), so the page and the type on it were on two
+   independent scales and the specimen misrepresented itself at every size but one.
+   Now one container-relative `font-size` drives everything and the rest is `em`, which is the idiom
+   `SardMini` already uses. `100cqw / 35` is not a chosen number — it is the tuned 16 px against the
+   560 px the design was drawn at, so the specimen looks exactly as it did, at any size.
+   The floor is a legibility guard, not a ratio: proportional scaling alone made the specimen's type
+   SMALLER than it used to be on a narrow column (measured 10.1 px against the old 12.6 px), which is
+   a regression however faithful the proportion. Below a frame of ~490 px the specimen therefore
+   stops shrinking its type. Above it, the ratio is exact. */
+.pf-stage-frame { container-type: inline-size; }
+.pf-book {
+  font-size: clamp(14px, calc(100cqw / 35), 34px);
+  padding: 1.625em; display: flex; align-items: center; justify-content: center;
+  aspect-ratio: 16 / 10;
 }
-.pf-book-title { font-size: 0.9375rem; margin-bottom: 10px; opacity: 0.8; }
-.pf-book-p { margin: 0 0 10px; font-size: 0.875rem; line-height: 1.9; }
-.pf-book-p.latin { font-size: 0.8125rem; line-height: 1.6; }
-.pf-book-mark { position: absolute; inset-block-start: 0; inset-inline-end: 30px; }
+.pf-book-sheet {
+  position: relative; width: 100%; height: 100%; border-radius: 0.25em; padding: 1.375em 1.5em;
+  box-shadow: 0 0.5em 1.375em rgba(20, 14, 6, 0.3); overflow: hidden;
+}
+.pf-book-title { font-size: 0.9375em; margin-bottom: 0.667em; opacity: 0.8; }
+.pf-book-p { margin: 0 0 0.714em; font-size: 0.875em; line-height: 1.9; }
+.pf-book-p.latin { font-size: 0.8125em; line-height: 1.6; }
+/* The mark scales with the page too. `BookmarkShape` composes absolutely-positioned boxes in px
+   arithmetic, so it cannot be resized by giving it a bigger box — only a transform scales it whole.
+   The factor is the frame against the 560 px the design was drawn at, so it is 1 at the tuned size.
+   If a renderer will not divide two lengths, the custom property is invalid at substitution time,
+   `transform` falls back to `none`, and the mark simply renders at today's fixed size — the previous
+   behaviour, never a broken one. Measured either way. */
+.pf-book { --pf-mark-k: calc(100cqw / 560px); }
+.pf-book-mark {
+  position: absolute; inset-block-start: 0; inset-inline-end: 1.875em;
+  transform: scale(var(--pf-mark-k)); transform-origin: top center;
+}
 
 /* ---- accessibility: the same rule the background system already applies ----
    A reader who has asked the OS for reduced transparency has stated a requirement, not a

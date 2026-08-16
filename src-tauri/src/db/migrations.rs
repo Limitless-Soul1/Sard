@@ -1,9 +1,58 @@
-//! Versioned, ordered migration runner (RAWY-08).
+//! Versioned migration runner (RAWY-08).
 //!
-//! Deterministic and idempotent: the highest applied version is recorded in a
-//! `schema_migrations` table (and mirrored to `PRAGMA user_version`). On each launch we
-//! apply only migrations whose version is greater than the current one, each in its own
-//! transaction. Never edit an already-shipped migration — append a new one instead.
+//! Each applied migration is recorded as its own row in `schema_migrations`. On each launch we apply
+//! every migration whose version is **absent** from that table, each in its own transaction. Never
+//! edit an already-shipped migration — append a new one instead.
+//!
+//! # Why presence, and not a high-water mark
+//!
+//! This runner used to apply migrations whose version exceeded `MAX(version)`. That encodes
+//! "everything below this line is done", which is a claim two branches developing in parallel cannot
+//! both make truthfully — and it fails **silently**, because a skipped migration and an applied one
+//! leave identical evidence behind: nothing. It was not hypothetical. Two branches both took 17, and
+//! on every database that had seen the other branch the second feature's table was simply never
+//! created, against a binary that compiled and passed its tests.
+//!
+//! Presence-tracking removes the ordering problem entirely: a migration is applied on its own
+//! account, whatever else has run, so two branches converge on the same schema in either merge order
+//! and nothing ever needs renumbering.
+//!
+//! Re-running is not a risk despite most migrations being non-idempotent (`ALTER TABLE ADD COLUMN`
+//! cannot be guarded in SQLite). A migration's SQL and its `schema_migrations` row are written in the
+//! SAME transaction, so a migration cannot be applied without being recorded — absent therefore
+//! provably means never applied.
+//!
+//! # Numbering: UTC `YYYYMMDDHHMMSS`
+//!
+//! Presence-tracking fixes the ORDER; unique numbers fix the IDENTITY. Both are needed — if two
+//! branches pick the same number, presence-tracking skips the second just as silently as before.
+//!
+//! Allocate a new migration's version with:
+//!
+//! ```text
+//! date -u +%Y%m%d%H%M%S
+//! ```
+//!
+//! and name the file after it, e.g. `20260816112700_add_shelf_colour.sql`. UTC, not local time: local
+//! time repeats an hour every autumn and disagrees between contributors. Versions 1–19 predate this
+//! convention and keep their hand-assigned numbers forever; `LAST_SEQUENTIAL_VERSION` is the boundary.
+//!
+//! The rules are enforced by the tests at the bottom of this file — unique versions, valid
+//! timestamps, pinned shipped versions, and file/list agreement — and CI runs them on every pull
+//! request. See `docs/WORKFLOW.md` for the contributor-facing version of this.
+//!
+//! # The one rule this buys with a constraint
+//!
+//! Migrations may be applied OUT OF NUMERIC ORDER. A database that took a migration from one branch
+//! will later apply a lower-numbered one from another. **Every migration must therefore stand on its
+//! own** and must not assume that a lower-numbered migration has already run. In practice migrations
+//! from independent branches touch independent tables, which is what makes this safe — but it is a
+//! rule, not an accident.
+//!
+//! `PRAGMA user_version` mirrors the COUNT of applied migrations, not the newest version number: it
+//! is a 32-bit field, and a `YYYYMMDDHHMMSS` version overflows it silently to 0. Nothing in Sard
+//! reads it. `db::schema_version()` returns the highest applied version, which is the value that
+//! identifies *which* migration is newest.
 
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -94,39 +143,21 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         include_str!("migrations_sql/0015_book_compat.sql"),
     ),
     // 16 is the RESILIENCE-1 / WP-2 *code* migration (run_compat_backfill, below) — not a SQL file,
-    // and NOT AVAILABLE. The runner's high-water mark is MAX(version), so a SQL migration numbered
-    // 16 would be skipped forever on every install that had already recorded the backfill, and
-    // would suppress the backfill on every install that had not.
+    // and NOT AVAILABLE. The number is the backfill's marker, so a SQL migration reusing it would be
+    // treated as already applied on every install that had recorded the backfill, and would suppress
+    // the backfill on every install that had not. The same is true of 8. Neither is a free slot, and
+    // the timestamp convention means nothing will ever want them again.
     // PROFILES (stage 1): the visual-identity registry. CREATE only — no row is written, so an
     // installation that never opens Profiles is unchanged by it.
     //
-    // NUMBERED 19, NOT 17, AND THE GAP IS DELIBERATE. The runner's high-water mark is MAX(version),
-    // so a version that another in-flight branch has already recorded is skipped forever — silently,
-    // because a skipped migration is indistinguishable from an applied one. `feature/library-design`
-    // occupies 17 (`0017_library_cases.sql`) and 18 (`0018_shelf_ink.sql`); this migration sat on 17
-    // and was therefore never applied on any database that had seen that branch, leaving every
-    // Profiles command failing with "no such table: profiles". Measured on a live database at
-    // user_version 18.
+    // NUMBERED 19 BECAUSE IT WAS ALLOCATED BEFORE THE TIMESTAMP CONVENTION, and it keeps that number
+    // now that it has one: 17 and 18 belong to `feature/library-design`, and under presence-tracking
+    // all three apply on their own account in whichever order the branches land. Nothing here needs
+    // renumbering, and nothing here depends on 17 or 18 having run — the table it creates stands
+    // alone, which is the rule every migration now has to satisfy.
     //
-    // 19 ASSUMES `feature/library-design` LANDS FIRST, and the assumption is load-bearing in BOTH
-    // directions. Read this before merging either branch:
-    //
-    //   · library-design first, then Profiles — correct, and the order this number is chosen for.
-    //     A database at 16 takes 17 and 18, then 19 here. Nothing is skipped.
-    //
-    //   · Profiles first, then library-design — BREAKS THE OTHER BRANCH, and does so silently. A
-    //     database at 16 would take 19 and record it; 17 and 18 are then below the high-water mark
-    //     forever, so `library_cases` and `shelf_ink` never run and that feature fails the same way
-    //     this one did. The damage lands on the branch that merges second, which is the branch
-    //     nobody is looking at while merging the first.
-    //
-    // Whichever merges second is the one that renumbers, and it must renumber ABOVE the highest
-    // version the other branch actually shipped — not merely to the next free-looking slot. Numbering
-    // cannot make both orders safe on its own: the runner takes MAX(version) once and compares every
-    // migration against it, so a lower number is never revisited. The only change that would remove
-    // this constraint entirely is per-version tracking in the runner (apply when a version is absent
-    // from `schema_migrations` rather than when it exceeds the maximum), which is a change to shared
-    // machinery that every shipped install would feel, and is not made here.
+    // This migration is why the runner changed. It originally sat on 17, collided with the other
+    // branch, and was silently never applied on any database that had seen it.
     (
         19,
         "profiles",
@@ -149,23 +180,25 @@ pub fn run(conn: &Connection, app_data_dir: Option<&Path>) -> rusqlite::Result<(
             applied_at INTEGER NOT NULL);",
     )?;
 
-    let current: i64 = conn.query_row(
-        "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
-        [],
-        |r| r.get(0),
-    )?;
+    // PRESENCE, NOT A HIGH-WATER MARK — see the module documentation for what this replaced and why.
+    // Read once: the set cannot change underneath us, since this is the only writer.
+    let applied = applied_versions(conn)?;
 
     for (version, name, sql) in MIGRATIONS {
-        if *version > current {
-            let tx = conn.unchecked_transaction()?;
-            tx.execute_batch(sql)?;
-            tx.execute(
-                "INSERT INTO schema_migrations(version, name, applied_at) VALUES(?1, ?2, ?3)",
-                rusqlite::params![version, name, now_unix()],
-            )?;
-            tx.pragma_update(None, "user_version", *version)?;
-            tx.commit()?;
+        if applied.contains(version) {
+            continue;
         }
+        // The SQL and its bookkeeping row commit together. That atomicity is what makes "absent"
+        // mean "never applied", which is in turn what makes it safe to re-check every version on
+        // every launch even though most migrations cannot be run twice.
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch(sql)?;
+        tx.execute(
+            "INSERT INTO schema_migrations(version, name, applied_at) VALUES(?1, ?2, ?3)",
+            rusqlite::params![version, name, now_unix()],
+        )?;
+        mirror_applied_count(&tx)?;
+        tx.commit()?;
     }
 
     // RAWY-189: migration 8 — the first *code* migration. It lives here rather than in a `.sql` file
@@ -265,8 +298,7 @@ fn record_migration(conn: &Connection, version: i64, name: &str) -> rusqlite::Re
         "INSERT INTO schema_migrations(version, name, applied_at) VALUES(?1, ?2, ?3)",
         rusqlite::params![version, name, now_unix()],
     )?;
-    conn.pragma_update(None, "user_version", version)?;
-    Ok(())
+    mirror_applied_count(conn)
 }
 
 fn record_migration_8(conn: &Connection) -> rusqlite::Result<()> {
@@ -274,8 +306,26 @@ fn record_migration_8(conn: &Connection) -> rusqlite::Result<()> {
         "INSERT INTO schema_migrations(version, name, applied_at) VALUES(8, 'arabic_dir_backfill', ?1)",
         rusqlite::params![now_unix()],
     )?;
-    conn.pragma_update(None, "user_version", 8i64)?;
-    Ok(())
+    mirror_applied_count(conn)
+}
+
+/// Every version already recorded. The runner's whole selection rule is "not in this set".
+fn applied_versions(conn: &Connection) -> rusqlite::Result<std::collections::HashSet<i64>> {
+    let mut stmt = conn.prepare("SELECT version FROM schema_migrations")?;
+    let rows = stmt.query_map([], |r| r.get::<_, i64>(0))?;
+    rows.collect()
+}
+
+/// Mirror the NUMBER of applied migrations into `PRAGMA user_version`.
+///
+/// Not the newest version number, which is what this used to carry: `user_version` is a 32-bit
+/// signed field, and a `YYYYMMDDHHMMSS` version silently truncates to 0 in it (measured — 2^31 is
+/// the wall, and SQLite reports no error). The count cannot overflow, is monotonic, and on a
+/// database whose history is contiguous it equals the value the field carried before. Nothing in
+/// Sard reads it; `db::schema_version()` is the accessor that answers "which migration is newest".
+fn mirror_applied_count(conn: &Connection) -> rusqlite::Result<()> {
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM schema_migrations", [], |r| r.get(0))?;
+    conn.pragma_update(None, "user_version", count)
 }
 
 fn now_unix() -> i64 {
@@ -287,7 +337,7 @@ fn now_unix() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{LAST_SEQUENTIAL_VERSION, MIGRATIONS, TIMESTAMP_FLOOR};
+    use super::{Connection, LAST_SEQUENTIAL_VERSION, MIGRATIONS, TIMESTAMP_FLOOR};
 
     // RAWY-178 (AUD-12): the v6→v7 upgrade path — an EXISTING library (books present before the
     // migration) gains `title_fold`/`author_fold`, backfilled by folding the effective title/author,
@@ -449,6 +499,237 @@ mod tests {
                  Versions above {LAST_SEQUENTIAL_VERSION} must be allocated with:  date -u +%Y%m%d%H%M%S"
             );
         }
+    }
+
+    // ---- the behaviour: presence-tracking ---------------------------------------------------------
+
+    /// A scratch database, opened the way the app opens one (so `afold` exists for migration 7).
+    fn scratch(tag: &str) -> (std::path::PathBuf, Connection) {
+        let dir = std::env::temp_dir().join("sard_migration_tracking");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join(format!("{tag}-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let conn = crate::db::open_database(&path).unwrap();
+        (path, conn)
+    }
+
+    fn recorded(conn: &Connection) -> Vec<i64> {
+        let mut stmt = conn.prepare("SELECT version FROM schema_migrations ORDER BY version").unwrap();
+        let v: Vec<i64> = stmt.query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        v
+    }
+
+    fn schema_fingerprint(conn: &Connection) -> Vec<String> {
+        let mut stmt = conn
+            .prepare("SELECT type||' '||name||' '||COALESCE(sql,'') FROM sqlite_master \
+                      WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name")
+            .unwrap();
+        stmt.query_map([], |r| r.get::<_, String>(0)).unwrap().map(Result::unwrap).collect()
+    }
+
+    fn user_version(conn: &Connection) -> i64 {
+        conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap()
+    }
+
+    /// EVERY historical upgrade path. For each prefix of the real list, apply that prefix the way an
+    /// older Sard would have, then run the current runner and assert it applies exactly the rest —
+    /// no more (which would re-run a non-idempotent ALTER TABLE) and no less (a silent skip).
+    #[test]
+    fn every_historical_prefix_upgrades_to_the_full_set() {
+        let all: Vec<i64> = MIGRATIONS.iter().map(|(v, _, _)| *v).collect();
+        for cut in 0..MIGRATIONS.len() {
+            let (path, conn) = scratch(&format!("prefix{cut}"));
+            conn.execute_batch(
+                "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, \
+                 name TEXT NOT NULL, applied_at INTEGER NOT NULL);",
+            )
+            .unwrap();
+            for (v, name, sql) in MIGRATIONS.iter().take(cut) {
+                conn.execute_batch(sql).unwrap_or_else(|e| panic!("prefix apply v{v}: {e}"));
+                conn.execute(
+                    "INSERT INTO schema_migrations(version, name, applied_at) VALUES(?1,?2,0)",
+                    rusqlite::params![v, name],
+                )
+                .unwrap();
+            }
+            super::run(&conn, None).unwrap_or_else(|e| panic!("upgrade from prefix {cut}: {e}"));
+            assert_eq!(recorded(&conn), all, "prefix {cut} must reach the full set exactly once");
+            let ic: String = conn.query_row("PRAGMA integrity_check", [], |r| r.get(0)).unwrap();
+            assert_eq!(ic, "ok", "prefix {cut} left the database intact");
+            drop(conn);
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+
+    /// Running twice must be a no-op. This is the direct guard on non-idempotency: 7 of the shipped
+    /// migrations use `ALTER TABLE ADD COLUMN`, which raises on a second application.
+    #[test]
+    fn running_twice_applies_nothing_the_second_time() {
+        let (path, conn) = scratch("twice");
+        super::run(&conn, None).unwrap();
+        let after_first = recorded(&conn);
+        let fp = schema_fingerprint(&conn);
+        super::run(&conn, None).expect("a second run must not error");
+        super::run(&conn, None).expect("a third run must not error");
+        assert_eq!(recorded(&conn), after_first, "no migration may be recorded twice");
+        assert_eq!(schema_fingerprint(&conn), fp, "the schema must not change on a repeat run");
+        drop(conn);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// THE REGRESSION TEST for the defect this replaced. A migration numbered BELOW the highest
+    /// already-applied version must still run. Under the old high-water rule it was skipped forever,
+    /// silently, which is exactly how one branch's feature shipped with no table.
+    #[test]
+    fn a_migration_below_the_maximum_still_runs() {
+        let (path, conn) = scratch("below");
+        // One recorded version, higher than every migration we carry. Under the old high-water rule
+        // `current` would be 999_999 and NOT ONE migration would run — the database would be left
+        // with no tables at all, silently, exactly as the 17/18 collision left Profiles with none.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, \
+             name TEXT NOT NULL, applied_at INTEGER NOT NULL);
+             INSERT INTO schema_migrations VALUES (999999,'from_the_future',0);",
+        )
+        .unwrap();
+
+        super::run(&conn, None).unwrap();
+
+        let after = recorded(&conn);
+        for (v, name, _) in MIGRATIONS {
+            assert!(
+                after.contains(v),
+                "migration {v} ('{name}') is below the recorded maximum and must still have run",
+            );
+        }
+        assert!(after.contains(&999_999), "the future row must be left where it was");
+        // And the schema really exists — not merely the bookkeeping.
+        let books: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='books'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(books, 1, "migration 1 must have actually created its tables");
+        drop(conn);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// BOTH MERGE ORDERS CONVERGE. Two independent branches, each adding a migration; whichever
+    /// lands first, the database ends up with the same schema and the same recorded set.
+    #[test]
+    fn independent_branches_converge_in_either_order() {
+        const BRANCH_A: (i64, &str, &str) =
+            (20_260_101_120_000, "branch_a", "CREATE TABLE a_thing (id TEXT PRIMARY KEY);");
+        const BRANCH_B: (i64, &str, &str) =
+            (20_260_101_090_000, "branch_b", "CREATE TABLE b_thing (id TEXT PRIMARY KEY);");
+
+        // `run` works from the const list, so replay its rule directly over an explicit order.
+        fn apply(conn: &Connection, list: &[(i64, &str, &str)]) {
+            let applied = super::applied_versions(conn).unwrap();
+            for (v, name, sql) in list {
+                if applied.contains(v) {
+                    continue;
+                }
+                let tx = conn.unchecked_transaction().unwrap();
+                tx.execute_batch(sql).unwrap();
+                tx.execute(
+                    "INSERT INTO schema_migrations(version, name, applied_at) VALUES(?1,?2,0)",
+                    rusqlite::params![v, name],
+                )
+                .unwrap();
+                super::mirror_applied_count(&tx).unwrap();
+                tx.commit().unwrap();
+            }
+        }
+
+        let (pa, ca) = scratch("order-ab");
+        super::run(&ca, None).unwrap();
+        apply(&ca, &[BRANCH_A]); // A merges first…
+        apply(&ca, &[BRANCH_B, BRANCH_A]); // …then B arrives, numbered LOWER than A
+
+        let (pb, cb) = scratch("order-ba");
+        super::run(&cb, None).unwrap();
+        apply(&cb, &[BRANCH_B]); // B merges first…
+        apply(&cb, &[BRANCH_B, BRANCH_A]); // …then A arrives
+
+        assert_eq!(recorded(&ca), recorded(&cb), "both orders must record the same versions");
+        assert_eq!(schema_fingerprint(&ca), schema_fingerprint(&cb), "both orders must build the same schema");
+        assert!(recorded(&ca).contains(&BRANCH_A.0) && recorded(&ca).contains(&BRANCH_B.0));
+        assert_eq!(user_version(&ca), user_version(&cb), "and agree on the mirrored count");
+        drop(ca);
+        drop(cb);
+        let _ = std::fs::remove_file(&pa);
+        let _ = std::fs::remove_file(&pb);
+    }
+
+    /// THE REAL-WORLD CROSS-BRANCH STATE. A database that has run another branch's build carries
+    /// versions this list has never heard of — the live database here holds 17 and 18 from
+    /// `feature/library-design`. Those rows must be left strictly alone: not re-applied, not removed,
+    /// not counted as a reason to skip anything of ours.
+    #[test]
+    fn versions_the_list_does_not_know_are_left_alone() {
+        let (path, conn) = scratch("foreign");
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, \
+             name TEXT NOT NULL, applied_at INTEGER NOT NULL);
+             INSERT INTO schema_migrations VALUES (17,'library_cases',0);
+             INSERT INTO schema_migrations VALUES (18,'shelf_ink',0);",
+        )
+        .unwrap();
+
+        super::run(&conn, None).unwrap();
+
+        let after = recorded(&conn);
+        assert!(after.contains(&17) && after.contains(&18), "foreign rows must survive untouched");
+        for (v, _, _) in MIGRATIONS {
+            assert!(after.contains(v), "our migration {v} must apply despite a higher foreign version");
+        }
+        // 19 is BELOW the foreign high-water mark of 18? No — but 1..15 certainly are, and under the
+        // old rule every one of them would have been skipped on this database.
+        assert!(after.contains(&1), "migration 1 must apply even though 18 was already recorded");
+        assert_eq!(
+            user_version(&conn),
+            after.len() as i64,
+            "the mirrored count includes the foreign rows, because they are applied migrations",
+        );
+        drop(conn);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A database with no bookkeeping table is a fresh one: everything applies, nothing is assumed.
+    #[test]
+    fn a_database_without_bookkeeping_takes_every_migration() {
+        let (path, conn) = scratch("legacy");
+        assert_eq!(crate::db::schema_version(&conn).unwrap(), 0, "no table yet");
+        super::run(&conn, None).unwrap();
+        let all: Vec<i64> = MIGRATIONS.iter().map(|(v, _, _)| *v).collect();
+        assert_eq!(recorded(&conn), all);
+        drop(conn);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `user_version` carries the COUNT, and `schema_version()` the highest version. The count must
+    /// stay inside the 32-bit field the pragma actually is, which a timestamp version would not.
+    #[test]
+    fn user_version_mirrors_the_count_not_the_version() {
+        let (path, conn) = scratch("mirror");
+        super::run(&conn, None).unwrap();
+        let versions = recorded(&conn);
+        assert_eq!(
+            user_version(&conn),
+            versions.len() as i64,
+            "user_version must be how many migrations have run",
+        );
+        assert_eq!(
+            crate::db::schema_version(&conn).unwrap(),
+            *versions.iter().max().unwrap(),
+            "schema_version() must remain the highest applied version",
+        );
+        assert!(user_version(&conn) < i64::from(i32::MAX), "the pragma is a 32-bit field");
+        drop(conn);
+        let _ = std::fs::remove_file(&path);
     }
 
     /// A `.sql` file that nobody registered is a migration that never runs — the same silent failure

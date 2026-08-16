@@ -1109,6 +1109,8 @@ export const ar: Record<TKey, string> = {
 
   "profiles.marks.bookmark": "علامة الصفحة",
   "profiles.marks.readMarker": "علامة الفصل المقروء",
+  "profiles.marks.advanced": "الحجم وموضع الحافّة",
+  "profiles.marks.advancedHide": "إخفاء الحجم وموضع الحافّة",
   "profiles.marks.texture": "ملمس الواجهة",
   "profiles.marks.textureHint":
     "يسري على اللوحات والقوائم وشريط القراءة. الصفحة نفسها لا تُشَفّ من هنا.",

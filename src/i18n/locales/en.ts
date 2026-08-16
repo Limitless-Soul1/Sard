@@ -1163,6 +1163,8 @@ export const en = {
 
   "profiles.marks.bookmark": "Page mark",
   "profiles.marks.readMarker": "Finished-chapter mark",
+  "profiles.marks.advanced": "Size and edge position",
+  "profiles.marks.advancedHide": "Hide size and edge position",
   "profiles.marks.texture": "Interface texture",
   "profiles.marks.textureHint":
     "Applies to panels, menus and the reading bar. The page itself is not made translucent from here.",

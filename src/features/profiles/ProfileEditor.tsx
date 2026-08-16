@@ -32,7 +32,12 @@ import {
 } from "../../lib/background";
 import { localeDigits } from "../../lib/format";
 import { backgroundImport, backgroundsList, type BackgroundRow } from "../../lib/ipc";
-import { BOOKMARK_COLORS, BOOKMARK_SHAPES } from "../../lib/bookmarkStyle";
+import {
+  BOOKMARK_COLORS,
+  BOOKMARK_SHAPES,
+  BOOKMARK_SIZE_MAX,
+  BOOKMARK_SIZE_MIN,
+} from "../../lib/bookmarkStyle";
 import { READ_MARKERS } from "../../lib/readMarkerStyle";
 import { FONT_CATALOGUE, useFonts } from "../../lib/fonts";
 import { ARABIC_FONTS, LATIN_FONTS } from "../../reader-engine/injectedCss";
@@ -330,7 +335,14 @@ function BookStage({ profile }: { profile: Profile }) {
         >
           The night narrows to a single lamp, and the story keeps its own hours.
         </p>
-        <span className="pf-book-mark">
+        {/* AT ITS REAL EDGE POSITION. `bookmarkPos` is a fraction of the page's width and is
+            PHYSICAL — it does not flip with the interface language, exactly as the reader's own
+            marker does not (see `PageBookmark`). It used to sit at a fixed inline-end inset, which
+            both ignored the setting and mirrored itself in English. */}
+        <span
+          className="pf-book-mark"
+          style={{ left: `${profile.data.marks.bookmarkPos * 100}%` }}
+        >
           <BookmarkShape
             shape={profile.data.marks.bookmarkShape}
             color={profile.data.theme.bookmark ?? c.accent}
@@ -790,8 +802,13 @@ function MarksSection({
   draft: Profile;
   patch: (f: (d: ProfileData) => void) => void;
 }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const colour = draft.data.theme.bookmark ?? draft.data.theme.colors.accent;
+  // SIZE AND EDGE POSITION SIT BEHIND A DISCLOSURE (plan §X.0 Q12). They are the two marks settings a
+  // reader sets once and then forgets, and putting them under the shapes would bury the choice that
+  // is actually made often. The link is the editor's existing "go deeper" affordance — the same one
+  // the colours use — rather than a new kind of control.
+  const [adv, setAdv] = useState(false);
 
   return (
     <>
@@ -825,6 +842,50 @@ function MarksSection({
           />
         ))}
       </div>
+
+      {/* The two settings the design's editor does not draw but Sard has always had. Kept rather
+          than silently lost, and bound to the DRAFT, so the specimen answers while the slider moves
+          and nothing is written until Save. */}
+      <button className="pf-cp-open" onClick={() => setAdv((v) => !v)} aria-expanded={adv}>
+        {adv ? t("profiles.marks.advancedHide") : t("profiles.marks.advanced")} {adv ? "↑" : "↓"}
+      </button>
+
+      {adv && (
+        <>
+          <div className="gs-slider-head">
+            <span>{t("gs.bookmark.size")}</span>
+            <span className="gs-slider-val">
+              {localeDigits(String(draft.data.marks.bookmarkSize), lang)}
+            </span>
+          </div>
+          <input
+            className="gs-slider"
+            type="range"
+            min={BOOKMARK_SIZE_MIN}
+            max={BOOKMARK_SIZE_MAX}
+            step={2}
+            value={draft.data.marks.bookmarkSize}
+            onChange={(e) => patch((d) => { d.marks.bookmarkSize = Number(e.target.value); })}
+          />
+
+          <div className="gs-slider-head">
+            <span>{t("gs.bookmark.position")}</span>
+            <span className="gs-slider-val">
+              {localeDigits(String(Math.round(draft.data.marks.bookmarkPos * 100)), lang)}
+            </span>
+          </div>
+          <input
+            className="gs-slider"
+            type="range"
+            min={0}
+            max={1}
+            step={0.01}
+            value={draft.data.marks.bookmarkPos}
+            onChange={(e) => patch((d) => { d.marks.bookmarkPos = Number(e.target.value); })}
+          />
+          <div className="pf-hint">{t("gs.bookmark.posHint")}</div>
+        </>
+      )}
 
       <div className="pf-field-label">{t("profiles.marks.readMarker")}</div>
       <div className="pf-rm-list">

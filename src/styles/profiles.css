@@ -393,8 +393,10 @@
    behaviour, never a broken one. Measured either way. */
 .pf-book { --pf-mark-k: calc(100cqw / 560px); }
 .pf-book-mark {
-  position: absolute; inset-block-start: 0; inset-inline-end: 1.875em;
-  transform: scale(var(--pf-mark-k)); transform-origin: top center;
+  position: absolute; inset-block-start: 0;
+  /* `left` is physical on purpose — the reader's marker does not flip with the interface language,
+     so a preview that mirrored it would be showing something the reader will never see. */
+  transform: translateX(-50%) scale(var(--pf-mark-k)); transform-origin: top center;
 }
 
 /* ---- accessibility: the same rule the background system already applies ----

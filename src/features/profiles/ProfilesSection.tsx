@@ -18,8 +18,7 @@ import { backgroundsList, type BackgroundRow } from "../../lib/ipc";
 import { THEMES, THEME_ORDER, isBuiltinThemeId } from "../../theme/themes";
 import type { BuiltinThemeId } from "../../theme/tokens";
 
-/** The design's three: how Sard looks now, one of the sixteen, or a paper of your own. */
-type StartFrom = "current" | "theme" | "custom";
+import { chosenPreset, type StartFrom } from "./startFrom";
 import { SardMini } from "./SardMini";
 import { miniOfTheme } from "./mini";
 import { ProfileCard } from "./ProfileCard";
@@ -86,17 +85,17 @@ export function ProfilesSection() {
     setBusy(true);
     try {
       const data = await captureCurrent();
+      // The preset the reader actually chose — see `chosenPreset`. `base` is still the canvas the
+      // editor opens on, but only a preset the reader was SHOWN and picked may be claimed as one.
+      const preset = chosenPreset(start, base);
       if (start !== "current") {
-        // Start from one of the sixteen. "A paper of your own" also begins here — it opens the
-        // editor on this base, where the custom-paper dialog and its four previews live, rather
-        // than making the reader choose colours before the profile exists.
-        data.theme.base = base;
+        data.theme.base = preset;
         data.theme.dark = THEMES[base].dark;
         data.theme.colors = structuredClone(THEMES[base].colors);
         data.theme.highlightAlpha = THEMES[base].highlightAlpha;
         data.theme.bookmark = null;
       }
-      const p = await createProfile(name, data, start === "current" ? null : base);
+      const p = await createProfile(name, data, preset);
       await applyProfile(p);
       setDialog({ kind: "edit", profile: p, fresh: true });
     } finally {

@@ -17,6 +17,7 @@ import {
   BOOKMARK_SHAPES,
   type BookmarkShapeKey,
 } from "../../../lib/bookmarkStyle";
+import { BG_DEFAULT_PARAMS, type BgParams } from "../../../lib/background";
 import { READ_MARKERS, type ReadMarkerKey } from "../../../lib/readMarkerStyle";
 import { THEMES, isBuiltinThemeId } from "../../../theme/themes";
 import type { BuiltinThemeId, CustomThemeId, Theme, ThemeColors } from "../../../theme/tokens";
@@ -54,11 +55,55 @@ export interface ProfileMarks {
   readMarker: ReadMarkerKey;
 }
 
+/**
+ * One surface's background, as a profile carries it.
+ *
+ * `ref` is the content hash of an imported image, and it is the ONLY part of this the collector can
+ * see — it is mirrored to the row's `bg_library` / `bg_reading` columns on save, because
+ * `backgrounds::gc()` must be able to ask "is this image still referenced" without parsing `data`.
+ * If a `ref` ever stops being mirrored, the image it names is deleted on the next surface bind.
+ */
+export interface ProfileSurfaceBg {
+  ref: string | null;
+  params: BgParams;
+}
+
+/**
+ * The reading surface adds one thing the library does not have: the design's «الصورة نفسها · أهدأ» —
+ * the same image as the library, at a quieter treatment. It resolves to the SAME content hash with
+ * its own params, which costs nothing in storage; that is what content-addressing is for.
+ */
+export interface ProfileReadingBg extends ProfileSurfaceBg {
+  sameAsLibrary: boolean;
+}
+
+/** Interface texture: three named steps, never a percentage. The design is explicit about that. */
+export type TextureStep = "opaque" | "light" | "glass";
+
+export const TEXTURE_STEPS: readonly TextureStep[] = ["opaque", "light", "glass"] as const;
+
+/**
+ * The alpha each step asks for.
+ *
+ * `glass` is 0.78 — the design's own value — and the measured binding floor is 0.800, so 0.78 is
+ * below it at the extreme end of one slider. It is NOT clamped here: the floor depends on the live
+ * desk scrim, which is a runtime value, so the clamp belongs where that is known. See
+ * `effectiveTextureAlpha`. `opaque` is 1 and writes nothing at all, which is what keeps an untouched
+ * profile byte-identical to today.
+ */
+export const TEXTURE_ALPHA: Record<TextureStep, number> = {
+  opaque: 1,
+  light: 0.92,
+  glass: 0.78,
+};
+
 export interface ProfileData {
   v: number;
   theme: ProfileTheme;
   type: ProfileType;
   marks: ProfileMarks;
+  bg: { library: ProfileSurfaceBg; reading: ProfileReadingBg };
+  texture: TextureStep;
 }
 
 /** A profile as the app holds it: the row's own columns, plus the parsed blob. */
@@ -130,6 +175,9 @@ export function parseProfileData(raw: string): ProfileData {
   const baseTheme: Theme = THEMES[base];
   const ty = (o.type ?? {}) as Record<string, unknown>;
   const m = (o.marks ?? {}) as Record<string, unknown>;
+  const bg = (o.bg ?? {}) as Record<string, unknown>;
+  const bgLib = (bg.library ?? {}) as Record<string, unknown>;
+  const bgRead = (bg.reading ?? {}) as Record<string, unknown>;
 
   return {
     v: typeof o.v === "number" ? o.v : PROFILE_DATA_VERSION,
@@ -153,6 +201,41 @@ export function parseProfileData(raw: string): ProfileData {
       bookmarkPos: clampNum(m.bookmarkPos, 0, 1, 0.84),
       readMarker: pick<ReadMarkerKey>(m.readMarker, isMarker, "accentTrail"),
     },
+    // Absent reads as "no image, default treatment" — which is what every profile written before
+    // backgrounds existed meant, and it emits nothing downstream.
+    bg: {
+      library: { ref: refOr(bgLib.ref), params: parseBgParams(bgLib.params) },
+      reading: {
+        ref: refOr(bgRead.ref),
+        params: parseBgParams(bgRead.params),
+        sameAsLibrary: bgRead.sameAsLibrary === true,
+      },
+    },
+    texture: pick<TextureStep>(o.texture, (x) => TEXTURE_STEPS.includes(x as TextureStep), "opaque"),
+  };
+}
+
+/** A background id is a content hash written by Rust; anything else is treated as absent. */
+const refOr = (v: unknown): string | null =>
+  typeof v === "string" && /^[a-f0-9]{8,64}$/i.test(v) ? v : null;
+
+/**
+ * Reuse the shipped defaults rather than restating them: a profile's treatment of an image is the
+ * same treatment the surfaces already use, and duplicating the numbers here is how the two would
+ * drift.
+ */
+function parseBgParams(v: unknown): BgParams {
+  const o = (v ?? {}) as Record<string, unknown>;
+  const num = (x: unknown, lo: number, hi: number, d: number) =>
+    typeof x === "number" && Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : d;
+  return {
+    presence: num(o.presence, 0, 100, BG_DEFAULT_PARAMS.presence),
+    blur: num(o.blur, 0, 40, BG_DEFAULT_PARAMS.blur),
+    flip: typeof o.flip === "boolean" ? o.flip : BG_DEFAULT_PARAMS.flip,
+    focalX: num(o.focalX, 0, 100, BG_DEFAULT_PARAMS.focalX),
+    focalY: num(o.focalY, 0, 100, BG_DEFAULT_PARAMS.focalY),
+    pageOpacity: num(o.pageOpacity, 0, 1, BG_DEFAULT_PARAMS.pageOpacity),
+    immersiveBlur: typeof o.immersiveBlur === "boolean" ? o.immersiveBlur : BG_DEFAULT_PARAMS.immersiveBlur,
   };
 }
 
@@ -197,6 +280,14 @@ export const PROFILE_WRITES = [
   "bookmark_size",
   "read_marker",
   "profile_active",
+  // Backgrounds and texture. The two `*_id` keys are the surfaces' own bindings — a profile owns
+  // what they point at, so applying one rebinds them; the collector counts both these keys and the
+  // profile's columns, so an image is referenced twice over while a profile is active.
+  "bg_library_id",
+  "bg_reading_id",
+  "bg_library_params",
+  "bg_reading_params",
+  "ui_texture",
 ] as const;
 
 /**
@@ -216,6 +307,11 @@ export function readingPatch(p: Profile): { arabicFont: string; latinFont: strin
 /** The settings a profile writes, as key/value pairs, ready to persist. */
 export function profileSettings(p: Profile): Array<[string, string]> {
   const bookmarkColor = p.data.theme.bookmark ?? p.data.theme.colors.accent;
+  // "The same image, quieter" resolves to the LIBRARY's hash with the reading surface's own params.
+  // One image on disk, two treatments — which is the whole point of addressing by content.
+  const readingRef = p.data.bg.reading.sameAsLibrary
+    ? p.data.bg.library.ref
+    : p.data.bg.reading.ref;
   return [
     ["theme_id", p.id],
     ["book_theme_id", p.id],
@@ -225,6 +321,27 @@ export function profileSettings(p: Profile): Array<[string, string]> {
     ["bookmark_pos", String(p.data.marks.bookmarkPos)],
     ["bookmark_size", String(p.data.marks.bookmarkSize)],
     ["read_marker", p.data.marks.readMarker],
+    ["bg_library_id", p.data.bg.library.ref ?? ""],
+    ["bg_reading_id", readingRef ?? ""],
+    ["bg_library_params", JSON.stringify(p.data.bg.library.params)],
+    ["bg_reading_params", JSON.stringify(p.data.bg.reading.params)],
+    ["ui_texture", p.data.texture],
     ["profile_active", p.id],
   ];
+}
+
+/**
+ * The two ids the collector must see, as the row's own columns.
+ *
+ * SEPARATE FROM `profileSettings` ON PURPOSE. Those are settings a profile writes when it is
+ * APPLIED; these are columns that must be true whenever the profile EXISTS, active or not. A
+ * profile nobody is using still owns its image, and the collector still has to know.
+ */
+export function profileRefs(p: Profile): { bgLibrary: string | null; bgReading: string | null } {
+  return {
+    bgLibrary: p.data.bg.library.ref,
+    bgReading: p.data.bg.reading.sameAsLibrary
+      ? p.data.bg.library.ref
+      : p.data.bg.reading.ref,
+  };
 }

@@ -21,6 +21,7 @@ import {
   type ProfileRow,
 } from "../../lib/ipc";
 import { useBookmarkStyle } from "../../lib/bookmarkStyle";
+import { useBackground } from "../../lib/background";
 import { useFonts } from "../../lib/fonts";
 import { useReadMarkerStyle } from "../../lib/readMarkerStyle";
 import { useReader } from "../../reader-engine/store";
@@ -31,6 +32,7 @@ import type { CustomThemeId, Theme } from "../../theme/tokens";
 import {
   PROFILE_DATA_VERSION,
   parseProfileData,
+  profileRefs,
   profileSettings,
   profileTheme,
   readingPatch,
@@ -73,10 +75,12 @@ function toRow(p: Profile): ProfileRow {
     derived_from: p.derivedFrom,
     created_at: p.createdAt,
     updated_at: p.updatedAt,
-    // Stage 4 binds backgrounds; until then a profile references no image, and the collector must
-    // keep seeing that truthfully rather than a stale value.
-    bg_library: null,
-    bg_reading: null,
+    // MIRRORED FROM `data`, and this is the line the collector depends on. `backgrounds::gc()` reads
+    // these columns and nothing else of the profile; if a ref lives in `data` but not here, the image
+    // it names is deleted the next time any surface is bound.
+    ...(({ bgLibrary, bgReading }) => ({ bg_library: bgLibrary, bg_reading: bgReading }))(
+      profileRefs(p),
+    ),
   };
 }
 
@@ -211,6 +215,7 @@ export async function captureCurrent(): Promise<ProfileData> {
   const fonts = useFonts.getState();
   const bm = useBookmarkStyle.getState();
   const rm = useReadMarkerStyle.getState();
+  const bgs = useBackground.getState();
   const reading = await currentReadingFonts();
   return {
     v: PROFILE_DATA_VERSION,
@@ -229,6 +234,21 @@ export async function captureCurrent(): Promise<ProfileData> {
       bookmarkPos: bm.pos,
       readMarker: rm.marker,
     },
+    // "How Sard looks now" has to mean it: the surfaces' current images and their treatments come
+    // along. `sameAsLibrary` is not inferred from the two ids matching — it is an authored choice,
+    // and a reader who happened to pick one image for both surfaces did not ask for them to be
+    // linked from then on.
+    bg: {
+      library: { ref: bgs.library?.id ?? null, params: { ...bgs.libraryParams } },
+      reading: {
+        ref: bgs.reading?.id ?? null,
+        params: { ...bgs.readingParams },
+        sameAsLibrary: false,
+      },
+    },
+    // Texture has no global setting to capture: today every surface is opaque, and `opaque` writes
+    // nothing, so a profile made from "how Sard looks now" is byte-identical to today.
+    texture: "opaque",
   };
 }
 

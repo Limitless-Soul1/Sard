@@ -12,6 +12,7 @@ import {
   PROFILE_READING_FIELDS,
   PROFILE_WRITES,
   parseProfileData,
+  profileRefs,
   profileSettings,
   profileTheme,
   readingPatch,
@@ -76,10 +77,15 @@ describe("the boundary — what a profile may write", () => {
     }
   });
 
-  it("the whitelist is exactly the nine keys the design needs — no quiet growth", () => {
+  // GROWN ONCE, DELIBERATELY. Stage 4 added the two surface bindings, their two parameter blobs and
+  // the texture step — what backgrounds and texture need, and nothing else. The list is pinned rather
+  // than derived precisely so widening it is an edit someone has to make on purpose: if this fails,
+  // the whitelist grew and the question is whether it should have.
+  it("the whitelist is exactly the fourteen keys the design needs — no quiet growth", () => {
     expect([...PROFILE_WRITES].sort()).toEqual([
+      "bg_library_id", "bg_library_params", "bg_reading_id", "bg_reading_params",
       "book_theme_id", "bookmark_color", "bookmark_pos", "bookmark_size", "bookmark_style",
-      "profile_active", "read_marker", "theme_id", "ui_font",
+      "profile_active", "read_marker", "theme_id", "ui_font", "ui_texture",
     ]);
   });
 });
@@ -180,5 +186,74 @@ describe("bookmark colour follows the accent unless authored", () => {
     p.data.theme.bookmark = "#1F6F6B";
     const color = profileSettings(p).find(([k]) => k === "bookmark_color")![1];
     expect(color).toBe("#1F6F6B");
+  });
+});
+
+describe("stage 4 — backgrounds and texture", () => {
+  // THE "NO MIGRATION" PROOF. Every profile written before stage 4 has no `bg` and no `texture` in
+  // its blob. If absence did not default cleanly, those rows would need a migration; because it
+  // does, adding these fields was a code change and nothing on disk had to move.
+  it("a profile written before backgrounds existed still parses, and means 'no image'", () => {
+    const old = JSON.stringify({
+      v: 1,
+      theme: { base: "ivory" },
+      type: { arabic: "amiri", latin: "literata" },
+      marks: { bookmarkShape: "ribbon" },
+    });
+    const d = parseProfileData(old);
+    expect(d.bg.library.ref).toBeNull();
+    expect(d.bg.reading.ref).toBeNull();
+    expect(d.bg.reading.sameAsLibrary).toBe(false);
+    expect(d.texture).toBe("opaque");
+    // and the treatment falls back to the shipped defaults rather than zeroes
+    expect(d.bg.library.params.presence).toBeGreaterThan(0);
+    expect(d.bg.library.params.pageOpacity).toBe(1);
+  });
+
+  it("a damaged or hostile blob cannot smuggle in a background id", () => {
+    const d = parseProfileData(
+      JSON.stringify({ bg: { library: { ref: "../../etc/passwd" } }, texture: "invisible" }),
+    );
+    expect(d.bg.library.ref).toBeNull();
+    expect(d.texture).toBe("opaque");
+  });
+
+  // THE COLLECTOR'S VIEW. `profileRefs` is what becomes the row's columns, and `gc()` reads only
+  // those. If this ever disagrees with `data`, the image is deleted while still in use.
+  it("profileRefs mirrors what the collector must keep", () => {
+    const d = parseProfileData(
+      JSON.stringify({ bg: { library: { ref: "aabbcc11" }, reading: { ref: "ddee2233" } } }),
+    );
+    const p = { id: "u:x", data: d } as unknown as Profile;
+    expect(profileRefs(p)).toEqual({ bgLibrary: "aabbcc11", bgReading: "ddee2233" });
+  });
+
+  it("'the same image, quieter' resolves the reading surface to the library's hash", () => {
+    const d = parseProfileData(
+      JSON.stringify({
+        bg: { library: { ref: "aabbcc11" }, reading: { ref: "ddee2233", sameAsLibrary: true } },
+      }),
+    );
+    const p = { id: "u:x", data: d } as unknown as Profile;
+    expect(profileRefs(p).bgReading).toBe("aabbcc11");
+    const s = new Map(profileSettings(p));
+    expect(s.get("bg_reading_id")).toBe("aabbcc11");
+    expect(s.get("bg_library_id")).toBe("aabbcc11");
+  });
+
+  it("no image writes an empty binding, not a stale one", () => {
+    const p = { id: "u:x", data: parseProfileData("{}") } as unknown as Profile;
+    const s = new Map(profileSettings(p));
+    expect(s.get("bg_library_id")).toBe("");
+    expect(s.get("bg_reading_id")).toBe("");
+    expect(s.get("ui_texture")).toBe("opaque");
+  });
+
+  // THE BOUNDARY, RESTATED FOR THE NEW KEYS. Backgrounds widened the whitelist; they must not have
+  // widened it into the reader's layout.
+  it("the widened whitelist still names nothing the reader owns", () => {
+    const forbidden = /line|margin|spacing|tracking|align|diacritic|zoom|weight|measure|page_width|flow|book_style|reading_style/i;
+    for (const k of PROFILE_WRITES) expect(k).not.toMatch(forbidden);
+    expect(PROFILE_READING_FIELDS).toEqual(["arabicFont", "latinFont"]);
   });
 });

@@ -12,11 +12,20 @@
 // margins, diacritics, alignment and size are the reader's own, in every profile. It is not a
 // control — it is the answer to the question the editor otherwise invites.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useI18n } from "../../i18n";
+import type { TKey } from "../../i18n/locales/en";
+import {
+  BG_BLUR_MAX,
+  PAGE_OPACITY_MIN,
+  bgSrcUrl,
+  presenceMaxFor,
+  type BgSurface,
+} from "../../lib/background";
 import { localeDigits } from "../../lib/format";
+import { backgroundImport, backgroundsList, type BackgroundRow } from "../../lib/ipc";
 import { BOOKMARK_COLORS, BOOKMARK_SHAPES } from "../../lib/bookmarkStyle";
 import { READ_MARKERS } from "../../lib/readMarkerStyle";
 import { FONT_CATALOGUE, useFonts } from "../../lib/fonts";
@@ -39,6 +48,16 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
   const [draft, setDraft] = useState<Profile>(() => structuredClone(live));
   const [open, setOpen] = useState<SectionId>("theme");
   const [face, setFace] = useState<"library" | "book">("library");
+  // The managed rows, so a ref can be shown as a thumbnail and a name. Loaded once; anything the
+  // editor imports is appended, so a freshly chosen image renders without a round trip.
+  const [bgRows, setBgRows] = useState<BackgroundRow[]>([]);
+  useEffect(() => {
+    let alive = true;
+    backgroundsList()
+      .then((r) => alive && setBgRows(r))
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, []);
   const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(live), [draft, live]);
 
   const patch = (f: (d: ProfileData) => void) =>
@@ -119,15 +138,29 @@ export function ProfileEditor({ profile, onClose }: { profile: Profile; onClose:
           {section(
             "libbg",
             t("profiles.section.libraryBg"),
-            "—",
-            <div className="pf-deferred">{t("profiles.section.notReady")}</div>,
+            bgRows.find((r) => r.id === draft.data.bg.library.ref)?.source_name ?? "—",
+            <BackgroundSection
+              surface="library"
+              draft={draft}
+              patch={patch}
+              rows={bgRows}
+              onImported={(r) => setBgRows((cur) => (cur.some((x) => x.id === r.id) ? cur : [...cur, r]))}
+            />,
           )}
 
           {section(
             "bookbg",
             t("profiles.section.bookBg"),
-            "—",
-            <div className="pf-deferred">{t("profiles.section.notReady")}</div>,
+            draft.data.bg.reading.sameAsLibrary
+              ? t("profiles.bg.sameAsLibraryShort")
+              : bgRows.find((r) => r.id === draft.data.bg.reading.ref)?.source_name ?? "—",
+            <BackgroundSection
+              surface="reading"
+              draft={draft}
+              patch={patch}
+              rows={bgRows}
+              onImported={(r) => setBgRows((cur) => (cur.some((x) => x.id === r.id) ? cur : [...cur, r]))}
+            />,
           )}
 
           {section(
@@ -412,6 +445,181 @@ function ThemeSection({
           }}
         />
       )}
+    </>
+  );
+}
+
+/**
+ * One surface's background, bound to the DRAFT.
+ *
+ * RE-HOSTED, NOT REBUILT. Every control here is the one Global Settings already uses — the same
+ * picker, the same presence and blur sliders against the same measured maxima, the same focal pad,
+ * the same page-translucency floor. What changes is only where the value lands: a draft's `data.bg`
+ * instead of the live surface. Choosing an image therefore does NOT repaint the running application
+ * and does not write a global binding; `applyProfile` is still the only thing that binds.
+ */
+function BackgroundSection({
+  surface,
+  draft,
+  patch,
+  rows,
+  onImported,
+}: {
+  surface: BgSurface;
+  draft: Profile;
+  patch: (f: (d: ProfileData) => void) => void;
+  rows: BackgroundRow[];
+  onImported: (row: BackgroundRow) => void;
+}) {
+  const { t, lang } = useI18n();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const reading = surface === "reading";
+  const slot = reading ? draft.data.bg.reading : draft.data.bg.library;
+  // "The same image, quieter" renders the LIBRARY's image with the reading surface's own params.
+  const shown = reading && draft.data.bg.reading.sameAsLibrary ? draft.data.bg.library.ref : slot.ref;
+  const row = rows.find((r) => r.id === shown) ?? null;
+  const linked = reading && draft.data.bg.reading.sameAsLibrary;
+
+  const at = (d: ProfileData) => (reading ? d.bg.reading : d.bg.library);
+
+  const pick = async () => {
+    setError(null);
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const picked = await open({
+      multiple: false,
+      filters: [{ name: "Image", extensions: ["jpg", "jpeg", "png", "webp"] }],
+    });
+    if (typeof picked !== "string") return;
+    setBusy(true);
+    try {
+      // Import only. The reference reaches the collector when the draft is saved — see
+      // `background_import` for why that direction is the safe one.
+      const imported = await backgroundImport(picked);
+      onImported(imported);
+      patch((d) => {
+        at(d).ref = imported.id;
+        if (reading) d.bg.reading.sameAsLibrary = false;
+      });
+    } catch (e) {
+      const code = String(e);
+      setError(code.startsWith("bg.err.") ? t(code as TKey) : code);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      {reading && (
+        <label className="pf-samecheck">
+          <input
+            type="checkbox"
+            checked={draft.data.bg.reading.sameAsLibrary}
+            disabled={!draft.data.bg.library.ref}
+            onChange={(e) => patch((d) => { d.bg.reading.sameAsLibrary = e.target.checked; })}
+          />
+          <span>{t("profiles.bg.sameAsLibrary")}</span>
+        </label>
+      )}
+
+      {!row ? (
+        <>
+          <button className="pf-btn" disabled={busy || linked} onClick={() => void pick()}>
+            {busy ? t("gs.bg.preparing") : t("gs.bg.choose")}
+          </button>
+          <div className="pf-hint">{t("gs.bg.formats")}</div>
+        </>
+      ) : (
+        <>
+          <div className="bg-ctl-row">
+            <span
+              className="bg-ctl-thumb"
+              style={{
+                backgroundImage: `url("${bgSrcUrl(row)}")`,
+                transform: `scaleX(${slot.params.flip ? -1 : 1})`,
+              }}
+              aria-hidden
+            />
+            <span className="bg-ctl-name" dir="auto">{row.source_name ?? ""}</span>
+            {!linked && (
+              <>
+                <button className="bg-ctl-act" disabled={busy} onClick={() => void pick()}>
+                  {busy ? t("gs.bg.preparing") : t("gs.bg.replace")}
+                </button>
+                <button
+                  className="bg-ctl-act danger"
+                  onClick={() => patch((d) => { at(d).ref = null; })}
+                >
+                  {t("gs.bg.remove")}
+                </button>
+              </>
+            )}
+          </div>
+
+          <div className="gs-slider-head">
+            <span>{t("gs.bg.presence")}</span>
+            <span className="gs-slider-val">{localeDigits(String(slot.params.presence), lang)}</span>
+          </div>
+          <input
+            className="gs-slider" type="range" min={0} max={presenceMaxFor(surface)} step={1}
+            value={slot.params.presence}
+            onChange={(e) => patch((d) => { at(d).params.presence = Number(e.target.value); })}
+          />
+
+          <div className="gs-slider-head">
+            <span>{t("gs.bg.blur")}</span>
+            <span className="gs-slider-val">{localeDigits(String(slot.params.blur), lang)}</span>
+          </div>
+          <input
+            className="gs-slider" type="range" min={0} max={BG_BLUR_MAX} step={1}
+            value={slot.params.blur}
+            onChange={(e) => patch((d) => { at(d).params.blur = Number(e.target.value); })}
+          />
+
+          {/* `cover` always crops; this chooses what survives the crop. */}
+          <div className="pf-field-label">{t("gs.bg.focal")}</div>
+          <div
+            className="bg-ctl-focal"
+            style={{
+              backgroundImage: `url("${bgSrcUrl(row)}")`,
+              backgroundPosition: `${slot.params.focalX}% ${slot.params.focalY}%`,
+            }}
+            onClick={(e) => {
+              const r = e.currentTarget.getBoundingClientRect();
+              patch((d) => {
+                at(d).params.focalX = Math.round(((e.clientX - r.left) / r.width) * 100);
+                at(d).params.focalY = Math.round(((e.clientY - r.top) / r.height) * 100);
+              });
+            }}
+          >
+            <span
+              className="bg-ctl-focal-dot"
+              style={{ left: `${slot.params.focalX}%`, top: `${slot.params.focalY}%` }}
+            />
+          </div>
+
+          {/* READING ONLY. The page is deliberately outside the interface texture's reach — the
+              design says so — so its translucency lives here, against its own measured AAA floor. */}
+          {reading && (
+            <>
+              <div className="gs-slider-head">
+                <span>{t("gs.bg.pageOpacity")}</span>
+                <span className="gs-slider-val">
+                  {localeDigits(String(Math.round(slot.params.pageOpacity * 100)), lang)}
+                </span>
+              </div>
+              <input
+                className="gs-slider" type="range" min={PAGE_OPACITY_MIN} max={1} step={0.01}
+                value={slot.params.pageOpacity}
+                onChange={(e) => patch((d) => { d.bg.reading.params.pageOpacity = Number(e.target.value); })}
+              />
+              <div className="pf-hint">{t("gs.bg.pageOpacityHint")}</div>
+            </>
+          )}
+        </>
+      )}
+      {error && <div className="pf-contrast warn">{error}</div>}
     </>
   );
 }

@@ -940,7 +940,8 @@ export const en = {
   // The two background sections are drawn but not yet filled. They must not borrow the firewall's
   // sentence to say so: that sentence is about the reader's own layout settings, and reading it
   // under "Library background" tells the reader something untrue about backgrounds.
-  "profiles.section.notReady": "Backgrounds are not ready yet.",
+  "profiles.bg.sameAsLibrary": "The same image as the library, quieter",
+  "profiles.bg.sameAsLibraryShort": "The same image, quieter",
 
   "profiles.identity.name": "Name",
   "profiles.identity.icon": "Icon",

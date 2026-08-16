@@ -91,6 +91,13 @@ export interface BackgroundRow {
 export const backgroundChoose = (surface: "library" | "reading", path: string): Promise<BackgroundRow> =>
   invoke<BackgroundRow>("background_choose", { surface, path });
 
+/** Import an image WITHOUT binding a surface — the profile editor's path. Binding is what
+ *  `applyProfile` does; a draft must not repaint the running app or write a global binding.
+ *  The row is unreferenced until the profile is saved, which is correct: an abandoned draft's
+ *  image IS an orphan. See `background_import` for why that direction is the safe one. */
+export const backgroundImport = (path: string): Promise<BackgroundRow> =>
+  invoke<BackgroundRow>("background_import", { path });
+
 export const backgroundsList = (): Promise<BackgroundRow[]> =>
   invoke<BackgroundRow[]>("backgrounds_list");
 

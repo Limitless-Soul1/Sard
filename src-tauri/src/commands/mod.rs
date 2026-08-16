@@ -832,6 +832,43 @@ pub async fn background_choose(
     Ok(row)
 }
 
+/// Import an image WITHOUT binding it to a surface — the profile editor's path.
+///
+/// WHY THIS EXISTS SEPARATELY FROM `background_choose`. That command imports and binds in one
+/// indivisible step, which is exactly right for a control that changes the live surface. A profile
+/// editor is editing a DRAFT: choosing an image there must not repaint the running application, and
+/// must not write a global binding that only `applyProfile` is allowed to write. So it imports, and
+/// the reference is recorded on the profile row when the draft is saved.
+///
+/// THE ROW IS UNREFERENCED UNTIL THEN, AND THAT IS CORRECT. `gc()` runs inside `set_surface()`, so
+/// nothing collects between here and the save; and an image imported for a draft the reader then
+/// abandons SHOULD be collected — it is an orphan by definition. What must never happen is the
+/// reverse, an image still named by a saved profile being collected, and that is what the profiles
+/// column in the collector's reference set prevents.
+///
+/// Staged exactly like `background_choose`: prepare and materialize hold no lock, so a large image
+/// does not freeze the window.
+#[tauri::command]
+pub async fn background_import(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<backgrounds::Background, String> {
+    let app_data_dir = state.app_data_dir.clone();
+
+    let prep = backgrounds::prepare(&path)?;
+    {
+        let conn = state.conn();
+        if let Some(existing) = backgrounds::dedup_or_repair(&conn, prep.id())? {
+            // Already managed — the same content never costs a second copy on disk, which is what
+            // lets two profiles (or both surfaces of one) share an image for free.
+            return Ok(existing);
+        }
+    }
+    let mat = backgrounds::materialize(prep)?;
+    let conn = state.conn();
+    backgrounds::commit(&conn, &app_data_dir, mat)
+}
+
 #[tauri::command]
 pub fn backgrounds_list(state: State<AppState>) -> Result<Vec<backgrounds::Background>, String> {
     let conn = state.conn();

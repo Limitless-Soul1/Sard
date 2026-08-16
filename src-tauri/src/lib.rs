@@ -150,6 +150,7 @@ macro_rules! sard_invoke_handler {
             commands::fonts_list,
             commands::font_remove,
             commands::background_choose, // RAWY-265: managed background images (import + bind, atomic)
+            commands::background_import, // PROFILES: import WITHOUT binding — a draft must not repaint
             commands::backgrounds_list,
             commands::background_set_surface,
             commands::bookmark_create,

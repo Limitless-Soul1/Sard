@@ -890,7 +890,8 @@ export const ar: Record<TKey, string> = {
   "profiles.section.bookBg": "خلفية الكتاب",
   "profiles.section.fonts": "الخطوط",
   "profiles.section.marks": "العلامات والملمس",
-  "profiles.section.notReady": "الخلفيّات ليست جاهزةً بعد.",
+  "profiles.bg.sameAsLibrary": "الصورة نفسها، أهدأ",
+  "profiles.bg.sameAsLibraryShort": "الصورة نفسها · أهدأ",
 
   "profiles.identity.name": "الاسم",
   "profiles.identity.icon": "الرمز",

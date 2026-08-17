@@ -1089,6 +1089,8 @@ export const en = {
   "profiles.shape.clip": "Brass clip",
   "profiles.shape.cord": "Braided cord",
   "profiles.shape.leaf": "Pressed leaf",
+  // What the thing in the toolbar IS, under its name — the design's 「هيئة سَرْد」.
+  "profiles.editor.subtitle": "Sard profile",
   "profiles.editor.stageLibrary": "Library",
   "profiles.editor.stageBook": "Book",
   // The preview's own chrome. It depicts Sard's interface, so it follows the reader's language —

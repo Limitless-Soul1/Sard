@@ -230,7 +230,20 @@
   display: flex; align-items: center; gap: 12px; padding: 0 16px; min-height: 60px;
   border-bottom: 1px solid var(--chrome-border); background: var(--chrome-bg);
 }
+/* The profile's own face in the toolbar, at the design's 34px. A chosen image fills it; a chosen
+   colour becomes the dot; otherwise the initial is set in the profile's own book face, which is the
+   same three-way — and the same fallback — the card uses. */
+.pf-editor-seal {
+  width: 34px; height: 34px; flex: none; border-radius: 9px;
+  display: grid; place-items: center; overflow: hidden;
+  font-size: 0.9375rem; box-shadow: inset 0 0 0 1px var(--chrome-border);
+}
+.pf-editor-seal-img { width: 100%; height: 100%; background-size: cover; background-position: 50% 34%; }
+.pf-editor-seal-dot { width: 14px; height: 14px; border-radius: 50%; }
+.pf-editor-ident { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .pf-editor-title { font: 600 0.9375rem var(--ui-font); color: var(--text); }
+/* What the thing is, under its name — so a profile's own name never has to carry that job. */
+.pf-editor-sub { font: 400 0.625rem var(--ui-font); color: var(--lib-faint, var(--muted)); }
 .pf-editor-dirty { font: 400 0.75rem var(--ui-font); color: var(--accent); }
 .pf-editor-spacer { flex: 1; }
 .pf-editor-x {
@@ -531,15 +544,20 @@
 .pf-ink-follow-name { font: 400 0.5625rem var(--ui-font); color: var(--muted); }
 .pf-ink-follow-tag { font: 400 0.5625rem var(--ui-font); color: var(--lib-faint, var(--muted)); }
 
-.pf-swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
-.pf-swatch-cell { display: flex; flex-direction: column; align-items: center; gap: 4px; border: 0; background: none; padding: 0; cursor: pointer; }
+.pf-swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px 10px; }
+.pf-swatch-cell { display: flex; flex-direction: column; align-items: center; gap: 6px; border: 0; background: none; padding: 0; cursor: pointer; }
+/* A FIXED 44px TILE, not a ratio. The design sizes the specimen by the height a letter needs to be
+   read at, which does not change with the column's width. */
 .pf-swatch {
-  width: 100%; aspect-ratio: 3 / 2; border-radius: 7px; display: flex;
-  align-items: center; justify-content: center; font: 500 0.75rem var(--ui-font);
+  width: 100%; height: 44px; border-radius: 6px; display: flex;
+  align-items: center; justify-content: center; gap: 4px;
   box-shadow: inset 0 0 0 1px var(--chrome-border);
 }
+/* The book face, not the interface font: the letter is a specimen of what this paper reads like. */
+.pf-swatch-glyph { font: 400 1rem Literata, serif; }
+.pf-swatch-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .pf-swatch-cell.on .pf-swatch { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg); }
-.pf-swatch-name { font: 400 0.625rem var(--ui-font); color: var(--muted); text-align: center; }
+.pf-swatch-name { font: 500 0.625rem/1.3 var(--ui-font); color: var(--muted); text-align: center; }
 
 /* The measured verdict, shown as a NUMBER rather than a badge: the reader can see what a choice
    actually buys, and the repair is offered rather than imposed. */
@@ -582,7 +600,9 @@
 /* The firewall: the rail's last block, and not a control. */
 /* The rail's closing block, at the design's own size (heading .625rem, body .5625rem/1.7). It sits in
    a 132px column, so it is set small on purpose rather than shrunk to fit. */
-.pf-firewall { margin-top: auto; padding: 10px; border-top: 1px solid var(--chrome-border); }
+/* The direction wrapper is the rail's flex child, so it is what carries the push to the bottom. */
+.pfe-rail-foot { margin-top: auto; }
+.pf-firewall { padding: 10px; border-top: 1px solid var(--chrome-border); }
 .pf-firewall-title { font: 600 0.625rem var(--ui-font); color: var(--muted); margin-bottom: 4px; }
 .pf-firewall-body { margin: 0; font: 400 0.5625rem/1.7 var(--ui-font); color: var(--lib-faint, var(--muted)); }
 

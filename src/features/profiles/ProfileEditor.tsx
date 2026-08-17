@@ -285,8 +285,33 @@ export function ProfileEditor({
     {share && <ShareSheet profile={live} onClose={() => setShare(false)} />}
     <div className="pf-editor" role="dialog" aria-modal="true">
       <div className="pf-editor-head">
-        <span className="pf-editor-title" dir="auto">
-          {draft.name ?? t("profiles.editor.title")}
+        {/* THE PROFILE'S OWN FACE, beside its name. The toolbar named the profile but never showed
+            it, so the one surface that is always on screen while you edit gave no sign of which
+            profile you were editing beyond a word. Same three-way as the card: a chosen image, a
+            chosen colour, or the initial — an image whose row has not loaded falls back to the
+            initial rather than to a hole. */}
+        <span
+          className="pf-editor-seal"
+          style={{
+            background: draft.data.theme.colors.paperBg,
+            color: draft.data.theme.colors.text,
+            fontFamily: bookFaceCss(draft.data.type.arabic),
+          }}
+          aria-hidden
+        >
+          {draft.iconKind === "color" && draft.iconRef ? (
+            <span className="pf-editor-seal-dot" style={{ background: draft.iconRef }} />
+          ) : iconUrl ? (
+            <span className="pf-editor-seal-img" style={{ backgroundImage: `url("${iconUrl}")` }} />
+          ) : (
+            (draft.name ?? "").trim().slice(0, 1) || "س"
+          )}
+        </span>
+        <span className="pf-editor-ident">
+          <span className="pf-editor-title" dir="auto">
+            {draft.name ?? t("profiles.editor.title")}
+          </span>
+          <span className="pf-editor-sub">{t("profiles.editor.subtitle")}</span>
         </span>
         {dirty && <span className="pf-editor-dirty">{t("profiles.editor.unsaved")}</span>}
         <span className="pf-editor-spacer" />
@@ -731,11 +756,17 @@ function ThemeSection({
               }
               title={t(`theme.${id}`)}
             >
+              {/* THE PAPER'S OWN LETTER AND ITS ACCENT. A swatch has to answer two questions at
+                  once — what does ink look like on this paper, and what colour marks things — so the
+                  design sets a single Arabic letter in the book face beside a dot of the accent.
+                  "Aa" answered neither: it named a Latin face this reader may never see and left the
+                  accent, which is half of what separates one paper from the next, off the tile. */}
               <span
                 className="pf-swatch"
                 style={{ background: THEMES[id].colors.paperBg, color: THEMES[id].colors.text }}
               >
-                Aa
+                <span className="pf-swatch-glyph">س</span>
+                <span className="pf-swatch-dot" style={{ background: THEMES[id].colors.accent }} />
               </span>
               <span className="pf-swatch-name">{t(`theme.${id}`)}</span>
             </button>

@@ -73,7 +73,11 @@ export function EditorShell({
             <span className="pfe-rail-value">{value(c.id)}</span>
           </button>
         ))}
-        {railFooter}
+        {/* THE FOOTER IS TRANSLATED PROSE, so it takes the app's direction like the chapter body —
+            the rail's own Arabic names are what make the frame RTL, and this block is not one of
+            them. Without it the English sentence was laid out right-to-left inside the RTL rail and
+            its final full stop rendered at the wrong end. */}
+        {railFooter && <div className="pfe-rail-foot" dir={bodyDir}>{railFooter}</div>}
       </nav>
 
       {/* One chapter at a time, with room for real specimens. */}

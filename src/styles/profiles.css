@@ -536,22 +536,33 @@
    line, and `translateX(-50%)` then moves it physically left — landing the pill exactly one full
    width off centre. Measured: −157.1px against a 157.1px pill. Physical `left` centres in both
    directions, which is what the design draws. */
-/* THE PILL KEEPS ITS SHAPE AND TAKES THE REFERENCE'S SIZE. The real reading chrome is a full-width
-   56px bar (`.rc-bottom`), not a pill, so there is no element to copy — the pill is the design's
-   abstraction of it and stays one. What it can borrow is that bar's WEIGHT: 56px on the reference
-   window is 56 / 1440 x 656 = 26 design-px, so the pill is built to stand 26 tall instead of the 30
-   it grew to, and its type and padding come down with it rather than being re-drawn. */
+/* A STATUS MARK, NOT A CONTROL — and the weight has to say so.
+   In the reading surface this chrome is HIDDEN while you read: `.reader-root` carries `chrome-hidden`
+   and `.rc-bottom` is translated away until you ask for it, and even then it is a quiet 56px bar
+   holding controls, not a raised object. So the loudest thing on the book face should not be the one
+   piece of chrome that is normally not on screen at all. It is here only so that panel colour and
+   interface texture can be judged against the page, which is a job for something small.
+
+   ⚠ THE SHADOW WAS THE FAULT, MORE THAN THE SIZE. Everything in this pill is in the composition's
+   design-px and is multiplied by the composition's scale, which reaches 3.10 on a 2560 window — so
+   `0 14px 34px` was rendering as a 43px-offset, 105px-wide bloom under a 377x81 lozenge. That is what
+   read as a floating primary button. A shadow this small has no business scaling at all: it is now a
+   whisper that survives magnification, and the hairline border does the separating.
+
+   The type and padding come down with it (10px -> 9px, 5/12 -> 3/8), which lands the pill at about
+   19 design-px against the page's 18px body line — subordinate to the words, which is the hierarchy
+   the reading surface actually has. */
 .pf-readbar {
-  position: absolute; inset-block-end: 18px; left: 50%;
-  transform: translateX(-50%); display: flex; align-items: center; gap: 9px;
-  padding: 5px 12px; border-radius: 20px;
-  background: color-mix(in srgb, var(--pc) 92%, transparent);
-  border: 1px solid var(--pb); box-shadow: 0 14px 34px rgba(20, 14, 6, 0.24);
+  position: absolute; inset-block-end: 16px; left: 50%;
+  transform: translateX(-50%); display: flex; align-items: center; gap: 7px;
+  padding: 3px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--pc) 88%, transparent);
+  border: 1px solid var(--pb); box-shadow: 0 1px 3px rgba(20, 14, 6, 0.16);
   opacity: var(--po);
 }
-.pf-readbar-name { font: 500 10px/1.4 var(--ui-font); color: var(--pm); }
-.pf-readbar-rule { width: 1px; height: 11px; background: var(--pb); }
-.pf-readbar-pct { font: 600 10px/1.4 var(--ui-font); color: var(--pa); }
+.pf-readbar-name { font: 500 9px/1.4 var(--ui-font); color: var(--pm); }
+.pf-readbar-rule { width: 1px; height: 9px; background: var(--pb); }
+.pf-readbar-pct { font: 600 9px/1.4 var(--ui-font); color: var(--pa); }
 
 /* ---- the shell: rail · chapter · preview ----
    Three columns, because the editor has three jobs and they do not take turns: the rail says where
@@ -568,27 +579,52 @@
    balance. (The page measure is now 428, derived from the reference window — see `.pf-stage-fit`.)
    The type comes down with the width: the design sets rail names at .75rem and values at .625rem,
    which is what makes 132px a comfortable column rather than a cramped one. */
+/* THE RAIL GROWS A LITTLE WITH THE WINDOW, because it was the only column that did not.
+   The rail and the chapter are fixed columns and the preview takes the remainder, so every pixel a
+   wider window brought went to the preview alone: measured, the controls hold 41% of a 1280 window
+   and 20% of a 2560 one, against a preview that goes from 756px to 2036px. The navigation did not
+   get smaller, but it read as smaller every time the window grew, and its second lines — a profile's
+   name, the chosen paper, the background's file — were being clipped at every size.
+
+   `clamp` keeps the design's 132px as the FLOOR, so nothing below about 1280 changes at all, and
+   caps the growth at 216 so this stays a rail and never becomes a panel: 132 → 151 → 202 → 216
+   across the four sizes. That is enough for the second line to finish its word, and it moves the
+   controls' share of a 2560 window from 20% back to 24% without taking the preview's primacy away. */
 .pfe-rail {
-  width: 132px; flex: none; background: var(--chrome-bg);
-  border-inline-end: 1px solid var(--chrome-border); overflow-y: auto; padding: 12px 8px;
-  display: flex; flex-direction: column; gap: 3px;
+  width: clamp(132px, 10.5vw, 216px); flex: none; background: var(--chrome-bg);
+  border-inline-end: 1px solid var(--chrome-border); overflow-y: auto; padding: 14px 10px;
+  display: flex; flex-direction: column; gap: 5px;
 }
+/* `relative` so the active marker below has something to sit in. */
 .pfe-rail-item {
-  display: flex; flex-direction: column; align-items: stretch; gap: 3px; width: 100%;
-  padding: 10px 10px 11px; border: 0; border-radius: 9px; background: transparent;
+  position: relative;
+  display: flex; flex-direction: column; align-items: stretch; gap: 4px; width: 100%;
+  padding: 11px 11px 12px; border: 0; border-radius: 9px; background: transparent;
   cursor: pointer; text-align: start;
 }
 .pfe-rail-item:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
-.pfe-rail-item.is-open { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.pfe-rail-item.is-open { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+/* WHERE YOU ARE, said twice — a ground and an edge. The ground alone was doing all the work at 12%
+   of the accent, which on the darker papers is nearly the rail's own colour; the marker is the part
+   that survives every one of them because it is the accent at full strength. Logical inset, so it
+   sits at the reading-start edge in both directions, and inset from the ends so it reads as a mark
+   on the item rather than a rule down the column. */
+.pfe-rail-item.is-open::before {
+  content: ""; position: absolute; inset-inline-start: 0; inset-block: 9px;
+  width: 2px; border-radius: 2px; background: var(--accent);
+}
+/* The section name is the thing you scan, so it carries the size; the value underneath is support
+   and stays clearly below it. 0.75/0.625rem put both in the same faint band — at 1280 that is
+   11.3px over 9.4px, which is small type doing two different jobs at almost one weight. */
 .pfe-rail-name {
   display: flex; align-items: center; gap: 5px;
-  font: 600 0.75rem var(--ui-font); color: var(--text);
+  font: 600 0.8125rem/1.35 var(--ui-font); color: var(--text); letter-spacing: 0.004em;
 }
 .pfe-rail-item.is-open .pfe-rail-name { color: var(--accent); }
 /* The dot is the whole point of the rail: "what have I changed", seen rather than remembered. */
 .pfe-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); flex: none; }
 .pfe-rail-value {
-  font: 400 0.625rem var(--ui-font); color: var(--lib-faint, var(--muted));
+  font: 400 0.6875rem/1.3 var(--ui-font); color: var(--lib-faint, var(--muted));
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
@@ -626,6 +662,9 @@
   font: 700 0.75rem/1.4 var(--ui-font); letter-spacing: 0.01em; white-space: nowrap;
   box-shadow: 0 2px 6px rgba(20, 14, 6, 0.35);
 }
+/* `inset-block-start` above is the DESIGN's hang, and the resting value. `FocusFrame` overrides it
+   inline when the frame is too near the top of the stage to hang a pill above it — see
+   `LABEL_OVERHANG` there for why that is computed from the measured box rather than chosen here. */
 
 /* ---- the Paper chapter's colour editor, in the chapter (design frame 2a) ----
    Three rows the reader owns, each with a code field that is always there, then the three that are
@@ -726,13 +765,16 @@
 .pf-rm-name { font: 500 0.78125rem var(--ui-font); color: var(--text); }
 
 /* The firewall: the rail's last block, and not a control. */
-/* The rail's closing block, at the design's own size (heading .625rem, body .5625rem/1.7). It sits in
-   a 132px column, so it is set small on purpose rather than shrunk to fit. */
+/* The rail's closing block. It stays the quietest thing in the column — it is a promise, not a
+   control, and must never compete with the six sections above it. The design set it at .625/.5625rem
+   for a 132px rail; now that the rail reaches 216 it takes one step up (.6875/.625rem) so it reads as
+   small print rather than as unreadable, and keeps its distance through colour and weight instead of
+   through being too small to see. Nine words per line at 132px was the real problem. */
 /* The direction wrapper is the rail's flex child, so it is what carries the push to the bottom. */
 .pfe-rail-foot { margin-top: auto; }
-.pf-firewall { padding: 10px; border-top: 1px solid var(--chrome-border); }
-.pf-firewall-title { font: 600 0.625rem var(--ui-font); color: var(--muted); margin-bottom: 4px; }
-.pf-firewall-body { margin: 0; font: 400 0.5625rem/1.7 var(--ui-font); color: var(--lib-faint, var(--muted)); }
+.pf-firewall { padding: 12px 11px; border-top: 1px solid var(--chrome-border); }
+.pf-firewall-title { font: 600 0.6875rem var(--ui-font); color: var(--muted); margin-bottom: 5px; }
+.pf-firewall-body { margin: 0; font: 400 0.625rem/1.65 var(--ui-font); color: var(--lib-faint, var(--muted)); }
 
 /* ---- accessibility: the same rule the background system already applies ----
    A reader who has asked the OS for reduced transparency has stated a requirement, not a

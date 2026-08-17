@@ -57,6 +57,30 @@ const legibleOn = (ground: string): string =>
  */
 const PAD = 6;
 
+/**
+ * Where the label sits against the frame's top edge.
+ *
+ * The design hangs it 11px ABOVE that edge, so the pill straddles the hairline. A frame whose top is
+ * at — or above — the stage's own top has nowhere to hang it, and the stage's clip cuts the pill off.
+ * That is not hypothetical: the page is now the full height of the environment, as the reading
+ * surface's page is, so `paper`'s frame starts at the top of the stage, `background` frames the
+ * composition itself, and `marks` starts ABOVE it because the bookmark overhangs the page edge.
+ * Measured before this, at all four window sizes, the label sat 16px above the stage, clipped.
+ *
+ * So the offset is computed rather than chosen: hang it at the design's 11px whenever there is room,
+ * and otherwise slide it down until it clears the stage's CONTROL STRIP — the face switch and the
+ * measure, which are drawn above the frame (z-index 4 against 3) and would otherwise cut into the
+ * pill. Clearing the strip rather than merely the stage's edge is what makes the narrow window work:
+ * at 1280 the stage is 754px wide, the centred controls reach much further across it, and the marks
+ * label ran into them by 12px. It also lands every inside-label on the same line, which reads as a
+ * decision rather than as each frame finding its own spot.
+ *
+ * The frame never moves. Its whole job is to sit around its object, and shrinking it to make room for
+ * its own label would break the one thing it is for.
+ */
+const LABEL_OVERHANG = 11;
+const LABEL_MARGIN = 8;
+
 interface Box { left: number; top: number; width: number; height: number }
 
 const same = (a: Box | null, b: Box | null): boolean =>
@@ -78,6 +102,9 @@ export function FocusFrame({
   const boxRef = useRef<Box | null>(null);
   const [ink, setInk] = useState(INK_LIGHT);
   const inkRef = useRef(INK_LIGHT);
+  /** The lowest edge of the stage's control strip, in the stage's own pixels. */
+  const [stripBottom, setStripBottom] = useState(0);
+  const stripRef = useRef(0);
 
   // NO DEPENDENCY ARRAY, deliberately. The editor re-renders on every draft change, so this
   // re-measures whenever a control moves the thing being framed — a bookmark slider, a page width,
@@ -107,6 +134,14 @@ export function FocusFrame({
         boxRef.current = next;
         setBox(next);
       }
+      // The strip is a sibling of the composition, at a constant size, so its depth in the stage
+      // changes with the window rather than with the picture — it has to be read, not assumed.
+      const strip = root.querySelector(".pf-stage-segbar");
+      const depth = strip ? strip.getBoundingClientRect().bottom - s.top : 0;
+      if (Math.abs(depth - stripRef.current) >= 0.5) {
+        stripRef.current = depth;
+        setStripBottom(depth);
+      }
       // The pill is painted in the ACTIVE theme's accent, which changes with the profile the reader
       // is wearing, so the ink that reads on it has to be chosen against that live value.
       const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
@@ -127,13 +162,20 @@ export function FocusFrame({
   });
 
   if (!box) return null;
+  // Negative = hanging above the frame's edge, as drawn; clamped so the pill always clears the
+  // control strip. Both values are already in the stage's own pixels, so this is the calculation.
+  const labelTop = Math.max(-LABEL_OVERHANG, stripBottom + LABEL_MARGIN - box.top);
   return (
     <div
       className="pf-focus"
       style={{ left: box.left, top: box.top, width: box.width, height: box.height }}
       aria-hidden
     >
-      {label && <span className="pf-focus-label" style={{ color: ink }}>{label}</span>}
+      {label && (
+        <span className="pf-focus-label" style={{ color: ink, insetBlockStart: labelTop }}>
+          {label}
+        </span>
+      )}
     </div>
   );
 }

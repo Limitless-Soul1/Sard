@@ -358,30 +358,43 @@ export function ProfileEditor({
                absolutely-positioned sibling in one paint order, and the faces read these `--p*`
                properties rather than taking colours as props. */
             <div className="pf-stage" style={stageVars} ref={stageRef}>
-              {/* ONE IMAGE LAYER FOR THE WHOLE STAGE, showing whichever surface is on screen — the
-                  library's picture behind the library, the book's behind the page. It used to live
-                  inside the book specimen only, which is why the library face could never show one
-                  and why this layer had no positioned ancestor to be clipped by. */}
-              {stageBg && (
-                <>
-                  <span
-                    className="pf-stage-bg"
-                    style={{
-                      backgroundImage: `url("${stageBg.url}")`,
-                      backgroundPosition: `${stageBg.p.focalX}% ${stageBg.p.focalY}%`,
-                      filter: `blur(${stageBg.p.blur}px)`,
-                      transform: `scaleX(${stageBg.p.flip ? -1 : 1})`,
-                    }}
-                    aria-hidden
-                  />
-                  <span
-                    className="pf-stage-scrim"
-                    style={{ opacity: scrimAlpha(stageBg.p.presence, stageBg.surface) }}
-                    aria-hidden
-                  />
-                </>
-              )}
+              {/* THE COMPOSITION, at the size the design drew it and scaled to fit. */}
+              <div className="pf-stage-fit">
+                {/* THE DESK IMAGE BELONGS TO THE COMPOSITION, NOT TO THE STAGE. It is a picture of
+                    Sard's own surface — the library behind its shelves, the reading surface behind
+                    its page — so it fills the thing being depicted and stops there. Hung on the
+                    stage instead it kept its −40px bleed against a box that grows with the window:
+                    measured at 2560, the picture ran 418px past the composition on each side while
+                    the composition itself was 1200 wide, so the wallpaper spilled across ground that
+                    is not part of the app at all. Inside the box it scales with everything else and
+                    the design's proportions hold at every size rather than at 1180 alone. */}
+                {stageBg && (
+                  <>
+                    <span
+                      className="pf-stage-bg"
+                      style={{
+                        backgroundImage: `url("${stageBg.url}")`,
+                        backgroundPosition: `${stageBg.p.focalX}% ${stageBg.p.focalY}%`,
+                        filter: `blur(${stageBg.p.blur}px)`,
+                        transform: `scaleX(${stageBg.p.flip ? -1 : 1})`,
+                      }}
+                      aria-hidden
+                    />
+                    <span
+                      className="pf-stage-scrim"
+                      style={{ opacity: scrimAlpha(stageBg.p.presence, stageBg.surface) }}
+                      aria-hidden
+                    />
+                  </>
+                )}
 
+                {face === "library"
+                  ? <LibraryFace profile={draft} iconUrl={iconUrl} />
+                  : <BookFace profile={draft} />}
+              </div>
+
+              {/* The face switch is a CONTROL, not part of the picture, so it stays on the stage at
+                  a constant size instead of scaling with the composition. */}
               <div className="pf-stage-segbar">
                 <div className="pf-stage-seg" role="group">
                   <button className={face === "library" ? "on" : ""} onClick={() => setFace("library")}>
@@ -391,15 +404,6 @@ export function ProfileEditor({
                     {t("profiles.editor.stageBook")}
                   </button>
                 </div>
-              </div>
-
-              {/* THE COMPOSITION, at the size the design drew it and scaled to fit. The desk, its
-                  scrim and the segmented control stay full-bleed on the stage, where the design
-                  puts them. */}
-              <div className="pf-stage-fit">
-                {face === "library"
-                  ? <LibraryFace profile={draft} iconUrl={iconUrl} />
-                  : <BookFace profile={draft} />}
               </div>
 
               {/* WHAT THIS CHAPTER GOVERNS, drawn around the object itself. It sits OUTSIDE the

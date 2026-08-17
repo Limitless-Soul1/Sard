@@ -337,7 +337,9 @@
   scale: min(calc(100cqw / 656px), calc(100cqh / 720px));
 }
 /* Inset so a blur samples beyond the edge instead of fading to nothing at it. This layout box is
-   MEANT to extend past the stage; the clip above is what keeps the paint inside. */
+   MEANT to extend past the composition; the stage's clip is what keeps the paint inside. Both
+   layers live in the composition box, so the −40px bleed stays 40px of the DESIGN's pixels at any
+   window size, and the image cannot spill onto ground that is not part of the depicted app. */
 .pf-stage-bg {
   position: absolute; inset: -40px; background-size: cover; background-position: 62% 44%;
 }

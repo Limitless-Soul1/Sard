@@ -1041,6 +1041,13 @@ export const ar: Record<TKey, string> = {
 
   // ---- فصول المُحرِّر وأسئلتها ----
   // نصّ التصميم حرفيًّا: هذه هي الكلمات التي رُسم بها المُحرِّر، ولم تتغيّر عند نقلها إلى المفاتيح.
+  // نصّ التصميم: «أو حرفٌ بخطّ الهيئة على ورقها».
+  "profiles.identity.sealStyle": "شكل الخاتَم",
+  "profiles.identity.sealProfileFace": "خطّ الهيئة نفسه",
+  "profiles.identity.sealAref": "رقعة · Aref Ruqaa",
+  "profiles.identity.sealAmiri": "أميري · Amiri",
+  "profiles.identity.sealDiamond": "مُعيَّن",
+
   "profiles.editor.chapters": "فصول الهيئة",
   "profiles.editor.edited": "مُعدَّل",
   "profiles.chapter.identity": "الهويّة",
@@ -1081,7 +1088,7 @@ export const ar: Record<TKey, string> = {
   "profiles.identity.iconColour": "لون",
   "profiles.identity.iconImage": "＋ اختيار صورة",
   "profiles.identity.sealHint":
-    "من غير صورة، يُرسَم أوّل حرفٍ من الاسم بخطّ الهيئة نفسه وعلى ورقها.",
+    "من غير صورة، يُرسَم أوّل حرفٍ من الاسم على ورق الهيئة — بخطّها نفسه أو بخطٍّ تختاره.",
 
   "profiles.theme.papers": "{n} ورقة",
   "profiles.theme.customise": "تخصيص الألوان",

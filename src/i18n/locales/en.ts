@@ -1096,6 +1096,13 @@ export const en = {
   // The design is a monolingual Arabic mockup, so `ar.ts` carries its wording verbatim and these are
   // the English readings of it. A chapter NAMES a subject; its question is what the reader is
   // actually being asked, which is why the question is a sentence and not a restatement.
+  // The seal's own look — a letter in a chosen face, or the diamond.
+  "profiles.identity.sealStyle": "Seal style",
+  "profiles.identity.sealProfileFace": "The profile's own face",
+  "profiles.identity.sealAref": "Aref Ruqaa",
+  "profiles.identity.sealAmiri": "Amiri",
+  "profiles.identity.sealDiamond": "A diamond",
+
   "profiles.editor.chapters": "Profile chapters",
   "profiles.editor.edited": "Edited",
   "profiles.chapter.identity": "Identity",
@@ -1141,7 +1148,7 @@ export const en = {
   "profiles.identity.iconColour": "Colour",
   "profiles.identity.iconImage": "＋ Choose an image",
   "profiles.identity.sealHint":
-    "With no image, the first letter of the name is drawn in the profile’s own face, on its own paper.",
+    "With no image, the name’s first letter is drawn on the profile’s own paper — in its own face, or one you pick.",
 
   "profiles.theme.papers": "{n} papers",
   "profiles.theme.customise": "Customise the colours",

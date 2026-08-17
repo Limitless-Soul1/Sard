@@ -287,6 +287,10 @@ export async function captureCurrent(): Promise<ProfileData> {
     // Texture has no global setting to capture: today every surface is opaque, and `opaque` writes
     // nothing, so a profile made from "how Sard looks now" is byte-identical to today.
     texture: "opaque",
+    // Nor has the seal: it is a property of a profile, and "how Sard looks now" is not yet one. The
+    // defaults draw the name's initial in the profile's own face, which is what a seal has always
+    // looked like.
+    seal: { face: "profile", glyph: "initial" },
   };
 }
 

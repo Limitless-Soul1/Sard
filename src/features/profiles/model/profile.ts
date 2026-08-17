@@ -97,6 +97,28 @@ export const TEXTURE_ALPHA: Record<TextureStep, number> = {
   glass: 0.78,
 };
 
+/**
+ * How the seal is drawn, when a profile wears one.
+ *
+ * IN THE BLOB, NOT IN A COLUMN. `icon_kind` says WHICH of the three kinds a profile wears; this says
+ * what the seal LOOKS like, which is appearance and therefore belongs with the rest of the
+ * appearance. It also means no migration: the blob is parsed defensively, so a profile written
+ * before this existed reads the defaults below and is byte-identical on screen to what it was.
+ *
+ * `face: "profile"` is that default — the seal follows the profile's own Arabic book face, which is
+ * exactly what every seal did before there was a choice. The two named faces are the design's own.
+ */
+export interface ProfileSeal {
+  face: "profile" | "arefRuqaa" | "amiri";
+  glyph: "initial" | "diamond";
+}
+
+export const SEAL_FACES: readonly ProfileSeal["face"][] = ["profile", "arefRuqaa", "amiri"];
+export const SEAL_GLYPHS: readonly ProfileSeal["glyph"][] = ["initial", "diamond"];
+
+/** The mark a `diamond` seal draws. The design's own character. */
+export const SEAL_DIAMOND = "◆";
+
 export interface ProfileData {
   v: number;
   theme: ProfileTheme;
@@ -104,6 +126,7 @@ export interface ProfileData {
   marks: ProfileMarks;
   bg: { library: ProfileSurfaceBg; reading: ProfileReadingBg };
   texture: TextureStep;
+  seal: ProfileSeal;
 }
 
 /** A profile as the app holds it: the row's own columns, plus the parsed blob. */
@@ -212,6 +235,20 @@ export function parseProfileData(raw: string): ProfileData {
       },
     },
     texture: pick<TextureStep>(o.texture, (x) => TEXTURE_STEPS.includes(x as TextureStep), "opaque"),
+    // Absent reads as "the profile's own face, and its initial" — what every seal drawn before this
+    // existed already looked like, so nothing that is already saved changes appearance.
+    seal: {
+      face: pick<ProfileSeal["face"]>(
+        (o.seal as Record<string, unknown> | undefined)?.face,
+        (x) => SEAL_FACES.includes(x as ProfileSeal["face"]),
+        "profile",
+      ),
+      glyph: pick<ProfileSeal["glyph"]>(
+        (o.seal as Record<string, unknown> | undefined)?.glyph,
+        (x) => SEAL_GLYPHS.includes(x as ProfileSeal["glyph"]),
+        "initial",
+      ),
+    },
   };
 }
 

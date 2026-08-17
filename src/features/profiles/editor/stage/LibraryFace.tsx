@@ -15,7 +15,7 @@
 
 import { useI18n } from "../../../../i18n";
 import { localeNum } from "../../../../lib/format";
-import { bookFaceCss } from "../../mini";
+import { sealOf } from "../../mini";
 import type { Profile } from "../../model/profile";
 
 /**
@@ -60,8 +60,8 @@ export function LibraryFace({ profile, iconUrl }: { profile: Profile; iconUrl?: 
           ) : iconUrl ? (
             <i className="pf-lib-avatar" style={{ backgroundImage: `url("${iconUrl}")` }} />
           ) : (
-            <i className="pf-lib-avatar seal" style={{ fontFamily: bookFaceCss(profile.data.type.arabic) }}>
-              {(profile.name ?? "").trim().slice(0, 1) || "س"}
+            <i className="pf-lib-avatar seal" style={{ fontFamily: sealOf(profile).fontFamily }}>
+              {sealOf(profile).text}
             </i>
           )}
           <i className="pf-lib-chip-rule" />

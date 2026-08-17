@@ -17,8 +17,8 @@ import { createPortal } from "react-dom";
 
 import { useI18n } from "../../i18n";
 import { SardMini } from "./SardMini";
-import { bookFaceCss, miniOf } from "./mini";
-import type { Profile } from "./model/profile";
+import { miniOf, sealOf } from "./mini";
+import { SEAL_DIAMOND, type Profile } from "./model/profile";
 
 export interface CardActions {
   onUse: () => void;
@@ -109,7 +109,7 @@ export function ProfileCard({
     };
   }, [menu]);
 
-  const seal = (profile.name ?? "").trim().slice(0, 1) || "س";
+  const seal = sealOf(profile);
 
   return (
     <div className={`pf-card${active ? " on" : ""}`} ref={wrap}>
@@ -129,8 +129,10 @@ export function ProfileCard({
           className="pf-seal"
           style={{
             background: profile.data.theme.colors.paperBg,
-            color: profile.data.theme.colors.text,
-            fontFamily: bookFaceCss(profile.data.type.arabic),
+            color: seal.text === SEAL_DIAMOND
+              ? profile.data.theme.colors.accent
+              : profile.data.theme.colors.text,
+            fontFamily: seal.fontFamily,
           }}
           aria-hidden
         >
@@ -141,7 +143,7 @@ export function ProfileCard({
           ) : (
             // An image icon whose row has not loaded yet — or has gone — falls back to the initial
             // rather than to a hole. The seal is a real choice, so it is never a broken state.
-            seal
+            seal.text
           )}
         </span>
 

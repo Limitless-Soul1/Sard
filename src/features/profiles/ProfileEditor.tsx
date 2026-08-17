@@ -51,9 +51,16 @@ import { ShareSheet } from "./ShareSheet";
 import { profileChangePending } from "./session";
 import { BookFace } from "./editor/stage/BookFace";
 import { LibraryFace } from "./editor/stage/LibraryFace";
-import { bookFaceCss } from "./mini";
+import { bookFaceCss, sealOf } from "./mini";
 import { saveProfile, useProfiles } from "./store";
-import { TEXTURE_ALPHA, TEXTURE_STEPS, type Profile, type ProfileData } from "./model/profile";
+import {
+  SEAL_DIAMOND,
+  TEXTURE_ALPHA,
+  TEXTURE_STEPS,
+  type Profile,
+  type ProfileData,
+  type ProfileSeal,
+} from "./model/profile";
 import { judgePalette } from "./model/guidance";
 import { editHex } from "./model/hex";
 import { deriveColors } from "./model/palette";
@@ -158,6 +165,7 @@ export function ProfileEditor({
     draft.data.bg.reading.sameAsLibrary ? draft.data.bg.library.ref : draft.data.bg.reading.ref,
   );
   const iconUrl = draft.iconKind === "image" && draft.iconRef ? urlOf(draft.iconRef) : null;
+  const headSeal = sealOf(draft);
 
   /**
    * The picture the stage's desk carries — the design's `bgLive`: the face on screen decides which
@@ -294,8 +302,10 @@ export function ProfileEditor({
           className="pf-editor-seal"
           style={{
             background: draft.data.theme.colors.paperBg,
-            color: draft.data.theme.colors.text,
-            fontFamily: bookFaceCss(draft.data.type.arabic),
+            color: headSeal.text === SEAL_DIAMOND
+              ? draft.data.theme.colors.accent
+              : draft.data.theme.colors.text,
+            fontFamily: headSeal.fontFamily,
           }}
           aria-hidden
         >
@@ -304,7 +314,7 @@ export function ProfileEditor({
           ) : iconUrl ? (
             <span className="pf-editor-seal-img" style={{ backgroundImage: `url("${iconUrl}")` }} />
           ) : (
-            (draft.name ?? "").trim().slice(0, 1) || "س"
+            headSeal.text
           )}
         </span>
         <span className="pf-editor-ident">
@@ -417,6 +427,20 @@ export function ProfileEditor({
 
 // ---- sections ------------------------------------------------------------------------------------
 
+/**
+ * The four seals the design offers, in its order.
+ *
+ * The first is not one of the design's — it is today's behaviour made explicit, so a reader who
+ * never touches this keeps exactly the seal they already had and can always get back to it. The
+ * other three are the design's: the same letter in two named faces, then its diamond.
+ */
+const SEAL_OPTIONS = [
+  { face: "profile",   glyph: "initial", label: "profiles.identity.sealProfileFace" },
+  { face: "arefRuqaa", glyph: "initial", label: "profiles.identity.sealAref" },
+  { face: "amiri",     glyph: "initial", label: "profiles.identity.sealAmiri" },
+  { face: "profile",   glyph: "diamond", label: "profiles.identity.sealDiamond" },
+] as const satisfies readonly { face: ProfileSeal["face"]; glyph: ProfileSeal["glyph"]; label: TKey }[];
+
 function IdentitySection({
   draft,
   setDraft,
@@ -431,7 +455,7 @@ function IdentitySection({
   const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const seal = (draft.name ?? "").trim().slice(0, 1) || "س";
+  const sealArt = sealOf(draft);
   const colour = draft.iconKind === "color";
   const image = draft.iconKind === "image";
   const sealKind = !colour && !image;
@@ -499,8 +523,10 @@ function IdentitySection({
           className="pf-icon-now"
           style={{
             background: draft.data.theme.colors.paperBg,
-            color: draft.data.theme.colors.text,
-            fontFamily: bookFaceCss(draft.data.type.arabic),
+            color: sealArt.text === SEAL_DIAMOND
+              ? draft.data.theme.colors.accent
+              : draft.data.theme.colors.text,
+            fontFamily: sealArt.fontFamily,
           }}
           aria-hidden
         >
@@ -512,7 +538,7 @@ function IdentitySection({
               style={{ backgroundImage: `url("${bgSrcUrl(iconRow)}")` }}
             />
           ) : (
-            seal
+            sealArt.text
           )}
         </span>
         <div className="pf-icon-kinds" role="radiogroup">
@@ -527,10 +553,10 @@ function IdentitySection({
               style={{
                 background: draft.data.theme.colors.paperBg,
                 color: draft.data.theme.colors.text,
-                fontFamily: bookFaceCss(draft.data.type.arabic),
+                fontFamily: sealArt.fontFamily,
               }}
             >
-              {seal}
+              {sealArt.text}
             </span>
             {t("profiles.identity.iconSeal")}
           </button>
@@ -609,6 +635,47 @@ function IdentitySection({
         )}
         {image && !iconRow && <div className="pf-hint">{t("gs.bg.formats")}</div>}
         {error && <div className="pf-contrast warn">{error}</div>}
+
+        {/* HOW THE SEAL IS DRAWN — the design's four, on the profile's own paper so each is judged
+            in the colours it will actually wear. The first follows the profile's book face, which is
+            what every seal did before there was a choice; the other three are the design's. */}
+        {sealKind && (
+          <>
+            <div className="pf-seal-faces" role="radiogroup" aria-label={t("profiles.identity.sealStyle")}>
+              {SEAL_OPTIONS.map((o) => {
+                const on = draft.data.seal.face === o.face && draft.data.seal.glyph === o.glyph;
+                const text = o.glyph === "diamond"
+                  ? SEAL_DIAMOND
+                  : (draft.name ?? "").trim().slice(0, 1) || "س";
+                return (
+                  <button
+                    key={o.face + o.glyph}
+                    role="radio"
+                    aria-checked={on}
+                    title={t(o.label)}
+                    className={`pf-seal-face${on ? " on" : ""}`}
+                    style={{
+                      background: draft.data.theme.colors.paperBg,
+                      color: o.glyph === "diamond"
+                        ? draft.data.theme.colors.accent
+                        : draft.data.theme.colors.text,
+                      fontFamily: bookFaceCss(o.face === "profile" ? draft.data.type.arabic : o.face),
+                      fontWeight: o.face === "amiri" ? 700 : 400,
+                    }}
+                    onClick={() =>
+                      setDraft((d) => ({
+                        ...d,
+                        data: { ...d.data, seal: { face: o.face, glyph: o.glyph } },
+                      }))
+                    }
+                  >
+                    {text}
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
 
         {colour && (
           <div className="pf-bm-colors">

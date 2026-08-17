@@ -7,7 +7,7 @@ import { scrimAlpha } from "../../lib/background";
 import { FONT_CATALOGUE } from "../../lib/fonts";
 import type { Theme } from "../../theme/tokens";
 import type { MiniProfile } from "./SardMini";
-import { TEXTURE_ALPHA, type Profile } from "./model/profile";
+import { SEAL_DIAMOND, TEXTURE_ALPHA, type Profile } from "./model/profile";
 
 /**
  * A book-font key → the CSS family that renders it.
@@ -31,6 +31,24 @@ export const miniGlyph = (name: string | null): string => {
   const n = (name ?? "").trim();
   return n ? n.slice(0, 12) : "سَرْد";
 };
+
+/**
+ * What a profile's seal shows, and the face it is set in.
+ *
+ * ONE PLACE, because a seal is drawn in five: the card, the switcher, the editor's toolbar, the
+ * identity chapter and the library face's chip. They are pictures of one thing and must never
+ * disagree about what that thing looks like — which they would the moment any of them decided the
+ * font or the letter for itself.
+ */
+export function sealOf(p: Profile): { text: string; fontFamily: string } {
+  const face = p.data.seal.face === "profile" ? p.data.type.arabic : p.data.seal.face;
+  return {
+    text: p.data.seal.glyph === "diamond"
+      ? SEAL_DIAMOND
+      : (p.name ?? "").trim().slice(0, 1) || "س",
+    fontFamily: bookFaceCss(face),
+  };
+}
 
 /**
  * The miniature for a saved profile.

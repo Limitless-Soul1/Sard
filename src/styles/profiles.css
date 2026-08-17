@@ -233,6 +233,16 @@
 /* The profile's own face in the toolbar, at the design's 34px. A chosen image fills it; a chosen
    colour becomes the dot; otherwise the initial is set in the profile's own book face, which is the
    same three-way — and the same fallback — the card uses. */
+/* The design's four seals, at its 46px. Each is drawn on the profile's own paper in its own ink, so
+   the choice is made by looking at the thing rather than at a font name. */
+.pf-seal-faces { display: flex; gap: 8px; margin-top: 10px; }
+.pf-seal-face {
+  width: 46px; height: 46px; flex: none; border-radius: 10px; cursor: pointer; border: 0;
+  display: grid; place-items: center; font-size: 1.25rem; line-height: 1;
+  box-shadow: inset 0 0 0 1px var(--chrome-border);
+}
+.pf-seal-face.on { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg); }
+
 /* The chosen icon at the design's 64px, with its double ring — accent, then the chrome it sits on,
    which is what makes the ring read as a selection rather than as a border. */
 .pf-icon-now {

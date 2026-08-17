@@ -49,11 +49,16 @@ import { EditorShell } from "./editor/EditorShell";
 import { FOCUS, type ChapterId, type Focus } from "./editor/chapters";
 import { ShareSheet } from "./ShareSheet";
 import { profileChangePending } from "./session";
-import { BookFace } from "./editor/stage/BookFace";
+import { BookFace, previewPageWidth } from "./editor/stage/BookFace";
 import { FocusFrame } from "./editor/stage/FocusFrame";
 import { LibraryFace } from "./editor/stage/LibraryFace";
+import {
+  PAGE_WIDTH_DEFAULT,
+  PAGE_WIDTH_MAX,
+  PAGE_WIDTH_MIN,
+} from "../../reader-engine/injectedCss";
 import { bookFaceCss, sealOf } from "./mini";
-import { saveProfile, useProfiles } from "./store";
+import { readerPageWidth, saveProfile, useProfiles } from "./store";
 import {
   SEAL_DIAMOND,
   TEXTURE_ALPHA,
@@ -171,6 +176,24 @@ export function ProfileEditor({
   const stageRef = useRef<HTMLDivElement | null>(null);
 
   /**
+   * THE MEASURE THE PREVIEW IS DRAWN AT — the reader's own, and preview-only.
+   *
+   * It opens on whatever they actually read at, so the specimen answers "how does my paper look on
+   * my page" rather than on one fixed column. It is deliberately NOT part of the draft: `pageWidth`
+   * is on the package validator's forbidden list and the rail footer promises it stays the reader's
+   * own in every profile, so this lives in the editor's own state, is never saved, and never reaches
+   * `ProfileData`.
+   */
+  const [pageW, setPageW] = useState(PAGE_WIDTH_DEFAULT);
+  useEffect(() => {
+    let alive = true;
+    readerPageWidth()
+      .then((v) => alive && setPageW(v))
+      .catch(() => undefined);
+    return () => { alive = false; };
+  }, []);
+
+  /**
    * The picture the stage's desk carries — the design's `bgLive`: the face on screen decides which
    * surface's image is shown, so the library face gets the library's and the book face the book's.
    * `scrimAlpha` is production's own presence→scrim function for that surface, which is what keeps
@@ -205,6 +228,7 @@ export function ProfileEditor({
     "--pf": `color-mix(in srgb, ${draft.data.theme.colors.muted} 62%, ${draft.data.theme.colors.paperBg})`,
     "--po": TEXTURE_ALPHA[draft.data.texture],
     "--pgo": bookUrl ? draft.data.bg.reading.params.pageOpacity : 1,
+    "--pf-page-w": `${previewPageWidth(pageW)}px`,
   } as CSSProperties;
 
   /** Each chapter's current answer, under its name in the rail. */
@@ -404,6 +428,23 @@ export function ProfileEditor({
                     {t("profiles.editor.stageBook")}
                   </button>
                 </div>
+                {/* ON THE STAGE, NOT IN A CHAPTER, and only where a page exists to measure. The rail
+                    tells the reader in as many words that page width is not part of a profile; a
+                    slider sitting among the chapters would say the opposite. Here it is plainly what
+                    it is — something that changes what you are looking at, not what you are saving. */}
+                {face === "book" && (
+                  <label className="pf-stage-measure" title={t("profiles.preview.measureHint")}>
+                    <span>{t("profiles.preview.measure")}</span>
+                    <input
+                      type="range"
+                      min={PAGE_WIDTH_MIN}
+                      max={PAGE_WIDTH_MAX}
+                      step={0.01}
+                      value={pageW}
+                      onChange={(e) => setPageW(Number(e.target.value))}
+                    />
+                  </label>
+                )}
               </div>
 
               {/* WHAT THIS CHAPTER GOVERNS, drawn around the object itself. It sits OUTSIDE the

@@ -1129,6 +1129,10 @@ export const en = {
   // interface is set to.
   "profiles.preview.add": "Add",
   "profiles.preview.readingBar": "Reading bar",
+  // A viewing control, not a setting: page width belongs to the reader, never to a profile.
+  "profiles.preview.measure": "Measure",
+  "profiles.preview.measureHint":
+    "See the page at another width. Page width is one of your reading settings — it is not saved with the profile.",
 
   "profiles.section.identity": "Identity",
   "profiles.section.theme": "Paper and colours",

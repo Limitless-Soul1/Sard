@@ -347,8 +347,17 @@
 
 .pf-stage-segbar {
   position: absolute; inset-block-start: 14px; inset-inline: 0;
-  display: flex; justify-content: center; z-index: 4;
+  display: flex; align-items: center; justify-content: center; gap: 10px; z-index: 4;
 }
+/* The measure control, in the same bar as the face switch and dressed like it, because it is the
+   same kind of thing: something that changes what you are looking at. */
+.pf-stage-measure {
+  display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-radius: 9px;
+  background: color-mix(in srgb, var(--pc) 92%, transparent);
+  border: 1px solid var(--pb); box-shadow: 0 3px 10px rgba(20, 14, 6, 0.18);
+  font: 500 0.75rem var(--ui-font); color: var(--pm); cursor: pointer;
+}
+.pf-stage-measure input[type="range"] { width: 96px; accent-color: var(--pa); cursor: pointer; }
 .pf-stage-seg {
   display: flex; gap: 2px; padding: 3px; border-radius: 9px;
   background: color-mix(in srgb, var(--pc) 92%, transparent);
@@ -414,8 +423,10 @@
 .pf-bookface { position: absolute; inset: 56px 0 0; display: flex; justify-content: center; }
 /* A FIXED 452px MEASURE, the design's. The desk stays visible on both sides, which is the only way
    page translucency — and the image it is translucent against — can be judged at all. */
+/* The measure is the READER'S, borrowed for the preview and never written back — see
+   `previewPageWidth`. Absent, it is the design's own 452. */
 .pf-page {
-  position: relative; width: 452px; padding: 48px 42px 0;
+  position: relative; width: var(--pf-page-w, 452px); padding: 48px 42px 0;
   box-shadow: 0 0 30px rgba(20, 14, 6, 0.28); color: var(--px);
 }
 /* The paper UNDER the type rather than the type's own background, so the sheet thins over the image

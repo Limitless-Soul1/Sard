@@ -1072,6 +1072,10 @@ export const ar: Record<TKey, string> = {
   // The design's own words for the preview's chrome.
   "profiles.preview.add": "إضافة",
   "profiles.preview.readingBar": "شريط القراءة",
+  // أداة نظر لا إعداد: عرض الصفحة يبقى للقارئ، ولا يُحفَظ في الهيئة.
+  "profiles.preview.measure": "المقاس",
+  "profiles.preview.measureHint":
+    "انظر الصفحة بعرضٍ آخر. عرض الصفحة من إعدادات قراءتك — لا يُحفَظ مع الهيئة.",
 
   "profiles.section.identity": "الهويّة",
   "profiles.section.theme": "الورق والألوان",

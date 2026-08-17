@@ -15,6 +15,7 @@
 import { BookmarkShape } from "../../../reader/BookmarkShape";
 import { useI18n } from "../../../../i18n";
 import { localeNum } from "../../../../lib/format";
+import { PAGE_WIDTH_DEFAULT, pageWidthPx } from "../../../../reader-engine/injectedCss";
 import { bookFaceCss } from "../../mini";
 import type { Profile } from "../../model/profile";
 
@@ -24,6 +25,25 @@ import type { Profile } from "../../model/profile";
  * design's own proportion at the default setting, tracking the slider from there across 40..120.
  */
 const MARK_K = 0.84;
+
+/**
+ * The composition's own width, and the page's share of it as the design draws it (452 of 656).
+ *
+ * PAGE WIDTH IS NOT A PROFILE PROPERTY. It is named in the package validator's forbidden list and
+ * the rail's footer promises the reader it stays theirs in every profile, so the preview BORROWS
+ * their measure to open on and never writes one. `previewPageWidth` maps the reader's own 0..1
+ * fraction — the same one the reading surface uses, through the same `pageWidthPx` — onto the
+ * composition, anchored so that their default measure draws exactly the 452px the design specifies.
+ * That way an untouched preview is the design's specimen, and moving the control shows the paper and
+ * the type at the measure the reader actually reads at.
+ */
+const COMPOSITION_W = 656;
+const PAGE_AT_DEFAULT = 452;
+
+export function previewPageWidth(fraction: number): number {
+  const k = PAGE_AT_DEFAULT / pageWidthPx(PAGE_WIDTH_DEFAULT);
+  return Math.min(pageWidthPx(fraction) * k, COMPOSITION_W);
+}
 
 /** The design's specimen progress. A picture of a book being read, not a reading of this one. */
 const READ_PCT = 38;

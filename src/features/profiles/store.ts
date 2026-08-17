@@ -26,6 +26,7 @@ import { useBackground } from "../../lib/background";
 import { applyTexture } from "../../lib/texture";
 import { useFonts } from "../../lib/fonts";
 import { useReadMarkerStyle } from "../../lib/readMarkerStyle";
+import { PAGE_WIDTH_DEFAULT } from "../../reader-engine/injectedCss";
 import { useReader } from "../../reader-engine/store";
 import { applyTheme } from "../../theme/applyTheme";
 import { resolveTheme, setCustomThemes } from "../../theme/resolve";
@@ -320,6 +321,30 @@ async function currentReadingFonts(): Promise<{ arabicFont: string; latinFont: s
     };
   } catch {
     return base;
+  }
+}
+
+/**
+ * The reader's own page measure, READ ONLY, for the editor's preview to open on.
+ *
+ * PAGE WIDTH IS NOT A PROFILE PROPERTY and must never become one — `pageWidth` is named in the
+ * package validator's forbidden list, and the rail's own footer promises the reader it stays theirs
+ * in every profile. This borrows the value so the preview can open on the measure they actually
+ * read at; nothing here writes it back, and nothing carries it into `ProfileData`.
+ *
+ * Same two sources as the faces above, for the same reason: the live reader when a book is open, the
+ * persisted row when the reader is standing in the Library.
+ */
+export async function readerPageWidth(): Promise<number> {
+  const live = useReader.getState().style;
+  if (live && typeof live.pageWidth === "number") return live.pageWidth;
+  const raw = await settingsGet(READING_KEY).catch(() => null);
+  if (!raw) return PAGE_WIDTH_DEFAULT;
+  try {
+    const s = JSON.parse(raw) as Partial<{ pageWidth: number }>;
+    return typeof s.pageWidth === "number" ? s.pageWidth : PAGE_WIDTH_DEFAULT;
+  } catch {
+    return PAGE_WIDTH_DEFAULT;
   }
 }
 

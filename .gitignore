@@ -57,6 +57,12 @@ ExportOptions.plist
 # Local build output.
 /test-build/
 
+# GENERATED: the vendored pdf.js worker with Sard's compatibility layer concatenated in front of it
+# (scripts/build-pdf-worker.mjs). The polyfill and the vendored worker are both tracked; this is
+# their concatenation, so committing it would be a second copy of a 2 MB file that can drift from
+# its own inputs. Produced by `npm run dev` and `npm run build`.
+/public/foliate-js/vendor/pdfjs/pdf.worker.sard.mjs
+
 # Env
 .env
 .env.*

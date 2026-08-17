@@ -15,9 +15,9 @@ import { ar } from "../../src/i18n/locales/ar";
 const FULL: RuntimeEnv = {
   objectGroupBy: true,
   mapGroupBy: true,
+  promiseTry: true,
   uint8ToHex: true,
-  uint8ToBase64: true,
-  uint8FromBase64: true,
+  mapGetOrInsertComputed: true,
 };
 const capable = () => __setRuntimeForTests(FULL);
 afterEach(() => __setRuntimeForTests(null));
@@ -57,7 +57,7 @@ describe("the reported defect", () => {
   });
 
   it("still lets EPUBs open on a runtime that only lacks the PDF features", () => {
-    __setRuntimeForTests({ ...FULL, uint8ToHex: false, uint8ToBase64: false, uint8FromBase64: false });
+    __setRuntimeForTests({ ...FULL, promiseTry: false, uint8ToHex: false, mapGetOrInsertComputed: false });
     const c = classifyBookError(new Error("Invalid or unsupported zip"), { format: "epub" });
     expect(c.kind).toBe("corrupt"); // classified on its merits, NOT forced to runtime-outdated
   });
@@ -224,7 +224,7 @@ describe("diagnostics context", () => {
   });
 
   it("runtimeRefusal explains itself without an exception to quote", () => {
-    __setRuntimeForTests({ ...FULL, uint8ToHex: false, uint8ToBase64: false, uint8FromBase64: false });
+    __setRuntimeForTests({ ...FULL, promiseTry: false, uint8ToHex: false, mapGetOrInsertComputed: false });
     const c = runtimeRefusal("pdf", { bookId: "b1" });
     expect(c.kind).toBe("runtime-outdated");
     expect(c.context.stage).toBe("pre-flight");

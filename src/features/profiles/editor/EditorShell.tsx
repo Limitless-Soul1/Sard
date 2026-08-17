@@ -5,16 +5,15 @@
 // the Profile readable at a glance and turns "what have I changed" into something you see rather
 // than remember.
 //
-// ADDITIVE ON PURPOSE. This is the shell only. Chapter bodies still live in the existing editor and
-// move in one at a time, so every commit in between builds and the old editor keeps working.
-//
-// WHY THE SHELL IS `rtl` BUT THE BODY IS NOT. The chapter names and questions are the design's
-// Arabic verbatim (see `chapters.ts`), so the frame they sit in has to be RTL whatever the interface
-// language is. The controls inside a chapter are not: they are the app's own translated strings, and
-// laying English out RTL is simply wrong. So the direction is set twice — `rtl` on the frame, the
-// app's own direction on the body — rather than once at the top where it would catch both.
+// THE FRAME FOLLOWS THE READER'S LANGUAGE. It used to be pinned `rtl` whatever the interface was,
+// because its chapter names were Arabic literals with no translation to follow. They are keys now
+// (see `chapters.ts`), so the whole editor can face the way the rest of the application faces: the
+// rail sits at the inline start — the right in Arabic, the left in English — and the direction is
+// set once at the top rather than twice, which is what the split into a separate `bodyDir` existed
+// to work around.
 import type { ReactNode } from "react";
 
+import { useI18n } from "../../../i18n";
 import { CHAPTERS, FOCUS, type ChapterId, type Focus } from "./chapters";
 
 export function EditorShell({
@@ -23,7 +22,6 @@ export function EditorShell({
   value,
   dirty,
   children,
-  bodyDir,
   preview,
   railFooter,
 }: {
@@ -35,14 +33,6 @@ export function EditorShell({
   dirty: (id: ChapterId) => boolean;
   /** The open chapter's controls. */
   children: ReactNode;
-  /**
-   * The interface direction, for the chapter body ONLY.
-   *
-   * The frame stays `rtl` because its words are Arabic; the controls inside it are translated, so
-   * they follow the app. Passed in rather than read from i18n here, which keeps the shell a pure
-   * layout component that renders the same way wherever it is mounted.
-   */
-  bodyDir: "ltr" | "rtl";
   /** The live faces. Receives the focus so it can draw the hairline frame. */
   preview: (focus: Focus) => ReactNode;
   /**
@@ -52,12 +42,13 @@ export function EditorShell({
    */
   railFooter?: ReactNode;
 }) {
+  const { t, dir } = useI18n();
   const open = CHAPTERS.find((c) => c.id === active) ?? CHAPTERS[0];
 
   return (
-    <div className="pfe" dir="rtl">
+    <div className="pfe" dir={dir}>
       {/* The whole Profile at a glance: six names, six values, a dot on anything moved. */}
-      <nav className="pfe-rail" aria-label="فصول الهيئة">
+      <nav className="pfe-rail" aria-label={t("profiles.editor.chapters")}>
         {CHAPTERS.map((c) => (
           <button
             key={c.id}
@@ -67,24 +58,21 @@ export function EditorShell({
             onClick={() => onSelect(c.id)}
           >
             <span className="pfe-rail-name">
-              {c.ar}
-              {dirty(c.id) && <span className="pfe-dot" aria-label="مُعدَّل" />}
+              {t(c.name)}
+              {dirty(c.id) && <span className="pfe-dot" aria-label={t("profiles.editor.edited")} />}
             </span>
             <span className="pfe-rail-value">{value(c.id)}</span>
           </button>
         ))}
-        {/* THE FOOTER IS TRANSLATED PROSE, so it takes the app's direction like the chapter body —
-            the rail's own Arabic names are what make the frame RTL, and this block is not one of
-            them. Without it the English sentence was laid out right-to-left inside the RTL rail and
-            its final full stop rendered at the wrong end. */}
-        {railFooter && <div className="pfe-rail-foot" dir={bodyDir}>{railFooter}</div>}
+        {/* The wrapper is the rail's flex child, so it is what carries the push to the bottom. */}
+        {railFooter && <div className="pfe-rail-foot">{railFooter}</div>}
       </nav>
 
       {/* One chapter at a time, with room for real specimens. */}
       <section className="pfe-chapter" aria-labelledby="pfe-ch-title">
-        <h2 className="pfe-ch-title" id="pfe-ch-title">{open.ar}</h2>
-        <p className="pfe-ch-q">{open.q}</p>
-        <div className="pfe-ch-body" dir={bodyDir}>{children}</div>
+        <h2 className="pfe-ch-title" id="pfe-ch-title">{t(open.name)}</h2>
+        <p className="pfe-ch-q">{t(open.q)}</p>
+        <div className="pfe-ch-body">{children}</div>
       </section>
 
       <aside className="pfe-preview">{preview(FOCUS[open.id])}</aside>

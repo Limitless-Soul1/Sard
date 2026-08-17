@@ -107,7 +107,7 @@ export function ProfileEditor({
   fresh?: boolean;
   onClose: () => void;
 }) {
-  const { t, dir } = useI18n();
+  const { t } = useI18n();
   const live = useProfiles((s) => s.profiles.find((p) => p.id === profile.id)) ?? profile;
 
   const [draft, setDraft] = useState<Profile>(() => structuredClone(live));
@@ -339,8 +339,6 @@ export function ProfileEditor({
           onSelect={openChapter}
           value={chapterValue}
           dirty={chapterDirty}
-          // The frame is Arabic and stays RTL; these controls are translated, so they follow the app.
-          bodyDir={dir}
           preview={(focus: Focus) => (
             /* THE PREVIEW — what you see here is what you will see in Sard.
                The stage is both the coordinate system and the palette scope: every layer below is an
@@ -395,7 +393,7 @@ export function ProfileEditor({
                     The insets are the design's own and are honest now that the faces fill the box
                     they were measured against. */}
                 <div className="pf-focus" style={{ inset: focus.inset }}>
-                  {focus.label && <span className="pf-focus-label">{focus.label}</span>}
+                  {focus.label && <span className="pf-focus-label">{t(focus.label)}</span>}
                 </div>
               </div>
             </div>

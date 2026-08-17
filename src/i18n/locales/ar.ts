@@ -1038,6 +1038,28 @@ export const ar: Record<TKey, string> = {
   "profiles.shape.cord": "جديلة",
   "profiles.shape.leaf": "ورقة مكبوسة",
   "profiles.editor.subtitle": "هيئة سَرْد",
+
+  // ---- فصول المُحرِّر وأسئلتها ----
+  // نصّ التصميم حرفيًّا: هذه هي الكلمات التي رُسم بها المُحرِّر، ولم تتغيّر عند نقلها إلى المفاتيح.
+  "profiles.editor.chapters": "فصول الهيئة",
+  "profiles.editor.edited": "مُعدَّل",
+  "profiles.chapter.identity": "الهويّة",
+  "profiles.chapter.identity.q": "باسمِ مَن هذه الهيئة؟",
+  "profiles.chapter.paper": "الوَرَق والألوان",
+  "profiles.chapter.paper.q": "كيف تبدو الصفحة؟",
+  "profiles.chapter.background": "الخلفيّة",
+  "profiles.chapter.background.q": "أين تريد الصورة، وكيف تظهر؟",
+  "profiles.chapter.fonts": "الخطوط",
+  "profiles.chapter.fonts.q": "كيف يبدو الحرف؟",
+  "profiles.chapter.marks": "العلامات",
+  "profiles.chapter.marks.q": "ما الذي يدلّك على موضعك؟",
+  "profiles.chapter.texture": "الملمس",
+  "profiles.chapter.texture.q": "كيف تبدو واجهة سَرْد؟",
+  "profiles.focus.identity": "الهيئة النشِطة",
+  "profiles.focus.paper": "الصفحة وألوانها",
+  "profiles.focus.fonts": "الحرف المقروء",
+  "profiles.focus.marks": "العلامة والتظليل",
+  "profiles.focus.texture": "لوحات الواجهة",
   "profiles.editor.stageLibrary": "المكتبة",
   "profiles.editor.stageBook": "الكتاب",
   // The design's own words for the preview's chrome.

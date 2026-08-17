@@ -1091,6 +1091,30 @@ export const en = {
   "profiles.shape.leaf": "Pressed leaf",
   // What the thing in the toolbar IS, under its name — the design's 「هيئة سَرْد」.
   "profiles.editor.subtitle": "Sard profile",
+
+  // ---- the editor's six chapters, their questions, and what each one points at ----
+  // The design is a monolingual Arabic mockup, so `ar.ts` carries its wording verbatim and these are
+  // the English readings of it. A chapter NAMES a subject; its question is what the reader is
+  // actually being asked, which is why the question is a sentence and not a restatement.
+  "profiles.editor.chapters": "Profile chapters",
+  "profiles.editor.edited": "Edited",
+  "profiles.chapter.identity": "Identity",
+  "profiles.chapter.identity.q": "Whose profile is this?",
+  "profiles.chapter.paper": "Paper and colours",
+  "profiles.chapter.paper.q": "How should the page look?",
+  "profiles.chapter.background": "Background",
+  "profiles.chapter.background.q": "Where do you want the picture, and how should it show?",
+  "profiles.chapter.fonts": "Fonts",
+  "profiles.chapter.fonts.q": "How should the letter look?",
+  "profiles.chapter.marks": "Marks",
+  "profiles.chapter.marks.q": "What shows you where you are?",
+  "profiles.chapter.texture": "Texture",
+  "profiles.chapter.texture.q": "How should Sard's interface look?",
+  "profiles.focus.identity": "The active profile",
+  "profiles.focus.paper": "The page and its colours",
+  "profiles.focus.fonts": "The type you read",
+  "profiles.focus.marks": "The mark and the highlight",
+  "profiles.focus.texture": "The interface panels",
   "profiles.editor.stageLibrary": "Library",
   "profiles.editor.stageBook": "Book",
   // The preview's own chrome. It depicts Sard's interface, so it follows the reader's language —

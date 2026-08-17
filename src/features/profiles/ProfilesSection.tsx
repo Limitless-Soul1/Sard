@@ -95,8 +95,18 @@ export function ProfilesSection() {
         data.theme.highlightAlpha = THEMES[base].highlightAlpha;
         data.theme.bookmark = null;
       }
+      // MAKING A PROFILE IS NOT WEARING ONE. This used to apply the new profile immediately, which
+      // repainted the whole application to the canvas the editor was about to open on — and for
+      // "a paper of your own" that canvas is a starting sheet the reader has not authored yet, so
+      // creating one silently replaced their look with Ivory and left it there when they backed out.
+      // Measured: paper #F5EEDD, ink #2B2521, accent #9C5A3C written to `theme_id`, `book_theme_id`
+      // and `profile_active`, with the previous active profile recoverable only from memory.
+      //
+      // `duplicate` below has always created-then-edited without applying, and `saveProfile` repaints
+      // only `if (activeId === p.id)` — so "editing a profile does not dress the app in it" is the
+      // rule everywhere else. This was the one exception. Wearing it stays one click away, on the
+      // card's own face and in the switcher.
       const p = await createProfile(name, data, preset);
-      await applyProfile(p);
       setDialog({ kind: "edit", profile: p, fresh: true });
     } finally {
       setBusy(false);

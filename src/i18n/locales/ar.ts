@@ -1195,6 +1195,7 @@ export const ar: Record<TKey, string> = {
   "profiles.unsaved.what.latinFont": "الخطّ اللاتيني",
   "profiles.unsaved.listSep": "، ",
   "profiles.saved.applied": "حُفِظت «{name}» وطُبِّقت",
+  "profiles.saved.only": "حُفِظت «{name}»",
   "profiles.saved.undo": "تراجع",
 
   "profiles.share.title": "مشاركة هيئة «{name}»",

@@ -1261,6 +1261,8 @@ export const en = {
   // English «,». Hardcoding either one puts the wrong script's punctuation in the other's sentence.
   "profiles.unsaved.listSep": ", ",
   "profiles.saved.applied": "Saved “{name}” and applied it",
+  /** The same save, when the profile edited is not the one being worn — nothing was applied. */
+  "profiles.saved.only": "Saved “{name}”",
   "profiles.saved.undo": "Undo",
 
   // FRAME 10 / 12 — the share sheet. Settings only: no asset rows, and no licensing row, because

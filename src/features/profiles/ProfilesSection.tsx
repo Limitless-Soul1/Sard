@@ -32,6 +32,7 @@ import {
   createProfile,
   duplicateProfile,
   removeProfile,
+  saveProfile,
   useProfiles,
 } from "./store";
 import type { Profile } from "./model/profile";
@@ -52,6 +53,13 @@ export function ProfilesSection() {
   const activeId = useProfiles((s) => s.activeId);
   const [dialog, setDialog] = useState<Dialog>({ kind: "none" });
   const [busy, setBusy] = useState(false);
+  /**
+   * Frame 22 — the last save, while it is still worth mentioning.
+   *
+   * It lives HERE rather than in the editor because the editor closes on save: an announcement owned
+   * by a component that has just unmounted is one nobody can read or undo.
+   */
+  const [saved, setSaved] = useState<{ name: string; previous: Profile; applied: boolean } | null>(null);
 
   // The managed rows, so a card can draw an image icon. Re-read whenever the profile list changes,
   // because the only way a new icon reaches a card is a profile being saved with one.
@@ -194,9 +202,72 @@ export function ProfilesSection() {
           profile={dialog.profile}
           fresh={dialog.fresh}
           onClose={() => setDialog({ kind: "none" })}
+          onSaved={(previous, saved) =>
+            setSaved({
+              // The same dash the cards, the switcher and the delete dialog use for a profile
+              // nobody has named — "Saved “”" is a sentence with a hole in it.
+              name: saved.name ?? "—",
+              previous,
+              // "and applied" is only true when the profile being edited is the one being worn.
+              // `saveProfile` repaints only `if (activeId === p.id)`, so saying it otherwise would
+              // announce something that did not happen.
+              applied: useProfiles.getState().activeId === saved.id,
+            })
+          }
         />
       )}
+
+      {saved && <SavedToast state={saved} onDone={() => setSaved(null)} />}
     </>
+  );
+}
+
+/**
+ * FRAME 22 — the save, said out loud, and undoable while it is being said.
+ *
+ * WHY THE UNDO IS `saveProfile` AGAIN. Undoing a save is saving what was there before, so it goes
+ * back through the one route every other write takes — which means it re-applies to the running app
+ * on exactly the same condition the save did, and there is no second way for a profile to reach the
+ * runtime. Nothing had to be snapshotted for this: the editor already held the stored profile it was
+ * editing, and that IS the previous state.
+ *
+ * The window is the toast's own life. An undo offered after the sentence has gone is an undo the
+ * reader cannot see the scope of, so the two share one timer.
+ */
+const SAVED_TOAST_MS = 6000;
+
+function SavedToast({
+  state,
+  onDone,
+}: {
+  state: { name: string; previous: Profile; applied: boolean };
+  onDone: () => void;
+}) {
+  const { t } = useI18n();
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const id = window.setTimeout(onDone, SAVED_TOAST_MS);
+    return () => window.clearTimeout(id);
+    // Re-armed per announcement: a second save replaces the first and starts its own window.
+  }, [state, onDone]);
+
+  return createPortal(
+    <div className="pf-toast" role="status">
+      <span className="pf-toast-msg">
+        {t(state.applied ? "profiles.saved.applied" : "profiles.saved.only", { name: state.name })}
+      </span>
+      <button
+        className="pf-toast-undo"
+        disabled={busy}
+        onClick={() => {
+          setBusy(true);
+          void saveProfile(state.previous).finally(onDone);
+        }}
+      >
+        {t("profiles.saved.undo")}
+      </button>
+    </div>,
+    document.body,
   );
 }
 

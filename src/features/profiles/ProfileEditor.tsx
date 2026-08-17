@@ -106,6 +106,7 @@ export function ProfileEditor({
   profile,
   fresh = false,
   onClose,
+  onSaved,
 }: {
   profile: Profile;
   /**
@@ -119,6 +120,8 @@ export function ProfileEditor({
    */
   fresh?: boolean;
   onClose: () => void;
+  /** Frame 22: what was saved, and what it replaced — see `save` below. */
+  onSaved?: (previous: Profile, saved: Profile) => void;
 }) {
   const { t } = useI18n();
   const live = useProfiles((s) => s.profiles.find((p) => p.id === profile.id)) ?? profile;
@@ -149,8 +152,15 @@ export function ProfileEditor({
       return next;
     });
 
+  // FRAME 22 — a save is announced, and is undoable for as long as the announcement is on screen.
+  //
+  // The editor does not own that announcement: it closes on save, and a toast belonging to a closed
+  // component is a toast nobody can dismiss. So it reports the save and the surface that opened it
+  // says so. `onSaved` is handed the profile AS IT WAS — the same object this editor was opened with,
+  // which is exactly what an undo has to put back, so nothing new has to be captured for it.
   const save = async () => {
     await saveProfile(draft);
+    onSaved?.(live, draft);
     onClose();
   };
 

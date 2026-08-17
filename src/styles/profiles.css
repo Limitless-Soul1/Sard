@@ -913,6 +913,37 @@
 }
 
 /* ---- frames 14 / 15 / 17: the import sheet ---- */
+/* ---- FRAME 22 · the save, said out loud ----
+   The design's own pill: 10px/16px, a 20px corner, and a lifted shadow. Its colours are the pair the
+   application's existing toast already uses — the ink as the ground and the paper as the letter —
+   which is the same inversion the design draws on its Ivory paper and which keeps working when the
+   theme is dark and the pair swaps.
+
+   ⚠ THE ACTION IS NOT THE DESIGN'S GOLD, AND THAT IS DELIBERATE. Frame 22 sets "تراجع" in #E8C36A,
+   which is the HIGHLIGHT amber — a reading colour that Sard never publishes as an interface token
+   (`applyTheme` writes no highlight variable). Hard-coding it would put a fixed warm gold on a pill
+   whose ground inverts with the theme: legible on the dark pill of a light paper, and washed out on
+   the light pill of a dark one. So the action carries the toast's own ink at a heavier weight and
+   sits behind a hairline separator, which reads as the action in both directions without inventing a
+   token or contradicting the palette the reader chose. */
+.pf-toast {
+  position: fixed; inset-inline: 0; bottom: 28px; margin: 0 auto; width: max-content;
+  max-width: min(560px, calc(100vw - 32px));
+  z-index: 70; display: flex; align-items: center; gap: 11px; padding: 10px 16px;
+  border-radius: 20px; background: var(--text); color: var(--paper-bg);
+  box-shadow: 0 14px 34px rgba(40, 28, 14, 0.22);
+}
+.pf-toast-msg { font: 500 0.875rem/1.5 var(--ui-font); }
+.pf-toast-undo {
+  flex: none; border: 0; background: transparent; cursor: pointer; padding: 0 0 0 11px;
+  border-inline-start: 1px solid color-mix(in srgb, var(--paper-bg) 32%, transparent);
+  font: 600 0.8125rem/1 var(--ui-font); color: inherit;
+}
+.pf-toast-undo:disabled { opacity: 0.5; cursor: default; }
+@media (prefers-reduced-motion: no-preference) {
+  .pf-toast { animation: sard-fade 0.16s ease-out; }
+}
+
 /* ---- FRAME 14 · the arriving profile, and FRAME 15 · the one that arrived ----
    The design draws frame 14 at 560px rather than the ordinary 420: it leads with a full-width
    miniature, and a picture of Sard at 420 is a thumbnail rather than a preview. Everything below is

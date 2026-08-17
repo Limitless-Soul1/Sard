@@ -3,8 +3,12 @@
 // WHY THIS IS NOT `SardMini`. The card's miniature is a 16:10 thumbnail: it answers "which profile
 // is this" at a glance, in a box the size of a postage stamp. The editor's stage answers a different
 // question — "what will Sard look like" — at nearly the size of the real thing, and the design draws
-// it as a stage-FILLING composition: a 132px sidebar, a real header row, and a five-column shelf of
-// ten spines. Reusing the thumbnail here was the original mismatch; it put a centred specimen card
+// it as a stage-FILLING composition: a sidebar, a real header row, and a shelf of ten spines. Those
+// are now sized from the reference window rather than transcribed — a 102px sidebar and an
+// eight-column shelf, which is what 244px of chrome and a 138.6px cover pitch come to at 1440. Ten
+// spines across eight columns leaves a short second row, which is exactly what a real shelf's last
+// row looks like; the count stays the design's ten cloths rather than being padded to fill a
+// rectangle. Reusing the thumbnail here was the original mismatch; it put a centred specimen card
 // where the design has a room, which is why the focus insets, the reading bar and the page geometry
 // all had nowhere to land. `SardMini` is still exactly right for the cards and is untouched.
 //

@@ -1,14 +1,14 @@
 // The editor stage's BOOK face — the reading surface as this profile would draw it.
 //
-// THE PAGE IS A SHEET ON A DESK, not a card that fills the frame. The design gives the page a fixed
-// 452px measure and centres it in the stage, so the desk — and therefore the background image, and
+// THE PAGE IS A SHEET ON A DESK, not a card that fills the frame. The page takes a fixed 428px
+// measure and is centred in the stage, so the desk — and therefore the background image, and
 // therefore what page translucency is translucent AGAINST — stays visible on both sides. The old
 // stage sized the page to 79% of a 16:10 card, which left no desk to speak of and made the whole
 // background chapter impossible to judge.
 //
 // A FIXED MEASURE IS ALSO WHY THERE ARE NO CONTAINER QUERIES HERE. The previous specimen scaled its
 // type and its bookmark off the frame's width through `cqw`, which needed a query container and a
-// length-division custom property. At a constant 452px the design's own px and rem values are simply
+// length-division custom property. At a constant 428px the design's own px and rem values are simply
 // correct, so the scaling machinery — and the "if the renderer cannot divide two lengths" fallback it
 // needed — is gone rather than reimplemented.
 
@@ -20,25 +20,39 @@ import { bookFaceCss } from "../../mini";
 import type { Profile } from "../../model/profile";
 
 /**
- * The design draws its marker 57px tall on its 452px page. Production's default marker is 68px of
- * real page (`DEFAULT_SIZE` in `bookmarkStyle.ts`), so the preview draws it at 68 × 0.84 ≈ 57 — the
- * design's own proportion at the default setting, tracking the slider from there across 40..120.
+ * The design draws its marker 57px tall on the 452px page it drew — a proportion of 0.126 of the
+ * measure. The measure is now 428 (see `PAGE_AT_DEFAULT`), so holding that same drawn proportion puts
+ * the marker at 428 × 0.126 ≈ 54, which production's default of 68px (`DEFAULT_SIZE` in
+ * `bookmarkStyle.ts`) reaches at 68 × 0.794.
+ *
+ * The marker is deliberately NOT re-derived from the reference window the way the measure is. At that
+ * scale it would be 31px: the design's marker is a drawn emblem, not a scale copy of the reader's, and
+ * halving it would be redrawing the design rather than placing it. It keeps its proportion to the page
+ * and tracks the slider from there across 40..120.
  */
-const MARK_K = 0.84;
+const MARK_K = 0.794;
 
 /**
- * The composition's own width, and the page's share of it as the design draws it (452 of 656).
+ * The composition's own width, and the page's share of it AT THE REFERENCE WINDOW (see the reference
+ * note in `profiles.css`, at `.pf-stage-fit`).
+ *
+ * 428 is not a drawn number. The reading page is an absolute measure in the running application —
+ * `pageWidthPx(0.5)` = 940px by default, capped only by `min(100%)` — so its share of the window is
+ * whatever the window happens to be, measured from 100% at 1180 down to 43.8% at 3200. Pinning the
+ * reference at 1440 x 900 makes that share answerable: 940 / 1440 × 656 = 428. The design's own 452
+ * was the same drawing against a ~1364px window, which is why it never looked wrong on a laptop and
+ * always looked oversized on a large monitor.
  *
  * PAGE WIDTH IS NOT A PROFILE PROPERTY. It is named in the package validator's forbidden list and
  * the rail's footer promises the reader it stays theirs in every profile, so the preview BORROWS
  * their measure to open on and never writes one. `previewPageWidth` maps the reader's own 0..1
  * fraction — the same one the reading surface uses, through the same `pageWidthPx` — onto the
- * composition, anchored so that their default measure draws exactly the 452px the design specifies.
- * That way an untouched preview is the design's specimen, and moving the control shows the paper and
- * the type at the measure the reader actually reads at.
+ * composition, anchored so that their default measure draws exactly 428. That way an untouched
+ * preview is the design's specimen at the reference, and moving the control shows the paper and the
+ * type at the measure the reader actually reads at.
  */
 const COMPOSITION_W = 656;
-const PAGE_AT_DEFAULT = 452;
+const PAGE_AT_DEFAULT = 428;
 
 export function previewPageWidth(fraction: number): number {
   const k = PAGE_AT_DEFAULT / pageWidthPx(PAGE_WIDTH_DEFAULT);

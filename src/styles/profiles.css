@@ -349,6 +349,23 @@
   scale: var(--pf-k);
   transform-origin: 0 0;
 }
+/* THE REFERENCE WINDOW: 1440 x 900.
+   Every chrome dimension in the running application is FIXED PIXELS, not a proportion — the library
+   sidebar is `width: 244px; flex: none` at every window size, and the reading page is an absolute
+   measure (480..1400px, `pageWidthPx`) capped only by `min(100%)`. Measured across 1180..3200, the
+   same 244px sidebar occupies 20.68% of the window down to 7.63% of it, and the page at one unchanged
+   setting occupies 100% down to 43.8%.
+
+   A scale model of a fixed-pixel interface is therefore meaningless until you say WHICH window it is a
+   model of. Without that, "the sidebar is too wide" is unfalsifiable: it is too wide for a 2560 window
+   and too narrow for a 1180 one, and both are the same drawing.
+
+   1440 x 900 is that window. Each face carries its own scale, because each face's box stands for the
+   window in a different way: the library is a framed PANE inset in the composition (604 design-px, so
+   244px -> 102), while the book face's desk is the full composition (656 design-px, so a 940px default
+   measure -> 428). Anything here that models a real element is derived from that window and says so;
+   anything that is a deliberate abstraction of the design's (the reading pill, the bookmark's
+   proportion) keeps its drawn shape and is only scaled. */
 /* THE PICTURE LAYERS. Where they live differs per face, because the two real surfaces differ.
    The bleed is there so a blur samples beyond the edge instead of fading to nothing at it; the
    owning element's clip is what keeps the paint inside.
@@ -406,9 +423,14 @@
    `opacity` below 1 makes it a stacking context of its own; the main area had nothing to save it and
    the shelves vanished behind the scrim. Measured: `elementFromPoint` at the centre of the main area
    returned the scrim rather than the grid. */
+/* 244px of a 1440px window, drawn on the 604px pane: 244 / 1440 x 604 = 102. The sidebar is `flex:
+   none` in both places because it is fixed in both places — it does not share the window's width, it
+   is subtracted from it. The main area is then 502 design-px, which is the real 1196px stage at the
+   same scale; the two agree to a pixel, which is what says the reference is being applied and not
+   just asserted. */
 .pf-lib-side {
   position: relative;
-  width: 132px; flex: none; background: var(--pc); opacity: var(--po);
+  width: 102px; flex: none; background: var(--pc); opacity: var(--po);
   border-inline-end: 1px solid var(--pb); padding: 14px 12px;
   display: flex; flex-direction: column; gap: 16px;
 }
@@ -447,17 +469,28 @@
   padding: 5px 11px; border-radius: 7px; background: var(--pa); color: var(--pp);
   font: 600 11px var(--ui-font);
 }
-.pf-lib-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px 14px; }
+/* EIGHT columns, because eight is what a shelf actually shows at the reference window: measured
+   covers of 118.6 x 177.9 on a 138.6px pitch across a 1196px stage. Five made each spine half again
+   too wide, which read as a picture-book shelf rather than a library. The 2/3 spine is the real
+   cover's own ratio, measured at 0.667 at every viewport, so only the count and the column gap
+   (20px real -> 8) are derived here; the row gap stays the design's vertical rhythm. */
+.pf-lib-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 14px 8px; }
 .pf-lib-spine { aspect-ratio: 2 / 3; border-radius: 3px; box-shadow: 0 5px 12px rgba(20, 14, 6, 0.28); }
 
 /* ---- the book face ---- */
+/* The 56px top inset is CLEARANCE FOR THE FACE SWITCH, not a model of the reader's top bar. That
+   control is a sibling of the fit box and deliberately does NOT scale with the composition, so it
+   occupies a constant ~48 rendered px while this inset is 56 design-px x the composition's scale.
+   Deriving it from the real 70px bar instead (70 / 1440 x 656 = 32) would put the page underneath the
+   control at every editor width below about 1600. It stays 56. */
 .pf-bookface { position: absolute; inset: 56px 0 0; display: flex; justify-content: center; }
-/* A FIXED 452px MEASURE, the design's. The desk stays visible on both sides, which is the only way
+/* THE DEFAULT MEASURE IS 428px: the reader's own default of 940px (`pageWidthPx(0.5)`) on the
+   reference window, 940 / 1440 x 656. The desk stays visible on both sides, which is the only way
    page translucency — and the image it is translucent against — can be judged at all. */
 /* The measure is the READER'S, borrowed for the preview and never written back — see
-   `previewPageWidth`. Absent, it is the design's own 452. */
+   `previewPageWidth`. Absent, it is their default drawn at the reference. */
 .pf-page {
-  position: relative; width: var(--pf-page-w, 452px); padding: 48px 42px 0;
+  position: relative; width: var(--pf-page-w, 428px); padding: 48px 42px 0;
   box-shadow: 0 0 30px rgba(20, 14, 6, 0.28); color: var(--px);
 }
 /* The paper UNDER the type rather than the type's own background, so the sheet thins over the image
@@ -490,17 +523,22 @@
    line, and `translateX(-50%)` then moves it physically left — landing the pill exactly one full
    width off centre. Measured: −157.1px against a 157.1px pill. Physical `left` centres in both
    directions, which is what the design draws. */
+/* THE PILL KEEPS ITS SHAPE AND TAKES THE REFERENCE'S SIZE. The real reading chrome is a full-width
+   56px bar (`.rc-bottom`), not a pill, so there is no element to copy — the pill is the design's
+   abstraction of it and stays one. What it can borrow is that bar's WEIGHT: 56px on the reference
+   window is 56 / 1440 x 656 = 26 design-px, so the pill is built to stand 26 tall instead of the 30
+   it grew to, and its type and padding come down with it rather than being re-drawn. */
 .pf-readbar {
   position: absolute; inset-block-end: 18px; left: 50%;
-  transform: translateX(-50%); display: flex; align-items: center; gap: 10px;
-  padding: 7px 14px; border-radius: 20px;
+  transform: translateX(-50%); display: flex; align-items: center; gap: 9px;
+  padding: 5px 12px; border-radius: 20px;
   background: color-mix(in srgb, var(--pc) 92%, transparent);
   border: 1px solid var(--pb); box-shadow: 0 14px 34px rgba(20, 14, 6, 0.24);
   opacity: var(--po);
 }
-.pf-readbar-name { font: 500 11px var(--ui-font); color: var(--pm); }
-.pf-readbar-rule { width: 1px; height: 12px; background: var(--pb); }
-.pf-readbar-pct { font: 600 11px var(--ui-font); color: var(--pa); }
+.pf-readbar-name { font: 500 10px/1.4 var(--ui-font); color: var(--pm); }
+.pf-readbar-rule { width: 1px; height: 11px; background: var(--pb); }
+.pf-readbar-pct { font: 600 10px/1.4 var(--ui-font); color: var(--pa); }
 
 /* ---- the shell: rail · chapter · preview ----
    Three columns, because the editor has three jobs and they do not take turns: the rail says where
@@ -512,8 +550,9 @@
 
 /* THE DESIGN'S OWN WIDTHS (frame 2a): rail 132, chapter 392, preview the remainder. The rail was
    268px — twice the design — and it took that space from the preview, which measured 452px against
-   the design's ~654. The page is drawn at 452 INSIDE that ~654, so a 452px stage left the paper
-   filling the preview edge to edge with none of the desk the chapter exists to let you balance.
+   the design's ~654. The page was drawn at 452 inside that ~654 at the time, so a 452px stage left
+   the paper filling the preview edge to edge with none of the desk the chapter exists to let you
+   balance. (The page measure is now 428, derived from the reference window — see `.pf-stage-fit`.)
    The type comes down with the width: the design sets rail names at .75rem and values at .625rem,
    which is what makes 132px a comfortable column rather than a cramped one. */
 .pfe-rail {

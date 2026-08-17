@@ -224,8 +224,10 @@
 
 /* ---- the editor: a stage and a 344px rail ---- */
 .pf-editor { position: fixed; inset: 0; z-index: 70; background: var(--app-bg); display: flex; flex-direction: column; }
+/* 60px, the design's toolbar height, stated rather than left to whatever the tallest child happens
+   to be (it measured 56px). `min-height` so a longer profile name can still grow the bar. */
 .pf-editor-head {
-  display: flex; align-items: center; gap: 12px; padding: 12px 16px;
+  display: flex; align-items: center; gap: 12px; padding: 0 16px; min-height: 60px;
   border-bottom: 1px solid var(--chrome-border); background: var(--chrome-bg);
 }
 .pf-editor-title { font: 600 0.9375rem var(--ui-font); color: var(--text); }
@@ -265,7 +267,16 @@
    leaves the frame at full height when the WIDTH binds: measured as a 404 × 714 frame around a
    404 × 253 page, i.e. 461 px of shadowed emptiness. Both bounds come from the layout; neither is a
    new constant, and 16/10 is the specimen's own ratio. */
+/* THE STAGE OWNS THE CLIP *AND* THE CONTAINING BLOCK — it must own both, or neither holds.
+   `overflow: hidden` alone did not contain the background image. Nothing between `.pf-book-bg` and
+   the root was positioned, so that layer resolved its containing block against the whole editor, and
+   a clipper only clips descendants whose containing block lies INSIDE it. Measured: `inset: -8%` of
+   the 1100 × 720 window is exactly −88px / −57.6px, and the image painted a 1276 × 835 sheet across
+   the rail, the chapter column and the toolbar — enabling a book background replaced the editor with
+   the picture. `position: relative` makes this element the containing block as well as the clipper,
+   so the rule is structural rather than remembered: a layer inside the stage cannot leave the stage. */
 .pf-stage-frame {
+  position: relative;
   width: min(100cqw, calc(100cqh * 16 / 10)); aspect-ratio: 16 / 10;
   border-radius: 12px; overflow: hidden; box-shadow: 0 14px 34px rgba(20, 14, 6, 0.22);
 }
@@ -278,32 +289,38 @@
    reflowing every time the window moves. */
 .pfe { flex: 1; min-height: 0; display: flex; }
 
+/* THE DESIGN'S OWN WIDTHS (frame 2a): rail 132, chapter 392, preview the remainder. The rail was
+   268px — twice the design — and it took that space from the preview, which measured 452px against
+   the design's ~654. The page is drawn at 452 INSIDE that ~654, so a 452px stage left the paper
+   filling the preview edge to edge with none of the desk the chapter exists to let you balance.
+   The type comes down with the width: the design sets rail names at .75rem and values at .625rem,
+   which is what makes 132px a comfortable column rather than a cramped one. */
 .pfe-rail {
-  width: 268px; flex: none; background: var(--chrome-bg);
-  border-inline-end: 1px solid var(--chrome-border); overflow-y: auto; padding: 10px;
-  display: flex; flex-direction: column; gap: 2px;
+  width: 132px; flex: none; background: var(--chrome-bg);
+  border-inline-end: 1px solid var(--chrome-border); overflow-y: auto; padding: 12px 8px;
+  display: flex; flex-direction: column; gap: 3px;
 }
 .pfe-rail-item {
   display: flex; flex-direction: column; align-items: stretch; gap: 3px; width: 100%;
-  padding: 9px 10px; border: 0; border-radius: 9px; background: transparent;
+  padding: 10px 10px 11px; border: 0; border-radius: 9px; background: transparent;
   cursor: pointer; text-align: start;
 }
 .pfe-rail-item:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
 .pfe-rail-item.is-open { background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .pfe-rail-name {
-  display: flex; align-items: center; gap: 6px;
-  font: 600 0.84375rem var(--ui-font); color: var(--text);
+  display: flex; align-items: center; gap: 5px;
+  font: 600 0.75rem var(--ui-font); color: var(--text);
 }
 .pfe-rail-item.is-open .pfe-rail-name { color: var(--accent); }
 /* The dot is the whole point of the rail: "what have I changed", seen rather than remembered. */
 .pfe-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); flex: none; }
 .pfe-rail-value {
-  font: 400 0.75rem var(--ui-font); color: var(--lib-faint, var(--muted));
+  font: 400 0.625rem var(--ui-font); color: var(--lib-faint, var(--muted));
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 .pfe-chapter {
-  width: 380px; flex: none; overflow-y: auto; padding: 18px 18px 24px;
+  width: 392px; flex: none; overflow-y: auto; padding: 18px 18px 24px;
   border-inline-end: 1px solid var(--chrome-border);
 }
 .pfe-ch-title { margin: 0; font: 600 1.0625rem var(--ui-font); color: var(--text); }
@@ -368,9 +385,11 @@
 .pf-rm-name { font: 500 0.78125rem var(--ui-font); color: var(--text); }
 
 /* The firewall: the rail's last block, and not a control. */
-.pf-firewall { margin-top: 18px; padding: 12px 8px 6px; border-top: 1px solid var(--chrome-border); }
-.pf-firewall-title { font: 600 0.75rem var(--ui-font); color: var(--muted); margin-bottom: 6px; }
-.pf-firewall-body { margin: 0; font: 400 0.71875rem/1.7 var(--ui-font); color: var(--lib-faint, var(--muted)); }
+/* The rail's closing block, at the design's own size (heading .625rem, body .5625rem/1.7). It sits in
+   a 132px column, so it is set small on purpose rather than shrunk to fit. */
+.pf-firewall { margin-top: auto; padding: 10px; border-top: 1px solid var(--chrome-border); }
+.pf-firewall-title { font: 600 0.625rem var(--ui-font); color: var(--muted); margin-bottom: 4px; }
+.pf-firewall-body { margin: 0; font: 400 0.5625rem/1.7 var(--ui-font); color: var(--lib-faint, var(--muted)); }
 
 /* ---- the stage's book face: a real passage, both scripts, the real marks ---- */
 /* THE BOOK SPECIMEN SCALES WITH ITS FRAME, not with the application's root font.

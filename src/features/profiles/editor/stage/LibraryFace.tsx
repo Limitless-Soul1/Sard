@@ -15,6 +15,7 @@
 
 import { useI18n } from "../../../../i18n";
 import { localeNum } from "../../../../lib/format";
+import type { BgParams } from "../../../../lib/background";
 import { sealOf } from "../../mini";
 import type { Profile } from "../../model/profile";
 
@@ -33,11 +34,43 @@ const SPINES = [
 /** The design's specimen count. A picture of a full library, not a reading of this one. */
 const SHELF_COUNT = 216;
 
-export function LibraryFace({ profile, iconUrl }: { profile: Profile; iconUrl?: string | null }) {
+export function LibraryFace({
+  profile,
+  iconUrl,
+  bg,
+}: {
+  profile: Profile;
+  iconUrl?: string | null;
+  /** The library's own picture, already resolved. The face owns it — see the note below. */
+  bg?: { url: string; params: BgParams; scrim: number } | null;
+}) {
   const { t, lang } = useI18n();
 
   return (
     <div className="pf-lib" aria-hidden>
+      {/* THE LIBRARY'S PICTURE, INSIDE THE LIBRARY. It used to hang on the composition, whose clip
+          is the stage — so the face's own `overflow: hidden` could never reach it and the image was
+          painted across the margins around the face as well as through it. Measured: the image ran
+          from x 869 to 2215 against a face of 990 to 2094, and `elementFromPoint` returned the image
+          layer at the left, right and bottom margins. A face cannot confine a layer it does not own.
+          As a descendant, the face's existing boundary IS the image's boundary: `.pf-lib` is already
+          `position: absolute`, so it is the containing block, and already `overflow: hidden`, so it
+          is the clipper. Nothing is opaque here — the sidebar keeps its texture alpha and the main
+          area keeps no background, so the picture is still seen THROUGH the library. */}
+      {bg && (
+        <>
+          <span
+            className="pf-lib-bg"
+            style={{
+              backgroundImage: `url("${bg.url}")`,
+              backgroundPosition: `${bg.params.focalX}% ${bg.params.focalY}%`,
+              filter: `blur(${bg.params.blur}px)`,
+              transform: `scaleX(${bg.params.flip ? -1 : 1})`,
+            }}
+          />
+          <span className="pf-lib-scrim" style={{ opacity: bg.scrim }} />
+        </>
+      )}
       {/* Where interface texture is actually visible — the same surface `SardMini` fades. */}
       <div className="pf-lib-side">
         <span className="pf-lib-brand">

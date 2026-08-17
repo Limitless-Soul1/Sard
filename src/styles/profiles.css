@@ -336,14 +336,19 @@
   width: 656px; height: 720px;
   scale: min(calc(100cqw / 656px), calc(100cqh / 720px));
 }
-/* Inset so a blur samples beyond the edge instead of fading to nothing at it. This layout box is
-   MEANT to extend past the composition; the stage's clip is what keeps the paint inside. Both
-   layers live in the composition box, so the −40px bleed stays 40px of the DESIGN's pixels at any
-   window size, and the image cannot spill onto ground that is not part of the depicted app. */
-.pf-stage-bg {
+/* THE PICTURE LAYERS, ONE PAIR PER FACE, each a descendant of the thing that bounds it.
+   The bleed is there so a blur samples beyond the edge instead of fading to nothing at it; the
+   owning element's own clip is what keeps the paint inside. This is why they are not one shared
+   layer on the composition: a face cannot confine a background it does not contain. */
+.pf-lib-bg,
+.pf-page-bg {
   position: absolute; inset: -40px; background-size: cover; background-position: 62% 44%;
 }
-.pf-stage-scrim { position: absolute; inset: 0; background: var(--pd); }
+.pf-lib-scrim,
+.pf-page-scrim { position: absolute; inset: 0; background: var(--pd); }
+/* The page must NOT clip — the marker overhangs its top edge — so the page's picture gets its own
+   clip box at the page's bounds instead. */
+.pf-page-bgclip { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; }
 
 .pf-stage-segbar {
   position: absolute; inset-block-start: 14px; inset-inline: 0;
@@ -376,7 +381,15 @@
 }
 /* Where interface texture is actually visible. The whole sidebar fades, its content included — the
    same treatment `SardMini` gives the card, so the two pictures of one profile cannot disagree. */
+/* THE LIBRARY'S CONTENTS SIT ABOVE ITS PICTURE. Both are `position: relative` for painting order,
+   not for placement: the picture layers are absolutely positioned, and positioned descendants paint
+   AFTER static ones in the same stacking context — so a static shelf grid ends up underneath the
+   very background it is supposed to be seen against. The sidebar happened to survive that because
+   `opacity` below 1 makes it a stacking context of its own; the main area had nothing to save it and
+   the shelves vanished behind the scrim. Measured: `elementFromPoint` at the centre of the main area
+   returned the scrim rather than the grid. */
 .pf-lib-side {
+  position: relative;
   width: 132px; flex: none; background: var(--pc); opacity: var(--po);
   border-inline-end: 1px solid var(--pb); padding: 14px 12px;
   display: flex; flex-direction: column; gap: 16px;
@@ -403,7 +416,7 @@
   display: grid; place-items: center; font-size: 12px; font-style: normal; color: var(--px);
 }
 .pf-lib-chip-rule { flex: 1; height: 2px; background: var(--px); opacity: 0.34; }
-.pf-lib-main { flex: 1; min-width: 0; padding: 16px 16px 0; }
+.pf-lib-main { position: relative; flex: 1; min-width: 0; padding: 16px 16px 0; }
 .pf-lib-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 14px; }
 /* PX, NOT REM, EVERYWHERE INSIDE THE FIT BOX. `rem` would make this type follow the application's
    UI scale as well as the box's own scale, which is two scales over one picture — measured here as
@@ -530,10 +543,18 @@
   position: absolute; border: 1px solid color-mix(in srgb, var(--accent) 62%, transparent);
   border-radius: 6px; pointer-events: none; z-index: 3;
 }
+/* TYPOGRAPHY ONLY — this changes nothing about the frame. The frame's box is set inline from its
+   target's measured bounds, so the label is a child that cannot move it.
+   It was 9px/600, which read as faint against a photograph. Now it follows the interface scale like
+   the rest of the editor's chrome (the label lives OUTSIDE the scaled composition), carries the
+   weight to hold its own on a busy background, and has a shadow to separate it from one.
+   The offset moves −9px → −11px purely to keep the design's relationship: the pill straddles the
+   frame's top edge, so a taller pill has to start higher to stay centred on that line. */
 .pf-focus-label {
-  position: absolute; inset-block-start: -9px; inset-inline-end: 8px;
-  padding: 2px 7px; border-radius: 999px; background: var(--accent); color: var(--paper-bg);
-  font: 600 9px/1.5 var(--ui-font); white-space: nowrap;
+  position: absolute; inset-block-start: -11px; inset-inline-end: 8px;
+  padding: 3px 9px; border-radius: 999px; background: var(--accent); color: var(--paper-bg);
+  font: 700 0.75rem/1.4 var(--ui-font); letter-spacing: 0.01em; white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(20, 14, 6, 0.35);
 }
 
 /* ---- the Paper chapter's colour editor, in the chapter (design frame 2a) ----

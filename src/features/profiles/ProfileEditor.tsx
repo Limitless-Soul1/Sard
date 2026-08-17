@@ -194,18 +194,28 @@ export function ProfileEditor({
   }, []);
 
   /**
-   * The picture the stage's desk carries — the design's `bgLive`: the face on screen decides which
-   * surface's image is shown, so the library face gets the library's and the book face the book's.
-   * `scrimAlpha` is production's own presence→scrim function for that surface, which is what keeps
-   * the preview and the thing it depicts from drifting apart.
+   * EACH FACE'S OWN PICTURE, resolved here and owned there.
+   *
+   * They used to be one layer on the composition, which meant neither face could confine its own
+   * background — a face cannot clip a layer that is not its descendant. Now the library's picture is
+   * handed to the library and the book's to the page, and each is bounded by the thing it belongs
+   * to. `scrimAlpha` is production's own presence→scrim function for that surface, which is what
+   * keeps the preview and the thing it depicts from drifting apart.
    */
-  const stageBg = (() => {
-    const url = face === "book" ? bookUrl : libUrl;
-    if (!url) return null;
-    return face === "book"
-      ? { url, p: draft.data.bg.reading.params, surface: "reading" as BgSurface }
-      : { url, p: draft.data.bg.library.params, surface: "library" as BgSurface };
-  })();
+  const libBg = libUrl
+    ? {
+        url: libUrl,
+        params: draft.data.bg.library.params,
+        scrim: scrimAlpha(draft.data.bg.library.params.presence, "library" as BgSurface),
+      }
+    : null;
+  const bookBg = bookUrl
+    ? {
+        url: bookUrl,
+        params: draft.data.bg.reading.params,
+        scrim: scrimAlpha(draft.data.bg.reading.params.presence, "reading" as BgSurface),
+      }
+    : null;
 
   /**
    * The palette, on the stage, as the design declares it on its frame.
@@ -383,38 +393,13 @@ export function ProfileEditor({
                properties rather than taking colours as props. */
             <div className="pf-stage" style={stageVars} ref={stageRef}>
               {/* THE COMPOSITION, at the size the design drew it and scaled to fit. */}
+              {/* THE PICTURE IS NOT HERE ANY MORE. Each face carries its own, bounded by the thing
+                  it belongs to — the library by the library, the book's by the page — because a face
+                  cannot confine a layer that is not its descendant. */}
               <div className="pf-stage-fit">
-                {/* THE DESK IMAGE BELONGS TO THE COMPOSITION, NOT TO THE STAGE. It is a picture of
-                    Sard's own surface — the library behind its shelves, the reading surface behind
-                    its page — so it fills the thing being depicted and stops there. Hung on the
-                    stage instead it kept its −40px bleed against a box that grows with the window:
-                    measured at 2560, the picture ran 418px past the composition on each side while
-                    the composition itself was 1200 wide, so the wallpaper spilled across ground that
-                    is not part of the app at all. Inside the box it scales with everything else and
-                    the design's proportions hold at every size rather than at 1180 alone. */}
-                {stageBg && (
-                  <>
-                    <span
-                      className="pf-stage-bg"
-                      style={{
-                        backgroundImage: `url("${stageBg.url}")`,
-                        backgroundPosition: `${stageBg.p.focalX}% ${stageBg.p.focalY}%`,
-                        filter: `blur(${stageBg.p.blur}px)`,
-                        transform: `scaleX(${stageBg.p.flip ? -1 : 1})`,
-                      }}
-                      aria-hidden
-                    />
-                    <span
-                      className="pf-stage-scrim"
-                      style={{ opacity: scrimAlpha(stageBg.p.presence, stageBg.surface) }}
-                      aria-hidden
-                    />
-                  </>
-                )}
-
                 {face === "library"
-                  ? <LibraryFace profile={draft} iconUrl={iconUrl} />
-                  : <BookFace profile={draft} />}
+                  ? <LibraryFace profile={draft} iconUrl={iconUrl} bg={libBg} />
+                  : <BookFace profile={draft} bg={bookBg} />}
               </div>
 
               {/* The face switch is a CONTROL, not part of the picture, so it stays on the stage at

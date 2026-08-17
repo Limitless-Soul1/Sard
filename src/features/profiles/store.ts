@@ -22,7 +22,7 @@ import {
   type ProfileRow,
 } from "../../lib/ipc";
 import { useBookmarkStyle } from "../../lib/bookmarkStyle";
-import { useBackground } from "../../lib/background";
+import { applyBackgrounds, initBackground, useBackground } from "../../lib/background";
 import { applyTexture } from "../../lib/texture";
 import { useFonts } from "../../lib/fonts";
 import { useReadMarkerStyle } from "../../lib/readMarkerStyle";
@@ -221,9 +221,31 @@ export async function applyProfile(p: Profile): Promise<void> {
   });
   useReadMarkerStyle.setState({ marker: p.data.marks.readMarker });
 
+  // THE SURFACES' OWN STATE, RE-READ FROM WHAT WE JUST WROTE.
+  //
+  // `profileSettings` above persists `bg_library_id`, `bg_reading_id` and both params blobs, but
+  // persisting is not applying: the live background store is hydrated from those rows by
+  // `initBackground`, and that ran once at startup. So every other value a profile owns reached the
+  // running application here while the backgrounds and the page transparency reached only the
+  // database, and the reader saw them on the NEXT LAUNCH.
+  //
+  // Measured before this: activating a profile whose page opacity is 0.84 and whose library carries
+  // an image left `--bg-page-opacity` at the previous profile's 85%, `--bg-rd-scrim-base` computed
+  // from the previous presence, and `--bg-lib-image` empty with no `data-bg-library` gate at all —
+  // while `data-theme`, `--paper-bg`, `--text` and `--accent` all updated correctly.
+  //
+  // RE-READING RATHER THAN RE-MAPPING IS THE POINT. `initBackground` is the one place that turns
+  // those settings into store state, and `applyBackgrounds` the one place that turns store state
+  // into custom properties. Going through both keeps the settings rows the single source of truth
+  // for the runtime; assigning the profile's values straight into the store would have created a
+  // second mapping that could drift from the one the rest of the application uses.
+  await initBackground();
+  applyBackgrounds(theme.colors);
+
   // TEXTURE, derived rather than stored. The profile carries the STEP; what it renders as depends on
   // the live desk scrim and the active theme, so the alpha is computed here on every application and
-  // never persisted. `opaque` removes the variable entirely.
+  // never persisted. `opaque` removes the variable entirely. AFTER the backgrounds, because the
+  // texture's floor is measured against the live desk scrim they have just set.
   applyTexture(p.data.texture, theme.colors);
 
   useProfiles.setState({ activeId: p.id });

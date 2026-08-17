@@ -24,13 +24,63 @@ import { createPortal } from "react-dom";
 import { useI18n } from "../../i18n";
 import type { TKey } from "../../i18n/locales/en";
 import { profileImportInspect } from "../../lib/ipc";
+import { localeDigits } from "../../lib/format";
+import { isBuiltinThemeId } from "../../theme";
+import { THEMES } from "../../theme/themes";
 import { inspectPackage, summarise } from "./model/package";
+import { miniOf, sealOf } from "./mini";
+import { SardMini } from "./SardMini";
 import { applyProfile, importProfile } from "./store";
-import type { Profile } from "./model/profile";
+import type { CustomThemeId } from "../../theme/tokens";
+import type { Profile, ProfileData } from "./model/profile";
+
+/**
+ * The package, as the PROFILE it is about to become — so the preview and the result are one object.
+ *
+ * Frame 14's promise is that "the preview is the same miniature the cards use, drawn from the package
+ * itself". That only holds if it goes through the SAME `miniOf` and `sealOf` the cards go through,
+ * which take a `Profile`. `inspectPackage` already returns the whole of `ProfileData`; nothing new
+ * has to travel for this, and nothing here is a second interpretation of a profile's appearance.
+ *
+ * `iconKind: "seal"` is not a placeholder — it is the truth. The manifest carries no icon (see
+ * `PackageManifest`), so an imported profile wears a seal, and showing one here is showing what will
+ * actually arrive rather than a picture of what the sender had.
+ */
+function previewProfile(name: string | null, author: string | null, data: ProfileData): Profile {
+  return {
+    id: "u:preview" as CustomThemeId,
+    name,
+    description: null,
+    author,
+    iconKind: "seal",
+    iconRef: null,
+    derivedFrom: null,
+    createdAt: 0,
+    updatedAt: 0,
+    data,
+  };
+}
+
+/**
+ * "Moonlit Sky, modified" — the design's own subtitle, which names the paper AND says whether it was
+ * left alone. Compared against the built-in the package NAMES, over the roles the miniature actually
+ * draws; a profile with no base is not "modified", it is a paper of its own.
+ */
+const PAPER_ROLES = ["paperBg", "surfaceBg", "chromeBg", "chromeBorder", "text", "muted", "accent"] as const;
+
+function paperIsModified(data: ProfileData): boolean {
+  const base = data.theme.base;
+  if (!base || !isBuiltinThemeId(base)) return false;
+  const b = THEMES[base].colors as unknown as Record<string, unknown>;
+  const c = data.theme.colors as unknown as Record<string, unknown>;
+  return PAPER_ROLES.some((k) => b[k] !== c[k]);
+}
 
 type Stage =
   | { at: "picking" }
-  | { at: "preview"; text: string; sum: ReturnType<typeof summarise>; bytes: number }
+  // `data` rides along with the summary: the miniature needs the whole of it, and `summarise`
+  // narrows to the four fields the old row list happened to want.
+  | { at: "preview"; text: string; sum: ReturnType<typeof summarise>; data: ProfileData; bytes: number }
   | { at: "done"; profile: Profile }
   | { at: "refused"; code: string; detail: string | null };
 
@@ -50,12 +100,12 @@ export function ImportSheet({
    */
   initialText?: string;
 }) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const [stage, setStage] = useState<Stage>(() => {
     if (!initialText) return { at: "picking" };
     const seen = inspectPackage(initialText);
     return seen.ok
-      ? { at: "preview", text: initialText, sum: summarise(seen),
+      ? { at: "preview", text: initialText, sum: summarise(seen), data: seen.data,
           bytes: new TextEncoder().encode(initialText).length }
       : { at: "refused", code: seen.refusal.code,
           detail: "field" in seen.refusal ? seen.refusal.field : null };
@@ -90,6 +140,7 @@ export function ImportSheet({
         at: "preview",
         text,
         sum: summarise(seen),
+        data: seen.data,
         bytes: new TextEncoder().encode(text).length,
       });
     } catch (e) {
@@ -112,10 +163,17 @@ export function ImportSheet({
     return null;
   }
 
-  const shell = (body: React.ReactNode) =>
+  // `wide` is frame 14 only: the design draws that one card at 560px because it leads with a
+  // full-width miniature. Every other state here is an ordinary 420px dialog, as it is elsewhere.
+  const shell = (body: React.ReactNode, wide = false) =>
     createPortal(
       <div className="pf-dialog-scrim" onClick={onClose}>
-        <div className="pf-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div
+          className={`pf-dialog${wide ? " pf-import-card" : ""}`}
+          onClick={(e) => e.stopPropagation()}
+          role="dialog"
+          aria-modal="true"
+        >
           {body}
         </div>
       </div>,
@@ -143,14 +201,23 @@ export function ImportSheet({
   }
 
   // ---- FRAME 15 — added, and it is yours ---------------------------------------------------------
+  // The design puts the miniature BESIDE the sentence rather than above it: the profile is no longer
+  // an arriving file to be inspected, it is one of yours, so it is introduced the way a card is.
   if (stage.at === "done") {
     const p = stage.profile;
     return shell(
       <>
-        <div className="pf-dialog-title">
-          {t("profiles.import.added", { name: p.name ?? "" })}
+        <div className="pf-imported-head">
+          <span className="pf-imported-mini">
+            <SardMini p={miniOf(p, null)} />
+          </span>
+          <span className="pf-imported-text">
+            <span className="pf-imported-title">
+              {t("profiles.import.added", { name: p.name ?? "" })}
+            </span>
+            <span className="pf-imported-body">{t("profiles.import.yoursNow")}</span>
+          </span>
         </div>
-        <p className="pf-dialog-body">{t("profiles.import.yoursNow")}</p>
         <div className="pf-dialog-actions">
           <button className="pf-btn" onClick={() => { onClose(); onEdit(p); }}>
             {t("profiles.card.edit")}
@@ -166,27 +233,56 @@ export function ImportSheet({
   // ---- FRAME 14 — a profile has reached you ------------------------------------------------------
   // Nothing to preview until the picker has returned something that passed both gates.
   if (stage.at !== "preview") return null;
-  const { sum } = stage;
+  const { sum, data } = stage;
+  const paper = sum.themeBase ? t(`theme.${sum.themeBase}` as TKey) : t("profiles.theme.custom");
+  const kb = Math.max(1, Math.round(stage.bytes / 1024));
+  const seen = previewProfile(sum.name, sum.author, data);
+  const seal = sealOf(seen);
+
+  // The design's own row set, minus the two it draws for assets that do not travel yet — a package
+  // carries no image and no icon, and a row claiming otherwise would be the one thing frame 14 exists
+  // to prevent. Fonts are ONE row here as they are in the design, holding both scripts.
   const rows: [string, string][] = [
-    [t("profiles.section.theme"), sum.themeBase ? t(`theme.${sum.themeBase}` as TKey) : t("profiles.theme.custom")],
-    [t("profiles.fonts.arabic"), sum.arabic],
-    [t("profiles.fonts.latin"), sum.latin],
+    [t("profiles.chapter.paper"), paper],
+    [t("profiles.chapter.fonts"), `${sum.arabic} · ${sum.latin}`],
+    [t("profiles.chapter.marks"), t(`profiles.shape.${data.marks.bookmarkShape}` as TKey)],
     [t("profiles.marks.texture"), t(`profiles.texture.${sum.texture}` as TKey)],
   ];
 
   return shell(
     <>
       <div className="pf-dialog-title">{t("profiles.import.title")}</div>
-      <div className="pf-import-name" dir="auto">{sum.name ?? t("profiles.editor.title")}</div>
-      {sum.author && <div className="pf-import-author" dir="auto">{sum.author}</div>}
 
-      <div className="pf-share-rows">
+      {/* THE MINIATURE IS THE PREVIEW. Frame 14 leads with it because the question the reader is
+          answering is "what will Sard look like", and the honest answer is a picture of Sard drawn
+          from the package's own colours — the same component, through the same `miniOf`, that every
+          card uses. Its 16:10 is SardMini's own, so the design's 325px is simply what 100% of this
+          card's width comes to. */}
+      <div className="pf-import-hero">
+        <SardMini p={miniOf(seen, null)} />
+      </div>
+
+      <div className="pf-import-id">
+        <span className="pf-import-seal" style={{ fontFamily: seal.fontFamily }} aria-hidden>
+          {seal.text}
+        </span>
+        <span className="pf-import-id-text">
+          <span className="pf-import-name" dir="auto">{sum.name ?? t("profiles.editor.title")}</span>
+          <span className="pf-import-author" dir="auto">
+            {paperIsModified(data) ? `${paper} · ${t("profiles.import.modified")}` : paper}
+            {" · "}
+            {t("profiles.share.kb", { n: localeDigits(String(kb), lang) })}
+            {sum.author ? ` · ${sum.author}` : ""}
+          </span>
+        </span>
+      </div>
+
+      <div className="pf-import-rows">
         {rows.map(([k, v]) => (
-          <div className="pf-share-row" key={k}>
-            <span className="pf-share-row-text">
-              <span className="pf-share-row-name">{k}</span>
-            </span>
-            <span className="pf-share-row-note" dir="auto">{v}</span>
+          <div className="pf-import-row" key={k}>
+            <span className="pf-import-dot" aria-hidden />
+            <span className="pf-import-row-name">{k}</span>
+            <span className="pf-import-row-val" dir="auto">{v}</span>
           </div>
         ))}
       </div>
@@ -216,5 +312,6 @@ export function ImportSheet({
         </button>
       </div>
     </>,
+    true,
   );
 }

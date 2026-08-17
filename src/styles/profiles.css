@@ -913,8 +913,55 @@
 }
 
 /* ---- frames 14 / 15 / 17: the import sheet ---- */
-.pf-import-name { font: 600 1.0625rem/1.4 var(--ui-font); color: var(--text); margin-bottom: 2px; }
-.pf-import-author { font: 400 0.75rem var(--ui-font); color: var(--lib-faint, var(--muted)); margin-bottom: 14px; }
+/* ---- FRAME 14 · the arriving profile, and FRAME 15 · the one that arrived ----
+   The design draws frame 14 at 560px rather than the ordinary 420: it leads with a full-width
+   miniature, and a picture of Sard at 420 is a thumbnail rather than a preview. Everything below is
+   the design's own geometry — 20px gutters, a 10px corner on the picture, 36px for the seal, a 6px
+   bullet on each row. */
+.pf-import-card { width: 560px; padding: 20px; }
+/* The picture's own corner and lift. `overflow: hidden` is what makes the corner real, since
+   `SardMini` paints edge to edge. */
+.pf-import-hero {
+  border-radius: 10px; overflow: hidden; box-shadow: 0 3px 10px rgba(40, 28, 14, 0.18);
+}
+.pf-import-id { display: flex; align-items: center; gap: 12px; margin: 16px 0 6px; }
+/* The seal, at the design's 36px. A package carries no icon, so this is the seal the imported
+   profile will actually wear — drawn through `sealOf`, like every other seal in Sard. */
+.pf-import-seal {
+  width: 36px; height: 36px; flex: none; border-radius: 9px; display: grid; place-items: center;
+  background: var(--paper-bg); color: var(--text); font-size: 17px; line-height: 1;
+  box-shadow: inset 0 0 0 1px var(--chrome-border);
+}
+.pf-import-id-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pf-import-name { font: 600 1.0625rem/1.4 var(--ui-font); color: var(--text); }
+.pf-import-author {
+  font: 400 0.75rem/1.5 var(--ui-font); color: var(--lib-faint, var(--muted));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* One row per thing that travelled. The rule under each row is the design's, and the last one drops
+   it so the list ends on the firewall rather than on a line. */
+.pf-import-rows { display: flex; flex-direction: column; gap: 2px; margin: 8px 0 4px; }
+.pf-import-row {
+  display: flex; align-items: center; gap: 10px; padding: 8px 0;
+  border-block-end: 1px solid var(--chrome-border);
+}
+.pf-import-row:last-child { border-block-end: 0; }
+.pf-import-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--accent); }
+.pf-import-row-name { flex: 1; min-width: 0; font: 500 0.8125rem/1.5 var(--ui-font); color: var(--text); }
+.pf-import-row-val { font: 400 0.75rem/1.5 var(--ui-font); color: var(--lib-faint, var(--muted)); }
+
+/* FRAME 15 — the miniature moves BESIDE the sentence: the profile is no longer a file being
+   inspected, it is one of yours, so it is introduced the way a card introduces one. The double
+   shadow is the design's ring — accent, then the card's own ground, which is what makes it read as
+   mounted rather than outlined. */
+.pf-imported-head { display: flex; align-items: center; gap: 12px; }
+.pf-imported-mini {
+  width: 96px; flex: none; border-radius: 7px; overflow: hidden;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg);
+}
+.pf-imported-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.pf-imported-title { font: 600 0.9375rem/1.4 var(--ui-font); color: var(--text); }
+.pf-imported-body { font: 400 0.71rem/1.6 var(--ui-font); color: var(--muted); }
 /* The firewall, restated where someone else's profile is arriving — the moment it matters most. */
 .pf-import-firewall {
   margin-top: 12px; padding: 11px 12px; border-radius: 9px;

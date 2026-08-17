@@ -1230,6 +1230,7 @@ export const ar: Record<TKey, string> = {
   "profiles.import.added": "أُضيفت هيئة «{name}»",
   "profiles.import.yoursNow": "هي الآن هيئتك، لك تعديلها وإعادة تسميتها.",
   "profiles.import.useNow": "استعملها الآن",
+  "profiles.import.modified": "معدّلة",
   "profiles.import.refusedTitle": "لم نتمكّن من قراءة هذه الحزمة",
   "profiles.import.nothingChanged": "لم يتغيّر شيءٌ عندك.",
   "profiles.import.chooseAnother": "اختيار ملفٍّ آخر",

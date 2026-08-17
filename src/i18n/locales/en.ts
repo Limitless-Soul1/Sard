@@ -1298,6 +1298,8 @@ export const en = {
   "profiles.import.added": "Added “{name}”",
   "profiles.import.yoursNow": "It is your profile now — yours to edit and to rename.",
   "profiles.import.useNow": "Use it now",
+  /** Frame 14's subtitle names the paper AND says whether the sender changed it: "Sepia · modified". */
+  "profiles.import.modified": "modified",
   "profiles.import.refusedTitle": "Sard could not read this package",
   "profiles.import.nothingChanged": "Nothing on your side has changed.",
   "profiles.import.chooseAnother": "Choose another file",

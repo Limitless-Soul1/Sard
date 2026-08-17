@@ -28,6 +28,26 @@
 
 import { useLayoutEffect, useRef, useState, type RefObject } from "react";
 
+import { contrastRatio } from "../../../../lib/contrast";
+
+/**
+ * Ink that is legible on the pill, whatever accent the active theme carries.
+ *
+ * THE DESIGN'S PAIR DOES NOT SURVIVE SIXTEEN THEMES. It sets the label as the app's cream on the
+ * accent, which is the right reading on the mock's own paper — but Sard's `--paper-bg` follows the
+ * active profile, so on a dark theme it is dark and lands on a dark accent. Measured: 10.57 against
+ * one profile's accent and 2.31 against another's, from the same rule. Reporting the first as if it
+ * were a property of the design was my error.
+ *
+ * Choosing the better of black and white is not a preference; it is the one choice that cannot fail.
+ * The worst possible ground is a mid grey, where white reaches 4.48 and black 4.69 — so the better of
+ * the two always clears 4.5, and every real accent is far from that worst case.
+ */
+const INK_LIGHT = "#FFF8EC";
+const INK_DARK = "#17110C";
+const legibleOn = (ground: string): string =>
+  contrastRatio(INK_LIGHT, ground) >= contrastRatio(INK_DARK, ground) ? INK_LIGHT : INK_DARK;
+
 /**
  * The breathing room between the object and the hairline around it.
  *
@@ -56,6 +76,8 @@ export function FocusFrame({
 }) {
   const [box, setBox] = useState<Box | null>(null);
   const boxRef = useRef<Box | null>(null);
+  const [ink, setInk] = useState(INK_LIGHT);
+  const inkRef = useRef(INK_LIGHT);
 
   // NO DEPENDENCY ARRAY, deliberately. The editor re-renders on every draft change, so this
   // re-measures whenever a control moves the thing being framed — a bookmark slider, a page width,
@@ -85,6 +107,16 @@ export function FocusFrame({
         boxRef.current = next;
         setBox(next);
       }
+      // The pill is painted in the ACTIVE theme's accent, which changes with the profile the reader
+      // is wearing, so the ink that reads on it has to be chosen against that live value.
+      const accent = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
+      if (accent) {
+        const want = legibleOn(accent);
+        if (want !== inkRef.current) {
+          inkRef.current = want;
+          setInk(want);
+        }
+      }
     };
 
     measure();
@@ -101,7 +133,7 @@ export function FocusFrame({
       style={{ left: box.left, top: box.top, width: box.width, height: box.height }}
       aria-hidden
     >
-      {label && <span className="pf-focus-label">{label}</span>}
+      {label && <span className="pf-focus-label" style={{ color: ink }}>{label}</span>}
     </div>
   );
 }

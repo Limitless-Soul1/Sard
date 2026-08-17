@@ -332,23 +332,41 @@
    degraded, never broken. Folded into one `transform`, an invalid factor would take the centring
    down with it. */
 .pf-stage-fit {
-  position: absolute; inset: 0; margin: auto;
-  width: 656px; height: 720px;
-  scale: min(calc(100cqw / 656px), calc(100cqh / 720px));
+  /* The composition's own pixels: 656 wide, the design's width, and as tall as the stage actually
+     is. It used to be a fixed 656 x 720 scaled by the SMALLER of the two ratios, which letterboxed
+     it against any stage of a different shape — measured at a 2036 x 1317 stage, a 1200-wide
+     composition with 418px of dead margin on each side, using 59% of the width it was given. That is
+     what made both faces read as small cards adrift in a canvas.
+
+     Taking the height from the stage instead means the environment IS the stage, and one factor
+     still scales the whole picture, so every number inside is the design's own and none of them had
+     to be re-derived. `top`/`left` and a 0 0 origin are PHYSICAL on purpose: a logical offset with a
+     physical origin does not line up in an RTL frame. */
+  --pf-k: calc(100cqw / 656px);
+  position: absolute; top: 0; left: 0;
+  width: calc(100cqw / var(--pf-k));
+  height: calc(100cqh / var(--pf-k));
+  scale: var(--pf-k);
+  transform-origin: 0 0;
 }
-/* THE PICTURE LAYERS, ONE PAIR PER FACE, each a descendant of the thing that bounds it.
+/* THE PICTURE LAYERS. Where they live differs per face, because the two real surfaces differ.
    The bleed is there so a blur samples beyond the edge instead of fading to nothing at it; the
-   owning element's own clip is what keeps the paint inside. This is why they are not one shared
-   layer on the composition: a face cannot confine a background it does not contain. */
+   owning element's clip is what keeps the paint inside.
+
+   LIBRARY: the picture belongs to the library window, which is what the face depicts, so it lives
+   inside `.pf-lib` and is bounded by it — the real Library's background fills the Library.
+
+   BOOK: the picture belongs to the READING ENVIRONMENT, not to the sheet lying on it, so it lives
+   on the composition and the page sits over it. That is what makes the page and its environment two
+   independent spaces: changing the measure resizes the page and reveals more environment around it,
+   because the environment never hears about the page at all. Hung inside the page instead, it was a
+   child of the thing being resized and scaled with it. */
 .pf-lib-bg,
-.pf-page-bg {
+.pf-stage-bg {
   position: absolute; inset: -40px; background-size: cover; background-position: 62% 44%;
 }
 .pf-lib-scrim,
-.pf-page-scrim { position: absolute; inset: 0; background: var(--pd); }
-/* The page must NOT clip — the marker overhangs its top edge — so the page's picture gets its own
-   clip box at the page's bounds instead. */
-.pf-page-bgclip { position: absolute; inset: 0; overflow: hidden; border-radius: inherit; }
+.pf-stage-scrim { position: absolute; inset: 0; background: var(--pd); }
 
 .pf-stage-segbar {
   position: absolute; inset-block-start: 14px; inset-inline: 0;

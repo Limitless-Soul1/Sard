@@ -16,7 +16,6 @@ import { BookmarkShape } from "../../../reader/BookmarkShape";
 import { useI18n } from "../../../../i18n";
 import { localeNum } from "../../../../lib/format";
 import { PAGE_WIDTH_DEFAULT, pageWidthPx } from "../../../../reader-engine/injectedCss";
-import type { BgParams } from "../../../../lib/background";
 import { bookFaceCss } from "../../mini";
 import type { Profile } from "../../model/profile";
 
@@ -49,14 +48,7 @@ export function previewPageWidth(fraction: number): number {
 /** The design's specimen progress. A picture of a book being read, not a reading of this one. */
 const READ_PCT = 38;
 
-export function BookFace({
-  profile,
-  bg,
-}: {
-  profile: Profile;
-  /** The book's own picture, already resolved. The PAGE owns it — see the note below. */
-  bg?: { url: string; params: BgParams; scrim: number } | null;
-}) {
+export function BookFace({ profile }: { profile: Profile }) {
   const { t, lang } = useI18n();
   const c = profile.data.theme.colors;
   const dark = profile.data.theme.dark;
@@ -65,35 +57,10 @@ export function BookFace({
     <>
       <div className="pf-bookface" aria-hidden>
         <div className="pf-page">
-          {/* THE PICTURE, INSIDE THE PAGE. It used to hang on the composition, so it was a layer the
-              page merely sat on: measured at the default measure it ran 260px past the page to the
-              left and right, 175px above and 73px below, and `elementFromPoint` either side of the
-              page returned the transparent book area with the image showing through. The page is the
-              environment the image belongs to, so it owns it.
-
-              THE CLIP IS A WRAPPER, NOT `overflow` ON THE PAGE. The marker deliberately overhangs the
-              page's top edge, and clipping the page itself would cut the tab off — that was fixed
-              once already and must not come back. This box is inset to the page's own bounds and
-              clips only what is inside it.
-
-              ORDER IS THE WHOLE POINT: image, then scrim, then the translucent paper, then the type.
-              The sheet thins over the picture and the words stay fully opaque above both. */}
-          {bg && (
-            <span className="pf-page-bgclip">
-              <span
-                className="pf-page-bg"
-                style={{
-                  backgroundImage: `url("${bg.url}")`,
-                  backgroundPosition: `${bg.params.focalX}% ${bg.params.focalY}%`,
-                  filter: `blur(${bg.params.blur}px)`,
-                  transform: `scaleX(${bg.params.flip ? -1 : 1})`,
-                }}
-              />
-              <span className="pf-page-scrim" style={{ opacity: bg.scrim }} />
-            </span>
-          )}
-          {/* The paper itself is a layer under the type, which is what lets the sheet thin over the
-              image while the words stay fully opaque. */}
+          {/* The paper is a layer under the type, which is what lets the sheet thin over the reading
+              environment behind it while the words stay fully opaque. The environment itself is NOT
+              here: it belongs to the composition, so that resizing this page reveals more of it
+              rather than resizing it too. */}
           <div className="pf-page-paper" />
 
           <div

@@ -397,9 +397,29 @@ export function ProfileEditor({
                   it belongs to — the library by the library, the book's by the page — because a face
                   cannot confine a layer that is not its descendant. */}
               <div className="pf-stage-fit">
+                {/* THE READING ENVIRONMENT, for the book face only. The picture belongs to the desk
+                    the sheet lies on, not to the sheet — which is what keeps the page and its
+                    environment two independent spaces, so moving the measure resizes the page and
+                    reveals more environment rather than resizing both. The library's picture is not
+                    here: it belongs to the library window, and lives inside the face itself. */}
+                {face === "book" && bookBg && (
+                  <>
+                    <span
+                      className="pf-stage-bg"
+                      style={{
+                        backgroundImage: `url("${bookBg.url}")`,
+                        backgroundPosition: `${bookBg.params.focalX}% ${bookBg.params.focalY}%`,
+                        filter: `blur(${bookBg.params.blur}px)`,
+                        transform: `scaleX(${bookBg.params.flip ? -1 : 1})`,
+                      }}
+                      aria-hidden
+                    />
+                    <span className="pf-stage-scrim" style={{ opacity: bookBg.scrim }} aria-hidden />
+                  </>
+                )}
                 {face === "library"
                   ? <LibraryFace profile={draft} iconUrl={iconUrl} bg={libBg} />
-                  : <BookFace profile={draft} bg={bookBg} />}
+                  : <BookFace profile={draft} />}
               </div>
 
               {/* The face switch is a CONTROL, not part of the picture, so it stays on the stage at

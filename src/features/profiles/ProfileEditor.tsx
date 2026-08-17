@@ -18,7 +18,7 @@
 // control — it is the answer to the question the editor otherwise invites. It rides in the shell's
 // `railFooter` slot rather than becoming a seventh chapter.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 
 import { useI18n } from "../../i18n";
@@ -49,10 +49,11 @@ import { EditorShell } from "./editor/EditorShell";
 import { FOCUS, type ChapterId, type Focus } from "./editor/chapters";
 import { ShareSheet } from "./ShareSheet";
 import { profileChangePending } from "./session";
-import { SardMini } from "./SardMini";
-import { bookFaceCss, miniOf } from "./mini";
+import { BookFace } from "./editor/stage/BookFace";
+import { LibraryFace } from "./editor/stage/LibraryFace";
+import { bookFaceCss } from "./mini";
 import { saveProfile, useProfiles } from "./store";
-import { TEXTURE_STEPS, type Profile, type ProfileData } from "./model/profile";
+import { TEXTURE_ALPHA, TEXTURE_STEPS, type Profile, type ProfileData } from "./model/profile";
 import { judgePalette } from "./model/guidance";
 import { editHex } from "./model/hex";
 import { deriveColors } from "./model/palette";
@@ -156,6 +157,44 @@ export function ProfileEditor({
   const bookUrl = urlOf(
     draft.data.bg.reading.sameAsLibrary ? draft.data.bg.library.ref : draft.data.bg.reading.ref,
   );
+  const iconUrl = draft.iconKind === "image" && draft.iconRef ? urlOf(draft.iconRef) : null;
+
+  /**
+   * The picture the stage's desk carries — the design's `bgLive`: the face on screen decides which
+   * surface's image is shown, so the library face gets the library's and the book face the book's.
+   * `scrimAlpha` is production's own presence→scrim function for that surface, which is what keeps
+   * the preview and the thing it depicts from drifting apart.
+   */
+  const stageBg = (() => {
+    const url = face === "book" ? bookUrl : libUrl;
+    if (!url) return null;
+    return face === "book"
+      ? { url, p: draft.data.bg.reading.params, surface: "reading" as BgSurface }
+      : { url, p: draft.data.bg.library.params, surface: "library" as BgSurface };
+  })();
+
+  /**
+   * The palette, on the stage, as the design declares it on its frame.
+   *
+   * `--pf` (faint) is not a stored colour: the design derives it as the muted ink pulled most of the
+   * way back to the paper, and it is the only place the sixteen do not already supply a value.
+   *
+   * `--pgo` is 1 with no background, which is production's rule rather than the mock's — page
+   * translucency only means something when there is an image to be translucent against, and the real
+   * reading surface composites it exactly this way: the PAPER thins, never the words on it.
+   */
+  const stageVars = {
+    "--pp": draft.data.theme.colors.paperBg,
+    "--pd": draft.data.theme.colors.surfaceBg,
+    "--pc": draft.data.theme.colors.chromeBg,
+    "--pb": draft.data.theme.colors.chromeBorder,
+    "--px": draft.data.theme.colors.text,
+    "--pm": draft.data.theme.colors.muted,
+    "--pa": draft.data.theme.colors.accent,
+    "--pf": `color-mix(in srgb, ${draft.data.theme.colors.muted} 62%, ${draft.data.theme.colors.paperBg})`,
+    "--po": TEXTURE_ALPHA[draft.data.texture],
+    "--pgo": bookUrl ? draft.data.bg.reading.params.pageOpacity : 1,
+  } as CSSProperties;
 
   /** Each chapter's current answer, under its name in the rail. */
   const chapterValue = (id: ChapterId): string => {
@@ -278,33 +317,60 @@ export function ProfileEditor({
           // The frame is Arabic and stays RTL; these controls are translated, so they follow the app.
           bodyDir={dir}
           preview={(focus: Focus) => (
-            /* THE PREVIEW — what you see here is what you will see in Sard. */
-            <div className="pf-stage">
-              <div className="pf-stage-seg" role="group">
-                <button className={face === "library" ? "on" : ""} onClick={() => setFace("library")}>
-                  {t("profiles.editor.stageLibrary")}
-                </button>
-                <button className={face === "book" ? "on" : ""} onClick={() => setFace("book")}>
-                  {t("profiles.editor.stageBook")}
-                </button>
-              </div>
-              {/* The frame is sized against THIS area, not against a constant: it is what the
-                  column has left once the segmented control and the focus label have taken theirs,
-                  which is what lets the specimen grow with the window. */}
-              <div className="pf-stage-area">
-                <div className="pf-stage-frame">
-                  {face === "library" ? (
-                    <SardMini p={miniOf(draft, libUrl)} />
-                  ) : (
-                    <BookStage profile={draft} bgUrl={bookUrl} />
-                  )}
+            /* THE PREVIEW — what you see here is what you will see in Sard.
+               The stage is both the coordinate system and the palette scope: every layer below is an
+               absolutely-positioned sibling in one paint order, and the faces read these `--p*`
+               properties rather than taking colours as props. */
+            <div className="pf-stage" style={stageVars}>
+              {/* ONE IMAGE LAYER FOR THE WHOLE STAGE, showing whichever surface is on screen — the
+                  library's picture behind the library, the book's behind the page. It used to live
+                  inside the book specimen only, which is why the library face could never show one
+                  and why this layer had no positioned ancestor to be clipped by. */}
+              {stageBg && (
+                <>
+                  <span
+                    className="pf-stage-bg"
+                    style={{
+                      backgroundImage: `url("${stageBg.url}")`,
+                      backgroundPosition: `${stageBg.p.focalX}% ${stageBg.p.focalY}%`,
+                      filter: `blur(${stageBg.p.blur}px)`,
+                      transform: `scaleX(${stageBg.p.flip ? -1 : 1})`,
+                    }}
+                    aria-hidden
+                  />
+                  <span
+                    className="pf-stage-scrim"
+                    style={{ opacity: scrimAlpha(stageBg.p.presence, stageBg.surface) }}
+                    aria-hidden
+                  />
+                </>
+              )}
+
+              <div className="pf-stage-segbar">
+                <div className="pf-stage-seg" role="group">
+                  <button className={face === "library" ? "on" : ""} onClick={() => setFace("library")}>
+                    {t("profiles.editor.stageLibrary")}
+                  </button>
+                  <button className={face === "book" ? "on" : ""} onClick={() => setFace("book")}>
+                    {t("profiles.editor.stageBook")}
+                  </button>
                 </div>
               </div>
-              {/* WHAT THIS CHAPTER GOVERNS, named. The design frames the exact region with a
-                  hairline; `FOCUS` here carries the face and the name but deliberately not the
-                  design's pixel insets, which were measured against the mock's own geometry and
-                  would be a lie against SardMini. So the region is named rather than drawn. */}
-              {focus.label && <div className="pfe-focus-label">{focus.label}</div>}
+
+              {/* THE COMPOSITION, at the size the design drew it and scaled to fit. The faces and
+                  the focus frame share this box so the design's percentage insets keep pointing at
+                  the thing they name at every window size; the desk, its scrim and the segmented
+                  control stay full-bleed on the stage, where the design puts them. */}
+              <div className="pf-stage-fit">
+                {face === "library" ? <LibraryFace iconUrl={iconUrl} /> : <BookFace profile={draft} />}
+
+                {/* WHAT THIS CHAPTER GOVERNS, drawn on the region itself rather than named under it.
+                    The insets are the design's own and are honest now that the faces fill the box
+                    they were measured against. */}
+                <div className="pf-focus" style={{ inset: focus.inset }}>
+                  {focus.label && <span className="pf-focus-label">{focus.label}</span>}
+                </div>
+              </div>
             </div>
           )}
           railFooter={
@@ -321,104 +387,6 @@ export function ProfileEditor({
     </div>
     </>,
     document.body,
-  );
-}
-
-// ---- the book face of the stage ----------------------------------------------------------------
-
-/**
- * The reading surface as this profile would draw it: a real passage in the profile's own faces, a
- * highlight under the paper's own blend, and the bookmark at its physical page edge.
- *
- * Both scripts, always — a profile authored by a Latin reader still ships an Arabic face, and the
- * only way to see that is to show it.
- */
-function BookStage({ profile, bgUrl }: { profile: Profile; bgUrl?: string | null }) {
-  const c = profile.data.theme.colors;
-  const dark = profile.data.theme.dark;
-  const rd = profile.data.bg.reading.params;
-  // THE PAGE OVER THE IMAGE — the relationship the background chapter exists to let a reader
-  // balance, and which this stage could not show at all: it drew a solid desk colour and no image,
-  // so page translucency had nothing to be translucent against.
-  //
-  // Both expressions are production's: `scrimAlpha(..., "reading")` is the reading surface's own
-  // presence→scrim function, and the page is composited exactly as `global.css` composites it —
-  // `color-mix(paper <opacity>, transparent)` on the BACKGROUND only, so the text stays fully
-  // opaque while the paper thins.
-  const page = bgUrl
-    ? `color-mix(in srgb, ${c.paperBg} ${(rd.pageOpacity * 100).toFixed(1)}%, transparent)`
-    : c.paperBg;
-  return (
-    <div className="pf-book" style={{ background: c.surfaceBg }}>
-      {bgUrl && (
-        <>
-          <span
-            className="pf-book-bg"
-            style={{
-              backgroundImage: `url("${bgUrl}")`,
-              backgroundPosition: `${rd.focalX}% ${rd.focalY}%`,
-              filter: `blur(${rd.blur}px)`,
-              transform: `scaleX(${rd.flip ? -1 : 1})`,
-            }}
-            aria-hidden
-          />
-          <span
-            className="pf-book-scrim"
-            style={{ background: c.surfaceBg, opacity: scrimAlpha(rd.presence, "reading") }}
-            aria-hidden
-          />
-        </>
-      )}
-      <div className="pf-book-sheet" style={{ background: page, color: c.text }}>
-        <div
-          className="pf-book-title"
-          style={{ fontFamily: bookFaceCss(profile.data.type.arabic) }}
-          dir="rtl"
-        >
-          الفصل الثالث · في المجالس
-        </div>
-        <p
-          className="pf-book-p"
-          style={{ fontFamily: bookFaceCss(profile.data.type.arabic) }}
-          dir="rtl"
-        >
-          وكان في المدينة رجلٌ يجمع الحكايات كما يجمع الناسُ المال، فإذا أقبل الليل{" "}
-          <span
-            style={{
-              background: c.highlight.amber,
-              mixBlendMode: dark ? "screen" : "multiply",
-              opacity: dark ? 0.66 : 0.72,
-              padding: "0.05em 0.2em 0.09em",
-              borderRadius: "0.12em",
-            }}
-          >
-            نشرها على مجلسه
-          </span>{" "}
-          فجلس السامعون كأنّهم في سَفَرٍ لا يبلغ آخره.
-        </p>
-        <p
-          className="pf-book-p latin"
-          style={{ fontFamily: bookFaceCss(profile.data.type.latin), color: c.muted }}
-          dir="ltr"
-        >
-          The night narrows to a single lamp, and the story keeps its own hours.
-        </p>
-        {/* AT ITS REAL EDGE POSITION. `bookmarkPos` is a fraction of the page's width and is
-            PHYSICAL — it does not flip with the interface language, exactly as the reader's own
-            marker does not (see `PageBookmark`). It used to sit at a fixed inline-end inset, which
-            both ignored the setting and mirrored itself in English. */}
-        <span
-          className="pf-book-mark"
-          style={{ left: `${profile.data.marks.bookmarkPos * 100}%` }}
-        >
-          <BookmarkShape
-            shape={profile.data.marks.bookmarkShape}
-            color={profile.data.theme.bookmark ?? c.accent}
-            h={profile.data.marks.bookmarkSize * 0.5}
-          />
-        </span>
-      </div>
-    </div>
   );
 }
 

@@ -1039,6 +1039,9 @@ export const ar: Record<TKey, string> = {
   "profiles.shape.leaf": "ورقة مكبوسة",
   "profiles.editor.stageLibrary": "المكتبة",
   "profiles.editor.stageBook": "الكتاب",
+  // The design's own words for the preview's chrome.
+  "profiles.preview.add": "إضافة",
+  "profiles.preview.readingBar": "شريط القراءة",
 
   "profiles.section.identity": "الهويّة",
   "profiles.section.theme": "الورق والألوان",

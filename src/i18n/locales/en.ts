@@ -1091,6 +1091,11 @@ export const en = {
   "profiles.shape.leaf": "Pressed leaf",
   "profiles.editor.stageLibrary": "Library",
   "profiles.editor.stageBook": "Book",
+  // The preview's own chrome. It depicts Sard's interface, so it follows the reader's language —
+  // unlike the book page inside it, which is a type specimen and shows both scripts whatever the
+  // interface is set to.
+  "profiles.preview.add": "Add",
+  "profiles.preview.readingBar": "Reading bar",
 
   "profiles.section.identity": "Identity",
   "profiles.section.theme": "Paper and colours",

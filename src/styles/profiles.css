@@ -478,12 +478,25 @@
 .pf-lib-spine { aspect-ratio: 2 / 3; border-radius: 3px; box-shadow: 0 5px 12px rgba(20, 14, 6, 0.28); }
 
 /* ---- the book face ---- */
-/* The 56px top inset is CLEARANCE FOR THE FACE SWITCH, not a model of the reader's top bar. That
-   control is a sibling of the fit box and deliberately does NOT scale with the composition, so it
-   occupies a constant ~48 rendered px while this inset is 56 design-px x the composition's scale.
-   Deriving it from the real 70px bar instead (70 / 1440 x 656 = 32) would put the page underneath the
-   control at every editor width below about 1600. It stays 56. */
-.pf-bookface { position: absolute; inset: 56px 0 0; display: flex; justify-content: center; }
+/* THE PAGE IS THE FULL HEIGHT OF THE ENVIRONMENT, which is what stops the picture escaping above it.
+   `.page-sheet` is `block-size: 100%` in the reading surface, so the real page is exactly as tall as
+   the desk it lies on and the environment can only ever be seen BESIDE it. Measured on a real open
+   book: 0px of image above the page, 0px below, 300px either side.
+
+   This face used to inset the page 56px from the top to clear the face switch, which opened a
+   56 design-px band across the full width where the picture showed above the page — a band the
+   reading surface does not have. At a wide measure the side margins are ~9px, so that band was
+   practically the only place the environment was visible, and it read as the image floating free of
+   the page rather than being seen through it.
+
+   The face switch now overlays the page's top, exactly as the reader's own top bar does (the reading
+   area keeps `inset-block-start: 0` underneath it — RAWY-142). The bookmark overhangs by 2px and is
+   clipped by the stage, which is the same 2px the reading surface clips against its own page edge.
+
+   The picture is NOT clipped to the page and must not be: it stays on the composition, sized to the
+   environment, so changing the measure reveals more environment beside the page instead of resizing
+   the image. The page is where it is SEEN, not what it is sized to. */
+.pf-bookface { position: absolute; inset: 0; display: flex; justify-content: center; }
 /* THE DEFAULT MEASURE IS 428px: the reader's own default of 940px (`pageWidthPx(0.5)`) on the
    reference window, 940 / 1440 x 656. The desk stays visible on both sides, which is the only way
    page translucency — and the image it is translucent against — can be judged at all. */

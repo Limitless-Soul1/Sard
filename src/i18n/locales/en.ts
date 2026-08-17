@@ -1185,6 +1185,31 @@ export const en = {
   "profiles.unsaved.sessionHint":
     "Kept for this session, nothing is saved to any profile — Sard returns to the profile’s own look next time you open it.",
   "profiles.unsaved.newName": "{name} — new look",
+  // FRAME 2a — the Paper chapter's inline colour editor. Three colours are the reader's own choice;
+  // the other three are derived from them and are shown, with their relationship named, so the page
+  // is never changed by something invisible.
+  "profiles.colour.heading": "Its colours — edit as you like",
+  "profiles.colour.hint": "Press a colour to change it, or paste a code you know.",
+  "profiles.colour.resetAll": "Revert all",
+  "profiles.colour.reverted": "Edited",
+  "profiles.colour.badHex": "Incomplete code — for example",
+  "profiles.colour.follows": "And these follow",
+  "profiles.colour.copy": "Copy",
+  "profiles.colour.paper": "The paper",
+  "profiles.colour.paperNote": "The book's page, and the fields",
+  "profiles.colour.text": "The letter",
+  "profiles.colour.textNote": "The text you read",
+  "profiles.colour.accent": "The touch",
+  "profiles.colour.accentNote": "Buttons, progress and selection",
+  "profiles.colour.desk": "The desk",
+  "profiles.colour.deskNote": "Around the page, and the library floor",
+  "profiles.colour.chrome": "The margins",
+  "profiles.colour.chromeNote": "Bars, menus and sides",
+  "profiles.colour.muted": "The quiet letter",
+  "profiles.colour.mutedNote": "Small headings and numbers",
+  "profiles.colour.followsPaper": "follows the paper",
+  "profiles.colour.followsText": "follows the letter",
+
   "profiles.unsaved.what.theme": "the paper",
   "profiles.unsaved.what.bookTheme": "the book’s paper",
   "profiles.unsaved.what.arabicFont": "the Arabic face",

@@ -42,7 +42,7 @@ import {
 import { READ_MARKERS } from "../../lib/readMarkerStyle";
 import { FONT_CATALOGUE, useFonts } from "../../lib/fonts";
 import { ARABIC_FONTS, LATIN_FONTS } from "../../reader-engine/injectedCss";
-import { THEMES, THEME_ORDER } from "../../theme/themes";
+import { DEFAULT_LIGHT, THEMES, THEME_ORDER } from "../../theme/themes";
 import { BookmarkShape } from "../reader/BookmarkShape";
 import { CustomPaper } from "./CustomPaper";
 import { EditorShell } from "./editor/EditorShell";
@@ -54,6 +54,8 @@ import { bookFaceCss, miniOf } from "./mini";
 import { saveProfile, useProfiles } from "./store";
 import { TEXTURE_STEPS, type Profile, type ProfileData } from "./model/profile";
 import { judgePalette } from "./model/guidance";
+import { editHex } from "./model/hex";
+import { deriveColors } from "./model/palette";
 
 /**
  * What each chapter owns, as a value that can be compared.
@@ -613,6 +615,125 @@ function IdentitySection({
   );
 }
 
+/**
+ * The three colours a reader chooses, and the three that follow — the design's own two groups.
+ *
+ * WHY THE FOLLOWERS ARE SHOWN BUT NOT EDITABLE. `deriveColors` computes desk, margins and the quiet
+ * letter from the paper, the letter and the touch; that derivation is measured across all sixteen
+ * shipped themes and is the reason two colours can produce a whole Sard. Showing them read-only with
+ * the relationship named is what makes the rule visible instead of surprising — and it is exactly
+ * what the design does: the follower rows are copy targets, not fields.
+ *
+ * EDITING A CORE COLOUR RE-DERIVES THE REST, so "follows the paper" stays true the moment the paper
+ * changes. The alternative — editing paper and leaving the desk behind — would make the label a lie.
+ */
+function InlineColours({
+  draft,
+  patch,
+}: {
+  draft: Profile;
+  patch: (f: (d: ProfileData) => void) => void;
+}) {
+  const { t } = useI18n();
+  const c = draft.data.theme.colors;
+  // The raw text per row, so a half-typed code survives a re-render. Absent = show the committed value.
+  const [typed, setTyped] = useState<Partial<Record<"paperBg" | "text" | "accent", string>>>({});
+  const [bad, setBad] = useState<string | null>(null);
+
+  const CORE = [
+    { key: "paperBg", name: "profiles.colour.paper", note: "profiles.colour.paperNote" },
+    { key: "text", name: "profiles.colour.text", note: "profiles.colour.textNote" },
+    { key: "accent", name: "profiles.colour.accent", note: "profiles.colour.accentNote" },
+  ] as const;
+  const FOLLOW = [
+    { key: "surfaceBg", name: "profiles.colour.desk", tag: "profiles.colour.followsPaper", note: "profiles.colour.deskNote" },
+    { key: "chromeBg", name: "profiles.colour.chrome", tag: "profiles.colour.followsPaper", note: "profiles.colour.chromeNote" },
+    { key: "muted", name: "profiles.colour.muted", tag: "profiles.colour.followsText", note: "profiles.colour.mutedNote" },
+  ] as const;
+
+  /** Re-derive the whole palette from the three the reader owns, keeping the authored dark flag. */
+  const commit = (role: "paperBg" | "text" | "accent", hex: string) =>
+    patch((d) => {
+      const next = { paperBg: c.paperBg, text: c.text, accent: c.accent, [role]: hex };
+      d.theme.colors = deriveColors(next.paperBg, next.text, next.accent, d.theme.dark);
+      // A colour of the reader's own is no longer one of the sixteen.
+      d.theme.base = null;
+    });
+
+  const onType = (role: "paperBg" | "text" | "accent", raw: string) => {
+    const r = editHex(raw);
+    setTyped((p) => ({ ...p, [role]: r.draft }));
+    setBad(r.bad ? role : null);
+    if (r.full) commit(role, r.full);
+  };
+
+  const edited = draft.data.theme.base === null;
+
+  return (
+    <div className="pf-ink">
+      <div className="pf-ink-head">
+        <span className="pf-ink-title">{t("profiles.colour.heading")}</span>
+        <span className="pf-ink-rule" />
+        {edited && (
+          <button
+            className="pf-ink-resetall"
+            onClick={() =>
+              patch((d) => {
+                const base = THEMES[DEFAULT_LIGHT];
+                d.theme.colors = structuredClone(base.colors);
+                d.theme.base = DEFAULT_LIGHT;
+                d.theme.dark = base.dark;
+                setTyped({});
+                setBad(null);
+              })
+            }
+          >
+            {t("profiles.colour.resetAll")}
+          </button>
+        )}
+      </div>
+      <div className="pf-ink-hint">{t("profiles.colour.hint")}</div>
+
+      {CORE.map((row) => (
+        <div className="pf-ink-row" key={row.key}>
+          <span className="pf-ink-chip" style={{ background: c[row.key] }} />
+          <span className="pf-ink-id">
+            <span className="pf-ink-name">{t(row.name)}</span>
+            <span className="pf-ink-note">{t(row.note)}</span>
+          </span>
+          {/* `dir="ltr"` and an isolate: a hex code is a Latin token and must not reorder inside an
+              Arabic sentence, in either interface language. */}
+          <input
+            className={`pf-ink-field${bad === row.key ? " bad" : ""}`}
+            value={typed[row.key] ?? c[row.key]}
+            onChange={(e) => onType(row.key, e.target.value)}
+            spellCheck={false}
+            dir="ltr"
+            aria-label={t(row.name)}
+          />
+        </div>
+      ))}
+
+      {bad && (
+        <div className="pf-ink-bad">
+          {t("profiles.colour.badHex")} <span dir="ltr">#3A7BFF</span>
+        </div>
+      )}
+
+      <div className="pf-ink-follows">
+        <span className="pf-ink-follows-label">{t("profiles.colour.follows")}</span>
+        {FOLLOW.map((f) => (
+          <span className="pf-ink-follow" key={f.key} title={`${t(f.name)} · ${t(f.note)}`}>
+            <span className="pf-ink-chip sm" style={{ background: c[f.key] }} />
+            <span className="pf-ink-follow-name">{t(f.name)}</span>
+            <span className="pf-ink-follow-tag">{t(f.tag)}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ThemeSection({
   draft,
   patch,
@@ -667,7 +788,15 @@ function ThemeSection({
         })}
       </div>
 
-      {/* The way out of the sixteen. The design puts it exactly here, as a link under the grid. */}
+      {/* THE COLOURS, IN THE CHAPTER — not behind a button.
+          The design (frame 2a) puts three editable colour rows directly under the sixteen papers,
+          each with an always-visible code field, and then names the three that follow from them. It
+          was implemented as a link that opened a dialog, which is the SUPERSEDED accordion frame's
+          shape: two clicks and a modal to reach the chapter's own primary controls. */}
+      <InlineColours draft={draft} patch={patch} />
+
+      {/* Step three of the design's own numbering: a paper of your own, from a paper and a touch,
+          shown as four whole Sards. That IS a separate surface in the design, and stays one. */}
       <button className="pf-cp-open" onClick={() => setCustom(true)}>
         {t("profiles.theme.customise")} ←
       </button>

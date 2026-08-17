@@ -509,10 +509,10 @@
 }
 
 .pfe-preview { flex: 1; min-width: 0; display: flex; }
-/* WHAT THE OPEN CHAPTER GOVERNS, drawn on the exact region instead of named in words underneath it.
-   The insets are the design's and live in `FOCUS`; they are only honest because the faces now fill
-   the stage they were measured against. The frame is EDITOR chrome, so it takes the app's own accent
-   rather than the profile's — it belongs to the tool, not to the thing being edited. */
+/* WHAT THE OPEN CHAPTER GOVERNS, drawn around the object itself. Its position and size are set
+   inline from the target's measured bounds — see `FocusFrame` for why a static inset could not work.
+   The frame is EDITOR chrome, so it takes the app's own accent rather than the profile's: it belongs
+   to the tool, not to the thing being edited. */
 .pf-focus {
   position: absolute; border: 1px solid color-mix(in srgb, var(--accent) 62%, transparent);
   border-radius: 6px; pointer-events: none; z-index: 3;

@@ -24,16 +24,18 @@ export interface Focus {
   face: "library" | "book" | null;
   label: TKey | null;
   /**
-   * The region of the stage this chapter governs, as a CSS `inset`.
+   * The object(s) this chapter governs, as selectors within the preview stage.
    *
-   * These are the design's own numbers and they are measured against a STAGE-FILLING face — the
-   * library face at `56px 26px 26px`, the book page 452px wide in the middle of the stage. They mean
-   * nothing against a centred 16:10 miniature, which is why they could not be carried until the
-   * faces were rebuilt. They are resolved against the composition box, which is laid out at exactly
-   * the size the design drew it, so they stay honest at every window size. Do not retune them: the
-   * frame is only honest if it lands on the thing it names.
+   * SELECTORS, NOT AN INSET. The design states each region as a static rectangle, which is exact for
+   * the one drawing it was measured on and wrong everywhere else: it cannot follow a bookmark the
+   * reader has just moved, it does not know which face is on screen, and `inset` is physical so it
+   * mirrors onto empty space in English. `FocusFrame` reads the union of these elements' live bounds
+   * instead — see the note there for the measurements that forced it.
+   *
+   * The face gate falls out of this for free: no matching element means no frame, and the faces are
+   * rendered one at a time.
    */
-  inset: string;
+  targets: readonly string[];
 }
 
 /**
@@ -46,10 +48,16 @@ export interface Focus {
  * label this map cannot hold.
  */
 export const FOCUS: Record<ChapterId, Focus> = {
-  identity:   { face: "library", label: "profiles.focus.identity", inset: "calc(100% - 96px) 34px 34px calc(100% - 166px)" },
-  paper:      { face: "book",    label: "profiles.focus.paper",    inset: "56px 25% 0 25%" },
-  background: { face: null,      label: null,                      inset: "56px 0 0 0" },
-  fonts:      { face: "book",    label: "profiles.focus.fonts",    inset: "104px 27% 30% 27%" },
-  marks:      { face: "book",    label: "profiles.focus.marks",    inset: "56px 27% 46% 27%" },
-  texture:    { face: "library", label: "profiles.focus.texture",  inset: "64px 34px 34px calc(100% - 166px)" },
+  // The active profile, where the library actually shows it.
+  identity:   { face: "library", label: "profiles.focus.identity", targets: [".pf-lib-chip"] },
+  // The page itself — the whole sheet, not a region of it.
+  paper:      { face: "book",    label: "profiles.focus.paper",    targets: [".pf-page"] },
+  // It governs the desk under BOTH faces, so it frames the whole composition and names neither.
+  background: { face: null,      label: null,                      targets: [".pf-stage-fit"] },
+  // The reading type, all of it: the chapter line and both scripts are one specimen.
+  fonts:      { face: "book",    label: "profiles.focus.fonts",    targets: [".pf-page-label", ".pf-page-ar", ".pf-page-la"] },
+  // Both marks the chapter owns — the highlight and underline on the page, and the marker at its edge.
+  marks:      { face: "book",    label: "profiles.focus.marks",    targets: [".pf-page-hl", ".pf-page-ul", ".pf-page-mark"] },
+  // The panel the interface texture is actually visible on.
+  texture:    { face: "library", label: "profiles.focus.texture",  targets: [".pf-lib-side"] },
 };

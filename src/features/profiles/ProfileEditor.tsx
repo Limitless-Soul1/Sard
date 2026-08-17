@@ -18,7 +18,7 @@
 // control — it is the answer to the question the editor otherwise invites. It rides in the shell's
 // `railFooter` slot rather than becoming a seventh chapter.
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 
 import { useI18n } from "../../i18n";
@@ -50,6 +50,7 @@ import { FOCUS, type ChapterId, type Focus } from "./editor/chapters";
 import { ShareSheet } from "./ShareSheet";
 import { profileChangePending } from "./session";
 import { BookFace } from "./editor/stage/BookFace";
+import { FocusFrame } from "./editor/stage/FocusFrame";
 import { LibraryFace } from "./editor/stage/LibraryFace";
 import { bookFaceCss, sealOf } from "./mini";
 import { saveProfile, useProfiles } from "./store";
@@ -166,6 +167,8 @@ export function ProfileEditor({
   );
   const iconUrl = draft.iconKind === "image" && draft.iconRef ? urlOf(draft.iconRef) : null;
   const headSeal = sealOf(draft);
+  /** The focus frame measures its target against this, in the stage's own unscaled pixels. */
+  const stageRef = useRef<HTMLDivElement | null>(null);
 
   /**
    * The picture the stage's desk carries — the design's `bgLive`: the face on screen decides which
@@ -354,7 +357,7 @@ export function ProfileEditor({
                The stage is both the coordinate system and the palette scope: every layer below is an
                absolutely-positioned sibling in one paint order, and the faces read these `--p*`
                properties rather than taking colours as props. */
-            <div className="pf-stage" style={stageVars}>
+            <div className="pf-stage" style={stageVars} ref={stageRef}>
               {/* ONE IMAGE LAYER FOR THE WHOLE STAGE, showing whichever surface is on screen — the
                   library's picture behind the library, the book's behind the page. It used to live
                   inside the book specimen only, which is why the library face could never show one
@@ -390,22 +393,23 @@ export function ProfileEditor({
                 </div>
               </div>
 
-              {/* THE COMPOSITION, at the size the design drew it and scaled to fit. The faces and
-                  the focus frame share this box so the design's percentage insets keep pointing at
-                  the thing they name at every window size; the desk, its scrim and the segmented
-                  control stay full-bleed on the stage, where the design puts them. */}
+              {/* THE COMPOSITION, at the size the design drew it and scaled to fit. The desk, its
+                  scrim and the segmented control stay full-bleed on the stage, where the design
+                  puts them. */}
               <div className="pf-stage-fit">
                 {face === "library"
                   ? <LibraryFace profile={draft} iconUrl={iconUrl} />
                   : <BookFace profile={draft} />}
-
-                {/* WHAT THIS CHAPTER GOVERNS, drawn on the region itself rather than named under it.
-                    The insets are the design's own and are honest now that the faces fill the box
-                    they were measured against. */}
-                <div className="pf-focus" style={{ inset: focus.inset }}>
-                  {focus.label && <span className="pf-focus-label">{t(focus.label)}</span>}
-                </div>
               </div>
+
+              {/* WHAT THIS CHAPTER GOVERNS, drawn around the object itself. It sits OUTSIDE the
+                  scaled composition and measures its target in the stage's own pixels, so the
+                  hairline stays a hairline and the frame follows anything the reader moves. */}
+              <FocusFrame
+                targets={focus.targets}
+                label={focus.label ? t(focus.label) : null}
+                stage={stageRef}
+              />
             </div>
           )}
           railFooter={

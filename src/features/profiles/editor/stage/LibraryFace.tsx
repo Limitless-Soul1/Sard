@@ -15,6 +15,8 @@
 
 import { useI18n } from "../../../../i18n";
 import { localeNum } from "../../../../lib/format";
+import { bookFaceCss } from "../../mini";
+import type { Profile } from "../../model/profile";
 
 /**
  * The ten spines, in the design's order.
@@ -31,7 +33,7 @@ const SPINES = [
 /** The design's specimen count. A picture of a full library, not a reading of this one. */
 const SHELF_COUNT = 216;
 
-export function LibraryFace({ iconUrl }: { iconUrl?: string | null }) {
+export function LibraryFace({ profile, iconUrl }: { profile: Profile; iconUrl?: string | null }) {
   const { t, lang } = useI18n();
 
   return (
@@ -48,12 +50,20 @@ export function LibraryFace({ iconUrl }: { iconUrl?: string | null }) {
           <i className="pf-lib-bar c" />
           <i className="pf-lib-bar d" />
         </span>
-        {/* The active profile, where Sard actually shows it. This is what `identity` points at. */}
+        {/* The active profile, where Sard actually shows it. This is what `identity` points at, so
+            it draws the profile's REAL icon — the design's mock only ever has a picture, but a
+            profile wearing a colour or a letter would otherwise show a blank square here and the
+            identity chapter would be pointing at nothing. Same three-way as the card. */}
         <span className="pf-lib-chip">
-          <i
-            className="pf-lib-avatar"
-            style={iconUrl ? { backgroundImage: `url("${iconUrl}")` } : undefined}
-          />
+          {profile.iconKind === "color" && profile.iconRef ? (
+            <i className="pf-lib-avatar" style={{ background: profile.iconRef }} />
+          ) : iconUrl ? (
+            <i className="pf-lib-avatar" style={{ backgroundImage: `url("${iconUrl}")` }} />
+          ) : (
+            <i className="pf-lib-avatar seal" style={{ fontFamily: bookFaceCss(profile.data.type.arabic) }}>
+              {(profile.name ?? "").trim().slice(0, 1) || "س"}
+            </i>
+          )}
           <i className="pf-lib-chip-rule" />
         </span>
       </div>

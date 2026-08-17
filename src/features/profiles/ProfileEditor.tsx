@@ -387,7 +387,9 @@ export function ProfileEditor({
                   the thing they name at every window size; the desk, its scrim and the segmented
                   control stay full-bleed on the stage, where the design puts them. */}
               <div className="pf-stage-fit">
-                {face === "library" ? <LibraryFace iconUrl={iconUrl} /> : <BookFace profile={draft} />}
+                {face === "library"
+                  ? <LibraryFace profile={draft} iconUrl={iconUrl} />
+                  : <BookFace profile={draft} />}
 
                 {/* WHAT THIS CHAPTER GOVERNS, drawn on the region itself rather than named under it.
                     The insets are the design's own and are honest now that the faces fill the box
@@ -490,6 +492,31 @@ function IdentitySection({
           colour"; with three that inference quietly claimed the image's selection too. */}
       <div className="pf-field">
         <span className="pf-field-label">{t("profiles.identity.icon")}</span>
+        {/* WHAT WAS ACTUALLY CHOSEN, at the size the design shows it. The three kind buttons each
+            carry a small preview, but each shows what its OWN kind would look like — so none of them
+            answers "what does this profile look like now" without the reader working out which one is
+            selected. The design answers it once, large, with a double ring that reads as "this is the
+            one". Presentation only: it draws the same three-way the card and the toolbar draw. */}
+        <span
+          className="pf-icon-now"
+          style={{
+            background: draft.data.theme.colors.paperBg,
+            color: draft.data.theme.colors.text,
+            fontFamily: bookFaceCss(draft.data.type.arabic),
+          }}
+          aria-hidden
+        >
+          {colour && draft.iconRef ? (
+            <span className="pf-icon-now-dot" style={{ background: draft.iconRef }} />
+          ) : iconRow ? (
+            <span
+              className="pf-icon-now-img"
+              style={{ backgroundImage: `url("${bgSrcUrl(iconRow)}")` }}
+            />
+          ) : (
+            seal
+          )}
+        </span>
         <div className="pf-icon-kinds" role="radiogroup">
           <button
             role="radio"

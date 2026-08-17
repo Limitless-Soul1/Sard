@@ -233,6 +233,17 @@
 /* The profile's own face in the toolbar, at the design's 34px. A chosen image fills it; a chosen
    colour becomes the dot; otherwise the initial is set in the profile's own book face, which is the
    same three-way — and the same fallback — the card uses. */
+/* The chosen icon at the design's 64px, with its double ring — accent, then the chrome it sits on,
+   which is what makes the ring read as a selection rather than as a border. */
+.pf-icon-now {
+  width: 64px; height: 64px; flex: none; border-radius: 12px;
+  display: grid; place-items: center; overflow: hidden; margin-bottom: 12px;
+  font-size: 1.75rem;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg);
+}
+.pf-icon-now-img { width: 100%; height: 100%; background-size: cover; background-position: 50% 34%; }
+.pf-icon-now-dot { width: 26px; height: 26px; border-radius: 50%; }
+
 .pf-editor-seal {
   width: 34px; height: 34px; flex: none; border-radius: 9px;
   display: grid; place-items: center; overflow: hidden;
@@ -366,6 +377,9 @@
 .pf-lib-avatar {
   width: 22px; height: 22px; flex: none; border-radius: 6px; background-color: var(--pp);
   background-size: cover; background-position: 50% 34%;
+}
+.pf-lib-avatar.seal {
+  display: grid; place-items: center; font-size: 12px; font-style: normal; color: var(--px);
 }
 .pf-lib-chip-rule { flex: 1; height: 2px; background: var(--px); opacity: 0.34; }
 .pf-lib-main { flex: 1; min-width: 0; padding: 16px 16px 0; }

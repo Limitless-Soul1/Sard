@@ -984,7 +984,11 @@ html, body, #root {
      open panel, exactly as the design shows (panel has its own header below the bar). */
   top: 70px;
   bottom: 56px;
-  inline-size: 300px;
+  /* ONE width for every reading panel (RAWY-88's In-Book Search value, which Notes already shared).
+     It lives here alone: `PANEL_LEAD`/`PANEL_TRAIL` in Reader.tsx must both equal it. Contents was
+     the last panel at 300 — the odd one out, and the reason the desk could reserve a width the
+     panel did not actually have. */
+  inline-size: 340px;
   max-inline-size: 86vw;
   display: flex;
   flex-direction: column;
@@ -1075,9 +1079,12 @@ html, body, #root {
 .rp-lead { left: 0; right: auto; border-right: 1px solid var(--chrome-border); transform: translateX(-104%); }
 /* RAWY-206: the NOTES panel is slightly wider than the 300px base — it now carries a source filter and
    BOOK · CHAPTER labels on cross-book rows, and RAWY-120/121 already recorded 300 as tight for this
-   header. Contents/Search (.rp-lead) keep 300. ⚠ `PANEL_TRAIL` in Reader.tsx MUST equal this: it drives
-   the desk padding + `--reading-shift` (TTS pill / kashida / resume hint). max-inline-size still caps it. */
-.rp-trail { right: 0; left: auto; border-left: 1px solid var(--chrome-border); transform: translateX(104%); inline-size: 340px; }
+   header. RAWY-88 had already set Search to 340 from its own design, so Contents was the last panel
+   still at 300 — the odd one out. The shared value now lives on `.reader-panel` and no panel overrides
+   it. ⚠ `PANEL_LEAD` and `PANEL_TRAIL` in Reader.tsx MUST BOTH equal it: they drive the desk padding +
+   `--reading-shift` (TTS pill / kashida / resume hint), and a panel wider than the padding the desk
+   reserves sits ON the page. max-inline-size still caps it. */
+.rp-trail { right: 0; left: auto; border-left: 1px solid var(--chrome-border); transform: translateX(104%); }
 /* RAWY-120: shown → visible IMMEDIATELY (visibility 0s 0s, not the base 0.22s delay) so the panel is
    seen as it slides IN; the base rule hides it again 0.22s after it slides out. */
 .reader-panel.show {
@@ -2238,7 +2245,8 @@ html, body, #root {
 .toc-dot.current { background: transparent; border: 1.5px solid var(--accent); }
 
 /* ===== RAWY-88: in-book search panel (design: In-Book Search) ===== */
-.search-panel { inline-size: 340px; }
+/* Width intentionally NOT set here. RAWY-88's 340 is now the shared `.reader-panel` value, so this
+   panel inherits it. Re-adding a width here is what let the CSS disagree with `PANEL_LEAD`. */
 /* search input */
 .sp-search-field {
   display: flex; align-items: center; gap: 8px; margin: 4px 12px 10px;

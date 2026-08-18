@@ -2005,12 +2005,17 @@ export function Reader({
   // UI language. Physical paddingLeft/Right match those fixed sides regardless of <html dir>.
   // The three right-edge drawers (Settings 384 / Notes 300) are mutually exclusive; Contents
   // (left) coexists. Shift the desk by whichever right drawer is open so the page recenters.
-  // ⚠ These MUST match the panels' CSS widths (`.reader-panel` / `.rp-trail` in global.css). The width
-  // lives in two places — here it drives the desk padding + `--reading-shift` (the TTS pill, the kashida
-  // and the resume hint all read it), so changing only the CSS silently de-centres the page and slides
-  // those off-target. RAWY-206 widened the NOTES panel (trailing) to 340 for its book+chapter labels;
-  // Contents/Search (leading) stay 300.
-  const PANEL_LEAD = 300;
+  // ⚠ These MUST match the panels' CSS width — now a single value on `.reader-panel` in global.css,
+  // which no panel overrides. The width lives in two places: here it drives the desk padding +
+  // `--reading-shift` (the TTS pill, the kashida and the resume hint all read it), so changing only
+  // the CSS silently de-centres the page and slides those off-target.
+  //
+  // That is exactly what had happened: RAWY-88 set Search to 340 from its design (2026-07-03), and
+  // RAWY-206 later added PANEL_LEAD = 300 with a comment claiming Contents/Search were both 300 —
+  // untrue when written. The desk reserved 300 while Search rendered 340, so 40px of the page sat
+  // UNDER the panel and `--reading-shift` was 20px off. Both are 340 now: Notes and Search already
+  // were, Contents was the last at 300, and one width means the two places cannot disagree again.
+  const PANEL_LEAD = 340;
   const PANEL_TRAIL = 340;
   // Contents + Search both live on the physical-left and are mutually exclusive — either shifts the desk.
   const leftPad = chaptersOpen || searchOpen ? PANEL_LEAD : 0;

@@ -94,6 +94,29 @@
   --sp-7:  24px;
   --sp-8:  32px;
 
+  /* ---- Interaction states -------------------------------------------------------------------
+   * Promoted from the vocabulary the Library already uses (`--lib-hover` / `--lib-active` /
+   * `--lib-soft` / `--lib-letterbox`), not invented: those derivations are duplicated verbatim in
+   * two stylesheets today, which is the reason to give them one home. They stay expressed as
+   * `color-mix` against `--text` / `--accent` / the ground, so every one of the 16 themes derives
+   * its own states instead of carrying a table of literals.
+   *
+   * The audit found the three ACTIVE treatments individually correct but said three different
+   * ways — toolbar (accent fill + dark icon), table of contents (accent edge + lighter ground +
+   * bold), library nav (filled ground + cream ink). The tokens below are the shared halves of
+   * those; which of edge/fill a surface uses is a component decision, not a token one.
+   *
+   * `disabled` is 0.55 because that is the app's most-used disabled opacity (5 rules; the field
+   * otherwise ranges 0.4–0.6 with no pattern).
+   */
+  --state-hover:     color-mix(in srgb, var(--text) 6%, transparent);
+  --state-selected:  color-mix(in srgb, var(--accent) 12%, var(--chrome-bg));
+  --state-soft:      color-mix(in srgb, var(--text) 4%, var(--paper-bg));
+  --state-sunken:    color-mix(in srgb, var(--text) 8%, var(--chrome-bg));
+  --state-edge:      var(--accent);   /* the 2px inset marker an active row carries */
+  --state-edge-size: 2px;
+  --state-disabled:  0.55;
+
   /* ---- Vista (Decision 5) -------------------------------------------------------------------
    * ⚠ Vista exists to make the USER'S BACKGROUND IMAGE visible and prominent. The image is the
    * point of the view, not decoration behind it. The governing rule is therefore:

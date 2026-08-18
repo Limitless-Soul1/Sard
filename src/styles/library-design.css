@@ -96,7 +96,12 @@
 .libd-chrome,
 .libd-stage,
 .libd-dialog {
-  font-size: 15px;
+  /* The Library surface's inherited base. It was a fixed 15px, which is the one thing on this
+     surface that could not follow the window or the reader's own font-size control — every rem
+     inside resolves against the ROOT, so only what inherits THIS was frozen. `--fs-large` is the
+     ramp step at that size (0.9375rem = 15px at a 16px root), so the value is unchanged where it
+     started and now moves with everything around it. */
+  font-size: var(--fs-large);
   line-height: 1.55;
 }
 

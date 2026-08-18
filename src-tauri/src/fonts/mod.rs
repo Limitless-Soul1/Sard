@@ -52,8 +52,49 @@ fn family_from_stem(stem: &str) -> String {
     if joined.is_empty() { "Imported font".into() } else { joined }
 }
 
+/// Register a font under a family the CALLER already knows, if this installation lacks it.
+///
+/// A PROFILE NAMES A FONT BY ITS FAMILY. `bookFaceCss` passes an unrecognised key straight through
+/// as a CSS family, so a packaged font is only useful if it lands under the exact family the profile
+/// names — which `family_from_stem` cannot guarantee, since it reads a filename and the manifest is
+/// what carries the truth.
+///
+/// THAT IS ALSO THE DEDUPLICATION, and why fonts need no content hash to avoid duplicate records.
+/// "Does this installation already have this family?" is the same question the renderer asks when it
+/// resolves the profile, so a family already present needs nothing: a second copy would add a row, a
+/// file and a byte count while changing nothing anyone can see. `Ok(None)` = already had it.
+pub fn import_named(
+    conn: &Connection,
+    app_data_dir: &Path,
+    src_path: &str,
+    family: &str,
+) -> Result<Option<CustomFont>, String> {
+    let family = family.trim();
+    if family.is_empty() {
+        return Err("font family is empty".into());
+    }
+    let existing: Option<String> = conn
+        .query_row("SELECT id FROM custom_fonts WHERE family_name = ?1 LIMIT 1", [family], |r| r.get(0))
+        .optional()
+        .map_err(|e| e.to_string())?;
+    if existing.is_some() {
+        return Ok(None);
+    }
+    import_as(conn, app_data_dir, src_path, Some(family)).map(Some)
+}
+
 /// Copy `src_path` into the managed fonts dir and record it. Returns the new row.
 pub fn import(conn: &Connection, app_data_dir: &Path, src_path: &str) -> Result<CustomFont, String> {
+    import_as(conn, app_data_dir, src_path, None)
+}
+
+/// The shared body. `family_override` names the family instead of deriving it from the file stem.
+fn import_as(
+    conn: &Connection,
+    app_data_dir: &Path,
+    src_path: &str,
+    family_override: Option<&str>,
+) -> Result<CustomFont, String> {
     let src = Path::new(src_path);
     let ext = src
         .extension()
@@ -64,7 +105,10 @@ pub fn import(conn: &Connection, app_data_dir: &Path, src_path: &str) -> Result<
         return Err(format!("Unsupported font type: .{ext} (use ttf, otf, woff, woff2)"));
     }
     let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("font").to_string();
-    let family = family_from_stem(&stem);
+    let family = match family_override {
+        Some(f) => f.to_string(),
+        None => family_from_stem(&stem),
+    };
 
     let fonts_dir: PathBuf = app_data_dir.join("fonts");
     std::fs::create_dir_all(&fonts_dir).map_err(|e| e.to_string())?;

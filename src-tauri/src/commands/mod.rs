@@ -1071,10 +1071,17 @@ pub async fn background_import(
 /// PROFILES (stage 6) — write a package to the path the reader chose.
 ///
 /// The manifest text is produced and shown by the frontend, and written verbatim: what the reader
-/// inspected before sending is byte-for-byte what leaves. Settings only — assets travel later.
+/// inspected before sending is byte-for-byte what leaves.
+///
+/// The ASSETS are chosen by the frontend, which owns the share sheet and its switches; this only
+/// moves the bytes. Absent = a settings-only package, exactly what a v1 caller wrote.
 #[tauri::command]
-pub fn profile_export(path: String, manifest_json: String) -> Result<(), String> {
-    profiles::package::export(&path, &manifest_json)
+pub fn profile_export(
+    path: String,
+    manifest_json: String,
+    assets: Option<Vec<profiles::package::AssetIn>>,
+) -> Result<(), String> {
+    profiles::package::export(&path, &manifest_json, &assets.unwrap_or_default())
 }
 
 /// Read a package's manifest and change NOTHING. The reader sees the profile before it enters, and
@@ -1095,11 +1102,16 @@ pub fn profile_import_inspect(path: String) -> Result<String, String> {
 pub fn profile_import_commit(
     manifest_json: String,
     new_id: String,
+    // The archive the manifest came from. Present = register its assets too; absent = settings only,
+    // which is what a v1 package and the drag-and-drop preview of one both amount to.
+    path: Option<String>,
     state: State<AppState>,
 ) -> Result<profiles::Profile, String> {
     safe_id(new_id.trim_start_matches("u:"))?;
+    let app_data_dir = state.app_data_dir.clone();
     let conn = state.conn();
-    profiles::package::commit(&conn, &manifest_json, &new_id)
+    let from = path.as_deref().map(|p| (p, app_data_dir.as_path()));
+    profiles::package::commit(&conn, &manifest_json, &new_id, from)
 }
 
 #[tauri::command]

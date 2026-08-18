@@ -12,9 +12,11 @@
 // written by a newer Sard, or that carries a reading-layout field it has no business carrying, would
 // be importing something nobody inspected. So this refuses in words before parsing forgives.
 //
-// SETTINGS ONLY, FOR NOW. Backgrounds, icons and fonts travel in a later stage; a package that
-// claims assets is not rejected, its asset claims are simply not honoured yet, so a profile shared
-// from a future Sard still imports its colours and faces here.
+// ASSETS TRAVEL, AND THEIR CLAIMS ARE ONLY CLAIMS. A package carries the pictures and faces a
+// profile is made of, and the manifest lists them so the preview can say what is arriving. This
+// module reads that list; it does not believe it. The archive holds the bytes, and Rust checks the
+// two agree before anything is unpacked — so a manifest that lies costs a row in a list, never a
+// file on disk.
 
 import { PROFILE_DATA_VERSION, parseProfileData, type Profile, type ProfileData } from "./profile";
 
@@ -156,6 +158,11 @@ export function inspectPackage(text: string): Inspection {
       description: typeof o.description === "string" ? o.description : null,
       author: typeof o.author === "string" ? o.author : null,
       data: o.data,
+      // The asset CLAIMS, kept only where they are shaped like claims. This list is a stranger's
+      // text: it says what the archive is supposed to hold, and the preview reads it so the reader
+      // can see what is arriving. Rust checks the claims against the archive before believing any of
+      // them, so a lie here costs a row in a list, never an unpacked file.
+      assets: Array.isArray(o.assets) ? o.assets.filter(isAssetClaim) : undefined,
     },
     // Total by construction: whatever survived the rules above is defaulted field by field.
     data: parseProfileData(JSON.stringify(o.data)),
@@ -171,6 +178,19 @@ function forbiddenIn(v: unknown, depth = 0): string | null {
     if (deeper) return deeper;
   }
   return null;
+}
+
+/** A claim shaped like a claim. Anything else in the list is dropped rather than drawn. */
+function isAssetClaim(v: unknown): v is PackageAsset {
+  if (!v || typeof v !== "object") return false;
+  const a = v as Record<string, unknown>;
+  return (
+    (a.kind === "background" || a.kind === "icon" || a.kind === "font") &&
+    typeof a.member === "string" &&
+    typeof a.name === "string" &&
+    typeof a.bytes === "number" &&
+    Number.isFinite(a.bytes)
+  );
 }
 
 /**

@@ -658,6 +658,25 @@ pub fn set_surface(
     Ok(())
 }
 
+/// The test PNG writer, shared with the package tests so the portability round trip runs against a
+/// real decodable image rather than a second, weaker fixture.
+#[cfg(test)]
+pub mod tests_support {
+    use std::path::Path;
+
+    pub fn write_png(dir: &Path, name: &str, w: u32, h: u32, base: u8) -> String {
+        let _ = std::fs::create_dir_all(dir);
+        let p = dir.join(name);
+        let img = image::RgbImage::from_fn(w, h, |x, y| {
+            image::Rgb([base, (x % 251) as u8, (y % 241) as u8])
+        });
+        image::DynamicImage::ImageRgb8(img)
+            .save_with_format(&p, image::ImageFormat::Png)
+            .unwrap();
+        p.display().to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

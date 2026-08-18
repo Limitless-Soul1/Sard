@@ -402,8 +402,10 @@ export async function saveProfile(p: Profile): Promise<void> {
  * generated there — one place decides what a profile id looks like. Rust re-checks the manifest
  * regardless: `commit` is the boundary, and it does not trust that inspection happened.
  */
-export async function importProfile(manifestJson: string): Promise<Profile> {
-  const row = await profileImportCommit(manifestJson, newId());
+export async function importProfile(manifestJson: string, archivePath?: string | null): Promise<Profile> {
+  // The archive rides along so `commit` can register the assets beside the row — one place, as the
+  // boundary intended. Absent (a v1 package, or a manifest with no assets) is settings only.
+  const row = await profileImportCommit(manifestJson, newId(), archivePath ?? null);
   await refreshProfiles();
   return toProfile(row);
 }

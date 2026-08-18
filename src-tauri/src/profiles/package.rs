@@ -46,6 +46,118 @@ pub const PACKAGE_VERSION: u64 = 2;
 /// the manifest already makes.
 pub const ASSET_DIR: &str = "assets/";
 
+/// A packageable asset, resolved from the profile's own references.
+///
+/// THE PLAN IS MADE HERE, NOT IN THE UI. The share sheet has to name each asset, price it in real
+/// bytes, and hand back what the reader chose — and every one of those needs a managed path the
+/// frontend has no business holding. Resolving them in one place means the sheet renders exactly
+/// what `export` will write, rather than a second, frontend-only picture of the same thing that can
+/// disagree with it.
+///
+/// `surfaces` is a LIST because one picture is often two surfaces. A profile whose book background
+/// is "the same image, quieter" names one file twice, so it is packed once and claimed twice — which
+/// is why the design prices the second one at "no additional size".
+#[derive(serde::Serialize)]
+pub struct PlannedAsset {
+    pub kind: String,
+    pub id: String,
+    pub member: String,
+    pub source: String,
+    pub name: String,
+    pub bytes: u64,
+    pub family: Option<String>,
+    pub surfaces: Vec<String>,
+}
+
+/// Resolve what CAN travel with this profile, with real sizes.
+///
+/// Only what the profile actually references, and only what is actually on disk: a ref whose row is
+/// gone, or whose file went missing, is simply absent from the plan rather than offered and then
+/// failing at export. Nothing here decides what SHOULD travel — that is the reader's, through the
+/// sheet's switches.
+pub fn plan(
+    conn: &Connection,
+    library_ref: Option<&str>,
+    reading_ref: Option<&str>,
+    icon_ref: Option<&str>,
+    families: &[String],
+) -> Result<Vec<PlannedAsset>, String> {
+    let mut out: Vec<PlannedAsset> = Vec::new();
+
+    // One entry per distinct FILE, with every surface that names it.
+    let mut add_image = |id: &str, surface: &str, kind: &str| -> Result<(), String> {
+        if let Some(existing) = out.iter_mut().find(|a| a.id == id) {
+            if !existing.surfaces.iter().any(|s| s == surface) {
+                existing.surfaces.push(surface.to_string());
+            }
+            return Ok(());
+        }
+        let Some(row) = crate::backgrounds::get(conn, id)? else { return Ok(()) };
+        let Ok(meta) = std::fs::metadata(&row.original_path) else { return Ok(()) };
+        out.push(PlannedAsset {
+            kind: kind.to_string(),
+            id: id.to_string(),
+            // The member is the content id: the same picture cannot be written twice, and the name
+            // says nothing about the sender's filesystem.
+            member: format!("{ASSET_DIR}{id}"),
+            source: row.original_path.clone(),
+            name: row.source_name.clone().unwrap_or_else(|| id.to_string()),
+            bytes: meta.len(),
+            family: None,
+            surfaces: vec![surface.to_string()],
+        });
+        Ok(())
+    };
+    if let Some(id) = library_ref.filter(|s| !s.is_empty()) {
+        add_image(id, "library", "background")?;
+    }
+    if let Some(id) = reading_ref.filter(|s| !s.is_empty()) {
+        add_image(id, "reading", "background")?;
+    }
+    if let Some(id) = icon_ref.filter(|s| !s.is_empty()) {
+        add_image(id, "icon", "icon")?;
+    }
+
+    // A family that is not a custom row is a built-in: every installation already has it, so sending
+    // it would be sending Sard its own file.
+    for (i, family) in families.iter().enumerate() {
+        let family = family.trim();
+        if family.is_empty() {
+            continue;
+        }
+        if out.iter().any(|a| a.family.as_deref() == Some(family)) {
+            continue;
+        }
+        let found: Option<String> = conn
+            .query_row(
+                "SELECT file_path FROM custom_fonts WHERE family_name = ?1 LIMIT 1",
+                [family],
+                |r| r.get(0),
+            )
+            .ok();
+        let Some(path) = found else { continue };
+        let Ok(meta) = std::fs::metadata(&path) else { continue };
+        let ext = Path::new(&path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .unwrap_or_else(|| "ttf".into());
+        out.push(PlannedAsset {
+            kind: "font".into(),
+            id: family.to_string(),
+            member: format!("{ASSET_DIR}font-{i}.{ext}"),
+            source: path,
+            // A font's name IS its family — that is what the profile names and what the reader
+            // recognises; the file it happens to live in is an implementation detail.
+            name: family.to_string(),
+            bytes: meta.len(),
+            family: Some(family.to_string()),
+            surfaces: Vec::new(),
+        });
+    }
+    Ok(out)
+}
+
 /// One asset the caller wants written into the package.
 ///
 /// The frontend chooses WHAT travels — it owns the share sheet, the toggles and the sizes — and this
@@ -322,11 +434,23 @@ pub fn commit(
                                     // believed — the row still exists and the collector still owns it.
                                     let claimed_id = a.get("id").and_then(|x| x.as_str());
                                     if claimed_id.is_none_or(|c| c == row.id) {
-                                        match a.get("surface").and_then(|x| x.as_str()) {
-                                            Some("library") => bg_library = Some(row.id.clone()),
-                                            Some("reading") => bg_reading = Some(row.id.clone()),
-                                            Some("icon") => icon_ref = Some(row.id.clone()),
-                                            _ => {}
+                                        // A LIST, because one picture is often two surfaces: a book
+                                        // background that is "the same image, quieter" is packed
+                                        // once and claimed twice.
+                                        let surfaces = a
+                                            .get("surfaces")
+                                            .and_then(|x| x.as_array())
+                                            .map(|v| {
+                                                v.iter().filter_map(|s| s.as_str()).collect::<Vec<_>>()
+                                            })
+                                            .unwrap_or_default();
+                                        for s in surfaces {
+                                            match s {
+                                                "library" => bg_library = Some(row.id.clone()),
+                                                "reading" => bg_reading = Some(row.id.clone()),
+                                                "icon" => icon_ref = Some(row.id.clone()),
+                                                _ => {}
+                                            }
                                         }
                                     }
                                 }
@@ -513,6 +637,106 @@ mod tests {
             "a family already present is not registered twice"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// TWO INSTALLATIONS, AND A PROFILE THAT SURVIVES THE JOURNEY.
+    ///
+    /// This is the claim the whole format exists to make, so it is made against two genuinely
+    /// separate app-data directories and two separate databases — not one database pretending. A
+    /// picture and a face are imported into A, planned, packed, and committed into a B that has
+    /// never seen either.
+    ///
+    /// The assertion that matters is the ID: because a background is content-addressed over its
+    /// ORIGINAL bytes and those bytes travel untouched, the row B creates lands under the SAME id A
+    /// had — which is what makes the refs inside `data` resolve on the far side with no rewriting.
+    #[test]
+    fn a_profile_and_its_assets_survive_a_journey_between_two_installations() {
+        let root = std::env::temp_dir().join(format!("sard-port-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let a_dir = root.join("A");
+        let b_dir = root.join("B");
+        std::fs::create_dir_all(&a_dir).unwrap();
+        std::fs::create_dir_all(&b_dir).unwrap();
+
+        // ---- installation A: a real picture and a real font file
+        let a_conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations::run(&a_conn, None).unwrap();
+        let src_png = crate::backgrounds::tests_support::write_png(&a_dir, "wall.png", 220, 140, 90);
+        let bg = crate::backgrounds::import(&a_conn, &a_dir, &src_png).unwrap();
+        let font_src = a_dir.join("Rakwa-Regular.ttf");
+        std::fs::write(&font_src, b"font bytes that are not really a font").unwrap();
+        crate::fonts::import_named(&a_conn, &a_dir, &font_src.display().to_string(), "Rakwa").unwrap();
+
+        // ---- what can travel, priced from the files themselves
+        let planned = plan(&a_conn, Some(&bg.id), Some(&bg.id), None, &["Rakwa".to_string()]).unwrap();
+        assert_eq!(planned.len(), 2, "one picture (serving two surfaces) and one font");
+        let picture = planned.iter().find(|p| p.kind == "background").unwrap();
+        assert_eq!(
+            picture.surfaces.len(),
+            2,
+            "one file claimed by both surfaces — packed once, which is why the design prices the \
+             second at no additional size"
+        );
+        assert!(picture.bytes > 0, "priced from the file, not estimated");
+
+        // ---- pack it
+        let pkg = root.join("p.zip");
+        let assets_json: Vec<String> = planned
+            .iter()
+            .map(|p| {
+                format!(
+                    r#"{{"kind":"{}","id":"{}","member":"{}","name":"n","bytes":{},"family":{},"surfaces":[{}]}}"#,
+                    p.kind,
+                    p.id,
+                    p.member,
+                    p.bytes,
+                    p.family.as_ref().map(|f| format!("\"{f}\"")).unwrap_or("null".into()),
+                    p.surfaces.iter().map(|s| format!("\"{s}\"")).collect::<Vec<_>>().join(","),
+                )
+            })
+            .collect();
+        let text = format!(
+            r#"{{"package":2,"app":"t","name":"Masaa","assets":[{}],"data":{{"theme":{{"base":"ivory"}},"type":{{"arabic":"Rakwa"}}}}}}"#,
+            assets_json.join(",")
+        );
+        let ins: Vec<AssetIn> = planned
+            .iter()
+            .map(|p| AssetIn { member: p.member.clone(), source: p.source.clone() })
+            .collect();
+        export(pkg.to_str().unwrap(), &text, &ins).unwrap();
+
+        // ---- installation B has never seen any of it
+        let b_conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations::run(&b_conn, None).unwrap();
+        assert!(crate::backgrounds::list(&b_conn).unwrap().is_empty(), "B starts empty");
+        assert!(crate::fonts::list(&b_conn).unwrap().is_empty(), "B starts empty");
+
+        let from = Some((pkg.to_str().unwrap(), b_dir.as_path()));
+        let p = commit(&b_conn, &text, "u:landed", from).unwrap();
+
+        let b_bgs = crate::backgrounds::list(&b_conn).unwrap();
+        assert_eq!(b_bgs.len(), 1, "the picture arrived");
+        assert_eq!(
+            b_bgs[0].id, bg.id,
+            "and under the SAME content id, so the profile's own refs resolve with no rewriting"
+        );
+        assert!(std::path::Path::new(&b_bgs[0].original_path).exists(), "its bytes are on B's disk");
+        assert_eq!(p.bg_library.as_deref(), Some(bg.id.as_str()), "the library surface is claimed");
+        assert_eq!(p.bg_reading.as_deref(), Some(bg.id.as_str()), "and so is the reading surface");
+        let b_fonts = crate::fonts::list(&b_conn).unwrap();
+        assert_eq!(b_fonts.len(), 1, "the face arrived");
+        assert_eq!(b_fonts[0].family_name, "Rakwa", "under the family the profile names");
+
+        // ---- the same package again: B already has all of it
+        commit(&b_conn, &text, "u:again", from).unwrap();
+        assert_eq!(
+            crate::backgrounds::list(&b_conn).unwrap().len(),
+            1,
+            "the picture is reused, not duplicated — content addressing does this for free"
+        );
+        assert_eq!(crate::fonts::list(&b_conn).unwrap().len(), 1, "and so is the face");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A member path is ours to construct. A manifest that names one outside the asset folder, or

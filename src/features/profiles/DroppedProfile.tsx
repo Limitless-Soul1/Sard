@@ -8,7 +8,8 @@ import { useDropped } from "./dropped";
 
 export function DroppedProfile() {
   const text = useDropped((s) => s.text);
+  const path = useDropped((s) => s.path);
   const clear = useDropped((s) => s.clear);
   if (!text) return null;
-  return <ImportSheet initialText={text} onClose={clear} onEdit={clear} />;
+  return <ImportSheet initialText={text} initialPath={path} onClose={clear} onEdit={clear} />;
 }

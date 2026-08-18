@@ -10,9 +10,10 @@
 // belt-and-braces for its own sake: the second gate is the one that can say WHICH rule was broken in
 // the reader's own language, and the first is the one that holds even if the frontend is wrong.
 //
-// FRAME 16 IS NOT HERE. The missing-font state belongs to the stage that carries fonts; a package
-// today sends font NAMES, and an absent family already falls back through the CSS stack without
-// anything to announce.
+// FRAME 16 IS NOT HERE, AND ITS REASON HAS CHANGED. A package now carries an imported font's FILE,
+// so the common case the frame was drawn for — "one font is not on this device" — is the case that no
+// longer happens. What remains is a font the sender EXCLUDED, and that is already stated in the rows
+// below as not included, at the moment the reader can still decline the import.
 //
 // NO "TRY IT". The study proposed previewing a profile by wearing it; the design deliberately offers
 // Cancel and Import only, and importing is additive and reversible by deleting. Adding a mode the
@@ -27,7 +28,7 @@ import { profileImportInspect } from "../../lib/ipc";
 import { localeDigits } from "../../lib/format";
 import { isBuiltinThemeId } from "../../theme";
 import { THEMES } from "../../theme/themes";
-import { inspectPackage, summarise } from "./model/package";
+import { inspectPackage, summarise, type PackageAsset } from "./model/package";
 import { miniOf, sealOf } from "./mini";
 import { SardMini } from "./SardMini";
 import { applyProfile, importProfile } from "./store";
@@ -42,9 +43,10 @@ import type { Profile, ProfileData } from "./model/profile";
  * which take a `Profile`. `inspectPackage` already returns the whole of `ProfileData`; nothing new
  * has to travel for this, and nothing here is a second interpretation of a profile's appearance.
  *
- * `iconKind: "seal"` is not a placeholder — it is the truth. The manifest carries no icon (see
- * `PackageManifest`), so an imported profile wears a seal, and showing one here is showing what will
- * actually arrive rather than a picture of what the sender had.
+ * IT WEARS A SEAL EVEN WHEN AN ICON IS COMING. A package can now carry one, but its bytes are still
+ * inside the archive and NOTHING is unpacked until the reader says yes — that is the whole of
+ * "preview first". Drawing a seal here is therefore honest about the moment rather than about the
+ * package: the icon is listed in the rows below as arriving, and appears once it has.
  */
 function previewProfile(name: string | null, author: string | null, data: ProfileData): Profile {
   return {
@@ -80,7 +82,7 @@ type Stage =
   | { at: "picking" }
   // `data` rides along with the summary: the miniature needs the whole of it, and `summarise`
   // narrows to the four fields the old row list happened to want.
-  | { at: "preview"; text: string; sum: ReturnType<typeof summarise>; data: ProfileData; bytes: number }
+  | { at: "preview"; text: string; path: string | null; sum: ReturnType<typeof summarise>; data: ProfileData; assets: PackageAsset[]; bytes: number }
   | { at: "done"; profile: Profile }
   | { at: "refused"; code: string; detail: string | null };
 
@@ -88,6 +90,7 @@ export function ImportSheet({
   onClose,
   onEdit,
   initialText,
+  initialPath,
 }: {
   onClose: () => void;
   onEdit: (p: Profile) => void;
@@ -99,13 +102,16 @@ export function ImportSheet({
    * skipped, because the reader already chose by dropping.
    */
   initialText?: string;
+  /** The archive `initialText` was read from — the assets live there, not in the manifest. */
+  initialPath?: string | null;
 }) {
   const { t, lang } = useI18n();
   const [stage, setStage] = useState<Stage>(() => {
     if (!initialText) return { at: "picking" };
     const seen = inspectPackage(initialText);
     return seen.ok
-      ? { at: "preview", text: initialText, sum: summarise(seen), data: seen.data,
+      ? { at: "preview", text: initialText, path: initialPath ?? null, sum: summarise(seen), data: seen.data,
+          assets: seen.manifest.assets ?? [],
           bytes: new TextEncoder().encode(initialText).length }
       : { at: "refused", code: seen.refusal.code,
           detail: "field" in seen.refusal ? seen.refusal.field : null };
@@ -139,8 +145,10 @@ export function ImportSheet({
       setStage({
         at: "preview",
         text,
+        path: picked,
         sum: summarise(seen),
         data: seen.data,
+        assets: seen.manifest.assets ?? [],
         bytes: new TextEncoder().encode(text).length,
       });
     } catch (e) {
@@ -278,6 +286,22 @@ export function ImportSheet({
       </div>
 
       <div className="pf-import-rows">
+        {/* WHAT IS ACTUALLY IN THIS ARCHIVE. Read from the manifest's own claims rather than from a
+            list of what a profile could have — a package whose sender switched the picture off says
+            so here, at the moment declining still costs nothing. */}
+        {stage.assets.map((a) => (
+          <div className="pf-import-row" key={a.member}>
+            <span className="pf-import-dot" aria-hidden />
+            <span className="pf-import-row-name">
+              {a.kind === "font"
+                ? t("profiles.chapter.fonts")
+                : a.kind === "icon"
+                  ? t("profiles.share.row.icon")
+                  : t("profiles.share.row.libraryBg")}
+            </span>
+            <span className="pf-import-row-val" dir="auto">{a.name}</span>
+          </div>
+        ))}
         {rows.map(([k, v]) => (
           <div className="pf-import-row" key={k}>
             <span className="pf-import-dot" aria-hidden />
@@ -302,7 +326,7 @@ export function ImportSheet({
           disabled={busy}
           onClick={() => {
             setBusy(true);
-            void importProfile(stage.text)
+            void importProfile(stage.text, stage.path)
               .then((p) => setStage({ at: "done", profile: p }))
               .catch((e) => setStage({ at: "refused", code: String(e), detail: null }))
               .finally(() => setBusy(false));

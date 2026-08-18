@@ -9,12 +9,15 @@ import { create } from "zustand";
 interface DroppedState {
   /** The manifest text `profile_import_inspect` returned, or null when nothing is waiting. */
   text: string | null;
-  offer: (text: string) => void;
+  /** The archive it came from — the assets live there, not in the manifest. */
+  path: string | null;
+  offer: (text: string, path: string) => void;
   clear: () => void;
 }
 
 export const useDropped = create<DroppedState>((set) => ({
   text: null,
-  offer: (text) => set({ text }),
-  clear: () => set({ text: null }),
+  path: null,
+  offer: (text, path) => set({ text, path }),
+  clear: () => set({ text: null, path: null }),
 }));

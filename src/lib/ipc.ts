@@ -96,16 +96,52 @@ export const backgroundChoose = (surface: "library" | "reading", path: string): 
  *  The row is unreferenced until the profile is saved, which is correct: an abandoned draft's
  *  image IS an orphan. See `background_import` for why that direction is the safe one. */
 /** PROFILES (stage 6) — write a package to a path the reader chose. Settings only. */
-export const profileExport = (path: string, manifestJson: string): Promise<void> =>
-  invoke<void>("profile_export", { path, manifestJson });
+/**
+ * A packageable asset, resolved by Rust from the profile's own references.
+ *
+ * The frontend never builds these: it renders them, lets the reader switch them off, and hands the
+ * survivors back to `profileExport`. That is what keeps the share sheet and the archive the same
+ * list rather than two lists that can drift.
+ */
+export interface PlannedAsset {
+  kind: "background" | "icon" | "font";
+  id: string;
+  member: string;
+  source: string;
+  name: string;
+  bytes: number;
+  family: string | null;
+  /** Which of `library` / `reading` / `icon` this one file serves. */
+  surfaces: string[];
+}
+
+/** What CAN travel with this profile, with real byte sizes. Resolves nothing the profile does not name. */
+export const profileAssetPlan = (
+  libraryRef: string | null,
+  readingRef: string | null,
+  iconRef: string | null,
+  families: string[],
+): Promise<PlannedAsset[]> =>
+  invoke<PlannedAsset[]>("profile_asset_plan", { libraryRef, readingRef, iconRef, families });
+
+export const profileExport = (
+  path: string,
+  manifestJson: string,
+  assets: { member: string; source: string }[] = [],
+): Promise<void> => invoke<void>("profile_export", { path, manifestJson, assets });
 
 /** Read a package's manifest, changing nothing. Rejects with a `pkg.err.*` code. */
 export const profileImportInspect = (path: string): Promise<string> =>
   invoke<string>("profile_import_inspect", { path });
 
 /** Commit an inspected package under a fresh id. Re-checks the manifest rather than trusting it. */
-export const profileImportCommit = (manifestJson: string, newId: string): Promise<ProfileRow> =>
-  invoke<ProfileRow>("profile_import_commit", { manifestJson, newId });
+export const profileImportCommit = (
+  manifestJson: string,
+  newId: string,
+  /** The archive the manifest came from — present = register its assets too. */
+  path?: string | null,
+): Promise<ProfileRow> =>
+  invoke<ProfileRow>("profile_import_commit", { manifestJson, newId, path: path ?? null });
 
 export const backgroundImport = (path: string): Promise<BackgroundRow> =>
   invoke<BackgroundRow>("background_import", { path });

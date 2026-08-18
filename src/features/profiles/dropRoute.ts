@@ -36,7 +36,7 @@ export async function routeDroppedPaths(
       // second modal on it. The drop is dropped, and it is NOT handed to the book importer either —
       // this file is a profile, and answering it with a book error would be a wrong reaction.
       if (profileChangePending()) return;
-      useDropped.getState().offer(text);
+      useDropped.getState().offer(text, paths[0]);
       return;
     }
   }

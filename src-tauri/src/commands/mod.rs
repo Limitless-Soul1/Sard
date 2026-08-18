@@ -1084,6 +1084,29 @@ pub fn profile_export(
     profiles::package::export(&path, &manifest_json, &assets.unwrap_or_default())
 }
 
+/// What CAN travel with this profile, with real sizes.
+///
+/// The share sheet needs to name each asset, price it, and hand back what the reader chose. Every
+/// one of those needs a managed path, so the resolution happens in Rust and the sheet renders what
+/// `profile_export` will actually write — not a second picture of it that can disagree.
+#[tauri::command]
+pub fn profile_asset_plan(
+    library_ref: Option<String>,
+    reading_ref: Option<String>,
+    icon_ref: Option<String>,
+    families: Vec<String>,
+    state: State<AppState>,
+) -> Result<Vec<profiles::package::PlannedAsset>, String> {
+    let conn = state.conn();
+    profiles::package::plan(
+        &conn,
+        library_ref.as_deref(),
+        reading_ref.as_deref(),
+        icon_ref.as_deref(),
+        &families,
+    )
+}
+
 /// Read a package's manifest and change NOTHING. The reader sees the profile before it enters, and
 /// the same refusal codes reach them here as from the frontend validator.
 #[tauri::command]

@@ -19,7 +19,7 @@
 import { PROFILE_DATA_VERSION, parseProfileData, type Profile, type ProfileData } from "./profile";
 
 /** The format's own version, independent of `ProfileData`'s. Bumped only on a breaking change. */
-export const PACKAGE_VERSION = 1;
+export const PACKAGE_VERSION = 2;
 
 /** The one name inside the archive that must exist. */
 export const MANIFEST_NAME = "profile.json";
@@ -34,6 +34,26 @@ export interface PackageManifest {
   author: string | null;
   /** `ProfileData`, verbatim. Validated structurally here, then parsed totally. */
   data: unknown;
+  /**
+   * What travels beside the settings — the pictures and faces the profile is made of.
+   *
+   * ABSENT IS LEGAL, and means a settings-only package: version 1 had no such field, and a reader
+   * who switched every asset off produces the same thing. A claim here is exactly that — a claim;
+   * the archive is what actually holds the bytes, and Rust checks the two agree before believing
+   * either.
+   */
+  assets?: PackageAsset[];
+}
+
+/** One asset's claim in the manifest. Mirrors `PlannedAsset`, minus the sender's own file path. */
+export interface PackageAsset {
+  kind: "background" | "icon" | "font";
+  id: string;
+  member: string;
+  name: string;
+  bytes: number;
+  family?: string | null;
+  surfaces?: string[];
 }
 
 /**
@@ -63,7 +83,12 @@ export type Inspection =
 export const MAX_MANIFEST_BYTES = 1024 * 1024;
 
 /** Serialise a profile into the manifest that goes in the archive. */
-export function serialiseProfile(p: Profile, appVersion: string): PackageManifest {
+export function serialiseProfile(
+  p: Profile,
+  appVersion: string,
+  /** What the reader chose to include. Omitted = a settings-only package. */
+  assets: PackageAsset[] = [],
+): PackageManifest {
   return {
     package: PACKAGE_VERSION,
     app: appVersion,
@@ -73,6 +98,9 @@ export function serialiseProfile(p: Profile, appVersion: string): PackageManifes
     // is deliberately not sent — provenance is local, and a stranger's row id means nothing here.
     author: p.author,
     data: p.data,
+    // Omitted entirely when nothing travels, so a settings-only package stays byte-identical to what
+    // version 1 wrote rather than carrying an empty list that says the same thing at more length.
+    ...(assets.length ? { assets } : {}),
   };
 }
 

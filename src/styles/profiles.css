@@ -892,6 +892,28 @@
 .pf-share-row:last-child { border-bottom: 0; }
 .pf-share-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .pf-share-row-name { font: 600 0.8125rem var(--ui-font); color: var(--text); }
+/* The asset switch, at the design's own 40x23 with a 19px knob. `role="switch"` on a real button,
+   so it is reachable and announced without a checkbox to restyle. Logical insets: the knob sits at
+   the reading-END when on, which mirrors correctly in Arabic without a second rule. */
+.pf-switch-ctl {
+  width: 40px; height: 23px; flex: none; padding: 0; border: 0; cursor: pointer;
+  border-radius: 999px; position: relative;
+  background: color-mix(in srgb, var(--text) 22%, transparent);
+  transition: background 140ms ease;
+}
+.pf-switch-ctl.on { background: var(--accent); }
+.pf-switch-ctl i {
+  position: absolute; inset-block-start: 2px; inset-inline-start: 2px;
+  width: 19px; height: 19px; border-radius: 50%; background: var(--paper-bg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: inset-inline-start 140ms ease;
+}
+.pf-switch-ctl.on i { inset-inline-start: 19px; }
+/* What this row contributes to the archive. Tabular so the column of sizes reads as a column. */
+.pf-share-row-size {
+  min-width: 66px; text-align: end; font-variant-numeric: tabular-nums;
+  font: 500 0.6875rem var(--ui-font); color: var(--muted);
+}
 .pf-share-row-note { font: 400 0.6875rem/1.5 var(--ui-font); color: var(--lib-faint, var(--muted)); }
 /* No switch: a profile without its paper is not a profile, and nothing here can be excluded. */
 .pf-share-always {

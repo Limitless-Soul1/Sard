@@ -481,8 +481,8 @@ html, body, #root {
 }
 .rc-back:hover { background: color-mix(in srgb, var(--accent) 16%, var(--rc-surface)); border-color: color-mix(in srgb, var(--accent) 45%, var(--chrome-border)); }
 .rc-title-block { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
-.rc-book { font: 600 0.8125rem var(--ui-font); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32vw; }
-.rc-chapter { font: 400 0.6875rem var(--ui-font); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32vw; }
+.rc-book { font: 600 var(--fs-base) var(--ui-font); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32vw; }
+.rc-chapter { font: 400 var(--fs-tiny) var(--ui-font); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32vw; }
 
 /* right controls: bordered, labelled buttons (icon + caption). RAWY-66: enlarged for easier
    tapping/clarity (owner feedback on the release build); fixed positions (D21), non-occlusion
@@ -500,7 +500,7 @@ html, body, #root {
   display: inline-flex; align-items: center; justify-content: center;
   transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
-.rc-btn-label { font: 500 0.625rem var(--ui-font); color: var(--muted); transition: color 0.15s ease; max-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rc-btn-label { font: 500 var(--fs-micro) var(--ui-font); color: var(--muted); transition: color 0.15s ease; max-width: 60px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rc-btn:hover .rc-btn-ico { background: color-mix(in srgb, var(--accent) 14%, var(--rc-surface)); border-color: color-mix(in srgb, var(--accent) 45%, var(--chrome-border)); }
 .rc-btn:hover .rc-btn-label { color: var(--text); }
 .rc-btn.on .rc-btn-ico { background: var(--accent); border-color: var(--accent); color: var(--paper-bg); }
@@ -535,7 +535,7 @@ html, body, #root {
 
 /* bottom: chapter / percent meta + progress track with a knob. The bar is pinned LTR (the
    fill grows from the physical left); only the page-turn chevrons follow the book (RAWY-33). */
-.rc-meta { width: 100%; display: flex; justify-content: space-between; font: 500 0.6875rem var(--ui-font); color: var(--muted); }
+.rc-meta { width: 100%; display: flex; justify-content: space-between; font: 500 var(--fs-tiny) var(--ui-font); color: var(--muted); }
 /* RESILIENCE-1 / WP-4F: the position readout sits between the chapter and the percentage. Quieter
    than both — it is reference information, not a headline — and it never wraps or pushes the
    percentage off the row on a narrow window. `tabular-nums` stops the row twitching as the number
@@ -617,7 +617,7 @@ html, body, #root {
   justify-content: space-between;
   padding: 14px 16px 10px;
 }
-.sp-title { font: 600 0.9375rem var(--ui-font); color: var(--text); }
+.sp-title { font: 600 var(--fs-large) var(--ui-font); color: var(--text); }
 /* Text · Page · Theme tab group (RAWY-34, design band I) — a segmented pill, active raised */
 /* Per-book scope banner (RAWY-40, Band I) — everything in this panel overrides THIS book only. */
 .sp-scope {
@@ -639,8 +639,8 @@ html, body, #root {
   background: color-mix(in srgb, var(--accent) 10%, var(--paper-bg));
   border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
 }
-.sp-pdf-title { font: 600 0.8125rem var(--ui-font); color: var(--text); margin-bottom: 4px; }
-.sp-pdf-body { font: 400 0.75rem/1.55 var(--ui-font); color: var(--muted); }
+.sp-pdf-title { font: 600 var(--fs-base) var(--ui-font); color: var(--text); margin-bottom: 4px; }
+.sp-pdf-body { font: 400 var(--fs-small)/1.55 var(--ui-font); color: var(--muted); }
 /* RAWY-86/141: copy-selection — a full-width, aligned button (the in-PDF find was removed). */
 .sp-pdf-copy {
   width: 100%; padding: 10px 12px; border: 1px solid var(--chrome-border); background: transparent;
@@ -753,8 +753,8 @@ html, body, #root {
   justify-content: center; background: #7b59a0; color: #fff; font-size: 0.75rem;
 }
 .sp-scope-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.sp-scope-title { font: 600 0.75rem var(--ui-font); color: var(--text); }
-.sp-scope-sub { font: 400 0.6875rem var(--ui-font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-scope-title { font: 600 var(--fs-small) var(--ui-font); color: var(--text); }
+.sp-scope-sub { font: 400 var(--fs-tiny) var(--ui-font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sp-reset {
   flex: none; border: 0; background: transparent; cursor: pointer; white-space: nowrap;
   font: 500 0.6875rem var(--ui-font); color: #7b59a0; padding: 4px 6px; border-radius: 6px;
@@ -1102,12 +1102,12 @@ html, body, #root {
   padding: 16px 16px 10px;
   border-bottom: 1px solid var(--chrome-border);
 }
-.rp-title { font: 600 0.9375rem var(--ui-font); color: var(--text); }
+.rp-title { font: 600 var(--fs-large) var(--ui-font); color: var(--text); }
 .rp-head-titles { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.rp-submeta { font: 400 0.6875rem var(--ui-font); color: var(--muted); }
+.rp-submeta { font: 400 var(--fs-tiny) var(--ui-font); color: var(--muted); }
 /* RESILIENCE-1 / WP-6A: the provenance note. Quieter than the count above it — the reader needs to
    know once that Sard built this list, not to be reminded while navigating it. */
-.rp-synth-note { display: block; margin-top: 3px; font: 400 0.625rem/1.4 var(--ui-font); color: var(--muted); opacity: 0.82; }
+.rp-synth-note { display: block; margin-top: 3px; font: 400 var(--fs-micro)/1.4 var(--ui-font); color: var(--muted); opacity: 0.82; }
 .rp-head-actions { display: flex; align-items: center; gap: 6px; }
 .rp-eye, .rp-x {
   border: 0; background: transparent; cursor: pointer; color: var(--muted);
@@ -1134,14 +1134,14 @@ html, body, #root {
   background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--muted);
 }
 .rp-x-round:hover { background: color-mix(in srgb, var(--text) 14%, transparent); color: var(--text); }
-.rp-meta { padding: 8px 18px 4px; font: 400 0.6875rem var(--ui-font); color: var(--muted); }
+.rp-meta { padding: 8px 18px 4px; font: 400 var(--fs-tiny) var(--ui-font); color: var(--muted); }
 .rp-hint {
   margin: 8px 14px 4px; padding: 7px 11px; border-radius: 7px;
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   font: 400 0.6875rem var(--ui-font); color: var(--muted);
 }
 .rp-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 6px 10px 18px; }
-.rp-empty { padding: 22px 16px; font: 400 0.75rem/1.6 var(--ui-font); color: var(--muted); text-align: center; }
+.rp-empty { padding: 22px 16px; font: 400 var(--fs-small)/1.6 var(--ui-font); color: var(--muted); text-align: center; }
 
 /* ---- RAWY-206: the Notes panel's SOURCE filter (this book / a book / all books) ---- */
 /* Reuses the Inbox's own control (.inbox-ctl + .lib-menu) — no new design language. The one tweak: the
@@ -1163,7 +1163,7 @@ html, body, #root {
   display: block; font: 500 0.625rem var(--ui-font); color: var(--muted);
   margin-bottom: 4px; overflow-wrap: anywhere;
 }
-.rp-x-text { font: 400 0.75rem/1.5 var(--ui-font); color: var(--text); overflow-wrap: anywhere; }
+.rp-x-text { font: 400 var(--fs-small)/1.5 var(--ui-font); color: var(--text); overflow-wrap: anywhere; }
 .rp-x-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
 
 /* ---- RAWY-114: TTS read-aloud player — the design-5a COMPACT FLOATING PILL ---- */
@@ -2120,7 +2120,7 @@ html, body, #root {
   background: color-mix(in srgb, var(--accent) 6%, transparent); cursor: pointer; text-align: start;
 }
 .rp-spoiler:hover { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
-.rp-spoiler-label { font: 600 0.78125rem var(--ui-font); color: var(--text); }
+.rp-spoiler-label { font: 600 var(--fs-base) var(--ui-font); color: var(--text); }
 
 /* anti-spoiler toggle (RAWY-22): a clear labelled pill switch with a hint */
 .rp-toggle {
@@ -2130,8 +2130,8 @@ html, body, #root {
 }
 .rp-toggle:hover { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 .rp-toggle-text { display: flex; flex-direction: column; gap: 2px; }
-.rp-toggle-label { font: 600 0.78125rem var(--ui-font); color: var(--text); }
-.rp-toggle-hint { font: 400 0.6875rem var(--ui-font); color: var(--muted); }
+.rp-toggle-label { font: 600 var(--fs-base) var(--ui-font); color: var(--text); }
+.rp-toggle-hint { font: 400 var(--fs-tiny) var(--ui-font); color: var(--muted); }
 .rp-switch {
   flex: 0 0 auto; width: 40px; height: 23px; border-radius: 23px; position: relative;
   background: color-mix(in srgb, var(--text) 18%, transparent); transition: background 0.18s ease;
@@ -2153,13 +2153,13 @@ html, body, #root {
 .rp-row:disabled { cursor: default; opacity: 0.55; }
 .toc-row.active { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 2px 0 0 var(--accent); }
 .rp-lead[dir="rtl"] .toc-row.active { box-shadow: inset -2px 0 0 var(--accent); }
-.toc-num { flex: 0 0 18px; font: 600 0.6875rem var(--ui-font); color: var(--muted); }
+.toc-num { flex: 0 0 18px; font: 600 var(--fs-tiny) var(--ui-font); color: var(--muted); }
 .toc-row.active .toc-num { color: var(--accent); }
 /* RAWY-69/70: with titles hidden the row's only content is the enlarged "الفصل N" / "Chapter N"
    (RAWY-70 — was a bare number in RAWY-69) — full-strength ink, sized to read on its own at a
    glance down a long list. It flexes to hold the whole localized label, not a fixed numeric column. */
-.toc-num.big { flex: 1; font: 700 1rem/1.3 var(--ui-font); color: var(--text); }
-.toc-label { flex: 1; font: 400 0.875rem/1.35 var(--ui-font); color: color-mix(in srgb, var(--text) 86%, transparent); }
+.toc-num.big { flex: 1; font: 700 var(--fs-title)/1.3 var(--ui-font); color: var(--text); }
+.toc-label { flex: 1; font: 400 var(--fs-body)/1.35 var(--ui-font); color: color-mix(in srgb, var(--text) 86%, transparent); }
 .toc-row.active .toc-label { font-weight: 600; color: var(--text); }
 /* ── RAWY-256: chapter READ markers in the Contents panel ────────────────────────────────────────────
    SIX variants from docs/design/read-indicator-selected-theme.html, implemented EXACTLY as the file
@@ -2274,12 +2274,12 @@ html, body, #root {
 }
 .sp-spoiler:hover { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 .sp-spoiler-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.sp-spoiler-label { font: 600 0.78125rem var(--ui-font); color: var(--accent); }
-.sp-spoiler-sub { font: 400 0.6875rem var(--ui-font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sp-spoiler-label { font: 600 var(--fs-base) var(--ui-font); color: var(--accent); }
+.sp-spoiler-sub { font: 400 var(--fs-tiny) var(--ui-font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* results */
 .sp-results { padding-top: 2px; }
-.sp-count { padding: 6px 12px 4px; font: 700 0.625rem var(--ui-font); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
-.sp-nothing-before { padding: 2px 12px 8px; font: 400 0.75rem var(--ui-font); color: var(--muted); }
+.sp-count { padding: 6px 12px 4px; font: 700 var(--fs-micro) var(--ui-font); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.sp-nothing-before { padding: 2px 12px 8px; font: 400 var(--fs-small) var(--ui-font); color: var(--muted); }
 .sr-row {
   display: flex; flex-direction: column; gap: 4px; width: 100%; text-align: start;
   padding: 9px 12px; border: 0; background: transparent; cursor: pointer; border-radius: 8px;
@@ -2289,26 +2289,26 @@ html, body, #root {
 .rp-lead[dir="rtl"] .sr-row.active { box-shadow: inset -2px 0 0 var(--accent); }
 .sr-row.ahead { opacity: 0.86; }
 .sr-meta { display: flex; align-items: baseline; gap: 8px; }
-.sr-chapter { flex: 1; min-width: 0; font: 700 0.65625rem var(--ui-font); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sr-loc { flex: none; font: 500 0.6875rem var(--ui-font); color: color-mix(in srgb, var(--accent) 90%, var(--muted)); }
-.sr-ahead-tag { flex: none; font: 700 0.53125rem var(--ui-font); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 5px; padding: 1px 5px; }
-.sr-snippet { font: 400 0.8125rem/1.5 "Literata", "SardUIArabic", serif; color: color-mix(in srgb, var(--text) 90%, transparent); }
+.sr-chapter { flex: 1; min-width: 0; font: 700 var(--fs-tiny) var(--ui-font); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sr-loc { flex: none; font: 500 var(--fs-tiny) var(--ui-font); color: color-mix(in srgb, var(--accent) 90%, var(--muted)); }
+.sr-ahead-tag { flex: none; font: 700 var(--fs-nano) var(--ui-font); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 5px; padding: 1px 5px; }
+.sr-snippet { font: 400 var(--fs-base)/1.5 "Literata", "SardUIArabic", serif; color: color-mix(in srgb, var(--text) 90%, transparent); }
 .sr-hit { background: color-mix(in srgb, var(--accent) 26%, transparent); color: var(--text); border-radius: 3px; padding: 0 1px; font-weight: 600; }
 /* you-are-here boundary */
 .sp-here { display: flex; align-items: center; gap: 10px; margin: 12px 12px 8px; }
 .sp-here-line { flex: 1; height: 1px; background: color-mix(in srgb, var(--accent) 34%, transparent); }
-.sp-here-label { flex: none; font: 700 0.59375rem var(--ui-font); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
+.sp-here-label { flex: none; font: 700 var(--fs-nano) var(--ui-font); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
 /* sealed card — a count, never a snippet */
 .sp-sealed { margin: 4px 12px 10px; padding: 14px; border-radius: 11px; text-align: center; background: color-mix(in srgb, var(--accent) 8%, transparent); border: 1px dashed color-mix(in srgb, var(--accent) 34%, transparent); }
 .sp-sealed-count { font: 600 0.84375rem var(--ui-font); color: var(--text); }
-.sp-sealed-body { margin-top: 5px; font: 400 0.75rem/1.5 var(--ui-font); color: var(--muted); }
-.sp-sealed-reveal, .sp-hide-again { margin-top: 10px; border: 0; background: transparent; cursor: pointer; font: 600 0.75rem var(--ui-font); color: var(--accent); }
+.sp-sealed-body { margin-top: 5px; font: 400 var(--fs-small)/1.5 var(--ui-font); color: var(--muted); }
+.sp-sealed-reveal, .sp-hide-again { margin-top: 10px; border: 0; background: transparent; cursor: pointer; font: 600 var(--fs-small) var(--ui-font); color: var(--accent); }
 .sp-hide-again { display: block; margin: 6px auto 4px; }
 .sp-sealed-reveal:hover, .sp-hide-again:hover { text-decoration: underline; }
-.sp-tashkil-note { margin: 8px 12px 4px; padding-top: 8px; border-top: 1px solid var(--chrome-border); font: 400 0.6875rem/1.5 var(--ui-font); color: var(--muted); }
+.sp-tashkil-note { margin: 8px 12px 4px; padding-top: 8px; border-top: 1px solid var(--chrome-border); font: 400 var(--fs-tiny)/1.5 var(--ui-font); color: var(--muted); }
 /* empty / searching / before-typing */
 /* RAWY-89: lively in-progress feedback — a spinning ring + live count + a scan bar (vs a static line) */
-.sp-searching { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 16px 14px 12px; font: 500 0.78125rem var(--ui-font); color: var(--muted); }
+.sp-searching { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 16px 14px 12px; font: 500 var(--fs-base) var(--ui-font); color: var(--muted); }
 .sp-searching-text { text-align: center; }
 .sp-spinner {
   width: 1.5rem; height: 1.5rem; border-radius: 50%;
@@ -2321,9 +2321,9 @@ html, body, #root {
 .sp-scanbar-fill { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width 0.12s linear; }
 @media (prefers-reduced-motion: reduce) { .sp-spinner { animation-duration: 1.4s; } }
 .sp-empty, .sp-hint { padding: 22px 16px; text-align: center; }
-.sp-empty-title { font: 600 0.875rem var(--ui-font); color: var(--text); }
-.sp-empty-body, .sp-hint-body { margin-top: 8px; font: 400 0.78125rem/1.6 var(--ui-font); color: var(--muted); }
-.sp-hint-title { font: 600 0.875rem var(--ui-font); color: var(--text); }
+.sp-empty-title { font: 600 var(--fs-body) var(--ui-font); color: var(--text); }
+.sp-empty-body, .sp-hint-body { margin-top: 8px; font: 400 var(--fs-base)/1.6 var(--ui-font); color: var(--muted); }
+.sp-hint-title { font: 600 var(--fs-body) var(--ui-font); color: var(--text); }
 
 /* annotations: the segmented tab track (RAWY-121, design 2a — supersedes the RAWY-33 pill row). Three
    EQUAL segments (flex:1 → each a third of the track); labels ellipsize under pressure, so the header's
@@ -2376,10 +2376,10 @@ html, body, #root {
   border-inline-start: 4px solid var(--swatch, var(--accent));
 }
 .rp-item-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 5px; }
-.rp-chapter { font: 600 0.65625rem var(--ui-font); letter-spacing: 0.02em; color: var(--muted); cursor: pointer; text-transform: uppercase; }
+.rp-chapter { font: 600 var(--fs-tiny) var(--ui-font); letter-spacing: 0.02em; color: var(--muted); cursor: pointer; text-transform: uppercase; }
 .rp-chapter:hover { color: var(--accent); }
 .rp-item-actions { display: flex; gap: 6px; }
-.rp-mini { border: 0; background: transparent; cursor: pointer; color: var(--muted); font: 500 0.6875rem var(--ui-font); padding: 3px 6px; border-radius: 6px; }
+.rp-mini { border: 0; background: transparent; cursor: pointer; color: var(--muted); font: 500 var(--fs-tiny) var(--ui-font); padding: 3px 6px; border-radius: 6px; }
 .rp-mini:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .rp-mini.primary { color: var(--paper-bg); background: var(--accent); }
 .rp-mini.danger:hover { color: #fff; background: #b5524a; }

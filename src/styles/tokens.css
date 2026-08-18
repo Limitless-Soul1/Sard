@@ -31,6 +31,13 @@
   /* ---- Type ramp (Decision 2) ---------------------------------------------------------------
    * step          rem          @16px   measured usage of the value it replaces
    */
+  /* Added in Stage 4.1, when migrating the Reader chrome revealed the ramp's floor was too high.
+   * Three uppercase, letter-spaced eyebrow labels sit below 10px by design — `.sr-ahead-tag`
+   * (0.53125rem), `.sp-here-label` (0.59375rem) and the 0.5625rem band (~6 uses). Tracked capitals
+   * read larger than their size, so that is a deliberate device, not drift. Rounding them all up to
+   * `--fs-micro` would have been a +0.5–1.5px change to the smallest type in the app. The ramp was
+   * wrong; the components were right. */
+  --fs-nano:    0.5625rem;  /*  9px — uppercase eyebrow labels only */
   --fs-micro:   0.625rem;   /* 10px — 46  counts, badges, the quietest meta */
   --fs-tiny:    0.6875rem;  /* 11px — 83  captions, secondary meta */
   --fs-small:   0.75rem;    /* 12px — 131 secondary labels          ← most used size in Sard */

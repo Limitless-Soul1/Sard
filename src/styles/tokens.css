@@ -1,0 +1,120 @@
+/* Sard's shared design tokens — the source of truth for type, control heights, radii, icon sizes
+ * and spacing.
+ *
+ * DEFINED HERE, NOT YET CONSUMED. Stage 3 establishes the scales; the surfaces move onto them in
+ * later stages, one at a time, each with its own before→after diff. Nothing in this file changes a
+ * rendered pixel on its own, and that is the property its gate checks.
+ *
+ * Every value below was derived by extracting what the product ACTUALLY uses (146 files scanned)
+ * and taking the weight of real usage as the evidence, rather than inventing a scale and forcing
+ * the app into it. The counts quoted are occurrences.
+ *
+ * ---------------------------------------------------------------------------------------------
+ * WHY rem, NOT px  (Decision 2)
+ *
+ * Measured: 576 rem usages against 18 px. rem is already the language of this codebase by 32:1.
+ * More importantly it is the language the RESPONSIVE behaviour is built on — `html` carries
+ *     font-size: calc(clamp(16px, 16px + (100vw - 1100px) * 0.0044, 22.4px) * var(--ui-user))
+ * so every rem grows with the window (1.0× at ≤1100px → 1.4× at ≥2560px) and with the user's own
+ * App-font size control. A px value does not participate in either. That is the whole of the
+ * S-D1 defect: text set in px keeps its size while everything around it grows, so on a large
+ * display the fixed text SHRINKS relative to its neighbours. Fixed px was measured at 7px, 9px,
+ * 10px, 11.5px, 12px, 13px, 13.3333px, 15px and 18px across the app.
+ *
+ * The ramp is therefore in rem, and the steps are named by ROLE. Sard's chrome is dense and lives
+ * between 10px and 15px at the 16px root, so the lower band is deliberately close-grained — a
+ * coarser ramp there would force visible jumps in the densest, most-used part of the UI.
+ * px equivalents below are at the 16px root; they scale from there.
+ */
+
+:root {
+  /* ---- Type ramp (Decision 2) ---------------------------------------------------------------
+   * step          rem          @16px   measured usage of the value it replaces
+   */
+  --fs-micro:   0.625rem;   /* 10px — 46  counts, badges, the quietest meta */
+  --fs-tiny:    0.6875rem;  /* 11px — 83  captions, secondary meta */
+  --fs-small:   0.75rem;    /* 12px — 131 secondary labels          ← most used size in Sard */
+  --fs-base:    0.8125rem;  /* 13px — 109 default UI text           ← second most used */
+  --fs-body:    0.875rem;   /* 14px — 31  body copy in chrome */
+  --fs-large:   0.9375rem;  /* 15px — 25  emphasised UI text */
+  --fs-title:   1.0625rem;  /* 17px — 14  panel and dialog titles */
+  --fs-h2:      1.25rem;    /* 20px — 9 */
+  --fs-h1:      1.5rem;     /* 24px — 2 */
+  --fs-display: 1.75rem;    /* 28px — 4   the largest thing the chrome shows */
+
+  /* ---- Radii (Decision 3) -------------------------------------------------------------------
+   * 30 distinct radii were in use. They are NOT arbitrary: they cluster into four bands plus two
+   * genuinely different shapes. The scale keeps the bands and collapses the noise inside them —
+   * 6/7/8/9/10px alone accounted for 192 uses across five adjacent values that no one could tell
+   * apart. `circle` and `pill` are kept as separate tokens because they are shapes, not sizes:
+   * a 50% radius on a square is a circle at any size, and 999px is a stadium. Forcing either onto
+   * a numeric step would be wrong, which is why "one radius for everything" was rejected.
+   */
+  --r-xs:     3px;    /* 20  hairline chips, progress tracks, tiny marks */
+  --r-sm:     6px;    /* 31  small controls, tags */
+  --r-md:     9px;    /* 51  default control radius   ← most used non-shape radius */
+  --r-lg:     12px;   /* 24 across 11/12/13  cards, plates */
+  --r-xl:     16px;   /* dialogs and trays */
+  --r-pill:   999px;  /* 9   stadium — a shape, not a size */
+  --r-circle: 50%;    /* 57  circle — a shape, not a size */
+
+  /* ---- Control heights ----------------------------------------------------------------------
+   * Anchored on Book Details, which the audit identified as the app's internal reference: it
+   * already runs 30 of its 33 buttons at a single height. `--ctl-md` is that height.
+   */
+  --ctl-xs:  22px;  /* 7   inline/among-text controls */
+  --ctl-sm:  26px;  /* 15  compact toolbar controls */
+  --ctl-md:  30px;  /* 12  DEFAULT — Book Details' own height */
+  --ctl-lg:  34px;  /* 7   comfortable controls */
+  --ctl-xl:  38px;  /* 7   primary actions */
+  --ctl-2xl: 44px;  /* 3   the largest transport control (TTS play) */
+
+  /* ---- Icon sizes (Decision 4) --------------------------------------------------------------
+   * Sizes only. The SYSTEM decision — SVG — is a component matter (Stage 6), not a CSS token:
+   * measured 45 SVG elements across 13 files against ~37 bare text glyphs and 8 CSS-drawn
+   * `ico-*` classes, so SVG is already the majority and becomes the single system. Glyphs are the
+   * debt to retire (the app currently uses BOTH `✕` and `×` for "close"); the CSS-drawn Reader
+   * set is coherent and migrates last, by its own stage.
+   */
+  --icon-sm: 14px;
+  --icon-md: 16px;
+  --icon-lg: 20px;
+  --icon-xl: 24px;
+  --icon-stroke: 1.75; /* the weight the existing SVGs already draw at */
+
+  /* ---- Spacing ------------------------------------------------------------------------------
+   * From 35 distinct gap values; 8px and 10px alone were 92 uses.
+   */
+  --sp-1:  2px;
+  --sp-2:  4px;
+  --sp-3:  6px;
+  --sp-4:  8px;   /* 47 — most used */
+  --sp-5:  12px;
+  --sp-6:  16px;
+  --sp-7:  24px;
+  --sp-8:  32px;
+
+  /* ---- Vista (Decision 5) -------------------------------------------------------------------
+   * ⚠ Vista exists to make the USER'S BACKGROUND IMAGE visible and prominent. The image is the
+   * point of the view, not decoration behind it. The governing rule is therefore:
+   *
+   *        maximise background visibility, THEN keep the overlaid content readable
+   *
+   * — in that order. Darkening the plate until the ink passes is explicitly NOT a solution: it was
+   * measured (α≈.78 is what the numbers demand in light themes) and rejected, because it turns the
+   * background into a slab and defeats the view.
+   *
+   * So the plate is expressed as a SCRIM STRENGTH to be solved for, not a fixed fill. The rule the
+   * later implementation must satisfy: use the LOWEST scrim opacity that still clears the ink
+   * floor against the actual composited ground — the same worst-case reasoning `regroundFaint`
+   * already applies to `--lib-faint`, but minimising the veil rather than fixing it. Dark and
+   * light themes each get an intentional treatment; light is not a degraded copy of dark.
+   *
+   * These are the SHAPE of that contract. The values are the current dark-theme behaviour so
+   * nothing moves today; the solver that sets `--vista-scrim` per theme is Stage 3.6/7 work.
+   */
+  --vista-scrim-min: 0.20;              /* never veil the image less than this: the plate must read as a plate */
+  --vista-scrim-max: 0.55;              /* never MORE than this: beyond it the image stops being the subject */
+  --vista-scrim: 0.34;                  /* current shipped value; to be solved per theme within the bounds */
+  --vista-plate: rgba(22, 16, 10, 0.34);/* today's fill, kept verbatim so Stage 3 changes nothing */
+}

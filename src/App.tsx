@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+// Design tokens first, so every sheet after this can read them. Defining them changes nothing on
+// its own — no rule consumes them yet; the surfaces move across in their own stages.
+import "./styles/tokens.css";
 import "./styles/global.css";
 // PROFILES: its own sheet. Nothing in it overrides an existing rule, so a reader who never opens
 // Profiles renders exactly as before — and `global.css` is untouched by this feature.

@@ -19,12 +19,12 @@
 // Cancel and Import only, and importing is additive and reversible by deleting. Adding a mode the
 // designer chose not to draw would be scope, not fidelity.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useI18n } from "../../i18n";
 import type { TKey } from "../../i18n/locales/en";
-import { profileImportInspect } from "../../lib/ipc";
+import { profileImportInspect, profilePackageAsset } from "../../lib/ipc";
 import { localeDigits } from "../../lib/format";
 import { isBuiltinThemeId } from "../../theme";
 import { THEMES } from "../../theme/themes";
@@ -43,24 +43,82 @@ import type { Profile, ProfileData } from "./model/profile";
  * which take a `Profile`. `inspectPackage` already returns the whole of `ProfileData`; nothing new
  * has to travel for this, and nothing here is a second interpretation of a profile's appearance.
  *
- * IT WEARS A SEAL EVEN WHEN AN ICON IS COMING. A package can now carry one, but its bytes are still
- * inside the archive and NOTHING is unpacked until the reader says yes — that is the whole of
- * "preview first". Drawing a seal here is therefore honest about the moment rather than about the
- * package: the icon is listed in the rows below as arriving, and appears once it has.
+ * IT WEARS THE ICON THE PACKAGE CARRIES, when it carries one. The bytes are read out of the archive
+ * and held in memory (see usePackagePictures) so the preview shows the face that is arriving
+ * without anything being unpacked before the reader says yes. A package with no icon, or one whose
+ * icon will not read, falls back to the seal, which is what the imported profile would wear anyway.
  */
-function previewProfile(name: string | null, author: string | null, data: ProfileData): Profile {
+function previewProfile(
+  name: string | null,
+  author: string | null,
+  data: ProfileData,
+  /** The icon this package carries, if it carries one — see `usePackagePictures`. */
+  iconRef: string | null = null,
+): Profile {
   return {
     id: "u:preview" as CustomThemeId,
     name,
     description: null,
     author,
-    iconKind: "seal",
-    iconRef: null,
+    iconKind: iconRef ? "image" : "seal",
+    iconRef,
     derivedFrom: null,
     createdAt: 0,
     updatedAt: 0,
     data,
   };
+}
+
+/**
+ * The package's own pictures, read out of the archive and held as object URLs for the preview.
+ *
+ * WHY NOT THE ORDINARY PATH. Everywhere else in Sard an icon or a background is resolved from a
+ * managed ROW — `iconRef` names a `backgrounds` row and `bgSrcUrl` turns it into an asset URL. Before
+ * an import there is no row, because nothing is unpacked until the reader says yes, so that path has
+ * nothing to resolve. The mechanism is not bypassed here; it simply does not exist yet at this
+ * moment, and the honest substitute is the bytes themselves: read from the archive, held in memory,
+ * never written. After the import the ordinary path takes over and the card resolves the real row.
+ *
+ * Revoked on unmount, so a preview the reader cancels leaves nothing behind — not even a blob.
+ */
+function usePackagePictures(path: string | null, assets: PackageAsset[]) {
+  const [urls, setUrls] = useState<{ icon: string | null; library: string | null }>({
+    icon: null,
+    library: null,
+  });
+  useEffect(() => {
+    if (!path) return;
+    let alive = true;
+    const made: string[] = [];
+    const want = (kind: string, surface?: string) =>
+      assets.find((a) =>
+        kind === "icon"
+          ? a.kind === "icon"
+          : a.kind === "background" && (a.surfaces ?? []).includes(surface ?? ""),
+      );
+    const load = async (a: PackageAsset | undefined) => {
+      if (!a) return null;
+      try {
+        const bytes = await profilePackageAsset(path, a.member);
+        const url = URL.createObjectURL(new Blob([new Uint8Array(bytes)]));
+        made.push(url);
+        return url;
+      } catch {
+        // A picture that will not read is simply not shown — the seal and the colours still are.
+        return null;
+      }
+    };
+    void (async () => {
+      const [icon, library] = await Promise.all([load(want("icon")), load(want("background", "library"))]);
+      if (alive) setUrls({ icon, library });
+      else made.forEach(URL.revokeObjectURL);
+    })();
+    return () => {
+      alive = false;
+      made.forEach(URL.revokeObjectURL);
+    };
+  }, [path, assets]);
+  return urls;
 }
 
 /**
@@ -77,6 +135,8 @@ function paperIsModified(data: ProfileData): boolean {
   const c = data.theme.colors as unknown as Record<string, unknown>;
   return PAPER_ROLES.some((k) => b[k] !== c[k]);
 }
+
+const EMPTY_ASSETS: PackageAsset[] = [];
 
 type Stage =
   | { at: "picking" }
@@ -117,6 +177,11 @@ export function ImportSheet({
           detail: "field" in seen.refusal ? seen.refusal.field : null };
   });
   const [busy, setBusy] = useState(false);
+  // Read on every render rather than inside the preview branch: a hook cannot live behind a return.
+  const pics = usePackagePictures(
+    stage.at === "preview" ? stage.path : null,
+    stage.at === "preview" ? stage.assets : EMPTY_ASSETS,
+  );
 
   const pick = async () => {
     const { open } = await import("@tauri-apps/plugin-dialog");
@@ -244,7 +309,7 @@ export function ImportSheet({
   const { sum, data } = stage;
   const paper = sum.themeBase ? t(`theme.${sum.themeBase}` as TKey) : t("profiles.theme.custom");
   const kb = Math.max(1, Math.round(stage.bytes / 1024));
-  const seen = previewProfile(sum.name, sum.author, data);
+  const seen = previewProfile(sum.name, sum.author, data, pics.icon);
   const seal = sealOf(seen);
 
   // The design's own row set, minus the two it draws for assets that do not travel yet — a package
@@ -267,13 +332,20 @@ export function ImportSheet({
           card uses. Its 16:10 is SardMini's own, so the design's 325px is simply what 100% of this
           card's width comes to. */}
       <div className="pf-import-hero">
-        <SardMini p={miniOf(seen, null)} />
+        <SardMini p={miniOf(seen, pics.library)} />
       </div>
 
       <div className="pf-import-id">
-        <span className="pf-import-seal" style={{ fontFamily: seal.fontFamily }} aria-hidden>
-          {seal.text}
-        </span>
+        {pics.icon ? (
+          // Nested exactly as the card nests it, so one rule draws an image seal everywhere.
+          <span className="pf-import-seal" aria-hidden>
+            <span className="pf-seal-img" style={{ backgroundImage: `url("${pics.icon}")` }} />
+          </span>
+        ) : (
+          <span className="pf-import-seal" style={{ fontFamily: seal.fontFamily }} aria-hidden>
+            {seal.text}
+          </span>
+        )}
         <span className="pf-import-id-text">
           <span className="pf-import-name" dir="auto">{sum.name ?? t("profiles.editor.title")}</span>
           <span className="pf-import-author" dir="auto">

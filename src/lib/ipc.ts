@@ -130,6 +130,15 @@ export const profileExport = (
   assets: { member: string; source: string }[] = [],
 ): Promise<void> => invoke<void>("profile_export", { path, manifestJson, assets });
 
+/**
+ * One asset's BYTES from a package, for the import preview to draw.
+ *
+ * Reads only — nothing is unpacked, so the preview can show the picture and the icon that are
+ * arriving without anything entering the reader's installation before they say yes.
+ */
+export const profilePackageAsset = (path: string, member: string): Promise<number[]> =>
+  invoke<number[]>("profile_package_asset", { path, member });
+
 /** Read a package's manifest, changing nothing. Rejects with a `pkg.err.*` code. */
 export const profileImportInspect = (path: string): Promise<string> =>
   invoke<string>("profile_import_inspect", { path });

@@ -1107,6 +1107,13 @@ pub fn profile_asset_plan(
     )
 }
 
+/// One asset's BYTES from a package, so the preview can DRAW what is arriving rather than name it.
+/// Reads only: nothing is unpacked, registered or written, so "preview first" is untouched.
+#[tauri::command]
+pub fn profile_package_asset(path: String, member: String) -> Result<Vec<u8>, String> {
+    profiles::package::read_member(&path, &member)
+}
+
 /// Read a package's manifest and change NOTHING. The reader sees the profile before it enters, and
 /// the same refusal codes reach them here as from the frontend validator.
 #[tauri::command]

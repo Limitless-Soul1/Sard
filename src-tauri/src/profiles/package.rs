@@ -303,6 +303,37 @@ fn extract_to_temp(
     Ok(out)
 }
 
+/// Read ONE member's bytes into memory, changing nothing on disk.
+///
+/// PREVIEW FIRST SURVIVES THIS. Frame 14 promises that nothing enters until the reader says yes, and
+/// that is still true: this unpacks nothing, registers nothing and writes nothing. It hands the
+/// preview the bytes it needs to SHOW what is arriving — the picture and the icon — so the sheet can
+/// stop describing an image in words while drawing a letter in its place.
+///
+/// Same guards as extraction, for the same reason: the member name is a stranger's string, and the
+/// declared size is checked before anything is read.
+pub fn read_member(path: &str, member: &str) -> Result<Vec<u8>, String> {
+    if !member.starts_with(ASSET_DIR) || member.contains("..") {
+        return Err("pkg.err.badAsset".into());
+    }
+    let file = std::fs::File::open(path).map_err(|_| "pkg.err.unreadable".to_string())?;
+    let mut zip = zip::ZipArchive::new(file).map_err(|_| "pkg.err.unreadable".to_string())?;
+    let mut entry = zip.by_name(member).map_err(|_| "pkg.err.assetMissing".to_string())?;
+    if entry.size() > MAX_ASSET_BYTES {
+        return Err("pkg.err.assetTooLarge".into());
+    }
+    let mut buf = Vec::new();
+    entry
+        .by_ref()
+        .take(MAX_ASSET_BYTES + 1)
+        .read_to_end(&mut buf)
+        .map_err(|_| "pkg.err.unreadable".to_string())?;
+    if buf.len() as u64 > MAX_ASSET_BYTES {
+        return Err("pkg.err.assetTooLarge".into());
+    }
+    Ok(buf)
+}
+
 /// The trust boundary. Returns the same refusal codes the TS validator uses, so one vocabulary
 /// reaches the reader whichever side refused.
 fn check(text: &str) -> Result<serde_json::Value, String> {
@@ -736,6 +767,207 @@ mod tests {
         );
         assert_eq!(crate::fonts::list(&b_conn).unwrap().len(), 1, "and so is the face");
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ---- FAILURE CASES, asserted against the real database and the real filesystem ---------------
+    //
+    // A green result here is not "the code returned Ok". Each case reads back what is ON DISK and IN
+    // THE TABLES afterwards, because the question is never whether import reported success — it is
+    // what it left behind when it did not.
+
+    /// Build an archive from `(member, bytes)` pairs plus a manifest.
+    fn archive(dir: &Path, name: &str, manifest: &str, members: &[(&str, Vec<u8>)]) -> std::path::PathBuf {
+        let _ = std::fs::create_dir_all(dir);
+        let path = dir.join(name);
+        let f = std::fs::File::create(&path).unwrap();
+        let mut z = zip::ZipWriter::new(f);
+        let o: zip::write::FileOptions<'_, ()> = zip::write::FileOptions::default();
+        z.start_file(MANIFEST_NAME, o).unwrap();
+        z.write_all(manifest.as_bytes()).unwrap();
+        for (m, b) in members {
+            z.start_file(*m, o).unwrap();
+            z.write_all(b).unwrap();
+        }
+        z.finish().unwrap();
+        path
+    }
+
+    /// Everything sitting in the managed background directory, so a claim about "no file was left"
+    /// is read off the filesystem rather than assumed from a return value.
+    fn managed_files(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir.join("backgrounds"))
+            .map(|rd| rd.flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect())
+            .unwrap_or_default();
+        v.sort();
+        v
+    }
+
+    /// A CORRUPTED picture registers nothing — no row, no file — and does not take the profile with
+    /// it. The reader keeps their colours and loses an image they could never have seen anyway.
+    #[test]
+    fn a_corrupted_asset_leaves_no_row_no_file_and_still_imports_the_profile() {
+        let root = std::env::temp_dir().join(format!("sard-corrupt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let app = root.join("app");
+        let text = r#"{"package":2,"app":"t","name":"n","assets":[{"kind":"background","id":"deadbeef","member":"assets/x.png","name":"x","bytes":9,"surfaces":["library"]}],"data":{"theme":{"base":"ivory"}}}"#;
+        let pkg = archive(&root, "c.zip", text, &[("assets/x.png", b"not a png".to_vec())]);
+
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations::run(&conn, None).unwrap();
+        let p = commit(&conn, text, "u:c", Some((pkg.to_str().unwrap(), app.as_path()))).unwrap();
+
+        assert!(crate::backgrounds::list(&conn).unwrap().is_empty(), "no background row was written");
+        assert!(managed_files(&app).is_empty(), "and no file reached the managed directory");
+        assert_eq!(p.bg_library, None, "the surface claims nothing it does not have");
+        assert_eq!(crate::profiles::list(&conn).unwrap().len(), 1, "the profile itself still arrived");
+        assert!(!app.join("import-tmp").exists(), "the extraction temp is cleaned up");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A member the manifest CLAIMS but the archive does not hold is skipped, not fatal.
+    #[test]
+    fn a_missing_member_is_skipped_and_the_profile_still_arrives() {
+        let root = std::env::temp_dir().join(format!("sard-missing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let app = root.join("app");
+        let text = r#"{"package":2,"app":"t","name":"n","assets":[{"kind":"background","id":"zz","member":"assets/absent.png","name":"x","bytes":1,"surfaces":["library"]}],"data":{"theme":{"base":"ivory"}}}"#;
+        let pkg = archive(&root, "m.zip", text, &[]);
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations::run(&conn, None).unwrap();
+        let p = commit(&conn, text, "u:m", Some((pkg.to_str().unwrap(), app.as_path()))).unwrap();
+        assert!(crate::backgrounds::list(&conn).unwrap().is_empty());
+        assert_eq!(p.bg_library, None, "a claim the archive cannot back is not believed");
+        assert_eq!(crate::profiles::list(&conn).unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A MALICIOUS member path is refused at import as well as at export, and overwrites nothing.
+    /// The archive really does contain a member under that name, so only the guard can stop it.
+    #[test]
+    fn a_member_that_escapes_is_refused_at_import_and_touches_nothing() {
+        let root = std::env::temp_dir().join(format!("sard-escape2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let app = root.join("app");
+        std::fs::create_dir_all(&root).unwrap();
+        let victim = root.join("victim.txt");
+        std::fs::write(&victim, b"original contents").unwrap();
+
+        for bad in ["../victim.txt", "assets/../../victim.txt", "victim.txt"] {
+            let text = format!(
+                r#"{{"package":2,"app":"t","name":"n","assets":[{{"kind":"background","id":"z","member":"{bad}","name":"x","bytes":1,"surfaces":["library"]}}],"data":{{"theme":{{"base":"ivory"}}}}}}"#
+            );
+            let pkg = archive(&root, "e.zip", &text, &[(bad, b"OVERWRITTEN".to_vec())]);
+            let conn = Connection::open_in_memory().unwrap();
+            crate::db::migrations::run(&conn, None).unwrap();
+            let p = commit(&conn, &text, "u:e", Some((pkg.to_str().unwrap(), app.as_path()))).unwrap();
+            assert_eq!(p.bg_library, None, "{bad}: nothing was registered");
+            assert_eq!(
+                std::fs::read_to_string(&victim).unwrap(),
+                "original contents",
+                "{bad}: a file outside the asset folder was NOT overwritten"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// MID-IMPORT PARTIAL FAILURE. One good picture, one corrupt: the good one registers, the bad one
+    /// registers nothing, the profile arrives claiming only what actually landed, and the collector
+    /// run afterwards keeps what is still referenced.
+    #[test]
+    fn a_partial_failure_registers_what_worked_and_leaves_no_orphan() {
+        let root = std::env::temp_dir().join(format!("sard-partial-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let app = root.join("app");
+        let good_src = crate::backgrounds::tests_support::write_png(&root, "good.png", 60, 40, 10);
+        let good_bytes = std::fs::read(&good_src).unwrap();
+        let good_id = {
+            let conn = Connection::open_in_memory().unwrap();
+            crate::db::migrations::run(&conn, None).unwrap();
+            crate::backgrounds::import(&conn, &root.join("probe"), &good_src).unwrap().id
+        };
+
+        let text = format!(
+            r#"{{"package":2,"app":"t","name":"n","assets":[{{"kind":"background","id":"{good_id}","member":"assets/good.png","name":"g","bytes":1,"surfaces":["library"]}},{{"kind":"background","id":"bad","member":"assets/bad.png","name":"b","bytes":1,"surfaces":["reading"]}}],"data":{{"theme":{{"base":"ivory"}}}}}}"#
+        );
+        let pkg = archive(
+            &root,
+            "p.zip",
+            &text,
+            &[("assets/good.png", good_bytes), ("assets/bad.png", b"garbage".to_vec())],
+        );
+
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations::run(&conn, None).unwrap();
+        let p = commit(&conn, &text, "u:p", Some((pkg.to_str().unwrap(), app.as_path()))).unwrap();
+
+        let rows = crate::backgrounds::list(&conn).unwrap();
+        assert_eq!(rows.len(), 1, "only the picture that decoded was registered");
+        assert_eq!(rows[0].id, good_id, "and it is content-addressed as always");
+        assert_eq!(p.bg_library.as_deref(), Some(good_id.as_str()), "the surface that worked claims it");
+        assert_eq!(p.bg_reading, None, "the surface that failed claims NOTHING, not a broken ref");
+        assert!(!app.join("import-tmp").exists(), "no extraction temp survives the failure");
+
+        let removed = crate::backgrounds::gc(&conn, &app).unwrap();
+        assert_eq!(removed, 0, "nothing collected — the row is referenced by the profile");
+        let after = crate::backgrounds::list(&conn).unwrap();
+        assert_eq!(after.len(), 1, "and it is still there");
+        assert!(std::path::Path::new(&after[0].original_path).exists(), "with its file intact");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// RETRY. The same package twice adds a second profile and reuses every asset.
+    #[test]
+    fn importing_the_same_package_twice_reuses_its_assets() {
+        let root = std::env::temp_dir().join(format!("sard-retry-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let app = root.join("app");
+        let src = crate::backgrounds::tests_support::write_png(&root, "r.png", 50, 30, 200);
+        let bytes = std::fs::read(&src).unwrap();
+        let text = r#"{"package":2,"app":"t","name":"n","assets":[{"kind":"background","id":"any","member":"assets/r.png","name":"r","bytes":1,"surfaces":["library"]}],"data":{"theme":{"base":"ivory"}}}"#;
+        let pkg = archive(&root, "r.zip", text, &[("assets/r.png", bytes)]);
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations::run(&conn, None).unwrap();
+        let from = Some((pkg.to_str().unwrap(), app.as_path()));
+        commit(&conn, text, "u:r1", from).unwrap();
+        let after_one = managed_files(&app);
+        commit(&conn, text, "u:r2", from).unwrap();
+        assert_eq!(crate::backgrounds::list(&conn).unwrap().len(), 1, "one row, not two");
+        assert_eq!(managed_files(&app), after_one, "and not one extra file on disk");
+        assert_eq!(crate::profiles::list(&conn).unwrap().len(), 2, "two profiles, as asked");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A member whose DECLARED size is over the ceiling is refused BEFORE it is read — the shape of a
+    /// decompression bomb. Ignored by default because proving it needs a member larger than 256 MiB;
+    /// run with `cargo test -- --ignored oversized`.
+    #[test]
+    #[ignore]
+    fn an_oversized_member_is_refused_before_extraction() {
+        let root = std::env::temp_dir().join(format!("sard-huge-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let app = root.join("app");
+        let huge = vec![0u8; (MAX_ASSET_BYTES + 1024) as usize];
+        let text = r#"{"package":2,"app":"t","name":"n","assets":[{"kind":"background","id":"h","member":"assets/h.png","name":"h","bytes":1,"surfaces":["library"]}],"data":{"theme":{"base":"ivory"}}}"#;
+        let path = root.join("h.zip");
+        let _ = std::fs::create_dir_all(&root);
+        {
+            let f = std::fs::File::create(&path).unwrap();
+            let mut z = zip::ZipWriter::new(f);
+            let o: zip::write::FileOptions<'_, ()> =
+                zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            z.start_file(MANIFEST_NAME, o).unwrap();
+            z.write_all(text.as_bytes()).unwrap();
+            z.start_file("assets/h.png", o).unwrap();
+            z.write_all(&huge).unwrap();
+            z.finish().unwrap();
+        }
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations::run(&conn, None).unwrap();
+        let p = commit(&conn, text, "u:h", Some((path.to_str().unwrap(), app.as_path()))).unwrap();
+        assert_eq!(p.bg_library, None, "the oversized member was refused");
+        assert!(managed_files(&app).is_empty(), "nothing of it reached the managed directory");
+        assert!(!app.join("import-tmp").exists(), "no partial temp survives");
         let _ = std::fs::remove_dir_all(&root);
     }
 

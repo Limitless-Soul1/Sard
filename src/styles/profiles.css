@@ -914,7 +914,12 @@
   min-width: 66px; text-align: end; font-variant-numeric: tabular-nums;
   font: 500 0.6875rem var(--ui-font); color: var(--muted);
 }
-.pf-share-row-note { font: 400 0.6875rem/1.5 var(--ui-font); color: var(--lib-faint, var(--muted)); }
+/* Same reason as the import row: a filename with nothing to break at overflows its column unless it
+   is allowed to break inside the word. */
+.pf-share-row-note {
+  font: 400 0.6875rem/1.5 var(--ui-font); color: var(--lib-faint, var(--muted));
+  overflow-wrap: anywhere;
+}
 /* No switch: a profile without its paper is not a profile, and nothing here can be excluded. */
 .pf-share-always {
   flex: none; padding: 2px 8px; border-radius: 999px;
@@ -1000,8 +1005,23 @@
 }
 .pf-import-row:last-child { border-block-end: 0; }
 .pf-import-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--accent); }
-.pf-import-row-name { flex: 1; min-width: 0; font: 500 0.8125rem/1.5 var(--ui-font); color: var(--text); }
-.pf-import-row-val { font: 400 0.75rem/1.5 var(--ui-font); color: var(--lib-faint, var(--muted)); }
+/* LABEL AND VALUE ARE TWO REGIONS, AND NEITHER MAY EAT THE OTHER.
+   A filename has no spaces to break at, and a flex item defaults to  — it refuses
+   to shrink below its own min-content, which for an unbroken run is the whole string. The label was
+   the only item allowed to shrink, so it took all the pressure: measured with a 90-character value,
+   the label collapsed to 0px and the value overran its row by 145px (178px in Arabic), scrolling the
+   dialog sideways. That is what reads as the value sitting on top of the label.
+   The label now keeps its natural width and shrinks only under real pressure; the value takes what
+   is left, is allowed to shrink to nothing, and may break INSIDE a word so a long name wraps in its
+   own column instead of pushing the row wider.  keeps it against the row's far
+   edge in both directions, which is where the design puts it. */
+.pf-import-row-name {
+  flex: 0 1 auto; min-width: 0; font: 500 0.8125rem/1.5 var(--ui-font); color: var(--text);
+}
+.pf-import-row-val {
+  flex: 1 1 0; min-width: 0; text-align: end; overflow-wrap: anywhere;
+  font: 400 0.75rem/1.5 var(--ui-font); color: var(--lib-faint, var(--muted));
+}
 
 /* FRAME 15 — the miniature moves BESIDE the sentence: the profile is no longer a file being
    inspected, it is one of yours, so it is introduced the way a card introduces one. The double

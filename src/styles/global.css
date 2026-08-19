@@ -1116,9 +1116,15 @@ html, body, #root {
    know once that Sard built this list, not to be reminded while navigating it. */
 .rp-synth-note { display: block; margin-top: 3px; font: 400 var(--fs-micro)/1.4 var(--ui-font); color: var(--muted); opacity: 0.82; }
 .rp-head-actions { display: flex; align-items: center; gap: 6px; }
+/* The close glyph is a target, not just a glyph. Sized by the character inside it this was
+   19x22, while the SAME action in the annotations panel (.rp-x-round, below) was 30x30 -- one
+   close action with two targets. The panel header is 62-67px tall, so stating the scale's
+   default height here changes no layout; only the hover wash grows to match the button. */
 .rp-eye, .rp-x {
   border: 0; background: transparent; cursor: pointer; color: var(--muted);
-  font-size: 0.875rem; line-height: 1; padding: 4px; border-radius: 6px;
+  font-size: 0.875rem; line-height: 1; padding: 4px; border-radius: var(--r-sm);
+  width: var(--ctl-md); height: var(--ctl-md);
+  display: inline-flex; align-items: center; justify-content: center;
 }
 .rp-eye.off { opacity: 0.6; }
 .rp-eye:hover, .rp-x:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }

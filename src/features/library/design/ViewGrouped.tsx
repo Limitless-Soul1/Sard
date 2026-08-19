@@ -353,10 +353,19 @@ export function ViewGrouped(props: GroupedProps) {
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                      {/* The shelf's collapse toggle took its size from its own glyph -- 12x14 --
+                          inside a row 26px tall, while the same faint-glyph control in the case
+                          editor is 22x22 on a 6px radius. The extra width is absorbed by a negative
+                          inline-end margin rather than by the row gap: this row holds three items,
+                          so narrowing the gap would also have pulled the count in against the name. */}
                       <button
                         onClick={() => props.onToggleShelf(shelf)}
                         aria-label={shelf.name}
-                        style={{ color: "var(--faint)", fontSize: 9, width: 12 }}
+                        style={{
+                          color: "var(--faint)", fontSize: 9, flex: "none",
+                          width: "var(--ctl-xs)", height: "var(--ctl-xs)", borderRadius: "var(--r-sm)",
+                          marginInlineEnd: -8,
+                        }}
                       >
                         {shelf.collapsed ? "▸" : "▾"}
                       </button>

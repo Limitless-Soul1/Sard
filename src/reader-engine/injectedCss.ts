@@ -776,6 +776,22 @@ export function buildReadingCss(
     ${hardList(TEXT_BLOCKS)} {
       line-height: ${style.lineHeight} !important;
     }
+    ${/* Keeping headings out of TEXT_BLOCKS is not enough on its own. `line-height` INHERITS, and the
+          UA sheet sets none on h1-h6, so a heading sitting inside one of those blocks — a <div>, which
+          is the ordinary EPUB wrapper — silently takes the reader's body ratio. Measured: at ratio 2.6
+          a 24px <h2> inside a <div> computed to 62.4px of leading, while a bare <h2> stayed `normal`.
+          That defeats the intent recorded above rather than serving it.
+
+          `:where()` carries ZERO specificity, which is the whole point of using it here. It is enough
+          to stop INHERITANCE — any declaration on the element beats an inherited value — while losing
+          to every rule the book itself writes, including a bare `h2 { line-height: 1.2 }` at (0,0,1).
+          So Sard stops imposing its leading on headings without imposing any leading of its own:
+          `normal` hands the heading back to the font, which is what it had before the ratio reached
+          it. No !important, no id guard, no hardening: hardening it would make Sard win over the
+          book, which is the opposite of what this is for. */ ""}
+    :where(h1, h2, h3, h4, h5, h6) {
+      line-height: normal;
+    }
     ${hardList(TEXT_BLOCKS, `:root:root.${ALIGN_GATE_CLASS}`, `${KEEP}${NEVER}`)} {
       text-align: ${style.align} !important;
     }

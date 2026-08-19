@@ -406,7 +406,7 @@ export function BookDetails(props: BookDetailsProps) {
           overflowY: "auto",
           background: "var(--chr)",
           border: "1px solid var(--brd)",
-          borderRadius: 16,
+          borderRadius: "var(--r-xl)",
           boxShadow: "var(--sh4)",
           animation: "sard-rise .16s ease-out",
           opacity: busy ? 0.75 : 1,

@@ -520,8 +520,17 @@ export function CaseEditor(props: CaseEditorProps) {
           flexDirection: "column",
           background: "var(--chr)",
           border: "1px solid var(--brd)",
+          // The case's ink runs down the shell as a spine, so the two corners it passes through
+          // square off to the spine's own 4px and only the far side keeps the dialog radius.
+          // Both halves have to be stated logically: border-inline-start follows the writing
+          // direction, but the border-radius shorthand is physical and does not, so in Arabic
+          // the spine bowed around the 16px curve while the bare edge kept the square corners
+          // that were meant for it.
           borderInlineStart: `4px solid ${c.ink ?? "var(--acc)"}`,
-          borderRadius: "4px 16px 16px 4px",
+          borderStartStartRadius: 4,
+          borderEndStartRadius: 4,
+          borderStartEndRadius: "var(--r-xl)",
+          borderEndEndRadius: "var(--r-xl)",
           boxShadow: "var(--sh4)",
           overflow: "hidden",
           animation: "sard-rise .16s ease-out",

@@ -677,7 +677,10 @@ function IdentitySection({
                   : { background: draft.data.theme.colors.paperBg, color: draft.data.theme.colors.muted }
               }
             >
-              {!iconRow && <Icon name="image" size="md" />}
+              {/* NOT migrated to the icon set: this mark lives inside `.pf-seal`, which is one of
+                  the protected identity components (with `.pf-card` and `.pf-mini`). Changing it
+                  was not authorised, so the original character stands until it is. */}
+              {!iconRow && "▣"}
             </span>
             {t("profiles.identity.iconImage")}
           </button>

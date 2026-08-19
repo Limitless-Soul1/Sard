@@ -206,9 +206,13 @@
 .pf-cp-harmony-name { font: 600 var(--fs-base) var(--ui-font); color: var(--text); }
 .pf-cp-harmony-note { font: 400 0.6875rem/1.5 var(--ui-font); color: var(--lib-faint, var(--muted)); }
 
+/* These buttons carry a label and a chevron. The chevron used to be a character, so it sat inline;
+   a drawn icon is a block box and pushed itself onto a second line, which doubled the button's
+   height. Laying the button out as a row puts them back on one line. */
 .pf-cp-open {
   margin-top: 12px; padding: 0; border: 0; background: transparent;
   color: var(--accent); font: 600 var(--fs-base) var(--ui-font); cursor: pointer;
+  display: inline-flex; align-items: center; gap: 5px;
 }
 .pf-cp-open:hover { text-decoration: underline; text-underline-offset: 3px; }
 /* "The same image, quieter" — a link, not a copy. Disabled until the library has an image to share,

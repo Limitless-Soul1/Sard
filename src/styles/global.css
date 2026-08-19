@@ -3731,7 +3731,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 }
 .gs-x:hover { background: var(--lib-hover); color: var(--text); }
 .gs-body { flex: 1; overflow-y: auto; padding: 24px 30px; display: flex; flex-direction: column; gap: 22px; }
-.gs-h1 { font: 600 1.3125rem var(--ui-font); color: var(--text); }
+.gs-h1 { font: 600 var(--fs-h2) var(--ui-font); color: var(--text); }
 .gs-sec { display: flex; flex-direction: column; gap: 11px; }
 .gs-sec.gs-two { flex-direction: row; gap: 14px; }
 .gs-sec.gs-two > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 9px; }
@@ -3782,7 +3782,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .gs-chip-imported { color: #fff; background: var(--accent); }
 .gs-chip-x { border: none; background: transparent; color: inherit; cursor: pointer; font-size: 0.875rem; line-height: 1; padding: 0; opacity: 0.8; }
 .gs-chip-x:hover { opacity: 1; }
-.gs-note { font: 400 0.71875rem var(--ui-font); color: color-mix(in srgb, var(--muted) 80%, var(--paper-bg)); }
+.gs-note { font: 400 var(--fs-tiny) var(--ui-font); color: color-mix(in srgb, var(--muted) 80%, var(--paper-bg)); }
 
 /* RAWY-93 — Fonts & Library panel, rebuilt to the on-disk design (App · Book side-by-side cards +
    the shared library grid). Wiring unchanged (RAWY-91/92); this is presentation only. */
@@ -3806,7 +3806,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .gs-fcard-ico-app { background: var(--accent); }
 .gs-fcard-ico-book { background: var(--gs-book); }
 .gs-fcard-title { font: 600 0.875rem var(--ui-font); color: var(--text); }
-.gs-fcard-sub { font: 400 0.71875rem var(--ui-font); color: var(--muted); margin-top: 2px; }
+.gs-fcard-sub { font: 400 var(--fs-tiny) var(--ui-font); color: var(--muted); margin-top: 2px; }
 
 /* picker row: current face's name IN ITS OWN FACE + sub + "Change ›"; the real <select> is laid
    transparently on top (opacity 0), so the styled row shows while the native menu still drives it. */

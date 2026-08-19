@@ -203,12 +203,12 @@
 }
 .pf-cp-harmony.on { border-color: transparent; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg); }
 .pf-cp-harmony-mini { display: block; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 2px rgba(40, 28, 14, 0.18); }
-.pf-cp-harmony-name { font: 600 0.78125rem var(--ui-font); color: var(--text); }
+.pf-cp-harmony-name { font: 600 var(--fs-base) var(--ui-font); color: var(--text); }
 .pf-cp-harmony-note { font: 400 0.6875rem/1.5 var(--ui-font); color: var(--lib-faint, var(--muted)); }
 
 .pf-cp-open {
   margin-top: 12px; padding: 0; border: 0; background: transparent;
-  color: var(--accent); font: 600 0.78125rem var(--ui-font); cursor: pointer;
+  color: var(--accent); font: 600 var(--fs-base) var(--ui-font); cursor: pointer;
 }
 .pf-cp-open:hover { text-decoration: underline; text-underline-offset: 3px; }
 /* "The same image, quieter" — a link, not a copy. Disabled until the library has an image to share,
@@ -762,7 +762,7 @@
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
-.pf-rm-name { font: 500 0.78125rem var(--ui-font); color: var(--text); }
+.pf-rm-name { font: 500 var(--fs-base) var(--ui-font); color: var(--text); }
 
 /* The firewall: the rail's last block, and not a control. */
 /* The rail's closing block. It stays the quietest thing in the column — it is a promise, not a

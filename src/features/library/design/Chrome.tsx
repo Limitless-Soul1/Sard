@@ -242,10 +242,10 @@ export function Sidebar(props: SidebarProps) {
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 8,
+          gap: "var(--sp-4)",
           width: "100%",
           padding: "6px 8px 6px 10px",
-          borderRadius: 6,
+          borderRadius: "var(--r-sm)",
           font: "500 .75rem var(--ui)",
           color: active ? "var(--txt)" : "var(--mut)",
           background: active ? "var(--act)" : "transparent",
@@ -376,9 +376,9 @@ export function Sidebar(props: SidebarProps) {
             setCreatingCase(true);
           }}
           style={{
-            width: 22,
-            height: 22,
-            borderRadius: 6,
+            width: "var(--ctl-xs)",
+            height: "var(--ctl-xs)",
+            borderRadius: "var(--r-sm)",
             display: "grid",
             placeItems: "center",
             color: "var(--mut)",
@@ -396,7 +396,7 @@ export function Sidebar(props: SidebarProps) {
           overflowY: "auto",
           display: "flex",
           flexDirection: "column",
-          gap: 2,
+          gap: "var(--sp-1)",
           scrollbarWidth: "thin",
           paddingBottom: 8,
         }}
@@ -479,9 +479,9 @@ export function Sidebar(props: SidebarProps) {
                     flex: "none",
                     display: "grid",
                     placeItems: "center",
-                    width: 22,
-                    height: 22,
-                    marginInlineEnd: 2,
+                    width: "var(--ctl-xs)",
+                    height: "var(--ctl-xs)",
+                    marginInlineEnd: "var(--sp-1)",
                     borderRadius: 7,
                     // The disc fills with the case's own colour once it is open.
                     border: `1px solid ${open ? "var(--brd)" : "transparent"}`,
@@ -507,7 +507,7 @@ export function Sidebar(props: SidebarProps) {
                     minWidth: 0,
                     display: "flex",
                     alignItems: "center",
-                    gap: 8,
+                    gap: "var(--sp-4)",
                     textAlign: "start",
                     padding: "6px 0",
                   }}
@@ -563,9 +563,9 @@ export function Sidebar(props: SidebarProps) {
                   }}
                   style={{
                     flex: "none",
-                    width: 20,
-                    height: 22,
-                    borderRadius: 6,
+                    width: "var(--icon-lg)",
+                    height: "var(--ctl-xs)",
+                    borderRadius: "var(--r-sm)",
                     fontSize: 11,
                     lineHeight: 1,
                     cursor: dragging === c.id ? "grabbing" : "grab",
@@ -583,9 +583,9 @@ export function Sidebar(props: SidebarProps) {
                     aria-label={t("lib.manage")}
                     onClick={() => setManaging((m) => (m === c.id ? null : c.id))}
                     style={{
-                      width: 22,
-                      height: 22,
-                      borderRadius: 6,
+                      width: "var(--ctl-xs)",
+                      height: "var(--ctl-xs)",
+                      borderRadius: "var(--r-sm)",
                       color: "var(--faint)",
                       fontSize: 13,
                       lineHeight: 1,
@@ -729,7 +729,7 @@ export function Sidebar(props: SidebarProps) {
                   justifyContent: "flex-start",
                   textAlign: "start",
                   padding: "2px 6px",
-                  marginInlineStart: 2,
+                  marginInlineStart: "var(--sp-1)",
                   borderRadius: 5,
                   font: "600 .625rem var(--ui)",
                   letterSpacing: ".14em",
@@ -749,9 +749,9 @@ export function Sidebar(props: SidebarProps) {
                 onClick={props.onManageUnfiled}
                 style={{
                   flex: "none",
-                  width: 22,
-                  height: 22,
-                  borderRadius: 6,
+                  width: "var(--ctl-xs)",
+                  height: "var(--ctl-xs)",
+                  borderRadius: "var(--r-sm)",
                   color: "var(--faint)",
                   fontSize: 13,
                   lineHeight: 1,
@@ -850,7 +850,7 @@ export function Sidebar(props: SidebarProps) {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            gap: 8,
+            gap: "var(--sp-4)",
             padding: "2px 11px 4px",
             font: "500 .6875rem var(--ui)",
             color: "var(--faint)",
@@ -974,7 +974,7 @@ export function Header(props: HeaderProps) {
           gap: 7,
           font: "500 .75rem var(--ui)",
           color: "var(--faint)",
-          marginBottom: 6,
+          marginBottom: "var(--sp-3)",
           minHeight: 18,
         }}
       >
@@ -989,7 +989,7 @@ export function Header(props: HeaderProps) {
       </div>
 
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 12, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: "var(--sp-5)", minWidth: 0 }}>
           <h1
             dir="auto"
             style={{
@@ -1021,7 +1021,7 @@ export function Header(props: HeaderProps) {
             style={{
               height: 32,
               padding: "0 14px",
-              borderRadius: 9,
+              borderRadius: "var(--r-md)",
               background: "var(--acc)",
               color: "var(--pap)",
               font: "600 .75rem var(--ui)",
@@ -1040,15 +1040,15 @@ export function Header(props: HeaderProps) {
           alignItems: "center",
           gap: 9,
           flexWrap: "wrap",
-          marginTop: 12,
+          marginTop: "var(--sp-5)",
         }}
       >
         <div
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 8,
-            height: 34,
+            gap: "var(--sp-4)",
+            height: "var(--ctl-lg)",
             minWidth: 240,
             flex: "0 1 320px",
             padding: "0 11px",
@@ -1176,9 +1176,9 @@ export function Header(props: HeaderProps) {
                   width: 180,
                   background: "var(--chr)",
                   border: "1px solid var(--brd)",
-                  borderRadius: 12,
+                  borderRadius: "var(--r-lg)",
                   boxShadow: "var(--sh4)",
-                  padding: 6,
+                  padding: "var(--sp-3)",
                   animation: "sard-rise .12s ease-out",
                 }}
               >
@@ -1238,9 +1238,9 @@ export function Header(props: HeaderProps) {
                   width: 216,
                   background: "var(--chr)",
                   border: "1px solid var(--brd)",
-                  borderRadius: 12,
+                  borderRadius: "var(--r-lg)",
                   boxShadow: "var(--sh4)",
-                  padding: 6,
+                  padding: "var(--sp-3)",
                   animation: "sard-rise .12s ease-out",
                 }}
               >

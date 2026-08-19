@@ -142,7 +142,7 @@ export function ViewGrouped(props: GroupedProps) {
           width: spines ? props.carryWidth : "100%",
           ...(spines ? { height: SPINE_HEIGHTS[props.density] } : { aspectRatio: "2/3" }),
           border: "2px dashed var(--acc)",
-          borderRadius: 3,
+          borderRadius: "var(--r-xs)",
           background: "var(--act)",
           animation: "sard-open .14s ease-out",
         }}
@@ -223,7 +223,7 @@ export function ViewGrouped(props: GroupedProps) {
                   // read as a centred title. The reference's `headBtn` sets no justification at
                   // all, i.e. start, and mirrors with the UI direction on its own.
                   justifyContent: "flex-start",
-                  gap: 12,
+                  gap: "var(--sp-5)",
                   minWidth: 0,
                   flex: 1,
                   margin: "-7px 0 -7px -8px",
@@ -239,8 +239,8 @@ export function ViewGrouped(props: GroupedProps) {
                     flex: "none",
                     display: "grid",
                     placeItems: "center",
-                    width: 26,
-                    height: 26,
+                    width: "var(--ctl-sm)",
+                    height: "var(--ctl-sm)",
                     borderRadius: 8,
                     background: open ? `color-mix(in srgb, ${ink} 20%, transparent)` : "var(--soft)",
                     border: `1px solid ${open ? `color-mix(in srgb, ${ink} 53%, transparent)` : "var(--brd)"}`,
@@ -357,7 +357,7 @@ export function ViewGrouped(props: GroupedProps) {
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "space-between",
-                      gap: 12,
+                      gap: "var(--sp-5)",
                       padding: "0 0 9px",
                     }}
                   >
@@ -390,15 +390,15 @@ export function ViewGrouped(props: GroupedProps) {
                         {num(total)}
                       </span>
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, position: "relative" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)", position: "relative" }}>
                       {isVirtualShelf(shelf.id) ? null : shelf.auto_rule ? (
                         <span
                           title={t("lib.ruleFixed")}
                           style={{
                             display: "inline-flex",
                             alignItems: "center",
-                            gap: 6,
-                            height: 26,
+                            gap: "var(--sp-3)",
+                            height: "var(--ctl-sm)",
                             padding: "0 10px",
                             borderRadius: 20,
                             font: "500 .6875rem var(--ui)",
@@ -416,8 +416,8 @@ export function ViewGrouped(props: GroupedProps) {
                           style={{
                             display: "inline-flex",
                             alignItems: "center",
-                            gap: 6,
-                            height: 26,
+                            gap: "var(--sp-3)",
+                            height: "var(--ctl-sm)",
                             padding: "0 10px",
                             borderRadius: 20,
                             font: "500 .6875rem var(--ui)",
@@ -483,9 +483,9 @@ export function ViewGrouped(props: GroupedProps) {
                       style={{
                         display: "flex",
                         alignItems: "center",
-                        gap: 2,
+                        gap: "var(--sp-1)",
                         padding: "8px 10px",
-                        borderRadius: 9,
+                        borderRadius: "var(--r-md)",
                         background: "var(--soft)",
                         border: "1px solid var(--brd)",
                         width: "100%",
@@ -501,7 +501,7 @@ export function ViewGrouped(props: GroupedProps) {
                             style={{
                               display: "block",
                               width: 4,
-                              height: 22,
+                              height: "var(--ctl-xs)",
                               borderRadius: 1,
                               background: "var(--faint)",
                               opacity: 0.7,
@@ -512,7 +512,7 @@ export function ViewGrouped(props: GroupedProps) {
                         style={{
                           font: "500 .6875rem var(--ui)",
                           color: "var(--faint)",
-                          marginInlineStart: 8,
+                          marginInlineStart: "var(--sp-4)",
                         }}
                       >
                         {t("lib.collapsed")} · {num(total)}
@@ -529,7 +529,7 @@ export function ViewGrouped(props: GroupedProps) {
                     <div
                       style={{
                         border: "1px dashed var(--rule)",
-                        borderRadius: 9,
+                        borderRadius: "var(--r-md)",
                         padding: "16px 18px",
                         background: "var(--soft)",
                         font: "400 .8125rem var(--ui)",

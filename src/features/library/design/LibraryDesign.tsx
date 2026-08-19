@@ -1109,7 +1109,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
                   height: 52,
                   margin: "0 auto 18px",
                   border: "1.5px solid var(--rule)",
-                  borderRadius: 3,
+                  borderRadius: "var(--r-xs)",
                   position: "relative",
                   opacity: 0.7,
                 }}
@@ -1125,7 +1125,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
                   style={{
                     height: 32,
                     padding: "0 15px",
-                    borderRadius: 9,
+                    borderRadius: "var(--r-md)",
                     border: "1px solid var(--brd)",
                     background: "var(--soft)",
                     font: "500 .75rem var(--ui)",
@@ -1178,9 +1178,9 @@ export function LibraryDesign(props: LibraryDesignProps) {
               className="libd-hov libd-hov-txt"
               onClick={() => setCarry(null)}
               style={{
-                height: 30,
+                height: "var(--ctl-md)",
                 padding: "0 12px",
-                borderRadius: 9,
+                borderRadius: "var(--r-md)",
                 border: "1px solid var(--brd)",
                 font: "500 .75rem var(--ui)",
                 color: "var(--mut)",

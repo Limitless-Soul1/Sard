@@ -93,7 +93,7 @@ export function DangerRow({
       style={{
         margin: "2px 4px 4px",
         padding: "8px 9px 9px",
-        borderRadius: 9,
+        borderRadius: "var(--r-md)",
         border: "1px solid color-mix(in srgb, #c0503a 38%, var(--brd))",
         background: "color-mix(in srgb, #c0503a 8%, transparent)",
       }}
@@ -107,7 +107,7 @@ export function DangerRow({
           onClick={() => setArmed(false)}
           style={{
             flex: 1,
-            height: 26,
+            height: "var(--ctl-sm)",
             borderRadius: 7,
             border: "1px solid var(--brd)",
             font: "500 .75rem var(--ui)",
@@ -121,7 +121,7 @@ export function DangerRow({
           onClick={onConfirm}
           style={{
             flex: 1,
-            height: 26,
+            height: "var(--ctl-sm)",
             borderRadius: 7,
             border: "1px solid #c0503a",
             font: "600 .75rem var(--ui)",
@@ -198,7 +198,7 @@ export function ShelfOrderMenu({
         <div style={{ ...legend, paddingTop: 0 }}>{t("lib.colour")}</div>
         <InkPicker value={shelf.ink} onPick={onInk} />
         <div style={{ height: 1, background: "var(--brd)", margin: "5px 4px" }} />
-        <div style={{ display: "flex", gap: 4, padding: "0 6px 4px" }}>
+        <div style={{ display: "flex", gap: "var(--sp-2)", padding: "0 6px 4px" }}>
           <button
             className="libd-hov"
             onClick={() => {
@@ -252,7 +252,7 @@ export function ShelfOrderMenu({
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
-                    gap: 8,
+                    gap: "var(--sp-4)",
                     minWidth: 0,
                     overflow: "hidden",
                   }}
@@ -486,11 +486,11 @@ export function CarryGhost({ book, spines }: { book: BookRow; spines: boolean })
         pointerEvents: "none",
         width: spines ? 34 : 74,
         ...(spines ? { height: 104 } : { aspectRatio: "2/3" }),
-        borderRadius: 3,
+        borderRadius: "var(--r-xs)",
         boxShadow: "var(--sh3)",
         display: "grid",
         placeItems: "center",
-        padding: 8,
+        padding: "var(--sp-4)",
         textAlign: "center",
         background: paint.bg,
         color: paint.ink,
@@ -623,8 +623,8 @@ export function SelectTray({
               <span
                 key={id}
                 style={{
-                  width: 14,
-                  height: 20,
+                  width: "var(--icon-sm)",
+                  height: "var(--icon-lg)",
                   borderRadius: 2,
                   background: paint?.bg ?? "var(--lbox)",
                   boxShadow: "var(--sh1)",
@@ -633,14 +633,14 @@ export function SelectTray({
             );
           })}
         </div>
-        <div style={{ width: 1, height: 22, background: "var(--brd)" }} />
+        <div style={{ width: 1, height: "var(--ctl-xs)", background: "var(--brd)" }} />
         <div style={{ position: "relative" }}>
           <button
             onClick={() => (open ? close() : setOpen(true))}
             style={{
-              height: 30,
+              height: "var(--ctl-md)",
               padding: "0 13px",
-              borderRadius: 9,
+              borderRadius: "var(--r-md)",
               background: "var(--acc)",
               color: "var(--pap)",
               font: "600 .75rem var(--ui)",
@@ -738,9 +738,9 @@ export function SelectTray({
           className="libd-hov libd-hov-txt"
           onClick={onClear}
           style={{
-            height: 30,
+            height: "var(--ctl-md)",
             padding: "0 12px",
-            borderRadius: 9,
+            borderRadius: "var(--r-md)",
             border: "1px solid var(--brd)",
             font: "500 .75rem var(--ui)",
             color: "var(--mut)",

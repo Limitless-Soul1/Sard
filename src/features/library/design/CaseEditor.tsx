@@ -544,7 +544,7 @@ export function CaseEditor(props: CaseEditorProps) {
             flex: "none",
             display: "flex",
             alignItems: "flex-start",
-            gap: 16,
+            gap: "var(--sp-6)",
             padding: "20px 24px 16px",
             borderBottom: "1px solid var(--brd)",
           }}
@@ -646,7 +646,7 @@ export function CaseEditor(props: CaseEditorProps) {
             className="libd-hov libd-hov-txt"
             onClick={props.onClose}
             aria-label={t("panel.close")}
-            style={{ flex: "none", width: 30, height: 30, borderRadius: 9, color: "var(--mut)", fontSize: 14 }}
+            style={{ flex: "none", width: "var(--ctl-md)", height: "var(--ctl-md)", borderRadius: "var(--r-md)", color: "var(--mut)", fontSize: 14 }}
           >
             <Icon name="close" size="sm" />
           </button>
@@ -670,7 +670,7 @@ export function CaseEditor(props: CaseEditorProps) {
                   padding: "10px 0 14px",
                   borderBottom: "1px solid var(--brd)",
                   opacity: shelfHeld || (rowDrag?.kind === "shelf" && rowDrag.id === s.id) ? 0.4 : 1,
-                  ...(s.auto_rule ? { background: "var(--soft)", borderRadius: 10, paddingInline: 12 } : {}),
+                  ...(s.auto_rule ? { background: "var(--soft)", borderRadius: 10, paddingInline: "var(--sp-5)" } : {}),
                 }}
               >
                 {/* where a dragged shelf would land */}
@@ -761,7 +761,7 @@ export function CaseEditor(props: CaseEditorProps) {
                       setMovingShelf(null);
                       setConfirmShelf(confirmShelf === s.id ? null : s.id);
                     }}
-                    style={{ width: 24, height: 24, borderRadius: 7, color: "var(--faint)", fontSize: 12 }}
+                    style={{ width: "var(--icon-xl)", height: "var(--icon-xl)", borderRadius: 7, color: "var(--faint)", fontSize: 12 }}
                   >
                     <Icon name="close" size="sm" />
                   </button>
@@ -837,7 +837,7 @@ export function CaseEditor(props: CaseEditorProps) {
                         </button>
                       )}
                       {g.name != null && (
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0 7px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)", padding: "6px 0 7px" }}>
                           <button
                             title={t("lib.moveCategoryHint")}
                             aria-label={t("lib.moveCategoryHint")}
@@ -874,7 +874,7 @@ export function CaseEditor(props: CaseEditorProps) {
                                   confirmCat?.cat === g.categoryId ? null : { shelf: s.id, cat: g.categoryId! },
                                 )
                               }
-                              style={{ width: 22, height: 22, borderRadius: 6, color: "var(--faint)", fontSize: 11 }}
+                              style={{ width: "var(--ctl-xs)", height: "var(--ctl-xs)", borderRadius: "var(--r-sm)", color: "var(--faint)", fontSize: 11 }}
                             >
                               <Icon name="close" size="sm" />
                             </button>
@@ -906,8 +906,8 @@ export function CaseEditor(props: CaseEditorProps) {
                           flexWrap: "wrap",
                           alignItems: "stretch",
                           gap: 7,
-                          minHeight: 44,
-                          borderRadius: 9,
+                          minHeight: "var(--ctl-2xl)",
+                          borderRadius: "var(--r-md)",
                           marginBottom: 10,
                           ...(hand?.kind === "book" && takeable
                             ? { outline: "1px dashed var(--brd)", outlineOffset: 6 }
@@ -1053,7 +1053,7 @@ export function CaseEditor(props: CaseEditorProps) {
                 if (v) run(() => shelfCreate(v, props.unfiled ? null : c.id));
               }}
               style={{
-                marginTop: 12,
+                marginTop: "var(--sp-5)",
                 width: 280,
                 background: "var(--soft)",
                 border: "1px solid var(--brd)",
@@ -1072,7 +1072,7 @@ export function CaseEditor(props: CaseEditorProps) {
             flex: "none",
             display: "flex",
             alignItems: "center",
-            gap: 12,
+            gap: "var(--sp-5)",
             padding: "13px 24px",
             borderTop: "1px solid var(--brd)",
           }}
@@ -1084,9 +1084,9 @@ export function CaseEditor(props: CaseEditorProps) {
               setCreatingShelf(true);
             }}
             style={{
-              height: 30,
+              height: "var(--ctl-md)",
               padding: "0 13px",
-              borderRadius: 9,
+              borderRadius: "var(--r-md)",
               border: "1px solid var(--brd)",
               background: "var(--chr)",
               font: "500 .75rem var(--ui)",
@@ -1117,9 +1117,9 @@ export function CaseEditor(props: CaseEditorProps) {
                 setTarget(null);
               }}
               style={{
-                height: 30,
+                height: "var(--ctl-md)",
                 padding: "0 12px",
-                borderRadius: 9,
+                borderRadius: "var(--r-md)",
                 border: "1px solid var(--brd)",
                 font: "500 .75rem var(--ui)",
                 color: "var(--mut)",
@@ -1136,9 +1136,9 @@ export function CaseEditor(props: CaseEditorProps) {
                   className="libd-hov"
                   onClick={() => setConfirmCase(false)}
                   style={{
-                    height: 30,
+                    height: "var(--ctl-md)",
                     padding: "0 12px",
-                    borderRadius: 9,
+                    borderRadius: "var(--r-md)",
                     border: "1px solid var(--brd)",
                     font: "500 .75rem var(--ui)",
                     color: "var(--mut)",
@@ -1162,9 +1162,9 @@ export function CaseEditor(props: CaseEditorProps) {
                     else setConfirmCase(false);
                   }}
                   style={{
-                    height: 30,
+                    height: "var(--ctl-md)",
                     padding: "0 12px",
-                    borderRadius: 9,
+                    borderRadius: "var(--r-md)",
                     border: "1px solid #c0503a",
                     font: "600 .75rem var(--ui)",
                     color: "#c0503a",
@@ -1177,7 +1177,7 @@ export function CaseEditor(props: CaseEditorProps) {
               <button
                 className="libd-hov"
                 onClick={() => setConfirmCase(true)}
-                style={{ height: 30, padding: "0 12px", borderRadius: 9, font: "500 .75rem var(--ui)", color: "#c0503a" }}
+                style={{ height: "var(--ctl-md)", padding: "0 12px", borderRadius: "var(--r-md)", font: "500 .75rem var(--ui)", color: "#c0503a" }}
               >
                 {t("lib.deleteCase")}
               </button>
@@ -1186,9 +1186,9 @@ export function CaseEditor(props: CaseEditorProps) {
             className="libd-hov-bright"
             onClick={props.onClose}
             style={{
-              height: 30,
+              height: "var(--ctl-md)",
               padding: "0 16px",
-              borderRadius: 9,
+              borderRadius: "var(--r-md)",
               background: "var(--acc)",
               color: "var(--pap)",
               font: "600 .75rem var(--ui)",
@@ -1241,7 +1241,7 @@ export function CaseEditor(props: CaseEditorProps) {
             insetInlineStart: 0,
             zIndex: 200,
             pointerEvents: "none",
-            width: 22,
+            width: "var(--ctl-xs)",
             height: 32,
             borderRadius: 2,
             boxShadow: "var(--sh3)",
@@ -1260,7 +1260,7 @@ function DropSlot() {
       style={{
         flex: "none",
         width: 56,
-        height: 44,
+        height: "var(--ctl-2xl)",
         borderRadius: 8,
         border: "2px dashed var(--acc)",
         background: "var(--act)",
@@ -1314,7 +1314,7 @@ function Chip({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 8,
+          gap: "var(--sp-4)",
           maxWidth: 250,
           padding: "5px 7px 5px 5px",
           borderRadius: 8,
@@ -1328,7 +1328,7 @@ function Chip({
         <span
           style={{
             flex: "none",
-            width: 22,
+            width: "var(--ctl-xs)",
             height: 32,
             borderRadius: 2,
             boxShadow: "var(--sh1)",
@@ -1364,7 +1364,7 @@ function Chip({
               e.stopPropagation();
               onDetails();
             }}
-            style={{ flex: "none", width: 20, height: 20, borderRadius: 6, color: "var(--mut)", fontSize: 12 }}
+            style={{ flex: "none", width: "var(--icon-lg)", height: "var(--icon-lg)", borderRadius: "var(--r-sm)", color: "var(--mut)", fontSize: 12 }}
           >
             <Icon name="more" size="sm" />
           </button>
@@ -1391,7 +1391,7 @@ function ConfirmBar({
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 12,
+        gap: "var(--sp-5)",
         flexWrap: "wrap",
         margin: "0 0 12px",
         padding: "10px 12px",
@@ -1401,7 +1401,7 @@ function ConfirmBar({
       }}
     >
       <span style={{ font: "500 .75rem var(--ui)", color: "var(--txt)" }}>{text}</span>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap" }}>
         {targets.map((x) => (
           <button
             key={x.id || "__none"}
@@ -1478,7 +1478,7 @@ function CatName({
         flex: "0 1 200px",
         background: disabled ? "transparent" : "var(--soft)",
         border: `1px solid ${disabled ? "transparent" : "var(--brd)"}`,
-        borderRadius: 6,
+        borderRadius: "var(--r-sm)",
         padding: "3px 7px",
         font: "600 .6875rem var(--ui)",
         letterSpacing: ".08em",

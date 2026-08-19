@@ -213,8 +213,8 @@ export function BookTile(props: BookTileProps) {
             zIndex: 12,
             insetBlockStart: spines ? -26 : 6,
             insetInlineEnd: spines ? -4 : 6,
-            width: 24,
-            height: 24,
+            width: "var(--icon-xl)",
+            height: "var(--icon-xl)",
             borderRadius: 8,
             background: "var(--chr)",
             border: "1px solid var(--brd)",
@@ -241,7 +241,7 @@ export function BookTile(props: BookTileProps) {
             border: "1px solid var(--brd)",
             borderRadius: 11,
             boxShadow: "var(--sh4)",
-            padding: 6,
+            padding: "var(--sp-3)",
             animation: "sard-rise .12s ease-out",
           }}
         >
@@ -381,7 +381,7 @@ export function BookTile(props: BookTileProps) {
             transition: "opacity .14s ease-out",
             display: "flex",
             flexDirection: "column",
-            gap: 2,
+            gap: "var(--sp-1)",
           }}
         >
           <div

@@ -284,7 +284,7 @@ export function BookDetails(props: BookDetailsProps) {
         flex: "none",
         width: w,
         height: h,
-        borderRadius: 3,
+        borderRadius: "var(--r-xs)",
         boxShadow: "var(--sh2)",
         position: "relative",
         overflow: "hidden",
@@ -472,7 +472,7 @@ export function BookDetails(props: BookDetailsProps) {
                 display: "flex",
                 alignItems: "center",
                 gap: 10,
-                marginTop: 12,
+                marginTop: "var(--sp-5)",
                 font: "500 .6875rem var(--ui)",
                 color: "var(--faint)",
                 flexWrap: "wrap",
@@ -494,7 +494,7 @@ export function BookDetails(props: BookDetailsProps) {
             className="libd-hov libd-hov-txt"
             onClick={props.onClose}
             aria-label={t("panel.close")}
-            style={{ flex: "none", width: 30, height: 30, borderRadius: 9, color: "var(--mut)", fontSize: 14 }}
+            style={{ flex: "none", width: "var(--ctl-md)", height: "var(--ctl-md)", borderRadius: "var(--r-md)", color: "var(--mut)", fontSize: 14 }}
           >
             ✕
           </button>
@@ -508,7 +508,7 @@ export function BookDetails(props: BookDetailsProps) {
               <div style={{ font: "400 .6875rem var(--ui)", color: "var(--faint)", margin: "-4px 0 9px" }}>
                 {t("lib.coverUse")}
               </div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 9 }}>
+              <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap", marginBottom: 9 }}>
                 <button style={chip(typeset)} onClick={() => edit({ coverMode: "typeset" })}>
                   {t("lib.coverTypeset")}
                 </button>
@@ -531,7 +531,7 @@ export function BookDetails(props: BookDetailsProps) {
 
               {/* COVER SIZING — how a cover fills its frame. RAWY-19's per-book override. */}
               <div style={{ ...legend, marginTop: 4 }}>{t("lib.coverSizing")}</div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 9 }}>
+              <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap", marginBottom: 9 }}>
                 {(["crop", "fit"] as const).map((m) => (
                   <button key={m} style={chip(draft.coverFit === m)} onClick={() => edit({ coverFit: m })}>
                     {t(m === "crop" ? "lib.cover.crop" : "lib.cover.fit")}
@@ -544,7 +544,7 @@ export function BookDetails(props: BookDetailsProps) {
                 </button>
               </div>
 
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap", alignItems: "center" }}>
                 {/* The FIRST swatch is "no chosen paint" — it clears the override and returns the
                     book to the colour Sard derives from its title. Without it the palette was a
                     one-way door: every swatch set a paint and none could unset one. It shows that
@@ -556,9 +556,9 @@ export function BookDetails(props: BookDetailsProps) {
                   onClick={() => setDraft(draftWithNoPaint)}
                   style={{
                     position: "relative",
-                    width: 22,
-                    height: 30,
-                    borderRadius: 3,
+                    width: "var(--ctl-xs)",
+                    height: "var(--ctl-md)",
+                    borderRadius: "var(--r-xs)",
                     background: derived.bg,
                     boxShadow:
                       draft.coverPaint === null
@@ -580,7 +580,7 @@ export function BookDetails(props: BookDetailsProps) {
                   />
                 </button>
 
-                <span style={{ width: 1, height: 22, background: "var(--brd)", flex: "none" }} />
+                <span style={{ width: 1, height: "var(--ctl-xs)", background: "var(--brd)", flex: "none" }} />
 
                 {PALETTE.map((k) => (
                   <button
@@ -589,9 +589,9 @@ export function BookDetails(props: BookDetailsProps) {
                     aria-pressed={draft.coverPaint === k}
                     onClick={() => setDraft((d) => draftWithPaint(d, k))}
                     style={{
-                      width: 22,
-                      height: 30,
-                      borderRadius: 3,
+                      width: "var(--ctl-xs)",
+                      height: "var(--ctl-md)",
+                      borderRadius: "var(--r-xs)",
                       background: k,
                       boxShadow:
                         draft.coverPaint === k
@@ -612,7 +612,7 @@ export function BookDetails(props: BookDetailsProps) {
                 <div
                   style={{
                     flex: "none",
-                    width: 44,
+                    width: "var(--ctl-2xl)",
                     height: 176,
                     borderRadius: 2,
                     boxShadow: "var(--sh2)",
@@ -686,7 +686,7 @@ export function BookDetails(props: BookDetailsProps) {
                 flexWrap: "wrap",
                 marginBottom: 14,
                 padding: "9px 12px",
-                borderRadius: 9,
+                borderRadius: "var(--r-md)",
                 background: "var(--pap)",
                 border: "1px solid var(--brd)",
               }}
@@ -714,7 +714,7 @@ export function BookDetails(props: BookDetailsProps) {
                 style={{
                   display: "flex",
                   alignItems: "flex-start",
-                  gap: 12,
+                  gap: "var(--sp-5)",
                   padding: "8px 0",
                   borderTop: "1px solid var(--brd)",
                 }}
@@ -732,7 +732,7 @@ export function BookDetails(props: BookDetailsProps) {
                 >
                   {lv.label}
                 </span>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap", flex: 1, minWidth: 0 }}>
                   {lv.empty ? (
                     <span style={{ font: "400 .75rem var(--ui)", color: "var(--faint)", paddingTop: 8 }}>
                       {lv.empty}
@@ -776,7 +776,7 @@ export function BookDetails(props: BookDetailsProps) {
             style={{
               height: 32,
               padding: "0 14px",
-              borderRadius: 9,
+              borderRadius: "var(--r-md)",
               border: "1px solid var(--brd)",
               font: "500 .8125rem var(--ui)",
               color: "var(--mut)",
@@ -791,7 +791,7 @@ export function BookDetails(props: BookDetailsProps) {
             style={{
               height: 32,
               padding: "0 18px",
-              borderRadius: 9,
+              borderRadius: "var(--r-md)",
               background: dirty ? "var(--acc)" : "var(--soft)",
               color: dirty ? "var(--pap)" : "var(--mut)",
               border: dirty ? "none" : "1px solid var(--brd)",

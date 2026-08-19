@@ -215,7 +215,7 @@ export function BookTile(props: BookTileProps) {
             insetInlineEnd: spines ? -4 : 6,
             width: "var(--icon-xl)",
             height: "var(--icon-xl)",
-            borderRadius: 8,
+            borderRadius: "var(--r-md)",
             background: "var(--chr)",
             border: "1px solid var(--brd)",
             boxShadow: "var(--sh2)",
@@ -272,7 +272,7 @@ export function BookTile(props: BookTileProps) {
                 justifyContent: "flex-start",
                 textAlign: "start",
                 padding: "7px 10px",
-                borderRadius: 8,
+                borderRadius: "var(--r-md)",
                 font: "500 .8125rem var(--ui)",
                 color: "var(--mut)",
               }}

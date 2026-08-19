@@ -464,7 +464,7 @@ export function Sidebar(props: SidebarProps) {
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  borderRadius: 7,
+                  borderRadius: "var(--r-md)",
                   paddingInlineEnd: 2,
                   borderInlineStart: `3px solid ${ink}`,
                   background: active ? "var(--act)" : "transparent",
@@ -482,7 +482,7 @@ export function Sidebar(props: SidebarProps) {
                     width: "var(--ctl-xs)",
                     height: "var(--ctl-xs)",
                     marginInlineEnd: "var(--sp-1)",
-                    borderRadius: 7,
+                    borderRadius: "var(--r-md)",
                     // The disc fills with the case's own colour once it is open.
                     border: `1px solid ${open ? "var(--brd)" : "transparent"}`,
                     background: open ? `color-mix(in srgb, ${ink} 18%, transparent)` : "transparent",
@@ -815,7 +815,7 @@ export function Sidebar(props: SidebarProps) {
             zIndex: 200,
             pointerEvents: "none",
             padding: "5px 11px",
-            borderRadius: 7,
+            borderRadius: "var(--r-md)",
             border: "1px solid var(--brd)",
             borderInlineStart: `3px solid ${props.cases.find((c) => c.id === dragging)?.ink ?? "var(--acc)"}`,
             background: "var(--chr)",
@@ -1052,7 +1052,7 @@ export function Header(props: HeaderProps) {
             minWidth: 240,
             flex: "0 1 320px",
             padding: "0 11px",
-            borderRadius: 10,
+            borderRadius: "var(--r-md)",
             background: "var(--soft)",
             border: "1px solid var(--brd)",
           }}
@@ -1135,7 +1135,7 @@ export function Header(props: HeaderProps) {
                 style={{
                   width: 28,
                   height: 28,
-                  borderRadius: 8,
+                  borderRadius: "var(--r-md)",
                   background: props.density === i ? "var(--act)" : "transparent",
                 }}
               >
@@ -1194,7 +1194,7 @@ export function Header(props: HeaderProps) {
                       width: "100%",
                       justifyContent: "flex-start",
                       padding: "7px 10px",
-                      borderRadius: 8,
+                      borderRadius: "var(--r-md)",
                       font: "500 .8125rem var(--ui)",
                       color: props.format === f ? "var(--txt)" : "var(--mut)",
                       background: props.format === f ? "var(--act)" : "transparent",
@@ -1256,7 +1256,7 @@ export function Header(props: HeaderProps) {
                       width: "100%",
                       justifyContent: "space-between",
                       padding: "7px 10px",
-                      borderRadius: 8,
+                      borderRadius: "var(--r-md)",
                       font: "500 .8125rem var(--ui)",
                       color: props.sort === s ? "var(--txt)" : "var(--mut)",
                     }}

@@ -583,7 +583,7 @@ export function CaseEditor(props: CaseEditorProps) {
                   width: "100%",
                   background: "var(--soft)",
                   border: "1px solid var(--brd)",
-                  borderRadius: 8,
+                  borderRadius: "var(--r-md)",
                   padding: "7px 10px",
                   font: rtl ? "700 1.125rem var(--ar)" : "600 1.0625rem var(--book)",
                   color: "var(--txt)",
@@ -670,7 +670,7 @@ export function CaseEditor(props: CaseEditorProps) {
                   padding: "10px 0 14px",
                   borderBottom: "1px solid var(--brd)",
                   opacity: shelfHeld || (rowDrag?.kind === "shelf" && rowDrag.id === s.id) ? 0.4 : 1,
-                  ...(s.auto_rule ? { background: "var(--soft)", borderRadius: 10, paddingInline: "var(--sp-5)" } : {}),
+                  ...(s.auto_rule ? { background: "var(--soft)", borderRadius: "var(--r-md)", paddingInline: "var(--sp-5)" } : {}),
                 }}
               >
                 {/* where a dragged shelf would land */}
@@ -761,7 +761,7 @@ export function CaseEditor(props: CaseEditorProps) {
                       setMovingShelf(null);
                       setConfirmShelf(confirmShelf === s.id ? null : s.id);
                     }}
-                    style={{ width: "var(--icon-xl)", height: "var(--icon-xl)", borderRadius: 7, color: "var(--faint)", fontSize: 12 }}
+                    style={{ width: "var(--icon-xl)", height: "var(--icon-xl)", borderRadius: "var(--r-md)", color: "var(--faint)", fontSize: 12 }}
                   >
                     <Icon name="close" size="sm" />
                   </button>
@@ -990,7 +990,7 @@ export function CaseEditor(props: CaseEditorProps) {
                         width: 240,
                         background: "var(--soft)",
                         border: "1px solid var(--brd)",
-                        borderRadius: 8,
+                        borderRadius: "var(--r-md)",
                         padding: "7px 10px",
                         font: "500 .8125rem var(--ui)",
                         outline: "none",
@@ -1057,7 +1057,7 @@ export function CaseEditor(props: CaseEditorProps) {
                 width: 280,
                 background: "var(--soft)",
                 border: "1px solid var(--brd)",
-                borderRadius: 8,
+                borderRadius: "var(--r-md)",
                 padding: "8px 11px",
                 font: "500 .8125rem var(--ui)",
                 outline: "none",
@@ -1212,7 +1212,7 @@ export function CaseEditor(props: CaseEditorProps) {
             zIndex: 210,
             pointerEvents: "none",
             padding: "5px 11px",
-            borderRadius: 7,
+            borderRadius: "var(--r-md)",
             border: "1px solid var(--brd)",
             borderInlineStart: "3px solid var(--acc)",
             background: "var(--chr)",
@@ -1261,7 +1261,7 @@ function DropSlot() {
         flex: "none",
         width: 56,
         height: "var(--ctl-2xl)",
-        borderRadius: 8,
+        borderRadius: "var(--r-md)",
         border: "2px dashed var(--acc)",
         background: "var(--act)",
         animation: "sard-open .14s ease-out",
@@ -1317,7 +1317,7 @@ function Chip({
           gap: "var(--sp-4)",
           maxWidth: 250,
           padding: "5px 7px 5px 5px",
-          borderRadius: 8,
+          borderRadius: "var(--r-md)",
           border: `1px solid ${hover && takeable ? "var(--acc)" : "var(--brd)"}`,
           background: hover ? "var(--hov)" : "var(--pap)",
           textAlign: "start",
@@ -1395,7 +1395,7 @@ function ConfirmBar({
         flexWrap: "wrap",
         margin: "0 0 12px",
         padding: "10px 12px",
-        borderRadius: 10,
+        borderRadius: "var(--r-md)",
         background: "var(--act)",
         border: "1px solid var(--acc)",
       }}
@@ -1410,7 +1410,7 @@ function ConfirmBar({
             style={{
               height: 28,
               padding: "0 11px",
-              borderRadius: 8,
+              borderRadius: "var(--r-md)",
               border: "1px solid var(--brd)",
               background: "var(--chr)",
               font: "500 .75rem var(--ui)",
@@ -1443,7 +1443,7 @@ function ShelfName({ shelf, onRename }: { shelf: ShelfNode; onRename: (v: string
         flex: "0 1 240px",
         background: "var(--soft)",
         border: "1px solid var(--brd)",
-        borderRadius: 7,
+        borderRadius: "var(--r-md)",
         padding: "5px 9px",
         font: "600 .8125rem var(--ui)",
         color: "var(--txt)",

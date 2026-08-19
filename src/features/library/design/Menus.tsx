@@ -108,7 +108,7 @@ export function DangerRow({
           style={{
             flex: 1,
             height: "var(--ctl-sm)",
-            borderRadius: 7,
+            borderRadius: "var(--r-md)",
             border: "1px solid var(--brd)",
             font: "500 .75rem var(--ui)",
             color: "var(--mut)",
@@ -122,7 +122,7 @@ export function DangerRow({
           style={{
             flex: 1,
             height: "var(--ctl-sm)",
-            borderRadius: 7,
+            borderRadius: "var(--r-md)",
             border: "1px solid #c0503a",
             font: "600 .75rem var(--ui)",
             color: "#c0503a",

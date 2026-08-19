@@ -228,7 +228,7 @@ export function ViewGrouped(props: GroupedProps) {
                   flex: 1,
                   margin: "-7px 0 -7px -8px",
                   padding: "7px 12px 7px 8px",
-                  borderRadius: 10,
+                  borderRadius: "var(--r-md)",
                   textAlign: "start",
                 }}
               >
@@ -241,7 +241,7 @@ export function ViewGrouped(props: GroupedProps) {
                     placeItems: "center",
                     width: "var(--ctl-sm)",
                     height: "var(--ctl-sm)",
-                    borderRadius: 8,
+                    borderRadius: "var(--r-md)",
                     background: open ? `color-mix(in srgb, ${ink} 20%, transparent)` : "var(--soft)",
                     border: `1px solid ${open ? `color-mix(in srgb, ${ink} 53%, transparent)` : "var(--brd)"}`,
                     transition: "background .14s ease-out",
@@ -469,7 +469,7 @@ export function ViewGrouped(props: GroupedProps) {
                         width: 260,
                         background: "var(--soft)",
                         border: "1px solid var(--brd)",
-                        borderRadius: 7,
+                        borderRadius: "var(--r-md)",
                         padding: "6px 9px",
                         font: "500 .8125rem var(--ui)",
                         outline: "none",

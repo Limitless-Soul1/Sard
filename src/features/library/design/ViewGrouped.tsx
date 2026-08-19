@@ -187,8 +187,16 @@ export function ViewGrouped(props: GroupedProps) {
               // chrome a little toward the paper, which is the intended restraint.
               background: "color-mix(in srgb, var(--chr) 88%, transparent)",
               border: "1px solid var(--brd)",
+              // The case's ink runs down this card as a spine, so the two corners it passes through
+              // square off to the spine's own 4px and the far side keeps the card radius. Both have
+              // to be stated logically: border-inline-start follows the writing direction but the
+              // border-radius shorthand is physical and does not, so in Arabic the spine bowed
+              // around the 14px curve while the bare edge kept the square corners cut for it.
               borderInlineStart: `4px solid ${spine}`,
-              borderRadius: "4px 14px 14px 4px",
+              borderStartStartRadius: 4,
+              borderEndStartRadius: 4,
+              borderStartEndRadius: 14,
+              borderEndEndRadius: 14,
               boxShadow: "var(--sh1)",
               overflow: "hidden",
             }}

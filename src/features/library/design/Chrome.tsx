@@ -300,10 +300,16 @@ export function Sidebar(props: SidebarProps) {
         <Hoopoe size={22} />
         <span style={{ display: "inline-flex", alignItems: "baseline", gap: 7, direction: "ltr" }}>
           <b style={{ font: "600 1.0625rem/1 var(--ui)" }}>Sard</b>
+          {/* The rule between the two wordmarks. Its height is tuned to the cap-height of the
+              lettering either side of it, so it is a LENGTH, not an icon and not a spacing step —
+              and the app has no token for that, because it has no such concept: its nine dividers
+              are 13, 16, 19, 20, 22, 22, 26, 34 and 54px, each measured against what it stands
+              beside. A token would be invented for one caller, so the literal stays and says why. */}
           <i
             style={{
               width: 1.5,
-              height: "var(--icon-md)",
+              // geometry-guard-allow: a divider length matched to cap-height, not an icon size
+              height: 16,
               alignSelf: "center",
               background: "currentColor",
               opacity: 0.28,

@@ -10,6 +10,16 @@
 // (0, 1, 1.5, 2 hairlines and rules), compound values ("8px 12px"), dynamic expressions, already
 // tokenised values, or colour literals -- see LIMITATIONS at the foot of this file.
 //
+// EXEMPTIONS. R1 is numeric, so it cannot tell an icon box from a divider that happens to be the
+// same number of pixels tall. Where a value is genuinely NOT the concept its token names, the
+// declaration may carry a marker:
+//
+//     // geometry-guard-allow: <reason>
+//
+// on the declaration's own line or the line above it. A reason is REQUIRED -- a bare marker does
+// not silence anything. Exemptions are never hidden: every one is printed on each run, so silencing
+// by sprinkling markers is visible in the output rather than invisible in a pass.
+//
 // Parsing is the validated jsx-scan module: comment blanking, brace depth and string state were all
 // fixed and self-tested there. Do not reimplement them here.
 
@@ -17,7 +27,7 @@ const fs = require("fs");
 const path = require("path");
 const JSX = require("./jsx-scan.cjs");
 
-// The files Stage 7 units 1 and 2 actually cleaned. PROTECTED (SardMini, ProfileCard) and
+// The files Stage 7 units 1, 1b and 2 actually cleaned. PROTECTED (SardMini, ProfileCard) and
 // surfaces that cannot be reached for runtime verification (ViewVista, ViewDetails, reader, photo)
 // are out of scope by construction, not by exclusion rule.
 const ENFORCED = [
@@ -46,6 +56,9 @@ const SPT = { 2: "--sp-1", 4: "--sp-2", 6: "--sp-3", 8: "--sp-4", 12: "--sp-5", 
 // violations survived units 1 and 2 unnoticed.
 const PAIR = /([A-Za-z][A-Za-z0-9]*)(\s*:\s*)(-?\d+)(\s*)(?=[,}\n]|$)/g;
 
+// A reason is mandatory: `geometry-guard-allow:` on its own exempts nothing.
+const ALLOW = /geometry-guard-allow:\s*(\S.*?)\s*(?:\*\/)?\s*$/;
+
 function tokenFor(key, n) {
   if (RAD.has(key)) return RADT[n] || null;
   if (SIZE.has(key)) return CTLT[n] || ICOT[n] || null;
@@ -53,9 +66,21 @@ function tokenFor(key, n) {
   return null;
 }
 
-/** Violations in one source text. `label` is only used for reporting. */
+/** The exemption reason for a violation on `line` (1-based), or null. Own line, then the line above. */
+function allowanceFor(srcLines, line) {
+  for (const i of [line - 1, line - 2]) {
+    if (i < 0 || i >= srcLines.length) continue;
+    const m = srcLines[i].match(ALLOW);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+/** Violations and acknowledged exemptions in one source text. */
 function checkText(src, label) {
-  const out = [];
+  const violations = [];
+  const exemptions = [];
+  const srcLines = src.split("\n");
   const blanked = JSX.blankComments(src);
   for (const range of JSX.blockRanges(src)) {
     const body = blanked.slice(range[0], range[1]);
@@ -65,27 +90,31 @@ function checkText(src, label) {
       const key = m[1], n = Number(m[3]);
       const line = src.slice(0, range[0] + m.index).split("\n").length;
       const tok = tokenFor(key, n);
+      let hit = null;
       if (tok) {
-        out.push({ file: label, line: line, rule: "R1", key: key, value: n, expected: "var(" + tok + ")",
-          why: "this value IS " + tok });
-        continue;
+        hit = { file: label, line: line, rule: "R1", key: key, value: n,
+          expected: "var(" + tok + ")", why: "this value IS " + tok };
+      } else if (RAD.has(key) && n >= 6 && n <= 10) {
+        hit = { file: label, line: line, rule: "R2", key: key, value: n,
+          expected: "var(--r-md)", why: "radius " + n + " is inside Decision 3's 6-10 band" };
       }
-      if (RAD.has(key) && n >= 6 && n <= 10) {
-        out.push({ file: label, line: line, rule: "R2", key: key, value: n, expected: "var(--r-md)",
-          why: "radius " + n + " is inside Decision 3's 6-10 band" });
-      }
+      if (!hit) continue;
+      const reason = allowanceFor(srcLines, line);
+      if (reason) { hit.reason = reason; exemptions.push(hit); } else { violations.push(hit); }
     }
   }
-  return out;
+  return { violations: violations, exemptions: exemptions };
 }
 
 function checkFiles(files) {
-  const all = [];
+  const violations = [], exemptions = [];
   for (const f of files) {
     if (!fs.existsSync(f)) { console.error("guard: missing file " + f); process.exitCode = 2; continue; }
-    for (const v of checkText(fs.readFileSync(f, "utf8"), f.split(path.sep).join("/"))) all.push(v);
+    const r = checkText(fs.readFileSync(f, "utf8"), f.split(path.sep).join("/"));
+    for (const v of r.violations) violations.push(v);
+    for (const e of r.exemptions) exemptions.push(e);
   }
-  return all;
+  return { violations: violations, exemptions: exemptions };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -100,34 +129,46 @@ function selfTest() {
     // the regression that slipped past units 1 and 2:
     ["violation as the LAST pair in a block", 'const e = <i style={{ display: "flex", gap: 4 }} />;', "R1"],
     ["exact icon size", 'const f = <i style={{ width: 16, height: 16 }} />;', "R1"],
+    // an exemption marker with NO reason must not silence anything:
+    ["bare marker with no reason still flags",
+      'const g = <i style={{\n  // geometry-guard-allow:\n  gap: 8,\n}} />;', "R1"],
+    // a marker must not leak to an unrelated violation further down:
+    ["marker does not leak to a later line",
+      'const h = <i style={{\n  // geometry-guard-allow: only the next one\n  gap: 8,\n  height: 30,\n  color: "red",\n}} />;', "R1"],
   ];
   const MUST_NOT_FLAG = [
-    ["already tokenised", 'const g = <i style={{ borderRadius: "var(--r-md)" }} />;'],
-    ["structural hairline", 'const h = <i style={{ height: 1, width: 0 }} />;'],
-    ["structural fractional", 'const i = <i style={{ height: 1.5 }} />;'],
-    ["radius below the band, not a token", 'const j = <i style={{ borderRadius: 2 }} />;'],
-    ["content dimension", 'const k = <i style={{ maxWidth: 430, height: 176 }} />;'],
-    ["dynamic expression", 'const l = <i style={{ padding: props.big ? 12 : 4 }} />;'],
-    ["compound value", 'const m = <i style={{ padding: "8px 12px" }} />;'],
-    ["colour literal (out of declared scope)", 'const n = <i style={{ color: "#fff" }} />;'],
-    ["non-geometry key", 'const o = <i style={{ zIndex: 30, opacity: 1 }} />;'],
-    ["value in a comment", 'const p = <i style={{ display: "flex" /* gap: 8 */ }} />;'],
+    ["already tokenised", 'const i = <i style={{ borderRadius: "var(--r-md)" }} />;'],
+    ["structural hairline", 'const j = <i style={{ height: 1, width: 0 }} />;'],
+    ["structural fractional", 'const k = <i style={{ height: 1.5 }} />;'],
+    ["radius below the band, not a token", 'const l = <i style={{ borderRadius: 2 }} />;'],
+    ["content dimension", 'const m = <i style={{ maxWidth: 430, height: 176 }} />;'],
+    ["dynamic expression", 'const n = <i style={{ padding: props.big ? 12 : 4 }} />;'],
+    ["compound value", 'const o = <i style={{ padding: "8px 12px" }} />;'],
+    ["colour literal (out of declared scope)", 'const p = <i style={{ color: "#fff" }} />;'],
+    ["non-geometry key", 'const q = <i style={{ zIndex: 30, opacity: 1 }} />;'],
+    ["value in a comment", 'const r = <i style={{ display: "flex" /* gap: 8 */ }} />;'],
+    ["marker on the line above exempts",
+      'const s = <i style={{\n  // geometry-guard-allow: a divider length, not an icon\n  height: 16,\n}} />;'],
+    ["marker on the same line exempts",
+      'const t = <i style={{ height: 16 /* geometry-guard-allow: a divider length */ }} />;'],
   ];
 
   let bad = 0;
   console.log("  positive cases (guard MUST flag):");
   for (const c of MUST_FLAG) {
-    const v = checkText(c[1], "fixture");
+    const v = checkText(c[1], "fixture").violations;
     const ok = v.length > 0 && v.some((x) => x.rule === c[2]);
     if (!ok) bad++;
-    console.log("    " + (ok ? "ok   " : "FAIL ") + c[0].padEnd(42) + (v.length ? v[0].rule + " " + v[0].key + "=" + v[0].value : "NOT FLAGGED"));
+    console.log("    " + (ok ? "ok   " : "FAIL ") + c[0].padEnd(44) + (v.length ? v[0].rule + " " + v[0].key + "=" + v[0].value : "NOT FLAGGED"));
   }
   console.log("  negative cases (guard MUST NOT flag):");
   for (const c of MUST_NOT_FLAG) {
-    const v = checkText(c[1], "fixture");
-    const ok = v.length === 0;
+    const r = checkText(c[1], "fixture");
+    const ok = r.violations.length === 0;
     if (!ok) bad++;
-    console.log("    " + (ok ? "ok   " : "FAIL ") + c[0].padEnd(42) + (ok ? "clean" : "flagged: " + JSON.stringify(v.map((x) => x.key + "=" + x.value))));
+    const note = ok ? (r.exemptions.length ? "clean (1 acknowledged exemption)" : "clean") :
+      "flagged: " + JSON.stringify(r.violations.map((x) => x.key + "=" + x.value));
+    console.log("    " + (ok ? "ok   " : "FAIL ") + c[0].padEnd(44) + note);
   }
   return bad;
 }
@@ -142,13 +183,21 @@ if (args[0] === "--selftest") {
 }
 
 const files = args.length ? args : ENFORCED;
-const violations = checkFiles(files);
-if (violations.length === 0) {
+const result = checkFiles(files);
+
+// Exemptions are ALWAYS printed, pass or fail, so they cannot accumulate unnoticed.
+if (result.exemptions.length) {
+  console.log("geometry-guard: " + result.exemptions.length + " acknowledged exemption(s):");
+  for (const e of result.exemptions) {
+    console.log("  " + e.file + ":" + e.line + "  " + e.key + ": " + e.value + "  — " + e.reason);
+  }
+}
+if (result.violations.length === 0) {
   console.log("geometry-guard: PASS — " + files.length + " file(s), no reintroduced geometry");
   process.exit(0);
 }
-console.log("geometry-guard: FAIL — " + violations.length + " violation(s)");
-for (const v of violations) {
+console.log("geometry-guard: FAIL — " + result.violations.length + " violation(s)");
+for (const v of result.violations) {
   console.log("  " + v.file + ":" + v.line + "  [" + v.rule + "] " + v.key + ": " + v.value +
     "  ->  " + v.expected + "   (" + v.why + ")");
 }

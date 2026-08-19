@@ -597,7 +597,7 @@ export function CaseEditor(props: CaseEditorProps) {
                 {t("lib.shelvesCount", { n: num(c.shelves.length) })}
               </span>
               {/* No colour picker here: an unfiled group has no ink of its own to set. */}
-              <div style={{ display: props.unfiled ? "none" : "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ display: props.unfiled ? "none" : "flex", alignItems: "center", gap: "var(--sp-3)" }}>
                 <button
                   title={t("lib.inkNone")}
                   aria-label={t("lib.inkNone")}
@@ -733,7 +733,7 @@ export function CaseEditor(props: CaseEditorProps) {
                       {s.order_rule === "hand" ? (
                         t("lib.byHand")
                       ) : (
-                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--sp-2)" }}>
                           <Icon name="sort" size="sm" />
                           {t(sortKey(s.order_rule))}
                         </span>

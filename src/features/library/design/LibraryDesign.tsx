@@ -1114,7 +1114,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
                   opacity: 0.7,
                 }}
               />
-              <div style={{ font: "600 1.125rem var(--book)", marginBottom: 8 }}>{t("lib.noResults")}</div>
+              <div style={{ font: "600 1.125rem var(--book)", marginBottom: "var(--sp-4)" }}>{t("lib.noResults")}</div>
               <p style={{ margin: "0 0 18px", font: "400 .8125rem/1.65 var(--ui)", color: "var(--mut)" }}>
                 {t("lib.noResultsBody")}
               </p>

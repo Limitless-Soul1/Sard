@@ -303,7 +303,7 @@ export function Sidebar(props: SidebarProps) {
           <i
             style={{
               width: 1.5,
-              height: 16,
+              height: "var(--icon-md)",
               alignSelf: "center",
               background: "currentColor",
               opacity: 0.28,
@@ -313,7 +313,7 @@ export function Sidebar(props: SidebarProps) {
         </span>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-1)" }}>
         {nav.map((n) => (
           <button
             key={n.id}
@@ -706,7 +706,7 @@ export function Sidebar(props: SidebarProps) {
                 title={looseOpen ? t("lib.collapse") : t("lib.expand")}
                 aria-label={looseOpen ? t("lib.collapse") : t("lib.expand")}
                 aria-expanded={looseOpen}
-                style={{ flex: "none", width: 16, height: 16, borderRadius: 4, display: "grid", placeItems: "center" }}
+                style={{ flex: "none", width: "var(--icon-md)", height: "var(--icon-md)", borderRadius: 4, display: "grid", placeItems: "center" }}
               >
                 <span
                   style={{
@@ -988,7 +988,7 @@ export function Header(props: HeaderProps) {
         ))}
       </div>
 
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16 }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "var(--sp-6)" }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: "var(--sp-5)", minWidth: 0 }}>
           <h1
             dir="auto"

@@ -530,7 +530,7 @@ export function BookDetails(props: BookDetailsProps) {
               </div>
 
               {/* COVER SIZING — how a cover fills its frame. RAWY-19's per-book override. */}
-              <div style={{ ...legend, marginTop: 4 }}>{t("lib.coverSizing")}</div>
+              <div style={{ ...legend, marginTop: "var(--sp-2)" }}>{t("lib.coverSizing")}</div>
               <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap", marginBottom: 9 }}>
                 {(["crop", "fit"] as const).map((m) => (
                   <button key={m} style={chip(draft.coverFit === m)} onClick={() => edit({ coverFit: m })}>
@@ -644,7 +644,7 @@ export function BookDetails(props: BookDetailsProps) {
                     </span>
                   )}
                 </div>
-                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
                   <button
                     style={chip(!spineSrc && spineMode === "typeset")}
                     onClick={() => edit({ spineMode: "typeset" })}

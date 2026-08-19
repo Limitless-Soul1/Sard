@@ -429,7 +429,7 @@ export function ViewGrouped(props: GroupedProps) {
                           {shelf.order_rule === "hand" ? (
                             t("lib.byHand")
                           ) : (
-                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--sp-2)" }}>
                               <Icon name="sort" size="sm" />
                               {t(sortKey(shelf.order_rule))}
                             </span>

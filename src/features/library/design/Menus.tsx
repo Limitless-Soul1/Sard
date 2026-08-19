@@ -101,7 +101,7 @@ export function DangerRow({
       <div style={{ font: "400 .6875rem/1.45 var(--ui)", color: "var(--txt)", paddingBottom: 8 }}>
         {confirmText}
       </div>
-      <div style={{ display: "flex", gap: 6 }}>
+      <div style={{ display: "flex", gap: "var(--sp-3)" }}>
         <button
           className="libd-hov"
           onClick={() => setArmed(false)}

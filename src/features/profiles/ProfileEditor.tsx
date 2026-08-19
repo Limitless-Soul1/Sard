@@ -70,6 +70,7 @@ import {
 import { judgePalette } from "./model/guidance";
 import { editHex } from "./model/hex";
 import { deriveColors } from "./model/palette";
+import { Icon } from "../../components/Icon";
 
 /**
  * What each chapter owns, as a value that can be compared.
@@ -383,7 +384,7 @@ export function ProfileEditor({
           {t("profiles.editor.save")}
         </button>
         <button className="pf-editor-x" onClick={onClose} aria-label={t("profiles.editor.close")}>
-          ✕
+          <Icon name="close" size="sm" />
         </button>
       </div>
 

@@ -51,6 +51,7 @@ import { Inbox } from "./Inbox";
 import { routeDroppedPaths } from "../profiles/dropRoute";
 import { BookmarksShelf } from "./BookmarksShelf";
 import { PhotoGallery } from "../photo/PhotoGallery";
+import { Icon } from "../../components/Icon";
 
 // Detect Arabic from the TITLE TEXT itself, so a caption renders in Amiri even when the
 // book's metadata mislabels its language (RAWY-17: e.g. an Arabic book tagged lang=en).
@@ -188,7 +189,7 @@ function ImportResultsPanel({
       <div className="import-report-head">
         <span className="import-report-title">{t("lib.import.resultsTitle")}</span>
         <button className="rp-x" onClick={onDismiss} aria-label={t("lib.import.dismiss")}>
-          ✕
+          <Icon name="close" size="sm" />
         </button>
       </div>
       <div className="import-report-counts">
@@ -795,7 +796,7 @@ function BookCard({
           title={t("edit.edit")}
           aria-label={t("edit.edit")}
         >
-          ⋯
+          <Icon name="more" size="sm" />
         </button>
       </div>
       <div className="lib-cap" dir={arabic ? "rtl" : "ltr"}>

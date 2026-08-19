@@ -12,6 +12,7 @@ import { resolveTheme, useTheme } from "../../theme";
 import { colorValue, HIGHLIGHT_SLOTS, isHex } from "../reader/highlightColors";
 import { annoIsHighlight, annoIsNote, annotationsAll, tagsList, type AnnoItem } from "../../lib/ipc";
 import type { OpenTarget } from "./Library";
+import { Icon } from "../../components/Icon";
 
 const ARABIC = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
 type TypeFilter = "all" | "highlight" | "note";
@@ -102,7 +103,7 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
             </span>
           </div>
           <label className="lib-search inbox-search">
-            <span className="lib-search-ico" aria-hidden>⌕</span>
+            <span className="lib-search-ico" aria-hidden><Icon name="search" size="sm" /></span>
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("inbox.search")} />
           </label>
         </div>

@@ -37,6 +37,7 @@ import { resolveBookMeta, displayTitle } from "../../../lib/bookMeta";
 import { autoCoverPaint } from "../AutoCover";
 import { dropIndex, isFinished, pctText, groupShelf, placementPlan, sortKey, type BookGroup } from "./model";
 import { createEdgeScroller, type EdgeScroller } from "./dragScroll";
+import { Icon } from "../../../components/Icon";
 
 /** The case inks, shared with the sidebar's picker. */
 const INKS = ["#BFA8D6", "#8DC3BA", "#9DC0D6", "#E8C36A", "#D69C9C", "#A8C08D", "#C9A88D", "#9C8DC3"];
@@ -647,7 +648,7 @@ export function CaseEditor(props: CaseEditorProps) {
             aria-label={t("panel.close")}
             style={{ flex: "none", width: 30, height: 30, borderRadius: 9, color: "var(--mut)", fontSize: 14 }}
           >
-            ✕
+            <Icon name="close" size="sm" />
           </button>
         </div>
 
@@ -698,7 +699,7 @@ export function CaseEditor(props: CaseEditorProps) {
                       touchAction: "none",
                     }}
                   >
-                    ⠿
+                    <Icon name="grip" size="sm" />
                   </button>
                   {/* `collection_rename` answers with the collection ROWS, not the tree — every
                       other write here answers with the tree. The cast that used to bridge that
@@ -755,7 +756,7 @@ export function CaseEditor(props: CaseEditorProps) {
                     }}
                     style={{ width: 24, height: 24, borderRadius: 7, color: "var(--faint)", fontSize: 12 }}
                   >
-                    ✕
+                    <Icon name="close" size="sm" />
                   </button>
                 </div>
 
@@ -846,7 +847,7 @@ export function CaseEditor(props: CaseEditorProps) {
                               touchAction: "none",
                             }}
                           >
-                            ⠿
+                            <Icon name="grip" size="sm" />
                           </button>
                           <CatName
                             name={g.name}
@@ -868,7 +869,7 @@ export function CaseEditor(props: CaseEditorProps) {
                               }
                               style={{ width: 22, height: 22, borderRadius: 6, color: "var(--faint)", fontSize: 11 }}
                             >
-                              ✕
+                              <Icon name="close" size="sm" />
                             </button>
                           )}
                         </div>
@@ -1358,7 +1359,7 @@ function Chip({
             }}
             style={{ flex: "none", width: 20, height: 20, borderRadius: 6, color: "var(--mut)", fontSize: 12 }}
           >
-            ⋯
+            <Icon name="more" size="sm" />
           </button>
         )}
       </div>

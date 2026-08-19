@@ -19,6 +19,7 @@ import { coverSrc } from "../coverSrc";
 import { resolveBookMeta, displayTitle } from "../../../lib/bookMeta";
 import { progressPct, isFinished, spineWidth, type DesignView } from "./model";
 import { coverPresentation, type CoverMode } from "./coverPresentation";
+import { Icon } from "../../../components/Icon";
 
 /** Cover heights per density step, for Spines. The design's numbers. */
 const SPINE_HEIGHTS = [104, 132, 168, 208];
@@ -223,7 +224,7 @@ export function BookTile(props: BookTileProps) {
             lineHeight: 1,
           }}
         >
-          ⋯
+          <Icon name="more" size="sm" />
         </button>
       )}
 

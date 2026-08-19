@@ -15,6 +15,7 @@ import { Hoopoe } from "../Hoopoe";
 import { CaseManageMenu } from "./Menus";
 import { DENSITY_STEPS, DESIGN_SORTS, dropIndex, UNFILED_CASE_ID, type DesignSort, type DesignView } from "./model";
 import { createEdgeScroller, type EdgeScroller } from "./dragScroll";
+import { Icon } from "../../../components/Icon";
 
 export type Section = "library" | "inbox" | "cards" | "bookmarks";
 
@@ -573,7 +574,7 @@ export function Sidebar(props: SidebarProps) {
                     background: lifted || dragging === c.id ? "var(--act)" : "transparent",
                   }}
                 >
-                  ⠿
+                  <Icon name="grip" size="sm" />
                 </button>
                 <span style={{ position: "relative", flex: "none" }}>
                   <button
@@ -590,7 +591,7 @@ export function Sidebar(props: SidebarProps) {
                       lineHeight: 1,
                     }}
                   >
-                    ⋯
+                    <Icon name="more" size="sm" />
                   </button>
                   {managing === c.id && (
                     <CaseManageMenu
@@ -756,7 +757,7 @@ export function Sidebar(props: SidebarProps) {
                   lineHeight: 1,
                 }}
               >
-                ⋯
+                <Icon name="more" size="sm" />
               </button>
             </div>
           )}
@@ -840,7 +841,7 @@ export function Sidebar(props: SidebarProps) {
           aria-label={t("gs.open")}
         >
           <span className="lib-settings-ico" aria-hidden>
-            ⚙
+            <Icon name="gear" size="sm" />
           </span>
           <span>{t("gs.open")}</span>
         </button>
@@ -1057,7 +1058,7 @@ export function Header(props: HeaderProps) {
           }}
         >
           <span style={{ color: "var(--faint)", fontSize: 13 }} aria-hidden>
-            ⌕
+            <Icon name="search" size="sm" />
           </span>
           <input
             value={props.query}
@@ -1079,7 +1080,7 @@ export function Header(props: HeaderProps) {
               aria-label={t("lib.clearSearch")}
               style={{ color: "var(--faint)", fontSize: 12, padding: "0 2px" }}
             >
-              ✕
+              <Icon name="close" size="sm" />
             </button>
           )}
         </div>
@@ -1119,7 +1120,7 @@ export function Header(props: HeaderProps) {
         {props.view === "grid" && (
           <button onClick={props.onCoverMode} style={ctlBtn(false)}>
             {t(props.coverMode === "crop" ? "lib.cover.crop" : "lib.cover.fit")}
-            <span style={{ color: "var(--faint)", fontSize: 9 }}>▾</span>
+            <span style={{ color: "var(--faint)", display: "flex" }} aria-hidden><Icon name="caretDown" size="sm" /></span>
           </button>
         )}
 
@@ -1219,7 +1220,7 @@ export function Header(props: HeaderProps) {
               {t("lib.sortEyebrow")}
             </span>
             <span style={{ font: "500 .8125rem var(--ui)" }}>{sortLabel[props.sort]}</span>
-            <span style={{ color: "var(--faint)", fontSize: 9 }}>▾</span>
+            <span style={{ color: "var(--faint)", display: "flex" }} aria-hidden><Icon name="caretDown" size="sm" /></span>
           </button>
           {sortOpen && (
             <>

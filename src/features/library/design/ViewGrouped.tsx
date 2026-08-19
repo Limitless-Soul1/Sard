@@ -16,6 +16,7 @@ import { BookTile } from "./BookTile";
 import { ShelfOrderMenu } from "./Menus";
 import { type BookGroup, type DesignView, isVirtualShelf, itemWidth, sortKey, UNFILED_CASE_ID } from "./model";
 import type { CoverMode } from "./coverPresentation";
+import { Icon } from "../../../components/Icon";
 
 export interface ShelfRender {
   shelf: ShelfNode;
@@ -375,7 +376,7 @@ export function ViewGrouped(props: GroupedProps) {
                           marginInlineEnd: -8,
                         }}
                       >
-                        {shelf.collapsed ? "▸" : "▾"}
+                        <Icon name={shelf.collapsed ? "caretRight" : "caretDown"} size="sm" />
                       </button>
                       <button
                         className="libd-hov-txt"
@@ -428,7 +429,7 @@ export function ViewGrouped(props: GroupedProps) {
                           {shelf.order_rule === "hand"
                             ? t("lib.byHand")
                             : `⇅ ${t(sortKey(shelf.order_rule))}`}
-                          <span style={{ color: "var(--faint)", fontSize: 9 }}>▾</span>
+                          <span style={{ color: "var(--faint)", display: "flex" }} aria-hidden><Icon name="caretDown" size="sm" /></span>
                         </button>
                       )}
                       {props.orderMenuFor === shelf.id && (

@@ -100,7 +100,12 @@ export function GlobalSettings({ open, onClose }: { open: boolean; onClose: () =
         {/* content */}
         <div className="gs-content">
           <div className="gs-topbar">
-            <button className="gs-x" onClick={onClose} aria-label="✕">✕</button>
+            {/* The name was the symbol itself (`aria-label="✕"`), which is the exact thing
+                RAWY-119 introduced `panel.close` to stop — its own note reads "a real label so it
+                isn't a bare glyph". */}
+            <button className="gs-x" onClick={onClose} aria-label={t("panel.close")} title={t("panel.close")}>
+              <Icon name="close" size="sm" />
+            </button>
           </div>
           <div className="gs-body">
             {section === "appearance" && <AppearanceSection />}

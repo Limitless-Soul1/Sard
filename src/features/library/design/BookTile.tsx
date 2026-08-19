@@ -364,7 +364,7 @@ export function BookTile(props: BookTileProps) {
                 fontSize: 10,
               }}
             >
-              ✓
+              <Icon name="check" size="sm" />
             </div>
           </>
         )}

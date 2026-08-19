@@ -115,7 +115,7 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
               onClick={() => setColor(null)}
               title={t("inbox.all")}
             >
-              ◍
+              <Icon name="swatchAny" size="md" />
             </button>
             {HIGHLIGHT_SLOTS.map((c) => (
               <button
@@ -202,7 +202,7 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
 
       {filtered.length === 0 ? (
         <div className="inbox-empty">
-          <div className="inbox-empty-mark" aria-hidden>❝</div>
+          <div className="inbox-empty-mark" aria-hidden><Icon name="quote" size="xl" /></div>
           <div className="inbox-empty-title">{items.length === 0 ? t("inbox.empty.title") : t("inbox.empty.none")}</div>
           <div className="inbox-empty-sub">{items.length === 0 ? t("inbox.empty.sub") : t("inbox.empty.noneSub")}</div>
         </div>

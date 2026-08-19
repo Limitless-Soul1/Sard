@@ -940,7 +940,9 @@ function EditBook({
       <div className="edit-dialog" role="dialog" aria-modal="true">
         <div className="edit-head">
           <span className="edit-title">{t("edit.title")}</span>
-          <button className="rc-icon" onClick={onClose} aria-label={t("edit.cancel")}>✕</button>
+          <button className="rc-icon" onClick={onClose} aria-label={t("edit.cancel")} title={t("edit.cancel")}>
+            <Icon name="close" size="sm" />
+          </button>
         </div>
         <div className="edit-body">
           <div className="edit-cover">

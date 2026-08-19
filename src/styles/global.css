@@ -3644,7 +3644,10 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .inbox-search { width: 240px; flex: 0 0 auto; }
 .inbox-filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .inbox-dots { display: flex; align-items: center; gap: 7px; }
-.inbox-dot { position: relative; width: 18px; height: 18px; border-radius: 50%; border: 0; cursor: pointer; padding: 0; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08); }
+/* The "all colours" slot holds a drawn ring rather than a character, so the row centres its
+   contents; the colour dots have no children and are unaffected. 16px reads level with an 18px
+   filled dot, where 14 read visibly smaller than its neighbours. */
+.inbox-dot { position: relative; width: 18px; height: 18px; border-radius: 50%; border: 0; cursor: pointer; padding: 0; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08); display: flex; align-items: center; justify-content: center; }
 .inbox-dot.on { box-shadow: 0 0 0 2px var(--app-bg), 0 0 0 3.5px var(--accent); }
 .inbox-dot-all { background: transparent; box-shadow: none; color: var(--muted); font-size: 0.9375rem; line-height: 1; }
 .inbox-dot-all.on { color: var(--accent); box-shadow: none; }
@@ -3686,7 +3689,11 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 }
 .inbox-card-note-label { color: var(--accent); font-weight: 600; }
 .inbox-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 40px; text-align: center; }
-.inbox-empty-mark { font: 400 4rem "Literata", serif; color: color-mix(in srgb, var(--accent) 40%, transparent); line-height: 1; }
+/* The empty-state quotation mark. It declared "Literata" but Literata has no such codepoint, so
+   it was actually drawn by Segoe UI Symbol at 63px. It is now drawn by the icon set; the size
+   stays here because this is a DISPLAY ornament, not a control, so it is not on the icon scale. */
+.inbox-empty-mark { color: color-mix(in srgb, var(--accent) 40%, transparent); line-height: 1; }
+.inbox-empty-mark svg { width: 64px; height: 64px; }
 .inbox-empty-title { font: 600 1.125rem var(--ui-font); color: var(--text); }
 .inbox-empty-sub { font: 400 0.8125rem var(--ui-font); color: var(--muted); max-width: 360px; }
 

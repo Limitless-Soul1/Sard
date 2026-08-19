@@ -426,9 +426,14 @@ export function ViewGrouped(props: GroupedProps) {
                             border: "1px solid var(--brd)",
                           }}
                         >
-                          {shelf.order_rule === "hand"
-                            ? t("lib.byHand")
-                            : `⇅ ${t(sortKey(shelf.order_rule))}`}
+                          {shelf.order_rule === "hand" ? (
+                            t("lib.byHand")
+                          ) : (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                              <Icon name="sort" size="sm" />
+                              {t(sortKey(shelf.order_rule))}
+                            </span>
+                          )}
                           <span style={{ color: "var(--faint)", display: "flex" }} aria-hidden><Icon name="caretDown" size="sm" /></span>
                         </button>
                       )}

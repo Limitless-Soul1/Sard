@@ -730,7 +730,14 @@ export function CaseEditor(props: CaseEditorProps) {
                       }}
                       style={chip(s.order_rule === "hand")}
                     >
-                      {s.order_rule === "hand" ? t("lib.byHand") : `⇅ ${t(sortKey(s.order_rule))}`}
+                      {s.order_rule === "hand" ? (
+                        t("lib.byHand")
+                      ) : (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                          <Icon name="sort" size="sm" />
+                          {t(sortKey(s.order_rule))}
+                        </span>
+                      )}
                     </button>
                   )}
                   {/* WHICH CASE HOLDS THIS SHELF. The one control that stops a shelf becoming an

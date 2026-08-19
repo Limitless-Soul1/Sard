@@ -677,7 +677,7 @@ function IdentitySection({
                   : { background: draft.data.theme.colors.paperBg, color: draft.data.theme.colors.muted }
               }
             >
-              {!iconRow && "▣"}
+              {!iconRow && <Icon name="image" size="md" />}
             </span>
             {t("profiles.identity.iconImage")}
           </button>
@@ -954,7 +954,8 @@ function ThemeSection({
       {/* Step three of the design's own numbering: a paper of your own, from a paper and a touch,
           shown as four whole Sards. That IS a separate surface in the design, and stays one. */}
       <button className="pf-cp-open" onClick={() => setCustom(true)}>
-        {t("profiles.theme.customise")} ←
+        {t("profiles.theme.customise")}
+        <Icon name={lang === "ar" ? "caretLeft" : "caretRight"} size="sm" />
       </button>
 
       {custom && (
@@ -1296,7 +1297,8 @@ function MarksSection({
           than silently lost, and bound to the DRAFT, so the specimen answers while the slider moves
           and nothing is written until Save. */}
       <button className="pf-cp-open" onClick={() => setAdv((v) => !v)} aria-expanded={adv}>
-        {adv ? t("profiles.marks.advancedHide") : t("profiles.marks.advanced")} {adv ? "↑" : "↓"}
+        {adv ? t("profiles.marks.advancedHide") : t("profiles.marks.advanced")}
+        <Icon name={adv ? "caretUp" : "caretDown"} size="sm" />
       </button>
 
       {adv && (

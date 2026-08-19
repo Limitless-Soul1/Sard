@@ -1161,7 +1161,8 @@ export function Header(props: HeaderProps) {
             aria-label={t("lib.filter")}
             style={ctlBtn(!!props.format)}
           >
-            ⛛ {props.format ? props.format.toUpperCase() : t("lib.filter.all")}
+            <Icon name="filter" size="sm" />
+            {props.format ? props.format.toUpperCase() : t("lib.filter.all")}
           </button>
           {formatOpen && (
             <>
@@ -1261,8 +1262,8 @@ export function Header(props: HeaderProps) {
                     }}
                   >
                     <span>{sortLabel[s]}</span>
-                    <span style={{ color: "var(--acc)", fontSize: 11 }}>
-                      {props.sort === s ? "✓" : ""}
+                    <span style={{ color: "var(--acc)", display: "flex" }} aria-hidden>
+                      {props.sort === s ? <Icon name="check" size="sm" /> : null}
                     </span>
                   </button>
                 ))}

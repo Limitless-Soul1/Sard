@@ -42,7 +42,20 @@ export type IconName =
   | "bookmark"     // "Bookmark style" — the ribbon marker         (was U+25B8)
   | "language"     // "Language"                                   (was U+2318)
   | "activity"     // "Activity"       — presence sharing          (was U+25C9)
-  | "about";       // "About"                                      (was U+24D8)
+  | "about"        // "About"                                      (was U+24D8)
+  // ---- state, action and direction -----------------------------------------------------------
+  // The second sweep found marks the audit's list never named. They are UI controls, not text, and
+  // they were falling through the same way -- the inbox "all colours" dot measured as Cambria Math,
+  // and the 63px empty-state quotation ornament declares `Literata, serif` but actually renders in
+  // Segoe UI Symbol, because Literata has no such codepoint.
+  | "filter"       // format filter                                (was U+26DB)
+  | "check"        // selected / applied                           (was U+2713)
+  | "sort"         // a shelf's order rule                         (was U+21C5)
+  | "swatchAny"    // the "all colours" slot among colour swatches (was U+25CD)
+  | "quote"        // the empty-state quotation ornament           (was U+275D)
+  | "image"        // "no image chosen" placeholder                (was U+25A3)
+  | "caretLeft"    // disclosure, inline-start                     (was U+2190)
+  | "caretUp";     // disclosure, collapse                         (was U+2191)
 
 export type IconSize = "sm" | "md" | "lg" | "xl";
 
@@ -137,6 +150,38 @@ const PATHS: Record<IconName, ReactElement> = {
       <circle cx="12" cy="7.8" r="1.05" fill="currentColor" stroke="none" />
     </>
   ),
+  filter: <path d="M4.4 5.2h15.2l-6 7.1v5.2l-3.2 1.8v-7z" />,
+  check: <path d="m5.2 12.6 4.5 4.5L18.8 7.4" />,
+  // Two arrows, up and down: the chip cycles a shelf between hand order and a sort rule, so the
+  // mark has to say "ordering", not "more" or "swap".
+  sort: (
+    <>
+      <path d="M7.2 19.2V4.8m0 0L4.6 7.4M7.2 4.8l2.6 2.6" />
+      <path d="M16.8 4.8v14.4m0 0-2.6-2.6m2.6 2.6 2.6-2.6" />
+    </>
+  ),
+  // The "all colours" slot sits among solid colour dots, so it is the same circle with no colour
+  // in it -- an open ring reads as "any", where a filled one would read as one more colour.
+  swatchAny: <circle cx="12" cy="12" r="7" />,
+  // A typographic quotation ornament, drawn. The inbox holds passages taken out of books, so the
+  // mark is right; only its rendering was not. Filled, like the other mark-shaped icons.
+  quote: (
+    <>
+      <path d="M10.4 5.6c-3.4 1.6-5.6 4.6-5.6 8 0 2.9 1.9 4.8 4.4 4.8 2.2 0 3.9-1.6 3.9-3.8 0-2.1-1.5-3.6-3.5-3.6-.4 0-.8.05-1.1.15.6-1.8 2-3.3 3.9-4.2z"
+        fill="currentColor" stroke="none" />
+      <path d="M19.9 5.6c-3.4 1.6-5.6 4.6-5.6 8 0 2.9 1.9 4.8 4.4 4.8 2.2 0 3.9-1.6 3.9-3.8 0-2.1-1.5-3.6-3.5-3.6-.4 0-.8.05-1.1.15.6-1.8 2-3.3 3.9-4.2z"
+        fill="currentColor" stroke="none" />
+    </>
+  ),
+  image: (
+    <>
+      <rect x="3.6" y="4.6" width="16.8" height="14.8" rx="2.4" />
+      <circle cx="8.9" cy="9.9" r="1.7" />
+      <path d="m4.4 16.6 4.3-4.1 3.1 3 3.1-2.7 5.1 4.6" />
+    </>
+  ),
+  caretLeft: <path d="m14.5 6-6 6 6 6" />,
+  caretUp: <path d="m6 14.5 6-6 6 6" />,
 };
 
 export interface IconProps extends Omit<SVGProps<SVGSVGElement>, "name"> {

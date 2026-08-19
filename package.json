@@ -40,7 +40,9 @@
     "verify:beta": "node scripts/verify-artifact.mjs --kind=beta --exe=src-tauri/target/release/sard.exe",
     "verify:main-ready": "node scripts/check-production-tree.mjs",
     "verify:main-buildable": "node scripts/verify-main-buildable.mjs",
-    "release:to-main": "node scripts/release-to-main.mjs"
+    "release:to-main": "node scripts/release-to-main.mjs",
+    "verify:geometry": "node scripts/geometry-guard.cjs",
+    "verify:geometry:selftest": "node scripts/geometry-guard.cjs --selftest"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

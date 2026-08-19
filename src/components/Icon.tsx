@@ -29,7 +29,20 @@ export type IconName =
   | "caretRight"   // was U+25B8  (disclosure, collapsed)
   | "grip"         // was U+283F  (drag handle)
   | "gear"         // was U+2699
-  | "search";      // was U+2315
+  | "search"       // was U+2315
+  // ---- settings navigation ----------------------------------------------------------------
+  // These replace MEANING, not shape. The old marks were stand-ins picked for what characters
+  // existed, so four were already apt (appearance, book styles, activity, about) and three said
+  // something else entirely: the bookmark row was a triangle, the language row was the command
+  // symbol, the profiles row was a diamond. Each is drawn from what its section actually holds,
+  // read from the section body rather than from the glyph.
+  | "appearance"   // "Appearance"     — day / night / auto        (was U+25D1)
+  | "profiles"     // "Profiles"       — saved appearance sets     (was U+25C8)
+  | "bookStyles"   // "Book styles"    — text and paragraph        (was U+25A4)
+  | "bookmark"     // "Bookmark style" — the ribbon marker         (was U+25B8)
+  | "language"     // "Language"                                   (was U+2318)
+  | "activity"     // "Activity"       — presence sharing          (was U+25C9)
+  | "about";       // "About"                                      (was U+24D8)
 
 export type IconSize = "sm" | "md" | "lg" | "xl";
 
@@ -76,6 +89,52 @@ const PATHS: Record<IconName, ReactElement> = {
     <>
       <circle cx="10.8" cy="10.8" r="6.3" />
       <path d="m15.5 15.5 4.2 4.2" />
+    </>
+  ),
+  // Half-lit disc: the section switches day / night / auto, which is exactly what the old mark
+  // already said. Kept, only drawn properly.
+  appearance: (
+    <>
+      <circle cx="12" cy="12" r="6.8" />
+      <path d="M12 5.2a6.8 6.8 0 0 1 0 13.6z" fill="currentColor" stroke="none" />
+    </>
+  ),
+  // A profile in Sard is a SAVED LOOK, not a person -- palette, backgrounds and book face stored
+  // together. A card behind a card says "one of several saved sets"; a person would be wrong.
+  profiles: (
+    <>
+      <rect x="3.8" y="7.6" width="12.6" height="12.6" rx="2.4" />
+      <path d="M8 4.5h9.6A1.9 1.9 0 0 1 19.5 6.4V16" />
+    </>
+  ),
+  bookStyles: (
+    <>
+      <rect x="4.5" y="3.6" width="15" height="16.8" rx="2.2" />
+      <path d="M8.2 8.6h7.6M8.2 12h7.6M8.2 15.4h4.8" />
+    </>
+  ),
+  // The ribbon, which is this app's own default bookmark shape (BookmarkShape.tsx draws twelve,
+  // and `ribbon` is the first of them) -- so the icon and the thing it configures agree.
+  bookmark: <path d="M7 4.4h10a1 1 0 0 1 1 1v14.2l-6-4.4-6 4.4V5.4a1 1 0 0 1 1-1z" />,
+  language: (
+    <>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M4 12h16M12 4c2.15 2.4 3.25 5 3.25 8S14.15 17.6 12 20c-2.15-2.4-3.25-5-3.25-8S9.85 6.4 12 4z" />
+    </>
+  ),
+  // Presence broadcast: a lit centre with signal arcs. The old filled disc was already a status
+  // dot, so this keeps that reading and adds what the section is for -- sharing it outward.
+  activity: (
+    <>
+      <circle cx="12" cy="12" r="2.3" fill="currentColor" stroke="none" />
+      <path d="M8.1 8.1a5.5 5.5 0 0 0 0 7.8M15.9 15.9a5.5 5.5 0 0 0 0-7.8M5.2 5.2a9.6 9.6 0 0 0 0 13.6M18.8 18.8a9.6 9.6 0 0 0 0-13.6" />
+    </>
+  ),
+  about: (
+    <>
+      <circle cx="12" cy="12" r="8" />
+      <path d="M12 11.1v5.2" />
+      <circle cx="12" cy="7.8" r="1.05" fill="currentColor" stroke="none" />
     </>
   ),
 };

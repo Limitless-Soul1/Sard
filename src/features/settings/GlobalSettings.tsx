@@ -9,6 +9,7 @@ import { useEffect, useState, type ChangeEvent, type ReactNode } from "react";
 import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
 import type { TKey } from "../../i18n/locales/en";
+import { Icon, type IconName } from "../../components/Icon";
 import { getVersion } from "@tauri-apps/api/app";
 import { appInfo } from "../../lib/ipc"; // BETA identification in About (build id)
 
@@ -38,19 +39,25 @@ import { THEMES, THEME_ORDER, currentMode, resolveTheme, useTheme, type ThemeMod
 const STYLE_KEY = "reading_style";
 
 type Section = "appearance" | "profiles" | "fonts" | "reading" | "bookmark" | "language" | "presence" | "about";
-const NAV: { key: Section; label: TKey; icon: string }[] = [
-  { key: "appearance", label: "gs.nav.appearance", icon: "◑" },
+// The row marks were text characters chosen for what existed, not for what the sections hold: the
+// bookmark row was a triangle, the language row was the command symbol, and six of the eight were
+// being drawn by Cambria Math with the "about" mark falling through to MS PGothic. Each is now an
+// icon of its own section, read from the section body. `fonts` deliberately keeps a LETTER -- it is
+// a type specimen shown in the app's own face, which is the one case where the character is the
+// right mark and has no fallback problem.
+const NAV: { key: Section; label: TKey; icon?: IconName; letter?: string }[] = [
+  { key: "appearance", label: "gs.nav.appearance", icon: "appearance" },
   // PROFILES: one row added, beside the bookmark and read-marker that already live here. The design
   // package draws a RESTRUCTURED settings window — Fonts, Bookmark and Language gone, three new
   // entries in their place — and that restructure is a different piece of work, deliberately not
   // done here. Every existing section keeps working exactly as it did.
-  { key: "profiles", label: "gs.nav.profiles", icon: "◈" },
-  { key: "fonts", label: "gs.nav.fonts", icon: "A" },
-  { key: "reading", label: "gs.nav.reading", icon: "▤" },
-  { key: "bookmark", label: "gs.nav.bookmark", icon: "▸" },
-  { key: "language", label: "gs.nav.language", icon: "⌘" },
-  { key: "presence", label: "gs.nav.presence", icon: "◉" },
-  { key: "about", label: "gs.nav.about", icon: "ⓘ" },
+  { key: "profiles", label: "gs.nav.profiles", icon: "profiles" },
+  { key: "fonts", label: "gs.nav.fonts", letter: "A" },
+  { key: "reading", label: "gs.nav.reading", icon: "bookStyles" },
+  { key: "bookmark", label: "gs.nav.bookmark", icon: "bookmark" },
+  { key: "language", label: "gs.nav.language", icon: "language" },
+  { key: "presence", label: "gs.nav.presence", icon: "activity" },
+  { key: "about", label: "gs.nav.about", icon: "about" },
 ];
 
 const LANGS = [
@@ -79,7 +86,9 @@ export function GlobalSettings({ open, onClose }: { open: boolean; onClose: () =
                 className={`gs-nav-item${section === n.key ? " on" : ""}`}
                 onClick={() => setSection(n.key)}
               >
-                <span className="gs-nav-ico" aria-hidden>{n.icon}</span>
+                <span className="gs-nav-ico" aria-hidden>
+                  {n.icon ? <Icon name={n.icon} size="md" /> : n.letter}
+                </span>
                 {t(n.label)}
               </button>
             ))}

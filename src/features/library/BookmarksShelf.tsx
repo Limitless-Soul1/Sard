@@ -16,8 +16,8 @@ import { useI18n } from "../../i18n";
 import { localeDigits, uiDateTimeFormat, uiRelativeTimeFormat } from "../../lib/format";
 import { bookmarksAll, type BookmarkItem } from "../../lib/ipc";
 import type { OpenTarget } from "./Library";
+import { isArabicText, scriptOf } from "../../lib/typography";
 
-const ARABIC = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
 
 function relTime(sec: number | null, lang: string): string {
   if (!sec) return "";
@@ -90,7 +90,7 @@ export function BookmarksShelf({ onOpen }: { onOpen: (b: OpenTarget) => void }) 
                     <button
                       key={b.id}
                       className={book === b.id ? "active" : ""}
-                      dir={ARABIC.test(b.title) ? "rtl" : "ltr"}
+                      dir={isArabicText(b.title) ? "rtl" : "ltr"}
                       onClick={() => { setBook(b.id); setBookMenu(false); }}
                     >
                       {b.title}
@@ -112,7 +112,7 @@ export function BookmarksShelf({ onOpen }: { onOpen: (b: OpenTarget) => void }) 
       ) : (
         <div className="inbox-list">
           {filtered.map((it) => {
-            const arabic = it.book_dir === "rtl" || ARABIC.test(it.book_title ?? "");
+            const arabic = scriptOf(it.book_title, it.book_dir) === "arabic";
             return (
               <button
                 key={it.id}

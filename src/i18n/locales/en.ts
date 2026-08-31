@@ -138,7 +138,6 @@ export const en = {
   "lib.nav.library": "Library",
   "lib.nav.highlights": "Highlights & Notes",
   "lib.nav.bookmarks": "Bookmarks", // RAWY-202: the cross-book bookmarks shelf
-  "lib.nav.readingNow": "Reading now",
   "lib.shelves": "Shelves",
   "lib.newShelf": "+ New shelf",
   "lib.noShelves": "No shelves yet",
@@ -171,6 +170,27 @@ export const en = {
   // Wording is the design's own, in both locales.
   "lib.cases": "Cases",
   "lib.newCase": "New case",
+  "lib.newCaseAction": "+ New case",
+  "lib.create.shelfTitle": "New shelf",
+  "lib.create.shelfHint": "A shelf you fill and order yourself.",
+  "lib.create.shelfName": "Shelf name",
+  "lib.create.shelfNameHint": "For example: books I want to read",
+  "lib.create.shelfDo": "Create shelf",
+  "lib.create.shelfColour": "Shelf colour",
+  "lib.create.caseColour": "Case colour",
+  "lib.create.shelfRepeat": "You already have a shelf with this name. That is allowed.",
+  "lib.create.where": "Where it goes",
+  "lib.create.caseGroup": "Cases",
+  "lib.create.noCases": "No cases yet — the shelf will sit outside them.",
+  "lib.create.caseTitle": "New case",
+  "lib.create.caseHint": "A case holds shelves, and keeps a part of the library together.",
+  "lib.create.caseNameHint": "For example: novels",
+  "lib.create.caseDo": "Create case",
+  "lib.rename.shelfTitle": "Rename shelf",
+  "lib.rename.caseTitle": "Rename case",
+  "lib.rename.hint": "Give it a name that will still make sense later.",
+  "lib.rename.do": "Save",
+  "lib.create.caseRepeat": "You already have a case with this name. That is allowed.",
   "lib.caseName": "Case name",
   "lib.deleteCase": "Delete case",
   // Destructive structural actions say the same three things every time: what goes, what stays,
@@ -187,6 +207,15 @@ export const en = {
   "lib.movedButNotRemoved": "Added to the new shelf, but it could not be taken off the old one — it is on both.",
   "lib.openCase": "Open case",
   "lib.manage": "Manage",
+  "lib.manageShelf": "Manage shelf",
+  "lib.menu.shelfColour": "Shelf colour",
+  "lib.menu.organisation": "Organisation",
+  "lib.menu.bookOrder": "Book order",
+  "lib.menu.positionIn": "Position in {name}",
+  "lib.menu.positionLoose": "Position among loose shelves",
+  "lib.menu.earlier": "Move earlier",
+  "lib.menu.later": "Move later",
+  "lib.menu.byHandNote": "By hand keeps the order you arranged. The others sort the shelf and leave that arrangement waiting underneath.",
   "lib.managing": "Managing case",
   "lib.managingUnfiled": "Managing shelves outside every case",
   "lib.manageUnfiled": "Manage these shelves",
@@ -210,6 +239,8 @@ export const en = {
   "lib.collapse": "Collapse",
   "lib.expand": "Expand",
   "lib.unshelved": "Not on a shelf",
+  "lib.casesCount": "{n} cases",
+  "lib.categoriesCount": "{n} categories",
   "lib.shelvesCount": "{n} shelves",
   "lib.searchWide": "Search titles, authors, shelves…",
   "lib.select": "Select",
@@ -219,6 +250,8 @@ export const en = {
   "lib.sortedByRule": "The system decides the order",
   "lib.orderOfThisShelf": "Order of this shelf",
   "lib.byHand": "By hand",
+  "lib.reordered": "Order changed",
+  "lib.movedTo": "Moved to",
   "lib.moveTo": "Move to…",
   // Select-mode move. The source is derived from context, and when it cannot be, it is asked.
   "lib.movingOutOf": "Moving them out of {name}",
@@ -243,6 +276,12 @@ export const en = {
   "lib.view.gridHint": "Grid — the classic library grid",
   "lib.sort.recent": "Recently read",
   "lib.sort.added": "Recently added",
+  // The shelf-s own stored order, the one a hand reorder writes. Offered only inside a shelf.
+  // Manual Ordering is always offered; where it cannot act it says which of these is missing.
+  "lib.arrangeNeedsShelf": "Open a shelf to arrange its books",
+  "lib.arrangeNoFiledBooks": "None of these books is filed on a shelf yet",
+  "lib.arrangeEmptyShelf": "This shelf has no books to arrange yet",
+  "lib.sort.shelf": "Shelf order",
   "lib.sort.progress": "Progress",
   "lib.finished": "Finished",
   "lib.rule.reading": "in progress",
@@ -252,16 +291,23 @@ export const en = {
   "lib.automatic": "Automatic",
   "lib.ruleFixed":
     "Membership follows the rule — books are not placed here by hand. Delete it whenever you like; only the collection goes.",
+  "lib.emptyCase": "Empty case",
+  // A case can show books it does not hold: a rule shelf inside it fills itself, and those books
+  // belong to no case. The count says what is filed; this says what the rest is doing there.
+  "lib.vista.shownByRule": "{n} more shown by rule, not filed here",
   "lib.emptyShelf": "Empty shelf. Pick a book up and place it here.",
+  // Vista states an empty shelf on the shelf's own plate, where the long line does not fit.
+  "lib.emptyShelfShort": "Empty shelf",
   "lib.noResults": "No books match",
   "lib.noResultsBody":
     "Nothing here matches that search. Try a shorter word, or another case — search looks at titles, authors, case and shelf names.",
   "lib.clearSearch": "Clear search",
   "lib.today": "Today",
   "lib.daysAgo": "{n}d ago",
-  "lib.arrangeHintOff": "Sorting decides order in Details. Inside a shelf, order is the shelf’s own.",
   "lib.arrangeHintOn":
     "Click a book to pick it up, move to the slot you want, click to place. Esc cancels. Outside this mode, press and hold a book.",
+  "lib.arrangeHintSorted":
+    "Sorted by a column, so a place between two books cannot be drawn. Drag a book onto a shelf in the sidebar to move it there, or sort by shelf to arrange by hand.",
   "lib.placeHere": "place here",
   "lib.takeOffShelf": "take off its shelf",
   "lib.copiedFromRuleShelf": "Added here. It stays in “{name}” while that still describes it.",
@@ -313,6 +359,11 @@ export const en = {
   "lib.notFiledHint": "This book is not on any shelf yet.",
   "lib.assignment": "Where it lives",
   "lib.caseWord": "Case",
+  // A case contains shelves, so it can never be a placement destination on its own — the dialog
+  // has to say that, or "pick a case and press Save" reads as filing and silently does nothing.
+  "lib.caseNarrowsOnly": "Choosing a case only narrows the shelves below. A shelf is what files the book.",
+  "lib.chooseShelfInCase": "Choose a shelf inside «{name}» to file this book there.",
+  "lib.chooseLooseShelf": "Choose a shelf to file this book there.",
   "lib.shelfWord": "Shelf",
   "lib.categoryWord": "Category",
   "lib.hero.eyebrow": "Continue reading",
@@ -322,9 +373,18 @@ export const en = {
   "lib.hero.last": "Last read",
   "lib.hero.nothing": "Nothing open yet",
   "lib.hero.nothingBody": "Pick anything below and it will wait for you here.",
+  "lib.vista.nothingHere": "Nothing here yet.",
+  "lib.vista.orderNotYours": "These books are not on a shelf yet, so they keep no order of their own — drag one onto a shelf to file it.",
+  // An empty place says what is MISSING from it. The toolbar has already named the container,
+  // so the stage does not repeat the name — that is what makes it read as intentional.
+  "lib.vista.noShelves": "No shelves in this case yet.",
+  "lib.vista.noBooksShelf": "This shelf is empty. Pick a book up and place it here.",
+  "lib.vista.noBooksCat": "No books in this category yet.",
   "lib.vista.openShelf": "Open shelf",
-  "lib.vista.allShelves": "All shelves",
-  "lib.vista.hint": "Your library on its own ground. Shelves read top to bottom; open one to see all of it.",
+  "lib.vista.up": "Back",
+  "lib.vista.openCase": "Open case",
+  "lib.vista.openCategory": "Open category",
+  "lib.vista.hint": "Your library on its own ground. Open a case to see its shelves, a shelf to see what is on it.",
 
   "lib.sortBy": "Sort by",
   "lib.sort.title": "Title",
@@ -334,6 +394,9 @@ export const en = {
   "lib.sort.dateAdded": "Date added",
   "lib.cover.crop": "Crop",
   "lib.cover.fit": "Fit",
+  "lib.titles.quiet": "Hide names",
+  "lib.titles.hint": "Book names wait until you touch a book — in Grid, Covers and Vista.",
+  "lib.size": "Cover size",
   "lib.filter": "Filter",
   "lib.filter.all": "All formats",
   "lib.col.title": "Title",
@@ -653,8 +716,13 @@ export const en = {
   "color.text": "Text colour",
   "color.within": "within the {theme} theme",
   "color.page": "Page colour", // RAWY-201: the reading surface
-  "color.background": "Background colour", // RAWY-201: the area behind the page
+  "color.background": "Colour behind the page", // RAWY-201: the layer between the page and the picture
+  "color.numbers": "Number colour", // the digits in the book, on their own — the same value a profile carries
   "color.default": "Theme default",
+  "color.none": "No colour — the picture as it is",
+  "color.behindPage": "Colour behind the page",
+  "color.behindPageNote": "A layer between the page and the picture — neither the paper nor the picture",
+  "color.behindPageHint": "\"Theme default\" uses the desk colour. \"No colour\" removes the layer entirely, so the background picture shows exactly as it is.",
   "color.custom": "Custom colour",
   // RAWY-281: the reference indicator (the twin rule under a referenced word). The labels name the LINES
   // rather than "the reference", because the reference itself — the note you attached — is not what these
@@ -797,6 +865,9 @@ export const en = {
   "gs.bg.replace": "Replace…",
   "gs.bg.remove": "Remove",
   "gs.bg.presence": "Presence",
+  "gs.bg.presenceLibrary": "Library picture presence",
+  "gs.bg.presenceBook": "Book picture presence",
+  "gs.bg.presenceNoOverlay": "Does nothing while \"no colour\" is chosen — presence is the strength of the colour layer, and there is no layer. Pick a colour, or the theme's, to bring it back.",
   // RAWY-279. Presence was the ONLY background control with no hint, which is a large part of why it
   // did not read as "overlay strength". The two hints differ because the two surfaces genuinely do:
   // the library cap is a measured WCAG AA floor (AA holds only to an overlay of 0.77), while the desk
@@ -1108,17 +1179,34 @@ export const en = {
   "profiles.chapter.identity": "Identity",
   "profiles.chapter.identity.q": "Whose profile is this?",
   "profiles.chapter.paper": "Paper and colours",
+  "profiles.chapter.paperLibrary": "Library colours",
+  "profiles.chapter.paperBook": "Book colours",
   "profiles.chapter.paper.q": "How should the page look?",
+  "profiles.chapter.paperLibrary.q": "How should your library look?",
+  "profiles.chapter.paperBook.q": "How should a book page look?",
   "profiles.chapter.background": "Background",
   "profiles.chapter.background.q": "Where do you want the picture, and how should it show?",
   "profiles.chapter.fonts": "Fonts",
   "profiles.chapter.fonts.q": "How should the letter look?",
+  "profiles.chapter.measure": "The measure",
+  "profiles.chapter.measure.q": "How should the words be set?",
+  "profiles.focus.measure": "the set page",
+  "profiles.measure.hint": "A profile need not have an opinion. Anything left as « as it is » keeps whatever you have chosen while reading.",
+  "profiles.measure.follows": "as it is",
+  "profiles.measure.clear": "Leave it as it is",
+  "profiles.measure.indentOn": "Indented",
+  "profiles.measure.indentOff": "Flush",
+  "profiles.measure.groupType": "The type",
+  "profiles.measure.groupRhythm": "The rhythm",
+  "profiles.measure.groupPage": "The page",
+  "profiles.measure.trackingArabic": "Arabic joins its letters, so tracking is not applied to it — the Latin line below shows the effect.",
   "profiles.chapter.marks": "Marks",
   "profiles.chapter.marks.q": "What shows you where you are?",
   "profiles.chapter.texture": "Texture",
   "profiles.chapter.texture.q": "How should Sard's interface look?",
   "profiles.focus.identity": "The active profile",
   "profiles.focus.paper": "The page and its colours",
+  "profiles.focus.paperLibrary": "The library and its colours",
   "profiles.focus.fonts": "The type you read",
   "profiles.focus.marks": "The mark and the highlight",
   "profiles.focus.texture": "The interface panels",
@@ -1127,7 +1215,6 @@ export const en = {
   // The preview's own chrome. It depicts Sard's interface, so it follows the reader's language —
   // unlike the book page inside it, which is a type specimen and shows both scripts whatever the
   // interface is set to.
-  "profiles.preview.add": "Add",
   "profiles.preview.readingBar": "Reading bar",
   // A viewing control, not a setting: page width belongs to the reader, never to a profile.
   "profiles.preview.measure": "Measure",
@@ -1143,14 +1230,30 @@ export const en = {
   // The two background sections are drawn but not yet filled. They must not borrow the firewall's
   // sentence to say so: that sentence is about the reader's own layout settings, and reading it
   // under "Library background" tells the reader something untrue about backgrounds.
-  "profiles.bg.sameAsLibrary": "The same image as the library, quieter",
+  "profiles.bg.sameAsLibrary": "The same image",
   "profiles.bg.sameAsLibraryShort": "The same image, quieter",
 
+  "profiles.unnamed": "Unnamed profile",
   "profiles.identity.name": "Name",
+  "profiles.identity.nameRequired": "A profile cannot lose its name.",
+  "profiles.identity.namePlaceholder": "Name this profile",
   "profiles.identity.icon": "Icon",
   "profiles.identity.iconSeal": "Initial",
   "profiles.identity.iconColour": "Colour",
-  "profiles.identity.iconImage": "＋ Choose an image",
+  "profiles.identity.iconImage": "Image",
+  "profiles.identity.colourGroup": "Mark colour",
+  "profiles.identity.colourCustom": "Another colour",
+  "profiles.identity.restore": "Bring the picture back",
+  "profiles.identity.frame": "Adjust image",
+  "profiles.identity.frameReset": "Reset",
+  "profiles.identity.frameDone": "Done",
+  "profiles.identity.frameStage": "Adjust the image — drag to move, arrow keys to nudge, + and − to zoom",
+  "profiles.identity.frameHint":
+    "Drag the picture to choose what the mark keeps. Zoom brings it closer.",
+  "profiles.identity.frameHintFits":
+    "This picture already fills the mark exactly. Zoom in to choose a part of it.",
+  "profiles.identity.zoom": "Zoom",
+  "profiles.identity.asItAppears": "As it appears",
   "profiles.identity.sealHint":
     "With no image, the name’s first letter is drawn on the profile’s own paper — in its own face, or one you pick.",
 
@@ -1214,10 +1317,20 @@ export const en = {
   "profiles.texture.opaque": "Opaque",
   "profiles.texture.light": "Light",
   "profiles.texture.glass": "Glass",
+  "profiles.texture.plateTitle": "Interface panel",
+  "profiles.texture.plateBody": "This is how Sard's panels sit over your current background — with the blur, saturation and translucency the app will actually paint.",
+  "profiles.texture.plateFoot": "Live preview",
+  "profiles.texture.converged": "On this background, Light and Glass meet at the same translucency: the legibility floor allows nothing thinner. Dim the background to separate them.",
 
   // The firewall, stated once — the rail's last block.
   // FRAME 21 — where an unsaved change goes, and FRAME 22 — that it went there.
   "profiles.unsaved.changed": "You changed {what}",
+  "profiles.unsaved.pendingTitle": "Unsaved changes in “{name}”",
+  "profiles.unsaved.pendingBody": "You changed {what}. What should happen to that before you go on?",
+  "profiles.unsaved.pendingBodyDraft": "You have changes that are not saved yet. What should happen to them?",
+  "profiles.unsaved.save": "Save to this profile",
+  "profiles.unsaved.discard": "Discard the changes",
+  "profiles.unsaved.cancel": "Stay here",
   "profiles.unsaved.where": "Where does this change go?",
   "profiles.unsaved.intoActive": "Save it into “{name}”",
   "profiles.unsaved.intoActiveUnnamed": "Save it into the profile you are using",
@@ -1230,6 +1343,11 @@ export const en = {
   // FRAME 2a — the Paper chapter's inline colour editor. Three colours are the reader's own choice;
   // the other three are derived from them and are shown, with their relationship named, so the page
   // is never changed by something invisible.
+  "profiles.pick.done": "Done",
+  "profiles.pick.plane": "Saturation and lightness",
+  "profiles.pick.hue": "Hue",
+  "profiles.pick.alpha": "Opacity",
+  "profiles.pick.hex": "Colour code",
   "profiles.colour.heading": "Its colours — edit as you like",
   "profiles.colour.hint": "Press a colour to change it, or paste a code you know.",
   "profiles.colour.resetAll": "Revert all",
@@ -1237,10 +1355,15 @@ export const en = {
   "profiles.colour.badHex": "Incomplete code — for example",
   "profiles.colour.follows": "And these follow",
   "profiles.colour.copy": "Copy",
+  "profiles.colour.numbers": "Numbers",
+  "profiles.colour.numbersNote": "The digits in the book, on their own.",
+  "profiles.colour.numbersFollow": "as the text",
   "profiles.colour.paper": "The paper",
   "profiles.colour.paperNote": "The book's page, and the fields",
+  "profiles.colour.paperNote.library": "The library ground and panels are built from it",
   "profiles.colour.text": "The letter",
   "profiles.colour.textNote": "The text you read",
+  "profiles.colour.textNote.library": "Titles, shelf names and rows",
   "profiles.colour.accent": "The touch",
   "profiles.colour.accentNote": "Buttons, progress and selection",
   "profiles.colour.desk": "The desk",
@@ -1251,6 +1374,12 @@ export const en = {
   "profiles.colour.mutedNote": "Small headings and numbers",
   "profiles.colour.followsPaper": "follows the paper",
   "profiles.colour.followsText": "follows the letter",
+
+  "profiles.relief.name": "Panel relief",
+  "profiles.relief.hint": "How far the bars and sides stand off the desk around them. Never touches the background picture.",
+  "profiles.relief.darker": "Darker than the desk by {p}%",
+  "profiles.relief.level": "Level with the desk",
+  "profiles.relief.lighter": "Lighter than the desk by {p}%",
 
   "profiles.unsaved.what.theme": "the paper",
   "profiles.unsaved.what.bookTheme": "the book’s paper",

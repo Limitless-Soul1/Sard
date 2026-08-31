@@ -15,10 +15,12 @@
 // So: DIRECTION comes from the content, ALIGNMENT comes from the interface. A column belongs to the
 // layout and stays where the layout puts it; the text inside renders in its own direction.
 
-/** Arabic and its presentation forms — the same range the rest of the library tests against. */
-export const ARABIC = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
-
-export const isArabicText = (s: string | null | undefined): boolean => !!s && ARABIC.test(s);
+// The range, the test and the rule all live in `lib/typography.ts` now: a face is chosen BY script,
+// so the two questions cannot be answered in different places and stay in agreement. Re-exported
+// here because this is where the library learned to ask them.
+export { ARABIC, isArabicText } from "../../../lib/typography";
+import { scriptOf } from "../../../lib/typography";
+export { scriptOf };
 
 /**
  * Which face a metadata field should be set in, judged from THAT FIELD.
@@ -27,11 +29,7 @@ export const isArabicText = (s: string | null | undefined): boolean => !!s && AR
  * its own — a title that is all digits and punctuation, say. It must never be allowed to decide the
  * script of a field that plainly states its own.
  */
-export function fieldScript(text: string | null | undefined, declaredDir?: string | null): "arabic" | "latin" {
-  if (isArabicText(text)) return "arabic";
-  if (text && text.trim()) return "latin"; // it has strong content of its own; believe it
-  return declaredDir === "rtl" ? "arabic" : "latin";
-}
+export const fieldScript = scriptOf;
 
 /**
  * The style a metadata cell needs so it cannot disturb, or be disturbed by, its neighbours.

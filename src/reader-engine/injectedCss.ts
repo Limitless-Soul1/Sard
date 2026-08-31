@@ -54,6 +54,15 @@ export interface ReadingStyle {
   // theme's own text colour. A set colour is forced through the same `:root:root` mechanism the
   // override uses (RAWY-38), so it wins over the book's own CSS. Contrast is guarded in the UI.
   textColor: string | null;
+  /**
+   * PER-PROFILE NUMBER INK (`null` = the surrounding text's colour).
+   *
+   * Digits are wrapped in `.sard-num` by the reader's text walker — CSS cannot select a run of digits
+   * inside a text node — and this colours that class. `null` emits no rule at all, so a book with no
+   * number colour set renders byte-identically to one from before the feature: the digits simply
+   * inherit, as they always did.
+   */
+  numberColor: string | null;
   // Per-book PAGE + BACKGROUND colour (RAWY-201): the reading SURFACE (`pageColor`, the paper the text
   // sits on) and the AREA BEHIND the page (`backgroundColor`, the desk where Moonlit draws its clouds).
   // Both `null` = follow the active theme's `paperBg` / `surfaceBg` — the null sentinel means "resolve
@@ -125,6 +134,40 @@ export const PAGE_WIDTH_PX_MAX = 1400;
 export const pageWidthPx = (t: number): number =>
   PAGE_WIDTH_PX_MIN + Math.max(0, Math.min(1, t)) * (PAGE_WIDTH_PX_MAX - PAGE_WIDTH_PX_MIN);
 
+/**
+ * THE SHEET'S OWN RULE, as a function: `min(100%, --page-pref)`.
+ *
+ * `global.css` states it as `inline-size: min(100%, var(--page-pref, 720px))` — the requested measure,
+ * capped so the sheet never exceeds what the window can give. The profile editor's specimen needs the
+ * SAME constraint or it draws a page the reader would never draw: measured, the preview column came
+ * out 1015px against the reader's 654px at identical settings, so it fitted about half again as many
+ * characters per line as the real book. Expressed here so both sides read one rule.
+ */
+export const sheetWidthPx = (t: number, availablePx: number): number =>
+  Math.min(Math.max(0, availablePx), pageWidthPx(t));
+
+/**
+ * How much of the desk the reading sheet is given.
+ *
+ * MEASURED out of the running reader, not chosen: at a 1240px window the sheet computed to 900px.
+ * A ratio rather than a pixel constant, so the specimen stays right when the window is resized.
+ */
+export const READER_DESK_RATIO = 0.726;
+
+/**
+ * The TEXT COLUMN inside a sheet: the sheet less the reader's own margins, both sides.
+ *
+ * THIS REPLACED A MEASURED RATIO, AND THE RATIO WAS THE BUG. The reader's column was measured at
+ * 654px inside a 900px sheet and that 0.727 was taken as a constant — but the measurement already
+ * had the reader's `marginPx` of 120 applied, so subtracting the margin again double-counted it and
+ * the specimen drew 414px instead of 654. The arithmetic gives the real rule away: 900 − 2×120 = 660,
+ * which is the measured 654 to within the box's own rounding. Margins are what inset the text, so
+ * the margin control is what the column should be derived from — and now it responds to that control
+ * instead of being pinned to the proportion that happened to hold when it was measured.
+ */
+export const textColumnPx = (sheetPx: number, marginPx: number): number =>
+  Math.max(80, Math.round(sheetPx - 2 * Math.max(0, marginPx)));
+
 // RAWY-195: paragraph spacing now ALWAYS emits a rule, so `0` means a real zero — tighter than the
 // book. That makes the old default of 0 wrong: it would have jammed every book's paragraphs together
 // out of the box. The default is the gap a typical EPUB sets for itself (`p{margin:1em 0}` at a 16px
@@ -132,6 +175,52 @@ export const pageWidthPx = (t: number): number =>
 // user can now go BELOW it. DB migration 9 lifts an already-stored 0 (which meant "book default") to
 // this value, so existing books keep their current look and don't silently collapse.
 export const PARAGRAPH_SPACING_DEFAULT = 16;
+
+/**
+ * THE ONE PLACE THE READING MEASURE IS DECIDED, so a preview of it cannot drift from the thing it
+ * previews.
+ *
+ * `buildCss` below consumes this, and so does the profile editor's page specimen. Before it existed
+ * the editor had no typography at all; adding a second copy of these rules would have produced a
+ * preview that agreed with the reader on the day it was written and quietly stopped later — which is
+ * exactly the failure the texture and page-opacity previews already had.
+ *
+ * The only real decision here is TRACKING, and it is the reader's existing one, moved rather than
+ * rewritten: letter-spacing inserts gaps between glyphs, and Arabic is cursive — its letters join.
+ * Tracking an Arabic run does not space it out, it BREAKS it into disconnected shapes. So the value
+ * is withheld for RTL text, and `trackingWithheld` says so out loud, so a surface can explain the
+ * limit instead of silently ignoring the control.
+ */
+export interface TypographyRender {
+  zoom: number;
+  fontWeight: number;
+  lineHeight: number;
+  paragraphSpacingPx: number;
+  textIndent: string;
+  /** px, already gated: zero whenever this text must not take tracking. */
+  letterSpacingPx: number;
+  /** True when tracking is being withheld because the text is RTL, not because it is set to zero. */
+  trackingWithheld: boolean;
+  textAlign: Align;
+}
+
+export function renderTypography(
+  style: Pick<ReadingStyle,
+    "zoom" | "fontWeight" | "lineHeight" | "paragraphSpacing" | "firstLineIndent" | "letterSpacing" | "align">,
+  opts: { rtl: boolean },
+): TypographyRender {
+  const withheld = opts.rtl && style.letterSpacing > 0;
+  return {
+    zoom: style.zoom,
+    fontWeight: style.fontWeight,
+    lineHeight: style.lineHeight,
+    paragraphSpacingPx: style.paragraphSpacing,
+    textIndent: style.firstLineIndent ? "1.5em" : "0",
+    letterSpacingPx: opts.rtl ? 0 : style.letterSpacing,
+    trackingWithheld: withheld,
+    textAlign: style.align,
+  };
+}
 
 interface FontDef {
   regular: string;
@@ -242,6 +331,7 @@ export const ARABIC_DEFAULTS: ReadingStyle = {
   firstLineIndent: false,
   letterSpacing: 0,
   textColor: null,
+  numberColor: null,
   pageColor: null,
   backgroundColor: null,
   flowMode: "scrolled",
@@ -264,6 +354,7 @@ export const LATIN_DEFAULTS: ReadingStyle = {
   firstLineIndent: false,
   letterSpacing: 0,
   textColor: null,
+  numberColor: null,
   pageColor: null,
   backgroundColor: null,
   flowMode: "scrolled",
@@ -588,6 +679,17 @@ export function buildReadingCss(
   // <html> is the default black under a forced-background theme, which would vanish on a dark page.
   const scrollInk = style.textColor || theme?.colors?.text || "currentColor";
 
+  // Only when asked for. An absent colour emits nothing, so the digits inherit exactly as before.
+  // A HIGHLIGHT PSEUDO-ELEMENT, NOT A SELECTOR ON A WRAPPER.
+  //
+  // The digits carry no element of their own: `markNumbers` registers them as live Ranges in the
+  // document's own `CSS.highlights`, so the book's DOM — and therefore every CFI recorded against it
+  // — is untouched. A highlight pseudo-element paints over the text's own colour by definition, so
+  // this needs none of the `:not(#…)` hardening the element rules use to out-rank book CSS.
+  const numberRule = style.numberColor
+    ? `::highlight(sard-num) { color: ${style.numberColor}; }`
+    : "";
+
   const diacriticsRule =
     style.diacritics === "dim"
       ? ".sard-tashkil { opacity: 0.28; }"
@@ -598,13 +700,15 @@ export function buildReadingCss(
   // Typography extras (RAWY-23). Weight applies to body text (not headings → keep hierarchy).
   // Letter-spacing is LATIN-ONLY — it inserts gaps that break Arabic cursive joining.
   const latinText = bookDir !== "rtl";
+  // The same function the profile editor's specimen renders from — see `renderTypography`.
+  const T = renderTypography(style, { rtl: !latinText });
   const extras = `
     ${/* font-weight is deliberately NOT hardened (RAWY-195 audit): a book marks whole-block emphasis
           with a class (`.calibre5{font-weight:bold}`), which out-specifies this element rule and so
           still wins — that is the book's EMPHASIS surviving, exactly as the invariant requires.
           Forcing it would flatten a bold paragraph to the reader's body weight. */ ""}
     p, li, blockquote, div, td, th, dd, dt {
-      font-weight: ${style.fontWeight};
+      font-weight: ${T.fontWeight};
     }
     ${/* Paragraph spacing — ALWAYS emitted (RAWY-195). THIS is the bug the user actually hit, and it was
           reproduced on the pre-fix build: the rule was gated on `> 0`, so at the MINIMUM it emitted
@@ -617,7 +721,7 @@ export function buildReadingCss(
           alone", not "collapse it"). `KEEP` spares deliberately-centred blocks: a poem's lines would
           otherwise be prised apart by the reader's paragraph spacing. */ ""}
     ${hardList(PARA_BLOCKS, ":root:root", `${KEEP}${NEVER}`)}
-      { margin-block: ${style.paragraphSpacing}px !important; }
+      { margin-block: ${T.paragraphSpacingPx}px !important; }
     ${/* First-line indent — ALSO always emitted, and hardened (RAWY-195). Same shape of defect: OFF
           emitted nothing, so the indent was whatever the rest of the cascade said rather than an
           explicit zero, and ON would lose to any book class that zeroes the indent the moment book CSS
@@ -625,16 +729,16 @@ export function buildReadingCss(
           indented). KNOWN LIMIT: with indent ON, a book's left-aligned VERSE lines (Alice's `p.poem`)
           are <p> too, so they take the indent — acceptable for an off-by-default, opt-in control. */ ""}
     ${hardList(PARA_BLOCKS, ":root:root", `${KEEP}${NEVER}`)}
-      { text-indent: ${style.firstLineIndent ? "1.5em" : "0"} !important; }
+      { text-indent: ${T.textIndent} !important; }
     ${/* Tracking stays LATIN-ONLY and stays gated on `> 0` (RAWY-195 audit — a deliberate exception to
           the always-emit rule): its "minimum" IS the CSS initial value (`normal`), and forcing that on
           every paragraph would strip the book's own decorative tracking (Alice's `p.asterism` scene
           break) for no user gain. It IS hardened now, so when the user does ask for tracking the
           control actually wins on a class-styled book. */ ""}
     ${
-      latinText && style.letterSpacing > 0
+      T.letterSpacingPx > 0
         ? `${hardList(["p", "li", "blockquote", "div", "td", "th"], ":root:root", `${KEEP}${NEVER}`)}
-      { letter-spacing: ${style.letterSpacing}px !important; }`
+      { letter-spacing: ${T.letterSpacingPx}px !important; }`
         : ""
     }`;
 
@@ -801,6 +905,7 @@ export function buildReadingCss(
 
     ${extras}
     ${diacriticsRule}
+    ${numberRule}
     ${themeBlock(theme, flags, style.textColor, style.pageColor)}
   `;
 }
@@ -870,6 +975,17 @@ export function buildFontFaceCss(style: ReadingStyle): string {
 // Keep the ink/diacritics expressions here in step with `themeBlock` + `diacriticsRule` above.
 export function buildDynamicCss(style: ReadingStyle, theme?: Theme, flags?: BookThemeFlags): string {
   const scrollInk = style.textColor || theme?.colors?.text || "currentColor";
+  // Only when asked for. An absent colour emits nothing, so the digits inherit exactly as before.
+  // A HIGHLIGHT PSEUDO-ELEMENT, NOT A SELECTOR ON A WRAPPER.
+  //
+  // The digits carry no element of their own: `markNumbers` registers them as live Ranges in the
+  // document's own `CSS.highlights`, so the book's DOM — and therefore every CFI recorded against it
+  // — is untouched. A highlight pseudo-element paints over the text's own colour by definition, so
+  // this needs none of the `:not(#…)` hardening the element rules use to out-rank book CSS.
+  const numberRule = style.numberColor
+    ? `::highlight(sard-num) { color: ${style.numberColor}; }`
+    : "";
+
   const diacriticsRule =
     style.diacritics === "dim"
       ? ".sard-tashkil { opacity: 0.28; }"
@@ -917,6 +1033,7 @@ export function buildDynamicCss(style: ReadingStyle, theme?: Theme, flags?: Book
   return `
     html, body { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, ${scrollInk} 30%, transparent) transparent; }
     ${diacriticsRule}
+    ${numberRule}
     ${inkCss}
     ${pageCss}
   `;

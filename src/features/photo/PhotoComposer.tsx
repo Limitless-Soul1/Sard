@@ -20,6 +20,8 @@ import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
 import { useFonts } from "../../lib/fonts";
 import { THEMES, THEME_ORDER, resolveTheme, type ThemeId } from "../../theme";
+import { BRAND_ARABIC, BRAND_LATIN, CHROME, displayFace } from "../../lib/typography";
+
 import {
   cardSeparator,
   CARD_STYLES,
@@ -62,7 +64,7 @@ const CARD_FONTS: { key: string; label: string; family: string }[] = [
 ];
 
 function resolveCardFont(key: string | null, arabic: boolean, custom: { family_name: string }[]): string {
-  const bookFont = arabic ? "'Amiri', serif" : "'Literata', serif";
+  const bookFont = displayFace(arabic);
   if (!key) return bookFont; // default → the book's script font (unchanged look)
   const builtin = CARD_FONTS.find((f) => f.key === key);
   if (builtin) return builtin.family;
@@ -105,8 +107,12 @@ function PhotoCard({
   const dark = resolveTheme(themeId).dark; // RAWY-152: the Moonlit style's night ornaments only make sense on dark papers
   const crescentId = `pc-crescent-${useId().replace(/[^a-zA-Z0-9]/g, "")}`; // RAWY-152: unique mask id for the SVG crescent
   const arabic = data.dir === "rtl";
-  const bookFont = arabic ? "'Amiri', serif" : "'Literata', serif";
-  const metaFont = arabic ? "'Amiri', serif" : "'Inter', sans-serif";
+  // A quote card is composed as printed matter, so the QUOTE is display scale. The credit under it
+  // is not the book speaking; it is Sard saying where the words came from, which is the chrome face
+  // — the same split the reference makes on a typeset cover, whose title is art and whose author
+  // line is `var(--ui)`. The credit used to name `Inter`, a SELECTABLE READING face with no role.
+  const bookFont = displayFace(arabic);
+  const metaFont = CHROME;
   const s = (n: number) => W * n; // proportional px from the card width
   const lineH = spacingLineHeight(quoteSpacing, arabic); // RAWY-154: "normal" = the prior 1.85/1.55
   // A tint of the theme accent — every ornament (rules, borders, glow, stars) rides on this so the
@@ -243,15 +249,15 @@ function PhotoCard({
       />
       {arabic ? (
         <>
-          <span style={{ font: `700 ${s(0.044)}px 'Amiri', serif`, color }}>سَرْد</span>
+          <span style={{ font: `700 ${s(0.044)}px ${BRAND_ARABIC}`, color }}>سَرْد</span>
           <span className="pc-brand-div" style={{ background: color, height: s(0.036) }} />
-          <span style={{ font: `700 ${s(0.036)}px 'Literata', serif`, color }}>Sard</span>
+          <span style={{ font: `700 ${s(0.036)}px ${BRAND_LATIN}`, color }}>Sard</span>
         </>
       ) : (
         <>
-          <span style={{ font: `700 ${s(0.04)}px 'Literata', serif`, color }}>Sard</span>
+          <span style={{ font: `700 ${s(0.04)}px ${BRAND_LATIN}`, color }}>Sard</span>
           <span className="pc-brand-div" style={{ background: color, height: s(0.036) }} />
-          <span style={{ font: `700 ${s(0.044)}px 'Amiri', serif`, color }}>سَرْد</span>
+          <span style={{ font: `700 ${s(0.044)}px ${BRAND_ARABIC}`, color }}>سَرْد</span>
         </>
       )}
     </div>

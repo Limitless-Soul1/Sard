@@ -357,6 +357,86 @@ export interface ShelfItem {
   category_id: string | null;
 }
 
+/**
+ * WHERE ONE BOOK IS, AND WHERE IT SITS AMONG ITS NEIGHBOURS.
+ *
+ * `container` is a shelf id or `UNFILED`. `rank` is an opaque ordering key: compare two with `<`,
+ * never parse one, never invent one. A book has exactly one of these — the table's primary key is
+ * the book — so there is no question of which of its homes counts.
+ */
+export interface Placement {
+  book_id: string;
+  container: string;
+  rank: string;
+  category_id: string | null;
+}
+
+/**
+ * The container holding every book that is on no shelf. A real place, with an order of its own.
+ *
+ * `LOOSE_SHELF_ID` in the library model is this same value, imported rather than repeated — the two
+ * were written out separately once, disagreed, and gave one container two identities.
+ */
+export const UNFILED = "__unshelved";
+
+/**
+ * The whole arrangement in one read: every placement, and the shelves they hang on.
+ *
+ * One call rather than one per shelf. Asking shelf by shelf let two answers come from either side
+ * of a write, which is how the screen could show a book in two places or in none.
+ */
+/**
+ * What a lens currently matches.
+ *
+ * A rule shelf owns nothing — its contents are a query — so these ids are a VIEW of the library
+ * rather than part of it. They are carried so the reader can still see «قيد القراءة» while none of
+ * those books acquires a second home from being listed there.
+ */
+export interface Lens {
+  shelf_id: string;
+  book_ids: string[];
+}
+
+export interface Arrangement {
+  tree: LibraryTree;
+  placements: Placement[];
+  lenses: Lens[];
+  /** The baseline for a run that has never been arranged. */
+  view_order_epoch: number;
+}
+
+export const libraryArrangement = (): Promise<Arrangement> => invoke<Arrangement>("library_arrangement");
+
+/** What a placement attempt did. `changed` is false when the book was already exactly there. */
+export interface Placed {
+  changed: boolean;
+  container: string;
+  rank: string;
+}
+
+export interface PlaceResult {
+  placed: Placed;
+  arrangement: Arrangement;
+}
+
+/**
+ * MOVE A BOOK IN FRONT OF ANOTHER — the one arrangement write.
+ *
+ * `before` is the book the release landed in front of, or `null` for the end of the container. A
+ * neighbour, not an index: an index has to be corrected for the book's own removal and has to agree
+ * with a list drawn some milliseconds ago, and both were sources of silent error.
+ *
+ * The reply carries the arrangement as it now stands, so the screen is redrawn from what was
+ * actually persisted rather than from a guess or a second read that could race the first.
+ */
+export const libraryPlaceBook = (
+  bookId: string,
+  container: string,
+  before: string | null,
+  categoryId: string | null = null,
+): Promise<PlaceResult> =>
+  invoke<PlaceResult>("library_place_book", { bookId, container, before, categoryId });
+
 export const libraryTree = (): Promise<LibraryTree> => invoke<LibraryTree>("library_tree");
 export const libraryShelfItems = (collectionId: string): Promise<ShelfItem[]> =>
   invoke<ShelfItem[]>("library_shelf_items", { collectionId });
@@ -714,6 +794,54 @@ export const photocardSave = async (args: {
     pngPath,
   });
 };
+
+// ---- View order (sequence, never membership) ------------------------------------------------
+//
+// `libraryPlaceBook` above moves a book between shelves and touches no order. These move a book
+// within a run and touch no shelf. A `ViewOrderRow` has no container field, so a reorder has
+// nowhere to put one — see `src-tauri/src/library/view_order.rs`.
+
+export interface ViewOrderRow {
+  section: string;
+  book_id: string;
+  rank: string;
+  /** When this run was last arranged by hand; the baseline promotions are measured against. */
+  arranged_at: number;
+}
+
+export interface Reordered {
+  /** False when the release would have left the run exactly as it stands. Decided in the write. */
+  changed: boolean;
+  /** The run afterwards, in order, so the screen draws what the write produced. */
+  order: string[];
+}
+
+/** Every saved order for one place in the library — all its sections, in one statement. */
+export const viewOrdersForScope = (format: string, scope: string): Promise<ViewOrderRow[]> =>
+  invoke<ViewOrderRow[]>("view_orders_for_scope", { format, scope });
+
+/**
+ * Move a book within one run. `before` is the book to land in front of, or null for the end.
+ *
+ * `present` is the run as the view would draw it with no saved order: used to materialise the run
+ * the first time it is arranged, and to take in books that have arrived since.
+ */
+export const viewOrderReorder = (args: {
+  format: string;
+  scope: string;
+  section: string;
+  bookId: string;
+  before: string | null;
+  present: string[];
+}): Promise<Reordered> =>
+  invoke<Reordered>("view_order_reorder", {
+    format: args.format,
+    scope: args.scope,
+    section: args.section,
+    bookId: args.bookId,
+    before: args.before,
+    present: args.present,
+  });
 
 export const photocardsList = (): Promise<PhotoCardRow[]> => invoke<PhotoCardRow[]>("photocards_list");
 export const photocardDelete = (id: string): Promise<boolean> => invoke<boolean>("photocard_delete", { id });

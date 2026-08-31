@@ -10,6 +10,7 @@ import { resolveSpotlight, resolvePill } from "../../reader-engine/ttsTrack";
 import { compositeOver, contrastIsReadable, effectivePaper } from "../../lib/contrast";
 import { currentDeskScrim, effectivePageOpacity, useBackground } from "../../lib/background"; // RAWY-265
 import { useI18n } from "../../i18n";
+import { InkCustom } from "../../components/InkCustom";
 
 // Calm terracotta-adjacent presets, per theme polarity (mirrors the text-colour presets' structure).
 const TRACK_PRESETS_LIGHT = ["#9C5A3C", "#B08968", "#6E7F5B", "#7E6A9E"];
@@ -115,14 +116,13 @@ function EffectBlock({
                 aria-label={hex}
               />
             ))}
-            <label className="rs-ink rs-ink-custom" title={t("color.custom")}>
-              <span className="rs-ink-plus" aria-hidden>+</span>
-              <input
-                type="color"
-                value={/^#[0-9a-fA-F]{6}$/.test(color ?? "") ? (color as string) : "#9C5A3C"}
-                onChange={(e) => setColor(e.target.value)}
-              />
-            </label>
+            <InkCustom
+              value={color}
+              fallback={effColor}
+              onPick={(hex) => setColor(hex)}
+              presets={presets}
+              title={t("color.custom")}
+            />
           </div>
 
           <div className="rs-slider-row rs-track-opacity">

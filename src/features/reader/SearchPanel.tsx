@@ -13,6 +13,7 @@ import { localeNum } from "../../lib/format";
 import { displayTitle } from "../../lib/bookMeta"; // WP-3: one rule for a missing title
 import type { SearchHit } from "../../reader-engine/FoliateController";
 
+import { isArabicText } from "../../lib/typography";
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -50,7 +51,9 @@ const ResultRow = memo(function ResultRow({
         {ahead && <span className="sr-ahead-tag">{aheadLabel}</span>}
         <span className="sr-loc">٪{localeNum(Math.round(hit.frac * 100), lang)}</span>
       </span>
-      <span className="sr-snippet" dir={bookDir}>
+      {/* A snippet is the BOOK'S words, so its script decides its face — Amiri for Arabic, as
+          everywhere else in Sard. `isArabicText` is the one script rule, in lib/typography.ts. */}
+      <span className={`sr-snippet${isArabicText(`${hit.pre}${hit.match}${hit.post}`) ? " ar" : ""}`} dir={bookDir}>
         {hit.pre}
         <mark className="sr-hit">{hit.match}</mark>
         {hit.post}

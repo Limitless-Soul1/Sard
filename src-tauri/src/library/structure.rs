@@ -124,7 +124,7 @@ fn auto_count(conn: &Connection, rule: &str) -> rusqlite::Result<i64> {
 
 fn shelves_where(conn: &Connection, case_id: Option<&str>) -> rusqlite::Result<Vec<ShelfNode>> {
     let sql = "SELECT c.id, c.name, c.case_id, c.order_rule, c.auto_rule, c.collapsed, \
-               (SELECT COUNT(*) FROM book_collections bc WHERE bc.collection_id = c.id), c.ink \
+               (SELECT COUNT(*) FROM placements p WHERE p.container = c.id), c.ink \
                FROM collections c WHERE c.case_id IS ?1 \
                ORDER BY COALESCE(c.sort_order, 0), c.name";
     let mut stmt = conn.prepare(sql)?;
@@ -168,7 +168,7 @@ fn shelves_where(conn: &Connection, case_id: Option<&str>) -> rusqlite::Result<V
 fn categories_of(conn: &Connection, collection_id: &str) -> rusqlite::Result<Vec<CategoryNode>> {
     let mut stmt = conn.prepare(
         "SELECT k.id, k.name, \
-         (SELECT COUNT(*) FROM book_collections bc WHERE bc.category_id = k.id) \
+         (SELECT COUNT(*) FROM placements p WHERE p.category_id = k.id) \
          FROM collection_categories k WHERE k.collection_id = ?1 \
          ORDER BY COALESCE(k.sort_order, 0), k.name",
     )?;
@@ -202,10 +202,11 @@ pub fn tree(conn: &Connection) -> rusqlite::Result<LibraryTree> {
     let mut cases = Vec::with_capacity(heads.len());
     for (id, name, ink) in heads {
         let shelves = shelves_where(conn, Some(&id))?;
-        // DISTINCT, so a book on two shelves of this case is counted once.
+        // No DISTINCT any more: a book has one placement, so it can be on at most one shelf of
+        // this case. The old query existed to stop it being counted twice.
         let count: i64 = conn.query_row(
-            "SELECT COUNT(DISTINCT bc.book_id) FROM book_collections bc \
-             JOIN collections c ON c.id = bc.collection_id WHERE c.case_id = ?1",
+            "SELECT COUNT(*) FROM placements p \
+             JOIN collections c ON c.id = p.container WHERE c.case_id = ?1",
             [&id],
             |r| r.get(0),
         )?;
@@ -242,18 +243,26 @@ pub fn shelf_items(conn: &Connection, collection_id: &str) -> rusqlite::Result<V
         return out;
     }
 
+    // A HAND SHELF'S ORDER IS ITS PLACEMENTS, IN RANK ORDER.
+    //
+    // It used to be `book_collections.position`, which was nullable, not unique, and not required
+    // to begin at zero — this reader's library holds a shelf whose only book sits at position 1.
+    // The `position` returned here is now simply the book's index within its container, which is
+    // what every caller actually wanted; the authoritative order is the rank, and nothing outside
+    // the placement module ever needs to see one.
     let mut stmt = conn.prepare(
-        "SELECT book_id, COALESCE(position, 0), category_id FROM book_collections \
-         WHERE collection_id = ?1 ORDER BY COALESCE(position, 0), book_id",
+        "SELECT book_id, category_id FROM placements \
+         WHERE container = ?1 ORDER BY rank",
     )?;
-    let out = stmt
+    let out: rusqlite::Result<Vec<ShelfItem>> = stmt
         .query_map([collection_id], |r| {
-            Ok(ShelfItem {
-                book_id: r.get(0)?,
-                position: r.get(1)?,
-                category_id: r.get(2)?,
-            })
+            Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
         })?
+        .enumerate()
+        .map(|(i, row)| {
+            let (book_id, category_id) = row?;
+            Ok(ShelfItem { book_id, position: i as i64, category_id })
+        })
         .collect();
     out
 }
@@ -432,11 +441,12 @@ pub fn shelf_set_collapsed(conn: &Connection, id: &str, collapsed: bool) -> rusq
     tree(conn)
 }
 
-/// Place a book at `index` within a shelf (and optionally within one of its categories).
+/// PLACE A BOOK — kept as the index-shaped door onto the one arrangement transaction.
 ///
-/// This is the single write behind both drag-and-drop and the keyboard move: it removes the
-/// book from its old position on THIS shelf if present, then renumbers the whole shelf so
-/// positions stay dense and total. Refused on a rule shelf, whose contents are computed.
+/// `index` is the position the book should end at once it has been taken out of the reckoning,
+/// which is what this function has always meant. It is translated straight into «in front of which
+/// book», because that is the form the transaction speaks and the form that cannot be off by one.
+/// New callers should prefer `placement::place_book` and name the neighbour directly.
 pub fn shelf_place_book(
     conn: &Connection,
     collection_id: &str,
@@ -444,76 +454,12 @@ pub fn shelf_place_book(
     category_id: Option<&str>,
     index: i64,
 ) -> rusqlite::Result<LibraryTree> {
-    let auto: Option<String> = conn
-        .query_row("SELECT auto_rule FROM collections WHERE id = ?1", [collection_id], |r| r.get(0))
-        .optional()?
-        .flatten();
-    if auto.is_some() {
-        return Err(rusqlite::Error::InvalidParameterName(
-            "cannot place a book on a shelf that fills itself".into(),
-        ));
-    }
-
-    // A CATEGORY BELONGS TO ONE SHELF, and a membership may only name its own shelf's category.
-    //
-    // Without this the row is written anyway: the shelf then reports an item whose category is not
-    // among its own, every view falls back to showing it as uncategorised, and deleting the real
-    // owner's category leaves the row pointing at something that no longer exists. No caller does
-    // this today — the drop slots and the pickers all take the category from the shelf they are
-    // drawing — so the check costs nothing and closes the hole at the boundary rather than relying
-    // on every future caller to remember.
-    if let Some(cat) = category_id {
-        let owner: Option<String> = conn
-            .query_row(
-                "SELECT collection_id FROM collection_categories WHERE id = ?1",
-                [cat],
-                |r| r.get(0),
-            )
-            .optional()?;
-        match owner.as_deref() {
-            Some(o) if o == collection_id => {}
-            _ => {
-                return Err(rusqlite::Error::InvalidParameterName(
-                    "that category belongs to a different shelf".into(),
-                ))
-            }
-        }
-    }
-
-    let tx = conn.unchecked_transaction()?;
-    let mut ids: Vec<String> = {
-        let mut stmt = tx.prepare(
-            "SELECT book_id FROM book_collections WHERE collection_id = ?1 \
-             ORDER BY COALESCE(position, 0), book_id",
-        )?;
-        let rows = stmt
-            .query_map([collection_id], |r| r.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        rows
-    };
-
-    if let Some(cur) = ids.iter().position(|x| x == book_id) {
-        ids.remove(cur);
-    } else {
-        tx.execute(
-            "INSERT OR IGNORE INTO book_collections(book_id, collection_id) VALUES(?1, ?2)",
-            rusqlite::params![book_id, collection_id],
-        )?;
-    }
-    let at = (index.max(0) as usize).min(ids.len());
-    ids.insert(at, book_id.to_string());
-
-    for (i, bid) in ids.iter().enumerate() {
-        tx.execute(
-            "UPDATE book_collections SET position = ?3 WHERE collection_id = ?1 AND book_id = ?2",
-            rusqlite::params![collection_id, bid, i as i64],
-        )?;
-    }
-    tx.execute(
-        "UPDATE book_collections SET category_id = ?3 WHERE collection_id = ?1 AND book_id = ?2",
-        rusqlite::params![collection_id, book_id, category_id],
-    )?;
-    tx.commit()?;
+    let books = crate::library::placement::container_books(conn, collection_id)?;
+    let without: Vec<&(String, String)> = books.iter().filter(|(id, _)| id != book_id).collect();
+    let at = (index.max(0) as usize).min(without.len());
+    let before = without.get(at).map(|(id, _)| id.clone());
+    crate::library::placement::place_book(conn, book_id, collection_id, before.as_deref(), category_id)
+        .map_err(rusqlite::Error::InvalidParameterName)?;
     tree(conn)
 }
 
@@ -732,15 +678,20 @@ mod tests {
         let to = t.loose.iter().find(|s| s.name == "To").unwrap().id.clone();
 
         shelf_place_book(&conn, &from, "b1", None, 0).unwrap();
-        // Joining another shelf does NOT leave the first — a book may sit on several shelves.
+        // A BOOK IS IN ONE PLACE. Joining another shelf therefore LEAVES the first — the reader
+        // asked for a move, and a model that answered by adding a second home is what let the same
+        // book be drawn twice and let each view pick a different one of its homes as "the" home.
         shelf_place_book(&conn, &to, "b1", None, 0).unwrap();
-        assert_eq!(shelf_items(&conn, &from).unwrap().len(), 1);
-        assert_eq!(shelf_items(&conn, &to).unwrap().len(), 1);
+        assert_eq!(shelf_items(&conn, &from).unwrap().len(), 0, "it left the shelf it came from");
+        assert_eq!(shelf_items(&conn, &to).unwrap().len(), 1, "and arrived at the one it went to");
+        assert_eq!(memberships(&conn, "b1"), 1, "one placement, never two");
 
-        // Leaving one shelf leaves the book on the other, and in the library.
-        crate::library::collection_remove_book(&conn, &from, "b1").unwrap();
-        assert_eq!(shelf_items(&conn, &from).unwrap().len(), 0);
-        assert_eq!(shelf_items(&conn, &to).unwrap().len(), 1);
+        // Taking it off that shelf does not lose it: it goes back among the books on no shelf,
+        // which is a container with an order of its own rather than an absence.
+        crate::library::collection_remove_book(&conn, &to, "b1").unwrap();
+        assert_eq!(shelf_items(&conn, &to).unwrap().len(), 0);
+        let unfiled = crate::library::placement::container_books(&conn, crate::library::placement::UNFILED).unwrap();
+        assert_eq!(unfiled.iter().filter(|(id, _)| id == "b1").count(), 1, "it is unfiled, not gone");
         let books: i64 = conn.query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0)).unwrap();
         assert_eq!(books, 1, "the book itself is untouched");
     }
@@ -1016,10 +967,13 @@ mod tests {
         shelf_items(conn, shelf).unwrap().into_iter().map(|i| i.book_id).collect()
     }
 
+    /// How many places a book is in. Under the placement model this can only ever be 0 or 1 — the
+    /// primary key of the table is the book — so a test asserting «one, not two» is now asserting
+    /// something the schema guarantees rather than something the code has to remember.
     fn memberships(conn: &Connection, book: &str) -> i64 {
         conn.query_row(
-            "SELECT COUNT(*) FROM book_collections WHERE book_id = ?1",
-            [book],
+            "SELECT COUNT(*) FROM placements WHERE book_id = ?1 AND container <> ?2",
+            rusqlite::params![book, crate::library::placement::UNFILED],
             |r| r.get(0),
         )
         .unwrap()
@@ -1234,8 +1188,8 @@ mod tests {
 
     #[test]
     fn a_bulk_move_leaves_a_books_other_shelves_completely_alone() {
-        // THE POINT OF THE WHOLE DESIGN. b2 also sits on a third shelf, deliberately. Moving it
-        // out of A must not touch that.
+        // A bulk move takes every selected book to the destination and leaves it nowhere else —
+        // including a book that happened to be sitting on some third shelf when the move began.
         let conn = db();
         for b in ["b1", "b2"] {
             add_book(&conn, b);
@@ -1248,13 +1202,19 @@ mod tests {
         let keep = t.loose.iter().find(|s| s.name == "Keep").unwrap().id.clone();
         shelf_place_book(&conn, &a, "b1", None, 0).unwrap();
         shelf_place_book(&conn, &a, "b2", None, 1).unwrap();
+        // Placing b2 on Keep MOVES it there; it is no longer on A.
         shelf_place_book(&conn, &keep, "b2", None, 0).unwrap();
+        assert_eq!(on_shelf(&conn, &a), vec!["b1"]);
+        assert_eq!(on_shelf(&conn, &keep), vec!["b2"]);
 
         bulk_move(&conn, Some(&a), &b, None, &["b1", "b2"]);
 
-        assert!(on_shelf(&conn, &a).is_empty());
-        assert_eq!(on_shelf(&conn, &keep), vec!["b2"], "the deliberate second placement survives");
-        assert_eq!(memberships(&conn, "b2"), 2, "destination + the shelf it was already on");
+        assert!(on_shelf(&conn, &a).is_empty(), "the source is emptied");
+        // The helper drops each book at index 0 in turn, so the destination reads back in the
+        // reverse of the order it was given — an artefact of the helper, stated rather than glossed.
+        assert_eq!(on_shelf(&conn, &b), vec!["b2", "b1"], "both arrive at the destination");
+        assert!(on_shelf(&conn, &keep).is_empty(), "and b2 left Keep, because a book is in one place");
+        assert_eq!(memberships(&conn, "b2"), 1);
         assert_eq!(memberships(&conn, "b1"), 1);
     }
 
@@ -1300,8 +1260,9 @@ mod tests {
 
     #[test]
     fn leaving_a_shelf_a_book_was_never_on_is_a_no_op() {
-        // The scoped case: the pane's shelf is the stated source even if some selected book is
-        // not on it. Removing a membership that does not exist must not disturb the one that does.
+        // The scoped case: the pane's shelf is the stated source even when the selected book is
+        // not actually on it. The destination is what the reader asked for, so the book goes there
+        // from wherever it really was — a stated source that is wrong must not strand it.
         let conn = db();
         add_book(&conn, "b1");
         let t = shelf_create(&conn, "Scoped", None, None).unwrap();
@@ -1314,9 +1275,10 @@ mod tests {
 
         bulk_move(&conn, Some(&scoped), &b, None, &["b1"]);
 
-        assert_eq!(on_shelf(&conn, &b), vec!["b1"], "it arrived");
-        assert_eq!(on_shelf(&conn, &elsewhere), vec!["b1"], "and its real shelf is untouched");
-        assert_eq!(memberships(&conn, "b1"), 2);
+        assert_eq!(on_shelf(&conn, &b), vec!["b1"], "it arrived at the destination");
+        assert!(on_shelf(&conn, &elsewhere).is_empty(), "and left the shelf it was actually on");
+        assert!(on_shelf(&conn, &scoped).is_empty(), "the stated source never held it and holds nothing now");
+        assert_eq!(memberships(&conn, "b1"), 1, "one placement, wherever the move was said to start");
     }
 
     #[test]
@@ -1402,12 +1364,19 @@ mod tests {
     // =======================================================================
 
     /// Every membership row in the database, as (collection, book) pairs.
+    /// Every book that is on a shelf, as (shelf, book). Books on no shelf are excluded — they are
+    /// placed too, in the unfiled container, but they are not "on a shelf" in the sense these tests
+    /// are asking about.
     fn all_memberships(conn: &Connection) -> Vec<(String, String)> {
         let mut stmt = conn
-            .prepare("SELECT collection_id, book_id FROM book_collections ORDER BY collection_id, book_id")
+            .prepare(
+                "SELECT container, book_id FROM placements WHERE container <> ?1                  ORDER BY container, book_id",
+            )
             .unwrap();
         let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
+            .query_map([crate::library::placement::UNFILED], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })
             .unwrap()
             .collect::<rusqlite::Result<Vec<_>>>()
             .unwrap();
@@ -1456,7 +1425,11 @@ mod tests {
             let cid = t.cases.iter().find(|c| c.name == format!("C{i}")).unwrap().id.clone();
             let t = shelf_create(&conn, &format!("S{i}"), Some(&cid), None).unwrap();
             let sid = t.cases.iter().find(|c| c.id == cid).unwrap().shelves[0].id.clone();
-            shelf_place_book(&conn, &sid, "b1", None, 0).unwrap();
+            // Its own book: one book cannot be on four shelves at once any more, and reusing one
+            // for all four would be testing the old model rather than this one.
+            let book = format!("cased{i}");
+            add_book(&conn, &book);
+            shelf_place_book(&conn, &sid, &book, None, 0).unwrap();
             shelves.push(sid);
         }
         loop {
@@ -1472,7 +1445,7 @@ mod tests {
             assert_eq!(shelf_items(&conn, s).unwrap().len(), 1, "and kept its book");
         }
         let books: i64 = conn.query_row("SELECT COUNT(*) FROM books", [], |r| r.get(0)).unwrap();
-        assert_eq!(books, 3);
+        assert_eq!(books, 7, "the three originals and one per cased shelf");
     }
 
     #[test]
@@ -1543,8 +1516,13 @@ mod tests {
         for i in 0..30 {
             let (from, to) = if i % 2 == 0 { (&a, &b) } else { (&b, &a) };
             shelf_place_book(&conn, to, "b1", None, 0).unwrap();
+            // The removal is now a no-op by construction: the book already left when it arrived
+            // elsewhere. Kept in the loop because this is exactly the sequence the UI performs, and
+            // the point of the test is that repeating it thirty times accumulates nothing.
             crate::library::collection_remove_book(&conn, from, "b1").unwrap();
-            assert_eq!(memberships(&conn, "b1"), 1, "exactly one membership after step {i}");
+            assert_eq!(memberships(&conn, "b1"), 1, "exactly one placement after step {i}");
+            assert_eq!(shelf_items(&conn, to).unwrap().len(), 1, "it is on the shelf it moved to, step {i}");
+            assert_eq!(shelf_items(&conn, from).unwrap().len(), 0, "and on no other, step {i}");
         }
         assert_eq!(all_memberships(&conn).len(), 1);
     }
@@ -1719,7 +1697,12 @@ mod tests {
     }
 
     #[test]
-    fn a_book_on_several_shelves_loses_only_the_one_it_is_moved_out_of() {
+    fn a_book_placed_on_shelf_after_shelf_ends_on_the_last_one_only() {
+        // This test used to assert the opposite — that a book gathered a home on every shelf it was
+        // placed on, and that leaving one left the others behind. That was the model, and it is the
+        // model a real library broke: with several homes, each part of the app picked a different
+        // one, so the same book reported a different place and a different set of destinations
+        // depending only on which view was drawing it. A book is now in ONE place.
         let conn = db();
         add_book(&conn, "b1");
         let mut ids = Vec::new();
@@ -1729,20 +1712,24 @@ mod tests {
         }
         for id in &ids {
             shelf_place_book(&conn, id, "b1", None, 0).unwrap();
+            assert_eq!(memberships(&conn, "b1"), 1, "never more than one, at any point");
         }
-        assert_eq!(memberships(&conn, "b1"), 4);
 
-        // Move out of exactly one of them.
-        let t = shelf_create(&conn, "E", None, None).unwrap();
-        let e = t.loose.iter().find(|s| s.name == "E").unwrap().id.clone();
-        shelf_place_book(&conn, &e, "b1", None, 0).unwrap();
-        crate::library::collection_remove_book(&conn, &ids[1], "b1").unwrap();
-
-        assert_eq!(memberships(&conn, "b1"), 4, "three deliberate placements plus the new one");
-        assert!(shelf_items(&conn, &ids[0]).unwrap().iter().any(|i| i.book_id == "b1"));
-        assert!(!shelf_items(&conn, &ids[1]).unwrap().iter().any(|i| i.book_id == "b1"));
-        assert!(shelf_items(&conn, &ids[2]).unwrap().iter().any(|i| i.book_id == "b1"));
+        // It is on the last shelf it was placed on, and on none of the others.
         assert!(shelf_items(&conn, &ids[3]).unwrap().iter().any(|i| i.book_id == "b1"));
+        for id in &ids[..3] {
+            assert!(
+                shelf_items(&conn, id).unwrap().iter().all(|i| i.book_id != "b1"),
+                "a shelf it was moved off holds nothing"
+            );
+        }
+
+        // Taking it off that one leaves it unfiled rather than nowhere at all.
+        crate::library::collection_remove_book(&conn, &ids[3], "b1").unwrap();
+        assert_eq!(memberships(&conn, "b1"), 0, "on no shelf");
+        let unfiled =
+            crate::library::placement::container_books(&conn, crate::library::placement::UNFILED).unwrap();
+        assert!(unfiled.iter().any(|(id, _)| id == "b1"), "but still placed, among the unfiled");
     }
 
     #[test]

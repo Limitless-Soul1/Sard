@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, useMemo } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { pdfAttemptStarted, stageOk } from "@pdfDiag"; // DIAGNOSTIC BUILD ONLY
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { setCloseFlush } from "../../lib/closeFlush"; // what this view needs saved before the window goes
 
 import { setBookCssMode } from "../../reader-engine/FoliateController";
 import { FoliateController, type SearchHit, type SelectionInfo, type TocEntry } from "../../reader-engine/FoliateController";
@@ -11,6 +11,7 @@ import { createReader, needsReaderHost } from "../../reader-transport";
 import { PhotoComposer } from "../photo/PhotoComposer";
 import type { CardData } from "../photo/photo";
 import { useReader } from "../../reader-engine/store";
+import { useProfiles } from "../profiles/store";
 import { parseSectionHref, sectionHref } from "../../reader-engine/sectionHref"; // WP-6A: generated-row hrefs
 import { positionReadout } from "../../reader-engine/position";
 import { loadBookCssMode } from "../../reader-engine/bookCssSetting"; // WP-7 stage 3 // WP-4F: one place decides the readout
@@ -41,7 +42,7 @@ import { openWebView2Help } from "../../lib/webview2";
 import { ErrorCard } from "../../app/ErrorCard";
 import { useI18n } from "../../i18n";
 import { extractChapterNumber, localeNum } from "../../lib/format";
-import { applyTheme, resolveTheme, useTheme, type ThemeId } from "../../theme";
+import { resolveTheme, useTheme, type ThemeId } from "../../theme";
 import {
   clearBookOverride,
   effectiveStyle,
@@ -54,7 +55,13 @@ import {
 } from "./perBookSettings";
 import { useStyleScope } from "../../lib/styleScope";
 // RAWY-265 (Phase 3): the page-opacity gate + the desk scrim, both resolved in one place.
-import { currentDeskScrim, effectivePageOpacity, useBackground } from "../../lib/background";
+import {
+  bgOverlayOf,
+  currentDeskScrim,
+  effectivePageOpacity,
+  overlayTint,
+  useBackground,
+} from "../../lib/background";
 import { AnnotationLayer } from "./AnnotationLayer";
 import { AnnotationsPanel } from "./AnnotationsPanel";
 import { PhotoBasketTray } from "./PhotoBasketTray";
@@ -285,9 +292,11 @@ export function Reader({
   // override, and the global theme captured on entry (restored to the chrome on exit).
   const globalStyleRef = useRef<ReadingStyle | null>(null);
   const overrideRef = useRef<BookOverride>({});
-  // The LIBRARY theme captured on entry, restored to the chrome on exit (RAWY-48/D29 — the
-  // Library has its OWN theme, independent of any book/unified theme).
-  const libraryThemeRef = useRef<ThemeId>(useTheme.getState().themeId);
+  // RAWY-48/D29's `libraryThemeRef` is GONE, and its absence is the point. It existed to put the
+  // Library's palette back on exit, because the Reader used to overwrite `:root` on entry. It writes
+  // nothing global now, so there is nothing to put back — and the ref could only ever restore a
+  // STALE value: it was captured when the book opened, so switching profiles mid-book and then going
+  // back handed the Library its previous profile's colours.
   const [bookThemeId, setBookThemeId] = useState<ThemeId>(useTheme.getState().bookThemeId);
   const [hasOv, setHasOv] = useState(false);
   const [photoCard, setPhotoCard] = useState<CardData | null>(null); // RAWY-49 Photo Mode composer
@@ -402,6 +411,45 @@ export function Reader({
       stageOk("library.row", { bookId: target.id });
       stageOk("path.resolved", { filePath: target.filePath, length: target.filePath?.length ?? 0 });
 
+      /**
+       * THE PAGE'S COLOUR IS RESOLVED BEFORE ANYTHING ELSE IS WAITED FOR.
+       *
+       * `.page-sheet` renders on the Reader's first frame, so whatever the effective style is at that
+       * moment is what the reader SEES. It used to be published after seven awaits, and the page wore
+       * the fallback until then. Measured inside a real open, with marks:
+       *
+       *     49 ms  bookRegister      the asset path
+       *     47 ms  bookGet           the book row
+       *     86 ms  progressGet       the saved position
+       *      8 ms  everything else, INCLUDING both style reads and the publish
+       *
+       * 182 of those 194 ms are three commands the page colour does not depend on. They are not slow
+       * in themselves — about 1 ms each when called on their own — they are slow HERE, because their
+       * round trips queue behind the Reader mounting. So this is not a micro-optimisation of the two
+       * reads; it is removing a dependency that was never real. Both of their inputs, the book's id
+       * and its direction, are on `target` from the first line of this function.
+       *
+       * Nothing about precedence moves: the effective style is still `effectiveStyle(global,
+       * override)` in the per-book scope and the bare global in unified, computed from the same two
+       * values in the same order. Only the moment it becomes known has changed.
+       */
+      const ts = useTheme.getState();
+      const unified = useStyleScope.getState().scope === "unified";
+      const [global, override] = await Promise.all([
+        loadGlobalStyle(target.dir ?? undefined),
+        loadBookOverride(target.id),
+      ]);
+      if (stale()) return;
+      globalStyleRef.current = global;
+      overrideRef.current = override;
+      // The book's theme comes from the shared BOOK theme (D29), NOT the Library theme:
+      // unified -> the shared book theme; per-book -> this book's override, else the shared book theme.
+      const effTheme = unified ? ts.bookThemeId : (override.themeId ?? ts.bookThemeId);
+      let initialStyle = unified ? global : effectiveStyle(global, override);
+      set({ style: initialStyle });
+      setBookThemeId(effTheme);
+      setHasOv(!unified && calcHasOverride(override)); // Reset is a per-book affordance
+
       const url = convertFileSrc(target.filePath);
       stageOk("asset.url", { assetUrl: url, scheme: (() => { try { return new URL(url).protocol + "//" + new URL(url).host; } catch { return "UNPARSEABLE"; } })() });
 
@@ -437,23 +485,16 @@ export function Reader({
       // saved global row loads OVER this book's DIRECTION baseline (loadGlobalStyle(target.dir)), so
       // any field the row lacks falls back to the Arabic baseline for an RTL book — on a fresh
       // install (no row) an Arabic book now opens at zoom 1.15 / line-height 1.9 / start, not Latin.
-      const ts = useTheme.getState();
-      const unified = useStyleScope.getState().scope === "unified";
+      // Both are resolved at the top of this function now - see the note there for why.
       // RESILIENCE-1 / WP-7 (stage 3): tell the engine what this book's own stylesheet may contain,
       // BEFORE `ctrl.open()` — the sanitiser hook runs while the book's resources are being loaded,
       // so the mode has to be current by then. Ships `off`, so today this loads a setting whose value
       // makes the sanitiser return an empty sheet.
       setBookCssMode(await loadBookCssMode());
       if (stale()) return;
-      const global = await loadGlobalStyle(target.dir ?? undefined);
+      // Guards the block below — ctrl.open, which would otherwise run on a null/superseded stage
+      // and throw A's error onto B.
       if (stale()) return;
-      const override = await loadBookOverride(target.id);
-      // Guards the block below — the ref writes, module-level applyTheme, and ctrl.open (which would
-      // otherwise run on a null/superseded stage and throw A's error onto B).
-      if (stale()) return;
-      libraryThemeRef.current = ts.themeId; // restore this to the chrome on exit
-      globalStyleRef.current = global;
-      overrideRef.current = override;
 
       // RAWY-285: EVERY per-book persisted value is loaded HERE — before `onRelocate` is registered and
       // before `ctrl.open()`, which is the first moment the engine can emit a position.
@@ -494,12 +535,6 @@ export function Reader({
       // silently discarded, and nobody who never used invert gets a dark theme they did not ask for.
       setPdfThemeId(isPdfThemeId(pdfThemeRaw) ? pdfThemeRaw : invertRaw === "1" ? "night" : "normal");
       setPdfZoom(parseStoredZoom(pdfZoomRaw) ?? "fit-page");
-      // The book's theme comes from the shared BOOK theme (D29), NOT the Library theme:
-      // unified → the shared book theme; per-book → this book's override, else the shared book theme.
-      const bookDefault = ts.bookThemeId;
-      const effTheme = unified ? bookDefault : (override.themeId ?? bookDefault);
-      let initialStyle = unified ? global : effectiveStyle(global, override);
-
       // RESILIENCE-1 / WP-6B — a FRAGMENTED spine defaults to SCROLLED flow.
       //
       // MEASURED across the corpus: exactly one book qualifies — `word-generated--unknown-title`,
@@ -512,8 +547,11 @@ export function Reader({
       // A DEFAULT, not a lock: it applies only when this book has no saved flow of its own, so a
       // reader who chooses paged keeps paged, on this book, for ever. The global preference is left
       // alone — one degenerate book must not change how every other book opens.
+      // THE ONE FIELD HERE THAT GENUINELY NEEDS `meta`, and it is not a colour. Applied where the row
+      // becomes available, over the style already published above; the page is unaffected either way.
       if (meta?.spineFragmented && !unified && override.style?.flowMode == null) {
         initialStyle = { ...initialStyle, flowMode: "scrolled" };
+        set({ style: initialStyle });
       }
 
       // On the hosted path this is the first moment the reader is actually needed, and the awaits
@@ -603,9 +641,10 @@ export function Reader({
         }, SAVE_DEBOUNCE_MS);
       });
 
-      // The whole reader (chrome + page) takes the book's effective theme while reading; the
-      // Library keeps the global default (restored on exit). The global store is NOT mutated.
-      applyTheme(resolveTheme(effTheme));
+      // THE BOOK'S THEME NO LONGER GOES TO `:root`. It reaches the page through `--reader-page`
+      // and `data-book-dark` above, and the book document through `ctrl.applyTheme` below. Writing
+      // it globally is what made the Reader's chrome wear the book's paper, and what made the page
+      // paint the Library's paper first. The Library keeps `:root`; the exit restore stays.
       await ctrl.open(url, stageRef.current!, {
         resumeCfi,
         resumeFraction, // RAWY-85: PDFs resume by page fraction
@@ -620,8 +659,6 @@ export function Reader({
       // newer open owns them now.
       if (stale()) return;
 
-      setBookThemeId(effTheme);
-      setHasOv(!unified && calcHasOverride(override)); // Reset is a per-book affordance
       // RESILIENCE-1 / WP-3 — the DATABASE names this book, not the file.
       //
       // `bookTitle` used to be `ctrl.title`: foliate's `dc:title`, straight out of the EPUB. That made
@@ -816,9 +853,24 @@ export function Reader({
       // exit path (Back to Library, a cross-book follow, the error screen) because all of them
       // either unmount the Reader or change `initial.id`, and this cleanup covers both.
       endReadingSession();
-      // Restore the LIBRARY theme to the chrome on exit (RAWY-40/48) — the book theme was only
-      // for this reading session; the Library shows its own independent theme again.
-      applyTheme(resolveTheme(libraryThemeRef.current));
+      // AND THE READING SESSION ENDS IN THE STORE TOO.
+      //
+      // `useReader` is a module-level singleton and nothing ever put it back: `status` and `style`
+      // kept the last book's values from the moment it closed until the next one finished opening.
+      // Two faults came out of that one omission, both measured:
+      //
+      //   · THE PREVIOUS BOOK'S PAGE COLOUR painted the next one. `--reader-page` reads
+      //     `style.pageColor`, and the open path publishes this book's style only AFTER `ctrl.open`
+      //     resolves — so opening a book straight after one with a different page colour showed the
+      //     WRONG book's colour for 125 ms.
+      //   · A STALE `status: "ready"` let the profile-switch effect below through its own guard on
+      //     the new Reader's MOUNT, where `overrideRef` is still empty — so it republished the
+      //     GLOBAL style over a book that overrides it, turning a correctly-painted page wrong.
+      //
+      // `null`/`idle` is the state the app already runs in whenever the Library is on screen, and
+      // every consumer is written for it: `driftOf` says so in as many words, and the two profile
+      // readers fall back to the persisted row "when the reader is standing in the Library".
+      useReader.getState().set({ status: "idle", style: null });
     };
     // Open the book the Library handed us; re-open if the selection changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -834,13 +886,19 @@ export function Reader({
   // flush first, so WE must destroy). `destroy()` needs `core:window:allow-destroy` — which was NOT
   // granted, so it rejected and, since preventDefault had already blocked the native close, the ✕ did
   // NOTHING inside a book (the Library, with no handler, still closed natively). The permission is now
-  // granted (capabilities/default.json), and this handler ALWAYS reaches the close on success/timeout/
-  // error (try/finally + a bounded flush), so ✕ closes promptly every time.
+  // granted (capabilities/default.json).
+  //
+  // THE HANDLER ITSELF NO LONGER LIVES HERE, and that is a lifecycle fix, not a tidy-up. Tauri blocks
+  // the native close whenever its `js_event_listeners` registry says a `tauri://close-requested`
+  // listener exists, and that registry is emptied only by an explicit `unlisten` IPC — never on
+  // navigation. A page RELOAD therefore destroys this component's handler while leaving the entry
+  // behind: the next close is prevented, and nothing is left alive to finish it (measured: window
+  // enabled, message loop pumping, process alive indefinitely). A handler owned by a component that
+  // comes and goes cannot satisfy a registration that does not. So the Reader now PUBLISHES what it
+  // needs flushed and `App` owns the close for the whole life of the page. See `lib/closeFlush.ts`
+  // for the measurements that separate the stale entry (harmless) from the missing handler (the bug).
   useEffect(() => {
-    const win = getCurrentWindow();
-    let unlisten: (() => void) | undefined;
-    let closing = false; // flush + close exactly once; a second ✕ during the flush is left to the first
-    // RAWY-285: this handler registers ONCE, so it must read the book from the SAME live sources every
+    // RAWY-285: the flush must read the book from the SAME live sources every
     // other writer uses — `bookRef` / `isPdfRef`, both updated by `openBook` — never from the props this
     // effect happened to close over. It used to capture `initial.id`/`initial.format` at MOUNT, so after a
     // cross-book follow the ✕ wrote the book on screen's read-aloud cursor under the PREVIOUS book's key.
@@ -864,23 +922,10 @@ export function Reader({
         if (cur) await settingsSet(`tts_position:${bookRef.current}`, JSON.stringify(cur)).catch(() => {});
       }
     };
-    win
-      .onCloseRequested(async (event) => {
-        event.preventDefault(); // hold the native close so we can flush; WE own the destroy below
-        if (closing) return; // a second ✕ while still flushing — the first invocation will close it
-        closing = true;
-        try {
-          // flush the last progress + TTS cursor, but NEVER let a slow/failed flush block the close
-          await Promise.race([flush(), new Promise((r) => setTimeout(r, 1500))]);
-        } finally {
-          // ALWAYS close now — destroy() bypasses this handler (no re-fire loop). It needs
-          // core:window:allow-destroy (granted, RAWY-174); wrapped so nothing can leave the ✕ dead.
-          try { await win.destroy(); } catch { /* no other JS path can force the close */ }
-        }
-      })
-      .then((u) => { unlisten = u; })
-      .catch(() => {});
-    return () => unlisten?.();
+    // Publish it for the app-root close handler, and take it back on unmount. Registration is
+    // synchronous, so unlike the old `onCloseRequested(...).then(u => unlisten = u)` there is no
+    // window in which a cleanup can run before the subscription exists and quietly leak it.
+    return setCloseFlush(flush);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -919,11 +964,73 @@ export function Reader({
     useReader.getState().set({ style: effStyle });
     setBookThemeId(effTheme);
     setHasOv(!unified && calcHasOverride(override));
-    applyTheme(resolveTheme(effTheme));
+    // `setBookThemeId` is what repaints the page: `--reader-page` and `data-book-dark` are derived
+    // from it on the next render. Nothing global is written.
     ctrlRef.current?.applyTheme(resolveTheme(effTheme), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
     ctrlRef.current?.applyStyle(effStyle);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope]);
+
+  /**
+   * A PROFILE SWITCHED WHILE READING REACHES THE PAGE — persisting is not applying.
+   *
+   * `applyProfile` writes the profile's reading fields (the two faces, the number ink, each
+   * typography opinion) into the `reading_style` row and stops there. `globalStyleRef` was read once
+   * when the book opened, so nothing on screen moved: measured, switching to a profile whose Arabic
+   * face is `thmanyahserifdisplay` left the page set in `amiri`, and its number ink unapplied.
+   *
+   * That was visible twice over. The reader saw the previous profile's type until the next launch —
+   * and because `driftOf` compares the live reading style against what the profile SAYS, the
+   * difference then read as an unsaved change: switching profiles a second time asked
+   * «تغييرات لم تُحفظ» about edits nobody had made. Applying what was written fixes both; nothing
+   * about the dirty check itself needed loosening.
+   *
+   * The same shape the backgrounds already carry in `applyProfile` ("re-read rather than re-map"),
+   * and the same three lines the scope effect above uses — so a per-book override still wins, which
+   * a patch straight into the live style could not have promised.
+   */
+  const activeProfileId = useProfiles((s) => s.activeId);
+  useEffect(() => {
+    if (status !== "ready") return;
+    let alive = true;
+    void (async () => {
+      const global = await loadGlobalStyle(dir ?? undefined);
+      if (!alive) return;
+      globalStyleRef.current = global;
+      const unified = useStyleScope.getState().scope === "unified";
+      const effStyle = unified ? global : effectiveStyle(global, overrideRef.current);
+      useReader.getState().set({ style: effStyle });
+      ctrlRef.current?.applyStyle(effStyle);
+    })();
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProfileId]);
+
+  /**
+   * AND SO DOES THE PALETTE THAT SWITCH BROUGHT WITH IT.
+   *
+   * The effect above re-reads the reading STYLE — the faces, the number ink, the typography — and
+   * stops there. `bookThemeId` is component state, captured when the book opened, so the profile's
+   * reading COLOURS never reached an open book. That was invisible for as long as the page took its
+   * colour from the global paper, because `applyProfile` writes that on its own: the page did change,
+   * just to the new profile's LIBRARY paper rather than its reading one. With the page reading a
+   * reader-scoped colour, a switch mid-book left the previous profile's paper on screen — measured,
+   * A -> B -> A with crossed palettes never moved off B's #0D3B14.
+   *
+   * Kept separate from the style effect above on purpose: this one is synchronous and depends on the
+   * THEME store, not on the profile row, so it is also correct for any other route that changes the
+   * default reading theme under an open book. A per-book theme still wins — the same three lines the
+   * scope effect uses, for the same reason.
+   */
+  const defaultBookTheme = useTheme((st) => st.bookThemeId);
+  useEffect(() => {
+    if (status !== "ready") return;
+    const unified = useStyleScope.getState().scope === "unified";
+    const effTheme = unified ? defaultBookTheme : (overrideRef.current.themeId ?? defaultBookTheme);
+    setBookThemeId(effTheme);
+    ctrlRef.current?.applyTheme(resolveTheme(effTheme), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultBookTheme]);
 
   // Pin the chrome open only while an ACTIVELY-DRIVEN drawer is open — Settings/Notes/basket, which
   // you interact with via the top bar. The Contents panel is DELIBERATELY excluded (RAWY-73): it is
@@ -1294,7 +1401,6 @@ export function Reader({
   // untouched, so returning to the Library still shows its own theme.
   const setBookTheme = (id: ThemeId) => {
     setBookThemeId(id);
-    applyTheme(resolveTheme(id));
     ctrlRef.current?.applyTheme(resolveTheme(id), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
     if (useStyleScope.getState().scope === "unified") {
       useTheme.getState().setBookTheme(id); // shared BOOK theme — persists book_theme_id, not the Library
@@ -1316,7 +1422,6 @@ export function Reader({
     // Reset → follow the shared BOOK theme (D29), not the Library theme.
     const bookDefault = useTheme.getState().bookThemeId;
     setBookThemeId(bookDefault);
-    applyTheme(resolveTheme(bookDefault));
     ctrlRef.current?.applyTheme(resolveTheme(bookDefault), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
     ctrlRef.current?.applyStyle(global);
   };
@@ -2041,14 +2146,45 @@ export function Reader({
   // RAWY-114: centre the floating read-aloud pill over the READING AREA (not the raw viewport), so an
   // open Contents/Notes panel shifts it clear of the panel — the compact pill reads this var.
   // RAWY-201: the per-book custom PAGE + BACKGROUND colours ride READER-SCOPED vars set here on
-  // .reader-root (never the global --paper-bg/--app-bg → no chrome/accent bleed). Set ONLY when a real
-  // colour is stored; when null the var is absent and the CSS falls back to the theme value — so an
-  // untouched book is byte-identical. `--reader-page` feeds the .page-sheet margin (the iframe surface
-  // gets the same value via injectedCss → no seam); `--reader-bg` feeds .reader-root + .reader-desk.
+  // .reader-root (never the global --paper-bg/--app-bg → no chrome/accent bleed). `--reader-page`
+  // feeds the .page-sheet margin (the iframe surface gets the same value via injectedCss → no seam);
+  // `--reader-bg` feeds .reader-root + .reader-desk.
+  // `--reader-page` is no longer conditional — see the block below for why the fallback had to go.
+  // THE OVERLAY'S THREE STATES, read through the one function that defines them. `theme` leaves the
+  // var absent so the stylesheet falls through to the desk colour exactly as before; `colour` sets
+  // it; `none` sets nothing here and instead marks the desk so the scrim layer is dropped entirely.
+  const bgOverlay = bgOverlayOf(style?.backgroundColor);
+  const overlayPaint = overlayTint(bgOverlay);
+
+  /**
+   * THE BOOK'S OWN PALETTE, SCOPED TO THE READER — and the whole of the colour boundary.
+   *
+   * `--reader-page` used to be set ONLY when a book carried its own `pageColor`, so with no override
+   * `.page-sheet` fell through to `var(--paper-bg)` — a global slot the Library and the Reader took
+   * turns writing. Two faults came out of that one fallback:
+   *
+   *   · THE FLASH. Opening a book painted the page with whatever `:root` held, which is the LIBRARY's
+   *     paper, and a later `applyTheme` corrected it. Measured across a profile switch: the page
+   *     painted #0D3B14 (the library paper) at t=299ms and became #F7F2E2 (the reading paper) at
+   *     t=481ms — 182ms of the wrong colour, on every cold open.
+   *   · THE BLEED. Correcting it meant writing the READING palette onto `:root`, where 31 Reader
+   *     chrome rules read `--paper-bg` as the ink that contrasts with the accent. The book's paper
+   *     became the colour of the highlight button and the read-aloud control.
+   *
+   * Setting it ALWAYS, from the resolved reading theme, ends both: the page is right on its first
+   * paint because there is nothing to fall through to, and `:root` is left to the Library. A
+   * per-book `pageColor` still wins — it is the same slot, written last.
+   */
+  const readingTheme = resolveTheme(bookThemeId);
   const rootVars = {
     "--reading-shift": `${(leftPad - rightPad) / 2}px`,
-    ...(style?.pageColor ? { "--reader-page": style.pageColor } : {}),
-    ...(style?.backgroundColor ? { "--reader-bg": style.backgroundColor } : {}),
+    "--reader-page": style?.pageColor ?? readingTheme.colors.paperBg,
+    // THE DESK IS THE PAGE'S ENVIRONMENT, NOT THE APP'S. `.reader-root` and `.reader-desk` paint
+    // `var(--reader-bg, var(--app-bg))`, and that fallback used to land on the reading palette only
+    // because the reading palette was being written to `:root`. It no longer is, so the desk is named
+    // here instead of inherited — the SAME colour it has always had, now stated rather than borrowed.
+    // An overlay colour still wins: it is the reader's own choice of what the page rests on.
+    "--reader-bg": overlayPaint.tint ?? readingTheme.colors.surfaceBg,
   } as CSSProperties;
 
   return (
@@ -2063,12 +2199,26 @@ export function Reader({
     // and the selection menu is a descendant of .reader-root (no portals), so a single capture-phase click
     // handler releases focus from any POINTER-clicked keys-swallower (button / [role=button] / link) before it
     // can capture SPACE/arrows — superseding the per-container onClickCapture the toolbar/pills still carry.
-    <div className={`reader-root${chromeShown ? "" : " chrome-hidden"}${ttsActive ? " tts-playing" : ""}${!isPaged && !isPdf ? " flow-scrolled" : ""}${immersive ? " immersive" : ""}${scrolledAway && !chromeShown ? " scrolled-away" : ""}${style?.immHidePill ? " im-hide-pill" : ""}${style?.immHideScrollbar ? " im-hide-scrollbar" : ""}${ttsStatus === "chapter-end" ? " tts-chapter-end" : ""}${ttsStatus === "edge-error" ? " tts-edge-error" : ""}`} style={rootVars} onClickCapture={releaseButtonFocusAfterPointerClick}>
+    <div
+      // THE PAGE'S OWN DARKNESS. `data-dark` on `:root` is the APP's polarity and is read by 30
+      // chrome rules; exactly one page rule needs the BOOK's instead — `.page-sheet`'s inset
+      // hairline, which must match the paper it is drawn on and not the surrounding interface.
+      data-book-dark={String(readingTheme.dark)}
+      // AND THE BOOK'S THEME BY NAME, for the decorations that belong to a particular reading paper.
+      // Moonlit draws a crescent and clouds into the desk margins; it is scenery for READING, and it
+      // was keyed on `:root[data-theme]` only because the reading theme used to be written there.
+      // Left alone it would have inverted — appearing when the LIBRARY is Moonlit and vanishing when
+      // the book is. This is the reader's own copy of the same question.
+      data-book-theme={readingTheme.id}
+      className={`reader-root${chromeShown ? "" : " chrome-hidden"}${ttsActive ? " tts-playing" : ""}${!isPaged && !isPdf ? " flow-scrolled" : ""}${immersive ? " immersive" : ""}${scrolledAway && !chromeShown ? " scrolled-away" : ""}${style?.immHidePill ? " im-hide-pill" : ""}${style?.immHideScrollbar ? " im-hide-scrollbar" : ""}${ttsStatus === "chapter-end" ? " tts-chapter-end" : ""}${ttsStatus === "edge-error" ? " tts-edge-error" : ""}`} style={rootVars} onClickCapture={releaseButtonFocusAfterPointerClick}>
       {/* desk + centered page sheet (the book) + page-turn affordances */}
       <div
         // RAWY-294: `pdf-view` marks EVERY PDF (it carries the scroll containment); the theme itself
         // is applied inside the page document, not by a class on this ancestor.
-        className={`reader-desk${isPdf ? " pdf-view" : ""}${style?.backgroundColor ? " custom-bg" : ""}`}
+        className={`reader-desk${isPdf ? " pdf-view" : ""}${overlayPaint.tint ? " custom-bg" : ""}`}
+        // `off` drops the scrim pseudo-element, so the picture is composited under nothing at all.
+        // Absent in the other two states, which keeps every existing book byte-identical.
+        data-overlay={overlayPaint.paint ? undefined : "off"}
         style={deskStyle}
         onWheel={onDeskWheel}
       >
@@ -2264,6 +2414,21 @@ export function Reader({
               "update-runtime": () => void openWebView2Help(),
             }}
             diagnosticsText={diagText}
+            // WHICH BOOK FAILED. The card's copy can only say "this book" — it is one string shared
+            // by every failure — so without this a reader with a large library is told a book is
+            // missing and not which one. That matters most exactly when it is least obvious: a
+            // cross-book note jump or a bookmark opens a book the reader never saw the cover of.
+            //
+            // It uses the card's existing `extra` slot (the startup gate's precedent) rather than a
+            // new surface, and the store's EFFECTIVE title — the reader's own rename if they made
+            // one — falling back to the hint the caller passed, since a pre-flight refusal fails
+            // before the row is read. Never the filename: the path is engine detail and belongs
+            // behind Details with everything else.
+            extra={
+              bookTitle || initial.title ? (
+                <p className="err-book-name">{bookTitle ?? initial.title}</p>
+              ) : undefined
+            }
           />
         </div>
       )}

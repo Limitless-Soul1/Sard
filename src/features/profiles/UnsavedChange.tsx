@@ -1,22 +1,26 @@
-// FRAME 21 — "Where does this change go?", and frame 22's confirmation.
+// THE UNSAVED-CHANGES DECISION, asked once, at the boundary that needs it.
 //
-// A profile-owned value changed outside the editor. The design does not guess which of the three
-// honest answers the reader meant, and neither does this: the change is already visible, and this
-// asks where it should LIVE.
+// It is no longer a reaction to a change. `session.ts` decides WHEN — this only renders the question
+// and carries out the answer, then lets the action that was waiting proceed.
 //
-// The change is never reverted by opening this. Asking is not undoing — the reader sees the new
-// paper while deciding what to do with it, which is the whole reason the question is answerable.
-
-import { useEffect, useState } from "react";
+//   Save     the drifted values are written into the active profile, so the look the reader has been
+//            building becomes what that profile is.
+//   Discard  the profile is re-applied, which puts the live surface back to its saved state.
+//   Cancel   nothing happens at all, and the waiting action does not run — the reader stays exactly
+//            where they were, with their changes intact.
+//
+// Save and Discard need no flag to clear: the dirty state is derived from profile-vs-live, so once
+// either has run the two agree and the badge goes on its own.
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useI18n } from "../../i18n";
 import type { TKey } from "../../i18n/locales/en";
-import { applyProfile, captureCurrent, createProfile, saveProfile, useProfiles } from "./store";
+import { applyProfile, captureCurrent, saveProfile, useProfiles } from "./store";
 import { THEMES, isBuiltinThemeId } from "../../theme/themes";
-import { useTheme } from "../../theme/store";
-import { driftOf, liveValues, useSession, type SessionKey } from "./session";
+import { liveValues, useSession, type SessionKey } from "./session";
 import type { Profile } from "./model/profile";
+import { useDialog } from "../../components/useDialog";
 
 /**
  * What the reader changed, in their own words — the design names the value, not the key.
@@ -43,8 +47,7 @@ export function describe(keys: SessionKey[], t: (k: TKey) => string): string {
 export function UnsavedChange() {
   const { t } = useI18n();
   const pending = useSession((s) => s.pending);
-  const keepForSession = useSession((s) => s.keepForSession);
-  const dismiss = useSession((s) => s.dismiss);
+  const close = useSession((s) => s.close);
   const profiles = useProfiles((s) => s.profiles);
   const activeId = useProfiles((s) => s.activeId);
   const [busy, setBusy] = useState(false);
@@ -52,20 +55,44 @@ export function UnsavedChange() {
 
   const active = profiles.find((p) => p.id === activeId) ?? null;
 
+  /* Cancel is what Escape means here — see `useDialog`. `pending` may be absent on this render, in
+     which case the dialog is not shown and the dismissal is never reachable. */
+  const pendingRef = useRef(pending);
+  pendingRef.current = pending;
+  const dlg = useDialog({
+    onDismiss: () => {
+      const p = pendingRef.current;
+      if (!p) return;
+      close();
+    },
+  });
+
   /**
    * What was captured, with the drifted APP paper folded in.
    *
-   * `captureCurrent` reads the BOOK theme, which is right for "how Sard looks now" but wrong here
-   * when the value that drifted was the app paper: a profile writes one id to both keys, so a
-   * profile made from a changed app paper must carry THAT paper, not the book one it never touched.
+   * `captureCurrent` reads BOTH themes now — the library's and the book's — so the premise this
+   * function was written against ("a profile writes one id to both keys") no longer holds. What
+   * remains is the drift itself: `liveValues` may hold an app paper the reader has changed since,
+   * and a profile made from it must carry THAT paper.
    */
   const capturedWithDrift = async () => {
     const data = await captureCurrent();
     const live = liveValues();
     if (isBuiltinThemeId(live.theme_id)) {
       const th = THEMES[live.theme_id];
-      data.theme = { ...data.theme, base: live.theme_id, dark: th.dark, colors: th.colors };
+      // THE APP PAPER, so the LIBRARY palette. `captureCurrent` now reads the library theme for
+      // that scope anyway; this still overrides it because `liveValues` may hold a paper the reader
+      // changed since, which is the drift this whole function exists to keep.
+      data.theme = {
+        ...data.theme,
+        library: { ...data.theme.library, base: live.theme_id, dark: th.dark, colors: th.colors },
+      };
     }
+    // The number ink, likewise. `captureCurrent` deliberately takes none — a profile made from "how
+    // Sard looks now" should not silently claim the digits — but SAVING a change is the opposite
+    // case: the colour on screen is precisely what the reader is asking to keep.
+    // The digits are drawn in a BOOK, so the reading palette carries them.
+    data.theme = { ...data.theme, reading: { ...data.theme.reading, numbers: live.numberColor || null } };
     return data;
   };
 
@@ -97,122 +124,75 @@ export function UnsavedChange() {
     );
   }
 
-  if (!pending || !pending.length || !active) return null;
+  if (!pending || !active) return null;
+  const keys = pending.keys;
 
-  // 1 · into the profile that is open.
-  const intoActive = async () => {
-    setBusy(true);
-    const before = structuredClone(active);
-    const data = await capturedWithDrift();
-    // ONLY the four. Everything else the profile holds is left exactly as saved — this dialog is
-    // about a change made outside the editor, not a re-capture of the whole look.
-    const next: Profile = {
-      ...active,
-      data: {
-        ...active.data,
-        type: { ...active.data.type, arabic: data.type.arabic, latin: data.type.latin },
-        theme: { ...data.theme, base: data.theme.base },
-      },
-    };
-    await saveProfile(next);
-    setBusy(false);
-    dismiss();
-    setSaved({ name: active.name ?? "", before });
+  /** Answer, then let the action that was waiting on the answer happen. */
+  const done = (proceed: boolean) => {
+    const go = pending.proceed;
+    close();
+    if (proceed) go();
   };
 
-  // 2 · a new profile carrying this look; the original is untouched.
-  const intoNew = async () => {
+  // Declared before the early returns above it would be a hook called conditionally; it sits here,
+  // after the guards, because every path below this point renders the dialog.
+  const save = async () => {
     setBusy(true);
-    const data = await capturedWithDrift();
-    const made = await createProfile(t("profiles.unsaved.newName", { name: active.name ?? "" }), data, active.id);
-    // AND IT BECOMES THE ONE IN USE. A profile made FROM this look is the look the reader is
-    // wearing; leaving the old one active would leave the same drift in place and ask again a
-    // second later, which reads as the question being ignored.
-    await applyProfile(made);
-    setBusy(false);
-    dismiss();
+    try {
+      if (pending.onSave) await pending.onSave();
+      else {
+        const data = await capturedWithDrift();
+        await saveProfile({ ...active, data });
+      }
+    } finally {
+      setBusy(false);
+    }
+    done(true);
   };
+
+  /** Put back what the profile says. Re-applying IS the discard — there is no snapshot to restore. */
+  const discard = async () => {
+    setBusy(true);
+    try {
+      if (pending.onDiscard) await pending.onDiscard();
+      else await applyProfile(active);
+    } finally {
+      setBusy(false);
+    }
+    done(true);
+  };
+
+
 
   return createPortal(
-    <div className="pf-dialog-scrim" onClick={() => keepForSession(pending)}>
-      <div className="pf-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-        <div className="pf-dialog-title">
-          {t("profiles.unsaved.changed", { what: describe(pending, t) })}
+    /* The scrim CANCELS. Dismissing by clicking away must be the option that changes nothing —
+       anything else would let a stray click save or discard on the reader's behalf. Escape is wired
+       to the SAME answer, so the keyboard and the pointer cannot mean different things. */
+    <div className="pf-dialog-scrim" onClick={() => done(false)}>
+      <div className="pf-dialog" onClick={(e) => e.stopPropagation()} ref={dlg.ref} {...dlg.props}>
+        <div className="pf-dialog-title" id={dlg.titleId}>
+          {t("profiles.unsaved.pendingTitle", { name: active.name ?? "" })}
         </div>
-        <p className="pf-dialog-body">{t("profiles.unsaved.where")}</p>
+        <p className="pf-dialog-body">
+          {keys.length
+            ? t("profiles.unsaved.pendingBody", { what: describe(keys, t) })
+            : t("profiles.unsaved.pendingBodyDraft")}
+        </p>
 
         <div className="pf-dest-list" role="group">
-          <button className="pf-dest" disabled={busy} onClick={() => void intoActive()}>
-            <span className="pf-dest-name">
-              {/* A profile may legitimately have no name — the model allows it, and empty quotes
-                  ("Save it into «»") is not a sentence. */}
-              {active.name
-                ? t("profiles.unsaved.intoActive", { name: active.name })
-                : t("profiles.unsaved.intoActiveUnnamed")}
-            </span>
+          <button className="pf-dest" disabled={busy} onClick={() => void save()}>
+            <span className="pf-dest-name">{t("profiles.unsaved.save")}</span>
             <span className="pf-dest-tag">{t("profiles.unsaved.recommended")}</span>
           </button>
-          <button className="pf-dest" disabled={busy} onClick={() => void intoNew()}>
-            <span className="pf-dest-name">{t("profiles.unsaved.intoNew")}</span>
+          <button className="pf-dest" disabled={busy} onClick={() => void discard()}>
+            <span className="pf-dest-name">{t("profiles.unsaved.discard")}</span>
           </button>
-          <button className="pf-dest" disabled={busy} onClick={() => keepForSession(pending)}>
-            <span className="pf-dest-name">{t("profiles.unsaved.sessionOnly")}</span>
+          <button className="pf-dest" disabled={busy} onClick={() => done(false)}>
+            <span className="pf-dest-name">{t("profiles.unsaved.cancel")}</span>
           </button>
         </div>
-
-        <div className="pf-hint">{t("profiles.unsaved.sessionHint")}</div>
       </div>
     </div>,
     document.body,
   );
-}
-
-/**
- * Watch the four, and ask once per drift.
- *
- * A SUBSCRIPTION RATHER THAN AN INTERCEPT. The shared setters persist as they always have, because a
- * reader with no profiles must be unaffected by any of this; what changes is only that a profile
- * NOTICES. Mounted once, beside the app's other always-on effects.
- */
-export function useUnsavedChangeWatch(): void {
-  const profiles = useProfiles((s) => s.profiles);
-  const activeId = useProfiles((s) => s.activeId);
-  const accepted = useSession((s) => s.accepted);
-  const pending = useSession((s) => s.pending);
-  const ask = useSession((s) => s.ask);
-  /**
-   * NOTHING HERE MEANS ANYTHING UNTIL THE THEME LAYER HAS LOADED.
-   *
-   * `useTheme` starts at `DEFAULT_LIGHT` for BOTH ids, and `initTheme()` runs only after
-   * `initProfiles()` resolves — App.tsx sequences them that way so profile themes are registered
-   * before one is applied. Between those two moments `activeId` already names the profile while the
-   * theme store still holds Sard's defaults, so a check there compares the profile against values
-   * nobody has read yet, concludes that `theme_id` and `book_theme_id` both "changed", and asks the
-   * reader where a change they never made should go. `pending` latches, so the question outlives the
-   * correction that lands a few milliseconds later.
-   *
-   * Measured before this guard: on a clean reload with no user action the dialog appeared 166 ms in,
-   * naming exactly those two values, while `theme_id`, `book_theme_id` and `profile_active` on disk
-   * all agreed with each other. Nothing had drifted.
-   */
-  const themeReady = useTheme((s) => s.ready);
-
-  const active = profiles.find((p) => p.id === activeId) ?? null;
-
-  useEffect(() => {
-    if (!active || !themeReady) return;
-    const check = () => {
-      // A key stays silent only while it still holds the value the reader accepted. Change it
-      // again and it is a new decision, so the question comes back.
-      const live = liveValues();
-      const drift = driftOf(active).filter((k) => accepted[k] !== live[k]);
-      if (drift.length && !pending) ask(drift);
-    };
-    check();
-    // Poll rather than subscribe to four stores across two layers: the reading style is not a
-    // zustand slice, so there is nothing to subscribe to for two of the four. A second is far below
-    // the threshold where a reader would notice, and the check is three string comparisons.
-    const id = setInterval(check, 1000);
-    return () => clearInterval(id);
-  }, [active, themeReady, accepted, pending, ask]);
 }

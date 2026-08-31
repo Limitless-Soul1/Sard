@@ -14,7 +14,7 @@ import {
   serialiseProfile,
   summarise,
 } from "../../src/features/profiles/model/package";
-import { parseProfileData, type Profile } from "../../src/features/profiles/model/profile";
+import { PROFILE_DATA_VERSION, parseProfileData, serialiseProfileData, type Profile } from "../../src/features/profiles/model/profile";
 
 const profile = (over: Partial<Profile> = {}): Profile =>
   ({
@@ -52,7 +52,7 @@ describe("serialising a profile", () => {
     const got = inspectPackage(manifestText(serialiseProfile(p, "1.2.3")));
     expect(got.ok).toBe(true);
     if (!got.ok) return;
-    expect(got.data.theme.base).toBe("moonlit");
+    expect(got.data.theme.library.base).toBe("moonlit");
     expect(got.data.type.arabic).toBe("amiri");
     expect(got.manifest.name).toBe("مَساء");
   });
@@ -91,7 +91,7 @@ describe("every refusal", () => {
   it("accepts an OLDER package — absence is how every field spells its default", () => {
     const r = inspectPackage(wrap({ theme: { base: "ivory" } }, { package: 0 }));
     expect(r.ok).toBe(true);
-    if (r.ok) expect(r.data.theme.base).toBe("ivory");
+    if (r.ok) expect(r.data.theme.library.base).toBe("ivory");
   });
 
   it("refuses a package with no data at all", () => {
@@ -141,6 +141,36 @@ describe("the firewall", () => {
     );
     expect(r.ok).toBe(true);
   });
+
+  /**
+   * WHY A MARK'S MAGNIFICATION IS CALLED `scale` AND NEVER `zoom`.
+   *
+   * The firewall matches key NAMES at any depth. A mark's framing lives in the blob beside the seal,
+   * so had the obvious name been used, every profile carrying a framed picture would have exported a
+   * package Sard itself refuses — naming a reading setting its sender never touched. The pair below
+   * is the whole argument, and it fails the moment anyone renames the field.
+   */
+  it("lets a mark's framing through, and would not have if it were called zoom", () => {
+    const framing = { theme: { base: "ivory" }, icon: { focalX: 20, focalY: 80, scale: 2 } };
+    expect(inspectPackage(wrap(framing)).ok).toBe(true);
+
+    const named = { theme: { base: "ivory" }, icon: { focalX: 20, focalY: 80, zoom: 2 } };
+    const r = inspectPackage(wrap(named));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.refusal.code).toBe("pkg.err.carriesReadingSettings");
+  });
+
+  it("carries a framing across the border intact", () => {
+    const p = profile({
+      iconKind: "image",
+      iconRef: "a1b2c3d4",
+      data: parseProfileData(JSON.stringify({ icon: { focalX: 12, focalY: 88, scale: 1.6 } })),
+    });
+    const got = inspectPackage(manifestText(serialiseProfile(p, "1.2.3")));
+    expect(got.ok).toBe(true);
+    if (!got.ok) return;
+    expect(got.data.icon).toEqual({ focalX: 12, focalY: 88, scale: 1.6 });
+  });
 });
 
 describe("what the reader is shown before deciding", () => {
@@ -164,8 +194,35 @@ describe("what the reader is shown before deciding", () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     // total parsing: an unknown base becomes "built from scratch", not a dangling id
-    expect(r.data.theme.base).toBeNull();
-    expect(r.data.theme.colors.paperBg).toMatch(/^#/);
+    expect(r.data.theme.library.base).toBeNull();
+    expect(r.data.theme.library.colors.paperBg).toMatch(/^#/);
     expect(summarise(r).texture).toBe("opaque");
+  });
+});
+
+describe("the package carries both palettes", () => {
+  it("a v2 profile round-trips its two palettes through the manifest", () => {
+    const p = profile();
+    p.data.theme.reading.colors.paperBg = "#123456";
+    p.data.theme.library.colors.paperBg = "#ABCDEF";
+    const back = parseProfileData(serialiseProfileData(p.data));
+    expect(back.theme.library.colors.paperBg).toBe("#ABCDEF");
+    expect(back.theme.reading.colors.paperBg).toBe("#123456");
+    expect(back.v).toBe(PROFILE_DATA_VERSION);
+  });
+
+  it("a v1 package still imports, and both scopes take its one palette", () => {
+    // THE COMPATIBILITY PROMISE. A package exported by any earlier Sard has a single `theme`; it
+    // must import and look exactly as its author meant, on both surfaces.
+    const v1 = JSON.stringify({ v: 1, theme: { base: "moonlit", colors: { text: "#101010" } } });
+    const back = parseProfileData(v1);
+    expect(back.theme.library.base).toBe("moonlit");
+    expect(back.theme.reading.base).toBe("moonlit");
+    expect(back.theme.reading.colors.text).toBe("#101010");
+    expect(back.theme.library.colors).toEqual(back.theme.reading.colors);
+  });
+
+  it("the data version is reported so an import can say what it is", () => {
+    expect(PROFILE_DATA_VERSION).toBe(2);
   });
 });

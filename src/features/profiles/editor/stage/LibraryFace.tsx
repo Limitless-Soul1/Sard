@@ -22,6 +22,7 @@ import { localeNum } from "../../../../lib/format";
 import type { BgParams } from "../../../../lib/background";
 import { sealOf } from "../../mini";
 import type { Profile } from "../../model/profile";
+import { markFrame } from "../../model/markFrame";
 
 /**
  * The ten spines, in the design's order.
@@ -95,7 +96,14 @@ export function LibraryFace({
           {profile.iconKind === "color" && profile.iconRef ? (
             <i className="pf-lib-avatar" style={{ background: profile.iconRef }} />
           ) : iconUrl ? (
-            <i className="pf-lib-avatar" style={{ backgroundImage: `url("${iconUrl}")` }} />
+            // A CLIPPING BOX WITH A LAYER INSIDE IT, not one element doing both. Above scale 1 the
+            // layer is deliberately larger than the box, and an element cannot clip itself.
+            <i className="pf-lib-avatar">
+              <i
+                className="pf-lib-avatar-img"
+                style={{ backgroundImage: `url("${iconUrl}")`, ...markFrame(profile.data.icon) }}
+              />
+            </i>
           ) : (
             <i className="pf-lib-avatar seal" style={{ fontFamily: sealOf(profile).fontFamily }}>
               {sealOf(profile).text}
@@ -106,11 +114,14 @@ export function LibraryFace({
       </div>
 
       <div className="pf-lib-main">
+        {/* A PREVIEW, NOT A LIBRARY. This head used to carry an «إضافة» chip copied from the real
+            library's own. Nothing here can add a book — the stage is a drawing of how a profile
+            looks — so the chip was an affordance for an act that does not exist on this surface,
+            which is worse than no affordance at all. The title and the count stay: they are what
+            the picture is OF. */}
         <div className="pf-lib-head">
           <span className="pf-lib-title">{t("profiles.editor.stageLibrary")}</span>
           <span className="pf-lib-count">{localeNum(SHELF_COUNT, lang)}</span>
-          <span className="pf-lib-spacer" />
-          <span className="pf-lib-add">{t("profiles.preview.add")}</span>
         </div>
         <div className="pf-lib-grid">
           {SPINES.map((c) => (

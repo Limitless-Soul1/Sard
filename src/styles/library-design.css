@@ -48,9 +48,8 @@
   --sh3: 0 14px 34px rgba(40, 28, 14, 0.22);
   --sh4: 0 18px 44px rgba(20, 14, 6, 0.22);
 
-  --ui: var(--ui-font);
-  --book: "Literata", Georgia, serif;
-  --ar: "Amiri", serif;
+  /* --ui, --book, --ar and the two brand roles are declared on :root in global.css, so that
+     everything drawn outside this shell resolves them too. See src/lib/typography.ts. */
 
   /* Vista sets its captions over an image, so they carry a 1px lift off the ground. */
   --libd-cap-shadow: rgba(255, 252, 244, 0.75);
@@ -113,9 +112,26 @@
    `.libd-chrome button`, so without this exclusion the reset would strip its padding, its font
    and its start alignment — the same way `.libd-root button` once flattened the Highlights
    screen. Any further Sard-owned control placed in here needs adding to this list. */
+/* `.libd-overlay-host` IS PART OF THE SHELL, and was the one part this list forgot.
+   A menu portalled into it is inside `.libd-root`, so its tokens resolve — the panel
+   was correctly themed all along. Its ITEMS were not: they are buttons, no rule here
+   reached them, and so they kept the user agent's own chrome. Measured, on a dark
+   theme: the panel came out rgb(29,24,28) as intended while every item inside it was
+   rgb(240,240,240) with a 2px outset border and `appearance: auto` — Windows'
+   ButtonFace, which is light in every Sard theme because it comes from the platform
+   and not from Sard at all.
+   Fixed here rather than on the menu, because any surface that floats over the
+   library has the same problem the moment it draws a button. */
 .libd-chrome button:not(.lib-settings-btn),
 .libd-stage button,
+.libd-overlay-host button,
 .libd-dialog button {
+  /* THE PLATFORM'S OWN CHROME, OFF AT THE SOURCE. Clearing the ground and the edge hides it on
+     this engine; `appearance` is what actually declines it. Left at `auto`, the user agent still
+     owns the control and can put its own paint back — a focus ring, a pressed fill, and the whole
+     of Windows' high-contrast mode, none of which consult a single Sard token. */
+  appearance: none;
+  -webkit-appearance: none;
   border: 0;
   background: none;
   color: inherit;
@@ -144,6 +160,1050 @@
    dialect. Here they are one data attribute, so a hovered element can carry declarations
    that the base style does not — without a rule per component. */
 .libd-hov:hover { background: var(--hov); }
+/* THE SAME OMISSION AS ITS BRIGHT SIBLING. `.libd-hov` dresses twenty-two controls across the
+   library's chrome, menus and case editor — including «مسح البحث», the only action the
+   search-empty state offers — and every one of them wore the browser's 1px default under the
+   keyboard. Measured: `outline-style: auto, 1px`. One rule, the same ring the rest of Sard uses. */
+.libd-hov:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+
+/* ---- A ROW IN THE BOOK MENU --------------------------------------------------
+   Every state comes from a token, so a theme Sard does not have yet gets these
+   for free. It used `.libd-hov`, which supplies a hover ground and nothing else:
+   no pressed state, no keyboard state, and — because nothing here reached the
+   overlay host until now — no ground at all in the rest state, which is how the
+   platform's own light ButtonFace ended up showing through on every theme.
+
+   The mark inside is drawn in `currentColor`, so these rules move the icon and
+   its label together and neither can be styled adrift of the other. */
+.libd-menu-item {
+  background: transparent;
+  border: 1px solid transparent;
+  transition: background-color .12s ease-out, border-color .12s ease-out, color .12s ease-out;
+}
+.libd-menu-item:hover { background: var(--hov); color: var(--txt); }
+.libd-menu-item:active { background: var(--act); border-color: var(--brd); }
+/* Focus must be visible without a pointer: this menu is reachable by keyboard. */
+.libd-menu-item:focus-visible { outline: 2px solid var(--acc); outline-offset: -2px; color: var(--txt); }
+.libd-menu-item[disabled] { color: var(--faint); cursor: default; }
+.libd-menu-item[disabled]:hover { background: transparent; }
+/* THE ONE ROW THAT CANNOT BE UNDONE. Same red the profile editor's destructive button uses, so a
+   reader meets one colour for "this removes something", not two. */
+.libd-menu-item.danger { color: #9c3b3b; }
+.libd-menu-item.danger:hover { background: color-mix(in srgb, #9c3b3b 10%, transparent); color: #9c3b3b; }
+/* The mark keeps the row's colour and the row's alignment, in either script. */
+.libd-menu-item svg { flex: none; color: currentColor; }
 .libd-hov-txt:hover { color: var(--txt); }
 .libd-hov-bright:hover { filter: brightness(1.08); }
+/* It styled hover and nothing else. On the empty library this is the single action the whole screen
+   is for, and a reader arriving by keyboard was given the browser's 1px default. */
+.libd-hov-bright:focus-visible { outline: 2px solid var(--acc); outline-offset: 3px; }
 .libd-hov-fade:hover { opacity: 0.75; }
+
+/* A CATEGORY IS MARKED BY A RULE, NOT BY TRACKED CAPITALS.
+   Covers and Spines set a category run in letter-spaced uppercase. Arabic has no capitals, and
+   letter-spacing severs its cursive joins, so that device renders an Arabic category name as loose
+   disconnected letters. A short rule before the name reads the same in either script. */
+.libd-place-cat::before {
+  content: "";
+  display: inline-block;
+  width: 20px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+  opacity: 0.45;
+  margin-inline-end: 11px;
+  vertical-align: middle;
+}
+
+/* ============================================================================
+   VISTA — THE CASEMENT
+   ============================================================================
+   The shell is the frame; the stage is the casement that opens in it. The
+   sidebar and the toolbar are the shipping components, unchanged and at full
+   size — the toolbar simply takes a plate here, and that plate is what earns
+   the scrim being lifted off the stage (see the substitution at the foot of
+   this block).
+
+   Every colour comes from the ten `--v-*` tokens, which `applyTheme` sets from
+   the designer's authored table (`src/theme/vistaTokens.ts`); nothing here
+   names a colour of its own.
+
+   THE ONE RULE THAT TRAVELS WITH THE TOKENS: `--v-recess-soft` is TEXT-FREE. It
+   is the fade that carries a container into the photograph, measured as low as
+   1.03:1, and no glyph may sit on it. Every name and count sits in the solid
+   zone at the foot of its container, on `--v-recess`.
+
+   AND THE ONE RULE THAT DECIDES THE GEOMETRY: a container is a COLUMN — recess,
+   sample, sill, plate — never a box with things positioned over it. That is
+   what makes it impossible for a cover to be clipped by an edge.
+   ========================================================================== */
+
+/* The lit edge is a light source, and the light comes from where reading
+   begins — so its origin flips with the interface direction. The room states
+   its own direction, so the flip keys off the room ITSELF: an ancestor rule
+   would tie on specificity with the room's own attribute and be settled by
+   source order, which is not a thing to leave to chance in a mirrored
+   interface. */
+.v-room { --v-litdir: right; }
+.v-room[dir="rtl"] { --v-litdir: left; }
+
+.v-room {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* The photograph reads as printed into the app rather than pasted behind it. */
+.v-grain {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+}
+
+.v-scroll {
+  position: relative;
+  z-index: 2;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  padding: 18px 22px 22px;
+}
+.v-scroll::-webkit-scrollbar { width: 9px; }
+.v-scroll::-webkit-scrollbar-track { background: transparent; }
+.v-scroll::-webkit-scrollbar-thumb { background: var(--v-sill); border-radius: 9px; }
+
+/* A button paints the UA default `buttonface` — light grey — behind anything
+   transparent laid on it, which drew a pale band through every container over a
+   dark photograph. Vista's pane is not `.libd-stage`, so it does not inherit
+   that stylesheet's own reset and states it here. */
+.v-piece, .v-more, .v-slot, .v-bookslot {
+  background-color: transparent;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+}
+
+/* ---- the two bands, and the line between them --------------------------------
+   Cases above, shelves below. That line is the whole answer to "does this shelf
+   belong to that case": everything above it holds shelves, everything below it
+   holds books, and no shelf at the root ever sits inside a case's band. No
+   label is spent on it, and the sidebar's tree says the same in words. */
+.v-grid {
+  display: grid;
+  gap: var(--v-gap, 22px);
+  justify-content: start;
+}
+.v-grid.v-cases {
+  grid-template-columns: repeat(auto-fill, var(--v-case-col, 216px));
+  grid-auto-rows: var(--v-case-row, 270px);
+}
+.v-grid.v-shelves {
+  grid-template-columns: repeat(auto-fill, var(--v-col, 300px));
+  grid-auto-rows: var(--v-row, 185px);
+}
+.v-grid.v-trays { display: flex; flex-direction: column; gap: 18px; }
+.v-grid .v-piece { width: auto; height: 100%; }
+/* A wide sill takes two tracks and ONE row, so it is a longer shelf and never a taller one. */
+.v-grid .v-sill.v-wide { grid-column: span 2; }
+
+/* Two-tone, like the containers: a light hairline vanishes over a bright
+   photograph and a dark one vanishes over a dark photograph. */
+.v-bandrule {
+  height: 1px;
+  margin: 24px 2px;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+  background: linear-gradient(to right, transparent,
+    color-mix(in srgb, var(--v-ink) 24%, transparent) 8%,
+    color-mix(in srgb, var(--v-ink) 24%, transparent) 92%, transparent);
+}
+
+/* ---- a container ------------------------------------------------------------
+   The ring is deliberately two-tone and the shadow is deliberately deep: fill
+   alone cannot separate a dark recess from a dark photograph, and no token
+   value can fix that, because the reader chooses the photograph. The separation
+   is carried by cues that do not depend on the fill at all. */
+.v-piece {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  cursor: pointer;
+  text-align: start;
+  border-radius: 16px;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.42),
+    inset 0 0 0 1px var(--v-edge),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07),
+    0 14px 36px rgba(0, 0, 0, 0.5);
+  /* TRANSFORM ONLY. box-shadow cannot be composited, so every frame of a 140 ms shadow
+     transition was a style recalculation and a repaint on the main thread — and crossing the six
+     containers at the library root starts twelve of them. Measured: 142 style recalculations and
+     140 layouts for sixty pointer moves, against 104 and 102 with the shadow left out of the
+     transition, and 62 in the implementation before Vista was rebuilt.
+
+     Both shadows are unchanged and both endpoints are pixel-identical: measured at 0.041-0.048%
+     of channels differing from the current build, against a 0.061-0.065% noise floor taken from
+     the build compared with ITSELF. What is given up is the easing of the shadow between those
+     endpoints; the lift still eases. Cross-fading the two shadows on pseudo-elements keeps the
+     easing but was measurably NOT identical (0.13-0.21%, two to three times the floor), so it was
+     rejected rather than shipped as near enough. */
+  transition: transform 0.14s ease-out;
+}
+.v-piece:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.5),
+    inset 0 0 0 1px color-mix(in srgb, var(--v-ink) 34%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    0 20px 46px rgba(0, 0, 0, 0.55);
+}
+.v-piece .v-bed {
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  pointer-events: none;
+}
+.v-piece > *:not(.v-bed):not(.v-rulemark) { position: relative; }
+
+/* An aperture is a case: the only portrait container on the stage, and 1.78x a
+   shelf's height. A sill is a shelf: landscape, because a shelf is a thing you
+   put books ON. The bed never reaches transparency — about a third at the head,
+   enough body to be an object and thin enough to see the photograph through. */
+.v-aperture .v-bed {
+  background: linear-gradient(to top, var(--v-recess) 0%, var(--v-recess) 40%,
+    var(--v-recess-soft) 68%, color-mix(in srgb, var(--v-recess) 34%, transparent) 100%);
+}
+.v-sill .v-bed {
+  background: linear-gradient(to top, var(--v-recess) 0%, var(--v-recess) 46%,
+    var(--v-recess-soft) 76%, color-mix(in srgb, var(--v-recess) 34%, transparent) 100%);
+}
+/* خارج الأرفف is less solid than a shelf — one more thing that says the shelf is
+   absent, and it hands a little more of the photograph back. */
+.v-sill.v-open .v-bed {
+  background: linear-gradient(to top,
+    color-mix(in srgb, var(--v-recess) 88%, transparent) 0%,
+    color-mix(in srgb, var(--v-recess) 70%, transparent) 46%,
+    color-mix(in srgb, var(--v-recess) 42%, transparent) 78%,
+    color-mix(in srgb, var(--v-recess) 22%, transparent) 100%);
+}
+/* AN EMPTY CONTAINER IS A CONTAINER WITH NOTHING IN IT. It keeps its cell, its
+   proportion, its sill and its plate — a third of the weight, and holding no
+   books. Blanking the sill made it read as broken; showing the sill makes it
+   read as an empty shelf, which is what it is. */
+.v-aperture.v-empty .v-bed, .v-sill.v-empty .v-bed {
+  background: linear-gradient(to top,
+    color-mix(in srgb, var(--v-recess) 80%, transparent) 0%,
+    color-mix(in srgb, var(--v-recess) 56%, transparent) 50%,
+    color-mix(in srgb, var(--v-recess) 20%, transparent) 100%);
+}
+
+.v-samplewrap { flex: 1; min-height: 0; padding: 0 18px; display: flex; align-items: flex-end; }
+.v-sample { display: flex; align-items: flex-end; gap: 12px; width: 100%; height: 100%; }
+.v-aperture .v-samplewrap { flex: none; height: 46%; }
+.v-tray .v-samplewrap { flex: none; height: calc(var(--v-cover-w, 118px) * 1.15); }
+
+.v-cover {
+  display: block;
+  flex: none;
+  width: auto;
+  height: auto;
+  max-height: 100%;
+  max-width: var(--v-cover-w, 118px);
+  border-radius: 3px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.55), 0 1px 3px rgba(0, 0, 0, 0.42);
+}
+/* A typeset jacket has no natural aspect, so it takes the 2:3 box it is drawn
+   for; a cover FILE keeps its own, which is why neither is ever cropped. */
+.v-cover-drawn { overflow: hidden; height: 100%; width: auto; aspect-ratio: 2 / 3; }
+.v-cover-drawn .auto-cover { width: 100%; height: 100%; }
+.v-tray .v-cover { max-width: calc(var(--v-cover-w, 118px) * 0.82); }
+.v-aperture .v-cover { max-width: var(--v-case-cover-w, 85px); }
+
+.v-more {
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  color: var(--v-mute);
+  background-color: color-mix(in srgb, var(--v-recess) 80%, transparent);
+  box-shadow: inset 0 0 0 1px var(--v-edge);
+  font: 500 var(--fs-small) var(--ui);
+  font-variant-numeric: tabular-nums;
+  height: 70%;
+}
+
+/* THE SILL. Three states, and every one of them is reinforcement — the plate
+   below says it first, in words.
+     lit     a shelf, and its books stand on it with 8px of contact
+     blank   a rule shelf: nothing rests here because nothing can be filed here
+     ghost   خارج الأرفف: the shelf that is not there */
+.v-shelfline {
+  flex: none;
+  height: 1px;
+  margin: 8px 20px 0;
+  background: linear-gradient(to var(--v-litdir),
+    color-mix(in srgb, var(--v-lit) 100%, transparent) 0%,
+    color-mix(in srgb, var(--v-lit) 40%, transparent) 58%, transparent 100%);
+  box-shadow: 0 0 12px 1px color-mix(in srgb, var(--v-lit) 24%, transparent);
+}
+.v-shelfline.v-blank { background: none; box-shadow: none; margin-top: 15px; }
+.v-shelfline.v-ghost {
+  box-shadow: none;
+  margin-top: 15px;
+  background: repeating-linear-gradient(to right,
+    color-mix(in srgb, var(--v-mute) 70%, transparent) 0 6px, transparent 6px 13px);
+}
+/* The outlined ring the sidebar already uses to mark a rule shelf. */
+.v-rulemark {
+  position: absolute;
+  top: 13px;
+  inset-inline-end: 15px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid var(--v-mute);
+  opacity: 0.8;
+}
+
+.v-plate { flex: none; padding: 11px 18px 13px; }
+.v-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--v-ink);
+}
+.v-name-case { font: 600 1.0625rem/1.25 var(--ui); }
+.v-name-shelf { font: 600 0.9375rem/1.25 var(--ui); }
+.v-inked {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: bottom;
+  box-shadow: inset 0 -7px 0 -3px color-mix(in srgb, var(--v-ink-rule) 55%, transparent);
+}
+.v-count {
+  display: block;
+  margin-top: 4px;
+  font: 500 var(--fs-tiny) var(--ui);
+  color: var(--v-mute);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- a tray: a category, only ever inside a shelf ---------------------------
+   As wide as what it holds, not as wide as the stage. A full-width band with
+   four books in it is the flat-band composition this design exists to replace,
+   and the width it does not take is photograph. */
+.v-tray {
+  flex-direction: row;
+  align-items: center;
+  gap: 22px;
+  width: fit-content;
+  min-width: min(100%, calc(var(--v-col, 300px) * 1.35));
+  max-width: 100%;
+  min-height: 110px;
+  padding: 16px 22px;
+  border-radius: 14px;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.36),
+    inset 0 0 0 1px var(--v-edge),
+    0 10px 26px rgba(0, 0, 0, 0.4);
+}
+.v-tray .v-bed {
+  border-radius: 14px;
+  background: linear-gradient(to top, var(--v-recess) 0%,
+    color-mix(in srgb, var(--v-recess) 66%, transparent) 100%);
+}
+.v-tray-txt { flex: none; max-width: 200px; min-width: 0; }
+.v-tray .v-samplewrap { margin-inline-start: auto; padding: 0; max-width: 100%; }
+/* Books on this shelf that are in no category. It is named and it sits last;
+   a lighter bed and a muted name carry the rest, so the dashed mark keeps
+   meaning exactly one thing — the sill that is not there. */
+.v-tray.v-loose .v-bed {
+  background: linear-gradient(to top,
+    color-mix(in srgb, var(--v-recess) 82%, transparent) 0%,
+    color-mix(in srgb, var(--v-recess) 46%, transparent) 100%);
+}
+.v-tray.v-loose .v-name { color: var(--v-mute); }
+
+/* ---- the books themselves ---------------------------------------------------- */
+.v-books { display: grid; gap: 32px 24px; align-items: end; }
+
+/* Said only when arrange mode is on over a shelf whose order is not the reader's to set — a
+   nineteen-book computed shelf used to turn every tile grabbable and offer nowhere to drop. */
+.v-nudge {
+  margin: 0 2px 16px;
+  padding: 9px 14px;
+  border-radius: 10px;
+  width: fit-content;
+  max-width: 100%;
+  color: var(--v-ink);
+  background: var(--v-recess);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), inset 0 0 0 1px var(--v-edge);
+  font: 500 var(--fs-small) var(--ui);
+}
+
+/* Where a carried book lands. Only ever drawn inside a container that can
+   actually accept one, which is why a case, a rule shelf and خارج الأرفف show
+   none: the refusal is visible before the attempt rather than after it. */
+.v-slot, .v-bookslot {
+  flex: none;
+  border-radius: 4px;
+  border: 2px dashed var(--v-lit);
+  background-color: var(--v-recess-soft);
+  animation: sard-open 0.14s ease-out;
+}
+.v-slot { height: 86%; aspect-ratio: 2 / 3; width: auto; }
+.v-bookslot { width: 100%; aspect-ratio: 2 / 3; cursor: pointer; }
+
+/* Standing, not shouting. The nudge used to appear only while arrange mode was on, so it read as
+   a response to an action; it now states a property of the shelf the reader has just walked into,
+   and should sit below the notice threshold until looked for. */
+.v-nudge-static {
+  opacity: 0.66;
+}
+
+/* The second line of a case's plate: why the covers outnumber the count above it. Quieter than
+   the count, because it qualifies that line rather than competing with it. */
+.v-byrule {
+  opacity: 0.72;
+  font-size: 0.9em;
+}
+
+/* A place a book may land BETWEEN TWO ROWS, in Details. A row list is vertical, so the place is a
+   bar across it rather than a slot beside it — but it answers to the same three data attributes as
+   every other landing place, and to the same .libd-hot ring when the pointer is over it. */
+/* A place a book may land BETWEEN TWO ROWS, in Details.
+   It reads as one book's worth of room, the way the card slot does in Grid and the cover slot does
+   on a shelf: a row is 74px, so a slot a little under that says «a book goes here» rather than
+   «something has come apart». It was a 10px hairline spanning the whole pane, and with several of
+   them stacked — the ends of every container were drawn together — it read as one large empty
+   region belonging to nothing. Inset to the same 12px the rows are, so it lines up with the list
+   rather than floating across it. */
+.libd-rowslot {
+  height: 56px;
+  margin: 4px 12px;
+  border-radius: var(--r-md);
+  border: 2px dashed var(--acc);
+  background: var(--act);
+  cursor: pointer;
+  animation: sard-open 0.14s ease-out;
+}
+
+/* A place a book may land BETWEEN TWO CARDS, in Grid. The grid lays cards out in
+   tracks, so the place takes a track of its own and matches a card-s proportion,
+   the way the slot between two covers does on a shelf. Same three data
+   attributes as every other landing place, and the same .libd-hot ring. */
+.libd-cardslot {
+  border: 2px dashed var(--acc);
+  border-radius: var(--r-xs);
+  background: var(--act);
+  cursor: pointer;
+  aspect-ratio: 2 / 3;
+  animation: sard-open 0.14s ease-out;
+}
+
+/* ---- A BOOK UNDER THE POINTER ------------------------------------------------
+   Hover used to live in React state, so running the pointer along a shelf
+   re-rendered every tile it touched — 11 commits and 55 mutations for sixty
+   moves across nineteen books, against 62 style recalculations and nothing
+   else in the implementation before Vista was rebuilt. None of that reaches
+   React any more; the same three effects are declared here instead.
+
+   `visibility` rather than `display` throughout: the caption keeps its space,
+   so pointing along a shelf cannot change a row's height, and the hidden ⋯
+   stays out of both the tab order and hit-testing, exactly as unmounting it
+   did. */
+.libd-tile { transition: transform 0.14s ease-out; }
+.libd-tile:hover { transform: translateY(-3px); }
+.libd-tile[data-arrange="1"]:hover { transform: translateY(-5px); }
+
+.libd-cap {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.14s ease-out;
+}
+/* WHAT BRINGS A WAITING CAPTION BACK.
+   `:focus-within` is the keyboard's half of `:hover`, and it was missing: with names hidden, a
+   reader moving through the shelf by keyboard reached book after book with nothing written under
+   any of them. The tile also carries the title as its accessible name, so the caption's
+   `visibility: hidden` never leaves a book unnamed — this rule is what puts it back on the SCREEN
+   for a sighted keyboard user, which the accessible name alone does not do. */
+.libd-cap-always,
+.libd-tile:hover .libd-cap,
+.libd-tile:focus-within .libd-cap,
+.libd-tile[data-selected="1"] .libd-cap {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* THE OVERLAY HOST — one place for every surface that floats over the library.
+   Covers the window so a surface can be positioned anywhere in it, and lets every pointer through,
+   so the page underneath behaves exactly as it did. Only what is drawn INSIDE it takes the pointer.
+   It lives inside `.libd-root`, which is where the design tokens are defined: a menu drawn on
+   `document.body` instead resolved `--chr`, `--brd`, `--txt` and `--hov` to nothing and came out
+   transparent, borderless and default-grey. */
+.libd-overlay-host {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  pointer-events: none;
+}
+.libd-overlay-host > * { pointer-events: auto; }
+
+/* ---- WHAT THE LIBRARY SAYS WHEN IT HAS NOTHING TO SHOW -----------------------
+   THE APPLICATION ALREADY HAD AN EMPTY-STATE PATTERN and this was not using it. The Inbox states
+   it plainly — `.inbox-empty` is a mark, a title and a sub, centred, and its mark is an icon from
+   the set tinted `accent 40%`. This surface invented its own composition inline instead, forking
+   every single value on one `welcome` boolean, and left the MARK SLOT EMPTY: a bare 52px div with
+   a border and no content, which is what a reader saw above «لا نتائج» — an empty square that read
+   as a missing asset rather than as anything intentional.
+
+   So the two scales are declared HERE, side by side, where their relationship is visible. The
+   welcome keeps its own weight — it is a new reader's first screen and carries the hoopoe — but it
+   is now the LARGE STEP of one pattern rather than a second design that happens to sit nearby. */
+.libd-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 0 20px;
+  margin-inline: auto;
+}
+.libd-empty[data-scale="quiet"]   { max-width: 430px; margin-block: 60px; gap: var(--sp-4); }
+.libd-empty[data-scale="welcome"] { max-width: 460px; margin-block: clamp(40px, 9vh, 96px); gap: var(--sp-5); }
+
+/* THE MARK. The same treatment the Inbox's empty state uses — an icon from the set, tinted rather
+   than drawn in full strength, because it is an ornament and not a control. The welcome's mark is
+   the hoopoe itself, which is why that one is a slot rather than an icon rule. */
+.libd-empty-mark { line-height: 1; color: color-mix(in srgb, var(--acc) 40%, transparent); }
+.libd-empty-mark svg { width: 64px; height: 64px; }
+.libd-empty[data-scale="welcome"] .libd-empty-mark svg { width: auto; height: auto; }
+.libd-empty-mark { margin-block-end: var(--sp-4); }
+.libd-empty[data-scale="welcome"] .libd-empty-mark { margin-block-end: var(--sp-6); }
+
+/* ONE TYPE RELATIONSHIP, TWO STEPS. The quiet title is already the same setting the Inbox uses
+   (600 1.125rem), so the welcome is simply the step above it rather than an unrelated size. */
+.libd-empty-title { color: var(--txt); }
+.libd-empty[data-scale="quiet"]   .libd-empty-title { font: 600 1.125rem var(--ui); }
+.libd-empty[data-scale="welcome"] .libd-empty-title { font: 700 1.5rem var(--ui); }
+
+.libd-empty-body { margin: 0; color: var(--mut); text-wrap: pretty; }
+.libd-empty[data-scale="quiet"]   .libd-empty-body { font: 400 .8125rem/1.65 var(--ui); max-width: 360px; }
+.libd-empty[data-scale="welcome"] .libd-empty-body { font: 400 .9375rem/1.7 var(--ui); max-width: 400px; }
+
+/* The action sits on the same rhythm as everything above it rather than carrying its own margin. */
+.libd-empty-act { margin-block-start: var(--sp-5); }
+.libd-empty[data-scale="welcome"] .libd-empty-act { margin-block-start: var(--sp-6); }
+
+/* ---- THE COVER-SIZE SLIDER -------------------------------------------------
+   Sard's slider language is the PLATFORM's slider with the theme's accent on it — `.gs-slider` is
+   `accent-color: var(--accent)` and nothing else, and every range in the profile editor is that.
+   This follows it, so the control is native to the application rather than a second idea of what a
+   slider looks like; RAWY-65 already records that a native range mirrors itself under RTL, which is
+   the whole of what this needs to be correct in Arabic.
+
+   Only the WIDTH is stated, because a toolbar has to stay narrow: the four buttons this replaced
+   occupied about 112px and this is 84, so the header got quieter rather than busier. The shell's
+   button reset does not reach an input, so nothing here is undoing anything. */
+.libd-size {
+  inline-size: 84px;
+  accent-color: var(--acc);
+  cursor: pointer;
+  /* The track is short; the platform's default block size leaves the row taller than its
+     neighbours and pushes the toolbar out. */
+  block-size: 16px;
+  margin: 0;
+}
+.libd-size:focus-visible { outline: 2px solid var(--acc); outline-offset: 3px; border-radius: 2px; }
+
+.libd-dots { visibility: hidden; }
+.libd-tile:hover .libd-dots,
+.libd-tile[data-menu="1"] .libd-dots,
+/* AND WHEN A KEYBOARD IS IN THE TILE. `visibility: hidden` keeps the ⋯ out of the tab order — a
+   deliberate choice, so a pointer-driven affordance does not add a stop to every book — but with
+   the tile itself focusable that same choice made the control unreachable by keyboard entirely.
+   Focus reveals it, which is what puts it back in the tab order: Tab reaches the book, Tab again
+   reaches its ⋯.
+
+   `:focus-within`, NOT `:has(:focus-visible)`, and the difference is a hazard rather than a taste.
+   Closing the menu with Escape hands focus back to the ⋯ programmatically (`BookActions`), and
+   whether a programmatic focus counts as `:focus-visible` is a browser heuristic. If it did not,
+   the control would VANISH while still holding focus, and the reader's next Tab would start from
+   somewhere invisible. `:focus-within` cannot get that wrong. */
+.libd-tile:focus-within .libd-dots { visibility: visible; }
+
+/* ---- THE FOCUSED BOOK ---------------------------------------------------------
+   The same sentence Grid says: `.lib-card:focus-visible .lib-cover` rings the JACKET, not the
+   card. Here for the same reason and with the same tokens — an outline is drawn outside the box
+   and takes no layout, so nothing shifts and nothing overflows when it appears.
+
+   `:focus-visible` rather than `:focus`, so a mouse click on a book does not leave a keyboard ring
+   behind it. The caption's reveal one rule above stays on `:focus-within`, which is the more
+   forgiving of the two and right for a NAME: however focus arrived, the book should say what it is.
+
+   Selection draws an INSET ring (`inset 0 0 0 2px var(--acc)`) and this one is outset, so a
+   selected book that also has focus shows both without either eating the other. */
+.libd-tile { outline: none; }
+.libd-tile:focus-visible .libd-tile-cover {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
+}
+
+/* ---- THE ⋯ IS A CONTROL, SO IT ANSWERS THE POINTER ---------------------------
+   It had no hover, pressed or focus state of its own: the only feedback was that
+   it appeared at all, which tells the reader it exists and nothing about whether
+   it can be pressed. The colours are the design's own tokens, so this follows
+   whichever theme is on rather than stating an appearance of its own. */
+.libd-dots { transition: background-color .12s ease-out, border-color .12s ease-out, transform .1s ease-out; }
+
+/* ---- MAKING A SHELF ----------------------------------------------------------
+   The resting appearance is stated inline, because the shell resets every button
+   inside it; these own the STATES, through the custom properties that inline
+   declaration reads. Every value is a theme token, so a theme Sard does not have
+   yet gets these without being asked. */
+/* ---- THE FORMAT SELECTOR ------------------------------------------------------
+   The five marks were redrawn; measuring the control that holds them turned up two
+   things the drawings could not fix.
+
+   THE SELECTED TAB'S INK. It is `--accent`, on `--act` — the accent's own tint —
+   and measured across the themes that lands at 2.65:1, and 2.51:1 on Parchment,
+   under the 3.0 floor Sard holds its marks to. `--accent-text` is the app's
+   existing answer: the accent walked toward `--text` until it clears that floor,
+   so the tab still reads as accented and the mark inside it stays visible.
+
+   THE FOCUS RING. There was none — computed `outline: 3px none` and no shadow, so
+   a reader arriving by keyboard had nothing to see. This is the same ring the
+   creation dialog's controls and the new-shelf action already use.
+
+   The states live here rather than inline because the tab sets its own ground
+   inline, and an inline `background` outranks every `:hover` rule in this file. */
+.libd-chrome button.libd-viewtab {
+  color: var(--mut);
+  transition: background-color .12s ease-out, color .12s ease-out;
+}
+/* THE SELECTED FORMAT CARRIES A RING, NOT ONLY A TINT.
+   ==========================================================================
+   `--act` is `color-mix(accent 12%, chrome-bg)`, so how visible it is equals
+   12% of the distance between a theme's accent and its own chrome — which is
+   a per-theme accident, not a guarantee. Measured across all sixteen, as the
+   RGB distance between the selected tab's ground and the strip it sits in:
+
+     ivory 38 · trueblack 39 · ink 33 · parchment 28 · sage 26 · linen 26
+     slate 24 · rosequartz 19 · moonlit 16
+     ... and then: charcoal 9 · forestnight 9 · dusk 8 · espresso 8
+     mulberry 8 · nocturne 6 · SEPIA 3
+
+   Sepia's selected ground is the strip's ground to within three steps out of
+   255 — there, selection rested entirely on the ink. Eight of sixteen were
+   under any threshold worth calling visible.
+
+   The app already had the answer and this control had only taken half of it:
+   `.gs-nav-item.on` pairs `--state-selected` (the same 12% tint) with
+   `--state-edge` (the accent at FULL strength). The tint is the soft signal
+   and the edge is the one that cannot wash out.
+
+   The edge here is an inset ring rather than a leading border, because this
+   is a horizontal strip of pills rather than a vertical list of rows: a ring
+   follows the pill's own radius, needs no mirroring in Arabic, and adds no
+   layout. It is drawn in `--accent-text` — the accent walked toward `--text`
+   until it clears Sard's 3.0 floor — so its visibility is a property of the
+   token rather than of the theme that happens to be on.
+
+   Three signals now, and they stay separate: the tint is the surface, the
+   ring is the selection, the ink is the accent. Hover adds a ground and does
+   not touch the ring; focus draws OUTSIDE the pill at an offset, so a focused
+   tab that is not selected still reads as focused-not-selected. */
+.libd-chrome button.libd-viewtab[aria-selected="true"] {
+  color: var(--accent-text);
+  box-shadow: inset 0 0 0 1.5px var(--accent-text);
+}
+.libd-chrome button.libd-viewtab:hover { --viewtab-bg: var(--hov); color: var(--txt); }
+.libd-chrome button.libd-viewtab[aria-selected="true"]:hover { color: var(--accent-text); }
+.libd-chrome button.libd-viewtab:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+
+/* ---- THE CREATION DIALOG ------------------------------------------------------
+   A field, a list of destinations and two actions, built from the tokens the other
+   dialogs are built from. Nothing here names a colour, a radius or a shadow of its
+   own — a theme Sard has not shipped yet gets this surface for free.
+
+   EVERY SELECTOR NAMES THE ELEMENT AS WELL AS THE CLASS. `.libd-dialog button` is
+   (0,1,1) and sets `background`, `border`, `color`, `font` and `padding`; a bare
+   class is (0,1,0) and loses to it, which is how an earlier control came out at the
+   user agent's own weight with no ground and no edge. `.libd-dialog input` does the
+   same for fields. Matching the weight and coming later in the file wins on order.
+
+   The states are here rather than inline for the same reason: an inline `background`
+   outranks every `:hover` rule in this stylesheet, and a control whose ground is set
+   inline is a control that cannot answer the pointer. */
+
+/* A FIELD — the text box, and the destination control that has to look like one. */
+.libd-dialog input.libd-field,
+.libd-dialog button.libd-field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  width: 100%;
+  min-height: var(--ctl-lg);
+  padding: var(--sp-4) var(--sp-5);
+  background: var(--soft);
+  border: 1px solid var(--brd);
+  border-radius: var(--r-md);
+  font: 500 .875rem var(--ui);
+  color: var(--txt);
+  text-align: start;
+  outline: none;
+  transition: border-color .14s ease-out, background-color .14s ease-out, box-shadow .14s ease-out;
+}
+.libd-dialog input.libd-field::placeholder { color: var(--faint); font-weight: 400; }
+.libd-dialog button.libd-field:hover,
+.libd-dialog input.libd-field:hover { border-color: var(--mut); }
+/* THE FOCUSED FIELD IS RINGED, NOT OUTLINED. An `outline` sits outside the border and
+   reads as a second edge around an already-edged box; an inset ring thickens the edge
+   the field already has, which is the calmer of the two and keeps the geometry still. */
+.libd-dialog input.libd-field:focus,
+.libd-dialog button.libd-field:focus-visible,
+.libd-dialog button.libd-field[aria-expanded="true"] {
+  border-color: var(--acc);
+  box-shadow: inset 0 0 0 1px var(--acc);
+  background: var(--pap);
+}
+
+/* A DESTINATION. The mark is a ring that fills when chosen — the shape a single choice
+   has always had — and the row lights under the pointer AND under the keyboard, from
+   one attribute, so the two never disagree about which row is live. */
+.libd-dialog button.libd-opt {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  width: 100%;
+  padding: var(--sp-4) var(--sp-3);
+  border-radius: var(--r-sm);
+  font: 500 .8125rem var(--ui);
+  color: var(--txt);
+  text-align: start;
+  transition: background-color .12s ease-out;
+}
+.libd-dialog button.libd-opt:hover,
+.libd-dialog button.libd-opt[data-cursor="1"] { background: var(--hov); }
+.libd-dialog button.libd-opt[aria-selected="true"] { color: var(--txt); font-weight: 600; }
+.libd-opt-mark {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--r-circle, 50%);
+  border: 1.5px solid var(--rule);
+  box-sizing: border-box;
+  transition: border-color .12s ease-out, box-shadow .12s ease-out;
+}
+.libd-opt-mark[data-on] {
+  border-color: var(--acc);
+  /* The fill is an inset ring rather than a child element, so the dot is one box. */
+  box-shadow: inset 0 0 0 3px var(--acc);
+}
+
+/* THE TWO ACTIONS. One carries the accent and one does not, which is the whole of the
+   hierarchy — no second border, no second size, no second weight. */
+.libd-dialog button.libd-btn {
+  min-height: var(--ctl-md);
+  padding: 0 var(--sp-6);
+  border-radius: var(--r-md);
+  font: 600 .8125rem var(--ui);
+  transition: background-color .14s ease-out, color .14s ease-out, border-color .14s ease-out, opacity .14s ease-out;
+}
+.libd-dialog button.libd-btn:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+.libd-dialog button.libd-btn-quiet { color: var(--mut); }
+.libd-dialog button.libd-btn-quiet:hover { background: var(--hov); color: var(--txt); }
+.libd-dialog button.libd-btn-primary { background: var(--acc); color: var(--chr); }
+.libd-dialog button.libd-btn-primary:hover { background: color-mix(in srgb, var(--acc) 86%, var(--txt)); }
+.libd-dialog button.libd-btn-primary:active { transform: translateY(1px); }
+/* DISABLED SAYS SO AND STOPS ANSWERING. Dimmed to the app's own disabled step, with the
+   pointer told plainly, and every hover rule above turned off — a control that still
+   lights up under the pointer is a control that claims it can be pressed. */
+.libd-dialog button.libd-btn:disabled {
+  opacity: .42;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* ---- THE ⋯ ON A SHELF ROW ----------------------------------------------------
+   `.libd-hov` and `.libd-hov-txt` cannot reach it: they are (0,2,0) against the
+   shell reset's (0,2,1), which sets both `background` and `color`. Measured on a
+   sidebar row — pointer confirmed over the element, `:hover` true — the ground
+   stayed rgba(0,0,0,0) and the ink never moved. So this control states its own
+   rest and hover at a weight that wins, rather than wearing classes that do
+   nothing here. */
+.libd-chrome button.libd-shelfdots { color: var(--faint); transition: background-color .12s ease-out, color .12s ease-out; }
+.libd-chrome button.libd-shelfdots:hover { color: var(--txt); background: var(--hov); }
+.libd-chrome button.libd-shelfdots:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+
+.libd-newshelf { transition: background-color .12s ease-out, border-color .12s ease-out, color .12s ease-out, transform .1s ease-out; }
+.libd-newshelf:hover { --newshelf-bg: color-mix(in srgb, var(--acc) 12%, transparent); --newshelf-edge: var(--acc); --newshelf-ink: var(--txt); }
+.libd-newshelf:active { transform: scale(0.98); }
+.libd-newshelf:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+/* The control states its ground inline, so a plain `background` here would never win. It
+   resolves `--dots-bg` / `--dots-brd` instead, which these rules DO own. */
+.libd-dots:hover { --dots-bg: color-mix(in srgb, var(--acc) 16%, var(--chr)); --dots-brd: var(--acc); }
+.libd-dots:active { transform: scale(.92); }
+.libd-dots:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+
+/* ---- REACHING THE ⋯ IN SPINES ------------------------------------------------
+   A spine is too narrow to carry the control inside it, so the button hangs above
+   the tile's inline-end corner — and that put a band of nothing between the two.
+   Measured on a real shelf: the tile occupied x 1260-1306 and the button x
+   1256-1280, twenty-six pixels higher, with a 2px vertical gap. Moving from the
+   book to the button therefore left the tile, `:hover` ended, `visibility` went
+   back to hidden, and the control vanished from under a pointer that was still
+   travelling towards it. Every step of that path was recorded; the button was
+   never covered by another tile, so it is the gap and nothing else.
+
+   The bridge is a transparent extension of the TILE that spans the button and the
+   gap beneath it, so the pointer never crosses unclaimed ground. It exists only
+   while the tile is hovered — the moment that matters — so it can never intercept
+   a press meant for whatever is drawn above the shelf. Hovering a descendant keeps
+   an ancestor's `:hover` true, which is what makes this work at all.
+
+   Deliberately NOT a permanently visible control: the reveal-on-hover model is the
+   design's, and the reader asked for it to be kept. */
+.libd-tile[data-spine="1"]:hover::before,
+.libd-tile[data-spine="1"][data-menu="1"]::before {
+  content: "";
+  position: absolute;
+  inset-block-start: -32px;
+  block-size: 36px;
+  inset-inline-end: -10px;
+  inline-size: 42px;
+  /* No paint of its own; it exists to be hit. */
+  background: transparent;
+  pointer-events: auto;
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+  .libd-tile, .libd-cap { transition: none; }
+}
+
+/* ---- THE PLACE UNDER THE HAND ------------------------------------------------
+   A landing place that is merely PRESENT says a book could go there. The one
+   under the pointer has to say the book WILL go there, or every drop is a guess
+   — measured across a six-step drag, all three places stayed byte-identical to
+   each other the whole way, so the reader was aiming blind.
+
+   Drawn as an added ring rather than as a changed border, deliberately: the
+   grouped views style their own landing places inline, and an inline border
+   would win over anything set here. `outline` and `box-shadow` are set by
+   neither, so one rule lights the place in Vista, Covers and Spines alike. */
+.libd-hot {
+  outline: 2px solid var(--acc);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--acc) 26%, transparent);
+}
+.v-room .libd-hot {
+  outline-color: var(--v-lit);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--v-lit) 30%, transparent);
+}
+
+/* ---- THE BOOK, UNDER THE HAND ------------------------------------------------
+   Follows the pointer for the whole of the drag. `pointer-events: none` is
+   load-bearing and not decoration: the release hit-tests the point under the
+   pointer, so a ghost that could be hit would resolve to itself and the drop
+   would land nowhere. Positioned by transform from the viewport origin, and
+   pulled back by half its own size so it hangs from the pointer rather than
+   starting at it. */
+.libd-drag-ghost {
+  position: fixed;
+  /* PHYSICAL, not logical. `clientX` is measured from the left edge of the viewport whichever way
+     the document runs, so `inset-inline-start` — which is the RIGHT edge in Arabic — put the book
+     a whole viewport away from the hand carrying it. Measured: pointer at x=1029, ghost at x=2486.
+     The centring is folded into the transform so no margin has a direction to get wrong either. */
+  top: 0;
+  left: 0;
+  z-index: 200;
+  pointer-events: none;
+  width: 76px;
+  opacity: 0;
+  transform: translate3d(-9999px, -9999px, 0) translate(-50%, -50%) rotate(-3deg);
+  border-radius: var(--r-xs);
+  box-shadow: var(--sh4);
+  overflow: hidden;
+  transition: opacity 0.1s ease-out;
+}
+.libd-drag-ghost img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.libd-drag-ghost span {
+  display: block;
+  padding: var(--sp-3);
+  background: var(--chr);
+  color: var(--txt);
+  font: 500 0.75rem var(--ui);
+  text-align: center;
+}
+@media (prefers-reduced-motion: reduce) {
+  .libd-drag-ghost { transition: none; }
+}
+
+/* An empty place says what is MISSING from it. The toolbar has already named
+   the container, so the stage states the one useful thing instead — which is
+   what makes it read as intentional rather than as something gone wrong. */
+.v-nothing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 58%;
+  text-align: center;
+  color: var(--v-mute);
+  font: 500 var(--fs-small) var(--ui);
+  text-wrap: pretty;
+}
+.v-nothing i {
+  display: block;
+  width: 96px;
+  height: 1px;
+  background: var(--v-edge);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v-piece, .v-slot, .v-bookslot { transition: none; animation: none; }
+  .v-piece:hover { transform: none; }
+}
+
+/* ============================================================================
+   THE BACKGROUND BELONGS TO THE READER, NOT TO THE FORMAT.
+   ============================================================================
+   This block used to lift RAWY-265's flat scrim for Vista ALONE, by overriding
+   `.lib-root::after`'s `background-image` down to the grain. That is what made
+   a chosen photograph look one way in Vista and another way in Covers, Grid,
+   Spines and Details: the four kept a theme-coloured veil at the 0.77 floor,
+   and Vista did not. Measured at the same settings, the blur was identical in
+   all five — the difference was entirely this layer.
+
+   There is no format-specific rule now. The scrim is whatever the reader's
+   Presence control says, in every format, and `LIB_SCRIM_MIN` is 0 so that
+   control can reach a photograph with nothing over it at all. See the long note
+   in lib/background.ts for what that gives up and why.
+
+   WHAT IS NOT A PREFERENCE. A reader who has asked the OS for high contrast,
+   forced colours or reduced transparency has stated a requirement. The floor
+   comes back for them in full — both layers of it — whatever the slider says.
+   Overriding the two custom properties is enough: the gradients that read them
+   are unchanged, so this cannot drift from the rule it is protecting.
+   ========================================================================== */
+@media (forced-colors: active), (prefers-contrast: more), (prefers-reduced-transparency: reduce) {
+  :root[data-bg-library="on"] .lib-root {
+    --bg-lib-scrim: 77%;
+    --bg-lib-falloff: 14%;
+  }
+}
+
+/* THE TOOLBAR STANDS ON ITS CONTROLS, NOT ON A PLANE.
+   ============================================================================
+   Vista lifted RAWY-265's full-page scrim and gave the whole toolbar a plane in
+   exchange — one translucent rectangle the width of the library, so that text
+   and controls over the reader's photograph stayed legible. It worked, and it
+   was redundant, which measurement made plain: every group in that toolbar
+   ALREADY carries its own plate. Measured on the real header — search 320px
+   r=9, the view switcher 432px r=11, the size chips 126px r=11, the format and
+   sort controls, Select, Arrange and Add — all of them `surface=true`,
+   `border=true`, standing on their own ground before the plane was drawn.
+
+   So the plane was covering the artwork to protect controls that did not need
+   protecting. The ONE thing under it with no ground of its own was the place
+   heading — bare text on a photograph — and one small plate answers that.
+
+   This is the same principle the scrim note above already states for Vista: a
+   plate under every text-bearing surface, rather than a blanket over the view.
+   It is now applied consistently instead of half-applied. The material is
+   unchanged — the sidebar's own from RAWY-265, following the same blur slider —
+   so nothing about how Sard's chrome is MADE changes; only how much of the
+   picture it covers.
+   ============================================================================ */
+.libd-console {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-bottom: 0;
+}
+/* The plate. Worn by a group that has text of its own to keep legible, and inert
+   outside Vista, where the scrim already carries that weight. */
+/* THE HEADING'S PLATE, WHEREVER THERE IS A PHOTOGRAPH BEHIND IT.
+   It was `.libd-console .libd-plate` alone, and `libd-console` is added only in Vista — so the
+   plate painted in Vista and nowhere else. That was survivable while the other four formats lay
+   under a 77% scrim: the heading had the scrim for a ground. With the scrim now following the
+   reader's own control and reaching zero, the place heading is the one piece of chrome that would
+   otherwise sit on the bare picture. The second selector gives it the same plate in every format,
+   gated on a background actually being set — with none, nothing changes anywhere. */
+.libd-console .libd-plate,
+:root[data-bg-library="on"] .libd-plate {
+  background: color-mix(in srgb, var(--chrome-bg) var(--bg-lib-sidebar, 85%), transparent);
+  backdrop-filter: blur(var(--bg-lib-blur, 0px)) saturate(1.1);
+  -webkit-backdrop-filter: blur(var(--bg-lib-blur, 0px)) saturate(1.1);
+  border: 1px solid var(--brd);
+  border-radius: var(--r-lg);
+  padding: var(--sp-3) var(--sp-5);
+}
+/* A reader who has asked the OS for high contrast, forced colours or reduced
+   transparency has stated a requirement: the plate becomes solid. */
+@media (forced-colors: active), (prefers-contrast: more), (prefers-reduced-transparency: reduce) {
+  .libd-console .libd-plate,
+  :root[data-bg-library="on"] .libd-plate {
+    background: var(--chrome-bg);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
+
+/* ---- the Details column rail ----
+   ONE WEIGHT, NO SHOUTING. The old header set its labels in 10px 600-weight uppercase with 0.12em
+   tracking — a dashboard convention that Arabic cannot take part in (there is no uppercase) and that
+   left the row reading as a control strip rather than as the head of a page of books. This sets them
+   in the ordinary interface face at a quiet size, lets the sortable ones own the accent when they are
+   the sort, and marks sortability on approach instead of permanently. */
+/* SCOPED TO THE RAIL, and that is not decoration. `.libd-stage button` above sets `font: inherit`
+   at specificity (0,1,1); a bare `.vd-col` is (0,1,0) and loses to it, so every type declaration
+   here was silently discarded and the labels rendered at the inherited 14.99px/23.23px. Measured
+   before this: `font: "14.985px / 23.2268px …"` where 0.75rem was asked for. `.vd-rail .vd-col` is
+   (0,2,0) and wins on class count.
+
+   THE LEADING IS 1.6, NOT 1.2. Arabic sets tall — the alif and the dots above ن and ب need room
+   above the x-height that a Latin-tuned 1.2 does not leave, and against a 2px top padding the row
+   read as cropped. */
+.vd-rail .vd-col {
+  font: 500 0.75rem/1.6 var(--ui);
+  color: var(--faint);
+  letter-spacing: 0;
+  background: none;
+  border: 0;
+  padding: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  cursor: default;
+  transition: color 140ms ease;
+}
+.vd-rail .vd-col--sortable { cursor: pointer; }
+.vd-rail .vd-col--sortable:hover { color: var(--txt); }
+/* The active sort is stated by weight and colour together, so it survives a reader who cannot pick
+   the accent out of the faint. */
+.vd-rail .vd-col.on { color: var(--acc); font-weight: 650; }
+/* The mark sits AFTER the label in reading order, so it lands on the correct side in both
+   directions without a mirrored rule. */
+.vd-rail .vd-col.on::after {
+  content: "";
+  inline-size: 4px; block-size: 4px; border-radius: 50%;
+  background: currentColor; opacity: 0.85;
+  align-self: center;
+}
+.vd-rail .vd-col:focus-visible { outline: 2px solid var(--acc); outline-offset: 3px; border-radius: 3px; }

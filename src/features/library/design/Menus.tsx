@@ -4,13 +4,15 @@
 // so they come from the chrome's file. The shelf popover's contents are the design's own:
 // six ordering rules, then a rule, then Rename and Delete shelf.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { BookRow, CaseNode, ShelfNode, ShelfOrder } from "../../../lib/ipc";
 import { useI18n } from "../../../i18n";
 import type { TKey } from "../../../i18n/locales/en";
 import { autoCoverPaint } from "../AutoCover";
 import { resolveBookMeta, displayTitle } from "../../../lib/bookMeta";
 import type { SelectionSource } from "./model";
+import { openTransient } from "./transient";
+import { Icon } from "../../../components/Icon";
 
 /** The design's menu row, active and inactive. */
 export const menuItem = (active: boolean): React.CSSProperties => ({
@@ -27,10 +29,67 @@ export const menuItem = (active: boolean): React.CSSProperties => ({
   color: active ? "var(--txt)" : "var(--mut)",
 });
 
-const panel = (width: number): React.CSSProperties => ({
+/**
+ * A MENU THAT DOES NOT FALL OFF THE BOTTOM OF THE WINDOW.
+ *
+ * `panel` opened downward and only downward. That was survivable while the only ⋯ in the sidebar
+ * belonged to a case — cases sit at the top of the list — and stopped being survivable when every
+ * shelf row gained one, because shelf rows run all the way to the foot of the column.
+ *
+ * Measured on a shelf near the bottom at 1400x900: the menu's colour swatches landed at y 872 and
+ * 895, and `elementFromPoint` at each swatch's own centre returned the root rather than the swatch
+ * — they were past the edge of the window. The colours were on screen in the sense that they had
+ * coordinates, and unreachable in the sense that mattered.
+ *
+ * So the panel is measured where it wants to be and flipped above its anchor if it does not fit,
+ * once, on the frame it opens. Flipping only when there is room above means a menu taller than the
+ * window still opens downward and scrolls, rather than being pushed off the top instead.
+ */
+function useFlipUp<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  const [up, setUp] = useState(false);
+  const [pull, setPull] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // MEASURED FROM THE ANCHOR, NOT FROM WHERE THE PANEL CURRENTLY IS.
+    //
+    // Reading the panel's own rect works exactly once: the moment a correction has been applied,
+    // the next reading includes it, and re-measuring would correct the correction. Deriving the
+    // position from the anchor and the panel's SIZE gives the same answer however many times it
+    // runs — which is what lets this re-run when the panel grows, as it does when the colour
+    // palette unfolds inside it.
+    const place = () => {
+      const anchor = el.offsetParent as HTMLElement | null;
+      if (!anchor) return;
+      const a = anchor.getBoundingClientRect();
+      const h = el.offsetHeight;
+      const w = el.offsetWidth;
+      const GAP = 6, EDGE = 8;
+      const fitsDown = a.bottom + GAP + h <= window.innerHeight - EDGE;
+      const fitsUp = a.top - GAP - h >= EDGE;
+      setUp(!fitsDown && fitsUp);
+      // The panel hangs from the anchor's inline-END, so which physical edge it grows from
+      // depends on the writing direction.
+      const rtl = getComputedStyle(document.documentElement).direction === "rtl";
+      const left = rtl ? a.left : a.right - w;
+      setPull(Math.round(Math.max(0, EDGE - left, left + w - (window.innerWidth - EDGE))));
+    };
+    place();
+    // The panel changes size in use — the palette unfolds, a page swaps for a longer one — and a
+    // menu that fitted when it opened can stop fitting without anything else happening.
+    const ro = new ResizeObserver(place);
+    ro.observe(el);
+    window.addEventListener("resize", place);
+    return () => { ro.disconnect(); window.removeEventListener("resize", place); };
+  }, []);
+  return { ref, up, pull };
+}
+
+const panel = (width: number, up = false, pull = 0): React.CSSProperties => ({
   position: "absolute",
-  insetInlineEnd: 0,
-  top: "calc(100% + 6px)",
+  insetInlineEnd: -pull,
+  ...(up ? { bottom: "calc(100% + 6px)" } : { top: "calc(100% + 6px)" }),
   zIndex: 60,
   width,
   background: "var(--chr)",
@@ -50,8 +109,13 @@ const legend: React.CSSProperties = {
 };
 
 /** Click-away, shared by every popover here. */
+// The full-screen backdrop is gone. `transient.ts` now answers the outside press and Escape for
+// every transient surface at once, and a per-menu overlay is exactly what stopped a click from
+// reaching the NEXT menu's button. What is left is a marker the stack can measure the menu by.
 function Backdrop({ onClose }: { onClose: () => void }) {
-  return <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 59 }} />;
+  const ref = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => openTransient(onClose, () => ref.current?.parentElement ?? null), [onClose]);
+  return <span ref={ref} hidden />;
 }
 
 /**
@@ -153,7 +217,6 @@ export function ShelfOrderMenu({
   onOrder,
   onRename,
   onDelete,
-  onNewCategory,
   onClose,
   onInk,
   onMove,
@@ -166,86 +229,262 @@ export function ShelfOrderMenu({
   onOrder: (o: ShelfOrder) => void;
   onRename: () => void;
   onDelete: () => void;
-  onNewCategory: () => void;
   onClose: () => void;
   onInk: (ink: string | null) => void;
   /** -1 = earlier among its siblings, +1 = later. */
   onMove: (direction: number) => void;
 }) {
   const { t } = useI18n();
+  const flip = useFlipUp<HTMLDivElement>();
+  /**
+   * ONE MENU, THREE PAGES — the two settings that have a CURRENT VALUE open onto their own list.
+   *
+   * WHAT THIS REPLACED, and why. The menu was one column holding, in order: the legend «ترتيب هذا
+   * الرفّ» followed by all six order rules as six sibling rows; the colour swatches; a «تحريك هذا
+   * الرفّ» pair of arrows; the legend «الخزانة» followed by every case in the library as more
+   * sibling rows; «فئة جديدة»; «إعادة تسمية»; and delete. Twenty-odd rows, most of them values
+   * rather than actions, and nothing saying which of the six orders or which of the cases was the
+   * one in force — the ✓ was there, but you had to read the whole list to find it.
+   *
+   * A setting with a current value is ONE row that states it and opens onto the choices. That is
+   * what makes the menu short enough to read: the root is now six rows, and each says either what
+   * it will do or what it currently is.
+   *
+   * The pages live inside this panel rather than in a nested popover. A popover hanging off a
+   * popover has to be positioned against the window all over again — and this panel already has
+   * to flip above its anchor near the foot of the sidebar, which is where shelf rows mostly are.
+   *
+   * «فئة جديدة» IS GONE, and nothing replaced it. It called `categoryCreate` with the literal
+   * name «فئة جديدة» — a category made with no name asked, from a menu that is not about
+   * categories. Categories have a home: `CaseEditor` creates them WITH a typed name, renames them
+   * and deletes them, and is one press away through the case's own ⋯ → «إدارة». Removing the
+   * duplicate takes no capability away; it takes away the only route that made an unnamed one.
+   */
+  const [page, setPage] = useState<"root" | "order" | "case">("root");
+  /**
+   * THE PALETTE IS FOLDED AWAY UNTIL IT IS WANTED.
+   *
+   * Nine swatches shown at all times took about a third of the menu's height to answer a question
+   * most openings of it are not about. Collapsed, the row states the colour the shelf HAS — which
+   * is the thing worth seeing every time — and opens the palette in place when that is the thing
+   * being changed. In place rather than on a page of its own: a colour is chosen by eye against
+   * the others, and a page would take the row's own swatch off screen at the moment of comparing.
+   */
+  const [palette, setPalette] = useState(false);
+  const orderNow = ORDER_DEFS.find((o) => o.id === shelf.order_rule) ?? ORDER_DEFS[0];
+  const caseNow = shelf.case_id ? cases.find((k) => k.id === shelf.case_id) : null;
+
+  /** A row that states a setting's current value and opens onto the choices. */
+  const settingRow = (label: string, value: string, to: "order" | "case") => (
+    <button
+      className="libd-menu-item"
+      onClick={() => setPage(to)}
+      style={{ ...menuItem(false), justifyContent: "space-between", gap: "var(--sp-4)" }}
+    >
+      <span style={{ flex: "none" }}>{label}</span>
+      <span
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "var(--sp-2)",
+          minWidth: 0,
+          overflow: "hidden",
+          color: "var(--mut)",
+          font: "500 .75rem var(--ui)",
+        }}
+      >
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{value}</span>
+        {/* Points the way the reader's writing goes, so "onward" is onward in both directions. */}
+        <span aria-hidden style={{ display: "flex", color: "var(--faint)" }}>
+          <Icon name="caretDown" size="sm" />
+        </span>
+      </span>
+    </button>
+  );
+
+  const backRow = (title: string) => (
+    <button
+      className="libd-menu-item"
+      onClick={() => setPage("root")}
+      style={{ ...menuItem(false), justifyContent: "flex-start", gap: "var(--sp-3)" }}
+    >
+      <span aria-hidden style={{ display: "flex", color: "var(--faint)", transform: "rotate(90deg)" }}>
+        <Icon name="caretDown" size="sm" />
+      </span>
+      <span style={{ font: "600 .75rem var(--ui)" }}>{title}</span>
+    </button>
+  );
+
+  const chosen = (on: boolean) => (
+    <span style={{ color: "var(--acc)", fontSize: 11 }}>{on ? "✓" : ""}</span>
+  );
+
   return (
     <>
       <Backdrop onClose={onClose} />
-      <div style={panel(210)}>
-        <div style={legend}>{t("lib.orderOfThisShelf")}</div>
-        {ORDER_DEFS.map((o) => (
-          <button
-            key={o.id}
-            className="libd-hov"
-            onClick={() => {
-              onOrder(o.id);
-              onClose();
-            }}
-            style={menuItem(shelf.order_rule === o.id)}
-          >
-            <span>{t(o.key)}</span>
-            <span style={{ color: "var(--acc)", fontSize: 11 }}>
-              {shelf.order_rule === o.id ? "✓" : ""}
-            </span>
-          </button>
-        ))}
-        <div style={{ height: 1, background: "var(--brd)", margin: "5px 4px" }} />
-        <div style={{ ...legend, paddingTop: 0 }}>{t("lib.colour")}</div>
-        <InkPicker value={shelf.ink} onPick={onInk} />
-        <div style={{ height: 1, background: "var(--brd)", margin: "5px 4px" }} />
-        <div style={{ display: "flex", gap: "var(--sp-2)", padding: "0 6px 4px" }}>
-          <button
-            className="libd-hov"
-            onClick={() => {
-              onMove(-1);
-              onClose();
-            }}
-            style={{ ...menuItem(false), justifyContent: "center", flex: 1 }}
-          >
-            ↑ {t("lib.moveShelf")}
-          </button>
-          <button
-            className="libd-hov"
-            onClick={() => {
-              onMove(1);
-              onClose();
-            }}
-            style={{ ...menuItem(false), justifyContent: "center", flex: 1 }}
-          >
-            ↓
-          </button>
-        </div>
-        {/* WHICH CASE HOLDS THIS SHELF. Without this a shelf could be created inside a case but
-            never moved into or out of one afterwards — `shelf_set_case` existed on the backend
-            and nothing in the UI could reach it, so an existing library could not be filed. */}
-        {cases.length > 0 && (
+      <div ref={flip.ref} style={panel(226, flip.up, flip.pull)}>
+        {page === "root" && (
           <>
-            <div style={{ height: 1, background: "var(--brd)", margin: "5px 4px" }} />
-            <div style={{ ...legend, paddingTop: 0 }}>{t("lib.caseWord")}</div>
+            <div style={legend}>{t("lib.manageShelf")}</div>
+
             <button
-              className="libd-hov"
-              onClick={() => {
-                onSetCase(null);
-                onClose();
-              }}
+              className="libd-menu-item"
+              aria-expanded={palette}
+              onClick={() => setPalette((v) => !v)}
+              style={{ ...menuItem(false), justifyContent: "space-between", gap: "var(--sp-4)" }}
+            >
+              <span style={{ flex: "none" }}>{t("lib.menu.shelfColour")}</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--sp-3)", flex: "none" }}>
+                {/* The colour the shelf HAS, at the size the sidebar draws it, with the same
+                    hairline — so the row is a preview of the row it describes. No colour shows
+                    the ruled-through swatch `InkPicker` itself uses for «no colour». */}
+                <span
+                  aria-hidden
+                  style={{
+                    position: "relative",
+                    width: "var(--icon-sm)",
+                    height: "var(--icon-sm)",
+                    borderRadius: "var(--r-xs)",
+                    background: shelf.ink ?? "var(--soft)",
+                    boxShadow: shelf.ink ? "0 0 0 1px var(--brd)" : "0 0 0 1px var(--brd)",
+                    overflow: "hidden",
+                  }}
+                >
+                  {!shelf.ink && (
+                    <span
+                      style={{
+                        position: "absolute",
+                        insetInline: -3,
+                        top: "50%",
+                        height: 1.5,
+                        background: "var(--faint)",
+                        transform: "rotate(-45deg)",
+                      }}
+                    />
+                  )}
+                </span>
+                <span
+                  aria-hidden
+                  style={{
+                    display: "flex",
+                    color: "var(--faint)",
+                    transform: palette ? "rotate(180deg)" : "none",
+                    transition: "transform .16s ease-out",
+                  }}
+                >
+                  <Icon name="caretDown" size="sm" />
+                </span>
+              </span>
+            </button>
+            {/* `InkPicker` carries a menu's own 10px sides. Nine 18px swatches with 5px between
+                them need 202px, and the panel's inner width is 214 — six pixels short once that
+                padding is counted twice. Pulling it back puts all nine on one line instead of
+                leaving the ninth stranded on a second. */}
+            {palette && (
+              <div style={{ margin: "0 -6px" }}>
+                <InkPicker value={shelf.ink} onPick={onInk} />
+              </div>
+            )}
+
+            <div style={{ height: 1, background: "var(--brd)", margin: "5px 4px" }} />
+            <div style={{ ...legend, paddingTop: 0 }}>{t("lib.menu.organisation")}</div>
+            {settingRow(t("lib.menu.bookOrder"), t(orderNow.key), "order")}
+            {settingRow(t("lib.caseWord"), caseNow ? caseNow.name : t("lib.unfiled"), "case")}
+
+            {/* ---- WHERE THE SHELF SITS AMONG ITS SIBLINGS.
+                    It said «تحريك هذا الرفّ» — "move this shelf" — beside two arrows, which is
+                    true and says nothing: moved where, and among what? A shelf can only move up
+                    or down among the shelves it shares a parent with, and the row now says so.
+                    It is kept because it is the ONLY way to reorder shelves from here: dragging
+                    one exists in the management panel and nowhere else. */}
+            <div style={{ ...menuItem(false), justifyContent: "space-between", gap: "var(--sp-4)", cursor: "default" }}>
+              <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {caseNow ? t("lib.menu.positionIn", { name: caseNow.name }) : t("lib.menu.positionLoose")}
+              </span>
+              <span style={{ display: "inline-flex", gap: "var(--sp-2)", flex: "none" }}>
+                <button
+                  className="libd-menu-item"
+                  title={t("lib.menu.earlier")}
+                  aria-label={t("lib.menu.earlier")}
+                  onClick={() => { onMove(-1); onClose(); }}
+                  style={{ width: "var(--ctl-xs)", height: "var(--ctl-xs)", borderRadius: "var(--r-sm)", justifyContent: "center" }}
+                >
+                  ↑
+                </button>
+                <button
+                  className="libd-menu-item"
+                  title={t("lib.menu.later")}
+                  aria-label={t("lib.menu.later")}
+                  onClick={() => { onMove(1); onClose(); }}
+                  style={{ width: "var(--ctl-xs)", height: "var(--ctl-xs)", borderRadius: "var(--r-sm)", justifyContent: "center" }}
+                >
+                  ↓
+                </button>
+              </span>
+            </div>
+
+            <div style={{ height: 1, background: "var(--brd)", margin: "5px 4px" }} />
+            <button
+              className="libd-menu-item"
+              onClick={() => { onRename(); onClose(); }}
+              style={{ ...menuItem(false), justifyContent: "flex-start" }}
+            >
+              {t("lib.shelf.rename")}
+            </button>
+            <DangerRow
+              label={t("lib.shelf.delete")}
+              confirmText={t("lib.shelf.deleteConfirm")}
+              confirmLabel={t("lib.shelf.deleteYes")}
+              onConfirm={() => { onDelete(); onClose(); }}
+            />
+          </>
+        )}
+
+        {/* ---- ONE SETTING, SIX VALUES.
+                «يدويّ» is not a seventh sort — it is the shelf saying "leave my order alone",
+                and the arrangement the reader made waits underneath whichever rule is chosen.
+                That distinction is already in the model: `sectionBooks` sorts by `order_rule`
+                and only falls through to the saved `view_orders` run when the rule is `hand`. */}
+        {page === "order" && (
+          <>
+            {backRow(t("lib.menu.bookOrder"))}
+            <div style={{ height: 1, background: "var(--brd)", margin: "5px 4px" }} />
+            {ORDER_DEFS.map((o) => (
+              <button
+                key={o.id}
+                className="libd-menu-item"
+                onClick={() => { onOrder(o.id); onClose(); }}
+                style={menuItem(shelf.order_rule === o.id)}
+              >
+                <span>{t(o.key)}</span>
+                {chosen(shelf.order_rule === o.id)}
+              </button>
+            ))}
+            <div style={{ ...legend, paddingTop: 6, letterSpacing: "normal", textTransform: "none", lineHeight: 1.5 }}>
+              {t("lib.menu.byHandNote")}
+            </div>
+          </>
+        )}
+
+        {/* ---- WHICH CASE HOLDS THIS SHELF. `shelf_set_case` has always existed; before it was
+                reachable here, a shelf made inside a case could never leave it. */}
+        {page === "case" && (
+          <>
+            {backRow(t("lib.caseWord"))}
+            <div style={{ height: 1, background: "var(--brd)", margin: "5px 4px" }} />
+            <button
+              className="libd-menu-item"
+              onClick={() => { onSetCase(null); onClose(); }}
               style={menuItem(!shelf.case_id)}
             >
               <span>{t("lib.unfiled")}</span>
-              <span style={{ color: "var(--acc)", fontSize: 11 }}>{!shelf.case_id ? "✓" : ""}</span>
+              {chosen(!shelf.case_id)}
             </button>
             {cases.map((cs) => (
               <button
                 key={cs.id}
-                className="libd-hov"
-                onClick={() => {
-                  onSetCase(cs.id);
-                  onClose();
-                }}
+                className="libd-menu-item"
+                onClick={() => { onSetCase(cs.id); onClose(); }}
                 style={menuItem(shelf.case_id === cs.id)}
               >
                 <span
@@ -270,44 +509,11 @@ export function ShelfOrderMenu({
                     {cs.name}
                   </span>
                 </span>
-                <span style={{ color: "var(--acc)", fontSize: 11 }}>
-                  {shelf.case_id === cs.id ? "✓" : ""}
-                </span>
+                {chosen(shelf.case_id === cs.id)}
               </button>
             ))}
           </>
         )}
-
-        <div style={{ height: 1, background: "var(--brd)", margin: "5px 4px" }} />
-        <button
-          className="libd-hov"
-          onClick={() => {
-            onNewCategory();
-            onClose();
-          }}
-          style={{ ...menuItem(false), justifyContent: "flex-start" }}
-        >
-          {t("lib.newCategory")}
-        </button>
-        <button
-          className="libd-hov"
-          onClick={() => {
-            onRename();
-            onClose();
-          }}
-          style={{ ...menuItem(false), justifyContent: "flex-start" }}
-        >
-          {t("lib.shelf.rename")}
-        </button>
-        <DangerRow
-          label={t("lib.shelf.delete")}
-          confirmText={t("lib.shelf.deleteConfirm")}
-          confirmLabel={t("lib.shelf.deleteYes")}
-          onConfirm={() => {
-            onDelete();
-            onClose();
-          }}
-        />
       </div>
     </>
   );
@@ -406,6 +612,7 @@ export function CaseManageMenu({
   onInk: (ink: string | null) => void;
 }) {
   const { t } = useI18n();
+  const flip = useFlipUp<HTMLDivElement>();
   const row = (label: string, run: () => void) => (
     <button
       className="libd-hov"
@@ -421,7 +628,7 @@ export function CaseManageMenu({
   return (
     <>
       <Backdrop onClose={onClose} />
-      <div style={panel(220)}>
+      <div ref={flip.ref} style={panel(220, flip.up, flip.pull)}>
         <div style={legend}>{t("lib.managing")}</div>
         {/* The management PANEL, from the sidebar. It used to be reachable only from a case card,
             which exists in Covers and Spines — so in Grid, Details and Vista the categories, the

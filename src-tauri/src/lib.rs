@@ -126,6 +126,11 @@ macro_rules! sard_invoke_handler {
             commands::collections_for_book,
             commands::library_tree,
             commands::library_shelf_items,
+            commands::library_arrangement,
+            commands::library_place_book,
+            // View order: sequence, never membership. See library/view_order.rs.
+            commands::view_orders_for_scope,
+            commands::view_order_reorder,
             commands::case_create,
             commands::case_rename,
             commands::case_delete,
@@ -237,14 +242,24 @@ pub fn run() {
     //
     // ORDERING NOTE: it is no longer literally first in the chain, but it is still registered before
     // the window is created and before `setup()` opens the database, which is what RAWY-173 required.
+    // A DEVELOPMENT RUN ON ITS OWN LIBRARY IS DELIBERATELY A SECOND INSTANCE.
+    //
+    // The guard keys on the bundle identifier, so it would hand the test run's window straight back
+    // to the developer's own copy and exit — which is exactly what must not happen when the two are
+    // meant to be looking at different databases. It is skipped only when `SARD_DATA_DIR` is set,
+    // and only in a debug build; a shipped Sard is single-instance exactly as before.
     #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
-        if let Some(w) = app.get_webview_window("main") {
-            let _ = w.unminimize();
-            let _ = w.show();
-            let _ = w.set_focus();
-        }
-    }));
+    let builder = if dev_data_dir_override().is_some() {
+        builder
+    } else {
+        builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.unminimize();
+                let _ = w.show();
+                let _ = w.set_focus();
+            }
+        }))
+    };
 
     // THE READER-HOST ORIGIN (origin-isolation step 1) — NOT ON WINDOWS, DELIBERATELY.
     //
@@ -289,10 +304,39 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init());
 
+/// A SEPARATE LIBRARY FOR DEVELOPMENT AND TESTING — never in a shipped build.
+///
+/// Sard keeps its database in the OS app-data directory, resolved through `SHGetKnownFolderPath` on
+/// Windows, which ignores `%APPDATA%`. There is therefore no way to point a test run at a different
+/// library, and every interaction test has had to run against the developer's real books — which is
+/// how four separate runs came to move real shelves and need repairing by hand.
+///
+/// `SARD_DATA_DIR` names a directory to use instead. It exists only under `debug_assertions`: in a
+/// release build this function is a literal `None`, the environment variable is never read, and the
+/// Windows path resolution is exactly what it always was. Nothing about production changes.
+#[cfg(debug_assertions)]
+fn dev_data_dir_override() -> Option<std::path::PathBuf> {
+    let raw = std::env::var_os("SARD_DATA_DIR")?;
+    if raw.is_empty() {
+        return None;
+    }
+    Some(std::path::PathBuf::from(raw))
+}
+
+#[cfg(not(debug_assertions))]
+fn dev_data_dir_override() -> Option<std::path::PathBuf> {
+    None
+}
+
     let builder = builder
         .setup(|app| {
-            // Resolve & create the OS app-data dir (%APPDATA%/com.sard.app on Windows).
-            let app_data_dir = app.path().app_data_dir()?;
+            // Resolve & create the OS app-data dir (%APPDATA%/com.sard.app on Windows) — unless a
+            // development run has named another one. See `dev_data_dir_override`; in a release
+            // build that call is a constant `None` and this is the OS path, as always.
+            let app_data_dir = match dev_data_dir_override() {
+                Some(dir) => dir,
+                None => app.path().app_data_dir()?,
+            };
             std::fs::create_dir_all(&app_data_dir)?;
             let db_path = app_data_dir.join("sard.db");
 
@@ -310,6 +354,12 @@ pub fn run() {
             // content-based direction backfill (migration 8) can read the imported EPUBs off disk.
             let conn = db::open_database(&db_path)?;
             db::migrations::run(&conn, Some(&app_data_dir))?;
+            // EVERY BOOK HAS A PLACE. A book imported before this ran, or one whose placement was
+            // cascaded away with a deleted shelf, would otherwise have none — and "no place" is the
+            // state the arrangement model exists to abolish. One query that usually finds nothing.
+            if let Err(e) = library::placement::ensure(&conn) {
+                eprintln!("could not give every book a placement: {e}");
+            }
             let version = db::schema_version(&conn)?;
 
             println!("[Sard] app_data_dir  = {}", app_data_dir.display());

@@ -13,11 +13,12 @@ import { initReadMarkerStyle } from "./lib/readMarkerStyle"; // RAWY-256: persis
 import { initFonts } from "./lib/fonts";
 import { applyBackgrounds, initBackground, useBackground } from "./lib/background"; // RAWY-265
 import { initStyleScope } from "./lib/styleScope";
+import { runCloseFlush } from "./lib/closeFlush"; // the window close is owned by the page, not the Reader
 import { diagStart } from "@diag"; // DIAGNOSTIC BUILD ONLY - observes, never intervenes
 import { registerOutcomeRecorder } from "./lib/listeningOutcomes"; // RAWY-263: the local outcome baseline
 import { initTheme, reapplyTitlebarTheme, resolveTheme, useTheme } from "./theme";
 import { initProfiles } from "./features/profiles/store"; // PROFILES: register authored themes first
-import { UnsavedChange, useUnsavedChangeWatch } from "./features/profiles/UnsavedChange";
+import { UnsavedChange } from "./features/profiles/UnsavedChange";
 import { DroppedProfile } from "./features/profiles/DroppedProfile";
 import { initPresence } from "./lib/presence"; // DISC/RPC: load the Discord on/off switch
 import { LanguagePicker } from "./features/onboarding/LanguagePicker";
@@ -31,7 +32,6 @@ import { libraryListBooks, settingsGet, settingsSet } from "./lib/ipc";
 // picker; afterwards the saved language/theme drive the UI and the Library is the home
 // screen. Selecting a book opens the Reading View; its back button returns here.
 function Root() {
-  useUnsavedChangeWatch();
   const { ready: i18nReady, hasLang } = useI18n();
   const themeReady = useTheme((s) => s.ready);
   const [open, setOpen] = useState<OpenTarget | null>(null);
@@ -146,6 +146,47 @@ function App() {
       window.clearTimeout(t);
       unlisten?.();
     };
+  }, []);
+
+  // THE WINDOW CLOSE, owned here because the page owns it — not the Reader.
+  //
+  // Tauri blocks the native close whenever `js_event_listeners` says a `tauri://close-requested`
+  // listener exists (tauri/src/manager/window.rs), and that registry is emptied only by an explicit
+  // `unlisten` IPC. Nothing clears it on navigation, so a page RELOAD orphans the entry: the close
+  // stays prevented while the handler that was supposed to complete it is gone with the old
+  // JavaScript context. Measured in that state — window visible and enabled, message loop pumping,
+  // process alive indefinitely, recoverable only from outside.
+  //
+  // Registering here fixes it because this component is the page. The reload that orphans the old
+  // entry is the same reload that mounts this and registers a fresh handler, so a live handler always
+  // exists for exactly as long as a window does. Measured across the four distinguishing states, a
+  // stale entry with a live handler beside it closes in one second — the entry was never the problem,
+  // the absence of a handler was.
+  //
+  // What must be SAVED first still belongs to whoever is reading: `lib/closeFlush.ts` carries the
+  // Reader's flush (position + read-aloud cursor), bounded so a slow or failed save can never leave
+  // the window unclosable — the failure mode RAWY-174 already paid for once.
+  useEffect(() => {
+    const win = getCurrentWindow();
+    let unlisten: (() => void) | undefined;
+    let disposed = false; // a cleanup that beats the registration promise must still unregister
+    let closing = false; // flush + close exactly once; a second ✕ mid-flush is left to the first
+    win
+      .onCloseRequested(async (event) => {
+        event.preventDefault(); // hold the close so the flush can finish; WE own the destroy below
+        if (closing) return;
+        closing = true;
+        try {
+          await runCloseFlush(1500);
+        } finally {
+          // ALWAYS close. `destroy()` bypasses this handler, so there is no re-fire loop; it needs
+          // core:window:allow-destroy (granted, RAWY-174) and is wrapped so nothing can leave ✕ dead.
+          try { await win.destroy(); } catch { /* no other JS path can force the close */ }
+        }
+      })
+      .then((u) => { if (disposed) u(); else unlisten = u; })
+      .catch(() => {});
+    return () => { disposed = true; unlisten?.(); };
   }, []);
 
   // F11 toggles fullscreen (the Windows convention); Esc exits when fullscreen (RAWY-42). Works

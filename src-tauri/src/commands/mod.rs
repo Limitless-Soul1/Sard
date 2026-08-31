@@ -344,7 +344,20 @@ pub fn collection_rename(id: String, name: String, state: State<AppState>) -> Re
 #[tauri::command]
 pub fn collection_delete(id: String, state: State<AppState>) -> Result<Vec<library::CollectionRow>, String> {
     let conn = state.conn();
-    library::collection_delete(&conn, &id).map_err(err)
+    let out = library::collection_delete(&conn, &id).map_err(err)?;
+    // THE SHELF'S ORDERS GO WITH THE SHELF.
+    //
+    // `forget_section` was written for this and then never called, so every deleted shelf left its
+    // `view_orders` rows behind — one set per format that had ever arranged it. Harmless while the
+    // id stayed unique, and not harmless as a habit: the rows outlive the thing they describe, they
+    // are invisible to every screen, and nothing else would ever remove them.
+    //
+    // Failing to sweep must not fail the delete: the shelf is already gone by here, and reporting
+    // an error would tell the reader their deletion did not happen when it did.
+    if let Err(e) = library::view_order::forget_section(&conn, &id) {
+        eprintln!("[Sard] the deleted shelf's view orders could not be swept: {e}");
+    }
+    Ok(out)
 }
 
 #[tauri::command]
@@ -385,6 +398,136 @@ use library::structure;
 pub fn library_tree(state: State<AppState>) -> Result<structure::LibraryTree, String> {
     let conn = state.conn();
     structure::tree(&conn).map_err(err)
+}
+
+/// THE WHOLE ARRANGEMENT, IN ONE READ.
+///
+/// Every book's container and rank, and the shelf tree they hang on, fetched together. One call
+/// rather than one per shelf: the old code asked each shelf in turn, so two answers could come from
+/// either side of a write and the screen could show a book on two shelves or on none. A single
+/// statement cannot be read half-way through.
+/// What a lens currently matches. A rule shelf owns nothing, so this is a view of the library
+/// rather than part of it — the ids are here so the reader can still SEE «قيد القراءة» without any
+/// of those books acquiring a second home.
+#[derive(serde::Serialize)]
+pub struct Lens {
+    pub shelf_id: String,
+    pub book_ids: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct Arrangement {
+    pub tree: structure::LibraryTree,
+    pub placements: Vec<library::placement::Placement>,
+    pub lenses: Vec<Lens>,
+    /// The baseline a run with no saved order is measured against, so reading-aware promotion can
+    /// be decided for it without a second call. Carried here because this read already happens
+    /// once per library load and nothing else would justify a round trip of its own.
+    pub view_order_epoch: i64,
+}
+
+#[tauri::command]
+pub fn library_arrangement(state: State<AppState>) -> Result<Arrangement, String> {
+    let conn = state.conn();
+    read_arrangement(&conn)
+}
+
+/// Everything the library is, in one consistent read.
+fn read_arrangement(conn: &rusqlite::Connection) -> Result<Arrangement, String> {
+    let tree = structure::tree(conn).map_err(err)?;
+    let mut lenses = Vec::new();
+    for shelf in tree.cases.iter().flat_map(|c| c.shelves.iter()).chain(tree.loose.iter()) {
+        if shelf.auto_rule.is_none() {
+            continue;
+        }
+        let items = structure::shelf_items(conn, &shelf.id).map_err(err)?;
+        lenses.push(Lens {
+            shelf_id: shelf.id.clone(),
+            book_ids: items.into_iter().map(|i| i.book_id).collect(),
+        });
+    }
+    Ok(Arrangement {
+        tree,
+        placements: library::placement::list(conn).map_err(err)?,
+        lenses,
+        view_order_epoch: library::view_order::epoch(conn),
+    })
+}
+
+/// MOVE A BOOK IN FRONT OF ANOTHER — the one arrangement write.
+///
+/// `before` is the book the release landed in front of, or absent for the end of the container.
+/// The reply carries the arrangement as it now stands, so the screen is drawn from what was
+/// actually persisted rather than from a guess or from a second read that could race the first.
+/// `changed` is false when the book was already exactly there; nothing was written, and nothing
+/// should be announced.
+#[derive(serde::Serialize)]
+pub struct PlaceResult {
+    pub placed: library::placement::Placed,
+    pub arrangement: Arrangement,
+}
+
+#[tauri::command]
+pub fn library_place_book(
+    book_id: String,
+    container: String,
+    before: Option<String>,
+    category_id: Option<String>,
+    state: State<AppState>,
+) -> Result<PlaceResult, String> {
+    let conn = state.conn();
+    let placed = library::placement::place_book(
+        &conn,
+        &book_id,
+        &container,
+        before.as_deref(),
+        category_id.as_deref(),
+    )?;
+    Ok(PlaceResult { placed, arrangement: read_arrangement(&conn)? })
+}
+
+// ---------------------------------------------------------------------------
+// VIEW ORDER — how books read in a view, which is not where they belong.
+// ---------------------------------------------------------------------------
+//
+// These two commands cannot change membership. Not by being careful: a `view_orders` row has no
+// container column, so there is nowhere to write one. `placements` is not read for writing here and
+// is never written. The separation is the point — `library_place_book` above moves a book between
+// shelves and touches no order; these move a book within a run and touch no shelf.
+
+/// Every saved order for one place in the library, all its sections at once.
+///
+/// ONE STATEMENT FOR THE WHOLE SCREEN. A grouped format draws every section of a scope together, so
+/// asking per section would be one query per shelf on screen. The rows arrive already ordered.
+#[tauri::command]
+pub fn view_orders_for_scope(
+    format: String,
+    scope: String,
+    state: State<AppState>,
+) -> Result<Vec<library::view_order::ViewOrderRow>, String> {
+    let conn = state.conn();
+    library::view_order::for_scope(&conn, &format, &scope).map_err(err)
+}
+
+/// Move one book within one run. `before` is the book to land in front of, or null for the end.
+///
+/// `present` is the run as the view would draw it with no saved order — used only to materialise a
+/// run the first time it is arranged, and to take in books that have arrived since. Which books are
+/// in a run is a question about rules, scopes and sections, so it stays with the caller that can
+/// actually answer it.
+#[tauri::command]
+pub fn view_order_reorder(
+    format: String,
+    scope: String,
+    section: String,
+    book_id: String,
+    before: Option<String>,
+    present: Vec<String>,
+    state: State<AppState>,
+) -> Result<library::view_order::Reordered, String> {
+    let mut conn = state.conn();
+    let key = library::view_order::RunKey { format, scope, section };
+    library::view_order::reorder(&mut conn, &key, &book_id, before.as_deref(), &present)
 }
 
 /// One shelf's books in the shelf's own order, with their category.

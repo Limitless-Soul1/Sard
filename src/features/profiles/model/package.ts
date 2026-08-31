@@ -99,11 +99,30 @@ export function serialiseProfile(
     // The sender's own name travels; the RECIPIENT's copy is theirs to rename, and `derived_from`
     // is deliberately not sent — provenance is local, and a stranger's row id means nothing here.
     author: p.author,
-    data: p.data,
+    data: exportable(p.data),
     // Omitted entirely when nothing travels, so a settings-only package stays byte-identical to what
     // version 1 wrote rather than carrying an empty list that says the same thing at more length.
     ...(assets.length ? { assets } : {}),
   };
+}
+
+/**
+ * A profile's data as it may cross the border — which is everything EXCEPT its typography.
+ *
+ * THE FIREWALL BELOW IS THE REASON. `forbiddenIn` refuses any package carrying a reading-layout key
+ * at any depth, and it names the key rather than stripping it, because a package that claims to
+ * reshape how the recipient reads is malformed by definition. A profile may now hold a typography
+ * opinion locally — but shipping it would produce a package Sard itself refuses to import, and
+ * shipping it successfully would be worse: importing a stranger's look would change how you read.
+ *
+ * So the measure stays HOME. The whole `reading` object is omitted rather than emptied, because the
+ * firewall matches on key NAMES: a `reading: { lineHeight: null }` would trip it exactly as a real
+ * value would. Absent is read back as "no opinion" by `parseTypography`, which is the same thing
+ * every profile written before typography existed already says.
+ */
+function exportable(d: ProfileData): ProfileData {
+  const { reading: _local, ...type } = d.type;
+  return { ...d, type: type as ProfileData["type"] };
 }
 
 export const manifestText = (m: PackageManifest): string => JSON.stringify(m, null, 2);
@@ -212,7 +231,7 @@ export function summarise(i: Extract<Inspection, { ok: true }>): {
   return {
     name: i.manifest.name,
     author: i.manifest.author,
-    themeBase: i.data.theme.base,
+    themeBase: i.data.theme.library.base,
     arabic: i.data.type.arabic,
     latin: i.data.type.latin,
     texture: i.data.texture,

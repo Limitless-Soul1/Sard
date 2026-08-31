@@ -38,6 +38,8 @@ import { autoCoverPaint } from "../AutoCover";
 import { dropIndex, isFinished, pctText, groupShelf, placementPlan, sortKey, type BookGroup } from "./model";
 import { createEdgeScroller, type EdgeScroller } from "./dragScroll";
 import { Icon } from "../../../components/Icon";
+import { displayFaceFor, isArabicText } from "../../../lib/typography";
+
 
 /** The case inks, shared with the sidebar's picker. */
 const INKS = ["#BFA8D6", "#8DC3BA", "#9DC0D6", "#E8C36A", "#D69C9C", "#A8C08D", "#C9A88D", "#9C8DC3"];
@@ -80,7 +82,8 @@ export interface CaseEditorProps {
   /** Re-read everything after a write. */
   onChanged: () => void;
   onClose: () => void;
-  onOpenBookDetails: (b: BookRow) => void;
+  /** The shelf the row was drawn in — a book can be on several, and a move must leave that one. */
+  onOpenBookDetails: (b: BookRow, fromShelf?: string | null) => void;
   /** The Library's toast — every deletion and every failed write is announced through it. */
   notify: (msg: string) => void;
 }
@@ -566,7 +569,9 @@ export function CaseEditor(props: CaseEditorProps) {
               <div
                 style={{
                   padding: "7px 0",
-                  font: rtl ? "700 1.125rem var(--ar)" : "600 1.0625rem var(--book)",
+                  // A translated label, so its script IS the interface language — but it is asked of
+                  // the string rather than assumed, so this reads the same as every other name here.
+                  font: `${isArabicText(t("lib.unfiled")) ? 700 : 600} ${isArabicText(t("lib.unfiled")) ? "1.125rem" : "1.0625rem"} ${displayFaceFor(t("lib.unfiled"))}`,
                   color: "var(--txt)",
                 }}
               >
@@ -585,7 +590,9 @@ export function CaseEditor(props: CaseEditorProps) {
                   border: "1px solid var(--brd)",
                   borderRadius: "var(--r-md)",
                   padding: "7px 10px",
-                  font: rtl ? "700 1.125rem var(--ar)" : "600 1.0625rem var(--book)",
+                  // The case's OWN name, not the interface language: a Latin case name in an Arabic
+                  // interface was being set in the Arabic role.
+                  font: `${isArabicText(name) ? 700 : 600} ${isArabicText(name) ? "1.125rem" : "1.0625rem"} ${displayFaceFor(name)}`,
                   color: "var(--txt)",
                   outline: "none",
                 }}
@@ -947,7 +954,7 @@ export function CaseEditor(props: CaseEditorProps) {
                               if (holdRef.current) window.clearTimeout(holdRef.current);
                               holdRef.current = null;
                             }}
-                            onDetails={() => props.onOpenBookDetails(b)}
+                            onDetails={() => props.onOpenBookDetails(b, s.id)}
                           />
                         ))}
                         {target?.shelfId === s.id &&

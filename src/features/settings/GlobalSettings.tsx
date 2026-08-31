@@ -19,7 +19,7 @@ import { settingsGet, settingsSet } from "../../lib/ipc";
 import { useUpdater } from "../../lib/updater";
 import { FONT_CATALOGUE, UI_SCALE_MAX, UI_SCALE_MIN, useFonts } from "../../lib/fonts";
 // RAWY-265: the Library background surface (measured constants + the apply layer live in the module).
-import { BG_BLUR_MAX, BG_PRESENCE_MAX, bgSrcUrl, useBackground } from "../../lib/background";
+import { BG_BLUR_MAX, BG_PRESENCE_MAX, bgSrcUrl, imageLabel, useBackground } from "../../lib/background";
 import { BOOKMARK_COLORS, BOOKMARK_SHAPES, BOOKMARK_SIZE_MAX, BOOKMARK_SIZE_MIN, useBookmarkStyle } from "../../lib/bookmarkStyle";
 import { BookmarkShape } from "../reader/BookmarkShape";
 import { READ_MARKERS, useReadMarkerStyle } from "../../lib/readMarkerStyle"; // RAWY-256
@@ -35,6 +35,7 @@ import {
   type ReadingStyle,
 } from "../../reader-engine/injectedCss";
 import { THEMES, THEME_ORDER, currentMode, resolveTheme, useTheme, type ThemeMode } from "../../theme";
+import { useDialog } from "../../components/useDialog";
 
 const STYLE_KEY = "reading_style";
 
@@ -68,16 +69,21 @@ const LANGS = [
 export function GlobalSettings({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t, dir } = useI18n();
   const [section, setSection] = useState<Section>("appearance");
+  // IT ALREADY CLAIMED TO BE A MODAL DIALOG. Measured, it took no focus, trapped no Tab, carried no
+  // name and ignored Escape — while its scrim blocked the pointer, so a keyboard could reach the
+  // library it had covered. Nothing here changes what Settings looks like or does; it makes the
+  // claim true. Escape closes, which is what the scrim and the ✕ already meant.
+  const dlg = useDialog({ onDismiss: onClose, initialFocus: "none" });
   if (!open) return null;
   return (
     <>
       <div className="panel-scrim show" onClick={onClose} />
-      <div className="gs" role="dialog" aria-modal="true" dir={dir}>
+      <div className="gs" ref={dlg.ref} {...dlg.props} dir={dir}>
         {/* left nav */}
         <nav className="gs-nav">
           <div className="gs-brand">
             <Hoopoe size={22} />
-            <span className="gs-brand-name">{t("gs.title")}</span>
+            <span className="gs-brand-name" id={dlg.titleId}>{t("gs.title")}</span>
           </div>
           <div className="gs-nav-list">
             {NAV.map((n) => (
@@ -256,7 +262,9 @@ function LibraryBackgroundSection() {
               }}
               aria-hidden
             />
-            <span className="bg-ctl-name" dir="auto">{library.source_name ?? ""}</span>
+            <span className="bg-ctl-name" dir="auto" title={imageLabel(library.source_name).full}>
+              {imageLabel(library.source_name).label}
+            </span>
             <button className="bg-ctl-act" disabled={busy} aria-busy={busy} onClick={pick}>
               {busy && <span className="bg-ctl-spin" aria-hidden />}
               {busy ? t("gs.bg.preparing") : t("gs.bg.replace")}
@@ -966,7 +974,11 @@ function AboutSection() {
       <div className="gs-about">
         <Hoopoe size={34} />
         <div>
-          <div className="gs-about-name">Sard · سَرْد</div>
+          {/* The bilingual wordmark. Two spans, because one element cannot carry two faces and
+              the mark's halves are set in different ones — see src/lib/typography.ts. */}
+          <div className="gs-about-name">
+            Sard <span aria-hidden>·</span> <span className="brand-ar">سَرْد</span>
+          </div>
           <div className="gs-about-tag">{t("gs.about.tagline")}</div>
           <div className="gs-about-ver">{t("gs.about.version")} {ver}</div>
           {betaId && (

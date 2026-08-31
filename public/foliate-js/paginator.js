@@ -1050,7 +1050,17 @@ export class Paginator extends HTMLElement {
     #canGoToIndex(index) {
         return index >= 0 && index <= this.sections.length - 1
     }
+    // ---- SARD LOCAL PATCH 12a (P7) — refuse an index that does not name a section ----
+    // `#adjacentIndex` RETURNS UNDEFINED at the ends of the book (its for-loop simply falls out), and
+    // two callers pass that straight through: `#turnPage` below, and prevSection/nextSection. The
+    // line under this one then evaluates `this.sections[undefined].load()` — and because that `.load()`
+    // is OUTSIDE the `.catch()` on the promise chain, the TypeError is thrown SYNCHRONOUSLY and escapes
+    // `#goTo` entirely rather than being logged as "Failed to load section".
+    // The predicate is upstream's own, unchanged; it already rejects `undefined` (`undefined >= 0` is
+    // false) and an empty `sections` array (length - 1 === -1), which is the still-loading case.
     async #goTo({ index, anchor, select}) {
+        if (!this.#canGoToIndex(index)) return
+        // ---- end SARD LOCAL PATCH 12a ----
         if (index === this.#index) await this.#display({ index, anchor, select })
         else {
             const oldIndex = this.#index
@@ -1120,14 +1130,23 @@ export class Paginator extends HTMLElement {
             return
         }
         this.#locked = true
-        const prev = dir === -1
-        const shouldGo = await (prev ? this.#scrollPrev(distance) : this.#scrollNext(distance))
-        if (shouldGo) await this.#goTo({
-            index: this.#adjacentIndex(dir),
-            anchor: prev ? () => 1 : () => 0,
-        })
-        if (shouldGo || !this.hasAttribute('animated')) await wait(100)
-        this.#locked = false
+        // ---- SARD LOCAL PATCH 12b (P7) — release the lock even if the body rejects ----
+        // Upstream clears `#locked` on the statement after the awaits, so ONE rejection anywhere above
+        // leaves it set for the lifetime of the view and every later turn takes the early return at the
+        // top of this function. Page turning is then dead in BOTH directions, silently, with nothing
+        // after the original throw to say so. `finally` is the whole fix; the happy path is unchanged.
+        try {
+            const prev = dir === -1
+            const shouldGo = await (prev ? this.#scrollPrev(distance) : this.#scrollNext(distance))
+            if (shouldGo) await this.#goTo({
+                index: this.#adjacentIndex(dir),
+                anchor: prev ? () => 1 : () => 0,
+            })
+            if (shouldGo || !this.hasAttribute('animated')) await wait(100)
+        } finally {
+            this.#locked = false
+        }
+        // ---- end SARD LOCAL PATCH 12b ----
         const pending = this.#pendingTurn
         if (pending) {
             this.#pendingTurn = null

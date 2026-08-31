@@ -24,7 +24,7 @@ import {
 import { useBookmarkStyle } from "../../lib/bookmarkStyle";
 import { applyBackgrounds, initBackground, useBackground } from "../../lib/background";
 import { applyTexture } from "../../lib/texture";
-import { useFonts } from "../../lib/fonts";
+import { applyUiFontVar, useFonts } from "../../lib/fonts";
 import { useReadMarkerStyle } from "../../lib/readMarkerStyle";
 import { PAGE_WIDTH_DEFAULT } from "../../reader-engine/injectedCss";
 import { useReader } from "../../reader-engine/store";
@@ -33,11 +33,17 @@ import { resolveTheme, setCustomThemes } from "../../theme/resolve";
 import { useTheme } from "../../theme/store";
 import type { CustomThemeId, Theme } from "../../theme/tokens";
 import {
+  ICON_FRAME_DEFAULT,
   PROFILE_DATA_VERSION,
+  cleanProfileName,
   parseProfileData,
   profileRefs,
   profileSettings,
   profileTheme,
+  profileReadingTheme,
+  readingThemeId,
+  type ProfileTheme,
+  EMPTY_TYPOGRAPHY,
   readingPatch,
   serialiseProfileData,
   type Profile,
@@ -104,10 +110,20 @@ export const useProfiles = create<ProfilesState>((_set, get) => ({
   byId: (id) => get().profiles.find((p) => p.id === id),
 }));
 
-/** Register every profile's theme so `resolveTheme` can find it. Replaces wholesale. */
+/**
+ * Register every profile's themes so `resolveTheme` can find them. Replaces wholesale.
+ *
+ * TWO ENTRIES PER PROFILE now: the library's palette under `p.id` — unchanged, so every `theme_id`
+ * already on disk still resolves — and the reading palette under `readingThemeId(p.id)`. The
+ * registry maps one id to one theme, so two palettes need two keys; nothing else has to know,
+ * because both are ordinary custom ids to everything downstream.
+ */
 function registerThemes(profiles: Profile[]): void {
   const m = new Map<CustomThemeId, Theme>();
-  for (const p of profiles) m.set(p.id, profileTheme(p));
+  for (const p of profiles) {
+    m.set(p.id, profileTheme(p));
+    m.set(readingThemeId(p.id), profileReadingTheme(p));
+  }
   setCustomThemes(m);
 }
 
@@ -156,8 +172,10 @@ export async function initProfiles(): Promise<void> {
  */
 async function reassertProfileValues(p: Profile): Promise<void> {
   await settingsSet("theme_id", p.id).catch(console.error);
-  await settingsSet("book_theme_id", p.id).catch(console.error);
-  await patchReadingFonts(p.data.type.arabic, p.data.type.latin);
+  // The READING palette's own id — the same value `profileSettings` writes. Re-asserting `p.id`
+  // here would quietly put the book back on the library's palette every time this ran.
+  await settingsSet("book_theme_id", readingThemeId(p.id)).catch(console.error);
+  await patchReadingStyle(readingPatch(p));
 }
 
 /** Re-read from the database. Used after any write, so the store is never a second source of truth. */
@@ -171,14 +189,17 @@ export async function refreshProfiles(): Promise<void> {
 // ---- applying -----------------------------------------------------------------------------------
 
 /**
- * Patch `reading_style` at exactly two fields, preserving the other twenty-seven.
+ * Patch `reading_style` at the fields a profile names, preserving every other one.
+ *
+ * It used to take exactly the two faces; it now takes whatever `readingPatch` produced, which is the
+ * faces plus each typography field the profile has an opinion about. Absent stays absent.
  *
  * Reads the raw blob rather than going through `loadGlobalStyle`, deliberately: that helper fills in
  * every absent field from the per-script defaults, so writing its result back would MATERIALISE
  * defaults the reader never chose into their row. Patching the raw text leaves absent fields absent,
  * and absent is how "follow the default" is spelled.
  */
-async function patchReadingFonts(arabicFont: string, latinFont: string): Promise<void> {
+async function patchReadingStyle(patch: Record<string, unknown>): Promise<void> {
   const raw = await settingsGet(READING_KEY).catch(() => null);
   let blob: Record<string, unknown> = {};
   if (raw) {
@@ -189,8 +210,9 @@ async function patchReadingFonts(arabicFont: string, latinFont: string): Promise
       /* an unreadable row is replaced by the two fields alone, not by a whole default style */
     }
   }
-  blob.arabicFont = arabicFont;
-  blob.latinFont = latinFont;
+  // Only the keys the profile actually carries. A field it has no opinion about is not in `patch`
+  // at all, so the reader's own value stays exactly where it was — which is the whole contract.
+  Object.assign(blob, patch);
   await settingsSet(READING_KEY, JSON.stringify(blob)).catch(console.error);
 }
 
@@ -202,20 +224,22 @@ async function patchReadingFonts(arabicFont: string, latinFont: string): Promise
  */
 export async function applyProfile(p: Profile): Promise<void> {
   for (const [k, v] of profileSettings(p)) await settingsSet(k, v).catch(console.error);
-  const { arabicFont, latinFont } = readingPatch(p);
-  await patchReadingFonts(arabicFont, latinFont);
+  await patchReadingStyle(readingPatch(p));
 
   const theme = profileTheme(p);
-  setCustomThemes(new Map(useProfiles.getState().profiles.map((x) => [x.id, profileTheme(x)])));
+  registerThemes(useProfiles.getState().profiles);
   applyTheme(theme);
-  useTheme.setState({ themeId: p.id, bookThemeId: p.id });
+  // THE LIBRARY AND THE BOOK, SEPARATELY. This wrote `p.id` to both, which made a profile the one
+  // thing in the application that forced the two scopes together — `theme/store.ts` keeps them
+  // apart everywhere else, and `setBookTheme` says so in as many words.
+  useTheme.setState({ themeId: p.id, bookThemeId: readingThemeId(p.id) });
 
   useFonts.setState({ uiFont: p.data.type.ui });
-  applyUiFont(p.data.type.ui);
+  applyUiFontVar(p.data.type.ui); // lib/fonts.ts owns the stack; applying it here skips re-persisting
 
   useBookmarkStyle.setState({
     shape: p.data.marks.bookmarkShape,
-    color: p.data.theme.bookmark ?? p.data.theme.colors.accent,
+    color: p.data.theme.reading.bookmark ?? p.data.theme.reading.colors.accent,
     pos: p.data.marks.bookmarkPos,
     size: p.data.marks.bookmarkSize,
   });
@@ -251,23 +275,33 @@ export async function applyProfile(p: Profile): Promise<void> {
   useProfiles.setState({ activeId: p.id });
 }
 
-/** The `--ui-font` write, mirroring `lib/fonts.ts` without re-persisting. */
-function applyUiFont(family: string | null): void {
-  const root = document.documentElement;
-  if (family && family.trim()) {
-    root.style.setProperty(
-      "--ui-font",
-      `"${family}", "SardUILatin", "SardUIArabic", system-ui, "Segoe UI", sans-serif`,
-    );
-  } else {
-    root.style.removeProperty("--ui-font");
-  }
-}
-
 // ---- creating, duplicating, deleting -------------------------------------------------------------
 
 const newId = (): CustomThemeId =>
   `u:${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}` as CustomThemeId;
+
+/**
+ * One live theme, as a profile stores a palette.
+ *
+ * `base` records lineage and is only meaningful for a SHIPPED theme: a custom id names another
+ * profile, which is not a preset anything can be reset to.
+ */
+function snapshotPalette(theme: Theme, id: string, bookmark: string): ProfileTheme {
+  return {
+    base: typeof id === "string" && !id.startsWith("u:") ? (id as never) : null,
+    dark: theme.dark,
+    colors: theme.colors,
+    highlightAlpha: theme.highlightAlpha,
+    bookmark,
+    separator: null,
+    // Captured with no number ink: the digits follow the text until a reader asks otherwise.
+    numbers: null,
+    // Captured with no relief of its own — and that is the faithful capture, not a lossy one. The
+    // theme handed in here is the RESOLVED one, so any relief in force is already inside `colors`;
+    // storing it a second time as a step would apply it twice.
+    relief: null,
+  };
+}
 
 /** Everything Sard looks like right now, as a profile's worth of data. */
 export async function captureCurrent(): Promise<ProfileData> {
@@ -280,15 +314,24 @@ export async function captureCurrent(): Promise<ProfileData> {
   const reading = await currentReadingFonts();
   return {
     v: PROFILE_DATA_VERSION,
+    // BOTH SURFACES, AS THEY ACTUALLY ARE. "Everything Sard looks like right now" has always meant
+    // two things since the theme store split them; it simply had nowhere to put the second one.
+    // The library takes `themeId` and the book takes `bookThemeId`, so a profile captured while the
+    // two differ keeps that difference instead of flattening it.
     theme: {
-      base: typeof t.bookThemeId === "string" && !t.bookThemeId.startsWith("u:") ? (t.bookThemeId as never) : null,
-      dark: theme.dark,
-      colors: theme.colors,
-      highlightAlpha: theme.highlightAlpha,
-      bookmark: bm.color,
-      separator: null,
+      library: snapshotPalette(resolveTheme(t.themeId), t.themeId, bm.color),
+      reading: snapshotPalette(theme, t.bookThemeId, bm.color),
     },
-    type: { ui: fonts.uiFont, arabic: reading.arabicFont, latin: reading.latinFont },
+    type: {
+      ui: fonts.uiFont,
+      arabic: reading.arabicFont,
+      latin: reading.latinFont,
+      // A profile captured from "how Sard looks now" takes NO typography opinion. Capturing the
+      // reader's live measure would make every new profile silently override size and leading on
+      // every switch, which is the behaviour `null` exists to prevent. The reader opts in from the
+      // typography chapter instead.
+      reading: { ...EMPTY_TYPOGRAPHY },
+    },
     marks: {
       bookmarkShape: bm.shape,
       bookmarkSize: bm.size,
@@ -305,6 +348,9 @@ export async function captureCurrent(): Promise<ProfileData> {
         ref: bgs.reading?.id ?? null,
         params: { ...bgs.readingParams },
         sameAsLibrary: false,
+        // Captured with no overlay of its own: the theme's colour, which is what a capture of
+        // "how Sard looks now" means when nothing has overridden it.
+        overlay: null,
       },
     },
     // Texture has no global setting to capture: today every surface is opaque, and `opaque` writes
@@ -314,6 +360,9 @@ export async function captureCurrent(): Promise<ProfileData> {
     // defaults draw the name's initial in the profile's own face, which is what a seal has always
     // looked like.
     seal: { face: "profile", glyph: "initial" },
+    // Nor has the framing: a profile captured from "how Sard looks now" has no mark of its own yet,
+    // and dead centre at `cover` is what a mark has always been drawn at.
+    icon: { ...ICON_FRAME_DEFAULT },
   };
 }
 
@@ -374,7 +423,7 @@ export async function createProfile(name: string, data: ProfileData, derivedFrom
   const now = Math.floor(Date.now() / 1000);
   const p: Profile = {
     id: newId(),
-    name: name.trim() || null,
+    name: cleanProfileName(name),
     description: null,
     author: null,
     iconKind: "seal",
@@ -390,7 +439,9 @@ export async function createProfile(name: string, data: ProfileData, derivedFrom
 }
 
 export async function saveProfile(p: Profile): Promise<void> {
-  await profileSave(toRow(p));
+  // ONE PLACE DECIDES WHAT A STORED NAME LOOKS LIKE. Every editor, sheet and dialog reaches the
+  // database through here, so the rule cannot be skipped by a path that forgot it.
+  await profileSave(toRow({ ...p, name: cleanProfileName(p.name) }));
   await refreshProfiles();
   if (useProfiles.getState().activeId === p.id) await applyProfile(p);
 }

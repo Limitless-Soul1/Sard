@@ -24,6 +24,11 @@
   font-weight: 500 700; font-display: swap;
   unicode-range: U+0600-06FF, U+0750-077F, U+08A0-08FF, U+FB50-FDFF, U+FE70-FEFF, U+200C-200F;
 }
+/* Noto Naskh is offered in the APP-font picker (fonts.ts FONT_CATALOGUE) and was registered only
+   for the book iframe, so choosing it as the application font did nothing at all on this side: the
+   family was unknown here and the stack fell through to the next entry. */
+@font-face { font-family: "NotoNaskhArabic"; src: url("/fonts/NotoNaskhArabic.ttf") format("truetype"); font-weight: 400 700; font-display: swap; }
+
 /* Display / wordmark Arabic face */
 @font-face { font-family: "ArefRuqaa"; src: url("/fonts/ArefRuqaa-Regular.ttf") format("truetype"); font-weight: 400; font-display: swap; }
 @font-face { font-family: "ArefRuqaa"; src: url("/fonts/ArefRuqaa-Bold.ttf") format("truetype"); font-weight: 700; font-display: swap; }
@@ -48,6 +53,59 @@
      weight control (Regular/Medium/Bold). Numeric App-font SIZE is RAWY-92 (chrome-only scaling). */
   --ui-font: "SardUILatin", "SardUIArabic", system-ui, "Segoe UI", sans-serif;
   --ui-weight: 400;
+
+  /* ---- THE THREE TYPOGRAPHY ROLES ----------------------------------------------------------
+     Declared here, on :root, and nowhere else. They were previously defined on `.libd-root`, which
+     meant anything drawn outside the library shell — a portal on `document.body`, the Grid caption
+     stylesheet, the quote card on its way to a PNG — could not see them, and reached for a family
+     name instead. Three faces leaked in that way, and a book's title ended up with five different
+     treatments across the five formats. See `src/lib/typography.ts` for what each role means and
+     `tests/unit/typographyRoles.test.ts` for the check that keeps them from drifting again.
+
+     CHROME is one family name covering both scripts, because the two Plex faces are joined by
+     `unicode-range` above. BOOK is not: Amiri and Literata are unrelated families, so the caller
+     says which script the text is in.
+
+     ---- THE ROLES DO NOT OWN FAMILIES; THEY OWN FALLBACK CHAINS ----
+     Each role reads a *-font BASE, and `lib/fonts.ts` writes all three bases from the ONE family the
+     reader chooses in Settings. The values below are what those bases hold when the reader has
+     chosen nothing, so the default appearance is exactly what it always was.
+
+     This is the fix for a real fault: `--ui-font` used to be the only runtime value, and `--book`,
+     `--ar` and `--brand-ar` were constants nothing ever wrote. So changing the application font
+     moved the chrome and the Latin half of the wordmark, and left every Arabic title, the Arabic
+     half of the wordmark, and the quote on a generated card exactly where they were. Arabic was
+     systematically the script left behind, because the design rule "Arabic is always --ar" routed
+     every Arabic name to a family the setting could not reach.
+
+     A role still decides SIZE, WEIGHT, LEADING and — the part that matters here — WHAT TO FALL BACK
+     TO when the chosen face cannot draw the script in front of it. That is the browser's own glyph
+     coverage doing the work, per role, rather than a silent jump to something unrelated.
+
+     ---- THE DEFAULT IS A CHOICE, NOT THE ABSENCE OF ONE ----
+     These three bases all START FROM THE APPLICATION FONT — the IBM Plex pair — and keep Literata
+     and Amiri only as deeper fallbacks. That is the fix for the fault the owner actually hit.
+
+     "IBM Plex Sans Arabic" is offered in the font picker like any other face, but the catalogue
+     writes it as the EMPTY STRING (`{ id: "plex", css: "" }`), because empty also means "nothing
+     chosen". `applyUiFontVar` read it as the latter and removed every override — so selecting IBM
+     handed the roles back to whatever the bases held. When those bases named Literata and Amiri,
+     choosing IBM produced FIVE families on one screen: Plex chrome, Plex Latin titles, AMIRI Arabic
+     titles, Plex authors, an Amiri half of the wordmark, and a Literata quote on a generated card.
+     Measured, not supposed.
+
+     So Amiri and Literata are now faces a reader can CHOOSE, not faces that arrive unbidden. The
+     role hierarchy is untouched: which text is a name and which is chrome, which is display scale
+     and which is label scale, and which script each is in, all still decide size, weight and the
+     fallback order. Only the FAMILY is now the reader's, everywhere at once. */
+  --book-font: "SardUILatin", "SardUIArabic", "Literata", Georgia, serif;
+  --ar-font: "SardUIArabic", "SardUILatin", "Amiri", serif;
+
+  --ui: var(--ui-font);                     /* chrome — what the app says */
+  --book: var(--book-font);                 /* a book's own name, Latin */
+  --ar: var(--ar-font);                     /* a book's own name, Arabic */
+  --brand: var(--ui-font);                  /* the wordmark, Latin half */
+  --brand-ar: var(--ar-font);               /* the wordmark, Arabic half */
   /* RAWY-98 — chrome-only UI scale (D35). The root font-size is an AUTO viewport baseline × the
      user's manual size. ALL chrome type is authored in `rem`, so it rides this one value; the
      foliate BOOK iframe is a separate document that never inherits it (book size stays the reading
@@ -175,7 +233,10 @@ html, body, #root {
 /* "Match window" — the sheet fills the window (leaving a sliver of desk), single column kept */
 .page-sheet.fitw { inline-size: min(100%, 96vw); }
 /* dark themes: swap the warm cast for a subtle inset light edge */
-:root[data-dark="true"] .page-sheet {
+/* THE PAGE'S HAIRLINE FOLLOWS THE BOOK, NOT THE APP. `data-dark` on `:root` is the interface's own
+   polarity — 30 chrome rules read it. This is the single page-side rule among them, and the paper it
+   is drawn on belongs to the reading palette, so it reads the reader's own attribute instead. */
+.reader-root[data-book-dark="true"] .page-sheet {
   box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.05), inset -1px 0 0 rgba(255, 255, 255, 0.05);
 }
 /* Sard is a single-column "page on desk": force foliate to ONE column AND let that column
@@ -225,8 +286,9 @@ html, body, #root {
 /* ================================================================================================
    RAWY-146: Moonlit Sky — Phase 2 DECORATIONS (crescent / stars / glow / cloud). A purely additive
    LAYER on top of the RAWY-145 colour theme — NO component markup/layout changes (these are CSS
-   pseudo-elements on EXISTING containers). SCOPED to Moonlit only via `:root[data-theme="moonlit"]`
-   (applyTheme sets that attribute), so the other 15 themes render zero decoration. GPU-cheap: static
+   pseudo-elements on EXISTING containers). SCOPED to Moonlit only via
+   `.reader-root[data-book-theme="moonlit"]` — the BOOK's theme, set by the Reader, because this is
+   scenery for reading and not for the app around it — so the other 15 themes render zero decoration. GPU-cheap: static
    `background-image` layers of the reusable `/moonlit/*.svg` assets + radial-gradient glows — NO
    per-frame animation. `pointer-events:none` so nothing is ever intercepted; `isolation:isolate` on
    the host + a `z-index:-1` pseudo keep the decoration ABOVE the container's own background but BEHIND
@@ -240,7 +302,7 @@ html, body, #root {
    clear (a right panel only opens transiently). Stars are denser (both margins — right always shows,
    left shows when Contents is closed), 2 side clouds added, and the glow is stronger. Still behind the
    opaque centred page sheet → the text column is never touched. */
-:root[data-theme="moonlit"] .reader-desk { isolation: isolate; }
+.reader-root[data-book-theme="moonlit"] .reader-desk { isolation: isolate; }
 /* RAWY-201 (D50): a custom BACKGROUND colour REPLACES the decorations — a plain colour under the clouds
    would clash. When the reader-desk carries `.custom-bg` (set only when backgroundColor is a real value),
    the decoration layer is not drawn, so the custom colour reads as intentional, not orphaned clouds. */
@@ -248,7 +310,7 @@ html, body, #root {
    Its specificity (0,4,1) beat the image rule's (0,3,1), so on Moonlit a custom colour silently hid
    a chosen wallpaper — the same defect as the D50 precedence rule below, reached by a second path.
    With no wallpaper this is unchanged: a custom colour still replaces the decorations, as D50 says. */
-:root[data-theme="moonlit"]:not([data-bg-reading="on"]) .reader-desk.custom-bg::before { content: none; }
+:root:not([data-bg-reading="on"]) .reader-root[data-book-theme="moonlit"] .reader-desk.custom-bg::before { content: none; }
 /* RAWY-265 (Phase 2): a reading BACKGROUND IMAGE also replaces the decorations — the same D50 rule,
    for the same reason (a crescent, a star field and a photograph competing for one strip of margin is
    clutter). It is expressed by EXCLUDING the decoration from matching, not by `content: none`, because
@@ -256,7 +318,7 @@ html, body, #root {
    decoration, and `content: none` would kill the replacement along with the thing being replaced.
    Scoping the decoration away frees the slot cleanly and keeps a single owner per pseudo-element —
    no specificity race between two rules that both want to paint here. */
-:root[data-theme="moonlit"]:not([data-bg-reading="on"]) .reader-desk::before {
+:root:not([data-bg-reading="on"]) .reader-root[data-book-theme="moonlit"] .reader-desk::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -367,7 +429,7 @@ html, body, #root {
   height: 42px;
   border-radius: 50%;
   border: 1px solid var(--chrome-border);
-  background: color-mix(in srgb, var(--chrome-bg) calc(92% * var(--ui-texture-scale, 1)), transparent);
+  background: color-mix(in srgb, var(--chrome-bg) calc(var(--ui-floor, 0%) + (92% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
   backdrop-filter: blur(6px);
   box-shadow: 0 3px 10px rgba(40, 28, 14, 0.12);
   color: var(--text);
@@ -431,7 +493,7 @@ html, body, #root {
      backdrop-blur re-blurred the whole column on every scroll (the RAWY-169 compositor cost, the pill
      already fixed). A more-opaque ground (88% → 96%) + a small blur (8px → 4px) keeps the frosted feel
      for a fraction of the GPU work. */
-  background: color-mix(in srgb, var(--chrome-bg) calc(96% * var(--ui-texture-scale, 1)), transparent);
+  background: color-mix(in srgb, var(--chrome-bg) calc(var(--ui-floor, 0%) + (96% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
   backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
   transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
   /* PINNED (RAWY-32/D21): force LTR so nav stays physical-LEFT and the control cluster stays
@@ -478,7 +540,7 @@ html, body, #root {
      sit on). The 10px radius is written literally rather than as `--r-md` (9px) on purpose: the
      whole toolbar is 10px, and moving nine controls by a pixel for token tidiness would be
      normalising a number, not fixing an inconsistency. Recorded for 5.G instead. */
-  width: var(--ctl-2xl); height: var(--ctl-2xl); border-radius: 10px;
+  width: var(--ctl-2xl); height: var(--ctl-2xl); border-radius: var(--r-md);
   background: var(--rc-surface); border: 1px solid var(--chrome-border);
   box-shadow: 0 1px 2px rgba(40, 28, 14, 0.06);
   color: var(--text); cursor: pointer;
@@ -497,11 +559,11 @@ html, body, #root {
 .rc-btns { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
 .rc-divider { width: 1px; height: 34px; background: var(--chrome-border); margin: 0 3px; }
 .rc-btn {
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  display: flex; flex-direction: column; align-items: center; gap: var(--sp-2);
   border: 0; background: transparent; cursor: pointer; padding: 0;
 }
 .rc-btn-ico {
-  width: 48px; height: 44px; border-radius: 10px;
+  width: 48px; height: 44px; border-radius: var(--r-md);
   background: var(--rc-surface); border: 1px solid var(--chrome-border);
   color: var(--text);
   display: inline-flex; align-items: center; justify-content: center;
@@ -518,7 +580,7 @@ html, body, #root {
 .rc-basket .rc-btn-ico { position: relative; overflow: visible; }
 .rc-basket-badge {
   position: absolute; top: -8px; right: -8px; min-width: 19px; height: 19px; padding: 0 4px;
-  border-radius: 10px; background: var(--accent); color: var(--paper-bg);
+  border-radius: var(--r-md); background: var(--accent); color: var(--paper-bg);
   font: 700 0.6875rem var(--ui-font); line-height: 19px; text-align: center;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); pointer-events: none;
 }
@@ -526,7 +588,7 @@ html, body, #root {
 
 /* button glyphs (currentColor follows the ico → flips to paper colour on the accent .on face).
    RAWY-66: scaled up proportionally (~15%) with the enlarged .rc-btn-ico box. */
-.ico-aa { font: 600 1.1875rem "Literata", serif; }
+.ico-aa { font: 600 1.1875rem var(--book); }
 .ico-aa span { font-size: 0.75rem; }
 .ico-lines { display: flex; flex-direction: column; gap: 3px; }
 .ico-lines span { width: 17px; height: 2px; background: currentColor; border-radius: 1px; }
@@ -575,7 +637,7 @@ html, body, #root {
   justify-content: center;
   min-width: 22px;
   height: 22px;
-  border-radius: 5px;
+  border-radius: var(--r-sm);
 }
 .rc-icon:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 
@@ -628,7 +690,7 @@ html, body, #root {
 /* Text · Page · Theme tab group (RAWY-34, design band I) — a segmented pill, active raised */
 /* Per-book scope banner (RAWY-40, Band I) — everything in this panel overrides THIS book only. */
 .sp-scope {
-  display: flex; align-items: center; gap: 10px; margin: 12px 16px 6px; padding: 10px 12px;
+  display: flex; align-items: center; gap: var(--sp-5); margin: 12px 16px 6px; padding: 10px 12px;
   border-radius: 9px; background: color-mix(in srgb, #7b59a0 14%, var(--paper-bg));
   border: 1px solid color-mix(in srgb, #7b59a0 28%, transparent);
 }
@@ -651,7 +713,7 @@ html, body, #root {
 /* RAWY-86/141: copy-selection — a full-width, aligned button (the in-PDF find was removed). */
 .sp-pdf-copy {
   width: 100%; padding: 10px 12px; border: 1px solid var(--chrome-border); background: transparent;
-  color: var(--text); font: 500 0.8125rem var(--ui-font); border-radius: 8px; cursor: pointer;
+  color: var(--text); font: 500 0.8125rem var(--ui-font); border-radius: var(--r-md); cursor: pointer;
   transition: border-color 0.15s;
 }
 .sp-pdf-copy:hover { border-color: var(--accent); }
@@ -770,7 +832,17 @@ html, body, #root {
 .sp-reset:disabled { opacity: 0.4; cursor: default; }
 
 /* Per-book TEXT COLOUR inks + contrast guard (RAWY-40, Band I). */
-.rs-inks { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.rs-inks { display: flex; align-items: center; gap: var(--sp-5); flex-wrap: wrap; }
+/* NO COLOUR — the absence of a fill, drawn as one. A diagonal stroke across an empty swatch is the
+   long-standing convention for "none" in a colour row, and it cannot be mistaken for a colour the
+   way any filled chip would be. */
+.rs-ink-none { background: transparent; position: relative; overflow: hidden; }
+.rs-ink-none > span {
+  position: absolute; inset: 0;
+  background: linear-gradient(to top left, transparent calc(50% - 1px),
+    var(--muted) calc(50% - 1px), var(--muted) calc(50% + 1px), transparent calc(50% + 1px));
+}
+
 .rs-ink {
   width: 2.35rem; height: 2.35rem; border-radius: 9px; border: 0; cursor: pointer; padding: 0;
   box-shadow: inset 0 0 0 1px rgba(43, 37, 33, 0.12);
@@ -784,9 +856,29 @@ html, body, #root {
   width: 16px; height: 16px; border-radius: 50%; background: var(--paper-bg); color: var(--text);
   font: 600 0.75rem var(--ui-font); display: flex; align-items: center; justify-content: center;
 }
-.rs-ink-custom input[type="color"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+/* THE CUSTOM SWATCH IS A BUTTON NOW, not a label over a hidden native input — the OS colour dialog
+   is gone from the Reader, so there is no input left to hide. `.rs-ink-wrap` exists only to give the
+   panel below something to be positioned against: the swatch keeps its place in the flex row while
+   the panel spans the row's full width beneath it. */
+.rs-ink-wrap { position: relative; display: inline-flex; }
+.rs-ink-panel {
+  position: absolute; inset-inline-start: 0; top: calc(100% + 10px); z-index: 20;
+  width: max-content; min-width: 15rem; padding: 12px;
+  background: var(--chrome-bg); border: 1px solid var(--chrome-border); border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(20, 14, 6, 0.28);
+}
+/* ABOVE THE SWATCH, when there is no room under it. The inline axis is corrected by a measured
+   `translateX` on the element itself; only the flip needs a rule, because it changes which edge the
+   panel is anchored by rather than how far it is nudged. */
+.rs-ink-panel.above { top: auto; bottom: calc(100% + 10px); }
+/* The row it belongs to must not clip it, and a settings drawer scrolls — so the panel opens toward
+   the start edge and is allowed to size itself rather than stretch. */
+.rs-ink-panel-foot {
+  margin-top: 8px; font: 600 0.6875rem var(--ui-font); color: var(--muted);
+  letter-spacing: 0.02em; text-align: center;
+}
 .rs-contrast {
-  display: flex; align-items: center; gap: 8px; margin-top: 11px; padding: 9px 12px; border-radius: 8px;
+  display: flex; align-items: center; gap: 8px; margin-top: 11px; padding: 9px 12px; border-radius: var(--r-md);
   background: var(--paper-bg); border: 1px solid var(--chrome-border);
   font: 400 0.71875rem/1.45 var(--ui-font); color: var(--muted);
 }
@@ -809,7 +901,7 @@ html, body, #root {
    Filling the row is also what segmented controls conventionally do. The count is fixed at five (the
    PDF drawer returns its own panel entirely), so this is not a responsive-count problem. */
 .sp-tabs {
-  display: flex; flex-wrap: wrap; gap: 3px; margin: 0 16px 4px; padding: 3px; border-radius: 9px;
+  display: flex; flex-wrap: wrap; gap: var(--sp-2); margin: 0 16px 4px; padding: 3px; border-radius: 9px;
   background: color-mix(in srgb, var(--text) 8%, transparent);
 }
 .sp-tab {
@@ -848,7 +940,7 @@ html, body, #root {
 .rs { display: flex; flex-direction: column; gap: 17px; }
 /* scroll anchors for the chrome's Text / Layout / Theme entry points (RAWY-33) */
 .rs-anchor { scroll-margin-top: 4px; height: 0; margin: 0; }
-.rs-sec { display: flex; flex-direction: column; gap: 10px; }
+.rs-sec { display: flex; flex-direction: column; gap: var(--sp-5); }
 .rs-sec-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 22px; }
 .rs-label, .rs-sec-title {
   font: 600 0.6875rem var(--ui-font); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted);
@@ -880,14 +972,14 @@ html, body, #root {
 .rs-outcomes { display: flex; flex-direction: column; gap: 4px; padding: 8px 2px 2px; }
 .rs-outcomes-title { color: var(--muted); font-size: 0.82em; letter-spacing: 0.02em; }
 .rs-outcomes-empty { color: var(--muted); font-size: 0.82em; opacity: 0.85; }
-.rs-outcomes-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 0.82em; }
+.rs-outcomes-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-5); font-size: 0.82em; }
 .rs-outcomes-k { color: var(--muted); flex: 1 1 auto; min-width: 0; }
 .rs-outcomes-v { color: var(--text); font-variant-numeric: tabular-nums; flex: 0 0 auto; text-align: end; }
 .rs-outcomes-note { color: var(--muted); font-size: 0.75em; opacity: 0.8; margin-block-start: 4px; }
 
 /* slider */
 .rs-slider-row { display: flex; align-items: center; gap: 12px; }
-.rs-slider-cap { color: var(--muted); font-family: "Literata", serif; line-height: 1; flex: 0 0 auto; }
+.rs-slider-cap { color: var(--muted); font-family: var(--book); line-height: 1; flex: 0 0 auto; }
 .rs-slider { flex: 1; accent-color: var(--accent); cursor: pointer; height: 4px; min-width: 0; }
 .rs-slider:disabled { opacity: 0.4; cursor: default; }
 .rs-tiny { font: 500 0.625rem var(--ui-font); color: var(--muted); flex: 0 0 auto; }
@@ -899,18 +991,18 @@ html, body, #root {
    needs at the top of the distance range, and without it the lower rule would clip against the box. */
 .rs-ref-preview {
   display: flex; justify-content: center; align-items: center;
-  padding: 18px 14px 30px; margin-top: 12px; border-radius: 10px;
+  padding: 18px 14px 30px; margin-top: 12px; border-radius: var(--r-md);
   background: var(--reader-page, var(--paper-bg)); color: var(--text);
-  font-family: "Literata", serif; overflow: hidden;
+  font-family: var(--book); overflow: hidden;
 }
 
 /* segmented control */
-.rs-seg { display: flex; background: color-mix(in srgb, var(--text) 8%, transparent); border-radius: 8px; padding: 3px; }
+.rs-seg { display: flex; background: color-mix(in srgb, var(--text) 8%, transparent); border-radius: var(--r-md); padding: 3px; }
 .rs-seg-item {
   flex: 1; border: 0; background: transparent; cursor: pointer; padding: 7px 10px; border-radius: 6px;
   color: var(--muted); font: 500 0.75rem var(--ui-font); white-space: nowrap;
 }
-.rs-seg-item.on { background: var(--paper-bg); color: var(--accent); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+.rs-seg-item.on { color: var(--accent-text); }
 .rs-sec-head .rs-seg { padding: 2px; }
 .rs-sec-head .rs-seg-item { padding: 4px 11px; }
 
@@ -923,7 +1015,7 @@ html, body, #root {
 .rs-toggle-label { font: 500 0.8125rem var(--ui-font); color: var(--text); }
 .rs-toggle-hint { font: 400 0.6875rem var(--ui-font); color: var(--muted); }
 /* RAWY-200: read-aloud tracking — layout only; the controls inside reuse rs-ink/rs-slider/rs-toggle. */
-.rs-track { display: flex; flex-direction: column; gap: 10px; }
+.rs-track { display: flex; flex-direction: column; gap: var(--sp-5); }
 .rs-track-effect { display: flex; flex-direction: column; gap: 8px; }
 .rs-track-effect + .rs-track-effect { margin-top: 4px; }
 .rs-track-opacity { gap: 8px; }
@@ -934,7 +1026,7 @@ html, body, #root {
    on the master is visible rather than silently doing nothing. Matches the existing disabled-opacity pattern. */
 .rs-toggle-row:disabled { opacity: 0.42; cursor: default; }
 .rs-switch {
-  flex: 0 0 auto; width: 40px; height: 23px; border-radius: 23px; position: relative;
+  flex: 0 0 auto; width: 40px; height: 23px; border-radius: var(--r-pill); position: relative;
   background: color-mix(in srgb, var(--text) 18%, transparent); transition: background 0.18s ease;
 }
 .rs-switch.on { background: var(--accent); }
@@ -962,13 +1054,15 @@ html, body, #root {
 /* typeface select row */
 .rs-select-row {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 10px 14px; background: var(--paper-bg); border: 1px solid var(--chrome-border); border-radius: 8px;
+  padding: 10px 14px; background: var(--paper-bg); border: 1px solid var(--chrome-border); border-radius: var(--r-md);
 }
 .rs-select-label { font: 500 0.75rem var(--ui-font); color: var(--muted); }
 .rs-select-wrap { position: relative; display: flex; align-items: center; }
 .rs-select {
   appearance: none; -webkit-appearance: none; border: 0; background: transparent; color: var(--text);
-  font: 500 0.9375rem "Literata", "SardUIArabic", serif; cursor: pointer; padding-inline-end: 16px; text-align: end;
+  /* A CONTROL. Its options are font NAMES — the app's own vocabulary — so it takes the chrome
+     face in both scripts, and follows the app font the reader chose in Settings. */
+  font: 500 0.9375rem var(--ui); cursor: pointer; padding-inline-end: 16px; text-align: end;
 }
 .rs-select-caret { position: absolute; inset-inline-end: 0; pointer-events: none; color: var(--muted); font-size: 0.6875rem; }
 .rs-select option { color: #1a1a1a; }
@@ -976,8 +1070,8 @@ html, body, #root {
 /* theme swatches */
 /* RAWY-29: a 4-column grid so all 15 themes wrap cleanly (was a 4-up flex row); the panel
    body scrolls if the rows exceed its height. */
-.rs-swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px 10px; }
-.rs-swatch-cell { display: flex; flex-direction: column; align-items: center; gap: 7px; border: 0; background: transparent; cursor: pointer; min-width: 0; }
+.rs-swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-5); }
+.rs-swatch-cell { display: flex; flex-direction: column; align-items: center; gap: var(--sp-4); border: 0; background: transparent; cursor: pointer; min-width: 0; }
 .rs-swatch { width: 100%; height: 42px; border-radius: 6px; border: 1px solid var(--chrome-border); }
 .rs-swatch.on { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg); border-color: transparent; }
 .rs-swatch-name { font: 500 0.625rem var(--ui-font); color: var(--muted); }
@@ -1105,7 +1199,7 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--sp-5);
   padding: 16px 16px 10px;
   border-bottom: 1px solid var(--chrome-border);
 }
@@ -1133,8 +1227,8 @@ html, body, #root {
    TWO-ROW layout so the three Arabic tab labels + counts + close never overflow the 300px panel (the
    old single row pushed the ✕ off the panel edge in RTL). Row 1 = a quiet eyebrow label + a round
    close ✕; row 2 = the segmented tab track. Colours are THEME TOKENS so it adapts across all 15 themes. */
-.rp-head-anno { flex-direction: column; align-items: stretch; gap: 11px; padding: 11px 13px 12px; }
-.rp-eyebrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.rp-head-anno { flex-direction: column; align-items: stretch; gap: var(--sp-5); padding: 11px 13px 12px; }
+.rp-eyebrow { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-5); }
 .rp-eyebrow-label {
   font: 700 0.65625rem var(--ui-font); letter-spacing: 0.02em; color: var(--muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1149,7 +1243,7 @@ html, body, #root {
 .rp-x-round:hover { background: color-mix(in srgb, var(--text) 14%, transparent); color: var(--text); }
 .rp-meta { padding: 8px 18px 4px; font: 400 var(--fs-tiny) var(--ui-font); color: var(--muted); }
 .rp-hint {
-  margin: 8px 14px 4px; padding: 7px 11px; border-radius: 7px;
+  margin: 8px 14px 4px; padding: 7px 11px; border-radius: var(--r-sm);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   font: 400 0.6875rem var(--ui-font); color: var(--muted);
 }
@@ -1177,7 +1271,7 @@ html, body, #root {
   margin-bottom: 4px; overflow-wrap: anywhere;
 }
 .rp-x-text { font: 400 var(--fs-small)/1.5 var(--ui-font); color: var(--text); overflow-wrap: anywhere; }
-.rp-x-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.rp-x-tags { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: 6px; }
 
 /* ---- RAWY-114: TTS read-aloud player — the design-5a COMPACT FLOATING PILL ---- */
 /* A ~330px pill floating ~26px above the page bottom, centred over the READING AREA (--reading-shift
@@ -1436,7 +1530,7 @@ html, body, #root {
   width: min(380px, calc(100vw - 28px)); /* RAWY-115: modest bump from 330 for breathing room */
   display: flex; flex-direction: column; gap: 4px;
   padding: 8px 10px 10px; border-radius: 16px; border: 1px solid var(--chrome-border);
-  background: color-mix(in srgb, var(--chrome-bg) calc(96% * var(--ui-texture-scale, 1)), transparent);
+  background: color-mix(in srgb, var(--chrome-bg) calc(var(--ui-floor, 0%) + (96% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
   /* RAWY-169/181: the ground is 96% opaque, so a heavy blur barely showed yet cost the compositor a full
      re-blur of the reading area on every size toggle AND on every reading-area repaint behind it during
      playback (BUG 2). Trimmed 7px → 4px (matching the RAWY-177 bars) — same frosted feel, far less GPU. */
@@ -1540,7 +1634,7 @@ html, body, #root {
   min-width: 104px; max-height: 246px; overflow-y: auto; overscroll-behavior: contain;
   padding: 5px; border-radius: 13px; border: 1px solid var(--chrome-border);
   /* Matches `.tts-pill`'s 96% ground; the pill's own 4px blur already frosts what is behind both. */
-  background: color-mix(in srgb, var(--chrome-bg) calc(96% * var(--ui-texture-scale, 1)), transparent);
+  background: color-mix(in srgb, var(--chrome-bg) calc(var(--ui-floor, 0%) + (96% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
   animation: tts-speed-in 0.13s cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -1643,10 +1737,10 @@ html, body, #root {
    descenders would be sliced flat against it — the RAWY-263 scar. */
 .tts-next-plate .tts-next-label {
   flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center;
-  font: 400 1.1875rem/1.35 "Amiri", serif; color: var(--nc-ink);
+  font: 400 1.1875rem/1.35 var(--ar); color: var(--nc-ink);
 }
 [dir="ltr"] .tts-next-plate .tts-next-label,
-.tts-next-plate[dir="ltr"] .tts-next-label { font: 400 0.9375rem/1.35 "Literata", serif; }
+.tts-next-plate[dir="ltr"] .tts-next-label { font: 400 0.9375rem/1.35 var(--book); }
 .tts-next-plate .tts-next-cap {
   flex: none; width: 38px; align-self: stretch;
   display: flex; align-items: center; justify-content: center;
@@ -1885,7 +1979,7 @@ html, body, #root {
   transform: translateX(calc(-50% + var(--reading-shift, 0px)));
   width: min(380px, calc(100vw - 28px)); max-height: min(42vh, 340px); /* RAWY-115: match the wider pill */
   display: flex; flex-direction: column; border-radius: 14px; border: 1px solid var(--chrome-border);
-  background: color-mix(in srgb, var(--chrome-bg) calc(98% * var(--ui-texture-scale, 1)), transparent);
+  background: color-mix(in srgb, var(--chrome-bg) calc(var(--ui-floor, 0%) + (98% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
   /* RAWY-177 (AUD-11): the ground is 98% opaque, so blur(16px) barely showed yet cost a heavy re-blur;
      a small blur keeps the frost for far less GPU work (the RAWY-169 recipe). */
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
@@ -1901,7 +1995,7 @@ html, body, #root {
   position: sticky; top: 0; z-index: 1; text-align: start;
   padding: 8px 8px 4px; margin-top: 6px;
   font: 800 0.6875rem var(--ui-font); letter-spacing: 0.04em; color: var(--accent);
-  background: color-mix(in srgb, var(--chrome-bg) calc(96% * var(--ui-texture-scale, 1)), transparent);
+  background: color-mix(in srgb, var(--chrome-bg) calc(var(--ui-floor, 0%) + (96% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
   backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
 }
 .tts-menu-group:first-child .tts-menu-section { margin-top: 0; }
@@ -2033,7 +2127,7 @@ html, body, #root {
   padding: 9px 15px; border-radius: 18px; cursor: pointer;
   /* RAWY-169: a MORE OPAQUE ground + a SMALL blur (was blur(9px)) — the frosted look is kept but the
      compositor re-blurs far less area on each size toggle, so switching sizes no longer hitches. */
-  background: color-mix(in srgb, var(--chrome-bg) calc(90% * var(--ui-texture-scale, 1)), transparent);
+  background: color-mix(in srgb, var(--chrome-bg) calc(var(--ui-floor, 0%) + (90% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
   border: 1px solid color-mix(in srgb, var(--chrome-border) 70%, transparent);
   backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
   box-shadow: 0 8px 22px rgba(40, 28, 14, 0.22);
@@ -2158,9 +2252,9 @@ html, body, #root {
 
 /* chapters rows */
 .rp-row {
-  display: flex; align-items: baseline; gap: 11px; width: 100%;
+  display: flex; align-items: baseline; gap: var(--sp-5); width: 100%;
   padding: 9px 11px; border: 0; background: transparent; cursor: pointer;
-  border-radius: 7px; text-align: start; color: var(--text);
+  border-radius: var(--r-sm); text-align: start; color: var(--text);
 }
 .rp-row:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
 .rp-row:disabled { cursor: default; opacity: 0.55; }
@@ -2240,7 +2334,7 @@ html, body, #root {
 /* The chooser's preview cell (Global Settings → Bookmark). Three stacked stand-in rows reusing the REAL
    `.toc-row.read/.active` selectors above, so the picker shows exactly what the panel will render — no
    second drawing of the six shapes to drift out of sync. */
-.gs-rm-prev { display: flex; flex-direction: column; gap: 3px; inline-size: 46px; }
+.gs-rm-prev { display: flex; flex-direction: column; gap: var(--sp-2); inline-size: 46px; }
 .gs-rm-prev .toc-row {
   position: relative; display: block; block-size: 7px; inline-size: 100%;
   border: 0; padding: 0; border-radius: 2px;
@@ -2263,25 +2357,25 @@ html, body, #root {
 /* search input */
 .sp-search-field {
   display: flex; align-items: center; gap: 8px; margin: 4px 12px 10px;
-  padding: 9px 12px; border-radius: 10px; background: var(--paper-bg);
+  padding: 9px 12px; border-radius: var(--r-md); background: var(--paper-bg);
   border: 1px solid var(--chrome-border);
 }
 .sp-search-field:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 .sp-search-ico { display: inline-flex; color: var(--muted); flex: none; }
 .sp-search-input {
   flex: 1; min-width: 0; border: 0; background: transparent; outline: none;
-  font: 400 0.875rem "Literata", "SardUIArabic", serif; color: var(--text);
+  font: 400 0.875rem var(--ui); color: var(--text);
 }
 .sp-search-input::placeholder { color: var(--muted); }
 .sp-search-clear {
   flex: none; border: 0; background: transparent; cursor: pointer; color: var(--muted);
-  font: 300 0.9375rem var(--ui-font); line-height: 1; padding: 2px 4px; border-radius: 5px;
+  font: 300 0.9375rem var(--ui-font); line-height: 1; padding: 2px 4px; border-radius: var(--r-sm);
 }
 .sp-search-clear:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 /* spoiler-safe toggle (app furniture — reuses .rp-switch) */
 .sp-spoiler {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; width: calc(100% - 24px);
-  margin: 0 12px 8px; padding: 10px 12px; border-radius: 10px; cursor: pointer; text-align: start;
+  margin: 0 12px 8px; padding: 10px 12px; border-radius: var(--r-md); cursor: pointer; text-align: start;
   border: 1px solid var(--chrome-border);
   background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
@@ -2305,14 +2399,18 @@ html, body, #root {
 .sr-chapter { flex: 1; min-width: 0; font: 700 var(--fs-tiny) var(--ui-font); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sr-loc { flex: none; font: 500 var(--fs-tiny) var(--ui-font); color: color-mix(in srgb, var(--accent) 90%, var(--muted)); }
 .sr-ahead-tag { flex: none; font: 700 var(--fs-nano) var(--ui-font); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent); border-radius: 5px; padding: 1px 5px; }
-.sr-snippet { font: 400 var(--fs-base)/1.5 "Literata", "SardUIArabic", serif; color: color-mix(in srgb, var(--text) 90%, transparent); }
+.sr-snippet { font: 400 var(--fs-base)/1.5 var(--book); color: color-mix(in srgb, var(--text) 90%, transparent); }
+/* A SNIPPET IS THE BOOK'S OWN WORDS. Its stack offered Latin the book serif and Arabic the
+   chrome sans, so an Arabic quotation was the one place Amiri never reached. The component
+   asks `isArabicText` — the single script rule in lib/typography.ts — and adds `.ar`. */
+.sr-snippet.ar { font-family: var(--ar); }
 .sr-hit { background: color-mix(in srgb, var(--accent) 26%, transparent); color: var(--text); border-radius: 3px; padding: 0 1px; font-weight: 600; }
 /* you-are-here boundary */
-.sp-here { display: flex; align-items: center; gap: 10px; margin: 12px 12px 8px; }
+.sp-here { display: flex; align-items: center; gap: var(--sp-5); margin: 12px 12px 8px; }
 .sp-here-line { flex: 1; height: 1px; background: color-mix(in srgb, var(--accent) 34%, transparent); }
 .sp-here-label { flex: none; font: 700 var(--fs-nano) var(--ui-font); letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
 /* sealed card — a count, never a snippet */
-.sp-sealed { margin: 4px 12px 10px; padding: 14px; border-radius: 11px; text-align: center; background: color-mix(in srgb, var(--accent) 8%, transparent); border: 1px dashed color-mix(in srgb, var(--accent) 34%, transparent); }
+.sp-sealed { margin: 4px 12px 10px; padding: 14px; border-radius: var(--r-lg); text-align: center; background: color-mix(in srgb, var(--accent) 8%, transparent); border: 1px dashed color-mix(in srgb, var(--accent) 34%, transparent); }
 .sp-sealed-count { font: 600 0.84375rem var(--ui-font); color: var(--text); }
 .sp-sealed-body { margin-top: 5px; font: 400 var(--fs-small)/1.5 var(--ui-font); color: var(--muted); }
 .sp-sealed-reveal, .sp-hide-again { margin-top: 10px; border: 0; background: transparent; cursor: pointer; font: 600 var(--fs-small) var(--ui-font); color: var(--accent); }
@@ -2321,7 +2419,7 @@ html, body, #root {
 .sp-tashkil-note { margin: 8px 12px 4px; padding-top: 8px; border-top: 1px solid var(--chrome-border); font: 400 var(--fs-tiny)/1.5 var(--ui-font); color: var(--muted); }
 /* empty / searching / before-typing */
 /* RAWY-89: lively in-progress feedback — a spinning ring + live count + a scan bar (vs a static line) */
-.sp-searching { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 16px 14px 12px; font: 500 var(--fs-base) var(--ui-font); color: var(--muted); }
+.sp-searching { display: flex; flex-direction: column; align-items: center; gap: var(--sp-4); padding: 16px 14px 12px; font: 500 var(--fs-base) var(--ui-font); color: var(--muted); }
 .sp-searching-text { text-align: center; }
 .sp-spinner {
   width: 1.5rem; height: 1.5rem; border-radius: 50%;
@@ -2349,7 +2447,7 @@ html, body, #root {
 }
 .rp-tab {
   flex: 1 1 0; min-width: 0; position: relative;
-  display: flex; align-items: center; justify-content: center; gap: 5px;
+  display: flex; align-items: center; justify-content: center; gap: var(--sp-2);
   height: 38px; border-radius: 9px; border: 0; background: transparent; padding: 0 6px; cursor: pointer;
   font: 600 0.78125rem var(--ui-font); color: var(--muted);
   transition: background 0.15s ease, color 0.15s ease;
@@ -2376,7 +2474,7 @@ html, body, #root {
 .rp-toolrow { padding: 6px 6px 10px; }
 .rp-add {
   width: 100%; border: 1px dashed var(--chrome-border); background: transparent; cursor: pointer;
-  padding: 9px; border-radius: 8px; color: var(--muted);
+  padding: 9px; border-radius: var(--r-md); color: var(--muted);
   font: 500 0.75rem var(--ui-font);
 }
 .rp-add:hover { color: var(--text); border-color: var(--accent); }
@@ -2396,12 +2494,14 @@ html, body, #root {
 .rp-mini:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .rp-mini.primary { color: var(--paper-bg); background: var(--accent); }
 .rp-mini.danger:hover { color: #fff; background: #b5524a; }
-.rp-note-body { font: 400 0.84375rem/1.55 "Literata", "SardUIArabic", serif; color: var(--text); cursor: pointer; white-space: pre-wrap; }
+.rp-note-body { font: 400 0.84375rem/1.55 var(--book); color: var(--text); cursor: pointer; white-space: pre-wrap; }
+.rp-note-body.ar { font-family: var(--ar); }
 .rp-excerpt {
-  font: 400 0.8125rem/1.5 "Literata", "SardUIArabic", serif; color: color-mix(in srgb, var(--text) 84%, transparent);
+  font: 400 0.8125rem/1.5 var(--book); color: color-mix(in srgb, var(--text) 84%, transparent);
   cursor: pointer; margin-bottom: 8px;
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
+.rp-excerpt.ar { font-family: var(--ar); }
 
 /* ================================================================================================
    RAWY-282 — NOTE TITLES, and the note-card TEXT CONTAINMENT audit (bug 4).
@@ -2441,7 +2541,7 @@ html, body, #root {
 }
 /* The title field, matching `.rp-textarea` exactly so the editor reads as one control set. */
 .rp-title-input {
-  width: 100%; border: 1px solid var(--chrome-border); border-radius: 7px;
+  width: 100%; border: 1px solid var(--chrome-border); border-radius: var(--r-sm);
   background: var(--paper-bg); color: var(--text); padding: 7px 8px; box-sizing: border-box;
   /* RAWY-283: one step above the 0.8125rem body (ratio 1.077) — enough to read as a heading in a narrow
      panel, small enough that it never competes with the note it belongs to. */
@@ -2463,15 +2563,16 @@ html, body, #root {
 }
 .nec-title:focus { outline: none; border-bottom-color: var(--accent); }
 .nec-title::placeholder { color: color-mix(in srgb, var(--muted) 70%, transparent); font-weight: 400; }
-.rp-dots { display: flex; gap: 7px; }
+.rp-dots { display: flex; gap: var(--sp-4); }
 .rp-dot { width: 15px; height: 15px; border-radius: 50%; border: 0; cursor: pointer; box-shadow: 0 0 0 1px rgba(0,0,0,0.08); }
 .rp-dot.active { box-shadow: 0 0 0 2px var(--paper-bg), 0 0 0 3.5px var(--accent); }
 .rp-compose { display: flex; flex-direction: column; gap: 6px; }
 .rp-textarea {
-  width: 100%; resize: vertical; border: 1px solid var(--chrome-border); border-radius: 7px;
+  width: 100%; resize: vertical; border: 1px solid var(--chrome-border); border-radius: var(--r-sm);
   background: var(--paper-bg); color: var(--text); padding: 8px; box-sizing: border-box;
-  font: 400 0.8125rem/1.5 "Literata", "SardUIArabic", serif;
+  font: 400 0.8125rem/1.5 var(--book);
 }
+.rp-textarea.ar { font-family: var(--ar); }
 .rp-textarea:focus { outline: none; border-color: var(--accent); }
 .rp-compose-foot { display: flex; justify-content: flex-end; gap: 8px; }
 
@@ -2547,7 +2648,7 @@ html, body, #root {
 }
 .welcome-watermark {
   position: absolute; right: -40px; bottom: -90px; pointer-events: none;
-  font: 700 25rem/1 "Amiri", serif; color: color-mix(in srgb, var(--text) 4%, transparent);
+  font: 700 25rem/1 var(--ar); color: color-mix(in srgb, var(--text) 4%, transparent);
 }
 .welcome-keyline { position: absolute; pointer-events: none; }
 .welcome-keyline-outer { inset: 46px 38px 38px; border: 1px solid color-mix(in srgb, var(--text) 16%, transparent); border-radius: 3px; }
@@ -2569,9 +2670,12 @@ html, body, #root {
 
 /* balanced bilingual wordmark */
 .welcome-wordmark { position: relative; display: flex; align-items: center; gap: 26px; margin-bottom: 20px; }
-.welcome-latin { font: 600 3.5rem/1 "Literata", serif; letter-spacing: 0.01em; color: var(--text); }
+/* THE WORDMARK — the same mark as the library sidebar, Settings → About and the quote card.
+   The design of record sets its Latin half in the chrome face and its Arabic half in Amiri;
+   this screen had drifted to Literata and the chrome sans. See src/lib/typography.ts. */
+.welcome-latin { font: 600 3.5rem/1 var(--brand); letter-spacing: 0.01em; color: var(--text); }
 .welcome-bar { width: 1px; height: 54px; background: var(--text); opacity: 0.28; }
-.welcome-ar { font: 600 4.125rem/1 "SardUIArabic", system-ui, sans-serif; color: var(--text); transform: translateY(-2px); }
+.welcome-ar { font: 600 4.125rem/1 var(--brand-ar); color: var(--text); transform: translateY(-2px); }
 
 /* ornament rule */
 .welcome-rule { display: flex; align-items: center; gap: 14px; margin-bottom: 26px; }
@@ -2583,7 +2687,7 @@ html, body, #root {
 /* choose-language — bilingual */
 .welcome-prompt { display: flex; align-items: baseline; gap: 12px; margin-bottom: 38px; color: var(--muted); }
 .welcome-prompt-en { font: 400 0.875rem/1 var(--ui-font); letter-spacing: 0.03em; }
-.welcome-prompt-ar { font: 400 0.9375rem/1 "SardUIArabic", system-ui, sans-serif; }
+.welcome-prompt-ar { font: 400 0.9375rem/1 var(--ui); }
 .welcome-sep { color: color-mix(in srgb, var(--muted) 55%, var(--paper-bg)); font-size: 0.8125rem; }
 
 /* two equal language cards; terracotta ring on hover */
@@ -2591,17 +2695,19 @@ html, body, #root {
 .welcome-lang {
   width: 224px; border: none; cursor: pointer; color: var(--text);
   background: color-mix(in srgb, var(--paper-bg) 45%, #fff);
-  font: 600 1.3125rem/1 "Literata", serif; padding: 24px 0 22px; border-radius: 11px;
+  /* THE TWO LANGUAGE CARDS ARE ONE CHOICE PRESENTED TWICE, so they must match: this was
+     Literata and its Arabic twin below was the chrome sans. Both are chrome. */
+  font: 600 1.3125rem/1 var(--ui); padding: 24px 0 22px; border-radius: 11px;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 12%, transparent), 0 3px 10px rgba(40, 28, 14, 0.07);
   transition: box-shadow 0.18s, transform 0.18s;
 }
 .welcome-lang:hover { box-shadow: 0 0 0 2px var(--accent), 0 14px 30px rgba(40, 28, 14, 0.16); transform: translateY(-2px); }
-.welcome-lang-ar { font: 600 1.25rem/1 "SardUIArabic", system-ui, sans-serif; padding: 23px 0 24px; }
+.welcome-lang-ar { font: 600 1.25rem/1 var(--ui); padding: 23px 0 24px; }
 
 /* changeable-later footnote — bilingual */
 .welcome-foot { display: flex; align-items: baseline; gap: 10px; margin-top: 34px; color: color-mix(in srgb, var(--muted) 78%, var(--paper-bg)); }
 .welcome-foot-en { font: 400 0.75rem/1 var(--ui-font); }
-.welcome-foot-ar { font: 400 0.75rem/1 "SardUIArabic", system-ui, sans-serif; }
+.welcome-foot-ar { font: 400 0.75rem/1 var(--ui); }
 
 /* ---- Reading stage (the desk; the book sheet is themed via injectedCss) ---- */
 /* RAWY-79 (#11): calm, themed reader error state with its own recovery actions. Covers the stage
@@ -2650,6 +2756,15 @@ html, body, #root {
   font: 400 0.875rem/1.62 var(--ui-font); color: var(--muted);
 }
 .reader-error-card .err-body + .err-body { margin-top: -4px; }
+
+/* WHICH book failed. Sits between the body and the actions, quieter than the title and firmer than
+   the body, so it reads as the subject of the sentence above it rather than as another sentence.
+   The card's own tokens throughout — no new colour, no new scale. `anywhere` because a title can be
+   one long unbroken string, and the card is only 440px wide. */
+.err-book-name {
+  margin: 0; max-width: 42ch; overflow-wrap: anywhere;
+  font: 600 0.875rem/1.55 var(--ui-font); color: var(--text); opacity: 0.9;
+}
 
 /* A quiet action — Details / copy. Distinct from a recovery action so the eye finds the real
    choices first; it is still a real button with a real focus ring. */
@@ -2725,27 +2840,44 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   background: var(--paper-bg); color: var(--text); font-family: var(--ui-font);
 }
 
-/* ---- sidebar ---- */
+/* ---- sidebar ----
+   INTERFACE TEXTURE IS VISIBLE HERE, and it was not.
+   ==========================================================================
+   A profile stores a texture step and `applyTexture` derives a travel, a
+   floor and a frost from it. Eight surfaces read those, and all eight
+   are READER chrome — the TTS pill, the reading controls, the page chevron,
+   the update banner. This sidebar read nothing and was flatly `--chrome-bg`,
+   so a reader who chose Opaque or Light and looked at their library saw the
+   same panel every time.
+
+   That is not a guess about intent: the editor's own focus map names this
+   panel as the one the setting is demonstrated on — `chapters.ts` points the
+   texture chapter at `.pf-lib-side`, the preview's miniature of this element.
+   The claim was made in one place and never honoured in the other.
+
+   `100%` at scale 1 is `--chrome-bg` exactly, so an Opaque profile — and a
+   reader with no profile at all — renders byte-identical to before, which is
+   the invariant the whole texture feature is built on.
+
+   THE FLOOR IS THE MEASURED ONE. `lib/texture.ts` derives 0.800 as the least
+   chrome alpha whose text still clears AA over a desk showing an image, worst
+   case. `max()` keeps that guarantee here rather than trusting the scale,
+   because the scale is anchored to the reader surfaces' own lowest (0.90) and
+   this surface is not one of them. */
 .lib-sidebar {
   width: 228px; flex: none; display: flex; flex-direction: column; padding: 20px 16px;
-  background: var(--chrome-bg); border-inline-end: 1px solid var(--chrome-border);
+  background: color-mix(in srgb, var(--chrome-bg)
+    calc(var(--ui-floor, 0%) + (100% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
+  backdrop-filter: blur(var(--ui-frost, 0px)) saturate(var(--ui-sat, 1)) brightness(var(--ui-bright, 1));
+  -webkit-backdrop-filter: blur(var(--ui-frost, 0px)) saturate(var(--ui-sat, 1)) brightness(var(--ui-bright, 1));
+  border-inline-end: 1px solid var(--chrome-border);
 }
-/* RAWY-95/96 — app wordmark, variant 2b (D34): IBM-Plex lockup, monochrome, quiet ink bar.
-   `.lib-brand` + `.lib-lockup` follow the UI direction, so the hoopoe (the lockup's first child)
-   leads on the reading-START edge — LEFT in LTR, RIGHT in the Arabic RTL UI (RAWY-96). Only the
-   `.lib-wordmark` text block is `direction: ltr`, pinning its INTERNAL order (Sard · bar · سَرْد)
-   so it never mirrors. The bird is vertically centred beside the baseline-aligned text. */
-.lib-brand { display: flex; align-items: center; padding: 0 8px 22px; }
-.lib-lockup { display: inline-flex; align-items: center; gap: 7px; }
-.lib-wordmark { display: inline-flex; align-items: baseline; gap: 7px; direction: ltr; }
-.lib-word-latin { font: 600 1.15625rem/1 "SardUILatin", "IBM Plex Sans", sans-serif; letter-spacing: 0.01em; color: var(--text); }
-.lib-word-ar { font: 600 1.25rem/1 "SardUIArabic", sans-serif; color: var(--text); }
 /* the divider is quiet INK at ~28% (not the terracotta 2a bar) — the whole mark stays monochrome */
 .lib-word-sep { flex: none; align-self: center; width: 1.5px; height: 19px; border-radius: 2px; background: color-mix(in srgb, var(--text) 28%, transparent); }
 
-.lib-nav { display: flex; flex-direction: column; gap: 3px; }
+.lib-nav { display: flex; flex-direction: column; gap: var(--sp-2); }
 .lib-nav-item {
-  display: flex; align-items: center; gap: 11px; padding: 9px 10px; border: none;
+  display: flex; align-items: center; gap: var(--sp-5); padding: 9px 10px; border: none;
   border-radius: 6px; background: transparent; color: var(--muted);
   font: 500 0.8125rem var(--ui-font); cursor: pointer; text-align: start; width: 100%;
 }
@@ -2805,7 +2937,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .lib-shelf:hover .lib-shelf-count, .lib-shelf:focus-within .lib-shelf-count { opacity: 0; }
 .lib-shelf-act {
   border: none; background: transparent; cursor: pointer; color: var(--lib-faint);
-  font-size: 0.75rem; line-height: 1; padding: 3px 5px; border-radius: 5px;
+  font-size: 0.75rem; line-height: 1; padding: 3px 5px; border-radius: var(--r-sm);
 }
 .lib-shelf-act:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .lib-shelf-input {
@@ -2821,7 +2953,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 /* an empty selected shelf (vs. the whole-library empty state) */
 .lib-shelf-empty-state {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 10px; padding: 60px 40px; text-align: center;
+  gap: var(--sp-5); padding: 60px 40px; text-align: center;
 }
 .lib-shelf-empty-title { font: 600 1.25rem var(--ui-font); color: var(--text); }
 :root[dir="rtl"] .lib-shelf-empty-title { font: 700 1.25rem var(--ui-font); }
@@ -2833,23 +2965,22 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 }
 .lib-lang { position: relative; }
 .lib-lang-btn {
-  display: flex; align-items: center; gap: 8px; padding: 7px 9px; border: none; border-radius: 7px;
+  display: flex; align-items: center; gap: 8px; padding: 7px 9px; border: none; border-radius: var(--r-sm);
   background: transparent; color: var(--muted); font: 500 0.75rem var(--ui-font); cursor: pointer;
 }
 .lib-lang-btn:hover { background: var(--lib-hover); color: var(--text); }
 .lib-lang-globe { color: var(--accent); font-size: 0.8125rem; }
-.lib-lang-ar { font-family: "SardUIArabic", "Amiri", sans-serif; font-size: 0.8125rem; }
 /* Higher specificity than the generic .lib-menu (which sets `top`) so it opens UPWARD. */
 .lib-sidefoot .lib-lang-menu {
   top: auto; bottom: calc(100% + 8px); inset-inline-start: 0; min-width: 160px;
 }
-.lib-lang-menu button { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.lib-lang-menu button { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-5); }
 .lib-lang-check { color: var(--accent); }
 
 .lib-theme { position: relative; }
 .lib-theme-btn {
   width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
-  border: none; border-radius: 7px; background: transparent; color: var(--muted);
+  border: none; border-radius: var(--r-sm); background: transparent; color: var(--muted);
   font-size: 1.0625rem; cursor: pointer;
 }
 .lib-theme-btn:hover { background: var(--lib-hover); color: var(--text); }
@@ -2858,7 +2989,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   /* RAWY-29: a fixed-width wrapping row so all 15 swatches tile into a tidy grid (~4 per row)
      (an absolutely-positioned flex shrink-wraps to one column without an explicit width). */
   display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 11px; width: 164px;
-  background: var(--chrome-bg); border: 1px solid var(--chrome-border); border-radius: 11px;
+  background: var(--chrome-bg); border: 1px solid var(--chrome-border); border-radius: var(--r-lg);
   box-shadow: 0 14px 34px rgba(40, 28, 14, 0.24);
 }
 .lib-swatch {
@@ -2891,8 +3022,8 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 :root[dir="rtl"] .lib-title { font: 700 1.75rem var(--ui-font); }
 .lib-title-count { font: 500 0.8125rem var(--ui-font); color: var(--lib-faint); }
 .lib-search {
-  display: flex; align-items: center; gap: 9px; width: 210px; padding: 8px 13px;
-  background: var(--lib-soft); border: 1px solid var(--chrome-border); border-radius: 8px;
+  display: flex; align-items: center; gap: var(--sp-4); width: 210px; padding: 8px 13px;
+  background: var(--lib-soft); border: 1px solid var(--chrome-border); border-radius: var(--r-md);
 }
 .lib-search-ico { color: var(--lib-faint); }
 .lib-search input {
@@ -2902,9 +3033,9 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .lib-search input::placeholder { color: var(--lib-faint); }
 
 .lib-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; flex-wrap: wrap; }
-.lib-pills { display: flex; gap: 5px; flex-wrap: wrap; }
+.lib-pills { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
 .lib-pill {
-  padding: 6px 12px; border: none; border-radius: 7px; background: transparent;
+  padding: 6px 12px; border: none; border-radius: var(--r-sm); background: transparent;
   color: var(--muted); font: 500 0.75rem var(--ui-font); cursor: pointer;
 }
 .lib-pill:hover { background: var(--lib-hover); }
@@ -2912,15 +3043,15 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 
 .lib-controls { display: flex; align-items: center; gap: 12px; }
 .lib-add {
-  padding: 6px 13px; border: none; border-radius: 7px; cursor: pointer;
+  padding: 6px 13px; border: none; border-radius: var(--r-sm); cursor: pointer;
   background: var(--accent); color: var(--paper-bg); font: 600 0.75rem var(--ui-font); white-space: nowrap;
 }
 .lib-add:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 86%, #000); }
 .lib-add:disabled { opacity: 0.6; cursor: default; }
-.lib-viewtoggle { display: flex; background: var(--chrome-bg); border-radius: 7px; padding: 3px; }
+.lib-viewtoggle { display: flex; background: var(--chrome-bg); border-radius: var(--r-sm); padding: 3px; }
 .lib-viewtoggle button {
   display: flex; align-items: center; justify-content: center; padding: 5px 9px;
-  border: none; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer;
+  border: none; border-radius: var(--r-sm); background: transparent; color: var(--muted); cursor: pointer;
 }
 .lib-viewtoggle button.active {
   background: color-mix(in srgb, var(--paper-bg) 88%, #fff); color: var(--accent);
@@ -2944,7 +3075,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .ico-rows { width: 14px; height: 12px; display: inline-flex; flex-direction: column; gap: 2.5px; overflow: hidden; }
 .ico-rows > span { height: 4.5px; width: 16px; background: repeating-linear-gradient(90deg, currentColor 0 3.5px, transparent 3.5px 5.5px); }
 .lib-ctl {
-  padding: 6px 11px; border: 1px solid var(--chrome-border); border-radius: 7px;
+  padding: 6px 11px; border: 1px solid var(--chrome-border); border-radius: var(--r-sm);
   background: var(--lib-soft); color: var(--muted); font: 500 0.75rem var(--ui-font); cursor: pointer;
   white-space: nowrap;
 }
@@ -2985,7 +3116,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .lib-rows { flex: 1; overflow-y: auto; scrollbar-gutter: stable; padding: 6px 0 26px; display: flex; flex-direction: column; gap: 2px; }
 .lib-shelfrow { padding: 0 0 18px; }
 .lib-shelfrow-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 30px 11px; }
-.lib-shelfrow-title { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.lib-shelfrow-title { display: flex; align-items: baseline; gap: var(--sp-5); min-width: 0; }
 .lib-shelfrow-name { font: 600 1.0625rem var(--ui-font); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lib-shelfrow-count { font: 500 0.75rem var(--ui-font); color: var(--lib-faint); flex: none; }
 .lib-shelfrow-seeall { border: none; background: transparent; cursor: pointer; font: 500 0.75rem var(--ui-font); color: var(--accent); white-space: nowrap; flex: none; }
@@ -3009,12 +3140,16 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .lib-grid {
   flex: 1; overflow: auto; scrollbar-gutter: stable; /* RAWY-269 (3) — see .lib-rows */
   padding: 8px 30px 92px; /* RAWY-170: extra bottom room clears the corner rosette */
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  /* THE FLOOR IS THE READER'S NOW. 148px was hardcoded here — `DENSITY_WIDTHS[2]`, the design's
+     third density step — so every one of the four steps drew the same card and the toolbar hid
+     the size control for this view. The fallback keeps that exact number, so a Grid rendered
+     without a size (the plain library, outside the design surface) is unchanged. */
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--lib-cover-min, 148px), 1fr));
   gap: 26px 24px; align-content: start;
 }
 .lib-card {
   padding: 0; border: none; background: none; cursor: pointer;
-  display: flex; flex-direction: column; gap: 9px; text-align: start; min-width: 0;
+  display: flex; flex-direction: column; gap: var(--sp-4); text-align: start; min-width: 0;
 }
 /* RAWY-269 (5) — the cover cell is an OPAQUE PLATE in both modes.
    Crop mode used to paint no background at all, so between a card being inserted and its image
@@ -3047,21 +3182,61 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 
 /* Caption under the cover — always identifies the book, in the script of its TITLE. */
 .lib-cap { min-width: 0; }
+
+/* NAMES OUT OF THE WAY UNTIL A BOOK IS TOUCHED — Grid's half of the Library preference.
+   The design surface already had this behaviour for its own tiles (`.libd-cap`); Grid draws its own
+   caption, so it gets the same rule rather than a second idea of what hiding means. The caption
+   keeps its space — only its paint changes — so a name appearing shifts nothing around it, which is
+   what makes running a pointer along a shelf calm instead of jumpy.
+   `:focus-within` is the keyboard's half of `:hover`. Without it a reader tabbing through the grid
+   would meet card after card with nothing written on any of them. The card also carries the title
+   as its `title` attribute, so the book stays named to assistive technology throughout. */
+.lib-card[data-hidecap="1"] .lib-cap {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.14s ease-out;
+}
+.lib-card[data-hidecap="1"]:hover .lib-cap,
+.lib-card[data-hidecap="1"]:focus-within .lib-cap,
+.lib-card[data-hidecap="1"][data-selected="1"] .lib-cap {
+  opacity: 1;
+  visibility: visible;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lib-card[data-hidecap="1"] .lib-cap { transition: none; }
+}
+/* GRID'S CAPTION TITLE, matched to `capTitleStyle` in the design of record: Arabic in Amiri, Latin
+   in the chrome face. Grid drew BOTH scripts in the chrome face, which is why an Arabic title was
+   Plex here and Amiri in Covers, Spines, Vista and the Details rows — the same title changing
+   typeface with the format. Latin was always right. The AUTHOR below is a separate decision. */
 .lib-cap-title {
   font: 500 0.8125rem/1.3 var(--ui-font); color: var(--text);
   display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical;
   overflow: hidden; overflow-wrap: anywhere;
 }
-.lib-cap-title.ar { font: 600 0.9375rem/1.4 var(--ui-font); }
+.lib-cap-title.ar { font: 600 0.9375rem/1.4 var(--ar); }
 .lib-cap-author {
   margin-top: 3px; font: 400 0.6875rem var(--ui-font); color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+/* `capAuthorStyle` in the design of record carries NO per-script branch: at caption size the
+   author is chrome in both scripts, and only the ROW author in Details is per-script. */
 .lib-cap-author.ar { font: 400 0.75rem var(--ui-font); }
 
 /* ---- auto cover ---- */
-.auto-cover { position: relative; overflow: hidden; }
-.ac-mark { position: absolute; top: 10px; inset-inline-start: 12px; font: 700 0.75rem "Amiri", serif; }
+/* THE JACKET SIZES ITSELF, because nothing inside it can.
+   Every child below is `position: absolute`, so `.auto-cover` has no in-flow content and no height
+   of its own. It used to be given one only by two ancestor rules — `.lib-cover .auto-cover`
+   (`inset: 0`) and `.v-cover-drawn .auto-cover` — which meant each new host had to remember to size
+   it, and one did not. Measured in the Covers view: three coverless books, `.auto-cover` at
+   191.5 x 0, and because `overflow: hidden` clips a title sitting at `top: 46px`, all three drew a
+   flat colour block with no title while the host kept painting the book's own paint underneath.
+   Filling the host is what the component always meant; stating it here is what makes it true for
+   every host rather than for the two that were remembered. Where a parent has no definite height
+   `height: 100%` resolves to auto exactly as before, so this can size a box that was wrong and
+   cannot shrink one that was right. */
+.auto-cover { position: relative; overflow: hidden; width: 100%; height: 100%; }
+.ac-mark { position: absolute; top: 10px; inset-inline-start: 12px; font: 700 0.75rem var(--ar); }
 .ac-title { position: absolute; inset-inline: 14px; top: 46px; line-height: 1.3; text-align: start; }
 .ac-author { position: absolute; inset-inline-start: 14px; bottom: 18px; font-size: 0.6875rem; }
 .ac-mini { width: 100%; height: 100%; }
@@ -3078,7 +3253,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .upd-rosette { position: fixed; z-index: 20; bottom: 22px; inset-inline-end: 24px; color: var(--accent); }
 .upd-rosette-btn {
   position: relative; display: grid; place-items: center; width: 54px; height: 54px; padding: 0; cursor: pointer;
-  border-radius: 15px;
+  border-radius: var(--r-xl);
   /* RAWY-171: a <button> RESETS `color` to the UA default (black) instead of inheriting, so the SVG's
      `currentColor` (petals/core/check) rendered black in every theme. Set the accent HERE, on the
      button, so `currentColor` is the theme accent (var(--accent) inherits to the button as a custom
@@ -3140,8 +3315,8 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
    It opens toward the screen centre, so it never runs off the corner it lives in. */
 .upd-latest {
   position: absolute; bottom: calc(100% + 12px); inset-inline-end: 0; width: max-content; max-width: 280px;
-  display: flex; align-items: center; gap: 9px; padding: 10px 14px; border-radius: 13px;
-  background: color-mix(in srgb, var(--chrome-bg) calc(96% * var(--ui-texture-scale, 1)), transparent);
+  display: flex; align-items: center; gap: var(--sp-4); padding: 10px 14px; border-radius: var(--r-xl);
+  background: color-mix(in srgb, var(--chrome-bg) calc(var(--ui-floor, 0%) + (96% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
   border: 1px solid var(--chrome-border); box-shadow: 0 14px 34px rgba(40, 28, 14, 0.24);
   backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px); animation: upd-card-in 0.18s ease;
 }
@@ -3165,7 +3340,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .upd-dialog {
   position: fixed; z-index: 61; top: 50%; left: 50%; transform: translate(-50%, -50%);
   width: min(460px, calc(100vw - 48px)); max-height: calc(100vh - 64px); overflow-y: auto;
-  padding: 24px 26px 20px; border-radius: 15px;
+  padding: 24px 26px 20px; border-radius: var(--r-xl);
   background: var(--chrome-bg); color: var(--text); border: 1px solid var(--chrome-border);
   box-shadow: 0 28px 64px rgba(20, 12, 4, 0.42); font-family: var(--ui-font);
   animation: upd-dlg-in 0.2s cubic-bezier(0.22, 1, 0.36, 1);
@@ -3181,11 +3356,11 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 
 /* current → new. The arrow is the one glyph that must mirror, and it does, via the RTL rule. */
 .upd-versions {
-  display: flex; align-items: center; gap: 14px; margin: 18px 0;
-  padding: 14px 16px; border-radius: 11px;
+  display: flex; align-items: center; gap: var(--sp-6); margin: 18px 0;
+  padding: 14px 16px; border-radius: var(--r-lg);
   background: color-mix(in srgb, var(--text) 4%, transparent);
 }
-.upd-ver { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.upd-ver { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
 .upd-ver-label { font: 500 0.65625rem var(--ui-font); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .upd-ver-num { font: 600 1.0625rem var(--ui-font); color: var(--text); font-variant-numeric: tabular-nums; }
 .upd-ver-new .upd-ver-num { color: var(--accent); }
@@ -3201,7 +3376,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 }
 .upd-ask { margin: 0 0 20px; font: 400 0.875rem/1.65 var(--ui-font); color: var(--muted); }
 
-.upd-dlg-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.upd-dlg-actions { display: flex; justify-content: flex-end; gap: var(--sp-5); }
 .upd-btn {
   padding: 10px 20px; border-radius: 9px; cursor: pointer; font: 500 0.84375rem var(--ui-font);
   color: var(--muted); background: transparent; border: 1px solid var(--chrome-border);
@@ -3230,7 +3405,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   font: 500 0.75rem var(--ui-font); color: var(--muted);
 }
 .upd-fineprint { margin: 14px 0 0; font: 400 0.75rem/1.6 var(--ui-font); color: var(--muted); }
-.upd-installing { display: flex; align-items: center; gap: 14px; margin-top: 18px; }
+.upd-installing { display: flex; align-items: center; gap: var(--sp-6); margin-top: 18px; }
 .spin-ring {
   flex: none; width: 22px; height: 22px; border-radius: 50%;
   border: 2.5px solid color-mix(in srgb, var(--accent) 22%, transparent);
@@ -3268,7 +3443,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .lib-list-head .sortable.active { color: var(--accent); }
 .lib-row {
   width: 100%; padding: 10px 12px; cursor: pointer; border: none; background: none; text-align: start;
-  border-radius: 8px; box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--text) 7%, transparent);
+  border-radius: var(--r-md); box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--text) 7%, transparent);
 }
 .lib-row:hover { background: var(--lib-hover); box-shadow: none; }
 .lib-row:focus-visible {
@@ -3304,7 +3479,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 }
 .lib-empty-grain { position: absolute; inset: 0; opacity: 0.03; }
 .lib-empty-bird { position: relative; height: 120px; margin-bottom: 26px; filter: drop-shadow(0 10px 16px rgba(40, 28, 14, 0.16)); }
-.lib-empty-spines { display: flex; align-items: flex-end; gap: 9px; margin-bottom: 34px; opacity: 0.85; position: relative; }
+.lib-empty-spines { display: flex; align-items: flex-end; gap: var(--sp-4); margin-bottom: 34px; opacity: 0.85; position: relative; }
 .lib-empty-spines span { width: 34px; border-radius: 2px; box-shadow: 0 6px 14px rgba(40, 28, 14, 0.12); }
 .lib-empty-spines span:nth-child(1) { background: linear-gradient(#efe3cc, #e6d8bb); border: 1px solid rgba(43, 37, 33, 0.08); }
 .lib-empty-spines span:nth-child(2) { background: linear-gradient(#9c5a3c, #854b30); }
@@ -3337,7 +3512,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 /* ---- toast ---- */
 .lib-toast {
   position: fixed; inset-inline: 0; bottom: 28px; margin: 0 auto; width: max-content; max-width: 80%;
-  padding: 11px 20px; z-index: 20; border-radius: 10px;
+  padding: 11px 20px; z-index: 20; border-radius: var(--r-md);
   background: var(--text); color: var(--paper-bg); font: 500 0.8125rem var(--ui-font);
   box-shadow: 0 12px 30px rgba(40, 28, 14, 0.3);
 }
@@ -3346,21 +3521,47 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 /* ---- card edit affordance (RAWY-19) ---- */
 .lib-card { outline: none; }
 .lib-card:focus-visible .lib-cover { outline: 2px solid var(--accent); outline-offset: 2px; }
-.lib-card-edit {
-  position: absolute; top: 7px; inset-inline-end: 7px; width: 26px; height: 26px;
-  display: flex; align-items: center; justify-content: center; border: none; border-radius: 6px;
-  background: color-mix(in srgb, #000 42%, transparent); color: #fff; font-size: 1rem; cursor: pointer;
-  opacity: 0; transition: opacity 120ms ease;
+/* THE ⋯ ON A GRID CARD — themed, and shaped like something you press.
+   It stated its own appearance: a 42% black scrim with a #fff glyph, which is the
+   same control in every one of Sard's themes and belongs to none of them. It is
+   drawn over cover art, so it does still need a ground of its own to stay legible
+   against an arbitrary picture — that ground is now MIXED FROM THE THEME's chrome
+   rather than from black, so a light theme gets a light control and a dark one a
+   dark control, and the glyph takes the theme's text colour instead of white.
+   The mix stays high enough to hold contrast over a bright cover.
+   It also had no pressed or focus state, and a 26px target. */
+/* THE SELECTOR CARRIES `.libd-stage` BECAUSE THE SHELL RESETS ITS BUTTONS.
+   `.libd-stage button` is (0,1,1) and sets `border: 0; background: none`, so a
+   bare `.lib-card-edit` at (0,1,0) lost both — measured: the control computed to
+   `rgba(0,0,0,0)` with a 0px border, which is why it read as a bare glyph with
+   nothing to press. The old hard-coded scrim was being dropped on the floor too;
+   this is the first time these declarations actually reach the element. */
+.lib-card-edit,
+.libd-stage .lib-card-edit {
+  position: absolute; top: 7px; inset-inline-end: 7px; width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center; border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--chrome-border) 70%, transparent);
+  background: color-mix(in srgb, var(--chrome-bg) 88%, transparent);
+  color: var(--text); font-size: 1rem; cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+  opacity: 0;
+  transition: opacity 120ms ease, background-color 120ms ease, border-color 120ms ease, transform 90ms ease;
 }
 .lib-card:hover .lib-card-edit, .lib-card:focus-within .lib-card-edit { opacity: 1; }
-.lib-card-edit:hover { background: color-mix(in srgb, #000 62%, transparent); }
+.lib-card-edit:hover,
+.libd-stage .lib-card-edit:hover { background: var(--chrome-bg); border-color: var(--accent); }
+.lib-card-edit:active,
+.libd-stage .lib-card-edit:active { transform: scale(0.92); }
+/* Focus must never depend on hover: a keyboard reaches this control without a pointer. */
+.lib-card-edit:focus-visible,
+.libd-stage .lib-card-edit:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ---- edit-book dialog (RAWY-19, band E7) ---- */
 .edit-dialog {
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 40;
   width: min(560px, 92vw); max-height: 88vh; overflow: auto;
   background: var(--chrome-bg); color: var(--text); border: 1px solid var(--chrome-border);
-  border-radius: 13px; box-shadow: 0 24px 60px rgba(40, 28, 14, 0.34); font-family: var(--ui-font);
+  border-radius: var(--r-xl); box-shadow: 0 24px 60px rgba(40, 28, 14, 0.34); font-family: var(--ui-font);
 }
 .edit-head {
   display: flex; align-items: center; justify-content: space-between; padding: 18px 22px 14px;
@@ -3368,7 +3569,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 }
 .edit-title { font: 600 1.0625rem var(--ui-font); color: var(--text); }
 :root[dir="rtl"] .edit-title { font: 700 1.125rem var(--ui-font); }
-.edit-body { display: flex; gap: 22px; padding: 22px; }
+.edit-body { display: flex; gap: var(--sp-7); padding: 22px; }
 .edit-cover { width: 130px; flex: none; display: flex; flex-direction: column; gap: 8px; }
 .edit-cover .lib-cover { width: 130px; }
 .edit-btn {
@@ -3377,25 +3578,25 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 }
 .edit-btn:hover { border-color: var(--accent); color: var(--text); }
 .edit-link { border: none; background: none; color: var(--accent); font: 500 0.6875rem var(--ui-font); cursor: pointer; padding: 2px 0; }
-.edit-fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.edit-fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-6); }
 .edit-row { display: flex; gap: 12px; }
 .edit-row .edit-field { flex: 1; min-width: 0; }
 .edit-field { display: flex; flex-direction: column; gap: 6px; }
 .edit-field > span { font: 600 0.625rem var(--ui-font); letter-spacing: 0.1em; text-transform: uppercase; color: var(--lib-faint); }
 .edit-field input {
   font: 500 0.875rem var(--ui-font); color: var(--text); background: var(--lib-soft);
-  border: 1px solid var(--chrome-border); border-radius: 7px; padding: 9px 11px; outline: none;
+  border: 1px solid var(--chrome-border); border-radius: var(--r-sm); padding: 9px 11px; outline: none;
 }
 .edit-field input:focus { border-color: var(--accent); }
-.edit-field input.ar { font-family: "Amiri", serif; font-size: 1rem; }
-.edit-seg { display: flex; gap: 4px; background: var(--chrome-bg); border: 1px solid var(--chrome-border); border-radius: 8px; padding: 3px; }
+.edit-field input.ar { font-family: var(--ar); font-size: 1rem; }
+.edit-seg { display: flex; gap: 4px; background: var(--chrome-bg); border: 1px solid var(--chrome-border); border-radius: var(--r-md); padding: 3px; }
 .edit-seg button {
   flex: 1; padding: 7px 10px; border: none; border-radius: 6px; background: transparent;
   color: var(--muted); font: 500 0.75rem var(--ui-font); cursor: pointer; white-space: nowrap;
 }
 .edit-seg button.active { background: var(--accent); color: var(--paper-bg); }
 /* RAWY-31: shelf-membership chips — toggle a book in/out of a shelf (design band E7). */
-.edit-chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.edit-chips { display: flex; flex-wrap: wrap; gap: var(--sp-4); }
 .edit-chip {
   font: 500 0.75rem var(--ui-font); color: var(--muted); background: transparent;
   border: 1px solid var(--chrome-border); padding: 5px 11px; border-radius: 999px; cursor: pointer;
@@ -3410,18 +3611,18 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 /* RAWY-76: the footer holds the destructive Delete on the leading edge, Cancel+Save trailing.
    space-between splits them; the actions cluster keeps its own gap. */
 .edit-foot {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--sp-5);
   padding: 14px 22px; border-top: 1px solid var(--chrome-border);
 }
-.edit-foot-actions { display: flex; gap: 10px; }
-.edit-cancel { border: 1px solid var(--chrome-border); background: transparent; color: var(--muted); font: 500 0.8125rem var(--ui-font); padding: 9px 20px; border-radius: 8px; cursor: pointer; }
-.edit-save { border: none; background: var(--text); color: var(--paper-bg); font: 600 0.8125rem var(--ui-font); padding: 9px 24px; border-radius: 8px; cursor: pointer; }
+.edit-foot-actions { display: flex; gap: var(--sp-5); }
+.edit-cancel { border: 1px solid var(--chrome-border); background: transparent; color: var(--muted); font: 500 0.8125rem var(--ui-font); padding: 9px 20px; border-radius: var(--r-md); cursor: pointer; }
+.edit-save { border: none; background: var(--text); color: var(--paper-bg); font: 600 0.8125rem var(--ui-font); padding: 9px 24px; border-radius: var(--r-md); cursor: pointer; }
 .edit-save:disabled, .edit-cancel:disabled, .edit-del:disabled { opacity: 0.6; cursor: default; }
 /* RAWY-76: destructive delete — quiet danger tint idle, solid danger when it's the confirm button
    (same red the photo-card confirm uses, so destructive confirms read the same everywhere). */
 .edit-del {
   border: 1px solid transparent; background: color-mix(in srgb, #B24A4A 12%, transparent);
-  color: #B24A4A; font: 600 0.8125rem var(--ui-font); padding: 9px 18px; border-radius: 8px; cursor: pointer;
+  color: #B24A4A; font: 600 0.8125rem var(--ui-font); padding: 9px 18px; border-radius: var(--r-md); cursor: pointer;
 }
 .edit-del:hover { background: color-mix(in srgb, #B24A4A 20%, transparent); }
 .edit-del.confirm { background: #B24A4A; color: #fff; }
@@ -3526,6 +3727,10 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .hl-cpick-or { display: flex; align-items: center; gap: 9px; margin: 13px 0 11px; }
 .hl-cpick-rule { height: 1px; flex: 1; background: color-mix(in srgb, currentColor 16%, transparent); }
 .hl-cpick-or-label { font: 400 0.625rem var(--ui-font); letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.6; }
+/* The shared picker's own box inside the highlight popover. It brings its own plane, hue strip and
+   hex field, so the popover only has to give it room and keep the Apply button below it. */
+.hl-cpick-space { margin: 2px 0 10px; }
+.hl-cpick-space .pf-pick-plane { height: 7.5rem; }
 .hl-cpick-hue {
   position: relative; height: 20px; border-radius: 10px; cursor: pointer; touch-action: none;
   background: linear-gradient(to right, hsl(0 62% 78%), hsl(45 62% 78%), hsl(90 58% 76%), hsl(150 52% 74%), hsl(200 56% 76%), hsl(260 52% 78%), hsl(320 58% 80%), hsl(360 62% 78%));
@@ -3665,11 +3870,11 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   border: 0; background: transparent; cursor: pointer; padding: 6px 12px; border-radius: 6px;
   color: var(--muted); font: 500 0.75rem var(--ui-font); white-space: nowrap;
 }
-.inbox-seg button.on { background: var(--paper-bg); color: var(--accent); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+.inbox-seg button.on { color: var(--accent-text); }
 .inbox-list { flex: 1; overflow-y: auto; scrollbar-gutter: stable; padding: 8px 36px 28px; display: flex; flex-direction: column; gap: 12px; } /* RAWY-269 (3) — see .lib-rows */
 /* a card carries a soft tint of its colour + matching border + a 4px colour bar (RAWY-22 cards) */
 .inbox-card {
-  display: flex; gap: 14px; width: 100%; text-align: start; cursor: pointer; padding: 15px 18px; border-radius: 10px;
+  display: flex; gap: var(--sp-6); width: 100%; text-align: start; cursor: pointer; padding: 15px 18px; border-radius: var(--r-md);
   background: color-mix(in srgb, var(--swatch, var(--accent)) 24%, transparent);
   border: 1px solid color-mix(in srgb, var(--swatch, var(--accent)) 50%, transparent);
 }
@@ -3677,10 +3882,10 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .inbox-card-bar { flex: 0 0 4px; align-self: stretch; border-radius: 3px; background: var(--swatch, var(--accent)); }
 .inbox-card-body { flex: 1; display: flex; flex-direction: column; gap: 7px; min-width: 0; }
 .inbox-card-text {
-  font: 400 1rem/1.5 "Literata", "SardUIArabic", serif; color: var(--text);
+  font: 400 1rem/1.5 var(--book); color: var(--text);
   display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
-.inbox-card-text.ar { font-family: "Amiri", "SardUIArabic", serif; font-size: 1.1875rem; line-height: 1.7; }
+.inbox-card-text.ar { font-family: var(--ar); font-size: 1.1875rem; line-height: 1.7; }
 .inbox-card-meta { font: 500 0.75rem var(--ui-font); color: var(--muted); }
 .inbox-card-kind { color: var(--accent); }
 .inbox-card-note {
@@ -3702,8 +3907,8 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
    Library: left nav + content. Theme-tokened; mirrors with the UI direction.
    ============================================================================ */
 .lib-settings-btn {
-  display: flex; align-items: center; gap: 9px; width: 100%; padding: 9px 11px; border: none;
-  border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer;
+  display: flex; align-items: center; gap: var(--sp-4); width: 100%; padding: 9px 11px; border: none;
+  border-radius: var(--r-md); background: transparent; color: var(--muted); cursor: pointer;
   font: 600 0.78125rem var(--ui-font); text-align: start;
 }
 .lib-settings-btn:hover { background: var(--lib-hover); color: var(--text); }
@@ -3712,7 +3917,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .gs {
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 41;
   width: min(960px, calc(100vw - 56px)); height: min(660px, calc(100vh - 64px));
-  display: flex; border-radius: 13px; overflow: hidden; background: var(--paper-bg);
+  display: flex; border-radius: var(--r-xl); overflow: hidden; background: var(--paper-bg);
   box-shadow: 0 28px 64px rgba(20, 12, 4, 0.42); border: 1px solid var(--chrome-border);
   font-family: var(--ui-font);
 }
@@ -3721,24 +3926,61 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   width: 232px; flex: none; display: flex; flex-direction: column; padding: 22px 14px;
   background: var(--chrome-bg); border-inline-end: 1px solid var(--chrome-border);
 }
-.gs-brand { display: flex; align-items: center; gap: 9px; padding: 0 8px 20px; }
-.gs-brand-name { font: 600 1rem "Literata", "SardUIArabic", serif; color: var(--text); }
+.gs-brand { display: flex; align-items: center; gap: var(--sp-4); padding: 0 8px 20px; }
+/* The Settings PANEL TITLE beside the hoopoe — «Settings», not the wordmark. Every other panel
+   title in Sard is `var(--ui-font)`; this one was the only serif. */
+.gs-brand-name { font: 600 1rem var(--ui); color: var(--text); }
 .gs-nav-list { display: flex; flex-direction: column; gap: 2px; }
+/* ---- WHICH SETTINGS SECTION AM I IN? -----------------------------------------
+   These rows named two tokens that DO NOT EXIST HERE. `--lib-hover` and
+   `--lib-active` are declared on `.lib-root`, and the settings panel is not
+   inside it — measured, both resolve EMPTY at `.gs-nav-item`. An empty `var()`
+   makes the whole declaration invalid, so the hover ground was silently dropped
+   and hover never had one at all.
+
+   That left `.on` carrying the entire distinction with `--paper-bg`, and paper
+   and chrome are both app surfaces, deliberately near neighbours. Measured
+   across eight themes, the selected row separated from the panel behind it by a
+   luminance ratio of 1.03 (forestnight) to 1.13 (ivory) — 1.00 being identical.
+   The `rgba(20,12,4,.12)` shadow added nothing on a dark ground. So the state
+   was carried by a coincidence between two colours designed not to differ.
+
+   The vocabulary for this already exists and is app-wide (`tokens.css`,
+   "Interaction states"): a neutral hover derived from the text colour, a
+   selected ground derived from the ACCENT — which is the one colour a theme
+   guarantees to be distinct from its surfaces — and an accent edge. That
+   comment names this exact pairing, "accent edge + lighter ground", as one of
+   the app's three correct active treatments. This adopts it rather than
+   inventing a fourth.
+
+   The edge is reserved as transparent in the rest state, so activating a row
+   moves nothing. `border-inline-start` follows the writing direction, so Arabic
+   and English need one rule, not two. */
 .gs-nav-item {
-  display: flex; align-items: center; gap: 11px; padding: 10px 12px; border: none; border-radius: 8px;
+  display: flex; align-items: center; gap: var(--sp-5); padding: 10px 12px; border-radius: var(--r-md);
+  border: none; border-inline-start: var(--state-edge-size) solid transparent;
   background: transparent; color: var(--muted); cursor: pointer; font: 500 0.8125rem var(--ui-font);
   text-align: start; width: 100%;
+  transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
 }
-.gs-nav-item:hover { background: var(--lib-hover); color: var(--text); }
+.gs-nav-item:hover { background: var(--state-hover); color: var(--text); }
 .gs-nav-item.on {
-  background: var(--paper-bg); color: var(--text); box-shadow: 0 1px 3px rgba(20, 12, 4, 0.12);
+  background: var(--state-selected);
+  border-inline-start-color: var(--state-edge);
+  color: var(--text);
 }
+/* Hover must READ ON TOP OF the selection, never replace it: pointing at the row
+   you are already in must not make it look like any other row. */
+.gs-nav-item.on:hover { background: color-mix(in srgb, var(--accent) 18%, var(--chrome-bg)); }
+.gs-nav-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; color: var(--text); }
+.gs-nav-item:disabled { opacity: var(--state-disabled); cursor: default; }
+.gs-nav-item:disabled:hover { background: transparent; color: var(--muted); }
 .gs-nav-ico { width: 16px; text-align: center; color: var(--accent); font-size: 0.875rem; }
 .gs-appwide {
   margin-top: auto; background: color-mix(in srgb, var(--accent) 8%, transparent); border-radius: 9px;
   padding: 11px 12px; font: 400 0.6875rem/1.55 var(--ui-font); color: var(--muted);
 }
-.gs-appwide b { color: var(--accent); font-weight: 700; }
+.gs-appwide b { color: var(--accent-text); font-weight: 700; }
 /* content */
 .gs-content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .gs-topbar {
@@ -3747,38 +3989,41 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 }
 .gs-x {
   width: 2.35rem; height: 2.35rem; border: none; background: transparent; color: var(--muted);
-  font-size: 0.9375rem; cursor: pointer; border-radius: 7px;
+  font-size: 0.9375rem; cursor: pointer; border-radius: var(--r-sm);
 }
-.gs-x:hover { background: var(--lib-hover); color: var(--text); }
-.gs-body { flex: 1; overflow-y: auto; padding: 24px 30px; display: flex; flex-direction: column; gap: 22px; }
+/* `--lib-hover` is declared on `.lib-root`; settings is not inside it, so this resolved EMPTY and
+   the whole declaration was dropped — the close control had no hover ground at all. The app-wide
+   state token says the same thing where every surface can hear it. */
+.gs-x:hover { background: var(--state-hover); color: var(--text); }
+.gs-body { flex: 1; overflow-y: auto; padding: 24px 30px; display: flex; flex-direction: column; gap: var(--sp-7); }
 .gs-h1 { font: 600 var(--fs-h2) var(--ui-font); color: var(--text); }
-.gs-sec { display: flex; flex-direction: column; gap: 11px; }
-.gs-sec.gs-two { flex-direction: row; gap: 14px; }
-.gs-sec.gs-two > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 9px; }
+.gs-sec { display: flex; flex-direction: column; gap: var(--sp-5); }
+.gs-sec.gs-two { flex-direction: row; gap: var(--sp-6); }
+.gs-sec.gs-two > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-4); }
 /* Two-column font row nested under a group label (RAWY-45 — BOOK TEXT FONT · Latin/Arabic). */
-.gs-two-row { display: flex; gap: 14px; }
-.gs-two-row > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 9px; }
-.gs-lbl-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.gs-two-row { display: flex; gap: var(--sp-6); }
+.gs-two-row > div { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-4); }
+.gs-lbl-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-5); }
 .gs-lbl { font: 600 0.6875rem var(--ui-font); letter-spacing: 0.1em; color: var(--muted); text-transform: uppercase; }
-.gs-lbl-hint { font: 400 0.6875rem var(--ui-font); color: color-mix(in srgb, var(--muted) 75%, var(--paper-bg)); }
+.gs-lbl-hint { font: 400 0.6875rem var(--ui-font); color: var(--text-hint); }
 /* segmented */
 .gs-seg { display: flex; gap: 4px; background: var(--chrome-bg); border-radius: 9px; padding: 4px; max-width: 420px; }
 .gs-seg-item {
   flex: 1; border: none; background: transparent; color: var(--muted); cursor: pointer;
   padding: 9px 8px; border-radius: 6px; font: 500 0.8125rem var(--ui-font);
 }
-.gs-seg-item.on { background: var(--paper-bg); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); font-weight: 600; }
+.gs-seg-item.on { color: var(--text); font-weight: 600; }
 /* theme swatches */
-.gs-swatches { display: flex; flex-wrap: wrap; gap: 10px; }
-.gs-swatch-cell { display: flex; flex-direction: column; align-items: center; gap: 5px; border: none; background: transparent; cursor: pointer; padding: 0; width: 64px; }
+.gs-swatches { display: flex; flex-wrap: wrap; gap: var(--sp-5); }
+.gs-swatch-cell { display: flex; flex-direction: column; align-items: center; gap: var(--sp-2); border: none; background: transparent; cursor: pointer; padding: 0; width: 64px; }
 .gs-swatch {
-  width: 100%; height: 46px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
-  font: 400 1.0625rem "Literata", serif; box-shadow: inset 0 0 0 1px var(--chrome-border);
+  width: 100%; height: 46px; border-radius: var(--r-md); display: flex; align-items: center; justify-content: center;
+  font: 400 1.0625rem var(--book); box-shadow: inset 0 0 0 1px var(--chrome-border);
 }
 .gs-swatch.on { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--paper-bg); }
 .gs-swatch-name { font: 500 0.625rem var(--ui-font); color: var(--muted); }
 /* font row + select */
-.gs-fontrow { display: flex; gap: 10px; align-items: stretch; }
+.gs-fontrow { display: flex; gap: var(--sp-5); align-items: stretch; }
 .gs-select {
   flex: 1; min-width: 0; background: var(--paper-bg); color: var(--text); border: 1px solid var(--chrome-border);
   border-radius: 9px; padding: 11px 13px; font: 500 0.875rem var(--ui-font); cursor: pointer;
@@ -3794,15 +4039,15 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   color: var(--text); font-size: 1.0625rem;
 }
 /* font library chips */
-.gs-chips { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.gs-chips { display: flex; flex-wrap: wrap; gap: var(--sp-4); align-items: center; }
 .gs-chip {
-  display: inline-flex; align-items: center; gap: 7px; font: 500 0.71875rem var(--ui-font); color: var(--muted);
+  display: inline-flex; align-items: center; gap: var(--sp-4); font: 500 0.71875rem var(--ui-font); color: var(--muted);
   padding: 6px 11px; background: color-mix(in srgb, var(--accent) 7%, transparent); border-radius: 16px;
 }
 .gs-chip-imported { color: #fff; background: var(--accent); }
 .gs-chip-x { border: none; background: transparent; color: inherit; cursor: pointer; font-size: 0.875rem; line-height: 1; padding: 0; opacity: 0.8; }
 .gs-chip-x:hover { opacity: 1; }
-.gs-note { font: 400 var(--fs-tiny) var(--ui-font); color: color-mix(in srgb, var(--muted) 80%, var(--paper-bg)); }
+.gs-note { font: 400 var(--fs-tiny) var(--ui-font); color: var(--text-hint); }
 
 /* RAWY-93 — Fonts & Library panel, rebuilt to the on-disk design (App · Book side-by-side cards +
    the shared library grid). Wiring unchanged (RAWY-91/92); this is presentation only. */
@@ -3814,13 +4059,13 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
    card has no SIZE control yet (App-font Size % is a planned follow-up), so its natural height differs. */
 .gs-fcards { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
 .gs-fcard {
-  flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: 14px;
+  flex: 1 1 300px; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-6);
   background: color-mix(in srgb, var(--chrome-bg) 45%, var(--paper-bg));
-  border: 1px solid var(--chrome-border); border-radius: 11px; padding: 18px 20px;
+  border: 1px solid var(--chrome-border); border-radius: var(--r-lg); padding: 18px 20px;
 }
-.gs-fcard-head { display: flex; align-items: flex-start; gap: 10px; }
+.gs-fcard-head { display: flex; align-items: flex-start; gap: var(--sp-5); }
 .gs-fcard-ico {
-  width: 26px; height: 26px; flex: none; border-radius: 7px; color: #fff;
+  width: 26px; height: 26px; flex: none; border-radius: var(--r-sm); color: #fff;
   display: flex; align-items: center; justify-content: center; font-size: 0.8125rem;
 }
 .gs-fcard-ico-app { background: var(--accent); }
@@ -3832,41 +4077,80 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
    transparently on top (opacity 0), so the styled row shows while the native menu still drives it. */
 .gs-fpick-stack { display: flex; flex-direction: column; gap: 8px; }
 .gs-fpick {
-  position: relative; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  position: relative; display: flex; align-items: center; justify-content: space-between; gap: var(--sp-5);
   background: var(--paper-bg); border: 1px solid var(--chrome-border); border-radius: 9px; padding: 10px 14px; cursor: pointer;
 }
 .gs-fpick:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--chrome-border)); }
 .gs-fpick-main { min-width: 0; display: flex; flex-direction: column; }
 .gs-fpick-name { font-size: 1rem; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gs-fpick-sub { font: 400 0.65625rem var(--ui-font); color: var(--muted); margin-top: 2px; }
-.gs-fpick-change { flex: none; font: 500 0.75rem var(--ui-font); color: var(--accent); white-space: nowrap; }
+.gs-fpick-change { flex: none; font: 500 0.75rem var(--ui-font); color: var(--accent-text); white-space: nowrap; }
 .gs-fpick-native { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: none; }
 
 /* weight — each label rendered in the target face AT its weight (design); a missing weight is dimmed */
 .gs-wblock, .gs-sblock { display: flex; flex-direction: column; gap: 8px; }
-.gs-wseg { display: flex; background: color-mix(in srgb, var(--chrome-bg) 72%, var(--paper-bg)); border-radius: 8px; padding: 3px; }
+.gs-wseg { display: flex; background: color-mix(in srgb, var(--chrome-bg) 72%, var(--paper-bg)); border-radius: var(--r-md); padding: 3px; }
 .gs-wseg-item {
   flex: 1; text-align: center; border: none; background: transparent; cursor: pointer;
   padding: 7px 0; border-radius: 6px; font-size: 0.75rem; color: var(--muted);
 }
-.gs-wseg-item.on { background: var(--paper-bg); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12); }
+.gs-wseg-item.on { color: var(--text); }
+
+/* ---- WHICH OPTION IS CHOSEN — one answer for every segmented control -----------
+   All four of these said "selected" the same wrong way: the chip painted
+   `--paper-bg` while its container painted `--chrome-bg`. Those are both app
+   SURFACES, deliberately near neighbours, so the state rested on the difference
+   between two colours designed not to differ. Measured on «المظهر»'s control
+   across the ten built-in themes, selected against its own container:
+
+     forestnight 1.03 / d=5    nocturne 1.04 / d=6    dusk 1.05 / d=9
+     espresso    1.06 / d=11   linen    1.08 / d=14   ivory 1.13 / d=26
+
+   — clearly visible in the light themes and all but invisible in the dark ones,
+   which is exactly the report. The `rgba(0,0,0,.1)` drop shadow that was meant to
+   lift the chip contributes nothing on a dark ground.
+
+   `--state-selected` is the vocabulary the design system already promoted for
+   this, and the Settings sidebar already uses it: a ground mixed from the ACCENT,
+   which is the one colour a theme guarantees to hold apart from its surfaces. The
+   ring is an INSET shadow rather than a border so the chip gains definition
+   without gaining 2px and shifting the row it sits in.
+
+   The sidebar's own active state is deliberately untouched — it states its
+   treatment separately, and it is already correct. */
+.gs-seg-item.on,
+.gs-wseg-item.on,
+.rs-seg-item.on,
+.inbox-seg button.on {
+  background: var(--state-selected);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 34%, transparent);
+}
+/* Pointing at the chosen option must not make it look like the others. */
+.gs-seg-item.on:hover,
+.gs-wseg-item.on:hover,
+.rs-seg-item.on:hover,
+.inbox-seg button.on:hover { background: color-mix(in srgb, var(--accent) 18%, var(--chrome-bg)); }
+.gs-seg-item:focus-visible,
+.gs-wseg-item:focus-visible,
+.rs-seg-item:focus-visible,
+.inbox-seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .gs-wseg-item.na { opacity: 0.5; }
 
 /* preview box */
 .gs-fprev {
-  display: flex; flex-direction: column; gap: 5px;
+  display: flex; flex-direction: column; gap: var(--sp-2);
   background: var(--paper-bg); border: 1px dashed color-mix(in srgb, var(--muted) 34%, transparent);
-  border-radius: 8px; padding: 10px 13px;
+  border-radius: var(--r-md); padding: 10px 13px;
 }
-.gs-fprev-text { font-size: 0.875rem; line-height: 1.5; color: var(--text); display: flex; flex-direction: column; gap: 5px; }
+.gs-fprev-text { font-size: 0.875rem; line-height: 1.5; color: var(--text); display: flex; flex-direction: column; gap: var(--sp-2); }
 
 /* font library — a 2-column grid of cards, each font name IN ITS OWN FACE + badges */
-.gs-flib { display: flex; flex-direction: column; gap: 11px; }
+.gs-flib { display: flex; flex-direction: column; gap: var(--sp-5); }
 .gs-flib-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.gs-flib-titles { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.gs-flib-titles { display: flex; align-items: baseline; gap: var(--sp-5); flex-wrap: wrap; }
 .gs-flib-title { font: 600 0.6875rem var(--ui-font); letter-spacing: 0.09em; text-transform: uppercase; color: var(--muted); }
 .gs-flib-sub { font: 400 0.6875rem var(--ui-font); color: color-mix(in srgb, var(--muted) 72%, var(--paper-bg)); }
-.gs-flib-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.gs-flib-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-5); }
 .gs-flib-card {
   display: flex; align-items: center; gap: 12px; min-width: 0;
   background: var(--paper-bg); border: 1px solid var(--chrome-border); border-radius: 9px; padding: 10px 14px;
@@ -3875,69 +4159,75 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .gs-flib-main { flex: 1; min-width: 0; }
 .gs-flib-name { font-size: 0.90625rem; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .gs-flib-meta { font: 400 0.65625rem var(--ui-font); color: var(--muted); margin-top: 3px; }
-.gs-flib-badges { flex: none; display: flex; gap: 5px; }
-.gs-badge { font: 600 0.5625rem var(--ui-font); letter-spacing: 0.05em; padding: 3px 8px; border-radius: 10px; color: #fff; white-space: nowrap; flex: none; }
+.gs-flib-badges { flex: none; display: flex; gap: var(--sp-2); }
+.gs-badge { font: 600 0.5625rem var(--ui-font); letter-spacing: 0.05em; padding: 3px 8px; border-radius: var(--r-md); color: #fff; white-space: nowrap; flex: none; }
 .gs-badge-app { background: var(--accent); }
 .gs-badge-book { background: var(--gs-book); }
 /* remove — terracotta (RAWY-92), placed at the imported card's trailing edge as the design shows */
-.gs-flib-remove { flex: none; border: none; background: transparent; cursor: pointer; font: 500 0.6875rem var(--ui-font); color: var(--accent); padding: 2px 4px; border-radius: 6px; white-space: nowrap; }
+.gs-flib-remove { flex: none; border: none; background: transparent; cursor: pointer; font: 500 0.6875rem var(--ui-font); color: var(--accent-text); padding: 2px 4px; border-radius: 6px; white-space: nowrap; }
 .gs-flib-remove:hover { text-decoration: underline; }
 /* reading defaults */
 .gs-banner {
-  display: inline-flex; align-items: center; gap: 7px; align-self: flex-start;
+  display: inline-flex; align-items: center; gap: var(--sp-4); align-self: flex-start;
   background: color-mix(in srgb, #7b59a0 16%, var(--paper-bg)); border: 1px solid color-mix(in srgb, #7b59a0 30%, transparent);
   border-radius: 16px; padding: 6px 13px; font: 500 0.71875rem var(--ui-font); color: color-mix(in srgb, #7b59a0 75%, var(--text));
 }
 .gs-slider-head { display: flex; align-items: baseline; justify-content: space-between; }
 .gs-slider-head span:first-child { font: 500 0.8125rem var(--ui-font); color: var(--text); }
-.gs-slider-val { font: 500 0.75rem var(--ui-font); color: var(--accent); }
+.gs-slider-val { font: 500 0.75rem var(--ui-font); color: var(--accent-text); }
 .gs-slider { width: 100%; accent-color: var(--accent); }
+/* A DISABLED SLIDER SAYS SO. Without this it keeps the accent and reads as live — which is the
+   very confusion this state exists to end. */
+.gs-slider:disabled { accent-color: var(--muted); opacity: 0.45; cursor: not-allowed; }
 /* bookmark placeholder */
 .gs-soon {
-  display: flex; align-items: center; gap: 11px; padding: 16px 18px; border-radius: 10px;
+  display: flex; align-items: center; gap: var(--sp-5); padding: 16px 18px; border-radius: var(--r-md);
   border: 1px dashed var(--chrome-border); background: color-mix(in srgb, var(--accent) 4%, transparent);
   color: var(--muted); font: 500 0.8125rem var(--ui-font);
 }
 .gs-soon-ico { color: var(--accent); font-size: 0.9375rem; }
 /* Bookmark-style picker (RAWY-41, Band J): shape grid + colour row + position preview. */
-.gs-bm-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 9px; }
+.gs-bm-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: var(--sp-4); }
 .gs-bm-cell {
-  aspect-ratio: 1; border: 0; border-radius: 8px; background: var(--paper-bg); cursor: pointer;
+  aspect-ratio: 1; border: 0; border-radius: var(--r-md); background: var(--paper-bg); cursor: pointer;
   display: flex; align-items: center; justify-content: center; box-shadow: inset 0 0 0 1px var(--chrome-border);
   overflow: hidden;
 }
 .gs-bm-cell.on { box-shadow: 0 0 0 2px var(--accent); }
-.gs-bm-colors { display: flex; gap: 11px; flex-wrap: wrap; }
+.gs-bm-colors { display: flex; gap: var(--sp-5); flex-wrap: wrap; }
 .gs-bm-color { width: 28px; height: 28px; border-radius: 50%; border: 0; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(43, 37, 33, 0.15); }
 .gs-bm-color.on { outline: 2px solid var(--text); outline-offset: 2px; }
 .gs-bm-preview {
-  position: relative; height: 56px; margin-top: 10px; border-radius: 8px;
+  position: relative; height: 56px; margin-top: 10px; border-radius: var(--r-md);
   background: var(--paper-bg); box-shadow: inset 0 0 0 1px var(--chrome-border); overflow: hidden;
 }
 .gs-bm-preview-mark { position: absolute; top: -2px; transform: translateX(-50%); }
 /* Bookmark SIZE preview (RAWY-48) — the marker drawn at its real chosen height, on paper. */
 .gs-bm-sizeprev {
   display: flex; justify-content: center; align-items: flex-start;
-  margin-top: 10px; padding: 8px; border-radius: 8px;
+  margin-top: 10px; padding: 8px; border-radius: var(--r-md);
   background: var(--paper-bg); box-shadow: inset 0 0 0 1px var(--chrome-border);
 }
 /* Bookmarks list item (RAWY-41). */
-.rp-item.bm-item { display: flex; align-items: center; gap: 11px; }
+.rp-item.bm-item { display: flex; align-items: center; gap: var(--sp-5); }
 .bm-item-mark { flex: none; display: flex; align-items: center; justify-content: center; width: 26px; }
 .bm-item-label { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; cursor: pointer; }
 .bm-item-pct { font: 500 0.6875rem var(--ui-font); color: var(--accent); }
 /* about */
 .gs-about { display: flex; align-items: center; gap: 16px; }
-.gs-about-name { font: 700 1.125rem "Literata", "SardUIArabic", serif; color: var(--text); }
+/* One element cannot carry two faces, and this mark is bilingual, so its halves are separate
+   spans — the same structure the sidebar and the card already use. */
+.gs-about-name { font: 700 1.125rem var(--brand); color: var(--text); }
+.gs-about-name .brand-ar { font-family: var(--brand-ar); }
 .gs-about-tag { font: 400 0.8125rem var(--ui-font); color: var(--muted); margin-top: 2px; }
 .gs-about-ver { font: 500 0.75rem var(--ui-font); color: color-mix(in srgb, var(--muted) 80%, var(--paper-bg)); margin-top: 6px; }
 
 /* RAWY-168: in-app update CHECK (Phase 1) — a quiet, on-brand row under the version; per-theme accent,
    RTL via the panel's dir, light + Moonlit. */
-.gs-update { margin-top: 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 9px; }
+.gs-update { margin-top: 12px; display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-4); }
 .gs-update-btn {
   display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
-  padding: 7px 14px; border-radius: 11px; font: 600 0.8rem var(--ui-font);
+  padding: 7px 14px; border-radius: var(--r-lg); font: 600 0.8rem var(--ui-font);
   color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent);
 }
@@ -3949,7 +4239,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .gs-update-quiet { color: var(--muted); }
 .gs-update-card {
   width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 8px;
-  padding: 12px 14px; border-radius: 13px;
+  padding: 12px 14px; border-radius: var(--r-xl);
   background: color-mix(in srgb, var(--accent) 8%, var(--paper-bg));
   border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--chrome-border));
 }
@@ -3972,10 +4262,10 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .gs-update-later:hover { color: var(--text); background: color-mix(in srgb, var(--text) 6%, transparent); }
 
 /* two-level distinction card */
-.gs-twolevel { display: flex; gap: 14px; margin-top: 4px; }
-.gs-tl-card { flex: 1; background: color-mix(in srgb, var(--accent) 5%, transparent); border: 1px solid var(--chrome-border); border-radius: 10px; padding: 16px 18px; }
-.gs-tl-head { display: flex; align-items: center; gap: 9px; font: 600 0.875rem var(--ui-font); color: var(--text); margin-bottom: 7px; }
-.gs-tl-ico { width: 24px; height: 24px; border-radius: 7px; display: flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; font-size: 0.8125rem; }
+.gs-twolevel { display: flex; gap: var(--sp-6); margin-top: 4px; }
+.gs-tl-card { flex: 1; background: color-mix(in srgb, var(--accent) 5%, transparent); border: 1px solid var(--chrome-border); border-radius: var(--r-md); padding: 16px 18px; }
+.gs-tl-head { display: flex; align-items: center; gap: var(--sp-4); font: 600 0.875rem var(--ui-font); color: var(--text); margin-bottom: 7px; }
+.gs-tl-ico { width: 24px; height: 24px; border-radius: var(--r-sm); display: flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; font-size: 0.8125rem; }
 .gs-tl-ico-book { background: #7b59a0; }
 .gs-tl-desc { font: 400 0.75rem/1.55 var(--ui-font); color: var(--muted); }
 
@@ -4018,7 +4308,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
    card's bottom while the stage never overflows → no scrollbar. Keeping the height lets the stage
    scroll (overflow-y:auto + safe-center on `.pc-stage`) so the whole tall card is reachable. */
 .pc-scale { position: relative; direction: ltr; overflow: hidden; flex-shrink: 0; }
-.pc-card { position: relative; overflow: hidden; border-radius: 5px; box-shadow: 0 22px 50px rgba(20, 14, 6, 0.32); display: flex; flex-direction: column; box-sizing: border-box; }
+.pc-card { position: relative; overflow: hidden; border-radius: var(--r-sm); box-shadow: 0 22px 50px rgba(20, 14, 6, 0.32); display: flex; flex-direction: column; box-sizing: border-box; }
 .pc-quotemark { position: relative; overflow: visible; }
 /* RAWY-50: the quote area is flex:1 with min-height:0 + overflow:hidden, so a long quote can
    never grow past its share and push the credit/footer off the card — the footer details are
@@ -4091,7 +4381,8 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .pbt-grip:hover { color: var(--text); }
 .pbt-row.dragging .pbt-grip { cursor: grabbing; }
 .pbt-body { flex: 1; min-width: 0; }
-.pbt-text { font: 400 0.78125rem/1.45 "Literata", "SardUIArabic", serif; color: var(--text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pbt-text { font: 400 0.78125rem/1.45 var(--book); color: var(--text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pbt-text.ar { font-family: var(--ar); }
 .pbt-chapter { font: 600 0.59375rem var(--ui-font); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
 .pc-basket-tray[dir="rtl"] .pbt-chapter { letter-spacing: 0; text-transform: none; }
 .pbt-remove { flex: none; border: none; background: transparent; color: var(--muted); font: 300 1.0625rem var(--ui-font); cursor: pointer; width: 1.65rem; height: 1.65rem; border-radius: 6px; }
@@ -4106,20 +4397,20 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 /* controls panel */
 .pc-panel { width: 344px; background: var(--pc-panel-bg); border-inline-start: 1px solid var(--pc-border); display: flex; flex-direction: column; }
 .pc-panel-head { height: 40px; display: flex; align-items: center; justify-content: flex-end; padding-inline-end: 12px; }
-.pc-close { border: none; background: transparent; color: var(--pc-muted); font: 300 1.0625rem var(--ui-font); cursor: pointer; width: 30px; height: 30px; border-radius: 7px; }
+.pc-close { border: none; background: transparent; color: var(--pc-muted); font: 300 1.0625rem var(--ui-font); cursor: pointer; width: 30px; height: 30px; border-radius: var(--r-sm); }
 .pc-close:hover { background: var(--pc-border); }
-.pc-panel-body { padding: 4px 26px 22px; flex: 1; display: flex; flex-direction: column; gap: 22px; overflow-y: auto; }
+.pc-panel-body { padding: 4px 26px 22px; flex: 1; display: flex; flex-direction: column; gap: var(--sp-7); overflow-y: auto; }
 .pc-panel-name { font: 600 1.0625rem var(--ui-font); color: var(--pc-text); }
 .pc-panel-sub { font: 400 0.75rem var(--ui-font); color: var(--pc-muted); margin-top: 2px; }
 .pc-group-label { font: 600 0.6875rem var(--ui-font); letter-spacing: .12em; color: var(--pc-muted); margin-bottom: 11px; }
 .pc-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
 .pc-swatch {
-  width: 40px; height: 34px; border-radius: 7px; border: 1px solid var(--pc-border); cursor: pointer;
-  font: 600 0.8125rem "Literata", serif; display: flex; align-items: center; justify-content: center;
+  width: 40px; height: 34px; border-radius: var(--r-sm); border: 1px solid var(--pc-border); cursor: pointer;
+  font: 600 0.8125rem var(--book); display: flex; align-items: center; justify-content: center;
 }
 .pc-swatch.on { box-shadow: 0 0 0 2px var(--pc-accent), 0 0 0 4px var(--pc-panel-bg); }
-.pc-formats { display: flex; gap: 9px; }
-.pc-format { flex: 1; border: none; background: transparent; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 0; }
+.pc-formats { display: flex; gap: var(--sp-4); }
+.pc-format { flex: 1; border: none; background: transparent; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: var(--sp-4); padding: 0; }
 .pc-format-ico { display: block; height: 30px; width: auto; border: 1.5px solid var(--pc-muted); border-radius: 2px; }
 .pc-format.on .pc-format-ico { border-color: var(--pc-accent); background: color-mix(in srgb, var(--pc-accent) 12%, transparent); }
 .pc-format-label { font: 500 0.625rem var(--ui-font); color: var(--pc-muted); }
@@ -4136,23 +4427,23 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .pc-select-caret { position: absolute; inset-inline-end: 12px; top: 50%; transform: translateY(-50%); color: var(--pc-muted); pointer-events: none; font-size: 0.6875rem; }
 /* RAWY-150: CARD STYLE picker — a wrap of pill buttons (the style is chosen independently of the
    paper). And the TEXT SIZE stepper — −/+ around the five presets XS–XL. */
-.pc-styles { display: flex; flex-wrap: wrap; gap: 7px; }
+.pc-styles { display: flex; flex-wrap: wrap; gap: var(--sp-4); }
 .pc-style {
   border: 1px solid var(--pc-border); background: transparent; color: var(--pc-muted);
-  font: 500 0.75rem var(--ui-font); padding: 7px 12px; border-radius: 8px; cursor: pointer;
+  font: 500 0.75rem var(--ui-font); padding: 7px 12px; border-radius: var(--r-md); cursor: pointer;
 }
 .pc-style:hover { color: var(--pc-text); }
 .pc-style.on { border-color: var(--pc-accent); color: var(--pc-accent); background: color-mix(in srgb, var(--pc-accent) 12%, transparent); font-weight: 600; }
 .pc-sizerow { display: flex; align-items: stretch; gap: 8px; }
 .pc-size-step {
   flex: none; width: 34px; border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text);
-  font: 400 1.125rem var(--ui-font); line-height: 1; border-radius: 8px; cursor: pointer;
+  font: 400 1.125rem var(--ui-font); line-height: 1; border-radius: var(--r-md); cursor: pointer;
 }
 .pc-size-step:hover { border-color: var(--pc-muted); }
 .pc-size-presets { flex: 1; display: flex; gap: 4px; }
 .pc-size-preset {
   flex: 1; border: 1px solid var(--pc-border); background: transparent; color: var(--pc-muted);
-  font: 600 0.6875rem var(--ui-font); padding: 8px 0; border-radius: 7px; cursor: pointer;
+  font: 600 0.6875rem var(--ui-font); padding: 8px 0; border-radius: var(--r-sm); cursor: pointer;
 }
 .pc-size-preset:hover { color: var(--pc-text); }
 .pc-size-preset.on { border-color: var(--pc-accent); color: var(--pc-accent); background: color-mix(in srgb, var(--pc-accent) 12%, transparent); }
@@ -4160,7 +4451,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .pc-seg { display: flex; gap: 6px; }
 .pc-seg-btn {
   flex: 1; border: 1px solid var(--pc-border); background: transparent; color: var(--pc-muted);
-  font: 500 0.75rem var(--ui-font); padding: 8px 4px; border-radius: 8px; cursor: pointer; white-space: nowrap;
+  font: 500 0.75rem var(--ui-font); padding: 8px 4px; border-radius: var(--r-md); cursor: pointer; white-space: nowrap;
 }
 .pc-seg-btn:hover { color: var(--pc-text); }
 .pc-seg-btn.on { border-color: var(--pc-accent); color: var(--pc-accent); background: color-mix(in srgb, var(--pc-accent) 12%, transparent); font-weight: 600; }
@@ -4173,10 +4464,10 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 /* Export actions pinned to the panel bottom (RAWY-56) — a fixed footer outside the scroll body,
    so Copy · Save · "Save in app" are always visible without scrolling. */
 .pc-panel-foot {
-  flex: none; display: flex; flex-direction: column; gap: 10px;
+  flex: none; display: flex; flex-direction: column; gap: var(--sp-5);
   padding: 14px 26px 18px; border-top: 1px solid var(--pc-border); background: var(--pc-panel-bg);
 }
-.pc-actions { display: flex; gap: 10px; }
+.pc-actions { display: flex; gap: var(--sp-5); }
 .pc-save { flex: 1; border: none; background: var(--pc-accent); color: var(--pc-modal-bg); font: 600 0.875rem var(--ui-font); padding: 13px 0; border-radius: 9px; cursor: pointer; }
 .pc-copy { border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text); font: 500 0.8125rem var(--ui-font); padding: 13px 16px; border-radius: 9px; cursor: pointer; }
 .pc-save:disabled, .pc-copy:disabled { opacity: 0.55; cursor: default; }
@@ -4186,7 +4477,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
    ============================================================================ */
 /* composer: the tertiary "Save in app" action under the Save/Copy row */
 .pc-saveinapp {
-  display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%;
+  display: flex; align-items: center; justify-content: center; gap: var(--sp-4); width: 100%;
   border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text);
   font: 600 0.8125rem var(--ui-font); padding: 11px 0; border-radius: 9px; cursor: pointer;
 }
@@ -4582,12 +4873,13 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
        rather than pasted behind it. */
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E"),
     /* (b) FALLOFF. Extra theme weight at the top, where `.lib-head` puts the title, the count and the
-       search field on the bare ground. It ADDS to the flat scrim below and so can only ever make the
-       ground MORE theme-dominated — the measured floor cannot be breached from here. Vertical, so it
-       is direction-agnostic and needs no RTL mirror. */
+       search field on the bare ground. It ADDS to the flat scrim below, and it SCALES WITH IT: it
+       was a fixed 14%, which meant a reader who turned the scrim off still got a tint across the
+       top they could not reach. A veil the control does not reach is the thing that makes a clear
+       setting not look clear. Vertical, so it is direction-agnostic and needs no RTL mirror. */
     linear-gradient(
       to bottom,
-      color-mix(in srgb, var(--paper-bg) 14%, transparent),
+      color-mix(in srgb, var(--paper-bg) var(--bg-lib-falloff, 14%), transparent),
       transparent 46%
     ),
     /* (c) The flat scrim at the measured floor, in the THEME's own colour — not black. A black
@@ -4658,9 +4950,18 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
    position renders the sidebar EXACTLY as it did before. `saturate(1.1)` is untouched — it is not
    blur, and dropping it would change the tint. */
 :root[data-bg-library="on"] .lib-sidebar {
-  background: color-mix(in srgb, var(--chrome-bg) var(--bg-lib-sidebar, 85%), transparent);
-  backdrop-filter: blur(var(--bg-lib-blur, 0px)) saturate(1.1);
-  -webkit-backdrop-filter: blur(var(--bg-lib-blur, 0px)) saturate(1.1);
+  /* With a picture behind it this surface starts at 85% and the floor sits just under it, so alpha
+     alone has about six points to work with — measured in the release, the old `max()` spent them
+     all and rendered Light and Glass at 80% and 80%, pixel-identical. The travel is floor-anchored
+     now, and the FROST carries the rest: it is what "glass" means, it reads instantly over a
+     picture, and blurring cannot cost contrast because it moves the ground toward its own mean
+     rather than toward an extreme. The user's own blur is a floor, never reduced. */
+  background: color-mix(in srgb, var(--chrome-bg)
+    calc(var(--ui-floor, 0%) + (var(--ui-base, var(--bg-lib-sidebar, 85%)) - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
+  backdrop-filter: blur(calc(var(--bg-lib-blur, 0px) + var(--ui-frost, 0px)))
+    saturate(calc(1.1 * var(--ui-sat, 1))) brightness(var(--ui-bright, 1));
+  -webkit-backdrop-filter: blur(calc(var(--bg-lib-blur, 0px) + var(--ui-frost, 0px)))
+    saturate(calc(1.1 * var(--ui-sat, 1))) brightness(var(--ui-bright, 1));
 }
 
 /* ---- covers must sit ON the surface, not on top of a picture ----
@@ -4779,6 +5080,14 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 }
 
 /* ---- layer 2: scrim + grain, crisp ---- */
+/* NO OVERLAY — the layer is dropped, not dimmed.
+   `content: none` removes the pseudo-element itself, so there is no scrim and no grain over the
+   picture and nothing composited above it at all. A 0% colour would have looked the same today and
+   left a compositing step for a later change to put a value back into; this leaves nothing to put a
+   value into. The PICTURE layer (`::before`) is untouched, so blur, focal point and flip all still
+   do exactly what the reader set them to. */
+:root[data-bg-reading="on"] .reader-desk[data-overlay="off"]::after { content: none; }
+
 :root[data-bg-reading="on"] .reader-desk::after {
   content: "";
   position: absolute;
@@ -4815,7 +5124,8 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 :root[data-bg-reading="on"] .page-sheet {
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.44), 0 2px 10px rgba(0, 0, 0, 0.26);
 }
-:root[data-bg-reading="on"][data-dark="true"] .page-sheet {
+/* the same hairline as above, in the picture-on variant — the book's polarity, for the same reason */
+:root[data-bg-reading="on"] .reader-root[data-book-dark="true"] .page-sheet {
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55), 0 2px 10px rgba(0, 0, 0, 0.34),
     inset 1px 0 0 rgba(255, 255, 255, 0.05), inset -1px 0 0 rgba(255, 255, 255, 0.05);
 }
@@ -4946,7 +5256,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 /* ---- RAWY-265: the Global Settings controls (Appearance -> Library background) ----
    These render only once an image is chosen (progressive disclosure in GlobalSettings.tsx), so with
    no background the section is a single "Choose image…" row and none of this is in the DOM. */
-.bg-ctl-row { display: flex; align-items: center; gap: 10px; }
+.bg-ctl-row { display: flex; align-items: center; gap: var(--sp-5); }
 .bg-ctl-thumb {
   flex: none; width: 46px; height: 30px; border-radius: 3px; background-size: cover;
   background-position: center; border: 1px solid var(--chrome-border);
@@ -4967,7 +5277,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
    marks the point that will actually survive the crop rather than an abstract coordinate. */
 .bg-ctl-focal {
   position: relative; width: 100%; height: 104px; padding: 0; cursor: crosshair;
-  border: 1px solid var(--chrome-border); border-radius: 5px; overflow: hidden;
+  border: 1px solid var(--chrome-border); border-radius: var(--r-sm); overflow: hidden;
   background-size: cover; background-repeat: no-repeat;
 }
 .bg-ctl-focal-dot {
@@ -5012,14 +5322,14 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   margin: 6px 0 0; font: 500 0.8125rem/1.45 var(--ui-font); color: var(--text);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   border-inline-start: 3px solid var(--accent);
-  padding: 7px 10px; border-radius: 5px; text-align: start;
+  padding: 7px 10px; border-radius: var(--r-sm); text-align: start;
 }
 
 
 /* BETA identification in About — the ONLY place a Beta says it is one (owner, 2026-08-07). The window
    title, product name and version stay identical to production so a tester experiences exactly the
    application they will receive; this block appears only when the build id begins BETA-. */
-.gs-about-beta { margin-top: 2px; font: 700 0.75rem var(--ui-font); color: var(--accent); letter-spacing: 0.04em; }
+.gs-about-beta { margin-top: 2px; font: 700 0.75rem var(--ui-font); color: var(--accent-text); letter-spacing: 0.04em; }
 .gs-about-build { margin-top: 4px; font: 500 0.6875rem var(--ui-font); color: var(--muted); direction: ltr; text-align: start; }
 .gs-about-build-lbl { display: block; opacity: 0.8; }
 .gs-about-build code { font-family: ui-monospace, Consolas, monospace; font-size: 0.6875rem; }
@@ -5027,11 +5337,12 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 /* ================================================================================================
    INTERFACE TEXTURE — the three named steps, suppressed under the three accessibility preferences.
    ================================================================================================
-   The eight chrome surfaces above read `--ui-texture-scale`, which a profile sets to a value below 1
-   for `light` and `glass`. It is a SCALE rather than an alpha so each surface keeps its own place in
-   the hierarchy — a drawer is deliberately not a toolbar — while the lowest of them lands on the
-   0.78 the design draws. `opaque` removes the property, so the fallback `1` restores the shipped
-   values exactly and a reader who never touches texture has no declaration in the tree at all.
+   The eight chrome surfaces above read `--ui-k`, `--ui-floor` and `--ui-frost`. Each lands at
+   `floor + (own − floor) × k`, so a surface keeps its own place in the hierarchy — a drawer is
+   deliberately not a toolbar — and no step can ever fall under the measured floor, which the old
+   proportional scale did (90% × the glass factor reached 78%, below it). `opaque` removes all
+   three, so the fallbacks reduce the formula to the surface's own value exactly and a reader who
+   never touches texture has no declaration in the tree at all.
 
    THESE SUPPRESSIONS ARE NEW, AND THEY HAD TO BE. The three existing accessibility blocks are scoped
    to `.lib-sidebar`, `.lib-root`, `.reader-desk` and `.page-sheet`; none of them names any of the
@@ -5052,7 +5363,45 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   :root[data-ui-texture] .tts-menu,
   :root[data-ui-texture] .tts-menu-section,
   :root[data-ui-texture] .tts-mini--kashida,
-  :root[data-ui-texture] .upd-latest {
+  :root[data-ui-texture] .upd-latest,
+  :root[data-ui-texture] .lib-sidebar {
     background: var(--chrome-bg);
   }
+  /* The frost is part of the feature, so it is suppressed with it. Leaving the blur behind would
+     honour the preference for the alpha and quietly ignore it for the transparency the blur reveals,
+     which is the same failure in a different property. */
+  :root[data-ui-texture] .lib-sidebar,
+  :root[data-ui-texture] .tts-pill,
+  :root[data-ui-texture] .rc-bottom {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
+
+
+/* ================================================================================================
+   CONTROL TIERS — Settings and the Reader's drawer, on the same steps as everything else.
+   ================================================================================================
+   These heights were emergent: padding plus whatever the line box came to, which is why equivalent
+   controls measured 29, 32, 35, 36.6, 37 and 39px across three neighbourhoods. Each is now taken
+   from `--ctl-*`, with the content centred, so the size is declared and does not move when the
+   script does — the same button beside «حفظ» and beside "Save".
+
+   WHAT IS DELIBERATELY LEFT ALONE:
+     .rc-btn        the reader's chrome button stacks an icon OVER a label; it is a different
+                    control, not a taller one, and its 62px is that composition.
+     .rp-row        a table-of-contents row is a list item — its height is the chapter title it
+                    holds, not a control size.
+     .gs-swatch-cell / .rs-swatch-cell   a paper specimen. Its box is an aspect ratio.
+     .rs-switch     a stadium toggle: `--r-pill` is a shape, and its height is the knob's.
+   ------------------------------------------------------------------------------------------------ */
+.gs-nav-item { min-height: var(--ctl-xl); padding-block: 0; }
+.gs-seg-item { min-height: var(--ctl-lg); padding-block: 0; display: inline-flex; align-items: center; justify-content: center; }
+.gs-x { width: var(--ctl-lg); height: var(--ctl-lg); display: inline-flex; align-items: center; justify-content: center; }
+.bg-ctl-act { min-height: var(--ctl-md); padding-block: 0; display: inline-flex; align-items: center; gap: var(--sp-3); }
+.rs-seg-item { min-height: var(--ctl-lg); padding-block: 0; display: inline-flex; align-items: center; justify-content: center; }
+.sp-tab { min-height: var(--ctl-lg); padding-block: 0; display: inline-flex; align-items: center; justify-content: center; }
+.rs-ink { width: var(--ctl-lg); height: var(--ctl-lg); }
+/* The drawer's compact variant keeps its own tighter step — it sits INSIDE a section head, where a
+   34px control would out-weigh the heading it belongs to. */
+.rs-sec-head .rs-seg-item { min-height: var(--ctl-sm); }

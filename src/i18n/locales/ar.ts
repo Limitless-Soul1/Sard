@@ -141,7 +141,6 @@ export const ar: Record<TKey, string> = {
   "lib.nav.library": "المكتبة",
   "lib.nav.highlights": "التظليلات والملاحظات",
   "lib.nav.bookmarks": "الإشارات المرجعية", // RAWY-202: رفّ الإشارات عبر كل الكتب
-  "lib.nav.readingNow": "أقرأ الآن",
   "lib.shelves": "الأرفف",
   "lib.newShelf": "+ رفّ جديد",
   "lib.noShelves": "لا أرفف بعد",
@@ -173,6 +172,27 @@ export const ar: Record<TKey, string> = {
   // تصميم المكتبة — الخزائن والعروض الأربعة والترتيب اليدويّ وبطاقة الكتاب.
   "lib.cases": "الخزائن",
   "lib.newCase": "خزانة جديدة",
+  "lib.newCaseAction": "+ خزانة جديدة",
+  "lib.create.shelfTitle": "إنشاء رفّ جديد",
+  "lib.create.shelfHint": "رفّ تملؤه وترتّبه بنفسك.",
+  "lib.create.shelfName": "اسم الرفّ",
+  "lib.create.shelfNameHint": "مثلاً: الكتب التي أريد قراءتها",
+  "lib.create.shelfDo": "إنشاء الرفّ",
+  "lib.create.shelfColour": "لون الرفّ",
+  "lib.create.caseColour": "لون الخزانة",
+  "lib.create.shelfRepeat": "لديك رفّ بهذا الاسم. لا مانع من ذلك.",
+  "lib.create.where": "مكان الرفّ",
+  "lib.create.caseGroup": "الخزائن",
+  "lib.create.noCases": "لا خزائن بعد — سيبقى الرفّ خارجها.",
+  "lib.create.caseTitle": "إنشاء خزانة جديدة",
+  "lib.create.caseHint": "الخزانة تضمّ أرففاً، وتجمع جزءاً من المكتبة في مكان واحد.",
+  "lib.create.caseNameHint": "مثلاً: الروايات",
+  "lib.create.caseDo": "إنشاء الخزانة",
+  "lib.rename.shelfTitle": "إعادة تسمية الرفّ",
+  "lib.rename.caseTitle": "إعادة تسمية الخزانة",
+  "lib.rename.hint": "اختر اسماً يظلّ مفهوماً بعد حين.",
+  "lib.rename.do": "حفظ",
+  "lib.create.caseRepeat": "لديك خزانة بهذا الاسم. لا مانع من ذلك.",
   "lib.caseName": "اسم الخزانة",
   "lib.deleteCase": "حذف الخزانة",
   "lib.case.deleteConfirm": "حذف هذه الخزانة؟ تخرج أرففها من الخزانة، وتبقى كل الكتب في مكتبتك.",
@@ -186,6 +206,15 @@ export const ar: Record<TKey, string> = {
   "lib.movedButNotRemoved": "أُضيف إلى الرفّ الجديد، لكن تعذّر إخراجه من القديم — فهو الآن على الاثنين.",
   "lib.openCase": "افتح الخزانة",
   "lib.manage": "إدارة",
+  "lib.manageShelf": "إدارة الرفّ",
+  "lib.menu.shelfColour": "لون الرفّ",
+  "lib.menu.organisation": "التنظيم",
+  "lib.menu.bookOrder": "ترتيب الكتب",
+  "lib.menu.positionIn": "موضعه في {name}",
+  "lib.menu.positionLoose": "موضعه بين الأرفف الحرّة",
+  "lib.menu.earlier": "تقديمه",
+  "lib.menu.later": "تأخيره",
+  "lib.menu.byHandNote": "«يدويّ» يُبقي الترتيب الذي رتّبته بنفسك. وما عداه يفرز الرفّ ويترك ترتيبك محفوظاً تحته.",
   "lib.managing": "إدارة الخزانة",
   "lib.managingUnfiled": "إدارة الأرفف خارج الخزائن",
   "lib.manageUnfiled": "إدارة هذه الأرفف",
@@ -209,6 +238,8 @@ export const ar: Record<TKey, string> = {
   "lib.collapse": "طَيّ",
   "lib.expand": "بسط",
   "lib.unshelved": "خارج الأرفف",
+  "lib.casesCount": "{n} خزائن",
+  "lib.categoriesCount": "{n} فئات",
   "lib.shelvesCount": "{n} أرفف",
   "lib.searchWide": "ابحث في العناوين والمؤلّفين والأرفف…",
   "lib.select": "تحديد",
@@ -218,6 +249,8 @@ export const ar: Record<TKey, string> = {
   "lib.sortedByRule": "النظام يقرّر الترتيب",
   "lib.orderOfThisShelf": "ترتيب هذا الرفّ",
   "lib.byHand": "يدويّ",
+  "lib.reordered": "تم تغيير ترتيب الكتاب",
+  "lib.movedTo": "تم نقل الكتاب إلى",
   "lib.moveTo": "نقل إلى…",
   "lib.movingOutOf": "ستخرج من {name}",
   "lib.moveOutOfWhich": "هذه الكتب على {n} أرفف. من أيّها تخرج؟",
@@ -241,6 +274,12 @@ export const ar: Record<TKey, string> = {
   "lib.view.gridHint": "الشبكة — شبكة المكتبة المعتادة",
   "lib.sort.recent": "الأحدث قراءةً",
   "lib.sort.added": "الأحدث إضافةً",
+  // The shelf-s own stored order, the one a hand reorder writes. Offered only inside a shelf.
+  // Manual Ordering is always offered; where it cannot act it says which of these is missing.
+  "lib.arrangeNeedsShelf": "افتح رفًّا لترتيب كتبه",
+  "lib.arrangeNoFiledBooks": "لا كتاب من هذه مُودَع على رفّ بعد",
+  "lib.arrangeEmptyShelf": "لا كتب في هذا الرفّ بعد",
+  "lib.sort.shelf": "ترتيب الرفّ",
   "lib.sort.progress": "التقدّم",
   "lib.finished": "مقروء",
   "lib.rule.reading": "قيد القراءة",
@@ -250,16 +289,22 @@ export const ar: Record<TKey, string> = {
   "lib.automatic": "تلقائيّ",
   "lib.ruleFixed":
     "العضوية تتبع القاعدة — لا تُوضع الكتب هنا يدويًّا. واحذفه متى شئت؛ تذهب المجموعة وحدها.",
+  "lib.emptyCase": "خزانة فارغة",
+  // A case can show books it does not hold: a rule shelf inside it fills itself, and those books
+  // belong to no case. The count says what is filed; this says what the rest is doing there.
+  "lib.vista.shownByRule": "و{n} تظهر بحكم قاعدة، لا بإيداع",
   "lib.emptyShelf": "رفّ فارغ. التقط كتابًا وضعه هنا.",
+  "lib.emptyShelfShort": "رفّ فارغ",
   "lib.noResults": "لا نتائج",
   "lib.noResultsBody":
     "لا شيء يطابق هذا البحث. جرّب كلمة أقصر أو خزانة أخرى — يبحث سَرْد في العناوين والمؤلّفين وأسماء الخزائن والأرفف.",
   "lib.clearSearch": "مسح البحث",
   "lib.today": "اليوم",
   "lib.daysAgo": "قبل {n} يومًا",
-  "lib.arrangeHintOff": "الفرز يحكم التفاصيل. أمّا داخل الرفّ فالترتيب ترتيبه هو.",
   "lib.arrangeHintOn":
     "انقر كتابًا لالتقاطه، حرّكه إلى الموضع الذي تريد، ثم انقر لتضعه. Esc للإلغاء. وخارج هذا الوضع اضغط مطوّلًا على الكتاب.",
+  "lib.arrangeHintSorted":
+    "الفرز جارٍ حسب عمود، فلا موضع بين كتابين يمكن رسمه. اسحب الكتاب إلى رفّ في الشريط الجانبي لنقله إليه، أو افرز حسب الرفّ لترتّبها بيدك.",
   "lib.placeHere": "ضعه هنا",
   "lib.takeOffShelf": "أخرِجه من رفّه",
   "lib.copiedFromRuleShelf": "أُضيف هنا. ويبقى في «{name}» ما دام الوصف منطبقًا.",
@@ -311,6 +356,9 @@ export const ar: Record<TKey, string> = {
   "lib.notFiledHint": "هذا الكتاب ليس على أيّ رفّ بعد.",
   "lib.assignment": "موضعه في المكتبة",
   "lib.caseWord": "الخزانة",
+  "lib.caseNarrowsOnly": "اختيار الخزانة يُضيّق الأرفف أدناه فقط، والرفّ هو ما يضع الكتاب.",
+  "lib.chooseShelfInCase": "اختر رفًّا داخل «{name}» لوضع الكتاب فيه.",
+  "lib.chooseLooseShelf": "اختر رفًّا لوضع الكتاب فيه.",
   "lib.shelfWord": "الرفّ",
   "lib.categoryWord": "الفئة",
   "lib.hero.eyebrow": "متابعة القراءة",
@@ -320,9 +368,16 @@ export const ar: Record<TKey, string> = {
   "lib.hero.last": "آخر قراءة",
   "lib.hero.nothing": "لا كتاب مفتوح بعد",
   "lib.hero.nothingBody": "اختر أيّ كتاب أدناه وسينتظرك هنا.",
+  "lib.vista.nothingHere": "لا شيء هنا بعد.",
+  "lib.vista.orderNotYours": "هذه الكتب ليست على رفّ بعد، فلا ترتيب خاصًّا بها هنا — اسحب كتابًا إلى رفّ لإيداعه.",
+  "lib.vista.noShelves": "لا أرفف في هذه الخزانة بعد.",
+  "lib.vista.noBooksShelf": "هذا الرفّ فارغ. التقط كتابًا وضعه هنا.",
+  "lib.vista.noBooksCat": "لا كتب في هذه الفئة بعد.",
   "lib.vista.openShelf": "افتح الرفّ",
-  "lib.vista.allShelves": "كل الأرفف",
-  "lib.vista.hint": "مكتبتك على أرضها. تُقرأ الأرفف من الأعلى إلى الأسفل؛ افتح رفًّا لتراه كاملًا.",
+  "lib.vista.up": "رجوع",
+  "lib.vista.openCase": "افتح الخزانة",
+  "lib.vista.openCategory": "افتح الفئة",
+  "lib.vista.hint": "مكتبتك على أرضها. افتح خزانةً لترى أرففها، ورفًّا لترى ما عليه.",
 
   "lib.sortBy": "ترتيب حسب",
   "lib.sort.title": "العنوان",
@@ -332,6 +387,19 @@ export const ar: Record<TKey, string> = {
   "lib.sort.dateAdded": "تاريخ الإضافة",
   "lib.cover.crop": "قَصّ",
   "lib.cover.fit": "احتواء",
+  // NAMES OUT OF THE WAY UNTIL A BOOK IS TOUCHED.
+  //
+  // «إخفاء الأسماء» — the owner's wording, chosen over the earlier «أسماء هادئة». The first said
+  // what the shelf BECOMES; this says what the control DOES, and a setting a reader meets once in a
+  // toolbar has to be legible at a glance rather than evocative. The hint carries the nuance the
+  // label gives up: the names are not gone, they wait. It also names the three formats it applies
+  // to, so a reader in Spines or Details is not left hunting for a control that is deliberately
+  // absent there.
+  "lib.titles.quiet": "إخفاء الأسماء",
+  "lib.titles.hint": "تنزوي أسماء الكتب حتى تلمس كتابًا — في الشبكة والأغلفة والمشهد.",
+  // THE SIZE OF THE BOOKS ON THE SHELF. One word, because it sits in a toolbar beside a slider
+  // whose two ends already say which way is bigger; a longer label would only crowd the header.
+  "lib.size": "حجم الأغلفة",
   "lib.filter": "تصفية",
   "lib.filter.all": "كل الصيغ",
   "lib.col.title": "العنوان",
@@ -645,8 +713,13 @@ export const ar: Record<TKey, string> = {
   "color.text": "لون النص",
   "color.within": "ضمن سمة {theme}",
   "color.page": "لون الصفحة", // RAWY-201: سطح القراءة
-  "color.background": "لون الخلفية", // RAWY-201: المنطقة خلف الصفحة
+  "color.background": "اللون خلف الصفحة", // RAWY-201: الطبقة بين الصفحة والصورة
+  "color.numbers": "لون الأرقام", // أرقام الكتاب وحدها — نفس القيمة التي تحملها الهيئة
   "color.default": "لون السمة الافتراضي",
+  "color.none": "بلا لون — الصورة كما هي",
+  "color.behindPage": "اللون خلف الصفحة",
+  "color.behindPageNote": "طبقة بين الصفحة والصورة — ليست الوَرَق ولا الصورة",
+  "color.behindPageHint": "«لون السمة» يستعمل لون المكتب. «بلا لون» يزيل الطبقة تمامًا فتظهر صورة الخلفية كما هي، بلا أي تظليل.",
   "color.custom": "لون مخصص",
   // RAWY-281: مؤشّر المرجع (الخطّان تحت الكلمة المرجعية)
   "ref.color": "لون خطّ المرجع",
@@ -780,6 +853,9 @@ export const ar: Record<TKey, string> = {
   "gs.bg.replace": "استبدال…",
   "gs.bg.remove": "إزالة",
   "gs.bg.presence": "الحضور",
+  "gs.bg.presenceLibrary": "حضور صورة المكتبة",
+  "gs.bg.presenceBook": "حضور صورة الكتاب",
+  "gs.bg.presenceNoOverlay": "لا أثر له ما دام «بلا لون» مختارًا — الحضور شدّةُ طبقة اللون، ولا طبقة الآن. اختر لونًا أو لون السمة ليعود.",
   // RAWY-279 — نصّان مختلفان لأن السطحين مختلفان فعلًا: سقف المكتبة حدٌّ قياسيّ للتباين، أما مكتب
   // القراءة فلا يحمل نصًّا عاريًا وقيس آمنًا عند التعتيم صفرًا. الأرقام بالهندية لتطابق قراءة المؤشّر.
   "gs.bg.presenceHint": "مقدار ما يظهر من صورتك خلف لون السمة. يتوقّف المدى عند الحدّ الذي تبقى عنده نصوص المكتبة مقروءة.",
@@ -1053,24 +1129,42 @@ export const ar: Record<TKey, string> = {
   "profiles.chapter.identity": "الهويّة",
   "profiles.chapter.identity.q": "باسمِ مَن هذه الهيئة؟",
   "profiles.chapter.paper": "الوَرَق والألوان",
+  // TWO SURFACES, NAMED FOR WHAT THEY ARE. The old «الوَرَق والألوان» is kept above rather than
+  // removed: it is still the honest name for a page, and the book half borrows its question.
+  "profiles.chapter.paperLibrary": "ألوان المكتبة",
+  "profiles.chapter.paperBook": "ألوان الكتب",
   "profiles.chapter.paper.q": "كيف تبدو الصفحة؟",
+  "profiles.chapter.paperLibrary.q": "كيف تبدو مكتبتك؟",
+  "profiles.chapter.paperBook.q": "كيف تبدو صفحة الكتاب؟",
   "profiles.chapter.background": "الخلفيّة",
   "profiles.chapter.background.q": "أين تريد الصورة، وكيف تظهر؟",
   "profiles.chapter.fonts": "الخطوط",
   "profiles.chapter.fonts.q": "كيف يبدو الحرف؟",
+  "profiles.chapter.measure": "القياس",
+  "profiles.chapter.measure.q": "كيف تُرصَف الكلمات؟",
+  "profiles.focus.measure": "الصفحة المرصوفة",
+  "profiles.measure.hint": "ليس على الهيئة أن ترى رأيًا. ما تُترك «كما هو » يبقى على ما اخترته أثناء القراءة.",
+  "profiles.measure.follows": "كما هو",
+  "profiles.measure.clear": "اتركه كما هو",
+  "profiles.measure.indentOn": "مُزاح",
+  "profiles.measure.indentOff": "بلا إزاحة",
+  "profiles.measure.groupType": "الحرف",
+  "profiles.measure.groupRhythm": "الإيقاع",
+  "profiles.measure.groupPage": "الصفحة",
+  "profiles.measure.trackingArabic": "العربية تصل حروفها، لذا لا يُطبَّق عليها التباعد — والسطر اللاتيني أدناه يُظهِر الأثر.",
   "profiles.chapter.marks": "العلامات",
   "profiles.chapter.marks.q": "ما الذي يدلّك على موضعك؟",
   "profiles.chapter.texture": "الملمس",
   "profiles.chapter.texture.q": "كيف تبدو واجهة سَرْد؟",
   "profiles.focus.identity": "الهيئة النشِطة",
   "profiles.focus.paper": "الصفحة وألوانها",
+  "profiles.focus.paperLibrary": "المكتبة وألوانها",
   "profiles.focus.fonts": "الحرف المقروء",
   "profiles.focus.marks": "العلامة والتظليل",
   "profiles.focus.texture": "لوحات الواجهة",
   "profiles.editor.stageLibrary": "المكتبة",
   "profiles.editor.stageBook": "الكتاب",
   // The design's own words for the preview's chrome.
-  "profiles.preview.add": "إضافة",
   "profiles.preview.readingBar": "شريط القراءة",
   // أداة نظر لا إعداد: عرض الصفحة يبقى للقارئ، ولا يُحفَظ في الهيئة.
   "profiles.preview.measure": "المقاس",
@@ -1083,14 +1177,30 @@ export const ar: Record<TKey, string> = {
   "profiles.section.bookBg": "خلفية الكتاب",
   "profiles.section.fonts": "الخطوط",
   "profiles.section.marks": "العلامات والملمس",
-  "profiles.bg.sameAsLibrary": "الصورة نفسها، أهدأ",
+  "profiles.bg.sameAsLibrary": "الصورة نفسها",
   "profiles.bg.sameAsLibraryShort": "الصورة نفسها · أهدأ",
 
+  "profiles.unnamed": "هيئة بلا اسم",
   "profiles.identity.name": "الاسم",
+  "profiles.identity.nameRequired": "لا يمكن أن تفقد الهيئة اسمها.",
+  "profiles.identity.namePlaceholder": "سمِّ هذه الهيئة",
   "profiles.identity.icon": "الرمز",
   "profiles.identity.iconSeal": "أوّل الاسم",
   "profiles.identity.iconColour": "لون",
-  "profiles.identity.iconImage": "＋ اختيار صورة",
+  "profiles.identity.iconImage": "صورة",
+  "profiles.identity.colourGroup": "لون الرمز",
+  "profiles.identity.colourCustom": "لونٌ آخر",
+  "profiles.identity.restore": "إعادة الصورة",
+  "profiles.identity.frame": "ضبط الصورة",
+  "profiles.identity.frameReset": "إعادة الضبط",
+  "profiles.identity.frameDone": "تمّ",
+  "profiles.identity.frameStage": "ضبط الصورة — اسحب لتحريكها، والأسهم للإزاحة، و+ و− للتقريب",
+  "profiles.identity.frameHint":
+    "اسحب الصورة لتختار ما يبقى منها في الرمز، وقرّبها إن شئت.",
+  "profiles.identity.frameHintFits":
+    "هذه الصورة تملأ الرمز تمامًا. قرّبها لتختار جزءًا منها.",
+  "profiles.identity.zoom": "التقريب",
+  "profiles.identity.asItAppears": "كما يظهر",
   "profiles.identity.sealHint":
     "من غير صورة، يُرسَم أوّل حرفٍ من الاسم على ورق الهيئة — بخطّها نفسه أو بخطٍّ تختاره.",
 
@@ -1155,8 +1265,22 @@ export const ar: Record<TKey, string> = {
   "profiles.texture.opaque": "مُعتِم",
   "profiles.texture.light": "خفيف",
   "profiles.texture.glass": "زجاجي",
+  // THE PLATE'S OWN WORDS. Deliberately about the setting itself rather than lorem: the reader is
+  // judging whether they can READ through this surface, and a line they can actually read is the
+  // only honest test of that.
+  "profiles.texture.plateTitle": "لوحة الواجهة",
+  "profiles.texture.plateBody": "هكذا تبدو لوحاتُ سَرْد فوق خلفيتك الحالية — بالضبابِ والإشباعِ والشفافيةِ التي سيرسمها التطبيق.",
+  "profiles.texture.plateFoot": "معاينة حيّة",
+  // Shown ONLY when the contrast floor has actually brought the two steps together.
+  "profiles.texture.converged": "على هذه الخلفية يلتقي «خفيف» و«زجاجي» عند الشفافية نفسها: حدُّ الوضوح لا يسمح بأرقّ من ذلك. اخفض إضاءة الخلفية ليفترقا.",
 
   "profiles.unsaved.changed": "غيّرت {what}",
+  "profiles.unsaved.pendingTitle": "تغييرات لم تُحفَظ في «{name}»",
+  "profiles.unsaved.pendingBody": "غيّرتَ {what}. ما الذي تريده قبل المتابعة؟",
+  "profiles.unsaved.pendingBodyDraft": "لديك تعديلات لم تُحفَظ بعد. ما الذي تريده قبل المتابعة؟",
+  "profiles.unsaved.save": "احفظ في هذه الهيئة",
+  "profiles.unsaved.discard": "تجاهل التغييرات",
+  "profiles.unsaved.cancel": "ابقَ هنا",
   "profiles.unsaved.where": "أين يذهب هذا التغيير؟",
   "profiles.unsaved.intoActive": "احفظه في «{name}»",
   "profiles.unsaved.intoActiveUnnamed": "احفظه في الهيئة التي تستعملها",
@@ -1167,6 +1291,11 @@ export const ar: Record<TKey, string> = {
     "يبقى للجلسة وحدها ولا يُحفَظ في أيّ هيئة — ويعود سَرْد إلى شكل الهيئة نفسها حين تفتحه في المرّة القادمة.",
   "profiles.unsaved.newName": "{name} — شكل جديد",
   // الفصل «الوَرَق والألوان» — محرّر الألوان في مكانه. النصوص من التصميم نفسه.
+  "profiles.pick.done": "تمّ",
+  "profiles.pick.plane": "الإشباع والإضاءة",
+  "profiles.pick.hue": "درجة اللون",
+  "profiles.pick.alpha": "الشفافية",
+  "profiles.pick.hex": "رمز اللون",
   "profiles.colour.heading": "ألوانها — عدّل ما شئت",
   "profiles.colour.hint": "اضغط لوناً لتغييره، أو الصق رمزاً تعرفه.",
   "profiles.colour.resetAll": "إرجاع الكلّ",
@@ -1174,10 +1303,19 @@ export const ar: Record<TKey, string> = {
   "profiles.colour.badHex": "رمزٌ غير مكتمل — مثال",
   "profiles.colour.follows": "وتتبعها",
   "profiles.colour.copy": "نسخ",
+  "profiles.colour.numbers": "الأرقام",
+  "profiles.colour.numbersNote": "أرقام الكتاب وحدها.",
+  "profiles.colour.numbersFollow": "كلون النص",
   "profiles.colour.paper": "الوَرَق",
   "profiles.colour.paperNote": "صفحة الكتاب، والحقول",
+  // The same role on the other surface. «الوَرَق» is the page in a book and the ground in the
+  // library, and the note has to say whichever one the chapter is about.
+  "profiles.colour.paperNote.library": "تُبنى منها أرضيّة المكتبة ولوحاتها",
   "profiles.colour.text": "الحرف",
-  "profiles.colour.textNote": "النصّ الذي تقرؤه",
+  "profiles.colour.textNote": "النص الذي تقرؤه",
+  // The same role on the library, where the words are not a book's: they are titles, shelf names
+  // and the rows of the interface.
+  "profiles.colour.textNote.library": "العناوين وأسماء الأرفف",
   "profiles.colour.accent": "اللمسة",
   "profiles.colour.accentNote": "الأزرار، والتقدّم، والتحديد",
   "profiles.colour.desk": "المكتب",
@@ -1188,6 +1326,12 @@ export const ar: Record<TKey, string> = {
   "profiles.colour.mutedNote": "العناوين الصغيرة والأعداد",
   "profiles.colour.followsPaper": "يتبع الوَرَق",
   "profiles.colour.followsText": "يتبع الحرف",
+
+  "profiles.relief.name": "بروز القوائم",
+  "profiles.relief.hint": "كم تبرز الأشرطة والجوانب عن المكتب من حولها. لا يمسّ صورة الخلفية.",
+  "profiles.relief.darker": "أغمق من المكتب {p}٪",
+  "profiles.relief.level": "مستوية مع المكتب",
+  "profiles.relief.lighter": "أفتح من المكتب {p}٪",
 
   "profiles.unsaved.what.theme": "الورق",
   "profiles.unsaved.what.bookTheme": "ورق الكتاب",

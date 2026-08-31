@@ -5,6 +5,7 @@
 // the design read a field Sard does not have, the substitution is named at the site.
 
 import type { BookRow, CaseNode, LibraryTree, ShelfItem, ShelfNode, ShelfOrder } from "../../../lib/ipc";
+import { UNFILED } from "../../../lib/ipc";
 
 /** The five views. `grid` is Sard's original Library grid, kept alongside the four new ones. */
 export type DesignView = "grid" | "covers" | "spines" | "details" | "vista";
@@ -14,12 +15,98 @@ export const DESIGN_VIEWS: DesignView[] = ["grid", "covers", "spines", "details"
 /** Covers and Spines share one renderer — the design draws both as cases → shelves → books. */
 export const isGroupedView = (v: DesignView) => v === "covers" || v === "spines";
 
+/**
+ * Which views can express a hand-made order.
+ *
+ * Arranging by hand means dropping a book INTO A PLACE BETWEEN TWO OTHERS, so a view has to be able
+ * to draw that place. Covers, Spines and Vista lay books out in shelf order and can open a gap
+ * between any two of them. Details is a sortable table — its order is the sort column's, not the
+ * reader's — and Grid is Sard's original library grid, drawn outside this surface entirely and
+ * holding no shelf structure to order within.
+ *
+ * Measured, before this existed: the Arrange control turned ON in Grid and in Details and then did
+ * nothing whatsoever — no book became draggable, no landing place appeared, nothing was written. A
+ * control that can be switched on and means nothing is worse than one that is not offered.
+ *
+ * DETAILS HAS SINCE JOINED, CONDITIONALLY, and so is no longer a member of this set. It always had
+ * the shelf and the books; what it lacked was any way to SHOW a hand order, because a column sort
+ * always governed. It can now sort by the shelf-s own stored order, and under THAT sort — and only
+ * under it — its rows are draggable. Its answer therefore depends on the sort and the shelf, and is
+ * decided by the owner rather than by this predicate.
+ *
+ * Grid is still a flat no: it renders the whole library from its own list, ignores the reader-s
+ * place entirely, and does not own the markup a landing place would have to sit in.
+ */
+export const canArrange = (v: DesignView) => v === "covers" || v === "spines" || v === "vista";
+
+
+/**
+ * Whether the VISTA STAGE, as it currently stands, holds anything the reader can reorder.
+ *
+ * `canArrange` answers for the view; this answers for the DEPTH, and both have to be true. Vista
+ * drills down, so the same view shows containers at one depth and books at another: at the library
+ * root and inside a case it draws cases and shelves, whose sample covers are decorative children of
+ * a navigation button — not books, and never draggable. Measured before this existed: at the root,
+ * arrange mode switched on over six containers and fifteen visible covers with nothing orderable
+ * and no explanation, and pressing one of those covers opened the case.
+ *
+ * Two conditions, and they are different questions:
+ *   `books.length > 0`  the stage is drawing real books at all, rather than previews of containers
+ *
+ * IT NO LONGER ALSO ASKS FOR `bookDrop`. That extra condition meant "this stage's own order is the
+ * reader's", and refusing the mode on that basis switched Manual Ordering off over خارج الأرفف and
+ * over a computed shelf — the two places holding most of a library that has not been filed yet. The
+ * reader's objection was exact: a book being outside a shelf is not a reason it cannot be moved. It
+ * has no order of its own to change, but it has somewhere to GO, and the destinations the interface
+ * offers are what decide that — not the stage it happens to be standing on.
+ *
+ * Whether this stage can be reordered WITHIN itself is still `bookDrop`, and still what decides
+ * whether landing places are drawn here. The two questions are simply no longer the same one.
+ */
+export const vistaArrangeable = (v: Pick<VistaView, "books" | "bookDrop">) =>
+  v.books.length > 0;
+
 /** The design's four density steps, as authored. */
 const DENSITY_WIDTHS = [92, 118, 148, 184];
 export const DENSITY_STEPS = DENSITY_WIDTHS.length;
 
-export const baseWidth = (density: number) =>
-  DENSITY_WIDTHS[Math.max(0, Math.min(DENSITY_WIDTHS.length - 1, density))];
+/**
+ * DENSITY IS A POSITION, NOT AN INDEX ANY MORE — and the design's own numbers are its anchors.
+ *
+ * It was an index into the four widths above, which is why the reader had four sizes and no way to
+ * ask for anything between them. Measured on a 1680px pane, Covers reached 12, 9, 8 and 6 books to
+ * a row: ten and eleven were simply unreachable, and at 1400 eight was.
+ *
+ * So the value is now a REAL NUMBER over the same 0..3 range and every per-step table is read by
+ * interpolation. Two things fall out of that, both deliberate:
+ *
+ *   · every authored number still renders EXACTLY as authored at 0, 1, 2 and 3. Nothing here
+ *     invents a size the design did not choose; the steps stop being the only places to stand.
+ *   · nothing has to be migrated. `libd_density` has always stored "0".."3", and those are already
+ *     valid positions on the continuum, so a reader's stored choice survives untouched.
+ */
+export const DENSITY_MIN = 0;
+export const DENSITY_MAX = DENSITY_WIDTHS.length - 1;
+/** Fine enough to feel continuous under a pointer; coarse enough that an arrow key does something. */
+export const DENSITY_STEP = 0.1;
+
+export const clampDensity = (d: number) =>
+  Number.isFinite(d) ? Math.max(DENSITY_MIN, Math.min(DENSITY_MAX, d)) : 1;
+
+/**
+ * Read one of the design's per-step tables at a fractional position.
+ *
+ * The tables are the authored design (`DENSITY_WIDTHS`, `SPINE_HEIGHTS`, `SHELF_COL`, …); this is
+ * the only thing that changed about how they are used. At an integer it returns that entry exactly.
+ */
+export function atDensity(table: readonly number[], density: number): number {
+  const d = Math.max(0, Math.min(table.length - 1, Number.isFinite(density) ? density : 1));
+  const lo = Math.floor(d);
+  const hi = Math.min(table.length - 1, lo + 1);
+  return table[lo] + (table[hi] - table[lo]) * (d - lo);
+}
+
+export const baseWidth = (density: number) => Math.round(atDensity(DENSITY_WIDTHS, density));
 
 /**
  * Item width. Covers and Spines use the density step directly; Vista fits whole columns to
@@ -71,6 +158,8 @@ export function daysAgo(at: number | null | undefined): number | null {
  * which is the reader's own arrangement and the one thing a sort must never quietly discard.
  */
 export function sortBooks(list: BookRow[], key: ShelfOrder): BookRow[] {
+  // "hand" is the order the list ARRIVES in — `shelfBooks` builds it from the shelf's stored
+  // positions, so re-sorting here would throw away the very thing being asked for.
   if (key === "hand") return list;
   const out = list.slice();
   const cmp = (a: string | null, b: string | null) => (a ?? "").localeCompare(b ?? "");
@@ -95,8 +184,29 @@ export function sortBooks(list: BookRow[], key: ShelfOrder): BookRow[] {
 }
 
 /** The toolbar's sort, which drives Details and the library-wide ordering. */
-export type DesignSort = "recent" | "added" | "title" | "author" | "progress";
+/**
+ * `shelf` is THE SHELF'S OWN STORED ORDER, and not a computed one like the rest.
+ *
+ * The other five are properties of a book — when it was read, when it was added, its title. This
+ * one is a property of the MEMBERSHIP: the position recorded in `book_collections`, the same number
+ * a hand reorder writes. It is therefore the only sort under which Details can show the result of
+ * a manual reorder, and the only one under which its rows are allowed to be dragged.
+ *
+ * It is offered only where it means something — inside a single hand-orderable shelf. Everywhere
+ * else there is no one shelf whose order it could be, so the toolbar does not list it.
+ */
+export type DesignSort = "recent" | "added" | "title" | "author" | "progress" | "shelf";
+/** The sorts offered everywhere. `shelf` is added by the toolbar only where a shelf owns the stage. */
 export const DESIGN_SORTS: DesignSort[] = ["recent", "added", "title", "author", "progress"];
+
+/**
+ * The toolbar-s sort, expressed as a SHELF-s ordering rule.
+ *
+ * The two vocabularies share five names and differ on one: the toolbar calls the stored order
+ * "shelf", because that is what the reader is choosing; a shelf calls it "hand", because that is
+ * who put it there. One place translates, so no call site has to remember which word it is in.
+ */
+export const asShelfOrder = (s: DesignSort): ShelfOrder => (s === "shelf" ? "hand" : s);
 
 // There is deliberately no title/author matcher here. The design's own file had one, but Sard
 // searches in SQL, where `library_list_books` folds Arabic the way RAWY-178 requires — an
@@ -161,6 +271,340 @@ export function allShelves(cases: CaseNode[], loose: ShelfNode[]): ShelfNode[] {
   return [...cases.flatMap((c) => c.shelves), ...loose];
 }
 
+// ---------------------------------------------------------------------------
+// Vista — The Casement
+// ---------------------------------------------------------------------------
+//
+// Vista is the Sard Library with the frosted pane lifted off the stage. The shell is the frame —
+// the sidebar and the toolbar stay, at full size and full function — and the stage is the casement
+// that opens in it, where the reader's photograph shows through unveiled.
+//
+// The stage holds FURNITURE, and the furniture's proportion says what kind of container it is:
+//
+//   a case        a TALL APERTURE, two grid rows high — the only portrait object on the stage
+//   a shelf       a WIDE LOW SILL, one grid row — landscape, because a shelf is a thing you put
+//                 books ON
+//   a rule shelf  the same sill with NO LIT EDGE and its books floating clear: nothing rests on it
+//                 because nothing can be filed into it
+//   خارج الأرفف   the same sill with a GHOSTED edge — the container is real, the shelf inside it is
+//                 not. Books on no shelf are a place, never a spill across the background.
+//   a category    a THIN TRAY, only ever inside a shelf, as wide as what it holds
+//
+// The governing rule, and the reason the earlier attempts were rejected: CONTENT STATES THE FACT,
+// GEOMETRY ONLY ACCELERATES THE SCAN. An aperture's own line reads "11 books · 4 shelves" — it
+// holds shelves. A sill's reads "6 books" — it holds books. Nothing here has to be decoded first;
+// the shape only makes the second glance instant.
+
+/** What kind of container a piece of furniture is, which is also what shape it takes. */
+export type VistaKind = "case" | "shelf" | "rule" | "unshelved" | "category";
+
+/** One container on the stage. */
+export interface VistaChild {
+  key: string;
+  kind: VistaKind;
+  name: string;
+  /** A case's reader-chosen colour, drawn as an inset rule under its name. */
+  ink: string | null;
+  /** Candidate books for the sample. The renderer measures and shows as many as fit whole. */
+  books: BookRow[];
+  /** What it holds in total, so "+n" can say how much is not shown. */
+  total: number;
+  /**
+   * A CASE ONLY: how many books are actually FILED into its shelves, as the library counts them.
+   *
+   * `total` is what the case's shelves SHOW, and the two are not the same thing. A rule shelf fills
+   * itself — its books hold no membership in the case, so the library counts none of them — and a
+   * case whose only content is such a shelf therefore holds nothing while displaying nineteen
+   * books. Measured: the sidebar, Covers and Spines all said «Test 0» while Vista said 19.
+   *
+   * Both numbers are kept, and Vista says which is which, rather than picking one and being wrong
+   * on a different screen. Absent wherever the distinction does not arise.
+   */
+  filed?: number;
+  /** For a case, how many shelves — a case is described by both, so it reads as holding shelves. */
+  children: number;
+  /** True when this container earns two grid columns. */
+  wide: boolean;
+  /** Where going in leads. */
+  enter: NavScope;
+  /**
+   * Where a dropped book lands, or null when that cannot be named.
+   *
+   * A CASE CANNOT ANSWER "WHICH SHELF?", so an aperture takes no drops. A RULE SHELF computes its
+   * own contents, so it takes none either — and the refusal is visible before the attempt rather
+   * than after it, because both are drawn with no lit edge.
+   */
+  drop: { shelfId: string; categoryId: string | null } | null;
+  /**
+   * WHICH DIRECTION THE DROP GOES, and the two are not the same operation.
+   *
+   *   "file"    the book JOINS this container, leaving the shelf it came from.
+   *   "unfile"  the book LEAVES the shelf it came from and joins nothing. Only خارج الأرفف means
+   *             this, because it is not a collection: there is no row to write, only one to delete.
+   *
+   * Keeping them apart in the contract is what lets خارج الأرفف accept a book being taken OFF a
+   * shelf while remaining impossible to file INTO — a distinction an earlier pass collapsed by
+   * refusing it any drop at all, which left no way to unfile a book by dragging.
+   */
+  dropKind: "file" | "unfile" | null;
+}
+
+/** Where the reader is standing. Null at the root, which the toolbar already names. */
+export interface VistaHere {
+  kind: "case" | "shelf" | "category";
+  /** True when this shelf fills itself, so its order is not the reader's to set. */
+  rule?: boolean;
+  name: string;
+  ink: string | null;
+  books: number;
+  /** A case only — the FILED count, where it differs from the books on show. See VistaChild. */
+  filed?: number;
+  children: number;
+}
+
+export interface VistaView {
+  here: VistaHere | null;
+  /**
+   * The root's cases, drawn ABOVE the hairline.
+   *
+   * The two bands are the whole answer to "does this shelf belong to that case": everything above
+   * the line holds shelves, everything below it holds books, and no shelf at the root ever sits
+   * inside a case's band. It needs no label, and the sidebar's own tree says the same in words.
+   */
+  cases: VistaChild[];
+  /** Everything below the line: loose shelves at the root, a case's shelves, a shelf's categories. */
+  children: VistaChild[];
+  /** The books themselves, when this level holds books rather than containers. */
+  books: BookRow[];
+  /** Where a book dropped among `books` lands — always a "file", into the shelf being shown. */
+  bookDrop: { shelfId: string; categoryId: string | null } | null;
+  /** The shelf a book lifted from `books` is leaving, or null when that is ambiguous. */
+  bookSource: ShelfNode | null;
+  /**
+   * The ink of the case the reader is standing INSIDE, at any depth.
+   *
+   * Separate from `here.ink`, which is the container's own signature and is null for a shelf. This
+   * is the identity of the case that OWNS where you are, and it is what the stage's head rule
+   * draws — the same colour as that case's bar in the sidebar. Two shelves called «العربية» in two
+   * different cases are told apart by it, with no parent's name printed beside the child's.
+   */
+  caseInk: string | null;
+}
+
+/** A shelf with its runs already grouped — what the grouped views render from. */
+export interface ShelfRuns {
+  shelf: ShelfNode;
+  groups: BookGroup[];
+}
+
+export interface VistaInput {
+  /** The scoped, query-filtered tree the grouped views render. */
+  rendered: { node: CaseNode | null; shelves: ShelfRuns[] }[];
+  /** Every case, so one holding nothing is still a place at the root. */
+  allCases: CaseNode[];
+  scope: NavScope;
+  shelfBooks: (s: ShelfNode) => BookRow[];
+  /** The reader's library sort. A case has no order of its own, so this is the only honest one. */
+  librarySort: ShelfOrder;
+  /** True while a search narrows the library. */
+  filtered: boolean;
+}
+
+/**
+ * How many books a container offers the renderer as sample candidates.
+ *
+ * These are CANDIDATES, not a count: the renderer measures the row and shows as many as fit whole,
+ * because a cropped cover is never acceptable. A case is deliberately short — two large covers say
+ * "these are books" where three small ones say "these are thumbnails", and the plate already
+ * reports how many it holds.
+ */
+const SAMPLE_CASE = 4;
+const SAMPLE_SHELF = 8;
+const SAMPLE_CATEGORY = 10;
+/** A shelf earns two columns once it has enough to show. */
+const WIDE_FROM = 4;
+
+function dedupe(lists: BookRow[][]): BookRow[] {
+  const seen = new Set<string>();
+  const out: BookRow[] = [];
+  for (const list of lists) for (const b of list) if (!seen.has(b.id)) { seen.add(b.id); out.push(b); }
+  return out;
+}
+
+const EMPTY_VIEW: VistaView = {
+  here: null, cases: [], children: [], books: [], bookDrop: null, bookSource: null, caseInk: null,
+};
+
+/**
+ * The stage, as seen from wherever the reader is standing.
+ *
+ * Root       cases above the line; loose shelves and خارج الأرفف below it.
+ * In a case  its shelves, as sills.
+ * In a shelf its categories, as trays — or its books, when it has none.
+ * In a run   its books.
+ */
+export function vistaView(input: VistaInput): VistaView {
+  const { rendered, allCases, scope, shelfBooks, librarySort, filtered } = input;
+  const caseInk = scope.caseId
+    ? allCases.find((c) => c.id === scope.caseId)?.ink ?? null
+    : null;
+
+  const runsOf = (s: ShelfRuns): BookGroup[] =>
+    s.groups.length ? s.groups : [{ categoryId: null, name: null, books: [] }];
+  const booksOf = (s: ShelfRuns): BookRow[] =>
+    // The unshelved run owns no membership rows, so its books come from the run itself.
+    isVirtualShelf(s.shelf.id) ? s.groups.flatMap((g) => g.books) : shelfBooks(s.shelf);
+
+  const shelfChild = (s: ShelfRuns, caseId: string | null): VistaChild => {
+    const books = booksOf(s);
+    const unshelved = isVirtualShelf(s.shelf.id);
+    const rule = !!s.shelf.auto_rule;
+    return {
+      key: s.shelf.id,
+      kind: unshelved ? "unshelved" : rule ? "rule" : "shelf",
+      name: s.shelf.name,
+      ink: null,
+      books: sortBooks(books, s.shelf.order_rule).slice(0, SAMPLE_SHELF),
+      total: books.length,
+      children: s.shelf.categories.length,
+      // خارج الأرفف is always given the room to show what it holds: it is the one container a
+      // reader most needs to see into, and the one an earlier design scattered across the wall.
+      wide: unshelved || books.length >= WIDE_FROM,
+      enter: { caseId: caseId ?? UNFILED_CASE_ID, shelfId: s.shelf.id, categoryId: null },
+      // خارج الأرفف takes a drop, and it means the opposite of every other one: the book leaves the
+      // shelf it came from and joins nothing.
+      drop: rule ? null : { shelfId: s.shelf.id, categoryId: null },
+      dropKind: rule ? null : unshelved ? "unfile" : "file",
+    };
+  };
+
+  // ---- inside a shelf, or inside one of its runs -------------------------------------------------
+  if (scope.shelfId) {
+    const found = rendered.flatMap((c) => c.shelves).find((s) => s.shelf.id === scope.shelfId);
+    if (!found) return EMPTY_VIEW;
+    const all = booksOf(found);
+    const runs = runsOf(found);
+    const named = found.shelf.categories.length > 0;
+    // A LENS CANNOT TAKE A BOOK. NOTHING ELSE IS EXCLUDED.
+    //
+    // This also refused the books on no shelf, from a time when that run was synthesised per render
+    // and had nowhere to write an order to. Under the placement model it is an ordinary container
+    // with an ordinary order, and every other format had already stopped making the exception — so
+    // standing in «خارج الأرفف», Grid, Details and Spines each drew all forty-two places while Vista
+    // drew none. The books were there and could be lifted; there was simply nowhere to put them.
+    // Measured on the reader's library: `gapsFor` returned 42 canonical places, one end, all
+    // distinct, and this line threw them away before the projection could carry them.
+    const canDrop = !found.shelf.auto_rule;
+
+    // Inside a category: its books, and nothing further to enter.
+    if (scope.categoryId) {
+      const run = runs.find((g) => g.categoryId === scope.categoryId);
+      return {
+        here: { kind: "category", name: run?.name ?? found.shelf.name, ink: null,
+          books: run?.books.length ?? 0, children: 0 },
+        cases: [],
+        children: [],
+        books: sortBooks(run?.books ?? [], found.shelf.order_rule),
+        bookDrop: canDrop ? { shelfId: found.shelf.id, categoryId: scope.categoryId } : null,
+        bookSource: found.shelf,
+        caseInk,
+      };
+    }
+
+    const here: VistaHere = { kind: "shelf", name: found.shelf.name, ink: null,
+      books: all.length, children: found.shelf.categories.length,
+      rule: !!found.shelf.auto_rule };
+
+    // A shelf that has categories shows them as trays; one that has none holds its books directly.
+    if (!named) {
+      return {
+        here, cases: [], children: [],
+        books: sortBooks(all, found.shelf.order_rule),
+        bookDrop: canDrop ? { shelfId: found.shelf.id, categoryId: null } : null,
+        bookSource: found.shelf,
+        caseInk,
+      };
+    }
+    return {
+      here,
+      cases: [],
+      children: runs.map((g) => ({
+        key: `${found.shelf.id}::${g.categoryId ?? ""}`,
+        kind: "category" as VistaKind,
+        name: g.name ?? "",
+        ink: null,
+        books: sortBooks(g.books, found.shelf.order_rule).slice(0, SAMPLE_CATEGORY),
+        total: g.books.length,
+        children: 0,
+        wide: true,
+        // The uncategorised run is a real place on this shelf and can be entered like any other.
+        enter: { caseId: scope.caseId, shelfId: found.shelf.id, categoryId: g.categoryId },
+        drop: canDrop ? { shelfId: found.shelf.id, categoryId: g.categoryId } : null,
+        dropKind: canDrop ? "file" : null,
+      })),
+      books: [],
+      bookDrop: null,
+      bookSource: null,
+      caseInk,
+    };
+  }
+
+  // ---- inside a case: its shelves, as sills --------------------------------------------------------
+  if (scope.caseId) {
+    const node = allCases.find((c) => c.id === scope.caseId) ?? null;
+    const shelves = rendered.flatMap((c) => c.shelves);
+    const books = dedupe(shelves.map(booksOf));
+    return {
+      here: { kind: "case", name: node?.name ?? "", ink: node?.ink ?? null,
+        books: books.length, filed: node?.count ?? books.length,
+        children: node ? node.shelves.length : shelves.length },
+      cases: [],
+      children: shelves.map((s) => shelfChild(s, scope.caseId)),
+      books: [],
+      bookDrop: null,
+      bookSource: null,
+      caseInk,
+    };
+  }
+
+  // ---- the root: cases above the line, shelves below it ---------------------------------------------
+  const cases: VistaChild[] = [];
+  const byId = new Map(rendered.filter((c) => c.node).map((c) => [c.node!.id, c]));
+  for (const node of allCases) {
+    const shelves = byId.get(node.id)?.shelves ?? [];
+    // DISTINCT books, because that is what a case's count already promises.
+    const books = dedupe(shelves.map(booksOf));
+    // A case the reader made and has not filled is still a place. A case emptied by a SEARCH is
+    // not — the search has already said it holds nothing that matches.
+    if (filtered && books.length === 0) continue;
+    cases.push({
+      key: node.id,
+      kind: "case",
+      name: node.name,
+      ink: node.ink,
+      // A case has no order of its own — "sorting decides order in Details; inside a shelf, order
+      // is the shelf's own", and a case is not a shelf.
+      books: sortBooks(books, librarySort).slice(0, SAMPLE_CASE),
+      total: books.length,
+      // The library's own number, untouched. Vista draws both and names the difference.
+      filed: node.count,
+      children: node.shelves.length,
+      wide: false,
+      enter: { caseId: node.id, shelfId: null, categoryId: null },
+      drop: null,
+      dropKind: null,
+    });
+  }
+  const children: VistaChild[] = [];
+  for (const c of rendered) {
+    if (c.node) continue;
+    for (const s of c.shelves) children.push(shelfChild(s, null));
+  }
+  // خارج الأرفف is always last: it is where the library runs out of structure.
+  children.sort((a, b) => Number(a.kind === "unshelved") - Number(b.kind === "unshelved"));
+  return { here: null, cases, children, books: [], bookDrop: null, bookSource: null, caseInk: null };
+}
+
 /**
  * The synthetic shelf that holds books on no shelf at all.
  *
@@ -169,7 +613,7 @@ export function allShelves(cases: CaseNode[], loose: ShelfNode[]): ShelfNode[] {
  * was added. It is not a row in `collections`: it exists only for the duration of a render,
  * cannot be written to, and disappears as soon as every book has a home.
  */
-export const LOOSE_SHELF_ID = "__unshelved";
+export const LOOSE_SHELF_ID = UNFILED;
 
 export const isVirtualShelf = (id: string) => id === LOOSE_SHELF_ID;
 
@@ -315,9 +759,20 @@ export function selectionSource(
 export interface NavScope {
   caseId: string | null;
   shelfId: string | null;
+  /**
+   * THE FOURTH LEVEL, AND THE ONE THAT WAS MISSING.
+   *
+   * `collection_categories` has always held a category as a real row under one shelf, the book
+   * sheet has always filed into one, and this library's own description is "cases holding shelves
+   * holding categories holding books". But a category was never somewhere the reader could STAND:
+   * scope stopped at the shelf, so a category could be written to and never visited. Any view that
+   * had to show one was left spelling the hierarchy out in text, because there was no position for
+   * the text to be a substitute for.
+   */
+  categoryId: string | null;
 }
 
-export const ROOT_SCOPE: NavScope = { caseId: null, shelfId: null };
+export const ROOT_SCOPE: NavScope = { caseId: null, shelfId: null, categoryId: null };
 
 /**
  * `scope.caseId` when the reader is standing in "not in a case".
@@ -327,11 +782,46 @@ export const ROOT_SCOPE: NavScope = { caseId: null, shelfId: null };
  * picker, which offers real cases and null. Reusing the id the open-set and the management panel
  * already answer to keeps one name for one concept rather than inventing a third.
  */
-export const UNFILED_SCOPE: NavScope = { caseId: UNFILED_CASE_ID, shelfId: null };
+export const UNFILED_SCOPE: NavScope = { caseId: UNFILED_CASE_ID, shelfId: null, categoryId: null };
 
 export const isUnfiledScope = (s: NavScope) => s.caseId === UNFILED_CASE_ID;
 
-export const isRootScope = (s: NavScope) => !s.caseId && !s.shelfId;
+export const isRootScope = (s: NavScope) => !s.caseId && !s.shelfId && !s.categoryId;
+
+// ---- scope, written down and read back ----------------------------------------------------------
+//
+// The rebuild described the library as persisting "density, sort, scope and collapsed cases". Three
+// of those were written; scope never was, so every launch landed at the root and a reader who had
+// walked into a shelf had to walk back in. `|` cannot occur in an id: ids are hex digests, the two
+// UI-only sentinels, or the seeded `c_` names.
+const SCOPE_SEP = "|";
+
+export function serialiseScope(s: NavScope): string {
+  // ONE SPELLING FOR THE ROOT. Written as "||" it means the same as an empty setting, and the two
+  // took turns in the store — the first load after an empty one rewrote it, which reads as the
+  // library changing under you when nothing has.
+  if (isRootScope(s)) return "";
+  return [s.caseId ?? "", s.shelfId ?? "", s.categoryId ?? ""].join(SCOPE_SEP);
+}
+
+/**
+ * One level up, or null at the root.
+ *
+ * The trail and the Escape key are the same movement, so they read it from the same place rather
+ * than each deciding for itself what "out" means.
+ */
+export function parentScope(s: NavScope): NavScope | null {
+  if (s.categoryId) return { caseId: s.caseId, shelfId: s.shelfId, categoryId: null };
+  if (s.shelfId) return s.caseId ? { caseId: s.caseId, shelfId: null, categoryId: null } : ROOT_SCOPE;
+  if (s.caseId) return ROOT_SCOPE;
+  return null;
+}
+
+export function parseScope(v: string | null): NavScope {
+  if (!v) return ROOT_SCOPE;
+  const [caseId, shelfId, categoryId] = v.split(SCOPE_SEP);
+  return { caseId: caseId || null, shelfId: shelfId || null, categoryId: categoryId || null };
+}
 
 /**
  * Pull a scope back to somewhere that still exists.
@@ -351,22 +841,40 @@ export function reconcileScope(scope: NavScope, cases: CaseNode[], loose: ShelfN
     const inCase = cases.find((c) => c.shelves.some((s) => s.id === scope.shelfId));
     const isLoose = loose.some((s) => s.id === scope.shelfId);
     // The shelf is gone: stay in the group it was in if that still exists, else go to the root.
+    // A category cannot outlive its shelf, so it goes with it.
     if (!inCase && !isLoose) {
       const groupStands = isUnfiledScope(scope) || (scope.caseId && cases.some((c) => c.id === scope.caseId));
-      return { caseId: groupStands ? scope.caseId : null, shelfId: null };
+      return { caseId: groupStands ? scope.caseId : null, shelfId: null, categoryId: null };
     }
     // A shelf's parent is whatever holds it — a case, or "not in a case". Following it here is
     // what keeps the breadcrumb honest when a shelf is filed into a case, or taken out of one,
     // while the reader is looking at it.
     const owner = inCase?.id ?? UNFILED_CASE_ID;
-    return owner === scope.caseId ? scope : { caseId: owner, shelfId: scope.shelfId };
+    // A DELETED CATEGORY DROPS THE READER ONTO ITS SHELF, not out of the library. Deleting a
+    // category deliberately keeps its books (the membership's `category_id` is nulled, never
+    // cascaded), so the shelf is still exactly where those books are and where the reader was.
+    const shelf = inCase?.shelves.find((s) => s.id === scope.shelfId)
+      ?? loose.find((s) => s.id === scope.shelfId);
+    const categoryId = scope.categoryId && shelf?.categories.some((k) => k.id === scope.categoryId)
+      ? scope.categoryId
+      : null;
+    return owner === scope.caseId && categoryId === scope.categoryId
+      ? scope
+      : { caseId: owner, shelfId: scope.shelfId, categoryId };
   }
+
+  // The unshelved run holds no categories, so standing in one there cannot mean anything.
+  if (scope.shelfId && isVirtualShelf(scope.shelfId) && scope.categoryId) {
+    return { ...scope, categoryId: null };
+  }
+  // A category without a shelf names nothing: there is no such row and no such place.
+  if (!scope.shelfId && scope.categoryId) return { ...scope, categoryId: null };
 
   // "Not in a case" names no row, so no tree can vouch for it — and it must survive reconciling,
   // or the reader is thrown out of a place they legitimately stand in.
   if (isUnfiledScope(scope)) return scope;
   if (scope.caseId && !cases.some((c) => c.id === scope.caseId)) {
-    return { caseId: null, shelfId: scope.shelfId };
+    return { caseId: null, shelfId: scope.shelfId, categoryId: scope.categoryId };
   }
   return scope;
 }
@@ -383,6 +891,55 @@ export function reconcileScope(scope: NavScope, cases: CaseNode[], loose: ShelfN
  * correction inline (`at > from ? at - 1 : at`) and getting it wrong is how a case appears to
  * refuse to move down by one.
  */
+/**
+ * The same correction `dropIndex` makes, for a BOOK moved within its own shelf.
+ *
+ * A view draws a landing place BEFORE each book and one at the tail, so `gap` is an index into the
+ * list as the reader currently sees it. `shelf_place_book` removes the book FIRST and then inserts
+ * at the index it is given, so its index is one into the list with that book already taken out.
+ * Every position after the book's own therefore shifts down by one, and passing the visual gap
+ * straight through overshoots: dropping a book into the gap immediately after itself sends it to the
+ * end instead of leaving it alone.
+ *
+ * Measured, before this existed: a two-book shelf, first book dragged onto the gap after itself,
+ * came back reversed — in Vista and in Covers alike, because both feed the same command.
+ *
+ * The backend is right for the case it was written for. Joining a shelf performs no removal, so its
+ * index needs no correction, and changing the command would move every other caller. The
+ * translation belongs here, where the source and the destination are both known.
+ *
+ * NOTE the boundary: this corrects a shelf-wide gap against a shelf-wide position. A shelf with
+ * CATEGORIES draws its landing places per category run, so the index it produces is not shelf-wide
+ * to begin with — a separate defect, shared with the grouped views, and not addressed here.
+ */
+/**
+ * Does the destination picker still need a shelf before it means anything?
+ *
+ * A CASE IS NOT A PLACEMENT DESTINATION. It contains shelves, so it cannot answer "which shelf?" —
+ * the same reason a case takes no drop. Choosing one only narrows the level below it. The dialog
+ * used to render the two levels as one control with Save beneath, so choosing a case and pressing
+ * Save read as filing and silently did nothing at all.
+ *
+ * True while the reader has aimed at a case the book is not in and has not yet named a shelf inside
+ * it. False when the picked case is where the book already sits — nothing is pending then — and
+ * false when that case offers no shelf to pick, because the level below says so on its own.
+ */
+export function awaitsShelfChoice(
+  currentCaseId: string | null,
+  pickedCaseId: string | null,
+  shelvesInPicked: number,
+): boolean {
+  return pickedCaseId !== currentCaseId && shelvesInPicked > 0;
+}
+
+/** One shelf's memberships, as the placement rule needs to see them. */
+export interface PlacementShelf {
+  id: string;
+  /** A shelf that fills itself is never a placement: nothing was filed there to move. */
+  rule: boolean;
+  items: { book_id: string; category_id: string | null }[];
+}
+
 export function dropIndex(pointerY: number, midpoints: number[], from: number): number {
   let at = midpoints.length;
   for (let i = 0; i < midpoints.length; i++) {

@@ -38,6 +38,7 @@ import { synthesiseToc, type SectionHeading, type SynthToc } from "./tocSynth"; 
 import { resolveSpotlight, resolvePill } from "./ttsTrack"; // RAWY-200: pure per-theme track resolution
 import type { Theme } from "../theme/tokens";
 import { extractChapterNumber, toWesternDigits } from "../lib/format";
+import { speakableText } from "../lib/ttsText"; // the ONE rewrite that separates spoken text from shown text
 // RAWY-259: the ONE ink resolution, shared with the Notes editor preview so both surfaces cannot drift.
 import {
   resolveHighlightInk,
@@ -75,7 +76,12 @@ const FONT_STYLE_KEYS: (keyof ReadingStyle)[] = ["arabicFont", "latinFont"];
 // change repaints via the in-place dynamic sheet with NO reflow (RAWY-140), exactly like textColor.
 // backgroundColor is NOT here: it never touches the iframe (it's a reader-scoped chrome var applied by
 // React), so it needs neither a re-inject nor a dynamic-sheet rewrite.
-const PAINT_STYLE_KEYS: (keyof ReadingStyle)[] = ["textColor", "diacritics", "pageColor"];
+// numberColor joins them for the same reason pageColor did: it is a COLOUR. Its rule is emitted by
+// `buildDynamicCss` onto `.sard-num`, so a change repaints in place with no reflow. Leaving it out of
+// both lists is what made the feature inert in the reader — the value reached `ReadingStyle`, the
+// digits were wrapped, and nothing ever asked the sheet to be rewritten, so the rule was never
+// applied. Absent from both lists means "chrome-side, touches neither", which this is not.
+const PAINT_STYLE_KEYS: (keyof ReadingStyle)[] = ["textColor", "diacritics", "pageColor", "numberColor"];
 const GEOMETRY_STYLE_KEYS: (keyof ReadingStyle)[] = [
   "zoom",
   "arabicFont",
@@ -670,6 +676,57 @@ interface OpenOptions {
 const MARKS = "\\u0610-\\u061A\\u064B-\\u065F\\u0670\\u06D6-\\u06DC\\u06DF-\\u06E4\\u06E7\\u06E8\\u06EA-\\u06ED";
 const TASHKIL = new RegExp(`[${MARKS}]`);
 const TASHKIL_SPLIT = new RegExp(`([${MARKS}]+)`);
+
+// DIGITS, MARKED WITHOUT TOUCHING THE BOOK.
+//
+// THE FIRST VERSION WRAPPED THEM IN SPANS, AND THAT WAS WRONG. Measured on a real library through
+// foliate's own `select(cfi)`: of six existing highlights in an Arabic book, ONE resolved to its
+// recorded text with the wrappers in place and SIX resolved correctly once they were removed. The
+// spans split text nodes, which shifts the child-step indices and text offsets a CFI is made of, so
+// every highlight, bookmark, resume position and TTS range recorded before the feature existed moved
+// to the wrong words. Nothing errored; the highlight simply landed somewhere else.
+//
+// This file already states the rule, at the reference-rule note in `injectedCss`: a mark "mutates
+// NOTHING in the book, so foliate's CFI child-step indices stay untouched and every stored bookmark,
+// resume position, highlight and TTS range keeps resolving". The wrapper broke that invariant.
+//
+// The CSS Custom Highlight API keeps it: a `Highlight` is a set of live `Range`s registered on the
+// window, styled through `::highlight(sard-num)`. The DOM is not touched at all — no nodes added, no
+// text split — so CFIs are exactly what they were. Its styleable set is text-only (colour,
+// background-colour, text-decoration, text-shadow), which is why the reference rule could not use it;
+// COLOUR is all a number ink needs, so the limit does not bite here.
+const DIGITS = "0-9\u0660-\u0669\u06F0-\u06F9";
+const NUMERAL_RUN = new RegExp(`[${DIGITS}]+`, "g");
+
+function markNumbers(doc: Document): void {
+  const win = doc.defaultView as (Window & {
+    CSS?: { highlights?: Map<string, unknown> };
+    Highlight?: new (...ranges: Range[]) => unknown;
+  }) | null;
+  // Absent on an engine without the API: the digits simply inherit, exactly as before the feature.
+  if (!win?.CSS?.highlights || typeof win.Highlight !== "function") return;
+  const body = doc.body;
+  if (!body) return;
+
+  const walker = doc.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+  const ranges: Range[] = [];
+  let n: Node | null;
+  while ((n = walker.nextNode())) {
+    const text = (n as Text).data;
+    if (!text) continue;
+    NUMERAL_RUN.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = NUMERAL_RUN.exec(text))) {
+      const r = doc.createRange();
+      r.setStart(n, m.index);
+      r.setEnd(n, m.index + m[0].length);
+      ranges.push(r);
+    }
+  }
+  // `set` REPLACES, so running this again on the same document is idempotent by construction —
+  // there is no accumulating layer and no guard flag to get wrong.
+  win.CSS.highlights.set("sard-num", new win.Highlight(...ranges));
+}
 
 function wrapTashkil(doc: Document): void {
   const body = doc.body;
@@ -1339,6 +1396,29 @@ if (typeof globalThis !== "undefined") {
 
 export class FoliateController {
   private view: any | null = null;
+  /**
+   * Is `view` a view that can actually be NAVIGATED?
+   *
+   * `view` alone cannot answer that, and the gap is not cosmetic. The element is assigned to
+   * `this.view` BEFORE `view.open()` is awaited, and `prev`/`next` are prototype methods on foliate's
+   * `View extends HTMLElement` — present from `createElement`, long before a book is. So on a view
+   * that is still opening, or that failed to open, `this.view?.prev?.()` passes BOTH optional chains
+   * and calls a real method whose entire body is:
+   *
+   *     async prev(distance) { await this.renderer.prev(distance) }        // view.js:513
+   *
+   * `renderer` belongs to the open that has not finished. That is the whole of the reported
+   * `TypeError: Cannot read properties of undefined (reading 'prev')`.
+   *
+   * Optional chaining proves a METHOD EXISTS. Only this proves the view is LOADED. The two look
+   * identical at the call site, which is why the guard that was there did not guard anything.
+   *
+   * It is set at the very END of `open()` rather than when the renderer appears, because there is a
+   * SECOND window between those two points: the renderer exists but its sections do not, and an
+   * arrow landing there throws from inside foliate instead
+   * (`paginator.js:1062  this.sections[index].load()`). Measured, both windows threw.
+   */
+  private navReady = false;
   private style: ReadingStyle | null = null;
   private theme: Theme | undefined = undefined;
   private flags: BookThemeFlags = { overrideBookColor: false, hideChapterTitles: false, hideFirstLine: false };
@@ -1409,6 +1489,7 @@ export class FoliateController {
   dispose(): void {
     const v = this.view;
     this.view = null;
+    this.navReady = false;
     this.annotations.clear();
     // RAWY-FINAL: release everything that holds a reference INTO a section document, so closing a book
     // (or switching one) cannot pin the outgoing book's DOM. `refRanges` holds Ranges; `contentDoc` /
@@ -1483,6 +1564,7 @@ export class FoliateController {
 
     const view = document.createElement("foliate-view") as any;
     this.view = view; // claim ownership before awaits; a later open() will replace this
+    this.navReady = false; // ownership is not readiness — nothing may navigate until this open finishes
     container.replaceChildren(view);
 
     // DIAGNOSTIC BUILD ONLY — stages 5-7. `view.open()` is where the book is fetched, the format is
@@ -1538,6 +1620,18 @@ export class FoliateController {
       diagStageFail("controller.open", e, { source: String(source).slice(0, 200) });
       rStageFail("book.opened", e, { source: String(source).slice(0, 200) }); // DIAGNOSTIC BUILD ONLY
       void diagProbeChain("view.open() threw");
+      // RELEASE A VIEW THAT COULD NOT BE OPENED.
+      //
+      // Every other member reaches the view through `this.view?.…`, so holding a half-built element
+      // here quietly disarmed all of them at once, not only paging. Dropping it restores the
+      // invariant the rest of the class already assumes — `this.view` is non-null only when it is a
+      // view that opened — and detaches the element, so a dead <foliate-view> cannot sit under the
+      // error card still holding its own listeners.
+      if (this.view === view) {
+        this.view = null;
+        this.navReady = false;
+      }
+      try { view.remove(); } catch { /* already detached */ }
       throw e;
     }
     if (this.view !== view) return; // superseded by a newer open()
@@ -1690,6 +1784,7 @@ export class FoliateController {
       }
       this.contentDoc = doc; // RAWY-122: kept so clearSelection() can drop a lingering text selection
       wrapTashkil(doc); // enable the diacritics toggle for this section
+      markNumbers(doc); // the number colour, WITHOUT touching the book (see `markNumbers`)
       this.writeFonts(doc); // RAWY-208: this section's @font-face sheet — survives every setStyles
       this.writeDynamic(doc); // RAWY-140: this section's in-place PAINT sheet (colour/tashkīl skip re-inject)
       markInBodyHeading(doc, sectionTocLabel(view, index)); // RAWY-67: hide-titles catches this too
@@ -1958,6 +2053,15 @@ export class FoliateController {
     else if (opts.resumeFraction != null && opts.resumeFraction > 0) await view.goToFraction(opts.resumeFraction);
     else if (this.scrolledMode) await view.goToFraction(0); // start at the top of section 0
     else await view.renderer.next();
+
+    // NAVIGABLE FROM HERE, and not one statement earlier. Each branch above awaits the FIRST render,
+    // so this is the first moment a page exists to turn away from. Setting it when the renderer
+    // appeared would have re-opened the second window: `#turnPage` would be entered with
+    // `sections` still empty and throw from `paginator.js:1062` instead — and because that function
+    // takes `#locked` before the throw and releases it outside a `finally`, an early arrow would also
+    // leave page turning permanently dead for that book. Refusing to enter it is the fix; the lock's
+    // own fragility is a vendored defect, recorded separately rather than patched here.
+    if (this.view === view) this.navReady = true;
   }
 
   /** Re-inject the full stylesheet (typography + theme) — the single visual funnel. RAWY-140: this
@@ -3163,12 +3267,27 @@ export class FoliateController {
     const map = this.rangeNodeMap(range, doc);
     if (!map) return;
     const { full, sub } = map; // `full` = the sentence's raw text; `sub(a,b)` → a Range for [a,b)
+    // MATCH IN THE ALPHABET EDGE WAS GIVEN, not the one on the page.
+    //
+    // `lib/ttsText.speakableText` rewrites Extended Arabic-Indic digits on the way to the voice,
+    // because Edge drops them from the audio entirely. Edge therefore reports the word as `١٤٠٥`
+    // while the page shows `۱۴۰۵`, so a search through the DISPLAYED text misses it and drops to the
+    // consume-the-length fallback below. Measured, that fallback painted the pill on `:` in
+    // «وقال آخر: ۶۳» — a sentence where the same rewrite makes two Edge words identical (`٦٣`),
+    // so the second lookup had nothing left to find. Pointing at the wrong words is worse than not
+    // pointing at all, which is what made this worth fixing rather than accepting.
+    //
+    // The rewrite is length-preserving by construction, so an index into `hay` is the SAME index
+    // into `full`: the needle is found in the spoken alphabet, and the Range is still built from the
+    // displayed text. Sentences with no extended digits get back the identical string, so this is a
+    // no-op for every other book.
+    const hay = speakableText(full);
     let cursor = 0;
     const ranges: (Range | null)[] = [];
     for (const w of words) {
       const text = w.text ?? "";
       if (!text) { ranges.push(null); continue; }
-      let pos = full.indexOf(text, cursor);
+      let pos = hay.indexOf(text, cursor);
       let len = text.length;
       if (pos < 0) {
         // not found verbatim — skip whitespace, then consume the word's own length from the cursor
@@ -3377,10 +3496,22 @@ export class FoliateController {
    * rather than introducing a new convention.
    */
   forward(): void {
-    this.view?.next?.();
+    this.navView()?.next?.();
   }
   backward(): void {
-    this.view?.prev?.();
+    this.navView()?.prev?.();
+  }
+
+  /**
+   * The view, but only when there is something to navigate — the one gate every page turn passes.
+   *
+   * Deliberately NOT a try/catch around the throw. Catching would hide the symptom while the reader
+   * still held a broken view, and the next member to reach for `this.view` would meet the same trap;
+   * "is this loaded?" has to be ANSWERABLE, not merely survivable. `renderer` is re-checked here and
+   * not just trusted from the flag, so a view disposed between the two cannot slip through.
+   */
+  private navView(): any | null {
+    return this.navReady && this.view?.renderer ? this.view : null;
   }
 
   /** RAWY-227: the chapter the end-of-chapter "next chapter" control advances FROM. It MUST be the chapter

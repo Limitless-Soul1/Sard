@@ -240,6 +240,60 @@ Chromium >= 140 and the EPUB set to Chromium >= 117.)
                         diagnosis5 must report `violations: 0`. Run it with `--cycles=N` to widen the
                         window; it fails if ANY sample deviates from the baseline.
 
+ 12. paginator.js:1053  — END-OF-BOOK NAVIGATION LOCK (P7). Two independent one-liners that must be
+     paginator.js:1122    kept together: 12a stops the throw, 12b stops a throw from being fatal.
+
+                         12a  `#goTo` — `if (!this.#canGoToIndex(index)) return`, the FIRST statement.
+                              `#adjacentIndex(dir)` returns UNDEFINED at either end of the book (its
+                              for-loop simply falls out), and two callers pass that value straight
+                              through: `#turnPage`, and prevSection/nextSection. `#goTo` then
+                              evaluates `this.sections[undefined].load()`. That `.load()` sits OUTSIDE
+                              the `.catch()` on the promise chain below it, so the TypeError is thrown
+                              SYNCHRONOUSLY and escapes `#goTo` entirely instead of being logged as
+                              upstream's "Failed to load section N".
+                              The predicate is upstream's own and unchanged. It already rejects
+                              `undefined` (`undefined >= 0` is false) and an empty `sections` array
+                              (`length - 1 === -1`), which is the still-loading case.
+
+                         12b  `#turnPage` — the locked body moved into `try { … } finally { this.#locked
+                              = false }`. Upstream clears the lock on the statement AFTER the awaits, so
+                              one rejection anywhere above leaves `#locked` set for the lifetime of the
+                              view and every later turn takes the early return at the top of the
+                              function. The happy path is byte-equivalent; only the rejection path
+                              differs.
+
+                         WHY BOTH: 12a alone would fix the end-of-book case and leave the lock just as
+                         fragile for any OTHER rejection inside `#scrollNext` / `#goTo` (a section that
+                         fails to load mid-book, say). 12b alone would leave the console error and the
+                         wasted turn. 12b is the one that matters more; 12a is the one that is provably
+                         reachable today.
+
+                         MEASURED, real app, isolated sandbox
+                         (a private test-harness probe, which proves navigation is live in the
+                         same session BEFORE it draws any conclusion, because "at the end" and "locked"
+                         both look like a fraction that stopped moving):
+
+                             step                    fraction   uncaught
+                             opened                  0.8514     0
+                             backward x3             0.5181     0      <- navigation demonstrably live
+                             forward x3              0.8514     0
+                             forward x3 (at the end) 0.8514     1      <- the throw
+                             backward x3             0.8514     1      <- DOES NOT MOVE
+                             forward x2              0.8514     1      <- never recovers
+
+                         WHAT A READER EXPERIENCED: they finish a book, press forward once more out of
+                         habit, and arrows, chevrons and taps all stop working with nothing shown.
+                         Leaving the book and reopening it restores everything, which is why it reads
+                         as intermittent.
+
+                         IF THIS PATCH IS LOST ON A RE-VENDOR: nothing looks wrong until a reader
+                         reaches the last page of a book, and then navigation dies silently for the
+                         rest of that session. There is exactly one uncaught console error to find it
+                         by, and it names `paginator.js` rather than anything in Sard.
+                         Regression test:
+                           the end-of-book navigation probe in the private harness
+                         Must report NOT locked, and `total uncaught: 0`.
+
   NOTE ON NUMBERING: entries 1-8 above predate this one and their numbers do not all match the
   `SARD LOCAL PATCH n` markers in the sources (the stylesheet-sanitiser hook is marked 5 in epub.js
   but listed as 6 here, and the turn-coalescing entry is listed as 5 out of order at the end). That

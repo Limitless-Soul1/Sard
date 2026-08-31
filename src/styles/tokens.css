@@ -101,6 +101,26 @@
   --sp-7:  24px;
   --sp-8:  32px;
 
+  /* ---- Elevation ------------------------------------------------------------------------------
+   * FOUR STEPS, ALREADY AUTHORED — and until now reachable only inside the library. `--sh1..4` were
+   * declared on `.libd-root`, so Profiles, Settings and the Reader could not use them and each wrote
+   * its own: measured, 22 distinct drop shadows on the Marks chapter alone, across values that were
+   * within a pixel or two of these four.
+   *
+   * Promoted here VERBATIM, with the dark set keyed on `data-dark` exactly as the library keys it.
+   * `.libd-root` keeps its own copies, identical, so nothing in the library moves by a pixel.
+   *
+   *   sh1  a card lifted off the page          sh3  a dialog
+   *   sh2  a popover or menu                   sh4  the largest tray
+   *
+   * An INSET ring is not elevation — it is a border drawn with a shadow — and none of those are
+   * touched here.
+   */
+  --sh1: 0 1px 2px rgba(40, 28, 14, 0.06);
+  --sh2: 0 3px 10px rgba(40, 28, 14, 0.12);
+  --sh3: 0 14px 34px rgba(40, 28, 14, 0.22);
+  --sh4: 0 18px 44px rgba(20, 14, 6, 0.22);
+
   /* ---- Interaction states -------------------------------------------------------------------
    * Promoted from the vocabulary the Library already uses (`--lib-hover` / `--lib-active` /
    * `--lib-soft` / `--lib-letterbox`), not invented: those derivations are duplicated verbatim in
@@ -123,6 +143,35 @@
   --state-edge:      var(--accent);   /* the 2px inset marker an active row carries */
   --state-edge-size: 2px;
   --state-disabled:  0.55;
+
+  /* ---- Text that must still be READ -----------------------------------------------------------
+   * Sard already states its own legibility floor: `FAINT_FLOOR = 3.0` in `lib/background.ts`, and
+   * `regroundFaint` clears it by walking a colour TOWARD `--text` until the ratio is met — the same
+   * shape as RAWY-256's read marker and RAWY-260's mark-on-ground. These two are that rule written
+   * where CSS can use it, for the cases the JS path never sees.
+   *
+   * `--text-hint` — the third step of the text hierarchy. It was being written ad hoc as
+   * `color-mix(var(--muted) 75%, var(--paper-bg))` in one place and `80%` in another: both take the
+   * SECONDARY colour and dilute it AWAY from the text, which is the opposite of the direction the
+   * floor is cleared in. Measured across the ten built-in themes those landed at 2.41-3.45 and
+   * 2.58-3.74 — under the floor in every single theme, and under it in ten of ten.
+   *
+   * There is no colour quieter than `--muted` that clears 3.0, because `--muted` itself only reaches
+   * 3.2 at its weakest (ivory, linen). So the third step is no longer carried by a further dilution
+   * that cannot be read; it is carried by SIZE and WEIGHT, which the hint styles already vary, and
+   * the colour holds at the quietest value that still clears the app's own floor.
+   */
+  --text-hint: var(--muted);
+
+  /* `--accent-text` — the accent, when it has to be READ rather than seen.
+   *
+   * The accent is chosen to sit apart from the surfaces, which makes it right for a fill, an edge or
+   * a marker and wrong for small type: as text it measured 2.79-7.54 across the themes, and on its
+   * own 14% tint 2.47-5.99 — under the floor in five of ten. Walking it toward `--text` is the same
+   * correction `regroundFaint` performs, and it keeps the accent's hue dominant rather than
+   * replacing it with plain text colour: measured, this clears 3.0 in all ten themes.
+   */
+  --accent-text: color-mix(in srgb, var(--accent) 70%, var(--text));
 
   /* ---- Vista (Decision 5) -------------------------------------------------------------------
    * ⚠ Vista exists to make the USER'S BACKGROUND IMAGE visible and prominent. The image is the
@@ -147,4 +196,12 @@
   --vista-scrim-max: 0.55;              /* never MORE than this: beyond it the image stops being the subject */
   --vista-scrim: 0.34;                  /* current shipped value; to be solved per theme within the bounds */
   --vista-plate: rgba(22, 16, 10, 0.34);/* today's fill, kept verbatim so Stage 3 changes nothing */
+}
+
+/* The dark elevation set — same four roles, keyed on the flag `applyTheme` already stamps. */
+:root[data-dark="true"] {
+  --sh1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --sh2: 0 3px 10px rgba(0, 0, 0, 0.55);
+  --sh3: 0 14px 34px rgba(0, 0, 0, 0.6);
+  --sh4: 0 18px 44px rgba(0, 0, 0, 0.65);
 }

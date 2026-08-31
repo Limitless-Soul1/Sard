@@ -5,9 +5,17 @@
 // SEMANTIC slot so it adapts to the theme. State lives in useAnnotations so the side panel
 // (AnnotationsPanel) reflects every change.
 
-import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from "react";
 
 import { useI18n } from "../../i18n";
+import { ColorPicker } from "../../components/ColorPicker";
 import { resolveTheme, useTheme } from "../../theme";
 import type { AnchorRect, AnnotationHit, FoliateController, SelectionInfo } from "../../reader-engine/FoliateController";
 import { useAnnotations } from "./annotationsStore";
@@ -57,17 +65,6 @@ const BackChevron = () => (
 
 // RAWY-123: a hue → a PALE highlight wash #hex. Fixed L≈72%, S≈60% (per the design) so black/light text
 // stays readable under it (the highlight is drawn with the usual translucent wash opacity on top).
-function hueHex(h: number): string {
-  const s = 0.6;
-  const l = 0.72;
-  const c = (1 - Math.abs(2 * l - 1)) * s;
-  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-  const m = l - c / 2;
-  const [r, g, b] =
-    h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
-  const hx = (n: number) => Math.round((n + m) * 255).toString(16).padStart(2, "0");
-  return `#${hx(r)}${hx(g)}${hx(b)}`;
-}
 
 // RAWY-123: the hybrid custom-colour picker (design "1c — curated first, hue if you want it"). Opened
 // from the "+", it REPLACES the popover's rows IN PLACE: a back-to-presets button + title, the eight
@@ -87,34 +84,7 @@ function CustomColorPicker({
 }) {
   const { t } = useI18n();
   const [selected, setSelected] = useState<HighlightColor>(HIGHLIGHT_SLOTS[0]);
-  const [hue, setHue] = useState<number | null>(null); // set once the hue bar is dragged
-  const barRef = useRef<HTMLDivElement>(null);
-  const dragging = useRef(false);
   const selHex = isHex(selected) ? (selected as string) : hl[selected as string] ?? hl.amber;
-
-  const hueFromX = (clientX: number) => {
-    const el = barRef.current;
-    if (!el) return 0;
-    const r = el.getBoundingClientRect();
-    return Math.max(0, Math.min(360, ((clientX - r.left) / r.width) * 360));
-  };
-  const pickHue = (clientX: number) => {
-    const h = hueFromX(clientX);
-    setHue(h);
-    setSelected(hueHex(h) as HighlightColor);
-  };
-  const onHueDown = (e: React.PointerEvent) => {
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
-    dragging.current = true;
-    pickHue(e.clientX);
-  };
-  const onHueMove = (e: React.PointerEvent) => {
-    if (dragging.current) pickHue(e.clientX);
-  };
-  const onHueUp = (e: React.PointerEvent) => {
-    dragging.current = false;
-    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
-  };
 
   return (
     <div className="hl-cpick">
@@ -131,7 +101,7 @@ function CustomColorPicker({
             type="button"
             className={`hl-cpick-swatch${selected === c ? " on" : ""}`}
             style={{ background: hl[c] }}
-            onClick={() => { setHue(null); setSelected(c); }}
+            onClick={() => setSelected(c)}
             aria-label={c}
           />
         ))}
@@ -141,10 +111,12 @@ function CustomColorPicker({
         <span className="hl-cpick-or-label">{t("hl.orHue")}</span>
         <span className="hl-cpick-rule" />
       </div>
-      <div className="hl-cpick-hue" ref={barRef} onPointerDown={onHueDown} onPointerMove={onHueMove} onPointerUp={onHueUp}>
-        <div className="hl-cpick-thumb" style={{ left: `${((hue ?? 0) / 360) * 100}%` }}>
-          <span className="hl-cpick-thumb-dot" style={{ background: hue != null ? hueHex(hue) : "transparent" }} />
-        </div>
+      {/* The SAME picker every other custom colour in Sard opens. It replaces a bare hue strip that
+          could only sweep the circle at one fixed tint and had nowhere to type a value — so a reader
+          with a hex code in hand could not use it. `Apply` stays the commit, because this popover
+          hangs off a live selection and must not recolour on every drag. */}
+      <div className="hl-cpick-space">
+        <ColorPicker value={selHex} onChange={(hex) => setSelected(hex as HighlightColor)} />
       </div>
       <div className="hl-cpick-foot">
         <div className="hl-cpick-preview">
@@ -202,11 +174,100 @@ export function ColorRow({ active, onPick }: { active?: string | null; onPick: (
   );
 }
 
-// Place the floating UI centred over the selection; clamp to the viewport, flip below if
-// there isn't room above. `below` is decided by the caller via the rect's top.
-function anchorStyle(rect: AnchorRect, below: boolean): CSSProperties {
-  const left = Math.min(Math.max(rect.left + rect.width / 2, 140), window.innerWidth - 140);
-  return below ? { left, top: rect.bottom + 10 } : { left, top: rect.top - 10 };
+// Place the floating UI over the selection, INSIDE the window, whatever size it happens to be.
+//
+// WHAT THIS REPLACES, and why the old version could not have worked. It clamped `left` against a
+// hard-coded half-width of 140px and clamped `top` NOT AT ALL:
+//
+//     const left = Math.min(Math.max(rect.left + rect.width / 2, 140), window.innerWidth - 140);
+//     return below ? { left, top: rect.bottom + 10 } : { left, top: rect.top - 10 };
+//
+// `.hl-pop` is `position: fixed` under `translate(-50%, -100%)`, so above the selection its TOP
+// lands at `rect.top - 10 - height` -- negative near the top of the window -- and below it its
+// BOTTOM lands at `rect.bottom + 10 + height`, past `innerHeight` near the bottom. Nothing bounded
+// either. Opening the colour picker then roughly triples the height (a 132px plane plus hue, alpha
+// and a footer), so a popup that fitted a moment ago does not. Full screen changes `innerHeight` and
+// nothing else, which is why it was no better there.
+//
+// THE FIX IS TO MEASURE. The popup reports its own box after every render that can change its size,
+// and the placement is computed from that box rather than from a constant: the side is chosen by
+// which one the popup actually fits in, and both axes are clamped to the viewport with a margin. A
+// popup larger than the window is pinned to the margin rather than centred off-screen.
+
+/** Space kept between the popup and the window edge, in px. */
+export const POP_EDGE = 8;
+/** Distance from the selection to the popup, in px -- the design's own offset. */
+export const POP_GAP = 10;
+
+export function anchorStyle(
+  rect: AnchorRect,
+  below: boolean,
+  box: { w: number; h: number } | null,
+  vw: number = window.innerWidth,
+  vh: number = window.innerHeight,
+): CSSProperties {
+  // Before the first measurement, fall back to the design's own half-width so the very first paint
+  // is no worse than it used to be; the measured pass lands on the next frame.
+  const halfW = box ? box.w / 2 : 140;
+  const h = box ? box.h : 0;
+  const loX = halfW + POP_EDGE;
+  const hiX = Math.max(loX, vw - halfW - POP_EDGE);
+  const left = Math.min(Math.max(rect.left + rect.width / 2, loX), hiX);
+  // `below` puts the popup's TOP at `top`; above puts its BOTTOM there (translateY(-100%)).
+  const loY = below ? POP_EDGE : h + POP_EDGE;
+  const hiY = below ? Math.max(loY, vh - h - POP_EDGE) : Math.max(loY, vh - POP_EDGE);
+  const top = Math.min(Math.max(below ? rect.bottom + POP_GAP : rect.top - POP_GAP, loY), hiY);
+  return { left, top };
+}
+
+/**
+ * Which side the popup fits on, decided from its MEASURED height rather than from the anchor alone.
+ *
+ * Prefers above, as the design does. Falls below when there is not room above, and when there is
+ * room in neither it takes the larger of the two -- the clamp then pins it, which is still on screen.
+ */
+export function fitsBelow(rect: AnchorRect, h: number, vh: number = window.innerHeight): boolean {
+  const roomAbove = rect.top - POP_GAP - POP_EDGE;
+  const roomBelow = vh - rect.bottom - POP_GAP - POP_EDGE;
+  if (h <= roomAbove) return false;
+  if (roomBelow >= h) return true;
+  return roomBelow > roomAbove;
+}
+
+/**
+ * Measure a floating element and keep the measurement current.
+ *
+ * A ResizeObserver catches the picker opening and closing inside the popup without the caller having
+ * to know which render changed the size, and the window listener catches entering or leaving full
+ * screen, which is a resize.
+ */
+function useMeasured(): [
+  React.RefObject<HTMLDivElement | null>,
+  { w: number; h: number } | null,
+] {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [box, setBox] = useState<{ w: number; h: number } | null>(null);
+  useLayoutEffect(() => {
+    const read = () => {
+      const el = ref.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      setBox((prev) =>
+        prev && Math.abs(prev.w - r.width) < 0.5 && Math.abs(prev.h - r.height) < 0.5
+          ? prev
+          : { w: r.width, h: r.height },
+      );
+    };
+    read();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(read) : null;
+    if (ro && ref.current) ro.observe(ref.current);
+    window.addEventListener("resize", read);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", read);
+    };
+  }, []);
+  return [ref, box];
 }
 
 // Action-tier line icons (design's SVGs; stroke = currentColor so they inherit the button ink).
@@ -263,13 +324,18 @@ function SelectionToolbar({
 }) {
   const { t } = useI18n();
   const hl = useHl();
-  const below = sel.rect.top < 90;
+  const [popRef, popBox] = useMeasured();
+  // MEASURED, not guessed. `sel.rect.top < 90` asked whether the selection was near the top, which
+  // is not the same question as whether the popup fits above it -- and it could not be, because the
+  // popup's height changes when the colour picker opens inside it.
+  const below = popBox ? fitsBelow(sel.rect, popBox.h) : sel.rect.top < 90;
   // RAWY-123: the "+" opens the hybrid custom-colour picker IN PLACE of the two tiers (back returns).
   const [picking, setPicking] = useState(false);
   return (
     <div
+      ref={popRef}
       className={`hl-pop${below ? " below" : ""}`}
-      style={anchorStyle(sel.rect, below)}
+      style={anchorStyle(sel.rect, below, popBox)}
       onPointerDown={(e) => e.stopPropagation()}
     >
       {picking ? (

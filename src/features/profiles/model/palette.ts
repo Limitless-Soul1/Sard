@@ -308,3 +308,74 @@ export function paletteColors(c: ThemeColors): string[] {
   return [c.paperBg, c.surfaceBg, c.chromeBg, c.text, c.muted, c.accent,
     ...HIGHLIGHT_SLOTS.map((k) => c.highlight[k])];
 }
+
+// ---- panel relief -------------------------------------------------------------------------------
+//
+// HOW FAR THE PANELS STAND OFF THE GROUND THEY SIT ON.
+//
+// This began measured against the PAPER, which was wrong, and the error is worth keeping written
+// down because the arithmetic never showed it. In the Library the panel's neighbour is the DESK:
+// `.pf-lib-main` and `.libd-stage` paint no background of their own, so the stage IS the desk, and
+// no paper-coloured surface touches a panel anywhere. Measured against the desk, the derivation is
+// already right (authored 1.080, derived 1.079) — so this is not a repair. It is a choice the
+// sixteen shipped themes each made differently: seven light and nine dark, in both directions,
+// with a spread wider than its own mean.
+//
+// THREE RULES IT KEEPS.
+//
+//   MONOTONIC. The first version folded — with no room it stepped the other way, so -x and +x gave
+//   the SAME colour and the slider mirrored itself. Four of the sixteen papers were inert end to
+//   end. This is linear in the requested step and clamps only at black and white.
+//
+//   NO DEAD TRAVEL. `reliefRoom` reports how far a palette can actually go each way, so the control
+//   can end where the room ends instead of offering a stretch that does nothing.
+//
+//   LIGHTNESS ONLY, AND ONLY THE PANEL. The panel keeps its own hue and saturation; `surfaceBg`,
+//   `paperBg` and every other value are returned untouched. Nothing here can reach the library's
+//   background picture — not its presence, not its blur, not a scrim over it. A panel is a panel.
+
+/**
+ * The furthest a panel may stand from its ground, in lightness.
+ *
+ * 0.12 because the shipped themes go to 0.098 (Sepia) and a control that cannot reach what the
+ * designers already drew is not a control over the same thing they were choosing. The rest is
+ * headroom, not ambition: the room a palette actually has is the real limit, and `reliefRoom` is
+ * what the editor tracks to.
+ *
+ * WORTH KNOWING, and not a defect: every one of the sixteen puts its panel at or ABOVE its desk —
+ * three sit exactly level and none goes below. The darker half of the range is therefore territory
+ * no shipped paper uses. It is offered anyway, because this is a reader's choice about their own
+ * library rather than a reconstruction of somebody else's.
+ */
+export const RELIEF_MAX = 0.12;
+export const RELIEF_STEP = 0.005;
+
+/** Where a palette's panel already stands: signed lightness, panel minus desk. */
+export function reliefOf(desk: string, chrome: string): number {
+  return rgbToHsl(toRgb(chrome))[2] - rgbToHsl(toRgb(desk))[2];
+}
+
+/**
+ * How far this palette can actually travel each way.
+ *
+ * A desk near black has little room below it and plenty above; a desk near white the reverse. Ending
+ * the control where the room ends is what keeps every position on the track worth something —
+ * clamping instead would leave a stretch of slider that changes nothing, which is the complaint the
+ * folding version earned.
+ */
+export function reliefRoom(desk: string): { min: number; max: number } {
+  const l = rgbToHsl(toRgb(desk))[2];
+  return { min: -Math.min(RELIEF_MAX, l), max: Math.min(RELIEF_MAX, 1 - l) };
+}
+
+/**
+ * The same palette with its panel set to `relief` against its desk.
+ *
+ * Hue and saturation are the panel's own and pass through untouched, so an authored chrome keeps the
+ * colour its designer chose and only changes where it stands.
+ */
+export function withPanelRelief(c: ThemeColors, relief: number): ThemeColors {
+  const deskL = rgbToHsl(toRgb(c.surfaceBg))[2];
+  const [h, s] = rgbToHsl(toRgb(c.chromeBg));
+  return { ...c, chromeBg: toHex(hslToRgb([h, s, clamp(deskL + relief, 0, 1)])) };
+}

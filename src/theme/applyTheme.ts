@@ -4,6 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { contrastRatio } from "../lib/contrast";
 import type { Theme } from "./tokens";
+import { applyVistaTokens } from "./vistaTokens";
 
 // RAWY-256 — `--read-marker` / `--read-marker-quiet`: the FIRST token in Sard guaranteed LEGIBLE against
 // the chrome ground. `--accent` is NOT that token in every theme — MEASURED across all 16: accent vs
@@ -104,6 +105,10 @@ export function applyTheme(theme: Theme): void {
   // measured result. The marker computes its own floor regardless, so it is guaranteed either way.
   set("--read-marker", resolveReadMarker(c.accent, c.chromeBg, c.text));
   set("--read-marker-quiet", resolveReadMarker(c.muted, c.chromeBg, c.text));
+  // VISTA'S FURNITURE. Ten tokens that only Vista reads, set here because they follow the theme and
+  // this is where a theme becomes CSS. A built-in paper gets the designer's authored values; a
+  // reader-made theme gets them derived by the same rule, so no theme is left without a set.
+  applyVistaTokens(set, theme);
   r.dataset.theme = theme.id;
   r.dataset.dark = String(theme.dark);
   // RAWY-118 (fixes ISSUE C — the black band above the top bar): the window uses the native OS

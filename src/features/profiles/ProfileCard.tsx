@@ -19,6 +19,8 @@ import { useI18n } from "../../i18n";
 import { SardMini } from "./SardMini";
 import { miniOf, sealOf } from "./mini";
 import { SEAL_DIAMOND, type Profile } from "./model/profile";
+import { markFrame } from "./model/markFrame";
+import { profileLabel } from "./model/profile";
 
 export interface CardActions {
   onUse: () => void;
@@ -128,10 +130,10 @@ export function ProfileCard({
         <span
           className="pf-seal"
           style={{
-            background: profile.data.theme.colors.paperBg,
+            background: profile.data.theme.library.colors.paperBg,
             color: seal.text === SEAL_DIAMOND
-              ? profile.data.theme.colors.accent
-              : profile.data.theme.colors.text,
+              ? profile.data.theme.library.colors.accent
+              : profile.data.theme.library.colors.text,
             fontFamily: seal.fontFamily,
           }}
           aria-hidden
@@ -139,7 +141,10 @@ export function ProfileCard({
           {profile.iconKind === "color" && profile.iconRef ? (
             <span className="pf-seal-dot" style={{ background: profile.iconRef }} />
           ) : profile.iconKind === "image" && iconUrl ? (
-            <span className="pf-seal-img" style={{ backgroundImage: `url("${iconUrl}")` }} />
+            <span
+              className="pf-seal-img"
+              style={{ backgroundImage: `url("${iconUrl}")`, ...markFrame(profile.data.icon) }}
+            />
           ) : (
             // An image icon whose row has not loaded yet — or has gone — falls back to the initial
             // rather than to a hole. The seal is a real choice, so it is never a broken state.
@@ -148,8 +153,13 @@ export function ProfileCard({
         </span>
 
         <span className="pf-card-text">
-          <span className="pf-card-name" dir="auto">
-            {profile.name ?? "—"}
+          <span className={`pf-card-name${(profile.name ?? "").trim() ? "" : " pf-card-name--unnamed"}`} dir="auto">
+            {/* THE GRID KEEPS THE DASH. Twelve of the profiles here have no name, and twelve
+                repetitions of «هيئة بلا اسم» down a wall of cards is noise where the card already
+                identifies itself — it carries its own miniature, its seal and its paper's name
+                underneath. The descriptive fallback is kept where a profile appears ALONE and has
+                to say what it is: the switcher, the editor's head, and the sentences in dialogs. */}
+            {profileLabel(profile.name, "—")}
           </span>
           <span className="pf-card-sub" dir="auto">
             {themeName}

@@ -7,18 +7,22 @@
 // and no profile — including one that arrives from someone else — can reach them.
 
 import { describe, expect, it } from "vitest";
+import { BOOKMARK_SIZE_MAX, BOOKMARK_SIZE_MIN } from "../../src/lib/bookmarkStyle";
 
 import {
   PROFILE_READING_FIELDS,
   PROFILE_WRITES,
   parseProfileData,
+  profileReadingTheme,
   profileRefs,
   profileSettings,
   profileTheme,
   readingPatch,
+  readingThemeId,
   serialiseProfileData,
   type Profile,
 } from "../../src/features/profiles/model/profile";
+import { inspectPackage, serialiseProfile } from "../../src/features/profiles/model/package";
 import { THEMES } from "../../src/theme/themes";
 import type { CustomThemeId } from "../../src/theme/tokens";
 
@@ -57,14 +61,59 @@ describe("the boundary — what a profile may write", () => {
     }
   });
 
-  it("patches the reading style at exactly two fields", () => {
-    expect([...PROFILE_READING_FIELDS]).toEqual(["arabicFont", "latinFont"]);
-    expect(Object.keys(readingPatch(profile())).sort()).toEqual(["arabicFont", "latinFont"]);
+  // THE PROPERTY THAT KEEPS EVERY EXISTING PROFILE UNCHANGED. A profile may now hold a typography
+  // opinion, but a profile that holds none must emit exactly what it always did — the two faces and
+  // nothing else. Emitting `null` would BLANK the reader's value; omitting leaves it alone.
+  // The two faces, plus the number ink — which is always written because a profile is its only
+  // source, so `null` has to be able to clear a colour a previous save wrote.
+  it("a profile with no typography opinion patches the faces, the number ink, the overlay and the page", () => {
+    // `backgroundColor` joins for the same reason `numberColor` did: it is a LOOK the profile owns,
+    // and omitting it on clear would leave the previous choice standing in `reading_style` with
+    // nothing able to drop it. Both are written even when null, which is what "follow the theme"
+    // persists as. The firewall this file guards is untouched: `readingPatch` still reaches only the
+    // GLOBAL `reading_style`, and a per-book `book_style:<id>` is still never written by a profile.
+    expect(Object.keys(readingPatch(profile())).sort())
+      .toEqual(["arabicFont", "backgroundColor", "latinFont", "numberColor", "pageColor"]);
+    expect(readingPatch(profile()).numberColor).toBeNull();
+    expect(readingPatch(profile()).backgroundColor).toBeNull();
   });
 
-  it("the reading patch cannot express a layout field", () => {
+  it("the page colour is always cleared, because a profile's answer to it is its reading paper", () => {
+    // The third always-written field, and the one with the sharpest consequence for omitting it.
+    // `.page-sheet` resolves the stored page colour BEFORE the reading palette, so a colour set once
+    // in the reading drawer outranked every profile's paper for ever with nothing able to drop it —
+    // measured on a real configuration as a page that survived A -> B -> A without moving. A profile
+    // carries no page colour of its own and must not: its answer is the palette, so it writes null.
+    const p = profile();
+    p.data.theme.reading.colors = { ...p.data.theme.reading.colors, paperBg: "#123456" };
+    expect(readingPatch(p).pageColor).toBeNull();
+    // and it is emphatically NOT the paper — writing that here would put the palette's colour into a
+    // per-reader override row, where a later palette change could never reach it again.
+    expect(readingPatch(p).pageColor).not.toBe("#123456");
+  });
+
+  it("a profile emits only the typography fields it actually sets", () => {
+    const p = profile();
+    p.data.type.reading = { ...p.data.type.reading, lineHeight: 2.1, zoom: 1.4 };
+    expect(Object.keys(readingPatch(p)).sort())
+      .toEqual(["arabicFont", "backgroundColor", "latinFont", "lineHeight", "numberColor", "pageColor", "zoom"]);
+    expect(readingPatch(p).lineHeight).toBe(2.1);
+  });
+
+  it("an out-of-range value is refused rather than clamped, so it stays no opinion", () => {
+    const raw = parseProfileData(JSON.stringify({
+      v: 1, type: { arabic: "amiri", latin: "literata", reading: { zoom: 99, lineHeight: 1.8 } },
+    }));
+    expect(raw.type.reading.zoom).toBeNull();
+    expect(raw.type.reading.lineHeight).toBe(1.8);
+  });
+
+  it("the reading patch cannot express a layout field the engine does not own", () => {
     const patch = readingPatch(profile()) as Record<string, unknown>;
-    for (const f of FORBIDDEN) expect(patch[f], f).toBeUndefined();
+    // `flowMode`, `pageFitWindow` and the rest stay the reader's alone.
+    for (const f of ["flowMode", "pageFitWindow", "hideChapterTitles", "hideFirstLine", "overrideBookColor"]) {
+      expect(patch[f], f).toBeUndefined();
+    }
   });
 
   it("none of the whitelisted keys is a reading-layout key", () => {
@@ -94,7 +143,7 @@ describe("parsing is total", () => {
   it("a damaged blob yields a usable profile rather than throwing", () => {
     for (const bad of ["", "{", "null", "[]", '"a string"', "{}"]) {
       const d = parseProfileData(bad);
-      expect(d.theme.colors.paperBg).toBeTruthy();
+      expect(d.theme.library.colors.paperBg).toBeTruthy();
       expect(d.marks.bookmarkShape).toBeTruthy();
       expect(d.type.arabic).toBeTruthy();
     }
@@ -104,19 +153,19 @@ describe("parsing is total", () => {
     const d = parseProfileData(
       JSON.stringify({ theme: { base: "sepia" }, somethingNew: { deep: [1, 2] }, v: 99 }),
     );
-    expect(d.theme.base).toBe("sepia");
+    expect(d.theme.library.base).toBe("sepia");
     expect(d.v).toBe(99);
   });
 
   it("missing fields take the base theme's own values", () => {
     const d = parseProfileData(JSON.stringify({ theme: { base: "moonlit" } }));
-    expect(d.theme.colors.paperBg).toBe(THEMES.moonlit.colors.paperBg);
-    expect(d.theme.dark).toBe(true);
+    expect(d.theme.library.colors.paperBg).toBe(THEMES.moonlit.colors.paperBg);
+    expect(d.theme.library.dark).toBe(true);
   });
 
   it("an unknown base theme falls back rather than carrying a dangling id", () => {
     const d = parseProfileData(JSON.stringify({ theme: { base: "u:gone" } }));
-    expect(d.theme.base).toBeNull();
+    expect(d.theme.library.base).toBeNull();
   });
 
   it("rejects a colour that is not a plain hex", () => {
@@ -126,15 +175,18 @@ describe("parsing is total", () => {
         theme: { base: "ivory", colors: { paperBg: "red;} body{display:none}", text: "#123456" } },
       }),
     );
-    expect(d.theme.colors.paperBg).toBe(THEMES.ivory.colors.paperBg); // the attack fell back
-    expect(d.theme.colors.text).toBe("#123456"); // the valid one survived
+    expect(d.theme.library.colors.paperBg).toBe(THEMES.ivory.colors.paperBg); // the attack fell back
+    expect(d.theme.library.colors.text).toBe("#123456"); // the valid one survived
   });
 
   it("clamps numbers into their measured ranges", () => {
     const d = parseProfileData(
       JSON.stringify({ marks: { bookmarkSize: 9999, bookmarkPos: -4 } }),
     );
-    expect(d.marks.bookmarkSize).toBeLessThanOrEqual(120);
+    // AGAINST THE CONSTANT, not a copy of it. This read 120, which is what the maximum happened to
+    // be — so raising the range broke a test that was never about the number.
+    expect(d.marks.bookmarkSize).toBeLessThanOrEqual(BOOKMARK_SIZE_MAX);
+    expect(d.marks.bookmarkSize).toBeGreaterThanOrEqual(BOOKMARK_SIZE_MIN);
     expect(d.marks.bookmarkPos).toBeGreaterThanOrEqual(0);
   });
 
@@ -169,21 +221,21 @@ describe("a profile is its own theme", () => {
 
   it("carries the authored polarity, not one inferred from the paper", () => {
     const p = profile();
-    expect(profileTheme(p).dark).toBe(p.data.theme.dark);
+    expect(profileTheme(p).dark).toBe(p.data.theme.library.dark);
   });
 });
 
 describe("bookmark colour follows the accent unless authored", () => {
   it("null means the accent", () => {
     const p = profile();
-    p.data.theme.bookmark = null;
+    p.data.theme.reading.bookmark = null;
     const color = profileSettings(p).find(([k]) => k === "bookmark_color")![1];
-    expect(color).toBe(p.data.theme.colors.accent);
+    expect(color).toBe(p.data.theme.reading.colors.accent);
   });
 
   it("an authored colour wins", () => {
     const p = profile();
-    p.data.theme.bookmark = "#1F6F6B";
+    p.data.theme.reading.bookmark = "#1F6F6B";
     const color = profileSettings(p).find(([k]) => k === "bookmark_color")![1];
     expect(color).toBe("#1F6F6B");
   });
@@ -254,6 +306,83 @@ describe("stage 4 — backgrounds and texture", () => {
   it("the widened whitelist still names nothing the reader owns", () => {
     const forbidden = /line|margin|spacing|tracking|align|diacritic|zoom|weight|measure|page_width|flow|book_style|reading_style/i;
     for (const k of PROFILE_WRITES) expect(k).not.toMatch(forbidden);
-    expect(PROFILE_READING_FIELDS).toEqual(["arabicFont", "latinFont"]);
+    // The whitelist grew to the nine the reading engine can honour, and no further. Everything in
+    // FORBIDDEN that is NOT one of those nine must still be unreachable.
+    const owned = new Set<string>([...PROFILE_READING_FIELDS]);
+    for (const f of ["flowMode", "pageFitWindow", "hideChapterTitles", "hideFirstLine", "overrideBookColor"]) {
+      expect(owned.has(f), f).toBe(false);
+    }
+  });
+
+  // THE BORDER IS UNCHANGED. A profile's measure is local: it must never travel, or importing a
+  // stranger's look would reshape how the recipient reads — and a package carrying it is refused by
+  // `inspectPackage` anyway, so exporting one would produce a file Sard cannot import.
+  it("an exported package carries no typography, even when the profile has one", () => {
+    const p = profile();
+    p.data.type.reading = { ...p.data.type.reading, lineHeight: 2.1, zoom: 1.4, letterSpacing: 2 };
+    const text = JSON.stringify(serialiseProfile(p, "1.2.2"));
+    expect(text).not.toContain("lineHeight");
+    expect(text).not.toContain("letterSpacing");
+    const seen = inspectPackage(text);
+    expect(seen.ok, JSON.stringify((seen as { refusal?: unknown }).refusal)).toBe(true);
+    if (seen.ok) expect(seen.data.type.reading.lineHeight).toBeNull();
+  });
+});
+
+describe("two palettes, and what happens to a profile written before there were two", () => {
+  it("a v1 blob's single palette becomes BOTH scopes, identically", () => {
+    // THE MIGRATION, AND THE WHOLE PROMISE OF IT. Every profile written before this change stored
+    // one palette; nothing on disk is rewritten, and the parser hands that palette to the library
+    // and to the book alike. So an existing profile renders exactly as it always did on both
+    // surfaces, and the two only part when a reader deliberately edits one.
+    const d = parseProfileData(JSON.stringify({ theme: { base: "moonlit" } }));
+    expect(d.theme.library.base).toBe("moonlit");
+    expect(d.theme.reading.base).toBe("moonlit");
+    expect(d.theme.reading.colors).toEqual(d.theme.library.colors);
+    expect(d.theme.reading.dark).toBe(d.theme.library.dark);
+  });
+
+  it("a v1 blob with authored colours carries them to both", () => {
+    const d = parseProfileData(JSON.stringify({
+      theme: { base: "ivory", colors: { text: "#123456" }, numbers: "#ABCDEF" },
+    }));
+    expect(d.theme.library.colors.text).toBe("#123456");
+    expect(d.theme.reading.colors.text).toBe("#123456");
+    expect(d.theme.reading.numbers).toBe("#ABCDEF");
+  });
+
+  it("a v2 blob keeps its two palettes apart", () => {
+    const d = parseProfileData(JSON.stringify({
+      v: 2,
+      theme: { library: { base: "moonlit" }, reading: { base: "sepia" } },
+    }));
+    expect(d.theme.library.base).toBe("moonlit");
+    expect(d.theme.reading.base).toBe("sepia");
+    expect(d.theme.reading.colors.paperBg).not.toBe(d.theme.library.colors.paperBg);
+  });
+
+  it("a v2 blob naming only one scope lends it to the other", () => {
+    // A hand-written or truncated manifest is a plain profile, never a half-painted one.
+    const d = parseProfileData(JSON.stringify({ v: 2, theme: { library: { base: "sage" } } }));
+    expect(d.theme.reading.colors).toEqual(d.theme.library.colors);
+  });
+
+  it("the two palettes register under DIFFERENT theme ids", () => {
+    // The registry maps one id to one theme, so two palettes need two keys. The library keeps the
+    // profile's own id, so every `theme_id` already stored on disk still resolves.
+    const p = profile();
+    expect(profileTheme(p).id).toBe(p.id);
+    expect(profileReadingTheme(p).id).toBe(readingThemeId(p.id));
+    expect(readingThemeId(p.id).startsWith("u:")).toBe(true);
+  });
+
+  it("applying a profile no longer writes one id to both keys", () => {
+    // The defect this change exists to remove: `book_theme_id` used to be the profile's own id, so
+    // the book page wore the library's palette and the two scopes could never differ.
+    const p = profile();
+    const s = new Map(profileSettings(p));
+    expect(s.get("theme_id")).toBe(p.id);
+    expect(s.get("book_theme_id")).toBe(readingThemeId(p.id));
+    expect(s.get("book_theme_id")).not.toBe(s.get("theme_id"));
   });
 });

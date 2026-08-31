@@ -22,6 +22,7 @@ import { type BookScript, voiceCompatibility, isImplausiblyShortAudio } from "./
 import { diagNote, diagPublishAudio } from "@diag";
 import { settingsGet, settingsSet, ttsEdgeVoices, ttsStop } from "./ipc";
 import { LatencySeries, newSeries, recordSeries, resetSeries, seriesSummary, SynthScheduler } from "./ttsScheduler";
+import { speakableText } from "./ttsText";
 
 /**
  * RAWY-281 — the selectable playback speeds, as an EXPLICIT ORDERED SET.
@@ -597,7 +598,12 @@ export const VOICE_MISMATCH_MARKER = "voice-language-mismatch";
 
 async function synthInvoke(i: number): Promise<ArrayBuffer> {
   const text = sentences[i];
-  const buf = await rawSynth(curEngine, curVoice, text);
+  // `speakableText` is the ONLY place the spoken string may differ from the displayed one. It exists
+  // because Edge silently drops standalone Extended Arabic-Indic digit runs — measured: two different
+  // numbers return byte-identical audio — and it rewrites them to the Arabic-Indic forms the endpoint
+  // does speak. Length-preserving, so the word boundaries Edge returns still map onto the displayed
+  // text; see `lib/ttsText.ts` for the measurements and the invariants.
+  const buf = await rawSynth(curEngine, curVoice, speakableText(text));
   if (isImplausiblyShortAudio(text, buf?.byteLength ?? 0)) {
     throw new Error(`${VOICE_MISMATCH_MARKER}: ${curVoice} returned ${buf?.byteLength ?? 0} bytes for ${text.length} chars`);
   }

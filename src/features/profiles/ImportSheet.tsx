@@ -19,7 +19,7 @@
 // Cancel and Import only, and importing is additive and reversible by deleting. Adding a mode the
 // designer chose not to draw would be scope, not fidelity.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useI18n } from "../../i18n";
@@ -34,6 +34,9 @@ import { SardMini } from "./SardMini";
 import { applyProfile, importProfile } from "./store";
 import type { CustomThemeId } from "../../theme/tokens";
 import type { Profile, ProfileData } from "./model/profile";
+import { markFrame } from "./model/markFrame";
+import { useDialog } from "../../components/useDialog";
+import { profileLabel } from "./model/profile";
 
 /**
  * The package, as the PROFILE it is about to become — so the preview and the result are one object.
@@ -129,10 +132,10 @@ function usePackagePictures(path: string | null, assets: PackageAsset[]) {
 const PAPER_ROLES = ["paperBg", "surfaceBg", "chromeBg", "chromeBorder", "text", "muted", "accent"] as const;
 
 function paperIsModified(data: ProfileData): boolean {
-  const base = data.theme.base;
+  const base = data.theme.library.base;
   if (!base || !isBuiltinThemeId(base)) return false;
   const b = THEMES[base].colors as unknown as Record<string, unknown>;
-  const c = data.theme.colors as unknown as Record<string, unknown>;
+  const c = data.theme.library.colors as unknown as Record<string, unknown>;
   return PAPER_ROLES.some((k) => b[k] !== c[k]);
 }
 
@@ -229,23 +232,65 @@ export function ImportSheet({
     }
   };
 
-  // The picker opens as soon as the sheet does — the sheet IS the import, not a step before it.
-  if (stage.at === "picking" && !busy && !initialText) {
+  /**
+   * THE PICKER OPENS ONCE PER ENTRY INTO `picking` — from an EFFECT, and latched.
+   *
+   * This used to be three statements in the render body:
+   *
+   *     if (stage.at === "picking" && !busy && !initialText) { void pick(); setBusy(true); return null; }
+   *
+   * and `useDialog` was called AFTER it. Both halves were wrong, and together they produced the
+   * reported fault exactly:
+   *
+   *   · `setBusy(true)` during render scheduled a second render immediately, and that render fell
+   *     THROUGH the early return and reached `useDialog`. The hook count changed between two
+   *     renders of the same component, which React treats as fatal — measured, the console carried
+   *     "React has detected a change in the order of Hooks" and "Update hook called on initial
+   *     render", and the whole settings surface went blank (document text length 0).
+   *   · the crash unmounted the sheet, `stage` was rebuilt as `picking`, and `pick()` ran again.
+   *     Measured from one click: TWO native "Open" dialogs, which is the loop the reader saw.
+   *
+   * A side effect belongs in an effect, and every hook must run on every render. Both are now true.
+   *
+   * THE LATCH IS NOT BELT-AND-BRACES. StrictMode is on (`main.tsx`), so React deliberately invokes
+   * every effect twice in development; without the ref this would open the chooser twice again, for
+   * a completely different reason. The ref is reset whenever the sheet leaves `picking`, so
+   * «اختر ملفًا آخر» — which sends it back there — still opens the chooser exactly once more.
+   */
+  const asked = useRef(false);
+  useEffect(() => {
+    if (initialText || stage.at !== "picking") {
+      asked.current = false;
+      return;
+    }
+    if (asked.current) return;
+    asked.current = true;
     void pick();
-    setBusy(true);
-    return null;
-  }
+    // `pick` is redefined every render and deliberately not a dependency: the latch above, not the
+    // identity of the function, is what decides when the chooser may open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stage.at, initialText]);
 
   // `wide` is frame 14 only: the design draws that one card at 560px because it leads with a
   // full-width miniature. Every other state here is an ordinary 420px dialog, as it is elsewhere.
+  //
+  // CALLED BEFORE ANY RETURN, unconditionally. `useDialog` is built for exactly this — its own
+  // comment describes dialogs "mounted the whole time [that] merely render `null` until they are
+  // opened" — so holding it above the early return is how it is meant to be used, not a dodge.
+  const dlg = useDialog({ onDismiss: onClose });
+
+  // Nothing is drawn while the chooser is open: the sheet IS the import, not a step before it.
+  // A pure return now — no side effect, no state update, no hook skipped.
+  if (stage.at === "picking") return null;
+
   const shell = (body: React.ReactNode, wide = false) =>
     createPortal(
       <div className="pf-dialog-scrim" onClick={onClose}>
         <div
           className={`pf-dialog${wide ? " pf-import-card" : ""}`}
           onClick={(e) => e.stopPropagation()}
-          role="dialog"
-          aria-modal="true"
+          ref={dlg.ref}
+          {...dlg.props}
         >
           {body}
         </div>
@@ -258,7 +303,7 @@ export function ImportSheet({
     return shell(
       <>
         <div className="pf-refused-mark" aria-hidden>!</div>
-        <div className="pf-dialog-title">{t("profiles.import.refusedTitle")}</div>
+        <div className="pf-dialog-title" id={dlg.titleId}>{t("profiles.import.refusedTitle")}</div>
         <p className="pf-dialog-body">{t(stage.code as TKey)}</p>
         {stage.detail && <div className="pf-share-file" dir="ltr">{stage.detail}</div>}
         {/* The one sentence that matters after a refusal. */}
@@ -324,7 +369,7 @@ export function ImportSheet({
 
   return shell(
     <>
-      <div className="pf-dialog-title">{t("profiles.import.title")}</div>
+      <div className="pf-dialog-title" id={dlg.titleId}>{t("profiles.import.title")}</div>
 
       {/* THE MINIATURE IS THE PREVIEW. Frame 14 leads with it because the question the reader is
           answering is "what will Sard look like", and the honest answer is a picture of Sard drawn
@@ -339,7 +384,10 @@ export function ImportSheet({
         {pics.icon ? (
           // Nested exactly as the card nests it, so one rule draws an image seal everywhere.
           <span className="pf-import-seal" aria-hidden>
-            <span className="pf-seal-img" style={{ backgroundImage: `url("${pics.icon}")` }} />
+            <span
+              className="pf-seal-img"
+              style={{ backgroundImage: `url("${pics.icon}")`, ...markFrame(seen.data.icon) }}
+            />
           </span>
         ) : (
           <span className="pf-import-seal" style={{ fontFamily: seal.fontFamily }} aria-hidden>
@@ -347,7 +395,7 @@ export function ImportSheet({
           </span>
         )}
         <span className="pf-import-id-text">
-          <span className="pf-import-name" dir="auto">{sum.name ?? t("profiles.editor.title")}</span>
+          <span className="pf-import-name" dir="auto">{profileLabel(sum.name, t("profiles.unnamed"))}</span>
           <span className="pf-import-author" dir="auto">
             {paperIsModified(data) ? `${paper} · ${t("profiles.import.modified")}` : paper}
             {" · "}

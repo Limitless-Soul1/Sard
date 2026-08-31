@@ -8,7 +8,7 @@
 // `metadata_overrides`, never a rewrite of the source EPUB. Clearing a control returns the book
 // to what Sard derives for it rather than to a second stored default.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { BookRow, CaseNode, ShelfNode } from "../../../lib/ipc";
@@ -29,8 +29,13 @@ import { localeNum } from "../../../lib/format";
 import { resolveBookMeta, displayTitle } from "../../../lib/bookMeta";
 import { autoCoverPaint } from "../AutoCover";
 import { coverSrc } from "../coverSrc";
-import { isFinished, progressPct } from "./model";
+import { openTransient } from "./transient";
+import { useSettledBusy } from "./busy";
+import {
+  awaitsShelfChoice, isFinished, progressPct } from "./model";
 import { coverPresentation, type CoverMode } from "./coverPresentation";
+import { displayFace, labelFace, scriptOf } from "../../../lib/typography";
+
 import {
   draftFromBook,
   draftWithNoPaint,
@@ -41,8 +46,8 @@ import {
   previewRow,
   type BookDraft,
 } from "./bookEdits";
+import { useDialog } from "../../../components/useDialog";
 
-const ARABIC = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
 
 /** The dialog's palette, exactly as authored. */
 const PALETTE = [
@@ -109,6 +114,11 @@ export function BookDetails(props: BookDetailsProps) {
   // which is not something a buffer can hold honestly.
   const [draft, setDraft] = useState<BookDraft>(() => draftFromBook(props.book));
   const [busy, setBusy] = useState(false);
+  // `busy` stays the truth about whether a write is running; this is whether it has run long enough
+  // to be worth showing. A shelf change against a local database finishes in about eleven
+  // milliseconds, and dimming for eleven milliseconds is a flash rather than feedback — see
+  // `useSettledBusy`, which is where the reasoning and the threshold live.
+  const showBusy = useSettledBusy(busy);
 
   useEffect(() => {
     setBook(props.book);
@@ -121,7 +131,28 @@ export function BookDetails(props: BookDetailsProps) {
   const preview = previewRow(book, draft);
   const meta = resolveBookMeta(preview);
   const shown = displayTitle(meta, t);
-  const arabic = book.dir === "rtl" || ARABIC.test(shown);
+
+  /**
+   * THE PANEL ANSWERS TO ESCAPE, like every other surface that covers the library.
+   *
+   * Measured before this existed: Escape did nothing at all here. Vista's own handler already
+   * defers while this panel is open — `if (detailsFor || …) return` — precisely so the key is not
+   * spent navigating out from under an open dialog. But nothing then consumed it, so the most
+   * modal surface in the library was the one surface the key could not close.
+   *
+   * Joining the stack also means a press outside answers here first, and that a book menu opened
+   * behind it cannot outlive it.
+   */
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => openTransient(props.onClose, () => dialogRef.current), [props.onClose]);
+  /**
+   * ESCAPE AND THE OUTSIDE PRESS ARE ALREADY THIS DIALOG'S OWN — `openTransient` owns the stack that
+   * closes the nearest layer first. So no `onDismiss` here: two handlers for one key would be two
+   * chances to close the wrong thing. What was missing is everything else a modal owes a keyboard —
+   * the trap, and giving focus back to the tile that opened it.
+   */
+  const dlg = useDialog({ label: shown, initialFocus: "none" });
+  const arabic = scriptOf(shown, book.dir) === "arabic";
   const derived = autoCoverPaint(shown);
   const src = coverSrc(book);
   const jacketSrc = draft.coverMode === "typeset" ? null : src;
@@ -134,8 +165,19 @@ export function BookDetails(props: BookDetailsProps) {
   const pct = progressPct(book);
   const done = isFinished(book);
   const dirty = isDirty(draft, book);
+  // `save` is declared above the placement rows that compute it, so the message reaches it by ref.
+  const awaitingShelfRef = useRef<string | null>(null);
+  // Raised when Save is pressed over an unfinished placement, so the footer can answer the press
+  // rather than the dialog simply not closing.
+  const [refused, setRefused] = useState(false);
 
   const save = async () => {
+    // A pending case choice is not a placement, and Save may not pretend it was. The dialog stays
+    // open and says what is still needed, rather than closing over a move that never happened.
+    if (awaitingShelfRef.current) {
+      setRefused(true);
+      return;
+    }
     const p = patchFromDraft(draft, book);
     if (Object.keys(p).length === 0) {
       props.onClose();
@@ -301,7 +343,7 @@ export function BookDetails(props: BookDetailsProps) {
               top: "15%",
               textAlign: "center",
               color: ink,
-              font: arabic ? "700 .875rem/1.4 var(--ar)" : "600 .8125rem/1.25 var(--book)",
+              font: `${arabic ? 700 : 600} ${arabic ? ".875rem/1.4" : ".8125rem/1.25"} ${displayFace(arabic)}`,
             }}
           >
             {shown}
@@ -319,12 +361,35 @@ export function BookDetails(props: BookDetailsProps) {
     </div>
   );
 
-  const levels: { label: string; options: React.ReactNode; empty: string | null }[] = [
+  // A CASE IS NOT A DESTINATION, and the dialog has to say so.
+  //
+  // Choosing a case only narrows the shelves below it — a case contains shelves, so it cannot answer
+  // "which shelf?". The two rows used to look like one destination control with Save underneath, so
+  // picking a case and pressing Save read as "file it there" and did nothing at all, silently.
+  // `awaitingShelf` is that state, named: the reader has aimed at a case the book is not in and has
+  // not yet chosen a shelf inside it.
+  const currentCaseId = place?.caseNode?.id ?? null;
+  const awaitingShelf = awaitsShelfChoice(currentCaseId, effectiveCaseId, shelvesOf(effectiveCase).length);
+  const chooseShelfHere = effectiveCase
+    ? t("lib.chooseShelfInCase", { name: effectiveCase.name })
+    : t("lib.chooseLooseShelf");
+
+  awaitingShelfRef.current = awaitingShelf ? chooseShelfHere : null;
+  if (refused && !awaitingShelf) setRefused(false);
+
+  const levels: {
+    label: string;
+    options: React.ReactNode;
+    empty: string | null;
+    note?: string;
+    required?: boolean;
+  }[] = [
     {
       label: t("lib.caseWord"),
       // Choosing a case does NOT write. It narrows the level below it, which is what makes
       // Case → Shelf → Category a hierarchy rather than three independent guesses.
       empty: props.cases.length ? null : t("lib.noCasesYet"),
+      note: t("lib.caseNarrowsOnly"),
       options: (
         <>
           <button style={chip(effectiveCaseId === null)} onClick={() => setPickedCase(null)}>
@@ -348,6 +413,8 @@ export function BookDetails(props: BookDetailsProps) {
         : effectiveCase
           ? t("lib.caseHasNoShelves")
           : t("lib.noShelves"),
+      note: awaitingShelf ? chooseShelfHere : undefined,
+      required: awaitingShelf,
       options: (
         <>
           {shelvesOf(effectiveCase).map((s) => {
@@ -398,6 +465,11 @@ export function BookDetails(props: BookDetailsProps) {
     >
       <div
         className="libd-dialog"
+        ref={(node) => { dialogRef.current = node; dlg.ref(node); }}
+        // It behaves as a modal — it covers the library, takes the press outside, and answers to
+        // Escape — so it has to SAY it is one. Without this a screen reader announces an anonymous
+        // group and never tells the reader that the surface behind it has gone inert.
+        {...dlg.props}
         onClick={(e) => e.stopPropagation()}
         style={{
           display: "block",
@@ -409,7 +481,9 @@ export function BookDetails(props: BookDetailsProps) {
           borderRadius: "var(--r-xl)",
           boxShadow: "var(--sh4)",
           animation: "sard-rise .16s ease-out",
-          opacity: busy ? 0.75 : 1,
+          opacity: showBusy ? 0.75 : 1,
+          // A step is a flash; a fade is a state. Only ever seen when the write is genuinely slow.
+          transition: "opacity .12s ease-out",
         }}
       >
         {/* ---- head: jacket, editable name, the book's own facts ---- */}
@@ -444,7 +518,7 @@ export function BookDetails(props: BookDetailsProps) {
                 borderRadius: "var(--r-md)",
                 padding: "7px 10px",
                 outline: "none",
-                font: arabic ? "700 1.125rem var(--ar)" : "600 1rem var(--ui)",
+                font: `${arabic ? 700 : 600} ${arabic ? "1.125rem" : "1rem"} ${labelFace(arabic)}`,
                 color: "var(--txt)",
               }}
             />
@@ -463,7 +537,7 @@ export function BookDetails(props: BookDetailsProps) {
                 borderRadius: "var(--r-md)",
                 padding: "6px 10px",
                 outline: "none",
-                font: arabic ? "400 1rem var(--ar)" : "400 .8125rem var(--ui)",
+                font: `${arabic ? "400 1rem" : "400 .8125rem"} ${labelFace(arabic)}`,
                 color: "var(--mut)",
               }}
             />
@@ -637,7 +711,7 @@ export function BookDetails(props: BookDetailsProps) {
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         color: spineMode === "none" ? "var(--faint)" : ink,
-                        font: arabic ? "700 .8125rem var(--ar)" : "500 .75rem var(--ui)",
+                        font: `${arabic ? 700 : 500} ${arabic ? ".8125rem" : ".75rem"} ${labelFace(arabic)}`,
                       }}
                     >
                       {shown}
@@ -727,7 +801,9 @@ export function BookDetails(props: BookDetailsProps) {
                     font: "600 .625rem var(--ui)",
                     letterSpacing: ".12em",
                     textTransform: "uppercase",
-                    color: "var(--faint)",
+                    // A level that still needs an answer says so in its own label, so the
+                    // requirement is visible before the reader reaches for Save.
+                    color: lv.required ? "var(--acc)" : "var(--faint)",
                   }}
                 >
                   {lv.label}
@@ -739,6 +815,19 @@ export function BookDetails(props: BookDetailsProps) {
                     </span>
                   ) : (
                     lv.options
+                  )}
+                  {lv.note && (
+                    <span
+                      style={{
+                        flexBasis: "100%",
+                        font: "400 .75rem/1.5 var(--ui)",
+                        color: lv.required ? "var(--acc)" : "var(--faint)",
+                        paddingTop: 2,
+                        textWrap: "pretty",
+                      }}
+                    >
+                      {lv.note}
+                    </span>
                   )}
                 </div>
               </div>
@@ -767,8 +856,18 @@ export function BookDetails(props: BookDetailsProps) {
             background: "var(--chr)",
           }}
         >
-          <span style={{ flex: 1, font: "400 .75rem var(--ui)", color: "var(--faint)" }}>
-            {dirty ? t("lib.unsavedChanges") : t("lib.noChanges")}
+          <span
+            style={{
+              flex: 1,
+              font: "400 .75rem var(--ui)",
+              color: awaitingShelfRef.current && refused ? "var(--acc)" : "var(--faint)",
+            }}
+          >
+            {awaitingShelfRef.current && refused
+              ? awaitingShelfRef.current
+              : dirty
+                ? t("lib.unsavedChanges")
+                : t("lib.noChanges")}
           </span>
           <button
             className="libd-hov libd-hov-txt"
@@ -796,7 +895,8 @@ export function BookDetails(props: BookDetailsProps) {
               color: dirty ? "var(--pap)" : "var(--mut)",
               border: dirty ? "none" : "1px solid var(--brd)",
               font: "600 .8125rem var(--ui)",
-              opacity: busy ? 0.6 : 1,
+              opacity: showBusy ? 0.6 : 1,
+              transition: "opacity .12s ease-out",
             }}
           >
             {t("lib.save")}

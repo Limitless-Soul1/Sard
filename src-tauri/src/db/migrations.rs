@@ -173,6 +173,28 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "profiles",
         include_str!("migrations_sql/0019_profiles.sql"),
     ),
+    // One placement per book, replacing the pair-keyed membership rows as the arrangement. Nothing
+    // is destroyed: what the one-placement rule cannot keep is preserved in `legacy_memberships`.
+    (
+        20_260_824_030_000,
+        "placements",
+        include_str!("migrations_sql/20260824030000_placements.sql"),
+    ),
+    // How books read in a VIEW, which is not where they belong. Purely additive: no backfill, no row
+    // touched anywhere else, and dropping the table restores the previous behaviour exactly.
+    (
+        20_260_825_120_000,
+        "view_orders",
+        include_str!("migrations_sql/20260825120000_view_orders.sql"),
+    ),
+    // When a run was last arranged by hand — the baseline reading promotions are measured against.
+    // Additive: one column with a default, and a floor stamped so the reading history already on
+    // disk stays baked into the ranks instead of floating to the front on first launch.
+    (
+        20_260_825_170_000,
+        "view_order_baseline",
+        include_str!("migrations_sql/20260825170000_view_order_baseline.sql"),
+    ),
 ];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.
@@ -678,27 +700,37 @@ mod tests {
     /// versions this list has never heard of — the live database here holds 17 and 18 from
     /// `feature/library-design`. Those rows must be left strictly alone: not re-applied, not removed,
     /// not counted as a reason to skip anything of ours.
+    ///
+    /// The fixture used to seed 17 and 18, which is to say OUR OWN `library_cases` and `shelf_ink`
+    /// marked applied without their SQL ever having run. That is not a foreign database, it is a
+    /// corrupt one, and nothing can be asked of it: a later migration needing a column that 17 adds
+    /// cannot conjure it back. It is also the exact state the runner was rebuilt to make impossible,
+    /// since versions are unique timestamps now and two branches cannot both claim a number. Seeded
+    /// with versions that genuinely are not in the list, which is what the name has always said.
     #[test]
     fn versions_the_list_does_not_know_are_left_alone() {
         let (path, conn) = scratch("foreign");
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, \
              name TEXT NOT NULL, applied_at INTEGER NOT NULL);
-             INSERT INTO schema_migrations VALUES (17,'library_cases',0);
-             INSERT INTO schema_migrations VALUES (18,'shelf_ink',0);",
+             INSERT INTO schema_migrations VALUES (900001,'a_branch_we_never_had',0);
+             INSERT INTO schema_migrations VALUES (900002,'nor_this_one',0);",
         )
         .unwrap();
 
         super::run(&conn, None).unwrap();
 
         let after = recorded(&conn);
-        assert!(after.contains(&17) && after.contains(&18), "foreign rows must survive untouched");
+        assert!(
+            after.contains(&900_001) && after.contains(&900_002),
+            "foreign rows must survive untouched"
+        );
         for (v, _, _) in MIGRATIONS {
             assert!(after.contains(v), "our migration {v} must apply despite a higher foreign version");
         }
         // 19 is BELOW the foreign high-water mark of 18? No — but 1..15 certainly are, and under the
         // old rule every one of them would have been skipped on this database.
-        assert!(after.contains(&1), "migration 1 must apply even though 18 was already recorded");
+        assert!(after.contains(&1), "migration 1 must apply even though 900002 was already recorded");
         assert_eq!(
             user_version(&conn),
             after.len() as i64,

@@ -67,7 +67,7 @@ export function sealOf(p: Profile): { text: string; fontFamily: string } {
  * turn a presence slider into a scrim, so the miniature and the thing it depicts cannot drift.
  */
 export function miniOf(p: Profile, bgUrl?: string | null): MiniProfile {
-  const c = p.data.theme.colors;
+  const c = p.data.theme.library.colors;
   const lib = p.data.bg.library.params;
   return {
     paper: c.paperBg,
@@ -77,7 +77,7 @@ export function miniOf(p: Profile, bgUrl?: string | null): MiniProfile {
     text: c.text,
     muted: c.muted,
     accent: c.accent,
-    ink: p.data.theme.bookmark ?? c.accent,
+    ink: p.data.theme.library.bookmark ?? c.accent,
     bgImg: bgUrl ? `url("${bgUrl}")` : "none",
     // The image is drawn in full and the SCRIM is what the presence slider moves — the same
     // division of labour the real surface uses, rather than a second interpretation of "presence".

@@ -1,4 +1,4 @@
-// The six questions a Profile answers, in the order the design puts them.
+// The seven questions a Profile answers, in the order the design puts them.
 //
 // NAMES, NOT WORDS. These used to be Arabic literals, because the design is a monolingual Arabic
 // mockup and the editor frame was drawn RTL whatever the interface language was. That made the rail,
@@ -11,9 +11,16 @@ import type { TKey } from "../../../i18n/locales/en";
 
 export const CHAPTERS = [
   { id: "identity",   name: "profiles.chapter.identity",   q: "profiles.chapter.identity.q" },
-  { id: "paper",      name: "profiles.chapter.paper",      q: "profiles.chapter.paper.q" },
+  // TWO SURFACES, TWO CHAPTERS. A profile carries two palettes, and one chapter with a switch in it
+  // presented them as one thing with a setting. These are the two editing surfaces themselves: each
+  // opens its own face, so the preview beside the swatches IS the thing being coloured.
+  { id: "paper",      name: "profiles.chapter.paperLibrary", q: "profiles.chapter.paperLibrary.q" },
+  { id: "paperBook",  name: "profiles.chapter.paperBook",    q: "profiles.chapter.paperBook.q" },
   { id: "background", name: "profiles.chapter.background", q: "profiles.chapter.background.q" },
   { id: "fonts",      name: "profiles.chapter.fonts",      q: "profiles.chapter.fonts.q" },
+  // Directly after the faces, because it is the same question continued: the faces choose the voice,
+  // this chooses how it is set on the page.
+  { id: "measure",    name: "profiles.chapter.measure",    q: "profiles.chapter.measure.q" },
   { id: "marks",      name: "profiles.chapter.marks",      q: "profiles.chapter.marks.q" },
   { id: "texture",    name: "profiles.chapter.texture",    q: "profiles.chapter.texture.q" },
 ] as const satisfies readonly { id: string; name: TKey; q: TKey }[];
@@ -51,11 +58,19 @@ export const FOCUS: Record<ChapterId, Focus> = {
   // The active profile, where the library actually shows it.
   identity:   { face: "library", label: "profiles.focus.identity", targets: [".pf-lib-chip"] },
   // The page itself — the whole sheet, not a region of it.
-  paper:      { face: "book",    label: "profiles.focus.paper",    targets: [".pf-page"] },
+  // THE LIBRARY'S OWN COLOURS, on the library. The whole composition, because a palette is not a
+  // region of a surface — it IS the surface.
+  paper:      { face: "library", label: "profiles.focus.paperLibrary", targets: [".pf-lib"] },
+  // THE BOOK'S COLOURS, on the page: the whole sheet, not a region of it. This is the focus the
+  // single palette chapter used to have, kept exactly, because it is still right for this half.
+  paperBook:  { face: "book",    label: "profiles.focus.paper",        targets: [".pf-page"] },
   // It governs the desk under BOTH faces, so it frames the whole composition and names neither.
   background: { face: null,      label: null,                      targets: [".pf-stage-fit"] },
   // The reading type, all of it: the chapter line and both scripts are one specimen.
   fonts:      { face: "book",    label: "profiles.focus.fonts",    targets: [".pf-page-label", ".pf-page-ar", ".pf-page-la"] },
+  // The whole set body — the measure is the relationship BETWEEN the lines, so framing one paragraph
+  // would misstate what the chapter changes.
+  measure:    { face: "book",    label: "profiles.focus.measure",  targets: [".pf-page-body"] },
   // Both marks the chapter owns — the highlight and underline on the page, and the marker at its edge.
   marks:      { face: "book",    label: "profiles.focus.marks",    targets: [".pf-page-hl", ".pf-page-ul", ".pf-page-mark"] },
   // The panel the interface texture is actually visible on.

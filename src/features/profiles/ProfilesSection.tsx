@@ -24,7 +24,7 @@ import { miniOfTheme } from "./mini";
 import { ProfileCard } from "./ProfileCard";
 import { ShareSheet } from "./ShareSheet";
 import { ImportSheet } from "./ImportSheet";
-import { profileChangePending } from "./session";
+import { guardUnsaved, profileChangePending } from "./session";
 import { ProfileEditor } from "./ProfileEditor";
 import {
   applyProfile,
@@ -36,6 +36,8 @@ import {
   useProfiles,
 } from "./store";
 import type { Profile } from "./model/profile";
+import { useDialog } from "../../components/useDialog";
+import { profileLabel } from "./model/profile";
 
 type Dialog =
   | { kind: "none" }
@@ -85,7 +87,7 @@ export function ProfilesSection() {
   const num = (n: number) => localeDigits(String(n), lang);
 
   const themeNameOf = (p: Profile): string => {
-    const base = p.data.theme.base;
+    const base = p.data.theme.library.base;
     return isBuiltinThemeId(base) ? t(`theme.${base}`) : t("profiles.theme.custom");
   };
 
@@ -97,11 +99,16 @@ export function ProfilesSection() {
       // editor opens on, but only a preset the reader was SHOWN and picked may be claimed as one.
       const preset = chosenPreset(start, base);
       if (start !== "current") {
-        data.theme.base = preset;
-        data.theme.dark = THEMES[base].dark;
-        data.theme.colors = structuredClone(THEMES[base].colors);
-        data.theme.highlightAlpha = THEMES[base].highlightAlpha;
-        data.theme.bookmark = null;
+        // BOTH SURFACES START ON THE PRESET the reader picked. A profile begun from a paper should
+        // BE that paper, in the library and in the book alike; the two are then free to part
+        // whenever the reader edits one of them, which is the whole point of their being separate.
+        for (const scope of ["library", "reading"] as const) {
+          data.theme[scope].base = preset;
+          data.theme[scope].dark = THEMES[base].dark;
+          data.theme[scope].colors = structuredClone(THEMES[base].colors);
+          data.theme[scope].highlightAlpha = THEMES[base].highlightAlpha;
+          data.theme[scope].bookmark = null;
+        }
       }
       // MAKING A PROFILE IS NOT WEARING ONE. This used to apply the new profile immediately, which
       // repainted the whole application to the canvas the editor was about to open on — and for
@@ -122,7 +129,7 @@ export function ProfilesSection() {
   };
 
   const duplicate = async (p: Profile) => {
-    const name = t("profiles.duplicateSuffix", { name: p.name ?? "—" });
+    const name = t("profiles.duplicateSuffix", { name: profileLabel(p.name, t("profiles.unnamed")) });
     const copy = await duplicateProfile(p, name);
     setDialog({ kind: "edit", profile: copy, fresh: true });
   };
@@ -165,10 +172,12 @@ export function ProfilesSection() {
               iconUrl={iconUrlOf(p)}
               libUrl={libUrlOf(p)}
               actions={{
-                onUse: () => void applyProfile(p),
+                // Switching replaces the live values, so unsaved changes to the CURRENT profile are
+                // about to be lost. Silent when there are none, which is nearly always.
+                onUse: () => guardUnsaved(() => void applyProfile(p)),
                 onEdit: () => setDialog({ kind: "edit", profile: p }),
                 onDuplicate: () => void duplicate(p),
-                onShare: () => { if (!profileChangePending()) setDialog({ kind: "share", profile: p }); },
+                onShare: () => { if (!profileChangePending()) guardUnsaved(() => setDialog({ kind: "share", profile: p })); },
                 onDelete: () => setDialog({ kind: "delete", profile: p }),
               }}
             />
@@ -206,7 +215,7 @@ export function ProfilesSection() {
             setSaved({
               // The same dash the cards, the switcher and the delete dialog use for a profile
               // nobody has named — "Saved “”" is a sentence with a hole in it.
-              name: saved.name ?? "—",
+              name: profileLabel(saved.name, t("profiles.unnamed")),
               previous,
               // "and applied" is only true when the profile being edited is the one being worn.
               // `saveProfile` repaints only `if (activeId === p.id)`, so saying it otherwise would
@@ -314,13 +323,15 @@ function CreateDialog({
   const [name, setName] = useState("");
   const [start, setStart] = useState<StartFrom>("current");
   const [base, setBase] = useState<BuiltinThemeId>("ivory");
+  // Escape cancels — the same answer the scrim gives, so pointer and keyboard cannot disagree.
+  const dlg = useDialog({ onDismiss: onCancel });
   // Portalled for the same reason the editor is: `.gs` carries a transform, which makes it the
   // containing block for `position: fixed`, so a dialog rendered in place is centred on the
   // settings window and clipped by its `overflow: hidden` rather than centred on Sard.
   return createPortal(
     <div className="pf-dialog-scrim" onClick={onCancel}>
-      <div className="pf-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-        <div className="pf-dialog-title">{t("profiles.create.title")}</div>
+      <div className="pf-dialog" onClick={(e) => e.stopPropagation()} ref={dlg.ref} {...dlg.props}>
+        <div className="pf-dialog-title" id={dlg.titleId}>{t("profiles.create.title")}</div>
 
         <label className="pf-field">
           <span className="pf-field-label">{t("profiles.create.name")}</span>
@@ -406,14 +417,18 @@ function DeleteDialog({
   onConfirm: () => void;
 }) {
   const { t } = useI18n();
+  // Escape cancels. Focus deliberately lands on the DIALOG and not on its first button — one of the
+  // buttons here deletes a profile, and a dialog that opens with delete under the return key is a
+  // trap dressed as a convenience.
+  const dlg = useDialog({ onDismiss: onCancel });
   // Portalled for the same reason the editor is: `.gs` carries a transform, which makes it the
   // containing block for `position: fixed`, so a dialog rendered in place is centred on the
   // settings window and clipped by its `overflow: hidden` rather than centred on Sard.
   return createPortal(
     <div className="pf-dialog-scrim" onClick={onCancel}>
-      <div className="pf-dialog" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-        <div className="pf-dialog-title">
-          {t("profiles.delete.title", { name: profile.name ?? "—" })}
+      <div className="pf-dialog" onClick={(e) => e.stopPropagation()} ref={dlg.ref} {...dlg.props}>
+        <div className="pf-dialog-title" id={dlg.titleId}>
+          {t("profiles.delete.title", { name: profileLabel(profile.name, t("profiles.unnamed")) })}
         </div>
         <p className="pf-dialog-body">{t("profiles.delete.body")}</p>
         <div className="pf-dialog-actions">

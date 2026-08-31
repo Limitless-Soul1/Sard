@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { appDataDir, join } from "@tauri-apps/api/path";
 
@@ -42,6 +42,8 @@ import { coverSrc } from "./coverSrc";
 // never going to be an image. Adding a format here costs nothing and rejects nothing.
 const IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "gif", "avif", "svg", "bmp", "ico"];
 import { GlobalSettings } from "../settings/GlobalSettings";
+import { useBookPickup } from "./design/bookPickup";
+import { BookActions, type BookActionsProps } from "./design/BookActions";
 import { UpdateRosette } from "../updater/UpdateRosette";
 import { UpdateDialog } from "../updater/UpdateDialog";
 import { LibraryDesign } from "./design/LibraryDesign";
@@ -52,10 +54,11 @@ import { routeDroppedPaths } from "../profiles/dropRoute";
 import { BookmarksShelf } from "./BookmarksShelf";
 import { PhotoGallery } from "../photo/PhotoGallery";
 import { Icon } from "../../components/Icon";
+import { isArabicText } from "../../lib/typography";
+import { useDialog } from "../../components/useDialog";
 
 // Detect Arabic from the TITLE TEXT itself, so a caption renders in Amiri even when the
 // book's metadata mislabels its language (RAWY-17: e.g. an Arabic book tagged lang=en).
-const ARABIC = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
 
 export interface OpenTarget {
   id: string;
@@ -647,29 +650,71 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     <>
       <LibraryDesign
         books={books}
+        /* THE ONE DELETE PATH. `bookDelete` cascades every child row and file (RAWY-76); the reload
+           and the toast below are the same ones the edit dialog's own delete has used since then,
+           so the menu's delete and the dialog's delete are one operation reached two ways. */
+        onDeleteBook={async (b) => {
+          const title = displayTitle(resolveBookMeta(b), t);
+          try {
+            await bookDelete(b.id);
+          } catch (e) {
+            console.error(e);
+            return;
+          }
+          loadBooks();
+          loadShelves();
+          flashToast(t("lib.book.deleted", { title }));
+        }}
         section={navSection}
         onSection={goSection}
         renderSection={(s) => paneFor(s)}
         // GRID — the original Library grid, unchanged: the same `.lib-grid` container (which owns
         // its own scroll and RAWY-170's bottom padding), the same `BookCard`, the same cover mode,
         // and the same empty state it has always shown.
-        renderGrid={() =>
-          isEmpty ? (
-            <EmptyState onBrowse={addBooks} onFolder={addFolder} />
-          ) : (
-            <div className="lib-grid">
-              {books.map((b) => (
-                <BookCard
-                  key={b.id}
-                  book={b}
-                  coverMode={coverMode}
-                  onOpen={() => open(b)}
-                  onEdit={() => setEditing(b)}
-                />
+        // GRID RENDERS WHAT IT IS GIVEN, WHEN IT IS GIVEN ANYTHING.
+        //
+        // With no argument this is exactly what it always was: the whole library, from this
+        // component's own list. Standing inside a shelf, the design surface hands over that
+        // shelf's books in the shelf's own order, plus a place-renderer to interleave between
+        // them — which is all the shared ordering protocol needs to reach a view that was
+        // previously outside it. No second ordering implementation, and the card is unchanged.
+        renderGrid={(g) => {
+          const rows = g?.books ?? books;
+          if (isEmpty && !g) return <EmptyState onBrowse={addBooks} onFolder={addFolder} />;
+          return (
+            // THE COVER SIZE THE READER CHOSE, as this grid's `minmax()` floor.
+            //
+            // The floor was hardcoded at 148px in the stylesheet — which is `DENSITY_WIDTHS[2]`
+            // exactly, so Grid has been frozen on the design's third density step since it was
+            // written, and the toolbar hid its size control because there was nothing for it to
+            // move. Covers has always done precisely this with a real width; Grid now does too,
+            // through a variable so the rule keeps its own default when no size is supplied.
+            <div
+              className="lib-grid"
+              style={g?.coverMin ? ({ "--lib-cover-min": `${g.coverMin}px` } as React.CSSProperties) : undefined}
+            >
+              {rows.map((b) => (
+                <Fragment key={b.id}>
+                  {g?.gap?.(b)}
+                  <BookCard
+                    book={b}
+                    coverMode={coverMode}
+                    onOpen={() => open(b)}
+                    // THE SAME MENU AND THE SAME EDITOR AS EVERY OTHER FORMAT. Grid used to pass
+                    // its own `onEdit` straight to Sard's older dialog; the design surface now
+                    // hands it the identical actions the grouped views get, so the reader meets one
+                    // set of choices whichever format they are looking at.
+                    actions={g?.actions?.(b)}
+                    onEdit={() => setEditing(b)}
+                    order={g?.order?.(b)}
+                    hideTitle={g?.hideTitles}
+                  />
+                  {g?.gapAfter?.(b)}
+                </Fragment>
               ))}
             </div>
-          )
-        }
+          );
+        }}
         coverMode={coverMode}
         onCoverMode={() => setCoverMode((m) => (m === "crop" ? "fit" : "crop"))}
         format={format}
@@ -745,31 +790,105 @@ function progressInfo(b: BookRow) {
   return { state: "reading" as const, pct: Math.round(f * 100) };
 }
 
+/**
+ * What a card needs in order to join the shared ordering protocol.
+ *
+ * Grid draws Sard's original card and keeps drawing it. What it lacked was any way to say WHICH
+ * book a card is, and any way for a press on one to become a drag — so manual ordering could not
+ * reach it. Both are supplied from outside; the card's own appearance is untouched.
+ */
+export interface CardOrder {
+  bookId: string;
+  arrangeOn: boolean;
+  /** This book can take part in the ordering gesture. */
+  orderable: boolean;
+  /**
+   * The shelf this book is FILED on, and its index there — null when it is filed nowhere.
+   *
+   * This is what makes a book a landing place in its own right: a release over it resolves to
+   * "this shelf, at this index", which is how a reader drops a book where they want it rather
+   * than onto a dashed placeholder. See `dropTarget` in LibraryDesign.
+   */
+  shelfId: string | null;
+  index: number;
+  /** This very card is the one in hand. */
+  inHand: boolean;
+  onArrangeDown: (x: number, y: number, el: Element) => void;
+  onPickUp: (x: number, y: number) => void;
+}
+
 function BookCard({
   book,
   coverMode,
+  actions,
   onOpen,
   onEdit,
+  order,
+  hideTitle,
 }: {
   book: BookRow;
   coverMode: CoverMode;
+  /** The shared book-actions menu. Absent only if Grid is ever drawn outside the design surface. */
+  actions?: BookActionsProps;
   onOpen: () => void;
   onEdit: () => void;
+  order?: CardOrder;
+  /** Library preference: keep the name out of the way until this book is touched. */
+  hideTitle?: boolean;
 }) {
   const { t } = useI18n();
   const p = progressInfo(book);
   const [failed, setFailed] = useState(false); // cover image absent or failed to load
   const title = displayTitle(resolveBookMeta(book), t); // WP-3: the same chrome every surface uses
-  const arabic = ARABIC.test(title);
+  const arabic = isArabicText(title);
   const showImg = !!book.cover_path && !failed;
   // A per-book Crop/Fit override (RAWY-19) wins over the library-wide mode.
   const mode = book.cover_fit === "crop" || book.cover_fit === "fit" ? book.cover_fit : coverMode;
+  // THE SAME GESTURE EVERY OTHER VIEW USES. Called unconditionally, as a hook must be.
+  //
+  // The two answers stay separate here, because they are separate questions. `arrangeOn` is whether
+  // Manual Ordering is running at all; `orderable` is whether THIS book has a shelf whose order is
+  // the reader's. A card that is not orderable while the mode is on is INERT — the hook answers the
+  // press, offers no grab, and opens nothing. Collapsing the two is what made forty-one of
+  // forty-four cards open under an active mode.
+  const pickup = useBookPickup({
+    arrangeOn: order?.arrangeOn ?? false,
+    orderable: order?.orderable ?? false,
+    onArrangeDown: order?.onArrangeDown ?? (() => {}),
+    onPickUp: order?.onPickUp ?? (() => {}),
+    onOpen,
+  });
+  // WHEN THE PRESS NEEDS ANSWERING AT ALL — two reasons, and only two: this book can be lifted, or
+  // the mode is on and an open has to be suppressed.
+  //
+  // Answering it otherwise would arm the press-and-hold on a book that has no shelf to be lifted
+  // from, and a hold SPENDS the press: it swallows the click that follows, so a slightly slow press
+  // on an ordinary card would quietly stop opening the book. Left off, such a card behaves exactly
+  // as it did before it was given a descriptor at all.
+  const wantsPress = !!order && (order.orderable || order.arrangeOn);
   return (
     <div
       className="lib-card"
       role="button"
       tabIndex={0}
-      onClick={onOpen}
+      // The card names the book it draws, and where that book is filed. The identity lets a check
+      // address it; the shelf and index are what let a RELEASE OVER THIS CARD resolve to a real
+      // position, which is how a book is dropped where the reader wants it.
+      data-book={order ? order.bookId : undefined}
+      data-shelf={order?.shelfId ?? undefined}
+      data-index={order && order.index >= 0 ? order.index : undefined}
+      onPointerDown={wantsPress ? pickup.onPointerDown : undefined}
+      onPointerUp={wantsPress ? pickup.cancelHold : undefined}
+      onPointerLeave={wantsPress ? pickup.cancelHold : undefined}
+      style={
+        order?.arrangeOn
+          ? { cursor: order.inHand ? "grabbing" : pickup.cursor,
+              // Only a card that can actually be dragged gives up touch scrolling over itself.
+              ...(order.orderable ? { touchAction: "none" as const } : {}),
+              ...(order.inHand ? { opacity: 0.25 } : {}) }
+          : undefined
+      }
+      onClick={order ? pickup.onClick : onOpen}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
@@ -777,6 +896,10 @@ function BookCard({
         }
       }}
       title={title}
+      // THE LIBRARY'S "hide names until touched" preference, marked on the card so the stylesheet
+      // can answer for the caption without every cell knowing about it. `title` above is what keeps
+      // the book named to a screen reader and to a hovering pointer while the caption is away.
+      data-hidecap={hideTitle ? "1" : undefined}
     >
       <div className="lib-cover" data-mode={mode}>
         {showImg ? (
@@ -787,21 +910,30 @@ function BookCard({
           <AutoCover title={title} author={book.author} dir={book.dir} />
         )}
         {p.state === "reading" && <span className="lib-card-bar" style={{ width: `${p.pct}%` }} />}
-        <button
-          className="lib-card-edit"
-          onClick={(e) => {
-            e.stopPropagation();
-            onEdit();
-          }}
-          title={t("edit.edit")}
-          aria-label={t("edit.edit")}
-        >
-          <Icon name="more" size="sm" />
-        </button>
+        {actions ? (
+          // Grid keeps its own placement — `.lib-card-edit` — and nothing else of its own.
+          <BookActions {...actions} className="lib-card-edit" />
+        ) : (
+          <button
+            className="lib-card-edit"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEdit();
+            }}
+            title={t("edit.edit")}
+            aria-label={t("edit.edit")}
+          >
+            <Icon name="more" size="sm" />
+          </button>
+        )}
       </div>
       <div className="lib-cap" dir={arabic ? "rtl" : "ltr"}>
         <div className={`lib-cap-title${arabic ? " ar" : ""}`}>{title}</div>
-        {book.author && <div className={`lib-cap-author${arabic ? " ar" : ""}`}>{book.author}</div>}
+        {/* THE AUTHOR'S OWN SCRIPT, not the title's. An Arabic book by an English author was
+            drawing that author at Arabic metrics, and the reverse pair the other way round. */}
+        {book.author && (
+          <div className={`lib-cap-author${isArabicText(book.author) ? " ar" : ""}`}>{book.author}</div>
+        )}
       </div>
     </div>
   );
@@ -853,7 +985,7 @@ function EditBook({
   // RAWY-76: a deliberate two-step delete (matches the photo-card confirm pattern) — the footer
   // swaps to a confirm row so a stray click can't cascade-delete a book and all its data.
   const [confirmDel, setConfirmDel] = useState(false);
-  const arabicTitle = ARABIC.test(title);
+  const arabicTitle = isArabicText(title);
   const editMeta = resolveBookMeta(book); // WP-3: where this book's stored name actually came from
 
   const del = async () => {
@@ -934,12 +1066,16 @@ function EditBook({
     }
   };
 
+  // Escape closes, which is what the scrim behind it already meant. Focus lands on the first field —
+  // this dialog exists to edit a book's details, so the title is what a reader came here to type in.
+  const dlg = useDialog({ onDismiss: onClose });
+
   return (
     <>
       <div className="panel-scrim show" onClick={onClose} />
-      <div className="edit-dialog" role="dialog" aria-modal="true">
+      <div className="edit-dialog" ref={dlg.ref} {...dlg.props}>
         <div className="edit-head">
-          <span className="edit-title">{t("edit.title")}</span>
+          <span className="edit-title" id={dlg.titleId}>{t("edit.title")}</span>
           <button className="rc-icon" onClick={onClose} aria-label={t("edit.cancel")} title={t("edit.cancel")}>
             <Icon name="close" size="sm" />
           </button>

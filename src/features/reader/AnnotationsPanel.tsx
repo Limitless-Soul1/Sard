@@ -48,13 +48,13 @@ import {
 import type { OpenTarget } from "./Reader"; // type-only: erased, so no runtime import cycle
 
 export type AnnoTab = "notes" | "highlights" | "bookmarks";
+import { isArabicText } from "../../lib/typography";
 
 /** RAWY-282: a hard cap on the note title, enforced at the INPUT rather than by trimming on save, so a
  *  reader never types text that is silently discarded. It is a heading, not a second body — the body is
  *  the place for length — and it also bounds the widest single word the card has to wrap. */
 const NOTE_TITLE_MAX = 120;
 
-const ARABIC = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
 // "current" | "all" | a book id
 type Source = string;
 
@@ -225,7 +225,7 @@ export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, initialTab
                 <button
                   key={b.id}
                   className={source === b.id ? "active" : ""}
-                  dir={ARABIC.test(b.title) ? "rtl" : "ltr"}
+                  dir={isArabicText(b.title) ? "rtl" : "ltr"}
                   onClick={() => { setSource(b.id); setSrcMenu(false); }}
                 >
                   {b.title}
@@ -307,7 +307,7 @@ function CrossTab({
             {/* `text` is the note BODY for a margin note, and the excerpt for a highlight. */}
             <div className="rp-x-text" dir="auto">{it.text}</div>
             {it.kind === "highlight" && (it.note ?? "").trim() !== "" && (
-              <div className="rp-note-body" dir="auto">{it.note}</div>
+              <div className={`rp-note-body${isArabicText(it.note) ? " ar" : ""}`} dir="auto">{it.note}</div>
             )}
             {it.tags.length > 0 && (
               <div className="rp-x-tags">
@@ -416,7 +416,7 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
               maxLength={NOTE_TITLE_MAX}
             />
             <textarea
-              className="rp-textarea"
+              className={`rp-textarea${isArabicText(marginDraft) ? " ar" : ""}`}
               autoFocus
               value={marginDraft}
               onChange={(e) => setMarginDraft(e.target.value)}
@@ -462,7 +462,7 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
                   dir="auto"
                   maxLength={NOTE_TITLE_MAX}
                 />
-                <textarea className="rp-textarea" autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} dir="auto" rows={3} />
+                <textarea className={`rp-textarea${isArabicText(draft) ? " ar" : ""}`} autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} dir="auto" rows={3} />
                 <div className="rp-compose-foot">
                   <button className="rp-mini" onClick={() => setEditId(null)}>{t("note.cancel")}</button>
                   <button className="rp-mini primary" onClick={async () => { await updateNote(n.id, draft, n.color, draftTitle); setEditId(null); }}>{t("hl.save")}</button>
@@ -476,7 +476,7 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
                   <div className="rp-note-title" dir="auto">{n.title}</div>
                 )}
                 {(n.body ?? "").trim() !== "" && (
-                  <div className="rp-note-body" dir="auto">{n.body}</div>
+                  <div className={`rp-note-body${isArabicText(n.body) ? " ar" : ""}`} dir="auto">{n.body}</div>
                 )}
               </div>
             )}
@@ -502,7 +502,13 @@ function HighlightsTab({ highlights, onJump }: { highlights: HighlightRow[]; onJ
             <span className="rp-chapter" dir="auto" onClick={() => onJump(h.cfi)} role="button" tabIndex={0}>{h.chapter_label}</span>
             <button className="rp-mini danger" onClick={() => removeHighlight(h.id)}>{t("note.delete")}</button>
           </div>
-          <div className="rp-excerpt" dir="auto" onClick={() => onJump(h.cfi)}>{h.text_excerpt}</div>
+          <div
+            className={`rp-excerpt${isArabicText(h.text_excerpt) ? " ar" : ""}`}
+            dir="auto"
+            onClick={() => onJump(h.cfi)}
+          >
+            {h.text_excerpt}
+          </div>
           <ColorRow active={h.color} onPick={(c) => setColor(h.id, c)} />
         </div>
       ))}

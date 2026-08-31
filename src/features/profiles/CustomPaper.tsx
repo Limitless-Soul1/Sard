@@ -14,7 +14,7 @@
 // because the platform picker is unreliable." That is the RAWY-123 pattern the highlight picker
 // already uses, and this reuses its shape rather than inventing a second one.
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 
 import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
@@ -22,93 +22,49 @@ import { SardMini } from "./SardMini";
 import { bookFaceCss, miniGlyph } from "./mini";
 import { HARMONY_IDS, harmonies, isHex, suggestsDark, type HarmonyId } from "./model/palette";
 import { judgePalette } from "./model/guidance";
+import { ColorPicker } from "../../components/ColorPicker";
 import type { ProfileTheme } from "./model/profile";
 import type { ThemeColors } from "../../theme/tokens";
+import { useDialog } from "../../components/useDialog";
 
 /** The design's own paper swatches (`paperSw`), plus a dark row so a night paper is reachable. */
-const PAPERS_LIGHT = ["#F5EEDD", "#F2E9D8", "#F4E3C8", "#F0F2E8", "#FBF1F1", "#F4F2EA", "#FFFFFF", "#F0E2BE"];
-const PAPERS_DARK = ["#222A31", "#1B2130", "#221912", "#15201A", "#221620", "#1C1C1E", "#122023", "#121A2E"];
+export const PAPERS_LIGHT = ["#F5EEDD", "#F2E9D8", "#F4E3C8", "#F0F2E8", "#FBF1F1", "#F4F2EA", "#FFFFFF", "#F0E2BE"];
+export const PAPERS_DARK = ["#222A31", "#1B2130", "#221912", "#15201A", "#221620", "#1C1C1E", "#122023", "#121A2E"];
 /** The design's own accent swatches (`accentSw`). */
-const ACCENTS = ["#9C5A3C", "#B06A2C", "#4E7A72", "#5E6B7A", "#7A2E1E", "#9A7B3F", "#5E7A52", "#B5727B"];
+export const ACCENTS = ["#9C5A3C", "#B06A2C", "#4E7A72", "#5E6B7A", "#7A2E1E", "#9A7B3F", "#5E7A52", "#B5727B"];
 
-/** A hue → a paper. Fixed lightness and saturation per polarity, so the strip only moves the hue. */
-function paperFromHue(h: number, dark: boolean): string {
-  return hsl(h, dark ? 0.2 : 0.28, dark ? 0.11 : 0.93);
-}
-/** A hue → an accent, at the mid lightness the shipped accents sit around. */
-function accentFromHue(h: number): string {
-  return hsl(h, 0.45, 0.42);
-}
-
-function hsl(h: number, s: number, l: number): string {
-  const c = (1 - Math.abs(2 * l - 1)) * s;
-  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-  const m = l - c / 2;
-  const [r, g, b] =
-    h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x]
-      : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
-  const hx = (n: number) => Math.round((n + m) * 255).toString(16).padStart(2, "0");
-  return `#${hx(r)}${hx(g)}${hx(b)}`;
-}
-
-/** A curated row with a hue strip beneath it — the RAWY-123 shape. */
+/**
+ * A labelled row: the curated swatches as PRESETS, and the whole colour space under them.
+ *
+ * WHAT THIS REPLACED. The row used to be swatches plus a hue strip whose output went through
+ * `paperFromHue`/`accentFromHue` — functions that pin saturation and lightness to constants. Sweeping
+ * it moved the hue and nothing else, so the reachable set was 8 swatches and one ring of tints, and
+ * the hex beside it was a read-only `<div>`: a reader who wanted `#5E7A52` had no way to say so. The
+ * swatches are still here and still one tap, which is what the design wanted them for; they are now
+ * a starting point rather than the boundary.
+ */
 function ColourRow({
   label,
   swatches,
   value,
   onPick,
-  fromHue,
+  contrastAgainst,
 }: {
   label: string;
   swatches: string[];
   value: string;
   onPick: (hex: string) => void;
-  fromHue: (h: number) => string;
+  contrastAgainst?: string;
 }) {
-  const bar = useRef<HTMLDivElement>(null);
-  const dragging = useRef(false);
-
-  const hueAt = (clientX: number): number => {
-    const el = bar.current;
-    if (!el) return 0;
-    const r = el.getBoundingClientRect();
-    // The strip is laid out in the writing direction; read it from its own start edge so it means
-    // the same thing in Arabic and English.
-    const rtl = getComputedStyle(el).direction === "rtl";
-    const t = rtl ? (r.right - clientX) / r.width : (clientX - r.left) / r.width;
-    return Math.max(0, Math.min(360, t * 360));
-  };
-
   return (
     <div className="pf-cp-row">
       <div className="pf-field-label">{label}</div>
-      <div className="pf-cp-swatches">
-        {swatches.map((hex) => (
-          <button
-            key={hex}
-            className={`pf-cp-swatch${value.toLowerCase() === hex.toLowerCase() ? " on" : ""}`}
-            style={{ background: hex }}
-            onClick={() => onPick(hex)}
-            title={hex}
-            aria-label={hex}
-          />
-        ))}
-      </div>
-      <div
-        ref={bar}
-        className="pf-cp-hue"
-        onPointerDown={(e) => {
-          try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
-          dragging.current = true;
-          onPick(fromHue(hueAt(e.clientX)));
-        }}
-        onPointerMove={(e) => dragging.current && onPick(fromHue(hueAt(e.clientX)))}
-        onPointerUp={(e) => {
-          dragging.current = false;
-          try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
-        }}
+      <ColorPicker
+        value={value}
+        onChange={onPick}
+        presets={swatches}
+        contrastAgainst={contrastAgainst}
       />
-      <div className="pf-cp-hex" dir="ltr">{value.toUpperCase()}</div>
     </div>
   );
 }
@@ -162,10 +118,12 @@ export function CustomPaper({
     glyph: miniGlyph(name),
   });
 
+  const dlg = useDialog({ onDismiss: onCancel });
+
   return (
     <div className="pf-dialog-scrim" onClick={onCancel}>
-      <div className="pf-dialog pf-cp" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
-        <div className="pf-dialog-title">{t("profiles.theme.custom")}</div>
+      <div className="pf-dialog pf-cp" onClick={(e) => e.stopPropagation()} ref={dlg.ref} {...dlg.props}>
+        <div className="pf-dialog-title" id={dlg.titleId}>{t("profiles.theme.custom")}</div>
         {startFrom && <div className="pf-cp-from">{startFrom}</div>}
 
         <ColourRow
@@ -173,7 +131,7 @@ export function CustomPaper({
           swatches={dark ? PAPERS_DARK : PAPERS_LIGHT}
           value={paper}
           onPick={setPaper}
-          fromHue={(h) => paperFromHue(h, dark)}
+          contrastAgainst={selected.colors.text}
         />
         {/* Both polarities are reachable: the grid shows one, and the other is one tap away. The
             design's own swatch set is all light; a night paper has to be reachable too. */}
@@ -189,7 +147,7 @@ export function CustomPaper({
           swatches={ACCENTS}
           value={accent}
           onPick={setAccent}
-          fromHue={accentFromHue}
+          contrastAgainst={paper}
         />
 
         <div className="pf-field-label pf-cp-harmony-label">{t("profiles.theme.harmony")}</div>

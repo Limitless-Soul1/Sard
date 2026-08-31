@@ -21,17 +21,45 @@
 import { useEffect, useRef, useState } from "react";
 
 import { useI18n } from "../../i18n";
+import { bgSrcUrl } from "../../lib/background";
+import { backgroundsList, type BackgroundRow } from "../../lib/ipc";
 import { isBuiltinThemeId } from "../../theme/themes";
 import { SardMini } from "./SardMini";
 import { miniOf } from "./mini";
 import { applyProfile, useProfiles } from "./store";
+import { guardUnsaved, useProfileDirty } from "./session";
+import { markFrame } from "./model/markFrame";
+import { profileLabel } from "./model/profile";
 
 export function ProfileSwitcher({ onManage }: { onManage: () => void }) {
   const { t } = useI18n();
   const profiles = useProfiles((s) => s.profiles);
   const activeId = useProfiles((s) => s.activeId);
+  const dirty = useProfileDirty();
   const [open, setOpen] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
+
+  /**
+   * A PROFILE THAT WEARS A PICTURE SHOULD WEAR IT HERE TOO.
+   *
+   * The card already draws a chosen image (`ProfileCard`'s seal), because `ProfilesSection` reads
+   * the managed background rows and hands it down as `iconUrl`. This row takes no props by design,
+   * so it never resolved that reference and always fell through to the generated miniature — the
+   * reader saw their own picture on the card and a palette swatch in the foot, for the same profile.
+   *
+   * The rows are re-read whenever the profile list changes, which is the only way a newly chosen
+   * icon reaches a card — the same trigger `ProfilesSection` uses, for the same reason.
+   */
+  const [bgRows, setBgRows] = useState<BackgroundRow[]>([]);
+  useEffect(() => {
+    let alive = true;
+    backgroundsList()
+      .then((r) => alive && setBgRows(r))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [profiles]);
 
   // Close on an outside click or Escape — the idiom every other menu in the sidebar uses.
   useEffect(() => {
@@ -55,11 +83,22 @@ export function ProfileSwitcher({ onManage }: { onManage: () => void }) {
 
   const active = profiles.find((p) => p.id === activeId) ?? null;
 
+  // The card's rule, unchanged and deliberately not re-derived: an image icon is a reference into
+  // the managed background rows, and a reference that no longer resolves falls back rather than
+  // leaving a hole — which is what keeps a deleted picture from emptying the foot.
+  const activeIconUrl =
+    active && active.iconKind === "image" && active.iconRef
+      ? (() => {
+          const row = bgRows.find((r) => r.id === active.iconRef);
+          return row ? bgSrcUrl(row) : null;
+        })()
+      : null;
+
   // The SAME rule the card uses, deliberately: a profile built on one of the sixteen names it, and
   // one carrying its own paper says so rather than naming a preset it no longer resembles. Resolving
   // the profile's own id here instead would echo the profile's name back as its own paper.
   const themeNameOf = (p: typeof profiles[number]): string =>
-    isBuiltinThemeId(p.data.theme.base) ? t(`theme.${p.data.theme.base}`) : t("profiles.theme.custom");
+    isBuiltinThemeId(p.data.theme.library.base) ? t(`theme.${p.data.theme.library.base}`) : t("profiles.theme.custom");
 
   return (
     <div className="pf-switch" ref={wrap}>
@@ -73,14 +112,37 @@ export function ProfileSwitcher({ onManage }: { onManage: () => void }) {
         {/* The live miniature of the profile it names — the design's own requirement, and the same
             component the cards and the editor's stage draw, so the three can never disagree. */}
         <span className="pf-switch-mini" aria-hidden>
-          {active ? <SardMini p={miniOf(active)} /> : null}
+          {activeIconUrl ? (
+            // The reader's own picture, in the slot the miniature would otherwise fill. The box is
+            // SardMini's own 16:10 so the row's height does not move, and `cover` matches how the
+            // card paints the same image (`.pf-seal-img`).
+            <span
+              style={{
+                display: "block",
+                width: "100%",
+                aspectRatio: "16 / 10",
+                backgroundImage: `url("${activeIconUrl}")`,
+                // The profile's own framing, through the one helper every mark surface uses. The
+                // box is 16:10 rather than square, which is exactly why it has to ask rather than
+                // assume: `cover` crops a different part of the same picture at a different aspect.
+                ...markFrame(active ? active.data.icon : null),
+              }}
+            />
+          ) : active ? (
+            <SardMini p={miniOf(active)} />
+          ) : null}
         </span>
         <span className="pf-switch-text">
           <span className="pf-switch-name" dir="auto">
-            {active ? (active.name ?? t("profiles.title")) : t("profiles.title")}
+            {active ? profileLabel(active.name, t("profiles.unnamed")) : t("profiles.title")}
           </span>
           <span className="pf-switch-sub" dir="auto">
-            {active ? themeNameOf(active) : t("profiles.count", { n: String(profiles.length) })}
+            {/* A CHANGE IS STATED, NEVER ASKED ABOUT. The old layer interrupted the moment anything
+                moved; this says the same thing in the one place the active profile is always named,
+                and waits. The reader is asked only at a boundary — see `session.ts`. */}
+            {dirty.length
+              ? t("profiles.editor.unsaved")
+              : active ? themeNameOf(active) : t("profiles.count", { n: String(profiles.length) })}
           </span>
         </span>
       </button>
@@ -94,13 +156,13 @@ export function ProfileSwitcher({ onManage }: { onManage: () => void }) {
               aria-checked={p.id === activeId}
               onClick={() => {
                 setOpen(false);
-                if (p.id !== activeId) void applyProfile(p);
+                if (p.id !== activeId) guardUnsaved(() => void applyProfile(p));
               }}
             >
               <span className="pf-switch-row-mini" aria-hidden>
                 <SardMini p={miniOf(p)} />
               </span>
-              <span className="pf-switch-row-name" dir="auto">{p.name ?? "—"}</span>
+              <span className="pf-switch-row-name" dir="auto">{profileLabel(p.name, t("profiles.unnamed"))}</span>
               {p.id === activeId && <span className="pf-switch-check" aria-hidden>✓</span>}
             </button>
           ))}

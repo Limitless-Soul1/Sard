@@ -53,7 +53,16 @@ const DEFAULT_POS = 0.84; // fraction along the top edge (0 = left, 1 = right), 
 // Marker HEIGHT in px (RAWY-48). The <BookmarkShape> scales entirely by this. User-sizable so the
 // on-page marker can be made bigger or smaller; the RAWY-42 non-occlusion offset still applies.
 export const BOOKMARK_SIZE_MIN = 40;
-export const BOOKMARK_SIZE_MAX = 120;
+/**
+ * 200, raised from 120.
+ *
+ * VERIFIED THROUGH THE RENDERER, not just at the slider. `BookmarkShape` derives every dimension
+ * from `h` — the box, the strip, the notch — and `.page-bookmark` puts no size of its own on the
+ * element. Measured in the editor's preview before the change: 40 -> 27px, 80 -> 54px, 120 -> 81px,
+ * exactly linear, so nothing between the value and the pixels was capping it. The only two limits
+ * were this constant and the profile parser's clamp against it, and both move together.
+ */
+export const BOOKMARK_SIZE_MAX = 200;
 const DEFAULT_SIZE = 68; // the RAWY-42 on-page height
 
 const K_SHAPE = "bookmark_style";

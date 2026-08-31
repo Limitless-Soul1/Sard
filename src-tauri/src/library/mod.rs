@@ -5,6 +5,8 @@
 #[cfg(test)]
 mod wp3_tests; // RESILIENCE-1 / WP-3 — the database is the single source of a book's name
 
+pub mod placement;
+pub mod view_order; // how books READ in a view, which is not where they belong
 pub mod structure; // cases, categories and the hand order that sit on top of these tables
 
 use std::path::Path;
@@ -224,7 +226,7 @@ pub fn list_books(
         args.push(Box::new(f.to_string()));
     }
     if let Some(c) = collection.filter(|s| !s.is_empty()) {
-        clauses.push("b.id IN (SELECT book_id FROM book_collections WHERE collection_id = ?)".into());
+        clauses.push("b.id IN (SELECT book_id FROM placements WHERE container = ?)".into());
         args.push(Box::new(c.to_string()));
     }
     if let Some(s) = search.filter(|s| !s.is_empty()) {
@@ -671,6 +673,44 @@ pub fn revert_cover(conn: &Connection, app_data_dir: &Path, id: &str) -> Result<
 /// notes, bookmarks, book_index) and `foreign_keys=ON` (db::open_database), so `DELETE FROM books`
 /// removes them automatically. Three things have NO FK and are deleted explicitly: `photo_cards`
 /// (book_id is a plain nullable column — a saved card would otherwise dangle) and the per-book
+/// Is `path` a file that Sard itself manages, sitting DIRECTLY in `dir`?
+///
+/// Every path Sard deletes from disk on a reader's behalf goes through this first, and it answers
+/// only for paths the application put there: the managed `.epub`/`.pdf` in `library/`, and the cover
+/// images in `library/covers/`. Anything it cannot PROVE belongs is refused.
+///
+/// WHY THE PARENT, CANONICALISED — and not `starts_with`, which is what `fonts::remove` uses.
+/// Measured on Windows against the real stored values, `Path::starts_with` is wrong in two opposite
+/// and equally unwanted directions:
+///
+///   * it is CASE-SENSITIVE, so a path differing only in case is refused and its file orphaned;
+///   * it does NOT collapse `..`, so `…/library/../../elsewhere/x.epub` PASSES it while pointing
+///     clean outside the directory it is supposed to confine.
+///
+/// Canonicalising resolves case, separator form, junctions and `..` in one step. Comparing the
+/// PARENT rather than a prefix also rejects a file one level deeper: `library/covers/x.jpg` is not a
+/// book file and must not be reachable by the rule that governs books.
+///
+/// The PARENT is canonicalised rather than the file because THE FILE IS OFTEN ALREADY GONE — a
+/// missing file is the ordinary case here, and `canonicalize` fails on one that does not exist. The
+/// parent directory exists whenever the answer could be "yes".
+///
+/// Fails closed: an unresolvable path, an unresolvable directory, or a path with no parent all
+/// return `false`. Refusing costs an orphaned file; admitting wrongly costs a reader their book.
+fn is_managed_file(path: &Path, dir: &Path) -> bool {
+    let (Some(parent), Ok(want)) = (path.parent(), dir.canonicalize()) else {
+        return false;
+    };
+    matches!(parent.canonicalize(), Ok(got) if got == want)
+}
+
+/// Test-only door onto the containment rule, so the suite can assert it without making the helper
+/// part of the module's public surface.
+#[cfg(test)]
+pub(crate) fn is_managed_file_for_test(path: &Path, dir: &Path) -> bool {
+    is_managed_file(path, dir)
+}
+
 /// `settings` rows `book_style:<id>` (RAWY-19/40) + `tts_position:<id>` (RAWY-162, last-spoken
 /// sentence). Files removed best-effort AFTER the commit: the
 /// managed `.epub`, the extracted cover, a replaced-cover file (the 'cover' override), and each
@@ -708,18 +748,42 @@ pub fn delete_book(conn: &Connection, app_data_dir: &Path, id: &str) -> Result<b
     tx.commit().map_err(|e| e.to_string())?;
 
     // Files: best-effort (a missing file is fine — the DB is already consistent).
-    let _ = std::fs::remove_file(&epub_path);
+    //
+    // THE THREE PATHS BELOW COME OUT OF THE DATABASE, and they are the only ones here that do — the
+    // cover sweep and the photo-card names are BUILT from `app_data_dir`. That difference is not
+    // academic: a test run against a copied database whose `books.file_path` still pointed into the
+    // reader's own library deleted four of their books, while every constructed path correctly
+    // stayed inside the sandbox. A stored path is an INPUT, so it is checked like one.
+    //
+    // Refusing only ever leaves a file behind. It never leaves the library inconsistent, because the
+    // rows are already gone above — a book whose path cannot be proven safe is still fully removed
+    // from the reader's library, which is what they asked for.
+    let library_dir = app_data_dir.join("library");
+    let covers_dir = app_data_dir.join(COVERS_REL);
+
+    let epub = Path::new(&epub_path);
+    if is_managed_file(epub, &library_dir) {
+        let _ = std::fs::remove_file(epub);
+    }
     if let Some(c) = cover_path {
-        let _ = std::fs::remove_file(&c);
+        let cover = Path::new(&c);
+        if is_managed_file(cover, &covers_dir) {
+            let _ = std::fs::remove_file(cover);
+        }
     }
     // Resolved, because the stored reference is relative on rows written by this version and
     // absolute on older ones — removing it raw would leave the file behind for every new row.
     if let Some(c) = custom_cover {
-        let _ = std::fs::remove_file(resolve_cover(app_data_dir, &c));
+        let resolved = resolve_cover(app_data_dir, &c);
+        let custom = Path::new(&resolved);
+        if is_managed_file(custom, &covers_dir) {
+            let _ = std::fs::remove_file(custom);
+        }
     }
     // And anything the book left behind under an earlier name, so deleting really does reach zero
-    // orphans (D31) rather than zero-orphans-for-the-currently-referenced-file.
-    sweep_custom_covers(&app_data_dir.join(COVERS_REL), id, None);
+    // orphans (D31) rather than zero-orphans-for-the-currently-referenced-file. CONSTRUCTED from
+    // `app_data_dir`, never read from a row, so it needs no containment check of its own.
+    sweep_custom_covers(&covers_dir, id, None);
     let cards_dir = app_data_dir.join("photocards");
     for cid in card_ids {
         let _ = std::fs::remove_file(cards_dir.join(format!("{cid}.png")));
@@ -793,33 +857,58 @@ pub fn collection_rename(conn: &Connection, id: &str, name: &str) -> rusqlite::R
 /// Delete a shelf. `book_collections` rows cascade away (FK ON DELETE CASCADE); the
 /// BOOKS remain in the library.
 pub fn collection_delete(conn: &Connection, id: &str) -> rusqlite::Result<Vec<CollectionRow>> {
+    // THE BOOKS COME HOME FIRST. A placement names its container, so deleting the shelf without
+    // moving them would leave every book on it pointing at something that no longer exists — the
+    // "no place" state this model exists to abolish. They join the books on no shelf, at the end,
+    // in the order they were in.
+    let leaving = placement::container_books(conn, id)?;
+    for (book_id, _) in leaving {
+        let rank = placement::append_rank(conn, placement::UNFILED)?;
+        placement::set(conn, &book_id, placement::UNFILED, &rank, None)
+            .map_err(rusqlite::Error::InvalidParameterName)?;
+    }
     conn.execute("DELETE FROM collections WHERE id = ?1", [id])?;
     collections_list(conn)
 }
 
-/// Add a book to a shelf (idempotent — re-adding is a no-op).
+/// Put a book on a shelf — which MOVES it, because a book is in exactly one place.
+///
+/// This used to insert a membership row and leave any others alone, so a book could accumulate
+/// homes and every reader had to decide which one counted. It arrives at the end of the shelf,
+/// since choosing it from a list says which shelf and nothing about where among its neighbours.
 pub fn collection_add_book(conn: &Connection, collection_id: &str, book_id: &str) -> rusqlite::Result<Vec<CollectionRow>> {
-    conn.execute(
-        "INSERT OR IGNORE INTO book_collections(book_id, collection_id) VALUES(?1, ?2)",
-        rusqlite::params![book_id, collection_id],
-    )?;
+    let rank = placement::append_rank(conn, collection_id)?;
+    placement::set(conn, book_id, collection_id, &rank, None)
+        .map_err(|e| rusqlite::Error::InvalidParameterName(e))?;
     collections_list(conn)
 }
 
-/// Remove a book from a shelf (the book itself is untouched).
+/// Take a book off a shelf. It does not vanish — it goes back among the books on no shelf, which
+/// is a real container with an order of its own, at the end of it.
 pub fn collection_remove_book(conn: &Connection, collection_id: &str, book_id: &str) -> rusqlite::Result<Vec<CollectionRow>> {
-    conn.execute(
-        "DELETE FROM book_collections WHERE book_id = ?1 AND collection_id = ?2",
-        rusqlite::params![book_id, collection_id],
-    )?;
+    let here: Option<String> = conn
+        .query_row("SELECT container FROM placements WHERE book_id = ?1", [book_id], |r| r.get(0))
+        .optional()?;
+    if here.as_deref() == Some(collection_id) {
+        let rank = placement::append_rank(conn, placement::UNFILED)?;
+        placement::set(conn, book_id, placement::UNFILED, &rank, None)
+            .map_err(|e| rusqlite::Error::InvalidParameterName(e))?;
+    }
     collections_list(conn)
 }
 
-/// The shelf ids a book currently belongs to (drives the edit-dialog chips).
+/// The shelf a book is on, as a list of one — or none, when it is on no shelf.
+///
+/// The edit dialog draws chips from this. It is a list because it always was; it can no longer
+/// hold more than a single entry, and that is the point.
 pub fn collections_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<String>> {
-    let mut stmt = conn.prepare("SELECT collection_id FROM book_collections WHERE book_id = ?1")?;
-    let rows = stmt.query_map([book_id], |r| r.get::<_, String>(0))?;
-    rows.collect()
+    let container: Option<String> = conn
+        .query_row("SELECT container FROM placements WHERE book_id = ?1", [book_id], |r| r.get(0))
+        .optional()?;
+    Ok(match container {
+        Some(c) if c != placement::UNFILED => vec![c],
+        _ => Vec::new(),
+    })
 }
 
 fn now_unix() -> i64 {
@@ -1299,6 +1388,143 @@ pub fn annotations_all(conn: &Connection) -> rusqlite::Result<Vec<AnnoItem>> {
 #[cfg(test)]
 mod tests {
     use super::{escape_like, fold_search};
+
+    // ── F-2: the containment rule that gates every database-derived file deletion ────────────────
+    //
+    // These build a REAL directory tree under the OS temp dir, because the rule is defined by what
+    // `canonicalize` does — case folding, separator form, `..` collapsing, junction resolution — and
+    // none of that can be exercised against a path that does not exist. A pure-string test here
+    // would assert the implementation instead of the behaviour, and would have passed just as
+    // happily for the `starts_with` version this replaces.
+    mod containment {
+        use super::super::is_managed_file_for_test as is_managed;
+        use std::path::{Path, PathBuf};
+
+        /// `<temp>/sard_f2_<tag>/{library, library/covers, library2, elsewhere}`
+        fn tree(tag: &str) -> PathBuf {
+            let root = std::env::temp_dir().join(format!("sard_f2_{tag}"));
+            let _ = std::fs::remove_dir_all(&root);
+            for d in ["library/covers", "library2", "elsewhere"] {
+                std::fs::create_dir_all(root.join(d)).unwrap();
+            }
+            root
+        }
+
+        #[test]
+        fn accepts_the_paths_the_importer_actually_writes() {
+            let root = tree("accept");
+            let lib = root.join("library");
+            let covers = lib.join("covers");
+            // `library/{id}.epub` and `library/{id}.pdf` — the two shapes import_epub/import_pdf build.
+            assert!(is_managed(&lib.join("abc123.epub"), &lib), "managed .epub");
+            assert!(is_managed(&lib.join("abc123.pdf"), &lib), "managed .pdf");
+            // `library/covers/{name}` — the extracted cover and the replaced-cover override.
+            assert!(is_managed(&covers.join("abc123.jpg"), &covers), "managed cover");
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn a_missing_file_is_still_judged_by_its_parent() {
+            // The ordinary case: the row is being deleted precisely because the book is going away,
+            // and the file may already be gone. Canonicalising the FILE would fail here; the parent
+            // is what the rule looks at, and it exists.
+            let root = tree("missing");
+            let lib = root.join("library");
+            let gone = lib.join("never-existed.epub");
+            assert!(!gone.exists());
+            assert!(is_managed(&gone, &lib), "a missing file inside the directory is still managed");
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn refuses_a_sibling_directory_sharing_the_prefix() {
+            // `library2` starts with `library` as a STRING but is a different directory.
+            let root = tree("sibling");
+            let lib = root.join("library");
+            assert!(!is_managed(&root.join("library2").join("x.epub"), &lib));
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn refuses_a_traversal_that_escapes_the_directory() {
+            // THE CASE `starts_with` GETS WRONG: this passes a prefix test and points outside.
+            let root = tree("traversal");
+            let lib = root.join("library");
+            let escape = lib.join("..").join("elsewhere").join("x.epub");
+            assert!(!is_managed(&escape, &lib), "`library/../elsewhere/x.epub` must be refused");
+            // and the deeper form, out of the app data dir entirely
+            let far = lib.join("..").join("..").join("x.epub");
+            assert!(!is_managed(&far, &lib));
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn refuses_an_absolute_path_outside() {
+            let root = tree("outside");
+            let lib = root.join("library");
+            assert!(!is_managed(&root.join("elsewhere").join("x.epub"), &lib));
+            assert!(!is_managed(Path::new("C:/Windows/System32/x.epub"), &lib));
+            assert!(!is_managed(Path::new("/etc/passwd"), &lib));
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn refuses_a_path_whose_parent_does_not_exist() {
+            // Fails closed: nothing to canonicalise ⇒ nothing proven ⇒ refuse.
+            let root = tree("unresolved");
+            let lib = root.join("library");
+            assert!(!is_managed(&lib.join("no-such-dir").join("x.epub"), &lib));
+            assert!(!is_managed(Path::new("x.epub"), &lib), "a bare relative name has no usable parent");
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn refuses_when_the_managed_directory_itself_is_missing() {
+            // If `library/` cannot be resolved, no path can be proven to be in it.
+            let root = tree("nodir");
+            let absent = root.join("library-that-was-deleted");
+            assert!(!is_managed(&absent.join("x.epub"), &absent));
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn a_cover_is_not_a_book_and_a_book_is_not_a_cover() {
+            // The parent must match EXACTLY. One level deeper is a different kind of file with a
+            // different lifetime, and the rule that governs books must not reach it.
+            let root = tree("depth");
+            let lib = root.join("library");
+            let covers = lib.join("covers");
+            assert!(!is_managed(&covers.join("x.jpg"), &lib), "a cover is not in library/");
+            assert!(!is_managed(&lib.join("x.epub"), &covers), "a book is not in library/covers/");
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[cfg(windows)]
+        #[test]
+        fn case_and_separator_forms_are_both_accepted() {
+            // BOTH forms occur in the owner's real database — 43 rows use the platform separator and
+            // one uses forward slashes — and `starts_with` accepts the separator difference but
+            // REFUSES a case difference, which would silently orphan a legitimate file.
+            //
+            // Written with `MAIN_SEPARATOR` and `join` rather than a spelled-out separator: this file
+            // has been through enough layers of escaping already, and a test that asserts the wrong
+            // string proves nothing.
+            let root = tree("case");
+            let lib = root.join("library");
+            let shown = lib.to_string_lossy().to_string();
+
+            let forward = format!("{}/x.epub", shown.replace(std::path::MAIN_SEPARATOR, "/"));
+            assert!(is_managed(Path::new(&forward), &lib), "forward slashes");
+
+            let upper = Path::new(&shown.to_uppercase()).join("X.EPUB");
+            assert!(is_managed(&upper, &lib), "upper-cased path");
+
+            let lower = Path::new(&shown.to_lowercase()).join("x.epub");
+            assert!(is_managed(&lower, &lib), "lower-cased path");
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
 
     // RAWY-178 (AUD-12): the library fold matches the in-book search intent — an unvocalized query
     // folds to the same string as the vocalized/variant title, so LIKE compares folded-to-folded.

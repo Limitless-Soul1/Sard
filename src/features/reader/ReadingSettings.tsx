@@ -7,6 +7,7 @@
 import { createContext, useContext, useEffect, useState, type CSSProperties, type ReactNode } from "react";
 
 import { useI18n } from "../../i18n";
+import { InkCustom } from "../../components/InkCustom";
 import { localeDigits } from "../../lib/format";
 import { listeningOutcomes, type OutcomeSummary } from "../../lib/listeningOutcomes"; // RAWY-263
 import type { SettingsSection } from "./ReaderChrome";
@@ -26,6 +27,7 @@ import {
   type LatinFont,
   type ReadingStyle,
 } from "../../reader-engine/injectedCss";
+import { useReader } from "../../reader-engine/store";
 import type { TKey } from "../../i18n/locales/en";
 import { DEFAULT_DARK, DEFAULT_LIGHT, THEMES, THEME_ORDER, isBuiltinThemeId, resolveTheme, useTheme, type ThemeId } from "../../theme";
 import { contrastIsReadable, effectivePaper } from "../../lib/contrast";
@@ -46,11 +48,14 @@ import { useFonts } from "../../lib/fonts";
 // all live in the module and are shared with the library surface — only the markup differs here.
 import {
   BG_BLUR_MAX,
-  presenceMaxFor,
+  BG_NO_OVERLAY,
   PAGE_OPACITY_MIN,
+  bgOverlayOf,
   bgSrcUrl,
   currentDeskScrim,
   effectivePageOpacity,
+  imageLabel,
+  presenceMaxFor,
   useBackground,
 } from "../../lib/background";
 
@@ -97,6 +102,7 @@ function ColorRow({
   presets,
   onPick,
   t,
+  offerNone = false,
 }: {
   label: string;
   value: string | null;
@@ -104,7 +110,17 @@ function ColorRow({
   presets: string[];
   onPick: (v: string | null) => void;
   t: (k: TKey) => string;
+  /**
+   * Offer "no colour at all" as a third state. TRUE ONLY FOR THE BACKGROUND.
+   *
+   * The page has no such state and must not be offered one: a book page is a surface text is read
+   * on, and "no paper" is not a reading surface — it would put the words straight onto whatever
+   * happens to be behind them. The background is the opposite case: there IS something behind it,
+   * the reader chose it, and they are entitled to see it untouched.
+   */
+  offerNone?: boolean;
 }) {
+  const overlay = bgOverlayOf(value);
   return (
     <>
       <div className="rs-sec-head">
@@ -112,30 +128,41 @@ function ColorRow({
       </div>
       <div className="rs-inks">
         <button
-          className={`rs-ink${value == null ? " on" : ""}`}
+          className={`rs-ink${overlay.kind === "theme" ? " on" : ""}`}
           style={{ background: themeValue }}
           onClick={() => onPick(null)}
           title={t("color.default")}
           aria-label={t("color.default")}
         />
+        {offerNone && (
+          /* NO COLOUR. Drawn as a hollow swatch rather than a filled one, because it is the absence
+             of a colour and a filled chip would be a colour standing for no colour. */
+          <button
+            className={`rs-ink rs-ink-none${overlay.kind === "none" ? " on" : ""}`}
+            onClick={() => onPick(BG_NO_OVERLAY)}
+            title={t("color.none")}
+            aria-label={t("color.none")}
+          >
+            <span aria-hidden />
+          </button>
+        )}
         {presets.map((hex) => (
           <button
             key={hex}
-            className={`rs-ink${value?.toLowerCase() === hex.toLowerCase() ? " on" : ""}`}
+            className={`rs-ink${overlay.kind === "colour" && overlay.hex.toLowerCase() === hex.toLowerCase() ? " on" : ""}`}
             style={{ background: hex }}
             onClick={() => onPick(hex)}
             title={hex}
             aria-label={hex}
           />
         ))}
-        <label className="rs-ink rs-ink-custom" title={t("color.custom")}>
-          <span className="rs-ink-plus" aria-hidden>+</span>
-          <input
-            type="color"
-            value={/^#[0-9a-fA-F]{6}$/.test(value ?? "") ? (value as string) : themeValue}
-            onChange={(e) => onPick(e.target.value)}
-          />
-        </label>
+        <InkCustom
+          value={value}
+          fallback={themeValue}
+          onPick={onPick}
+          presets={presets}
+          title={t("color.custom")}
+        />
       </div>
     </>
   );
@@ -295,6 +322,9 @@ function ReadingBackgroundSection() {
   };
   useEffect(() => () => { delete document.documentElement.dataset.bgImmPreview; }, []);
   const { reading, readingParams, setParams, choose, clear, resetParams } = useBackground();
+  // The overlay lives in the reading STYLE, not in the background params, so this section has to
+  // subscribe to it — the same value the editor reads, through the same function.
+  const overlayOff = useReader((st) => bgOverlayOf(st.style?.backgroundColor).kind === "none");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -346,7 +376,9 @@ function ReadingBackgroundSection() {
               }}
               aria-hidden
             />
-            <span className="bg-ctl-name" dir="auto">{reading.source_name ?? ""}</span>
+            <span className="bg-ctl-name" dir="auto" title={imageLabel(reading.source_name).full}>
+              {imageLabel(reading.source_name).label}
+            </span>
             <button className="bg-ctl-act" disabled={busy} aria-busy={busy} onClick={pick}>
               {busy && <span className="bg-ctl-spin" aria-hidden />}
               {busy ? t("gs.bg.preparing") : t("gs.bg.replace")}
@@ -370,16 +402,23 @@ function ReadingBackgroundSection() {
           {/* RAWY-279: the READING presence may travel past 100, down to a fully transparent overlay.
               The LIBRARY's may not — its scrim is a measured WCAG AA floor (see `presenceMaxFor`).
               0..100 is unchanged on both surfaces, so every existing profile renders identically. */}
+          {/* THE SAME RULE THE EDITOR APPLIES, from the same function. Presence is the strength of
+              the colour layer, and «بلا لون» removes that layer — so with no overlay there is
+              nothing for this to be the strength OF. Both surfaces read `bgOverlayOf`, so the two
+              cannot come to different conclusions about the same stored value. */}
           <Section label={t("gs.bg.presence")} value={localeDigits(String(readingParams.presence), lang)}>
             <Slider
               value={readingParams.presence}
               min={0}
               max={presenceMaxFor("reading")}
               step={1}
+              disabled={overlayOff}
               onInput={(v) => setParams("reading", { presence: v })}
             />
           </Section>
-          <div className="rs-sec-hint">{t("gs.bg.presenceHintReading")}</div>
+          <div className="rs-sec-hint">
+            {t(overlayOff ? "gs.bg.presenceNoOverlay" : "gs.bg.presenceHintReading")}
+          </div>
 
           <Section label={t("gs.bg.blur")} value={localeDigits(String(readingParams.blur), lang)}>
             <Slider
@@ -902,14 +941,14 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
           />
         ))}
         {/* Custom colour via the native picker */}
-        <label className="rs-ink rs-ink-custom" title={t("color.custom")}>
-          <span className="rs-ink-plus" aria-hidden>+</span>
-          <input
-            type="color"
-            value={/^#[0-9a-fA-F]{6}$/.test(style.textColor ?? "") ? (style.textColor as string) : theme.colors.text}
-            onChange={(e) => update({ textColor: e.target.value })}
+        <InkCustom
+            value={style.textColor}
+            fallback={theme.colors.text}
+            onPick={(hex) => update({ textColor: hex })}
+            presets={presets}
+            contrastAgainst={paper}
+            title={t("color.custom")}
           />
-        </label>
       </div>
       <div className={`rs-contrast${readable ? "" : " warn"}`}>
         <span aria-hidden>{readable ? "✓" : "⚠"}</span>
@@ -929,10 +968,28 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
       {/* ---- BACKGROUND COLOUR (RAWY-201) — behind the page (replaces Moonlit decorations); null = theme ---- */}
       <ColorRow
         label={t("color.background")}
+        offerNone
         value={style.backgroundColor}
         themeValue={theme.colors.surfaceBg}
         presets={dark ? BG_PRESETS_DARK : BG_PRESETS_LIGHT}
         onPick={(v) => update({ backgroundColor: v })}
+        t={t}
+      />
+
+      {/* ---- NUMBER COLOUR — the digits in the book, on their own.
+           THE SAME FIELD A PROFILE CARRIES. `numberColor` is a `ReadingStyle` value, so this row and
+           the profile editor's «الأرقام» chip are two doors onto one setting rather than two settings
+           that have to be kept in step. The reader could already be given one by activating a profile
+           and had no way to see or change it here, which is the whole of the gap this closes.
+           `null` = the digits inherit the text ink, which is what an untouched book has always done —
+           and the paint is a CSS Custom Highlight over ranges the engine registers, so nothing in the
+           book's DOM changes and every CFI, highlight, note and read-aloud range is untouched. ---- */}
+      <ColorRow
+        label={t("color.numbers")}
+        value={style.numberColor}
+        themeValue={ink}
+        presets={presets}
+        onPick={(v) => update({ numberColor: v })}
         t={t}
       />
 

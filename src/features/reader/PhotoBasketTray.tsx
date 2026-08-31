@@ -17,6 +17,7 @@ import { useI18n } from "../../i18n";
 import { localeNum } from "../../lib/format";
 import { usePhotoBasket } from "./photoBasket";
 
+import { isArabicText } from "../../lib/typography";
 export function PhotoBasketTray({
   open,
   onClose,
@@ -130,7 +131,7 @@ export function PhotoBasketTray({
               ⠿
             </span>
             <div className="pbt-body">
-              <div className="pbt-text" dir="auto">{p.text}</div>
+              <div className={`pbt-text${isArabicText(p.text) ? " ar" : ""}`} dir="auto">{p.text}</div>
               {p.chapterLabel && <div className="pbt-chapter" dir="auto">{p.chapterLabel}</div>}
             </div>
             <button className="pbt-remove" onClick={() => remove(p.id)} aria-label={t("basket.remove")}>×</button>

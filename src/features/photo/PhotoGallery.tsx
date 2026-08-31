@@ -13,8 +13,8 @@ import { isBuiltinThemeId, resolveTheme, useTheme, type ThemeId } from "../../th
 import { photocardDelete, photocardsList, savePhotoCardFile, type PhotoCardRow } from "../../lib/ipc";
 import { PhotoComposer } from "./PhotoComposer";
 import { DEFAULT_META, FORMATS, type CardData, type CardFormat, type CardPassage } from "./photo";
+import { isArabicText } from "../../lib/typography";
 
-const ARABIC = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
 
 // Reopen a saved card in the composer (RAWY-57 Edit): rebuild CardData from the stored row.
 // Format + theme are restored; the direction is inferred from the text; the show-on-card toggles
@@ -34,7 +34,7 @@ function rowToCardData(row: PhotoCardRow): CardData {
   return {
     quote: row.quote ?? "",
     passages,
-    dir: ARABIC.test(dirText) ? "rtl" : "ltr",
+    dir: isArabicText(dirText) ? "rtl" : "ltr",
     bookId: row.book_id ?? undefined,
     cfi: row.cfi ?? undefined,
     bookTitle: row.book_title ?? undefined,

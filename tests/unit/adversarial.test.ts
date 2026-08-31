@@ -81,7 +81,7 @@ describe("placement, pushed at its edges", () => {
 
 describe("navigation, pushed at its edges", () => {
   it("survives a tree that is entirely empty", () => {
-    expect(reconcileScope({ caseId: "x", shelfId: "y" }, [], [])).toEqual(ROOT_SCOPE);
+    expect(reconcileScope({ caseId: "x", shelfId: "y", categoryId: null }, [], [])).toEqual(ROOT_SCOPE);
     expect(reconcileScope(ROOT_SCOPE, [], [])).toBe(ROOT_SCOPE);
   });
 
@@ -91,12 +91,12 @@ describe("navigation, pushed at its edges", () => {
     const cases = [kase("a", [shelf("s1", { case_id: "a" })]), kase("b", [])];
     const loose = [shelf("s2")];
     const starts = [
-      { caseId: "ghost", shelfId: "ghost" },
-      { caseId: "a", shelfId: "s2" },
-      { caseId: "b", shelfId: "s1" },
-      { caseId: UNFILED_CASE_ID, shelfId: "s1" },
-      { caseId: null, shelfId: "s1" },
-      { caseId: "ghost", shelfId: LOOSE_SHELF_ID },
+      { caseId: "ghost", shelfId: "ghost", categoryId: null },
+      { caseId: "a", shelfId: "s2", categoryId: null },
+      { caseId: "b", shelfId: "s1", categoryId: null },
+      { caseId: UNFILED_CASE_ID, shelfId: "s1", categoryId: null },
+      { caseId: null, shelfId: "s1", categoryId: null },
+      { caseId: "ghost", shelfId: LOOSE_SHELF_ID, categoryId: null },
     ];
     for (const s of starts) {
       const once = reconcileScope(s, cases, loose);
@@ -108,8 +108,8 @@ describe("navigation, pushed at its edges", () => {
   it("never invents a case that is not in the tree", () => {
     const cases = [kase("a", [])];
     for (const s of [
-      { caseId: "ghost", shelfId: null },
-      { caseId: "ghost", shelfId: "ghost" },
+      { caseId: "ghost", shelfId: null, categoryId: null },
+      { caseId: "ghost", shelfId: "ghost", categoryId: null },
     ]) {
       const out = reconcileScope(s, cases, []);
       if (out.caseId && !isUnfiledScope(out)) expect(cases.some((c) => c.id === out.caseId)).toBe(true);

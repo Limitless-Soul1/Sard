@@ -13,8 +13,8 @@ import { colorValue, HIGHLIGHT_SLOTS, isHex } from "../reader/highlightColors";
 import { annoIsHighlight, annoIsNote, annotationsAll, tagsList, type AnnoItem } from "../../lib/ipc";
 import type { OpenTarget } from "./Library";
 import { Icon } from "../../components/Icon";
+import { isArabicText, scriptOf } from "../../lib/typography";
 
-const ARABIC = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
 type TypeFilter = "all" | "highlight" | "note";
 
 function relTime(sec: number | null, lang: string): string {
@@ -150,7 +150,7 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
                     <button
                       key={b.id}
                       className={book === b.id ? "active" : ""}
-                      dir={ARABIC.test(b.title) ? "rtl" : "ltr"}
+                      dir={isArabicText(b.title) ? "rtl" : "ltr"}
                       onClick={() => { setBook(b.id); setBookMenu(false); }}
                     >
                       {b.title}
@@ -178,7 +178,7 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
                       <button
                         key={tg}
                         className={tag === tg ? "active" : ""}
-                        dir={ARABIC.test(tg) ? "rtl" : "ltr"}
+                        dir={isArabicText(tg) ? "rtl" : "ltr"}
                         onClick={() => { setTag(tg); setTagMenu(false); }}
                       >
                         {tg}
@@ -210,7 +210,7 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         <div className="inbox-list">
           {filtered.map((it) => {
             const swatch = colorValue(it.color, hl);
-            const arabic = it.book_dir === "rtl" || ARABIC.test(it.text ?? "");
+            const arabic = scriptOf(it.text, it.book_dir) === "arabic";
             return (
               <button
                 key={`${it.kind}-${it.id}`}

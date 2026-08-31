@@ -161,6 +161,25 @@ function verifyBinary(kind, exePath) {
     const wantPrefix = { diag: "DIAG", beta: "BETA", release: "REL" }[kind.id];
     if (id.startsWith(wantPrefix)) ok(`carries a build id: ${id}`);
     else bad(`build id ${id} declares the wrong kind (expected a ${wantPrefix}- prefix)`);
+
+    // ...AND THAT IT IS *THIS* BUILD, not merely a genuine one.
+    //
+    // The prefix check answers "is this a release?". It does not answer "is this the release I just
+    // asked for?", and on 2026-08-30 that gap shipped a stale binary as verified. `tauri build`
+    // could not replace `sard.exe` because a running copy held it — "Access is denied (os error 5)",
+    // "failed to build app" — AND STILL EXITED 0. The exe on disk was an hour old and carried the
+    // PREVIOUS id; `dist/` beside it was new, so the bundle half of this gate read the fresh files
+    // and passed. Everything looked green and the application did not contain the work.
+    //
+    // When the caller stamped an id, it is the only thing that decides. Comparing them is the whole
+    // of what was missing.
+    if (process.env.SARD_BUILD_ID) {
+      if (id === process.env.SARD_BUILD_ID) ok("and it is the id THIS build stamped");
+      else bad(
+        `STALE ARTIFACT — this build stamped ${process.env.SARD_BUILD_ID} but the executable carries ${id}. ` +
+        "The binary was not replaced. The usual cause is a running copy holding the file open; " +
+        "close it and build again.");
+    }
   }
 
   // The updater endpoint is the difference between "a diagnostic build someone ran once" and "a

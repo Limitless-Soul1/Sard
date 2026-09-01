@@ -17,10 +17,6 @@ interface Props {
   // Per-book scope (RAWY-40): the book's own theme + a reset of all its overrides.
   bookThemeId: ThemeId;
   onPickTheme: (id: ThemeId) => void;
-  bookTitle: string | null;
-  hasOverride: boolean;
-  onReset: () => void;
-  unified: boolean; // RAWY-43 — the banner + Reset reflect the active book-style scope
   // RAWY-85/86: for a PDF the drawer becomes a "read-only" panel. RAWY-141 pared it to what actually
   // works on a fixed-layout PDF — the honest limits, an INVERT appearance (approximate night mode, NOT
   // real themes), and copy-selection. The reading-direction toggle (cosmetic on a fixed-layout PDF) and
@@ -52,10 +48,6 @@ export function SettingsPanel({
   onSection,
   bookThemeId,
   onPickTheme,
-  bookTitle,
-  hasOverride,
-  onReset,
-  unified,
   isPdf,
   pdfThemeId,
   onPdfTheme,
@@ -174,26 +166,6 @@ export function SettingsPanel({
         <span className="sp-title">{t("reader.settings")}</span>
         <button className="rc-icon" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
       </div>
-      {/* Scope banner (RAWY-40/43) — reflects the active book-style model. Per-book: "applies to
-          this book · won't change others" + Reset. Unified: "applies to all books". RAWY-216: the
-          title is now composed from the SHARED scope noun rather than its own sentence, so the banner
-          and every in-panel scope suffix say the same words. */}
-      <div className={`sp-scope${unified ? " unified" : ""}`}>
-        <span className="sp-scope-ico" aria-hidden>{unified ? "⊞" : "▤"}</span>
-        <span className="sp-scope-text">
-          <span className="sp-scope-title">
-            {t("perbook.appliesTo")} {unified ? t("scope.allBooks") : t("scope.thisBook")}
-          </span>
-          <span className="sp-scope-sub" dir="auto">
-            {unified ? t("perbook.scopeAllSub") : (bookTitle ? `${bookTitle} · ` : "") + t("perbook.scopeSub")}
-          </span>
-        </span>
-        {!unified && (
-          <button className="sp-reset" onClick={onReset} disabled={!hasOverride} title={t("perbook.reset")}>
-            ↻ {t("perbook.reset")}
-          </button>
-        )}
-      </div>
       <div className="sp-tabs" role="tablist">
         {tabs.map((tb) => (
           <button
@@ -215,7 +187,6 @@ export function SettingsPanel({
           section={section}
           bookThemeId={bookThemeId}
           onPickTheme={onPickTheme}
-          unified={unified}
         />
       </div>
     </aside>

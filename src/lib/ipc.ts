@@ -903,9 +903,13 @@ export interface ProfileRow {
   updated_at: number;
   bg_library: string | null;
   bg_reading: string | null;
+  /** When the profile was last WORN. Read-only here: `profile_save` ignores it, and `profileTouch`
+   *  is the only thing that writes it — which is why it is optional and why nothing that builds a
+   *  row has to carry it forward. */
+  last_used_at?: number | null;
 }
 
-/** Every profile, most-recently-edited first. */
+/** Every profile, MOST RECENTLY WORN first; one never worn keeps its most-recently-edited place. */
 export const profilesList = (): Promise<ProfileRow[]> => invoke<ProfileRow[]>("profiles_list");
 
 /** One profile by id, or null when it does not exist. */
@@ -915,6 +919,15 @@ export const profileGet = (id: string): Promise<ProfileRow | null> =>
 /** Insert or update. `created_at` is preserved on update; `updated_at` is stamped by the core. */
 export const profileSave = (profile: ProfileRow): Promise<boolean> =>
   invoke<boolean>("profile_save", { profile });
+
+/**
+ * Stamp a profile as worn, so the list can order by use rather than by edit.
+ *
+ * It writes that one column and nothing else — not `updated_at` — because wearing a profile is
+ * not editing it. Touching one that does not exist is not an error.
+ */
+export const profileTouch = (id: string): Promise<boolean> =>
+  invoke<boolean>("profile_touch", { id });
 
 /** Remove a profile. Deleting one that does not exist is not an error. */
 export const profileDelete = (id: string): Promise<boolean> =>

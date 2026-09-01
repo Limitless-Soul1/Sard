@@ -295,6 +295,25 @@ export const TTS_TRACKING_DEFAULTS: Pick<
   ttsKaraokeOpacity: null,
 };
 
+/**
+ * THE SEVEN READ-ALOUD FIELDS, BY NAME, AND WHY THE LIST EXISTS.
+ *
+ * The list survives the removal of the per-book style scope, and it is worth saying why it is still
+ * needed. It was written when a book could hold reading settings of its own: measured on the owner's
+ * library, two books carried their own tracking colours and in those two books switching هيئة changed
+ * nothing, because the book's override was laid over the profile's values. With one style for every
+ * book that resolver is gone and the seven can no longer be outranked by anything — but naming
+ * them once is still what keeps three separate things in step: what a هيئة carries, what activating
+ * one writes, and what the parser accepts.
+ *
+ * Derived from `TTS_TRACKING_DEFAULTS` so the two cannot fall out of step: a field added there and
+ * forgotten here would fail to compile.
+ */
+export const TTS_TRACKING_KEYS = [
+  "ttsSpotlightOn", "ttsSpotlightColor", "ttsSpotlightOpacity", "ttsSpotlightRule",
+  "ttsKaraokeOn", "ttsKaraokeColor", "ttsKaraokeOpacity",
+] as const satisfies readonly (keyof typeof TTS_TRACKING_DEFAULTS)[];
+
 // RAWY-212: immersive per-element hide defaults, shared by BOTH per-script default sets so they can never
 // drift. These reproduce RAWY-210/211 exactly for an existing `immersive_scroll=1` profile — pill + scrollbar
 // hide on scroll-away (the resume hint was never hidden, and still isn't) — so nobody sees a behaviour change.
@@ -641,7 +660,7 @@ function themeBlock(
            .sard-title-ph {
              display: inline-flex; align-items: baseline; gap: .4em; flex-wrap: wrap;
              margin: .15em 0 .75em; font-size: .82em; line-height: 1.6;
-             font-family: 'SardArabic', 'SardLatin', serif;
+             font-family: 'SardArabic', 'SardLatin', 'SardArabicFallback', serif;
              user-select: none; -webkit-user-select: none;
            }
            .sard-title-ph[data-sard-state="revealed"] { display: none; }
@@ -853,9 +872,13 @@ export function buildReadingCss(
     .sard-title-ph { display: none; direction: ${rl.dir}; unicode-bidi: isolate; }
     img, svg, video, table { max-width: 100%; max-height: 100%; }
 
-    /* per-script fonts: Arabic glyphs use the chosen Arabic face, Latin uses Literata */
+    /* per-script fonts: Arabic glyphs use the chosen Arabic face, Latin uses Literata.
+       SardArabicFallback catches Arabic-block characters the chosen face has no glyph for, so they
+       land on a bundled Arabic design instead of the generic serif — see buildFontFaceCss. It is
+       ordered after SardLatin deliberately: the two claim disjoint unicode-ranges, so a Latin
+       character can never reach it and Latin text is unaffected. */
     html, body, p, li, blockquote, div, span, h1, h2, h3, h4, h5, h6, td, th, a {
-      font-family: 'SardArabic', 'SardLatin', serif !important;
+      font-family: 'SardArabic', 'SardLatin', 'SardArabicFallback', serif !important;
     }
     ${/* RAWY-195. These two were the last PLAIN rules in the funnel: an element selector at specificity
           (0,0,1), no !important — while text COLOUR (themeBlock) and paragraph spacing had carried the
@@ -961,6 +984,26 @@ export function buildFontFaceCss(style: ReadingStyle): string {
       src: url('${latSrc}')${latImported ? "" : " format('truetype')"};
       ${latImported ? "" : `font-weight: ${latBuiltin!.variable ? "200 700" : "normal"};`}
       unicode-range: ${LATIN_RANGE};
+    }
+    /* THE ARABIC SAFETY NET.
+       An Arabic face need not cover the whole Arabic block, and a legitimate book may use any of it.
+       Measured on a real library: the reader's chosen face thmanyah serif display has no glyph for
+       FARSI YEH (U+06CC), KEHEH (U+06A9) or GAF (U+06AF), and a valid EPUB used all three — 2054, 346
+       and 19 times. SardArabic was then skipped for exactly those characters, SardLatin does not
+       claim the Arabic range, and the stack fell through to the generic serif — Times New Roman on
+       Windows. Every such character was drawn in a different design, at different metrics, and the
+       shaping run was split at both of its edges, so the LETTERS AROUND IT lost their joining context
+       too. The same book renders correctly in other readers only because their fonts happen to cover
+       the codepoints.
+       So the chain gains an Arabic rung before the generic one. It is bundled (no network), it claims
+       the same range, and it sits BELOW the reader's own choice — so it is consulted only for
+       characters that choice cannot draw, and text the chosen face covers is byte-identical to before.
+       Noto Naskh is the widest-covering Arabic face Sard ships, which is the only reason it is the net. */
+    @font-face {
+      font-family: 'SardArabicFallback';
+      src: url('${absFontUrl(ARABIC_FONTS.notoNaskh.regular)}') format('truetype');
+      font-weight: 100 900;
+      unicode-range: ${ARABIC_RANGE};
     }`;
 }
 

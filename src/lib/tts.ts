@@ -203,7 +203,22 @@ type Status = "idle" | "preparing" | "playing" | "paused" | "error" | "chapter-e
 // so the old "start only the first sentence" hack is obsolete.
 interface StartOpts { sentences: string[]; lang: TtsLang; startIndex?: number; chapterLabel: string;
   /** WP-5A: the script SNIFFED from the book (never its declared language). null = do not gate. */
-  bookScript?: BookScript }
+  bookScript?: BookScript;
+  /**
+   * WHAT THIS QUEUE IS. Until footnotes, a queue was always a chapter, so "the sentences ran out" and
+   * "the chapter finished" were the same event and `playFrom` could set `chapter-end` unconditionally.
+   * They are not the same event any more: a footnote is auxiliary content a few sentences long, and
+   * reaching its end says nothing whatever about the chapter the reader is in.
+   *
+   * MEASURED before this existed: finishing a two-sentence footnote put the session in `chapter-end`,
+   * which is the state the player reads to offer «الفصل التالي» — so a note offered to advance the
+   * book. That is a state-ownership error, not a display one, and it is fixed here rather than hidden
+   * in the player.
+   */
+  source?: TtsSource }
+
+/** A read-aloud queue is either the chapter on screen or an open footnote. Default: the chapter. */
+export type TtsSource = "chapter" | "note";
 
 /** WP-5C: the settings prefix recording "I chose this voice anyway", for ONE voice id. Per-voice, so
  *  an override can never silently generalise to a different incompatible voice. */
@@ -231,6 +246,8 @@ interface TtsState {
   words: TtsWord[]; // RAWY-127: the current sentence's Edge word timings ([] = sentence-level only)
   wordIndex: number; // RAWY-127: active word within `words` (-1 = none / no karaoke) — drives the pill
   chapterLabel: string;
+  /** What the CURRENT queue is reading. See `StartOpts.source`. */
+  source: TtsSource;
   error: string | null;
   // RAWY-231 (invariant E, recurrence guard): LOCAL counters the owner can SEE (not just feel) — no
   // telemetry leaves the machine. `underruns` = times playback had to WAIT on synthesis (a stall);
@@ -1234,6 +1251,14 @@ function prefetchFrom(idx: number): void {
 async function playFrom(i: number, myGen: number, establishLead = false) {
   const set = useTts.setState;
   if (i >= sentences.length) {
+    // A FOOTNOTE THAT ENDS HAS ENDED, and nothing more. It is not a chapter, so it must not enter the
+    // state the player reads to offer the next one; it closes the way a finished aside should, through
+    // the same `stop()` every other ending uses. The reader's chapter, position and navigation state are
+    // untouched because nothing here ever described them.
+    if (useTts.getState().source === "note") {
+      useTts.getState().stop();
+      return;
+    }
     // RAWY-184 (Part B): reached the LAST sentence — STOP and enter the "chapter-end" state (the owner
     // chose a "next chapter" button over auto-advance). The pill then offers Next chapter (if one exists)
     // or a gentle end-of-book state; playing/paused-gated shortcuts (Space, arrows) no-op here.
@@ -1456,6 +1481,7 @@ export const useTts = create<TtsState>((set, get) => ({
   words: [],
   wordIndex: -1,
   chapterLabel: "",
+  source: "chapter",
   error: null,
   underruns: 0,
   abandoned: 0,
@@ -1479,7 +1505,10 @@ export const useTts = create<TtsState>((set, get) => ({
 
   start: async (opts) => {
     lastStart = opts;
-    const { sentences: sen, lang, startIndex = 0, chapterLabel, bookScript = null } = opts;
+    const { sentences: sen, lang, startIndex = 0, chapterLabel, bookScript = null, source = "chapter" } = opts;
+    // Recorded BEFORE anything can end: `playFrom` reads it to decide whether running out of sentences
+    // means "this chapter is finished" or "this footnote is finished", and those are different events.
+    set({ source });
     audioCtx(); // create within the user gesture so autoplay policy unlocks it
     const myGen = ++gen;
     stopSource();

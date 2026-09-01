@@ -31,6 +31,7 @@ import {
   captureCurrent,
   createProfile,
   duplicateProfile,
+  refreshProfiles,
   removeProfile,
   saveProfile,
   useProfiles,
@@ -62,6 +63,19 @@ export function ProfilesSection() {
    * by a component that has just unmounted is one nobody can read or undo.
    */
   const [saved, setSaved] = useState<{ name: string; previous: Profile; applied: boolean } | null>(null);
+
+  // ENTERING THE AREA IS WHEN THE ORDER IS RECOMPUTED.
+  //
+  // The list is ordered by most recent USE, and the stamp is written by `applyProfile` the moment a
+  // profile is worn — but the re-sort is held until a list is next BUILT rather than done under the
+  // reader's pointer, because a card's miniature IS the switch and promoting the card they have just
+  // clicked would put a different profile where their finger already is. This section mounts on every
+  // entry to Profiles, so leaving and coming back is exactly that "next build".
+  //
+  // It runs once, on mount. Re-reading on every list change would be a loop: the read sets the list.
+  useEffect(() => {
+    void refreshProfiles();
+  }, []);
 
   // The managed rows, so a card can draw an image icon. Re-read whenever the profile list changes,
   // because the only way a new icon reaches a card is a profile being saved with one.

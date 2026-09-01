@@ -879,7 +879,7 @@ pub fn collection_delete(conn: &Connection, id: &str) -> rusqlite::Result<Vec<Co
 pub fn collection_add_book(conn: &Connection, collection_id: &str, book_id: &str) -> rusqlite::Result<Vec<CollectionRow>> {
     let rank = placement::append_rank(conn, collection_id)?;
     placement::set(conn, book_id, collection_id, &rank, None)
-        .map_err(|e| rusqlite::Error::InvalidParameterName(e))?;
+        .map_err(rusqlite::Error::InvalidParameterName)?;
     collections_list(conn)
 }
 
@@ -892,7 +892,7 @@ pub fn collection_remove_book(conn: &Connection, collection_id: &str, book_id: &
     if here.as_deref() == Some(collection_id) {
         let rank = placement::append_rank(conn, placement::UNFILED)?;
         placement::set(conn, book_id, placement::UNFILED, &rank, None)
-            .map_err(|e| rusqlite::Error::InvalidParameterName(e))?;
+            .map_err(rusqlite::Error::InvalidParameterName)?;
     }
     collections_list(conn)
 }

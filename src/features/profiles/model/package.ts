@@ -18,7 +18,14 @@
 // two agree before anything is unpacked — so a manifest that lies costs a row in a list, never a
 // file on disk.
 
-import { PROFILE_DATA_VERSION, parseProfileData, type Profile, type ProfileData } from "./profile";
+import {
+  PROFILE_DATA_VERSION,
+  PROFILE_READING_FIELDS,
+  parseProfileData,
+  type Profile,
+  type ProfileData,
+} from "./profile";
+import { ARABIC_DEFAULTS } from "../../../reader-engine/injectedCss";
 
 /** The format's own version, independent of `ProfileData`'s. Bumped only on a breaking change. */
 export const PACKAGE_VERSION = 2;
@@ -59,14 +66,32 @@ export interface PackageAsset {
 }
 
 /**
- * Everything the reader's own layout owns. A package may not carry any of it, and a package that
- * tries is refused rather than quietly stripped — silently dropping a field is how a sender comes to
- * believe they sent something they did not.
+ * WHAT A PACKAGE MAY NOT CARRY, DERIVED rather than listed.
+ *
+ * The list used to be written out by hand, and it had drifted from the model twice over: it refused
+ * `lineHeight`, `zoom`, `pageWidth` and the rest of the measure, which a هيئة now OWNS, while
+ * `exportable` separately stripped the whole measure anyway. Between them a shared هيئة arrived
+ * without the size, the leading, the margins or the page it was designed at — the recipient got the
+ * colours and none of the setting.
+ *
+ * THE RULE IS THE MODEL'S OWN NOW. A reading field a هيئة owns (`PROFILE_READING_FIELDS`) may cross;
+ * every other field of `ReadingStyle` may not, and is refused BY NAME rather than stripped, because a
+ * package claiming to reshape what it does not own is malformed by definition. Derived from those two
+ * lists, so a field added to `ReadingStyle` is refused until someone declares it profile-owned, and a
+ * field added to a هيئة travels with it. Neither can be forgotten in a second list.
+ *
+ * WHAT THAT STILL EXCLUDES, and why none of it is a هيئة's to send: `pageFitWindow` and `flowMode`
+ * (how a book is presented, not how it looks), `textColor`, `pageColor` and `backgroundColor` (a هيئة
+ * speaks about those through its palette and its background, not as raw reading fields), the two
+ * immersive flags and the three reference-rule settings (reading behaviour), and the two SETTINGS-ROW
+ * names below, which are not profile data in any form: a package naming `reading_style` or
+ * `book_style` is malformed however it got there, and `book_style` in particular is the removed
+ * per-book scope trying to come back in through the door.
  */
 const FORBIDDEN_DATA_KEYS = [
-  "lineHeight", "pageWidth", "measure", "margin", "margins", "marginPx", "paragraphSpacing",
-  "tracking", "letterSpacing", "align", "textAlign", "diacritics", "zoom", "fontWeight",
-  "firstLineIndent", "flowMode", "reading_style", "book_style",
+  ...(Object.keys(ARABIC_DEFAULTS) as string[])
+    .filter((k) => !(PROFILE_READING_FIELDS as readonly string[]).includes(k)),
+  "reading_style", "book_style",
 ] as const;
 
 export type Refusal =
@@ -107,22 +132,23 @@ export function serialiseProfile(
 }
 
 /**
- * A profile's data as it may cross the border — which is everything EXCEPT its typography.
+ * A هيئة'S DATA AS IT CROSSES THE BORDER, WHICH IS ALL OF IT.
  *
- * THE FIREWALL BELOW IS THE REASON. `forbiddenIn` refuses any package carrying a reading-layout key
- * at any depth, and it names the key rather than stripping it, because a package that claims to
- * reshape how the recipient reads is malformed by definition. A profile may now hold a typography
- * opinion locally — but shipping it would produce a package Sard itself refuses to import, and
- * shipping it successfully would be worse: importing a stranger's look would change how you read.
+ * This stripped the whole `type.reading` object, and the reason was sound at the time: the measure
+ * was the READER's, the firewall refused its keys by name, and shipping it would have produced a
+ * package Sard itself refused to import. A هيئة was a palette then.
  *
- * So the measure stays HOME. The whole `reading` object is omitted rather than emptied, because the
- * firewall matches on key NAMES: a `reading: { lineHeight: null }` would trip it exactly as a real
- * value would. Absent is read back as "no opinion" by `parseTypography`, which is the same thing
- * every profile written before typography existed already says.
+ * It is the complete reading preset now — paper, faces, the measure, the page's width, the marks and
+ * the read-aloud cursor — and a shared one arriving without the size and the leading it was designed
+ * at is not the هيئة its sender saw. The firewall moved with the model (see `FORBIDDEN_DATA_KEYS`),
+ * so what a هيئة owns may cross and nothing else may, and there is nothing left for this to hold
+ * back.
+ *
+ * It stays as the ONE named place the question is answered, so "what does a هيئة send" has a function
+ * to read rather than an absence to infer.
  */
 function exportable(d: ProfileData): ProfileData {
-  const { reading: _local, ...type } = d.type;
-  return { ...d, type: type as ProfileData["type"] };
+  return d;
 }
 
 export const manifestText = (m: PackageManifest): string => JSON.stringify(m, null, 2);

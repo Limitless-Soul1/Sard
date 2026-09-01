@@ -317,12 +317,27 @@ describe("the appearance editor carries the same choice", () => {
 
   it("and it uses the editor's INLINE picker, never a floating panel", () => {
     // Measured in the running editor: the floating panel was the only picker that could reach the
-    // preview; all four inline ones covered none of it at any window size. The editor no longer
-    // imports the floating one at all.
+    // preview; all four inline ones covered none of it at any window size. The editor does not
+    // import the floating one.
     const at = EDITOR.indexOf('open === "overlay" && (');
     expect(EDITOR.slice(at, at + 900)).toContain('className="pf-ink-picker"');
     expect(EDITOR).not.toContain('import { InkCustom }');
     expect(EDITOR).not.toContain("<InkCustom");
+  });
+
+  it("BUT THIS FILE'S OWN IMPORTS ARE NO LONGER THE WHOLE ANSWER", () => {
+    // The guard above asks whether THIS file renders a floating picker, and a component boundary
+    // walks straight past it: the read-aloud chapter renders `TtsTrackingControls`, which is the
+    // reader's own component and contains an `InkCustom`. Measured in the running editor at
+    // 1440x940, its panel was cut in half by `.pfe-chapter`'s scroll container and the preview
+    // showed through the missing 92px.
+    //
+    // The intent is kept where it can no longer be walked past — in the placement itself. A panel
+    // that stays inside the box that clips it cannot reach the preview, whatever renders it, so
+    // this is now a property of every picker rather than a rule about one file's imports.
+    const INK = read("src/components/InkCustom.tsx");
+    expect(INK).toContain("function clipBoxOf(");
+    expect(INK).toContain("const box = clipBoxOf(el);");
   });
 
   it("the row reads no paper value, so the two cannot re-couple", () => {
@@ -377,7 +392,7 @@ describe("the custom colour panel stays in the window", () => {
     // the one already in state React re-rendered nothing and never put it back — so the panel measured
     // exactly as far outside the window as before the fix. Fifteen of fifteen, in the running reader.
     expect(INK).toContain('el.style.transform = "none";');
-    expect(INK).toContain("el.style.transform = dx ? `translateX(${dx}px)` : \"\";");
+    expect(INK).toContain("el.style.transform = dx || dy ? `translate(${dx}px, ${dy}px)` : \"\";");
     expect(INK).not.toContain("style={fit.dx");
   });
 
@@ -385,8 +400,26 @@ describe("the custom colour panel stays in the window", () => {
     // Measuring room from the PANEL's own top is a question whose answer changes the moment the flip
     // happens, so it oscillated and settled on "below" every time.
     expect(INK).toContain("const anchor = wrap.current?.getBoundingClientRect();");
-    expect(INK).toContain("const roomBelow = vh - anchor.bottom - GAP - PANEL_EDGE;");
-    expect(INK).toContain("const roomAbove = anchor.top - GAP - PANEL_EDGE;");
+    // AND THE ROOM IS MEASURED IN THE CLIP BOX, not in the window: a swatch low in a scrolling
+    // column has no room below it there, however much window is left underneath the column.
+    expect(INK).toContain("const roomBelow = box.bottom - PANEL_EDGE - anchor.bottom - GAP;");
+    expect(INK).toContain("const roomAbove = anchor.top - GAP - (box.top + PANEL_EDGE);");
+  });
+
+  it("the box it stays inside is every clipping ancestor, not just the viewport", () => {
+    // THE DEFECT THIS PINS. An absolutely-positioned panel is cut by the nearest ancestor whose
+    // overflow is not `visible`, and no z-index reaches past that. Clamping to the WINDOW only looks
+    // right where the clipping ancestor reaches the window's edge — true of the reading drawer,
+    // false of a 392px settings column in the middle of the screen.
+    expect(INK).toContain('const clipsX = s.overflowX !== "visible";');
+    expect(INK).toContain('const clipsY = s.overflowY !== "visible";');
+    // The PADDING box is what clips: the border box is too generous by the border, and a scrollbar
+    // gutter is not usable space either.
+    expect(INK).toContain("r.left + e.clientLeft + e.clientWidth");
+    expect(INK).toContain("r.top + e.clientTop + e.clientHeight");
+    // The viewport is still one of the boxes — it clips too.
+    expect(INK).toContain("let right = window.innerWidth;");
+    expect(INK).toContain("let bottom = window.innerHeight;");
   });
 
   it("it re-places on resize and on a scroll anywhere, including the drawer's", () => {
@@ -395,8 +428,22 @@ describe("the custom colour panel stays in the window", () => {
     expect(INK).toContain("ResizeObserver");
   });
 
-  it("a panel wider than the window is pinned rather than hung off both edges", () => {
-    expect(INK).toContain("if (r.width > vw - 2 * PANEL_EDGE) dx = PANEL_EDGE - r.left;");
+  it("a panel wider than its box is pinned rather than hung off both edges", () => {
+    expect(INK).toContain("if (r.width > maxRight - minLeft) dx = minLeft - r.left;");
+  });
+
+  it("and the block axis is slid the same way, because the flip cannot answer every case", () => {
+    // MEASURED in the reader's read-aloud tab at 1440x940: the word pill's swatch had 126px below it
+    // and 250px above, against a 272px panel — neither side holds it, so the flip had no move to make
+    // and 138px of the picker were cut off by the drawer's scrolling body.
+    expect(INK).toContain("if (r.bottom > maxBottom) dy = maxBottom - r.bottom;");
+    expect(INK).toContain("if (r.top + dy < minTop) dy = minTop - r.top;");
+    expect(INK).toContain("if (r.height > maxBottom - minTop) dy = minTop - r.top;");
+    expect(INK).toContain("el.style.transform = dx || dy ? `translate(${dx}px, ${dy}px)` : \"\";");
+  });
+
+  it("a flip re-places, so the slide is computed for the side the panel ends up on", () => {
+    expect(INK).toContain("}, [open, above]);");
   });
 
   it("the stylesheet owns only the flip, not the nudge", () => {

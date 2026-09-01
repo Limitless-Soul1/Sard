@@ -17,10 +17,55 @@
 // it. `null` (follow the theme) stays entirely the caller's business: this only ever reports a hex.
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
-/** Space kept between the panel and the window edge, in px. */
+/** Space kept between the panel and the edge of the box it must stay inside, in px. */
 export const PANEL_EDGE = 8;
 /** The offset the stylesheet puts between the swatch and the panel. */
 export const GAP = 10;
+
+/**
+ * THE BOX THE PANEL MAY OCCUPY: the viewport, narrowed by every ancestor that CLIPS.
+ *
+ * WHY THE WINDOW IS THE WRONG BOX, and it is a defect this replaces rather than a refinement. An
+ * absolutely-positioned element is clipped by the nearest ancestor whose `overflow` is not `visible`,
+ * and no z-index reaches past that — a scroll container cuts its descendants whatever they stack
+ * above. Keeping the panel inside the WINDOW therefore only looks like the right rule where the
+ * clipping ancestor happens to reach the window's edge, which is true of the reading drawer and false
+ * of a settings column in the middle of the screen.
+ *
+ * MEASURED, in the profile editor at 1440x940 (RTL): the preview occupies x 0..897 and the chapter
+ * column x 897..1289, `.pfe-chapter` carries `overflow-y: auto` — which makes `overflow-x` compute
+ * to `auto` as well — and the panel's box came out at x 805..1041. Ninety-two pixels of it fell
+ * outside the column and were cut away, the preview showed through where they should have been, and
+ * the column grew a horizontal scrollbar. `elementFromPoint` reported the picker at the panel's inner
+ * columns and the preview's page at its outer one: not a stacking problem, a clipping one.
+ *
+ * The PADDING box is what clips, and `clientLeft`/`clientWidth` are what report it — the border
+ * box would be too generous by the border, and a scrollbar gutter is not usable space either.
+ *
+ * Each axis is narrowed independently, because an ancestor may clip one and not the other.
+ */
+function clipBoxOf(el: Element): { left: number; top: number; right: number; bottom: number } {
+  let left = 0;
+  let top = 0;
+  let right = window.innerWidth;
+  let bottom = window.innerHeight;
+  for (let e = el.parentElement; e; e = e.parentElement) {
+    const s = getComputedStyle(e);
+    const clipsX = s.overflowX !== "visible";
+    const clipsY = s.overflowY !== "visible";
+    if (!clipsX && !clipsY) continue;
+    const r = e.getBoundingClientRect();
+    if (clipsX) {
+      left = Math.max(left, r.left + e.clientLeft);
+      right = Math.min(right, r.left + e.clientLeft + e.clientWidth);
+    }
+    if (clipsY) {
+      top = Math.max(top, r.top + e.clientTop);
+      bottom = Math.min(bottom, r.top + e.clientTop + e.clientHeight);
+    }
+  }
+  return { left, top, right, bottom };
+}
 
 import { useI18n } from "../i18n";
 import { ColorPicker } from "./ColorPicker";
@@ -58,7 +103,7 @@ export function InkCustom({
     return () => window.removeEventListener("pointerdown", away);
   }, [open]);
 
-  // KEEP THE PANEL IN THE WINDOW.
+  // KEEP THE PANEL INSIDE THE BOX THAT CAN ACTUALLY SHOW IT.
   //
   // The stylesheet placed it with `position: absolute; inset-inline-start: 0; top: calc(100% + 10px)`
   // against the SWATCH, which is 2.35rem wide and sits at the end of a colour row near the drawer's
@@ -69,6 +114,12 @@ export function InkCustom({
   // The fix measures rather than guesses, because the panel's size is not knowable from here: the
   // picker sizes itself, the drawer scrolls, and the window resizes. `dx` slides it back inside on
   // the inline axis and `above` flips it over the swatch when there is no room beneath.
+  //
+  // THAT BOX IS `clipBoxOf`, NOT THE WINDOW, and the difference is the whole of a second defect —
+  // see the note there for the measurement. A panel kept inside the window can still be sliced in
+  // half by the scrolling column it lives in, which is what the profile editor's own colour picker
+  // was, and it is not something a z-index can reach. One rule for every swatch: stay inside whatever
+  // would otherwise cut you, and inside the window as well, because the window clips too.
   const panel = useRef<HTMLDivElement | null>(null);
   const [above, setAbove] = useState(false);
   useLayoutEffect(() => {
@@ -86,14 +137,30 @@ export function InkCustom({
       // before the fix. Writing the style directly makes clearing and reapplying the same act.
       el.style.transform = "none";
       const r = el.getBoundingClientRect();
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
+      // The box is measured with the transform already cleared, so `r` and it are in one space.
+      const box = clipBoxOf(el);
+      const minLeft = box.left + PANEL_EDGE;
+      const maxRight = box.right - PANEL_EDGE;
       let dx = 0;
-      if (r.right > vw - PANEL_EDGE) dx = vw - PANEL_EDGE - r.right;
-      if (r.left + dx < PANEL_EDGE) dx = PANEL_EDGE - r.left;
-      // A panel wider than the window is pinned to the start edge rather than hung off both.
-      if (r.width > vw - 2 * PANEL_EDGE) dx = PANEL_EDGE - r.left;
-      el.style.transform = dx ? `translateX(${dx}px)` : "";
+      if (r.right > maxRight) dx = maxRight - r.right;
+      if (r.left + dx < minLeft) dx = minLeft - r.left;
+      // A panel wider than the box is pinned to its start edge rather than hung off both.
+      if (r.width > maxRight - minLeft) dx = minLeft - r.left;
+      // THE BLOCK AXIS IS NUDGED TOO, and it has to be, because the flip below cannot answer every
+      // case. `above` chooses the better SIDE of the swatch; when neither side holds the panel it has
+      // no move left to make and the old rule quietly kept the worse one. Measured in the reader's
+      // read-aloud tab at 1440x940: the word pill's swatch sits mid-column with 126px below it and
+      // 250px above, against a 272px panel — so it stayed below and 138px of it were cut off by
+      // `.sp-body`. Sliding it is the same instrument the inline axis already uses, and it keeps the
+      // panel whole rather than trading a clipped picker for a scrolling one.
+      const minTop = box.top + PANEL_EDGE;
+      const maxBottom = box.bottom - PANEL_EDGE;
+      let dy = 0;
+      if (r.bottom > maxBottom) dy = maxBottom - r.bottom;
+      if (r.top + dy < minTop) dy = minTop - r.top;
+      // Taller than the box: pinned to the top, for the same reason the inline axis pins to the start.
+      if (r.height > maxBottom - minTop) dy = minTop - r.top;
+      el.style.transform = dx || dy ? `translate(${dx}px, ${dy}px)` : "";
       // THE FLIP IS MEASURED FROM THE SWATCH, NOT FROM THE PANEL.
       //
       // Asking "does the panel's current top leave room below it" is a question whose answer changes
@@ -103,9 +170,11 @@ export function InkCustom({
       // 86px. The swatch does not move when the panel flips, so anchoring to it is stable.
       const anchor = wrap.current?.getBoundingClientRect();
       if (anchor) {
-        const roomBelow = vh - anchor.bottom - GAP - PANEL_EDGE;
-        const roomAbove = anchor.top - GAP - PANEL_EDGE;
+        const roomBelow = box.bottom - PANEL_EDGE - anchor.bottom - GAP;
+        const roomAbove = anchor.top - GAP - (box.top + PANEL_EDGE);
         // Prefer below, as the design does; flip only when below will not hold it and above will.
+        // When NEITHER holds it the panel stays where the design puts it and the slide above keeps it
+        // on screen — one decision each, rather than a flip that has to mean two things.
         setAbove(r.height > roomBelow && r.height <= roomAbove);
       }
     };
@@ -120,7 +189,12 @@ export function InkCustom({
       window.removeEventListener("resize", place);
       document.removeEventListener("scroll", place, true);
     };
-  }, [open]);
+    // `above` IS A DEPENDENCY, and that is what makes the two corrections agree. The flip is React
+    // state, so it moves the panel on a later render than the one that measured it — leaving the
+    // slide computed for the side the panel is no longer on. Re-running settles it in one more pass,
+    // and it cannot oscillate: the flip is decided from the SWATCH, which does not move when the
+    // panel flips, so the second pass computes the same answer and React bails out.
+  }, [open, above]);
 
   const live = /^#[0-9a-fA-F]{6}$/.test(value ?? "") ? (value as string) : fallback;
 

@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# TypeScript's incremental build cache. A local timing artifact, rewritten by every `tsc -b`.
+*.tsbuildinfo
+
 # Rust / Tauri build artifacts
 /src-tauri/target
 /src-tauri/gen/schemas

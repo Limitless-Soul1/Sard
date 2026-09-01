@@ -23,11 +23,8 @@ export const en = {
   "settings.allbooks": "All books",
   // RAWY-216: ONE scope vocabulary. The drawer used to say the same thing three ways ("Applies to this
   // book", "for this book only", "Applies to all books" as a section heading). These two nouns are now
-  // the ONLY words for scope: the banner reads `perbook.appliesTo` + the noun, a section heading appends
+  // (the scope wording is gone with the per-book/unified model it described)
   // the noun after an em dash. Change the noun once and every scope statement follows.
-  "scope.thisBook": "this book",
-  "scope.allBooks": "all books",
-  "settings.allbooksSub": "These always apply to every book, not just this one.",
   "settings.voiceNote": "Voice, engine and speed are in the player while listening.",
   // RAWY-216: one muted reason line under a control that is inert right now.
   "inert.matchWindow": "Match window is on.",
@@ -651,6 +648,12 @@ export const en = {
   "ne.less": "Less",
   "ne.close": "Close",
   // RAWY-260: references — a note bound to a word or short phrase, marked wherever it occurs.
+  // The book's OWN notes (not the reader's references above): the engine classifies each target, and
+  // the panel names it honestly rather than calling everything a footnote.
+  "note.footnote": "Footnote",
+  "note.endnote": "Endnote",
+  "note.reference": "Reference",
+  "note.expand": "Open it",
   "ref.add": "Add reference",
   "ref.label": "Reference",
   "ref.selected": "Selected text",
@@ -680,18 +683,9 @@ export const en = {
   "gs.bookmark.posHint": "Fixed — doesn't flip with language. You can also drag the marker on the page.",
 
   // Per-book reading settings + text colour (RAWY-40, Band I). RAWY-216: the two scope TITLES are gone —
-  // the banner is now `perbook.appliesTo` + the shared `scope.*` noun, so scope is worded in one place.
-  "perbook.appliesTo": "Applies to",
-  "perbook.scopeSub": "won't change other books",
-  "perbook.scopeAllSub": "book styles are unified — changing here changes every book",
-  "perbook.reset": "Reset",
+  // (the scope wording is gone with the per-book/unified model it described)
   // RAWY-284: the group label is the MODE, because the section itself is now titled "Book styles" and a
   // heading and a label reading the same words look like a bug. "Style mode" is the owner's own phrasing.
-  "gs.scope": "STYLE MODE",
-  "gs.scope.unified": "Unified",
-  "gs.scope.perbook": "Per-book",
-  "gs.scope.unifiedHint": "All books share one style — changing font, theme, size or colour in any book applies to every book.",
-  "gs.scope.perbookHint": "Each book keeps its own style — changes while reading affect only that book.",
   // The 16 reading themes. These were rendered from a hard-coded English `name` on each theme, so a
   // fully Arabic UI still showed sixteen English words in one grid — the most visible untranslated
   // surface in the app. Keys are `theme.<ThemeId>`, so the template literal in ReadingSettings is
@@ -750,7 +744,6 @@ export const en = {
   "gs.appwideNote": "These apply everywhere. A book's own font & theme are set while reading.",
   "gs.nav.appearance": "Appearance",
   "gs.nav.fonts": "Fonts & library",
-  "gs.nav.reading": "Book styles", // RAWY-284 — see "gs.reading"
   "gs.nav.bookmark": "Bookmark style",
   "gs.nav.language": "Language",
   "gs.nav.presence": "Activity", // DISC/RPC
@@ -778,12 +771,9 @@ export const en = {
   // RAWY-284: "Book styles", not "Reading defaults". In unified scope this section holds no defaults —
   // the reading-appearance controls moved to the reader, where they preview — so the old title promised
   // something that is not there. "Book styles" is true in BOTH scopes.
-  "gs.reading": "Book styles",
-  "gs.readingBanner": "The baseline for new books — each book can override it while reading.",
   // RAWY-284: shown INSTEAD of the appearance controls in unified scope. It names the panel a reader can
   // act on rather than saying a vague "in the reader", and states the REASON they live there (the live
   // preview), so the move reads as a benefit rather than as something taken away.
-  "gs.reading.inReader": "Line spacing and read-aloud emphasis are set while reading — open a book, then Settings. Every change previews live on the page.",
   "gs.defaultLatin": "Latin",
   "gs.defaultArabic": "Arabic",
   "gs.defaultSize": "Default size",
@@ -909,7 +899,6 @@ export const en = {
   "bg.err.vector": "SVG files can't be used as a background. Use JPEG, PNG or WebP.",
   "bg.err.decode": "That image couldn't be read — it may be damaged.",
   "bg.err.surface": "Unknown background surface.",
-  "gs.reading.fontsHint": "Book font, weight & size are set in the Fonts panel.",
   // RAWY-91 — Fonts panel: App font (chrome) fully separate from Book font (reading text)
   "fonts.appwide": "Two separate fonts: one for the app interface, one for the text inside books.",
   "fonts.title": "Fonts & Library",
@@ -1098,7 +1087,7 @@ export const en = {
   "gs.nav.profiles": "Profiles",
   "profiles.title": "Profiles",
   "profiles.subtitle":
-    "A profile carries how Sard looks: its paper, colours, backgrounds, faces and marks. Your reading settings are not part of it.",
+    "A profile is a complete reading preset: paper, colours, backgrounds, faces, marks, read-aloud tracking, and how your books are set — size, line spacing, page width and margins.",
   "profiles.new": "New profile",
   "profiles.import": "Import a profile",
   "profiles.active": "Active",
@@ -1110,7 +1099,7 @@ export const en = {
   "profiles.empty.title": "Sard is on its default look",
   "profiles.empty.body":
     "Make a profile to keep your paper, colours, backgrounds and faces in one place — or import one a friend sent you.",
-  "profiles.empty.reassure": "Your reading settings stay as they are, either way.",
+  "profiles.empty.reassure": "How your books are set stays as it is, either way.",
 
   // Card menu
   "profiles.card.edit": "Edit",
@@ -1123,7 +1112,7 @@ export const en = {
   // Delete, two-step. The promise is specific: nothing of the reader's is lost.
   "profiles.delete.title": "Delete “{name}”?",
   "profiles.delete.body":
-    "No book or quote is deleted, and your reading settings do not change. If this is the active profile, Sard returns to its default look.",
+    "No book or quote is deleted, and how your books are set does not change. If this is the active profile, Sard returns to its default look.",
   "profiles.delete.confirm": "Delete",
   "profiles.delete.cancel": "Cancel",
 
@@ -1191,6 +1180,14 @@ export const en = {
   "profiles.chapter.measure": "The measure",
   "profiles.chapter.measure.q": "How should the words be set?",
   "profiles.focus.measure": "the set page",
+  "profiles.voice.hint":
+    "The read-aloud marks are drawn on the page like every other mark, so a profile may carry them. It need not: a profile that carries none puts them back to Sard's own, so no profile inherits the marks of the one worn before it.",
+  "profiles.voice.label": "Read-aloud marks",
+  "profiles.voice.follows": "Sard's own",
+  "profiles.voice.carried": "From the profile",
+  "profiles.voice.clear": "Back to Sard's own marks",
+  "profiles.voice.none": "No marks",
+
   "profiles.measure.hint": "A profile need not have an opinion. Anything left as « as it is » keeps whatever you have chosen while reading.",
   "profiles.measure.follows": "as it is",
   "profiles.measure.clear": "Leave it as it is",
@@ -1202,6 +1199,8 @@ export const en = {
   "profiles.measure.trackingArabic": "Arabic joins its letters, so tracking is not applied to it — the Latin line below shows the effect.",
   "profiles.chapter.marks": "Marks",
   "profiles.chapter.marks.q": "What shows you where you are?",
+  "profiles.chapter.voice": "Read-aloud",
+  "profiles.chapter.voice.q": "How should Sard follow the words as it reads to you?",
   "profiles.chapter.texture": "Texture",
   "profiles.chapter.texture.q": "How should Sard's interface look?",
   "profiles.focus.identity": "The active profile",
@@ -1209,6 +1208,7 @@ export const en = {
   "profiles.focus.paperLibrary": "The library and its colours",
   "profiles.focus.fonts": "The type you read",
   "profiles.focus.marks": "The mark and the highlight",
+  "profiles.focus.voice": "The sentence and the word",
   "profiles.focus.texture": "The interface panels",
   "profiles.editor.stageLibrary": "Library",
   "profiles.editor.stageBook": "Book",
@@ -1217,9 +1217,6 @@ export const en = {
   // interface is set to.
   "profiles.preview.readingBar": "Reading bar",
   // A viewing control, not a setting: page width belongs to the reader, never to a profile.
-  "profiles.preview.measure": "Measure",
-  "profiles.preview.measureHint":
-    "See the page at another width. Page width is one of your reading settings — it is not saved with the profile.",
 
   "profiles.section.identity": "Identity",
   "profiles.section.theme": "Paper and colours",
@@ -1385,6 +1382,9 @@ export const en = {
   "profiles.unsaved.what.bookTheme": "the book’s paper",
   "profiles.unsaved.what.arabicFont": "the Arabic face",
   "profiles.unsaved.what.latinFont": "the Latin face",
+  "profiles.unsaved.what.measure": "how the text is set",
+  "profiles.unsaved.what.numbers": "the digits' ink",
+  "profiles.unsaved.what.voice": "the read-aloud marks",
   // The separator between the named values, when more than one changed at once. It is a
   // TRANSLATED string because the comma itself differs by script: Arabic sets «،» (U+060C),
   // English «,». Hardcoding either one puts the wrong script's punctuation in the other's sentence.
@@ -1432,7 +1432,7 @@ export const en = {
   "pkg.err.carriesReadingSettings": "This package tries to carry reading settings, which a profile never does.",
 
   "profiles.import.title": "A profile has reached you",
-  "profiles.import.settingsSafe": "Your reading settings will not change",
+  "profiles.import.settingsSafe": "What an arriving profile can change",
   "profiles.import.additive": "It is added to your profiles, and it is yours to edit however you like.",
   "profiles.import.confirm": "Import",
   "profiles.import.added": "Added “{name}”",
@@ -1444,9 +1444,11 @@ export const en = {
   "profiles.import.nothingChanged": "Nothing on your side has changed.",
   "profiles.import.chooseAnother": "Choose another file",
 
+  "profiles.import.notPart.body":
+    "A profile is a complete reading preset, so one you import brings its own paper, faces, marks, read-aloud tracking and measure — size, line spacing, margins and page width. It cannot change how a book is presented, and Sard refuses any file that tries.",
   "profiles.notPart.title": "Not part of a profile",
   "profiles.notPart.body":
-    "Line spacing, page width, margins, diacritics, alignment and size are your reading settings. They stay yours in every profile.",
+    "Margins, line spacing, page width, diacritics, alignment and size are how your books are set. A profile that names none of them leaves yours alone; one that names any carries the whole measure.",
 } as const;
 
 export type TKey = keyof typeof en;

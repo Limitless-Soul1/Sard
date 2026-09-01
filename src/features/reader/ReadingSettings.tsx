@@ -69,7 +69,6 @@ interface Props {
   // (not the global store), so changing them affects only this book.
   bookThemeId: ThemeId;
   onPickTheme: (id: ThemeId) => void;
-  unified: boolean; // RAWY-45 — the font label reflects the active scope (this book vs all books)
 }
 
 // Per-book text-colour presets, keyed by theme polarity (RAWY-40, Band I). The first is "Default"
@@ -734,16 +733,12 @@ function SelectRow<T extends string>({
   );
 }
 
-export function ReadingSettings({ style, update, isRtlBook, section = "typography", bookThemeId, onPickTheme, unified }: Props) {
+export function ReadingSettings({ style, update, isRtlBook, section = "typography", bookThemeId, onPickTheme }: Props) {
   const { t, lang } = useI18n();
-  // RAWY-216: ONE scope wording for the whole drawer. Three phrasings used to say the same thing; the
-  // scope NOUN now lives in a single pair of keys, shared with the panel's banner, and a section
-  // heading appends it after an em dash. The noun is chosen by the ACTIVE book-style model (D43):
-  // unified writes the global row, per-book writes this book's override.
-  const scopeSuffix = `— ${unified ? t("scope.allBooks") : t("scope.thisBook")}`;
-  // The one row whose scope differs from its tab's (see the immersive master in Layout) states it
-  // explicitly, using the same noun rather than a fourth phrasing.
-  const scopeAllSuffix = `— ${t("scope.allBooks")}`;
+  // THE SCOPE SUFFIXES ARE GONE WITH THE SCOPE. They existed to say which of two models a control
+  // was writing under — "this book" or "all books" — and there is only one model now: every reading
+  // setting is the reader's, once, for every book. A suffix that can only ever say the same thing is
+  // not information, and one that still said "this book" would be false.
   // Override-book-colour + hide-chapter-title + hide-first-line stay GLOBAL flags (RAWY-40); the
   // THEME is per-book. RAWY-69 split hide-chapter-title/hide-first-line into two independent flags.
   const { overrideBookColor, hideChapterTitles, hideFirstLine, immersive, setOverride, setHideTitles, setHideFirstLine, setImmersive } = useTheme();
@@ -845,7 +840,7 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
 
       {/* ---- BOOK TEXT FONT (RAWY-45); imported fonts listed too (RAWY-44). RAWY-216: the heading no
            longer rewords itself by scope — it is one stable title plus the shared scope suffix. ---- */}
-      <div className="rs-sec-title">{t("type.font")} <span className="rs-scope">{scopeSuffix}</span></div>
+      <div className="rs-sec-title">{t("type.font")}</div>
       <SelectRow<string>
         label={t("type.latin")}
         value={style.latinFont}
@@ -1068,19 +1063,17 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
       <div className="rs-divider" />
 
       {/* RAWY-210: immersive hide-on-scroll MASTER — a GLOBAL reading-behaviour flag (via useTheme, like the
-          hide-title toggles), not per-book typography, so it is NOT wired through `update`. RAWY-216: it is the
-          ONE deliberate exception to "scope is structural" — it stays in Layout because its two children are
-          per-book and functionally inseparable from it, so it carries the quiet "all books" suffix instead. */}
+          hide-title toggles), not typography, so it is NOT wired through `update`. It stays in Layout
+          because its two children are functionally inseparable from it; the "all books" suffix it used
+          to carry is gone with the scope that made it worth saying. */}
       <ToggleRow
         label={t("type.immersive")}
-        scope={scopeAllSuffix}
         hint={t("type.immersiveHint")}
         on={immersive}
         onToggle={() => setImmersive(!immersive)}
       />
-      {/* RAWY-212: two PER-BOOK sub-toggles (D43 — written via `update`, so unified writes the global default
-          and per-book writes this book's override). They gate each element's hide-on-scroll-away independently;
-          dimmed + inert while the master is off. The resume hint is intentionally NOT a toggle — it always
+      {/* RAWY-212: two sub-toggles gating each element's hide-on-scroll-away independently; dimmed +
+          inert while the master is off. The resume hint is intentionally NOT a toggle — it always
           shows in immersive mode (owner revision). */}
       <ToggleRow sub disabled={!immersive} label={t("type.immHidePill")} on={style.immHidePill} onToggle={() => update({ immHidePill: !style.immHidePill })} />
       <ToggleRow sub disabled={!immersive} label={t("type.immHideScrollbar")} on={style.immHideScrollbar} onToggle={() => update({ immHideScrollbar: !style.immHideScrollbar })} />
@@ -1091,13 +1084,12 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
 
       {section === "allbooks" && (
       <>
-      {/* ---- ALL BOOKS (RAWY-216) — the three GLOBAL flags (RAWY-40/69) that ignore the per-book/unified
-           scope. They used to sit at the bottom of the Theme tab under an "applies to all books" heading,
-           inside a drawer whose banner said "this book" (RAWY-80, audit #8). Now the TAB is the scope
-           signal, so a reader cannot flip one while reading "this book only" and silently change every
-           book. Hide chapter title / Hide first line ALSO lived in the Contents panel — that duplicate is
-           removed, and this is now their single home. ---- */}
-      <div className="rs-sec-hint">{t("settings.allbooksSub")}</div>
+      {/* ---- The three flags that act on the book's own content, plus the reading background. They
+           are stored outside `ReadingStyle` and were grouped here when the drawer still had two
+           scopes, to keep a reader from flipping one while reading "this book only". That contrast is
+           gone: every reading setting applies to every book now, so the group's old subtitle — "these
+           always apply to every book, not just this one" — would be saying something about a
+           distinction that no longer exists. The grouping is kept; the claim is not. ---- */}
       <ToggleRow label={t("theme.override")} on={overrideBookColor} onToggle={() => setOverride(!overrideBookColor)} />
       <ToggleRow label={t("theme.hideTitles")} on={hideChapterTitles} onToggle={() => setHideTitles(!hideChapterTitles)} />
       <ToggleRow

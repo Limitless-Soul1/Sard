@@ -250,6 +250,18 @@ pub fn profile_save(profile: profiles::Profile, state: State<AppState>) -> Resul
     Ok(true)
 }
 
+/// Stamp a profile as worn, so the list can order by use.
+///
+/// FIRE AND FORGET, on purpose. The frontend calls this when a profile is APPLIED, and applying must
+/// not be able to fail because a stamp did — the reader has already got the look they asked for.
+/// The error still travels back for a caller that wants it; the caller does not have to wait.
+#[tauri::command]
+pub fn profile_touch(id: String, state: State<AppState>) -> Result<bool, String> {
+    let conn = state.conn();
+    profiles::touch(&conn, &id).map_err(err)?;
+    Ok(true)
+}
+
 #[tauri::command]
 pub fn profile_delete(id: String, state: State<AppState>) -> Result<bool, String> {
     let conn = state.conn();

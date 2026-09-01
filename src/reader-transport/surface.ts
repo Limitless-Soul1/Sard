@@ -54,6 +54,8 @@ export const CROSSING: Readonly<Record<string, Crossing>> = Object.freeze({
   pdfTextQuality: "mirrored",
   pdfRenderedScale: "mirrored",
   pdfHasSpeakableText: "mirrored",
+  // Reads the resolved style and theme and returns a plain object. No DOM, so a snapshot answers it.
+  notePresentation: "mirrored",
 
   // ---- getters: read as properties, so only the mirror can answer them ---------------------------
   // A getter is never called, so a forwarding function is not a slow answer — it is the wrong VALUE.
@@ -76,6 +78,10 @@ export const CROSSING: Readonly<Record<string, Crossing>> = Object.freeze({
   // `isFixedLayout`, which is mirrored, plus the arrow callback, which the APPLICATION registered and
   // therefore already holds. The side effect it triggers is forwarded and not waited on.
   handleNavKey: "decided-locally",
+  // `resolveNoteLink(hit, href, declared)` is arithmetic on strings the application already holds:
+  // the hit came to it as an event, and the answer is a `URL` resolution plus one comparison. It is
+  // called from a click handler inside an open note, so it cannot wait for a round trip either.
+  resolveNoteLink: "decided-locally",
   // Reads a live layout property of the host document.
   openingUnderTopBar: "mirrored",
 
@@ -88,6 +94,12 @@ export const CROSSING: Readonly<Record<string, Crossing>> = Object.freeze({
   onReadingRedraw: "callback",
   onRelocate: "callback",
   onReferenceHit: "callback",
+  // The book's own footnotes. This one is worth a line, because it was nearly the opposite: the first
+  // shape of the feature handed the application the engine's live `<foliate-view>`, which is a DOM
+  // object and could never have crossed a port. Taking the note as HTML instead was chosen for a
+  // rendering reason, and it leaves a hit that is entirely structured-cloneable — string, string,
+  // string, and a plain rect — so the hosted transport can forward it like any other event.
+  onFootnote: "callback",
 
   // ---- the host asks the application and needs the answer NOW -----------------------------------
   // The engine calls these mid-gesture and branches on what comes back, so an asynchronous reply is
@@ -105,6 +117,24 @@ export const CROSSING: Readonly<Record<string, Crossing>> = Object.freeze({
   // host runs the search with its own callbacks and pushes each batch back, so results still arrive
   // progressively rather than all at the end.
   searchBook: "progressive",
+
+  // ---- the note surface: application-side by construction ---------------------------------------
+  // A note is drawn by the APPLICATION, not by the reader host — it is an extracted fragment on a
+  // Sard sheet, outside the reading frame entirely. These three exist so a selection made there can
+  // reach the ONE selection channel and the ONE segmenter rather than growing a second of each, and all
+  // three touch a DOM that, hosted, would only ever exist on the application's side of the port.
+  //
+  // `setNoteSurface` takes the element itself. `reportNoteSelection` is listed with it because its
+  // `range` field is the same kind of live object: the payload it PUBLISHES is fully cloneable (see
+  // `SelectionInfo`), but what it accepts is not. Hosted, the pair resolves together or not at all
+  // — the note sheet and its segmentation belong where the note is drawn.
+  setNoteSurface: "dom-bound",
+  reportNoteSelection: "dom-bound",
+  // Answers a gesture from the note's own overlay, synchronously, because its result decides whether
+  // the gesture is claimed at all — the same reason `handleNavKey` cannot wait for a round trip.
+  // The overlay it reads is in the application's document, so hosted this belongs on the application's
+  // side with the two above it rather than crossing.
+  noteHighlightAtPoint: "dom-bound",
 
   // ---- carries a live DOM object ----------------------------------------------------------------
   // `open` takes the container to render into. Hosted, the host supplies its own and the parameter

@@ -23,6 +23,32 @@ export const READING_PILL = {
   dark: { fill: "rgb(201,138,94)", op: 0.9, blend: "screen" },
 };
 
+/**
+ * THE SHAPES THE TWO MARKS ARE DRAWN IN, as proportions of one line's height.
+ *
+ * Stated here rather than inside the draw functions because they are no longer read in one place: the
+ * overlay draws them as SVG rectangles over a book, and the profile editor's preview draws the same
+ * two marks as CSS on a specimen page. Two renderings of one design — which is exactly the shape
+ * that drifts, and has before (see `highlightInk.ts`). One set of numbers, two readers.
+ *
+ * The caps are in the reader's own pixels: at book sizes the proportion governs, and at very large
+ * type the cap stops a rounded end from becoming a lozenge.
+ */
+export const TRACK_SHAPE = {
+  /** The band's rounded ends: the design's ~.3em, per line fragment. */
+  spotRadius: 0.2,
+  spotRadiusMax: 6,
+  /** The baseline rule under the band: the design's ~.12em. */
+  ruleHeight: 0.08,
+  ruleHeightMin: 1.5,
+  /** The pill's horizontal breathing room, so the token reads as a pill and not a tight box. */
+  pillPad: 0.12,
+  pillPadMax: 3,
+  /** The pill's rounded ends: the design's ~.28em token. */
+  pillRadius: 0.22,
+  pillRadiusMax: 6,
+};
+
 export interface SpotlightDraw { fill: string; band: number; rule: number }
 export interface PillDraw { fill: string; op: number; blend: string }
 

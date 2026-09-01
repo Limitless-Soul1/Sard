@@ -105,6 +105,7 @@ macro_rules! sard_invoke_handler {
             commands::profiles_list,
             commands::profile_get,
             commands::profile_save,
+            commands::profile_touch,
             commands::profile_delete,
             // PROFILES (stage 6): the shareable package. Inspection is separate from commit on
             // purpose — the reader sees what a file contains before any of it enters.

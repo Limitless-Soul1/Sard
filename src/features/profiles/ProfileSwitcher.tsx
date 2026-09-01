@@ -26,7 +26,7 @@ import { backgroundsList, type BackgroundRow } from "../../lib/ipc";
 import { isBuiltinThemeId } from "../../theme/themes";
 import { SardMini } from "./SardMini";
 import { miniOf } from "./mini";
-import { applyProfile, useProfiles } from "./store";
+import { applyProfile, refreshProfiles, useProfiles } from "./store";
 import { guardUnsaved, useProfileDirty } from "./session";
 import { markFrame } from "./model/markFrame";
 import { profileLabel } from "./model/profile";
@@ -104,7 +104,27 @@ export function ProfileSwitcher({ onManage }: { onManage: () => void }) {
     <div className="pf-switch" ref={wrap}>
       <button
         className="pf-switch-btn"
-        onClick={() => setOpen((v) => !v)}
+        /**
+         * OPENING THE MENU REBUILDS THE LIST, and without this the menu was the one surface where
+         * "most recently worn first" was never visible.
+         *
+         * The order is a projection of the use stamps, and the store holds it until something asks
+         * for it again: `initProfiles` at startup, every write, and the Profiles area on entry.
+         * Switching from HERE is none of those — measured, wearing a هيئة from this menu and
+         * reopening it showed the same order as before, for the whole session. A reader who never
+         * opens the Profiles area therefore never saw the feature at all, which is exactly how it
+         * was reported.
+         *
+         * BEFORE the menu paints, not after, and that is why the read is awaited. The list is
+         * reordered while there is nothing on screen to reorder; a refresh after opening would move
+         * the rows under a pointer already travelling to one of them. It is also why the GRID is not
+         * refreshed on the switch itself — same rule, stated for the surface that shows the list:
+         * rebuild it as it is opened, never while it is being read.
+         */
+        onClick={() => {
+          if (open) { setOpen(false); return; }
+          void refreshProfiles().finally(() => setOpen(true));
+        }}
         aria-haspopup="menu"
         aria-expanded={open}
         title={t("profiles.title")}

@@ -4,7 +4,12 @@
 // the reader's settings, and a rule nobody exercises is a rule nobody has. The acceptance tests
 // matter just as much: a validator that refuses everything is safe and useless.
 
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
+import { PROFILE_READING_FIELDS } from "../../src/features/profiles/model/profile";
+import { ARABIC_DEFAULTS } from "../../src/reader-engine/injectedCss";
 
 import {
   MAX_MANIFEST_BYTES,
@@ -109,17 +114,22 @@ describe("every refusal", () => {
   });
 });
 
-// THE FIREWALL AT THE BORDER. A profile never carries the reader's layout. A package that claims to
-// is refused BY NAME rather than stripped, so a sender is never told they sent something they did not.
+// THE FIREWALL AT THE BORDER, and what it defends has MOVED with the model.
+//
+// It used to refuse the reader's whole layout, because a هيئة was a palette and the measure was the
+// reader's alone. A هيئة is the complete reading preset now: the measure, the page's width and the
+// read-aloud marks are its own, so they cross with it. What may NOT cross is everything a هيئة does
+// not own — refused BY NAME rather than stripped, so a sender is never told they sent something they
+// did not — and the list is derived from `PROFILE_READING_FIELDS` rather than written out, so a new
+// `ReadingStyle` field is refused until someone declares it profile-owned.
 describe("the firewall", () => {
   it.each([
-    ["lineHeight", { lineHeight: 2.4 }],
-    ["pageWidth", { pageWidth: 700 }],
-    ["margins", { margins: 40 }],
-    ["diacritics", { diacritics: "hide" }],
-    ["zoom", { zoom: 1.4 }],
-    ["textAlign", { textAlign: "justify" }],
-    ["paragraphSpacing", { paragraphSpacing: 20 }],
+    ["flowMode", { flowMode: "paged" }],
+    ["pageFitWindow", { pageFitWindow: true }],
+    ["textColor", { textColor: "#ff0000" }],
+    ["pageColor", { pageColor: "#ff0000" }],
+    ["immHidePill", { immHidePill: true }],
+    ["refRuleWeight", { refRuleWeight: 2 }],
   ])("refuses a package carrying %s", (field, extra) => {
     const r = inspectPackage(wrap({ theme: { base: "ivory" }, ...extra }));
     expect(r.ok).toBe(false);
@@ -129,8 +139,27 @@ describe("the firewall", () => {
     }
   });
 
+  it.each([
+    ["lineHeight", { type: { reading: { lineHeight: 2.4 } } }],
+    ["pageWidth", { type: { reading: { pageWidth: 0.8 } } }],
+    ["zoom", { type: { reading: { zoom: 1.4 } } }],
+    ["marginPx", { type: { reading: { marginPx: 120 } } }],
+    ["diacritics", { type: { reading: { diacritics: "hide" } } }],
+    ["the read-aloud marks", { voice: { ttsSpotlightColor: "#6E7F5B" } }],
+  ])("but ADMITS %s, which a هيئة owns", (_name, extra) => {
+    const r = inspectPackage(wrap({ theme: { base: "ivory" }, ...extra }));
+    expect(r.ok, JSON.stringify((r as { refusal?: unknown }).refusal)).toBe(true);
+  });
+
+  it("and `book_style` stays refused — the removed per-book scope may not return by post", () => {
+    const r = inspectPackage(wrap({ theme: { base: "ivory" }, book_style: { zoom: 2 } }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.refusal.code).toBe("pkg.err.carriesReadingSettings");
+  });
+
   it("finds a forbidden field NESTED, not only at the top", () => {
-    const r = inspectPackage(wrap({ theme: { base: "ivory" }, type: { deep: { zoom: 2 } } }));
+    // `zoom` is a هيئة's own now, so the depth test uses one that is not.
+    const r = inspectPackage(wrap({ theme: { base: "ivory" }, type: { deep: { flowMode: "paged" } } }));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.refusal.code).toBe("pkg.err.carriesReadingSettings");
   });
@@ -150,11 +179,15 @@ describe("the firewall", () => {
    * package Sard itself refuses — naming a reading setting its sender never touched. The pair below
    * is the whole argument, and it fails the moment anyone renames the field.
    */
-  it("lets a mark's framing through, and would not have if it were called zoom", () => {
+  it("lets a mark's framing through, and would not have if it were called flowMode", () => {
+    // The original pair used `zoom`, which a هيئة owns today — so the collision it guards against is
+    // shown with a name that is still refused. The argument is unchanged: the scan matches key NAMES
+    // at any depth, so an unrelated field borrowing a reading field's name would export a package
+    // Sard itself refuses.
     const framing = { theme: { base: "ivory" }, icon: { focalX: 20, focalY: 80, scale: 2 } };
     expect(inspectPackage(wrap(framing)).ok).toBe(true);
 
-    const named = { theme: { base: "ivory" }, icon: { focalX: 20, focalY: 80, zoom: 2 } };
+    const named = { theme: { base: "ivory" }, icon: { focalX: 20, focalY: 80, flowMode: "paged" } };
     const r = inspectPackage(wrap(named));
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.refusal.code).toBe("pkg.err.carriesReadingSettings");
@@ -224,5 +257,54 @@ describe("the package carries both palettes", () => {
 
   it("the data version is reported so an import can say what it is", () => {
     expect(PROFILE_DATA_VERSION).toBe(2);
+  });
+});
+
+describe("the two firewalls cannot drift apart", () => {
+  // THE DEFECT THIS PINS. Rust re-checks the manifest on commit rather than trusting the frontend —
+  // which is right, and is why the list has to be written twice. It had drifted: Rust still refused
+  // `lineHeight`, `zoom`, `pageWidth` and `align` long after a هيئة owned them, so a هيئة carrying its
+  // own measure was refused at the door by the very process that had just exported it. The comment
+  // over it said "kept in step with model/package.ts", which is a promise no one can keep by hand.
+  //
+  // So the promise is a test. It reads the Rust source, parses the array, and compares it to what
+  // TypeScript DERIVES from `PROFILE_READING_FIELDS`.
+  const RS = readFileSync(
+    join(import.meta.dirname, "..", "..", "src-tauri/src/profiles/package.rs"), "utf8");
+
+  const rustList = (): string[] => {
+    const m = /const FORBIDDEN: \[&str; \d+\] = \[([\s\S]*?)\];/.exec(RS);
+    expect(m, "the FORBIDDEN array should be findable in package.rs").toBeTruthy();
+    return [...(m![1].matchAll(/"([^"]+)"/g))].map((x) => x[1]);
+  };
+
+  /** What TypeScript refuses: every `ReadingStyle` field a هيئة does not own, plus the two rows. */
+  const tsList = (): string[] => [
+    ...Object.keys(ARABIC_DEFAULTS).filter(
+      (k) => !(PROFILE_READING_FIELDS as readonly string[]).includes(k),
+    ),
+    "reading_style",
+    "book_style",
+  ];
+
+  it("Rust refuses exactly what TypeScript refuses", () => {
+    expect([...rustList()].sort()).toEqual([...tsList()].sort());
+  });
+
+  it("and the declared length matches the array, so a stale count cannot hide an entry", () => {
+    const declared = /const FORBIDDEN: \[&str; (\d+)\]/.exec(RS);
+    expect(Number(declared![1])).toBe(rustList().length);
+  });
+
+  it("neither list refuses anything a هيئة owns", () => {
+    for (const k of PROFILE_READING_FIELDS as readonly string[]) {
+      expect(rustList(), k + " is profile-owned and must cross").not.toContain(k);
+      expect(tsList(), k + " is profile-owned and must cross").not.toContain(k);
+    }
+  });
+
+  it("and both still refuse the removed per-book scope", () => {
+    expect(rustList()).toContain("book_style");
+    expect(tsList()).toContain("book_style");
   });
 });

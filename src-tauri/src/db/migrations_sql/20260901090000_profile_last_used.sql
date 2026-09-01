@@ -1,0 +1,28 @@
+-- WHEN A هيئة WAS LAST WORN — the one fact "most recently used, first" cannot be derived from.
+--
+-- The list has always been ordered `updated_at DESC`, which answers a different question: when the
+-- profile was last EDITED. The two diverge the moment a reader stops editing and starts choosing —
+-- wearing a هيئة for a month never moves it, while opening its editor and closing it again puts it
+-- at the front. Recency of USE is not recoverable from any column that exists.
+--
+-- IT IS NOT `updated_at` REUSED, deliberately. Stamping `updated_at` on activation would make the
+-- column mean two things at once and would falsify every surface that reads it as "edited" — the
+-- editor's own «آخر تعديل» among them. One integer, one meaning.
+ALTER TABLE profiles ADD COLUMN last_used_at INTEGER;
+
+-- NULLABLE, AND LEFT NULL FOR EVERY EXISTING ROW.
+--
+-- A profile that has never been activated since this column existed has no honest answer to "when
+-- was it last used", and inventing one would reorder the reader's list on first launch with no
+-- gesture of theirs to blame. `NULL` says "unknown", and the query reads it as exactly that:
+--
+--     ORDER BY (last_used_at IS NULL), COALESCE(last_used_at, updated_at) DESC
+--
+-- TWO TIERS, because the two kinds of profile cannot be ranked against each other on one number: a
+-- use stamp and an edit time are different facts, and comparing them let a profile nobody had worn
+-- overtake one the reader actually used, merely by being saved. The first key separates them — every
+-- worn profile above every unworn one — and the recency key orders within each tier.
+--
+-- The unworn tier keeps `updated_at DESC`, which is the order this list has always had. That is what
+-- makes this migration invisible: with no stamps yet, every row is in that tier and the list comes
+-- back byte-identical. It re-sorts only as profiles are actually worn.

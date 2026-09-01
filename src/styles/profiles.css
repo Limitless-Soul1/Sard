@@ -31,8 +31,15 @@
 .pf-btn.danger { color: #9c3b3b; border-color: color-mix(in srgb, #9c3b3b 34%, transparent); }
 .pf-btn.danger:hover { background: color-mix(in srgb, #9c3b3b 10%, transparent); }
 
-/* ---- the grid: it wraps, so twelve profiles look the same as three ---- */
-.pf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: var(--sp-6); }
+/* ---- the grid: it wraps, so twelve profiles look the same as three ----
+   THE CARD IS THE THING BEING CHOSEN, so it is drawn at a size worth looking at: the track's floor
+   went 196 -> 274px, a 40% wider card and very nearly twice its area. `auto-fill` over `minmax` is
+   what keeps that a FLOOR rather than a fixed size — the row still reflows to the window and the
+   cards still share the remainder, so nothing has to be re-tuned per width.
+   Everything inside the artwork is proportional (`SardMini` is drawn at `width: 100%`), so the
+   miniature grows with the track instead of sitting in new empty space. The foot's own furniture is
+   raised more gently below: type set 40% larger would shout, and a card is a specimen. */
+.pf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(274px, 1fr)); gap: var(--sp-6); }
 
 .pf-card {
   position: relative; border-radius: var(--r-lg); background: var(--chrome-bg);
@@ -46,19 +53,22 @@
   display: block; width: 100%; padding: 0; border: 0; background: none; cursor: pointer;
   border-radius: 11px 11px 0 0; overflow: hidden;
 }
-.pf-card-foot { display: flex; align-items: center; gap: var(--sp-4); padding: 9px 10px; }
+/* Raised WITH the card, not by the card's own factor: the miniature above is 40% larger and the
+   foot follows at about a sixth of that, so the name still reads as a caption to a specimen rather
+   than as a heading of its own. */
+.pf-card-foot { display: flex; align-items: center; gap: var(--sp-4); padding: 11px 13px; }
 
 /* The seal: the profile's initial, in the profile's OWN face on its OWN paper — a type specimen
    rather than clip art, which is what makes two profiles tell apart at a glance. */
 .pf-seal {
-  width: 30px; height: 30px; flex: none; border-radius: var(--r-md);
+  width: 36px; height: 36px; flex: none; border-radius: var(--r-md);
   display: flex; align-items: center; justify-content: center;
-  font-size: 0.9375rem; line-height: 1; box-shadow: inset 0 0 0 1px var(--chrome-border);
+  font-size: 1.0625rem; line-height: 1; box-shadow: inset 0 0 0 1px var(--chrome-border);
   /* A framed picture is deliberately larger than its box above 1x, and an element cannot clip
      itself. Every other mark surface already clipped; this one had never needed to. */
   overflow: hidden;
 }
-.pf-seal-dot { width: 15px; height: 15px; border-radius: 50%; }
+.pf-seal-dot { width: 18px; height: 18px; border-radius: 50%; }
 /* An image icon fills the seal's own box, so the three kinds are interchangeable wherever a profile
    names itself — same size, same corner, same ring. */
 /* THE FRAMING IS NOT DECLARED HERE ANY MORE. `markFrame` supplies `background-size`, its position
@@ -69,11 +79,11 @@
 
 .pf-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .pf-card-name {
-  font: 600 0.875rem/1.35 var(--ui-font); color: var(--text);
+  font: 600 0.9375rem/1.35 var(--ui-font); color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .pf-card-sub {
-  font: 400 0.6875rem/1.35 var(--ui-font); color: var(--lib-faint, var(--muted));
+  font: 400 0.75rem/1.35 var(--ui-font); color: var(--lib-faint, var(--muted));
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .pf-badge {
@@ -83,11 +93,11 @@
      in parchment — under Sard's own 3.0 floor in five of ten themes. `--accent-text` walks it
      toward the text colour until it clears that floor, which is the correction `regroundFaint`
      already makes for `--lib-faint`; the hue stays the accent's. */
-  color: var(--accent-text); font: 600 0.625rem var(--ui-font);
+  color: var(--accent-text); font: 600 0.6875rem var(--ui-font);
 }
 .pf-card-more {
-  flex: none; width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent;
-  color: var(--muted); font-size: 0.8125rem; line-height: 1; cursor: pointer;
+  flex: none; width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent;
+  color: var(--muted); font-size: 0.9375rem; line-height: 1; cursor: pointer;
 }
 .pf-card-more:hover { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
 
@@ -534,15 +544,6 @@
   position: absolute; inset-block-start: 14px; inset-inline: 0;
   display: flex; align-items: center; justify-content: center; gap: var(--sp-5); z-index: 4;
 }
-/* The measure control, in the same bar as the face switch and dressed like it, because it is the
-   same kind of thing: something that changes what you are looking at. */
-.pf-stage-measure {
-  display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-radius: 9px;
-  background: color-mix(in srgb, var(--pc) 92%, transparent);
-  border: 1px solid var(--pb); box-shadow: 0 3px 10px rgba(20, 14, 6, 0.18);
-  font: 500 0.75rem var(--ui-font); color: var(--pm); cursor: pointer;
-}
-.pf-stage-measure input[type="range"] { width: 96px; accent-color: var(--pa); cursor: pointer; }
 .pf-stage-seg {
   display: flex; gap: 2px; padding: 3px; border-radius: 9px;
   background: color-mix(in srgb, var(--pc) 92%, transparent);
@@ -680,9 +681,51 @@
 }
 .pf-page-ar { position: relative; margin: 0 0 20px; font-size: 18px; line-height: 2.15; }
 .pf-page-hl { padding: 0.05em 0.2em 0.09em; border-radius: 0.12em; }
-/* The accent underline the `marks` chapter governs — two stacked shadows, which is how it clears the
-   descenders instead of striking through them. */
-.pf-page-ul { box-shadow: 0 0.3em 0 0 var(--pa), 0 0.44em 0 0 var(--pa); }
+/* A RUN OF SELECTED TEXT, drawn the way the reading surface draws one: the palette's selection wash
+   behind the words and nothing else. `::selection` sets a background and no other property — no
+   radius, no padding, no change of ink — so neither does this. The colour arrives inline, from the
+   reading palette's own `selection`, because that is the field the `marks` chapter is showing.
+   It replaced an accent UNDERLINE, which was the one mark on this page that showed something Sard
+   does not draw: nothing in the reading surface underlines a run of text.
+
+   `.pf-page-sel` therefore has no rule of its own, and that is the faithful answer rather than an
+   omission: a selection is one background colour, the colour is the palette's and arrives inline, and
+   anything added here would be a treatment the reading surface does not give it. */
+
+/* THE READ-ALOUD MARKS, AS THE OVERLAY PAINTS THEM.
+   The band is the span's own background, the baseline rule a second layer pinned to its bottom edge,
+   and the word token an overlay above the glyphs — the same three shapes, in the same order, that
+   `drawReadingSpotlight` and `drawReadingPill` append to the SVG. Their colours, strengths and
+   proportions all arrive as custom properties from `BookFace`, resolved by the reading engine's own
+   `resolveSpotlight` / `resolvePill` and `TRACK_SHAPE`, so there is no second opinion here about what
+   the marks look like — only about how the same answer is painted. */
+.pf-page-spot.on {
+  /* PER LINE FRAGMENT, exactly as the overlay draws it. `drawReadingSpotlight` walks the range's
+     client rects and appends one rounded band and one baseline rule PER RECT, so a sentence spanning
+     two lines gets two complete marks. A CSS background on a wrapped inline defaults to `slice`,
+     which spreads ONE box across the fragments: the rounded ends appear only at the sentence's start
+     and finish, and `background-position: bottom` puts the baseline rule under the LAST line alone.
+     `clone` gives each fragment its own box, which is the same rule stated in the other medium. */
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  background-color: var(--spot-band);
+  background-image: linear-gradient(var(--spot-rule), var(--spot-rule));
+  background-repeat: no-repeat;
+  background-position: bottom left;
+  background-size: 100% var(--spot-rule-h);
+  border-radius: var(--spot-r);
+}
+.pf-page-pill { position: relative; }
+/* A LAYER OVER THE WORD, NOT A BACKGROUND UNDER IT, and that is the whole of the pill's design: the
+   token is near-solid, and what keeps the glyphs readable through it is the blend (multiply on paper,
+   screen on dark), which needs something painted ON TOP of the text to blend WITH. `opacity` on the
+   span itself would fade the letters instead, which is the mistake `.pf-page-hl` records above. */
+.pf-page-pill.on::after {
+  content: ""; position: absolute; inset-block: 0;
+  inset-inline: calc(-1 * var(--pill-pad));
+  background: var(--pill-fill); opacity: var(--pill-op); mix-blend-mode: var(--pill-blend);
+  border-radius: var(--pill-r); pointer-events: none;
+}
 .pf-page-la {
   position: relative; margin: 0; font-size: 15px; line-height: 1.85;
   direction: ltr; text-align: start; opacity: 0.92;

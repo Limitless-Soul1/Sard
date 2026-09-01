@@ -195,6 +195,14 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "view_order_baseline",
         include_str!("migrations_sql/20260825170000_view_order_baseline.sql"),
     ),
+    // When a profile was last WORN, so the list can order by use rather than by edit. Additive: one
+    // nullable column, no backfill, and the query falls back to `updated_at` for every row that has
+    // none — so nothing moves until a profile is actually activated.
+    (
+        20_260_901_090_000,
+        "profile_last_used",
+        include_str!("migrations_sql/20260901090000_profile_last_used.sql"),
+    ),
 ];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.

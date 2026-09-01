@@ -16,8 +16,11 @@ import type { ReactNode } from "react";
 import { useI18n } from "../../../i18n";
 import { localeDigits } from "../../../lib/format";
 import {
+  PAGE_WIDTH_MAX,
+  PAGE_WIDTH_MIN,
   ZOOM_MAX,
   ZOOM_MIN,
+  pageWidthPx,
   type Align,
   type DiacriticsMode,
 } from "../../../reader-engine/injectedCss";
@@ -141,7 +144,7 @@ export function MeasureSection({
   value: ProfileTypography;
   /** The reader's own live values, shown greyed where the profile has no opinion. */
   fallback: {
-    zoom: number; marginPx: number; lineHeight: number;
+    zoom: number; pageWidth: number; marginPx: number; lineHeight: number;
     letterSpacing: number; paragraphSpacing: number; fontWeight: number;
     firstLineIndent: boolean; align: Align; diacritics: DiacriticsMode;
   };
@@ -266,6 +269,21 @@ export function MeasureSection({
       </Row>
 
       <div className="pf-ms-group">{t("profiles.measure.groupPage")}</div>
+
+      {/* THE MEASURE. It was the one reading value a هيئة could not carry — the page its margins were
+          measured against — which made a هيئة able to set the inset and not the page. It is the
+          reader's own 0..1 fraction, so the row shows what the slider shows. */}
+      <Row
+        label={t("type.pageWidth")}
+        set={set("pageWidth")}
+        shown={set("pageWidth")
+          ? n(`${Math.round(pageWidthPx(v("pageWidth")))} px`)
+          : t("profiles.measure.follows")}
+        onClear={() => clear("pageWidth")}
+      >
+        <Slide value={v("pageWidth")} min={PAGE_WIDTH_MIN} max={PAGE_WIDTH_MAX} step={0.05}
+          onInput={(x) => onChange({ pageWidth: Math.round(x * 100) / 100 })} />
+      </Row>
 
       
 

@@ -1,4 +1,3 @@
-import { readingThemeId } from "./model/profile";
 // UNSAVED CHANGES — one derived answer to "has the active profile been changed?", and one moment to
 // ask about it.
 //
@@ -29,29 +28,63 @@ import { readingThemeId } from "./model/profile";
 import { create } from "zustand";
 
 import { useReader } from "../../reader-engine/store";
+import {
+  TTS_TRACKING_DEFAULTS,
+  TTS_TRACKING_KEYS,
+  defaultsForDir,
+  type ReadingStyle,
+} from "../../reader-engine/injectedCss";
 import { useTheme } from "../../theme/store";
-import type { Profile } from "./model/profile";
+import {
+  PROFILE_READING_FIELDS,
+  TYPOGRAPHY_KEYS,
+  readingThemeId,
+  type Profile,
+} from "./model/profile";
 import { useProfiles } from "./store";
 
 /**
- * The profile-owned values reachable from outside the editor.
+ * WHAT COUNTS AS AN EDIT TO THE ACTIVE هيئة, derived from the هيئة's own definition of what it owns.
  *
- * `numberColor` joined them when the Reader gained its own number-ink row: a profile carries that
- * colour, so changing it from the reading drawer changes the profile, exactly as changing a face
- * does. Values a profile has NO opinion about are deliberately absent — those are the reader's own
- * settings and changing one is not an edit to any profile.
+ * THE DEFECT THIS ENDS. This list used to be written out by hand, and it fell behind the model twice:
+ * `PROFILE_READING_FIELDS` already names every reading value a هيئة owns, and nothing in the product
+ * consulted it. So changing the size, the leading, the margins or the page width from inside the
+ * reader moved the page, was written to the row the هيئة owns, and was invisible to the dirty check
+ * — the reader could reshape their reading, switch هيئة, and lose it with no prompt at all.
+ *
+ * It is derived now. A field added to `PROFILE_READING_FIELDS` is a field this compares, an editor
+ * row, and a value `readingPatch` asserts, in one edit; a future setting cannot escape by being
+ * forgotten in a second list.
  */
-export type SessionKey = "theme_id" | "book_theme_id" | "arabicFont" | "latinFont" | "numberColor";
+const READING_KEYS = PROFILE_READING_FIELDS;
 
+export type SessionKey = "theme_id" | "book_theme_id" | (typeof READING_KEYS)[number];
+
+/**
+ * The two the THEME layer owns, and the reading ones it does not.
+ *
+ * The split matters at exactly one point: `useReader.style` is `null` in the Library (the Reader
+ * nulls it on the way out), so a reading value is UNKNOWN there rather than empty, and none of them
+ * can be compared. The two ids are always known. See `driftOf`.
+ */
 export const SESSION_KEYS: readonly SessionKey[] = [
   "theme_id",
   "book_theme_id",
-  "arabicFont",
-  "latinFont",
-  "numberColor",
+  ...READING_KEYS,
 ] as const;
 
-/** What the profile says each of the four should be. */
+/**
+ * What the profile says each of these should be.
+ *
+ * THE READ-ALOUD MARKS JOINED for the reason `numberColor` did, and it is the model's own rule rather
+ * than a new one: a value the هيئة OWNS and that can be changed from OUTSIDE the editor belongs here.
+ * The seven are now carried by a هيئة and are settable from the reading drawer's read-aloud tab, so
+ * changing one there is an edit to the هيئة exactly as changing a face is.
+ *
+ * A هيئة carrying no read-aloud opinion is not exempt: activating it asserts Sard's own marks (see
+ * `readingPatch`), so that IS what it says they should be, and a reader who changes them has changed
+ * something the هيئة would put back.
+ */
 export function profileValues(p: Profile): Record<SessionKey, string> {
   return {
     // A profile IS its theme, under its own id — that is what the resolver registers.
@@ -67,7 +100,30 @@ export function profileValues(p: Profile): Record<SessionKey, string> {
     // "" is the honest reading of "this profile paints no number ink" — `readingPatch` writes the
     // field either way, so an absent colour is a value the profile holds, not a gap.
     numberColor: p.data.theme.reading.numbers ?? "",
-  };
+    ...Object.fromEntries(
+      TTS_TRACKING_KEYS.map((k) => [k, String((p.data.voice ?? TTS_TRACKING_DEFAULTS)[k] ?? "")]),
+    ),
+    // THE MEASURE, RESOLVED THE WAY ACTIVATION RESOLVES IT.
+    //
+    // A هيئة does not assert a number for a field it does not name — `readingPatch` CLEARS it, and
+    // `loadGlobalStyle` then fills it from the per-script defaults. So what the هيئة "says" a field
+    // should be is its own value where it has one, and the engine's default for THIS BOOK's direction
+    // where it has not. Comparing against one script's defaults would report drift on every Arabic
+    // book (zoom 1.15 vs 1.0, leading 1.9 vs 1.6, align start vs justify).
+    ...Object.fromEntries(
+      TYPOGRAPHY_KEYS.map((k) => [k, String(p.data.type.reading[k] ?? readingBase()[k])]),
+    ),
+  } as Record<SessionKey, string>;
+}
+
+/**
+ * The defaults a cleared field resolves to, for the book that is open.
+ *
+ * `defaultsForDir` is the same function `loadGlobalStyle` uses, so "what the هيئة asserts" here and
+ * "what activating it produces" are one answer rather than two that have to agree.
+ */
+function readingBase(): ReadingStyle {
+  return defaultsForDir(useReader.getState().dir ?? undefined);
 }
 
 /** What Sard is actually showing right now. */
@@ -80,15 +136,19 @@ export function liveValues(): Record<SessionKey, string> {
     arabicFont: String(s?.arabicFont ?? ""),
     latinFont: String(s?.latinFont ?? ""),
     numberColor: String(s?.numberColor ?? ""),
-  };
+    ...Object.fromEntries(TTS_TRACKING_KEYS.map((k) => [k, String(s?.[k] ?? "")])),
+    // The live measure. `useReader.style` is the RESOLVED style, so every one of these is a real
+    // value while a book is open and the comparison is like for like.
+    ...Object.fromEntries(TYPOGRAPHY_KEYS.map((k) => [k, String(s?.[k] ?? "")])),
+  } as Record<SessionKey, string>;
 }
 
 /**
- * Which of the four differ from what the profile saved.
+ * Which profile-owned values differ from what the هيئة saved.
  *
- * An empty face reads as "no drift" rather than as a change to nothing: the reading style fills
- * absent fields from the per-script defaults at render time, and an absent field is not a value the
- * reader chose.
+ * This is the whole of "has the reader changed something that belongs to the هيئة", and it is the
+ * same question whether the change was made in the profile editor or in the reader's own drawer:
+ * both write the values `PROFILE_READING_FIELDS` names, and both are compared here.
  */
 export function driftOf(p: Profile): SessionKey[] {
   // NOTHING IS KNOWN UNTIL THE THEME LAYER HAS LOADED.
@@ -100,20 +160,23 @@ export function driftOf(p: Profile): SessionKey[] {
   //
   // It is the THEME layer, not the reading style. Guarding on the reading style would switch the
   // whole model off whenever the Reader is closed — which is where the profile editor lives, so
-  // every change made in it would look like no change at all. The three reading-derived keys need no
-  // guard of their own: `liveValues` reports them as "" when there is no style, and the rule below
-  // already treats an absent value as no opinion.
+  // every change made in it would look like no change at all.
   if (!useTheme.getState().ready) return [];
+  // AND THE READING STYLE IS UNKNOWN, NOT EMPTY, WHEN NO BOOK IS OPEN.
+  //
+  // The rule this replaces asked whether the live value was `""`, and that conflated two different
+  // facts: "the Reader is closed, so there is nothing to compare" and "the field is genuinely null".
+  // It was wrong in both directions. It reported nothing in the Library — right answer, wrong reason —
+  // and it also SWALLOWED a real edit: a reader who cleared the number ink while wearing a هيئة that
+  // paints one produced `""` live, which the rule read as "no opinion" and never asked about.
+  //
+  // `style === null` is the fact itself. With a book open every reading key is compared properly,
+  // nulls included; with none open, none of them is.
+  const readingKnown = useReader.getState().style != null;
   const want = profileValues(p);
   const have = liveValues();
   return SESSION_KEYS.filter((k) => {
-    // AN ABSENT LIVE VALUE IS NOT A CHANGE. A field the reading style does not carry is one the
-    // reader has expressed no opinion about — not a value they chose that happens to differ. The
-    // rule already held for the two faces; it holds for the number ink for the same reason, and it
-    // is what keeps a reading blob written before that field existed from reading as an edit.
-    if (k === "arabicFont" || k === "latinFont" || k === "numberColor") {
-      return have[k] !== "" && have[k] !== want[k];
-    }
+    if ((READING_KEYS as readonly string[]).includes(k)) return readingKnown && have[k] !== want[k];
     return have[k] !== want[k];
   });
 }

@@ -172,6 +172,9 @@ html, body, #root {
   --z-panel-over: 31; /* an explicit swap that must sit above an open panel (RAWY-169) */
   --z-nav: 35;      /* page-turn controls — ABOVE a panel, by the invariant above */
   --z-modal: 40;    /* a decision the reader must make before anything continues (WP-5C) */
+  --z-modal-over: 41; /* a control that must stay reachable ABOVE a modal surface — the selection
+                         toolbar, raised over an open note. Same reasoning as `--z-panel-over` one rank
+                         down, and the same invariant: no application control may be occluded. */
 }
 
 /* ---- Reader layout (RAWY-14, band C) ---- */
@@ -688,17 +691,6 @@ html, body, #root {
 }
 .sp-title { font: 600 var(--fs-large) var(--ui-font); color: var(--text); }
 /* Text · Page · Theme tab group (RAWY-34, design band I) — a segmented pill, active raised */
-/* Per-book scope banner (RAWY-40, Band I) — everything in this panel overrides THIS book only. */
-.sp-scope {
-  display: flex; align-items: center; gap: var(--sp-5); margin: 12px 16px 6px; padding: 10px 12px;
-  border-radius: 9px; background: color-mix(in srgb, #7b59a0 14%, var(--paper-bg));
-  border: 1px solid color-mix(in srgb, #7b59a0 28%, transparent);
-}
-/* Unified scope (RAWY-43): "applies to all books" — use the accent instead of the per-book purple. */
-.sp-scope.unified {
-  background: color-mix(in srgb, var(--accent) 12%, var(--paper-bg));
-  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
-}
 /* RAWY-85/141: the PDF read-only panel. One consistent inset — the blocks inherit `.sp-body`'s
    horizontal padding and stack with an even rhythm, so the note/appearance/copy align (the old note
    & copy carried their own 16px margins while the sections sat at 22px → ragged edges). */
@@ -816,20 +808,6 @@ html, body, #root {
   background: var(--text); color: var(--paper-bg); font: 500 0.8125rem var(--ui-font);
   padding: 9px 17px; border-radius: 20px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.3);
 }
-.sp-scope.unified .sp-scope-ico { background: var(--accent); }
-.sp-scope-ico {
-  width: 24px; height: 24px; flex: none; border-radius: 6px; display: flex; align-items: center;
-  justify-content: center; background: #7b59a0; color: #fff; font-size: 0.75rem;
-}
-.sp-scope-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.sp-scope-title { font: 600 var(--fs-small) var(--ui-font); color: var(--text); }
-.sp-scope-sub { font: 400 var(--fs-tiny) var(--ui-font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sp-reset {
-  flex: none; border: 0; background: transparent; cursor: pointer; white-space: nowrap;
-  font: 500 0.6875rem var(--ui-font); color: #7b59a0; padding: 4px 6px; border-radius: 6px;
-}
-.sp-reset:hover:not(:disabled) { background: color-mix(in srgb, #7b59a0 14%, transparent); }
-.sp-reset:disabled { opacity: 0.4; cursor: default; }
 
 /* Per-book TEXT COLOUR inks + contrast guard (RAWY-40, Band I). */
 .rs-inks { display: flex; align-items: center; gap: var(--sp-5); flex-wrap: wrap; }
@@ -1075,7 +1053,6 @@ html, body, #root {
 .rs-swatch { width: 100%; height: 42px; border-radius: 6px; border: 1px solid var(--chrome-border); }
 .rs-swatch.on { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg); border-color: transparent; }
 .rs-swatch-name { font: 500 0.625rem var(--ui-font); color: var(--muted); }
-
 
 /* ---- Reading side panels (RAWY-21, band C-II): chapters (leading) + annotations (trailing) ---- */
 .reader-panel {
@@ -3672,7 +3649,10 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
    (flex + logical props). Anchored/flipped like the old bar.
    ============================================================================ */
 .hl-pop {
-  position: fixed; z-index: 30; transform: translate(-50%, -100%);
+  /* ABOVE A MODAL SURFACE, by the invariant at the top of this file: no application control may be
+     occluded. At `--z-panel` it was hidden behind an open note's scrim, so selecting text in a note
+     raised a toolbar nobody could see. It is a transient control over the reading area either way. */
+  position: fixed; z-index: var(--z-modal-over); transform: translate(-50%, -100%);
   background: var(--text); color: var(--paper-bg);
   border-radius: 15px; box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4); font-family: var(--ui-font);
   padding: 11px 13px 12px; display: flex; flex-direction: column; max-width: 94vw;
@@ -4556,7 +4536,6 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .pg-lightbox.dark .pg-lb-confirm-text { color: #E4E2F0; }
 .pg-toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 60; background: var(--text); color: var(--app-bg); font: 600 0.8125rem var(--ui-font); padding: 10px 22px; border-radius: 22px; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28); }
 
-
 /* ===== RAWY-91: App-font WEIGHT control ===== the control sets --ui-weight (Regular 400 / Medium 500
    / Bold 700); it drives the main chrome text weight here (last rule wins over shorthand weights).
    Big display titles keep their design weight so size still marks the hierarchy; a font that lacks a
@@ -4789,6 +4768,185 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .ref-save:focus-visible, .ref-cancel:focus-visible, .ref-del:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ---- the reference popup: label · phrase · note. No buttons; a tap outside closes it ---- */
+/* ---- THE BOOK'S OWN NOTE: A SECOND SHEET OF THE SAME PAPER ----
+   Sard reads as a page on a desk. `.page-sheet` is the paper, `.reader-desk` is the surface beneath
+   it, and the measure the reader chose decides how wide the text runs. A note belongs to that world,
+   so it is drawn as another sheet of the same paper laid on the same desk rather than as a panel of
+   interface colour: the paper, ink, face, measure and direction all come from the reading surface,
+   handed over whole by `notePresentation()`.
+
+   The paper and the ink are INLINE, set from that resolver, because they are the reading palette and
+   not the interface's — a chrome token here would be the wrong colour in every theme where the two
+   differ, and would ignore a page colour set for one book. Everything below is geometry, elevation and
+   the small amount of type that is Sard speaking rather than the book.
+
+   COMPOSED, NOT PINNED. The earlier version was positioned against the reference's rectangle, which is
+   what made it read as a tooltip. This one is placed once, centred, at a width taken from the reading
+   measure so the note's lines break like the book's. */
+.note-scrim {
+  /* THE READER'S OWN RANK, not a number picked here. `--z-modal` is the layer this application
+     reserves for "a decision the reader must make before anything continues", which is what one
+     surface at a time means: it sits above the Contents and Notes drawers (`--z-panel`) and above the
+     page-turn controls (`--z-nav`), so the dim covers everything it is dimming. MEASURED with the
+     Contents drawer open: `elementFromPoint` inside the drawer returns this scrim. */
+  position: fixed; inset: 0; z-index: var(--z-modal);
+  display: flex; align-items: center; justify-content: center;
+  padding: 5vh 4vw;
+  /* The desk, dimmed. One surface at a time: this removes the competition rather than adding
+     decoration, and it is the dismissal as much as it is the treatment. */
+  background: rgba(20, 15, 8, 0.42);
+  animation: note-scrim-in 0.18s ease both;
+}
+:root[data-dark="true"] .note-scrim { background: rgba(0, 0, 0, 0.55); }
+@keyframes note-scrim-in { from { opacity: 0; } to { opacity: 1; } }
+
+.note-sheet {
+  /* THE MEASURE, from the page's own. `--page-pref` is the absolute width the reader set for the book
+     (480..1400px), so a note breaks its lines the way the book does. It is capped narrower than the
+     page can go: a two-line note on a 1400px sheet is a caption, not a page. */
+  inline-size: min(100%, var(--page-pref, 720px), 42rem);
+  max-block-size: 100%;
+  display: flex; flex-direction: column;
+  border-radius: var(--r-xl);
+  /* The page's own shadow family, lifted: this sheet is above the one it covers. */
+  box-shadow: 0 24px 60px rgba(60, 40, 16, 0.28), 0 2px 8px rgba(60, 40, 16, 0.12);
+  padding: clamp(1.35rem, 3.4vw, 2.4rem) clamp(1.35rem, 3.4vw, 2.6rem) clamp(1.1rem, 2.6vw, 1.8rem);
+  animation: note-rise 0.22s cubic-bezier(0.32, 0.72, 0, 1) both;
+  outline: none;
+}
+:root[data-dark="true"] .note-sheet {
+  /* The hairline carries more of the load on a dark theme than the shadow does: a near-black paper on
+     a desk dimmed to near-black has no edge left for a shadow to describe. It is still only a hairline. */
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6), inset 0 0 0 1px rgba(255, 255, 255, 0.09);
+}
+@keyframes note-rise { from { opacity: 0; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .note-scrim, .note-sheet { animation: none; }
+}
+
+/* THE HEAD. Three things and a hairline: the numeral that was touched, what kind of note this is, and
+   the way out. No dot, no uppercase tracking, nothing that belongs to a toolbar. */
+/* TWO GROUPS AND A RULE: what this note is, and the way out. `space-between` states that directly;
+   the close used to be pushed across by `margin-inline-start: auto`, which says nothing about the
+   layout and mirrors with whatever direction it lands in.
+
+   The head keeps its OWN direction, deliberately. It is Sard's frame around the note, not part of the
+   book, so it does not flip when an Arabic book is followed by an English one — the identification
+   is always at the same edge and the close is always in the same corner, which is what makes it
+   findable without looking. The note's TEXT below is the book's, and does mirror. */
+.note-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 0.6rem;
+  direction: ltr;
+  padding-block-end: clamp(0.7rem, 1.6vw, 1rem);
+  margin-block-end: clamp(0.7rem, 1.6vw, 1rem);
+  border-block-end: 1px solid color-mix(in srgb, var(--note-ink, currentColor) 14%, transparent);
+}
+.note-ident { display: flex; align-items: baseline; gap: 0.55rem; min-width: 0; }
+/* Set in the BOOK's face (inline), at the size of a drop capital: it is the connection between the
+   word the reader left and the sheet in front of them, so it is content, not a label. */
+.note-marker {
+  font-size: 1.6rem; line-height: 1; font-weight: 600;
+  color: var(--note-accent, currentColor);
+  font-variant-numeric: lining-nums;
+}
+.note-kind {
+  font: 500 0.78rem/1 var(--ui-font);
+  color: color-mix(in srgb, var(--note-ink, currentColor) 55%, transparent);
+  letter-spacing: 0.01em;
+}
+.note-close {
+  align-self: center;
+  display: inline-flex; align-items: center; justify-content: center;
+  inline-size: 1.9rem; block-size: 1.9rem;
+  border: 0; border-radius: var(--r-md); cursor: pointer;
+  background: transparent;
+  color: color-mix(in srgb, var(--note-ink, currentColor) 55%, transparent);
+  transition: background 0.14s ease, color 0.14s ease;
+}
+.note-close:hover {
+  background: color-mix(in srgb, var(--note-ink, currentColor) 9%, transparent);
+  color: var(--note-ink, currentColor);
+}
+
+/* THE NOTE ITSELF. The book's own markup lands here, and books write a note as whatever they like —
+   measured in this library, a `<dl>`, an `<li>` and a bare `<p>` all occur. The rules below settle only
+   what would otherwise read as a defect of Sard's: a list marker or indent the book never meant as one,
+   and the leading and trailing margins that would open a gap against the rule and the sheet's edge.
+   Nothing here restyles the note's content. */
+.note-text-wrap { position: relative; min-block-size: 0; }
+/* THE NOTE'S MARK LAYER. The engine's own overlay SVG is drawn in here, over the words and under
+   nothing: it is clipped to the text so a mark scrolled out of view does not escape onto the paper,
+   and it never takes a pointer — the text underneath keeps every gesture, selection included. */
+.note-overlay {
+  /* INSIDE THE SHEET, over the words and in the SAME stacking context as them. That placement is what
+     makes the mark look right, and it took a measurement to find: a highlight is painted with
+     `mix-blend-mode`, which blends with the backdrop of its own stacking context. As a SIBLING of the
+     sheet the backdrop was the dimmed desk, not the note's paper and glyphs — so the mark came out
+     as a flat wash painted OVER the text, greying the letters, while the same mark on the page sits
+     behind bright glyphs. Here the backdrop is the note itself, exactly as the page's overlay sits
+     beside the reading frame inside foliate's own view element.
+
+     Coordinates are handled by a `viewBox` rather than by offsets: `getClientRects()` answers in
+     viewport coordinates, and a viewBox of the layer's own viewport rectangle makes user space and
+     viewport space the same thing at 1:1. Two earlier attempts — translating the SVG, then offsetting
+     its `left`/`top` — were both off by a box-model residual or clipped by the SVG's own bounds.
+
+     It never takes a pointer: every gesture belongs to the words underneath, selection included. */
+  position: absolute; inset: 0; overflow: hidden; pointer-events: none;
+}
+/* GROWN: the sheet takes the desk, and the layout — not a second magic fraction — decides how
+   much of it the text gets. The head and the rule keep their size; everything left over is reading. */
+.note-sheet.grown { block-size: 100%; }
+.note-sheet.grown .note-text-wrap { flex: 1 1 auto; }
+.note-sheet.grown .note-text { block-size: 100%; }
+.note-text {
+  overflow: auto; overscroll-behavior: contain; scrollbar-width: thin;
+  /* It is the book's text and it reads like the book's text: selectable, with the reading cursor. The
+     application sets `user-select: none` widely on chrome, and a note is not chrome. */
+  user-select: text; -webkit-user-select: text; cursor: auto;
+  /* The application tints its scrollbars from the INTERFACE ink (see the :root rule near the top).
+     Inside this sheet the ink is the BOOK's, so the bar is re-tinted from that — same property,
+     same technique, so the bar melts into this paper the way it melts into every other surface. */
+  scrollbar-color: color-mix(in srgb, var(--note-ink, currentColor) 17%, transparent) transparent;
+}
+/* The note's own first and last blocks lose their outer margins, one level deep on each side: a book
+   wraps a note in a `<dl>` or a `<div>` as often as it writes a bare `<p>`, and stopping at the wrapper
+   leaves the reader looking at an inch of blank paper under the rule. `:where()` carries no
+   specificity, so the book's own spacing between its blocks is untouched. */
+:where(.note-text > :first-child, .note-text > :first-child > :first-child) { margin-block-start: 0; }
+:where(.note-text > :last-child, .note-text > :last-child > :last-child) { margin-block-end: 0; }
+.note-text ol, .note-text ul, .note-text dl, .note-text dd {
+  margin-inline: 0; padding-inline-start: 0; list-style: none;
+}
+.note-text img { max-inline-size: 100%; block-size: auto; }
+/* A note's own links — in practice its backlink — are live, and say so. */
+.note-text [data-note-href] { color: var(--note-accent, currentColor); cursor: pointer; text-decoration: none; }
+.note-text [data-note-href]:hover { text-decoration: underline; }
+
+/* THE ONLY SIGN THAT THERE IS MORE: the paper running out. Not a scrollbar, not a chevron. */
+.note-fade {
+  position: absolute; inset-inline: 0; inset-block-end: 0; block-size: 3.2rem;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--note-paper, transparent));
+}
+
+/* «أفتحها» — it GROWS the sheet, it does not navigate. A note that sent the reader to the back of
+   the book cost them their place and left a return control behind it; there is no navigation here to
+   leave anything behind. Quiet type, no chip, no border: an invitation, not a button bar. */
+.note-grow {
+  align-self: flex-start;
+  margin-block-start: clamp(0.55rem, 1.2vw, 0.85rem);
+  border: 0; cursor: pointer;
+  padding: 0.42rem 0.9rem; border-radius: var(--r-md);
+  font: 600 0.92rem/1 var(--ui-font);
+  /* A quiet tint of the note's OWN accent, so the one control the sheet offers reads as part of the
+     paper rather than as a button borrowed from the toolbar. */
+  color: var(--note-accent, currentColor);
+  background: color-mix(in srgb, var(--note-accent, currentColor) 12%, transparent);
+  transition: background 0.14s ease;
+}
+.note-grow:hover { background: color-mix(in srgb, var(--note-accent, currentColor) 20%, transparent); }
+
 .ref-popup-scrim { position: fixed; inset: 0; z-index: 61; }
 .ref-popup {
   position: fixed; z-index: 62; transform: translate(-50%, -100%);
@@ -5315,7 +5473,6 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 }
 @media (prefers-reduced-motion: reduce) { .bg-ctl-spin { animation-duration: 1.4s; } }
 
-
 /* A refused cover says why, in the dialog, next to the button that refused it. Uses the theme
    ink rather than a literal red so it stays legible on all sixteen papers. */
 .edit-cover-error {
@@ -5324,7 +5481,6 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   border-inline-start: 3px solid var(--accent);
   padding: 7px 10px; border-radius: var(--r-sm); text-align: start;
 }
-
 
 /* BETA identification in About — the ONLY place a Beta says it is one (owner, 2026-08-07). The window
    title, product name and version stay identical to production so a tester experiences exactly the
@@ -5377,7 +5533,6 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
     -webkit-backdrop-filter: none;
   }
 }
-
 
 /* ================================================================================================
    CONTROL TIERS — Settings and the Reader's drawer, on the same steps as everything else.

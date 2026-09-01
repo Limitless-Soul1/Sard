@@ -12,7 +12,6 @@ import { initBookmarkStyle } from "./lib/bookmarkStyle";
 import { initReadMarkerStyle } from "./lib/readMarkerStyle"; // RAWY-256: persisted read-marker variant
 import { initFonts } from "./lib/fonts";
 import { applyBackgrounds, initBackground, useBackground } from "./lib/background"; // RAWY-265
-import { initStyleScope } from "./lib/styleScope";
 import { runCloseFlush } from "./lib/closeFlush"; // the window close is owned by the page, not the Reader
 import { diagStart } from "@diag"; // DIAGNOSTIC BUILD ONLY - observes, never intervenes
 import { registerOutcomeRecorder } from "./lib/listeningOutcomes"; // RAWY-263: the local outcome baseline
@@ -91,7 +90,6 @@ function App() {
     initFonts(); // load + apply persisted UI font + register imported @font-faces (RAWY-39)
     initBookmarkStyle(); // load persisted bookmark shape/colour/position (RAWY-41)
     initReadMarkerStyle(); // RAWY-256: persisted chapter read-marker variant (global, like bookmark shape)
-    initStyleScope(); // load unified-vs-per-book book-style scope (RAWY-43)
     // DIAGNOSTIC BUILD ONLY. Armed at startup so the tester has to do nothing special before
     // reproducing — the evidence for a failure is worthless if collection began after it. Hooks
     // `fetch` and subscribes to the TTS store; it records and never intervenes.

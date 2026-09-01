@@ -42,10 +42,20 @@ pub struct Profile {
     pub updated_at: i64,
     pub bg_library: Option<String>,
     pub bg_reading: Option<String>,
+    /// When the profile was last WORN, or `None` for one never activated since the column existed.
+    ///
+    /// OPTIONAL OVER THE WIRE for the same reason: a frontend that saves a profile sends the struct
+    /// it was given, and nothing there has any business naming a use-stamp.
+    ///
+    /// READ HERE, WRITTEN ONLY BY `touch`. `save` does not carry this column — deliberately, and
+    /// that is the whole safety of the field: a frontend round-trip (rename, edit, re-save) cannot
+    /// clobber it with a stale value, and no caller has to remember to preserve it.
+    #[serde(default)]
+    pub last_used_at: Option<i64>,
 }
 
 const COLS: &str = "id, name, description, author, icon_kind, icon_ref, data, derived_from, \
-                    created_at, updated_at, bg_library, bg_reading";
+                    created_at, updated_at, bg_library, bg_reading, last_used_at";
 
 fn now_unix() -> i64 {
     SystemTime::now()
@@ -68,12 +78,30 @@ fn row_to_profile(r: &rusqlite::Row<'_>) -> rusqlite::Result<Profile> {
         updated_at: r.get(9)?,
         bg_library: r.get(10)?,
         bg_reading: r.get(11)?,
+        last_used_at: r.get(12)?,
     })
 }
 
-/// Every profile, most-recently-edited first — the order the Profiles area presents.
+/// Every profile, MOST RECENTLY WORN first — the order the Profiles area presents.
+///
+/// USE, NOT EDIT. `updated_at` answers a different question, and the two diverge the moment a reader
+/// stops editing and starts choosing: wearing a profile for a month never moved it, while opening
+/// its editor and closing it again put it at the front.
+///
+/// TWO TIERS, AND THE FIRST KEY IS WHAT MAKES THE NAME HONEST. `COALESCE` alone sorted the two kinds
+/// of profile against each other on incomparable numbers: a profile that had never been worn was
+/// ranked by when it was EDITED, so editing one floated it above profiles the reader had actually
+/// used. That is not "most recently used". `last_used_at IS NULL` splits them first — every worn
+/// profile above every unworn one — and the recency key then orders within each tier: by use above,
+/// by edit below.
+///
+/// THE UNWORN TIER KEEPS `updated_at DESC`, which is the order this list has always had, so it is a
+/// deterministic fallback rather than a new rule. It is also what keeps the migration honest: with no
+/// stamps yet every row is in that tier, and the list is byte-identical to what it was before.
 pub fn list(conn: &Connection) -> rusqlite::Result<Vec<Profile>> {
-    let sql = format!("SELECT {COLS} FROM profiles ORDER BY updated_at DESC");
+    let sql = format!(
+        "SELECT {COLS} FROM profiles          ORDER BY (last_used_at IS NULL), COALESCE(last_used_at, updated_at) DESC"
+    );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], row_to_profile)?;
     rows.collect()
@@ -121,6 +149,23 @@ pub fn save(conn: &Connection, p: &Profile) -> rusqlite::Result<()> {
             p.bg_library,
             p.bg_reading,
         ],
+    )?;
+    Ok(())
+}
+
+/// Stamp a profile as worn, now.
+///
+/// THE ONLY WRITER of `last_used_at`, and it touches nothing else — not `updated_at`, not `data`.
+/// Wearing a profile is not editing it, and a reader who only ever switches between two profiles
+/// must not watch their «last edited» dates crawl forward for it.
+///
+/// A missing id is not an error: the caller's intent ("this profile was just used") is already
+/// unsatisfiable, and a profile deleted between the switch and the stamp is a race the reader should
+/// never see reported.
+pub fn touch(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE profiles SET last_used_at = ?2 WHERE id = ?1",
+        rusqlite::params![id, now_unix()],
     )?;
     Ok(())
 }
@@ -190,6 +235,7 @@ mod tests {
             updated_at: 0,
             bg_library: None,
             bg_reading: None,
+            last_used_at: None,
         }
     }
 
@@ -257,6 +303,183 @@ mod tests {
         let left = list(&conn).unwrap();
         assert_eq!(left.len(), 1);
         assert_eq!(left[0].id, "u:two");
+    }
+
+    /// Set the two time columns by hand.
+    ///
+    /// `now_unix` has one-second resolution, so two saves in the same test would tie and the order
+    /// under test would be whatever SQLite happened to return. Writing the stamps directly is what
+    /// makes these assertions about the QUERY rather than about how fast the machine is.
+    fn stamp(conn: &Connection, id: &str, updated: i64, used: Option<i64>) {
+        conn.execute(
+            "UPDATE profiles SET updated_at = ?2, last_used_at = ?3 WHERE id = ?1",
+            rusqlite::params![id, updated, used],
+        )
+        .unwrap();
+    }
+
+    /// Wear it at a stated moment. `touch` uses the clock, which has one-second resolution, so a
+    /// sequence of wears in one test would tie; this states the moment instead.
+    fn stamp_used(conn: &Connection, id: &str, used: i64) {
+        conn.execute(
+            "UPDATE profiles SET last_used_at = ?2 WHERE id = ?1",
+            rusqlite::params![id, used],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_library_that_predates_the_column_keeps_the_order_it_had() {
+        // The migration adds no stamps, so on the first launch after it every profile is unworn and
+        // the list must be exactly what `updated_at DESC` gave — no reordering the reader did not
+        // ask for, and no gesture of theirs to blame for one.
+        let conn = db();
+        for id in ["u:one", "u:two", "u:three"] {
+            save(&conn, &sample(id)).unwrap();
+        }
+        stamp(&conn, "u:one", 300, None);
+        stamp(&conn, "u:two", 200, None);
+        stamp(&conn, "u:three", 100, None);
+
+        let ids: Vec<String> = list(&conn).unwrap().into_iter().map(|p| p.id).collect();
+        assert_eq!(ids, ["u:one", "u:two", "u:three"]);
+    }
+
+    #[test]
+    fn wearing_a_profile_puts_it_first_however_old_it_is() {
+        // The whole point: the LEAST recently edited profile, worn, outranks the most recently
+        // edited one that has not been.
+        let conn = db();
+        for id in ["u:new", "u:old"] {
+            save(&conn, &sample(id)).unwrap();
+        }
+        stamp(&conn, "u:new", 9_000, None);
+        stamp(&conn, "u:old", 10, None);
+        touch(&conn, "u:old").unwrap();
+
+        let ids: Vec<String> = list(&conn).unwrap().into_iter().map(|p| p.id).collect();
+        assert_eq!(ids, ["u:old", "u:new"]);
+    }
+
+    #[test]
+    fn wearing_is_not_editing() {
+        // A reader who only switches between two profiles must not watch their last-edited dates
+        // crawl forward. `touch` writes one column and no other.
+        let conn = db();
+        save(&conn, &sample("u:one")).unwrap();
+        stamp(&conn, "u:one", 500, None);
+        let before = get(&conn, "u:one").unwrap().unwrap();
+
+        touch(&conn, "u:one").unwrap();
+
+        let after = get(&conn, "u:one").unwrap().unwrap();
+        assert_eq!(after.updated_at, before.updated_at, "when it was edited never moves");
+        assert_eq!(after.created_at, before.created_at);
+        assert_eq!(after.data, before.data);
+        assert!(after.last_used_at.unwrap() > 0, "and the use stamp is written");
+    }
+
+    #[test]
+    fn renaming_a_worn_profile_cannot_lose_its_use_stamp() {
+        // `save` does not carry the column, so a frontend round-trip — which reads a profile, edits
+        // a field and writes the whole struct back — has no way to clobber the stamp with a stale
+        // value. This is the property that removes "remember to preserve it" from every caller.
+        let conn = db();
+        save(&conn, &sample("u:one")).unwrap();
+        stamp(&conn, "u:one", 500, Some(777));
+
+        let mut edited = get(&conn, "u:one").unwrap().unwrap();
+        edited.name = Some("Evening".into());
+        edited.last_used_at = None; // a caller that never knew about the column
+        save(&conn, &edited).unwrap();
+
+        let after = get(&conn, "u:one").unwrap().unwrap();
+        assert_eq!(after.name.as_deref(), Some("Evening"));
+        assert_eq!(after.last_used_at, Some(777), "the stamp survives the edit");
+    }
+
+    #[test]
+    fn a_new_profile_is_unworn_so_it_sits_below_every_worn_one() {
+        // MADE IS NOT USED. A profile just created has no stamp, so it leads the UNWORN tier — above
+        // other profiles nobody has worn, and below every profile that has been. Ranking it against
+        // worn ones by its edit time is exactly the confusion the first key removes.
+        let conn = db();
+        save(&conn, &sample("u:worn")).unwrap();
+        stamp(&conn, "u:worn", 10, Some(20));
+        save(&conn, &sample("u:stale")).unwrap();
+        stamp(&conn, "u:stale", 5, None);
+        save(&conn, &sample("u:fresh")).unwrap(); // newest `updated_at` of the three
+
+        let ids: Vec<String> = list(&conn).unwrap().into_iter().map(|p| p.id).collect();
+        assert_eq!(ids, ["u:worn", "u:fresh", "u:stale"]);
+    }
+
+    #[test]
+    fn editing_an_unworn_profile_cannot_lift_it_above_a_worn_one() {
+        // The reported defect, as an assertion: a profile nobody has ever worn must not overtake one
+        // the reader actually used, however recently it was saved.
+        let conn = db();
+        save(&conn, &sample("u:worn")).unwrap();
+        stamp(&conn, "u:worn", 10, Some(20));
+        save(&conn, &sample("u:never")).unwrap();
+        stamp(&conn, "u:never", 9_999_999, None); // edited far more recently than the other was worn
+
+        let ids: Vec<String> = list(&conn).unwrap().into_iter().map(|p| p.id).collect();
+        assert_eq!(ids, ["u:worn", "u:never"]);
+    }
+
+    #[test]
+    fn the_sequence_the_owner_specified() {
+        // A, B, C created and never worn; then worn in a stated order, with D made at the end.
+        let conn = db();
+        for (i, id) in ["u:a", "u:b", "u:c"].iter().enumerate() {
+            save(&conn, &sample(id)).unwrap();
+            stamp(&conn, id, 100 + i as i64, None);
+        }
+        let ids = |c: &Connection| -> Vec<String> {
+            list(c).unwrap().into_iter().map(|p| p.id).collect()
+        };
+        touch(&conn, "u:c").unwrap();
+        stamp_used(&conn, "u:c", 1_000);
+        assert_eq!(ids(&conn), ["u:c", "u:b", "u:a"]); // C worn; B, A unworn by edit time
+
+        stamp_used(&conn, "u:a", 1_001);
+        assert_eq!(ids(&conn), ["u:a", "u:c", "u:b"]);
+
+        stamp_used(&conn, "u:b", 1_002);
+        assert_eq!(ids(&conn), ["u:b", "u:a", "u:c"]);
+
+        stamp_used(&conn, "u:a", 1_003);
+        assert_eq!(ids(&conn), ["u:a", "u:b", "u:c"]);
+
+        // D made last, never worn: below all three, however new its edit time.
+        save(&conn, &sample("u:d")).unwrap();
+        stamp(&conn, "u:d", 9_999_999, None);
+        assert_eq!(ids(&conn), ["u:a", "u:b", "u:c", "u:d"]);
+    }
+
+    #[test]
+    fn touching_a_profile_that_is_gone_is_not_an_error() {
+        // The switch and the stamp are two statements; a profile deleted between them is a race the
+        // reader should never see reported.
+        let conn = db();
+        touch(&conn, "u:nope").unwrap();
+        assert!(get(&conn, "u:nope").unwrap().is_none());
+    }
+
+    #[test]
+    fn deleting_a_worn_profile_leaves_the_rest_in_use_order() {
+        let conn = db();
+        for id in ["u:a", "u:b", "u:c"] {
+            save(&conn, &sample(id)).unwrap();
+        }
+        stamp(&conn, "u:a", 30, Some(300));
+        stamp(&conn, "u:b", 20, Some(100));
+        stamp(&conn, "u:c", 10, Some(200));
+        delete(&conn, "u:a").unwrap();
+
+        let ids: Vec<String> = list(&conn).unwrap().into_iter().map(|p| p.id).collect();
+        assert_eq!(ids, ["u:c", "u:b"]);
     }
 
     #[test]

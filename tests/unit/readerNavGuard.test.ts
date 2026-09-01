@@ -102,3 +102,39 @@ describe("normal paging is not weakened to hide the exception", () => {
     expect(body).toContain("this.backward()");
   });
 });
+
+describe("the page margin is Sard's, and there is one of it", () => {
+  // THE DEFECT. foliate's paginator carries `--_gap: 7%`, and in SCROLLED flow it spends the whole of
+  // it as `!important` padding on the book's own <html>: `gap = -g/(g-1) * size`, 7.53% a side. That
+  // is a column gutter's arithmetic applied where there are no columns, and it landed ON TOP of the
+  // margin Sard already applies by insetting `.page-host`.
+  //
+  // Measured at 1440x940 with the reader's margin at 16px: sheet 1400, host 1368, and inside it
+  // <html> took 102.968px a side — exactly 0.075269 x 1368. 206px of a 1368px page went to a margin
+  // nobody asked for, and because it is a proportion of the container it did not shrink as the type
+  // grew: at zoom 2.5 the strip was the same 103px and the line simply held fewer words.
+  const CTRL = readFileSync(
+    join(import.meta.dirname, "..", "..", "src/reader-engine/FoliateController.ts"), "utf8");
+
+  it("scrolled flow is given no gap of its own", () => {
+    expect(CTRL).toContain('view.renderer.setAttribute("gap", this.scrolledMode ? "0%" : "7%");');
+  });
+
+  it("and PAGED flow keeps foliate's, because there it is the column gutter", () => {
+    // Collapsing it there would run the two facing columns together — the gap is doing its real job
+    // in paged flow, and half of it is the outer padding.
+    const at = CTRL.indexOf('setAttribute("gap"');
+    expect(CTRL.slice(at, at + 60)).toContain('"7%"');
+  });
+
+  it("it is set through the renderer's own attribute, touching no vendored line", () => {
+    // `attributeChangedCallback` forwards `gap` to `--_gap`; this is the same route RAWY-21 already
+    // uses to drive the measure through the closed shadow boundary.
+    const VENDOR = readFileSync(
+      join(import.meta.dirname, "..", "..", "public/foliate-js/paginator.js"), "utf8");
+    expect(VENDOR).toContain("case 'gap':");
+    expect(VENDOR).toContain("this.#top.style.setProperty('--_' + name, value)");
+    // and the upstream default is untouched
+    expect(VENDOR).toContain("--_gap: 7%;");
+  });
+});

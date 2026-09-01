@@ -1,9 +1,10 @@
 // PROFILES — loading, switching, and the one place a profile is applied.
 //
-// THE ONE RULE THIS FILE EXISTS TO KEEP. Applying a profile writes the keys in `PROFILE_WRITES` and
-// patches `reading_style` at exactly `arabicFont` and `latinFont`. It touches nothing else, and in
-// particular it never reads, writes or deletes a `book_style:<id>` row. A profile carries how Sard
-// looks; the reader's layout and their per-book work are theirs.
+// THE ONE RULE THIS FILE EXISTS TO KEEP. Applying a هيئة writes the settings keys in
+// `PROFILE_WRITES` and patches `reading_style` at exactly the fields `PROFILE_READING_FIELDS` names —
+// asserting the ones it holds and CLEARING the rest, so nothing of the previous هيئة survives. It
+// touches nothing else, and in particular it never reads, writes or deletes a `book_style:<id>` row:
+// a هيئة is the complete reading preset, and there is no second, per-book owner to negotiate with.
 //
 // STARTUP ORDER MATTERS, ONCE. `initProfiles` registers every profile's theme with the resolver, so
 // it must finish before `initTheme` applies a persisted `theme_id` that may name one. App.tsx awaits
@@ -16,6 +17,7 @@ import {
   profileDelete,
   profileImportCommit,
   profileSave,
+  profileTouch,
   profilesList,
   settingsGet,
   settingsSet,
@@ -31,7 +33,7 @@ import { useReader } from "../../reader-engine/store";
 import { applyTheme } from "../../theme/applyTheme";
 import { resolveTheme, setCustomThemes } from "../../theme/resolve";
 import { useTheme } from "../../theme/store";
-import type { CustomThemeId, Theme } from "../../theme/tokens";
+import type { CustomThemeId, Theme, ThemeId } from "../../theme/tokens";
 import {
   ICON_FRAME_DEFAULT,
   PROFILE_DATA_VERSION,
@@ -45,6 +47,7 @@ import {
   type ProfileTheme,
   EMPTY_TYPOGRAPHY,
   readingPatch,
+  type ReadingPatch,
   serialiseProfileData,
   type Profile,
   type ProfileData,
@@ -100,6 +103,16 @@ interface ProfilesState {
   profiles: Profile[];
   /** The active profile's id, or `null` when Sard is running on its own settings. */
   activeId: CustomThemeId | null;
+  /**
+   * HOW MANY TIMES A هيئة HAS BEEN APPLIED. Not which one — how many times.
+   *
+   * `activeId` cannot answer "was the هيئة just re-asserted", because re-applying the one already
+   * worn does not change it. Everything downstream that has to re-read after an application was
+   * therefore keyed on a value that stands still exactly when it matters: measured, «تجاهل
+   * التغييرات» re-applied the هيئة, wrote its faces back to the row, and the open book kept the
+   * drifted face — so discarding did not discard, and the prompt asked again immediately.
+   */
+  applyTick: number;
   byId: (id: string) => Profile | undefined;
 }
 
@@ -107,6 +120,7 @@ export const useProfiles = create<ProfilesState>((_set, get) => ({
   ready: false,
   profiles: [],
   activeId: null,
+  applyTick: 0,
   byId: (id) => get().profiles.find((p) => p.id === id),
 }));
 
@@ -171,6 +185,7 @@ export async function initProfiles(): Promise<void> {
  * nobody asked for.
  */
 async function reassertProfileValues(p: Profile): Promise<void> {
+  await settleThemeMode();
   await settingsSet("theme_id", p.id).catch(console.error);
   // The READING palette's own id — the same value `profileSettings` writes. Re-asserting `p.id`
   // here would quietly put the book back on the library's palette every time this ran.
@@ -178,7 +193,44 @@ async function reassertProfileValues(p: Profile): Promise<void> {
   await patchReadingStyle(readingPatch(p));
 }
 
-/** Re-read from the database. Used after any write, so the store is never a second source of truth. */
+/**
+ * WEARING A هيئة IS CHOOSING A PAPER, so Follow-OS stops being in force.
+ *
+ * THE DEFECT THIS CLOSES, measured on the owner's own library: `theme_mode` was `auto`, and
+ * `initTheme` resolves the library paper as
+ *
+ *     themeId = auto ? (osPrefersDark() ? DEFAULT_DARK : DEFAULT_LIGHT) : storedThemeId
+ *
+ * so the `theme_id` a هيئة writes was DISCARDED at every launch. Their row held `trueblack` while the
+ * active هيئة was `u:mteyv188ouu2ly`, and `driftOf` compares exactly those two — so «غيّرتَ الورق»
+ * appeared on every switch, for ever, without anyone having edited anything. The OS-change listener
+ * does the same thing live.
+ *
+ * THE RULE ALREADY EXISTS; this only routes through it. `setTheme` turns Follow-OS off whenever a
+ * paper is picked by hand, because an explicit choice outranks the system's. Wearing a هيئة is that
+ * same choice made from another surface, and `applyProfile` wrote the store directly and skipped it.
+ * Two owners of one value, and the OS won every restart.
+ */
+async function settleThemeMode(): Promise<void> {
+  // THE PERSISTED VALUE, NOT THE STORE'S, because of the one ordering that matters. `initProfiles`
+  // runs BEFORE `initTheme` (App.tsx sequences them so a profile's theme is registered before a
+  // stored `theme_id` is resolved), so at startup `useTheme.autoMode` is still its default `false`
+  // and reading it would say "not following the OS" about an installation that is. Measured: the
+  // guard bailed, `initTheme` then read `auto` from disk and forced `trueblack`, and the drift came
+  // straight back on the next launch.
+  const stored = await settingsGet("theme_mode").catch(() => null);
+  if (!useTheme.getState().autoMode && stored !== "auto") return;
+  useTheme.setState({ autoMode: false });
+  await settingsSet("theme_mode", "manual").catch(console.error);
+}
+
+/**
+ * Re-read from the database. Used after any write, so the store is never a second source of truth.
+ *
+ * ALSO THE MOMENT THE ORDER IS RECOMPUTED. `applyProfile` stamps the profile as worn but deliberately
+ * does not re-sort what is on screen — see the note there — so the new order arrives the next
+ * time a list is BUILT: at startup, after any write, and when the Profiles area is entered.
+ */
 export async function refreshProfiles(): Promise<void> {
   const rows = await profilesList().catch(() => [] as ProfileRow[]);
   const profiles = (rows ?? []).map(toProfile);
@@ -199,7 +251,7 @@ export async function refreshProfiles(): Promise<void> {
  * defaults the reader never chose into their row. Patching the raw text leaves absent fields absent,
  * and absent is how "follow the default" is spelled.
  */
-async function patchReadingStyle(patch: Record<string, unknown>): Promise<void> {
+async function patchReadingStyle(patch: ReadingPatch): Promise<void> {
   const raw = await settingsGet(READING_KEY).catch(() => null);
   let blob: Record<string, unknown> = {};
   if (raw) {
@@ -210,9 +262,12 @@ async function patchReadingStyle(patch: Record<string, unknown>): Promise<void> 
       /* an unreadable row is replaced by the two fields alone, not by a whole default style */
     }
   }
-  // Only the keys the profile actually carries. A field it has no opinion about is not in `patch`
-  // at all, so the reader's own value stays exactly where it was — which is the whole contract.
-  Object.assign(blob, patch);
+  // CLEARED FIRST, THEN WRITTEN. A measure field the هيئة does not name is REMOVED, not left alone:
+  // the row is shared, so leaving it would hand the next هيئة the previous one's margin. Removing it
+  // is how this model spells "Sard's own default", and it stays per-script because `loadGlobalStyle`
+  // resolves the absence against the book's direction rather than against whatever was written.
+  for (const k of patch.clear) delete blob[k];
+  Object.assign(blob, patch.set);
   await settingsSet(READING_KEY, JSON.stringify(blob)).catch(console.error);
 }
 
@@ -222,9 +277,43 @@ async function patchReadingStyle(patch: Record<string, unknown>): Promise<void> 
  * The store updates below are `setState`, not the stores' own setters, because the setters persist
  * as a side effect and the persisting has already happened here — through the whitelist, once.
  */
-export async function applyProfile(p: Profile): Promise<void> {
+export async function applyProfile(
+  p: Profile,
+  /**
+   * WAS THIS A CHOICE, or is the same هيئة simply being re-asserted?
+   *
+   * APPLYING IS NOT ALWAYS WEARING, and conflating the two made editing count as using. Two paths
+   * re-apply the هيئة the reader is ALREADY wearing: saving it (so the running app repaints to the
+   * edit) and discarding session drift (re-applying IS the discard — there is no snapshot). Neither
+   * is the reader choosing a هيئة, and measured before this, saving the active one moved its use
+   * stamp 1788258282 -> 1788258289 and would have floated it above هيئات actually worn since.
+   *
+   * The default is `true` because every OTHER caller is a switch: the switcher, the card's own face,
+   * the import sheet. A new call site that forgets gets the right answer for a switch, and only a
+   * re-application has to say so.
+   */
+  opts: { worn?: boolean } = {},
+): Promise<void> {
+  // WORN, NOW — the one fact "most recently used first" cannot be derived from. This is the single
+  // use-point: every surface that switches profile comes through here, so one call covers the
+  // switcher, the cards, the import sheet and the unsaved-changes prompt.
+  //
+  // IT DOES NOT RE-SORT WHAT IS ON SCREEN, and that is deliberate. A profile card's miniature IS the
+  // switch, so promoting the card the reader has just clicked would slide it out from under their
+  // pointer and put a different profile where their finger already is — a second click would then
+  // switch to something they never chose. The order is recomputed when a list is next built instead
+  // (`refreshProfiles`), which is the same shape the library uses for books promoted by reading.
+  //
+  // NOT AWAITED, and its failure is not the reader's problem: they asked for a look, and they get it
+  // whether or not the stamp lands. A missing stamp costs one position in a list, once.
+  if (opts.worn !== false) void profileTouch(p.id).catch(console.error);
+
   for (const [k, v] of profileSettings(p)) await settingsSet(k, v).catch(console.error);
   await patchReadingStyle(readingPatch(p));
+
+  // The paper is being chosen, so Follow-OS yields — see `settleThemeMode`. Before the ids are
+  // written, so nothing can read a half-settled state.
+  await settleThemeMode();
 
   const theme = profileTheme(p);
   registerThemes(useProfiles.getState().profiles);
@@ -272,7 +361,9 @@ export async function applyProfile(p: Profile): Promise<void> {
   // texture's floor is measured against the live desk scrim they have just set.
   applyTexture(p.data.texture, theme.colors);
 
-  useProfiles.setState({ activeId: p.id });
+  // LAST, and it is what tells the rest of the application that an application HAPPENED. The tick
+  // moves even when the id does not, which is the whole point — see `applyTick`.
+  useProfiles.setState({ activeId: p.id, applyTick: useProfiles.getState().applyTick + 1 });
 }
 
 // ---- creating, duplicating, deleting -------------------------------------------------------------
@@ -353,6 +444,10 @@ export async function captureCurrent(): Promise<ProfileData> {
         overlay: null,
       },
     },
+    // NOR ANY OPINION ABOUT THE READ-ALOUD MARKS, for the same reason the measure takes none: a
+    // profile captured from "how Sard looks now" would then impose the reader's current spotlight on
+    // every switch, and `null` is what prevents that. The reader opts in from the voice chapter.
+    voice: null,
     // Texture has no global setting to capture: today every surface is opaque, and `opaque` writes
     // nothing, so a profile made from "how Sard looks now" is byte-identical to today.
     texture: "opaque",
@@ -443,7 +538,11 @@ export async function saveProfile(p: Profile): Promise<void> {
   // database through here, so the rule cannot be skipped by a path that forgot it.
   await profileSave(toRow({ ...p, name: cleanProfileName(p.name) }));
   await refreshProfiles();
-  if (useProfiles.getState().activeId === p.id) await applyProfile(p);
+  // THE RUNNING APP FOLLOWS THE EDIT, but editing is not wearing: the reader was already in this
+  // هيئة and has not chosen it again, so this re-application takes no use stamp. Without that, a
+  // save floated the هيئة to the front of a list ordered by USE — which is the one thing that
+  // ordering must not report.
+  if (useProfiles.getState().activeId === p.id) await applyProfile(p, { worn: false });
 }
 
 /**
@@ -472,7 +571,7 @@ export async function duplicateProfile(p: Profile, name: string): Promise<Profil
  * `theme_id` so nothing keeps naming something that no longer exists. Books, quotes and the
  * reader's own layout are untouched, which is what the confirmation promises.
  */
-export async function removeProfile(p: Profile, fallback: string): Promise<void> {
+export async function removeProfile(p: Profile, fallback: ThemeId): Promise<void> {
   const wasActive = useProfiles.getState().activeId === p.id;
   await profileDelete(p.id);
   await refreshProfiles();
@@ -480,6 +579,15 @@ export async function removeProfile(p: Profile, fallback: string): Promise<void>
     await settingsSet(PROFILE_ACTIVE_KEY, "").catch(console.error);
     await settingsSet("theme_id", fallback).catch(console.error);
     await settingsSet("book_theme_id", fallback).catch(console.error);
+
+    // AND THE SCREEN GOES WHERE THE ROW JUST WENT. Persisting the fallback is not wearing it.
+    // `refreshProfiles` above has already unregistered the deleted palette, so without these two
+    // lines the live theme id still named the هيئة that no longer exists while the settings row said
+    // `ivory` — measured: `themeId` stayed `u:<deleted>` and the tokens on `:root` were never
+    // repainted, so the reader kept looking at the هيئة they had just deleted until the next launch,
+    // when the persisted `ivory` finally took. The two must not be allowed to disagree.
+    applyTheme(resolveTheme(fallback));
+    useTheme.setState({ themeId: fallback, bookThemeId: fallback });
     useProfiles.setState({ activeId: null });
   }
 }

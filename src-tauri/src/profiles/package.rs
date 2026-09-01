@@ -186,13 +186,30 @@ pub const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
 /// rule that already exists. The image importer's pixel ceiling still applies afterwards, on its own.
 pub const MAX_ASSET_BYTES: u64 = 256 * 1024 * 1024;
 
-/// Everything the reader's own layout owns. A package carrying any of these is refused rather than
-/// quietly stripped — silently dropping a field is how a sender comes to believe they sent something
-/// they did not. Kept in step with `FORBIDDEN_DATA_KEYS` in `model/package.ts`.
-const FORBIDDEN: [&str; 18] = [
-    "lineHeight", "pageWidth", "measure", "margin", "margins", "marginPx", "paragraphSpacing",
-    "tracking", "letterSpacing", "align", "textAlign", "diacritics", "zoom", "fontWeight",
-    "firstLineIndent", "flowMode", "reading_style", "book_style",
+/// WHAT A PACKAGE MAY NOT CARRY. Everything a هيئة does NOT own, refused rather than quietly
+/// stripped — silently dropping a field is how a sender comes to believe they sent something they
+/// did not.
+///
+/// THIS IS A SECOND COPY ON PURPOSE, and the reason it must exist is the reason it is dangerous.
+/// `commit` re-checks the manifest rather than trusting the frontend, so this list cannot be imported
+/// from TypeScript; it has to be stated here. It had already drifted once, and the drift was silent:
+/// it still refused `lineHeight`, `zoom`, `pageWidth`, `align` and the rest of the measure long after
+/// a هيئة owned them, so a shared هيئة carrying its own measure was refused at the door by the very
+/// process that had just written it. Measured: a round trip died on `align` with the frontend's own
+/// validator admitting it.
+///
+/// IT CANNOT DRIFT AGAIN WITHOUT FAILING A TEST. `profilePackage.test.ts` reads this file, parses the
+/// list below, and compares it to the one TypeScript derives from `PROFILE_READING_FIELDS`. Add a
+/// field to a هيئة and this list must lose it; add a field to `ReadingStyle` and this list must gain
+/// it. The test says which.
+///
+/// The last two are not `ReadingStyle` fields at all — they are the SETTINGS ROWS. A package naming
+/// `reading_style` or `book_style` is malformed however it got there, and `book_style` in particular
+/// is the removed per-book style scope trying to return by post.
+const FORBIDDEN: [&str; 12] = [
+    "pageFitWindow", "textColor", "pageColor", "backgroundColor", "flowMode",
+    "immHidePill", "immHideScrollbar", "refRuleColor", "refRuleWeight", "refRuleOffset",
+    "reading_style", "book_style",
 ];
 
 /// Write a package to `path`. The manifest text is produced by the frontend and written verbatim, so
@@ -531,6 +548,11 @@ pub fn commit(
         // failed to register leaves these null exactly as a settings-only package does.
         bg_library,
         bg_reading,
+        // AN IMPORTED PROFILE HAS NEVER BEEN WORN HERE. Whatever the sender's list order was is
+        // theirs, not the reader's, so the arrival takes no use-stamp and sorts by `created_at`
+        // through the fallback — which puts it at the front, where a thing that just arrived
+        // belongs. `save` does not carry the column anyway; this states the intent.
+        last_used_at: None,
     };
     super::save(conn, &p).map_err(|e| e.to_string())?;
     Ok(p)
@@ -591,10 +613,15 @@ mod tests {
     }
 
     #[test]
-    fn commit_refuses_a_package_carrying_the_readers_own_layout() {
+    fn commit_refuses_what_a_profile_does_not_own() {
+        // THE BOUNDARY MOVED WITH THE MODEL. This used to name `lineHeight`, `zoom` and `diacritics`,
+        // because a profile was a palette and the whole measure was the reader's. A profile is the
+        // complete reading preset now and owns them, so what must be refused is everything it does
+        // NOT own — and the drift between this list and the frontend's was itself the defect: a
+        // profile carrying its own measure was refused at the door by the process that exported it.
         let conn = Connection::open_in_memory().unwrap();
         crate::db::migrations::run(&conn, None).unwrap();
-        for field in ["lineHeight", "zoom", "margins", "diacritics"] {
+        for field in ["flowMode", "pageFitWindow", "textColor", "immHidePill", "book_style"] {
             let json = manifest(&format!(r#","{field}":1"#));
             let e = commit(&conn, &json, "u:x", None).unwrap_err();
             assert!(
@@ -603,8 +630,24 @@ mod tests {
             );
         }
         // and nested, not only at the top
-        let nested = manifest(r#","type":{"deep":{"zoom":2}}"#);
+        let nested = manifest(r#","type":{"deep":{"flowMode":"paged"}}"#);
         assert!(commit(&conn, &nested, "u:x", None).unwrap_err().starts_with("pkg.err.carriesReadingSettings"));
+    }
+
+    #[test]
+    fn commit_admits_the_whole_measure_and_the_read_aloud_marks() {
+        // The other half, and the one that was broken: a profile's own fields must cross. Without
+        // this, sharing silently dropped the size, the leading, the margins and the page width.
+        let conn = Connection::open_in_memory().unwrap();
+        crate::db::migrations::run(&conn, None).unwrap();
+        // `r##"..."##`, because the payload contains `"#` (a hex colour follows a quote) and the
+        // shorter delimiter would end the literal in the middle of the JSON.
+        let json = manifest(
+            r##","type":{"arabic":"amiri","reading":{"zoom":1.75,"pageWidth":0.25,"marginPx":96,"lineHeight":2.15,"align":"center","diacritics":"dim"}},"voice":{"ttsSpotlightColor":"#7E6A9E","ttsKaraokeOn":false}"##,
+        );
+        let p = commit(&conn, &json, "u:x", None).expect("a profile's own fields must cross");
+        assert!(p.data.contains("pageWidth"), "the measure travelled: {}", p.data);
+        assert!(p.data.contains("ttsSpotlightColor"), "the marks travelled: {}", p.data);
     }
 
     #[test]
@@ -633,12 +676,10 @@ mod tests {
         std::fs::write(&src, b"not a real font, but real bytes").unwrap();
 
         let pkg = dir.join("p.zip");
-        let text = format!(
-            r#"{{"package":2,"app":"t","name":"n","assets":[{{"member":"assets/f0.ttf","kind":"font","family":"Rakwa"}}],"data":{{"theme":{{"base":"ivory"}},"type":{{"arabic":"Rakwa"}}}}}}"#
-        );
+        let text = r#"{"package":2,"app":"t","name":"n","assets":[{"member":"assets/f0.ttf","kind":"font","family":"Rakwa"}],"data":{"theme":{"base":"ivory"},"type":{"arabic":"Rakwa"}}}"#;
         export(
             pkg.to_str().unwrap(),
-            &text,
+            text,
             &[AssetIn { member: "assets/f0.ttf".into(), source: src.display().to_string() }],
         )
         .unwrap();
@@ -648,7 +689,7 @@ mod tests {
         let app_dir = dir.join("appdata");
         let from = Some((pkg.to_str().unwrap(), app_dir.as_path()));
 
-        commit(&conn, &text, "u:one", from).unwrap();
+        commit(&conn, text, "u:one", from).unwrap();
         let fonts = crate::fonts::list(&conn).unwrap();
         assert_eq!(fonts.len(), 1, "the font arrived");
         assert_eq!(
@@ -661,7 +702,7 @@ mod tests {
         );
 
         // The same package again: the family is already here, so nothing is added.
-        commit(&conn, &text, "u:two", from).unwrap();
+        commit(&conn, text, "u:two", from).unwrap();
         assert_eq!(
             crate::fonts::list(&conn).unwrap().len(),
             1,

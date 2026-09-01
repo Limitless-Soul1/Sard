@@ -24,6 +24,7 @@ import {
   sheetWidthPx,
   type ReadingStyle,
 } from "../../../../reader-engine/injectedCss";
+import { resolvePill, resolveSpotlight, TRACK_SHAPE } from "../../../../reader-engine/ttsTrack";
 import { bookFaceCss } from "../../mini";
 import type { Profile } from "../../model/profile";
 
@@ -39,6 +40,26 @@ import type { Profile } from "../../model/profile";
  * and tracks the slider from there across 40..120.
  */
 const MARK_K = 0.794;
+
+/**
+ * ONE LINE'S DRAWN HEIGHT, as a multiple of the font size.
+ *
+ * The read-aloud marks are proportions of a LINE FRAGMENT'S height — the box `getClientRects()`
+ * reports for a run of text, which is the face's ascent plus its descent and has nothing to do with
+ * `line-height`. The overlay measures that box; CSS cannot be given it as a length, so the preview
+ * states the same proportions in `em` through this ratio.
+ *
+ * 1.2 is an APPROXIMATION and is here rather than measured on purpose. What the voice chapter
+ * actually sets is colour, strength and on/off, and those arrive exact through the reading engine's
+ * own resolvers; this governs only a corner radius and the thickness of a hairline rule, where the
+ * error across the faces Sard ships is a fraction of a pixel at the miniature's scale. Measuring it
+ * would mean reading a client rect back out of a `zoom`ed subtree and dividing by a scale the stage
+ * does not publish — a great deal of machinery for a rounded corner.
+ */
+const LINE_BOX_EM = 1.2;
+/** A proportion of the line box, as CSS the preview can hold: the design's ratio, with its own cap. */
+const trackLen = (ratio: number, cap: number, floor = false): string =>
+  `${floor ? "max" : "min"}(${cap}px, ${(ratio * LINE_BOX_EM).toFixed(3)}em)`;
 
 /**
  * The composition's own width, and the page's share of it AT THE REFERENCE WINDOW (see the reference
@@ -229,6 +250,44 @@ export function BookFace({
   const numberInk = profile.data.theme.reading.numbers;
 
   /**
+   * THE READ-ALOUD MARKS, RESOLVED BY THE READING ENGINE ITSELF.
+   *
+   * `resolveSpotlight` and `resolvePill` are the functions the overlay calls to decide what to paint,
+   * and they are called here with the same two inputs: the style the reader would be reading under,
+   * and the polarity of the paper it is drawn on. So the preview cannot be a near-miss of the marks —
+   * the colours and the strengths are literally the ones the book would draw, including the per-theme
+   * defaults a هيئة with no opinion of its own falls back to.
+   *
+   * The style is the هيئة's block over the reader's live one, exactly as the voice chapter's controls
+   * sit: a هيئة carrying no read-aloud opinion previews the marks the reader already has.
+   */
+  const voiceStyle: ReadingStyle = { ...readerStyle, ...(profile.data.voice ?? {}) };
+  const spot = resolveSpotlight(voiceStyle, dark);
+  const pill = resolvePill(voiceStyle, dark);
+  /** `fill-opacity` on a rect, as a colour a CSS background can carry. */
+  const wash = (fill: string, alpha: number) =>
+    `color-mix(in srgb, ${fill} ${(alpha * 100).toFixed(1)}%, transparent)`;
+  const spotVars = {
+    "--spot-band": wash(spot.fill, spot.band),
+    "--spot-rule": wash(spot.fill, spot.rule),
+    "--spot-r": trackLen(TRACK_SHAPE.spotRadius, TRACK_SHAPE.spotRadiusMax),
+    // The rule is a separate rect in the overlay, so OFF means it is simply not drawn. A height of
+    // zero is how a background layer says the same thing.
+    "--spot-rule-h": voiceStyle.ttsSpotlightRule
+      ? trackLen(TRACK_SHAPE.ruleHeight, TRACK_SHAPE.ruleHeightMin, true)
+      : "0px",
+  } as CSSProperties;
+  const pillVars = {
+    "--pill-fill": pill.fill,
+    "--pill-op": String(pill.op),
+    // The blend is NOT user-exposed: it is what keeps the glyphs legible through a near-solid token,
+    // and the preview has to carry it or the pill reads here as a block of paint over the word.
+    "--pill-blend": pill.blend,
+    "--pill-pad": trackLen(TRACK_SHAPE.pillPad, TRACK_SHAPE.pillPadMax),
+    "--pill-r": trackLen(TRACK_SHAPE.pillRadius, TRACK_SHAPE.pillRadiusMax),
+  } as CSSProperties;
+
+  /**
    * THE PAGE'S GEOMETRY, DERIVED THE WAY THE READER DERIVES IT.
    *
    * The desk this window would give the reader, the sheet's own `min(100%, …)` rule against it, and
@@ -339,15 +398,44 @@ export function BookFace({
               نشرها على مجلسه
             </span>{" "}
             {withRuns(" فجلس السامعون كأنّهم في سَفَرٍ لا يبلغ آخره، ثمّ ينصرفون وفي أيديهم ")}
-            <span className="pf-page-ul">{withRuns("طَرَفٌ من الخبر")}</span>.
+            {/* A RUN OF SELECTED TEXT, not an underline. This drew the accent as two stacked shadows
+                under the words, which said "a link, or an emphasis" — nothing in Sard is marked that
+                way. What the reading palette actually owns here is the SELECTION wash, the colour
+                behind the words the moment the reader drags across them, and the page draws it with
+                `::selection { background }` and nothing else. So does this: one colour, no radius,
+                no padding, and the ink untouched. */}
+            <span className="pf-page-sel" style={{ background: c.selection }}>
+              {withRuns("طَرَفٌ من الخبر")}
+            </span>.
           </p>
 
           <p className="pf-page-ar" style={arStyle} dir="rtl">
             {withRuns("حدّث في سنة ٤٠٧ عن ثلاثةٍ وعشرين رجلًا، ثمّ عاد إلى الفصل ۱۲ فقرأ الصفحة 348 — ولم يبدأ حتى سكن المجلس. يقول: إنّ الحكاية لا تُروى مرّتين على وجهٍ واحد، لأنّ الذي يسمعها في المرّة الثانية ليس هو الذي سمعها أوّل مرّة.")}
           </p>
 
+          {/* THE SENTENCE SARD IS READING, AND THE WORD IT IS ON. The voice chapter's own specimen:
+              the band and its baseline rule around the sentence, the solid token on one word inside
+              it — the two marks set against each other, which is how they are actually seen and the
+              only way their strengths can be judged together.
+
+              IT IS ALWAYS DRAWN, like every other mark on this page, and it answers to the same
+              switches the reader will use: spotlight off leaves the sentence plain, karaoke off
+              takes the token away, and the baseline rule has its own. A specimen that only appeared
+              while its own chapter was open would be showing a page the reader never gets. */}
           <p className="pf-page-ar" style={arStyle} dir="rtl">
-            {withRuns("فإذا انتهى، قام النّاس وفي نفوسهم أنّ الليلة كانت أطول ممّا كانت، وأنّ الطريق إلى بيوتهم صار أقصر.")}
+            <span
+              className={`pf-page-spot${voiceStyle.ttsSpotlightOn ? " on" : ""}`}
+              style={spotVars}
+            >
+              {withRuns("فإذا انتهى، قام النّاس وفي نفوسهم أنّ الليلة كانت أطول ممّا كانت، وأنّ ")}
+              <span
+                className={`pf-page-pill${voiceStyle.ttsKaraokeOn ? " on" : ""}`}
+                style={pillVars}
+              >
+                {withRuns("الطريق")}
+              </span>
+              {withRuns(" إلى بيوتهم صار أقصر.")}
+            </span>
           </p>
 
           <p className="pf-page-la" style={laStyle} dir="ltr">

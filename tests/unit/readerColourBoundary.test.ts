@@ -20,8 +20,11 @@
 // Comments are stripped before every assertion. A guard that can be satisfied by the prose next to
 // the code is not a guard, and this suite has been fooled that way before.
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+
+import { en } from "../../src/i18n/locales/en";
+import { ar } from "../../src/i18n/locales/ar";
 
 const R = join(import.meta.dirname, "..", "..");
 const read = (p: string) => readFileSync(join(R, p), "utf8");
@@ -192,10 +195,12 @@ describe("no page ever wears a colour that belongs to something else", () => {
     expect(theme).toBeLessThan(open);
   });
 
-  it("and the value it publishes is this book's, resolved from its own override", () => {
-    // `initialStyle` is `effectiveStyle(global, override)` — the global row with THIS book's partial
-    // override on top. Publishing the bare global would be the bug with earlier timing.
-    expect(READER).toMatch(/let initialStyle = unified \? global : effectiveStyle\(global, override\)/);
+  it("and the value it publishes is the reading style itself", () => {
+    // It used to be `effectiveStyle(global, override)` — the global row with THIS book's partial
+    // override on top — and the point of the assertion was that the resolution happened BEFORE the
+    // page was published, not after. There is one level now, so the resolution IS the global row;
+    // what still matters is that it is read and published before `open`, which the test above pins.
+    expect(READER).toMatch(/let initialStyle = global;/);
   });
 
   it("the page colour still resolves the override above the palette, and nothing below them", () => {
@@ -204,5 +209,107 @@ describe("no page ever wears a colour that belongs to something else", () => {
     expect(line).toContain("style?.pageColor");
     expect(line).toContain("readingTheme.colors.paperBg");
     expect(line.split("??")).toHaveLength(2);
+  });
+});
+
+describe("one reading style, and the book-style scope is gone", () => {
+  // WHAT THIS REPLACES. Sard carried two levels — a global `reading_style` row and a partial
+  // `book_style:<id>` override — with a `style_scope` setting choosing whether the second applied.
+  // Two levels meant two owners of the same fields, and the reader could see it: a book that had once
+  // been tuned kept its own face, paper and read-aloud colours whatever هيئة was worn. Measured on
+  // a real library, two books held their own tracking colours and neither followed a هيئة.
+  //
+  // A هيئة is the complete reading appearance now, so there is exactly one row. These are structural
+  // facts about the source, read as files like every other guard in this suite.
+  const PERBOOK = strip(read("src/features/reader/perBookSettings.ts"));
+  const PANEL = strip(read("src/features/reader/SettingsPanel.tsx"));
+  const SETTINGS_UI = strip(read("src/features/reader/ReadingSettings.tsx"));
+  const GLOBAL_UI = strip(read("src/features/settings/GlobalSettings.tsx"));
+
+  it("the scope store no longer exists", () => {
+    expect(existsSync(join(R, "src/lib/styleScope.ts"))).toBe(false);
+  });
+
+  it("nothing in the app reads or writes a scope", () => {
+    for (const [name, src] of [["Reader", READER], ["panel", PANEL],
+      ["reading settings", SETTINGS_UI], ["global settings", GLOBAL_UI]] as const) {
+      expect(src, name).not.toContain("useStyleScope");
+      expect(src, name).not.toContain("style_scope");
+    }
+  });
+
+  it("and the per-book override has no resolver, loader or writer left", () => {
+    // The functions are gone, not merely unused: a dead resolver is a second level waiting to be
+    // called again.
+    for (const fn of ["effectiveStyle", "loadBookOverride", "saveBookOverride",
+      "clearBookOverride", "hasOverride", "book_style:"]) {
+      expect(PERBOOK, fn).not.toContain(fn);
+    }
+    expect(PERBOOK).toContain("export async function loadGlobalStyle");
+    expect(PERBOOK).toContain("export function saveGlobalStyle");
+  });
+
+  it("the reader resolves its style from the global row alone", () => {
+    expect(READER).toContain("const global = await loadGlobalStyle(target.dir ?? undefined);");
+    expect(READER).toContain("let initialStyle = global;");
+    expect(READER).not.toContain("overrideRef");
+  });
+
+  it("every reading change is saved to that one row", () => {
+    expect(READER).toContain("saveGlobalStyle(useReader.getState().style!);");
+  });
+
+  it("EXISTING ROWS ARE PRESERVED — nothing deletes a stored override", () => {
+    // "Ignore, never delete" is the rule the shared model always followed. A reader who once tuned a
+    // book keeps that row on disk; it is simply never consulted.
+    for (const src of [READER, PERBOOK]) {
+      expect(src).not.toContain("clearBookOverride");
+      expect(src).not.toContain('settingsSet(bookKey');
+    }
+  });
+
+  it("no scope copy survives in either locale", () => {
+    for (const dict of [en, ar] as Record<string, string>[]) {
+      for (const k of ["gs.scope", "gs.scope.unified", "gs.scope.perbook", "scope.allBooks",
+        "scope.thisBook", "perbook.appliesTo", "perbook.reset", "settings.allbooksSub"]) {
+        expect(dict[k], k).toBeUndefined();
+      }
+    }
+  });
+});
+
+describe("«أنماط الكتب» is gone, not emptied", () => {
+  // It was the settings home of the book-style scope. With one reading style owned by a هيئة it had
+  // nothing left to say — it had already been reduced to a banner pointing at the reader — and a
+  // settings row that opens a signpost is worse than no row.
+  const GS = strip(read("src/features/settings/GlobalSettings.tsx"));
+
+  it("the navigation no longer registers it", () => {
+    expect(GS).not.toContain('label: "gs.nav.reading"');
+    expect(GS).not.toContain('"reading"');
+  });
+
+  it("its component is deleted, not left unmounted", () => {
+    expect(GS).not.toContain("ReadingDefaultsSection");
+  });
+
+  it("and every one of its strings is gone from BOTH locales", () => {
+    for (const dict of [en, ar] as unknown as Record<string, string>[]) {
+      for (const k of ["gs.nav.reading", "gs.reading", "gs.readingBanner",
+        "gs.reading.inReader", "gs.reading.fontsHint"]) {
+        expect(dict[k], k).toBeUndefined();
+      }
+    }
+  });
+
+  it("the sections that remain are untouched", () => {
+    // The removal must take one row and nothing else with it.
+    const E = en as unknown as Record<string, string>;
+    const A = ar as unknown as Record<string, string>;
+    for (const k of ["gs.nav.appearance", "gs.nav.profiles", "gs.nav.fonts", "gs.nav.bookmark",
+      "gs.nav.language", "gs.nav.presence", "gs.nav.about"]) {
+      expect(E[k], k).toBeTruthy();
+      expect(A[k], k).toBeTruthy();
+    }
   });
 });

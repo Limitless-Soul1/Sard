@@ -432,10 +432,16 @@ export function ImportSheet({
       </div>
 
       {/* THE FIREWALL, RESTATED WHERE IT IS MOST NEEDED. Someone else's profile is arriving; this is
-          the moment the reader most needs to know it cannot touch how they read. */}
+          the moment the reader most needs to know it cannot touch how they read.
+
+          ITS OWN WORDING, and not the editor's. The two claims are no longer the same claim: a هيئة
+          the reader is AUTHORING may carry the measure — the measure chapter is what that chapter
+          is — while one ARRIVING may not, because `exportable` holds it back and the validator
+          refuses any package that carries it by name. One string could only be right about one of
+          them, and the stronger promise belongs here, where it is the one actually enforced. */}
       <div className="pf-import-firewall">
         <div className="pf-import-firewall-title">{t("profiles.import.settingsSafe")}</div>
-        <p className="pf-import-firewall-body">{t("profiles.notPart.body")}</p>
+        <p className="pf-import-firewall-body">{t("profiles.import.notPart.body")}</p>
       </div>
       <div className="pf-hint">{t("profiles.import.additive")}</div>
 

@@ -26,11 +26,8 @@ export const ar: Record<TKey, string> = {
   "settings.colour": "الألوان",
   "settings.readaloud": "القراءة الصوتية",
   "settings.allbooks": "كل الكتب",
-  // RAWY-216: مفردات نطاق واحدة بدل ثلاث صياغات. اللافتة = perbook.appliesTo + الاسم، وعنوان القسم
+  // (زال وصف النطاق مع زوال وضعَي «لكل كتاب» و«موحد»)
   // يُلحق الاسم بعد شَرْطة. تُغيَّر الكلمة مرة واحدة فتتبعها كل مواضع النطاق.
-  "scope.thisBook": "هذا الكتاب",
-  "scope.allBooks": "كل الكتب",
-  "settings.allbooksSub": "هذه تسري على كل الكتب، لا على هذا الكتاب وحده.",
   "settings.voiceNote": "الصوت والمحرّك والسرعة في المشغّل أثناء الاستماع.",
   // RAWY-216: سطر سبب واحد خافت تحت أي عنصر معطّل الأثر الآن.
   "inert.matchWindow": "ملء النافذة مفعَّل.",
@@ -649,6 +646,11 @@ export const ar: Record<TKey, string> = {
   "ne.less": "أقل",
   "ne.close": "إغلاق",
   // RAWY-260: references — a note bound to a word or short phrase, marked wherever it occurs.
+  // حواشي الكتاب نفسه — لا مراجع القارئ أعلاه. المحرّك يصنّف كل هدف، واللوحة تسمّيه بما هو.
+  "note.footnote": "حاشية",
+  "note.endnote": "تعليق ختامي",
+  "note.reference": "مرجع",
+  "note.expand": "أفتحها",
   "ref.add": "إضافة مرجع",
   "ref.label": "مرجع",
   "ref.selected": "الكلمة المحدَّدة",
@@ -678,18 +680,9 @@ export const ar: Record<TKey, string> = {
   "gs.bookmark.posHint": "ثابت — لا ينقلب مع اللغة. ويمكنك أيضًا سحب الفاصل على الصفحة.",
 
   // إعدادات القراءة لكل كتاب + لون النص (RAWY-40، نطاق I). RAWY-216: حُذف عنوانا النطاق، فاللافتة
-  // صارت perbook.appliesTo + اسم النطاق المشترك، فتُصاغ عبارة النطاق في موضع واحد.
-  "perbook.appliesTo": "يُطبَّق على",
-  "perbook.scopeSub": "لا يؤثّر في الكتب الأخرى",
-  "perbook.scopeAllSub": "أنماط الكتب موحَّدة — أي تغيير هنا يغيّر كل الكتب",
-  "perbook.reset": "إعادة",
+  // (زال وصف النطاق مع زوال وضعَي «لكل كتاب» و«موحد»)
   // RAWY-284: صار عنوان القسم نفسه «أنماط الكتب»، وتكرار العبارة عنوانًا وتسمية يبدو خطأً، فصارت
   // التسمية تصف الوضع نفسه لا مجاله.
-  "gs.scope": "وضع الأنماط",
-  "gs.scope.unified": "موحَّد",
-  "gs.scope.perbook": "لكل كتاب",
-  "gs.scope.unifiedHint": "كل الكتب تشترك في نمط واحد — تغيير الخط أو السمة أو الحجم أو اللون في أي كتاب يُطبَّق على كل الكتب.",
-  "gs.scope.perbookHint": "كل كتاب يحتفظ بنمطه — التغييرات أثناء القراءة تؤثّر في ذلك الكتاب وحده.",
   // أسماء السمات الستّ عشرة. كانت تُعرض بالإنجليزية داخل واجهة عربية بالكامل. الأسماء هنا مترجمة
   // ترجمة طبيعية لا حرفية: «رَقّ» للورق المصنوع من الجلد، و«غَسَق» لضوء ما بعد المغيب، و«مَرْيَميّ»
   // لِلَون نبات المَرْيَميّة — لغة تليق بتطبيق قراءة، لا نقلًا صوتيًّا للكلمة الإنجليزية.
@@ -744,7 +737,6 @@ export const ar: Record<TKey, string> = {
   "gs.appwideNote": "تُطبَّق في كل مكان. أمّا خط الكتاب وسمته فتُضبط أثناء القراءة.",
   "gs.nav.appearance": "المظهر",
   "gs.nav.fonts": "الخطوط والمكتبة",
-  "gs.nav.reading": "أنماط الكتب", // RAWY-284 — انظر "gs.reading"
   "gs.nav.bookmark": "شكل الفاصل",
   "gs.nav.language": "اللغة",
   "gs.nav.presence": "الأنشطة",
@@ -772,11 +764,8 @@ export const ar: Record<TKey, string> = {
   // RAWY-284: «أنماط الكتب» بدل «إعدادات القراءة الافتراضية». في الوضع الموحَّد لم يعد في هذا القسم أي
   // إعداد افتراضي — انتقلت ضوابط مظهر القراءة إلى القارئ حيث تُعايَن حيّة — فالعنوان القديم يَعِد بما ليس
   // موجودًا. و«أنماط الكتب» صحيح في الوضعين معًا.
-  "gs.reading": "أنماط الكتب",
-  "gs.readingBanner": "الأساس للكتب الجديدة — ويمكن لكل كتاب تجاوزه أثناء القراءة.",
   // RAWY-284: يظهر بدلًا من ضوابط المظهر في الوضع الموحَّد. يسمّي اللوحة التي يقصدها القارئ بدل عبارة
   // مبهمة مثل «في القارئ»، ويذكر السبب (المعاينة الحيّة) حتى يُقرأ النقل مكسبًا لا انتقاصًا.
-  "gs.reading.inReader": "يُضبط تباعد الأسطر وإبراز القراءة الصوتية أثناء القراءة — افتح كتابًا ثم «الإعدادات». كل تغيير يُعايَن حيًّا على الصفحة.",
   "gs.defaultLatin": "لاتيني",
   "gs.defaultArabic": "عربي",
   "gs.defaultSize": "الحجم الافتراضي",
@@ -888,7 +877,6 @@ export const ar: Record<TKey, string> = {
   "bg.err.vector": "لا يمكن استخدام ملفات SVG خلفية. استخدم JPEG أو PNG أو WebP.",
   "bg.err.decode": "تعذّرت قراءة هذه الصورة — قد تكون تالفة.",
   "bg.err.surface": "سطح خلفية غير معروف.",
-  "gs.reading.fontsHint": "خط الكتاب ووزنه وحجمه تُضبط في لوحة الخطوط.",
   // RAWY-91 — لوحة الخطوط: خط الواجهة منفصل تمامًا عن خط الكتاب
   "fonts.appwide": "خطّان منفصلان: أحدهما لواجهة التطبيق، والآخر لنصّ الكتب.",
   "fonts.title": "الخطوط والمكتبة",
@@ -1059,7 +1047,7 @@ export const ar: Record<TKey, string> = {
   "gs.nav.profiles": "الهيئات",
   "profiles.title": "الهيئات",
   "profiles.subtitle":
-    "الهيئة تحمل شكل سَرْد: الورق والألوان والخلفيّات والخطوط والعلامات. إعداداتُ قراءتك ليست منها.",
+    "الهيئة هيئةُ قراءةٍ كاملة: الورق والألوان والخلفيّات والخطوط والعلامات وتتبّع القراءة الصوتيّة، ومقاسُ القراءة نفسه — التكبير وتباعد الأسطر وعرض الصفحة والهوامش.",
   "profiles.new": "هيئة جديدة",
   "profiles.import": "استيراد هيئة",
   "profiles.active": "نشِطة",
@@ -1069,7 +1057,7 @@ export const ar: Record<TKey, string> = {
   "profiles.empty.title": "سَرْد الآن على هيئته الافتراضيّة",
   "profiles.empty.body":
     "أنشئ هيئةً لتحفظ ورقك وألوانك وخلفيّاتك وخطوطك في مكانٍ واحد، أو استورد هيئةً وصلتك من قارئٍ آخر.",
-  "profiles.empty.reassure": "إعدادات قراءتك تبقى كما هي في كلّ الحالات.",
+  "profiles.empty.reassure": "مقاسُ قراءتك يبقى كما هو في كلّ الحالات.",
 
   "profiles.card.edit": "تعديل",
   "profiles.card.use": "تعيين كهيئة نشِطة",
@@ -1080,7 +1068,7 @@ export const ar: Record<TKey, string> = {
 
   "profiles.delete.title": "حذف هيئة «{name}»؟",
   "profiles.delete.body":
-    "لن يُحذَف كتابٌ ولا اقتباس، ولن تتغيّر إعدادات قراءتك. إن كانت هذه الهيئة النشِطة، يعود سَرْد إلى هيئته الافتراضيّة.",
+    "لن يُحذَف كتابٌ ولا اقتباس، ولن يتغيّر مقاسُ قراءتك. إن كانت هذه الهيئة النشِطة، يعود سَرْد إلى هيئته الافتراضيّة.",
   "profiles.delete.confirm": "حذف",
   "profiles.delete.cancel": "إلغاء",
 
@@ -1143,6 +1131,14 @@ export const ar: Record<TKey, string> = {
   "profiles.chapter.measure": "القياس",
   "profiles.chapter.measure.q": "كيف تُرصَف الكلمات؟",
   "profiles.focus.measure": "الصفحة المرصوفة",
+  "profiles.voice.hint":
+    "علاماتُ القراءة الصوتيّة تُرسَم على الصفحة كما تُرسَم العلامات الأخرى، فللهيئة أن تحملها. وليس عليها ذلك: الهيئةُ التي لا تحملها تعيدها إلى علامات سَرْد الافتراضيّة، فلا تَرِثُ هيئةٌ علاماتِ هيئةٍ قبلها.",
+  "profiles.voice.label": "علامات القراءة الصوتيّة",
+  "profiles.voice.follows": "الافتراضيّة",
+  "profiles.voice.carried": "من الهيئة",
+  "profiles.voice.clear": "أعِدها إلى علامات سَرْد",
+  "profiles.voice.none": "بلا علامات",
+
   "profiles.measure.hint": "ليس على الهيئة أن ترى رأيًا. ما تُترك «كما هو » يبقى على ما اخترته أثناء القراءة.",
   "profiles.measure.follows": "كما هو",
   "profiles.measure.clear": "اتركه كما هو",
@@ -1154,6 +1150,8 @@ export const ar: Record<TKey, string> = {
   "profiles.measure.trackingArabic": "العربية تصل حروفها، لذا لا يُطبَّق عليها التباعد — والسطر اللاتيني أدناه يُظهِر الأثر.",
   "profiles.chapter.marks": "العلامات",
   "profiles.chapter.marks.q": "ما الذي يدلّك على موضعك؟",
+  "profiles.chapter.voice": "القراءة الصوتيّة",
+  "profiles.chapter.voice.q": "كيف يتتبّع سَرْد الكلامَ وهو يقرأ لك؟",
   "profiles.chapter.texture": "الملمس",
   "profiles.chapter.texture.q": "كيف تبدو واجهة سَرْد؟",
   "profiles.focus.identity": "الهيئة النشِطة",
@@ -1161,15 +1159,13 @@ export const ar: Record<TKey, string> = {
   "profiles.focus.paperLibrary": "المكتبة وألوانها",
   "profiles.focus.fonts": "الحرف المقروء",
   "profiles.focus.marks": "العلامة والتظليل",
+  "profiles.focus.voice": "الجملة والكلمة",
   "profiles.focus.texture": "لوحات الواجهة",
   "profiles.editor.stageLibrary": "المكتبة",
   "profiles.editor.stageBook": "الكتاب",
   // The design's own words for the preview's chrome.
   "profiles.preview.readingBar": "شريط القراءة",
   // أداة نظر لا إعداد: عرض الصفحة يبقى للقارئ، ولا يُحفَظ في الهيئة.
-  "profiles.preview.measure": "المقاس",
-  "profiles.preview.measureHint":
-    "انظر الصفحة بعرضٍ آخر. عرض الصفحة من إعدادات قراءتك — لا يُحفَظ مع الهيئة.",
 
   "profiles.section.identity": "الهويّة",
   "profiles.section.theme": "الورق والألوان",
@@ -1337,6 +1333,9 @@ export const ar: Record<TKey, string> = {
   "profiles.unsaved.what.bookTheme": "ورق الكتاب",
   "profiles.unsaved.what.arabicFont": "الخطّ العربي",
   "profiles.unsaved.what.latinFont": "الخطّ اللاتيني",
+  "profiles.unsaved.what.measure": "مقاس النصّ",
+  "profiles.unsaved.what.numbers": "لون الأرقام",
+  "profiles.unsaved.what.voice": "علامات القراءة الصوتيّة",
   "profiles.unsaved.listSep": "، ",
   "profiles.saved.applied": "حُفِظت «{name}» وطُبِّقت",
   "profiles.saved.only": "حُفِظت «{name}»",
@@ -1378,7 +1377,7 @@ export const ar: Record<TKey, string> = {
   "pkg.err.carriesReadingSettings": "تحاول هذه الحزمة حمل إعدادات قراءة، والهيئة لا تحملها أبداً.",
 
   "profiles.import.title": "هيئة وصلتك",
-  "profiles.import.settingsSafe": "إعدادات قراءتك لن تتغيّر.",
+  "profiles.import.settingsSafe": "ما الذي تغيّره هيئةٌ واردة",
   "profiles.import.additive": "تُضاف إلى هيئاتك، ولك تعديلها كما تشاء.",
   "profiles.import.confirm": "استيراد",
   "profiles.import.added": "أُضيفت هيئة «{name}»",
@@ -1389,7 +1388,9 @@ export const ar: Record<TKey, string> = {
   "profiles.import.nothingChanged": "لم يتغيّر شيءٌ عندك.",
   "profiles.import.chooseAnother": "اختيار ملفٍّ آخر",
 
+  "profiles.import.notPart.body":
+    "الهيئة هيئةُ قراءةٍ كاملة، فالتي تستوردها تأتي بورقها وخطوطها وعلاماتها وتتبّع قراءتها الصوتيّة ومقاسها — التكبير وتباعد الأسطر والهوامش وعرض الصفحة. ولا تملك أن تغيّر طريقة عرض الكتاب، ويرفض سَرْد أيّ ملفٍّ يحاول.",
   "profiles.notPart.title": "ليست من الهيئة",
   "profiles.notPart.body":
-    "تباعد الأسطر، عرض الصفحة، الهوامش، التشكيل، المحاذاة، التكبير — إعداداتُ قراءتك، تبقى لك في كلّ هيئة.",
+    "عرض الصفحة والهوامش وتباعد الأسطر والتشكيل والمحاذاة والتكبير — مقاسُ القراءة. الهيئة التي لا تذكر منه شيئًا تترك مقاسك كما هو، والتي تذكر شيئًا تحمل المقاس كلّه.",
 };

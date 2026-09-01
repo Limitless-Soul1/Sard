@@ -60,6 +60,7 @@ import type { ThemeColors } from "../../theme/tokens";
 import { BookmarkShape } from "../reader/BookmarkShape";
 import { ACCENTS, CustomPaper, PAPERS_DARK, PAPERS_LIGHT } from "./CustomPaper";
 import { MeasureSection } from "./editor/MeasureSection";
+import { VoiceSection } from "./editor/VoiceSection";
 import { ColorPicker } from "../../components/ColorPicker";
 import { EditorShell } from "./editor/EditorShell";
 import { FOCUS, type ChapterId, type Focus } from "./editor/chapters";
@@ -70,8 +71,6 @@ import { FocusFrame } from "./editor/stage/FocusFrame";
 import { LibraryFace } from "./editor/stage/LibraryFace";
 import {
   PAGE_WIDTH_DEFAULT,
-  PAGE_WIDTH_MAX,
-  PAGE_WIDTH_MIN,
 } from "../../reader-engine/injectedCss";
 import { bookFaceCss, sealOf } from "./mini";
 import { readerPageWidth, saveProfile, useProfiles } from "./store";
@@ -143,6 +142,10 @@ function chapterSlice(p: Profile, id: ChapterId): unknown {
       return d.type;
     case "marks":
       return { ...d.marks, bookmark: d.theme.reading.bookmark };
+    // The whole block, `null` included — "this هيئة carries no read-aloud marks" is itself an answer
+    // the reader can change, so the dot has to light when they change it.
+    case "voice":
+      return d.voice;
     case "texture":
       return d.texture;
   }
@@ -332,20 +335,25 @@ export function ProfileEditor({
   /**
    * THE MEASURE THE PREVIEW IS DRAWN AT — the reader's own, and preview-only.
    *
-   * It opens on whatever they actually read at, so the specimen answers "how does my paper look on
-   * my page" rather than on one fixed column. It is deliberately NOT part of the draft: `pageWidth`
-   * is on the package validator's forbidden list and the rail footer promises it stays the reader's
-   * own in every profile, so this lives in the editor's own state, is never saved, and never reaches
-   * `ProfileData`.
+   * THE MEASURE IS THE هيئة'S NOW, so this is no longer the editor's own preview state.
+   *
+   * It used to be: `pageWidth` was on the package validator's forbidden list and the rail promised
+   * the reader it stayed theirs, so the stage carried a slider that changed what you were LOOKING at
+   * and never what you were saving. The هيئة carries the measure today, so that slider would have
+   * been a second control for one value, and the one that could not save it.
+   *
+   * What is left is the fallback: a هيئة with no measure of its own previews at the width the reader
+   * actually reads at, which is exactly what activating it would produce.
    */
-  const [pageW, setPageW] = useState(PAGE_WIDTH_DEFAULT);
+  const [readerW, setReaderW] = useState(PAGE_WIDTH_DEFAULT);
   useEffect(() => {
     let alive = true;
     readerPageWidth()
-      .then((v) => alive && setPageW(v))
+      .then((v) => alive && setReaderW(v))
       .catch(() => undefined);
     return () => { alive = false; };
   }, []);
+  const pageW = draft.data.type.reading.pageWidth ?? readerW;
 
   /**
    * EACH FACE'S OWN PICTURE, resolved here and owned there.
@@ -495,6 +503,18 @@ export function ProfileEditor({
         const held = TYPOGRAPHY_KEYS.filter((k) => draft.data.type.reading[k] !== null).length;
         return held ? localeDigits(String(held), lang) : t("profiles.measure.follows");
       }
+      // WHICH MARKS ARE ON, not a colour. The chapter holds two independent effects, and either one
+      // of their colours would misrepresent the other; naming the effects answers the rail's question
+      // ("what does this chapter say") in the one line it has.
+      case "voice": {
+        const v = draft.data.voice;
+        if (!v) return t("profiles.voice.follows");
+        const on = [
+          v.ttsSpotlightOn ? t("track.spotlight") : null,
+          v.ttsKaraokeOn ? t("track.karaoke") : null,
+        ].filter(Boolean);
+        return on.length ? on.join(" · ") : t("profiles.voice.none");
+      }
       case "texture":
         return t(`profiles.texture.${draft.data.texture}`);
     }
@@ -574,6 +594,8 @@ export function ProfileEditor({
         return <FontsSection draft={draft} patch={patch} />;
       case "marks":
         return <MarksSection draft={draft} patch={patch} />;
+      case "voice":
+        return <VoiceSection draft={draft} patch={patch} readerStyle={readerStyle} />;
       case "texture":
         return <TextureSection draft={draft} patch={patch} libBg={libBg} />;
     }
@@ -727,23 +749,11 @@ export function ProfileEditor({
                     {t("profiles.editor.stageBook")}
                   </button>
                 </div>
-                {/* ON THE STAGE, NOT IN A CHAPTER, and only where a page exists to measure. The rail
-                    tells the reader in as many words that page width is not part of a profile; a
-                    slider sitting among the chapters would say the opposite. Here it is plainly what
-                    it is — something that changes what you are looking at, not what you are saving. */}
-                {face === "book" && (
-                  <label className="pf-stage-measure" title={t("profiles.preview.measureHint")}>
-                    <span>{t("profiles.preview.measure")}</span>
-                    <input
-                      type="range"
-                      min={PAGE_WIDTH_MIN}
-                      max={PAGE_WIDTH_MAX}
-                      step={0.01}
-                      value={pageW}
-                      onChange={(e) => setPageW(Number(e.target.value))}
-                    />
-                  </label>
-                )}
+                {/* THE STAGE'S OWN MEASURE SLIDER IS GONE. It existed because the page's width was the
+                    one reading value a هيئة could not carry, so it changed the view and never the
+                    draft. The measure chapter owns it now, like every other measure field, and two
+                    controls for one value — one of which could not save it — would be the
+                    contradiction this comment used to warn against. */}
               </div>
 
               {/* WHAT THIS CHAPTER GOVERNS, drawn around the object itself. It sits OUTSIDE the

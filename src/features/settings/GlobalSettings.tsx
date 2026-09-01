@@ -24,8 +24,6 @@ import { BOOKMARK_COLORS, BOOKMARK_SHAPES, BOOKMARK_SIZE_MAX, BOOKMARK_SIZE_MIN,
 import { BookmarkShape } from "../reader/BookmarkShape";
 import { READ_MARKERS, useReadMarkerStyle } from "../../lib/readMarkerStyle"; // RAWY-256
 import { usePresence } from "../../lib/presence"; // DISC/RPC: the Discord on/off switch
-import { TtsTrackingControls } from "../reader/TtsTrackingControls"; // RAWY-200
-import { useStyleScope } from "../../lib/styleScope";
 import {
   ARABIC_FONTS,
   LATIN_DEFAULTS,
@@ -39,7 +37,7 @@ import { useDialog } from "../../components/useDialog";
 
 const STYLE_KEY = "reading_style";
 
-type Section = "appearance" | "profiles" | "fonts" | "reading" | "bookmark" | "language" | "presence" | "about";
+type Section = "appearance" | "profiles" | "fonts" | "bookmark" | "language" | "presence" | "about";
 // The row marks were text characters chosen for what existed, not for what the sections hold: the
 // bookmark row was a triangle, the language row was the command symbol, and six of the eight were
 // being drawn by Cambria Math with the "about" mark falling through to MS PGothic. Each is now an
@@ -54,7 +52,6 @@ const NAV: { key: Section; label: TKey; icon?: IconName; letter?: string }[] = [
   // done here. Every existing section keeps working exactly as it did.
   { key: "profiles", label: "gs.nav.profiles", icon: "profiles" },
   { key: "fonts", label: "gs.nav.fonts", letter: "A" },
-  { key: "reading", label: "gs.nav.reading", icon: "bookStyles" },
   { key: "bookmark", label: "gs.nav.bookmark", icon: "bookmark" },
   { key: "language", label: "gs.nav.language", icon: "language" },
   { key: "presence", label: "gs.nav.presence", icon: "activity" },
@@ -117,7 +114,6 @@ export function GlobalSettings({ open, onClose }: { open: boolean; onClose: () =
             {section === "appearance" && <AppearanceSection />}
             {section === "profiles" && <ProfilesSection />}
             {section === "fonts" && <FontsSection />}
-            {section === "reading" && <ReadingDefaultsSection />}
             {section === "bookmark" && <BookmarkSection />}
             {section === "language" && <LanguageSection />}
             {section === "presence" && <PresenceSection />}
@@ -625,133 +621,6 @@ function FontsSection() {
           ))}
         </div>
       </section>
-    </>
-  );
-}
-
-// ---- Book styles: the style MODE (unified vs per-book) and — in per-book ONLY — the global
-//      reading_style baseline a NEW book starts from ----
-//
-// RAWY-284: the reading-APPEARANCE controls (line spacing + the read-aloud tracking group) used to be
-// rendered here unconditionally, and in UNIFIED scope that was a pure duplicate of controls the reader
-// already has in the open book: line spacing is the Typography tab's `type.lineSpacing`, and the
-// tracking group is the SAME `TtsTrackingControls` component the Read-aloud tab renders (RAWY-200 made
-// it shared precisely so the two surfaces could not drift). Under unified, `Reader.update` writes the
-// GLOBAL row (Reader.tsx — `if (unified) globalStyleRef.current = next` → `saveGlobalStyle`), i.e. the
-// very row this section edits. So the duplicate was not merely redundant, it was the WORSE of the two
-// copies: identical destination, no live preview.
-//
-// It survives in PER-BOOK scope because there it is NOT a duplicate. The reader then writes
-// `book_style:<id>` instead, and this global row is the baseline a not-yet-opened book starts from —
-// which is also why it is the one place in the app where "you cannot preview it" is inherent rather
-// than a defect: the book it describes is not open. The heading says exactly that.
-//
-// The controls are a SEPARATE COMPONENT rather than a `scope === "perbook" &&` around the JSX so that
-// under unified they are not mounted at all: no `settingsGet` IPC, no style state, and none of the four
-// `useBackground` subscriptions the two EffectBlocks take. Gating inside the component would have kept
-// all of them alive to render nothing.
-function ReadingDefaultsSection() {
-  const { t } = useI18n();
-  const { scope, setScope } = useStyleScope();
-  return (
-    <>
-      <SecHead>{t("gs.reading")}</SecHead>
-
-      {/* RAWY-43: choose whether all books share one style (unified) or each keeps its own.
-          RAWY-271: Unified is listed FIRST because it is the default (styleScope.ts) — the old order
-          read as if Per-book were the primary option. Order only; the stored value is untouched.
-          RAWY-284: this block is deliberately unchanged — it is app-level, needs no preview, and is
-          the setting that decides what the rest of this section means. */}
-      <div className="gs-sec">
-        <Label>{t("gs.scope")}</Label>
-        <Seg<"unified" | "perbook">
-          value={scope}
-          onPick={(s) => setScope(s)}
-          options={[
-            { key: "unified", label: t("gs.scope.unified") },
-            { key: "perbook", label: t("gs.scope.perbook") },
-          ]}
-        />
-        <div className="gs-note">{scope === "unified" ? t("gs.scope.unifiedHint") : t("gs.scope.perbookHint")}</div>
-      </div>
-
-      {/* RAWY-284: no disabled/greyed leftovers under unified — the controls are GONE, replaced by
-          where they actually are. Says the panel name a reader can act on, not just "in the reader". */}
-      {scope === "perbook" ? <NewBookDefaults /> : <div className="gs-banner">▤ {t("gs.reading.inReader")}</div>}
-    </>
-  );
-}
-
-// RAWY-284: mounted ONLY in per-book scope (see the note above). Everything inside is byte-for-byte the
-// pre-RAWY-284 markup and the same `patch` funnel writing the same `reading_style` key — the ticket
-// changes WHERE these are shown, never what they store.
-function NewBookDefaults() {
-  const { t, lang } = useI18n();
-  const { bookThemeId } = useTheme();
-  // The tracking preview + contrast guard use the shared BOOK theme (D29) — the one a new book opens in
-  // — so the swatches show the real per-theme terracotta and warn against the real paper. Theme choice
-  // does NOT affect what is persisted (the track values are theme-independent); it is preview only.
-  const gTheme = resolveTheme(bookThemeId);
-  const [style, setStyle] = useState<ReadingStyle | null>(null);
-
-  useEffect(() => {
-    (async () => {
-      const raw = await settingsGet(STYLE_KEY).catch(() => null);
-      let parsed: Partial<ReadingStyle> = {};
-      if (raw) {
-        try {
-          parsed = JSON.parse(raw) as Partial<ReadingStyle>;
-        } catch {
-          parsed = {};
-        }
-      }
-      setStyle({ ...LATIN_DEFAULTS, ...parsed });
-    })();
-  }, []);
-
-  const patch = (p: Partial<ReadingStyle>) => {
-    setStyle((cur) => {
-      if (!cur) return cur;
-      const next = { ...cur, ...p };
-      settingsSet(STYLE_KEY, JSON.stringify(next)).catch(console.error);
-      return next;
-    });
-  };
-
-  // RAWY-284: null, not a bare heading — the parent already rendered the section head and the style
-  // MODE switch, so the panel is never a blank frame while this one `settingsGet` is in flight (UI
-  // Rules: no blank frames, no visible rebuilding). Before this split the whole panel was one heading.
-  if (!style) return null;
-  return (
-    <>
-      {/* RAWY-284: the banner moved BELOW the mode switch so it scopes the group it describes. Under
-          unified it said "the baseline for new books" about a row that is every book's LIVE style —
-          true only in per-book, which is now the only scope that renders it. */}
-      <div className="gs-banner">↻ {t("gs.readingBanner")}</div>
-
-      {/* Book font, weight & size now live in the Fonts panel (RAWY-91); line spacing stays here. */}
-      <div className="gs-sec">
-        <div className="gs-slider-head"><span>{t("gs.defaultLineSpacing")}</span><span className="gs-slider-val">{localeDigits(style.lineHeight.toFixed(2), lang)}</span></div>
-        {/* RAWY-65: an RTL-mirror fix was investigated (see the Slider component's comment in
-            ReadingSettings.tsx) and found unnecessary — this runtime already auto-mirrors native
-            <input type=range> correctly for RTL, both visually and for click/drag, with no code. */}
-        <input className="gs-slider" type="range" min={1.2} max={2.6} step={0.05} value={style.lineHeight}
-          onChange={(e) => patch({ lineHeight: Math.round(Number(e.target.value) * 100) / 100 })} />
-      </div>
-      <div className="gs-note">{t("gs.reading.fontsHint")}</div>
-
-      {/* RAWY-200: read-aloud tracking defaults — the same six controls as the in-book panel, writing
-          the GLOBAL reading_style row (the per-book panel writes book_style:<id>). */}
-      <div className="gs-sec">
-        <TtsTrackingControls
-          style={style}
-          update={patch}
-          dark={gTheme.dark}
-          paperBg={gTheme.colors.paperBg}
-          themeInk={gTheme.colors.text}
-          deskBg={gTheme.colors.surfaceBg}
-        />
-      </div>
     </>
   );
 }

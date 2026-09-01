@@ -18,8 +18,11 @@ import { useI18n } from "../../i18n";
 import type { TKey } from "../../i18n/locales/en";
 import { applyProfile, captureCurrent, saveProfile, useProfiles } from "./store";
 import { THEMES, isBuiltinThemeId } from "../../theme/themes";
-import { liveValues, useSession, type SessionKey } from "./session";
-import type { Profile } from "./model/profile";
+import { liveValues, profileValues, useSession, type SessionKey } from "./session";
+import type { Profile, ProfileData } from "./model/profile";
+import { useReader } from "../../reader-engine/store";
+import { TTS_TRACKING_KEYS } from "../../reader-engine/injectedCss";
+import { TYPOGRAPHY_KEYS } from "./model/profile";
 import { useDialog } from "../../components/useDialog";
 
 /**
@@ -33,15 +36,39 @@ import { useDialog } from "../../components/useDialog";
  * Exported so the joining can be tested in both languages without rendering the dialog.
  */
 export function describe(keys: SessionKey[], t: (k: TKey) => string): string {
-  const label = (k: SessionKey) =>
-    k === "theme_id"
-      ? t("profiles.unsaved.what.theme")
-      : k === "book_theme_id"
-        ? t("profiles.unsaved.what.bookTheme")
-        : k === "arabicFont"
-          ? t("profiles.unsaved.what.arabicFont")
-          : t("profiles.unsaved.what.latinFont");
-  return keys.map(label).join(t("profiles.unsaved.listSep"));
+  // A LOOKUP, NOT A CHAIN OF TERNARIES. The chain ended in `latinFont`, so it named the LATIN FACE for
+  // every key it did not recognise — and the set has grown twice since it was written (the number
+  // ink, then the seven read-aloud marks). A reader who changed a tracking colour would have been
+  // told they had changed the Latin font. An unknown key now says nothing rather than something
+  // false, and the dialog falls back to its own "you have unsaved changes" wording if that empties
+  // the list.
+  const LABELS: Partial<Record<SessionKey, TKey>> = {
+    theme_id: "profiles.unsaved.what.theme",
+    book_theme_id: "profiles.unsaved.what.bookTheme",
+    arabicFont: "profiles.unsaved.what.arabicFont",
+    latinFont: "profiles.unsaved.what.latinFont",
+    numberColor: "profiles.unsaved.what.numbers",
+    ...Object.fromEntries(
+      TYPOGRAPHY_KEYS.map((k) => [k, "profiles.unsaved.what.measure" as TKey]),
+    ),
+    ttsSpotlightOn: "profiles.unsaved.what.voice",
+    ttsSpotlightColor: "profiles.unsaved.what.voice",
+    ttsSpotlightOpacity: "profiles.unsaved.what.voice",
+    ttsSpotlightRule: "profiles.unsaved.what.voice",
+    ttsKaraokeOn: "profiles.unsaved.what.voice",
+    ttsKaraokeColor: "profiles.unsaved.what.voice",
+    ttsKaraokeOpacity: "profiles.unsaved.what.voice",
+  };
+  // The seven marks are ONE thing to a reader, so they are named once however many of them moved.
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const k of keys) {
+    const key = LABELS[k];
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(t(key));
+  }
+  return out.join(t("profiles.unsaved.listSep"));
 }
 
 export function UnsavedChange() {
@@ -78,6 +105,18 @@ export function UnsavedChange() {
   const capturedWithDrift = async () => {
     const data = await captureCurrent();
     const live = liveValues();
+    // WHAT `captureCurrent` DELIBERATELY DECLINES TO TAKE MUST NOT BE LOST HERE.
+    //
+    // It takes NO typography opinion and NO read-aloud opinion, and both refusals are right for what
+    // it is for: a profile made from "how Sard looks now" must not silently claim the reader's
+    // measure or their reading cursor. Saving into a هيئة THAT ALREADY EXISTS is the opposite case —
+    // those are values it already holds, and replacing the whole blob with a capture deleted them as
+    // a side effect of confirming an unrelated colour change. Restored from the هيئة itself, so
+    // nothing outside the drift can move.
+    if (active) {
+      data.type.reading = { ...active.data.type.reading };
+      data.voice = active.data.voice ? { ...active.data.voice } : null;
+    }
     if (isBuiltinThemeId(live.theme_id)) {
       const th = THEMES[live.theme_id];
       // THE APP PAPER, so the LIBRARY palette. `captureCurrent` now reads the library theme for
@@ -93,6 +132,27 @@ export function UnsavedChange() {
     // case: the colour on screen is precisely what the reader is asking to keep.
     // The digits are drawn in a BOOK, so the reading palette carries them.
     data.theme = { ...data.theme, reading: { ...data.theme.reading, numbers: live.numberColor || null } };
+    // AND THE READ-ALOUD MARKS, for exactly the same reason the number ink is folded in: they are
+    // هيئة-owned and settable from the reading drawer, so the marks on screen are precisely what the
+    // reader is asking to keep. Only while a book is open — with none, the reading style is unknown
+    // rather than empty (see `driftOf`), and the هيئة's own block restored above stands.
+    const liveStyle = useReader.getState().style;
+    if (liveStyle) {
+      data.voice = Object.fromEntries(
+        TTS_TRACKING_KEYS.map((k) => [k, liveStyle[k]]),
+      ) as ProfileData["voice"];
+      // AND THE MEASURE, but only where it actually DIFFERS from what the هيئة asserts.
+      //
+      // Not "capture everything on screen": a هيئة that names no margin asserts Sard's own, and
+      // writing that number back would turn a هيئة with no opinion into one with ten, freezing this
+      // book's direction defaults into it. Only a field the reader has genuinely moved becomes an
+      // opinion; the rest stay exactly as authored, `null` included.
+      const asserted = profileValues(active!);
+      for (const k of TYPOGRAPHY_KEYS) {
+        if (String(liveStyle[k] ?? "") === asserted[k]) continue;
+        (data.type.reading as unknown as Record<string, unknown>)[k] = liveStyle[k];
+      }
+    }
     return data;
   };
 
@@ -155,7 +215,9 @@ export function UnsavedChange() {
     setBusy(true);
     try {
       if (pending.onDiscard) await pending.onDiscard();
-      else await applyProfile(active);
+      // RE-APPLYING IS THE DISCARD, and it is not a choice of هيئة: the reader is putting back what
+      // the one they are already wearing says. It therefore takes no use stamp — see `applyProfile`.
+      else await applyProfile(active, { worn: false });
     } finally {
       setBusy(false);
     }

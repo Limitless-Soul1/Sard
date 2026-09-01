@@ -30,6 +30,10 @@ import type { BuiltinThemeId, CustomThemeId, Theme, ThemeColors } from "../../..
 import { HIGHLIGHT_SLOTS } from "../../../theme/tokens";
 import { isHex, reliefRoom, withPanelRelief } from "./palette";
 import {
+  PAGE_WIDTH_MAX,
+  PAGE_WIDTH_MIN,
+  TTS_TRACKING_DEFAULTS,
+  TTS_TRACKING_KEYS,
   ZOOM_MAX,
   ZOOM_MIN,
   type Align,
@@ -103,8 +107,44 @@ export interface ProfileType {
  * them so the patch is a field-for-field copy and the two cannot drift apart. `marginPx` is included
  * because the reader's own drawer offers it beside the rest of the measure.
  */
+/**
+ * THE READ-ALOUD MARKS, AS A PROFILE'S OPINION.
+ *
+ * WHY THIS ONE IS A BLOCK AND THE MEASURE IS A FIELD-BY-FIELD OPINION. Every typography field can say
+ * "no opinion" on its own because `null` there has no other meaning. Here `null` is already taken: a
+ * colour of `null` means "the theme's own terracotta", and an opacity of `null` means "the theme's own
+ * band" — that is what `resolveSpotlight` reads, and it is how the «افتراضي» swatch is spelled. So
+ * a per-field null could not also mean "leave the reader alone" without the two collapsing into each
+ * other, and a profile could never say "put the marks back to the theme's default".
+ *
+ * The whole block is therefore the three-state: `null` for a هيئة that carries no opinion about
+ * read-aloud — which is what every profile written before this says — and a complete set of
+ * seven when it does.
+ *
+ * `null` MEANS "SARD'S OWN MARKS", NOT "WHATEVER IS THERE". Activating a هيئة writes all seven either
+ * way (see `readingPatch`): its own when it has them, and the engine's defaults when it has not. A
+ * هيئة is a complete look, so it cannot inherit the marks of the one worn before it. Nothing about a
+ * STORED profile changed for this — `null` is still exactly what every profile written before this
+ * chapter existed says; only what activating one asserts did.
+ *
+ * IT IS THE READING STYLE'S OWN TYPE. `Pick`ed from `ReadingStyle` through the defaults the engine
+ * already publishes, so the patch is a field-for-field copy and a renamed field fails to compile here.
+ */
+export type ProfileVoice = typeof TTS_TRACKING_DEFAULTS;
+
+/**
+ * THE ENGINE'S OWN LIST, re-exported rather than repeated.
+ *
+ * The same seven names decide three things: what a هيئة carries, what activation writes, and what
+ * `parseVoice` accepts. Written out three times they would drift on the day an eighth is added; named
+ * once, an addition reaches all three or fails to compile.
+ */
+export const VOICE_KEYS: readonly (keyof ProfileVoice)[] = TTS_TRACKING_KEYS;
+
 export interface ProfileTypography {
   zoom: number | null;
+  /** The reading MEASURE, as the reader's own 0..1 fraction — see the note above `TYPOGRAPHY_KEYS`. */
+  pageWidth: number | null;
   marginPx: number | null;
   lineHeight: number | null;
   letterSpacing: number | null;
@@ -117,25 +157,29 @@ export interface ProfileTypography {
 
 /** Every key a profile may contribute, so the patch and the editor cannot fall out of step. */
 /**
- * PAGE WIDTH IS NOT HERE, and its absence is the point.
+ * PAGE WIDTH IS HERE NOW, and the reversal is deliberate.
  *
- * `store.ts` already states the rule — "PAGE WIDTH IS NOT A PROFILE PROPERTY and must never become
- * one" — and `package.ts` refuses any package carrying it. A profile could nonetheless own one,
- * through a slider in the Measure chapter, and `readingPatch` then imposed it on the reader at every
- * activation: the architecture said one thing in two places and the opposite in a third.
+ * It was excluded, and the exclusion was stated three times over: this list left it out, `package.ts`
+ * refused any package carrying it, and the editor's own footer promised the reader that the measure
+ * stayed theirs in every هيئة. That was coherent while a هيئة was a palette.
  *
- * It is dropped rather than deprecated. A value already stored simply stops being read — the parser
- * names the fields it takes, so an unknown one is ignored, which is this project's own versioning
- * rule ("unknown fields ignored, never rejected"). The reader keeps their own measure, which is what
- * the editor's firewall has always promised them.
+ * It is not what a هيئة is any more. A هيئة is the complete reading preset — paper, faces, the
+ * measure, the marks, the read-aloud cursor — so the width of the page is exactly the kind of
+ * thing it should carry, and leaving it out made a هيئة that could set the MARGINS but not the page
+ * they were measured against. The firewall it was defended by is dropped with it: `pageWidth` is no
+ * longer a forbidden package key, so a shared هيئة carries the width it was designed at.
+ *
+ * IT IS THE SAME 0..1 FRACTION the reader's own control uses, mapped by `pageWidthPx`, so nothing
+ * downstream has to learn a second unit; and it is `null` when the هيئة has no opinion, exactly like
+ * every other field here.
  */
 export const TYPOGRAPHY_KEYS = [
-  "zoom", "marginPx", "lineHeight", "letterSpacing",
+  "zoom", "pageWidth", "marginPx", "lineHeight", "letterSpacing",
   "paragraphSpacing", "fontWeight", "firstLineIndent", "align", "diacritics",
 ] as const;
 
 export const EMPTY_TYPOGRAPHY: ProfileTypography = {
-  zoom: null, marginPx: null, lineHeight: null, letterSpacing: null,
+  zoom: null, pageWidth: null, marginPx: null, lineHeight: null, letterSpacing: null,
   paragraphSpacing: null, fontWeight: null, firstLineIndent: null, align: null, diacritics: null,
 };
 
@@ -276,6 +320,10 @@ export interface ProfileData {
   type: ProfileType;
   marks: ProfileMarks;
   bg: { library: ProfileSurfaceBg; reading: ProfileReadingBg };
+  /**
+   * The read-aloud marks, or `null` for a هيئة that has no opinion about them. See `ProfileVoice`.
+   */
+  voice: ProfileVoice | null;
   texture: TextureStep;
   seal: ProfileSeal;
   /** How an image mark is framed. Meaningless — and ignored — for the other two kinds. */
@@ -320,6 +368,9 @@ function parseTypography(v: unknown): ProfileTypography {
     typeof x === "number" && Number.isFinite(x) && x >= lo && x <= hi ? x : null;
   return {
     zoom: num(o.zoom, ZOOM_MIN, ZOOM_MAX),
+    // The reader's own 0..1 fraction. Anything outside it is not a measure this engine can honour, so
+    // it reads as no opinion rather than being clamped into one.
+    pageWidth: num(o.pageWidth, PAGE_WIDTH_MIN, PAGE_WIDTH_MAX),
     marginPx: num(o.marginPx, 0, 160),
     lineHeight: num(o.lineHeight, 1.2, 2.6),
     letterSpacing: num(o.letterSpacing, 0, 3),
@@ -328,6 +379,36 @@ function parseTypography(v: unknown): ProfileTypography {
     firstLineIndent: typeof o.firstLineIndent === "boolean" ? o.firstLineIndent : null,
     align: ALIGNS.includes(o.align as Align) ? (o.align as Align) : null,
     diacritics: DIACRITICS.includes(o.diacritics as DiacriticsMode) ? (o.diacritics as DiacriticsMode) : null,
+  };
+}
+
+/**
+ * Read a profile's read-aloud marks, or `null` when it carries none.
+ *
+ * ABSENT IS THE ANSWER FOR EVERY PROFILE WRITTEN BEFORE THIS, and it has to be distinguishable from a
+ * block whose fields are all at their defaults — the first says "leave the reader's own marks
+ * alone", the second says "these marks, which happen to be the defaults". So the object's PRESENCE is
+ * the opinion, and a malformed one is read as absent rather than repaired into a real override.
+ *
+ * Within a present block each field is defaulted rather than refused: a hex that is not one, or an
+ * opacity out of range, is a value that has drifted, and `TTS_TRACKING_DEFAULTS` is what the engine
+ * would have drawn anyway. `null` survives as itself, because here it is a real value.
+ */
+function parseVoice(v: unknown): ProfileVoice | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  const bool = (x: unknown, fallback: boolean): boolean => (typeof x === "boolean" ? x : fallback);
+  const ink = (x: unknown): string | null => (typeof x === "string" && isHex(x) ? x : null);
+  const alpha = (x: unknown): number | null =>
+    typeof x === "number" && Number.isFinite(x) && x > 0 && x <= 1 ? x : null;
+  return {
+    ttsSpotlightOn: bool(o.ttsSpotlightOn, TTS_TRACKING_DEFAULTS.ttsSpotlightOn),
+    ttsSpotlightColor: ink(o.ttsSpotlightColor),
+    ttsSpotlightOpacity: alpha(o.ttsSpotlightOpacity),
+    ttsSpotlightRule: bool(o.ttsSpotlightRule, TTS_TRACKING_DEFAULTS.ttsSpotlightRule),
+    ttsKaraokeOn: bool(o.ttsKaraokeOn, TTS_TRACKING_DEFAULTS.ttsKaraokeOn),
+    ttsKaraokeColor: ink(o.ttsKaraokeColor),
+    ttsKaraokeOpacity: alpha(o.ttsKaraokeOpacity),
   };
 }
 
@@ -462,6 +543,10 @@ export function parseProfileData(raw: string): ProfileData {
               : null,
       },
     },
+    // Absent reads as "this هيئة has no opinion about the read-aloud marks" — what every profile
+    // written before this chapter existed means, and what keeps a switch from repainting somebody's
+    // reading cursor.
+    voice: parseVoice(o.voice),
     texture: pick<TextureStep>(o.texture, (x) => TEXTURE_STEPS.includes(x as TextureStep), "opaque"),
     // Absent reads as "the profile's own face, and its initial" — what every seal drawn before this
     // existed already looked like, so nothing that is already saved changes appearance.
@@ -667,22 +752,52 @@ export const PROFILE_WRITES = [
 ] as const;
 
 /**
- * The ONLY two fields of `reading_style` a profile touches.
+ * EVERY READING VALUE A هيئة OWNS. The authoritative list, and the one the rest of the app derives.
  *
- * The other twenty-seven are the reader's own. Naming these two here, rather than spreading a whole
- * object over the row, is what makes it impossible for a profile to carry line spacing home by
- * accident — the patch cannot express a field that is not in this list.
+ * It began as two fields, then three, and for a long time it was declared here and consulted
+ * NOWHERE: `driftOf` kept its own hand-written copy and the package firewall kept another. Both fell
+ * behind, and each gap was a real defect — the measure could be changed from the reader without
+ * the هيئة ever counting as edited, and a shared هيئة arrived without the size and the leading it was
+ * designed at.
+ *
+ * Three things read this now, so they cannot disagree:
+ *   · `readingPatch`  — what activating a هيئة writes, and what it clears
+ *   · `session.ts`    — what counts as an unsaved change to the active هيئة
+ *   · `package.ts`    — what may cross the border, and what is refused by name
+ *
+ * A field added here reaches all three; a `ReadingStyle` field NOT added here is refused at the
+ * border and ignored by the rest, which is the safe direction for a list to fail in.
  */
-export const PROFILE_READING_FIELDS = ["arabicFont", "latinFont", "numberColor", ...TYPOGRAPHY_KEYS] as const;
+export const PROFILE_READING_FIELDS = [
+  "arabicFont", "latinFont", "numberColor", ...TYPOGRAPHY_KEYS, ...VOICE_KEYS,
+] as const;
 
 /**
- * The reading-style patch a profile contributes: the two faces, always, and each typography field
- * the profile actually has an opinion about.
+ * What activating a هيئة does to the reading style: values to WRITE, and keys to CLEAR.
  *
- * A null field is OMITTED rather than written as null — the patcher merges into the reader's own
- * blob, so omitting is what leaves their value alone. Writing `null` would blank it.
+ * TWO LISTS, BECAUSE "SARD'S OWN DEFAULT" IS NOT A VALUE. The patcher merges into the reader's blob,
+ * so a field the هيئة does not name has to be actively removed for the default to show through —
+ * omitting it leaves the PREVIOUS هيئة's value standing, which is the leak this shape exists to end.
+ * Measured on a real library: one book's stored row wrote `marginPx: 136`, the هيئة worn over it
+ * carried a measure but no margin of its own, and the reader read every book at 136px of margin
+ * under a هيئة that never asked for it — a fifth of the page, unresponsive to text size because
+ * a margin is not typographic.
+ *
+ * AND CLEARING IS WHY IT IS NOT A WRITE. `loadGlobalStyle` fills every absent field from
+ * `defaultsForDir(dir)`, and those two sets DIFFER: zoom 1.15/1.0, line-height 1.9/1.6, align
+ * start/justify. Writing a number would freeze ONE script's default into a row both scripts read, and
+ * an Arabic book would open at the Latin baseline — the exact defect AUD-6 fixed. Absent is how this
+ * model already spells "follow the default", and it stays direction-aware because it is resolved at
+ * read time rather than at write time.
  */
-export function readingPatch(p: Profile): Record<string, unknown> {
+export interface ReadingPatch {
+  /** Fields to write, verbatim. `null` here is a real value the profile holds. */
+  set: Record<string, unknown>;
+  /** Keys to remove, so the engine's own per-script default resolves for them. */
+  clear: string[];
+}
+
+export function readingPatch(p: Profile): ReadingPatch {
   const out: Record<string, unknown> = {
     arabicFont: p.data.type.arabic,
     latinFont: p.data.type.latin,
@@ -717,16 +832,48 @@ export function readingPatch(p: Profile): Record<string, unknown> {
   // owner's own configuration: a stored `#2C37BC` survived A -> B -> A with the book open and the
   // page never moved off it — the reading palette was simply unreachable.
   //
-  // Writing null restores the documented order: a per-book override still wins, and below it the
-  // active profile's reading paper. A page colour chosen in the reading drawer still holds, and now
-  // lasts until the next profile switch — the same contract as the number ink and the overlay.
+  // Writing null restores the documented order, with the active هيئة's reading paper below it. (The
+  // per-book override that used to sit above both is gone with the book-style scope; there is one
+  // reading style now.) A page colour chosen in the reading drawer still holds, and lasts until the
+  // next هيئة switch — the same contract as the number ink and the overlay.
   out.pageColor = null;
+  // THE MEASURE: every field, every time — the هيئة's own where it has one, and CLEARED where it has
+  // not, so Sard's own default resolves instead of the last هيئة's value. A هيئة is the complete
+  // reading appearance; it cannot be worn in another's margins.
   const r = p.data.type.reading;
+  const clear: string[] = [];
   for (const k of TYPOGRAPHY_KEYS) {
     const v = r[k];
     if (v !== null && v !== undefined) out[k] = v;
+    else clear.push(k);
   }
-  return out;
+  // THE READ-ALOUD MARKS: ALWAYS ALL SEVEN, whether the هيئة carries an opinion or not.
+  //
+  // OMITTING THEM LEAKED ONE هيئة'S MARKS INTO ANOTHER, and that is the defect this closes. A patch
+  // merges into the reader's blob, so a هيئة with no opinion wrote nothing and simply left whatever
+  // the PREVIOUS هيئة had asserted standing: wearing A (green spotlight) and then B (no opinion) left
+  // the reader reading B with A's green marks, and no gesture of theirs could have caused it. A هيئة
+  // is a complete look, so activating one has to establish the whole of it.
+  //
+  // WHAT "NO OPINION" IS WORTH WRITING is not invented here. `loadGlobalStyle` fills every field the
+  // blob does not carry from `defaultsForDir`, into which `TTS_TRACKING_DEFAULTS` is spread — so
+  // "absent" and "these seven values" are the same effective state to the reading engine, and this is
+  // the model's own spelling of "follow the default" rather than a second one. The constant is spread
+  // at call time, so a change to the engine's defaults reaches these هيئات too.
+  //
+  // IT IS THE SHAPE `pageColor` ALREADY HAS, for the reason recorded above it: a value only these
+  // screens can set must be able to say "back to Sard's own", and a field that is merely omitted has
+  // no way to say it. The consequence is the same one that field already documents — a mark chosen
+  // in the reading drawer holds until the next هيئة switch, and a هيئة carrying its own marks then
+  // restores them exactly.
+  //
+  // The READ-ALOUD MARKS stay a WRITE rather than a clear, and the difference is not an inconsistency:
+  // `TTS_TRACKING_DEFAULTS` is identical in both per-script sets, so writing them and clearing them
+  // are the same effective state — and writing keeps `null` available as the real value it is there
+  // ("the theme's own colour"), which absence could not express.
+  const voice = p.data.voice ?? TTS_TRACKING_DEFAULTS;
+  for (const k of VOICE_KEYS) out[k] = voice[k];
+  return { set: out, clear };
 }
 
 /** The settings a profile writes, as key/value pairs, ready to persist. */

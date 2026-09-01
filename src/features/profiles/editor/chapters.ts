@@ -22,6 +22,9 @@ export const CHAPTERS = [
   // this chooses how it is set on the page.
   { id: "measure",    name: "profiles.chapter.measure",    q: "profiles.chapter.measure.q" },
   { id: "marks",      name: "profiles.chapter.marks",      q: "profiles.chapter.marks.q" },
+  // Directly after the marks, because the reading cursor IS one: it is drawn on the page while Sard
+  // reads aloud, and it is set the way the highlight and the bookmark are — a colour and a strength.
+  { id: "voice",      name: "profiles.chapter.voice",      q: "profiles.chapter.voice.q" },
   { id: "texture",    name: "profiles.chapter.texture",    q: "profiles.chapter.texture.q" },
 ] as const satisfies readonly { id: string; name: TKey; q: TKey }[];
 
@@ -71,8 +74,12 @@ export const FOCUS: Record<ChapterId, Focus> = {
   // The whole set body — the measure is the relationship BETWEEN the lines, so framing one paragraph
   // would misstate what the chapter changes.
   measure:    { face: "book",    label: "profiles.focus.measure",  targets: [".pf-page-body"] },
-  // Both marks the chapter owns — the highlight and underline on the page, and the marker at its edge.
-  marks:      { face: "book",    label: "profiles.focus.marks",    targets: [".pf-page-hl", ".pf-page-ul", ".pf-page-mark"] },
+  // The three marks the chapter owns — the highlight and the selected run on the page, and the
+  // marker at its edge.
+  marks:      { face: "book",    label: "profiles.focus.marks",    targets: [".pf-page-hl", ".pf-page-sel", ".pf-page-mark"] },
+  // The sentence being read and the word inside it: one specimen, because the two marks are set
+  // against each other and framing either alone would misstate what the chapter does.
+  voice:      { face: "book",    label: "profiles.focus.voice",    targets: [".pf-page-spot"] },
   // The panel the interface texture is actually visible on.
   texture:    { face: "library", label: "profiles.focus.texture",  targets: [".pf-lib-side"] },
 };

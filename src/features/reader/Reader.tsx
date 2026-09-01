@@ -22,7 +22,6 @@ import {
 } from "../../reader-engine/pdfView";
 import {
   ARABIC_DEFAULTS,
-  defaultsForDir,
   PAGE_WIDTH_DEFAULT,
   pageWidthPx,
   type ReadingStyle,
@@ -43,17 +42,8 @@ import { ErrorCard } from "../../app/ErrorCard";
 import { useI18n } from "../../i18n";
 import { extractChapterNumber, localeNum } from "../../lib/format";
 import { resolveTheme, useTheme, type ThemeId } from "../../theme";
-import {
-  clearBookOverride,
-  effectiveStyle,
-  hasOverride as calcHasOverride,
-  loadBookOverride,
-  loadGlobalStyle,
-  saveBookOverride,
-  saveGlobalStyle,
-  type BookOverride,
-} from "./perBookSettings";
-import { useStyleScope } from "../../lib/styleScope";
+import type { FootnoteHit } from "../../reader-engine/FoliateController";
+import { loadGlobalStyle, saveGlobalStyle } from "./perBookSettings";
 // RAWY-265 (Phase 3): the page-opacity gate + the desk scrim, both resolved in one place.
 import {
   bgOverlayOf,
@@ -73,6 +63,7 @@ import { useAnnotations } from "./annotationsStore";
 import { useReferences } from "./referencesStore"; // RAWY-260: phrase-bound references, per book
 import { useBookmarks } from "./bookmarksStore";
 import { ReaderChrome, type SettingsSection } from "./ReaderChrome";
+import { NoteSheet } from "./NoteSheet";
 import { SettingsPanel } from "./SettingsPanel";
 import { useReadMarkerStyle } from "../../lib/readMarkerStyle"; // RAWY-256: the global read-marker variant
 import { endReadingSession, startReadingSession, updateReadingSession } from "../../lib/presence"; // DISC/RPC
@@ -291,14 +282,12 @@ export function Reader({
   // Per-book settings (RAWY-40): the global reading defaults (baseline), this book's PARTIAL
   // override, and the global theme captured on entry (restored to the chrome on exit).
   const globalStyleRef = useRef<ReadingStyle | null>(null);
-  const overrideRef = useRef<BookOverride>({});
   // RAWY-48/D29's `libraryThemeRef` is GONE, and its absence is the point. It existed to put the
   // Library's palette back on exit, because the Reader used to overwrite `:root` on entry. It writes
   // nothing global now, so there is nothing to put back — and the ref could only ever restore a
   // STALE value: it was captured when the book opened, so switching profiles mid-book and then going
   // back handed the Library its previous profile's colours.
   const [bookThemeId, setBookThemeId] = useState<ThemeId>(useTheme.getState().bookThemeId);
-  const [hasOv, setHasOv] = useState(false);
   const [photoCard, setPhotoCard] = useState<CardData | null>(null); // RAWY-49 Photo Mode composer
   const [devCardFont, setDevCardFont] = useState<string | null>(null); // RAWY-81 DEV capture only
   const [basketOpen, setBasketOpen] = useState(false); // RAWY-60 passages tray
@@ -310,9 +299,6 @@ export function Reader({
   const ttsWordIndex = useTts((s) => s.wordIndex); // RAWY-127: active word (drives the karaoke pill)
 
   const { status, dir, cfi, fraction, chapterLabel, chapterHref, error, style, bookTitle, location, pageLabel } = useReader();
-  // RAWY-43: unified (all books share one style) vs per-book. Drives where changes are written
-  // and how a book's effective style/theme is resolved.
-  const scope = useStyleScope((s) => s.scope);
   // RAWY-41: the current book's bookmarks; the marker shows ONLY in the bookmark's chapter.
   // RAWY-229 (corrected): a bookmark is a per-CHAPTER mark — its marker shows anywhere in that chapter, at
   // any scroll position (top to bottom), and hides only when the reader LEAVES the chapter. `bookmarkVisible`
@@ -429,26 +415,22 @@ export function Reader({
        * reads; it is removing a dependency that was never real. Both of their inputs, the book's id
        * and its direction, are on `target` from the first line of this function.
        *
-       * Nothing about precedence moves: the effective style is still `effectiveStyle(global,
-       * override)` in the per-book scope and the bare global in unified, computed from the same two
-       * values in the same order. Only the moment it becomes known has changed.
+       * Nothing about precedence moves: the effective style is the global row, as it always was
+       * under the shared model. Only the moment it becomes known has changed.
        */
+      // ONE READING STYLE, AND IT IS THE GLOBAL ROW. The per-book/unified scope is gone: a هيئة is
+      // the complete reading appearance now, and a second per-book layer over it could only compete
+      // for the same fields. Any `book_style:<id>` a reader stored is left on disk untouched and is
+      // simply never read — the same "ignore, never delete" rule unified scope always followed.
       const ts = useTheme.getState();
-      const unified = useStyleScope.getState().scope === "unified";
-      const [global, override] = await Promise.all([
-        loadGlobalStyle(target.dir ?? undefined),
-        loadBookOverride(target.id),
-      ]);
+      const global = await loadGlobalStyle(target.dir ?? undefined);
       if (stale()) return;
       globalStyleRef.current = global;
-      overrideRef.current = override;
-      // The book's theme comes from the shared BOOK theme (D29), NOT the Library theme:
-      // unified -> the shared book theme; per-book -> this book's override, else the shared book theme.
-      const effTheme = unified ? ts.bookThemeId : (override.themeId ?? ts.bookThemeId);
-      let initialStyle = unified ? global : effectiveStyle(global, override);
+      // The book's theme comes from the shared BOOK theme (D29), NOT the Library theme.
+      const effTheme = ts.bookThemeId;
+      let initialStyle = global;
       set({ style: initialStyle });
       setBookThemeId(effTheme);
-      setHasOv(!unified && calcHasOverride(override)); // Reset is a per-book affordance
 
       const url = convertFileSrc(target.filePath);
       stageOk("asset.url", { assetUrl: url, scheme: (() => { try { return new URL(url).protocol + "//" + new URL(url).host; } catch { return "UNPARSEABLE"; } })() });
@@ -479,10 +461,8 @@ export function Reader({
       const resumeCfi = target.cfi ?? (targetIsPdf ? null : saved?.cfi) ?? null;
       const resumeFraction = targetIsPdf ? (saved?.fraction ?? null) : null;
 
-      // RAWY-40/43: per-book → effective = GLOBAL defaults with THIS book's PARTIAL override on
-      // top, theme = override theme else global. UNIFIED → the GLOBAL style/theme, IGNORING (never
-      // deleting) the override so switching back to per-book restores it. RAWY-176 (AUD-6): the
-      // saved global row loads OVER this book's DIRECTION baseline (loadGlobalStyle(target.dir)), so
+      // ONE STYLE FOR EVERY BOOK, resolved per DIRECTION. RAWY-176 (AUD-6): the saved global row
+      // loads OVER this book's direction baseline (loadGlobalStyle(target.dir)), so
       // any field the row lacks falls back to the Arabic baseline for an RTL book — on a fresh
       // install (no row) an Arabic book now opens at zoom 1.15 / line-height 1.9 / start, not Latin.
       // Both are resolved at the top of this function now - see the note there for why.
@@ -549,10 +529,17 @@ export function Reader({
       // alone — one degenerate book must not change how every other book opens.
       // THE ONE FIELD HERE THAT GENUINELY NEEDS `meta`, and it is not a colour. Applied where the row
       // becomes available, over the style already published above; the page is unaffected either way.
-      if (meta?.spineFragmented && !unified && override.style?.flowMode == null) {
-        initialStyle = { ...initialStyle, flowMode: "scrolled" };
-        set({ style: initialStyle });
-      }
+      // THE FRAGMENTED-SPINE DEFAULT IS GONE WITH THE PER-BOOK LAYER IT DEPENDED ON.
+      //
+      // It read "if this book's spine is fragmented AND this book has no flow of its own, open it
+      // scrolled" — a default for ONE book, which only meant anything while a book could hold a flow
+      // of its own. Without that layer the condition can only be about the reader's own preference,
+      // and then it is either a no-op (their flow is already scrolled, which is the default) or a
+      // silent refusal of the paged flow they explicitly chose. Measured: it forced a paged reader
+      // back to scrolled on such a book, with no way to say otherwise.
+      //
+      // So the reader's flow is the reader's, for every book. A fragmented spine paginates poorly and
+      // they can switch — which is the same control they would have used before.
 
       // On the hosted path this is the first moment the reader is actually needed, and the awaits
       // above have already given the host time to load. On Windows `ctrlRef.current` was assigned
@@ -949,28 +936,6 @@ export function Reader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lang]);
 
-  // RAWY-43: toggling the unified/per-book scope LIVE re-resolves the open book's effective
-  // style + theme immediately. Unified → the global style/theme (overrides ignored, kept);
-  // per-book → global ∪ this book's preserved override.
-  useEffect(() => {
-    if (status !== "ready") return;
-    const global = globalStyleRef.current;
-    if (!global) return;
-    const unified = scope === "unified";
-    const override = overrideRef.current;
-    const effStyle = unified ? global : effectiveStyle(global, override);
-    const bookDefault = useTheme.getState().bookThemeId;
-    const effTheme = unified ? bookDefault : (override.themeId ?? bookDefault);
-    useReader.getState().set({ style: effStyle });
-    setBookThemeId(effTheme);
-    setHasOv(!unified && calcHasOverride(override));
-    // `setBookThemeId` is what repaints the page: `--reader-page` and `data-book-dark` are derived
-    // from it on the next render. Nothing global is written.
-    ctrlRef.current?.applyTheme(resolveTheme(effTheme), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
-    ctrlRef.current?.applyStyle(effStyle);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope]);
-
   /**
    * A PROFILE SWITCHED WHILE READING REACHES THE PAGE — persisting is not applying.
    *
@@ -985,11 +950,14 @@ export function Reader({
    * «تغييرات لم تُحفظ» about edits nobody had made. Applying what was written fixes both; nothing
    * about the dirty check itself needed loosening.
    *
-   * The same shape the backgrounds already carry in `applyProfile` ("re-read rather than re-map"),
-   * and the same three lines the scope effect above uses — so a per-book override still wins, which
-   * a patch straight into the live style could not have promised.
+   * The same shape the backgrounds already carry in `applyProfile` ("re-read rather than re-map"):
+   * the row is re-READ through `loadGlobalStyle`, so an absent field resolves against the book's own
+   * direction, which a patch straight into the live style could not have promised.
    */
-  const activeProfileId = useProfiles((s) => s.activeId);
+  // KEYED ON THE APPLICATION, NOT ON THE ID. Re-applying the هيئة already worn — which is what
+  // «تجاهل التغييرات» does, since re-applying IS the discard — leaves `activeId` untouched, so an
+  // effect keyed on it never ran and the page kept the very drift the reader had just discarded.
+  const applyTick = useProfiles((s) => s.applyTick);
   useEffect(() => {
     if (status !== "ready") return;
     let alive = true;
@@ -997,14 +965,12 @@ export function Reader({
       const global = await loadGlobalStyle(dir ?? undefined);
       if (!alive) return;
       globalStyleRef.current = global;
-      const unified = useStyleScope.getState().scope === "unified";
-      const effStyle = unified ? global : effectiveStyle(global, overrideRef.current);
-      useReader.getState().set({ style: effStyle });
-      ctrlRef.current?.applyStyle(effStyle);
+      useReader.getState().set({ style: global });
+      ctrlRef.current?.applyStyle(global);
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProfileId]);
+  }, [applyTick]);
 
   /**
    * AND SO DOES THE PALETTE THAT SWITCH BROUGHT WITH IT.
@@ -1025,8 +991,7 @@ export function Reader({
   const defaultBookTheme = useTheme((st) => st.bookThemeId);
   useEffect(() => {
     if (status !== "ready") return;
-    const unified = useStyleScope.getState().scope === "unified";
-    const effTheme = unified ? defaultBookTheme : (overrideRef.current.themeId ?? defaultBookTheme);
+    const effTheme = defaultBookTheme;
     setBookThemeId(effTheme);
     ctrlRef.current?.applyTheme(resolveTheme(effTheme), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1334,22 +1299,13 @@ export function Reader({
     const next = { ...current, ...patch };
     useReader.getState().set({ style: next });
 
-    const unified = useStyleScope.getState().scope === "unified";
-    if (unified) {
-      // UNIFIED (RAWY-43): the change is the new GLOBAL baseline → write the global row (affects
-      // every book). The per-book override is left untouched (ignored, not deleted).
-      globalStyleRef.current = next;
-    } else {
-      // PER-BOOK (RAWY-40): fold the patch into this book's partial override — a field back at the
-      // global default drops out (so it keeps following global), otherwise it's recorded.
-      const ovStyle: Partial<ReadingStyle> = { ...(overrideRef.current.style ?? {}) };
-      for (const k of Object.keys(patch) as (keyof ReadingStyle)[]) {
-        if (next[k] === global[k]) delete ovStyle[k];
-        else (ovStyle as Record<string, unknown>)[k] = next[k];
-      }
-      overrideRef.current = { ...overrideRef.current, style: ovStyle };
-      setHasOv(calcHasOverride(overrideRef.current));
-    }
+    // ONE BASELINE, ONE ROW. Every reading change is the global one now, so there is no second
+    // place a value could go and nothing that could outrank the active هيئة.
+    //
+    // THE READ-ALOUD SPECIAL CASE IS GONE WITH IT. It existed to keep those seven out of a book's
+    // override while everything else still went there; with no override to keep them out of, the
+    // rule is simply the rule for every field.
+    globalStyleRef.current = next;
 
     // flowMode is a renderer attribute set at open() — switching it re-opens at the current CFI
     // (preserves position); every other field is the live injected-CSS funnel.
@@ -1388,42 +1344,22 @@ export function Reader({
     }
     if (styleTimer.current) clearTimeout(styleTimer.current);
     styleTimer.current = window.setTimeout(() => {
-      if (useStyleScope.getState().scope === "unified") saveGlobalStyle(useReader.getState().style!);
-      else saveBookOverride(bookRef.current, overrideRef.current);
+      saveGlobalStyle(useReader.getState().style!);
     }, SAVE_DEBOUNCE_MS);
   };
   updateRef.current = update;
 
   // THEME change from the Theme tab. Applies to the reading surface (:root while reading + the
-  // book iframe) but NEVER to the Library's own theme (RAWY-48/D29). PER-BOOK (RAWY-40): change
-  // ONLY this book's paper+ink (persisted in the book override). UNIFIED (RAWY-43): set the shared
-  // BOOK theme (`book_theme_id`) so every book follows it — the Library theme (`theme_id`) is left
-  // untouched, so returning to the Library still shows its own theme.
+  // book iframe) but NEVER to the Library's own theme (RAWY-48/D29). It sets the shared BOOK theme
+  // (`book_theme_id`) so every book follows it — the Library theme (`theme_id`) is left untouched,
+  // so returning to the Library still shows its own theme.
+  //
+  // THE PER-BOOK BRANCH IS GONE, and with it the «↻ إعادة الضبط» that existed only to undo it: a
+  // book no longer keeps a paper of its own, because the هيئة is what decides how Sard looks.
   const setBookTheme = (id: ThemeId) => {
     setBookThemeId(id);
     ctrlRef.current?.applyTheme(resolveTheme(id), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
-    if (useStyleScope.getState().scope === "unified") {
-      useTheme.getState().setBookTheme(id); // shared BOOK theme — persists book_theme_id, not the Library
-    } else {
-      const bookDefault = useTheme.getState().bookThemeId;
-      overrideRef.current = { ...overrideRef.current, themeId: id === bookDefault ? undefined : id };
-      setHasOv(calcHasOverride(overrideRef.current));
-      saveBookOverride(bookRef.current, overrideRef.current);
-    }
-  };
-
-  // Reset this book to the app defaults (RAWY-40, Band I "↻ Reset"): drop the whole override.
-  const resetBook = () => {
-    overrideRef.current = {};
-    setHasOv(false);
-    clearBookOverride(bookRef.current);
-    const global = globalStyleRef.current ?? defaultsForDir(dir);
-    useReader.getState().set({ style: global });
-    // Reset → follow the shared BOOK theme (D29), not the Library theme.
-    const bookDefault = useTheme.getState().bookThemeId;
-    setBookThemeId(bookDefault);
-    ctrlRef.current?.applyTheme(resolveTheme(bookDefault), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
-    ctrlRef.current?.applyStyle(global);
+    useTheme.getState().setBookTheme(id); // shared BOOK theme — persists book_theme_id, not the Library
   };
 
   // RAWY-41: toggle a bookmark at the CURRENT reading location (CFI + fraction + chapter). If the
@@ -1954,6 +1890,28 @@ export function Reader({
     // synchronous chapter walk.
     useTts.setState({ active: true, status: "preparing", chapterLabel: chapter, error: null });
     await nextPaint();
+    // A NOTE IS ITS OWN TEXT. Everything below segments the chapter ON SCREEN and then looks for the
+    // selection inside it, which is right for a selection made in the reading frame and wrong for one
+    // made in a note: the note's words are not in that chapter, so the range match fails, the text
+    // match fails, and `startIndex` falls back to 0. MEASURED before this branch existed — pressing
+    // «استماع» on a footnote handed `start()` 165 sentences of the chapter behind the note and index 0,
+    // so read-aloud began at the top of the chapter the reader was already looking at.
+    //
+    // The note's plan comes from the SAME segmenter, run over the note's own DOM. `chapterLabel` stays
+    // the reader's chapter, which is the honest caption: this is a footnote belonging to what they are
+    // reading, not a separate chapter.
+    if (sel.fromNote) {
+      const plan = await ctrl.noteListenPlan(bookLang);
+      if (plan) {
+        useTts.getState().start({
+          sentences: plan.sentences, lang: bookLang, startIndex: plan.startIndex, chapterLabel: chapter,
+          // WHAT THIS QUEUE IS. Without it the player treats the end of a two-sentence footnote as the
+          // end of the chapter and offers to advance the book — see `StartOpts.source`.
+          source: "note",
+        });
+        return;
+      }
+    }
     const sentences = await ctrl.getCurrentChapterSentences(bookLang); // RAWY-182: async + chunked (non-blocking)
     // RAWY-227: exact range → unit mapping first (units were just built for this on-screen chapter); the
     // 24-char normalised text match is only a FALLBACK, and the chapter top is the last resort.
@@ -2059,6 +2017,32 @@ export function Reader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tocSecMap, readVersion]);
 
+  /**
+   * THE BOOK'S OWN NOTE.
+   *
+   * ONE at a time, deliberately. A stack was written here first, on the assumption that a note may
+   * reference another note — and the library says otherwise: across every book that has notes at all,
+   * 136 of them, not one note references another. What notes DO contain is a backlink, every time, and
+   * a backlink is not a second note to stack. So there is a single slot and no `Back` affordance for a
+   * depth that real books never reach.
+   *
+   * The reading position is never involved: the engine's link event was suppressed, so the main view
+   * has not moved and there is nothing to restore.
+   */
+  const [note, setNote] = useState<FootnoteHit | null>(null);
+  useEffect(() => {
+    ctrlRef.current?.onFootnote((hit) => {
+      // Start resolving the note's own place in the book now. Selecting text in it needs a CFI, and
+      // the reader has to read the note before they can select any of it — which is all the time
+      // the lookup needs to finish in.
+      ctrlRef.current?.prepareNoteAnchor(hit.href);
+      setNote(hit);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+  // A note belongs to the book it was opened in.
+  useEffect(() => { setNote(null); }, [initial.id]);
+
   // RAWY-250 (addendum 3): the Contents panel is ORDINARY NAVIGATION, NOT a jump — clicking a chapter targets
   // a PLACE the reader intends to read FROM, not a piece of content he wants to look at. It therefore does NOT
   // freeze and shows no pill; progress saves normally. (RAWY-232's path table measured which paths WRITE
@@ -2129,8 +2113,12 @@ export function Reader({
   // control shows its real effect live while you adjust it (pushing the desk capped the sheet to
   // the narrowed space → "page width does nothing"). The top cluster stays clickable above both.
   const rightPad = annoOpen ? PANEL_TRAIL : 0;
+  // The measure, named once: the page wears it, and so does a note, so that a note's lines break the
+  // way the book's do. It cannot simply be inherited — it is declared on the desk, and the note's
+  // scrim is a sibling of the desk rather than a child of it.
+  const measurePx = pageWidthPx(pageFraction);
   const deskStyle = {
-    "--page-pref": `${pageWidthPx(pageFraction)}px`,
+    "--page-pref": `${measurePx}px`,
     // Page margin insets the foliate host within the sheet (RAWY-36) — reliable across flow modes
     // (foliate's !important html padding can't be beaten from injected CSS).
     "--page-margin": `${style?.marginPx ?? 56}px`,
@@ -2343,10 +2331,6 @@ export function Reader({
         onSection={setSettingsSection}
         bookThemeId={bookThemeId}
         onPickTheme={setBookTheme}
-        bookTitle={bookTitle}
-        hasOverride={hasOv}
-        onReset={resetBook}
-        unified={scope === "unified"}
         isPdf={isPdf}
         pdfThemeId={pdfThemeId}
         onPdfTheme={choosePdfTheme}
@@ -2377,6 +2361,57 @@ export function Reader({
           chromeShown={chromeShown}
           onReturn={returnToAnchor}
           onDismiss={thawAnchor}
+        />
+      )}
+
+      {/* The book's own footnote, held where the reader is. Invisible in a book that has none: nothing
+          renders until the engine claims a link as a reference, so a book without notes shows no
+          chrome and pays nothing. */}
+      {note && (
+        <NoteSheet
+          hit={note}
+          presentation={ctrlRef.current?.notePresentation() ?? null}
+          measurePx={measurePx}
+          isBacklink={(rawHref, declared) =>
+            ctrlRef.current?.resolveNoteLink(note, rawHref, declared).back ?? declared}
+          // Straight to the engine, which anchors it and publishes it through the SAME channel the
+          // reading frame uses. Nothing here interprets it: the toolbar and every action it offers are
+          // already listening, and they cannot tell a note selection from a page selection.
+          onSelect={(sel) => void ctrlRef.current?.reportNoteSelection(sel)}
+          onSurface={(el, layer) => {
+            ctrlRef.current?.setNoteSurface(el, layer);
+            // A note the reader has already marked opens with its marks on it. The rows come from the
+            // store, which owns them; the engine decides which of them this note can actually place.
+            if (el) ctrlRef.current?.noteDrawStored(useAnnotations.getState().highlights);
+          }}
+          onRedraw={() => ctrlRef.current?.noteRedraw()}
+          // THE PAGE'S OWN PATH, not a second editor. The engine answers which stored highlight is
+          // under the point, and the hit is published through `onShowAnnotation` — the very callback
+          // the reading frame fires — so the annotation editor that opens is the application's one
+          // and only, with its colours, its note field and its delete already wired.
+          onEditAt={(x, y) => {
+            const ctrl = ctrlRef.current;
+            const hit = ctrl?.noteHighlightAtPoint(x, y);
+            if (!hit) return;
+            ctrl?.clearSelection();
+            ctrl?.publishAnnotationHit(hit);
+          }}
+          // The sheet took focus out of the book to be a dialog at all; it goes straight back, which is
+          // this application's standing focus policy and what keeps the page-turn keys alive.
+          onClose={() => { setNote(null); restoreReadingFocus(); }}
+          onFollow={(rawHref, declaredBacklink) => {
+            const link = ctrlRef.current?.resolveNoteLink(note, rawHref, declaredBacklink);
+            setNote(null);
+            // A BACKLINK IS ALREADY HOME. It points at the reference behind the sheet, so dismissing
+            // the note is the whole of it — navigating there would move the book to where it already
+            // is and arm a return pill for a journey nobody took.
+            if (!link || link.back) { restoreReadingFocus(); return; }
+            // A GENUINE CROSS-REFERENCE is the one path from a note that really is navigation, and the
+            // only one that arms the pill. The note goes with it, so the pill is never left explaining
+            // a surface that is no longer there.
+            beginJump();      // freeze the real position → the return pill appears
+            jumpHref(link.href);
+          }}
         />
       )}
 

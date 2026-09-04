@@ -1,21 +1,12 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { appDataDir, join } from "@tauri-apps/api/path";
 
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
 import {
-  bookCommitCover,
   bookDelete,
-  bookDiscardCover,
-  bookRevertCover,
-  bookStageCover,
-  bookUpdate,
-  collectionAddBook,
   collectionDelete,
-  collectionRemoveBook,
   collectionRename,
-  collectionsForBook,
   collectionsList,
   importBooks,
   importFolder,
@@ -40,7 +31,6 @@ import { coverSrc } from "./coverSrc";
 // What the picker OFFERS. Deliberately not an acceptance rule: Rust decodes what it can and anything
 // else is put to the renderer, so this list only spares the reader from browsing to a file that was
 // never going to be an image. Adding a format here costs nothing and rejects nothing.
-const IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "gif", "avif", "svg", "bmp", "ico"];
 import { GlobalSettings } from "../settings/GlobalSettings";
 import { useBookPickup } from "./design/bookPickup";
 import { BookActions, type BookActionsProps } from "./design/BookActions";
@@ -48,14 +38,16 @@ import { UpdateRosette } from "../updater/UpdateRosette";
 import { UpdateDialog } from "../updater/UpdateDialog";
 import { LibraryDesign } from "./design/LibraryDesign";
 import "../../styles/library-design.css";
-import { displayTitle, resolveBookMeta, titleIsGuess, titleProvenanceKey } from "../../lib/bookMeta"; // WP-3
+import { displayTitle, resolveBookMeta } from "../../lib/bookMeta"; // WP-3
 import { Inbox } from "./Inbox";
+import { useBookDetailsRequest } from "./bookDetailsRequest";
+import { useIncomingDeposit } from "../deposit/store";
+import { RefsReps } from "./refs/RefsReps";
 import { routeDroppedPaths } from "../profiles/dropRoute";
 import { BookmarksShelf } from "./BookmarksShelf";
 import { PhotoGallery } from "../photo/PhotoGallery";
 import { Icon } from "../../components/Icon";
 import { isArabicText } from "../../lib/typography";
-import { useDialog } from "../../components/useDialog";
 
 // Detect Arabic from the TITLE TEXT itself, so a caption renders in Amiri even when the
 // book's metadata mislabels its language (RAWY-17: e.g. an Arabic book tagged lang=en).
@@ -74,7 +66,7 @@ export interface OpenTarget {
 
 type View = "grid" | "list" | "rows";
 type CoverMode = "crop" | "fit";
-type Section = "library" | "inbox" | "cards" | "bookmarks";
+type Section = "library" | "inbox" | "cards" | "bookmarks" | "refs";
 
 const SORTS: SortKey[] = ["title", "author", "format", "date_read", "date_added"];
 
@@ -260,7 +252,6 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     setBooksState(rows);
     setBooksLoaded(true);
   }, []);
-  const [editing, setEditing] = useState<BookRow | null>(null);
   const [shelves, setShelvesState] = useState<CollectionRow[]>(() => shelvesCache);
   const setShelves = useCallback((rows: CollectionRow[]) => {
     shelvesCache = rows;
@@ -424,6 +415,28 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     setWanted((w) => (s === section ? null : s === w ? w : s));
   }, [section]);
 
+  // A DEPOSIT ASKED TO BE SHOWN. It travels through the SAME navigation the sidebar uses, so the swap
+  // preloads and settles exactly as a click on «الأرشيف» does — one way in, not two. Cleared here
+  // because this is where it is honoured.
+  const wantsArchive = useIncomingDeposit((st) => st.showArchive);
+  const archiveShown = useIncomingDeposit((st) => st.archiveShown);
+  useEffect(() => {
+    if (!wantsArchive) return;
+    goSection("inbox");
+    archiveShown();
+  }, [wantsArchive, goSection, archiveShown]);
+
+  // A DEPOSIT WROTE STRAIGHT INTO THE DATABASE. The shelf on screen was read before that happened, so
+  // it is refreshed through the SAME loaders the importer uses — not by reloading the page, and not by
+  // a second list of its own.
+  const received = useIncomingDeposit((st) => st.received);
+  useEffect(() => {
+    if (!received) return;
+    void loadBooks();
+    void loadShelves();
+  }, [received, loadBooks, loadShelves]);
+
+
   useEffect(() => {
     if (!wanted) return;
     let alive = true;
@@ -485,7 +498,10 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     if (imported.length !== 1) return;
     const all = await libraryListBooks({ sort: "date_added", order: "desc" }).catch(() => [] as BookRow[]);
     const row = all.find((b) => b.id === imported[0].id);
-    if (row) setEditing(row);
+    // THE ONE BOOK SHEET. This used to open Sard's older editor, which is how that dialog stayed
+    // alive after every view of the design surface had moved to `BookDetails`. It now asks for the
+    // same sheet the ⋯ menu opens, so a newly imported book is met exactly as any other book is.
+    if (row) useBookDetailsRequest.getState().ask(row.id);
   }, []);
 
   // Import a batch of paths through the real Rust pipeline, then refresh + summarise.
@@ -705,8 +721,9 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
                     // hands it the identical actions the grouped views get, so the reader meets one
                     // set of choices whichever format they are looking at.
                     actions={g?.actions?.(b)}
-                    onEdit={() => setEditing(b)}
+                    onEdit={() => useBookDetailsRequest.getState().ask(b.id)}
                     order={g?.order?.(b)}
+                    select={g?.select?.(b)}
                     hideTitle={g?.hideTitles}
                   />
                   {g?.gapAfter?.(b)}
@@ -720,7 +737,6 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         format={format}
         onFormat={setFormat}
         onOpenBook={open}
-        onEditBook={setEditing}
         onAddBooks={addBooks}
         importing={importing}
         onSettings={() => setSettingsOpen(true)}
@@ -730,29 +746,6 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         onRenameShelf={renameShelf}
         onDeleteShelf={removeShelf}
       />
-      {editing && (
-        <EditBook
-          book={editing}
-          shelves={shelves}
-          onShelves={(rows) => {
-            setShelves(rows);
-            loadBooks();
-          }}
-          onClose={() => setEditing(null)}
-          onSaved={(b) => {
-            loadBooks();
-            loadShelves();
-            if (b) setEditing(b);
-          }}
-          onDeleted={() => {
-            const title = displayTitle(resolveBookMeta(editing), t);
-            setEditing(null);
-            loadBooks();
-            loadShelves();
-            flashToast(t("lib.book.deleted", { title }));
-          }}
-        />
-      )}
       {drag && <DropOverlay count={drag.count} t={t} lang={lang} />}
       {toast && <div className="lib-toast">{toast}</div>}
       {importReport && (
@@ -776,6 +769,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     if (s === "cards") return <PhotoGallery />;
     if (s === "inbox") return <Inbox onOpen={onOpen} />;
     if (s === "bookmarks") return <BookmarksShelf onOpen={onOpen} />;
+    if (s === "refs") return <RefsReps onOpen={onOpen} />;
     if (isEmpty) return <EmptyState onBrowse={addBooks} onFolder={addFolder} />;
     return null;
   }
@@ -817,6 +811,26 @@ export interface CardOrder {
   onPickUp: (x: number, y: number) => void;
 }
 
+/**
+ * MULTI-SELECT, AS A CARD SEES IT.
+ *
+ * Grid is not drawn by the design surface — it is handed across `renderGrid` and built from the card
+ * below. The grouped views, Details and Vista each receive `selectOn`, `selected` and `onToggleSelect`
+ * directly; Grid received none of the three, so its cards were built with `selectOn: false` and a click
+ * under «تحديد» fell through to opening the book. Measured: 47 books on screen, «تحديد» pressed, one
+ * click — nothing marked and the library replaced by the reader.
+ *
+ * Sent the same way as `CardOrder` and `actions`, so a format does not have to invent an idea of
+ * selection any more than it invents an idea of ordering.
+ */
+export interface CardSelect {
+  /** Selection mode is on. It owns the press: nothing is lifted and nothing is opened. */
+  on: boolean;
+  /** This book is one of the marked ones. */
+  selected: boolean;
+  onToggle: () => void;
+}
+
 function BookCard({
   book,
   coverMode,
@@ -824,6 +838,7 @@ function BookCard({
   onOpen,
   onEdit,
   order,
+  select,
   hideTitle,
 }: {
   book: BookRow;
@@ -833,6 +848,8 @@ function BookCard({
   onOpen: () => void;
   onEdit: () => void;
   order?: CardOrder;
+  /** Multi-select, when the surface drawing this card has a selection to report. */
+  select?: CardSelect;
   /** Library preference: keep the name out of the way until this book is touched. */
   hideTitle?: boolean;
 }) {
@@ -856,6 +873,13 @@ function BookCard({
     orderable: order?.orderable ?? false,
     onArrangeDown: order?.onArrangeDown ?? (() => {}),
     onPickUp: order?.onPickUp ?? (() => {}),
+    // SELECTION MODE OWNS THE PRESS. `useBookPickup` already answers for it — `onClick` toggles and
+    // returns before it can open, and `onPointerDown` returns before it can arm a hold — but only when
+    // it is told the mode is on. This card was never telling it, which is the whole of the defect.
+    // Nothing about Manual Ordering is touched: the two modes are exclusive, and the arrange fields
+    // above are unchanged.
+    selectOn: select?.on ?? false,
+    onToggleSelect: select?.onToggle,
     onOpen,
   });
   // WHEN THE PRESS NEEDS ANSWERING AT ALL — two reasons, and only two: this book can be lifted, or
@@ -888,10 +912,13 @@ function BookCard({
               ...(order.inHand ? { opacity: 0.25 } : {}) }
           : undefined
       }
-      onClick={order ? pickup.onClick : onOpen}
+      onClick={order || select ? pickup.onClick : onOpen}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
+          // The keyboard reaches the same two answers the pointer does. Only the select branch is new;
+          // with the mode off this is the line it has always been.
+          if (select?.on) { select.onToggle(); return; }
           onOpen();
         }
       }}
@@ -900,6 +927,9 @@ function BookCard({
       // can answer for the caption without every cell knowing about it. `title` above is what keeps
       // the book named to a screen reader and to a hovering pointer while the caption is away.
       data-hidecap={hideTitle ? "1" : undefined}
+      // MARKED FOR A BULK ACTION. `global.css` already keys the caption off this attribute the way
+      // `library-design.css` does for a tile — the rule was written, the attribute never set.
+      data-selected={select?.selected ? "1" : undefined}
     >
       <div className="lib-cover" data-mode={mode}>
         {showImg ? (
@@ -926,6 +956,41 @@ function BookCard({
             <Icon name="more" size="sm" />
           </button>
         )}
+        {/* MARKED FOR A BULK ACTION — and marked the way the rest of the library marks it.
+            This is the treatment `BookTile` draws for Covers and Vista, on the same geometry: both
+            cover boxes are `position: relative` with `overflow: hidden`, so an inset ring and a plate
+            laid over `inset: 0` land identically. The tokens are the tile's own — `--acc` and `--act`
+            are declared on `.libd-root`, which this card sits inside; each carries the value that
+            token resolves to, for a grid drawn anywhere else. */}
+        {select?.selected && (
+          <>
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                boxShadow: "inset 0 0 0 2px var(--acc, var(--accent))",
+                background: "var(--act, var(--lib-active))",
+              }}
+            />
+            <div
+              style={{
+                position: "absolute",
+                insetBlockStart: 6,
+                insetInlineEnd: 6,
+                width: 18,
+                height: 18,
+                borderRadius: "50%",
+                background: "var(--acc, var(--accent))",
+                color: "#fff",
+                display: "grid",
+                placeItems: "center",
+                fontSize: 10,
+              }}
+            >
+              <Icon name="check" size="sm" />
+            </div>
+          </>
+        )}
       </div>
       <div className="lib-cap" dir={arabic ? "rtl" : "ltr"}>
         <div className={`lib-cap-title${arabic ? " ar" : ""}`}>{title}</div>
@@ -936,238 +1001,6 @@ function BookCard({
         )}
       </div>
     </div>
-  );
-}
-
-function EditBook({
-  book,
-  shelves,
-  onShelves,
-  onSaved,
-  onDeleted,
-  onClose,
-}: {
-  book: BookRow;
-  shelves: CollectionRow[];
-  onShelves: (rows: CollectionRow[]) => void;
-  onSaved: (b: BookRow | null) => void;
-  onDeleted: () => void;
-  onClose: () => void;
-}) {
-  const { t } = useI18n();
-  // Shelf membership (RAWY-31): toggling a chip persists immediately (separate from the
-  // metadata Save) and refreshes the sidebar counts via onShelves.
-  const [member, setMember] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    collectionsForBook(book.id).then((ids) => setMember(new Set(ids))).catch(console.error);
-  }, [book.id]);
-  const toggleShelf = async (id: string) => {
-    const has = member.has(id);
-    // optimistic
-    setMember((prev) => {
-      const next = new Set(prev);
-      if (has) next.delete(id); else next.add(id);
-      return next;
-    });
-    const rows = await (has ? collectionRemoveBook(id, book.id) : collectionAddBook(id, book.id))
-      .catch((e) => { console.error(e); return null; });
-    if (rows) onShelves(rows);
-  };
-  const [title, setTitle] = useState(book.title ?? "");
-  const [author, setAuthor] = useState(book.author ?? "");
-  const [language, setLanguage] = useState(book.language ?? "");
-  const initialFit = book.cover_fit === "crop" || book.cover_fit === "fit" ? book.cover_fit : "";
-  const [coverFit, setCoverFit] = useState<"" | "crop" | "fit">(initialFit);
-  const [busy, setBusy] = useState(false);
-  // Why a message and not a silent no-op: the reported complaint was that replacing a cover simply
-  // did nothing, leaving the reader to guess. A refusal must say why.
-  const [coverError, setCoverError] = useState<string | null>(null);
-  // RAWY-76: a deliberate two-step delete (matches the photo-card confirm pattern) — the footer
-  // swaps to a confirm row so a stray click can't cascade-delete a book and all its data.
-  const [confirmDel, setConfirmDel] = useState(false);
-  const arabicTitle = isArabicText(title);
-  const editMeta = resolveBookMeta(book); // WP-3: where this book's stored name actually came from
-
-  const del = async () => {
-    setBusy(true);
-    try {
-      await bookDelete(book.id);
-      onDeleted();
-    } catch (e) {
-      console.error(e);
-      setBusy(false);
-      setConfirmDel(false);
-    }
-  };
-
-  const save = async () => {
-    setBusy(true);
-    try {
-      // RAWY-271: `dir` is deliberately ABSENT from the patch. Reading direction is decided
-      // automatically (books/mod.rs: the EPUB's page-progression, then the language, then a
-      // content sniff of the Arabic script — plus migration 8's backfill), so there is no user
-      // control for it any more. Omitting the field makes `update_book` leave the stored value
-      // untouched, which keeps the override an INTERNAL capability (`BookPatch.dir` still exists
-      // end-to-end) rather than exposing it as a preference.
-      const updated = await bookUpdate(book.id, { title, author, language, coverFit });
-      onSaved(updated);
-      onClose();
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setBusy(false);
-    }
-  };
-  // The renderer's half of the two-stage validation. Rust has already copied the file in under its
-  // content-addressed name and told us whether IT could decode it; a `verified: false` is not a
-  // rejection, it means "we have no decoder for this" — AVIF is one Chromium displays today. So the
-  // engine that will actually paint the cover is asked, which is the only answer that means "this
-  // will display", and it needs no format list that would rot as new formats ship.
-  const rendererAccepts = async (rel: string): Promise<boolean> => {
-    try {
-      const url = convertFileSrc(await join(await appDataDir(), rel));
-      const img = new Image();
-      img.src = url;
-      await img.decode();
-      return img.naturalWidth > 0 && img.naturalHeight > 0;
-    } catch {
-      return false;
-    }
-  };
-
-  const replaceCover = async () => {
-    setCoverError(null);
-    try {
-      const { open } = await import("@tauri-apps/plugin-dialog");
-      const sel = await open({ multiple: false, filters: [{ name: "Image", extensions: IMAGE_EXTENSIONS }] });
-      if (!sel || Array.isArray(sel)) return;
-      const staged = await bookStageCover(book.id, sel);
-      if (!staged.verified && !(await rendererAccepts(staged.rel))) {
-        // Nothing was adopted, so nothing needs undoing — only the staged bytes are dropped. The
-        // reader is TOLD, rather than left looking at the previous cover wondering what happened,
-        // which was the original complaint about this feature.
-        await bookDiscardCover(staged.rel).catch(() => {});
-        setCoverError(t("edit.coverUnreadable"));
-        return;
-      }
-      onSaved(await bookCommitCover(book.id, staged.rel));
-    } catch (e) {
-      // Rust refuses an unreadable, empty or absurdly large file with a specific reason; show it
-      // rather than a generic failure.
-      setCoverError(String((e as Error)?.message ?? e));
-    }
-  };
-  const revertCover = async () => {
-    setCoverError(null);
-    try {
-      onSaved(await bookRevertCover(book.id));
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  // Escape closes, which is what the scrim behind it already meant. Focus lands on the first field —
-  // this dialog exists to edit a book's details, so the title is what a reader came here to type in.
-  const dlg = useDialog({ onDismiss: onClose });
-
-  return (
-    <>
-      <div className="panel-scrim show" onClick={onClose} />
-      <div className="edit-dialog" ref={dlg.ref} {...dlg.props}>
-        <div className="edit-head">
-          <span className="edit-title" id={dlg.titleId}>{t("edit.title")}</span>
-          <button className="rc-icon" onClick={onClose} aria-label={t("edit.cancel")} title={t("edit.cancel")}>
-            <Icon name="close" size="sm" />
-          </button>
-        </div>
-        <div className="edit-body">
-          <div className="edit-cover">
-            <div className="lib-cover" data-mode={coverFit || "crop"}>
-              {book.cover_path ? (
-                <img className="real" src={coverSrc(book)!} alt="" />
-              ) : (
-                <AutoCover title={displayTitle(resolveBookMeta(book), t)} author={book.author} dir={book.dir} />
-              )}
-            </div>
-            <button className="edit-btn" onClick={replaceCover}>{t("edit.replaceCover")}</button>
-            <button className="edit-link" onClick={revertCover}>{t("edit.revertCover")}</button>
-            {coverError && <p className="edit-cover-error" role="alert">{coverError}</p>}
-          </div>
-
-          <div className="edit-fields">
-            <label className="edit-field">
-              <span>{t("edit.fieldTitle")}</span>
-              <input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                className={arabicTitle ? "ar" : ""}
-                dir={arabicTitle ? "rtl" : "ltr"}
-              />
-              {/* RESILIENCE-1 / WP-3: when WP-2 had to fall past a placeholder (a Calibre "Unknown",
-                  an empty <dc:title>), say so HERE — where the reader can act on it — instead of
-                  presenting a guessed name as though the book had claimed it. */}
-              {titleIsGuess(editMeta) && (
-                <span className="edit-hint">
-                  {t("meta.titleGuess")} {titleProvenanceKey(editMeta) && t(titleProvenanceKey(editMeta)!)}
-                </span>
-              )}
-            </label>
-            <label className="edit-field">
-              <span>{t("edit.author")}</span>
-              <input value={author} onChange={(e) => setAuthor(e.target.value)} />
-            </label>
-            <label className="edit-field">
-              <span>{t("edit.language")}</span>
-              <input value={language} onChange={(e) => setLanguage(e.target.value)} placeholder="en · ar · …" />
-            </label>
-            <div className="edit-field">
-              <span>{t("edit.coverFit")}</span>
-              <div className="edit-seg">
-                <button className={coverFit === "" ? "active" : ""} onClick={() => setCoverFit("")}>{t("edit.fitDefault")}</button>
-                <button className={coverFit === "crop" ? "active" : ""} onClick={() => setCoverFit("crop")}>{t("lib.cover.crop")}</button>
-                <button className={coverFit === "fit" ? "active" : ""} onClick={() => setCoverFit("fit")}>{t("lib.cover.fit")}</button>
-              </div>
-            </div>
-            <div className="edit-field">
-              <span>{t("edit.shelves")}</span>
-              {shelves.length === 0 ? (
-                <div className="edit-shelves-hint">{t("edit.shelvesHint")}</div>
-              ) : (
-                <div className="edit-chips">
-                  {shelves.map((s) => (
-                    <button
-                      key={s.id}
-                      className={`edit-chip${member.has(s.id) ? " on" : ""}`}
-                      onClick={() => toggleShelf(s.id)}
-                      dir="auto"
-                    >
-                      {s.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-        {confirmDel ? (
-          <div className="edit-foot edit-foot-confirm">
-            <span className="edit-del-warn" dir="auto">{t("edit.deleteConfirm")}</span>
-            <div className="edit-foot-actions">
-              <button className="edit-cancel" onClick={() => setConfirmDel(false)} disabled={busy}>{t("edit.deleteKeep")}</button>
-              <button className="edit-del confirm" onClick={del} disabled={busy}>{t("edit.deleteYes")}</button>
-            </div>
-          </div>
-        ) : (
-          <div className="edit-foot">
-            <button className="edit-del" onClick={() => setConfirmDel(true)} disabled={busy}>{t("edit.delete")}</button>
-            <div className="edit-foot-actions">
-              <button className="edit-cancel" onClick={onClose}>{t("edit.cancel")}</button>
-              <button className="edit-save" onClick={save} disabled={busy}>{t("edit.save")}</button>
-            </div>
-          </div>
-        )}
-      </div>
-    </>
   );
 }
 

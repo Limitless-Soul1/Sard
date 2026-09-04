@@ -10,7 +10,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { coverSrc } from "../coverSrc";
-import type { CardOrder } from "../Library";
+import type { CardOrder, CardSelect } from "../Library";
 import type { BookRow, CaseNode, LibraryTree, Placement, ShelfItem, ShelfNode } from "../../../lib/ipc";
 import { buildArrangement } from "./arrangement";
 import {
@@ -27,6 +27,7 @@ import { Icon } from "../../../components/Icon";
 import { OVERLAY_HOST_CLASS } from "./overlay";
 import { CreateDialog, type CreateRequest } from "./CreateDialog";
 import {
+  libraryListBooks,
   caseCreate,
   caseDelete,
   caseRename,
@@ -90,6 +91,9 @@ import {
   type DesignView,
 } from "./model";
 import { createPortal } from "react-dom";
+import { useIncomingDeposit } from "../../deposit/store";
+import { useBookDetailsRequest } from "../bookDetailsRequest";
+import { DepositSheet } from "../../deposit/DepositSheet";
 import { overlayHost } from "./overlay";
 import { resolveBookMeta, displayTitle } from "../../../lib/bookMeta";
 import { createEdgeScroller, type EdgeScroller } from "./dragScroll";
@@ -132,6 +136,15 @@ export interface LibraryDesignProps {
      * from having to invent them, and stops the answer drifting per view.
      */
     actions: (b: BookRow) => BookActionsProps;
+    /**
+     * Whether this book is MARKED, and how to mark it — the third thing that has to cross this
+     * boundary for a format to behave like the others.
+     *
+     * The grouped views, Details and Vista are handed `selected`, `selectOn` and `onToggleSelect`
+     * below. Grid was handed the order and the actions but never the selection, so «تحديد» went on
+     * over cards that had no idea it was on and a click opened the book instead of marking it.
+     */
+    select: (b: BookRow) => CardSelect;
     /** The Library's "hide names until touched" preference, for the caption Grid draws itself. */
     hideTitles?: boolean;
     /**
@@ -152,7 +165,6 @@ export interface LibraryDesignProps {
   format: string | null;
   onFormat: (f: string | null) => void;
   onOpenBook: (b: BookRow) => void;
-  onEditBook: (b: BookRow) => void;
   onAddBooks: () => void;
   /**
    * DELETE A BOOK FROM THE LIBRARY — through the owner's own `bookDelete` path, not a second one.
@@ -223,6 +235,29 @@ export function LibraryDesign(props: LibraryDesignProps) {
   // The book the dialog is open on, AND the shelf the reader opened it from — a book can be on
   // several shelves, and a move has to leave the one they were looking at.
   const [detailsFor, setDetailsFor] = useState<{ book: BookRow; fromShelf: string | null } | null>(null);
+
+  // SOMEONE OUTSIDE THIS SURFACE ASKED TO SEE A BOOK.
+  //
+  // Honoured HERE because this is where the book's own details live. `BookDetails` is the sheet every
+  // view of this surface opens, and now the only one in Sard: a book arriving in a deposit and a book
+  // arriving through the ordinary importer both come to it by this one request, so neither can drift
+  // back to an editor of its own.
+  const wantsBook = useBookDetailsRequest((st) => st.wanted);
+  const bookShown = useBookDetailsRequest((st) => st.shown);
+  useEffect(() => {
+    if (!wantsBook) return;
+    let alive = true;
+    (async () => {
+      // Read afresh: the book was written a moment ago and may not be in this surface's list yet.
+      const all = await libraryListBooks({ sort: "date_added", order: "desc" }).catch(() => [] as BookRow[]);
+      const row = all.find((b) => b.id === wantsBook);
+      if (alive && row) setDetailsFor({ book: row, fromShelf: null });
+      bookShown();
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [wantsBook, bookShown]);
   // Which case the management panel is open on — the reference's "Manage" destination.
   // `UNFILED_EDITOR` opens the same panel over the shelves that belong to no case.
   const [editorFor, setEditorFor] = useState<string | null>(null);
@@ -1338,6 +1373,26 @@ export function LibraryDesign(props: LibraryDesignProps) {
   const booksOnScreen = flatBooks.length > 0;
   /** The book whose deletion is being confirmed. Owned here, so all five views share one dialog. */
   const [deleting, setDeleting] = useState<BookRow | null>(null);
+  // THE DEPOSIT SHEET. Held here, beside the other book-level dialogs, and drawn in `shellOverlays` —
+  // the cluster BOTH returns render — so the action works from every section rather than springing
+  // open later when the library happens to mount.
+  const [sharing, setSharing] = useState<BookRow | null>(null);
+  /** The deposit being READ. A path, not a payload: nothing is unpacked until the reader accepts.
+   *  Held in a store rather than in this component because a deposit arrives by more than one door —
+   *  the header's own action, and a drop onto the window — and both end at the same sheet. */
+  const setReceiving = useIncomingDeposit((s) => s.offer);
+  // A deposit can bring a book and its marks with it, so the library reloads once one has been dealt
+  // with rather than showing a stale picture. The SHEET itself is mounted at the application, so a
+  // deposit dropped while a book is open still has somewhere to appear.
+  const incoming = useIncomingDeposit((s) => s.path);
+  const hadIncoming = useRef(false);
+  useEffect(() => {
+    if (incoming) hadIncoming.current = true;
+    else if (hadIncoming.current) {
+      hadIncoming.current = false;
+      void loadTree();
+    }
+  }, [incoming, loadTree]);
   /**
    * WHICH KIND OF NOTHING, or `null` when there is something to draw.
    *
@@ -1986,6 +2041,9 @@ export function LibraryDesign(props: LibraryDesignProps) {
         // The menu ASKS; the confirmation decides. Opening a dialog is the whole of what this does,
         // so a stray press on a five-item menu cannot cascade a book away.
         onDelete: () => setDeleting(b),
+      // EPUB ONLY, and refused in the menu rather than in a dialog: a PDF carries no cfi and no
+      // whole-book text search, so its highlights have no honest way to travel.
+      onShare: b.format === "epub" ? () => setSharing(b) : null,
       };
     },
     [orderSourceOf, props, setFinished, removeFromShelf],
@@ -2256,6 +2314,146 @@ export function LibraryDesign(props: LibraryDesignProps) {
         : t("lib.title");
   const vista = view === "vista";
 
+  // THE SHELL'S FLOATING SURFACES, OWNED BY THE SHELL RATHER THAN BY ONE OF ITS TWO RETURNS.
+  //
+  // `LibraryDesign` renders two trees — one for the library, one for every other section — and this
+  // cluster used to live only in the library's. But the SIDEBAR is in both, and the sidebar is where
+  // cabinets and shelves are created, renamed, managed and deleted. Outside the library those actions
+  // set their state and drew NOTHING, and the dialog then appeared unbidden the moment the library
+  // mounted again: press «+ خزانة جديدة» in References & Replacements, see nothing, walk back to the
+  // Library, and a creation dialog springs open there. Measured, then fixed.
+  //
+  // Rendering the same cluster from both returns is what makes the action belong to the surface that
+  // asked for it. `detailsFor` can only be set from the library's own grid, so it simply stays null in
+  // the other branch. It is SHARED, not duplicated, so the two trees cannot drift apart again.
+  /** Ask for a deposit file and open it for reading. Nothing is unpacked or written by choosing one. */
+  const openDeposit = useCallback(async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const picked = await open({
+      multiple: false,
+      // Zip leads, because that is what Sard now writes. The old extension stays in the list so a
+      // deposit made before this change still opens — the gate reads the CONTENTS either way.
+      filters: [{ name: "ZIP", extensions: ["zip", "sard-deposit"] }],
+    });
+    if (typeof picked === "string") setReceiving(picked);
+  }, []);
+
+  const shellOverlays = (
+    <>
+      {sharing && <DepositSheet book={sharing} onClose={() => setSharing(null)} />}
+
+      {/* The management panel. A real case supplies its own node; the unfiled group is given a
+          synthesised one carrying the loose shelves, so an un-cased shelf can be renamed, ordered,
+          coloured, reordered, filed into a case and deleted through exactly the same panel — and
+          the sidebar shelf row stays the mark/name/count the reference draws. */}
+      {editorNode && (
+        <CaseEditor
+          caseNode={editorNode}
+          unfiled={editorFor === UNFILED_EDITOR}
+          cases={tree.cases}
+          byId={byId}
+          items={shelfRows}
+          onTree={applyTree}
+          onChanged={() => {
+            loadTree().catch(() => {});
+            props.onReloadBooks();
+          }}
+          onClose={() => setEditorFor(null)}
+          onOpenBookDetails={(b, fromShelf) => setDetailsFor({ book: b, fromShelf: fromShelf ?? null })}
+          notify={flash}
+        />
+      )}
+
+      {/* THE ONE CREATION DIALOG. Mounted here beside the other two, so it is the same dialog with
+          the same fields and the same validation whichever surface asked for it. */}
+      {creating && (
+        <CreateDialog
+          request={creating}
+          cases={tree.cases}
+          // Names already in use in the same family — a shelf compares against shelves, a case
+          // against cases — so a repeat can be pointed out. The model allows one, so this only
+          // ever informs; see the dialog.
+          taken={
+            creating.kind === "case"
+              ? tree.cases.map((c) => c.name)
+              : [...tree.cases.flatMap((c) => c.shelves.map((sh) => sh.name)), ...tree.loose.map((sh) => sh.name)]
+          }
+          busy={creatingBusy}
+          onCancel={() => setCreating(null)}
+          onCreate={async (name, caseId, ink) => {
+            setCreatingBusy(true);
+            // RENAMING TOUCHES THE NAME AND NOTHING ELSE — the dialog shows neither a destination
+            // nor a colour in that mode, so there is nothing else it could have been asked to do.
+            // A case renames through `case_rename`, which answers with a tree; a shelf renames
+            // through `collection_rename`, which answers with rows, so it goes the way every other
+            // shelf rename in the app already goes — the Library's own call, then a reload.
+            const target = creating.rename;
+            if (target) {
+              if (creating.kind === "case") await write(() => caseRename(target.id, name));
+              else await renameShelf(target.id, name);
+              setCreatingBusy(false);
+              setCreating(null);
+              return;
+            }
+            const made = await write(async () => {
+              // A CASE TAKES ITS INK IN ONE CALL — `case_create` has always accepted one.
+              if (creating.kind === "case") return caseCreate(name, ink);
+              const next = await shelfCreate(name, caseId);
+              if (!ink) return next;
+              // A SHELF'S DOES NOT, so it is a second write — made only when a colour was
+              // actually chosen, so the ordinary shelf is still one. The new shelf is found by
+              // difference rather than by name: two shelves may honestly share a name, and
+              // matching on one would colour whichever the search happened to reach first.
+              const had = new Set([
+                ...tree.cases.flatMap((k) => k.shelves.map((sh) => sh.id)),
+                ...tree.loose.map((sh) => sh.id),
+              ]);
+              const fresh = [...next.cases.flatMap((k) => k.shelves), ...next.loose].find((sh) => !had.has(sh.id));
+              return fresh ? shelfSetInk(fresh.id, ink) : next;
+            });
+            setCreatingBusy(false);
+            // A FAILED WRITE KEEPS THE DIALOG, AND WHAT WAS TYPED IN IT. `write` has already told
+            // the reader what went wrong; closing on top of that would take the name away too and
+            // leave them to type it again with no idea whether the first attempt half-landed.
+            if (made) setCreating(null);
+          }}
+        />
+      )}
+
+      {carry && <CarryGhost book={carry.book} spines={view === "spines"} />}
+
+      {/* Book Details, from the reference bundles. One dialog, mounted once here, so it is the
+          same dialog with the same controls whichever view opened it. */}
+      {deleting && (
+        <ConfirmDeleteBook
+          book={deleting}
+          t={t}
+          onCancel={() => setDeleting(null)}
+          onConfirm={async () => {
+            const book = deleting;
+            setDeleting(null);
+            await props.onDeleteBook(book);
+          }}
+        />
+      )}
+      {detailsFor && (
+        <BookDetails
+          book={detailsFor.book}
+          cases={tree.cases}
+          loose={tree.loose}
+          placement={placementOf(detailsFor.book.id)}
+          notify={flash}
+          libraryCoverMode={props.coverMode}
+          onClose={() => setDetailsFor(null)}
+          onChanged={() => {
+            loadTree().catch(() => {});
+            props.onReloadBooks();
+          }}
+        />
+      )}
+    </>
+  );
+
   if (props.section !== "library") {
     return (
       // BOTH classes, deliberately. `.lib-root` is the element the RAWY-265 background system hangs
@@ -2315,6 +2513,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
         <div className="lib-main">
           <div className="lib-pane">{props.renderSection(props.section)}</div>
         </div>
+        {shellOverlays}
         <div className={OVERLAY_HOST_CLASS} />
       </div>
     );
@@ -2427,6 +2626,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
             setCarry(null);
           }}
           onAddBooks={props.onAddBooks}
+          onOpenDeposit={() => void openDeposit()}
           importing={props.importing}
           query={props.query}
           onQuery={props.onQuery}
@@ -2483,6 +2683,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
         ) : vista ? (
           <div ref={paneRef} style={{ flex: 1, minHeight: 0, position: "relative", zIndex: 2 }}>
             <ViewVista
+              actions={bookActions}
               onDeleteBook={(b) => setDeleting(b)}
               view={stage}
               density={density}
@@ -2539,6 +2740,17 @@ export function LibraryDesign(props: LibraryDesignProps) {
               gap: gapBefore,
               gapAfter,
               order: bookOrder,
+              select: (b) => ({
+                on: mode === "select",
+                selected: selected.has(b.id),
+                onToggle: () =>
+                  setSelected((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(b.id)) next.delete(b.id);
+                    else next.add(b.id);
+                    return next;
+                  }),
+              }),
             })}
           </div>
         ) : (
@@ -2586,6 +2798,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
             />
           ) : isGroupedView(view) ? (
             <ViewGrouped
+              actions={bookActions}
               onDeleteBook={(b) => setDeleting(b)}
               cases={rendered}
               view={view}
@@ -2765,115 +2978,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
         )}
       </div>
 
-      {/* The management panel. A real case supplies its own node; the unfiled group is given a
-          synthesised one carrying the loose shelves, so an un-cased shelf can be renamed, ordered,
-          coloured, reordered, filed into a case and deleted through exactly the same panel — and
-          the sidebar shelf row stays the mark/name/count the reference draws. */}
-      {editorNode && (
-        <CaseEditor
-          caseNode={editorNode}
-          unfiled={editorFor === UNFILED_EDITOR}
-          cases={tree.cases}
-          byId={byId}
-          items={shelfRows}
-          onTree={applyTree}
-          onChanged={() => {
-            loadTree().catch(() => {});
-            props.onReloadBooks();
-          }}
-          onClose={() => setEditorFor(null)}
-          onOpenBookDetails={(b, fromShelf) => setDetailsFor({ book: b, fromShelf: fromShelf ?? null })}
-          notify={flash}
-        />
-      )}
-
-      {/* THE ONE CREATION DIALOG. Mounted here beside the other two, so it is the same dialog with
-          the same fields and the same validation whichever surface asked for it. */}
-      {creating && (
-        <CreateDialog
-          request={creating}
-          cases={tree.cases}
-          // Names already in use in the same family — a shelf compares against shelves, a case
-          // against cases — so a repeat can be pointed out. The model allows one, so this only
-          // ever informs; see the dialog.
-          taken={
-            creating.kind === "case"
-              ? tree.cases.map((c) => c.name)
-              : [...tree.cases.flatMap((c) => c.shelves.map((sh) => sh.name)), ...tree.loose.map((sh) => sh.name)]
-          }
-          busy={creatingBusy}
-          onCancel={() => setCreating(null)}
-          onCreate={async (name, caseId, ink) => {
-            setCreatingBusy(true);
-            // RENAMING TOUCHES THE NAME AND NOTHING ELSE — the dialog shows neither a destination
-            // nor a colour in that mode, so there is nothing else it could have been asked to do.
-            // A case renames through `case_rename`, which answers with a tree; a shelf renames
-            // through `collection_rename`, which answers with rows, so it goes the way every other
-            // shelf rename in the app already goes — the Library's own call, then a reload.
-            const target = creating.rename;
-            if (target) {
-              if (creating.kind === "case") await write(() => caseRename(target.id, name));
-              else await renameShelf(target.id, name);
-              setCreatingBusy(false);
-              setCreating(null);
-              return;
-            }
-            const made = await write(async () => {
-              // A CASE TAKES ITS INK IN ONE CALL — `case_create` has always accepted one.
-              if (creating.kind === "case") return caseCreate(name, ink);
-              const next = await shelfCreate(name, caseId);
-              if (!ink) return next;
-              // A SHELF'S DOES NOT, so it is a second write — made only when a colour was
-              // actually chosen, so the ordinary shelf is still one. The new shelf is found by
-              // difference rather than by name: two shelves may honestly share a name, and
-              // matching on one would colour whichever the search happened to reach first.
-              const had = new Set([
-                ...tree.cases.flatMap((k) => k.shelves.map((sh) => sh.id)),
-                ...tree.loose.map((sh) => sh.id),
-              ]);
-              const fresh = [...next.cases.flatMap((k) => k.shelves), ...next.loose].find((sh) => !had.has(sh.id));
-              return fresh ? shelfSetInk(fresh.id, ink) : next;
-            });
-            setCreatingBusy(false);
-            // A FAILED WRITE KEEPS THE DIALOG, AND WHAT WAS TYPED IN IT. `write` has already told
-            // the reader what went wrong; closing on top of that would take the name away too and
-            // leave them to type it again with no idea whether the first attempt half-landed.
-            if (made) setCreating(null);
-          }}
-        />
-      )}
-
-      {carry && <CarryGhost book={carry.book} spines={view === "spines"} />}
-
-      {/* Book Details, from the reference bundles. One dialog, mounted once here, so it is the
-          same dialog with the same controls whichever view opened it. */}
-      {deleting && (
-        <ConfirmDeleteBook
-          book={deleting}
-          t={t}
-          onCancel={() => setDeleting(null)}
-          onConfirm={async () => {
-            const book = deleting;
-            setDeleting(null);
-            await props.onDeleteBook(book);
-          }}
-        />
-      )}
-      {detailsFor && (
-        <BookDetails
-          book={detailsFor.book}
-          cases={tree.cases}
-          loose={tree.loose}
-          placement={placementOf(detailsFor.book.id)}
-          notify={flash}
-          libraryCoverMode={props.coverMode}
-          onClose={() => setDetailsFor(null)}
-          onChanged={() => {
-            loadTree().catch(() => {});
-            props.onReloadBooks();
-          }}
-        />
-      )}
+      {shellOverlays}
       {/* WHERE EVERY FLOATING SURFACE IS DRAWN. Last, so it paints over the pane and the sidebar;
           inside the shell, so it inherits the design tokens. See `overlay.ts`. */}
       <div className={OVERLAY_HOST_CLASS} />

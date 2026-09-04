@@ -61,6 +61,7 @@ import { SearchPanel } from "./SearchPanel";
 import { PageBookmark } from "./PageBookmark";
 import { useAnnotations } from "./annotationsStore";
 import { useReferences } from "./referencesStore"; // RAWY-260: phrase-bound references, per book
+import { useReplacements } from "./replacementsStore"; // phrase-bound reading-time substitutions, per book
 import { useBookmarks } from "./bookmarksStore";
 import { ReaderChrome, type SettingsSection } from "./ReaderChrome";
 import { NoteSheet } from "./NoteSheet";
@@ -68,6 +69,7 @@ import { SettingsPanel } from "./SettingsPanel";
 import { useReadMarkerStyle } from "../../lib/readMarkerStyle"; // RAWY-256: the global read-marker variant
 import { endReadingSession, startReadingSession, updateReadingSession } from "../../lib/presence"; // DISC/RPC
 import { ReturnPill } from "./ReturnPill"; // RAWY-250: the return-to-reading-position pill
+import { ReplacementNotice } from "./ReplacementNotice";
 import { TtsPlayer } from "./TtsPlayer";
 import { releaseButtonFocusAfterPointerClick, skipSentenceForArrow, useTts } from "../../lib/tts";
 import { useChromeOnIntent } from "./useChromeOnIntent";
@@ -241,7 +243,26 @@ export function Reader({
   // overwrite the anchor, it still points at the original reading position. The anchor IS the freeze (one
   // piece of state, so the pill and the freeze can never disagree). `anchorRef` is what the once-registered
   // onRelocate closure reads; `anchorUi` mirrors it for rendering.
+  // RAWY-250 (addendum 7): HOW FAR IS "I CARRIED ON READING".
+  //
+  // The freeze treats a jump as an inspection and holds the real position until the reader says
+  // otherwise — the pill's ×, or reaching the end of the chapter they landed in. Measured, that last
+  // signal is too late to be the only automatic one: a reader who opens an annotation and simply keeps
+  // reading loses everything after it, because leaving before the chapter ends restores the pre-jump
+  // position.
+  //
+  // The distance is measured in foliate's own LOCATIONS, the only unit here that means the same thing
+  // in every book: it is byte-derived, so it does not move with font size, margins, page width, window
+  // size or flow mode. Measured across three books of 129, 80 and 2913 locations, one location is
+  // consistently two to three page turns — so THREE locations is six to nine pages of continuous
+  // reading. Well past a glance at a highlight and its surroundings, and well short of the chapter-end
+  // rule it complements (a chapter is ~9 locations in the smallest of those books, ~24 in the largest).
+  // A book whose engine reports no locations never trips this and keeps the chapter-end signal alone.
+  const THAW_LOCATIONS = 3;
   const anchorRef = useRef<ReadAnchor | null>(null);
+  // Where the jump LANDED, in locations — recorded on the first relocate after an anchor is taken,
+  // because the landing is not known at the moment the anchor is. Null while no anchor holds.
+  const anchorLocRef = useRef<number | null>(null);
   const [anchorUi, setAnchorUi] = useState<ReadAnchor | null>(null);
   // RAWY-250 (PART 0.4 / D66): per-chapter tracking for the SHARED end-signal. `atStart` = the chapter was
   // entered at its beginning (a mid-chapter jump must never mark it read); `endOnArrival` = its end-condition
@@ -382,6 +403,7 @@ export function Reader({
       jumpNavAtRef.current = 0;
       nextChapterArmedRef.current = false;
       anchorRef.current = null;         // RAWY-250: an anchor belongs to the book it was taken in
+      anchorLocRef.current = null;
       setAnchorUi(null);
       setSearchQuery("");               // book A's hits are meaningless CFIs in book B
       setActiveHitCfi(null);
@@ -459,6 +481,32 @@ export function Reader({
       isPdfRef.current = targetIsPdf; // RAWY-285: the close flush reads this, not its mount-time capture
       // RAWY-27: an inbox item passes a jump CFI that wins over the saved reading position.
       const resumeCfi = target.cfi ?? (targetIsPdf ? null : saved?.cfi) ?? null;
+
+      // OPENING A BOOK AT A LOCATOR IS A JUMP TOO — and it was the one jump that took no anchor.
+      //
+      // RAWY-250 freezes the reading position across a jump, so that inspecting an annotation cannot
+      // overwrite where the reader actually was, and every jump WITHIN an open book goes through
+      // `beginJump` and gets that freeze. Reaching an annotation from the LIBRARY does not: it opens
+      // the book AT the annotation's locator, so there is no jump to intercept and no live position to
+      // capture — the reader has not been in this book yet this session.
+      //
+      // Measured before this: with a real reading position in chapter VI, opening an annotation from
+      // the archive landed in chapter III and the row was overwritten with the annotation's own
+      // locator on the first relocate. No pill appeared, because no anchor existed, so leaving there
+      // meant the reading position was simply gone — the very defect the freeze was built to prevent,
+      // arriving through the one door it was not watching.
+      //
+      // The SAVED row is the position to protect, so it becomes the anchor. `sec` is -1 and the label
+      // unknown because the view has not loaded yet; neither is needed to go back — `returnToAnchor`
+      // navigates by CFI — and the pill simply appears without a chapter name. Everything after this
+      // is the existing behaviour: the row is frozen, the pill offers the way back, dismissing it
+      // adopts the new place, and reading to the end of the landed chapter thaws it.
+      if (!targetIsPdf && target.cfi && saved?.cfi && saved.cfi !== target.cfi) {
+        const a: ReadAnchor = { cfi: saved.cfi, label: null, sec: -1 };
+        anchorRef.current = a;
+        anchorLocRef.current = null; // the landing is recorded by the first relocate
+        setAnchorUi(a);
+      }
       const resumeFraction = targetIsPdf ? (saved?.fraction ?? null) : null;
 
       // ONE STYLE FOR EVERY BOOK, resolved per DIRECTION. RAWY-176 (AUD-6): the saved global row
@@ -621,7 +669,21 @@ export function Reader({
         // RAWY-250 (PART 1): while the anchor holds (a jump is being previewed), the reader's REAL position
         // must stay untouched in the row — so resume-on-open still lands where he was actually reading.
         // Every other write path is unchanged; the freeze ends via the pill's × or the end-signal above.
-        if (anchorRef.current) return;
+        // RAWY-250 (addendum 7): READING ON IS NOT INSPECTING. While the freeze holds, watch how far
+        // the reader has travelled FORWARD from where the jump landed. The first relocate after the
+        // anchor records the landing; once they are `THAW_LOCATIONS` beyond it they are plainly reading
+        // rather than looking, so the freeze ends and this very relocate is saved — the same effect as
+        // dismissing the pill, reached without asking them to do it.
+        //
+        // Forward only: paging back toward the passage they jumped to is still inspection.
+        if (anchorRef.current) {
+          const here = location?.current ?? null;
+          if (here != null) {
+            if (anchorLocRef.current == null) anchorLocRef.current = here;
+            else if (here - anchorLocRef.current >= THAW_LOCATIONS) thawRef.current();
+          }
+          if (anchorRef.current) return; // still frozen — the row stays exactly as it was
+        }
         progressTimer.current = window.setTimeout(() => {
           // RAWY-85: a PDF has no CFI — persist it by fraction (empty cfi) so it still resumes.
           if (cfi || targetIsPdf) progressSave(bookRef.current, cfi ?? "", fraction).catch(console.error);
@@ -792,6 +854,11 @@ export function Reader({
       // section from that set as it renders — no per-section query, and the book is never rescanned.
       useReferences.getState().bind(ctrl, target.id);
       await useReferences.getState().load();
+      // This book's replacement rules, on the same footing and for the same reason: loaded once, held in
+      // memory, and applied per section as it renders. Loaded BEFORE the first section is substituted, so
+      // the page is never briefly shown in the author's wording and then rewritten under the reader.
+      useReplacements.getState().bind(ctrl, target.id);
+      await useReplacements.getState().load();
       // RAWY-285: the read-chapter / beginning-seen sets and the two per-book preferences used to be read
       // HERE, after the view was already emitting relocates. They are now loaded before `ctrl.open()` —
       // see the ordering note above. Nothing replaces them at this point.
@@ -1599,6 +1666,7 @@ export function Reader({
     if (!st.cfi) return; // nothing real to return to yet (a PDF, or before the first relocate)
     const a: ReadAnchor = { cfi: st.cfi, label: st.chapterLabel, sec: ctrlRef.current?.currentSectionIndex() ?? -1 };
     anchorRef.current = a;
+    anchorLocRef.current = null; // the landing is recorded by the first relocate after the jump
     setAnchorUi(a);
   }, []);
 
@@ -1961,6 +2029,7 @@ export function Reader({
   const thawAnchor = useCallback(() => {
     if (!anchorRef.current) return;
     anchorRef.current = null;
+    anchorLocRef.current = null;
     setAnchorUi(null);
     const st = useReader.getState();
     if (st.cfi) progressSave(bookRef.current, st.cfi, st.fraction).catch(() => {});
@@ -1971,6 +2040,7 @@ export function Reader({
     const a = anchorRef.current;
     if (!a) return;
     anchorRef.current = null;
+    anchorLocRef.current = null;
     setAnchorUi(null);
     ctrlRef.current?.goToLocator(a.cfi);
   }, []);
@@ -2363,6 +2433,10 @@ export function Reader({
           onDismiss={thawAnchor}
         />
       )}
+
+      {/* While a replacement is in force the page is not the author's wording, and the reader is told so
+          rather than left to discover it. Renders nothing at all when no rule is on. */}
+      <ReplacementNotice />
 
       {/* The book's own footnote, held where the reader is. Invisible in a book that has none: nothing
           renders until the engine claims a link as a reference, so a book without notes shows no

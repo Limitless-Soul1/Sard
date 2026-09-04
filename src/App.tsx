@@ -7,25 +7,30 @@ import "./styles/global.css";
 // PROFILES: its own sheet. Nothing in it overrides an existing rule, so a reader who never opens
 // Profiles renders exactly as before — and `global.css` is untouched by this feature.
 import "./styles/profiles.css";
+import "./styles/deposit.css";
 import { I18nProvider, useI18n } from "./i18n";
 import { initBookmarkStyle } from "./lib/bookmarkStyle";
 import { initReadMarkerStyle } from "./lib/readMarkerStyle"; // RAWY-256: persisted read-marker variant
 import { initFonts } from "./lib/fonts";
 import { applyBackgrounds, initBackground, useBackground } from "./lib/background"; // RAWY-265
-import { runCloseFlush } from "./lib/closeFlush"; // the window close is owned by the page, not the Reader
+import { createCloseHandler, runCloseFlush } from "./lib/closeFlush"; // the window close is owned by the page, not the Reader
 import { diagStart } from "@diag"; // DIAGNOSTIC BUILD ONLY - observes, never intervenes
 import { registerOutcomeRecorder } from "./lib/listeningOutcomes"; // RAWY-263: the local outcome baseline
 import { initTheme, reapplyTitlebarTheme, resolveTheme, useTheme } from "./theme";
 import { initProfiles } from "./features/profiles/store"; // PROFILES: register authored themes first
 import { UnsavedChange } from "./features/profiles/UnsavedChange";
 import { DroppedProfile } from "./features/profiles/DroppedProfile";
+import { DroppedDeposit } from "./features/deposit/DroppedDeposit";
+import { useIncomingDeposit } from "./features/deposit/store";
+import { useBookDetailsRequest } from "./features/library/bookDetailsRequest";
+import { routeDroppedPaths } from "./features/profiles/dropRoute";
 import { initPresence } from "./lib/presence"; // DISC/RPC: load the Discord on/off switch
 import { LanguagePicker } from "./features/onboarding/LanguagePicker";
 import { Library, type OpenTarget } from "./features/library/Library";
 import { Reader } from "./features/reader/Reader";
 import { RuntimeGate } from "./app/RuntimeGate"; // RESILIENCE-1 / WP-1
 import { canRender } from "./lib/runtime";
-import { libraryListBooks, settingsGet, settingsSet } from "./lib/ipc";
+import { libraryListBooks, openedFilesTake, settingsGet, settingsSet } from "./lib/ipc";
 
 // RAWY-12 i18n + RAWY-13 themes + RAWY-15 Library home. First run shows the language
 // picker; afterwards the saved language/theme drive the UI and the Library is the home
@@ -47,6 +52,62 @@ function Root() {
       if (b) setOpen({ id: b.id, filePath: b.file_path, dir: b.dir, format: b.format });
     })().catch(console.error);
   }, []);
+
+  // A FILE THE OPERATING SYSTEM HANDED US — one opened with "Open with Sard", dragged onto the
+  // executable, or named on the command line.
+  //
+  // Sard claims NO extension of its own: a deposit is an ordinary .zip, and seizing .zip would take the
+  // reader's archives away from the tools he already uses to open them. So there is no double-click
+  // door by design, and this one stays because a file handed to Sard deliberately should still arrive.
+  //
+  // It ends at the SAME door a dropped file takes. `routeDroppedPaths` classifies by content rather
+  // than by extension, so a deposit reaches the deposit sheet and a profile reaches the profile
+  // preview without this needing to know which it was handed.
+  //
+  // TWO ARRIVALS, ONE QUEUE. A cold start queues its argument before the window exists, so the drain
+  // on mount collects it. A second launch pushes onto the same queue and emits `sard://opened`, which
+  // carries nothing and only means "look again" — so a path can never arrive twice or be lost to a
+  // listener that was not yet attached.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let alive = true;
+    const drain = async () => {
+      const paths = await openedFilesTake().catch(() => [] as string[]);
+      // ONCE TAKEN, ALWAYS DELIVERED. The drain is destructive, so a path that has left the queue can
+      // never be asked for again — dropping it here because this effect has since been cleaned up
+      // would lose the deposit outright. It cost a measured failure to learn: under StrictMode the
+      // first mount took the path and the second found an empty queue, and nothing ever opened.
+      // Routing is a write to a store that outlives the component, so it is safe after unmount.
+      //
+      // The fallback is deliberately empty: what is handed in is classified by CONTENT, and anything
+      // that is not a deposit or a profile was never this door's to act on.
+      if (paths.length) await routeDroppedPaths(paths, () => {});
+    };
+    void drain();
+    (async () => {
+      try {
+        const { listen } = await import("@tauri-apps/api/event");
+        const un = await listen("sard://opened", () => void drain());
+        if (alive) unlisten = un;
+        else un();
+      } catch {
+        /* not in a tauri webview — nothing hands us files */
+      }
+    })();
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, []);
+
+  // «افتح الأرشيف» WHILE A BOOK IS OPEN. The archive is a library section, so the page has to come back
+  // before the library can change section. Only the return trip belongs here; the library clears the
+  // request once it has honoured it.
+  const wantsArchive = useIncomingDeposit((s) => s.showArchive);
+  const wantsBook = useBookDetailsRequest((s) => s.wanted);
+  useEffect(() => {
+    if (wantsArchive || wantsBook) setOpen(null);
+  }, [wantsArchive, wantsBook]);
 
   if (!i18nReady || !themeReady) return null; // brief: settings loading (avoids theme flash)
   // RESILIENCE-1 / WP-1: the runtime gate. foliate's OPF parser needs browser features an older
@@ -73,6 +134,7 @@ function Root() {
       {/* A profile dropped onto the window. The Library's drop listener already ran it through the
           import gate; this shows the ordinary preview so the drop and the picker end in one place. */}
       <DroppedProfile />
+      <DroppedDeposit />
     </>
   );
 }
@@ -168,20 +230,19 @@ function App() {
     const win = getCurrentWindow();
     let unlisten: (() => void) | undefined;
     let disposed = false; // a cleanup that beats the registration promise must still unregister
-    let closing = false; // flush + close exactly once; a second ✕ mid-flush is left to the first
+    // The decision-making lives in `lib/closeFlush.ts` so it can be tested without a window: the latch
+    // that guards against a double ✕ used to be permanent, and one failed `destroy()` left the window
+    // impossible to close by any means. `destroy()` bypasses this handler, so there is no re-fire loop;
+    // it needs core:window:allow-destroy (granted, RAWY-174).
+    const handleClose = createCloseHandler({
+      flush: (ms) => runCloseFlush(ms),
+      destroy: () => win.destroy(),
+      // The close was released for a retry; say so, so a recurrence leaves evidence instead of only a
+      // window that would not shut.
+      onDestroyFailed: (err) => console.error("[sard] window destroy failed; close released for retry", err),
+    });
     win
-      .onCloseRequested(async (event) => {
-        event.preventDefault(); // hold the close so the flush can finish; WE own the destroy below
-        if (closing) return;
-        closing = true;
-        try {
-          await runCloseFlush(1500);
-        } finally {
-          // ALWAYS close. `destroy()` bypasses this handler, so there is no re-fire loop; it needs
-          // core:window:allow-destroy (granted, RAWY-174) and is wrapped so nothing can leave ✕ dead.
-          try { await win.destroy(); } catch { /* no other JS path can force the close */ }
-        }
-      })
+      .onCloseRequested(handleClose)
       .then((u) => { if (disposed) u(); else unlisten = u; })
       .catch(() => {});
     return () => { disposed = true; unlisten?.(); };

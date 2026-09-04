@@ -345,6 +345,19 @@ struct EpubMeta {
     ncx_path: Option<String>,
 }
 
+/// How many linear content documents an EPUB's spine holds — the axis a reading map is drawn on.
+///
+/// READ-ONLY AND ADDITIVE. It runs the same `parse_epub` that import already runs, so there is not a
+/// second idea in this codebase of what a spine is; nothing here writes, copies or registers anything.
+/// `None` means the file could not be opened or parsed, which the caller reports as "no map" rather
+/// than as a failure — a deposit is still worth sending without one.
+pub fn spine_count(path: &Path) -> Option<usize> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut zip = zip::ZipArchive::new(file).ok()?;
+    let meta = parse_epub(&mut zip)?;
+    Some(meta.spine_docs.len())
+}
+
 fn parse_epub<R: Read + Seek>(zip: &mut zip::ZipArchive<R>) -> Option<EpubMeta> {
     let container = read_entry_string(zip, "META-INF/container.xml")?;
     let opf_path = find_opf_path(&container)?;

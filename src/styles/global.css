@@ -1712,12 +1712,18 @@ html, body, #root {
    as a printed label rather than another piece of chrome. Line-height is 1.35, NOT the sheet's 1: the plate
    must clip to its 2px corner (`overflow: hidden`), and a 1.0 line box is the em square, so Arabic
    descenders would be sliced flat against it — the RAWY-263 scar. */
+/* THE LABEL IS THE APPLICATION'S OWN WORD, so it takes the interface face — one rule, both scripts.
+   It was set in the READING faces: `--ar` for Arabic and `--book` for Latin. Those follow the reader's
+   BOOK font, not their interface font, so the one control on this plate ignored the interface
+   typography while the message four rules below it — `var(--ui-font)` — followed it. Sard's own
+   contract, guarded in `typographyRoles.test.ts`, is that the app's own words are the UI face in both
+   scripts, because chrome is not per-script. The two sizes collapse to the one the Latin label already
+   used; line-height stays 1.35, NOT 1 — the plate clips to its 2px corner, and a 1.0 line box is the em
+   square, which slices Arabic descenders flat (the RAWY-263 scar). */
 .tts-next-plate .tts-next-label {
   flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center;
-  font: 400 1.1875rem/1.35 var(--ar); color: var(--nc-ink);
+  font: 400 0.9375rem/1.35 var(--ui); color: var(--nc-ink);
 }
-[dir="ltr"] .tts-next-plate .tts-next-label,
-.tts-next-plate[dir="ltr"] .tts-next-label { font: 400 0.9375rem/1.35 var(--book); }
 .tts-next-plate .tts-next-cap {
   flex: none; width: 38px; align-self: stretch;
   display: flex; align-items: center; justify-content: center;
@@ -1750,114 +1756,53 @@ html, body, #root {
   .tts-end-next.tts-next-plate:active { transform: none; }
 }
 
-/* ---- 3c per-theme tokens, transcribed from the concept sheet's own tuned table ----
-   Light papers: an INK cap on paper, with a warm ink-tinted shadow. Dark papers: an ACCENT cap with a
-   deep-ink glyph and a black shadow, on lighter hairlines. True-Black drops the shadow entirely and works
-   on the hairline alone. Ink (high contrast) takes a much heavier rule and a 3px focus ring. */
+/* ---- the plate's tokens, DERIVED FROM THE ACTIVE THEME ----------------------------------------
+
+   These were sixteen hand-written blocks, one per built-in paper, keyed on `:root[data-theme="…"]`.
+   A theme the reader MAKES carries `data-theme="u:<id>"` and matched none of them, so the plate fell
+   through to the base block — which was Ivory, spelled out in hex. Every custom theme therefore drew
+   an Ivory plate on top of its own colours, and no accent of the reader's ever reached the cap.
+   Measured, with a reader-made theme whose paper is #2A1B3D and whose accent is #7CF0C8: the control
+   rendered rgb(245,238,221) — Ivory — and its cap took Ivory's ink.
+
+   The table was not a set of judgements; it was ONE rule written sixteen times. Read against the
+   palettes in `themes.ts`: Ivory's paper `#F5EEDD` IS its `paperBg`, its ink `#2B2521` IS its `text`,
+   its cap is that same ink and the glyph on the cap is the paper again. Charcoal's paper `#1C1C1E` IS
+   its `paperBg`, its ink `#DCD9D2` IS its `text`, and its cap `#C98A5E` IS its `accent` — the concept's
+   dark-paper rule, which is what the sheet says in words: ink cap on light papers, accent cap on dark.
+   Moonlit's gilt cap needs no exception either; gilt is that theme's accent.
+
+   So the rule is stated once here and every theme gets a plate, built-in or reader-made. `data-dark`
+   is the interface's own polarity — `applyTheme` writes it from the theme itself, so a custom dark
+   theme lands on the dark branch exactly as a built-in does. This is the same answer Vista was given
+   in `vistaTokens.ts`: a theme becomes tokens by rule, not by table.
+
+   Two accommodations do not survive the move, both of them per-theme special cases that a rule cannot
+   carry: Ink's heavier 0.7 hairline and its 3px focus ring, which now take the common values. */
 :root {
-  /* base = Ivory, so the very first paint before applyTheme runs is already right (the file's convention) */
-  --nc-paper: #F5EEDD; --nc-ink: #2B2521; --nc-edge: rgba(43, 37, 33, 0.34);
-  --nc-shadow: rgba(60, 40, 16, 0.16); --nc-shadow-soft: rgba(60, 40, 16, 0.1);
-  --nc-cap: #2B2521; --nc-cap-hover: #3A2F26; --nc-cap-press: #201B18; --nc-cap-ink: #F5EEDD;
+  --nc-paper: var(--paper-bg);
+  --nc-ink: var(--text);
+  --nc-edge: color-mix(in srgb, var(--text) 30%, transparent);
+  --nc-shadow: color-mix(in srgb, var(--text) 16%, transparent);
+  --nc-shadow-soft: color-mix(in srgb, var(--text) 10%, transparent);
+  /* light papers: the cap carries the INK, and the glyph on it is the paper */
+  --nc-cap: var(--text);
+  --nc-cap-hover: color-mix(in srgb, var(--text) 92%, var(--paper-bg));
+  --nc-cap-press: color-mix(in srgb, var(--text) 88%, #000);
+  --nc-cap-ink: var(--paper-bg);
+  /* the paper WASH — the faintest touch-of-paper tint, used for hover inside the plate */
+  --nc-wash: color-mix(in srgb, var(--text) 5%, transparent);
 }
-:root[data-theme="sepia"] {
-  --nc-paper: #EBDDBE; --nc-ink: #45382A; --nc-edge: rgba(58, 46, 24, 0.36);
-  --nc-shadow: rgba(60, 40, 16, 0.18); --nc-shadow-soft: rgba(60, 40, 16, 0.11);
-  --nc-cap: #45382A; --nc-cap-hover: #56452F; --nc-cap-press: #362B20; --nc-cap-ink: #F3E9CF;
+/* dark papers: the cap carries the ACCENT with a deep-ink glyph, and the shadow is black rather than
+   an ink tint — a light ink would glow instead of casting. */
+:root[data-dark="true"] {
+  --nc-cap: var(--accent);
+  --nc-cap-hover: color-mix(in srgb, var(--accent) 90%, #fff);
+  --nc-cap-press: color-mix(in srgb, var(--accent) 86%, #000);
+  --nc-cap-ink: var(--paper-bg);
+  --nc-shadow: rgba(0, 0, 0, 0.5);
+  --nc-shadow-soft: rgba(0, 0, 0, 0.32);
 }
-:root[data-theme="parchment"] {
-  --nc-paper: #F0E2BE; --nc-ink: #3A2E14; --nc-edge: rgba(58, 46, 24, 0.38);
-  --nc-shadow: rgba(58, 46, 24, 0.18); --nc-shadow-soft: rgba(58, 46, 24, 0.12);
-  --nc-cap: #3A2E14; --nc-cap-hover: #4A3B1D; --nc-cap-press: #2C2210; --nc-cap-ink: #F0E2BE;
-}
-:root[data-theme="linen"] {
-  --nc-paper: #F4F2EA; --nc-ink: #2A2925; --nc-edge: rgba(42, 41, 37, 0.32);
-  --nc-shadow: rgba(42, 41, 37, 0.13); --nc-shadow-soft: rgba(42, 41, 37, 0.08);
-  --nc-cap: #2A2925; --nc-cap-hover: #383731; --nc-cap-press: #201F1C; --nc-cap-ink: #F4F2EA;
-}
-:root[data-theme="sage"] {
-  --nc-paper: #F0F2E8; --nc-ink: #2E342B; --nc-edge: rgba(46, 52, 43, 0.34);
-  --nc-shadow: rgba(46, 52, 43, 0.14); --nc-shadow-soft: rgba(46, 52, 43, 0.09);
-  --nc-cap: #2E342B; --nc-cap-hover: #3C4536; --nc-cap-press: #232821; --nc-cap-ink: #F0F2E8;
-}
-:root[data-theme="rosequartz"] {
-  --nc-paper: #FBF1F1; --nc-ink: #3A2F30; --nc-edge: rgba(58, 47, 48, 0.32);
-  --nc-shadow: rgba(58, 47, 48, 0.13); --nc-shadow-soft: rgba(58, 47, 48, 0.08);
-  --nc-cap: #3A2F30; --nc-cap-hover: #4A3B3C; --nc-cap-press: #2E2526; --nc-cap-ink: #FBF1F1;
-}
-/* Ink: the high-contrast contract — a 0.70 rule instead of a hairline, and a 3px ring */
-:root[data-theme="ink"] {
-  --nc-paper: #FFFFFF; --nc-ink: #0E0D0A; --nc-edge: rgba(0, 0, 0, 0.7);
-  --nc-shadow: rgba(0, 0, 0, 0.18); --nc-shadow-soft: rgba(0, 0, 0, 0.12);
-  --nc-cap: #0E0D0A; --nc-cap-hover: #241F18; --nc-cap-press: #000000; --nc-cap-ink: #FFFFFF;
-  --nc-ring-w: 3px;
-}
-:root[data-theme="slate"] {
-  --nc-paper: #1B2228; --nc-ink: #E4DED2; --nc-edge: rgba(255, 255, 255, 0.28);
-  --nc-shadow: rgba(0, 0, 0, 0.45); --nc-shadow-soft: rgba(0, 0, 0, 0.3);
-  --nc-cap: #C98A5E; --nc-cap-hover: #D89B6E; --nc-cap-press: #B0764C; --nc-cap-ink: #1B2228;
-}
-/* True-Black: no shadow at all — it is invisible on #000, so the hairline carries the whole edge */
-:root[data-theme="trueblack"] {
-  --nc-paper: #000000; --nc-ink: #CFC8BA; --nc-edge: rgba(255, 255, 255, 0.34);
-  --nc-shadow: rgba(0, 0, 0, 0); --nc-shadow-soft: rgba(0, 0, 0, 0);
-  --nc-cap: #C98A5E; --nc-cap-hover: #DCA274; --nc-cap-press: #A96F45; --nc-cap-ink: #000000;
-}
-:root[data-theme="espresso"] {
-  --nc-paper: #221912; --nc-ink: #EADCC6; --nc-edge: rgba(255, 255, 255, 0.28);
-  --nc-shadow: rgba(0, 0, 0, 0.5); --nc-shadow-soft: rgba(0, 0, 0, 0.32);
-  --nc-cap: #D49A6A; --nc-cap-hover: #E4AC7C; --nc-cap-press: #B98455; --nc-cap-ink: #221912;
-}
-:root[data-theme="charcoal"] {
-  --nc-paper: #1C1C1E; --nc-ink: #DCD9D2; --nc-edge: rgba(255, 255, 255, 0.28);
-  --nc-shadow: rgba(0, 0, 0, 0.5); --nc-shadow-soft: rgba(0, 0, 0, 0.32);
-  --nc-cap: #C98A5E; --nc-cap-hover: #D99C71; --nc-cap-press: #AF764C; --nc-cap-ink: #1A1A1C;
-}
-:root[data-theme="dusk"] {
-  --nc-paper: #1B2130; --nc-ink: #D8DEEC; --nc-edge: rgba(255, 255, 255, 0.3);
-  --nc-shadow: rgba(0, 0, 0, 0.45); --nc-shadow-soft: rgba(0, 0, 0, 0.3);
-  --nc-cap: #8FA6D8; --nc-cap-hover: #A3B7E4; --nc-cap-press: #7B92C4; --nc-cap-ink: #141926;
-}
-:root[data-theme="forestnight"] {
-  --nc-paper: #15201A; --nc-ink: #D6E2D4; --nc-edge: rgba(255, 255, 255, 0.28);
-  --nc-shadow: rgba(0, 0, 0, 0.48); --nc-shadow-soft: rgba(0, 0, 0, 0.3);
-  --nc-cap: #82B08C; --nc-cap-hover: #96C39F; --nc-cap-press: #6E9A78; --nc-cap-ink: #121B15;
-}
-:root[data-theme="mulberry"] {
-  --nc-paper: #221620; --nc-ink: #E6D8E2; --nc-edge: rgba(255, 255, 255, 0.28);
-  --nc-shadow: rgba(0, 0, 0, 0.5); --nc-shadow-soft: rgba(0, 0, 0, 0.32);
-  --nc-cap: #C189B0; --nc-cap-hover: #D39CC1; --nc-cap-press: #A9749A; --nc-cap-ink: #1D1219;
-}
-:root[data-theme="nocturne"] {
-  --nc-paper: #122023; --nc-ink: #CFE0E0; --nc-edge: rgba(255, 255, 255, 0.28);
-  --nc-shadow: rgba(0, 0, 0, 0.5); --nc-shadow-soft: rgba(0, 0, 0, 0.32);
-  --nc-cap: #5FA8A8; --nc-cap-hover: #74BBBB; --nc-cap-press: #4F9191; --nc-cap-ink: #0F1C1E;
-}
-/* Moonlit Sky is the one paper the concept sheet does not cover (it predates the RAWY-145 theme), so it is
-   tuned HERE to the sheet's dark-paper rule — accent cap, deep-ink glyph, black shadow — with the one
-   Moonlit-specific departure the theme always makes: its rules are GILT, never white. */
-:root[data-theme="moonlit"] {
-  --nc-paper: #121A2E; --nc-ink: #F5E8C8; --nc-edge: rgba(230, 199, 122, 0.34);
-  --nc-shadow: rgba(0, 0, 0, 0.5); --nc-shadow-soft: rgba(0, 0, 0, 0.32);
-  --nc-cap: #E6C77A; --nc-cap-hover: #F0D592; --nc-cap-press: #C9A85F; --nc-cap-ink: #101828;
-  --nc-wash: rgba(230, 199, 122, 0.07);
-}
-/* the paper WASH — the faintest touch-of-paper tint, used for hover inside the plate (concept `--wash`) */
-:root { --nc-wash: rgba(43, 37, 33, 0.045); }
-:root[data-theme="sepia"] { --nc-wash: rgba(69, 56, 42, 0.05); }
-:root[data-theme="parchment"] { --nc-wash: rgba(58, 46, 24, 0.05); }
-:root[data-theme="linen"] { --nc-wash: rgba(42, 41, 37, 0.04); }
-:root[data-theme="sage"] { --nc-wash: rgba(46, 52, 43, 0.045); }
-:root[data-theme="rosequartz"] { --nc-wash: rgba(58, 47, 48, 0.04); }
-:root[data-theme="ink"] { --nc-wash: rgba(0, 0, 0, 0.05); }
-:root[data-theme="slate"] { --nc-wash: rgba(255, 255, 255, 0.05); }
-:root[data-theme="trueblack"] { --nc-wash: rgba(255, 255, 255, 0.06); }
-:root[data-theme="espresso"] { --nc-wash: rgba(255, 240, 220, 0.05); }
-:root[data-theme="charcoal"] { --nc-wash: rgba(255, 255, 255, 0.05); }
-:root[data-theme="dusk"] { --nc-wash: rgba(255, 255, 255, 0.05); }
-:root[data-theme="forestnight"] { --nc-wash: rgba(230, 255, 235, 0.05); }
-:root[data-theme="mulberry"] { --nc-wash: rgba(255, 235, 250, 0.05); }
-:root[data-theme="nocturne"] { --nc-wash: rgba(220, 255, 255, 0.05); }
 
 /* ================================================================================================
    THE CHAPTER-END COMPONENT IS THE PLATE.
@@ -4766,6 +4711,74 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .ref-save:disabled { opacity: 0.45; cursor: default; } /* the design disables Save on an empty note */
 .ref-save:not(:disabled):hover { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
 .ref-save:focus-visible, .ref-cancel:focus-visible, .ref-del:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ---- the replacement editor ------------------------------------------------------------------
+   IT HAD NO STYLES AT ALL. The dialog shares the reference editor's frame — scrim, card, eyebrow,
+   actions — so it always LOOKED like a Sard dialog from the outside, while everything inside it was
+   raw: two default inputs and a bare arrow, in the browser's own font, on the browser's own ground.
+   That is the whole of the regression.
+
+   WHAT IT IS. Two fields of equal weight with the arrow between them, set in the READING face rather
+   than the interface one, because what the reader is composing is a line of the book — the design's
+   own instruction, and what makes this feel like part of the page instead of a form. Every colour is
+   a live token, so a custom palette paints it with nothing hard-coded. */
+.rep-dialog { width: min(27rem, 100%); }
+.rep-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+}
+.rep-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--paper-bg);
+  border: 1px solid color-mix(in srgb, var(--text) 16%, transparent);
+  border-radius: 7px;
+  padding: 0.62rem 0.8rem;
+  font: 500 1.05rem/1.5 var(--book);
+  color: var(--text);
+  text-align: center;
+}
+/* Arabic sits a shade larger, as it does everywhere else a reading face is used at small sizes. */
+.rep-input.ar { font-family: var(--ar); font-size: 1.15rem; }
+/* THE ORIGINAL IS THE QUIETER OF THE TWO: it is what the book says, and the reader is looking at what
+   it will become. */
+.rep-from { color: var(--muted); }
+.rep-to { color: var(--text); }
+.rep-input::placeholder { color: color-mix(in srgb, var(--muted) 70%, transparent); }
+.rep-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.rep-arrow {
+  flex: none;
+  align-self: center;
+  font: 400 1.1rem/1 var(--ui-font);
+  color: color-mix(in srgb, var(--accent) 75%, transparent);
+  user-select: none;
+}
+/* The arrow points from the new wording back to the author's, so it must turn with the script. */
+[dir="ltr"] .rep-arrow { transform: scaleX(-1); }
+.rep-scope {
+  margin-top: 0.8rem;
+  font: 400 0.75rem/1.6 var(--ui-font);
+  color: var(--muted);
+}
+/* A phrase this book already replaces: said plainly, on the spot, instead of failing silently when
+   the rule is saved. */
+.rep-exists {
+  margin-top: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  font: 500 0.78rem/1.5 var(--ui-font);
+  color: var(--text);
+}
+.rep-exists svg { flex: none; color: var(--accent); }
 
 /* ---- the reference popup: label · phrase · note. No buttons; a tap outside closes it ---- */
 /* ---- THE BOOK'S OWN NOTE: A SECOND SHEET OF THE SAME PAPER ----

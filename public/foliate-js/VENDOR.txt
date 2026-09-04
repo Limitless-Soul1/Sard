@@ -300,3 +300,37 @@ Chromium >= 140 and the EPUB set to Chromium >= 117.)
   mismatch is INHERITED, not introduced here, and is left alone deliberately: renumbering during
   active development would churn the sources for no product benefit. Patch 9's markers and its entry
   here do agree. Fix the older numbering during the cleanup milestone, not before.
+
+  PATCH 10 — epubcfi.js   TWO COORDINATE HOOKS, SO A REPLACEMENT CANNOT MOVE A STORED CFI.
+             fromRange,   Sard's replacements feature substitutes a word in a rendered section by writing
+             toRange      `textNode.data` in place. That adds, removes and splits no node, so the child
+                          steps a CFI is built from are untouched (measured: the stored CFI resolves to
+                          the SAME text node in 16/16 Latin and 24/24 Arabic annotations). What DOES move
+                          is the character offset inside the changed node.
+
+                          Sard's rule is that a stored CFI is always in the AUTHOR's coordinates, so the
+                          page's coordinates are converted at the only two points where an offset crosses
+                          that boundary — the mint (`fromRange`) and the resolve (`toRange`). Placing the
+                          conversion here rather than at Sard's own call sites is deliberate: foliate
+                          resolves CFIs INTERNALLY for `addAnnotation`, `goTo`, bookmarks and search
+                          navigation, so a hook in Sard's code would have covered none of those.
+
+                          The hooks are `globalThis.__sardRepToAuthor` and `__sardRepToPage`. When they
+                          are absent — which is every library that has never made a replacement, and
+                          every book with no rule in force — both functions run exactly the original
+                          code, so this is inert rather than merely equivalent.
+
+                          In `toRange` the conversion happens BEFORE setStart/setEnd, which also stops a
+                          shrinking replacement from pushing a stored offset past the node's new length;
+                          the DOM throws IndexSizeError on that, and it was observed doing so.
+
+                          IF THIS PATCH IS LOST ON A RE-VENDOR: nothing looks wrong until a reader turns
+                          on a replacement in a book that already has highlights or notes. Then those
+                          marks silently move onto the wrong words — measured at 10 of 15 wrong — and
+                          nothing is logged, because resolving still succeeds. Toggling the replacement
+                          off puts them back, which is what makes it read as a drawing bug rather than a
+                          coordinate one.
+                          Regression test:
+                            the replacement CFI probe in the private harness
+                          Must report the same text node for every annotation, every annotation exact
+                          with the rule active, and the baseline restored when it is switched off.

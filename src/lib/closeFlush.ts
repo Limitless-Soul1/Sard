@@ -78,3 +78,77 @@ export async function runCloseFlush(ms = 1500): Promise<"flushed" | "timeout" | 
   ]);
   return timedOut ? "timeout" : outcome;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE CLOSE HANDLER ITSELF, as a pure function of its two effects.
+//
+// WHY THIS IS NOT INLINE IN `App`. The defect below cannot be reached from a unit test while the logic
+// lives inside a `useEffect` that needs a real Tauri window, and it is a defect that costs the user
+// their whole session — so the logic is separated from the wiring and tested directly. `App` keeps the
+// registration; this owns the decision-making.
+//
+// THE DEFECT, MEASURED. `closing` exists so a second ✕ during a flush is ignored rather than starting a
+// second flush. It was set before the flush and never released. `destroy()` was wrapped in a bare
+// `catch {}`, so when it failed the handler returned with the close still PREVENTED, the window still
+// there, and the latch still set — and every later ✕ hit `if (closing) return` and did nothing.
+// Reproduced by injecting one destroy failure into the real handler and then repairing it:
+//
+//     handler FIRED / body entered / flush ran / reached destroy / destroy threw
+//     ...destroy healthy again...
+//     handler FIRED / IGNORED: closing latch already set        <- and nothing, ever again
+//
+// The window stayed visible, enabled, responsive and modal-free, and could only be force-terminated.
+// A transient failure had been turned into a permanent one.
+//
+// THE RULE THIS NOW KEEPS: the latch describes a close that is IN PROGRESS, so it is released the
+// moment the close is known not to have happened. There is deliberately NO timeout around `destroy` —
+// a hung destroy is not a failure this can recover from (a second destroy would hang too), and a
+// timeout would only hide it. What is fixed is the case that was measured: destroy FAILING.
+export interface CloseHandlerDeps {
+  /** Persist whatever the current view owns. Bounded and non-throwing by contract. */
+  flush: (ms?: number) => Promise<unknown>;
+  /** Actually close the window. Rejecting means the window is still there. */
+  destroy: () => Promise<void>;
+  /** The ceiling the close is willing to wait for the flush. */
+  flushMs?: number;
+  /**
+   * Told when a destroy attempt failed and the latch was released for a retry.
+   *
+   * A failed close used to leave NO trace at all: the error went into a bare `catch {}`, so the one
+   * event worth knowing about — the window refusing to go — was the one event nothing recorded. If this
+   * ever fires in the field it is the first line of the next investigation, which is why it is reported
+   * rather than swallowed.
+   */
+  onDestroyFailed?: (error: unknown) => void;
+}
+
+/**
+ * Build the `onCloseRequested` handler. The returned function may be called any number of times; it
+ * runs one flush-and-destroy at a time, and stays usable if a destroy fails.
+ */
+export function createCloseHandler(deps: CloseHandlerDeps) {
+  let closing = false;
+  return async function handleCloseRequested(event: { preventDefault: () => void }): Promise<void> {
+    event.preventDefault(); // hold the close so the flush can finish; WE own the destroy below
+    if (closing) return; // a second ✕ mid-flush is left to the first
+    closing = true;
+    try {
+      await deps.flush(deps.flushMs ?? 1500);
+    } finally {
+      try {
+        await deps.destroy();
+        // Reached only if the window did not go away synchronously; leaving the latch set is right —
+        // the close succeeded and there is nothing left to retry.
+      } catch (err) {
+        // THE WINDOW IS STILL HERE and the close is still prevented. Release the latch so the next
+        // gesture can try again, instead of leaving a window nothing can ever close.
+        closing = false;
+        try {
+          deps.onDestroyFailed?.(err);
+        } catch {
+          /* a reporter that throws must not take the retry down with it */
+        }
+      }
+    }
+  };
+}

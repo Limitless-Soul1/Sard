@@ -1,19 +1,63 @@
-// Cross-book Highlights & Notes inbox (RAWY-27, design band D). A calm, searchable list of
-// EVERY highlight + standalone note across all books — each with its colour, the book and
-// chapter, and (for a highlight that has a note) the note body. Filter by colour / book /
-// type, search the text, and click an item to open that book at its CFI. UI chrome → theme
-// tokens, mirrors with the UI language; Arabic items render in Amiri / RTL by their book dir.
+// Library → Highlights & Notes: the archive, as a card-catalogue cabinet.
+//
+// THE SHAPE. Two levels. The cabinet lists one shallow DRAWER per book — cover plate set into the
+// face, the tally, the ink spectrum, and the newest thing marked in that book quoted with its real
+// ink. Pulling a drawer opens that book's wall of slips, and the book becomes the room: the cluster
+// header is gone because there is nothing left to group.
+//
+// WHAT MOVED, AND WHY. The flat cross-book list this replaced carried five controls in one bar:
+// search, an ink row, a book menu, a tag menu and a type switch. The cabinet's own head has room for
+// two of them — the search, which spans every drawer, and the order. The book menu is now the cabinet
+// itself, one drawer per book, so it would be a second way to do the same thing. The other three —
+// ink, tag and type — moved INSIDE the drawer, where they filter the wall of the book you are
+// standing in. Nothing was dropped: every filter that existed still exists, at the level where the
+// design leaves room for it.
+//
+// SCOPE. This file is the LIBRARY's surface only. The reader's in-book annotations panel and the
+// Bookmarks shelf are deliberately untouched — they still render the `.inbox-*` rules, which is why
+// this screen has its own `.arch-*` namespace and changes nothing they depend on.
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { useI18n } from "../../i18n";
 import { localeDigits, uiDateTimeFormat, uiRelativeTimeFormat } from "../../lib/format";
 import { resolveTheme, useTheme } from "../../theme";
-import { colorValue, HIGHLIGHT_SLOTS, isHex } from "../reader/highlightColors";
-import { annoIsHighlight, annoIsNote, annotationsAll, tagsList, type AnnoItem } from "../../lib/ipc";
+import { HIGHLIGHT_SLOTS, isHex } from "../reader/highlightColors";
+import {
+  annoIsHighlight,
+  annoIsNote,
+  annotationsAll,
+  libraryListBooks,
+  repsForBook,
+  type RepRow,
+  settingsGet,
+  settingsSet,
+  tagsList,
+  type AnnoItem,
+  type BookRow,
+} from "../../lib/ipc";
 import type { OpenTarget } from "./Library";
 import { Icon } from "../../components/Icon";
-import { isArabicText, scriptOf } from "../../lib/typography";
+import { coverSrc } from "./coverSrc";
+import { autoCoverPaint } from "./AutoCover";
+import { Cabinet } from "./archive/Cabinet";
+import { SlipWall } from "./archive/SlipWall";
+import { SlipSheet } from "./archive/SlipSheet";
+import { PhotoComposer } from "../photo/PhotoComposer";
+import type { CardData } from "../photo/photo";
+import {
+  buildDrawers,
+  clampScale,
+  letterOf,
+  SCALE_MAX,
+  SCALE_MIN,
+  SCALE_STEP,
+  sortDrawers,
+  type Drawer,
+} from "./archive/model";
+import { applyToText, type RepLite } from "../../lib/replacements";
+
+import "../../styles/archive.css";
 
 type TypeFilter = "all" | "highlight" | "note";
 
@@ -28,87 +72,216 @@ function relTime(sec: number | null, lang: string): string {
 
 export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const { t, lang } = useI18n();
-  const hl = resolveTheme(useTheme((s) => s.themeId)).colors.highlight;
+  const theme = resolveTheme(useTheme((s) => s.themeId));
+  const hl = theme.colors.highlight;
+  const dark = theme.dark;
+  // Two grounds, because two surfaces. A slip is paper; a drawer face is chrome. The ink resolver
+  // carries the colour into whichever it is told about, so telling it the wrong one mixes a mark for
+  // a surface it is not painted on.
+  const paper = theme.colors.paperBg;
+  const chrome = theme.colors.chromeBg;
+
   const [items, setItems] = useState<AnnoItem[]>([]);
+  const [books, setBooks] = useState<BookRow[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [search, setSearch] = useState("");
+  const [openBook, setOpenBook] = useState<string | null>(null); // which drawer is pulled open
+  // A CLICK OPENS THE SLIP, NOT THE BOOK. Reading in the book is one of the four things the sheet
+  // offers; it is no longer the only meaning a click can carry on this surface.
+  const [sheet, setSheet] = useState<AnnoItem | null>(null);
+  const [card, setCard] = useState<CardData | null>(null);
+  const [reloads, setReloads] = useState(0);
+  // HOW BIG THE SLIPS ARE. Persisted on the same `settings` path the Library's own view, density and
+  // sort already use — the archive gets no storage mechanism of its own for one number.
+  const [scale, setScale] = useState(SCALE_MIN);
+  const [scaleReady, setScaleReady] = useState(false);
+
+  // The three filters that moved inside the drawer.
   const [color, setColor] = useState<string | null>(null); // a slot, "custom", or null
-  const [book, setBook] = useState<string | null>(null);
   const [type, setType] = useState<TypeFilter>("all");
-  const [bookMenu, setBookMenu] = useState(false);
-  const [tag, setTag] = useState<string | null>(null); // RAWY-203: filter by a tag name
+  const [tag, setTag] = useState<string | null>(null);
   const [tagMenu, setTagMenu] = useState(false);
-  const [tagNames, setTagNames] = useState<string[]>([]); // RAWY-204: ALL tags (the tags table)
+  const [tagNames, setTagNames] = useState<string[]>([]);
 
   useEffect(() => {
-    annotationsAll()
-      .then((rows) => setItems(rows))
+    // BOTH LISTS, TOGETHER. The drawer face shows the author, the cover and when the book was last
+    // opened — none of which an annotation row carries. Joining the Library's own book list here is
+    // what keeps this a read-only view over data that already exists, with no backend change.
+    Promise.all([
+      annotationsAll().catch(() => [] as AnnoItem[]),
+      libraryListBooks({ sort: "date_read", order: "desc" }).catch(() => [] as BookRow[]),
+    ])
+      .then(async ([rows, bs]) => {
+        // WHAT THE PAGE SAYS NOW. A stored passage keeps the AUTHOR's wording — nothing here writes to
+        // it — but while a replacement is in force the book reads differently, and a shelf quoting the
+        // old wording would look like it had lost track of the reader's own rule. So the passage is
+        // shown through the rules that are actually on, per book.
+        //
+        // The NOTE is deliberately left alone: it is the reader's own writing, not the author's, and a
+        // rule about the book's words has no business rewriting it.
+        const ids = [...new Set(rows.map((r) => r.book_id))];
+        const perBook = new Map<string, RepLite[]>();
+        await Promise.all(
+          ids.map(async (id) => {
+            const reps = await repsForBook(id).catch(() => [] as RepRow[]);
+            const on = reps.filter((r) => r.enabled && r.replacement.length > 0);
+            if (on.length) {
+              perBook.set(id, on.map((r) => ({ id: r.id, phrase_fold: r.phrase_fold, replacement: r.replacement })));
+            }
+          }),
+        );
+        const shown = perBook.size
+          ? rows.map((r) => {
+              const reps = perBook.get(r.book_id);
+              return reps && r.text ? { ...r, text: applyToText(r.text, reps) } : r;
+            })
+          : rows;
+        setItems(shown);
+        setBooks(bs);
+      })
       .catch(console.error)
       .finally(() => setLoaded(true));
-    // RAWY-204: the tag-filter options come from the tags TABLE (every tag the user made), not from the
-    // tags on loaded notes — otherwise a tag with zero current note links (e.g. one just re-created after a
-    // delete) is invisible in the filter though it exists. Selecting such a tag simply yields an empty list.
+    // RAWY-204: tag options come from the tags TABLE, not from the tags on loaded notes — otherwise a
+    // tag with no current links is invisible in the filter though it exists.
     tagsList().then((ts) => setTagNames(ts.map((x) => x.name))).catch(console.error);
-  }, []);
+    settingsGet("arch_scale")
+      .then((v) => setScale(clampScale(v)))
+      .catch(() => {})
+      .finally(() => setScaleReady(true));
+    // `reloads` re-runs this after the sheet writes or deletes, so the wall behind it agrees with
+    // what just happened without any surface holding a second copy of the truth.
+  }, [reloads]);
 
-  // Distinct books present (for the "All books" filter).
-  const books = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const it of items) if (!m.has(it.book_id)) m.set(it.book_id, it.book_title || "—");
-    return [...m].map(([id, title]) => ({ id, title }));
-  }, [items]);
-
-  // RAWY-204: the tag-filter options = every tag in the tags table (union'd with any tag seen on a loaded
-  // item, so nothing is ever missed even before `tagsList` resolves). Previously this was ONLY the tags on
-  // loaded notes, which hid a valid tag that had no current links (a re-created tag) — the reported bug.
   const allTags = useMemo(() => {
     const s = new Set<string>(tagNames);
     for (const it of items) for (const tg of it.tags) s.add(tg);
     return [...s].sort((a, b) => a.localeCompare(b, lang, { sensitivity: "base" }));
   }, [items, tagNames, lang]);
 
-  const matchColor = (c: string | null) =>
-    !color || (color === "custom" ? isHex(c) : c === color);
   const q = search.trim().toLowerCase();
-  const filtered = items.filter((it) => {
-    // RAWY-282: classify by CONTENT, not by the raw `kind`. A highlight that carries a note arrives as
-    // `kind: "highlight"` with a body folded in, so filtering on `kind` put that one passage under
-    // Highlights and hid it from Notes — the same duplication the reader's panel had. Shared predicate.
-    if (type === "highlight" && !annoIsHighlight(it)) return false;
-    if (type === "note" && !annoIsNote(it)) return false;
-    if (book && it.book_id !== book) return false;
-    if (tag && !it.tags.includes(tag)) return false; // RAWY-203: an item shows under each of its tags
-    if (!matchColor(it.color)) return false;
-    if (q) {
-      // RAWY-282: the title is searchable too — a reader who titled a note will look for that word first.
-      const hay = `${it.text ?? ""} ${it.note ?? ""} ${it.note_title ?? ""} ${it.book_title ?? ""} ${it.chapter_label ?? ""} ${it.tags.join(" ")}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
+  const hay = (it: AnnoItem) =>
+    `${it.text ?? ""} ${it.note ?? ""} ${it.note_title ?? ""} ${it.book_title ?? ""} ${it.chapter_label ?? ""} ${it.tags.join(" ")}`.toLowerCase();
 
-  const open = (it: AnnoItem) =>
+  // ── level 1 · the cabinet ──────────────────────────────────────────────────────────────────────
+  // The search spans every drawer: a book keeps its drawer only while something inside it still
+  // matches, and the tally on the face then reports the matches rather than the whole book, so a
+  // searched cabinet never claims more than it holds.
+  const drawers = useMemo(() => {
+    const rows = q ? items.filter((it) => hay(it).includes(q)) : items;
+    return sortDrawers(buildDrawers(rows, books), lang);
+  }, [items, books, q, lang]);
+
+  // ── level 2 · inside one drawer ────────────────────────────────────────────────────────────────
+  const current: Drawer | null = useMemo(
+    () => (openBook ? drawers.find((d) => d.bookId === openBook) ?? null : null),
+    [drawers, openBook],
+  );
+
+  const matchColor = (c: string | null) => !color || (color === "custom" ? isHex(c) : c === color);
+  const wall = useMemo(() => {
+    if (!current) return [];
+    return current.items.filter((it) => {
+      // RAWY-282: classify by CONTENT, not by the raw `kind` — a highlight carrying a note arrives as
+      // `kind: "highlight"` with a body folded in. Shared predicate, unchanged by this redesign.
+      if (type === "highlight" && !annoIsHighlight(it)) return false;
+      if (type === "note" && !annoIsNote(it)) return false;
+      if (tag && !it.tags.includes(tag)) return false;
+      if (!matchColor(it.color)) return false;
+      return true;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current, type, tag, color]);
+
+  /** The archive's own open path — reached from the sheet's "read in book", never from a bare click. */
+  const readInBook = (it: AnnoItem) =>
     onOpen({ id: it.book_id, filePath: it.file_path, dir: it.book_dir, cfi: it.cfi });
+
+  /** Hand the annotation to the composer the reader already uses — same component, same data shape. */
+  const composeCard = (it: AnnoItem) => {
+    const bk = books.find((b) => b.id === it.book_id) ?? null;
+    setCard({
+      quote: it.text ?? it.note ?? "",
+      dir: (it.book_dir === "rtl" ? "rtl" : "ltr") as CardData["dir"],
+      bookId: it.book_id,
+      cfi: it.cfi ?? undefined,
+      bookTitle: it.book_title ?? undefined,
+      author: bk?.author ?? undefined,
+      chapterLabel: it.chapter_label ?? undefined,
+      date: new Date((it.created_at ?? Date.now() / 1000) * 1000),
+    });
+    setSheet(null);
+  };
+
+  // Written back only after the stored value has been read, so the first render cannot overwrite the
+  // reader's own choice with the default.
+  useEffect(() => {
+    if (scaleReady) settingsSet("arch_scale", String(scale)).catch(() => {});
+  }, [scale, scaleReady]);
+
+  const num = (n: number) => localeDigits(String(n), lang);
+  // ONE IS NOT PLURAL. A drawer holding a single mark read "1 highlights"; English needs the singular
+  // and Arabic counts with the bare noun, so each language names its own one-form rather than having
+  // a count spliced into a plural string.
+  const tally = (h: number, n: number) =>
+    [
+      h === 1 ? t("arch.tallyH1") : h > 1 ? t("arch.tallyH", { n: num(h) }) : "",
+      n === 1 ? t("arch.tallyN1") : n > 1 ? t("arch.tallyN", { n: num(n) }) : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
 
   if (!loaded) return null;
 
-  return (
-    <div className="inbox">
-      <header className="inbox-head">
-        <div className="inbox-head-top">
-          <div className="inbox-title-wrap">
-            <h1 className="inbox-title">{t("lib.nav.highlights")}</h1>
-            <span className="inbox-count">
-              {t("inbox.count", { n: localeDigits(String(items.length), lang), m: localeDigits(String(books.length), lang) })}
-            </span>
-          </div>
-          <label className="lib-search inbox-search">
-            <span className="lib-search-ico" aria-hidden><Icon name="search" size="sm" /></span>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("inbox.search")} />
-          </label>
+  // ── the drawer, open ───────────────────────────────────────────────────────────────────────────
+  if (current) {
+    const src = coverSrc({ cover_path: current.coverPath });
+    return (
+      <div className="arch">
+        <div className="arch-band">
+          <button className="arch-back" onClick={() => { setOpenBook(null); setSearch(""); }}>
+            <Icon name="caretLeft" size="sm" />
+            {t("arch.allBooks")}
+          </button>
+
+          <span className="arch-band-plate">
+            {src ? (
+              <img src={src} alt="" />
+            ) : (
+              /* The same letter plate the cabinet uses, so a coverless book looks like itself at both
+                 levels rather than showing a full generated cover squeezed into a 38px band plate. */
+              <span
+                className="arch-plate-letter"
+                style={{ background: autoCoverPaint(current.title).bg, color: autoCoverPaint(current.title).ink }}
+                aria-hidden
+              >
+                {letterOf(current.title)}
+              </span>
+            )}
+          </span>
+
+          <span className="arch-band-id">
+            <span className="arch-band-title">{current.title}</span>
+            <span className="arch-band-meta">{tally(current.highlights, current.notes)}</span>
+          </span>
+
         </div>
 
-        <div className="inbox-filters">
+        {/* The three filters that belong to the wall, not to the cabinet — gathered onto ONE contained
+            plate that hugs them, rather than a bar ruled across the window. */}
+        <div className="arch-sub on-band">
+          <div className="arch-tools">
+            {/* THE SEARCH BELONGS TO THIS PLATE. It used to sit alone at the far edge of the band above,
+                a whole window's width from every other control, which read as an ornament rather than as
+                the broadest filter of the four. It narrows the same wall the swatches and the type
+                switch narrow, so it stands with them. */}
+            <label className="arch-search in-tools">
+              <span className="arch-search-ico" aria-hidden><Icon name="search" size="sm" /></span>
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder={t("arch.searchDrawer")}
+              />
+            </label>
           <div className="inbox-dots">
             <button
               className={`inbox-dot inbox-dot-all${color === null ? " on" : ""}`}
@@ -133,38 +306,9 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
             />
           </div>
 
-          <span className="inbox-sep" />
-
-          <div className="inbox-ctl-wrap">
-            <button className="inbox-ctl" onClick={() => setBookMenu((o) => !o)}>
-              {book ? books.find((b) => b.id === book)?.title ?? t("inbox.allBooks") : t("inbox.allBooks")} ▾
-            </button>
-            {bookMenu && (
-              <>
-                <div className="lib-clickaway" onClick={() => setBookMenu(false)} />
-                <div className="lib-menu inbox-menu">
-                  <button className={book === null ? "active" : ""} onClick={() => { setBook(null); setBookMenu(false); }}>
-                    {t("inbox.allBooks")}
-                  </button>
-                  {books.map((b) => (
-                    <button
-                      key={b.id}
-                      className={book === b.id ? "active" : ""}
-                      dir={isArabicText(b.title) ? "rtl" : "ltr"}
-                      onClick={() => { setBook(b.id); setBookMenu(false); }}
-                    >
-                      {b.title}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* RAWY-203: filter by tag — same dropdown pattern as the book filter. Only shown once tags exist. */}
           {allTags.length > 0 && (
             <div className="inbox-ctl-wrap">
-              <button className="inbox-ctl" onClick={() => setTagMenu((o) => !o)}>
+              <button className="arch-sort" onClick={() => setTagMenu((o) => !o)}>
                 {tag ?? t("inbox.allTags")} ▾
               </button>
               {tagMenu && (
@@ -178,7 +322,6 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
                       <button
                         key={tg}
                         className={tag === tg ? "active" : ""}
-                        dir={isArabicText(tg) ? "rtl" : "ltr"}
                         onClick={() => { setTag(tg); setTagMenu(false); }}
                       >
                         {tg}
@@ -197,50 +340,124 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
               </button>
             ))}
           </div>
+
+          {/* HOW BIG THE SLIPS ARE. The same instrument the Library uses for cover size, on the same
+              plate as the filters that already govern this wall — two marks for the ends of the
+              range and the slider between them, rather than a labelled control competing with the
+              chapter and the ink for the reader's attention. */}
+          <div className="arch-size" title={t("arch.size")}>
+            <span className="arch-size-mark sm" aria-hidden />
+            <input
+              type="range"
+              className="libd-size"
+              min={SCALE_MIN}
+              max={SCALE_MAX}
+              step={SCALE_STEP}
+              value={scale}
+              onChange={(e) => setScale(clampScale(Number(e.target.value)))}
+              aria-label={t("arch.size")}
+              // What a screen reader says instead of "1.35": how far along the range it is, which is
+              // the only thing the number means to a reader.
+              aria-valuetext={`${Math.round(((scale - SCALE_MIN) / (SCALE_MAX - SCALE_MIN)) * 100)}%`}
+            />
+            <span className="arch-size-mark lg" aria-hidden />
+          </div>
+          </div>
+        </div>
+
+        {wall.length === 0 ? (
+          <div className="arch-empty">
+            <div className="arch-empty-mark" aria-hidden><Icon name="quote" size="xl" /></div>
+            <div className="arch-empty-title">{t("inbox.empty.none")}</div>
+            <div className="arch-empty-sub">{t("inbox.empty.noneSub")}</div>
+          </div>
+        ) : (
+          <SlipWall
+            scale={scale}
+            items={wall}
+            hl={hl}
+            dark={dark}
+            paper={paper}
+            accent={theme.colors.accent}
+            noteLabel={t("ne.myNote")}
+            chapter={(it) => it.chapter_label ?? ""}
+            when={(it) => relTime(it.created_at, lang)}
+            from={(it) => (it.sender ? t("arch.from", { name: it.sender }) : "")}
+            readAll={t("arch.readSlip")}
+            onOpen={setSheet}
+          />
+        )}
+
+        {sheet && (
+          <SlipSheet
+            item={sheet}
+            hl={hl}
+            dark={dark}
+            paper={paper}
+            when={relTime(sheet.created_at, lang)}
+            onClose={() => setSheet(null)}
+            onRead={readInBook}
+            onCard={composeCard}
+            onChanged={() => setReloads((n) => n + 1)}
+          />
+        )}
+
+        {card && (
+          <PhotoComposer
+            data={card}
+            initialThemeId={useTheme.getState().bookThemeId ?? useTheme.getState().themeId}
+            lang={lang}
+            onClose={() => setCard(null)}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // ── the cabinet ────────────────────────────────────────────────────────────────────────────────
+  return (
+    <div className="arch">
+      <header className="arch-head">
+        <div className="arch-head-top">
+          <h1 className="arch-title">{t("lib.nav.highlights")}</h1>
+          <span className="arch-count">
+            {t("inbox.count", { n: num(items.length), m: num(drawers.length) })}
+          </span>
+        </div>
+
+        <div className="arch-sub">
+          <span className="arch-hint">{t("arch.hint")}</span>
+          <span className="arch-rule" />
+            {/* The search stands with the sort, on the line the controls are on — not across the
+                header from the title, where it was the only control on a row of headings. */}
+          <label className="arch-search in-line">
+            <span className="arch-search-ico" aria-hidden><Icon name="search" size="sm" /></span>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("arch.searchAll")} />
+          </label>
+          <span className="arch-sort">{t("arch.sortOpened")}</span>
         </div>
       </header>
 
-      {filtered.length === 0 ? (
-        <div className="inbox-empty">
-          <div className="inbox-empty-mark" aria-hidden><Icon name="quote" size="xl" /></div>
-          <div className="inbox-empty-title">{items.length === 0 ? t("inbox.empty.title") : t("inbox.empty.none")}</div>
-          <div className="inbox-empty-sub">{items.length === 0 ? t("inbox.empty.sub") : t("inbox.empty.noneSub")}</div>
+      {drawers.length === 0 ? (
+        <div className="arch-empty">
+          <div className="arch-empty-mark" aria-hidden><Icon name="quote" size="xl" /></div>
+          <div className="arch-empty-title">{items.length === 0 ? t("inbox.empty.title") : t("inbox.empty.none")}</div>
+          <div className="arch-empty-sub">{items.length === 0 ? t("inbox.empty.sub") : t("inbox.empty.noneSub")}</div>
         </div>
       ) : (
-        <div className="inbox-list">
-          {filtered.map((it) => {
-            const swatch = colorValue(it.color, hl);
-            const arabic = scriptOf(it.text, it.book_dir) === "arabic";
-            return (
-              <button
-                key={`${it.kind}-${it.id}`}
-                className="inbox-card"
-                style={{ "--swatch": swatch } as CSSProperties}
-                onClick={() => open(it)}
-                dir={arabic ? "rtl" : "ltr"}
-              >
-                <span className="inbox-card-bar" />
-                <span className="inbox-card-body">
-                  <span className={`inbox-card-text${arabic ? " ar" : ""}`}>{it.text}</span>
-                  <span className="inbox-card-meta">
-                    {it.kind === "note" && <span className="inbox-card-kind">{t("panel.marginNote")} · </span>}
-                    {[it.book_title, it.chapter_label, relTime(it.created_at, lang)].filter(Boolean).join(" · ")}
-                  </span>
-                  {it.note && (
-                    <span className="inbox-card-note">
-                      <span className="inbox-card-note-label">{t("hl.note")} · </span>
-                      {it.note}
-                    </span>
-                  )}
-                  {it.tags.length > 0 && (
-                    <span className="inbox-card-tags">
-                      {it.tags.map((tg) => <span key={tg} className="inbox-tag">{tg}</span>)}
-                    </span>
-                  )}
-                </span>
-              </button>
-            );
-          })}
+        <div className="arch-cabinet">
+          <Cabinet
+            drawers={drawers}
+            hl={hl}
+            dark={dark}
+            face={chrome}
+            text={{
+              tally,
+              opened: (at) => (at ? t("arch.opened", { when: relTime(at, lang) }) : t("arch.neverOpened")),
+              pull: t("arch.pull"),
+            }}
+            onOpen={(d) => { setOpenBook(d.bookId); setSearch(""); }}
+          />
         </div>
       )}
     </div>

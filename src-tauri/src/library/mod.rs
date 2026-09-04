@@ -925,7 +925,11 @@ fn now_unix() -> i64 {
 // ---------------------------------------------------------------------------
 
 /// 24-hex id derived from stable parts → re-acting on the same range/target is idempotent.
-fn gen_id(seed: &str) -> String {
+///
+/// `pub(crate)` so the deposit importer can compute the SAME id a local action would, and skip a mark
+/// the reader already has rather than writing a second one. Deriving it twice in two places is how the
+/// two would drift.
+pub(crate) fn gen_id(seed: &str) -> String {
     let mut h = Sha256::new();
     h.update(seed.as_bytes());
     h.finalize().iter().take(12).map(|b| format!("{b:02x}")).collect()
@@ -1327,6 +1331,13 @@ pub struct AnnoItem {
     /// RAWY-282: the attached note's title, or `None`. Lets the cross-book Inbox render the same
     /// title/preview shape as the in-book list without a second query.
     pub note_title: Option<String>,
+    /// WHOSE MARK THIS IS, when it is not the reader's own.
+    ///
+    /// A mark that arrived in a reading deposit keeps its sender's name; a mark the reader made has
+    /// none, which is how the archive tells the two apart. APPENDED, like every column before it, so
+    /// no existing field shifts. The receiving sheet promises the archive will say this — until this
+    /// column existed, it could not.
+    pub sender: Option<String>,
 }
 
 fn anno_item(r: &rusqlite::Row) -> rusqlite::Result<AnnoItem> {
@@ -1336,6 +1347,8 @@ fn anno_item(r: &rusqlite::Row) -> rusqlite::Result<AnnoItem> {
     // RAWY-282: column 14, APPENDED after the tags for the same reason RAWY-203 appended 12 and 13 —
     // every earlier index keeps its position, so no existing field can shift under a reader.
     let note_title: Option<String> = r.get(14)?;
+    // Column 15, appended for the same reason: an arriving mark's sender, NULL for the reader's own.
+    let sender: Option<String> = r.get(15)?;
     let tags = tag_str
         .map(|s| s.split('\n').filter(|t| !t.is_empty()).map(str::to_string).collect())
         .unwrap_or_default();
@@ -1355,6 +1368,7 @@ fn anno_item(r: &rusqlite::Row) -> rusqlite::Result<AnnoItem> {
         note_id: r.get(12)?,
         tags,
         note_title,
+        sender,
     })
 }
 
@@ -1366,16 +1380,20 @@ pub fn annotations_all(conn: &Connection) -> rusqlite::Result<Vec<AnnoItem>> {
     // and every existing field an item carried before is still returned in the same position.
     let tags_sub = "(SELECT GROUP_CONCAT(tg.name, char(10)) FROM note_tags nt \
                      JOIN tags tg ON tg.id = nt.tag_id WHERE nt.note_id = n.id)";
+    // WHO GAVE IT. A mark the reader made has no row in `mark_origin`, so this is NULL for everything
+    // he wrote himself — which is exactly the distinction the archive needs to draw.
+    let hl_sender = "(SELECT d.sender FROM mark_origin mo JOIN deposits d ON d.id = mo.deposit_id                       WHERE mo.kind = 'highlight' AND mo.mark_id = h.id)";
+    let note_sender = "(SELECT d.sender FROM mark_origin mo JOIN deposits d ON d.id = mo.deposit_id                         WHERE mo.kind = 'note' AND mo.mark_id = n.id)";
     let sql = format!(
         "SELECT h.id, 'highlight', h.book_id, {OV_TITLE}, b.file_path, \
             COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='dir'), b.dir), \
-            h.chapter_label, h.color, h.text_excerpt, n.body, h.start_cfi, h.created_at, n.id, {tags_sub}, n.title \
+            h.chapter_label, h.color, h.text_excerpt, n.body, h.start_cfi, h.created_at, n.id, {tags_sub}, n.title, \n            {hl_sender}  \
          FROM highlights h JOIN books b ON b.id = h.book_id \
          LEFT JOIN notes n ON n.highlight_id = h.id \
          UNION ALL \
          SELECT n.id, 'note', n.book_id, {OV_TITLE}, b.file_path, \
             COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='dir'), b.dir), \
-            n.chapter_label, n.color, n.body, NULL, n.locator_cfi, n.created_at, n.id, {tags_sub}, n.title \
+            n.chapter_label, n.color, n.body, NULL, n.locator_cfi, n.created_at, n.id, {tags_sub}, n.title, \n            {note_sender}  \
          FROM notes n JOIN books b ON b.id = n.book_id \
          WHERE n.highlight_id IS NULL \
          ORDER BY created_at DESC"
@@ -1640,5 +1658,146 @@ pub fn ref_save(
 pub fn ref_delete(conn: &Connection, id: &str) -> rusqlite::Result<()> {
     conn.execute("DELETE FROM refs WHERE id = ?1", [id])?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// REPLACEMENTS: a reading-time substitution bound to a PHRASE, per book
+// (see 20260902100000_replacements.sql). Deliberately shaped like `refs` above — same folding, same
+// per-book identity, same load-once-per-open access pattern — so the two features stay one idea.
+// ---------------------------------------------------------------------------
+
+/// One replacement rule. `phrase` is the author's wording as the reader gave it; `replacement` is what
+/// they want to read instead; `enabled` is a SWITCH, never a delete, because turning a rule off has to
+/// restore the author's wording without losing the rule.
+#[derive(Serialize)]
+pub struct RepRow {
+    pub id: String,
+    pub book_id: String,
+    pub phrase: String,
+    pub phrase_fold: String,
+    pub replacement: String,
+    pub word_count: i64,
+    pub enabled: bool,
+    pub created_at: Option<i64>,
+    pub updated_at: Option<i64>,
+}
+
+const REP_COLS: &str =
+    "id, book_id, phrase, phrase_fold, replacement, word_count, enabled, created_at, updated_at";
+
+fn rep_row(r: &rusqlite::Row) -> rusqlite::Result<RepRow> {
+    Ok(RepRow {
+        id: r.get(0)?,
+        book_id: r.get(1)?,
+        phrase: r.get(2)?,
+        phrase_fold: r.get(3)?,
+        replacement: r.get(4)?,
+        word_count: r.get(5)?,
+        enabled: r.get::<_, i64>(6)? != 0,
+        created_at: r.get(7)?,
+        updated_at: r.get(8)?,
+    })
+}
+
+/// Every replacement for one book, longest phrase first so a multi-word rule wins over a single-word one
+/// nested inside it — the same precedence `findPhraseHits` applies, kept here so the order the reader
+/// sees and the order the matcher uses cannot drift apart.
+pub fn reps_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<RepRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {REP_COLS} FROM reps WHERE book_id = ?1 ORDER BY word_count DESC, created_at"
+    ))?;
+    let rows = stmt.query_map([book_id], rep_row)?;
+    rows.collect()
+}
+
+/// Create or UPDATE the rule for a phrase in a book. Idempotent per (book, folded phrase): replacing the
+/// same word twice edits the existing rule rather than leaving two rules fighting over the same text.
+/// `enabled` is deliberately NOT touched on update — an edit to the wording must not silently switch a
+/// rule the reader had turned off back on.
+pub fn rep_save(
+    conn: &Connection,
+    book_id: &str,
+    phrase: &str,
+    phrase_fold: &str,
+    replacement: &str,
+    word_count: i64,
+) -> rusqlite::Result<Option<RepRow>> {
+    let id = gen_id(&format!("rep:{book_id}:{phrase_fold}"));
+    let now = now_unix();
+    conn.execute(
+        "INSERT INTO reps(id, book_id, phrase, phrase_fold, replacement, word_count, enabled, created_at, updated_at) \
+         VALUES(?1,?2,?3,?4,?5,?6,1,?7,?7) \
+         ON CONFLICT(book_id, phrase_fold) DO UPDATE SET \
+            phrase=excluded.phrase, replacement=excluded.replacement, \
+            word_count=excluded.word_count, updated_at=excluded.updated_at",
+        rusqlite::params![id, book_id, phrase, phrase_fold, replacement, word_count, now],
+    )?;
+    // The conflict target is (book_id, phrase_fold), so on an edit the row keeps its ORIGINAL id —
+    // re-read by the unique key rather than assuming the id just generated.
+    conn.query_row(
+        &format!("SELECT {REP_COLS} FROM reps WHERE book_id = ?1 AND phrase_fold = ?2"),
+        rusqlite::params![book_id, phrase_fold],
+        rep_row,
+    )
+    .optional()
+}
+
+/// Turn one rule on or off. The row is left otherwise untouched, so the author's wording returns with
+/// nothing lost and the rule can be switched back at any time.
+pub fn rep_set_enabled(conn: &Connection, id: &str, enabled: bool) -> rusqlite::Result<Option<RepRow>> {
+    conn.execute(
+        "UPDATE reps SET enabled = ?2, updated_at = ?3 WHERE id = ?1",
+        rusqlite::params![id, i64::from(enabled), now_unix()],
+    )?;
+    conn.query_row(
+        &format!("SELECT {REP_COLS} FROM reps WHERE id = ?1"),
+        [id],
+        rep_row,
+    )
+    .optional()
+}
+
+pub fn rep_delete(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM reps WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+/// Every book that holds a reference or a replacement, with both counts and the most recent touch — the
+/// shelf level of the References & Replacements surface, which lists exactly the books the reader has
+/// made something in. Done in SQL so the frontend never loads every rule of every book just to count.
+pub fn refs_reps_books(conn: &Connection) -> rusqlite::Result<Vec<RefsRepsBook>> {
+    let mut stmt = conn.prepare(
+        "SELECT b.id, b.title, b.author, \
+                (SELECT COUNT(*) FROM refs r WHERE r.book_id = b.id) AS n_refs, \
+                (SELECT COUNT(*) FROM reps p WHERE p.book_id = b.id) AS n_reps, \
+                MAX(COALESCE((SELECT MAX(updated_at) FROM refs r WHERE r.book_id = b.id), 0), \
+                    COALESCE((SELECT MAX(updated_at) FROM reps p WHERE p.book_id = b.id), 0)) AS touched \
+         FROM books b \
+         WHERE EXISTS(SELECT 1 FROM refs r WHERE r.book_id = b.id) \
+            OR EXISTS(SELECT 1 FROM reps p WHERE p.book_id = b.id) \
+         ORDER BY touched DESC",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(RefsRepsBook {
+            id: r.get(0)?,
+            title: r.get(1)?,
+            author: r.get(2)?,
+            refs_count: r.get(3)?,
+            reps_count: r.get(4)?,
+            touched: r.get(5)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// One row of the References & Replacements shelf.
+#[derive(Serialize)]
+pub struct RefsRepsBook {
+    pub id: String,
+    pub title: String,
+    pub author: Option<String>,
+    pub refs_count: i64,
+    pub reps_count: i64,
+    pub touched: Option<i64>,
 }
 

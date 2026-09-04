@@ -13,6 +13,7 @@ import type { BookRow, CaseNode, ShelfNode, ShelfOrder } from "../../../lib/ipc"
 import { useI18n } from "../../../i18n";
 import { localeNum } from "../../../lib/format";
 import { BookTile } from "./BookTile";
+import type { BookActionsProps } from "./BookActions";
 import { ShelfOrderMenu } from "./Menus";
 import { atDensity, type BookGroup, type DesignView, isVirtualShelf, itemWidth, sortKey, UNFILED_CASE_ID } from "./model";
 import type { CoverMode } from "./coverPresentation";
@@ -58,6 +59,8 @@ export interface GroupedProps {
   onRemoveFromShelf: (bookId: string, shelfId: string) => void;
   /** Delete the book itself — the library's one delete path. */
   onDeleteBook: (book: BookRow) => void;
+  /** The shared per-book action set — the same object Details spreads into its own menu. */
+  actions: (b: BookRow) => BookActionsProps;
   onSetFinished: (b: BookRow, finished: boolean) => void;
   onNewShelf: (caseId: string) => void;
   onManageCase: (id: string | null) => void;
@@ -668,6 +671,7 @@ export function ViewGrouped(props: GroupedProps) {
                                         ? null
                                         : () => props.onRemoveFromShelf(b.id, shelf.id)
                                     }
+                                    actions={props.actions(b)}
                                     onDelete={() => props.onDeleteBook(b)}
                                     onSetFinished={(f) => props.onSetFinished(b, f)}
                                     libraryCoverMode={props.libraryCoverMode}

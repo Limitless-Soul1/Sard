@@ -203,6 +203,23 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "profile_last_used",
         include_str!("migrations_sql/20260901090000_profile_last_used.sql"),
     ),
+    // Per-book reading-time word replacements. Purely additive: one new table, no column added to any
+    // existing one and no backfill, so a library that never makes a replacement is byte-identical.
+    (
+        20_260_902_100_000,
+        "replacements",
+        include_str!("migrations_sql/20260902100000_replacements.sql"),
+    ),
+    (
+        20_260_903_120_000,
+        "deposits",
+        include_str!("migrations_sql/20260903120000_deposits.sql"),
+    ),
+    (
+        20_260_903_180_000,
+        "mark_placement",
+        include_str!("migrations_sql/20260903180000_mark_placement.sql"),
+    ),
 ];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.

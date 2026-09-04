@@ -25,6 +25,7 @@
 
 import { Fragment, useEffect, useLayoutEffect, useRef } from "react";
 import type { BookRow } from "../../../lib/ipc";
+import type { BookActionsProps } from "./BookActions";
 import { useI18n } from "../../../i18n";
 import { localeNum } from "../../../lib/format";
 import { BookTile } from "./BookTile";
@@ -79,6 +80,8 @@ export interface VistaProps {
   onRemoveFromShelf: (bookId: string, shelfId: string) => void;
   /** Delete the book itself — the library's one delete path. */
   onDeleteBook: (book: BookRow) => void;
+  /** The shared per-book action set — the same object Details spreads into its own menu. */
+  actions: (b: BookRow) => BookActionsProps;
   onSetFinished: (b: BookRow, finished: boolean) => void;
   libraryCoverMode: CoverMode;
   onPlace: (gap: { container: string; before: string | null }, categoryId: string | null) => void;
@@ -469,7 +472,8 @@ export function ViewVista(props: VistaProps) {
               ? () => props.onRemoveFromShelf(b.id, view.bookSource!.id)
               : null
           }
-          onDelete={() => props.onDeleteBook(b)}
+          actions={props.actions(b)}
+            onDelete={() => props.onDeleteBook(b)}
             onSetFinished={(f) => props.onSetFinished(b, f)}
             libraryCoverMode={props.libraryCoverMode}
           />

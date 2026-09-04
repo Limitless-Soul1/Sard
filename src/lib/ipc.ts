@@ -653,6 +653,13 @@ export interface AnnoItem {
   note_id: string | null; // RAWY-203: the underlying note's id (null for a note-less highlight)
   tags: string[]; // RAWY-203: the note's tag names (empty when untagged / no note)
   note_title: string | null; // RAWY-282: the attached note's title (null when untitled / no note)
+  /**
+   * Whose mark this is, when it is not the reader's own.
+   *
+   * A mark that arrived in a reading deposit keeps its sender's name; one the reader made is `null`.
+   * It is what lets the archive say «من فلان» beside a slip that came from someone else.
+   */
+  sender: string | null;
 }
 
 /**
@@ -878,6 +885,54 @@ export const refSave = (
 
 export const refDelete = (id: string): Promise<boolean> => invoke<boolean>("ref_delete", { id });
 
+/** One replacement rule: read `phrase` as `replacement`, in this book only, while `enabled`. */
+export interface RepRow {
+  id: string;
+  book_id: string;
+  /** The author's wording, exactly as the reader gave it — shown verbatim in the editor. */
+  phrase: string;
+  /** The folded MATCHING key (see foldPhrase) — never displayed. */
+  phrase_fold: string;
+  /** What the reader wants to read instead. Stored verbatim, never folded. */
+  replacement: string;
+  word_count: number;
+  /** A switch, not a delete: off restores the author's wording and keeps the rule. */
+  enabled: boolean;
+  created_at: number | null;
+  updated_at: number | null;
+}
+
+export const repsForBook = (bookId: string): Promise<RepRow[]> =>
+  invoke<RepRow[]>("reps_for_book", { bookId });
+
+/** Create OR update in one call — replacing the same phrase twice edits the rule instead of duplicating. */
+export const repSave = (
+  bookId: string,
+  phrase: string,
+  phraseFold: string,
+  replacement: string,
+  wordCount: number,
+): Promise<RepRow | null> =>
+  invoke<RepRow | null>("rep_save", { bookId, phrase, phraseFold, replacement, wordCount });
+
+export const repSetEnabled = (id: string, enabled: boolean): Promise<RepRow | null> =>
+  invoke<RepRow | null>("rep_set_enabled", { id, enabled });
+
+export const repDelete = (id: string): Promise<boolean> => invoke<boolean>("rep_delete", { id });
+
+/** The shelf level: every book holding a reference or a replacement, with both counts. */
+export interface RefsRepsBook {
+  id: string;
+  title: string;
+  author: string | null;
+  refs_count: number;
+  reps_count: number;
+  touched: number | null;
+}
+
+export const refsRepsBooks = (): Promise<RefsRepsBook[]> =>
+  invoke<RefsRepsBook[]>("refs_reps_books", {});
+
 // ---- Profiles (stage 1): the visual-identity registry. Storage only — no UI reaches these yet. ----
 //
 // A profile carries how Sard LOOKS: paper and colours, the interface and book faces, both
@@ -910,6 +965,145 @@ export interface ProfileRow {
 }
 
 /** Every profile, MOST RECENTLY WORN first; one never worn keeps its most-recently-edited place. */
+// ---------------------------------------------------------------------------
+// READING DEPOSITS (phase 1 — the sender)
+//
+// The PLAN is made in Rust because every answer needs a managed path or a parsed spine: the sheet
+// then renders exactly what the writer will write. `deposit_export` copies the book file-to-file, so
+// a book's bytes never cross this boundary.
+// ---------------------------------------------------------------------------
+
+/** Where one mark falls in the book, as far as its stored cfi can say. */
+export interface MarkSection {
+  kind: "highlight" | "note";
+  id: string;
+  section: string | null;
+  /** Null when the cfi names a document but no position inside it — carried, never guessed. */
+  section_index: number | null;
+}
+
+export interface DepositPlan {
+  book: {
+    hash: string;
+    format: string | null;
+    title: string | null;
+    author: string | null;
+    language: string | null;
+    dir: string | null;
+    size_bytes: number;
+  };
+  /** Sections in the spine. Null when the file could not be parsed — the sheet then offers no map. */
+  spine_count: number | null;
+  book_bytes: number;
+  cover_bytes: number;
+  book_source: string | null;
+  cover_source: string | null;
+  book_member: string | null;
+  cover_member: string | null;
+  sections: MarkSection[];
+  counts: { highlights: number; notes: number; references: number; replacements: number };
+}
+
+export const depositPlan = (bookId: string): Promise<DepositPlan> =>
+  invoke<DepositPlan>("deposit_plan", { bookId });
+
+export const depositExport = (
+  path: string,
+  manifestJson: string,
+  book: { member: string; source: string } | null,
+  cover: { member: string; source: string } | null,
+): Promise<void> =>
+  invoke<void>("deposit_export", {
+    path,
+    manifestJson,
+    bookMember: book?.member ?? null,
+    bookSource: book?.source ?? null,
+    coverMember: cover?.member ?? null,
+    coverSource: cover?.source ?? null,
+  });
+
+/** What the receiver kept — indices into the manifest's own arrays, never ids. */
+export interface DepositAcceptance {
+  highlights: number[];
+  notes: number[];
+  references: { index: number; take_theirs: boolean }[];
+  replacements: { index: number; take_theirs: boolean }[];
+}
+
+export interface DepositCounts {
+  highlights: number;
+  notes: number;
+  references: number;
+  replacements: number;
+}
+
+export interface DepositOutcome {
+  deposit_id: string;
+  book_id: string | null;
+  book_imported: boolean;
+  same_book: boolean;
+  applied: DepositCounts;
+  skipped_existing: DepositCounts;
+  unplaced: DepositCounts;
+  kept_mine: DepositCounts;
+  already_received: boolean;
+}
+
+/** Read the manifest and change NOTHING. */
+export const depositInspect = (path: string): Promise<string> =>
+  invoke<string>("deposit_inspect", { path });
+
+/** One member's bytes, so a preview can draw an arriving cover rather than name it. Reads only. */
+export const depositMember = (path: string, member: string): Promise<number[]> =>
+  invoke<number[]>("deposit_member", { path, member });
+
+/** The trust boundary: re-validates, resolves the book, applies what was kept — in one transaction. */
+export const depositCommit = (
+  path: string,
+  manifestJson: string,
+  accept: DepositAcceptance,
+  /** The reader's own answer to "which of my books is this?", when the hash cannot answer it. */
+  bindTo: string | null = null,
+): Promise<DepositOutcome> =>
+  invoke<DepositOutcome>("deposit_commit", { path, manifestJson, accept, bindTo });
+
+/** A mark a deposit brought that has not yet found its place in this reader's copy. */
+export interface PendingMark {
+  kind: "highlight" | "note";
+  id: string;
+  cfi: string | null;
+  /** The needle. A note is never given one — its body is the reader's words, not the book's. */
+  excerpt: string | null;
+  chapter_label: string | null;
+  state: string | null;
+  target_section: number | null;
+  of_highlight: string | null;
+}
+
+export interface PlacementVerdict {
+  kind: "highlight" | "note";
+  id: string;
+  state: string;
+  target_section: number | null;
+  /** Only for `placed`: the cfi minted in the rendered section. */
+  cfi: string | null;
+}
+
+export const depositPendingMarks = (bookId: string): Promise<PendingMark[]> =>
+  invoke<PendingMark[]>("deposit_pending_marks", { bookId });
+
+export const depositPlaceMarks = (verdicts: PlacementVerdict[]): Promise<number> =>
+  invoke<number>("deposit_place_marks", { verdicts });
+
+/**
+ * Files the operating system handed to Sard — a deposit double-clicked in a file manager, or one named
+ * on the command line — drained so each is returned exactly once.
+ *
+ * The queue is the whole contract: the `sard://opened` event carries nothing and only means "ask again",
+ * so a second launch can never deliver a path twice nor lose one because nobody was listening yet.
+ */
+export const openedFilesTake = (): Promise<string[]> => invoke<string[]>("opened_files_take");
+
 export const profilesList = (): Promise<ProfileRow[]> => invoke<ProfileRow[]>("profiles_list");
 
 /** One profile by id, or null when it does not exist. */

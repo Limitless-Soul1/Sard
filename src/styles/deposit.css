@@ -1,0 +1,525 @@
+/* THE READING DEPOSIT — one sheet, a map and a sheaf.
+ *
+ * EVERY COLOUR IS A TOKEN. The design reference is a single dark mock with literal hexes; Sard has
+ * sixteen built-in papers plus every theme a reader makes, and a control that names its own colours
+ * belongs to none of them. So the sheet paints from `--paper-bg`, `--chrome-bg`, `--chrome-border`,
+ * `--text`, `--muted` and `--accent`, and `:root[data-dark="true"]` carries the two places where
+ * polarity, not hue, is what changes.
+ *
+ * EVERY FACE IS A ROLE. `--ui` is the application's own voice in both scripts; the reader's own words
+ * — an excerpt, a note, an inscription — are set in `--ar`/`--book`, because those are theirs.
+ */
+
+.dep-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--text) 42%, transparent);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.dep-sheet {
+  position: relative;
+  width: min(660px, 100%);
+  max-height: min(88vh, 900px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px 24px 20px;
+  border-radius: 10px;
+  background: var(--paper-bg);
+  box-shadow: 0 24px 60px color-mix(in srgb, var(--text) 26%, transparent);
+  font: 400 0.875rem/1.6 var(--ui);
+  color: var(--text);
+}
+:root[data-dark="true"] .dep-sheet {
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+}
+
+/* ---- shared marks ---------------------------------------------------------------------------- */
+.dep-label {
+  font: 600 0.6875rem/1.4 var(--ui);
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+/* WHAT THIS SHEET IS. Small, tracked and in the theme's accent — the reference's own hierarchy: the
+   line is made to register by COLOUR, not by size, so the book's title stays the largest thing.
+   The tracking is the reference's .09em rather than .14em, and Arabic gets none at all: letter-spacing
+   is a Latin device, and on a cursive script it breaks the joins between letters — which is exactly
+   what left «وصلتك وديعة قراءة» reading as scattered marks instead of a phrase. */
+/* WHAT THIS SHEET IS — and it has to be seen.
+   The reference sets this small and signals identity by colour alone. Rendered in Sard, under a real
+   book title, that read as a caption rather than as the arrival of something. So it keeps the
+   reference's INTENT — accent, tracked, subordinate to the title — and is given the presence the
+   rendered result actually needs: the emblem at full size beside it, and a size that holds its own on
+   the line above an 18px title without ever competing with it. */
+.dep-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: 700 0.9375rem/1.4 var(--ui);
+  letter-spacing: 0.04em;
+  color: var(--accent);
+}
+[dir="rtl"] .dep-eyebrow { letter-spacing: 0; }
+.dep-eyebrow svg { flex: none; width: 1.15em; height: 1.15em; }
+.dep-note {
+  font: 400 0.75rem/1.6 var(--ui);
+  color: var(--muted);
+}
+.dep-error {
+  margin: 0;
+  font: 500 0.75rem/1.6 var(--ui);
+  color: var(--accent);
+}
+
+.dep-btn {
+  border: 1px solid var(--chrome-border);
+  background: var(--chrome-bg);
+  color: var(--text);
+  cursor: pointer;
+  padding: 9px 14px;
+  border-radius: 8px;
+  font: 600 0.8125rem var(--ui);
+}
+.dep-btn:hover { background: color-mix(in srgb, var(--accent) 8%, var(--chrome-bg)); }
+.dep-btn:disabled { opacity: 0.5; cursor: default; }
+.dep-btn-primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--paper-bg);
+}
+.dep-btn-primary:hover { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
+.dep-btn-quiet { background: transparent; border-color: transparent; color: var(--muted); }
+
+/* ---- the head -------------------------------------------------------------------------------- */
+.dep-head { display: flex; flex-direction: column; gap: 4px; }
+.dep-title { margin: 2px 0 0; font: 700 1.125rem/1.4 var(--ar); color: var(--text); }
+[dir="ltr"] .dep-title { font-family: var(--book); }
+/* The one native control on the sheet. `accent-color` is the whole of what a checkbox needs to stop
+   being the operating system's blue and start being the theme's — the layer checks are drawn by hand
+   because they carry three states, but this one has two and needs no drawing. */
+.dep-bookline input[type="checkbox"] { accent-color: var(--accent); }
+.dep-bookline {
+  margin-top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 400 0.75rem var(--ui);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+/* ---- the inscription ------------------------------------------------------------------------- */
+.dep-letter { display: flex; flex-direction: column; gap: 6px; }
+.dep-letter-field {
+  width: 100%;
+  resize: none;
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--chrome-border);
+  background: var(--chrome-bg);
+  color: var(--text);
+  /* the reader's OWN words, so the reading face rather than the chrome one */
+  font: 400 0.9375rem/1.9 var(--ar);
+}
+[dir="ltr"] .dep-letter-field { font-family: var(--book); }
+.dep-letter-field::placeholder { color: var(--muted); }
+.dep-sign { display: flex; align-items: center; gap: 10px; }
+.dep-sign-field {
+  flex: 0 1 220px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--chrome-border);
+  background: var(--chrome-bg);
+  color: var(--text);
+  font: 500 0.8125rem var(--ui);
+}
+
+/* ---- the map --------------------------------------------------------------------------------- */
+.dep-map { display: flex; flex-direction: column; gap: 8px; }
+.dep-map-head { display: flex; align-items: baseline; gap: 9px; }
+/* THE ENDING, as the reference composes it: the book's face, then the words, centred — with the parts
+   ruled off above them rather than left to float. */
+.dep-done-cover {
+  display: block;
+  width: 96px;
+  height: 134px;
+  object-fit: cover;
+  border-radius: 3px;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--text) 24%, transparent);
+}
+.dep-done h2 { margin: 20px 0 0; font: 700 1.125rem var(--ui); color: var(--text); }
+.dep-done .dep-note { margin: 9px 0 0; font: 400 0.8125rem/1.85 var(--ui); color: var(--muted); }
+.dep-done .dep-parts {
+  margin-top: 14px;
+  padding-top: 13px;
+  box-shadow: inset 0 1px 0 var(--chrome-border);
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.dep-done .dep-parts > span + span { border-inline-start: 1px solid var(--chrome-border); padding-inline-start: 9px; }
+.dep-done .dep-actions { margin-top: 24px; }
+/* The hairline the reference rules between the map's name and its note. */
+.dep-map-rule { flex: 1; height: 1px; background: var(--chrome-border); }
+.dep-bands {
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+  height: 112px;
+  /* A crowded stretch may stack past the box; it is clipped rather than allowed to push the sheet. */
+  overflow: hidden;
+}
+.dep-band {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-start;
+  gap: 2px;
+}
+/* WHERE THE READER WENT QUIET. Drawn, not omitted — a silent stretch is a fact about the reading. */
+.dep-band[data-empty="1"]::after {
+  content: "";
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+/* A STRATUM IS ITS COUNT. Lit while any of its marks is bound; hollow when the last is released. */
+.dep-stratum {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 10%, transparent);
+}
+/* HIS READING IS A FACT. On a received map an unbound stretch keeps the mark's own ink, dimmed —
+   what is taken is the lit state. On your own map an unbound stretch is a neutral absence. */
+.dep-stratum[data-voice="theirs"] {
+  background: color-mix(in srgb, var(--dep-tint, var(--accent)) 30%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dep-tint, var(--accent)) 50%, transparent);
+}
+.dep-stratum[data-on="1"] {
+  background: var(--dep-tint, var(--accent));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--paper-bg) 26%, transparent);
+}
+.dep-stratum:disabled { cursor: default; }
+.dep-stratum:not(:disabled):hover { filter: brightness(1.08); }
+/* THE AXIS — the book's own chapters under the bars, which is what makes this a map of a book.
+   One cell per bar, so a number never names a stretch it is not standing on. */
+.dep-axis { display: flex; gap: 5px; margin-top: 6px; }
+.dep-axis-cell { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.dep-axis-rule { height: 2px; border-radius: 1px; background: var(--chrome-border); }
+.dep-axis-rule[data-bound="1"] { background: var(--accent); }
+.dep-axis-label {
+  position: relative;
+  height: 13px;
+  font: 500 0.6875rem/1 var(--ui);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-align: center;
+}
+.dep-map-foot { display: flex; gap: 14px; font: 400 0.6875rem var(--ui); color: var(--muted); }
+
+/* ---- the sheaf ------------------------------------------------------------------------------- */
+.dep-sheaf { display: flex; flex-direction: column; gap: 8px; }
+.dep-layers { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.dep-layer {
+  border: 1px solid var(--chrome-border);
+  border-radius: 8px;
+  background: var(--chrome-bg);
+  overflow: hidden;
+}
+.dep-layer-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
+.dep-check {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  border: 1.5px solid var(--chrome-border);
+  background: var(--paper-bg);
+  color: var(--paper-bg);
+  cursor: pointer;
+  padding: 0;
+}
+.dep-check[data-state="all"] { background: var(--dep-tint, var(--accent)); border-color: var(--dep-tint, var(--accent)); }
+.dep-check[data-state="some"] { background: color-mix(in srgb, var(--dep-tint, var(--accent)) 45%, var(--paper-bg)); border-color: var(--dep-tint, var(--accent)); }
+.dep-check:disabled { opacity: 0.45; cursor: default; }
+.dep-spine { flex: none; width: 3px; height: 20px; border-radius: 2px; background: var(--dep-tint, var(--accent)); }
+.dep-layer-name { font: 600 0.8125rem var(--ui); color: var(--text); }
+.dep-layer-count { flex: 1; font: 500 0.75rem var(--ui); color: var(--dep-tint, var(--muted)); }
+.dep-open {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: 600 0.75rem var(--ui);
+  padding: 4px 6px;
+}
+.dep-open:disabled { color: var(--muted); cursor: default; }
+
+.dep-slips {
+  list-style: none;
+  margin: 0;
+  padding: 2px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 260px;
+  overflow: auto;
+}
+/* THREE FIXED TRACKS: knot, text, place. */
+.dep-slip { display: grid; grid-template-columns: 14px 1fr auto; align-items: start; gap: 10px; }
+.dep-knot {
+  margin-top: 5px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--dep-tint, var(--accent));
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.dep-slip[data-bound="1"] .dep-knot { background: var(--dep-tint, var(--accent)); }
+.dep-slip-body { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.dep-slip-text {
+  font: 400 0.8125rem/1.65 var(--ar);
+  color: var(--text);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+[dir="ltr"] .dep-slip-text { font-family: var(--book); }
+.dep-slip-under { font: 400 0.75rem/1.55 var(--ui); color: var(--muted); }
+.dep-slip-place { font: 400 0.6875rem var(--ui); color: var(--muted); white-space: nowrap; }
+/* A RELEASED SLIP STAYS ON SCREEN. It goes quiet — it is not taken away, because it can be bound again. */
+.dep-slip:not([data-bound="1"]) .dep-slip-body { opacity: 0.42; }
+
+/* ---- the foot -------------------------------------------------------------------------------- */
+.dep-foot { display: flex; flex-direction: column; gap: 10px; }
+.dep-summary { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.dep-parts { display: flex; flex-wrap: wrap; gap: 10px; font: 500 0.75rem var(--ui); color: var(--text); }
+.dep-parts span + span { border-inline-start: 1px solid var(--chrome-border); padding-inline-start: 10px; }
+.dep-actions { display: flex; gap: 8px; align-items: center; }
+
+/* ---- the preview ----------------------------------------------------------------------------- */
+.dep-read-scrim {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: color-mix(in srgb, var(--text) 30%, transparent);
+}
+.dep-read {
+  width: min(560px, 100%);
+  max-height: 78vh;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px 22px;
+  border-radius: 10px;
+  background: var(--paper-bg);
+  box-shadow: 0 18px 44px color-mix(in srgb, var(--text) 24%, transparent);
+}
+.dep-read-head { display: flex; flex-direction: column; gap: 3px; }
+.dep-read-title { margin: 0; font: 700 1.0625rem/1.4 var(--ar); color: var(--text); }
+[dir="ltr"] .dep-read-title { font-family: var(--book); }
+.dep-read-body { overflow: auto; display: flex; flex-direction: column; gap: 18px; }
+.dep-read-letter { display: flex; flex-direction: column; gap: 6px; }
+.dep-letter-text { margin: 0; font: 400 0.9375rem/1.95 var(--ar); color: var(--text); white-space: pre-wrap; }
+[dir="ltr"] .dep-letter-text { font-family: var(--book); }
+.dep-letter-sign { margin: 0; font: 500 0.8125rem var(--ui); color: var(--muted); }
+.dep-read-set { display: flex; flex-direction: column; gap: 10px; }
+.dep-read-set h3 {
+  margin: 0;
+  font: 700 0.625rem var(--ui);
+  letter-spacing: 0.12em;
+  color: var(--accent);
+}
+.dep-read-exc {
+  margin: 0;
+  padding-inline-start: 12px;
+  border-inline-start: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  font: 400 0.875rem/1.9 var(--ar);
+  color: var(--text);
+}
+[dir="ltr"] .dep-read-exc { font-family: var(--book); }
+.dep-read-exc cite,
+.dep-read-note cite { display: block; margin-top: 4px; font: 400 0.6875rem var(--ui); color: var(--muted); font-style: normal; }
+.dep-read-note { display: flex; flex-direction: column; gap: 3px; }
+.dep-read-note h4 { margin: 0; font: 600 0.8125rem var(--ui); color: var(--text); }
+.dep-read-note p { margin: 0; font: 400 0.875rem/1.85 var(--ar); color: var(--text); }
+[dir="ltr"] .dep-read-note p { font-family: var(--book); }
+.dep-read-term,
+.dep-read-swap { margin: 0; display: flex; align-items: baseline; gap: 8px; font: 400 0.8125rem var(--ui); }
+.dep-read-term b,
+.dep-read-swap b { color: var(--text); font-family: var(--ar); font-weight: 600; }
+[dir="ltr"] .dep-read-term b,
+[dir="ltr"] .dep-read-swap b { font-family: var(--book); }
+.dep-read-term span,
+.dep-read-swap span { color: var(--muted); }
+.dep-read-swap i { color: var(--accent); font-style: normal; }
+.dep-read-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+
+/* ---- the done state -------------------------------------------------------------------------- */
+.dep-done { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; padding: 14px 0 4px; }
+.dep-done h2 { margin: 6px 0 0; font: 700 1.0625rem var(--ui); color: var(--text); }
+.dep-done p { margin: 0; max-width: 46ch; }
+.dep-path {
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--chrome-border);
+  background: var(--chrome-bg);
+  font: 400 0.75rem var(--ui);
+  color: var(--muted);
+  word-break: break-all;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dep-scrim { backdrop-filter: none; -webkit-backdrop-filter: none; }
+}
+
+
+/* ---- the head's book, the corner mark, and the sheaf's chip ----------------------------------- */
+.dep-head-row { display: flex; align-items: flex-start; gap: 14px; }
+.dep-head-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+/* The book is PRESENT, not merely named. Sized to a thumbnail, never cropped square. */
+.dep-cover {
+  flex: none;
+  width: 62px;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: 3px;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--text) 22%, transparent);
+}
+.dep-chapters { font: 600 0.8125rem var(--ui); color: var(--text); }
+/* THE CORNER MARK sits OPPOSITE the title: the sheet reads from the title's side, so the way out
+   belongs on the other one. `inset-inline-end` puts it left in Arabic and right in English without a
+   second rule — and it stops the mark landing on top of the eyebrow, which is what happened when it
+   was pinned to the start. */
+.dep-x {
+  position: absolute;
+  inset-inline-end: 14px;
+  inset-block-start: 14px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--chrome-border);
+  background: var(--chrome-bg);
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0;
+}
+.dep-x:hover { color: var(--text); }
+.dep-sheaf-bar { display: flex; justify-content: flex-start; margin-top: -6px; }
+.dep-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--chrome-border);
+  background: var(--chrome-bg);
+  color: var(--text);
+  cursor: pointer;
+  font: 600 0.75rem var(--ui);
+}
+.dep-chip:hover { background: color-mix(in srgb, var(--accent) 10%, var(--chrome-bg)); }
+.dep-chip:disabled { opacity: 0.5; cursor: default; }
+.dep-btn-wide { flex: 1; justify-content: center; }
+
+/* ---- the inscription, as a letter rather than a field ----------------------------------------- */
+.dep-letter {
+  position: relative;
+  padding: 14px 16px;
+  border-radius: 8px;
+  background: var(--chrome-bg);
+  border-inline-end: 2px solid var(--accent);
+}
+.dep-letter .dep-label { color: var(--accent); }
+.dep-letter-field {
+  background: transparent;
+  border: 0;
+  padding: 6px 0 0;
+}
+.dep-letter-field:focus { outline: none; }
+.dep-sign { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--chrome-border); }
+
+
+/* ---- the receiving side ----------------------------------------------------------------------- */
+/* The book line answers the first question a receiver has — do I have this book? — so it is the one
+   line on the sheet that changes colour with its answer. */
+.dep-recv-book { margin: 8px 0 0; font: 500 0.75rem/1.6 var(--ui); color: var(--muted); }
+.dep-recv-book[data-state="same"] { color: color-mix(in srgb, var(--accent) 70%, var(--text)); }
+.dep-recv-book[data-state="absent"] { color: var(--muted); }
+
+/* A PHRASE THE RECEIVER ALREADY OWNS. Stated on the slip, with their own wording, and the choice
+   beside it — keeping your own meaning is the default and needs no press. */
+.dep-slip-clash {
+  display: inline-flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 3px;
+  font: 400 0.6875rem/1.5 var(--ui);
+  color: var(--muted);
+}
+.dep-slip-clash b { color: var(--text); font-weight: 600; }
+.dep-clash-btn {
+  border: 1px solid var(--chrome-border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font: 600 0.625rem var(--ui);
+}
+.dep-clash-btn[data-on="1"] {
+  border-color: var(--dep-tint, var(--accent));
+  color: var(--dep-tint, var(--accent));
+}
+
+
+/* ---- choosing which copy a deposit belongs to ------------------------------------------------- */
+.dep-copies { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.dep-copy-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.dep-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 7px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--chrome-border);
+  background: var(--chrome-bg);
+  color: var(--text);
+  cursor: pointer;
+  text-align: start;
+  max-width: 100%;
+}
+.dep-copy[data-on="1"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--chrome-bg)); }
+.dep-copy-title { font: 600 0.75rem var(--ui); }
+.dep-copy-author { font: 400 0.6875rem var(--ui); color: var(--muted); }

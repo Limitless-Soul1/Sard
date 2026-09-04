@@ -6,21 +6,57 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const inspect = vi.fn();
+const depositOf = vi.fn();
 const pending = vi.fn(() => false);
 
-vi.mock("../../src/lib/ipc", () => ({ profileImportInspect: (p: string) => inspect(p) }));
+vi.mock("../../src/lib/ipc", () => ({
+  profileImportInspect: (p: string) => inspect(p),
+  depositInspect: (p: string) => depositOf(p),
+}));
 vi.mock("../../src/features/profiles/session", () => ({ profileChangePending: () => pending() }));
 
 import { routeDroppedPaths } from "../../src/features/profiles/dropRoute";
 import { useDropped } from "../../src/features/profiles/dropped";
+import { useIncomingDeposit } from "../../src/features/deposit/store";
 
 const MANIFEST = '{"package":1,"data":{"v":1}}';
 
 describe("routeDroppedPaths", () => {
   beforeEach(() => {
     inspect.mockReset();
+    depositOf.mockReset().mockRejectedValue("dep.err.notSard");
     pending.mockReset().mockReturnValue(false);
     useDropped.getState().clear();
+    useIncomingDeposit.getState().clear();
+  });
+
+  it("offers a deposit to the deposit sheet, and never to the profile gate or the bookshelf", async () => {
+    depositOf.mockResolvedValue('{"deposit":1}');
+    const books = vi.fn();
+    await routeDroppedPaths(["C:/x/a-reading.sard-deposit"], books);
+    expect(useIncomingDeposit.getState().path).toBe("C:/x/a-reading.sard-deposit");
+    expect(inspect).not.toHaveBeenCalled();
+    expect(books).not.toHaveBeenCalled();
+  });
+
+  it("REFUSES to stack on an unsaved-change dialog — the same precedence a profile obeys", async () => {
+    depositOf.mockResolvedValue('{"deposit":1}');
+    pending.mockReturnValue(true);
+    const books = vi.fn();
+    await routeDroppedPaths(["C:/x/a-reading.sard-deposit"], books);
+    // Not shown, and NOT handed to the importer either: answering a deposit with a book error would be
+    // the wrong reaction to the right file.
+    expect(useIncomingDeposit.getState().path).toBeNull();
+    expect(books).not.toHaveBeenCalled();
+  });
+
+  it("a deposit dropped alongside other files is a shelf of books, not a deposit", async () => {
+    depositOf.mockResolvedValue('{"deposit":1}');
+    const books = vi.fn();
+    const many = ["C:/x/a.sard-deposit", "C:/x/b.epub"];
+    await routeDroppedPaths(many, books);
+    expect(useIncomingDeposit.getState().path).toBeNull();
+    expect(books).toHaveBeenCalledWith(many);
   });
 
   it("offers a valid profile to the import preview and never to the bookshelf", async () => {

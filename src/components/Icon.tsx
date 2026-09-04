@@ -87,7 +87,14 @@ export type IconName =
   // fastest way to tell them from the destinations that hold them.
   | "markHighlight"     // REQ-04  the wick, word-shaped, on a line
   | "markNote"          // REQ-05  set text above, a written stroke below
-  | "markReference";    // REQ-06  the same phrase twin-ruled twice, tied
+  | "markReference"     // REQ-06  the same phrase twin-ruled twice, tied
+  // The two halves of References & Replacements. They belong to the `nav` family rather than to
+  // `mark`: they name SECTIONS of a surface, the way navBookmarks and navPhotoCards do, and they are
+  // read at the same small size — which is what decides how they are drawn (see the note at the
+  // drawings themselves).
+  | "navReferences"
+  | "navReplacements"
+  | "deposit";
 
 export type IconSize = "sm" | "md" | "lg" | "xl";
 
@@ -120,6 +127,8 @@ const PER_PATH: ReadonlySet<IconName> = new Set<IconName>([
   // The format marks mix solid and outlined parts — a thumbnail is a block, a caption is a rule —
   // so each shape states its own weight and its own fill.
   "viewCovers", "viewGrid", "viewSpines", "viewDetails", "viewVista",
+  // The sheaf states a weight per part: one rule binds, the slips repeat beneath it.
+  "deposit",
 ]);
 
 const PATHS: Record<IconName, ReactElement> = {
@@ -445,6 +454,52 @@ const PATHS: Record<IconName, ReactElement> = {
       <path d="M9.5 5.4h9.5M9.5 18.6h9.5" strokeWidth={1.3} strokeOpacity={0.45} />
       <path d="M9.5 7.9h6.5M9.5 9.7h6.5M9.5 14.3h6.5M9.5 16.1h6.5" strokeWidth={1.3} />
       <path d="M6.6 9.4C4.3 11 4.3 13 6.6 14.6" strokeWidth={1.6} />
+    </>
+  ),
+  /* ---- THE TWO HALVES OF REFERENCES & REPLACEMENTS -------------------------------------------
+     WHY THESE ARE NOT THE `mark` DRAWINGS. The first attempt used `markReference` and a sibling drawn
+     in its language — two short type-rules and a bracket. Measured in the running app at the size the
+     tab actually uses: the whole mark came to a 10px line, a 3.5px curve and nothing else inside a
+     14px box. It was painting correctly and it was still, in practice, no icon at all.
+     `markReference` is right where it stands alone and large; a tab needs what the `nav` family does
+     — FEW SHAPES THAT FILL THE BOX at 1.6-1.9, which is why navBookmarks reads at a glance and a
+     hairline bracket does not. So these are drawn to the nav family's spans (roughly 4.5-19.5 across
+     and 5.5-18.7 down) and its weights, and they sit in that family's part of the union. */
+
+  // A work you CONSULT rather than read through: two leaves standing open from a spine. Deliberately
+  // not `bookStyles` (a closed book with rules) and not navBookmarks (ribbons on a head edge), so the
+  // three are never the same silhouette in the same window.
+  navReferences: (
+    <>
+      <path d="M12 7.6v11.1" strokeWidth={1.6} />
+      <path d="M12 7.6C10.3 6.2 8 5.6 4.5 5.6v11.1c3.5 0 5.8.6 7.5 2" strokeWidth={1.75} />
+      <path d="M12 7.6c1.7-1.4 4-2 7.5-2v11.1c-3.5 0-5.8.6-7.5 2" strokeWidth={1.75} />
+    </>
+  ),
+  // One wording leaving as another arrives — the `original ⟵ new` the list already draws, at the one
+  // weight the nav family uses for primary structure. Two full-width rules, so the mark reads as an
+  // exchange at 16px rather than as a pair of ticks.
+  // A SHEAF TIED AT ITS HEAD — the object the feature is named for, not an arrow leaving a box.
+  // Slips of paper bound on one thread: the binding rule carries the primary structural weight and
+  // the slips beneath it the repeated-structure weight, so the mark reads as bound papers at 16px.
+  // A READING GIVEN — books standing, one leaning against them, which is the emblem the reference
+  // draws for a deposit. It replaced a stacked-box shape that read as a carton at any size and said
+  // nothing about reading. Scaled from the reference's 20-unit grid onto Sard's 24 and given the
+  // family's own stroke, so it sits with the other marks rather than beside them. No fill, no
+  // font-dependent glyph, one colour: it takes the ink of whatever control holds it.
+  deposit: (
+    <>
+      <rect x={3.6} y={4.2} width={4.8} height={15.6} rx={1.2} strokeWidth={1.7} />
+      <rect x={10.1} y={4.2} width={4.8} height={15.6} rx={1.2} strokeWidth={1.7} />
+      <path d="M17.3 5.8l3.6 1-3.1 13.1-3.6-1z" strokeWidth={1.7} />
+    </>
+  ),
+  navReplacements: (
+    <>
+      <path d="M19 8.6H6.2" strokeWidth={1.75} />
+      <path d="m9.4 5.4-3.2 3.2 3.2 3.2" strokeWidth={1.75} />
+      <path d="M5 15.4h12.8" strokeWidth={1.75} />
+      <path d="m14.6 12.2 3.2 3.2-3.2 3.2" strokeWidth={1.75} />
     </>
   ),
 };

@@ -9,6 +9,8 @@
 // renamed `.zip`, or a profile renamed anything at all, both land where they belong. Nothing is
 // unpacked and nothing is written — inspect reads one bounded member into memory and returns text.
 import { profileImportInspect } from "../../lib/ipc";
+import { depositInspect } from "../../lib/ipc";
+import { useIncomingDeposit } from "../deposit/store";
 import { useDropped } from "./dropped";
 import { profileChangePending } from "./session";
 
@@ -24,6 +26,25 @@ export async function routeDroppedPaths(
 ): Promise<void> {
   // A profile package is one file. A multi-file drop is a shelf of books by definition.
   if (paths.length === 1) {
+    // A READING DEPOSIT IS ASKED ABOUT FIRST, and asked the cheapest way there is: `deposit_inspect`
+    // reads one member and changes nothing. A file that is not one is refused silently and goes on to
+    // have its ordinary turn below — a reader who dropped a book must not meet a deposit's error.
+    let deposit: string | null = null;
+    try {
+      deposit = await depositInspect(paths[0]);
+    } catch {
+      /* not a deposit — fall through */
+    }
+    if (deposit !== null) {
+      // THE SAME PRECEDENCE A PROFILE OBEYS. An unsaved-change dialog is already asking a question, and
+      // a deposit sheet stacked on it would be a second question over the first. The drop is dropped —
+      // and it is NOT handed to the book importer either, because this file is a deposit and answering
+      // it with a book error would be the wrong reaction.
+      if (profileChangePending()) return;
+      useIncomingDeposit.getState().offer(paths[0]);
+      return;
+    }
+
     let text: string | null = null;
     try {
       text = await profileImportInspect(paths[0]);

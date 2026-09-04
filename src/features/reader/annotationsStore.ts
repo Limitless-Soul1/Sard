@@ -56,6 +56,33 @@ interface AnnoState {
   deleteNote: (id: string) => Promise<void>;
 }
 
+/**
+ * Run a book's placement pass once, off the critical path.
+ *
+ * Deferred to an idle moment for the same reason `getSynthesisedToc` chunks its own walk: a long
+ * synchronous pass freezes the window, and nothing here is worth a frame of the reader's attention.
+ * Every verdict it reaches is final, so a second open finds nothing left to do.
+ */
+function schedulePlacement(ctrl: NonNullable<AnnoState["ctrl"]>, bookId: string, get: () => AnnoState): void {
+  const run = async () => {
+    try {
+      const { runPlacementPass } = await import("../deposit/placementPass");
+      await runPlacementPass(ctrl as never, bookId, {
+        // Only the reader's OWN marks can occupy a place; read live, so one that arrived moments ago counts.
+        alreadyAt: (cfi) => get().highlights.some((h) => h.cfi === cfi),
+        // A mark that just found its place should be drawn, and appear in the panel beside the rest.
+        onPlaced: () => void get().load(),
+      });
+    } catch {
+      /* best-effort: a book must open whether or not a deposit can be placed in it */
+    }
+  };
+  const idle = (globalThis as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void })
+    .requestIdleCallback;
+  if (idle) idle(() => void run(), { timeout: 4000 });
+  else setTimeout(() => void run(), 1200);
+}
+
 export const useAnnotations = create<AnnoState>((set, get) => ({
   bookId: null,
   ctrl: null,
@@ -81,6 +108,12 @@ export const useAnnotations = create<AnnoState>((set, get) => ({
     // while the panel gets the ordering the reader asked for. `slice()` so the store array is untouched.
     const chronological = highlights.slice().sort((a, b) => (a.created_at ?? 0) - (b.created_at ?? 0));
     await ctrl?.loadHighlights(chronological.map((h) => ({ cfi: h.cfi, color: h.color, alpha: h.alpha })));
+
+    // READING DEPOSITS (phase 3): a deposit bound to a DIFFERENT edition leaves marks whose cfis mean
+    // nothing here, and only this reader's own text can say where they belong. The pass is gated on one
+    // indexed query — for a book that never received a deposit it finds nothing and stops — and it is
+    // deferred, so it can never sit between the reader and the first page.
+    if (ctrl) schedulePlacement(ctrl, bookId, get);
   },
 
   highlightByCfi: (cfi) => get().highlights.find((h) => h.cfi === cfi),

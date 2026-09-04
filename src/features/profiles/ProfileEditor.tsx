@@ -2243,6 +2243,24 @@ function BackgroundSection({
             />
           </div>
 
+          {/* FLIP, in the same place and the same words the other two background panels use.
+              `params.flip` is the one piece of state — the preview above already reads it — so this
+              only adds a way to reach it here, not a second notion of what "flipped" means. The markup
+              is the house toggle idiom (`rs-toggle-row`), which carries the direction pin that makes
+              the knob slide from the same edge in Arabic and in English. */}
+          <button
+            className="rs-toggle-row"
+            onClick={() => patch((d) => { at(d).params.flip = !at(d).params.flip; })}
+            aria-pressed={slot.params.flip}
+          >
+            <span className="rs-toggle-text">
+              <span className="rs-toggle-label">{t("gs.bg.flip")}</span>
+            </span>
+            <span className={`rs-switch${slot.params.flip ? " on" : ""}`} aria-hidden>
+              <span className="rs-knob" />
+            </span>
+          </button>
+
           {/* READING ONLY. The page is deliberately outside the interface texture's reach — the
               design says so — so its translucency lives here, against its own measured AAA floor. */}
           {reading && (

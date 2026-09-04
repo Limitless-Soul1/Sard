@@ -51,7 +51,16 @@ import {
 } from "../lib/highlightInk";
 // RAWY-260: the reference matching engine — folding + whole-phrase scanning, kept out of this file so the
 // rules stay testable and identical between the create path and the render path.
-import { foldChar, findPhraseHits, type RefLite } from "../lib/references";
+import { foldChar, foldPhrase, findPhraseHits, type RefLite } from "../lib/references";
+import {
+  applyToSection,
+  expandQuery,
+  restoreSection,
+  shiftOffset,
+  type NodeEdit,
+  type RepLite,
+  type SectionPlan,
+} from "../lib/replacements";
 // RAWY-281: the reference twin rule's geometry resolver — shared with the settings panel, so the numbers
 // the reader adjusts and the numbers this file draws are one object.
 import { resolveRefRule, refRuleReach, refRuleBars } from "./refRule";
@@ -1609,6 +1618,8 @@ export class FoliateController {
   private relocateCb: ((info: RelocateInfo) => void) | null = null;
   // Highlights (RAWY-20): cfi → semantic colour slot; re-applied per section render.
   private annotations = new Map<string, string>();
+  /** RAWY deposits (phase 3): notified once a section's rendered document exists. */
+  private sectionRenderedCb: ((index: number) => void) | undefined = undefined;
   // RAWY-259: each highlight’s OWN ink density, keyed by the same CFI as `annotations`. Absent = follow
   // the theme default (every highlight made before the feature), so the map stays empty until a reader
   // actually sets a density and nothing about the untouched case changes.
@@ -2031,6 +2042,12 @@ export class FoliateController {
       markEmptyParagraphs(doc, this.dir); // RAWY-253 (root B): collapse scrape-padding empty <p>
       // RAWY-260: mark this section's reference occurrences. Runs ONCE per section render, over this
       // section's own text — the book is never rescanned, so the cost is independent of its length.
+      // Replacements substitute the section's TEXT, so they must land after `wrapTashkil` (which splits
+      // the nodes this holds references to) and before anything that builds a Range over the result.
+      // `markNumbers` already ran above and its Ranges are now stale, so it is re-run — it is idempotent
+      // by construction (`CSS.highlights.set` REPLACES), which is why re-running is the whole fix.
+      this.applyReplacements(doc, index);
+      if (this.repPlans.get(index)?.count) markNumbers(doc);
       this.applyReferences(doc, index);
       // RAWY-70: the two-step reveal for the hide-first-line placeholder. Handled from the parent
       // frame (the content iframe runs no scripts, RAWY-64) via cross-frame DOM access, like the
@@ -3030,6 +3047,140 @@ export class FoliateController {
   /** Flattened TOC (chapters panel, RAWY-21). Empty if the book exposes none. */
   getToc(): TocEntry[] {
     return flattenToc(this.view?.book?.toc);
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // READING DEPOSITS (phase 3) — placing a stranger's marks in THIS reader's copy.
+  //
+  // A deposit bound to a different edition carries cfis that mean nothing here, so each mark has to
+  // earn its place by its own text. The engine owns the two halves that need a document; the decision
+  // itself is a pure function elsewhere (`model/placement.ts`), and this never decides anything.
+  //
+  // WHY THE COUNT AND THE ANCHOR ARE SEPARATE. Counting is text, so it runs over the RAW documents and
+  // needs no rendering — the same `createDocument()` walk `getSynthesisedToc` already uses, chunked for
+  // the same reason. Minting a cfi is NOT safe there: measured over two books, a cfi minted in a raw
+  // document and resolved the way the engine draws it failed on 2 of 55 ranges, because Sard's cfis are
+  // made against the RENDERED document. So the anchor is minted in the section itself, when it renders.
+  // ---------------------------------------------------------------------------------------------
+
+  /** Which spine section the sender's chapter label names here, or null when nothing matches it. */
+  sectionForChapterLabel(label: string | null | undefined): number | null {
+    const want = (label ?? "").trim().toLowerCase();
+    if (!want) return null;
+    const entries = this.getToc();
+    const map = this.tocHrefSectionMap(entries);
+    for (const t of entries) {
+      if ((t.label ?? "").trim().toLowerCase() !== want) continue;
+      const i = t.href ? map.get(t.href) ?? map.get(t.href.split("#")[0]) : undefined;
+      if (typeof i === "number") return i;
+    }
+    return null;
+  }
+
+  /**
+   * Count each needle across the whole book, once, over raw documents.
+   *
+   * Yields to the event loop between sections for the reason `getSynthesisedToc` states: a long
+   * synchronous walk freezes the window (the RAWY-182 lesson). Nothing is rendered, navigated or drawn.
+   */
+  async placementScan(
+    needles: { id: string; needle: string }[],
+    fold: (s: string) => string,
+    countIn: (hay: string, needle: string) => number,
+  ): Promise<Map<string, { total: number; sole: number | null; perSection: Map<number, number> }>> {
+    const out = new Map<string, { total: number; sole: number | null; perSection: Map<number, number> }>();
+    for (const n of needles) out.set(n.id, { total: 0, sole: null, perSection: new Map() });
+    const sections: { createDocument?: () => Promise<Document>; linear?: string }[] =
+      (this.view?.book?.sections as never) ?? [];
+    for (let i = 0; i < sections.length; i++) {
+      const sec = sections[i];
+      if (!sec?.createDocument) continue;
+      let text = "";
+      try {
+        const doc = await sec.createDocument();
+        text = fold(doc?.body?.textContent ?? "");
+      } catch {
+        continue; // an unreadable section simply contributes no occurrences
+      }
+      for (const n of needles) {
+        const c = countIn(text, n.needle);
+        if (!c) continue;
+        const rec = out.get(n.id)!;
+        rec.total += c;
+        rec.perSection.set(i, c);
+        rec.sole = rec.total === 1 ? i : null;
+      }
+      // one section per turn of the loop, so the window keeps painting
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    return out;
+  }
+
+  /**
+   * Mint a cfi for `needle` inside a RENDERED section — the only place a cfi may be made.
+   *
+   * Returns null unless the needle occurs EXACTLY ONCE in that section: the count is taken again here,
+   * against the text the reader is actually looking at, so a section whose rendered text differs from
+   * its raw text refuses rather than guessing.
+   */
+  placementAnchor(
+    index: number,
+    needle: string,
+    foldCh: (c: string) => string,
+  ): { status: "placed"; cfi: string } | { status: "notRendered" | "notUnique" | "notFound" } {
+    const contents = (this.view?.renderer?.getContents?.() as { index: number; doc?: Document }[]) ?? [];
+    const doc = contents.find((c) => c.index === index)?.doc;
+    // NOT RENDERED IS NOT A VERDICT. The section simply is not on screen yet, and saying anything about
+    // the mark now would condemn it for the reader's position rather than for its own text.
+    if (!doc?.body || !needle) return { status: "notRendered" };
+
+    // The same one-pass folded walk `applyReferences` performs: every folded character remembers the
+    // text node and offset it came from, so a hit maps straight back to a Range with no second walk.
+    let hay = "";
+    const nodes: Text[] = [];
+    const offs: number[] = [];
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+    let n: Node | null;
+    while ((n = walker.nextNode())) {
+      const t = n as Text;
+      const data = t.data;
+      for (let i = 0; i < data.length; i++) {
+        const fc = foldCh(data[i]);
+        for (let k = 0; k < fc.length; k++) {
+          hay += fc[k];
+          nodes.push(t);
+          offs.push(i);
+        }
+      }
+    }
+
+    let at = -1;
+    let from = 0;
+    for (;;) {
+      const i = hay.indexOf(needle, from);
+      if (i < 0) break;
+      if (at >= 0) return { status: "notUnique" }; // a second occurrence here — refuse rather than choose
+      at = i;
+      from = i + 1;
+    }
+    if (at < 0) return { status: "notFound" };
+
+    const end = at + needle.length - 1;
+    if (!nodes[at] || !nodes[end]) return { status: "notFound" };
+    try {
+      const range = doc.createRange();
+      range.setStart(nodes[at], offs[at]);
+      range.setEnd(nodes[end], offs[end] + 1);
+      const cfi = (this.view as unknown as { getCFI(i: number, r: Range): string }).getCFI(index, range);
+      return cfi ? { status: "placed", cfi } : { status: "notFound" };
+    } catch {
+      return { status: "notFound" };
+    }
+  }
+
+  /** Register a listener called after a section has rendered, so a located mark can be anchored in it. */
+  onSectionRendered(cb: ((index: number) => void) | null): void {
+    this.sectionRenderedCb = cb ?? undefined;
   }
 
   /**
@@ -4346,36 +4497,45 @@ export class FoliateController {
       // Sard's four real draw functions are all TYPED `: SVGGElement`, so the compiler already guarantees
       // they return a node; this inline callback was the one untyped path and the only violator.
       const drawNothing = () => document.createElementNS("http://www.w3.org/2000/svg", "g");
-      for await (const r of view.search({ query: q, draw: drawNothing })) {
-        if (opts.signal?.aborted) break;
-        if (r === "done") break;
-        const now = performance.now();
-        if (now - lastYield > 30) {
-          await new Promise<void>((res) => setTimeout(res, 0));
-          lastYield = performance.now();
-        }
-        if (typeof (r as any).progress === "number") {
-          scanFrac = (r as any).progress;
-          curIndex = Math.max(0, Math.round(scanFrac * n) - 1);
-          emit(false);
-          continue;
-        }
-        const rr = r as any;
-        if (Array.isArray(rr.subitems)) {
-          for (const s of rr.subitems) {
-            if (!s?.cfi) continue;
-            hits.push({
-              cfi: s.cfi,
-              sectionIndex: curIndex,
-              chapterLabel: rr.label ?? "",
-              pre: s.excerpt?.pre ?? "",
-              match: s.excerpt?.match ?? "",
-              post: s.excerpt?.post ?? "",
-              frac: fractions[curIndex] ?? 0,
-              ahead: boundary && compare ? compare(s.cfi, boundary) > 0 : false,
-            });
+      // BOTH WORDINGS FIND THE PASSAGE. Search reads the book through foliate's own `createDocument()` —
+      // a fresh parse that never sees the rendered page — so it always scans the AUTHOR's text. Typing
+      // the author's word therefore already works; typing what is ON THE PAGE would find nothing, so the
+      // query is expanded to include the author's phrase for any rule whose replacement it matches.
+      // With no rule in force `expandQuery` returns the single original term and this loop runs once,
+      // which is exactly the code path that existed before.
+      for (const term of expandQuery(q, this.reps, foldPhrase)) {
+        for await (const r of view.search({ query: term, draw: drawNothing })) {
+          if (opts.signal?.aborted) break;
+          if (r === "done") break;
+          const now = performance.now();
+          if (now - lastYield > 30) {
+            await new Promise<void>((res) => setTimeout(res, 0));
+            lastYield = performance.now();
           }
-          emit(false);
+          if (typeof (r as any).progress === "number") {
+            scanFrac = (r as any).progress;
+            curIndex = Math.max(0, Math.round(scanFrac * n) - 1);
+            emit(false);
+            continue;
+          }
+          const rr = r as any;
+          if (Array.isArray(rr.subitems)) {
+            for (const s of rr.subitems) {
+              if (!s?.cfi) continue;
+              if (hits.some((h) => h.cfi === s.cfi)) continue; // two terms can reach the same passage
+              hits.push({
+                cfi: s.cfi,
+                sectionIndex: curIndex,
+                chapterLabel: rr.label ?? "",
+                pre: s.excerpt?.pre ?? "",
+                match: s.excerpt?.match ?? "",
+                post: s.excerpt?.post ?? "",
+                frac: fractions[curIndex] ?? 0,
+                ahead: boundary && compare ? compare(s.cfi, boundary) > 0 : false,
+              });
+            }
+            emit(false);
+          }
         }
       }
     } catch {
@@ -4566,6 +4726,131 @@ export class FoliateController {
     for (const c of contents ?? []) {
       if (c?.doc) this.applyReferences(c.doc, c.index);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // REPLACEMENTS: read a word as something else, without changing the book.
+  // ---------------------------------------------------------------------------
+
+  /** The book's ENABLED rules. A disabled rule is not in this list at all, so "off" costs nothing. */
+  private reps: RepLite[] = [];
+  /** Per rendered section, what was substituted — enough to translate an offset and to put it back. */
+  private repPlans = new Map<number, SectionPlan>();
+  /** How many occurrences are standing in the sections on screen, for the reader-facing notice. */
+  private repCount = 0;
+  private onRepsApplied: ((count: number) => void) | null = null;
+
+  /** Tell the reader how many substitutions are showing, so it can say so plainly rather than surprise. */
+  setReplacementListener(fn: ((count: number) => void) | null): void {
+    this.onRepsApplied = fn;
+  }
+
+  /** The rules in force — a search expands through exactly the set the page is showing. */
+  activeReplacements(): RepLite[] {
+    return this.reps;
+  }
+
+  /**
+   * Replace the rule set and re-apply it to every rendered section.
+   *
+   * ORDER MATTERS AND IS NOT OBVIOUS. Writing `textNode.data` collapses any live Range the DOM is
+   * tracking, and every drawn highlight IS a live Range held by the overlayer. So the marks come down
+   * first, the text is restored and re-substituted, and only then are they drawn again — at which point
+   * they resolve through the coordinate hooks and land on the same words they were put on.
+   */
+  setReplacements(list: RepLite[]): void {
+    const had = this.repPlans.size > 0 || this.reps.length > 0;
+    this.reps = list;
+    const contents = this.view?.renderer?.getContents?.() as { index: number; doc?: Document }[] | undefined;
+    if (!contents?.length) {
+      this.repPlans.clear();
+      this.installRepHooks();
+      return;
+    }
+    if (had) for (const [cfi] of this.annotations) this.view?.deleteAnnotation({ value: cfi });
+    for (const c of contents) {
+      if (!c?.doc) continue;
+      const prev = this.repPlans.get(c.index);
+      if (prev) restoreSection(prev);
+      this.repPlans.set(c.index, applyToSection(c.doc, this.reps));
+    }
+    this.installRepHooks();
+    this.refreshRepCount();
+    // The text has a different length now, so every reference mark's Range is stale — remark, then redraw.
+    for (const c of contents) if (c?.doc) this.applyReferences(c.doc, c.index);
+    for (const [cfi, color] of this.annotations) this.view?.addAnnotation({ value: cfi, color });
+  }
+
+  /**
+   * Substitute one freshly loaded section. Called from the `load` handler, which is BEFORE the overlayer
+   * exists, so no live Range can be disturbed and the marks that follow are built on the final text.
+   */
+  private applyReplacements(doc: Document, index: number): void {
+    const prev = this.repPlans.get(index);
+    if (prev) restoreSection(prev);
+    this.repPlans.delete(index);
+    // Drop plans for sections that unloaded — their nodes went with the document.
+    const live = new Set(
+      ((this.view?.renderer?.getContents?.() as { index: number }[] | undefined) ?? []).map((c) => c.index),
+    );
+    live.add(index);
+    for (const idx of Array.from(this.repPlans.keys())) if (!live.has(idx)) this.repPlans.delete(idx);
+    if (this.reps.length) this.repPlans.set(index, applyToSection(doc, this.reps));
+    this.installRepHooks();
+    this.refreshRepCount();
+    // A DEPOSIT'S MARK CAN ONLY BE ANCHORED WHERE IT LIVES. This is the moment a section's rendered
+    // document exists, which is the only document a cfi may be made against — so a mark the count pass
+    // located here is anchored now, beside the substitution and reference work that already runs per
+    // section. It is a no-op for every book that has nothing waiting.
+    try {
+      this.sectionRenderedCb?.(index);
+    } catch {
+      /* placement must never be able to break a section's render */
+    }
+  }
+
+  private refreshRepCount(): void {
+    let n = 0;
+    for (const p of this.repPlans.values()) n += p.count;
+    if (n === this.repCount) return;
+    this.repCount = n;
+    this.onRepsApplied?.(n);
+  }
+
+  /**
+   * Install the two coordinate hooks foliate's CFI code calls (see VENDOR.txt PATCH 10).
+   *
+   * They are REMOVED outright when nothing is substituted rather than left in place returning the same
+   * number: an absent hook means the vendored code runs its original path, so a library that never makes
+   * a replacement is untouched by this feature rather than merely equivalent to it.
+   */
+  private installRepHooks(): void {
+    const g = globalThis as unknown as {
+      __sardRepToAuthor?: (n: Node, o: number, e: boolean) => number;
+      __sardRepToPage?: (n: Node, o: number, e: boolean) => number;
+    };
+    let any = false;
+    for (const p of this.repPlans.values()) if (p.edits.size) any = true;
+    if (!any) {
+      delete g.__sardRepToAuthor;
+      delete g.__sardRepToPage;
+      return;
+    }
+    const editsFor = (node: Node): NodeEdit[] | undefined => {
+      for (const p of this.repPlans.values()) {
+        const e = p.edits.get(node as Text);
+        if (e) return e;
+      }
+      return undefined;
+    };
+    g.__sardRepToAuthor = (node, off, isEnd) => shiftOffset(editsFor(node), off, isEnd, false);
+    g.__sardRepToPage = (node, off, isEnd) => {
+      const out = shiftOffset(editsFor(node), off, isEnd, true);
+      // A stored offset can sit past the end of a node a shrinking rule made shorter; clamp rather than
+      // let the DOM throw IndexSizeError, which would drop the mark entirely.
+      const len = (node as Text).length ?? 0;
+      return out > len ? len : out;
+    };
   }
 
   /**

@@ -22,6 +22,8 @@ import { useAnnotations } from "./annotationsStore";
 import { useReader } from "../../reader-engine/store"; // RAWY-259: the book title for the metadata block
 import { useReferences } from "./referencesStore"; // RAWY-260
 import { ReferenceDialog, ReferencePopup } from "./ReferenceDialog"; // RAWY-260
+import { ReplacementDialog } from "./ReplacementDialog";
+import { useReplacements } from "./replacementsStore";
 import { HIGHLIGHT_SLOTS, isHex } from "./highlightColors";
 import { TagPicker } from "./TagPicker";
 import { localeNum, uiDateTimeFormat } from "../../lib/format";
@@ -37,7 +39,7 @@ import {
   INK_RADIUS_EM,
   INK_EDGE_EM,
 } from "../../lib/highlightInk";
-import { noteTagsFor, noteTagsSet, type HighlightColor, type HighlightRow, type NoteRow, type RefRow } from "../../lib/ipc";
+import { noteTagsFor, noteTagsSet, type HighlightColor, type HighlightRow, type NoteRow, type RefRow, type RepRow } from "../../lib/ipc";
 
 function useHl() {
   const id = useTheme((s) => s.themeId);
@@ -276,9 +278,11 @@ const PenIcon = () => (
     <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
   </svg>
 );
-const CopyIcon = () => (
+// Two arrows exchanging places — the same "one thing stands in for another" the design's ⟵ says in the
+// list. Not a pencil: a replacement does not edit the book, it reads it differently.
+const ReplaceIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <rect x="9" y="9" width="11" height="11" rx="2.4" /><path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
+    <path d="M4 8h13l-3.2-3.2M20 16H7l3.2 3.2" />
   </svg>
 );
 const PhotoIcon = () => (
@@ -309,7 +313,7 @@ function SelectionToolbar({
   onListen,
   onReference,
   onNote,
-  onCopy,
+  onReplace,
   onAddToCard,
   onPhotoCard,
 }: {
@@ -318,7 +322,7 @@ function SelectionToolbar({
   onListen: () => void;
   onReference: () => void;
   onNote: () => void;
-  onCopy: () => void;
+  onReplace: () => void;
   onAddToCard: () => void;
   onPhotoCard: () => void;
 }) {
@@ -363,7 +367,11 @@ function SelectionToolbar({
             {/* RAWY-260: ONE new action added to the existing toolbar — the toolbar itself is untouched,
                 and RAWY-124's warning still holds: never drop one of the other five. */}
             <button className="hl-pop-act" onClick={onReference}><RefIcon />{t("ref.add")}</button>
-            <button className="hl-pop-act" onClick={onCopy}><CopyIcon />{t("hl.copy")}</button>
+            {/* RAWY-124's warning still holds — never DROP one of these silently. Copy is not dropped
+                here by accident, it is REPLACED by Replace at the owner's decision: the selection is the
+                natural place to say "read this word as something else", and the toolbar is already full.
+                The system copy gesture (Ctrl+C and the context menu) is untouched and still copies. */}
+            <button className="hl-pop-act" onClick={onReplace}><ReplaceIcon />{t("rep.action")}</button>
             <button className="hl-pop-act" onClick={onAddToCard}><AddCardIcon />{t("photo.addToCard")}</button>
             <button className="hl-pop-act primary" onClick={onPhotoCard}><PhotoIcon />{t("photo.card")}</button>
           </div>
@@ -687,11 +695,16 @@ export function AnnotationLayer({
     clearSel();
     if (row) setActive({ cfi: row.cfi, rect }); // open the popover to type
   };
-  const onCopy = () => {
-    if (!selection) return;
-    navigator.clipboard.writeText(selection.text).catch(console.error);
+  const onReplace = () => {
+    const s = selection;
+    if (!s) return;
+    const phrase = s.text.trim();
     setSelection(null);
     clearSel();
+    // Replacing a phrase that already has a rule EDITS it rather than creating a second one that would
+      // fight the first over the same words. Matched from EITHER side: once a rule is live the
+      // page shows the replacement, so the words a reader selects are the new ones, not the author's.
+    setRepDialog({ phrase, existing: useReplacements.getState().byText(phrase) ?? null });
   };
   // RAWY-124: Listen from the selection — hand the passage up to start read-aloud from here.
   const onListenSel = () => {
@@ -738,6 +751,8 @@ export function AnnotationLayer({
   // edit path — no extra button, and the note is immediately editable.
   const refs = useReferences();
   const [refDialog, setRefDialog] = useState<{ phrase: string; existing: RefRow | null } | null>(null);
+  const [repDialog, setRepDialog] = useState<{ phrase: string; existing: RepRow | null } | null>(null);
+  const reps = useReplacements();
   const [refPopup, setRefPopup] = useState<{ row: RefRow; rect: AnchorRect } | null>(null);
   useEffect(() => {
     ctrlRef.current?.onReferenceHit((hit) => {
@@ -769,6 +784,16 @@ export function AnnotationLayer({
           />
         </>
       )}
+      {repDialog && (
+        <ReplacementDialog
+          phrase={repDialog.phrase}
+          existing={repDialog.existing}
+          bookTitle={useReader.getState().bookTitle ?? ""}
+          onSave={async (from, to) => { await reps.save(from, to); setRepDialog(null); }}
+          onDelete={async () => { if (repDialog.existing) await reps.remove(repDialog.existing.id); setRepDialog(null); }}
+          onClose={() => setRepDialog(null)}
+        />
+      )}
       {refDialog && (
         <ReferenceDialog
           phrase={refDialog.phrase}
@@ -785,7 +810,7 @@ export function AnnotationLayer({
           onListen={onListenSel}
           onReference={onReference}
           onNote={onNote}
-          onCopy={onCopy}
+          onReplace={onReplace}
           onAddToCard={onAdd}
           onPhotoCard={() => {
             const s = selection;

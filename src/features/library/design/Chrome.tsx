@@ -20,7 +20,7 @@ import { openTransient } from "./transient";
 
 
 import { displayFaceFor, scriptOf } from "../../../lib/typography";
-export type Section = "library" | "inbox" | "cards" | "bookmarks";
+export type Section = "library" | "inbox" | "cards" | "bookmarks" | "refs";
 
 /** What the main pane is currently scoped to. */
 export interface Scope {
@@ -112,6 +112,11 @@ const NAV_ICON: Record<string, IconName> = {
   library: "navLibrary",
   inbox: "navHighlightsNotes",
   bookmarks: "navBookmarks",
+  // The destination was added to `nav` without an entry here, so the row rendered with no mark at all
+  // while its four neighbours had one — a map lookup that silently returns undefined, which no type
+  // error and no DOM assertion catches. The open spread is a work you CONSULT, distinct from the
+  // shelf furniture above it and from the ribbons and card below.
+  refs: "navReferences",
   cards: "navPhotoCards",
 };
 
@@ -231,6 +236,7 @@ export function Sidebar(props: SidebarProps) {
     { id: "library", label: t("lib.nav.library"), count: props.bookCount },
     { id: "inbox", label: t("lib.nav.highlights") },
     { id: "bookmarks", label: t("lib.nav.bookmarks") },
+    { id: "refs", label: t("lib.nav.refs") },
     { id: "cards", label: t("lib.nav.cards") },
   ];
 
@@ -1026,6 +1032,9 @@ interface HeaderProps {
   onToggleSelect: () => void;
   onToggleArrange: () => void;
   onAddBooks: () => void;
+  /** OPEN A DEPOSIT SOMEONE SENT. It sits beside «أضِف كتبًا» because it is the other way a reading
+   *  enters this library — a book with someone's marks on it, rather than a bare file. */
+  onOpenDeposit?: () => void;
   /**
    * THE LIBRARY HAS NO BOOKS AND NOTHING IS BEING SEARCHED FOR.
    *
@@ -1391,6 +1400,16 @@ export function Header(props: HeaderProps) {
           >
             {props.mode === "arrange" ? t("lib.arranging") : t("lib.arrange")}
           </button>
+          {props.onOpenDeposit && (
+            <button
+              className="libd-hov"
+              onClick={props.onOpenDeposit}
+              title={t("dep.recv.open")}
+              style={{ height: 32, padding: "0 12px", borderRadius: "var(--r-md)", font: "600 .75rem var(--ui)" }}
+            >
+              {t("dep.recv.open")}
+            </button>
+          )}
           <button
             className="libd-hov-bright"
             onClick={props.onAddBooks}

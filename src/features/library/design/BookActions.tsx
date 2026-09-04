@@ -42,6 +42,13 @@ export interface BookActionsProps {
    */
   onDelete: () => void;
   /**
+   * GIVE THIS BOOK'S READING AWAY — a deposit: the book, a letter, and the marks the sender chooses.
+   *
+   * Absent where a deposit cannot be made, which today means anything that is not an EPUB: a PDF
+   * carries no cfi and no whole-book text search, so its highlights have no honest way to travel.
+   */
+  onShare?: (() => void) | null;
+  /**
    * Where the button sits, which is the one thing a format legitimately decides for itself.
    *
    * Giving a `className` means the format positions the control from its own stylesheet — Grid's
@@ -168,6 +175,9 @@ export function BookActions(props: BookActionsProps) {
       icon: "check",
       run: () => props.onSetFinished(!props.finished),
     },
+    // GIVING, not exporting. It sits after the everyday acts and before the destructive ones,
+    // because handing someone a reading is neither.
+    ...(props.onShare ? [{ label: t("dep.menu"), icon: "deposit" as IconName, run: props.onShare }] : []),
     ...(props.onRemoveFromShelf
       ? [{ label: t("lib.removeFromShelf"), icon: "trash" as IconName, run: props.onRemoveFromShelf }]
       : []),
@@ -282,6 +292,18 @@ export function BookActions(props: BookActionsProps) {
           role="menu"
           aria-label={t("lib.bookActions")}
           onClick={(e) => e.stopPropagation()}
+          // THE PRESS BELONGS TO THE MENU TOO — the same rule as the click above and the keydown
+          // below, for the one event type that was left out.
+          //
+          // The card starts a 340 ms hold on any `pointerdown` that reaches it (`useBookPickup`), and
+          // one on a menu item DOES reach it: this menu is portalled into the overlay host, so in the
+          // DOM it is nowhere near the card, but React propagates through the REACT tree and
+          // `<BookActions>` is a child of the card. Measured: holding a menu option for half a second
+          // lifted the book standing behind the menu into manual-movement mode.
+          //
+          // The ⋯ trigger has carried this same guard all along; the menu it opens had not. Scoped to
+          // the menu, so a press anywhere else on a book still lifts it exactly as before.
+          onPointerDown={(e) => e.stopPropagation()}
           onKeyDown={(e) => {
             const last = items.length - 1;
             const go = (i: number) => {

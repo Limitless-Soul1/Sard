@@ -94,6 +94,13 @@ export const CROSSING: Readonly<Record<string, Crossing>> = Object.freeze({
   onReadingRedraw: "callback",
   onRelocate: "callback",
   onReferenceHit: "callback",
+  // Replacements: the count of what is currently substituted, so the reader can say so. A number
+  // over a port, registered the same way every other listener here is.
+  setReplacementListener: "callback",
+  // The rules in force. Read SYNCHRONOUSLY by the search expansion, so a port cannot answer it in
+  // time — but the set only changes when the reader edits a rule, so the host pushes it ahead and
+  // this is served from the mirror like every other synchronous read here.
+  activeReplacements: "mirrored",
   // The book's own footnotes. This one is worth a line, because it was nearly the opposite: the first
   // shape of the feature handed the application the engine's live `<foliate-view>`, which is a DOM
   // object and could never have crossed a port. Taking the note as HTML instead was chosen for a
@@ -148,6 +155,24 @@ export const CROSSING: Readonly<Record<string, Crossing>> = Object.freeze({
   // Returns ranges. Its only consumer is `window.__sardPdfTts`, a diagnostic hook, and it uses them
   // solely to COUNT how many units carry one.
   getChapterUnits: "dom-bound",
+  // READING DEPOSITS (phase 3) — placing another edition's marks in this reader's copy.
+  //
+  // `placementScan` takes two FUNCTIONS (the fold and the count) and answers with a `Map`; none of the
+  // three survives a structured clone, and the walk it performs reads section documents that exist only
+  // inside the engine. `placementAnchor` mints a cfi from a live rendered document, which is the one
+  // place a cfi may be made at all — a range cannot be cloned out to be minted elsewhere.
+  //
+  // On the hosted transport this whole pass therefore belongs to the HOST side: the application would
+  // send "place what is pending for this book" and receive verdicts, rather than forwarding these three
+  // members. That is a transport decision, recorded here so the day it ships nobody has to rediscover
+  // why they cannot simply be proxied.
+  // Reads the same table of contents `getToc` does, so it is answerable from mirrored state.
+  sectionForChapterLabel: "mirrored",
+  placementScan: "dom-bound",
+  placementAnchor: "dom-bound",
+  // The engine calls this after a section renders; the host would push it as an event, exactly like the
+  // other callbacks above.
+  onSectionRendered: "callback",
   // Called only from inside the engine; never reached from the application.
   highlightAtPoint: "dom-bound",
   referenceAtPoint: "dom-bound",

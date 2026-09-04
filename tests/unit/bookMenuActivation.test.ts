@@ -80,9 +80,12 @@ describe("the conditions that make the collision possible are still true", () =>
   it("the card still claims Enter and Space for opening a book", () => {
     // The other half of the collision. If this handler is ever removed, this whole test becomes
     // vacuous and should be revisited rather than left passing for the wrong reason.
-    const at = CARD.indexOf('if (e.key === "Enter" || e.key === " ")');
+    // Read past the commentary: this window is measured in characters, so a sentence added above the
+    // line being asserted would otherwise push the assertion out of its own slice.
+    const card = codeOnly(CARD);
+    const at = card.indexOf('if (e.key === "Enter" || e.key === " ")');
     expect(at, "the card's open-on-Enter handler").toBeGreaterThan(-1);
-    const branch = CARD.slice(at, at + 220);
+    const branch = card.slice(at, at + 220);
     expect(branch).toContain("e.preventDefault()");
     expect(branch).toContain("onOpen()");
   });

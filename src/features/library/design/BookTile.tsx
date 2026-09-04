@@ -20,7 +20,7 @@ import { atDensity, progressPct, isFinished, spineWidth, type DesignView } from 
 import { coverPresentation, type CoverMode } from "./coverPresentation";
 import { Icon } from "../../../components/Icon";
 import { useBookPickup } from "./bookPickup";
-import { BookActions } from "./BookActions";
+import { BookActions, type BookActionsProps } from "./BookActions";
 import { labelFace, scriptOf } from "../../../lib/typography";
 
 
@@ -74,6 +74,14 @@ export interface BookTileProps {
   /** Delete the book itself, wherever it is filed — see `BookActionsProps.onDelete`. */
   onDelete: () => void;
   onSetFinished: (finished: boolean) => void;
+  /**
+   * WHAT CAN BE DONE WITH THIS BOOK — the shared object every view hands to `BookActions`.
+   *
+   * The tile used to name the acts one by one, so an act added later reached the views that spread
+   * this object and no others: «أهدِ تجربة القراءة» existed in Grid and in the rows and nowhere else.
+   * A menu belongs to the book, not to the view drawing it, so the whole object travels.
+   */
+  actions: BookActionsProps;
   /** The library's Crop/Fit setting, which a book with no per-book fit follows. */
   libraryCoverMode: CoverMode;
 }
@@ -274,14 +282,8 @@ export function BookTile(props: BookTileProps) {
     >
       {showDots && (
         <BookActions
-          filePath={book.file_path}
-          finished={finished}
-          onEditDetails={props.onEdit}
-          onOpen={props.onOpen}
-          onSetFinished={props.onSetFinished}
-          onRemoveFromShelf={props.onRemoveFromShelf}
-          onDelete={props.onDelete}
-          onOpenChange={setMenuOpen}
+            {...props.actions}
+            onOpenChange={setMenuOpen}
           // Spines hang their control clear of a very narrow tile; that is a matter of layout, and
           // the only thing a format is allowed to decide for itself here.
           // RETUNED FOR THE CONTROL'S TRUE SIZE. This was -26, hand-fitted to a 24px button so it

@@ -7,7 +7,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::db::{self, AppState};
-use crate::{backgrounds, books, fonts, library, photocards, profiles, settings};
+use crate::{backgrounds, books, deposit, fonts, library, photocards, profiles, settings};
 
 #[derive(Serialize)]
 pub struct AppInfo {
@@ -1223,6 +1223,110 @@ pub async fn background_import(
     backgrounds::commit(&conn, &app_data_dir, mat)
 }
 
+/// READING DEPOSITS (phase 1, the sender) — what can travel with this book, priced, and where every
+/// mark falls in it.
+///
+/// Resolved in Rust because every answer needs a managed path or a parsed spine: the sheet then
+/// renders exactly what `deposit_export` will write, rather than a second picture that can disagree.
+/// Reads only.
+#[tauri::command]
+pub fn deposit_plan(book_id: String, state: State<AppState>) -> Result<deposit::Plan, String> {
+    let conn = state.conn();
+    deposit::plan(&conn, &state.app_data_dir, &book_id)
+}
+
+/// Write the deposit to the path the sender chose.
+///
+/// The manifest is produced and shown by the frontend and written verbatim: what the sender read in
+/// the preview is byte-for-byte what leaves. The two optional files are copied file-to-file, so a
+/// book's bytes never cross this boundary.
+#[tauri::command]
+pub fn deposit_export(
+    path: String,
+    manifest_json: String,
+    book_member: Option<String>,
+    book_source: Option<String>,
+    cover_member: Option<String>,
+    cover_source: Option<String>,
+) -> Result<(), String> {
+    let book = match (book_member.as_deref(), book_source.as_deref()) {
+        (Some(member), Some(source)) => Some(deposit::package::MemberIn { member, source }),
+        _ => None,
+    };
+    let cover = match (cover_member.as_deref(), cover_source.as_deref()) {
+        (Some(member), Some(source)) => Some(deposit::package::MemberIn { member, source }),
+        _ => None,
+    };
+    deposit::package::export(&path, &manifest_json, book, cover)
+}
+
+/// READING DEPOSITS (phase 2, the receiver) — read the manifest and change NOTHING.
+///
+/// Separate from commit on purpose: the reader sees what a file contains before any of it enters.
+#[tauri::command]
+pub fn deposit_inspect(path: String) -> Result<String, String> {
+    deposit::package::inspect(&path)
+}
+
+/// One member's bytes, so the sheet can DRAW an arriving cover rather than name a file. Reads only.
+#[tauri::command]
+pub fn deposit_member(path: String, member: String) -> Result<Vec<u8>, String> {
+    deposit::package::read_member(&path, &member)
+}
+
+/// Everything the operating system has handed Sard since this was last asked.
+///
+/// DRAINING, not peeking: a path is returned once. The frontend routes each through the same door a
+/// dropped file takes, so a deposit opened from a file manager and one dragged onto the window are the
+/// same event as far as the rest of the app is concerned.
+#[tauri::command]
+pub fn opened_files_take(state: tauri::State<'_, crate::OpenedFiles>) -> Vec<String> {
+    state.take()
+}
+
+/// THE TRUST BOUNDARY. Re-validates the manifest rather than trusting that inspection happened,
+/// resolves the book, and applies exactly what the receiver kept — in one transaction, additively.
+#[tauri::command]
+pub fn deposit_commit(
+    path: String,
+    manifest_json: String,
+    accept: deposit::apply::Acceptance,
+    // The reader's own answer to "which of my books is this?", when the hash cannot answer it. Never
+    // inferred: binding to the wrong book would attach a stranger's marks to an unrelated text.
+    bind_to: Option<String>,
+    state: State<AppState>,
+) -> Result<deposit::apply::Outcome, String> {
+    let app_data_dir = state.app_data_dir.clone();
+    let mut conn = state.conn();
+    deposit::apply::commit(&mut conn, &app_data_dir, &manifest_json, &path, &accept, bind_to.as_deref())
+}
+
+/// READING DEPOSITS (phase 3) — what a book still has to place, and where each mark stands.
+///
+/// Cheap and indexed; for the overwhelming majority of books the answer is empty and the reader does
+/// nothing further.
+#[tauri::command]
+pub fn deposit_pending_marks(
+    book_id: String,
+    state: State<AppState>,
+) -> Result<Vec<deposit::placement::PendingMark>, String> {
+    let conn = state.conn();
+    deposit::placement::pending(&conn, &book_id)
+}
+
+/// Record what the reader's own engine decided about each mark.
+///
+/// Every write is gated on `mark_origin`, so a mark the reader made cannot be reached from here — which
+/// is what makes "an import never overwrites your own annotations" structural rather than careful.
+#[tauri::command]
+pub fn deposit_place_marks(
+    verdicts: Vec<deposit::placement::Verdict>,
+    state: State<AppState>,
+) -> Result<u32, String> {
+    let mut conn = state.conn();
+    deposit::placement::record(&mut conn, &verdicts)
+}
+
 /// PROFILES (stage 6) — write a package to the path the reader chose.
 ///
 /// The manifest text is produced and shown by the frontend, and written verbatim: what the reader
@@ -1449,6 +1553,53 @@ pub fn ref_delete(id: String, state: State<AppState>) -> Result<bool, String> {
     let conn = state.conn();
     library::ref_delete(&conn, &id).map_err(err)?;
     Ok(true)
+}
+
+/// Every replacement for a book — loaded once on open and held in memory, exactly like references, and
+/// consulted per section rather than per word.
+#[tauri::command]
+pub fn reps_for_book(book_id: String, state: State<AppState>) -> Result<Vec<library::RepRow>, String> {
+    let conn = state.conn();
+    library::reps_for_book(&conn, &book_id).map_err(err)
+}
+
+/// Create OR update — one path serves both the "new replacement" panel and editing an existing rule.
+#[tauri::command]
+pub fn rep_save(
+    book_id: String,
+    phrase: String,
+    phrase_fold: String,
+    replacement: String,
+    word_count: i64,
+    state: State<AppState>,
+) -> Result<Option<library::RepRow>, String> {
+    let conn = state.conn();
+    library::rep_save(&conn, &book_id, &phrase, &phrase_fold, &replacement, word_count).map_err(err)
+}
+
+/// Switch one rule on or off. Not a delete: the author's wording returns and the rule is kept.
+#[tauri::command]
+pub fn rep_set_enabled(
+    id: String,
+    enabled: bool,
+    state: State<AppState>,
+) -> Result<Option<library::RepRow>, String> {
+    let conn = state.conn();
+    library::rep_set_enabled(&conn, &id, enabled).map_err(err)
+}
+
+#[tauri::command]
+pub fn rep_delete(id: String, state: State<AppState>) -> Result<bool, String> {
+    let conn = state.conn();
+    library::rep_delete(&conn, &id).map_err(err)?;
+    Ok(true)
+}
+
+/// The shelf level of References & Replacements: every book holding either, with both counts.
+#[tauri::command]
+pub fn refs_reps_books(state: State<AppState>) -> Result<Vec<library::RefsRepsBook>, String> {
+    let conn = state.conn();
+    library::refs_reps_books(&conn).map_err(err)
 }
 
 #[cfg(test)]

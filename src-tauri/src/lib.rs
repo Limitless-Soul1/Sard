@@ -24,6 +24,7 @@ pub mod diag_startup;
 pub const BUILD_KIND_BANNER: &str = "SARD DIAGNOSTIC BUILD — NOT FOR RELEASE";
 pub mod library; // repositories: books, shelves, highlights, notes, bookmarks, progress (placeholder)
 pub mod books; // file import, format detection, EPUB/PDF orchestration (placeholder)
+pub mod deposit; // reading deposits: one book, its reader's marks, and a letter, in one file
 pub mod metadata; // read embedded metadata + persist user overrides (placeholder)
 pub mod fonts; // register/validate custom fonts (placeholder)
 pub mod photocards; // saved photo cards: PNG store + DB rows (RAWY-52, Photo Mode part 2a)
@@ -41,7 +42,7 @@ pub mod window_chrome; // RAWY-118: theme the native title bar to match the app 
 
 use std::path::Path;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 /// One-time, idempotent migration of legacy app-data from the old identity
 /// (`com.erawy.app` / `erawy.db`) to the new one (`com.sard.app` / `sard.db`).
@@ -114,6 +115,16 @@ macro_rules! sard_invoke_handler {
             commands::profile_package_asset,
             commands::profile_import_inspect,
             commands::profile_import_commit,
+            // READING DEPOSITS (phase 1): the sender's half. The plan is read-only and prices what the
+            // writer will write; nothing here reads or commits an incoming deposit yet.
+            commands::deposit_plan,
+            commands::deposit_export,
+            commands::deposit_inspect,
+            commands::deposit_member,
+            commands::deposit_commit,
+            commands::deposit_pending_marks,
+            commands::deposit_place_marks,
+            commands::opened_files_take, // files the OS handed us (a double-clicked deposit)
             commands::book_register,
             commands::progress_save,
             commands::progress_get,
@@ -170,6 +181,11 @@ macro_rules! sard_invoke_handler {
             commands::refs_for_book, // RAWY-260: references (phrase-bound notes)
             commands::ref_save,
             commands::ref_delete,
+            commands::reps_for_book, // replacements (phrase-bound reading-time substitutions)
+            commands::rep_save,
+            commands::rep_set_enabled,
+            commands::rep_delete,
+            commands::refs_reps_books,
             commands::highlight_delete,
             commands::notes_for_book,
             commands::note_create,
@@ -207,6 +223,99 @@ macro_rules! sard_invoke_handler {
     };
 }
 
+/// PATHS THE OPERATING SYSTEM HANDED TO SARD.
+///
+/// A deposit double-clicked in a file manager, opened with "Open with", or named on the command line
+/// arrives as an argument — on a cold start before the window exists, and on a second launch in a
+/// process that is about to exit. Both funnel here, and the frontend drains the queue when it is ready.
+///
+/// THE QUEUE IS THE ONE SOURCE OF TRUTH. The second-launch event carries no payload; it only says
+/// "look again". A path can therefore never be delivered twice, nor lost because nobody was listening.
+#[derive(Default)]
+pub struct OpenedFiles(std::sync::Mutex<Vec<String>>);
+
+impl OpenedFiles {
+    pub fn push_all(&self, paths: Vec<String>) {
+        if let Ok(mut q) = self.0.lock() {
+            q.extend(paths);
+        }
+    }
+
+    /// Hand over everything waiting and forget it.
+    pub fn take(&self) -> Vec<String> {
+        self.0.lock().map(|mut q| std::mem::take(&mut *q)).unwrap_or_default()
+    }
+}
+
+/// Which arguments are FILES the user meant to open.
+///
+/// Deliberately strict rather than clever: skip the program itself, ignore anything that looks like a
+/// switch, and keep only what exists on disk RIGHT NOW. A development run carries its own arguments and
+/// a shipped one may be handed anything at all; neither should be able to make Sard act on a path that
+/// is not a real file.
+pub fn file_args<I: IntoIterator<Item = String>>(argv: I) -> Vec<String> {
+    argv.into_iter()
+        .skip(1)
+        .filter(|a| !a.starts_with('-'))
+        .filter(|a| std::path::Path::new(a).is_file())
+        .collect()
+}
+
+#[cfg(test)]
+mod opened_files_tests {
+    use super::{file_args, OpenedFiles};
+
+    fn arg(s: &str) -> String {
+        s.to_string()
+    }
+
+    #[test]
+    fn the_program_itself_is_never_a_file_to_open() {
+        // argv[0] is Sard. Opening it would be absurd, and on Windows it is a real path that exists,
+        // so nothing but the skip protects against it.
+        let exe = std::env::current_exe().unwrap().to_string_lossy().to_string();
+        assert!(file_args(vec![exe.clone()]).is_empty());
+        // ...and the very same path is accepted when it arrives as a genuine argument.
+        assert_eq!(file_args(vec![arg("sard.exe"), exe.clone()]), vec![exe]);
+    }
+
+    #[test]
+    fn switches_are_not_files() {
+        let args = vec![arg("sard.exe"), arg("--flag"), arg("-v")];
+        assert!(file_args(args).is_empty());
+    }
+
+    #[test]
+    fn a_path_that_does_not_exist_is_refused() {
+        let args = vec![arg("sard.exe"), arg("C:/nowhere/at/all/ghost.zip")];
+        assert!(file_args(args).is_empty());
+    }
+
+    #[test]
+    fn a_directory_is_not_a_file() {
+        let dir = std::env::temp_dir().to_string_lossy().to_string();
+        assert!(file_args(vec![arg("sard.exe"), dir]).is_empty());
+    }
+
+    #[test]
+    fn the_queue_hands_each_path_over_exactly_once() {
+        let q = OpenedFiles::default();
+        q.push_all(vec![arg("a"), arg("b")]);
+        assert_eq!(q.take(), vec![arg("a"), arg("b")]);
+        // DRAINED, NOT PEEKED — the second ask is empty, which is what stops a deposit being offered
+        // twice when the window remounts.
+        assert!(q.take().is_empty());
+    }
+
+    #[test]
+    fn a_second_launch_adds_to_what_is_already_waiting() {
+        let q = OpenedFiles::default();
+        q.push_all(vec![arg("first")]);
+        q.push_all(vec![arg("second")]);
+        assert_eq!(q.take(), vec![arg("first"), arg("second")]);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // RAWY-111: two rustls crypto providers (aws-lc-rs via msedge-tts + ring via ureq 3) are compiled
@@ -225,8 +334,8 @@ pub fn run() {
     //
     // RAWY-173 (AUD-9): registered FIRST so a SECOND launch is intercepted before it opens a window
     // or attaches the same WAL DB. The callback runs in the ALREADY-RUNNING instance — focus its
-    // window instead of starting a rival that would fight over the DB + per-session state. (A file
-    // arg could be routed here later; for now, just surface the existing window.)
+    // window instead of starting a rival that would fight over the DB + per-session state, and hand it
+    // any file the second launch was asked to open.
     //
     // WHY IT MOVED OUT OF THE CHAIN ABOVE. `tauri-plugin-single-instance` opens with a CRATE-level
     // `#![cfg(not(any(target_os = "android", target_os = "ios")))]`, so on mobile the crate compiles
@@ -253,7 +362,15 @@ pub fn run() {
     let builder = if dev_data_dir_override().is_some() {
         builder
     } else {
-        builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // A FILE ARG IS NOW ROUTED, which is what the note above anticipated. The second launch
+            // hands its paths to the running instance and dies; the running window is raised and told
+            // to look at its queue.
+            let files = file_args(argv);
+            if !files.is_empty() {
+                app.state::<OpenedFiles>().push_all(files);
+                let _ = app.emit("sard://opened", ());
+            }
             if let Some(w) = app.get_webview_window("main") {
                 let _ = w.unminimize();
                 let _ = w.show();
@@ -389,6 +506,12 @@ fn dev_data_dir_override() -> Option<std::path::PathBuf> {
             });
             app.manage(tts::TtsEngine::default()); // holds the warm Edge socket + cached voice list
             app.manage(presence::PresenceManager::start()); // DISC/RPC: the worker thread (idle until used)
+
+            // A COLD START THAT WAS HANDED A FILE. Queued, not acted on: the window does not exist yet
+            // and the frontend is not listening, so it waits until something asks for it.
+            let opened = OpenedFiles::default();
+            opened.push_all(file_args(std::env::args().collect::<Vec<_>>()));
+            app.manage(opened);
             Ok(())
         });
 

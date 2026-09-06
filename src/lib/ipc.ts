@@ -866,6 +866,8 @@ export interface RefRow {
   /** Token count, so section matching can skip the multi-token scan for single-word references. */
   word_count: number;
   note: string;
+  /** Where the reader stood when they made it — `null` when it was not made from a selection. */
+  cfi: string | null;
   created_at: number | null;
   updated_at: number | null;
 }
@@ -880,8 +882,10 @@ export const refSave = (
   phraseFold: string,
   wordCount: number,
   note: string,
+  /** The selection's cfi, when the rule is being made from one. Omitted, an existing place is kept. */
+  cfi?: string | null,
 ): Promise<RefRow | null> =>
-  invoke<RefRow | null>("ref_save", { bookId, phrase, phraseFold, wordCount, note });
+  invoke<RefRow | null>("ref_save", { bookId, phrase, phraseFold, wordCount, note, cfi: cfi ?? null });
 
 export const refDelete = (id: string): Promise<boolean> => invoke<boolean>("ref_delete", { id });
 
@@ -898,6 +902,8 @@ export interface RepRow {
   word_count: number;
   /** A switch, not a delete: off restores the author's wording and keeps the rule. */
   enabled: boolean;
+  /** Where the reader stood when they made it — `null` when it was not made from a selection. */
+  cfi: string | null;
   created_at: number | null;
   updated_at: number | null;
 }
@@ -912,8 +918,10 @@ export const repSave = (
   phraseFold: string,
   replacement: string,
   wordCount: number,
+  /** The selection's cfi, when the rule is being made from one. Omitted, an existing place is kept. */
+  cfi?: string | null,
 ): Promise<RepRow | null> =>
-  invoke<RepRow | null>("rep_save", { bookId, phrase, phraseFold, replacement, wordCount });
+  invoke<RepRow | null>("rep_save", { bookId, phrase, phraseFold, replacement, wordCount, cfi: cfi ?? null });
 
 export const repSetEnabled = (id: string, enabled: boolean): Promise<RepRow | null> =>
   invoke<RepRow | null>("rep_set_enabled", { id, enabled });
@@ -975,7 +983,10 @@ export interface ProfileRow {
 
 /** Where one mark falls in the book, as far as its stored cfi can say. */
 export interface MarkSection {
-  kind: "highlight" | "note";
+  // All four kinds now, because all four can have a place: a reference and a replacement
+  // record where the reader stood when they made it. One without a place yields no section
+  // at all rather than a guessed one.
+  kind: "highlight" | "note" | "reference" | "replacement";
   id: string;
   section: string | null;
   /** Null when the cfi names a document but no position inside it — carried, never guessed. */

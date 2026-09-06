@@ -220,6 +220,11 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "mark_placement",
         include_str!("migrations_sql/20260903180000_mark_placement.sql"),
     ),
+    (
+        20_260_906_090_000,
+        "where_made",
+        include_str!("migrations_sql/20260906090000_where_made.sql"),
+    ),
 ];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.
@@ -675,6 +680,144 @@ mod tests {
 
     /// BOTH MERGE ORDERS CONVERGE. Two independent branches, each adding a migration; whichever
     /// lands first, the database ends up with the same schema and the same recorded set.
+    /// A LIBRARY THAT PREDATES THE PLACE COLUMN, UPGRADED THE WAY A LAUNCH UPGRADES IT.
+    ///
+    /// `where_made` adds `cfi` to `refs` and `reps`, and every rule written before it existed has
+    /// nowhere to have recorded one. The upgrade must therefore be a pure widening: every row still
+    /// there, every field it already had untouched, and the new column NULL — never a position
+    /// reconstructed from the phrase, from its first occurrence, or from a neighbouring chapter, none
+    /// of which is the place the reader was actually standing in.
+    ///
+    /// The fixture is built by running the real migration list with `where_made` withheld, so it is a
+    /// genuine pre-column schema rather than a hand-written imitation, and then `run` finishes it.
+    #[test]
+    fn a_library_from_before_the_place_column_upgrades_without_losing_anything() {
+        let (path, conn) = scratch("pre-cfi-upgrade");
+
+        // 1. The schema as it stood before the place column: every migration except that one.
+        let before: Vec<(i64, &str, &str)> = super::MIGRATIONS
+            .iter()
+            .filter(|(v, _, _)| *v != 20_260_906_090_000)
+            .copied()
+            .collect();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, \
+             name TEXT NOT NULL, applied_at INTEGER NOT NULL);",
+        )
+        .unwrap();
+        for (v, name, sql) in &before {
+            let tx = conn.unchecked_transaction().unwrap();
+            tx.execute_batch(sql).unwrap();
+            tx.execute(
+                "INSERT INTO schema_migrations(version, name, applied_at) VALUES(?1,?2,0)",
+                rusqlite::params![v, name],
+            )
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        assert!(
+            conn.prepare("SELECT cfi FROM refs LIMIT 1").is_err(),
+            "the fixture must not already have the column it is meant to be missing"
+        );
+
+        // 2. A reader's library in that schema: two books, and marks of every kind on both.
+        conn.execute_batch(
+            "INSERT INTO books(id, file_path, format, title, author, language, dir, size_bytes, added_at) \
+             VALUES('b1','/x/one.epub','epub','One','A','ar','rtl',11,100), \
+                   ('b2','/x/two.epub','epub','Two','B','en','ltr',22,200); \
+             INSERT INTO highlights(id, book_id, start_cfi, end_cfi, color, text_excerpt, chapter_label, created_at) \
+             VALUES('h1','b1','epubcfi(/6/14!/4/2)','epubcfi(/6/14!/4/4)','amber','kept','ch 7',300), \
+                   ('h2','b2','epubcfi(/6/8!/4/2)',NULL,'teal','also kept',NULL,301); \
+             INSERT INTO notes(id, book_id, highlight_id, locator_cfi, color, body, chapter_label, created_at, updated_at) \
+             VALUES('n1','b1','h1','epubcfi(/6/14!/4/2)','amber','a note','ch 7',400,401), \
+                   ('n2','b2',NULL,NULL,NULL,'a placeless note',NULL,402,403); \
+             INSERT INTO refs(id, book_id, phrase, phrase_fold, word_count, note, created_at, updated_at) \
+             VALUES('r1','b1','Klein','klein',1,'the fool',500,501), \
+                   ('r2','b2','Amon','amon',1,'the wrong angel',502,503); \
+             INSERT INTO reps(id, book_id, phrase, phrase_fold, replacement, word_count, enabled, created_at, updated_at) \
+             VALUES('p1','b1','Mortis','mortis','Murtis',1,1,600,601), \
+                   ('p2','b2','Lady','lady','Mistress',1,0,602,603);",
+        )
+        .unwrap();
+
+        // 3. What the library held, read back BEFORE the upgrade, so the comparison is against the
+        //    fixture itself rather than against what this test believes it wrote.
+        let read_refs = |c: &Connection| -> Vec<(String, String, String, i64, String, i64, i64)> {
+            c.prepare(
+                "SELECT id, phrase, phrase_fold, word_count, note, created_at, updated_at \
+                 FROM refs ORDER BY id",
+            )
+            .unwrap()
+            .query_map([], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
+            })
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+        };
+        let read_reps = |c: &Connection| -> Vec<(String, String, String, String, i64, i64, i64, i64)> {
+            c.prepare(
+                "SELECT id, phrase, phrase_fold, replacement, word_count, enabled, created_at, updated_at \
+                 FROM reps ORDER BY id",
+            )
+            .unwrap()
+            .query_map([], |r| {
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
+                ))
+            })
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+        };
+        let count = |c: &Connection, t: &str| -> i64 {
+            c.query_row(&format!("SELECT COUNT(*) FROM {t}"), [], |r| r.get(0)).unwrap()
+        };
+        let refs_before = read_refs(&conn);
+        let reps_before = read_reps(&conn);
+        let (hl_n, nt_n) = (count(&conn, "highlights"), count(&conn, "notes"));
+
+        // 4. THE UPGRADE, through the real runner — the same call a launch makes.
+        super::run(&conn, None).unwrap();
+        assert!(
+            recorded(&conn).contains(&20_260_906_090_000),
+            "the place column's migration should now be recorded"
+        );
+
+        // 5. Nothing lost, nothing rewritten, nothing invented.
+        assert_eq!(refs_before, read_refs(&conn), "every reference field survives the upgrade unchanged");
+        assert_eq!(reps_before, read_reps(&conn), "every replacement field too, `enabled` included");
+
+        let null_refs: i64 =
+            conn.query_row("SELECT COUNT(*) FROM refs WHERE cfi IS NULL", [], |r| r.get(0)).unwrap();
+        let null_reps: i64 =
+            conn.query_row("SELECT COUNT(*) FROM reps WHERE cfi IS NULL", [], |r| r.get(0)).unwrap();
+        assert_eq!(null_refs, 2, "no place is invented for a rule that never recorded one");
+        assert_eq!(null_reps, 2, "nor for a replacement");
+
+        assert_eq!(count(&conn, "highlights"), hl_n, "highlights are untouched");
+        assert_eq!(count(&conn, "notes"), nt_n, "notes are untouched");
+        assert_eq!(count(&conn, "books"), 2, "and both books are still on the shelf");
+        let h1: String = conn
+            .query_row("SELECT start_cfi FROM highlights WHERE id='h1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(h1, "epubcfi(/6/14!/4/2)", "a highlight's own place is not disturbed");
+
+        // 6. And it is idempotent — a second launch changes nothing.
+        super::run(&conn, None).unwrap();
+        assert_eq!(count(&conn, "refs"), 2);
+        assert_eq!(count(&conn, "reps"), 2);
+        assert_eq!(read_refs(&conn), refs_before);
+        let _ = std::fs::remove_file(&path);
+    }
+
     #[test]
     fn independent_branches_converge_in_either_order() {
         const BRANCH_A: (i64, &str, &str) =

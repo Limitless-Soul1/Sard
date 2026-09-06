@@ -1542,10 +1542,12 @@ pub fn ref_save(
     phrase_fold: String,
     word_count: i64,
     note: String,
+    // Where the selection stood, when the rule came from one. None from the library screen.
+    cfi: Option<String>,
     state: State<AppState>,
 ) -> Result<Option<library::RefRow>, String> {
     let conn = state.conn();
-    library::ref_save(&conn, &book_id, &phrase, &phrase_fold, word_count, &note).map_err(err)
+    library::ref_save(&conn, &book_id, &phrase, &phrase_fold, word_count, &note, cfi.as_deref()).map_err(err)
 }
 
 #[tauri::command]
@@ -1571,10 +1573,13 @@ pub fn rep_save(
     phrase_fold: String,
     replacement: String,
     word_count: i64,
+    // Where the selection stood, when the rule came from one. None from the library screen.
+    cfi: Option<String>,
     state: State<AppState>,
 ) -> Result<Option<library::RepRow>, String> {
     let conn = state.conn();
-    library::rep_save(&conn, &book_id, &phrase, &phrase_fold, &replacement, word_count).map_err(err)
+    library::rep_save(&conn, &book_id, &phrase, &phrase_fold, &replacement, word_count, cfi.as_deref())
+        .map_err(err)
 }
 
 /// Switch one rule on or off. Not a delete: the author's wording returns and the rule is kept.

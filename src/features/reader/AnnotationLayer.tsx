@@ -704,7 +704,7 @@ export function AnnotationLayer({
     // Replacing a phrase that already has a rule EDITS it rather than creating a second one that would
       // fight the first over the same words. Matched from EITHER side: once a rule is live the
       // page shows the replacement, so the words a reader selects are the new ones, not the author's.
-    setRepDialog({ phrase, existing: useReplacements.getState().byText(phrase) ?? null });
+    setRepDialog({ phrase, cfi: s.cfi, existing: useReplacements.getState().byText(phrase) ?? null });
   };
   // RAWY-124: Listen from the selection — hand the passage up to start read-aloud from here.
   const onListenSel = () => {
@@ -750,8 +750,10 @@ export function AnnotationLayer({
   // the reader taps a marked phrase. A tap on the popup opens the dialog on that reference, which is the
   // edit path — no extra button, and the note is immediately editable.
   const refs = useReferences();
-  const [refDialog, setRefDialog] = useState<{ phrase: string; existing: RefRow | null } | null>(null);
-  const [repDialog, setRepDialog] = useState<{ phrase: string; existing: RepRow | null } | null>(null);
+  // THE PLACE IS TAKEN AT THE SELECTION, not at the save. By the time the dialog is answered the
+  // selection has been cleared - which is why it is carried here, alongside the phrase it came from.
+  const [refDialog, setRefDialog] = useState<{ phrase: string; cfi?: string; existing: RefRow | null } | null>(null);
+  const [repDialog, setRepDialog] = useState<{ phrase: string; cfi: string; existing: RepRow | null } | null>(null);
   const reps = useReplacements();
   const [refPopup, setRefPopup] = useState<{ row: RefRow; rect: AnchorRect } | null>(null);
   useEffect(() => {
@@ -767,7 +769,7 @@ export function AnnotationLayer({
     setSelection(null);
     clearSel();
     // Referencing a phrase that already has one EDITS it rather than creating a duplicate.
-    setRefDialog({ phrase, existing: useReferences.getState().byPhrase(phrase) ?? null });
+    setRefDialog({ phrase, cfi: s.cfi, existing: useReferences.getState().byPhrase(phrase) ?? null });
   };
 
   return (
@@ -780,6 +782,8 @@ export function AnnotationLayer({
           <ReferencePopup
             row={refPopup.row}
             rect={refPopup.rect}
+            // EDITING one that already exists, not making one: there is no selection behind this,
+            // so no place is sent and the one the row already holds is left as it is.
             onOpen={() => { setRefDialog({ phrase: refPopup.row.phrase, existing: refPopup.row }); setRefPopup(null); }}
           />
         </>
@@ -789,7 +793,7 @@ export function AnnotationLayer({
           phrase={repDialog.phrase}
           existing={repDialog.existing}
           bookTitle={useReader.getState().bookTitle ?? ""}
-          onSave={async (from, to) => { await reps.save(from, to); setRepDialog(null); }}
+          onSave={async (from, to) => { await reps.save(from, to, repDialog.cfi); setRepDialog(null); }}
           onDelete={async () => { if (repDialog.existing) await reps.remove(repDialog.existing.id); setRepDialog(null); }}
           onClose={() => setRepDialog(null)}
         />
@@ -798,7 +802,7 @@ export function AnnotationLayer({
         <ReferenceDialog
           phrase={refDialog.phrase}
           existing={refDialog.existing}
-          onSave={async (note) => { await refs.save(refDialog.phrase, note); setRefDialog(null); }}
+          onSave={async (note) => { await refs.save(refDialog.phrase, note, refDialog.cfi); setRefDialog(null); }}
           onDelete={async () => { if (refDialog.existing) await refs.remove(refDialog.existing.id); setRefDialog(null); }}
           onClose={() => setRefDialog(null)}
         />

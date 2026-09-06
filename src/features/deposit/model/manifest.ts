@@ -53,12 +53,19 @@ export interface ManifestReference {
   phrase_fold: string;
   word_count: number;
   note: string;
+  /** Where the sender made it, so the receiver's map can draw it where the sender's did. Absent on
+   *  a copy written before this travelled, and on a rule that never had a place — both unplaced. */
+  section?: string | null;
+  section_index?: number | null;
 }
 export interface ManifestReplacement {
   phrase: string;
   phrase_fold: string;
   word_count: number;
   replacement: string;
+  /** Where the sender made it — see ManifestReference. */
+  section?: string | null;
+  section_index?: number | null;
 }
 
 export interface DepositManifest {
@@ -158,9 +165,15 @@ export function buildManifest(input: BuildInput): DepositManifest {
       of_highlight: n.highlight_id ? indexOfHighlight.get(n.highlight_id) ?? null : null,
     }));
 
+  // THE PLACE TRAVELS WITH THE RULE. Without it the receiver's map would show his own copy's
+  // references nowhere, while the sender's showed them at their chapters - the same reading drawn two
+  // different ways depending on who is looking.
   const references = input.references
     .filter((r) => selection.references.has(r.id))
-    .map((r) => ({ phrase: r.phrase, phrase_fold: r.phrase_fold, word_count: r.word_count, note: r.note }));
+    .map((r) => ({
+      phrase: r.phrase, phrase_fold: r.phrase_fold, word_count: r.word_count, note: r.note,
+      ...sectionOf(plan, r.id),
+    }));
 
   const replacements = input.replacements
     .filter((r) => selection.replacements.has(r.id))
@@ -169,6 +182,7 @@ export function buildManifest(input: BuildInput): DepositManifest {
       phrase_fold: r.phrase_fold,
       word_count: r.word_count,
       replacement: r.replacement,
+      ...sectionOf(plan, r.id),
       // `enabled` deliberately does NOT travel: an imported substitution arrives switched off, and
       // whether the SENDER had it on says nothing about whether the receiver wants it on.
     }));

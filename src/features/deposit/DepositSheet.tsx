@@ -33,7 +33,7 @@ import { DepositLayers, type LayerSlips } from "./DepositLayers";
 import { DepositMap } from "./DepositMap";
 import { DepositRead } from "./DepositRead";
 import { bindAll, boundCount, setLayer, toggleMark } from "./model/bind";
-import { buildMap } from "./model/map";
+import { buildMap, totalIn } from "./model/map";
 import { useIncomingDeposit } from "./store";
 import {
   buildManifest,
@@ -119,8 +119,6 @@ export function DepositSheet({ book, onClose }: { book: BookRow; onClose: () => 
         ? buildMap({
             plan,
             bound: selection,
-            referenceIds: [...selection.references],
-            replacementIds: [...selection.replacements],
           })
         : null,
     [plan, selection],
@@ -309,6 +307,7 @@ export function DepositSheet({ book, onClose }: { book: BookRow; onClose: () => 
         onOpen={setOpenLayer}
         onSetLayer={(k, on) => setSelection((s) => setLayer(s, k, rows, on))}
         onToggleMark={(k, id) => setSelection((s) => toggleMark(s, k, id))}
+        unplaced={map ? totalIn(map.sectionless) : 0}
       />
 
       <footer className="dep-foot">

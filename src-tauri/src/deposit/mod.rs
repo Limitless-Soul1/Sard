@@ -195,7 +195,10 @@ pub fn plan(conn: &Connection, app_data_dir: &Path, book_id: &str) -> Result<Pla
     let refs = library::refs_for_book(conn, book_id).map_err(|e| e.to_string())?;
     let reps = library::reps_for_book(conn, book_id).map_err(|e| e.to_string())?;
 
-    let mut sections: Vec<MarkSection> = Vec::with_capacity(highlights.len() + notes.len());
+    // ALL FOUR KINDS GO INTO ONE LIST. The map stacks them into the same bands, so the plan hands it
+    // one stream of marks and lets the band arithmetic sort them out.
+    let mut sections: Vec<MarkSection> =
+        Vec::with_capacity(highlights.len() + notes.len() + refs.len() + reps.len());
     for h in &highlights {
         let sec = cfi_section(&h.cfi);
         sections.push(MarkSection {
@@ -210,6 +213,25 @@ pub fn plan(conn: &Connection, app_data_dir: &Path, book_id: &str) -> Result<Pla
         sections.push(MarkSection {
             kind: "note".into(),
             id: n.id.clone(),
+            section_index: sec.as_deref().and_then(|s| section_index(s, spine_count)),
+            section: sec,
+        });
+    }
+
+    for r in &refs {
+        let sec = r.cfi.as_deref().and_then(cfi_section);
+        sections.push(MarkSection {
+            kind: "reference".into(),
+            id: r.id.clone(),
+            section_index: sec.as_deref().and_then(|s| section_index(s, spine_count)),
+            section: sec,
+        });
+    }
+    for r in &reps {
+        let sec = r.cfi.as_deref().and_then(cfi_section);
+        sections.push(MarkSection {
+            kind: "replacement".into(),
+            id: r.id.clone(),
             section_index: sec.as_deref().and_then(|s| section_index(s, spine_count)),
             section: sec,
         });

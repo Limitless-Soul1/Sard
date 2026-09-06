@@ -1,14 +1,28 @@
 // THE READING MAP — where this reader went, drawn before a word of it is read.
 //
-// «خريطة قراءتي» when it is yours, «خريطة قراءته» when it is his. One bar per stretch of the book,
-// right to left, each stacked by the KIND of mark made there, in one fixed order so the strata read
-// alike from one bar to the next. You can see the shape of someone's reading before reading any of it:
-// where they went quiet, where they stopped four times in sixty chapters.
+// «خريطة قراءتي» when it is yours, «خريطة قراءته» when it is his. A STACKED COLUMN CHART: twenty-four
+// fixed columns across the book, one per stretch, each stacked by the KIND of mark made there in one
+// fixed order so the strata read alike from one column to the next. All four kinds share a column —
+// a stretch is one bar, never four — and a kind with nothing in that stretch takes no room at all.
+// You can see the shape of someone's reading before reading any of it: where they went quiet, where
+// they stopped four times in sixty chapters.
 //
 // A STRATUM'S HEIGHT IS ITS COUNT, NOT ITS SHARE. Thirteen pixels a mark, capped at forty-six, exactly
 // as the reference draws it. Absolute rather than normalised on purpose: normalising to the busiest
 // stretch makes one dense chapter flatten the whole book, and "four times in sixty chapters" stops
 // being legible. The cap is what keeps one crowded stretch from towering over the rest.
+//
+// THE FRAME IS A BOUNDARY, AND THE MAP IS CONTAINED BY IT. Four kinds at the cap is 4x46 + 3x2 = 190px
+// in a 112px box, so a genuinely crowded stretch is taller than the frame it stands in. What is drawn
+// stops at the frame's top edge. The heights themselves are untouched — a segment is still its count —
+// and every mark stays in the model, the sheaf, the manifest and the transfer; the map is a viewport
+// on the stack, not a recount of it.
+//
+// WHY CONTAINMENT WINS. Without the clip the top of a dense stack paints over the map's own header and
+// into the inscription above it, and past 158px it vanishes behind that card regardless, because a
+// textarea paints above the backgrounds of later siblings. Covering unrelated UI is the worse of the
+// two failures. Measured: real reading data reaches 46px and the reference's own fixture 87px, so the
+// boundary is reached only by a stretch holding roughly nine or more marks of three or more kinds.
 //
 // PRESSING A STRATUM TAKES OR RELEASES ITS WHOLE LAYER — the map is a control, not a picture. It is
 // the same act as the layer's own checkbox below, so there is one way for a layer to change and two
@@ -111,8 +125,6 @@ export function DepositMap({
   const { t, lang } = useI18n();
   const hl = resolveTheme(useTheme((s) => s.themeId)).colors.highlight;
   const tint = (k: keyof Strata) => colorValue(TINT_SLOT[k], hl);
-  const loose = totalIn(map.sectionless);
-  const whole = totalIn(map.wholeBook);
   return (
     <section className="dep-map">
       <header className="dep-map-head">
@@ -134,18 +146,28 @@ export function DepositMap({
               <Bar key={b.index} band={b} tint={tint} possessive={possessive} onSetLayer={onSetLayer} />
             ))}
           </div>
-          {/* THE AXIS. A rule under every bar, lit where that stretch has something bound, and the
-              book's own chapter numbers under every sixth — which is what turns a row of bars into a
-              map of a book rather than a chart. Each number sits under ITS OWN bar, so a label never
-              names a stretch it is not standing on. Western digits in every language, per Sard's rule. */}
+          {/* THE RULE ROW — NOT AN AXIS. There is no continuous line anywhere in the map: this is
+              twenty-four separate 2px segments on the same tracks as the bands above, each saying
+              what its own stretch holds. Warm where something in that stretch is taken; on a received
+              map, faintly warm where he marked a stretch you have taken nothing from — so his reading
+              never arrives looking empty; otherwise the chrome's own rule, for silence.
+              The book's chapter numbers sit under every sixth segment, each under ITS OWN stretch, so
+              a number never names a stretch it is not standing on. A band past the end of a short
+              book gets no number, because there is no such chapter to name. */}
           <div className="dep-axis">
             {map.bands.map((b, i) => (
               <div className="dep-axis-cell" key={b.index}>
-                <span className="dep-axis-rule" data-bound={totalIn(b.bound) > 0 ? "1" : undefined} aria-hidden />
+                <span
+                  className="dep-axis-rule"
+                  data-rule={
+                    totalIn(b.bound) > 0 ? "on" : possessive === "theirs" && totalIn(b.all) > 0 ? "his" : undefined
+                  }
+                  aria-hidden
+                />
                 <span className="dep-axis-label" aria-hidden>
                   {i === 0
                     ? t("dep.mapChapter", { n: localeNum(1, lang) })
-                    : i % LABEL_EVERY === 0
+                    : i % LABEL_EVERY === 0 && b.to >= b.from
                       ? localeNum(b.from + 1, lang)
                       : ""}
                 </span>
@@ -153,14 +175,6 @@ export function DepositMap({
             ))}
           </div>
         </>
-      )}
-      {/* WHAT HAS NO PLACE ON THE MAP is said in words rather than drawn at a guessed one: a mark whose
-          cfi names no position, and the two layers that belong to the whole book by construction. */}
-      {(loose > 0 || whole > 0) && (
-        <div className="dep-map-foot">
-          {whole > 0 && <span>{t("dep.mapWhole", { n: localeNum(whole, lang) })}</span>}
-          {loose > 0 && <span>{t("dep.mapLoose", { n: localeNum(loose, lang) })}</span>}
-        </div>
       )}
     </section>
   );

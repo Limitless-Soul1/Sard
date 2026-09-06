@@ -32,7 +32,7 @@ interface RepState {
   byText: (text: string) => RepRow | undefined;
   byId: (id: string) => RepRow | undefined;
   /** Create OR edit — one path, matching the single editor in the design. */
-  save: (phrase: string, replacement: string) => Promise<RepRow | null>;
+  save: (phrase: string, replacement: string, cfi?: string | null) => Promise<RepRow | null>;
   setEnabled: (id: string, enabled: boolean) => Promise<void>;
   remove: (id: string) => Promise<void>;
 }
@@ -77,13 +77,14 @@ export const useReplacements = create<RepState>((set, get) => ({
   },
   byId: (id) => get().reps.find((r) => r.id === id),
 
-  save: async (phrase, replacement) => {
+  // The place the selection stood in, carried to the row — see the note in `referencesStore`.
+  save: async (phrase, replacement, cfi) => {
     const { bookId, ctrl } = get();
     if (!bookId) return null;
     const fold = foldPhrase(phrase);
     if (!fold) return null; // nothing to match on (punctuation or whitespace only)
     try {
-      const row = await repSave(bookId, phrase.trim(), fold, replacement.trim(), phraseWordCount(phrase));
+      const row = await repSave(bookId, phrase.trim(), fold, replacement.trim(), phraseWordCount(phrase), cfi);
       if (!row) return null;
       // Upsert by id: the backend keys on (book, folded phrase), so an edit returns the ORIGINAL row id.
       const next = get().reps.some((r) => r.id === row.id)

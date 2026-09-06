@@ -105,6 +105,12 @@ export function inspectDeposit(text: string): Inspection {
       of_highlight: of !== null && of >= 0 && of < highlights.length ? of : null,
     };
   });
+  // THE PLACE ARRIVES WITH THE RULE, exactly as it does for a highlight or a note. Read back here or
+  // it is lost: this reader rebuilds every row field by field rather than passing the parsed object
+  // through, so a field it does not name is a field the receiver never sees. Measured — his map drew
+  // his highlights and his notes at their chapters and his references and replacements nowhere at all,
+  // while the sender's own map drew all four. A copy written before the place travelled carries
+  // neither field, and those still arrive unplaced.
   const references: ManifestReference[] = arr(marks.references)
     .map((x) => {
       const r = obj(x);
@@ -113,6 +119,8 @@ export function inspectDeposit(text: string): Inspection {
         phrase_fold: str(r.phrase_fold),
         word_count: numOrNull(r.word_count) ?? 1,
         note: str(r.note),
+        section: strOrNull(r.section),
+        section_index: numOrNull(r.section_index),
       };
     })
     .filter((r) => r.phrase.length > 0);
@@ -124,6 +132,8 @@ export function inspectDeposit(text: string): Inspection {
         phrase_fold: str(r.phrase_fold),
         word_count: numOrNull(r.word_count) ?? 1,
         replacement: str(r.replacement),
+        section: strOrNull(r.section),
+        section_index: numOrNull(r.section_index),
       };
     })
     .filter((r) => r.phrase.length > 0);

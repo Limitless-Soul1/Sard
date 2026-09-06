@@ -22,7 +22,8 @@ export interface Strata {
 export interface Band {
   /** 0 is the first stretch of the book. The RTL drawing order is the view's business, not this. */
   index: number;
-  /** From, to — section ordinals this bar covers, for the caption. */
+  /** From, to — section ordinals this bar covers, for the caption. `to < from` where the band lies
+   *  past the end of a book too short to fill twenty-four of them. */
   from: number;
   to: number;
   /** Everything that falls here. */
@@ -34,54 +35,57 @@ export interface Band {
 export interface ReadingMap {
   bands: Band[];
   /** Marks whose cfi names no position — they have a text but nowhere to stand. Never guessed onto a
-   *  band; they are reported here and shown in the map's foot. */
+   *  band, and never drawn: the map is a map, and they are counted in the sheaf like every other mark. */
   sectionless: Strata;
-  /** References and replacements apply to the whole book by construction: they key on a phrase, not a
-   *  position, so drawing them at a chapter would be drawing a false shape. */
-  wholeBook: Strata;
   spineCount: number | null;
 }
 
 const zero = (): Strata => ({ highlights: 0, notes: 0, references: 0, replacements: 0 });
 
-/**
- * How many bars to draw.
- *
- * The design's sheet shows twenty-four across 1432 chapters — roughly sixty chapters a bar, which is
- * what makes them "substantial strips, not hairlines". Twenty-four over a nine-section book would be
- * slivers of nothing, so the count is bounded by the spine itself.
- */
+/** THE BOOK IS ALWAYS TWENTY-FOUR BANDS WIDE. Fixed by the design: not derived from the data, not
+ *  responsive. A short book simply leaves its trailing bands with no chapters in them. */
+export const BANDS = 24;
+
+/** How many bars to draw: twenty-four, or none at all when the book has no spine to draw. */
 export const bandCount = (spineCount: number | null | undefined): number => {
   if (!spineCount || spineCount < 1) return 0;
-  return Math.max(1, Math.min(24, spineCount));
+  return BANDS;
 };
+
+/** Chapters to a band — `ceil`, so the last band is the short one rather than the first. */
+export const bandSpan = (spineCount: number, bands: number): number =>
+  Math.max(1, Math.ceil(spineCount / Math.max(1, bands)));
 
 /** Which bar a section ordinal falls in. */
 export const bandOf = (sectionIndex: number, spineCount: number, bands: number): number =>
-  Math.min(bands - 1, Math.floor((sectionIndex / spineCount) * bands));
+  Math.min(bands - 1, Math.max(0, Math.floor(sectionIndex / bandSpan(spineCount, bands))));
 
 export interface MapInput {
   plan: DepositPlan;
   /** Bound row ids, by layer — the same selection the manifest is built from. */
   bound: { highlights: Set<string>; notes: Set<string>; references: Set<string>; replacements: Set<string> };
-  /** All reference and replacement ids available, since neither carries a position. */
-  referenceIds: string[];
-  replacementIds: string[];
 }
 
 export function buildMap(input: MapInput): ReadingMap {
   const spineCount = input.plan.spine_count ?? null;
   const n = bandCount(spineCount);
+  const per = spineCount ? bandSpan(spineCount, n) : 0;
   const bands: Band[] = [];
   for (let i = 0; i < n; i++) {
-    const from = spineCount ? Math.floor((i * spineCount) / n) : 0;
-    const to = spineCount ? Math.max(from, Math.floor(((i + 1) * spineCount) / n) - 1) : 0;
+    // `to < from` on a band the book never reaches — twenty-four is fixed, so a short book runs out
+    // of chapters before it runs out of bands. Those bands are drawn, empty, and carry no number.
+    const from = i * per;
+    const to = spineCount ? Math.min(spineCount, (i + 1) * per) - 1 : 0;
     bands.push({ index: i, from, to, all: zero(), bound: zero() });
   }
   const sectionless = zero();
-  const wholeBook = zero();
 
-  const place = (m: MarkSection, key: "highlights" | "notes", isBound: boolean) => {
+  // EVERY KIND GOES THROUGH ONE DOOR. All four stack into the same twenty-four bands by the chapter
+  // each was made in; a mark whose cfi names no position — an unanchorable highlight, a reference made
+  // before Sard recorded where it was made — is counted apart and left off the map entirely. It keeps
+  // its place in the layer counts, the sheaf, the manifest and the transfer; what it does not get is
+  // a chapter it never had.
+  const place = (m: MarkSection, key: keyof Strata, isBound: boolean) => {
     if (spineCount && n > 0 && m.section_index !== null && m.section_index !== undefined) {
       const b = bands[bandOf(m.section_index, spineCount, n)];
       b.all[key]++;
@@ -91,15 +95,19 @@ export function buildMap(input: MapInput): ReadingMap {
     }
   };
 
+  const KEY: Record<string, keyof Strata> = {
+    highlight: "highlights",
+    note: "notes",
+    reference: "references",
+    replacement: "replacements",
+  };
   for (const m of input.plan.sections) {
-    if (m.kind === "highlight") place(m, "highlights", input.bound.highlights.has(m.id));
-    else if (m.kind === "note") place(m, "notes", input.bound.notes.has(m.id));
+    const key = KEY[m.kind];
+    if (!key) continue;
+    place(m, key, input.bound[key].has(m.id));
   }
 
-  wholeBook.references = input.referenceIds.length;
-  wholeBook.replacements = input.replacementIds.length;
-
-  return { bands, sectionless, wholeBook, spineCount };
+  return { bands, sectionless, spineCount };
 }
 
 /** The tallest stack in the map, so a view can scale every bar against one number. */

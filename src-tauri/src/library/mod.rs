@@ -1589,6 +1589,10 @@ pub struct RefRow {
     pub phrase_fold: String,
     pub word_count: i64,
     pub note: String,
+    /// Where the reader stood when they made it. NULL for a rule typed into the library rather
+    /// than taken from a selection, and for every row written before the column existed. Never
+    /// guessed: the places the phrase occurs are where the WORD is, not where the reader was.
+    pub cfi: Option<String>,
     pub created_at: Option<i64>,
     pub updated_at: Option<i64>,
 }
@@ -1601,12 +1605,14 @@ fn ref_row(r: &rusqlite::Row) -> rusqlite::Result<RefRow> {
         phrase_fold: r.get(3)?,
         word_count: r.get(4)?,
         note: r.get(5)?,
-        created_at: r.get(6)?,
-        updated_at: r.get(7)?,
+        cfi: r.get(6)?,
+        created_at: r.get(7)?,
+        updated_at: r.get(8)?,
     })
 }
 
-const REF_COLS: &str = "id, book_id, phrase, phrase_fold, word_count, note, created_at, updated_at";
+const REF_COLS: &str =
+    "id, book_id, phrase, phrase_fold, word_count, note, cfi, created_at, updated_at";
 
 /// Every reference for one book — the whole set, loaded once when the book opens and then held in memory
 /// for per-section matching. A book's references are counted in tens, not thousands, so this is one small
@@ -1631,16 +1637,21 @@ pub fn ref_save(
     phrase_fold: &str,
     word_count: i64,
     note: &str,
+    cfi: Option<&str>,
 ) -> rusqlite::Result<Option<RefRow>> {
     let id = gen_id(&format!("ref:{book_id}:{phrase_fold}"));
     let now = now_unix();
     conn.execute(
-        "INSERT INTO refs(id, book_id, phrase, phrase_fold, word_count, note, created_at, updated_at) \
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?7) \
+        // COALESCE, so an edit can never erase a place. The library screen saves the same rule
+        // with no selection behind it, and writing NULL over the cfi there would quietly take the
+        // rule off the map. A place is gained here, never lost.
+        "INSERT INTO refs(id, book_id, phrase, phrase_fold, word_count, note, cfi, created_at, updated_at) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?8) \
          ON CONFLICT(book_id, phrase_fold) DO UPDATE SET \
             phrase=excluded.phrase, word_count=excluded.word_count, note=excluded.note, \
+             cfi=COALESCE(excluded.cfi, refs.cfi), \
             updated_at=excluded.updated_at",
-        rusqlite::params![id, book_id, phrase, phrase_fold, word_count, note, now],
+        rusqlite::params![id, book_id, phrase, phrase_fold, word_count, note, cfi, now],
     )?;
     // The conflict target is (book_id, phrase_fold), not the id, so on an edit the row keeps its ORIGINAL
     // id — re-derive it from the unique key rather than assuming the id we just generated.
@@ -1678,12 +1689,16 @@ pub struct RepRow {
     pub replacement: String,
     pub word_count: i64,
     pub enabled: bool,
+    /// Where the reader stood when they made it. NULL for a rule typed into the library rather
+    /// than taken from a selection, and for every row written before the column existed. Never
+    /// guessed: the places the phrase occurs are where the WORD is, not where the reader was.
+    pub cfi: Option<String>,
     pub created_at: Option<i64>,
     pub updated_at: Option<i64>,
 }
 
 const REP_COLS: &str =
-    "id, book_id, phrase, phrase_fold, replacement, word_count, enabled, created_at, updated_at";
+    "id, book_id, phrase, phrase_fold, replacement, word_count, enabled, cfi, created_at, updated_at";
 
 fn rep_row(r: &rusqlite::Row) -> rusqlite::Result<RepRow> {
     Ok(RepRow {
@@ -1694,8 +1709,9 @@ fn rep_row(r: &rusqlite::Row) -> rusqlite::Result<RepRow> {
         replacement: r.get(4)?,
         word_count: r.get(5)?,
         enabled: r.get::<_, i64>(6)? != 0,
-        created_at: r.get(7)?,
-        updated_at: r.get(8)?,
+        cfi: r.get(7)?,
+        created_at: r.get(8)?,
+        updated_at: r.get(9)?,
     })
 }
 
@@ -1721,16 +1737,21 @@ pub fn rep_save(
     phrase_fold: &str,
     replacement: &str,
     word_count: i64,
+    cfi: Option<&str>,
 ) -> rusqlite::Result<Option<RepRow>> {
     let id = gen_id(&format!("rep:{book_id}:{phrase_fold}"));
     let now = now_unix();
     conn.execute(
-        "INSERT INTO reps(id, book_id, phrase, phrase_fold, replacement, word_count, enabled, created_at, updated_at) \
-         VALUES(?1,?2,?3,?4,?5,?6,1,?7,?7) \
+        // COALESCE, so an edit can never erase a place. The library screen saves the same rule
+        // with no selection behind it, and writing NULL over the cfi there would quietly take the
+        // rule off the map. A place is gained here, never lost.
+        "INSERT INTO reps(id, book_id, phrase, phrase_fold, replacement, word_count, enabled, cfi, created_at, updated_at) \
+         VALUES(?1,?2,?3,?4,?5,?6,1,?7,?8,?8) \
          ON CONFLICT(book_id, phrase_fold) DO UPDATE SET \
             phrase=excluded.phrase, replacement=excluded.replacement, \
-            word_count=excluded.word_count, updated_at=excluded.updated_at",
-        rusqlite::params![id, book_id, phrase, phrase_fold, replacement, word_count, now],
+            word_count=excluded.word_count, cfi=COALESCE(excluded.cfi, reps.cfi), \
+            updated_at=excluded.updated_at",
+        rusqlite::params![id, book_id, phrase, phrase_fold, replacement, word_count, cfi, now],
     )?;
     // The conflict target is (book_id, phrase_fold), so on an edit the row keeps its ORIGINAL id —
     // re-read by the unique key rather than assuming the id just generated.

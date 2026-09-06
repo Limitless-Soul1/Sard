@@ -98,6 +98,7 @@ export function DepositLayers({
   /** «ما ظلّلتُه» when it is your reading, «ما ظلّله» when it is someone else's. */
   possessive = "mine",
   labelKey = "dep.sheafLabel",
+  unplaced = 0,
 }: {
   slips: LayerSlips;
   selection: Selection;
@@ -108,6 +109,15 @@ export function DepositLayers({
   onTakeTheirs?: (k: LayerKey, id: string) => void;
   possessive?: "mine" | "theirs";
   labelKey?: string;
+  /**
+   * How many marks carry no place in the book.
+   *
+   * THE MAP IS SPATIAL AND THESE HAVE NO SPACE, so the sheaf is where the fact belongs — a footnote
+   * under the layers, never a shape on the map. It says the marks are here and that the map has
+   * nowhere to draw them; it says nothing about which KIND they are, because the kind is not the
+   * reason. A reference made from a page has a place and is drawn like any other mark.
+   */
+  unplaced?: number;
 }) {
   const { t, lang } = useI18n();
   const asRows: LayerRows = slips;
@@ -185,6 +195,14 @@ export function DepositLayers({
           );
         })}
       </ul>
+      {/* Only when there is something to explain — silence when every mark has a place. */}
+      {unplaced && unplaced > 0 ? (
+        <p className="dep-unplaced">
+          {unplaced === 1
+            ? t("dep.unplacedOne")
+            : t("dep.unplacedMany", { n: localeNum(unplaced, lang) })}
+        </p>
+      ) : null}
     </section>
   );
 }

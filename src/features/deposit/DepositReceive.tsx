@@ -28,7 +28,7 @@ import {
 import { DepositLayers, type LayerSlips } from "./DepositLayers";
 import { DepositMap } from "./DepositMap";
 import { DepositRead } from "./DepositRead";
-import { buildMap } from "./model/map";
+import { buildMap, totalIn } from "./model/map";
 import { inspectDeposit, type Inspection } from "./model/inspect";
 import { emptySelection, LAYERS, type DepositManifest, type LayerKey, type Selection } from "./model/manifest";
 import { useIncomingDeposit } from "./store";
@@ -228,6 +228,20 @@ export function DepositReceive({ path, onClose }: { path: string; onClose: () =>
           section: n.section,
           section_index: n.section_index,
         })),
+        // The other two kinds place themselves the same way, from the place the sender recorded.
+        // A copy written before that travelled carries neither field, and those arrive unplaced.
+        ...manifest.marks.references.map((r, i) => ({
+          kind: "reference" as const,
+          id: String(i),
+          section: r.section ?? null,
+          section_index: r.section_index ?? null,
+        })),
+        ...manifest.marks.replacements.map((r, i) => ({
+          kind: "replacement" as const,
+          id: String(i),
+          section: r.section ?? null,
+          section_index: r.section_index ?? null,
+        })),
       ],
       counts: {
         highlights: manifest.marks.highlights.length,
@@ -239,8 +253,6 @@ export function DepositReceive({ path, onClose }: { path: string; onClose: () =>
     return buildMap({
       plan,
       bound: selection,
-      referenceIds: [...selection.references],
-      replacementIds: [...selection.replacements],
     });
   }, [manifest, selection]);
 
@@ -494,6 +506,7 @@ export function DepositReceive({ path, onClose }: { path: string; onClose: () =>
           onOpen={setOpenLayer}
           possessive="theirs"
           labelKey="dep.recv.sheafLabel"
+          unplaced={map ? totalIn(map.sectionless) : 0}
           onSetLayer={(k, on) =>
             setSelection((s) => ({ ...s, [k]: on ? new Set(slips[k].map((x) => x.id)) : new Set() }))
           }

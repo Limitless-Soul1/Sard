@@ -96,6 +96,41 @@ describe("inspecting a deposit", () => {
     expect(m.marks.highlights[0].cfi).toBe("epubcfi(/6/8)");
   });
 
+  it("carries a reference's and a replacement's place through, so his map is not blank", () => {
+    // MEASURED, THEN FIXED. The reader rebuilds every row field by field, and these two were missing
+    // the two fields the map is drawn from: the sender's own sheet showed all four kinds at their
+    // chapters and the receiver's showed highlights and notes only.
+    const m = ok(
+      good({
+        marks: {
+          highlights: [],
+          notes: [],
+          references: [{ phrase: "term", phrase_fold: "term", word_count: 1, note: "n", section: "/6/1986", section_index: 992 }],
+          replacements: [{ phrase: "from", phrase_fold: "from", word_count: 1, replacement: "to", section: "/6/1490", section_index: 744 }],
+        },
+      }),
+    );
+    expect(m.marks.references[0].section_index).toBe(992);
+    expect(m.marks.references[0].section).toBe("/6/1986");
+    expect(m.marks.replacements[0].section_index).toBe(744);
+    expect(m.marks.replacements[0].section).toBe("/6/1490");
+  });
+
+  it("leaves a rule from a copy written before the place travelled unplaced", () => {
+    const m = ok(
+      good({
+        marks: {
+          highlights: [],
+          notes: [],
+          references: [{ phrase: "term", phrase_fold: "term", word_count: 1, note: "n" }],
+          replacements: [{ phrase: "from", phrase_fold: "from", word_count: 1, replacement: "to" }],
+        },
+      }),
+    );
+    expect(m.marks.references[0].section_index).toBeNull();
+    expect(m.marks.replacements[0].section_index).toBeNull();
+  });
+
   it("drops a note's link when it points at no highlight", () => {
     const m = ok(
       good({

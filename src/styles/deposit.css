@@ -171,12 +171,21 @@
 .dep-done .dep-actions { margin-top: 24px; }
 /* The hairline the reference rules between the map's name and its note. */
 .dep-map-rule { flex: 1; height: 1px; background: var(--chrome-border); }
+/* THE FRAME IS A BOUNDARY. One hundred and twelve pixels is the height the reference draws, and the
+   map is contained by it: a stack grows from the baseline as its counts say, and the part that would
+   stand above the frame is simply not shown.
+   THE HEIGHTS ARE NOT TOUCHED — a segment is still min(count x 13, 46), and every mark is still in the
+   model, the sheaf, the manifest and the transfer. This is a viewport, not a recount.
+   The reference declares no overflow here, and its own densest stretch reaches 87px of the 112, so it
+   never had to decide. Sard does: measured in the running app, four kinds at the cap is 190px, and
+   without a clip the top of the stack paints over the map's own header and into the inscription above
+   it — and above 158px it disappears behind that card anyway, because a textarea paints over the
+   backgrounds of later siblings. Covering unrelated UI is the worse failure of the two. */
 .dep-bands {
   display: flex;
   align-items: flex-end;
   gap: 5px;
   height: 112px;
-  /* A crowded stretch may stack past the box; it is clipped rather than allowed to push the sheet. */
   overflow: hidden;
 }
 .dep-band {
@@ -187,13 +196,20 @@
   justify-content: flex-start;
   gap: 2px;
 }
-/* WHERE THE READER WENT QUIET. Drawn, not omitted — a silent stretch is a fact about the reading. */
+/* WHERE THE READER WENT QUIET. Drawn, not omitted — a silent stretch is a fact about the reading.
+   FOUR AND A HALF PER CENT, which is the reference's own number and half what this was. The stub is
+   the faintest thing on the sheet on purpose: it has to be subordinate to the rule under it, which the
+   reference draws at eight. At eight the stub was the heavier of the two, and since real reading fills
+   two or three bands out of twenty-four, the twenty-odd stubs lined up into a second rule row that
+   competed with the real one. The reference never shows that because its own fixture leaves only three
+   bands empty. Measured on this theme's ground: the stub goes from +17 to +9 against a rule at +26,
+   which is the hierarchy the reference has. */
 .dep-band[data-empty="1"]::after {
   content: "";
   display: block;
   height: 4px;
   border-radius: 2px;
-  background: color-mix(in srgb, var(--text) 8%, transparent);
+  background: color-mix(in srgb, var(--text) 4.5%, transparent);
 }
 /* A STRATUM IS ITS COUNT. Lit while any of its marks is bound; hollow when the last is released. */
 .dep-stratum {
@@ -218,12 +234,16 @@
 }
 .dep-stratum:disabled { cursor: default; }
 .dep-stratum:not(:disabled):hover { filter: brightness(1.08); }
-/* THE AXIS — the book's own chapters under the bars, which is what makes this a map of a book.
-   One cell per bar, so a number never names a stretch it is not standing on. */
+/* THE RULE ROW — one 2px segment per band, on the band's own track. NOT AN AXIS: there is no
+   continuous horizontal line anywhere in the map, so a stretch's rule speaks only for that stretch.
+   The book's own chapter numbers hang under every sixth, which is what makes this a map of a book. */
 .dep-axis { display: flex; gap: 5px; margin-top: 6px; }
 .dep-axis-cell { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .dep-axis-rule { height: 2px; border-radius: 1px; background: var(--chrome-border); }
-.dep-axis-rule[data-bound="1"] { background: var(--accent); }
+/* HIS READING NEVER ARRIVES EMPTY. On a received map a stretch he marked keeps a faint warmth even
+   before you take anything from it; taking lights it fully. */
+.dep-axis-rule[data-rule="his"] { background: color-mix(in srgb, var(--accent) 20%, transparent); }
+.dep-axis-rule[data-rule="on"] { background: color-mix(in srgb, var(--accent) 55%, transparent); }
 .dep-axis-label {
   position: relative;
   height: 13px;
@@ -233,7 +253,17 @@
   white-space: nowrap;
   text-align: center;
 }
-.dep-map-foot { display: flex; gap: 14px; font: 400 0.6875rem var(--ui); color: var(--muted); }
+
+
+/* A FOOTNOTE, NOT A WARNING. Marks with no place in the book still travel and are still listed above;
+   what they cannot do is stand somewhere on a map of the book. The line says so in the sheaf, where
+   the marks themselves are, and the map stays purely spatial. Muted, unruled and unboxed on purpose:
+   it is a quiet aside about the data, and nothing has gone wrong. */
+.dep-unplaced {
+  margin: 2px 2px 0;
+  font: 400 0.6875rem/1.7 var(--ui);
+  color: var(--muted);
+}
 
 /* ---- the sheaf ------------------------------------------------------------------------------- */
 .dep-sheaf { display: flex; flex-direction: column; gap: 8px; }

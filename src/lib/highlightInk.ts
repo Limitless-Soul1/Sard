@@ -22,8 +22,26 @@ export const INK_BASE_DARK = 0.5;
 export const DARK_INK_MIX = 0.37;
 /** What an untouched highlight (alpha NULL = "follow the theme") shows in the density control. */
 export const DEFAULT_INK = 0.75;
-/** The density control's floor — a mark can be faint, never invisible. */
+/**
+ * THE FLOOR FOR A MARK THAT IS THERE AT ALL — and it is a floor, not a minimum.
+ *
+ * Below this a mark is present, claims a passage and cannot be seen, which is the worst of both. So
+ * every density the reader dials is held at or above it — EXCEPT the one value that is not a density
+ * at all. See `INK_NONE`.
+ */
 export const INK_MIN = 0.15;
+/**
+ * NO SHADING. Not a faint one: none.
+ *
+ * The scale used to begin at `INK_MIN`, so the lowest a reader could go still laid colour over the
+ * words. "A mark I can keep without the colour" is an ordinary thing to want — the note, the tags and
+ * the place all survive, and only the wash goes — and it had no value on the dial.
+ *
+ * It is a SEPARATE value rather than a lower floor, deliberately: everything above zero keeps the
+ * meaning it has always had, so no stored density changes appearance and nothing already saved has
+ * to be migrated.
+ */
+export const INK_NONE = 0;
 /** The design's horizontal mask: the stroke fades in/out over this much at each end. */
 export const INK_EDGE_EM = 0.24;
 // THE MARK'S GEOMETRY, in em — the Ink Swatch's "identical everywhere" figures
@@ -111,10 +129,16 @@ export function resolveHighlightInk(opts: {
 }): ResolvedInk {
   const base = opts.dark ? INK_BASE_DARK : INK_BASE_LIGHT;
   const ceiling = base * 1.35;
+  const fill = opts.dark ? mixInk(opts.ink, opts.paper ?? "#000000", DARK_INK_MIX) : opts.ink;
+  const blend: ResolvedInk["blend"] = opts.dark ? "screen" : "multiply";
+  // ZERO IS NOT A DENSITY. It is the reader saying "no colour", so it is answered before the floor
+  // and before the 0.06 guard below — both of which exist to stop a density becoming invisible by
+  // accident, which is precisely not what this is.
+  if (opts.alpha != null && opts.alpha <= INK_NONE) return { fill, blend, opacity: 0 };
   const a = opts.alpha == null ? base : base * Math.max(INK_MIN, Math.min(1, opts.alpha)) * 1.35;
   return {
-    fill: opts.dark ? mixInk(opts.ink, opts.paper ?? "#000000", DARK_INK_MIX) : opts.ink,
-    blend: opts.dark ? "screen" : "multiply",
+    fill,
+    blend,
     opacity: Math.max(0.06, Math.min(ceiling, a)),
   };
 }

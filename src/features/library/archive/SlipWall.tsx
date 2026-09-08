@@ -11,6 +11,7 @@
 // paper, a pen glyph and the interface face, so the two are told apart from across the room.
 
 import type { CSSProperties } from "react";
+import { SelectionTick } from "../../../components/listSelection";
 
 import { Icon } from "../../../components/Icon";
 import type { AnnoItem } from "../../../lib/ipc";
@@ -67,9 +68,17 @@ interface Props {
   /** "read the sheet" — shown only on a slip that had to hide something. */
   readAll: string;
   onOpen: (it: AnnoItem) => void;
+  /**
+   * CHOOSING SEVERAL SLIPS. Absent while nobody is choosing, which is why it is optional: the wall
+   * is a wall of buttons that open, and it goes on being exactly that until the reader says
+   * otherwise.
+   */
+  picking?: boolean;
+  isPicked?: (it: AnnoItem) => boolean;
+  onPick?: (it: AnnoItem) => void;
 }
 
-export function SlipWall({ items, hl, dark, paper, accent, scale, noteLabel, chapter, when, from, readAll, onOpen }: Props) {
+export function SlipWall({ items, hl, dark, paper, accent, scale, noteLabel, chapter, when, from, readAll, onOpen, picking, isPicked, onPick }: Props) {
   return (
     // TWO BOXES, DELIBERATELY. The scroller owns the height; the column box owns the columns and is
     // left to grow. A multi-column box with a DEFINITE height does not overflow downwards — it makes
@@ -90,6 +99,9 @@ export function SlipWall({ items, hl, dark, paper, accent, scale, noteLabel, cha
         <Slip
           key={`${it.kind}-${it.id}`}
           it={it}
+          picking={picking}
+          isPicked={isPicked}
+          onPick={onPick}
           hl={hl}
           dark={dark}
           paper={paper}
@@ -107,7 +119,7 @@ export function SlipWall({ items, hl, dark, paper, accent, scale, noteLabel, cha
   );
 }
 
-function Slip({ it, hl, dark, paper, accent, noteLabel, chapter, when, from, readAll, onOpen }: { it: AnnoItem } & Omit<Props, "items" | "scale">) {
+function Slip({ it, hl, dark, paper, accent, noteLabel, chapter, when, from, readAll, onOpen, picking, isPicked, onPick }: { it: AnnoItem } & Omit<Props, "items" | "scale">) {
   // The SCRIPT chooses the face; it does not choose a direction. The slip belongs to the interface's
   // own layout, so an English passage marked inside an Arabic book stays in the Arabic wall rather
   // than turning one card around inside it.
@@ -137,12 +149,18 @@ function Slip({ it, hl, dark, paper, accent, noteLabel, chapter, when, from, rea
   const longExcerpt = excerpt.length > (note ? LONG_SHARED : LONG_PLAIN);
   const longNote = note.length > LONG_NOTE;
 
+  const picked = !!picking && !!isPicked?.(it);
+
   return (
     <button
-      className={`arch-slip${isStandaloneNote ? " note" : ""}${note ? " has-note" : ""}`}
-      onClick={() => onOpen(it)}
+      className={`arch-slip${isStandaloneNote ? " note" : ""}${note ? " has-note" : ""}${picked ? " sel-on" : ""}`}
+      aria-pressed={picking ? picked : undefined}
+      // A press CHOOSES while the mode is on. The slip is itself the button, so the tick is a mark
+      // drawn on it rather than a second button inside one.
+      onClick={() => (picking ? onPick?.(it) : onOpen(it))}
     >
       <span className="arch-slip-tab" style={{ background: tabColor(it, hl, accent) }} aria-hidden />
+      {picking && <span className="arch-slip-pick"><SelectionTick state={picked} /></span>}
 
       {/* THE BOOK'S WORD, wearing the mark it wears on the page. */}
       {excerpt && (

@@ -809,6 +809,30 @@ export function buildReadingCss(
        html padding-inline here (inline styles always beat a stylesheet rule). So the page
        margin now insets the foliate host within the sheet (--page-margin -> .page-host), which
        foliate cannot override and which works identically in both flow modes. */
+    /* ...EXCEPT IN SCROLLED FLOW, WHERE THE MARGIN MUST BE PART OF THE PAGE. Insetting the host puts
+       the reading margin OUTSIDE the iframe, so it belongs to the app document, not the book. The text
+       then begins on the frame's very last pixel column, and a press in the margin never reaches the
+       book at all: no caret is placed, and because the gesture belongs to the parent document,
+       dragging inward cannot recover it either.
+       MEASURED (Arabic, scrolled, 1400x900): the frame spanned 170..1245 with body margin and padding
+       both 0, and the line's start edge WAS 1245. A press at x<=1244 placed a caret and the parent
+       window never saw it; at x>=1245 the parent saw the press and the selection stayed None. In an
+       RTL book the line STARTS at that edge, so aiming at or just before the first character — the
+       natural place to begin a selection — misses the reading surface entirely.
+       So in scrolled flow the same margin is applied INSIDE the document instead, and the host spans
+       the sheet (global.css, '.flow-scrolled .page-host'). The text lands in exactly the same place:
+       the body's width is the host's, and this padding takes the margin out of its CONTENT box, which
+       is what the host inset used to do from outside. What changes is only WHO owns the margin — the
+       book does, so a press there places a caret on the nearest line, as on any page.
+       'body' on purpose, not 'html': foliate's inline !important padding is on 'html' (see above), so a
+       rule there would lose. On 'body' the paginator's scrolled branch sets only max-width and margin,
+       never padding, so nothing overrides this. VERIFIED in the running app: the reading content box is
+       1075px wide either way — 1075 frame with no body padding before, 1155 frame less 40px of padding
+       on each side after — so the measure and the wrap points are unchanged, and only the OWNER of the
+       margin differs. Paged flow is untouched: there the host inset is also the column geometry.
+       A fixed-layout book or a PDF never reaches this sheet at all — 'FixedLayout' has no 'setStyles',
+       so 'renderer.setStyles?.()' no-ops and their margin stays the host inset it has always been. */
+    ${style.flowMode === "paged" ? "" : `body { padding-inline: ${Math.max(0, style.marginPx)}px; }`}
     /* RAWY-260 / RAWY-281 — REFERENCES. The mark for a referenced word or phrase is NOT drawn here any
        more, and the reason is a hard capability limit rather than a preference. RAWY-260 drew it with the
        CSS Custom Highlight API (::highlight(sard-ref)), whose styleable property set is text-only —

@@ -15,10 +15,8 @@ import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
 import { bgSrcUrl } from "../../lib/background";
 import { backgroundsList, type BackgroundRow } from "../../lib/ipc";
-import { THEMES, THEME_ORDER, isBuiltinThemeId } from "../../theme/themes";
-import type { BuiltinThemeId } from "../../theme/tokens";
+import { THEMES, isBuiltinThemeId } from "../../theme/themes";
 
-import { chosenPreset, type StartFrom } from "./startFrom";
 import { SardMini } from "./SardMini";
 import { miniOfTheme } from "./mini";
 import { ProfileCard } from "./ProfileCard";
@@ -28,7 +26,7 @@ import { guardUnsaved, profileChangePending } from "./session";
 import { ProfileEditor } from "./ProfileEditor";
 import {
   applyProfile,
-  captureCurrent,
+  defaultProfileData,
   createProfile,
   duplicateProfile,
   refreshProfiles,
@@ -37,12 +35,11 @@ import {
   useProfiles,
 } from "./store";
 import type { Profile } from "./model/profile";
-import { useDialog } from "../../components/useDialog";
+import { useDialog, useScrimDismiss } from "../../components/useDialog";
 import { profileLabel } from "./model/profile";
 
 type Dialog =
   | { kind: "none" }
-  | { kind: "create" }
   | { kind: "share"; profile: Profile }
   | { kind: "import" }
   | { kind: "delete"; profile: Profile }
@@ -105,37 +102,50 @@ export function ProfilesSection() {
     return isBuiltinThemeId(base) ? t(`theme.${base}`) : t("profiles.theme.custom");
   };
 
-  const create = async (name: string, start: StartFrom, base: BuiltinThemeId) => {
+  /**
+   * A NEW هيئة OPENS IN THE EDITOR, with no questions first.
+   *
+   * There used to be a dialog between the button and the editor: a name, and a three-way "start
+   * from" (how Sard looks now · one of the sixteen · a paper of your own). It is gone. Making a
+   * هيئة is one gesture now — press, and you are editing it.
+   *
+   * WHERE IT STARTS: Sard's own default appearance (`defaultProfileData`) — NOT what is currently on
+   * screen. A هيئة seeded from the live look is indistinguishable from the one being worn, drift and
+   * all, which is exactly how creating one came to feel like editing the current one.
+   *
+   * IT CLAIMS NO PRESET (`null`). The claim was only ever honest for "one of the sixteen", where the
+   * reader had been shown the swatches and picked one; with no such choice on offer there is nothing
+   * to claim, and announcing one would put a paper's name on a هيئة nobody chose it for.
+   *
+   * THE NAME IS THE EDITOR'S. It carries the name field and says when one is required, so asking
+   * for a name up front only meant asking twice.
+   */
+  const create = async () => {
     setBusy(true);
     try {
-      const data = await captureCurrent();
-      // The preset the reader actually chose — see `chosenPreset`. `base` is still the canvas the
-      // editor opens on, but only a preset the reader was SHOWN and picked may be claimed as one.
-      const preset = chosenPreset(start, base);
-      if (start !== "current") {
-        // BOTH SURFACES START ON THE PRESET the reader picked. A profile begun from a paper should
-        // BE that paper, in the library and in the book alike; the two are then free to part
-        // whenever the reader edits one of them, which is the whole point of their being separate.
-        for (const scope of ["library", "reading"] as const) {
-          data.theme[scope].base = preset;
-          data.theme[scope].dark = THEMES[base].dark;
-          data.theme[scope].colors = structuredClone(THEMES[base].colors);
-          data.theme[scope].highlightAlpha = THEMES[base].highlightAlpha;
-          data.theme[scope].bookmark = null;
-        }
-      }
+      // FROM SARD'S OWN DEFAULT, NOT FROM WHAT IS BEING WORN.
+      //
+      // This used to call `captureCurrent()`, and that is what made creation behave like editing: the
+      // new هيئة opened holding the ACTIVE one's values — including whatever the reader had changed
+      // and not yet saved — so the editor showed the current appearance and there was no way to tell
+      // the two apart. Seeding from the default gives the new هيئة its own identity from the first
+      // frame, and makes it impossible for the active one's drift to reach into it.
+      const data = defaultProfileData();
+      const preset = null;
       // MAKING A PROFILE IS NOT WEARING ONE. This used to apply the new profile immediately, which
       // repainted the whole application to the canvas the editor was about to open on — and for
-      // "a paper of your own" that canvas is a starting sheet the reader has not authored yet, so
-      // creating one silently replaced their look with Ivory and left it there when they backed out.
-      // Measured: paper #F5EEDD, ink #2B2521, accent #9C5A3C written to `theme_id`, `book_theme_id`
-      // and `profile_active`, with the previous active profile recoverable only from memory.
+      // the canvas was one the reader had not authored yet, so creating one silently replaced their
+      // look and left it there when they backed out. Measured: paper #F5EEDD, ink #2B2521, accent
+      // #9C5A3C written to `theme_id`, `book_theme_id` and `profile_active`, with the previous active
+      // profile recoverable only from memory. It matters no less now that a هيئة begins from what is
+      // already on screen: beginning FROM the live look must not also mean being dressed in the copy.
       //
       // `duplicate` below has always created-then-edited without applying, and `saveProfile` repaints
       // only `if (activeId === p.id)` — so "editing a profile does not dress the app in it" is the
       // rule everywhere else. This was the one exception. Wearing it stays one click away, on the
       // card's own face and in the switcher.
-      const p = await createProfile(name, data, preset);
+      // No name yet: the editor asks for one, and `profileLabel` shows "unnamed" until it has it.
+      const p = await createProfile("", data, preset);
       setDialog({ kind: "edit", profile: p, fresh: true });
     } finally {
       setBusy(false);
@@ -159,7 +169,7 @@ export function ProfilesSection() {
       <div className="gs-note">{t("profiles.subtitle")}</div>
 
       <div className="pf-actions">
-        <button className="pf-btn primary" disabled={busy} onClick={() => setDialog({ kind: "create" })}>
+        <button className="pf-btn primary" disabled={busy} onClick={() => void create()}>
           {t("profiles.new")}
         </button>
         {/* Import arrives with the package format (a later stage). Shown disabled rather than
@@ -174,7 +184,7 @@ export function ProfilesSection() {
       </div>
 
       {profiles.length === 0 ? (
-        <FirstRun onImport={() => { if (!profileChangePending()) setDialog({ kind: "import" }); }} onCreate={() => setDialog({ kind: "create" })} />
+        <FirstRun onImport={() => { if (!profileChangePending()) setDialog({ kind: "import" }); }} onCreate={() => void create()} />
       ) : (
         <div className="pf-grid">
           {profiles.map((p) => (
@@ -199,9 +209,6 @@ export function ProfilesSection() {
         </div>
       )}
 
-      {dialog.kind === "create" && (
-        <CreateDialog busy={busy} onCancel={() => setDialog({ kind: "none" })} onCreate={create} />
-      )}
       {dialog.kind === "delete" && (
         <DeleteDialog
           profile={dialog.profile}
@@ -323,103 +330,6 @@ function FirstRun({ onCreate, onImport }: { onCreate: () => void; onImport: () =
   );
 }
 
-/** New profile: a name, and where it starts from. */
-function CreateDialog({
-  busy,
-  onCancel,
-  onCreate,
-}: {
-  busy: boolean;
-  onCancel: () => void;
-  onCreate: (name: string, start: StartFrom, base: BuiltinThemeId) => void;
-}) {
-  const { t } = useI18n();
-  const [name, setName] = useState("");
-  const [start, setStart] = useState<StartFrom>("current");
-  const [base, setBase] = useState<BuiltinThemeId>("ivory");
-  // Escape cancels — the same answer the scrim gives, so pointer and keyboard cannot disagree.
-  const dlg = useDialog({ onDismiss: onCancel });
-  // Portalled for the same reason the editor is: `.gs` carries a transform, which makes it the
-  // containing block for `position: fixed`, so a dialog rendered in place is centred on the
-  // settings window and clipped by its `overflow: hidden` rather than centred on Sard.
-  return createPortal(
-    <div className="pf-dialog-scrim" onClick={onCancel}>
-      <div className="pf-dialog" onClick={(e) => e.stopPropagation()} ref={dlg.ref} {...dlg.props}>
-        <div className="pf-dialog-title" id={dlg.titleId}>{t("profiles.create.title")}</div>
-
-        <label className="pf-field">
-          <span className="pf-field-label">{t("profiles.create.name")}</span>
-          <input
-            className="pf-input"
-            value={name}
-            autoFocus
-            dir="auto"
-            placeholder={t("profiles.create.namePlaceholder")}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && !busy && onCreate(name, start, base)}
-          />
-        </label>
-
-        {/* "Start from" — the design's three. The third opens the custom-paper dialog from inside
-            the editor, which is where the four harmonies and their previews live. */}
-        <div className="pf-field">
-          <span className="pf-field-label">{t("profiles.create.startFrom")}</span>
-          <div className="pf-startfrom-list" role="radiogroup">
-            {(["current", "theme", "custom"] as const).map((k) => (
-              <button
-                key={k}
-                role="radio"
-                aria-checked={start === k}
-                className={`pf-startfrom-opt${start === k ? " on" : ""}`}
-                onClick={() => setStart(k)}
-              >
-                {k === "current"
-                  ? t("profiles.create.fromCurrent")
-                  : k === "theme"
-                    ? t("profiles.create.fromTheme")
-                    : t("profiles.theme.custom")}
-              </button>
-            ))}
-          </div>
-          {start === "theme" && (
-            <div className="pf-swatches pf-startfrom-swatches">
-              {THEME_ORDER.map((id) => (
-                <button
-                  key={id}
-                  className={`pf-swatch-cell${base === id ? " on" : ""}`}
-                  onClick={() => setBase(id)}
-                  title={t(`theme.${id}`)}
-                >
-                  <span
-                    className="pf-swatch"
-                    style={{ background: THEMES[id].colors.paperBg, color: THEMES[id].colors.text }}
-                  >
-                    Aa
-                  </span>
-                  <span className="pf-swatch-name">{t(`theme.${id}`)}</span>
-                </button>
-              ))}
-            </div>
-          )}
-          {start === "custom" && (
-            <div className="pf-hint">{t("profiles.create.customHint")}</div>
-          )}
-        </div>
-
-        <div className="pf-dialog-actions">
-          <button className="pf-btn" onClick={onCancel}>
-            {t("profiles.theme.cancel")}
-          </button>
-          <button className="pf-btn primary" disabled={busy} onClick={() => onCreate(name, start, base)}>
-            {t("profiles.create.submit")}
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body,
-  );
-}
-
 /** Delete, two-step — and the copy promises exactly what is and is not lost. */
 function DeleteDialog({
   profile,
@@ -435,12 +345,16 @@ function DeleteDialog({
   // buttons here deletes a profile, and a dialog that opens with delete under the return key is a
   // trap dressed as a convenience.
   const dlg = useDialog({ onDismiss: onCancel });
+  // The backdrop takes a press only when the gesture began there and ends clear of the sheet.
+  const scrim = useScrimDismiss(onCancel);
+
   // Portalled for the same reason the editor is: `.gs` carries a transform, which makes it the
   // containing block for `position: fixed`, so a dialog rendered in place is centred on the
   // settings window and clipped by its `overflow: hidden` rather than centred on Sard.
   return createPortal(
-    <div className="pf-dialog-scrim" onClick={onCancel}>
-      <div className="pf-dialog" onClick={(e) => e.stopPropagation()} ref={dlg.ref} {...dlg.props}>
+    <div className="pf-dialog-scrim" {...scrim.scrimProps}>
+      <div className="pf-dialog" onClick={(e) => e.stopPropagation()}
+        ref={(node) => { dlg.ref(node); scrim.panelRef(node); }} {...dlg.props}>
         <div className="pf-dialog-title" id={dlg.titleId}>
           {t("profiles.delete.title", { name: profileLabel(profile.name, t("profiles.unnamed")) })}
         </div>

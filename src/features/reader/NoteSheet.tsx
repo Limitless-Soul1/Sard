@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useScrimDismiss } from "../../components/useDialog";
 
 import { Icon } from "../../components/Icon";
 import { useI18n } from "../../i18n";
@@ -367,16 +368,20 @@ export function NoteSheet({
   // The sheet is the BOOK's, so it reads in the book's direction — an RTL book keeps its note RTL even
   // when the interface is not, and the header, the rule and the close control all follow it.
   const dir = presentation?.direction ?? "rtl";
+  // The backdrop takes a press only when the gesture began there and ends clear of the sheet.
+  const scrim = useScrimDismiss(onClose);
 
   return (
     <div
       className="note-scrim"
-      onPointerDown={onClose}
+      // WAS `onPointerDown={onClose}` — the sheet went the instant a press landed anywhere on the
+      // scrim, with no chance for the gesture to turn out to be a drag out of the note's own text.
+      {...scrim.scrimProps}
       style={{ "--page-pref": `${measurePx}px` } as React.CSSProperties}
     >
       <div
         className={`note-sheet${expanded ? " grown" : ""}`}
-        ref={sheet}
+        ref={(node) => { sheet.current = node; scrim.panelRef(node); }}
         tabIndex={-1}
         dir={dir}
         role="dialog"
@@ -412,7 +417,7 @@ export function NoteSheet({
             )}
             <span className="note-kind">{label}</span>
           </span>
-          <button className="note-close" onClick={onClose} aria-label={t("panel.close")}>
+          <button className="note-close ui-close" onClick={onClose} aria-label={t("panel.close")}>
             <Icon name="close" size="sm" />
           </button>
         </header>

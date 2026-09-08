@@ -221,6 +221,21 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         include_str!("migrations_sql/20260903180000_mark_placement.sql"),
     ),
     (
+        20_260_904_120_000,
+        "bookmark_silk",
+        include_str!("migrations_sql/20260904120000_bookmark_silk.sql"),
+    ),
+    (
+        20_260_904_210_000,
+        "photo_card_document",
+        include_str!("migrations_sql/20260904210000_photo_card_document.sql"),
+    ),
+    (
+        20_260_904_230_000,
+        "photo_card_images_no_fk",
+        include_str!("migrations_sql/20260904230000_photo_card_images_no_fk.sql"),
+    ),
+    (
         20_260_906_090_000,
         "where_made",
         include_str!("migrations_sql/20260906090000_where_made.sql"),

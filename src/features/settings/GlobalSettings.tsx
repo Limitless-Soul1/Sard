@@ -17,7 +17,7 @@ import { Hoopoe } from "../library/Hoopoe";
 import { ProfilesSection } from "../profiles/ProfilesSection";
 import { settingsGet, settingsSet } from "../../lib/ipc";
 import { useUpdater } from "../../lib/updater";
-import { FONT_CATALOGUE, UI_SCALE_MAX, UI_SCALE_MIN, useFonts } from "../../lib/fonts";
+import { familiesOnce, FONT_CATALOGUE, UI_SCALE_MAX, UI_SCALE_MIN, useFonts } from "../../lib/fonts";
 // RAWY-265: the Library background surface (measured constants + the apply layer live in the module).
 import { BG_BLUR_MAX, BG_PRESENCE_MAX, bgSrcUrl, imageLabel, useBackground } from "../../lib/background";
 import { BOOKMARK_COLORS, BOOKMARK_SHAPES, BOOKMARK_SIZE_MAX, BOOKMARK_SIZE_MIN, useBookmarkStyle } from "../../lib/bookmarkStyle";
@@ -515,7 +515,7 @@ function FontsSection() {
       </span>
     );
   // imported fonts (script unknown) offered in BOTH book pickers, mirroring RAWY-44/92.
-  const customOpts = custom.map((c) => (
+  const customOpts = familiesOnce(custom).map((c) => (
     <option key={c.family_name} value={c.family_name}>{`${c.family_name} · ${t("gs.imported")}`}</option>
   ));
 

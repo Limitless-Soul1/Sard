@@ -74,7 +74,7 @@ export function SettingsPanel({
       <aside className={`settings-panel${open ? " show" : ""}`} aria-hidden={!open} inert={!open}>
         <div className="sp-head">
           <span className="sp-title">{t("pdf.options")}</span>
-          <button className="rc-icon" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
+          <button className="rc-icon ui-close" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
         </div>
         <div className="sp-body sp-pdf">
           <div className="sp-pdf-note">
@@ -164,7 +164,7 @@ export function SettingsPanel({
     <aside className={`settings-panel${open ? " show" : ""}`} aria-hidden={!open} inert={!open}>
       <div className="sp-head">
         <span className="sp-title">{t("reader.settings")}</span>
-        <button className="rc-icon" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
+        <button className="rc-icon ui-close" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
       </div>
       <div className="sp-tabs" role="tablist">
         {tabs.map((tb) => (

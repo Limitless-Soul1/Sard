@@ -33,6 +33,7 @@ import {
   resolveHighlightInk,
   DEFAULT_INK,
   INK_MIN,
+  INK_NONE,
   INK_PAD_X_EM,
   INK_PAD_TOP_EM,
   INK_PAD_BOTTOM_EM,
@@ -140,6 +141,13 @@ function CustomColorPicker({
 // invisible, and DEFAULT_INK is what an untouched highlight (alpha NULL = follow the theme) shows in the
 // control, so opening the editor on an old highlight never silently changes it.
 const INK_BARS = 9; // the design draws the density as nine bars
+/**
+ * Where the strip stops meaning «بلا».
+ *
+ * Half a bar: the reader has to have travelled into the first bar before any colour is laid down, so
+ * "no shading" is a place you can actually land on rather than one pixel at the very end.
+ */
+const HALF_BAR = 0.5 / INK_BARS;
 // Metadata timestamps: day + month is enough for a note, and it localises without a date library.
 const fmtStamp = (unix: number, lang: string): string =>
   uiDateTimeFormat(lang, { day: "numeric", month: "long" }).format(new Date(unix * 1000));
@@ -449,7 +457,9 @@ function NoteEditorModal({
     if (!el) return;
     const r = el.getBoundingClientRect();
     const raw = dir === "rtl" ? (r.right - clientX) / r.width : (clientX - r.left) / r.width;
-    const v = Math.max(INK_MIN, Math.min(1, raw));
+    // THE FIRST BAR IS «بلا». Past it the floor applies as it always has, so every density the
+    // reader could already choose still means what it meant; only the far end of the strip is new.
+    const v = raw <= HALF_BAR ? INK_NONE : Math.max(INK_MIN, Math.min(1, raw));
     setAlpha(v);
     onAlpha(v); // live redraw of THIS mark only
   };
@@ -536,7 +546,7 @@ function NoteEditorModal({
         <aside className="nec-rail">
           <div className="nec-rail-head">
             <span className="nec-rail-title">{t("ne.title")}</span>
-            <button type="button" className="nec-x" onClick={onClose} aria-label={t("ne.close")} title={t("ne.close")}>✕</button>
+            <button type="button" className="nec-x ui-close" onClick={onClose} aria-label={t("ne.close")} title={t("ne.close")}>✕</button>
           </div>
 
           <div className="nec-group">
@@ -562,14 +572,15 @@ function NoteEditorModal({
                 const step = e.key === "ArrowLeft" ? -0.05 : e.key === "ArrowRight" ? 0.05 : 0;
                 if (!step) return;
                 e.preventDefault();
-                const v = Math.max(INK_MIN, Math.min(1, alpha + step));
+                const next = alpha + step;
+                const v = next <= HALF_BAR ? INK_NONE : Math.max(INK_MIN, Math.min(1, next));
                 setAlpha(v);
                 onAlpha(v);
               }}
               role="slider"
               tabIndex={0}
               aria-label={t("ne.density")}
-              aria-valuemin={Math.round(INK_MIN * 100)}
+              aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={Math.round(alpha * 100)}
             >
@@ -581,7 +592,12 @@ function NoteEditorModal({
                 />
               ))}
             </div>
-            <span className="nec-value nec-pct">{localeNum(Math.round(alpha * 100), lang)}٪</span>
+            {/* AT ZERO IT SAYS SO IN WORDS. «٠٪» is a number a reader has to interpret; «بلا» is the
+                answer to the question they were actually asking, and it is the same word the card's
+                own readability control uses for the same idea. */}
+            <span className="nec-value nec-pct">
+              {alpha <= INK_NONE ? t("ne.densityNone") : `${localeNum(Math.round(alpha * 100), lang)}٪`}
+            </span>
           </div>
 
           <div className="nec-group">

@@ -8,6 +8,7 @@
 // from that alone. The database is not touched until «أضِف ما أبقيتَه إلى قراءتي», and then in one
 // transaction that can only add.
 import { useEffect, useMemo, useState } from "react";
+import { useScrimDismiss } from "../../components/useDialog";
 import { createPortal } from "react-dom";
 import { useI18n } from "../../i18n";
 import { localeNum } from "../../lib/format";
@@ -38,6 +39,9 @@ import { useBookDetailsRequest } from "../library/bookDetailsRequest";
 type BookState = "same" | "brings" | "absent";
 
 export function DepositReceive({ path, onClose }: { path: string; onClose: () => void }) {
+  // The backdrop takes a press only when the gesture began there and ends clear of the sheet.
+  const scrim = useScrimDismiss(onClose);
+
   const { t, lang } = useI18n();
   const [inspection, setInspection] = useState<Inspection | null>(null);
   const [book, setBook] = useState<BookRow | null>(null);
@@ -573,9 +577,10 @@ export function DepositReceive({ path, onClose }: { path: string; onClose: () =>
   }
 
   return createPortal(
-    <div className="dep-scrim" onClick={onClose}>
+    <div className="dep-scrim" {...scrim.scrimProps}>
       <div
         className="dep-sheet"
+        ref={scrim.panelRef}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"

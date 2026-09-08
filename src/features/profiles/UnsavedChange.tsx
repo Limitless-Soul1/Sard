@@ -184,7 +184,11 @@ export function UnsavedChange() {
     );
   }
 
-  if (!pending || !active) return null;
+  // THE هيئة THE QUESTION IS ABOUT. A boundary that is editing one names it; everything else is
+  // asking about the one being worn. Without this the dialog always said the active هيئة's name,
+  // even while the reader was looking at a different one's editor.
+  const subject = pending?.subject ?? active;
+  if (!pending || !subject) return null;
   const keys = pending.keys;
 
   /** Answer, then let the action that was waiting on the answer happen. */
@@ -200,7 +204,10 @@ export function UnsavedChange() {
     setBusy(true);
     try {
       if (pending.onSave) await pending.onSave();
-      else {
+      // FOLDING THE DRIFT IN is only meaningful for the هيئة being WORN — drift is the gap between
+      // what it says and what Sard shows, and nothing else can have one. A boundary that supplied its
+      // own `onSave` (the editor) has already been handled above.
+      else if (active) {
         const data = await capturedWithDrift();
         await saveProfile({ ...active, data });
       }
@@ -217,7 +224,7 @@ export function UnsavedChange() {
       if (pending.onDiscard) await pending.onDiscard();
       // RE-APPLYING IS THE DISCARD, and it is not a choice of هيئة: the reader is putting back what
       // the one they are already wearing says. It therefore takes no use stamp — see `applyProfile`.
-      else await applyProfile(active, { worn: false });
+      else if (active) await applyProfile(active, { worn: false });
     } finally {
       setBusy(false);
     }
@@ -233,7 +240,7 @@ export function UnsavedChange() {
     <div className="pf-dialog-scrim" onClick={() => done(false)}>
       <div className="pf-dialog" onClick={(e) => e.stopPropagation()} ref={dlg.ref} {...dlg.props}>
         <div className="pf-dialog-title" id={dlg.titleId}>
-          {t("profiles.unsaved.pendingTitle", { name: active.name ?? "" })}
+          {t("profiles.unsaved.pendingTitle", { name: subject.name ?? "" })}
         </div>
         <p className="pf-dialog-body">
           {keys.length

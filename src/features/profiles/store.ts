@@ -23,15 +23,20 @@ import {
   settingsSet,
   type ProfileRow,
 } from "../../lib/ipc";
-import { useBookmarkStyle } from "../../lib/bookmarkStyle";
-import { applyBackgrounds, initBackground, useBackground } from "../../lib/background";
+import {
+  BOOKMARK_DEFAULT_COLOR, BOOKMARK_DEFAULT_POS, BOOKMARK_DEFAULT_SHAPE, BOOKMARK_DEFAULT_SIZE,
+  useBookmarkStyle,
+} from "../../lib/bookmarkStyle";
+import { BG_DEFAULT_PARAMS, applyBackgrounds, initBackground, useBackground } from "../../lib/background";
 import { applyTexture } from "../../lib/texture";
 import { applyUiFontVar, useFonts } from "../../lib/fonts";
-import { useReadMarkerStyle } from "../../lib/readMarkerStyle";
-import { PAGE_WIDTH_DEFAULT } from "../../reader-engine/injectedCss";
+import { READ_MARKER_DEFAULT, useReadMarkerStyle } from "../../lib/readMarkerStyle";
+import { PAGE_WIDTH_DEFAULT, type ReadingStyle } from "../../reader-engine/injectedCss";
 import { useReader } from "../../reader-engine/store";
+import { noteGlobalStyleRow, primeGlobalStyle } from "../reader/perBookSettings";
 import { applyTheme } from "../../theme/applyTheme";
 import { resolveTheme, setCustomThemes } from "../../theme/resolve";
+import { DEFAULT_LIGHT, THEMES } from "../../theme/themes";
 import { useTheme } from "../../theme/store";
 import type { CustomThemeId, Theme, ThemeId } from "../../theme/tokens";
 import {
@@ -165,32 +170,29 @@ export async function initProfiles(): Promise<void> {
   const activeProfile = activeId ? profiles.find((p) => p.id === activeId) : undefined;
   if (activeProfile) applyTexture(activeProfile.data.texture, profileTheme(activeProfile).colors);
 
-  // THE SESSION LAYER'S GUARANTEE, KEPT HERE. A value the reader changed outside the editor and
-  // chose to keep "for this session only" was written to settings by the ordinary setter — the
-  // shared setters are deliberately untouched, because a reader with no profiles must behave exactly
-  // as before. So the drift is undone at the START of the next session instead: the active profile
-  // re-asserts its own four values, and whatever the last sitting drifted to is simply not there.
+  // A READER'S OWN CHANGES NOW OUTLIVE THE SITTING.
   //
-  // AT STARTUP RATHER THAN AT SHUTDOWN, deliberately. A quit hook cannot survive a crash or a kill,
-  // and a guarantee that holds only on a clean exit is not one. This runs before `initTheme`, whose
-  // reads then see the profile's values rather than the drift.
-  if (activeProfile) await reassertProfileValues(activeProfile);
-}
-
-/**
- * Write the active profile's four externally-changeable values back over any session drift.
- *
- * Only those four. Everything else a profile owns is unreachable from outside its editor, so there
- * is nothing to re-assert — and rewriting more would turn a targeted guarantee into a broad one
- * nobody asked for.
- */
-async function reassertProfileValues(p: Profile): Promise<void> {
-  await settleThemeMode();
-  await settingsSet("theme_id", p.id).catch(console.error);
-  // The READING palette's own id — the same value `profileSettings` writes. Re-asserting `p.id`
-  // here would quietly put the book back on the library's palette every time this ran.
-  await settingsSet("book_theme_id", readingThemeId(p.id)).catch(console.error);
-  await patchReadingStyle(readingPatch(p));
+  // WHAT THIS USED TO DO, AND WHY IT NO LONGER DOES. The active هيئة re-asserted its own values here,
+  // over whatever the last sitting had drifted to — a deliberate guarantee that a change made outside
+  // the editor was "for this session only". It made every ordinary reading customisation temporary:
+  // a reader who set the text size in a book, closed Sard and came back found the هيئة's size again,
+  // with nothing having said the change would not last.
+  //
+  // The product decision is reversed. Changing the type, the paper or the measure while reading is a
+  // change to the هيئة you are wearing, and it survives a restart like any other change.
+  //
+  // WHAT IS NOT REVERSED: the change is still UNSAVED. `driftOf` derives it by comparing what the
+  // هيئة says with what Sard is showing, and that comparison is unaffected by when the values were
+  // written — so switching هيئة still stops and asks whether to keep the changes or leave them. The
+  // difference is only that the question now survives a restart instead of being answered by
+  // silently discarding.
+  //
+  // Nothing latches, so there is still no second source of truth: the row IS the live value, and the
+  // هيئة is still the last saved one.
+  if (activeProfile) await settleThemeMode();
+  // The Library must be able to answer "has this هيئة been changed?" too, and reading values are only
+  // resolvable with the direction they were resolved for — so make both available before anything asks.
+  await primeGlobalStyle().catch(() => {});
 }
 
 /**
@@ -269,6 +271,10 @@ async function patchReadingStyle(patch: ReadingPatch): Promise<void> {
   for (const k of patch.clear) delete blob[k];
   Object.assign(blob, patch.set);
   await settingsSet(READING_KEY, JSON.stringify(blob)).catch(console.error);
+  // AND SAY SO. This row is what "what is Sard reading in?" means outside the Reader, and the answer
+  // is cached — so a write that does not announce itself leaves every later comparison arguing with a
+  // copy of the previous هيئة. That is what made a freshly saved هيئة report changes nobody had made.
+  noteGlobalStyleRow(blob as Partial<ReadingStyle>);
 }
 
 /**
@@ -457,6 +463,53 @@ export async function captureCurrent(): Promise<ProfileData> {
     seal: { face: "profile", glyph: "initial" },
     // Nor has the framing: a profile captured from "how Sard looks now" has no mark of its own yet,
     // and dead centre at `cover` is what a mark has always been drawn at.
+    icon: { ...ICON_FRAME_DEFAULT },
+  };
+}
+
+/**
+ * A هيئة THAT HAS NOTHING TO DO WITH WHAT IS ON SCREEN — Sard's own default appearance, written out.
+ *
+ * WHY THIS EXISTS AND `captureCurrent` DOES NOT ANSWER IT. `captureCurrent` reads the live stores, so
+ * a هيئة made from it is a photograph of the moment — including whatever the reader had changed and
+ * not yet saved. Seeding a NEW هيئة from that made creation behave like editing the one being worn:
+ * the editor opened on the active هيئة's values, drift and all, and it was impossible to tell the two
+ * apart by looking. A new هيئة must begin from Sard's own default, so that what the reader is wearing
+ * — saved or drifted — cannot reach into it.
+ *
+ * Every value here is the default its own module already declares, read from that module rather than
+ * copied as a literal, so a changed default reaches this in one edit and cannot fall behind.
+ */
+export function defaultProfileData(): ProfileData {
+  const base = THEMES[DEFAULT_LIGHT];
+  return {
+    v: PROFILE_DATA_VERSION,
+    // BOTH SURFACES ON SARD'S OWN PAPER. They begin identical and are free to part the moment the
+    // reader edits one, which is what makes them two scopes rather than one.
+    theme: {
+      library: snapshotPalette(base, DEFAULT_LIGHT, BOOKMARK_DEFAULT_COLOR),
+      reading: snapshotPalette(base, DEFAULT_LIGHT, BOOKMARK_DEFAULT_COLOR),
+    },
+    // THE TWO BOOK FACES ARE SARD'S OWN — the same pair the reading engine falls back to — and the
+    // chrome face is left to Sard (`null`). No MEASURE opinion, for the reason `captureCurrent` takes
+    // none: a هيئة that named a size would override the reader's leading on every switch, and an
+    // empty typography is what prevents that.
+    type: { ui: null, arabic: "amiri", latin: "literata", reading: { ...EMPTY_TYPOGRAPHY } },
+    marks: {
+      bookmarkShape: BOOKMARK_DEFAULT_SHAPE,
+      bookmarkSize: BOOKMARK_DEFAULT_SIZE,
+      bookmarkPos: BOOKMARK_DEFAULT_POS,
+      readMarker: READ_MARKER_DEFAULT,
+    },
+    // No picture on either surface: a new هيئة is a sheet of Sard's own paper, not a copy of the
+    // reader's desk. They add one from the editor's own background chapter.
+    bg: {
+      library: { ref: null, params: { ...BG_DEFAULT_PARAMS } },
+      reading: { ref: null, params: { ...BG_DEFAULT_PARAMS }, sameAsLibrary: false, overlay: null },
+    },
+    voice: null,
+    texture: "opaque",
+    seal: { face: "profile", glyph: "initial" },
     icon: { ...ICON_FRAME_DEFAULT },
   };
 }

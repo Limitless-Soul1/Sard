@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { SelectionBar, SelectionBox, useListSelection } from "../../../components/listSelection";
 
 import { useI18n } from "../../../i18n";
 import { Icon } from "../../../components/Icon";
@@ -6,11 +7,13 @@ import type { OpenTarget } from "../Library";
 import {
   refDelete,
   refSave,
+  refsAll,
   refsForBook,
   refsRepsBooks,
   repDelete,
   repSave,
   repSetEnabled,
+  repsAll,
   repsForBook,
   libraryListBooks,
   type BookRow,
@@ -67,24 +70,36 @@ export function RefsReps({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   }, []);
   useEffect(() => () => window.clearTimeout(toastTimer.current), []);
 
-  // The shelf is one query; the per-book contents are loaded for every listed book, because the plate
-  // previews what the reader made and a count alone cannot draw it. A reader has tens of these, not
-  // thousands, which is the same assumption the reader-side cache already makes.
+  /**
+   * THE SHELF, IN A FIXED NUMBER OF QUERIES.
+   *
+   * The plate previews what the reader made in each book, so the contents are genuinely needed and no
+   * data is being dropped here. What changed is how they are fetched: this asked PER BOOK — two round
+   * trips a row — on the stated assumption that "a reader has tens of these, not thousands".
+   *
+   * MEASURED on 2,000 books carrying rules: ~3,400 IPC calls on one press, 1,121ms of the main thread
+   * inside `fetch`, and a page that could not be used while it ran. The assumption was reasonable and
+   * simply is not true of a large library, so the shape had to change rather than the number.
+   *
+   * Four calls now, whatever the size. The rows arrive ordered by book and then in the per-book
+   * order, so grouping them here produces exactly what the per-book calls produced, row for row.
+   */
   const reload = useCallback(async () => {
-    const rows = await refsRepsBooks().catch(() => [] as RefsRepsBook[]);
+    const [rows, all, refs, reps] = await Promise.all([
+      refsRepsBooks().catch(() => [] as RefsRepsBook[]),
+      libraryListBooks({ sort: "title", order: "asc" }).catch(() => [] as BookRow[]),
+      refsAll().catch(() => [] as RefRow[]),
+      repsAll().catch(() => [] as RepRow[]),
+    ]);
     setShelf(rows);
-    const all = await libraryListBooks({ sort: "title", order: "asc" }).catch(() => [] as BookRow[]);
     setBooks(new Map(all.map((b) => [b.id, b])));
-    const pairs = await Promise.all(
-      rows.map(async (r) => {
-        const [refs, reps] = await Promise.all([
-          refsForBook(r.id).catch(() => [] as RefRow[]),
-          repsForBook(r.id).catch(() => [] as RepRow[]),
-        ]);
-        return [r.id, { refs, reps }] as const;
-      }),
-    );
-    setPerBook(new Map(pairs));
+    const by = new Map<string, { refs: RefRow[]; reps: RepRow[] }>();
+    // Every listed book gets an entry even when one side is empty, so a caller reading
+    // `perBook.get(id)` sees the same shape it always did.
+    for (const r of rows) by.set(r.id, { refs: [], reps: [] });
+    for (const r of refs) (by.get(r.book_id) ?? by.set(r.book_id, { refs: [], reps: [] }).get(r.book_id)!).refs.push(r);
+    for (const p of reps) (by.get(p.book_id) ?? by.set(p.book_id, { refs: [], reps: [] }).get(p.book_id)!).reps.push(p);
+    setPerBook(by);
   }, []);
 
   useEffect(() => { void reload(); }, [reload]);
@@ -114,6 +129,20 @@ export function RefsReps({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
       reps: current.reps.filter((r) => foldPhrase(r.phrase).includes(f) || foldPhrase(r.replacement).includes(f)),
     };
   }, [current, query]);
+
+  // CHOOSING SEVERAL. What "all" means is the tab that is forward AND what the search has left —
+  // never the book's totals, which is what the tab numerals say and deliberately do not narrow.
+  const visibleIds = (tab === "refs" ? shown.refs : shown.reps).map((x) => x.id);
+  const sel = useListSelection(visibleIds);
+
+  /** The section's own deletion, run over the chosen rows, then the book is read back. */
+  const deleteChosen = async () => {
+    for (const id of sel.selected) {
+      await (tab === "refs" ? refDelete(id) : repDelete(id)).catch(() => null);
+    }
+    if (bookId) await refreshBook(bookId);
+    sel.exit();
+  };
 
   // The TAB COUNTS stay the book's totals: the design calls them navigational, and a count that moved
   // with the search would stop telling the reader what the other tab holds.
@@ -252,11 +281,11 @@ export function RefsReps({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
             {/* The two marks are drawn in Sard's `nav` family, at the size that family is read at —
                 see the note on their drawings for why the smaller `mark` set could not carry a tab.
                 Both take `currentColor`, so active and inactive ink reach them with no rule here. */}
-            <button className={`rr-tab${tab === "refs" ? " on" : ""}`} onClick={() => { setTab("refs"); resetDraft(); }}>
+            <button className={`rr-tab${tab === "refs" ? " on" : ""}`} onClick={() => { setTab("refs"); resetDraft(); sel.exit(); }}>
               <Icon name="navReferences" size="md" />
               <span>{t("rr.tabRefs")}</span><span className="rr-tab-n">{fmtNum(refsCount)}</span>
             </button>
-            <button className={`rr-tab${tab === "reps" ? " on" : ""}`} onClick={() => { setTab("reps"); resetDraft(); }}>
+            <button className={`rr-tab${tab === "reps" ? " on" : ""}`} onClick={() => { setTab("reps"); resetDraft(); sel.exit(); }}>
               <Icon name="navReplacements" size="md" />
               <span>{t("rr.tabReps")}</span><span className="rr-tab-n">{fmtNum(repsCount)}</span>
             </button>
@@ -271,6 +300,20 @@ export function RefsReps({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
           </button>
         )}
         <span className="rr-spacer" />
+        {inBook && (
+          <SelectionBar
+            sel={sel}
+            total={visibleIds.length}
+            actions={[{
+              key: "delete",
+              icon: "trash" as const,
+              label: t("rep.delete"),
+              confirm: t("rep.deleteConfirm"),
+              danger: true,
+              run: () => void deleteChosen(),
+            }]}
+          />
+        )}
       </div>
 
       {/* ---- level 1: the shelf ---- */}
@@ -391,10 +434,19 @@ export function RefsReps({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
                       </div>
                     </div>
                   ) : (
-                    <div className="rr-def-wrap" key={r.id}>
+                    <div className={`rr-def-wrap${sel.has(r.id) ? " sel-on" : ""}`} key={r.id}>
+                    {sel.on && (
+                      <SelectionBox on={sel.has(r.id)} onToggle={() => sel.toggle(r.id)} label={r.phrase} />
+                    )}
                     <button
                       className="rr-def"
-                      onClick={() => { setDraft({ word: r.phrase, note: r.note, from: "", to: "" }); setEditId(r.id); setConfirmId(null); setAdding(false); }}
+                      aria-pressed={sel.on ? sel.has(r.id) : undefined}
+                      // While the mode is on the row CHOOSES; opening it for editing is what it
+                      // does the rest of the time, and the two must never be the same press.
+                      onClick={() => {
+                        if (sel.on) { sel.toggle(r.id); return; }
+                        setDraft({ word: r.phrase, note: r.note, from: "", to: "" }); setEditId(r.id); setConfirmId(null); setAdding(false);
+                      }}
                     >
                       <span className={`rr-def-word rr-rule${face(r.phrase)}`} dir="auto">{r.phrase}</span>
                       <span className="rr-def-note" dir="auto">{r.note}</span>
@@ -438,10 +490,17 @@ export function RefsReps({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
                       </div>
                     </div>
                   ) : (
-                    <div className="rr-rule-row" key={p.id}>
+                    <div className={`rr-rule-row${sel.has(p.id) ? " sel-on" : ""}`} key={p.id}>
+                      {sel.on && (
+                        <SelectionBox on={sel.has(p.id)} onToggle={() => sel.toggle(p.id)} label={p.phrase} />
+                      )}
                       <button
                         className="rr-rule-main"
-                        onClick={() => { setDraft({ word: "", note: "", from: p.phrase, to: p.replacement }); setEditId(p.id); setConfirmId(null); setAdding(false); }}
+                        aria-pressed={sel.on ? sel.has(p.id) : undefined}
+                        onClick={() => {
+                          if (sel.on) { sel.toggle(p.id); return; }
+                          setDraft({ word: "", note: "", from: p.phrase, to: p.replacement }); setEditId(p.id); setConfirmId(null); setAdding(false);
+                        }}
                       >
                         {/* The LIVE side carries text ink and the other is muted, so which wording is on
                             the page is readable at a glance without a word of explanation. */}

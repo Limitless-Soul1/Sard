@@ -25,7 +25,7 @@ import { judgePalette } from "./model/guidance";
 import { ColorPicker } from "../../components/ColorPicker";
 import type { ProfileTheme } from "./model/profile";
 import type { ThemeColors } from "../../theme/tokens";
-import { useDialog } from "../../components/useDialog";
+import { useDialog, useScrimDismiss } from "../../components/useDialog";
 
 /** The design's own paper swatches (`paperSw`), plus a dark row so a night paper is reachable. */
 export const PAPERS_LIGHT = ["#F5EEDD", "#F2E9D8", "#F4E3C8", "#F0F2E8", "#FBF1F1", "#F4F2EA", "#FFFFFF", "#F0E2BE"];
@@ -119,10 +119,14 @@ export function CustomPaper({
   });
 
   const dlg = useDialog({ onDismiss: onCancel });
+  // The backdrop takes a press only when the gesture began there and ends clear of the sheet.
+  const scrim = useScrimDismiss(onCancel);
+
 
   return (
-    <div className="pf-dialog-scrim" onClick={onCancel}>
-      <div className="pf-dialog pf-cp" onClick={(e) => e.stopPropagation()} ref={dlg.ref} {...dlg.props}>
+    <div className="pf-dialog-scrim" {...scrim.scrimProps}>
+      <div className="pf-dialog pf-cp" onClick={(e) => e.stopPropagation()}
+        ref={(node) => { dlg.ref(node); scrim.panelRef(node); }} {...dlg.props}>
         <div className="pf-dialog-title" id={dlg.titleId}>{t("profiles.theme.custom")}</div>
         {startFrom && <div className="pf-cp-from">{startFrom}</div>}
 

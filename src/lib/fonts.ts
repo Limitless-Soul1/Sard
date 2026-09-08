@@ -252,9 +252,30 @@ export const useFonts = create<FontsState>((set, get) => ({
   },
   uiChoices: () => [
     ...BUILTIN_UI_FONTS,
-    ...get().custom.map((c) => ({ family: c.family_name, label: c.family_name, builtin: false })),
+    ...familiesOnce(get().custom).map((c) => ({ family: c.family_name, label: c.family_name, builtin: false })),
   ],
 }));
+
+/** ONE ENTRY PER IMPORTED FAMILY, for the pickers.
+ *
+ *  `fonts::import` records a row per FILE and derives the family from the file stem with weight words
+ *  stripped (`family_from_stem`), so importing a face's Regular AND Bold — an ordinary thing to do —
+ *  writes two rows under a single family name. Every picker keys its options on that name, so React
+ *  saw two children with the same key and warned that it may duplicate or omit one of them; the reader
+ *  saw the same font offered twice, and both entries resolved to the same face because
+ *  `customFontUrl` matches by family and takes the first row.
+ *
+ *  A family is ONE choice, so the pickers offer it once, keeping the first row — the same row
+ *  `customFontUrl` already resolves to, so what is selected is what renders. The FONT LIBRARY is
+ *  deliberately left alone: there each file is its own removable card. */
+export function familiesOnce<T extends { family_name: string }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  return rows.filter((r) => {
+    if (seen.has(r.family_name)) return false;
+    seen.add(r.family_name);
+    return true;
+  });
+}
 
 /** An imported font's asset-protocol URL by family name (RAWY-44) — used to declare its
  *  @font-face INSIDE the foliate iframe via the injectedCss resolver. */

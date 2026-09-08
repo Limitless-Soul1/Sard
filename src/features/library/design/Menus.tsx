@@ -722,6 +722,7 @@ export function SelectTray({
   source,
   shelfName,
   onMove,
+  onDelete,
   onClear,
 }: {
   selected: string[];
@@ -733,6 +734,12 @@ export function SelectTray({
   /** Names the shelves in `source.shelves`, for the "out of which?" question. */
   shelfName: (id: string) => string;
   onMove: (shelfId: string, categoryId: string | null, removeFrom: string | null) => void;
+  /**
+   * DELETE THE CHOSEN BOOKS — through the library's own confirmation, which names what is going and
+   * takes the files with it. The tray raises the question and does not answer it: one deletion path
+   * for one book and for twenty, or the two drift and only one of them is the one that was tested.
+   */
+  onDelete: () => void;
   onClear: () => void;
 }) {
   const { t } = useI18n();
@@ -941,6 +948,28 @@ export function SelectTray({
             </>
           )}
         </div>
+        {/* THE OTHER THING A READER MEANS BY CHOOSING SEVERAL BOOKS. The ⋯ menu on one book has
+            offered «حذف الكتاب» since the beginning; choosing twenty and being offered only a move
+            was the collection whose selection did not match its own semantics. Beside the move, not
+            hidden behind it, and it asks before it acts because the confirmation is the library's. */}
+        <button
+          className="libd-hov"
+          onClick={onDelete}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 6,
+            height: "var(--ctl-md)",
+            padding: "0 13px",
+            borderRadius: "var(--r-md)",
+            border: "1px solid var(--brd)",
+            font: "600 .75rem var(--ui)",
+            color: "#b5524a",
+          }}
+        >
+          <Icon name="trash" size="sm" />
+          {t("edit.delete")}
+        </button>
         <button
           className="libd-hov libd-hov-txt"
           onClick={onClear}

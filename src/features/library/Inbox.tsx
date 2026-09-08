@@ -28,7 +28,6 @@ import {
   annoIsNote,
   annotationsAll,
   libraryListBooks,
-  repsForBook,
   type RepRow,
   settingsGet,
   settingsSet,
@@ -42,6 +41,8 @@ import { coverSrc } from "./coverSrc";
 import { autoCoverPaint } from "./AutoCover";
 import { Cabinet } from "./archive/Cabinet";
 import { SlipWall } from "./archive/SlipWall";
+import { SelectionBar, useListSelection } from "../../components/listSelection";
+import { highlightDelete, noteDelete, repsAll } from "../../lib/ipc";
 import { SlipSheet } from "./archive/SlipSheet";
 import { PhotoComposer } from "../photo/PhotoComposer";
 import type { CardData } from "../photo/photo";
@@ -119,17 +120,24 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         //
         // The NOTE is deliberately left alone: it is the reader's own writing, not the author's, and a
         // rule about the book's words has no business rewriting it.
-        const ids = [...new Set(rows.map((r) => r.book_id))];
+        // ONE QUERY FOR THE RULES, not one per book.
+        //
+        // This asked `repsForBook` for every DISTINCT book among the loaded marks — correct, and on a
+        // library with marks in two thousand books it is two thousand IPC round trips on one press.
+        // Measured: 758ms of the main thread inside `fetch` while the archive opened.
+        //
+        // The rules are the same rows either way; only the number of questions changes. Rows come
+        // back ordered by book, so grouping them here gives each book exactly what its own query
+        // would have given it. Books with no rule in force are simply absent from the map, which is
+        // what `perBook.size` and `perBook.get` already expect.
         const perBook = new Map<string, RepLite[]>();
-        await Promise.all(
-          ids.map(async (id) => {
-            const reps = await repsForBook(id).catch(() => [] as RepRow[]);
-            const on = reps.filter((r) => r.enabled && r.replacement.length > 0);
-            if (on.length) {
-              perBook.set(id, on.map((r) => ({ id: r.id, phrase_fold: r.phrase_fold, replacement: r.replacement })));
-            }
-          }),
-        );
+        for (const r of await repsAll().catch(() => [] as RepRow[])) {
+          if (!r.enabled || r.replacement.length === 0) continue;
+          const list = perBook.get(r.book_id);
+          const lite = { id: r.id, phrase_fold: r.phrase_fold, replacement: r.replacement };
+          if (list) list.push(lite);
+          else perBook.set(r.book_id, [lite]);
+        }
         const shown = perBook.size
           ? rows.map((r) => {
               const reps = perBook.get(r.book_id);
@@ -177,6 +185,9 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     [drawers, openBook],
   );
 
+  /** A slip is identified by its kind AND its id, because a note and a highlight can share one. */
+  const slipKey = (it: AnnoItem) => it.kind + ":" + it.id;
+
   const matchColor = (c: string | null) => !color || (color === "custom" ? isHex(c) : c === color);
   const wall = useMemo(() => {
     if (!current) return [];
@@ -191,6 +202,32 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current, type, tag, color]);
+
+  const sel = useListSelection(wall.map(slipKey));
+
+  /**
+   * THE ARCHIVE'S OWN DELETION, run over the chosen slips.
+   *
+   * The order is the sheet's, deliberately: a highlight's note goes with the highlight, and a
+   * standalone note is only a note. Two surfaces calling the same two commands in the same
+   * sequence is what keeps them agreeing about what a slip IS.
+   */
+  const deleteChosen = async () => {
+    for (const it of wall.filter((x) => sel.has(slipKey(x)))) {
+      try {
+        if (it.kind === "note") {
+          if (it.note_id) await noteDelete(it.note_id);
+        } else {
+          if (it.note_id) await noteDelete(it.note_id);
+          await highlightDelete(it.id);
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    sel.exit();
+    setReloads((n) => n + 1);
+  };
 
   /** The archive's own open path — reached from the sheet's "read in book", never from a bare click. */
   const readInBook = (it: AnnoItem) =>
@@ -362,6 +399,21 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
             />
             <span className="arch-size-mark lg" aria-hidden />
           </div>
+
+          {/* CHOOSING SEVERAL SLIPS, on the plate that already narrows this wall — the same place
+              the reader goes to say which slips they mean. */}
+          <SelectionBar
+            sel={sel}
+            total={wall.length}
+            actions={[{
+              key: "delete",
+              icon: "trash" as const,
+              label: t("ne.delete"),
+              confirm: t("arch.deleteConfirm"),
+              danger: true,
+              run: () => void deleteChosen(),
+            }]}
+          />
           </div>
         </div>
 
@@ -375,6 +427,9 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
           <SlipWall
             scale={scale}
             items={wall}
+            picking={sel.on}
+            isPicked={(it) => sel.has(slipKey(it))}
+            onPick={(it) => sel.toggle(slipKey(it))}
             hl={hl}
             dark={dark}
             paper={paper}
@@ -418,23 +473,51 @@ export function Inbox({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   return (
     <div className="arch">
       <header className="arch-head">
+        {/* The title and its count are one thing, and over a photograph they need a ground of
+            their own — see `ui-page-title`. With no picture set the class does nothing at all.
+
+            THE PLATE GOES ROUND THE CONTENT, NOT ROUND THE ROW. `.arch-head-top` carries this
+            page's own padding — 22px down each side — so decorating IT drew the plate around the
+            padding as well, which is a panel across the top of the page rather than a chip on the
+            title. The row keeps its padding; the words inside it get the ground. */}
         <div className="arch-head-top">
-          <h1 className="arch-title">{t("lib.nav.highlights")}</h1>
-          <span className="arch-count">
-            {t("inbox.count", { n: num(items.length), m: num(drawers.length) })}
+          {/* ONE HEADER BLOCK: what this page is, how much of it there is, and how it works.
+
+              The hint is a sentence ABOUT the cabinet, so it reads under the title like a subtitle
+              rather than sharing a line with the controls. It used to sit on the control line with a
+              hairline stretched between, and that rule — `flex: 1` — pushed the search and the sort
+              to the far corner, a whole window from the drawers they filter.
+
+              IT IS INSIDE THE PLATE, and that is the readability fix rather than a second box. It is
+              an instruction — it tells a reader how this page is operated — so it is functional text
+              and may not be left to whatever the photograph is doing. Measured over a picture at
+              full presence, at its worst point it reached 1.03:1: not "hard to read", absent. A
+              plate of its own would have been a second floating box under the first; a header block
+              is one surface saying one thing. */}
+          <span className="ui-page-title ui-page-title--stack">
+            <span className="ui-page-title-line">
+              <h1 className="arch-title">{t("lib.nav.highlights")}</h1>
+              <span className="arch-count">
+                {t("inbox.count", { n: num(items.length), m: num(drawers.length) })}
+              </span>
+            </span>
+            <p className="arch-lede">{t("arch.hint")}</p>
           </span>
         </div>
 
+        {/* ONE PLATE, AT THE EDGE THE CONTENT STARTS FROM. This is the same `.arch-tools` the book
+            folder's filters already stand on, and putting the cabinet's two controls on it makes the
+            two archive views the same shape: a heading, then a contained group of controls aligned
+            with the material below it. They stop being two loose items in a corner and become a
+            control group that is visibly part of this view. */}
         <div className="arch-sub">
-          <span className="arch-hint">{t("arch.hint")}</span>
-          <span className="arch-rule" />
-            {/* The search stands with the sort, on the line the controls are on — not across the
-                header from the title, where it was the only control on a row of headings. */}
-          <label className="arch-search in-line">
-            <span className="arch-search-ico" aria-hidden><Icon name="search" size="sm" /></span>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("arch.searchAll")} />
-          </label>
-          <span className="arch-sort">{t("arch.sortOpened")}</span>
+          <div className="arch-tools">
+            <label className="arch-search in-tools">
+              <span className="arch-search-ico" aria-hidden><Icon name="search" size="sm" /></span>
+              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("arch.searchAll")} />
+            </label>
+            <span className="arch-sort">{t("arch.sortOpened")}</span>
+          </div>
         </div>
       </header>
 

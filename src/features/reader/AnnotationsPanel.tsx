@@ -24,6 +24,9 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 import { useI18n } from "../../i18n";
+// Choosing several rows at once, said once for every list in Sard — see `listSelection`.
+import { SelectionBar, SelectionBox, rowSelectProps, useListSelection } from "../../components/listSelection";
+import type { TKey } from "../../i18n/locales/en";
 import { resolveTheme, useTheme } from "../../theme";
 import { useReader } from "../../reader-engine/store";
 import { useAnnotations } from "./annotationsStore";
@@ -47,8 +50,35 @@ import {
 } from "../../lib/ipc";
 import type { OpenTarget } from "./Reader"; // type-only: erased, so no runtime import cycle
 
-export type AnnoTab = "notes" | "highlights" | "bookmarks";
+/**
+ * THE FIVE THINGS A READER LEAVES IN A BOOK.
+ *
+ * The order is not new: `dep.layer.mine.*` already fixes it for the four a reading copy carries —
+ * highlights, notes, references, replacements — running from the plainest mark on the text to the
+ * one that changes what the text says. Bookmarks come last because they are the odd one out: they
+ * keep a PLACE rather than mark a passage, which is also why a deposit does not carry them.
+ */
+export type AnnoTab = "highlights" | "notes" | "references" | "replacements" | "bookmarks";
 import { isArabicText } from "../../lib/typography";
+// The two newest kinds of mark, from the SAME stores the reader writes them with — no second copy of
+// the data and, for a replacement's on/off, no second copy of the truth. See `ReplacementsTab`.
+import { useReferences } from "./referencesStore";
+import { useReplacements } from "./replacementsStore";
+// The dock side is DECLARED, not spelled here: `panelSides.ts` is the one place that says which
+// physical edge this panel uses, and the toolbar groups its control from the same entry (RAWY-32).
+import { panelDockClass } from "./panelSides";
+
+/**
+ * The categories, in the order `AnnoTab` explains — the single place the tab track is written from.
+ * A new kind of mark is one entry here and one arm in the body below, never a fourth copy of a button.
+ */
+const CATEGORIES: { key: AnnoTab; label: TKey }[] = [
+  { key: "highlights", label: "panel.highlights" },
+  { key: "notes", label: "panel.notes" },
+  { key: "references", label: "panel.references" },
+  { key: "replacements", label: "panel.replacements" },
+  { key: "bookmarks", label: "panel.bookmarks" },
+];
 
 /** RAWY-282: a hard cap on the note title, enforced at the INPUT rather than by trimming on save, so a
  *  reader never types text that is silently discarded. It is a heading, not a second body — the body is
@@ -152,6 +182,18 @@ export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, initialTab
   const nNotes = cross ? xNotes.length : notes.length;
   const nHls = cross ? xHls.length : standaloneHighlights.length;
   const nBms = cross ? xMarks.length : bookmarks.length;
+  // REFERENCES AND REPLACEMENTS BELONG TO THE OPEN BOOK, always. Their stores are bound to it (see
+  // `bind`), and a rule that rewrites this book's words has no meaning in another — so unlike the
+  // three above they do not follow the cross-book source filter, and their numerals are the book's.
+  const refs = useReferences((s2) => s2.refs);
+  const reps = useReplacements((s2) => s2.reps);
+  const counts: Record<AnnoTab, number> = {
+    highlights: nHls,
+    notes: nNotes,
+    references: refs.length,
+    replacements: reps.length,
+    bookmarks: nBms,
+  };
 
   const srcLabel =
     source === "current" ? t("panel.src.current")
@@ -168,7 +210,7 @@ export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, initialTab
 
   return (
     <aside
-      className={`reader-panel rp-trail${open ? " show" : ""}`}
+      className={`reader-panel ${panelDockClass("notes")}${open ? " show" : ""}`}
       dir={dir}
       aria-hidden={!open}
       inert={!open} // RAWY-288: see ChaptersPanel — keeps the closed panel out of the tab order
@@ -184,28 +226,39 @@ export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, initialTab
       <div className="rp-head rp-head-anno">
         <div className="rp-eyebrow">
           <span className="rp-eyebrow-label">{t("panel.annoEyebrow")}</span>
-          <button className="rp-x rp-x-round" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>
+          <button className="rp-x rp-x-round ui-close" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
               <path d="M18 6 6 18M6 6l12 12" />
             </svg>
           </button>
         </div>
-        <div className="rp-tabs">
-          <button className={`rp-tab${tab === "notes" ? " on" : ""}`} onClick={() => setTab("notes")}>
-            <span className="rp-tab-label">{t("panel.notes")}</span>
-            <span className="rp-count">{localeNum(nNotes, lang)}</span>
-          </button>
-          <button className={`rp-tab${tab === "highlights" ? " on" : ""}`} onClick={() => setTab("highlights")}>
-            <span className="rp-tab-label">{t("panel.highlights")}</span>
-            <span className="rp-count">{localeNum(nHls, lang)}</span>
-          </button>
-          <button className={`rp-tab${tab === "bookmarks" ? " on" : ""}`} onClick={() => setTab("bookmarks")}>
-            <span className="rp-tab-label">{t("panel.bookmarks")}</span>
-            <span className="rp-count">{localeNum(nBms, lang)}</span>
-          </button>
+        {/* ONE TRACK, FIVE SEGMENTS, WRITTEN ONCE. Three hand-written buttons could be read at a
+            glance; five could not, and a sixth kind of mark would have meant a fourth copy of the
+            same markup. The list is the order — see `AnnoTab`. The track wraps rather than squeezing,
+            which is how the settings drawer already carries its own five (`.sp-tabs`): three then
+            two, each segment still wide enough for «الاستبدالات» and its numeral. */}
+        <div className="rp-tabs" role="tablist">
+          {CATEGORIES.map((c) => (
+            <button
+              key={c.key}
+              role="tab"
+              aria-selected={tab === c.key}
+              className={`rp-tab${tab === c.key ? " on" : ""}`}
+              onClick={() => setTab(c.key)}
+            >
+              <span className="rp-tab-label">{t(c.label)}</span>
+              <span className="rp-count">{localeNum(counts[c.key], lang)}</span>
+            </button>
+          ))}
         </div>
       </div>
 
+      {/* THE SOURCE FILTER BELONGS TO THE THREE KINDS THAT HAVE A CROSS-BOOK FORM. References and
+          replacements are the open book's own, so showing a book chooser above them would offer a
+          scope they cannot honour — it read as "this book" over a list that could never be anything
+          else. Hidden there rather than disabled, because there is no choice to grey out. */}
+      {tab !== "references" && tab !== "replacements" && (
+      <>
       {/* RAWY-206: the source filter — the Inbox's own control (`.inbox-ctl` + `.lib-menu`), no new
           design language. It sits OUTSIDE `.rp-scroll` so it stays put while the list scrolls. */}
       <div className="rp-src">
@@ -235,9 +288,18 @@ export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, initialTab
           )}
         </div>
       </div>
+      </>
+      )}
 
       <div className="rp-scroll">
-        {!cross ? (
+        {/* REFERENCES AND REPLACEMENTS ANSWER FIRST, whichever source is chosen. They are the open
+            book's own and have no cross-book form, so letting the filter fall through to `CrossTab`
+            would have shown an empty list for a book that has plenty. */}
+        {tab === "references" ? (
+          <ReferencesTab onJump={onJump} />
+        ) : tab === "replacements" ? (
+          <ReplacementsTab />
+        ) : !cross ? (
           // The DEFAULT: unchanged from before RAWY-206 — live store data, fully editable.
           tab === "notes" ? (
             <NotesTab highlights={highlights} notes={notes} onJump={onJump} />
@@ -251,6 +313,134 @@ export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, initialTab
         )}
       </div>
     </aside>
+  );
+}
+
+/**
+ * THE REFERENCES THIS BOOK CARRIES.
+ *
+ * Built from `.rp-item` exactly as Notes and Highlights are — the phrase reads as the passage, the
+ * note beneath it as the writing, and one quiet destructive control sits in the head row. Nothing new
+ * was drawn for it, which is why it does not look like an addition.
+ */
+function ReferencesTab({ onJump }: { onJump: (cfi: string) => void }) {
+  const { t } = useI18n();
+  const refs = useReferences((s) => s.refs);
+  const remove = useReferences((s) => s.remove);
+  const sel = useListSelection(refs.map((r) => r.id));
+  void onJump; // a reference marks words, not a locator — there is nothing to jump to yet
+
+  if (refs.length === 0) return <div className="rp-empty">{t("panel.noReferences")}</div>;
+  return (
+    <>
+      <SelectionBar
+        sel={sel}
+        total={refs.length}
+        actions={[{
+          key: "delete",
+          icon: "trash" as const,
+          label: t("select.delete"),
+          danger: true,
+          // The SAME removal one row uses, run over the chosen ones — there is no second delete path
+          // that could behave differently from the one a reader already trusts.
+          run: () => { for (const id of sel.selected) void remove(id); sel.exit(); },
+        }]}
+      />
+      {refs.map((r) => (
+        <div
+          key={r.id}
+          className={`rp-item plain${sel.has(r.id) ? " sel-on" : ""}`}
+          {...rowSelectProps(sel, r.id)}
+        >
+          <div className="rp-item-head">
+            {sel.on && <SelectionBox on={sel.has(r.id)} onToggle={() => sel.toggle(r.id)} label={r.phrase} />}
+            <span className="rp-chapter" dir="auto">{r.phrase}</span>
+            {!sel.on && (
+              <button className="rp-mini danger" onClick={() => void remove(r.id)}>{t("ref.delete")}</button>
+            )}
+          </div>
+          <div className={`rp-excerpt${isArabicText(r.note) ? " ar" : ""}`} dir="auto">{r.note}</div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+/**
+ * THE REPLACEMENTS THIS BOOK CARRIES, each with the switch that is its whole point.
+ *
+ * The switch writes to `useReplacements().setEnabled`, which is the SAME state the rule was created
+ * with and the same one the library's own list uses: it persists through `rep_set_enabled` and then
+ * re-pushes the enabled set at the renderer, so the page changes because the rule left the set — not
+ * because a second flag somewhere said to ignore it. There is one truth about whether a replacement
+ * is on, and this control moves it.
+ *
+ * The switch itself is the reader's own `.rs-switch`/`.rs-knob`, the part every reading setting uses,
+ * which also means its knob travels the correct way in Arabic without this file knowing the direction.
+ */
+function ReplacementsTab() {
+  const { t } = useI18n();
+  const reps = useReplacements((s) => s.reps);
+  const setEnabled = useReplacements((s) => s.setEnabled);
+  const remove = useReplacements((s) => s.remove);
+  const sel = useListSelection(reps.map((r) => r.id));
+
+  if (reps.length === 0) return <div className="rp-empty">{t("panel.noReplacements")}</div>;
+  return (
+    <>
+      <SelectionBar
+        sel={sel}
+        total={reps.length}
+        actions={[{
+          key: "delete",
+          icon: "trash" as const,
+          label: t("select.delete"),
+          danger: true,
+          run: () => { for (const id of sel.selected) void remove(id); sel.exit(); },
+        }]}
+      />
+      {reps.map((r) => (
+        <div
+          key={r.id}
+          className={`rp-item plain rep-item${r.enabled ? "" : " off"}${sel.has(r.id) ? " sel-on" : ""}`}
+          {...rowSelectProps(sel, r.id)}
+        >
+          <div className="rp-item-head">
+            {sel.on && <SelectionBox on={sel.has(r.id)} onToggle={() => sel.toggle(r.id)} label={r.phrase} />}
+            {/* The state is announced only when it is OFF. A row that is doing its job needs no
+                badge; a row that is switched off is the one a reader has to be told about, which is
+                the same rule the library's list follows. */}
+            <span className="rp-chapter">{r.enabled ? "" : t("rep.off")}</span>
+            {!sel.on && (
+              <button className="rp-mini danger" onClick={() => void remove(r.id)}>{t("rep.delete")}</button>
+            )}
+          </div>
+          {/* THE RULE, NAMED RATHER THAN ARROWED. An arrow has to point somewhere, and this row can
+              hold Arabic on one side and Latin on the other, so no single direction is right for it —
+              the first attempt drew a glyph keyed to the PANEL's direction and pointed the wrong way
+              the moment a row read the other way. The two sides are labelled instead, with the words
+              the editor already uses, and a label cannot point wrongly. */}
+          <div className="rep-rule">
+            <span className="rep-key">{t("rep.fromLabel")}</span>
+            <span className={`rep-was${isArabicText(r.phrase) ? " ar" : ""}`} dir="auto">{r.phrase}</span>
+            <span className="rep-key">{t("rep.toLabel")}</span>
+            <span className={`rep-now${isArabicText(r.replacement) ? " ar" : ""}`} dir="auto">{r.replacement}</span>
+          </div>
+          {!sel.on && (
+          <button
+            className="rs-toggle-row rep-switch-row"
+            role="switch"
+            aria-checked={r.enabled}
+            aria-label={t("rep.toggle")}
+            onClick={() => void setEnabled(r.id, !r.enabled)}
+          >
+            <span className="rs-toggle-text"><span className="rs-toggle-label">{t("rep.toggle")}</span></span>
+            <span className={`rs-switch${r.enabled ? " on" : ""}`} aria-hidden><span className="rs-knob" /></span>
+          </button>
+          )}
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -347,11 +537,34 @@ function BookmarksTab({ bookmarks, onJump }: { bookmarks: BookmarkRow[]; onJump:
   const { t, lang } = useI18n();
   const { shape, color } = useBookmarkStyle();
   const remove = useBookmarks((s) => s.remove);
+  const sel = useListSelection(bookmarks.map((b) => b.id));
   return (
     <>
+      <SelectionBar
+        sel={sel}
+        total={bookmarks.length}
+        actions={[{
+          key: "delete",
+          icon: "trash" as const,
+          label: t("select.delete"),
+          danger: true,
+          run: () => { for (const id of sel.selected) remove(id); sel.exit(); },
+        }]}
+      />
       {bookmarks.length === 0 && <div className="rp-empty">{t("panel.noBookmarks")}</div>}
       {bookmarks.map((b) => (
-        <div key={b.id} className="rp-item bm-item">
+        <div
+          key={b.id}
+          className={`rp-item bm-item${sel.has(b.id) ? " sel-on" : ""}`}
+          {...rowSelectProps(sel, b.id)}
+        >
+          {sel.on && (
+            <SelectionBox
+              on={sel.has(b.id)}
+              onToggle={() => sel.toggle(b.id)}
+              label={b.chapter_label || t("reader.chapterFallback")}
+            />
+          )}
           <span className="bm-item-mark" aria-hidden>
             <BookmarkShape shape={shape} color={color} h={30} />
           </span>
@@ -359,7 +572,9 @@ function BookmarksTab({ bookmarks, onJump }: { bookmarks: BookmarkRow[]; onJump:
             {b.chapter_label || t("reader.chapterFallback")}
             <span className="bm-item-pct">{localeNum(Math.round((b.fraction ?? 0) * 100), lang)}%</span>
           </span>
-          <button className="rp-mini danger" onClick={() => remove(b.id)}>{t("note.delete")}</button>
+          {!sel.on && (
+            <button className="rp-mini danger" onClick={() => remove(b.id)}>{t("note.delete")}</button>
+          )}
         </div>
       ))}
     </>
@@ -371,6 +586,7 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
   const hl = useHl();
   const updateNote = useAnnotations((s) => s.updateNote);
   const deleteNote = useAnnotations((s) => s.deleteNote);
+  const sel = useListSelection(notes.map((n) => n.id));
   const addMarginNote = useAnnotations((s) => s.addMarginNote);
   const [editId, setEditId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -435,21 +651,47 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
         )}
       </div>
 
+      <SelectionBar
+        sel={sel}
+        total={notes.length}
+        actions={[{
+          key: "delete",
+          icon: "trash" as const,
+          label: t("select.delete"),
+          danger: true,
+          run: () => { for (const id of sel.selected) deleteNote(id); sel.exit(); },
+        }]}
+      />
+
       {notes.length === 0 && <div className="rp-empty">{t("panel.noNotes")}</div>}
 
       {notes.map((n) => {
         const target = locate(n);
         const editing = editId === n.id;
         return (
-          <div key={n.id} className="rp-item note-item" style={{ "--swatch": colorValue(n.color, hl) } as CSSProperties}>
+          <div
+            key={n.id}
+            className={`rp-item note-item${sel.has(n.id) ? " sel-on" : ""}`}
+            style={{ "--swatch": colorValue(n.color, hl) } as CSSProperties}
+            {...rowSelectProps(sel, n.id)}
+          >
             <div className="rp-item-head">
+              {sel.on && (
+                <SelectionBox
+                  on={sel.has(n.id)}
+                  onToggle={() => sel.toggle(n.id)}
+                  label={n.title || n.chapter_label || t("panel.marginNote")}
+                />
+              )}
               <span className="rp-chapter" dir="auto" onClick={() => target && onJump(target)} role="button" tabIndex={0}>
                 {n.chapter_label || (n.highlight_id ? "" : t("panel.marginNote"))}
               </span>
+              {!sel.on && (
               <div className="rp-item-actions">
                 <button className="rp-mini" onClick={() => { setEditId(n.id); setDraft(n.body ?? ""); setDraftTitle(n.title ?? ""); }}>{t("note.edit")}</button>
                 <button className="rp-mini danger" onClick={() => deleteNote(n.id)}>{t("note.delete")}</button>
               </div>
+              )}
             </div>
             {editing ? (
               <div className="rp-compose">
@@ -492,15 +734,37 @@ function HighlightsTab({ highlights, onJump }: { highlights: HighlightRow[]; onJ
   const hl = useHl();
   const setColor = useAnnotations((s) => s.setColor);
   const removeHighlight = useAnnotations((s) => s.removeHighlight);
+  const sel = useListSelection(highlights.map((h) => h.id));
 
   return (
     <>
+      <SelectionBar
+        sel={sel}
+        total={highlights.length}
+        actions={[{
+          key: "delete",
+          icon: "trash" as const,
+          label: t("select.delete"),
+          danger: true,
+          run: () => { for (const id of sel.selected) removeHighlight(id); sel.exit(); },
+        }]}
+      />
       {highlights.length === 0 && <div className="rp-empty">{t("panel.noHighlights")}</div>}
       {highlights.map((h) => (
-        <div key={h.id} className="rp-item hi-item" style={{ "--swatch": colorValue(h.color, hl) } as CSSProperties}>
+        <div
+          key={h.id}
+          className={`rp-item hi-item${sel.has(h.id) ? " sel-on" : ""}`}
+          style={{ "--swatch": colorValue(h.color, hl) } as CSSProperties}
+          {...rowSelectProps(sel, h.id)}
+        >
           <div className="rp-item-head">
+            {sel.on && (
+              <SelectionBox on={sel.has(h.id)} onToggle={() => sel.toggle(h.id)} label={h.text_excerpt ?? undefined} />
+            )}
             <span className="rp-chapter" dir="auto" onClick={() => onJump(h.cfi)} role="button" tabIndex={0}>{h.chapter_label}</span>
-            <button className="rp-mini danger" onClick={() => removeHighlight(h.id)}>{t("note.delete")}</button>
+            {!sel.on && (
+              <button className="rp-mini danger" onClick={() => removeHighlight(h.id)}>{t("note.delete")}</button>
+            )}
           </div>
           <div
             className={`rp-excerpt${isArabicText(h.text_excerpt) ? " ar" : ""}`}
@@ -509,7 +773,7 @@ function HighlightsTab({ highlights, onJump }: { highlights: HighlightRow[]; onJ
           >
             {h.text_excerpt}
           </div>
-          <ColorRow active={h.color} onPick={(c) => setColor(h.id, c)} />
+          {!sel.on && <ColorRow active={h.color} onPick={(c) => setColor(h.id, c)} />}
         </div>
       ))}
     </>

@@ -41,14 +41,38 @@
    Borders step up with it: `--chrome-border` is 7% white on the dark themes, which disappears over a
    picture, so controls take a firmer edge while surfaces keep the quiet one. */
 .rr {
+  /* ATMOSPHERIC. The page's own sheet, which carries no words of its own — the picture may show
+     through it as far as the reader's texture setting asks. */
   --rr-sheet: color-mix(in srgb, var(--chrome-bg)
     calc(var(--ui-floor, 0%) + (92% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
-  --rr-plate: color-mix(in srgb, var(--chrome-bg)
-    calc(var(--ui-floor, 0%) + (96% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
-  --rr-control: color-mix(in srgb, var(--chrome-bg)
-    calc(var(--ui-floor, 0%) + (90% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
+
+  /* FUNCTIONAL, AND THEREFORE SOLID.
+
+     WHAT WAS WRONG. Every rung below was a `color-mix(chrome, transparent)` whose alpha travels
+     with the reader's texture step — and every surface in this section that uses them carries
+     words: the reference rows, the replacement rules and their switches, the search field, the
+     tabs, the actions, and the back button. Measured over a photograph at full presence, with the
+     ladder at its MOST OPAQUE rung, the back button composited to 2.92:1 against its own mark and
+     the search field to 3.23:1 — both under AA, before the reader has moved the texture control at
+     all. At «glass» each of them collapses to the floor and it can only get worse.
+
+     The floor was not the mistake either. It was derived when the library still had a 0.77 scrim
+     beneath it; the owner's ruling took that floor to zero so the photograph could actually be
+     seen, and stated what pays for it — the chrome that carries text keeps its own opaque ground.
+     This is that ground, and it is the shared one: see `.ui-solid` in `global.css`.
+
+     The picture is not lost. It shows AROUND the rows, which is where a background belongs; what
+     it no longer does is decide whether a rule the reader wrote can be read. */
+  --rr-plate-base: var(--solid-base);
+  --rr-plate: var(--solid-tint);
+  --rr-control-base: var(--solid-base);
+  --rr-control: var(--solid-tint);
   --rr-edge: color-mix(in srgb, var(--text) 14%, transparent);
-  --rr-frost: blur(calc(var(--bg-lib-blur, 0px) + var(--ui-frost, 0px)))
+
+  /* A blur under an opaque ground is paint nobody can see. It stays defined for the atmospheric
+     sheet and is `none` for everything that has to be read. */
+  --rr-frost: none;
+  --rr-frost-sheet: blur(calc(var(--bg-lib-blur, 0px) + var(--ui-frost, 0px)))
     saturate(var(--ui-sat, 1)) brightness(var(--ui-bright, 1));
 }
 
@@ -63,7 +87,12 @@
   border: 1px solid var(--rr-edge); border-radius: var(--r-md);
   background: var(--rr-control);
   backdrop-filter: var(--rr-frost); -webkit-backdrop-filter: var(--rr-frost);
-  color: var(--muted); cursor: pointer;
+  /* THE WAY OUT OF A PAGE IS NOT SECONDARY TEXT.
+     `--muted` is derived to a 3:1 floor, which is the right target for a caption beside something
+     louder and the wrong one for the control a reader reaches for to leave. Measured on its own
+     opaque plate: 3.03:1 at rest, 11.5:1 on hover — so it was already drawn correctly, once you
+     had found it and pointed at it. The resting state now matches the hover it was going to reach. */
+  color: var(--text); cursor: pointer;
   transition: color 0.15s linear, border-color 0.15s linear, background 0.15s linear;
 }
 .rr-back:hover {
@@ -397,3 +426,29 @@
    has no Arabic glyphs, so an Arabic word left on the Latin role falls out of Sard's faces entirely. */
 .rr-cover-fallback.ar, .rr-pv-word.ar, .rr-blank.ar,
 .rr-def-word.ar, .rr-big.ar, .rr-edit-word.ar { font-family: var(--ar); }
+
+/* ================================================================================================
+   THE TWO LAYERS, stated last so nothing can undo them.
+   ================================================================================================
+   Every selector above sets `background:` — the SHORTHAND, which resets `background-image` — so a
+   two-layer ground declared before them is silently flattened by the very rules it exists to make
+   safe. Source order is what settles it between rules of equal specificity, so it is settled here.
+
+   These are the functional surfaces of this section: the rows a reader reads, the field they type
+   in, the tabs they choose with, and the control they leave by. See `.ui-solid` in `global.css` for
+   why an opaque floor under the tint, rather than a higher alpha, is the only version of this that
+   is actually a guarantee.
+   ================================================================================================ */
+.rr-back,
+.rr-ghost,
+.rr-search,
+.rr-tabs,
+.rr-plate,
+.rr-def-wrap,
+.rr-rule-row {
+  background-color: var(--solid-base);
+  background-image: linear-gradient(var(--solid-tint), var(--solid-tint));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  isolation: isolate;
+}

@@ -577,6 +577,11 @@ pub fn gc(conn: &Connection, app_data_dir: &Path) -> Result<usize, String> {
     // it would be DELETED on the next surface bind, because the sweep below removes any managed file
     // no row claims, and `choose()` collects inline.
     keep.extend(crate::profiles::referenced_icons(conn).map_err(|e| e.to_string())?);
+    // THE FIFTH REFERENCE SOURCE — images used by a saved PHOTO CARD, ground and stickers alike.
+    // Read from `photo_card_images`, a table written in the same transaction as the card row, so the
+    // collector never has to parse the card's frontend-owned `doc` JSON to learn what it holds. Added
+    // here in the same change as that write path, per the rule in this module's header.
+    keep.extend(crate::photocards::referenced_backgrounds(conn).map_err(|e| e.to_string())?);
     let mut removed = 0usize;
     for row in list(conn)? {
         if keep.iter().any(|k| *k == row.id) {
@@ -826,6 +831,113 @@ mod tests {
         assert!(!Path::new(&ra.original_path).exists(), "its file goes with it");
         assert!(Path::new(&rb.original_path).exists(), "the bound file is spared");
         assert_eq!(managed_files(&dir).len(), 1, "zero orphans left in the managed dir");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Bind `bg` to a saved photo card, the way `photocards::save` does — the row and the binding
+    /// together, since that pairing is the whole point of the fifth reference source.
+    fn card_using(conn: &Connection, card: &str, bg: &str) {
+        conn.execute(
+            "INSERT OR REPLACE INTO photo_cards(id, book_id, book_title, chapter_label, cfi, format,              theme_id, quote, created_at) VALUES(?1, NULL, 'B', NULL, NULL, 'portrait', 'ivory', 'q', 0)",
+            [card],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO photo_card_images(card_id, background_id) VALUES(?1, ?2)",
+            rusqlite::params![card, bg],
+        )
+        .unwrap();
+    }
+
+    // THE REGRESSION TEST FOR THE FIFTH REFERENCE SOURCE.
+    //
+    // A card's background is named by nothing else: no surface key holds it, no profile mentions it.
+    // Delete the `photocards::referenced_backgrounds` line from `gc()` and this fails — the image is
+    // deleted, row and file, the next time anyone changes their wallpaper, while the gallery goes on
+    // listing a card whose picture is gone. That is the exact fault this source exists to prevent.
+    #[test]
+    fn an_image_a_photo_card_names_survives_collection() {
+        let (conn, dir) = fresh("gccard");
+        let art = write_png(&dir, "art.png", 300, 300, 120);
+        let wall = write_png(&dir, "wall.png", 260, 180, 60);
+
+        let card_bg = import(&conn, &dir, &art).unwrap();
+        card_using(&conn, "card-1", &card_bg.id);
+
+        // Someone changes their wallpaper — which is what runs the collector.
+        let bound = choose(&conn, &dir, KEY_LIBRARY_ID, &wall).unwrap();
+
+        assert!(get(&conn, &card_bg.id).unwrap().is_some(), "the card's image survives");
+        assert!(Path::new(&card_bg.original_path).exists(), "and so does its file");
+        assert!(get(&conn, &bound.id).unwrap().is_some(), "the wallpaper is still bound");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // THE WINDOW BETWEEN PICKING AN IMAGE AND SAVING THE CARD.
+    //
+    // A bare `import` leaves the row unreferenced, and `gc()` runs inside `set_surface()` — so a
+    // sticker chosen in an open composer could be deleted the moment the reader changed their
+    // wallpaper, before Save was ever pressed. `stage_image` writes the binding in the same
+    // transaction as the import, which closes the window by construction rather than by being quick.
+    #[test]
+    fn an_image_staged_into_an_unsaved_card_survives_a_wallpaper_change() {
+        let (conn, dir) = fresh("gcstage");
+        let art = write_png(&dir, "sticker.png", 240, 240, 170);
+        let wall = write_png(&dir, "w3.png", 220, 160, 50);
+
+        // The composer has not saved anything: there is no photo_cards row for this id yet.
+        let staged = crate::photocards::stage_image(&conn, &dir, "card-being-composed", &art).unwrap();
+        assert!(
+            conn.query_row("SELECT COUNT(*) FROM photo_cards WHERE id = 'card-being-composed'", [], |r| r.get::<_, i64>(0)).unwrap() == 0,
+            "precondition: the card really is unsaved",
+        );
+
+        choose(&conn, &dir, KEY_LIBRARY_ID, &wall).unwrap(); // this runs the collector
+        assert!(get(&conn, &staged.id).unwrap().is_some(), "the staged image survives");
+        assert!(Path::new(&staged.original_path).exists(), "and so does its file");
+
+        // Between sessions, a binding for a card that was never saved is rubbish — and only then.
+        crate::photocards::sweep_draft_bindings(&conn).unwrap();
+        gc(&conn, &dir).unwrap();
+        assert!(get(&conn, &staged.id).unwrap().is_none(), "an abandoned import is reclaimed at startup");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The sweep must never touch a binding whose card WAS saved.
+    #[test]
+    fn the_startup_sweep_spares_a_saved_card() {
+        let (conn, dir) = fresh("gcsweep");
+        let art = write_png(&dir, "kept.png", 200, 200, 90);
+        let staged = crate::photocards::stage_image(&conn, &dir, "real-card", &art).unwrap();
+        card_using(&conn, "real-card", &staged.id); // the composer pressed Save
+
+        crate::photocards::sweep_draft_bindings(&conn).unwrap();
+        gc(&conn, &dir).unwrap();
+        assert!(get(&conn, &staged.id).unwrap().is_some(), "a saved card keeps its image");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Two cards sharing one imported image: losing one card must not collect the other's picture.
+    #[test]
+    fn a_shared_image_survives_until_the_last_card_lets_go() {
+        let (conn, dir) = fresh("gcshare");
+        let art = write_png(&dir, "shared.png", 280, 280, 150);
+        let wall = write_png(&dir, "w2.png", 200, 200, 40);
+        let shared = import(&conn, &dir, &art).unwrap();
+        card_using(&conn, "card-a", &shared.id);
+        card_using(&conn, "card-b", &shared.id);
+
+        conn.execute("DELETE FROM photo_card_images WHERE card_id = 'card-a'", []).unwrap();
+        choose(&conn, &dir, KEY_LIBRARY_ID, &wall).unwrap();
+        assert!(get(&conn, &shared.id).unwrap().is_some(), "the other card still holds it");
+
+        conn.execute("DELETE FROM photo_card_images WHERE card_id = 'card-b'", []).unwrap();
+        gc(&conn, &dir).unwrap();
+        assert!(get(&conn, &shared.id).unwrap().is_none(), "with no card left, it is collected");
 
         let _ = std::fs::remove_dir_all(&dir);
     }

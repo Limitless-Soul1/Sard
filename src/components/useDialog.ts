@@ -25,7 +25,12 @@
  * IT CHANGES NO VISUAL DESIGN AND NO DECISION. `onDismiss` is whatever the caller's own cancel path
  * already is — for the unsaved question that is Cancel, which leaves the draft exactly where it was.
  */
-import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import {
+  useCallback, useEffect, useId, useRef, useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
 /** Open dialogs, innermost last. Only the last one answers the keyboard. */
 const stack: HTMLElement[] = [];
@@ -182,5 +187,99 @@ export function useDialog(opts: {
       onKeyDown,
     },
     titleId,
+  };
+}
+
+/**
+ * DISMISSING BY THE BACKDROP, WITHOUT LOSING A SHEET TO A NEAR MISS.
+ *
+ * THE DEFECT THIS CLOSES, and it is one defect shared by every sheet rather than several. The
+ * pattern was `onClick={onClose}` on the scrim with `stopPropagation` on the panel, and that is not
+ * the same thing as "the reader clicked outside":
+ *
+ *   · A `click` is dispatched at the nearest COMMON ANCESTOR of the press and the release. Select a
+ *     book's title, drag a few pixels past the field, let go — press inside, release outside, so the
+ *     click lands on the SCRIM and the whole sheet closes mid-edit. `stopPropagation` on the panel
+ *     cannot prevent it, because the event never targets the panel.
+ *   · The panel's border box is the whole boundary, so a press one pixel outside it is treated
+ *     exactly like a press across the room. On a control near the edge that is a coin toss.
+ *   · One sheet dismissed on `pointerdown`, which removes even the chance of a drag being a drag.
+ *
+ * THE RULE HERE: a backdrop dismissal requires a press that BEGAN on the backdrop, a release on the
+ * backdrop, and both of them clear of the panel by `guardPx`. A gesture that started on the sheet
+ * belongs to the sheet however it ends; a press that grazes the edge is a miss, not an instruction.
+ *
+ * `guardPx` is a margin around the panel, not padding on it: nothing about the layout changes, and
+ * the panel's own hit area is untouched. Zero disables it for a surface where the backdrop really is
+ * a target — a lightbox, say, where tapping beside the picture is how you leave.
+ *
+ * WHAT IT DELIBERATELY DOES NOT DO: ask. A confirmation on every stray touch would be worse than the
+ * bug, because the touches are frequent and the answer is always the same. The fix belongs in the
+ * hit test.
+ */
+/**
+ * How far outside a surface still counts as the surface. Shared, because the two places that
+ * dismiss by an outside press — a sheet's own backdrop and the library's dismissal stack — have to
+ * agree, or a sheet forgives the near miss that the stack underneath it still acts on.
+ */
+export const NEAR_MISS_PX = 12;
+
+/**
+ * Is this point genuinely on the backdrop — clear of the panel by `guardPx`?
+ *
+ * Separated from the hook so the rule can be stated and tested as a rule. `null` for the panel means
+ * "not measured yet", and the honest answer then is that the point is on the backdrop: a scrim with
+ * nothing in it is all backdrop.
+ */
+export function isOnBackdrop(
+  x: number,
+  y: number,
+  panel: { left: number; right: number; top: number; bottom: number } | null,
+  guardPx: number,
+): boolean {
+  if (!panel) return true;
+  return (
+    x < panel.left - guardPx || x > panel.right + guardPx ||
+    y < panel.top - guardPx || y > panel.bottom + guardPx
+  );
+}
+
+export function useScrimDismiss(
+  onDismiss: () => void,
+  opts: { guardPx?: number } = {},
+): {
+  /** Attach to the panel — its rect is what the guard measures from. */
+  panelRef: (el: HTMLElement | null) => void;
+  /** Spread onto the scrim. */
+  scrimProps: {
+    onPointerDown: (e: ReactPointerEvent<HTMLElement>) => void;
+    onClick: (e: ReactMouseEvent<HTMLElement>) => void;
+  };
+} {
+  const panel = useRef<HTMLElement | null>(null);
+  const startedOutside = useRef(false);
+  const guard = opts.guardPx ?? NEAR_MISS_PX;
+
+  const outside = useCallback(
+    (e: { target: EventTarget | null; currentTarget: EventTarget | null; clientX: number; clientY: number }) => {
+      if (e.target !== e.currentTarget) return false;
+      const el = panel.current;
+      return isOnBackdrop(e.clientX, e.clientY, el ? el.getBoundingClientRect() : null, guard);
+    },
+    [guard],
+  );
+
+  return {
+    panelRef: useCallback((el: HTMLElement | null) => { panel.current = el; }, []),
+    scrimProps: {
+      onPointerDown: useCallback((e: ReactPointerEvent<HTMLElement>) => {
+        startedOutside.current = outside(e);
+      }, [outside]),
+      onClick: useCallback((e: ReactMouseEvent<HTMLElement>) => {
+        // BOTH ENDS. The press decides whether the gesture was ever the backdrop's to begin with.
+        if (startedOutside.current && outside(e)) onDismiss();
+        startedOutside.current = false;
+      }, [onDismiss, outside]),
+    },
   };
 }

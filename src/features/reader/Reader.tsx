@@ -63,12 +63,24 @@ import { useAnnotations } from "./annotationsStore";
 import { useReferences } from "./referencesStore"; // RAWY-260: phrase-bound references, per book
 import { useReplacements } from "./replacementsStore"; // phrase-bound reading-time substitutions, per book
 import { useBookmarks } from "./bookmarksStore";
+import { useBookmarkStyle } from "../../lib/bookmarkStyle"; // the dye a new place is marked in
 import { ReaderChrome, type SettingsSection } from "./ReaderChrome";
 import { NoteSheet } from "./NoteSheet";
 import { SettingsPanel } from "./SettingsPanel";
 import { useReadMarkerStyle } from "../../lib/readMarkerStyle"; // RAWY-256: the global read-marker variant
 import { endReadingSession, startReadingSession, updateReadingSession } from "../../lib/presence"; // DISC/RPC
 import { ReturnPill } from "./ReturnPill"; // RAWY-250: the return-to-reading-position pill
+import { landingStep } from "./readAnchor";
+import {
+  advanceFurthest,
+  boundaryHasParted,
+  movedOnFrom,
+  type Landing,
+  markFromResume,
+  parseFurthest,
+  serialiseFurthest,
+  type FurthestMark,
+} from "./furthestRead"; // the furthest point reached — the maximum of the reading position
 import { ReplacementNotice } from "./ReplacementNotice";
 import { TtsPlayer } from "./TtsPlayer";
 import { releaseButtonFocusAfterPointerClick, skipSentenceForArrow, useTts } from "../../lib/tts";
@@ -186,7 +198,11 @@ export function Reader({
   // does for its own view, lifted one layer up to the whole open sequence.
   const openEpoch = useRef(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>("typography");
+  // OPENS ON COLOUR. With one entrance instead of three, the drawer needs a place to land, and
+  // colour is the setting a reader reaches for while actually reading — the light in the room
+  // changed, not the typography. After that the section is remembered, so reopening returns the
+  // reader to whichever tab they were last using rather than resetting under them.
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("colour");
   // RAWY-89: Contents + Search share the physical-left, so only ONE is open at a time — a single
   // source of truth makes that structural (no two-setter races; the persisted-open effect can't
   // re-open Contents over a Search the user just opened). `chaptersOpen`/`searchOpen` are derived.
@@ -263,7 +279,52 @@ export function Reader({
   // Where the jump LANDED, in locations — recorded on the first relocate after an anchor is taken,
   // because the landing is not known at the moment the anchor is. Null while no anchor holds.
   const anchorLocRef = useRef<number | null>(null);
+  // A JUMP IS NOT OVER UNTIL ITS NAVIGATION IS.
+  //
+  // `beginJump` already suppresses the SECTION-change thaw deterministically, by pre-arming the chapter
+  // tracker with the section the jump will land in — its own comment gives the reason: one jump emits
+  // several relocates ("an `onExpand` re-anchor emits another"), and a rule that fires on any of them
+  // cannot be trusted. The LOCATION rule added later (addendum 7 — three locations past the landing
+  // means the reader is reading here now) never got that protection. It takes the FIRST relocate as the
+  // landing and measures every later one against it, so a jump that settles further on than it first
+  // landed thaws itself and the pill vanishes the instant it appeared.
+  //
+  // `goToSearchHit` settles twice by construction: it navigates to the cfi, then re-finds the hit's real
+  // text in the rendered document and scrolls to THAT. So the search path — the one this pill exists for
+  // — is precisely the path that can move after landing.
+  //
+  // This counts jumps in flight. While one is, the landing keeps being re-recorded instead of measured
+  // against, so the baseline is where the jump FINISHED, not where it first touched down. It is cleared
+  // by the navigation's own promise, not by a timer: the engine says when it is done.
+  const jumpsInFlight = useRef(0);
   const [anchorUi, setAnchorUi] = useState<ReadAnchor | null>(null);
+  // THE FURTHEST POINT REACHED IN THIS BOOK — the destination of "take me back to where I got to".
+  //
+  // It is the running MAXIMUM of the very value the row below already persists, so it is not a second
+  // opinion about where the reader is: it advances inside the same debounce, behind the same anchor
+  // freeze, from the same relocate. See `furthestRead.ts` for why that is the whole definition.
+  // `furthestRef` is what the once-registered onRelocate closure reads; `furthestUi` mirrors it for
+  // rendering, exactly as the anchor pair does.
+  const furthestRef = useRef<FurthestMark | null>(null);
+  // WHEN THE READER WAS SENT SOMEWHERE RATHER THAN READING THERE.
+  //
+  // A search hit, an annotation, a bookmark or a cross-reference already announces itself: it takes a
+  // return anchor, the reading position freezes, and nothing below can advance the mark. A CONTENTS
+  // row does not — it is ordinary navigation, it writes the reading position immediately, and that is
+  // long-standing behaviour this feature must not disturb (close the book after picking a chapter and
+  // it still reopens there).
+  //
+  // But picking chapter 900 from the list to look at it is not READING to chapter 900, and the mark —
+  // which now also decides what search seals — must not treat it as such. So the jump is stamped here
+  // and the mark alone consults it. Nothing else does: the reading position, the read-chapter
+  // set and the anchor rules all behave exactly as before. Read ON from the landing and the next
+  // position is no longer jump-driven, so the mark advances then — genuine forward reading, which is
+  // the whole distinction being drawn.
+  // Armed by an explicit contents jump, disarmed once the reader has moved ON from where it put them.
+  // `null` inside means the landing has not been seen yet. See `movedOnFrom` for why this is a
+  // position and not a timer.
+  const tocPendingRef = useRef<{ landing: Landing | null } | null>(null);
+  const [furthestUi, setFurthestUi] = useState<FurthestMark | null>(null);
   // RAWY-250 (PART 0.4 / D66): per-chapter tracking for the SHARED end-signal. `atStart` = the chapter was
   // entered at its beginning (a mid-chapter jump must never mark it read); `endOnArrival` = its end-condition
   // was already true when we landed (a chapter shorter than one screen) — that one completes only when the
@@ -400,6 +461,9 @@ export function Reader({
       chapTrackRef.current = { sec: -1, atStart: false }; // sec < 0 ⇒ the completion rule cannot fire
       seenStartRef.current = new Set(); // replaced by THIS book's persisted set below, before the view exists
       readChaptersRef.current = new Set();
+      furthestRef.current = null;      // this book's mark is restored below, before the view exists
+      tocPendingRef.current = null;
+      setFurthestUi(null);
       jumpNavAtRef.current = 0;
       nextChapterArmedRef.current = false;
       anchorRef.current = null;         // RAWY-250: an anchor belongs to the book it was taken in
@@ -535,7 +599,7 @@ export function Reader({
       // and the same call site, exercised once loading had finished, correctly merged (`[1]` → `[1,6]`).
       // Nothing here depends on the view, so the reads simply belong before it. No flag, no guard, no
       // deferral of the handler: the data is just present before anything can read it.
-      const [readRaw, seenRaw, spoilerRaw, invertRaw, pdfThemeRaw, pdfZoomRaw] = await Promise.all([
+      const [readRaw, seenRaw, spoilerRaw, invertRaw, pdfThemeRaw, pdfZoomRaw, furthestRaw] = await Promise.all([
         settingsGet(`chapters_read:${target.id}`).catch(() => null),
         settingsGet(`seen_start:${target.id}`).catch(() => null),
         settingsGet(`spoiler_safe:${target.id}`).catch(() => null),
@@ -545,11 +609,34 @@ export function Reader({
         // because the right magnification depends on that file's page size and scan quality.
         settingsGet(PDF_THEME_KEY).catch(() => null),
         settingsGet(pdfZoomKey(target.id)).catch(() => null),
+        // The furthest point reached. Same additive settings-row pattern as the two sets above —
+        // no schema change, no migration, and an absent key simply means this book has no mark yet.
+        settingsGet(`furthest_read:${target.id}`).catch(() => null),
       ]);
       if (stale()) return;
       // RAWY-250 (PART 4) / RAWY-256 (addendum, case 6): the read-chapter set and the "beginning seen" set,
       // both per book, both plain settings rows (additive, no migration). An absent key = nothing recorded.
       readChaptersRef.current = new Set(parseSecs(readRaw));
+      // The furthest mark is restored BEFORE the first relocate can arrive, so a book reopened at
+      // chapter 320 knows it once reached 488 from the moment it opens — the reader never has to
+      // read forward again to win back what they had already reached.
+      //
+      // NO STORED MARK? THE SAVED READING POSITION IS ONE. Every book read before this existed has no
+      // `furthest_read` row, and treating that as "has reached nowhere" would be both false and a
+      // regression: the spoiler-safe search boundary follows this mark now, so a null mark would seal
+      // nothing and reveal the whole book. Where the reader stopped reading IS a point they reached,
+      // so it becomes the opening mark, and it is written straight away — held only in memory it
+      // would be lost the moment they read backwards and closed the book.
+      //
+      // `saved`, deliberately, not `resumeCfi`: the two differ when the library opens a book AT an
+      // annotation, and that locator is somewhere the reader was SENT, not somewhere they got to.
+      const stored = targetIsPdf ? null : parseFurthest(furthestRaw);
+      const restored = targetIsPdf ? null : markFromResume(stored, saved);
+      furthestRef.current = restored;
+      setFurthestUi(restored);
+      if (!stored && restored) {
+        settingsSet(`furthest_read:${target.id}`, serialiseFurthest(restored)).catch(() => {});
+      }
       seenStartRef.current = new Set(parseSecs(seenRaw));
       setReadVersion((v) => v + 1); // RAWY-256: publish the loaded set to the Contents markers
       // RAWY-285: the two per-book PREFERENCES that used to be read by their own `[]`-dep effects. Those
@@ -679,14 +766,53 @@ export function Reader({
         if (anchorRef.current) {
           const here = location?.current ?? null;
           if (here != null) {
-            if (anchorLocRef.current == null) anchorLocRef.current = here;
-            else if (here - anchorLocRef.current >= THAW_LOCATIONS) thawRef.current();
+            const step = landingStep(anchorLocRef.current, here, jumpsInFlight.current > 0, THAW_LOCATIONS);
+            anchorLocRef.current = step.baseline;
+            if (step.thaw) thawRef.current();
           }
           if (anchorRef.current) return; // still frozen — the row stays exactly as it was
         }
         progressTimer.current = window.setTimeout(() => {
           // RAWY-85: a PDF has no CFI — persist it by fraction (empty cfi) so it still resumes.
           if (cfi || targetIsPdf) progressSave(bookRef.current, cfi ?? "", fraction).catch(console.error);
+          // THE FURTHEST MARK RIDES THIS WRITE. Reaching this line already means everything the
+          // reading model requires: the anchor freeze did not hold, the position settled for the
+          // debounce, and the row is being written. So the only question left is whether this is
+          // further than the book has ever been — and the answer is no for every backward page
+          // turn, which is precisely why paging back through half a book costs no writes at all.
+          // EPUB only: a PDF resumes by fraction and has no cfi to order.
+          // THE LANDING OF A CONTENTS JUMP IS NOT A READING ADVANCE — and neither is a re-layout that
+          // reports the same place again. The first relocate after the jump records where it put the
+          // reader; the mark stays sealed until they move forward from there.
+          const pending = tocPendingRef.current;
+          if (pending) {
+            const now: Landing = { loc: location?.current ?? null, frac: fraction };
+            if (!pending.landing) pending.landing = now;
+            else if (movedOnFrom(pending.landing, now)) tocPendingRef.current = null;
+          }
+          if (!targetIsPdf && cfi && !tocPendingRef.current) {
+            void (async () => {
+              // The ENGINE orders two positions — it owns the book's document order, and on the hosted
+              // path it is the only side that can answer at all. A number crosses that boundary; the
+              // comparator itself would not.
+              const held = furthestRef.current;
+              const order = held ? await ctrl.compareLocators(cfi, held.cfi) : null;
+              // Another relocate may have moved the mark while that answer was in flight. It moved it
+              // FORWARD (nothing else can), so the newer mark is the better one and this one stands down
+              // rather than racing it backwards.
+              if (furthestRef.current !== held) return;
+              const grown = advanceFurthest(
+                held,
+                { cfi, fraction, label: chapterLabel, href: chapterHref, sec: curSec },
+                order,
+              );
+              if (!grown) return;
+              furthestRef.current = grown;
+              setFurthestUi(grown);
+              ctrl.setFurthestBoundary(grown.cfi); // search seals from the new point on
+              settingsSet(`furthest_read:${bookRef.current}`, serialiseFurthest(grown)).catch(() => {});
+            })();
+          }
         }, SAVE_DEBOUNCE_MS);
       });
 
@@ -707,6 +833,10 @@ export function Reader({
       // Superseded during the (async) open → don't publish ready/toc or bind the shared stores; the
       // newer open owns them now.
       if (stale()) return;
+      // THE SPOILER-SAFE BOUNDARY IS THIS MARK. The engine no longer works it out from what has been
+      // displayed; it is told, here and on every advance below, so search seals exactly what the
+      // reader has not read — and keeps sealing it after they page back to an earlier chapter.
+      ctrl.setFurthestBoundary(furthestRef.current?.cfi ?? null);
 
       // RESILIENCE-1 / WP-3 — the DATABASE names this book, not the file.
       //
@@ -1130,11 +1260,14 @@ export function Reader({
     });
   }, [signalMove, signalScroll]);
 
-  // When the basket empties (Clear, or removing the last passage) the top-bar button hides, so
-  // close the now-orphaned tray too (RAWY-60).
-  useEffect(() => {
-    if (basketCount === 0) setBasketOpen(false);
-  }, [basketCount]);
+  // WHEN IT EMPTIES, THE TRAY STAYS. It used to close itself the moment the last passage went, on
+  // the grounds that its button in the bar had hidden and the tray was orphaned. Two things were
+  // wrong with that. The surface vanished out from under the pointer at the exact moment the
+  // reader acted, which reads as a glitch rather than as a result; and it made the empty state
+  // unreachable — the one place that says how passages are collected could never be seen.
+  //
+  // The bar stays clean either way: with nothing collected there is still no button on it. This is
+  // only about the panel the reader has open in front of them, which they close themselves.
 
   // RAWY-126 (TTS reading indicator, Phase 1): drive the sentence "spotlight" off the queue's current
   // sentence. The units were built in lockstep with the queue at start (startListen*), so
@@ -1441,8 +1574,16 @@ export function Reader({
     const ctrl = ctrlRef.current;
     if (!st.cfi || !ctrl) return;
     const existing = useBookmarks.getState().bookmarks.find((b) => ctrl.bookmarkVisible(b.cfi, st.cfi));
-    if (existing) useBookmarks.getState().remove(existing.id);
-    else useBookmarks.getState().add(st.cfi, st.chapterLabel, st.fraction);
+    if (existing) { useBookmarks.getState().remove(existing.id); return; }
+    // WHAT THIS PLACE WILL BE RECOGNISED BY, read while the reader is still standing in it — the
+    // words of the block, and the dye currently chosen. Neither can be recovered later: the section
+    // will not be rendered when the shelf asks, and a dye changed afterwards would rewrite history.
+    // The place is saved either way; the words are an enrichment, never a precondition.
+    const color = useBookmarkStyle.getState().color;
+    void ctrl
+      .placeWords(st.cfi)
+      .catch(() => null)
+      .then((words) => useBookmarks.getState().add(st.cfi!, st.chapterLabel, st.fraction, words, color));
   };
 
   // RAWY-85: PDF Phase 0 is READ-ONLY. `isPdf` gates the EPUB-only affordances (themes/fonts/
@@ -1648,7 +1789,17 @@ export function Reader({
   // programmatic jump navigates. ONE-DEEP (the owner's choice): if an anchor already exists, a further jump
   // keeps pointing at the ORIGINAL reading position rather than at the previous jump's landing.
   // `target` = the CFI/href the jump is about to navigate to, so the landing section can be pre-armed.
+  /** Clear the in-flight mark once the navigation has resolved AND the browser has shown the result —
+   *  the last relocate of a landing arrives with that paint. Never a delay: both are real events. */
+  const settleJump = useCallback((nav?: unknown) => {
+    void Promise.resolve(nav)
+      .catch(() => {})
+      .then(() => nextPaint())
+      .finally(() => { jumpsInFlight.current = Math.max(0, jumpsInFlight.current - 1); });
+  }, []);
+
   const beginJump = useCallback((target?: string) => {
+    jumpsInFlight.current += 1;
     // RAWY-250 (addendum 6): DETERMINISTIC jump suppression. Resolve the section the jump will land in and
     // pre-arm the chapter tracker with it, so the landing relocate is NOT a section change and therefore can
     // never reach the thaw rule — regardless of how long the load takes, how busy the machine is, or how many
@@ -1675,7 +1826,7 @@ export function Reader({
     beginJump(hit.cfi); // RAWY-250: freeze the real position + pre-arm the landing section (§6.2)
     // RAWY-139: pass the split excerpt so goToSearchHit can re-find the hit's exact text in the rendered
     // doc (the search CFI is unreliable there — the rendered structure differs from the search doc).
-    ctrlRef.current?.goToSearchHit(hit.cfi, { pre: hit.pre, match: hit.match, post: hit.post });
+    settleJump(ctrlRef.current?.goToSearchHit(hit.cfi, { pre: hit.pre, match: hit.match, post: hit.post }));
   }, []);
   // RESILIENCE-1 / WP-4F: the position readout, decided in ONE pure place (reader-engine/position.ts)
   // and formatted with the app's locale digits — the same formatter the PDF page counter already uses.
@@ -1850,6 +2001,70 @@ export function Reader({
       : t("panel.chapter", { n: localeNum(own, lang) });
   })();
 
+  // WHAT THE SPOILER-SAFE BOUNDARY IS CALLED, and whether it is still simply "where you are".
+  //
+  // The three strings the search panel builds from this label all describe the BOUNDARY — what is
+  // hidden past it, what lies before it, where the list divides. They read as "your position" only
+  // because the boundary used to BE the current position. Now that it is the furthest point reached,
+  // the label names that point, and the wording says so whenever the two have parted company —
+  // telling a reader in chapter 320 that their position is chapter 592 would be a plain untruth.
+  //
+  // Named the way the Contents list names it, and by the same rule as the chrome caption above: the
+  // book's own title for the row, the computed name when it has none, and the neutral name alone
+  // while chapter titles are hidden. A mark whose row cannot be found — a book migrated from before
+  // the mark existed still carries no contents href — falls back to its stored label and then to a
+  // percentage, so the boundary is always nameable.
+  const furthestTocIndex = useMemo(
+    () => (furthestUi?.href ? toc.findIndex((c) => c.href === furthestUi.href) : -1),
+    [furthestUi, toc],
+  );
+  const boundaryIsFurthest = boundaryHasParted(furthestUi, furthestTocIndex, tocIndex, fraction);
+  const searchBoundaryLabel = (() => {
+    if (!boundaryIsFurthest || !furthestUi) return searchPositionLabel;
+    if (furthestTocIndex >= 0) {
+      const own = tocOwnNumbers ? tocOwnNumbers[furthestTocIndex] : furthestTocIndex + 1;
+      const neutral =
+        own == null
+          ? t("panel.tocSection", { n: localeNum(furthestTocIndex + 1, lang) })
+          : t("panel.chapter", { n: localeNum(own, lang) });
+      return hideChapterTitles ? neutral : toc[furthestTocIndex].label || neutral;
+    }
+    return (
+      furthestUi.label ||
+      t("reader.percentRead", { p: localeNum(Math.round(furthestUi.fraction * 100), lang) })
+    );
+  })();
+
+  /**
+   * THE CHAPTER CAPTION, RESOLVED AT THE MOMENT IT IS USED.
+   *
+   * `chapter` above is a RENDER value: it is computed from `chapterLabel`/`tocIndex`, which are set by
+   * the relocate event. `nextChapter` navigates and then starts read-aloud inside the SAME closure, so
+   * the caption it captured is the chapter the reader just left — the pill then showed chapter N while
+   * the audio read N+1, and only corrected on the following advance, one chapter late every time.
+   *
+   * So the caption is derived here from the CONTROLLER's own current section, which is true the instant
+   * navigation finishes rather than when React next renders. The display rules are unchanged — the same
+   * toc entry, the same hide-titles numbering — only their input is taken from the authoritative place.
+   */
+  const captionRef = useRef(() => chapter);
+  captionRef.current = () => {
+    const sec = ctrlRef.current?.currentSectionIndex?.() ?? -1;
+    if (sec < 0) return chapter;
+    // The same nearest-preceding rule `tocIndex` uses, applied to the section the controller is on.
+    let idx = -1, bestSec = -1;
+    toc.forEach((cc, i) => {
+      const cs = cc.href ? tocSecMap.get(cc.href) : undefined;
+      if (typeof cs === "number" && cs <= sec && cs >= bestSec) { idx = i; bestSec = cs; }
+    });
+    if (idx < 0) return chapter;
+    if (!hideChapterTitles) return toc[idx]?.label || chapterLabel || t("reader.chapterFallback");
+    const own = tocOwnNumbers ? tocOwnNumbers[idx] : idx + 1;
+    return own == null
+      ? t("panel.tocSection", { n: localeNum(idx + 1, lang) })
+      : t("panel.chapter", { n: localeNum(own, lang) });
+  };
+
   // RAWY-105: start read-aloud from the current chapter (top-bar Listen). Voice defaults by the BOOK's
   // direction (Arabic book → Arabic voice). RAWY-227: if a session is already reading THIS chapter, resume
   // it in place instead of restarting at the top; and when a saved cursor belongs to this chapter, CONTINUE
@@ -1871,7 +2086,7 @@ export function Reader({
     // and `new AudioContext()` inits on first play. Show the loading pill FIRST (instant feedback), let
     // it paint, THEN do the walk + start playback — so the work happens UNDER the visible "preparing"
     // state instead of a dead frozen frame. (The sidecar spawn / Edge connect / synth were already async.)
-    useTts.setState({ active: true, status: "preparing", chapterLabel: chapter, error: null });
+    useTts.setState({ active: true, status: "preparing", chapterLabel: captionRef.current(), error: null });
     // RAWY-162: read the saved TTS cursor BEFORE playback starts (playback overwrites it via the save
     // effect). RAWY-227: it is now the DEFAULT continue point, not a prompt. A stale/absent value → top.
     let saved: { cfi?: string; sec?: number; idx: number; snip?: string } | null = null;
@@ -1900,7 +2115,7 @@ export function Reader({
       else startIndex = Math.min(Math.max(0, at), sentences.length - 1);
     }
     // WP-5A: the SNIFFED script rides along so the pre-flight can refuse before any synthesis.
-    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: chapter, bookScript: useReader.getState().bookScript });
+    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: captionRef.current(), bookScript: useReader.getState().bookScript });
   };
   // RAWY-186 (Part A): the Play/Pause gesture (pill button AND Space). Read-aloud audio is decoupled from
   // the view (RAWY-129: you can browse while listening), so pressing Play after navigating to a DIFFERENT
@@ -1956,7 +2171,7 @@ export function Reader({
     const bookLang = isRtlBook ? "ar" : "en";
     // RAWY-181 (BUG 1): same freeze-avoidance as startListen — show the loading pill + paint before the
     // synchronous chapter walk.
-    useTts.setState({ active: true, status: "preparing", chapterLabel: chapter, error: null });
+    useTts.setState({ active: true, status: "preparing", chapterLabel: captionRef.current(), error: null });
     await nextPaint();
     // A NOTE IS ITS OWN TEXT. Everything below segments the chapter ON SCREEN and then looks for the
     // selection inside it, which is right for a selection made in the reading frame and wrong for one
@@ -1972,7 +2187,7 @@ export function Reader({
       const plan = await ctrl.noteListenPlan(bookLang);
       if (plan) {
         useTts.getState().start({
-          sentences: plan.sentences, lang: bookLang, startIndex: plan.startIndex, chapterLabel: chapter,
+          sentences: plan.sentences, lang: bookLang, startIndex: plan.startIndex, chapterLabel: captionRef.current(),
           // WHAT THIS QUEUE IS. Without it the player treats the end of a two-sentence footnote as the
           // end of the chapter and offers to advance the book — see `StartOpts.source`.
           source: "note",
@@ -1992,7 +2207,7 @@ export function Reader({
     if (startIndex < 0) startIndex = 0;
     // RAWY-182: call start() even when empty (it surfaces the empty-chapter state), so the "preparing"
     // pill shown above never gets stuck — consistent with startListen.
-    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: chapter });
+    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: captionRef.current() });
   };
 
   // Responsive page width (RAWY-23): the slider fraction → a window-relative preferred width
@@ -2044,6 +2259,33 @@ export function Reader({
     setAnchorUi(null);
     ctrlRef.current?.goToLocator(a.cfi);
   }, []);
+
+  // GO TO THE FURTHEST POINT REACHED.
+  //
+  // This takes the CONTENTS path, not the jump path, and the difference is the whole feature.
+  //
+  // Sard's two families are `beginJump` — search hit, annotation, bookmark, cross-reference — which
+  // FREEZE the reading position because the reader is looking at something and will want to come
+  // back; and plain navigation — a contents row, a page turn — which simply moves and lets the
+  // position follow. A jump here would freeze the row at chapter 320 while showing chapter 488, so
+  // closing the book would reopen it at 320: the reader would have asked to get back to where they
+  // had read to, and Sard would have quietly refused to remember it. That is the one outcome this
+  // feature exists to prevent, so the position must genuinely become the destination.
+  //
+  // Nothing is lost by not freezing. The mark still stands at 488, and 320 was not a place the reader
+  // was sent to — they navigated there themselves and can navigate back the same way.
+  //
+  // Whichever panel offered it closes, because this action is terminal: it means "put me back and let
+  // me read", unlike a contents row, which is browsing and leaves the list up. Both the Contents panel
+  // and the Search panel offer it, and it means the same thing from either.
+  const goToFurthest = useCallback(() => {
+    const m = furthestRef.current;
+    if (!m?.cfi) return;
+    setLeftPanel(null);
+    ctrlRef.current?.goToLocator(m.cfi);
+    restoreReadingFocus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restoreReadingFocus]);
   // RAWY-250 (PART 4): record a chapter as READ (idempotent) and persist the set for this book.
   // RAWY-256 (addendum, case 6 — owner's decision): remember that this chapter's BEGINNING has been seen,
   // and PERSIST it per book. A 1432-chapter book is read across many sessions; if the fact died with the
@@ -2087,6 +2329,11 @@ export function Reader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tocSecMap, readVersion]);
 
+  // IS THERE A MARK AT ALL? Whether it is worth OFFERING is the Contents panel's call, because that
+  // is where the comparison can be made in the unit the control speaks in — the contents row the
+  // reader is in against the one the mark is in (`offerReturn`). A PDF has no cfi and no mark.
+  const furthestAhead = !isPdf && !!furthestUi?.cfi;
+
   /**
    * THE BOOK'S OWN NOTE.
    *
@@ -2122,6 +2369,7 @@ export function Reader({
   // deliberately stays open, so the close-transition rule above never fired for this path.
   const jumpHref = useCallback(
     (href: string) => {
+      tocPendingRef.current = { landing: null }; // arriving by the list is not reading to there
       // WP-6A: a synthesised row carries a spine index, not a real href.
       const section = parseSectionHref(href);
       const r = section != null ? ctrlRef.current?.goToSection(section) : ctrlRef.current?.goToHref(href);
@@ -2134,10 +2382,11 @@ export function Reader({
     (cfi: string) => {
       beginJump(cfi);
       const r = ctrlRef.current?.goToLocator(cfi);
+      settleJump(r);
       restoreReadingFocus();
       return r;
     },
-    [beginJump, restoreReadingFocus],
+    [beginJump, settleJump, restoreReadingFocus],
   );
   const closeContents = useCallback(() => setLeftPanel((p) => (p === "contents" ? null : p)), []);
   const closeSearch = useCallback(() => setLeftPanel((p) => (p === "search" ? null : p)), []);
@@ -2174,8 +2423,8 @@ export function Reader({
   // untrue when written. The desk reserved 300 while Search rendered 340, so 40px of the page sat
   // UNDER the panel and `--reading-shift` was 20px off. Both are 340 now: Notes and Search already
   // were, Contents was the last at 300, and one width means the two places cannot disagree again.
-  const PANEL_LEAD = 340;
-  const PANEL_TRAIL = 340;
+  const PANEL_LEAD = 380;
+  const PANEL_TRAIL = 380;
   // Contents + Search both live on the physical-left and are mutually exclusive — either shifts the desk.
   const leftPad = chaptersOpen || searchOpen ? PANEL_LEAD : 0;
   // The Notes drawer pushes the desk so the page sits beside it. The SETTINGS drawer does NOT
@@ -2329,6 +2578,9 @@ export function Reader({
         readHrefs={readHrefs}
         readMarker={readMarker}
         fraction={fraction}
+        furthestHref={furthestUi?.href ?? null}
+        furthestOffered={furthestAhead}
+        onGoFurthest={goToFurthest}
       />
 
       {!isPdf && (
@@ -2336,7 +2588,9 @@ export function Reader({
           open={searchOpen}
           onClose={closeSearch}
           bookTitle={bookTitle}
-          positionLabel={searchPositionLabel}
+          positionLabel={searchBoundaryLabel}
+          boundaryIsFurthest={boundaryIsFurthest}
+          onGoFurthest={goToFurthest}
           bookDir={isRtlBook ? "rtl" : "ltr"}
           query={searchQuery}
           onQuery={setSearchQuery}
@@ -2372,16 +2626,15 @@ export function Reader({
         searchOpen={searchOpen}
         onListen={startListen}
         ttsActive={ttsActive}
-        onText={() => openSettings("typography")}
-        onTheme={() => openSettings("colour")}
-        onLayout={() => openSettings("layout")}
+        // Passing the section that is already showing is what makes the one button a TOGGLE:
+        // `openSettings` closes the drawer when asked for the tab it is already on.
+        onSettings={() => openSettings(isPdf ? "layout" : settingsSection)}
         onAnnotations={() => { setAnnoOpen((v) => !v); setSettingsOpen(false); }}
         onBookmark={onBookmark}
         bookmarked={!!activeBm}
         chaptersOpen={chaptersOpen}
         annoOpen={annoOpen}
         settingsOpen={settingsOpen}
-        settingsSection={settingsSection}
         basketCount={basketCount}
         basketOpen={basketOpen}
         onBasket={() => setBasketOpen((v) => !v)}
@@ -2484,7 +2737,7 @@ export function Reader({
             // only one that arms the pill. The note goes with it, so the pill is never left explaining
             // a surface that is no longer there.
             beginJump();      // freeze the real position → the return pill appears
-            jumpHref(link.href);
+            settleJump(jumpHref(link.href));
           }}
         />
       )}

@@ -35,6 +35,7 @@ import {
   type ReadingStyle,
 } from "../../reader-engine/injectedCss";
 import { useTheme } from "../../theme/store";
+import { peekGlobalDir, peekGlobalStyle } from "../reader/perBookSettings";
 import {
   PROFILE_READING_FIELDS,
   TYPOGRAPHY_KEYS,
@@ -122,14 +123,49 @@ export function profileValues(p: Profile): Record<SessionKey, string> {
  * `defaultsForDir` is the same function `loadGlobalStyle` uses, so "what the هيئة asserts" here and
  * "what activating it produces" are one answer rather than two that have to agree.
  */
-function readingBase(): ReadingStyle {
-  return defaultsForDir(useReader.getState().dir ?? undefined);
+/**
+ * THE DIRECTION THE COMPARISON CAN HONESTLY BE MADE IN, or `undefined` when there is none.
+ *
+ * `"?"` IS THE READER'S WORD FOR "NO BOOK", NOT A DIRECTION — it is the store's initial value, and
+ * because it is a string rather than null a `??` fallback never fired. Beyond that: guessing a
+ * baseline is not a harmless default. A typography field the هيئة does not name resolves against it,
+ * so guessing Latin for an Arabic reader reports drift on zoom, leading and alignment for someone who
+ * has changed nothing — and the key came and went from the list depending on what had been read last.
+ */
+function knownDir(): string | undefined {
+  const live = useReader.getState().dir;
+  if (live && live !== "?") return live;
+  return peekGlobalDir();
 }
 
-/** What Sard is actually showing right now. */
+function readingBase(): ReadingStyle {
+  // The Reader knows the open book's direction; with no book open the last one read is the honest
+  // answer, and it is stored beside the row for exactly this comparison. Resolving the هيئة against
+  // one baseline while the live row was resolved against the other reports drift on a reader who has
+  // changed nothing — an Arabic reader would see it on zoom, leading and alignment at once.
+  //
+  // `"?"` IS THE READER'S WORD FOR "NO BOOK", NOT A DIRECTION. It is the store's initial value, and
+  // because it is a string rather than null a `??` fallback never fired — so in the Library the
+  // comparison resolved against the LATIN baseline whatever the reader actually reads, and alignment
+  // came and went from the drift list depending on which side had been read last.
+  return defaultsForDir(knownDir());
+}
+
+/**
+ * What Sard is actually showing right now.
+ *
+ * WITH NO BOOK OPEN, the persisted row stands in. `useReader.style` is null in the Library (the
+ * Reader nulls it on the way out), and that used to mean no reading value could be compared there at
+ * all — which was tolerable while a reader's changes lasted only for the sitting, and is not now
+ * that they outlive it: the Library is where هيئات are switched, and a switch that silently replaced
+ * changes the reader had made and kept would be the very loss this whole layer exists to prevent.
+ *
+ * The row is the same value the Reader would be showing, resolved against the same baseline, so the
+ * comparison is like for like in both places.
+ */
 export function liveValues(): Record<SessionKey, string> {
   const t = useTheme.getState();
-  const s = useReader.getState().style;
+  const s = useReader.getState().style ?? peekGlobalStyle();
   return {
     theme_id: String(t.themeId),
     book_theme_id: String(t.bookThemeId),
@@ -172,7 +208,16 @@ export function driftOf(p: Profile): SessionKey[] {
   //
   // `style === null` is the fact itself. With a book open every reading key is compared properly,
   // nulls included; with none open, none of them is.
-  const readingKnown = useReader.getState().style != null;
+  // Known in the Reader from the live style, and in the Library from the persisted row — see
+  // `liveValues`. Unknown only before either has ever been read, which is the launch instant.
+  //
+  // AND THE DIRECTION MUST BE KNOWN TOO, because a typography field the هيئة does not name resolves
+  // against a per-script baseline: without a direction the two sides of the comparison are resolved
+  // in different frames and the answer is not wrong so much as meaningless. Unknown is unknown — the
+  // same rule this file already applies to a closed Reader, applied to the baseline as well. The
+  // direction is stored beside the row the first time any book is read, so this is the launch of a
+  // library that has never been read from, and nothing else.
+  const readingKnown = (useReader.getState().style != null || peekGlobalStyle() != null) && knownDir() != null;
   const want = profileValues(p);
   const have = liveValues();
   return SESSION_KEYS.filter((k) => {
@@ -203,6 +248,15 @@ export interface Pending {
    */
   onSave?: () => Promise<void> | void;
   onDiscard?: () => Promise<void> | void;
+  /**
+   * WHICH هيئة THE QUESTION IS ABOUT, when that is not the one being worn.
+   *
+   * The dialog names a هيئة, and it used to name the ACTIVE one whatever the boundary was — so
+   * closing the editor of a DIFFERENT هيئة asked about changes to the one on screen, and closing the
+   * editor of a brand-new هيئة asked about the active one's drift, which is neither true nor
+   * answerable. A boundary that is editing something names it here and the dialog says so.
+   */
+  subject?: Profile;
 }
 
 interface SessionState {
@@ -225,8 +279,28 @@ export const useSession = create<SessionState>((set) => ({
  */
 export function guardUnsaved(
   action: () => void,
-  opts?: { alsoDirty?: boolean; onSave?: Pending["onSave"]; onDiscard?: Pending["onDiscard"] },
+  opts?: {
+    alsoDirty?: boolean;
+    onSave?: Pending["onSave"];
+    onDiscard?: Pending["onDiscard"];
+    subject?: Profile;
+  },
 ): void {
+  // A BOUNDARY THAT NAMES ITS SUBJECT IS ASKING ABOUT THAT SUBJECT, AND ABOUT NOTHING ELSE.
+  //
+  // The editor is the only such boundary today, and it must be: leaving the editor of هيئة B is not
+  // an occasion to ask about drift in هيئة A, and for a هيئة that has just been created it is not
+  // even a coherent question — the reader has changed nothing about what they are wearing. The only
+  // unsaved thing here is the editor's own draft, which is what `alsoDirty` reports.
+  if (opts?.subject) {
+    if (!opts.alsoDirty) { action(); return; }
+    useSession.getState().open({
+      // No drift keys: the change is a draft, so the dialog uses its draft wording rather than
+      // listing values the reader has not touched.
+      keys: [], proceed: action, onSave: opts.onSave, onDiscard: opts.onDiscard, subject: opts.subject,
+    });
+    return;
+  }
   const { profiles, activeId } = useProfiles.getState();
   const active = profiles.find((p) => p.id === activeId) ?? null;
   const keys = active ? driftOf(active) : [];

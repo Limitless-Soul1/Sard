@@ -186,6 +186,8 @@ macro_rules! sard_invoke_handler {
             commands::rep_set_enabled,
             commands::rep_delete,
             commands::refs_reps_books,
+            commands::refs_all,
+            commands::reps_all,
             commands::highlight_delete,
             commands::notes_for_book,
             commands::note_create,
@@ -210,6 +212,7 @@ macro_rules! sard_invoke_handler {
             commands::stage_png,
             commands::save_photo_card,
             commands::photocard_save,
+            commands::photocard_stage_image,
             commands::photocards_list,
             commands::photocard_delete,
             tts::tts_synthesize,
@@ -477,6 +480,15 @@ fn dev_data_dir_override() -> Option<std::path::PathBuf> {
             // state the arrangement model exists to abolish. One query that usually finds nothing.
             if let Err(e) = library::placement::ensure(&conn) {
                 eprintln!("could not give every book a placement: {e}");
+            }
+            // A composer closed without saving leaves its imported images bound to a card id that
+            // was never written. During a session those bindings are what keeps the images alive;
+            // between sessions there is no composer to protect, so they are just rubbish. Swept
+            // here — the one place that cannot race a live composer.
+            match photocards::sweep_draft_bindings(&conn) {
+                Ok(0) => {}
+                Ok(n) => eprintln!("reclaimed {n} image binding(s) from unsaved cards"),
+                Err(e) => eprintln!("could not reclaim unsaved card image bindings: {e}"),
             }
             let version = db::schema_version(&conn)?;
 

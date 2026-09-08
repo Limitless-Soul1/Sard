@@ -518,6 +518,29 @@ const PATHS: Record<IconName, ReactElement> = {
  * REQ-05 (a single stroke) and REQ-07 (solid shapes 3.2 units wide, the most robust in the set).
  */
 const SMALL: Partial<Record<IconName, ReactElement>> = {
+  // THE GEAR, FOR A CONTROL RATHER THAN A LIST ROW.
+  //
+  // The full drawing is eight thin teeth detached from a 6.6 rim with a hollow hub. At list size that
+  // is legible; at toolbar size it collapses into a ring with a fringe — the teeth fall below a
+  // pixel, the two concentric circles merge, and what is left reads as a faint washer. Measured in
+  // the reader's own bar, where every neighbouring mark is drawn at 17px and this one was arriving at
+  // 14: it was both the smallest and the least distinct thing on the bar, on the one control that
+  // should be the most obvious.
+  //
+  // So the small drawing carries FEWER, SHORTER, ATTACHED teeth on a rim that owns the weight, and a
+  // SOLID hub instead of a second outline. Six teeth rather than eight: at this size the gaps do more
+  // work than the teeth, and six of them survive where eight blur together. Same 24 viewBox as the
+  // full drawing, which is the rule that lets the two be swapped at all.
+  gear: (
+    <>
+      <circle cx="12" cy="12" r="6.9" strokeWidth={1.9} />
+      <circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none" />
+      <path
+        strokeWidth={2.1}
+        d="M18.9 12H21M5.1 12H3M15.45 17.98l1.05 1.81M8.55 17.98l-1.05 1.81M8.55 6.02 7.5 4.21M15.45 6.02 16.5 4.21"
+      />
+    </>
+  ),
   navLibrary: (
     <>
       <path d="M3.5 19.6h17" strokeWidth={1.9} />

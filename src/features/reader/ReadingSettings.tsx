@@ -43,7 +43,7 @@ import {
   REF_OFFSET_MAX,
 } from "../../reader-engine/refRule";
 import { useTts } from "../../lib/tts"; // RAWY-257 (Phase 1 / RAWY-255): the read-aloud diagnostic toggle
-import { useFonts } from "../../lib/fonts";
+import { familiesOnce, useFonts } from "../../lib/fonts";
 // RAWY-265 (Phase 2): the reading DESK background. Constants, store and the presence→scrim mapping
 // all live in the module and are shared with the library surface — only the markup differs here.
 import {
@@ -847,7 +847,7 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
         onChange={(k) => update({ latinFont: k })}
         options={[
           ...(Object.keys(LATIN_FONTS) as LatinFont[]).map((k) => ({ key: k, label: LATIN_FONTS[k].label })),
-          ...customFonts.map((c) => ({ key: c.family_name, label: `${c.family_name} · ${t("gs.imported")}` })),
+          ...familiesOnce(customFonts).map((c) => ({ key: c.family_name, label: `${c.family_name} · ${t("gs.imported")}` })),
         ]}
       />
       <SelectRow<string>
@@ -856,7 +856,7 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
         onChange={(k) => update({ arabicFont: k })}
         options={[
           ...(Object.keys(ARABIC_FONTS) as ArabicFont[]).map((k) => ({ key: k, label: ARABIC_FONTS[k].label })),
-          ...customFonts.map((c) => ({ key: c.family_name, label: `${c.family_name} · ${t("gs.imported")}` })),
+          ...familiesOnce(customFonts).map((c) => ({ key: c.family_name, label: `${c.family_name} · ${t("gs.imported")}` })),
         ]}
       />
       {/* RAWY-271: discoverability only. Imported fonts already appear in both lists above (RAWY-44),

@@ -51,7 +51,7 @@ import {
 } from "../lib/highlightInk";
 // RAWY-260: the reference matching engine — folding + whole-phrase scanning, kept out of this file so the
 // rules stay testable and identical between the create path and the render path.
-import { foldChar, foldPhrase, findPhraseHits, type RefLite } from "../lib/references";
+import { foldCharInto, foldPhrase, findPhraseHits, type RefLite } from "../lib/references";
 import {
   applyToSection,
   expandQuery,
@@ -1864,8 +1864,11 @@ export class FoliateController {
     }
 
     // RAWY-88: seed the spoiler-safe boundary at the resume position + load the CFI comparator (EPUB
-    // only — a PDF has no CFI/whole-book text search). Done before reading starts so relocate can
-    // advance `furthestCfi` synchronously.
+    // only — a PDF has no CFI/whole-book text search).
+    //
+    // THE SEED IS A FLOOR, NOT THE ANSWER. The application owns the furthest-read mark and pushes it
+    // with `setFurthestBoundary` as soon as the book is open; this only ensures that a search run
+    // before it speaks hides the same matches the old behaviour hid, rather than none.
     this.furthestCfi = fxl ? null : (opts.resumeCfi ?? null);
     if (!fxl) await this.ensureCfiCompare();
     if (this.view !== view) return; // superseded during the await
@@ -1919,12 +1922,18 @@ export class FoliateController {
         const n = this.pdfPageCount;
         if (n > 0) fraction = (pageIdx + 0.5) / n;
       }
-      // RAWY-88: advance the furthest-read boundary (never retreat — re-reading earlier never un-hides
-      // spoiler-safe results). EPUB only; the comparator is preloaded so this stays synchronous.
+      // THE SPOILER-SAFE BOUNDARY IS NO LONGER DECIDED HERE.
+      //
+      // It used to advance on EVERY relocate, which made it "the furthest position ever DISPLAYED".
+      // Two consequences, both wrong once the application grew a real furthest-read mark: opening a
+      // search hit or an annotation in chapter 900 moved the boundary to 900 although the reader had
+      // only looked; and the boundary was in-memory, seeded from the resume position, so closing a
+      // book at chapter 320 after reaching 592 un-hid everything between them on the next open.
+      //
+      // The application already answers this question — one mark, advanced only when the reading
+      // position is genuinely written (never behind a return-anchor freeze) and persisted per book. So
+      // it is TOLD to this engine through `setFurthestBoundary` rather than guessed at again here.
       const cfi = e.detail?.cfi ?? null;
-      if (!fxl && cfi) {
-        if (!this.furthestCfi || (this.cfiCompareFn?.(cfi, this.furthestCfi) ?? 0) > 0) this.furthestCfi = cfi;
-      }
       // RESILIENCE-1 (NAV-2): refine WHICH TOC entry the reader is inside when a section holds more
       // than one. See `refineTocEntry` — foliate's own answer is kept verbatim for every other book.
       const sectionIndex = e.detail?.section?.current;
@@ -3296,6 +3305,57 @@ export class FoliateController {
    *  for the same chapter (foliate emits the same spine step for a section). NOT the visible range (that
    *  made the marker vanish mid-chapter and let the button add a 2nd bookmark) and NOT the whole-book
    *  fraction window (that lit the marker in every chapter of a long book — the original FEEDBACK 1.6 bug). */
+  /**
+   * THE WORDS A SAVED PLACE IS RECOGNISED BY.
+   *
+   * A reader knows where they were by what was written there — a percentage has to be decoded before
+   * it means anything. So a bookmark records the opening of the block it sits in, captured at the
+   * moment it is placed, and the shelf shows those words instead of a figure.
+   *
+   * Only ever called for a place in the section on screen (a bookmark is made where the reader is),
+   * which is what makes it cheap: the section's document is already rendered, so the CFI resolves
+   * against a live document and nothing has to be re-parsed. A place in any other section, or a CFI
+   * the book cannot resolve, yields null — the caller stores nothing rather than storing a guess.
+   *
+   * `async` so it needs no entry in the crossing table: everything not listed there is forwarded
+   * verbatim, and this returns a plain string that a port can carry.
+   */
+  async placeWords(cfi: string): Promise<string | null> {
+    const view = this.view as {
+      book?: { resolveCFI?: (c: string) => { index?: number; anchor?: (d: Document) => Range } | null };
+      renderer?: { getContents?: () => { index: number; doc?: Document }[] };
+    } | null;
+    const book = view?.book;
+    if (!book?.resolveCFI) return null;
+    let target: { index?: number; anchor?: (d: Document) => Range } | null = null;
+    try {
+      target = book.resolveCFI(cfi);
+    } catch {
+      return null;
+    }
+    if (!target?.anchor) return null;
+    const here = (view?.renderer?.getContents?.() ?? []).find((c) => c.index === target?.index);
+    if (!here?.doc) return null;
+    let range: Range | null = null;
+    try {
+      range = target.anchor(here.doc);
+    } catch {
+      return null;
+    }
+    if (!range) return null;
+    // Up to the block the place sits in — a text node alone is a fragment of a sentence, and the
+    // design asks for the opening LINE, which is a block's worth of words.
+    let node: Node | null = range.startContainer;
+    while (node && node.nodeType !== 1) node = node.parentNode;
+    let el = node as Element | null;
+    const BLOCK = /^(P|DIV|LI|BLOCKQUOTE|H1|H2|H3|H4|H5|H6|SECTION|TD)$/;
+    while (el && !BLOCK.test(el.tagName)) el = el.parentElement;
+    const raw = (el?.textContent ?? range.toString() ?? "").replace(/\s+/g, " ").trim();
+    if (!raw) return null;
+    // Two lines' worth is all the row shows; storing a chapter would be storing the book again.
+    return raw.length > 220 ? raw.slice(0, 220).trimEnd() : raw;
+  }
+
   bookmarkVisible(bookmarkCfi: string | null | undefined, currentCfi: string | null | undefined): boolean {
     // Delegates to `cfiSection.ts`. The rule is pure and the hosted transport has to apply it in the
     // application — `Reader.tsx:300` calls this inside a React render body, which cannot await a
@@ -4427,6 +4487,29 @@ export class FoliateController {
     return this.furthestCfi;
   }
 
+  /** Tell the engine how far the reader has actually read, so `searchBook` can seal what lies past it.
+   *  The application owns this — see the relocate handler for why the engine stopped deciding it. */
+  setFurthestBoundary(cfi: string | null): void {
+    if (this.isFixedLayout) return; // a PDF has no cfi and no whole-book search to seal
+    this.furthestCfi = cfi && cfi.length > 0 ? cfi : null;
+  }
+
+  /** Where `a` stands relative to `b` in the book's own order: negative before, positive after, 0 the
+   *  same place. Null when the engine's comparator is unavailable, so a caller can fall back rather
+   *  than guess.
+   *
+   *  A METHOD RETURNING A NUMBER, not the comparator itself. Handing out the function would be the
+   *  shorter code and it cannot cross the reader host's port — a function is not cloneable, so on the
+   *  hosted path every caller would receive nothing usable. Numbers cross; functions do not. Document
+   *  order is the engine's to define either way, and this is the same comparator the spoiler-safe
+   *  boundary already uses rather than a second copy of it. */
+  async compareLocators(a: string, b: string): Promise<number | null> {
+    if (!a || !b) return null;
+    await this.ensureCfiCompare();
+    const c = this.cfiCompareFn?.(a, b);
+    return typeof c === "number" && Number.isFinite(c) ? c : null;
+  }
+
   /** RAWY-88: in-book search over the WHOLE book (EPUB only). Streams foliate's search generator into
    *  a flat, ordered list of hits — each with its chapter label, location fraction, split excerpt, and
    *  whether it lies AHEAD of the furthest-read position (for spoiler-safe). Diacritics-/case-
@@ -4448,6 +4531,19 @@ export class FoliateController {
     const compare = this.cfiCompareFn;
     const boundary = this.furthestCfi;
     const hits: SearchHit[] = [];
+    // THE DE-DUPLICATION SET. Two expanded terms can reach the same passage, so a cfi already taken is
+    // skipped — but the test used to be `hits.some(h => h.cfi === s.cfi)`, a linear scan of everything
+    // found so far, run once per match. That is O(n²) in the number of MATCHES, and matches are exactly
+    // what a common term produces a great many of.
+    //
+    // MEASURED on a real book, searching one letter: 15,481 matches, and `searchBook`'s own body was the
+    // single largest cost in the profile at 806ms of self time — roughly 120 million string comparisons
+    // for one search. It is quadratic, so it is also the term that explains why a long book with tens of
+    // thousands of matches stops answering altogether rather than merely being slow.
+    //
+    // A Set answers the same question in constant time. Identical results, identical order, identical
+    // count — the only thing removed is the scanning.
+    const seen = new Set<string>();
     let curIndex = 0;
     let scanFrac = 0;
     // Throttle the UI callbacks — a 1000+ section book yields ~1000 progress ticks; firing setState on
@@ -4522,7 +4618,8 @@ export class FoliateController {
           if (Array.isArray(rr.subitems)) {
             for (const s of rr.subitems) {
               if (!s?.cfi) continue;
-              if (hits.some((h) => h.cfi === s.cfi)) continue; // two terms can reach the same passage
+              if (seen.has(s.cfi)) continue; // two terms can reach the same passage
+              seen.add(s.cfi);
               hits.push({
                 cfi: s.cfi,
                 sectionIndex: curIndex,
@@ -4913,7 +5010,10 @@ export class FoliateController {
         const t = n as Text;
         const s = t.data;
         for (let i = 0; i < s.length; i++) {
-          const fc = foldChar(s[i]);
+          // A RUN OF WHITESPACE FOLDS TO ONE SPACE, the same collapsing `foldPhrase` applies to the
+          // stored phrase — the rule lives in `references` so the two folds cannot drift. Skipping an
+          // emission cannot disturb the index→node mapping below: only emitted characters advance it.
+          const fc = foldCharInto(s[i], hay.charCodeAt(hay.length - 1) === 32);
           for (let k = 0; k < fc.length; k++) { hay += fc[k]; nodes.push(t); offs.push(i); }
         }
       }

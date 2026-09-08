@@ -46,7 +46,7 @@ import {
   previewRow,
   type BookDraft,
 } from "./bookEdits";
-import { useDialog } from "../../../components/useDialog";
+import { useScrimDismiss, useDialog } from "../../../components/useDialog";
 
 
 /** The dialog's palette, exactly as authored. */
@@ -140,18 +140,27 @@ export function BookDetails(props: BookDetailsProps) {
    * spent navigating out from under an open dialog. But nothing then consumed it, so the most
    * modal surface in the library was the one surface the key could not close.
    *
-   * Joining the stack also means a press outside answers here first, and that a book menu opened
-   * behind it cannot outlive it.
+   * Joining the stack also means a book menu opened behind it cannot outlive it. It does NOT mean
+   * the stack takes the press outside: that listener sees only the press, and this sheet needs both
+   * ends of the gesture to tell a dismissal from a title dragged a pixel too far. The scrim below
+   * owns it.
    */
   const dialogRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => openTransient(props.onClose, () => dialogRef.current), [props.onClose]);
+  useEffect(
+    // NOT by an outside press: the scrim below owns that gesture, and it needs both ends of it.
+    () => openTransient(props.onClose, () => dialogRef.current, { outsidePress: false }),
+    [props.onClose],
+  );
   /**
-   * ESCAPE AND THE OUTSIDE PRESS ARE ALREADY THIS DIALOG'S OWN — `openTransient` owns the stack that
-   * closes the nearest layer first. So no `onDismiss` here: two handlers for one key would be two
-   * chances to close the wrong thing. What was missing is everything else a modal owes a keyboard —
+   * ESCAPE IS ALREADY THIS DIALOG'S OWN — `openTransient` owns the stack that closes the nearest
+   * layer first. So no `onDismiss` here: two handlers for one key would be two chances to close
+   * the wrong thing. What was missing is everything else a modal owes a keyboard —
    * the trap, and giving focus back to the tile that opened it.
    */
   const dlg = useDialog({ label: shown, initialFocus: "none" });
+  // The backdrop takes a press only when the gesture began there and ends clear of the sheet.
+  const scrim = useScrimDismiss(props.onClose);
+
   const arabic = scriptOf(shown, book.dir) === "arabic";
   const derived = autoCoverPaint(shown);
   const src = coverSrc(book);
@@ -452,7 +461,10 @@ export function BookDetails(props: BookDetailsProps) {
 
   return (
     <div
-      onClick={props.onClose}
+      // The backdrop dismisses only a gesture that BEGAN on it and ends clear of the sheet — see
+      // `useScrimDismiss`. Editing a title and releasing a pixel past the field used to close the
+      // whole sheet, because a click is dispatched at the common ancestor of press and release.
+      {...scrim.scrimProps}
       style={{
         position: "fixed",
         inset: 0,
@@ -465,7 +477,7 @@ export function BookDetails(props: BookDetailsProps) {
     >
       <div
         className="libd-dialog"
-        ref={(node) => { dialogRef.current = node; dlg.ref(node); }}
+        ref={(node) => { dialogRef.current = node; dlg.ref(node); scrim.panelRef(node); }}
         // It behaves as a modal — it covers the library, takes the press outside, and answers to
         // Escape — so it has to SAY it is one. Without this a screen reader announces an anonymous
         // group and never tells the reader that the surface behind it has gone inert.
@@ -565,7 +577,7 @@ export function BookDetails(props: BookDetailsProps) {
             </div>
           </div>
           <button
-            className="libd-hov libd-hov-txt"
+            className="libd-hov libd-hov-txt ui-close"
             onClick={props.onClose}
             aria-label={t("panel.close")}
             style={{ flex: "none", width: "var(--ctl-md)", height: "var(--ctl-md)", borderRadius: "var(--r-md)", color: "var(--mut)", fontSize: 14 }}
@@ -702,7 +714,7 @@ export function BookDetails(props: BookDetailsProps) {
                       alt=""
                       style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
                     />
-                  ) : (
+                  ) : spineMode === "none" ? null : (
                     <span
                       style={{
                         transform: "rotate(-90deg)",
@@ -710,7 +722,9 @@ export function BookDetails(props: BookDetailsProps) {
                         maxWidth: 168,
                         overflow: "hidden",
                         textOverflow: "ellipsis",
-                        color: spineMode === "none" ? "var(--faint)" : ink,
+                        // The plain spine draws nothing at all now, so the only spine that reaches
+                        // here is the typeset one and it uses the book's own ink.
+                        color: ink,
                         font: `${arabic ? 700 : 500} ${arabic ? ".8125rem" : ".75rem"} ${labelFace(arabic)}`,
                       }}
                     >
@@ -741,6 +755,11 @@ export function BookDetails(props: BookDetailsProps) {
                       {t("lib.spineRemove")}
                     </button>
                   )}
+                  {/* WHICH IS WHICH. Two chips named "Typeset by Sard" and "Plain" do not say what
+                      they differ in, and that difference is the whole of the choice. */}
+                  <span style={{ font: "400 .625rem/1.5 var(--ui)", color: "var(--faint)", textWrap: "pretty" }}>
+                    {t("lib.spineModeNote")}
+                  </span>
                   <span style={{ font: "400 .625rem/1.5 var(--ui)", color: "var(--faint)", textWrap: "pretty" }}>
                     {t("lib.spineNote")}
                   </span>

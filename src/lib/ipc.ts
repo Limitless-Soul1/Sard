@@ -155,6 +155,13 @@ export const profileImportCommit = (
 export const backgroundImport = (path: string): Promise<BackgroundRow> =>
   invoke<BackgroundRow>("background_import", { path });
 
+/** Import an image for a card that is still being composed, binding it in the same transaction.
+ *  Use this rather than `backgroundImport` from the composer: a bare import leaves the row
+ *  unreferenced, and the collector runs whenever anyone changes their wallpaper — so an imported
+ *  sticker could be deleted before the card was ever saved. */
+export const photocardStageImage = (cardId: string, path: string): Promise<BackgroundRow> =>
+  invoke<BackgroundRow>("photocard_stage_image", { cardId, path });
+
 export const backgroundsList = (): Promise<BackgroundRow[]> =>
   invoke<BackgroundRow[]>("backgrounds_list");
 
@@ -170,7 +177,10 @@ export interface BookmarkRow {
   cfi: string;
   chapter_label: string | null;
   fraction: number | null;
+  /** The opening words of the block this place sits in, captured when it was marked. */
   label: string | null;
+  /** The dye it was marked in. `null` for a place saved before the reader could choose one. */
+  color: string | null;
   created_at: number | null;
 }
 export interface BookmarkItem extends BookmarkRow {
@@ -185,10 +195,12 @@ export const bookmarkCreate = (args: {
   chapterLabel?: string | null;
   fraction?: number | null;
   label?: string | null;
+  color?: string | null;
 }): Promise<BookmarkRow | null> =>
   invoke<BookmarkRow | null>("bookmark_create", {
     bookId: args.bookId,
     cfi: args.cfi,
+    color: args.color ?? null,
     chapterLabel: args.chapterLabel ?? null,
     fraction: args.fraction ?? null,
     label: args.label ?? null,
@@ -765,6 +777,10 @@ export interface PhotoCardRow {
   quote: string | null;
   passages: string | null; // JSON array of { text, chapterLabel } for a multi-passage card (RAWY-60)
   quote_font: string | null; // RAWY-81 — the quote's own font key; null = follow the book font
+  /** The card's composition document. NULL for a card saved before the document existed — the UI
+   *  reconstructs that card's composition from the columns above, so it opens exactly as it always
+   *  did. See `features/photo/composition.ts`. */
+  doc: string | null;
   created_at: number;
   image_path: string; // absolute path to the stored PNG (load via convertFileSrc)
 }
@@ -781,6 +797,11 @@ export const photocardSave = async (args: {
   quote?: string | null;
   passages?: string | null;
   quoteFont?: string | null;
+  /** The serialised composition. */
+  doc?: string | null;
+  /** The managed background ids the composition uses, sent so the collector can read them from a
+   *  table rather than by parsing `doc`. See `photocards::referenced_backgrounds` (Rust). */
+  images?: string[];
   createdAt: number;
   png: ArrayBuffer; // RAWY-177 (AUD-4): the card PNG, staged as a raw ipc body (not a JSON array)
 }): Promise<PhotoCardRow> => {
@@ -797,6 +818,8 @@ export const photocardSave = async (args: {
     quote: args.quote ?? null,
     passages: args.passages ?? null,
     quoteFont: args.quoteFont ?? null,
+    doc: args.doc ?? null,
+    images: args.images ?? [],
     createdAt: args.createdAt,
     pngPath,
   });
@@ -938,6 +961,19 @@ export interface RefsRepsBook {
   touched: number | null;
 }
 
+/**
+ * THE WHOLE SHELF, IN TWO CALLS RATHER THAN TWO PER BOOK.
+ *
+ * The shelf previews what the reader made in each book, so it needs the contents and not a count.
+ * Asking per book is ~2N round trips: measured on 2,000 books carrying rules, that was ~3,400 calls
+ * and 1,121ms of the main thread inside `fetch` on one press.
+ *
+ * Rows come back ordered by book, then exactly as the per-book query orders them, so grouping by
+ * `book_id` reproduces what the per-book calls returned. The per-book calls remain, and remain
+ * right, for reloading ONE book after an edit.
+ */
+export const refsAll = (): Promise<RefRow[]> => invoke<RefRow[]>("refs_all");
+export const repsAll = (): Promise<RepRow[]> => invoke<RepRow[]>("reps_all");
 export const refsRepsBooks = (): Promise<RefsRepsBook[]> =>
   invoke<RefsRepsBook[]>("refs_reps_books", {});
 

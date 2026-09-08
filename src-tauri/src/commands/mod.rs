@@ -1073,11 +1073,20 @@ pub fn bookmark_create(
     chapter_label: Option<String>,
     fraction: Option<f64>,
     label: Option<String>,
+    color: Option<String>,
     state: State<AppState>,
 ) -> Result<Option<library::BookmarkRow>, String> {
     let conn = state.conn();
-    library::bookmark_create(&conn, &book_id, &cfi, chapter_label.as_deref(), fraction, label.as_deref())
-        .map_err(err)
+    library::bookmark_create(
+        &conn,
+        &book_id,
+        &cfi,
+        chapter_label.as_deref(),
+        fraction,
+        label.as_deref(),
+        color.as_deref(),
+    )
+    .map_err(err)
 }
 
 #[tauri::command]
@@ -1468,6 +1477,11 @@ pub fn stage_png(request: tauri::ipc::Request<'_>) -> Result<String, String> {
 }
 
 // ---- Saved photo cards + gallery (RAWY-52, Photo Mode part 2a). ----
+//
+// `doc` is the card's composition; `images` is the set of managed background ids that composition
+// uses. The ids are sent EXPLICITLY rather than parsed out of `doc`, because `backgrounds::gc()`
+// must be able to learn what a card references without reading frontend-owned JSON — see
+// `photocards::referenced_backgrounds`, the collector's fifth reference source.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn photocard_save(
@@ -1482,6 +1496,8 @@ pub fn photocard_save(
     quote: Option<String>,
     passages: Option<String>,
     quote_font: Option<String>,
+    doc: Option<String>,
+    images: Option<Vec<String>>,
     created_at: i64,
     png_path: String, // RAWY-177 (AUD-4): a staged temp file, not a JSON number-array of the bytes
     state: State<AppState>,
@@ -1504,9 +1520,26 @@ pub fn photocard_save(
         quote,
         passages,
         quote_font,
+        doc,
+        images: images.unwrap_or_default(),
         created_at,
     };
     photocards::save(&conn, &app_data_dir, meta, &data)
+}
+
+/// Import an image for a card that is still being composed, binding it in the same transaction.
+/// See `photocards::stage_image` — this exists so an imported sticker cannot be collected before the
+/// card is saved.
+#[tauri::command]
+pub fn photocard_stage_image(
+    card_id: String,
+    path: String,
+    state: State<AppState>,
+) -> Result<crate::backgrounds::Background, String> {
+    safe_id(&card_id)?;
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.conn();
+    photocards::stage_image(&conn, &app_data_dir, &card_id, &path)
 }
 
 #[tauri::command]
@@ -1598,6 +1631,24 @@ pub fn rep_delete(id: String, state: State<AppState>) -> Result<bool, String> {
     let conn = state.conn();
     library::rep_delete(&conn, &id).map_err(err)?;
     Ok(true)
+}
+
+/// THE WHOLE SHELF'S CONTENTS, in one call each.
+///
+/// The shelf previews what the reader made in every listed book, so it needs the contents rather
+/// than a count — and it used to fetch them PER BOOK, two round trips a row. See `library::refs_all`
+/// for the measurement that made that untenable on a large library. The per-book commands stay:
+/// they are still the right call when one book is reloaded after an edit.
+#[tauri::command]
+pub fn refs_all(state: State<AppState>) -> Result<Vec<library::RefRow>, String> {
+    let conn = state.conn();
+    library::refs_all(&conn).map_err(err)
+}
+
+#[tauri::command]
+pub fn reps_all(state: State<AppState>) -> Result<Vec<library::RepRow>, String> {
+    let conn = state.conn();
+    library::reps_all(&conn).map_err(err)
 }
 
 /// The shelf level of References & Replacements: every book holding either, with both counts.

@@ -300,6 +300,10 @@ export function ProfileEditor({
    */
   const askToLeave = () =>
     guardUnsaved(onClose, {
+      // THE QUESTION IS ABOUT THE هيئة ON THIS SCREEN. Without naming it the gate answered from the
+      // ACTIVE هيئة instead — so closing a new هيئة's editor announced unsaved changes to the one
+      // being worn, and closing any other هيئة's editor did the same whenever the worn one had drift.
+      subject: live,
       alsoDirty: dirty,
       onSave: async () => { await saveProfile(draft); onSaved?.(live, draft); },
       onDiscard: () => { setDraft(live); },
@@ -674,7 +678,7 @@ export function ProfileEditor({
           {t("profiles.editor.save")}
         </button>
         <button
-          className="pf-editor-x"
+          className="pf-editor-x ui-close"
           // THE DRAFT IS THE THING AT RISK HERE. It is never applied, so `driftOf` cannot see it and
           // re-applying the profile would not undo it — the gate is told about it and given the two
           // verbs that mean something for a draft: commit it, or drop it.

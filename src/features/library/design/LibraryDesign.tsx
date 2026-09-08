@@ -59,6 +59,7 @@ import { ViewGrouped, type CaseRender, type ShelfRender } from "./ViewGrouped";
 import { ViewDetails } from "./ViewDetails";
 import { VistaEnvironment, ViewVista } from "./ViewVista";
 import { CarryGhost, SelectTray } from "./Menus";
+import { allStateOf, toggleAllIn } from "../../../components/listSelection";
 import type { BookActionsProps } from "./BookActions";
 import { BookDetails } from "./BookDetails";
 import { CaseEditor } from "./CaseEditor";
@@ -1372,7 +1373,9 @@ export function LibraryDesign(props: LibraryDesignProps) {
    */
   const booksOnScreen = flatBooks.length > 0;
   /** The book whose deletion is being confirmed. Owned here, so all five views share one dialog. */
-  const [deleting, setDeleting] = useState<BookRow | null>(null);
+  // ONE BOOK OR SEVERAL, in one state. The confirmation and the deletion are the same for both, so
+  // giving the bulk case its own pair would be two paths to the same irreversible act.
+  const [deleting, setDeleting] = useState<BookRow[] | null>(null);
   // THE DEPOSIT SHEET. Held here, beside the other book-level dialogs, and drawn in `shellOverlays` —
   // the cluster BOTH returns render — so the action works from every section rather than springing
   // open later when the library happens to mount.
@@ -2040,7 +2043,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
         onRemoveFromShelf: home && !isVirtualShelf(home) ? () => removeFromShelf(b.id, home) : null,
         // The menu ASKS; the confirmation decides. Opening a dialog is the whole of what this does,
         // so a stray press on a five-item menu cannot cascade a book away.
-        onDelete: () => setDeleting(b),
+        onDelete: () => setDeleting([b]),
       // EPUB ONLY, and refused in the menu rather than in a dialog: a PDF carries no cfi and no
       // whole-book text search, so its highlights have no honest way to travel.
       onShare: b.format === "epub" ? () => setSharing(b) : null,
@@ -2424,15 +2427,19 @@ export function LibraryDesign(props: LibraryDesignProps) {
 
       {/* Book Details, from the reference bundles. One dialog, mounted once here, so it is the
           same dialog with the same controls whichever view opened it. */}
-      {deleting && (
+      {deleting && deleting.length > 0 && (
         <ConfirmDeleteBook
-          book={deleting}
+          books={deleting}
           t={t}
           onCancel={() => setDeleting(null)}
           onConfirm={async () => {
-            const book = deleting;
+            const books = deleting;
             setDeleting(null);
-            await props.onDeleteBook(book);
+            // IN ORDER, THROUGH THE OWNER'S OWN PATH. `onDeleteBook` reloads and reports; running
+            // them concurrently would have several reloads racing over one list.
+            for (const book of books) await props.onDeleteBook(book);
+            setSelected(new Set());
+            setMode("browse");
           }}
         />
       )}
@@ -2606,6 +2613,10 @@ export function LibraryDesign(props: LibraryDesignProps) {
             setMode((m) => (m === "select" ? "browse" : "select"));
             setSelected(new Set());
           }}
+          // WHAT IS ON SCREEN, not what is in the library. A search or a shelf narrows the run, and
+          // «تحديد الكل» has to mean the books the reader can actually see being taken.
+          selectState={allStateOf(flatBooks.map((b) => b.id), selected)}
+          onToggleSelectAll={() => setSelected((s) => toggleAllIn(flatBooks.map((b) => b.id), s))}
           onToggleArrange={() => {
             setMode((m) => {
               const next = m === "arrange" ? "browse" : "arrange";
@@ -2684,7 +2695,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
           <div ref={paneRef} style={{ flex: 1, minHeight: 0, position: "relative", zIndex: 2 }}>
             <ViewVista
               actions={bookActions}
-              onDeleteBook={(b) => setDeleting(b)}
+              onDeleteBook={(b) => setDeleting([b])}
               view={stage}
               density={density}
               hideTitles={hideTitles}
@@ -2799,7 +2810,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
           ) : isGroupedView(view) ? (
             <ViewGrouped
               actions={bookActions}
-              onDeleteBook={(b) => setDeleting(b)}
+              onDeleteBook={(b) => setDeleting([b])}
               cases={rendered}
               view={view}
               density={density}
@@ -2939,6 +2950,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
           source={moveSource}
           shelfName={(id) => shelfById.get(id)?.shelf.name ?? id}
           onMove={bulkMove}
+          onDelete={() => setDeleting([...selected].map((id) => byId.get(id)).filter((b): b is BookRow => !!b))}
           onClear={() => {
             setSelected(new Set());
             setMode("browse");
@@ -3092,22 +3104,34 @@ function LibraryEmpty({
  * other dialog in Sard; focus lands on the dialog, never on «حذف», because Enter on arrival must
  * not delete a book.
  */
+/**
+ * ONE CONFIRMATION, FOR ONE BOOK OR FOR TWENTY.
+ *
+ * It takes a LIST because the alternative was a second dialog for the bulk case, and a second dialog
+ * is a second set of words about the same irreversible act — one of which would eventually be edited
+ * and the other not. With one book it says exactly what it always said; with several it names as
+ * many as it can show and counts the rest, because a confirmation that does not say WHAT is going is
+ * a confirmation of nothing.
+ */
 function ConfirmDeleteBook({
-  book,
+  books,
   t,
   onCancel,
   onConfirm,
 }: {
-  book: BookRow;
-  t: (k: TKey) => string;
+  books: BookRow[];
+  t: (k: TKey, vars?: Record<string, string>) => string;
   onCancel: () => void;
   onConfirm: () => void | Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
   const dlg = useDialog({ onDismiss: onCancel, initialFocus: "none" });
-  // The SAME name the tile and the details sheet show — a confirmation that renamed the book
+  // The SAME names the tiles and the details sheet show — a confirmation that renamed a book
   // between the menu and the dialog would be its own small betrayal.
-  const title = displayTitle(resolveBookMeta(book), t);
+  const many = books.length > 1;
+  const NAMED = 4; // as many as fit before the list stops being read and starts being scrolled
+  const titles = books.slice(0, NAMED).map((b) => displayTitle(resolveBookMeta(b), t));
+  const rest = books.length - titles.length;
   return createPortal(
     <div
       onClick={onCancel}
@@ -3130,15 +3154,24 @@ function ConfirmDeleteBook({
         }}
       >
         <div id={dlg.titleId} style={{ font: "600 1.0625rem var(--ui)", color: "var(--txt)", marginBottom: "var(--sp-4)" }}>
-          {t("edit.delete")}
+          {many ? t("edit.deleteMany", { n: String(books.length) }) : t("edit.delete")}
         </div>
-        {/* The book being deleted, named — a confirmation that does not say WHICH book is a
+        {/* The books being deleted, named — a confirmation that does not say WHICH is a
             confirmation of nothing. */}
-        <div dir="auto" style={{ font: "600 .875rem var(--ui)", color: "var(--txt)", marginBottom: "var(--sp-3)" }}>
-          {title}
+        <div style={{ marginBottom: "var(--sp-3)" }}>
+          {titles.map((name, i) => (
+            <div key={i} dir="auto" style={{ font: "600 .875rem/1.55 var(--ui)", color: "var(--txt)" }}>
+              {name}
+            </div>
+          ))}
+          {rest > 0 && (
+            <div style={{ font: "500 .8125rem/1.55 var(--ui)", color: "var(--mut)" }}>
+              {t("edit.deleteAndMore", { n: String(rest) })}
+            </div>
+          )}
         </div>
         <p style={{ margin: "0 0 var(--sp-7)", font: "400 .8125rem/1.7 var(--ui)", color: "var(--mut)" }}>
-          {t("edit.deleteConfirm")}
+          {many ? t("edit.deleteManyConfirm") : t("edit.deleteConfirm")}
         </p>
         <div style={{ display: "flex", gap: "var(--sp-4)", justifyContent: "flex-end" }}>
           <button

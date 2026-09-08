@@ -13,6 +13,7 @@
 // without reaching into the reader's panel, whose redesign is somebody else's task.
 
 import { useEffect, useRef, useState } from "react";
+import { useScrimDismiss } from "../../../components/useDialog";
 
 import { Icon } from "../../../components/Icon";
 import { useI18n } from "../../../i18n";
@@ -47,6 +48,9 @@ interface Props {
 }
 
 export function SlipSheet({ item, hl, dark, paper, when, onClose, onRead, onCard, onChanged }: Props) {
+  // The backdrop takes a press only when the gesture began there and ends clear of the sheet.
+  const scrim = useScrimDismiss(onClose);
+
   const { t } = useI18n();
   const isNote = annoIsNote(item);
   const [editing, setEditing] = useState(false);
@@ -113,10 +117,10 @@ export function SlipSheet({ item, hl, dark, paper, when, onClose, onRead, onCard
   };
 
   return (
-    <div className="arch-scrim" onClick={onClose}>
+    <div className="arch-scrim" {...scrim.scrimProps}>
       <div
         className="arch-sheet"
-        ref={sheetRef}
+        ref={(node) => { sheetRef.current = node; scrim.panelRef(node); }}
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
@@ -136,7 +140,7 @@ export function SlipSheet({ item, hl, dark, paper, when, onClose, onRead, onCard
             {/* The same line the wall shows, kept where the slip names its book and its chapter. */}
             {item.sender && <div className="arch-sheet-from">{t("arch.from", { name: item.sender })}</div>}
           </div>
-          <button className="arch-sheet-close" onClick={onClose} aria-label={t("ne.close")}>
+          <button className="arch-sheet-close ui-close" onClick={onClose} aria-label={t("ne.close")}>
             <Icon name="close" size="sm" />
           </button>
         </div>

@@ -8,6 +8,8 @@ import "./styles/global.css";
 // Profiles renders exactly as before — and `global.css` is untouched by this feature.
 import "./styles/profiles.css";
 import "./styles/deposit.css";
+// Choosing several things at once: one appearance for every list that offers it.
+import "./styles/selection.css";
 import { I18nProvider, useI18n } from "./i18n";
 import { initBookmarkStyle } from "./lib/bookmarkStyle";
 import { initReadMarkerStyle } from "./lib/readMarkerStyle"; // RAWY-256: persisted read-marker variant

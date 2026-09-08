@@ -8,6 +8,7 @@
 // WHAT LEAVES IS WHAT WAS READ. The manifest is built here, shown by «اقرأ الوديعة» exactly as it
 // stands, and handed to `deposit_export`, which writes it verbatim.
 import { useEffect, useMemo, useState } from "react";
+import { useScrimDismiss } from "../../components/useDialog";
 import { createPortal } from "react-dom";
 import { useI18n } from "../../i18n";
 import { localeNum } from "../../lib/format";
@@ -52,6 +53,9 @@ const megabytes = (bytes: number, lang: string) =>
   `${localeNum(Math.max(1, Math.round(bytes / 1048576)), lang)} MB`;
 
 export function DepositSheet({ book, onClose }: { book: BookRow; onClose: () => void }) {
+  // The backdrop takes a press only when the gesture began there and ends clear of the sheet.
+  const scrim = useScrimDismiss(onClose);
+
   const { t, lang } = useI18n();
   const [plan, setPlan] = useState<DepositPlan | null>(null);
   const [rows, setRows] = useState<{
@@ -342,9 +346,10 @@ export function DepositSheet({ book, onClose }: { book: BookRow; onClose: () => 
   );
 
   return createPortal(
-    <div className="dep-scrim" onClick={onClose}>
+    <div className="dep-scrim" {...scrim.scrimProps}>
       <div
         className="dep-sheet"
+        ref={scrim.panelRef}
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"

@@ -82,7 +82,7 @@
   color: var(--muted);
 }
 
-/* The hint line: what the cabinet is, a rule across the gap, and the sort on the trailing edge. */
+/* The control line. It holds one `.arch-tools` plate, in both archive views. */
 .arch-sub {
   display: flex;
   align-items: center;
@@ -90,15 +90,13 @@
   padding: 9px 26px 16px;
 }
 
-.arch-hint {
+/* The cabinet's subtitle — what this view is, on its own line under the title. Same type as the
+   hint it replaces; only its place in the header changed. */
+.arch-lede {
+  margin: 0;
+  padding: 6px 26px 0;
   font: 400 0.8125rem var(--ui-font);
   color: var(--muted);
-}
-
-.arch-rule {
-  flex: 1;
-  height: 1px;
-  background: var(--chrome-border);
 }
 
 .arch-sort {
@@ -448,8 +446,7 @@
    lone field on a heading row, wrong for one control among several. Inside the plate it also drops its
    own border and takes a recessed ground instead, so it reads as a well IN the plate rather than a box
    sitting on top of one. */
-.arch-search.in-tools,
-.arch-search.in-line { margin-inline-start: 0; }
+.arch-search.in-tools { margin-inline-start: 0; }
 .arch-search.in-tools {
   width: 186px;
   padding: 4px 9px;
@@ -457,9 +454,6 @@
   border-color: transparent;
 }
 .arch-search.in-tools:focus-within { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
-/* On the cabinet's hint line the field keeps its outline, because there is no plate to sit in. */
-.arch-search.in-line { width: 186px; padding: 5px 10px; }
-.arch-search.in-line:focus-within { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
 
 /* One contained plate holding the wall's filters. `fit-content` is the point: it hugs the controls
  * instead of ruling a bar across the window, and it gives every one of them — swatches, tag menu and

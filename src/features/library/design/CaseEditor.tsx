@@ -650,7 +650,7 @@ export function CaseEditor(props: CaseEditorProps) {
             </div>
           </div>
           <button
-            className="libd-hov libd-hov-txt"
+            className="libd-hov libd-hov-txt ui-close"
             onClick={props.onClose}
             aria-label={t("panel.close")}
             style={{ flex: "none", width: "var(--ctl-md)", height: "var(--ctl-md)", borderRadius: "var(--r-md)", color: "var(--mut)", fontSize: 14 }}

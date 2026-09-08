@@ -1008,6 +1008,24 @@ pub fn highlight_set_color(conn: &Connection, id: &str, color: &str) -> rusqlite
     get_highlight(conn, id)
 }
 
+/// CLAMP DEFENSIVELY, BUT DO NOT OVERRULE THE READER.
+///
+/// The floor was 0.05 for a good reason: a density that reached zero by ACCIDENT — a bad write, a
+/// stray drag — would leave a mark claiming a passage and showing nothing, with no way back except
+/// the control that had just been lost. That reasoning holds for every value between zero and the
+/// floor, and it is why they are still lifted to it.
+///
+/// It does not hold for zero ITSELF, which the control now offers as «بلا». A reader asking for a
+/// mark with no colour is making a decision, not an accident: the note, the tags and the place all
+/// survive, and only the wash goes. So zero passes through exactly as it was given.
+fn alpha_for_store(v: f64) -> f64 {
+    if v <= 0.0 { 0.0 } else { v.clamp(0.05, 1.0) }
+}
+
+#[cfg(test)]
+pub(crate) fn alpha_for_store_for_test(v: f64) -> f64 {
+    alpha_for_store(v)
+}
 /// RAWY-259: set (or clear) a highlight's OWN ink density. `None` restores "follow the theme default",
 /// so the control can always be returned to the state every highlight had before this feature existed.
 /// Touches one row by id — editing one highlight can never move another.
@@ -1016,9 +1034,7 @@ pub fn highlight_set_alpha(
     id: &str,
     alpha: Option<f64>,
 ) -> rusqlite::Result<Option<HighlightRow>> {
-    // Clamp defensively: the value comes from a UI control, and a stored out-of-range alpha would make a
-    // highlight invisible (0) or opaque enough to bury the text (>1) with no way back except this control.
-    let a = alpha.map(|v| v.clamp(0.05, 1.0));
+    let a = alpha.map(alpha_for_store);
     conn.execute("UPDATE highlights SET alpha = ?2 WHERE id = ?1", rusqlite::params![id, a])?;
     get_highlight(conn, id)
 }
@@ -1042,10 +1058,14 @@ pub struct BookmarkRow {
     pub chapter_label: Option<String>,
     pub fraction: Option<f64>,
     pub label: Option<String>,
+    /// The dye this place was marked in. `None` for a bookmark placed before the reader could
+    /// choose one — the view resolves that to the global colour rather than inventing a choice.
+    pub color: Option<String>,
     pub created_at: Option<i64>,
 }
 
-const BM_COLS: &str = "id, book_id, locator_cfi, chapter_label, fraction, label, created_at";
+const BM_COLS: &str =
+    "id, book_id, locator_cfi, chapter_label, fraction, label, color, created_at";
 
 fn bookmark_row(r: &rusqlite::Row) -> rusqlite::Result<BookmarkRow> {
     Ok(BookmarkRow {
@@ -1055,7 +1075,8 @@ fn bookmark_row(r: &rusqlite::Row) -> rusqlite::Result<BookmarkRow> {
         chapter_label: r.get(3)?,
         fraction: r.get(4)?,
         label: r.get(5)?,
-        created_at: r.get(6)?,
+        color: r.get(6)?,
+        created_at: r.get(7)?,
     })
 }
 
@@ -1074,14 +1095,19 @@ pub fn bookmark_create(
     chapter: Option<&str>,
     fraction: Option<f64>,
     label: Option<&str>,
+    color: Option<&str>,
 ) -> rusqlite::Result<Option<BookmarkRow>> {
     let id = gen_id(&format!("bm:{book_id}:{cfi}"));
     conn.execute(
-        "INSERT INTO bookmarks(id, book_id, locator_cfi, chapter_label, fraction, label, created_at) \
-         VALUES(?1,?2,?3,?4,?5,?6,?7) \
+        // COALESCE ON THE UPDATE ARM, deliberately: re-marking a place that already has words or a
+        // dye must not blank them because this particular call had none to give.
+        "INSERT INTO bookmarks(id, book_id, locator_cfi, chapter_label, fraction, label, color, created_at) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8) \
          ON CONFLICT(id) DO UPDATE SET chapter_label=excluded.chapter_label, \
-            fraction=excluded.fraction, label=excluded.label",
-        rusqlite::params![id, book_id, cfi, chapter, fraction, label, now_unix()],
+            fraction=excluded.fraction, \
+            label=COALESCE(excluded.label, bookmarks.label), \
+            color=COALESCE(excluded.color, bookmarks.color)",
+        rusqlite::params![id, book_id, cfi, chapter, fraction, label, color, now_unix()],
     )?;
     conn.query_row(&format!("SELECT {BM_COLS} FROM bookmarks WHERE id = ?1"), [&id], bookmark_row)
         .optional()
@@ -1102,6 +1128,7 @@ pub struct BookmarkItem {
     pub chapter_label: Option<String>,
     pub fraction: Option<f64>,
     pub label: Option<String>,
+    pub color: Option<String>,
     pub cfi: String,
     pub created_at: Option<i64>,
 }
@@ -1111,7 +1138,7 @@ pub fn bookmarks_all(conn: &Connection) -> rusqlite::Result<Vec<BookmarkItem>> {
     let sql = format!(
         "SELECT k.id, k.book_id, {OV_TITLE}, b.file_path, \
             COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='dir'), b.dir), \
-            k.chapter_label, k.fraction, k.label, k.locator_cfi, k.created_at \
+            k.chapter_label, k.fraction, k.label, k.color, k.locator_cfi, k.created_at \
          FROM bookmarks k JOIN books b ON b.id = k.book_id \
          ORDER BY k.created_at DESC"
     );
@@ -1126,8 +1153,9 @@ pub fn bookmarks_all(conn: &Connection) -> rusqlite::Result<Vec<BookmarkItem>> {
             chapter_label: r.get(5)?,
             fraction: r.get(6)?,
             label: r.get(7)?,
-            cfi: r.get(8)?,
-            created_at: r.get(9)?,
+            color: r.get(8)?,
+            cfi: r.get(9)?,
+            created_at: r.get(10)?,
         })
     })?;
     rows.collect()
@@ -1406,6 +1434,48 @@ pub fn annotations_all(conn: &Connection) -> rusqlite::Result<Vec<AnnoItem>> {
 #[cfg(test)]
 mod tests {
     use super::{escape_like, fold_search};
+    // ── «كثافة الحبر» AT ZERO ────────────────────────────────────────────────────────────────────
+    //
+    // The scale used to begin at its floor, and the floor was enforced HERE as well as in the
+    // interface — so a reader who dialled a mark to nothing had the value quietly raised to 0.05 on
+    // its way into the database, and got a faint wash back. Measured in the running application
+    // before this: writing 0 returned 0.05, and it was still 0.05 after a restart.
+    mod ink_density {
+        use super::super::alpha_for_store_for_test as store;
+
+        #[test]
+        fn zero_is_stored_as_zero() {
+            // The reader asking for no colour is a decision, not an accident.
+            assert_eq!(store(0.0), 0.0);
+        }
+
+        #[test]
+        fn a_value_between_zero_and_the_floor_is_still_lifted() {
+            // The floor still does the job it was put there for: a density that reached almost-zero
+            // by accident must not leave a mark that claims a passage and shows nothing.
+            assert_eq!(store(0.01), 0.05);
+            assert_eq!(store(0.049), 0.05);
+        }
+
+        #[test]
+        fn every_ordinary_value_is_untouched() {
+            for v in [0.05, 0.1, 0.15, 0.3, 0.5, 0.75, 0.9, 1.0] {
+                assert_eq!(store(v), v, "density {v} changed on its way into the database");
+            }
+        }
+
+        #[test]
+        fn the_ceiling_still_holds() {
+            // Above 1 a mark buries the words it marks, and the control cannot reach that.
+            assert_eq!(store(1.4), 1.0);
+        }
+
+        #[test]
+        fn a_negative_value_is_nothing_rather_than_an_error() {
+            // It cannot arrive from the control; if it ever did, "no colour" is the honest reading.
+            assert_eq!(store(-0.5), 0.0);
+        }
+    }
 
     // ── F-2: the containment rule that gates every database-derived file deletion ────────────────
     //
@@ -1617,6 +1687,28 @@ const REF_COLS: &str =
 /// Every reference for one book — the whole set, loaded once when the book opens and then held in memory
 /// for per-section matching. A book's references are counted in tens, not thousands, so this is one small
 /// query per open rather than a lookup per section (let alone per word).
+/// EVERY reference, and every replacement, in ONE statement.
+///
+/// WHY THIS EXISTS. The shelf draws a preview of what the reader made in each book, so it needs the
+/// contents of every listed book and not merely a count. It got them by asking per book, which is two
+/// IPC round trips per row: correct, and the note beside it recorded the assumption it rested on —
+/// "a reader has tens of these, not thousands".
+///
+/// MEASURED against 2,000 books carrying references or replacements: ~3,400 round trips on opening
+/// the page, 1,121ms of the main thread inside `fetch` alone, and the screen unusable while it ran.
+/// The assumption was reasonable and it is simply not true of a large library.
+///
+/// The ORDER is the per-book order — longest phrase first, then oldest — so a caller that groups by
+/// `book_id` gets exactly what the per-book query would have handed it, row for row. The per-book
+/// functions stay: they are still the right call when one book is being reloaded after an edit.
+pub fn refs_all(conn: &Connection) -> rusqlite::Result<Vec<RefRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {REF_COLS} FROM refs ORDER BY book_id, word_count DESC, created_at"
+    ))?;
+    let rows = stmt.query_map([], ref_row)?;
+    rows.collect()
+}
+
 pub fn refs_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<RefRow>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT {REF_COLS} FROM refs WHERE book_id = ?1 ORDER BY word_count DESC, created_at"
@@ -1718,6 +1810,15 @@ fn rep_row(r: &rusqlite::Row) -> rusqlite::Result<RepRow> {
 /// Every replacement for one book, longest phrase first so a multi-word rule wins over a single-word one
 /// nested inside it — the same precedence `findPhraseHits` applies, kept here so the order the reader
 /// sees and the order the matcher uses cannot drift apart.
+/// Every replacement, in one statement — the companion to `refs_all`, same reasoning, same order.
+pub fn reps_all(conn: &Connection) -> rusqlite::Result<Vec<RepRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {REP_COLS} FROM reps ORDER BY book_id, word_count DESC, created_at"
+    ))?;
+    let rows = stmt.query_map([], rep_row)?;
+    rows.collect()
+}
+
 pub fn reps_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<RepRow>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT {REP_COLS} FROM reps WHERE book_id = ?1 ORDER BY word_count DESC, created_at"

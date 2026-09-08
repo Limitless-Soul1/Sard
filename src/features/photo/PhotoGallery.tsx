@@ -8,12 +8,15 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 
 import { useI18n } from "../../i18n";
+import { SelectionBar, SelectionTick, useListSelection } from "../../components/listSelection";
+import { useScrimDismiss } from "../../components/useDialog";
 import { localeNum, uiDateTimeFormat } from "../../lib/format";
 import { isBuiltinThemeId, resolveTheme, useTheme, type ThemeId } from "../../theme";
 import { photocardDelete, photocardsList, savePhotoCardFile, type PhotoCardRow } from "../../lib/ipc";
 import { PhotoComposer } from "./PhotoComposer";
-import { DEFAULT_META, FORMATS, type CardData, type CardFormat, type CardPassage } from "./photo";
+import { FORMATS, type CardData, type CardFormat, type CardPassage } from "./photo";
 import { isArabicText } from "../../lib/typography";
+import { compositionFromLegacy, newCustomComposition, parseComposition } from "./composition";
 
 
 // Reopen a saved card in the composer (RAWY-57 Edit): rebuild CardData from the stored row.
@@ -109,6 +112,11 @@ export function PhotoGallery() {
   const [toast, setToast] = useState<string | null>(null);
   const [confirmDel, setConfirmDel] = useState(false);
   const [editing, setEditing] = useState<PhotoCardRow | null>(null); // RAWY-57: Edit → composer
+  const [creating, setCreating] = useState(false); // a card with no book behind it
+  const sel = useListSelection(cards.map((c) => c.id));
+  // The lightbox leaves by a press beside the card — but not by a press that GRAZED it, and not by
+  // one that began on the card and ended past its edge. See `useScrimDismiss`.
+  const lightbox = useScrimDismiss(() => { setOpen(null); setConfirmDel(false); });
 
   const load = () => {
     photocardsList()
@@ -168,15 +176,81 @@ export function PhotoGallery() {
     }
   };
 
+  // THE SAME DELETION, over the chosen cards. It goes through `photocardDelete` exactly as one card
+  // does — the row is removed here only for the ids the backend actually accepted, so a failure
+  // leaves the card on screen rather than vanishing it from a list it is still in.
+  const onDeleteChosen = async () => {
+    const ids = [...sel.selected];
+    const gone: string[] = [];
+    for (const id of ids) {
+      try {
+        await photocardDelete(id);
+        gone.push(id);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    if (gone.length) {
+      const dead = new Set(gone);
+      setCards((cs) => cs.filter((c) => !dead.has(c.id)));
+    }
+    sel.exit();
+  };
+
   if (!loaded) return <div className="lib-main pg-root" />;
 
   return (
     <div className="lib-main pg-root">
       <header className="pg-head">
-        <h1 className="pg-title">{t("cards.title")}</h1>
-        <span className="pg-count">{cards.length > 0 ? t("cards.count", { n: localeNum(cards.length, lang) }) : ""}</span>
+        {/* Title and count on one ground — see `ui-page-title`. */}
+        <span className="ui-page-title">
+          <h1 className="pg-title">{t("cards.title")}</h1>
+          <span className="pg-count">{cards.length > 0 ? t("cards.count", { n: localeNum(cards.length, lang) }) : ""}</span>
+        </span>
+        {/* A card does not have to come from a passage. This is a first-class way in, not a detour
+            through a book: nothing about the composer needs a book, and a card made here claims no
+            provenance it does not have.
+
+            IT STANDS DOWN WHILE THE READER IS CHOOSING. The head is the page's one row of actions,
+            and during a selection every action in it should be about the cards that are chosen —
+            "make another" is a different task, and leaving it there is what crowded the row and made
+            the selection controls look like a second, competing set. */}
+        {!sel.on && (
+        <button className="pg-new" onClick={() => setCreating(true)}>
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <rect x="4" y="3" width="16" height="18" rx="2" /><path d="M12 8v8M8 12h8" />
+          </svg>
+          <span>{t("photo.newCard")}</span>
+        </button>
+        )}
+        {/* THE SELECTION CONTROLS BELONG TO THIS ROW, not to a row of their own.
+            They had one: a second strip under the head, hugging the far edge, which is what put one
+            control above and another below and made the page read as improvised. There is one row of
+            page actions on this shelf, and choosing cards is one of them — so «تحديد» stands beside
+            «أنشئ بطاقة مصوّرة», and pressing it turns that same place into the toolbar. */}
+        {cards.length > 0 && (
+          <SelectionBar
+            sel={sel}
+            total={cards.length}
+            actions={[{
+              key: "delete",
+              icon: "trash" as const,
+              label: t("cards.delete"),
+              confirm: t("cards.deleteConfirm"),
+              danger: true,
+              run: () => void onDeleteChosen(),
+            }]}
+          />
+        )}
       </header>
 
+      {/* THE GALLERY'S OWN ROW OF LIST CONTROLS.
+
+          It used to be a bare bar floating under the heading at the far edge, and it changed size
+          and height when the mode came on — so the grid moved under it and the controls landed
+          somewhere new on the press that turned selection on. A row that is ALWAYS drawn, at a
+          fixed height and on the grid's own column, is what makes it a toolbar instead: the same
+          relationship the archive's filter plate has to the wall it narrows. */}
       {cards.length === 0 ? (
         <div className="pg-empty">
           <img className="pg-empty-bird" src="/assets/sard-bird.png" alt="" />
@@ -186,9 +260,22 @@ export function PhotoGallery() {
       ) : (
         <div className="pg-grid">
           {cards.map((c) => (
-            <button key={c.id} className="pg-cell" onClick={() => { setOpen(c); setConfirmDel(false); }}>
+            <button
+              key={c.id}
+              className={`pg-cell${sel.has(c.id) ? " sel-on" : ""}`}
+              aria-pressed={sel.on ? sel.has(c.id) : undefined}
+              onClick={() => {
+                // While the mode is on, a press CHOOSES rather than opens. The cell is already a
+                // button, so the tick is drawn as a mark on it rather than as a second button
+                // inside one — which is not valid markup and is not operable by keyboard either.
+                if (sel.on) { sel.toggle(c.id); return; }
+                setOpen(c);
+                setConfirmDel(false);
+              }}
+            >
               <span className="pg-thumb">
                 <img src={convertFileSrc(c.image_path)} alt="" loading="lazy" />
+                {sel.on && <span className="pg-pick"><SelectionTick state={sel.has(c.id)} /></span>}
               </span>
               <span className="pg-meta-title" dir="auto">{c.book_title || t("cards.untitled")}</span>
               {c.chapter_label && <span className="pg-meta-sub" dir="auto">{c.chapter_label}</span>}
@@ -201,10 +288,10 @@ export function PhotoGallery() {
       {open && (
         <div
           className={`pg-lightbox${cardIsDark(open.theme_id) ? " dark" : ""}`}
-          onPointerDown={() => { setOpen(null); setConfirmDel(false); }}
+          {...lightbox.scrimProps}
         >
-          <button className="pg-lb-close" onClick={() => setOpen(null)} aria-label={t("photo.close")}>✕</button>
-          <div className="pg-lb-stage" onPointerDown={(e) => e.stopPropagation()}>
+          <button className="pg-lb-close ui-close" onClick={() => setOpen(null)} aria-label={t("photo.close")}>✕</button>
+          <div className="pg-lb-stage" ref={lightbox.panelRef} onPointerDown={(e) => e.stopPropagation()}>
             {/* the saved card, large — the hero */}
             <div className="pg-lb-card">
               <img src={convertFileSrc(open.image_path)} alt="" />
@@ -241,11 +328,32 @@ export function PhotoGallery() {
           data={rowToCardData(editing)}
           initialThemeId={validTheme(editing.theme_id) ?? useTheme.getState().bookThemeId}
           initialFormat={validFormat(editing.format)}
-          initialMeta={DEFAULT_META}
+          // THE FIX FOR THE ROUND TRIP. A card's style, size and toggles used to be dropped here:
+          // this call passed the default toggles and no style at all, so a Gilded XL card reopened
+          // as Minimal auto-fit and Save then overwrote the good PNG. The document carries them
+          // now; a card saved before it existed gets a deterministic reconstruction from its own
+          // columns, which is exactly what this call used to do — so nothing about an old card moves.
+          initialComposition={parseComposition(editing.doc) ?? compositionFromLegacy(editing)}
           initialQuoteFont={editing.quote_font}
           editId={editing.id}
           lang={lang}
           onClose={() => { setEditing(null); load(); }}
+        />
+      )}
+
+      {creating && (
+        <PhotoComposer
+          // No book id, no title, no chapter, no author — and the composition's metadata toggles are
+          // all off. A custom card must not invent a provenance, so there is nothing to invent from.
+          data={{ quote: "", dir: lang === "ar" ? "rtl" : "ltr", date: new Date() }}
+          initialThemeId={useTheme.getState().bookThemeId ?? useTheme.getState().themeId}
+          initialComposition={newCustomComposition(
+            useTheme.getState().bookThemeId ?? useTheme.getState().themeId,
+            "portrait",
+            t("photo.customQuote"),
+          )}
+          lang={lang}
+          onClose={() => { setCreating(false); load(); }}
         />
       )}
 

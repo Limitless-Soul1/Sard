@@ -17,6 +17,7 @@ import { DENSITY_MAX, DENSITY_MIN, DENSITY_STEP, DESIGN_SORTS, dropIndex, isVirt
 import { createEdgeScroller, type EdgeScroller } from "./dragScroll";
 import { Icon, type IconName } from "../../../components/Icon";
 import { openTransient } from "./transient";
+import { SelectionTick, type AllState } from "../../../components/listSelection";
 
 
 import { displayFaceFor, scriptOf } from "../../../lib/typography";
@@ -1030,6 +1031,9 @@ interface HeaderProps {
   place?: PlaceLine | null;
   mode: "browse" | "select" | "arrange";
   onToggleSelect: () => void;
+  /** How much of what is on screen is ticked — see `allStateOf`. */
+  selectState: AllState;
+  onToggleSelectAll: () => void;
   onToggleArrange: () => void;
   onAddBooks: () => void;
   /** OPEN A DEPOSIT SOMEONE SENT. It sits beside «أضِف كتبًا» because it is the other way a reading
@@ -1376,6 +1380,19 @@ export function Header(props: HeaderProps) {
           <button onClick={props.onToggleSelect} style={ctlBtn(props.mode === "select")}>
             {t("lib.select")}
           </button>
+          {/* IT APPEARS WITH THE MODE, beside the control that turned the mode on — «تحديد الكل» over
+              a library nobody is selecting from is an instruction with no object. The tick carries
+              the three states, so a partial selection says so rather than reading as "none". */}
+          {props.mode === "select" && (
+            <button
+              onClick={props.onToggleSelectAll}
+              aria-pressed={props.selectState === "all"}
+              style={{ ...ctlBtn(false), display: "inline-flex", alignItems: "center", gap: 6 }}
+            >
+              <SelectionTick state={props.selectState} />
+              {t("select.all")}
+            </button>
+          )}
           {/* ALWAYS DRAWN — Manual Ordering is a feature of the library, not of one place in it.
               Hiding it where the current scope holds nothing reorderable made it vanish from
               twelve of the twenty view-and-depth combinations, including the unshelved run a
@@ -1401,11 +1418,20 @@ export function Header(props: HeaderProps) {
             {props.mode === "arrange" ? t("lib.arranging") : t("lib.arrange")}
           </button>
           {props.onOpenDeposit && (
+            /* IT WEARS THE SAME CONTROL AS ITS NEIGHBOURS. It had a hover ground and a focus ring
+               (`.libd-hov` gives those and nothing else) over ad-hoc inline sizing — no background,
+               no border — so beside Select and Manual arrange it read as a line of text that
+               happened to respond to the pointer. `ctlBtn` is the part those two are built from, so
+               using it settles the border, the ground, the ink, the height and the type in one
+               move, from tokens, in every theme.
+               `ctlBtn(false)` and not the accent fill: opening a deposit is a SECONDARY way a
+               reading enters the library, and «إضافة كتب» beside it is the primary one. Two filled
+               buttons would leave neither of them looking like the main action. */
             <button
               className="libd-hov"
               onClick={props.onOpenDeposit}
               title={t("dep.recv.open")}
-              style={{ height: 32, padding: "0 12px", borderRadius: "var(--r-md)", font: "600 .75rem var(--ui)" }}
+              style={ctlBtn(false)}
             >
               {t("dep.recv.open")}
             </button>

@@ -94,6 +94,30 @@ Chromium >= 140 and the EPUB set to Chromium >= 117.)
                          `node tests/harness/toc-regression.mjs` — 25/25 books must match what their
                          own file declares.
 
+  8. paginator.js:764  — SCROLLED FLOW HONOURS THE BOOK'S DIRECTION.
+                         `this.setAttribute('dir', vertical ? 'rtl' : 'ltr')` became
+                         `this.setAttribute('dir', vertical || rtl ? 'rtl' : 'ltr')`.
+                         Upstream's scrolled branch derives `dir` from `vertical` alone and drops
+                         `rtl`; the PAGED branch a few lines below already writes
+                         `dir = rtl ? 'rtl' : 'ltr'`. So a right-to-left book read in scrolled flow
+                         got dir="ltr", and `#container` (overflow:auto, inside the paginator's CLOSED
+                         shadow root) put its vertical scrollbar on the RIGHT — the side an RTL line
+                         STARTS on. The iframe is width:100% of the container's CLIENT box, so the
+                         text column ends exactly where the scrollbar begins, with no gutter between
+                         them.
+                         MEASURED, Arabic book, 1400x900: a press at x=1228 gave a caret and moved
+                         nothing; at x=1230 and x=1238 it produced NO selection and scrolled
+                         `#container` 0 -> 984 -> 1771 — a scrollbar TRACK click, which pages by one
+                         viewport. No navigation API was called and no `relocate` fired, because the
+                         browser was scrolling a container, not foliate navigating. The same matrix in
+                         an LTR book moved nothing at any of 15 points, since there the line starts on
+                         the left, away from the scrollbar.
+                         The fix moves the scrollbar to the leading side for RTL books, which is the
+                         platform convention for RTL content. LTR books resolve to 'ltr' exactly as
+                         before, `vertical` keeps its 'rtl', and the paged branch is untouched.
+                         Revert by deleting `|| rtl` and the comment block above the line.
+
+
   8. epub.js:~940,1083 — INVALID-XHTML FALLBACK ON THE DOCUMENT PATH (RESILIENCE-1 / WP-8).
                          One module-level helper (`sardInvalidXHTML`) plus its use in TWO places:
                          `loadDocument` (new) and `loadReplaced` (replacing upstream's identical

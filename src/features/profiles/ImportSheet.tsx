@@ -35,7 +35,7 @@ import { applyProfile, importProfile } from "./store";
 import type { CustomThemeId } from "../../theme/tokens";
 import type { Profile, ProfileData } from "./model/profile";
 import { markFrame } from "./model/markFrame";
-import { useDialog } from "../../components/useDialog";
+import { useDialog, useScrimDismiss } from "../../components/useDialog";
 import { profileLabel } from "./model/profile";
 
 /**
@@ -278,6 +278,9 @@ export function ImportSheet({
   // comment describes dialogs "mounted the whole time [that] merely render `null` until they are
   // opened" — so holding it above the early return is how it is meant to be used, not a dodge.
   const dlg = useDialog({ onDismiss: onClose });
+  // The backdrop takes a press only when the gesture began there and ends clear of the sheet.
+  const scrim = useScrimDismiss(onClose);
+
 
   // Nothing is drawn while the chooser is open: the sheet IS the import, not a step before it.
   // A pure return now — no side effect, no state update, no hook skipped.
@@ -285,11 +288,11 @@ export function ImportSheet({
 
   const shell = (body: React.ReactNode, wide = false) =>
     createPortal(
-      <div className="pf-dialog-scrim" onClick={onClose}>
+      <div className="pf-dialog-scrim" {...scrim.scrimProps}>
         <div
           className={`pf-dialog${wide ? " pf-import-card" : ""}`}
           onClick={(e) => e.stopPropagation()}
-          ref={dlg.ref}
+          ref={(node) => { dlg.ref(node); scrim.panelRef(node); }}
           {...dlg.props}
         >
           {body}

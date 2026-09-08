@@ -261,6 +261,14 @@ html, body, #root {
    itself still fills full height, so its background shows behind the bar; only the text is inset.
    Applies in both scrolled + paged flows and both directions (it's a block-axis inset, not inline). */
 .page-host { position: absolute; inset-block: 70px 0; inset-inline: var(--page-margin, 56px); --sard-columns: 1; --sard-measure: 3000px; }
+/* IN SCROLLED FLOW THE MARGIN MOVES INSIDE THE PAGE. Inset here, the margin sits OUTSIDE the reading
+   iframe and belongs to the app, so the text begins on the frame's last pixel column: a press at the
+   start of a right-to-left line lands beside the book rather than in it, places no caret, and cannot
+   be recovered by dragging inward because the gesture is the parent document's. The host therefore
+   spans the sheet and `injectedCss` applies the SAME margin as the book body's inline padding — the
+   text keeps its exact position and measure (the body's width is the host's), and the margin becomes
+   part of the reading surface. Paged flow keeps the inset: there it is also the column geometry. */
+.reader-root.flow-scrolled .page-host { inset-inline: 0; }
 .page-host foliate-view { width: 100%; height: 100%; display: block; }
 /* RAWY-117 (fixes ISSUE A — supersedes RAWY-71's PERMANENT 70px top inset): the 70px only clears the
    top bar while it is SHOWN. When the chrome auto-hides, TRULY free that space — the reading text
@@ -507,7 +515,22 @@ html, body, #root {
 .rc-top {
   top: 0;
   height: 70px; /* RAWY-66: enlarged from 58px for easier tapping/clarity */
-  justify-content: space-between;
+  /* THREE ZONES, BECAUSE THE BAR CARRIES THREE KINDS OF THING.
+     It carried navigation, identity and tools in TWO slots, so identity had nowhere to go but inside
+     the navigation slot — which is what crowded that edge while the middle of a 1280px bar stayed
+     empty. Controls hold each edge and the book sits between them, the same three-part reading the
+     bottom bar already has (chapter · position · percent).
+     The outer tracks are equal, so the title is centred on the WINDOW rather than floating on
+     whatever the two clusters happen to measure — the clusters differ in width and always will.
+     The middle track starts at 0 so a long title truncates instead of pushing a cluster off the bar
+     (RAWY-89's failure, which the flexing nav used to absorb). */
+  display: grid;
+  grid-template-columns: 1fr minmax(0, auto) 1fr;
+  /* AIR THE TITLE CANNOT BE SQUEEZED OUT OF. Without it the middle track may end flush against a
+     cluster — measured at 800px, the title's last letter sat hard against the first tool with no
+     space at all. The gap is part of the track sizing, so the title truncates a step earlier
+     instead of touching, at every width. */
+  column-gap: var(--sp-6);
   padding: 0 16px;
   border-bottom: 1px solid var(--chrome-border);
   box-shadow: 0 2px 14px rgba(40, 28, 14, 0.06);
@@ -533,26 +556,21 @@ html, body, #root {
    the right-hand control cluster (7 buttons since RAWY-88 added Search) always keeps its full,
    readable size and never clips off the bar — the owner saw the last button(s) cut off in Arabic
    (longer labels) once Search held the chrome open. */
-.rc-nav { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 1 1 auto; }
-.rc-back {
-  flex: 0 0 auto;
-  /* RAWY-66 enlarged this "with the cluster, to match" — but measured against the cluster it did
-     not: the tool icons are 44px tall with a 10px radius, this was 46px and 11px. Same bar, two
-     geometries, for no reason anyone stated. It now genuinely matches, which is what the original
-     note asked for. Height comes from the scale (`--ctl-2xl` is 44px, the value the tools already
-     sit on). The 10px radius is written literally rather than as `--r-md` (9px) on purpose: the
-     whole toolbar is 10px, and moving nine controls by a pixel for token tidiness would be
-     normalising a number, not fixing an inconsistency. Recorded for 5.G instead. */
-  width: var(--ctl-2xl); height: var(--ctl-2xl); border-radius: var(--r-md);
-  background: var(--rc-surface); border: 1px solid var(--chrome-border);
-  box-shadow: 0 1px 2px rgba(40, 28, 14, 0.06);
-  color: var(--text); cursor: pointer;
-  font: 300 1.5rem var(--ui-font);
-  display: inline-flex; align-items: center; justify-content: center;
-  transition: background 0.15s ease, border-color 0.15s ease;
-}
-.rc-back:hover { background: color-mix(in srgb, var(--accent) 16%, var(--rc-surface)); border-color: color-mix(in srgb, var(--accent) 45%, var(--chrome-border)); }
+/* One step of real space between the departure control and the tool pair — the grouping is
+   carried by proximity and treatment now, not by a rule drawn between them. */
+.rc-nav { display: flex; align-items: center; gap: var(--sp-6); min-width: 0; justify-self: start; }
+/* The identity zone. `justify-self: center` places it on the window's centre line; the spans below
+   keep their own truncation, so a long title shortens symmetrically instead of shifting off centre. */
+.rc-title-block { justify-self: center; align-items: center; text-align: center; }
+/* Only the TRAILING cluster is pushed to its edge — the leading one is a child of `.rc-nav`, so this
+   child selector reaches the right-hand group and cannot touch Contents/Search. */
+.rc-top > .rc-btns { justify-self: end; }
+
 .rc-title-block { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+/* Centred, the title no longer has a cluster beside it to be measured against, so the old 32vw cap
+   (chosen when it sat against the nav) can relax — it is bounded by the middle grid track now. */
+.rc-title-block .rc-book,
+.rc-title-block .rc-chapter { max-width: 100%; }
 .rc-book { font: 600 var(--fs-base) var(--ui-font); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32vw; }
 .rc-chapter { font: 400 var(--fs-tiny) var(--ui-font); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32vw; }
 
@@ -560,7 +578,31 @@ html, body, #root {
    tapping/clarity (owner feedback on the release build); fixed positions (D21), non-occlusion
    (RAWY-42) and the RAWY-59/60 popover/tray behavior are all unaffected — only sizing changed. */
 .rc-btns { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-.rc-divider { width: 1px; height: 34px; background: var(--chrome-border); margin: 0 3px; }
+/* CENTRED ON WHAT IT DIVIDES — the icon boxes — and not on the whole control.
+   It was a 34px line centred in the flex line, and that line is as tall as an entire control: icon
+   box, gap, caption. Centring on THAT put the divider's middle about 8px below the middle of the
+   boxes standing either side of it, which is the "slightly off" that could be seen but not named.
+   It now spans the icon band itself, so its centre is their centre by construction — and stays so
+   if the caption's type or wording ever changes, because the caption is no longer in the reference.
+   `flex-start` is the correct anchor rather than a chosen offset: the controls are the tallest items
+   on the line, so the line's cross-start IS the top of their icon boxes. */
+.rc-divider {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  width: 1px;
+  height: var(--ctl-2xl);
+  margin-inline: var(--sp-2);
+  display: grid;
+  place-items: center;
+}
+/* The visible line is inset within that band so it reads as a separator and not a wall — the same
+   proportion the old 34px had against a 44px box, now stated as a proportion instead of a number. */
+.rc-divider::before {
+  content: "";
+  width: 1px;
+  height: 78%;
+  background: var(--chrome-border);
+}
 .rc-btn {
   display: flex; flex-direction: column; align-items: center; gap: var(--sp-2);
   border: 0; background: transparent; cursor: pointer; padding: 0;
@@ -577,17 +619,20 @@ html, body, #root {
 .rc-btn:hover .rc-btn-label { color: var(--text); }
 .rc-btn.on .rc-btn-ico { background: var(--accent); border-color: var(--accent); color: var(--paper-bg); }
 .rc-btn.on .rc-btn-label { color: var(--accent); font-weight: 600; }
-/* Photo-card Quotes collection (RAWY-60; renamed from "Basket" RAWY-66): the count badge sits on
-   the button's outer-top corner. The .rc-top cluster is pinned direction:ltr (D21), so this stays
-   on the physical corner in both languages. */
-.rc-basket .rc-btn-ico { position: relative; overflow: visible; }
-.rc-basket-badge {
-  position: absolute; top: -8px; right: -8px; min-width: 19px; height: 19px; padding: 0 4px;
-  border-radius: var(--r-md); background: var(--accent); color: var(--paper-bg);
-  font: 700 0.6875rem var(--ui-font); line-height: 19px; text-align: center;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); pointer-events: none;
+/* THE COUNT IS PART OF THE CONTROL. It was an absolutely positioned badge at the icon's outer-top
+   corner, and the bar it sits in begins at the top edge of the window — so the badge had nowhere to
+   go but outside the application, where it was photographed half cut off. Setting it in the label
+   row instead means it is laid out INSIDE the button: one digit or three, in either direction, at
+   any window size, it cannot escape a box it is a child of. */
+.rc-basket .rc-btn-ico { border-color: color-mix(in srgb, var(--accent) 34%, var(--chrome-border)); }
+.rc-basket-label { display: inline-flex; align-items: center; gap: 5px; max-width: none; }
+.rc-basket-n {
+  min-width: 15px; height: 15px; padding: 0 4px; border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text); font: 700 0.625rem var(--ui-font); line-height: 15px;
+  font-variant-numeric: tabular-nums; text-align: center;
 }
-.rc-basket.on .rc-basket-badge { background: var(--paper-bg); color: var(--accent); }
+.rc-basket.on .rc-basket-n { background: color-mix(in srgb, var(--paper-bg) 82%, transparent); color: var(--accent); }
 
 /* button glyphs (currentColor follows the ico → flips to paper colour on the accent .on face).
    RAWY-66: scaled up proportionally (~15%) with the enlarged .rc-btn-ico box. */
@@ -603,7 +648,6 @@ html, body, #root {
 .ico-cols span:last-child { width: 10px; }
 .ico-ribbon { width: 14px; height: 18px; background: var(--accent); clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 80%, 0 100%); }
 .rc-btn.on .ico-ribbon { background: var(--paper-bg); }
-.ico-note { width: 16px; height: 16px; border: 1.8px solid currentColor; border-radius: 3px; }
 
 /* bottom: chapter / percent meta + progress track with a knob. The bar is pinned LTR (the
    fill grows from the physical left); only the page-turn chevrons follow the book (RAWY-33). */
@@ -1023,11 +1067,10 @@ html, body, #root {
    toggles — whose `.settings-panel` root sets no `dir`, unlike the `dir="rtl"` chapters/search panels
    — resolve LTR, desyncing off vs on (proven: the ON knob computed to x=-15, off the left edge).
    Pinning `direction` on the switch itself (default LTR; RTL when the UI is RTL) makes every toggle
-   instance self-contained — reading settings, chapters/search panels, and the photo composer. */
-.rs-switch, .rp-switch, .pc-switch { direction: ltr; }
+   instance self-contained — reading settings and the chapters/search panels. */
+.rs-switch, .rp-switch { direction: ltr; }
 :root[dir="rtl"] .rs-switch,
-:root[dir="rtl"] .rp-switch,
-:root[dir="rtl"] .pc-switch { direction: rtl; }
+:root[dir="rtl"] .rp-switch { direction: rtl; }
 
 /* typeface select row */
 .rs-select-row {
@@ -1066,7 +1109,13 @@ html, body, #root {
      It lives here alone: `PANEL_LEAD`/`PANEL_TRAIL` in Reader.tsx must both equal it. Contents was
      the last panel at 300 — the odd one out, and the reason the desk could reserve a width the
      panel did not actually have. */
-  inline-size: 340px;
+  /* 340 held three categories and their numerals. Five need a line-length that does not force
+     «الاستبدالات» to ellipsis, and a replacement row has to show two wordings and a switch. 380 is
+     one step of the layout scale up, not a round number chosen by eye: it is the width at which the
+     widest Arabic label stops truncating in the wrapped track. `max-inline-size` still yields on a
+     narrow window, so the desk never loses more than 86% of itself.
+     ⚠ `PANEL_LEAD`/`PANEL_TRAIL` in Reader.tsx MUST both equal this. */
+  inline-size: 380px;
   max-inline-size: 86vw;
   display: flex;
   flex-direction: column;
@@ -2190,6 +2239,39 @@ html, body, #root {
 .toc-num.big { flex: 1; font: 700 var(--fs-title)/1.3 var(--ui-font); color: var(--text); }
 .toc-label { flex: 1; font: 400 var(--fs-body)/1.35 var(--ui-font); color: color-mix(in srgb, var(--text) 86%, transparent); }
 .toc-row.active .toc-label { font-weight: 600; color: var(--text); }
+/* THE WAY BACK TO THE FURTHEST POINT REACHED — one row, shown by the Contents panel above its list
+   and by the Search panel under its spoiler line, only when there is somewhere
+   to go. It is built from parts this panel already owns: the row's own box and radius, the accent
+   wash the CURRENT chapter wears (.toc-row.active, 14%) at a lighter 10% so it reads as an action
+   beside the list rather than a chapter inside it, and the two-line lead/destination of the return
+   pill. It sits OUTSIDE .rp-scroll, so it needs no sticky layer and no opaque ground of its own, and
+   the 1400 rows below can never slide under it. Its margins hold it to the rows' own edge (the
+   scroller's 10px + the row's 11px), so nothing is a hair out of line with the list it heads. */
+.rp-furthest {
+  display: flex; align-items: center; gap: var(--sp-4);
+  /* A gap above so it is the panel's first ACTION rather than the last line of its header, and a
+     larger one below so the contents list plainly starts after it. Rendered, with none of this, it
+     read as a banner welded to the header. */
+  width: calc(100% - 20px); margin: 4px 10px 9px; padding: 7px 11px;
+  border: 0; cursor: pointer; border-radius: var(--r-sm); text-align: start;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text);
+}
+.rp-furthest:hover { background: color-mix(in srgb, var(--accent) 17%, transparent); }
+.rp-furthest-arrow { flex: 0 0 auto; display: inline-flex; align-items: center; color: var(--accent); }
+.rp-furthest-arrow svg {
+  width: 15px; height: 15px; fill: none; stroke: currentColor;
+  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+}
+.rp-furthest-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.rp-furthest-lead { font: 600 var(--fs-tiny) var(--ui-font); color: var(--accent); }
+/* The destination is one line and may be a long chapter title, so it truncates rather than growing
+   the header away from the list. The chapter NUMBER leads it, so what is lost to an ellipsis is
+   always the title, never the answer to "where would this take me". */
+.rp-furthest-where {
+  font: 400 var(--fs-body)/1.3 var(--ui-font); color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* ── RAWY-256: chapter READ markers in the Contents panel ────────────────────────────────────────────
    SIX variants from docs/design/read-indicator-selected-theme.html, implemented EXACTLY as the file
    describes them and scoped by a single class on the scroll container (`.rm-<variant>`), so switching
@@ -2363,12 +2445,17 @@ html, body, #root {
    scrollWidth never exceeds the panel width (no overflow, no detached ✕). The active segment lifts onto
    a warm surface with a 16px accent underline; counts are quiet accent numerals BESIDE the label (not
    grey pills). Anchored to `.rp-head-anno` (the two-row header) — the tab classes are annotations-only. */
+/* FIVE SEGMENTS, SO THE TRACK WRAPS. `flex: 1 1 0` divided the row evenly, which was right for
+   three and would have left five at about 60px each — narrower than «الاستبدالات» alone. The
+   settings drawer met this exactly once before and answered it by wrapping (`.sp-tabs`, five concept
+   tabs), so this uses the same answer rather than a second one: a basis near a third means three sit
+   on the first line and two share the second, each still wide enough for its word and its numeral. */
 .rp-tabs {
-  display: flex; gap: 4px; padding: 4px; border-radius: 12px;
+  display: flex; flex-wrap: wrap; gap: 4px; padding: 4px; border-radius: 12px;
   background: color-mix(in srgb, var(--text) 9%, transparent);
 }
 .rp-tab {
-  flex: 1 1 0; min-width: 0; position: relative;
+  flex: 1 1 28%; min-width: 0; position: relative;
   display: flex; align-items: center; justify-content: center; gap: var(--sp-2);
   height: 38px; border-radius: 9px; border: 0; background: transparent; padding: 0 6px; cursor: pointer;
   font: 600 0.78125rem var(--ui-font); color: var(--muted);
@@ -2379,6 +2466,39 @@ html, body, #root {
   color: var(--text); background: var(--paper-bg); box-shadow: 0 1px 3px rgba(60, 40, 16, 0.14);
 }
 :root[data-dark="true"] .rp-tab.on { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); }
+/* A NEUTRAL CARD, for the rows that are not a coloured mark.
+   `.rp-item` tints itself from `--swatch` and falls back to the ACCENT when a row has none — right
+   for a highlight, wrong for a reference or a rule, which arrived looking like accent-coloured
+   highlights because they set no swatch. These carry the panel's own paper and border instead, so
+   they read as cards in a list rather than as marks in the book. */
+.rp-item.plain {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  border: 1px solid var(--chrome-border);
+  border-inline-start: 4px solid color-mix(in srgb, var(--text) 22%, transparent);
+}
+
+/* THE RULE, AS TWO LABELLED LINES. A small fixed column for the label and the wording beside it, so
+   the two sides line up under each other whichever script either of them is in. */
+.rep-rule {
+  display: grid; grid-template-columns: auto 1fr; gap: var(--sp-2) var(--sp-5);
+  align-items: baseline; margin-top: var(--sp-2);
+}
+.rep-key {
+  font: 600 var(--fs-nano) var(--ui-font); letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--muted); white-space: nowrap;
+}
+.rep-was { color: var(--muted); }
+.rep-now { color: var(--text); font-weight: 600; }
+/* The wording sits AGAINST its label, not at the far side of its column. `dir="auto"` gives a Latin
+   phrase its own left-to-right box, which in an Arabic panel parked it across the panel from the word
+   naming it; `justify-self: start` places the box at the start of its cell in the GRID's direction,
+   so the pair reads as a pair whichever script the wording is in. */
+.rep-was, .rep-now { min-width: 0; overflow-wrap: anywhere; justify-self: start; }
+/* Switched off, the rule quietens but stays legible — it is kept, not deleted, and the row should
+   look like something waiting rather than something broken. */
+.rep-item.off .rep-rule { opacity: 0.6; }
+.rep-switch-row { margin-top: var(--sp-5); }
+
 /* the 16px terracotta underline marker under the active segment (design 2a) */
 .rp-tab.on::after {
   content: ""; position: absolute; bottom: 5px; inset-inline: 0; margin-inline: auto;
@@ -4199,30 +4319,9 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
    adapts to the chosen card theme's light/dark (design I1 light vs I2 dark) via a
    local token set; the CARD itself is coloured inline from the selected theme tokens.
    ============================================================================ */
-.pc-overlay {
-  position: fixed; inset: 0; z-index: 50; display: flex; align-items: center; justify-content: center;
-  background: rgba(20, 14, 6, 0.5); backdrop-filter: blur(3px); padding: 24px;
-}
-.pc-modal {
-  --pc-modal-bg: #F3ECDB; --pc-stage-bg: #E7DCC4; --pc-panel-bg: #FBF7EC;
-  --pc-text: #2B2521; --pc-muted: #9b8e7c; --pc-border: rgba(43, 37, 33, 0.09); --pc-accent: #9C5A3C;
-  display: flex; height: min(720px, 92vh); width: min(1000px, 94vw);
-  border-radius: 12px; overflow: hidden; background: var(--pc-modal-bg);
-  box-shadow: 0 24px 60px rgba(20, 14, 6, 0.4); color: var(--pc-text);
-}
-.pc-modal.dark {
-  --pc-modal-bg: #0E1114; --pc-stage-bg: #0A0C0E; --pc-panel-bg: #15191D;
-  --pc-text: #E4DED2; --pc-muted: #7E8A93; --pc-border: rgba(255, 255, 255, 0.06); --pc-accent: #C98A5E;
-}
+
 /* stage / preview */
-.pc-stage {
-  flex: 1; background: var(--pc-stage-bg); display: flex; flex-direction: column;
-  align-items: center; justify-content: safe center; gap: 16px; position: relative; padding: 24px;
-  /* RAWY-152: a manual text size can grow the card past the stage — scroll to it. `safe center`
-     centres the card when it fits and top-aligns when it overflows, so nothing is clipped. */
-  overflow-y: auto;
-}
-.pc-stage-label { font: 500 0.6875rem var(--ui-font); letter-spacing: .08em; color: var(--pc-muted); text-transform: uppercase; }
+
 /* The scale wrapper is a pure layout box that must NOT inherit the UI direction (RAWY-54): in
    RTL its full-size inner child was placed right-aligned and then scaled from `top left`, so the
    card landed shifted LEFT and overlapped the controls panel. Forcing `direction: ltr` pins the
@@ -4232,9 +4331,1046 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
    flex child of the stage column it otherwise shrinks to fit, and its overflow:hidden then clips the
    card's bottom while the stage never overflows → no scrollbar. Keeping the height lets the stage
    scroll (overflow-y:auto + safe-center on `.pc-stage`) so the whole tall card is reachable. */
-.pc-scale { position: relative; direction: ltr; overflow: hidden; flex-shrink: 0; }
+/* `overflow: visible`, deliberately. The scaled card is painted at exactly this box's size, so
+   nothing of the CARD ever needed clipping — but the editor's grips sit ON an element's edge, and an
+   element dragged to the edge of the card put its grips outside this box, where a clip made them
+   invisible to hit-testing. Measured: an element at the card's right edge could be moved and never
+   resized again. The card keeps its own `overflow: hidden`, so its content is still contained. */
+
 .pc-card { position: relative; overflow: hidden; border-radius: var(--r-sm); box-shadow: 0 22px 50px rgba(20, 14, 6, 0.32); display: flex; flex-direction: column; box-sizing: border-box; }
 .pc-quotemark { position: relative; overflow: visible; }
+
+/* ══ THE PHOTO CARD WORKSPACE (NewQu) ═══════════════════════════════════════════════════════════
+   A creative workspace held in a popup over the Sard context — never a page. Two rows (a 52px bar,
+   then everything else) and two columns (a 64px rail for making things, then canvas). The inspector,
+   the contextual toolbar, the objects strip and the literary menu all FLOAT over the workspace; none
+   of them is a column, because a column takes room from the canvas permanently and the canvas is
+   the point.
+
+   The palette is NewQu's own, which is Sard's ivory: a desk, a slightly warmer chrome, and a paper
+   surface a shade lighter than either. The dark block swaps those three grounds and nothing else, so
+   one structure reads in both. */
+.pcx-scrim {
+  position: fixed; inset: 0; z-index: 90;
+  display: grid; place-items: center;
+  /* The reader's own ground, darkened — so the veil belongs to the theme rather than being one
+     fixed brown over all sixteen of them. */
+  background: color-mix(in srgb, var(--app-bg) 34%, rgba(0, 0, 0, 0.62));
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+}
+
+/* ---- THE EDITOR HAS NO PALETTE OF ITS OWN ------------------------------------------------------
+   It had two: a hard-coded sepia and a hard-coded dark, chosen from the CARD's paper. So picking a
+   dark paper for the card turned the whole workspace dark, and a reader on any of the other fourteen
+   themes — or one they made themselves — got neither. Every token below is derived from what
+   `applyTheme` puts on the document, which is the one place a Sard theme becomes CSS.
+
+   The CARD keeps its own paper, chosen in the inspector. That is the point of the card. What follows
+   the reader's theme is everything AROUND it. */
+.pcx-modal {
+  --pc-desk: var(--app-bg);
+  --pc-chrome: var(--chrome-bg);
+  /* A raised control. `--paper-bg` is Sard's reading surface and sits above the chrome in every
+     theme, light or dark, which is exactly the relation a raised control wants. */
+  --pc-surface: var(--paper-bg);
+  --pc-text: var(--text);
+  --pc-muted: var(--muted);
+  /* Between the two: secondary text that is information rather than chrome. */
+  --pc-muted-2: color-mix(in srgb, var(--text) 58%, var(--muted) 42%);
+  --pc-accent: var(--accent);
+  --pc-line: var(--chrome-border);
+  --pc-line-2: color-mix(in srgb, var(--text) 16%, transparent);
+  --pc-sunk: color-mix(in srgb, var(--text) 5%, transparent);
+  --pc-sunk-2: color-mix(in srgb, var(--text) 8%, transparent);
+  --pc-danger: #B24A4A;
+  /* Aliases for the document controls that still live inside the inspector. */
+  --pc-modal-bg: var(--pc-desk); --pc-stage-bg: var(--pc-desk); --pc-panel-bg: var(--pc-chrome);
+  --pc-border: var(--pc-line);
+
+  position: relative; /* the question this editor asks is positioned against THIS box */
+  display: grid; grid-template-rows: 52px 1fr 66px;
+  width: min(1840px, 94vw); height: min(1040px, 94vh);
+  border-radius: 16px; overflow: hidden;
+  background: var(--pc-desk); color: var(--pc-text);
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.34);
+  font-family: var(--ui-font);
+}
+/* Only the danger red needs a hand: a mid red loses too much against a dark ground. */
+:root[data-dark="true"] .pcx-modal { --pc-danger: #D97B7B; }
+
+/* ── top bar ──────────────────────────────────────────────────────────────────────────────── */
+.pcx-top {
+  display: flex; align-items: center; gap: 12px; padding: 0 14px;
+  background: var(--pc-chrome); border-bottom: 1px solid var(--pc-line);
+  /* Above the card's floating toolbar (32). The header is chrome: only the question this editor
+     asks, and the scrim, belong over it — and a list opened FROM the header must not be painted
+     over by a toolbar belonging to the canvas underneath. */
+  z-index: 40;
+}
+/* THE WAY OUT OF THE EDITOR. It was a 29px muted glyph on the chrome: legible, but not obviously
+   the control that closes a modal. It is now a chip with its own ground, its own edge and full text
+   contrast, at a size the pointer does not have to be aimed at. */
+.pcx-top-back {
+  width: 34px; height: 34px; flex: none; display: grid; place-items: center;
+  border: 1px solid var(--pc-line-2); border-radius: 9px;
+  background: var(--pc-sunk); color: var(--pc-text); cursor: pointer;
+  transition: background 0.14s linear, border-color 0.14s linear;
+}
+.pcx-top-back:hover {
+  background: var(--pc-sunk-2);
+  border-color: color-mix(in srgb, var(--pc-accent) 55%, transparent);
+}
+.pcx-top-back:active { background: color-mix(in srgb, var(--pc-accent) 16%, var(--pc-sunk-2)); }
+.pcx-top-back:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--pc-accent) 70%, transparent); outline-offset: 2px;
+}
+.pcx-top-title { font-size: 0.8125rem; font-weight: 600; white-space: nowrap; }
+.pcx-top-ctx {
+  display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 320px;
+  padding: 3px 9px; border-radius: 999px;
+  background: var(--pc-sunk); border: 1px solid var(--pc-line); color: var(--pc-muted);
+}
+.pcx-top-ctx span { font-size: 0.71875rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pcx-top-gap { flex: 1; }
+
+/* ── SEVERAL PASSAGES, SAID ONCE AND PROPERLY ─────────────────────────────────────────────────
+   A card made from a collection is a different KIND of card, and the interface owes the reader
+   three things: that it is one, how many, and which. The count used to sit in a pill identical to
+   the book's, wearing a list glyph that opened nothing — the shape of a readout, not of a control.
+
+   It belongs in the context area beside the book because that is what it qualifies: this card,
+   from this book, out of this many passages. The list opens beneath it and visibly belongs to it,
+   rather than arriving in the middle of the workspace with no parent in sight. */
+/* Full height of the bar, so the list it opens is measured from the BAR's edge and hangs cleanly
+   below it. Anchored to the button's own box instead, the list began a few pixels above the bar's
+   bottom border and tucked under the chrome it was supposed to be hanging from. */
+.pcx-passwrap { position: relative; flex: none; align-self: stretch; display: flex; align-items: center; }
+.pcx-passages {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 3px 8px 3px 4px; border-radius: 999px; cursor: pointer;
+  background: color-mix(in srgb, var(--pc-accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pc-accent) 34%, transparent);
+  color: var(--pc-text);
+  transition: background 0.14s linear, border-color 0.14s linear;
+}
+[dir="rtl"] .pcx-passages { padding: 3px 4px 3px 8px; }
+.pcx-passages:hover {
+  background: color-mix(in srgb, var(--pc-accent) 18%, transparent);
+  border-color: color-mix(in srgb, var(--pc-accent) 52%, transparent);
+}
+.pcx-passages:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--pc-accent) 70%, transparent); outline-offset: 2px;
+}
+/* The number is the point, so it is set AS a number rather than folded into the sentence. */
+.pcx-pass-count {
+  flex: none; min-inline-size: 20px; block-size: 20px; padding: 0 5px;
+  display: grid; place-items: center; border-radius: 999px;
+  background: var(--pc-accent); color: var(--pc-surface);
+  font: 700 0.6875rem var(--ui-font); font-variant-numeric: tabular-nums;
+}
+.pcx-pass-word { font: 500 0.71875rem var(--ui-font); white-space: nowrap; }
+.pcx-pass-chev { opacity: 0.6; transition: transform 0.16s ease; }
+.pcx-passages[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--pc-accent) 20%, transparent);
+  border-color: color-mix(in srgb, var(--pc-accent) 60%, transparent);
+}
+.pcx-passages[aria-expanded="true"] .pcx-pass-chev { transform: rotate(180deg); }
+
+/* The surface itself: anchored to the control, sized by a clamp rather than a fixed width, and
+   never taller than the window can show — the list scrolls inside instead of running off it. */
+.pcx-pass-pop {
+  position: absolute; inset-block-start: calc(100% + 6px); inset-inline-start: 0; z-index: 5;
+  inline-size: min(360px, 62vw); max-block-size: min(56vh, 430px);
+  display: flex; flex-direction: column;
+  background: var(--pc-chrome); border: 1px solid var(--pc-line-2); border-radius: 13px;
+  box-shadow: 0 20px 46px rgba(0, 0, 0, 0.34);
+  overflow: hidden;
+}
+.pcx-pass-head {
+  display: flex; flex-direction: column; gap: 2px; padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--pc-line-2);
+}
+.pcx-pass-head b { font: 600 0.8125rem var(--ui-font); color: var(--pc-text); }
+.pcx-pass-head i { font: 400 0.6875rem var(--ui-font); font-style: normal; color: var(--pc-muted); }
+.pcx-pass-list {
+  margin: 0; padding: 8px; list-style: none; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 6px; min-block-size: 0;
+}
+/* A row is the passage and where it came from. The ordinal ties it to the card, which reads in the
+   same order — that is the whole of the mapping, and it needs no interaction to explain itself. */
+.pcx-pass-row {
+  display: flex; align-items: flex-start; gap: 9px; padding: 9px 10px;
+  border-radius: 9px; background: var(--pc-sunk); border: 1px solid transparent;
+}
+.pcx-pass-n {
+  flex: none; inline-size: 19px; block-size: 19px; display: grid; place-items: center;
+  border-radius: 999px; background: color-mix(in srgb, var(--pc-accent) 20%, transparent);
+  color: var(--pc-text); font: 700 0.625rem var(--ui-font); font-variant-numeric: tabular-nums;
+  margin-block-start: 1px;
+}
+.pcx-pass-body { display: flex; flex-direction: column; gap: 3px; min-inline-size: 0; }
+/* Two lines of the passage in the BOOK's face: enough to recognise it by, and it reads as the
+   writing it is rather than as interface text. */
+.pcx-pass-text {
+  font: 400 0.75rem/1.5 var(--book-font); color: var(--pc-text);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.pcx-pass-ch { font: 500 0.65625rem var(--ui-font); color: var(--pc-muted-2); }
+.pcx-pass-ch.none { opacity: 0.62; font-style: italic; }
+.pcx-pass-note {
+  margin: 0; padding: 9px 14px 11px; border-top: 1px solid var(--pc-line-2);
+  font: 400 0.65625rem/1.55 var(--ui-font); color: var(--pc-muted);
+}
+
+/* ── the foot: what to do with the card, where you arrive having finished ──────────────────────
+   These three used to sit at the top beside the card's NAME — which is where you look before you
+   have made anything. Composing runs down the card; the end of the work is here. And they are three
+   different acts that used to read as three similar buttons: each says what it leaves behind, and
+   the one that keeps the card EDITABLE is the one carrying the accent. */
+.pcx-foot {
+  display: flex; align-items: center; gap: 14px; padding: 0 18px;
+  background: var(--pc-chrome); border-top: 1px solid var(--pc-line); z-index: 30;
+}
+.pcx-foot-note {
+  flex: 1; min-width: 0; font: 400 0.71875rem var(--ui-font); color: var(--pc-muted);
+}
+/* The three sit together, with the pair closer to each other than to the one that keeps the card:
+   proximity is what says which two are alternatives and which one is the point. */
+.pcx-foot-actions { display: flex; align-items: stretch; gap: 10px; flex: none; }
+.pcx-foot-pair { display: flex; align-items: stretch; gap: 6px; }
+.pcx-act {
+  position: relative;   /* the completed state is laid over it — see .pcx-act-done */
+  display: flex; align-items: center; gap: 10px; flex: none;
+  padding: 8px 15px; border-radius: 10px; cursor: pointer; text-align: start;
+  /* ON THE EDITOR'S OWN RAISED SURFACE. These two were transparent on the chrome with a hairline,
+     which beside a filled primary read as a caption you could click. Every other control in this
+     editor sits on `--pc-surface`; so do they now. */
+  border: 1px solid var(--pc-line-2); background: var(--pc-surface); color: var(--pc-text);
+  transition: border-color 0.14s linear, background 0.14s linear, box-shadow 0.14s linear;
+}
+.pcx-act svg { flex: none; opacity: 0.66; }
+.pcx-act span { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pcx-act b { font: 600 0.8125rem var(--ui-font); white-space: nowrap; }
+.pcx-act i {
+  font: 400 0.6875rem var(--ui-font); font-style: normal; color: var(--pc-muted-2); white-space: nowrap;
+}
+.pcx-act:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--pc-accent) 8%, var(--pc-surface));
+  border-color: color-mix(in srgb, var(--pc-accent) 45%, transparent);
+}
+.pcx-act:hover:not(:disabled) svg { opacity: 0.9; }
+.pcx-act:active:not(:disabled) { background: color-mix(in srgb, var(--pc-accent) 14%, var(--pc-surface)); }
+.pcx-act:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--pc-accent) 70%, transparent); outline-offset: 2px;
+}
+.pcx-act:disabled { opacity: 0.5; cursor: default; }
+/* THE ONE THAT KEEPS THE CARD. The only filled thing in the bar, a step larger than the pair, and
+   the only action whose result you can come back to. */
+.pcx-act.primary {
+  padding: 8px 18px;
+  border-color: transparent; background: var(--pc-accent); color: var(--pc-surface);
+  box-shadow: 0 2px 12px color-mix(in srgb, var(--pc-accent) 34%, transparent);
+}
+.pcx-act.primary svg { opacity: 0.92; }
+.pcx-act.primary i { color: color-mix(in srgb, var(--pc-surface) 80%, transparent); }
+.pcx-act.primary:hover:not(:disabled) {
+  background: var(--pc-accent); filter: brightness(1.07); border-color: transparent;
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--pc-accent) 40%, transparent);
+}
+.pcx-act.primary:active:not(:disabled) {
+  filter: brightness(1.02); box-shadow: 0 1px 6px color-mix(in srgb, var(--pc-accent) 30%, transparent);
+}
+/* ── IDLE → WORKING → COMPLETED ──────────────────────────────────────────────
+   The result is drawn OVER the button that produced it rather than in place of its contents: the
+   label and sub-label keep their boxes underneath, so the button cannot change width, the pair
+   cannot re-space, and the footer cannot jump at the moment the reader is looking at it.
+
+   One treatment for all three, and it is neither idle state — the raised surface with the accent as
+   ink, where the primary is accent-filled and the pair are quiet. So "it worked" never looks like
+   "it is waiting to be pressed", on either kind of button.
+
+   Success is shown here; FAILURE keeps the toast. A failure is worth interrupting for and worth
+   reading, and it must not be mistaken for the quiet confirmation this is. */
+.pcx-act-done {
+  position: absolute; inset: 0; z-index: 1;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  border-radius: inherit;
+  background: var(--pc-surface);
+  border: 1px solid color-mix(in srgb, var(--pc-accent) 62%, transparent);
+  color: var(--pc-accent);
+  font: 600 0.8125rem var(--ui-font);
+  animation: pcx-act-done 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.pcx-act-done b { font: inherit; white-space: nowrap; }
+.pcx-act-done svg { flex: none; }
+@keyframes pcx-act-done {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pcx-act-done { animation: none; }
+}
+
+
+/* WHICH ONE IS WORKING. It takes the icon's place, so the button neither resizes nor loses its
+   label while it runs - and only the action the reader pressed says anything. */
+.pcx-act-spin {
+  flex: none; inline-size: 15px; block-size: 15px; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, currentColor 28%, transparent);
+  border-block-start-color: currentColor;
+  animation: pcx-act-spin 0.7s linear infinite;
+}
+@keyframes pcx-act-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .pcx-act-spin { animation-duration: 2.4s; }
+}
+
+/* ---- the one question this editor asks ------------------------------------------------------ */
+.pcx-ask {
+  /* Covers the EDITOR, which is the window this question belongs to. The padding is what guarantees
+     the card can never touch an edge at any window size - it is the responsive part, not a
+     breakpoint. */
+  position: absolute; inset: 0; z-index: 70; display: grid; place-items: center;
+  padding: clamp(16px, 4vmin, 40px);
+  background: color-mix(in srgb, var(--pc-desk) 40%, rgba(0, 0, 0, 0.55));
+  backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+}
+.pcx-ask-card {
+  /* SIZED BY WHAT IT SAYS, between two sensible bounds. `max-content` lets a short question be a
+     small box and a longer one grow; the clamps stop it becoming either a slot or a wall. The
+     percentages resolve against the padded area above, so a narrow window shrinks the card rather
+     than cropping it - the previous `min(420px, 82%)` was a fixed box that only looked right at one
+     size. */
+  inline-size: max-content;
+  min-inline-size: min(300px, 100%);
+  max-inline-size: min(460px, 100%);
+  max-block-size: 100%; overflow: auto;
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 22px 24px; border-radius: 14px;
+  background: var(--pc-chrome); border: 1px solid var(--pc-line-2);
+  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.38);
+}
+.pcx-ask-card b { font: 600 1rem var(--ui-font); color: var(--pc-text); }
+.pcx-ask-card p {
+  margin: 0; font: 400 0.84375rem/1.65 var(--ui-font); color: var(--pc-muted-2); text-wrap: pretty;
+}
+/* The answers are a group of their own, set apart from what is being asked. */
+.pcx-ask-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-block-start: 12px; padding-block-start: 14px;
+  border-block-start: 1px solid var(--pc-line-2);
+}
+.pcx-ask-row .pcx-act { padding: 9px 16px; }
+/* Discarding is a real answer, so it is offered — quietly, and last. */
+.pcx-ask-drop {
+  margin-inline-start: auto; padding: 9px 10px; border: 0; background: transparent;
+  color: var(--pc-danger); font: 500 0.78125rem var(--ui-font); cursor: pointer; border-radius: 8px;
+}
+.pcx-ask-drop:hover { background: color-mix(in srgb, var(--pc-danger) 12%, transparent); }
+
+/* ── body: rail + workspace ───────────────────────────────────────────────────────────────── */
+.pcx-body { display: grid; grid-template-columns: 288px 1fr; min-height: 0; }
+
+/* ── THE RAIL ──────────────────────────────────────────────────────────────────────────────
+   A column of NAMED THINGS, not a strip of icons. The change it makes is legibility: a card's
+   literary parts used to live behind a button that opened a menu, so the only way to learn what the
+   card was made of was to ask. Here each role says its name, whether it is on the card, and what it
+   currently reads — and the ones that are not on it say what they WOULD read, in italic, so the
+   difference between "present" and "available" is visible without a legend.
+
+   Adding lives here; editing lives on the card. The note at the foot says so, and nothing in this
+   column opens a panel, which is what keeps that promise true. */
+.pcx-rail {
+  display: grid; grid-template-rows: 1fr auto; min-height: 0; gap: 12px; padding: 14px 14px 14px;
+  background: var(--pc-chrome); border-inline-end: 1px solid var(--pc-line); z-index: 24;
+}
+/* The sections scroll; the rule at the foot does not. Opening the mark's controls used to push the
+   note below the fold, and the note is the one line that explains the whole column. */
+.pcx-railscroll {
+  display: flex; flex-direction: column; gap: 12px; min-height: 0;
+  overflow-y: auto; overflow-x: hidden; scrollbar-width: thin;
+}
+.pcx-railsec { display: flex; flex-direction: column; gap: 8px; flex: none; }
+.pcx-railhead {
+  margin: 0; display: flex; align-items: baseline; gap: 7px; padding-inline-start: 2px;
+  font-weight: 400;
+}
+/* Two shapes for one head: side by side while both halves are short, stacked when the hint is a
+   sentence — which it is for the literary section and for the mark. */
+.pcx-railhead.col { flex-direction: column; align-items: stretch; gap: 2px; }
+/* The title never breaks; the hint wraps beneath it when it will not sit alongside. The Arabic head
+   fits on one line and reads as the reference draws it; the English one is longer and would
+   otherwise break "Add element" itself in half, which is the wrong thing to give way. */
+.pcx-railhead b {
+  font: 700 0.8125rem var(--ui-font); letter-spacing: 0.04em; color: var(--pc-text);
+  white-space: nowrap;
+}
+.pcx-railhead i {
+  font: 400 0.75rem/1.55 var(--ui-font); font-style: normal; color: var(--pc-muted-2);
+}
+
+/* The three ways to put something new on the card. */
+.pcx-addrow {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 11px;
+  border: 1px solid var(--pc-line); border-radius: 10px;
+  background: var(--pc-surface); color: var(--pc-text); cursor: pointer;
+  box-shadow: 0 1px 2px rgba(40, 28, 14, 0.06);
+  transition: border-color 0.14s linear, background 0.14s linear;
+}
+.pcx-addrow:hover { border-color: color-mix(in srgb, var(--pc-accent) 45%, transparent); }
+.pcx-addtile {
+  width: 30px; height: 30px; flex: none; display: grid; place-items: center;
+  border-radius: 8px; background: var(--pc-sunk); color: inherit;
+}
+.pcx-addtxt { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; text-align: start; }
+.pcx-addtxt b { font: 600 0.90625rem var(--ui-font); }
+.pcx-addtxt i {
+  font: 400 0.78125rem var(--ui-font); font-style: normal; color: var(--pc-muted-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pcx-addplus {
+  width: 19px; height: 19px; flex: none; display: grid; place-items: center;
+  border-radius: 6px; background: color-mix(in srgb, var(--pc-accent) 12%, transparent);
+  color: var(--pc-accent); font: 700 0.8125rem/1 var(--ui-font);
+}
+/* The ground is opened, not added — a chevron, and it holds the selected state while it is open. */
+/* The chevron points the way ON — the inline-END in each direction. The glyph is drawn pointing
+   left, which is already correct in Arabic and has to be mirrored in English. (It cannot borrow the
+   top bar's `--pcx-flip`: that variable is declared on the back button, so nothing else inherits it.) */
+.pcx-addchev { flex: none; opacity: 0.42; transform: scaleX(-1); }
+[dir="rtl"] .pcx-addchev { transform: none; }
+.pcx-addrow.bg.on {
+  border-color: var(--pc-accent); color: var(--pc-accent);
+  background: color-mix(in srgb, var(--pc-accent) 12%, transparent);
+}
+.pcx-addrow.bg.on .pcx-addtile { background: color-mix(in srgb, var(--pc-accent) 16%, transparent); }
+
+/* A literary role. Three states, and the border carries the important one: DASHED means the card
+   does not have it yet, SOLID means it does. */
+.pcx-role {
+  display: flex; align-items: center; gap: 2px;
+  border: 1px dashed var(--pc-line); border-radius: 9px; background: transparent;
+  transition: background 0.14s linear, border-color 0.14s linear;
+}
+.pcx-role.here {
+  border-style: solid; border-color: color-mix(in srgb, var(--text) 8%, transparent);
+  background: var(--pc-sunk); padding-inline-end: 4px;
+}
+.pcx-role.on { border-color: var(--pc-accent); background: color-mix(in srgb, var(--pc-accent) 12%, transparent); }
+/* The switch is its OWN control, because it does its own thing: it shows and hides the element on
+   the card. It used to be an indicator meaning "this exists", which is a fact about the document
+   rather than about the picture — and it could not be pressed. */
+.pcx-role-check {
+  flex: none; display: grid; place-items: center; padding: 9px 0 9px 11px;
+  border: 0; background: transparent; cursor: pointer;
+}
+[dir="rtl"] .pcx-role-check { padding: 9px 11px 9px 0; }
+.pcx-role-main {
+  display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; padding: 9px 10px;
+  border: 0; border-radius: 9px; background: transparent; color: var(--pc-text);
+  cursor: pointer; text-align: start;
+}
+.pcx-role-tick {
+  width: 21px; height: 21px; flex: none; display: grid; place-items: center;
+  border: 1px solid var(--pc-line-2); border-radius: 6px;
+  background: transparent; color: var(--pc-muted);
+  font: 700 0.8125rem/1 var(--ui-font);
+  transition: background 0.12s linear, border-color 0.12s linear, color 0.12s linear;
+}
+.pcx-role-check:hover .pcx-role-tick { border-color: var(--pc-accent); color: var(--pc-accent); }
+.pcx-role.here .pcx-role-tick {
+  background: var(--pc-accent); border-color: var(--pc-accent); color: var(--pc-surface);
+}
+/* PRESENT BUT HIDDEN. The element is still the user's — its words, its type and its place are all
+   kept — so the row stays solid and legible; only the card has stopped showing it. */
+.pcx-role.off { border-style: solid; background: transparent; }
+.pcx-role.off .pcx-role-txt b { color: var(--pc-muted); }
+.pcx-role.off .pcx-role-txt i { opacity: 0.7; }
+.pcx-role-txt { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.pcx-role-txt b { font: 600 0.90625rem var(--ui-font); }
+/* Italic while it is only AVAILABLE — the words are a description of what it would say, not a
+   quotation of what it does say. It straightens the moment the role is on the card. */
+.pcx-role-txt i {
+  font: 400 0.78125rem/1.4 var(--ui-font); font-style: italic; color: var(--pc-muted-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pcx-role.here .pcx-role-txt i { font-style: normal; }
+.pcx-role.on .pcx-role-txt i { color: var(--pc-accent); }
+
+.pcx-segs.tight button { padding: 5px 4px; font-size: 0.65625rem; }
+/* PHYSICAL, so it does not mirror. Left has to be the button on the left in both languages, or the
+   label "يسار" would put the mark on the right. */
+.pcx-segs.places { direction: ltr; }
+
+/* Pushed to the foot, because it is the rule the whole column depends on. */
+.pcx-railnote {
+  margin: 0; flex: none; padding: 10px 12px; border-radius: 10px;
+  background: color-mix(in srgb, var(--pc-text) 4%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pc-text) 8%, transparent);
+  font: 400 0.75rem/1.6 var(--ui-font); color: var(--pc-muted-2);
+}
+
+/* ── the workspace, and the things that float on it ───────────────────────────────────────── */
+.pcx-work {
+  position: relative; min-width: 0; overflow: hidden;
+  background: var(--pc-desk); display: grid; place-items: center;
+  /* The head room is for the CONTEXTUAL TOOLBAR, which floats just above the card. At 56px the card
+     began where the objects strip already was, and the toolbar landed on top of the chips —
+     photographed, not deduced. The strip needs ~48px and the toolbar ~48 more. */
+  padding: 112px 372px 44px 44px;
+}
+[dir="rtl"] .pcx-work { padding: 112px 44px 44px 372px; }
+
+/* `overflow: visible` so a handle on an element at the card's edge stays hittable — clipping it was
+   a measured bug, not a hypothetical one. */
+.pcx-wrap { position: relative; direction: ltr; overflow: visible; flex-shrink: 0; }
+
+/* ── objects strip + zoom ─────────────────────────────────────────────────────────────────── */
+.pcx-strip {
+  position: absolute; top: 0; inset-inline: 0; z-index: 22;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  padding: 11px 13px; pointer-events: none;
+}
+.pcx-strip.with-inspector { padding-inline-end: 362px; }
+.pcx-chips {
+  display: flex; align-items: center; gap: 4px; flex: 1 1 auto; min-width: 0;
+  overflow-x: auto; pointer-events: auto;
+  scrollbar-width: none; -ms-overflow-style: none;
+}
+.pcx-chips::-webkit-scrollbar { display: none; }
+.pcx-chip {
+  display: inline-flex; align-items: center; gap: 6px; flex: none; max-width: 190px;
+  padding: 5px 10px; border: 1px solid var(--pc-line); border-radius: 999px;
+  background: color-mix(in srgb, var(--pc-surface) 92%, transparent);
+  color: var(--pc-text); font: 500 0.6875rem var(--ui-font); cursor: pointer;
+}
+.pcx-chip span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pcx-chip:hover { border-color: color-mix(in srgb, var(--pc-accent) 45%, transparent); }
+.pcx-chip.on { border-color: var(--pc-accent); color: var(--pc-accent); }
+.pcx-chip-dot { width: 7px; height: 7px; flex: none; border-radius: 2px; background: var(--pc-muted); }
+.pcx-chip-dot.quote { background: var(--pc-accent); border-radius: 50%; }
+.pcx-chip-dot.image { background: color-mix(in srgb, var(--accent) 45%, var(--muted)); }
+.pcx-chip-dot.attribution { background: var(--pc-muted); }
+.pcx-zoom {
+  display: flex; align-items: center; gap: 2px; flex: none; padding: 3px; pointer-events: auto;
+  border-radius: 9px; background: color-mix(in srgb, var(--pc-surface) 92%, transparent);
+  border: 1px solid var(--pc-line);
+}
+.pcx-zoom button {
+  min-width: 25px; height: 23px; display: grid; place-items: center;
+  border: 0; border-radius: 6px; background: transparent; color: var(--pc-text); cursor: pointer;
+}
+.pcx-zoom button:hover { background: var(--pc-sunk); }
+.pcx-zoom-fit { min-width: 48px; font: 500 0.71875rem var(--ui-font); font-variant-numeric: tabular-nums; }
+
+/* ── the contextual toolbar, floating ABOVE the card ──────────────────────────────────────── */
+.pcx-tb {
+  /* The wrapper around the card is `direction: ltr` so the scaled preview is laid out physically.
+     The toolbar is chrome, not card, so it takes the INTERFACE's direction back — without this a
+     menu opening from it ran left-to-right inside an Arabic editor. */
+  direction: ltr;
+  position: absolute; bottom: calc(100% + 12px); left: 50%; transform: translateX(-50%);
+  z-index: 32;
+  display: flex; align-items: center; gap: 6px; padding: 5px;
+  border-radius: 11px; background: var(--pc-chrome);
+  border: 1px solid var(--pc-line); box-shadow: 0 10px 26px rgba(0, 0, 0, 0.22);
+  white-space: nowrap;
+}
+
+.pcx-tb-group, .pcx-tb-segs {
+  display: flex; align-items: center; gap: 1px; height: 29px; padding: 0 2px;
+  border-radius: 7px; background: var(--pc-sunk);
+}
+.pcx-tb-segs { gap: 2px; padding: 2px; }
+.pcx-tb-step {
+  width: 22px; height: 25px; border: 0; border-radius: 5px; background: transparent;
+  color: var(--pc-text); font-size: 0.8125rem; cursor: pointer;
+}
+.pcx-tb-step:hover { background: var(--pc-sunk-2); }
+.pcx-tb-mini {
+  min-width: 25px; height: 25px; display: grid; place-items: center;
+  border: 0; border-radius: 5px; background: transparent; color: var(--pc-text); cursor: pointer;
+  font: 500 0.6875rem var(--ui-font);
+}
+.pcx-tb-mini.wide { padding: 0 9px; }
+.pcx-tb-mini:hover { background: var(--pc-sunk-2); }
+.pcx-tb-mini.on { background: var(--pc-surface); color: var(--pc-accent); }
+.pcx-tb-swatch {
+  width: 29px; height: 29px; flex: none; border-radius: 7px; cursor: pointer;
+  border: 1px solid var(--pc-line-2);
+}
+.pcx-tb-div { width: 1px; height: 20px; background: var(--pc-line-2); }
+[dir="rtl"] .pcx-tb { direction: rtl; }
+.pcx-tb-text {
+  height: 29px; padding: 0 11px; border: 0; border-radius: 7px; background: var(--pc-sunk);
+  color: var(--pc-text); font: 500 0.75rem var(--ui-font); cursor: pointer; white-space: nowrap;
+}
+.pcx-tb-text:hover { background: var(--pc-sunk-2); }
+.pcx-tb-slider {
+  display: flex; align-items: center; gap: 7px; height: 29px; padding: 0 9px;
+  border-radius: 7px; background: var(--pc-sunk); font-size: 0.6875rem; color: var(--pc-muted);
+}
+.pcx-tb-slider input { width: 72px; accent-color: var(--pc-accent); cursor: pointer; }
+.pcx-tb-slider b {
+  font: 600 0.71875rem var(--ui-font); color: var(--pc-accent);
+  min-width: 32px; text-align: end; direction: ltr; font-variant-numeric: tabular-nums;
+}
+.pcx-tb-del {
+  width: 29px; height: 29px; display: grid; place-items: center;
+  border: 0; border-radius: 7px; background: transparent; color: var(--pc-danger); cursor: pointer;
+}
+.pcx-tb-del:hover { background: color-mix(in srgb, var(--pc-danger) 12%, transparent); }
+
+/* ── a number you drag or type ────────────────────────────────────────────────────────────── */
+.pcx-scrub {
+  display: flex; align-items: center; gap: 3px; cursor: ew-resize; user-select: none;
+  padding: 0 4px; border-radius: 5px;
+}
+.pcx-scrub:hover { background: var(--pc-sunk-2); }
+.pcx-scrub.off { opacity: 0.45; cursor: default; }
+.pcx-scrub-label { font: 600 0.59375rem var(--ui-font); color: var(--pc-muted); flex: none; }
+.pcx-scrub-input {
+  border: 0; background: transparent; outline: none; cursor: text;
+  color: var(--pc-text); font: 600 0.75rem var(--ui-font);
+  text-align: center; direction: ltr; font-variant-numeric: tabular-nums;
+}
+.pcx-scrub-unit { font-size: 0.5625rem; color: var(--pc-muted); flex: none; }
+
+/* ── the literary roles ───────────────────────────────────────────────────────────────────── */
+/* ── the inspector: an overlay, never a column ────────────────────────────────────────────── */
+.pcx-insp {
+  position: absolute; top: 0; bottom: 0; inset-inline-end: 0; z-index: 34; width: 348px;
+  display: flex; flex-direction: column; gap: 16px;
+  overflow-y: auto; padding: 16px 18px 26px;
+  background: var(--pc-chrome); border-inline-start: 1px solid var(--pc-line);
+}
+.pcx-insp-head { display: flex; align-items: center; gap: 9px; flex: none; }
+.pcx-insp-dot { width: 9px; height: 9px; flex: none; border-radius: 50%; background: var(--pc-muted); }
+.pcx-insp-dot.bg, .pcx-insp-dot.image { background: color-mix(in srgb, var(--accent) 45%, var(--muted)); }
+.pcx-insp-dot.quote, .pcx-insp-dot.text, .pcx-insp-dot.attribution { background: var(--pc-accent); }
+.pcx-insp-name { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pcx-insp-name b { font: 600 0.78125rem var(--ui-font); }
+.pcx-insp-name i { font: 400 0.625rem var(--ui-font); font-style: normal; color: var(--pc-muted); }
+
+.pcx-bg { display: flex; flex-direction: column; gap: 9px; }
+.pcx-bg-prev {
+  height: 108px; border-radius: 9px; border: 1px solid var(--pc-line-2);
+  background: var(--pc-surface) center / cover no-repeat;
+  display: grid; place-items: center; font-size: 0.6875rem; color: var(--pc-muted);
+}
+.pcx-bg-row { display: flex; gap: 6px; }
+.pcx-bg-pick {
+  flex: 1; height: 31px; border: 0; border-radius: 7px;
+  background: var(--pc-text); color: var(--pc-desk); font: 600 0.75rem var(--ui-font); cursor: pointer;
+}
+.pcx-bg-clear {
+  flex: none; padding: 0 11px; height: 31px; border: 1px solid var(--pc-line-2); border-radius: 7px;
+  background: transparent; color: var(--pc-text); font: 500 0.75rem var(--ui-font); cursor: pointer;
+}
+
+/* ---- a dropdown the page draws --------------------------------------------------------------
+   A native `<select>`'s menu is an OS popup: outside the document, largely beyond this stylesheet,
+   and — measured here — unreadable, because the closed control had been given a dark colour scheme
+   and the popup had not. Worse than the contrast was the blindness: nothing that inspects the page
+   can see an OS window, so the defect survived every check that was not a person looking at it.
+   This menu is an element, so it takes the composer's own surfaces and can be photographed. */
+.pcx-pickerwrap { position: relative; display: inline-flex; min-width: 0; }
+.pcx-picker {
+  display: flex; align-items: center; gap: 7px; inline-size: 100%; min-inline-size: 0;
+  padding: 7px 9px; border: 1px solid var(--pc-line-2); border-radius: 7px;
+  background: var(--pc-surface); color: var(--pc-text); font: 500 0.71875rem var(--ui-font);
+  cursor: pointer; text-align: start;
+}
+.pcx-picker.tb { height: 28px; padding: 0 9px; border-radius: 7px; }
+.pcx-picker:hover { border-color: color-mix(in srgb, var(--pc-accent) 45%, transparent); }
+.pcx-picker.open { border-color: var(--pc-accent); }
+.pcx-picker svg { flex: none; opacity: 0.55; margin-inline-start: auto; }
+.pcx-picker-val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pcx-opts {
+  position: absolute; top: calc(100% + 5px); inset-inline-start: 0; z-index: 60;
+  min-inline-size: 100%; max-block-size: 264px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 1px; padding: 5px;
+  border: 1px solid var(--pc-line-2); border-radius: 9px;
+  /* OPAQUE. A translucent menu over a card is the same unreadability in a different costume. */
+  background: var(--pc-chrome); box-shadow: 0 16px 38px rgba(0, 0, 0, 0.3);
+}
+.pcx-opts:focus-visible { outline: none; }
+.pcx-opt {
+  display: flex; align-items: center; gap: 7px; inline-size: 100%; padding: 7px 8px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--pc-text);
+  font-size: 0.78125rem; cursor: pointer; text-align: start; white-space: nowrap;
+}
+.pcx-opt-tick {
+  inline-size: 12px; flex: none; color: var(--pc-accent); font-size: 0.6875rem; font-weight: 700;
+}
+.pcx-opt-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pcx-opt.hot { background: var(--pc-sunk-2); }
+.pcx-opt.on { color: var(--pc-accent); font-weight: 600; }
+
+/* ---- the inspector's own furniture -------------------------------------------------------------
+   Sections rather than a list. The panel this replaced was one scrolling column holding every
+   control the card had, whether or not it applied to anything; this shows the card, or one element,
+   and stops. Nothing here duplicates the toolbar — the size, the alignment and the ink are a few
+   pixels from the thing they change, and repeating them at the edge of the screen is what made the
+   old panel feel like a settings page.
+
+   Every quantity is a real number in the card's own export pixels, typed or dragged. No XS/S/M/L/XL
+   anywhere, and no slider that is the ONLY way to reach a value. */
+.pcx-sec { display: flex; flex-direction: column; gap: 9px; flex: none; }
+.pcx-sec + .pcx-sec { border-top: 1px solid var(--pc-line); padding-top: 15px; }
+.pcx-sec-title {
+  margin: 0; display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap;
+  font: 600 0.59375rem var(--ui-font); letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--pc-muted);
+}
+.pcx-sec-title i {
+  font: 400 0.625rem var(--ui-font); font-style: normal;
+  letter-spacing: 0; text-transform: none; color: var(--pc-accent);
+}
+.pcx-rest { margin: 0; font: 400 0.71875rem/1.65 var(--ui-font); color: var(--pc-muted); }
+.pcx-note { margin: 0; font: 400 0.65625rem/1.6 var(--ui-font); color: var(--pc-muted); }
+
+.pcx-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; align-items: center; }
+.pcx-quad { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+
+/* THE FORMAT, drawn at its own proportion — four words all read the same, four shapes do not. */
+.pcx-formats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.pcx-format {
+  display: flex; align-items: center; gap: 9px; padding: 7px 9px; text-align: start;
+  border: 1px solid var(--pc-line-2); border-radius: 8px; background: transparent;
+  color: var(--pc-text); cursor: pointer;
+  transition: border-color 0.14s linear, background 0.14s linear;
+}
+.pcx-format:hover { border-color: color-mix(in srgb, var(--pc-accent) 45%, transparent); }
+.pcx-format.on { border-color: var(--pc-accent); background: color-mix(in srgb, var(--pc-accent) 10%, transparent); }
+.pcx-format-proxy {
+  flex: none; block-size: 22px; inline-size: auto; border-radius: 2px;
+  background: var(--pc-muted); opacity: 0.5;
+}
+.pcx-format.on .pcx-format-proxy { background: var(--pc-accent); opacity: 0.85; }
+.pcx-format-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pcx-format-txt b { font: 600 0.71875rem var(--ui-font); }
+.pcx-format-txt i {
+  font: 400 0.59375rem var(--ui-font); font-style: normal; color: var(--pc-muted);
+  direction: ltr; font-variant-numeric: tabular-nums;
+}
+
+/* THE PAPERS ARE SHORTCUTS, NOT THE CEILING. All sixteen Sard ships, and a hex field under them. */
+.pcx-papers { display: grid; grid-template-columns: repeat(auto-fill, minmax(30px, 1fr)); gap: 5px; }
+/* A swatch is the paper and its ink. It carried a letterform, which read as content that had got
+   onto the card by accident — and said less about the pairing than a stroke of the ink itself. */
+.pcx-paper {
+  aspect-ratio: 1; padding: 0; display: grid; place-items: center;
+  border: 1px solid var(--pc-line-2); border-radius: 7px; cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s linear;
+}
+.pcx-paper-ink {
+  inline-size: 46%; block-size: 3px; border-radius: 2px; opacity: 0.85;
+}
+.pcx-paper:hover { transform: translateY(-1px); }
+.pcx-paper.on { border-color: transparent; box-shadow: 0 0 0 2px var(--pc-accent); }
+.pcx-customcol {
+  display: flex; align-items: center; gap: 8px; inline-size: 100%; padding: 7px 9px;
+  border: 1px solid var(--pc-line-2); border-radius: 8px; background: transparent;
+  color: var(--pc-text); font: 500 0.71875rem var(--ui-font); cursor: pointer;
+}
+.pcx-customcol:hover { border-color: color-mix(in srgb, var(--pc-accent) 45%, transparent); }
+.pcx-customcol.on { border-color: var(--pc-accent); }
+.pcx-customcol-chip {
+  flex: none; inline-size: 16px; block-size: 16px; border-radius: 5px;
+  border: 1px solid var(--pc-line-2);
+  background: repeating-conic-gradient(var(--pc-line) 0% 25%, transparent 0% 50%) 50% / 8px 8px;
+}
+.pcx-customcol i {
+  margin-inline-start: auto; font: 500 0.625rem var(--ui-font); font-style: normal;
+  color: var(--pc-muted); direction: ltr; text-transform: uppercase;
+}
+
+/* THE COLOUR PICKER. Visual first, hex always — the hex is the one form of a colour a person can
+   carry somewhere else, so it is a field and never a read-out. */
+.pcx-pick {
+  display: flex; flex-direction: column; gap: 8px; padding: 10px;
+  border: 1px solid var(--pc-line-2); border-radius: 10px; background: var(--pc-surface);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.24);
+}
+.pcx-pick-head { display: flex; align-items: center; gap: 7px; }
+.pcx-pick-chip { flex: none; inline-size: 15px; block-size: 15px; border-radius: 5px; border: 1px solid var(--pc-line-2); }
+.pcx-pick-title { flex: 1; font: 600 0.6875rem var(--ui-font); }
+.pcx-pick-x {
+  flex: none; inline-size: 20px; block-size: 20px; display: grid; place-items: center;
+  border: 0; border-radius: 5px; background: transparent; color: var(--pc-muted); cursor: pointer;
+}
+.pcx-pick-x:hover { background: var(--pc-sunk-2); color: var(--pc-text); }
+.pcx-pick-sv { position: relative; block-size: 104px; border-radius: 8px; cursor: crosshair; touch-action: none; }
+.pcx-pick-hue {
+  position: relative; block-size: 13px; border-radius: 7px; cursor: pointer; touch-action: none;
+  /* The hue wheel is a fact about colour, not about direction: it stays left-to-right in both. */
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+}
+.pcx-pick-dot {
+  position: absolute; inline-size: 11px; block-size: 11px; border-radius: 50%;
+  transform: translate(-50%, -50%); border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4); pointer-events: none;
+}
+.pcx-pick-hex { display: flex; align-items: center; gap: 7px; }
+.pcx-pick-hex span { font: 600 0.59375rem var(--ui-font); letter-spacing: 0.08em; color: var(--pc-muted); }
+.pcx-pick-hex input {
+  flex: 1; min-inline-size: 0; padding: 6px 8px; direction: ltr; text-transform: uppercase;
+  border: 1px solid var(--pc-line-2); border-radius: 6px; background: var(--pc-chrome);
+  color: var(--pc-text); font: 500 0.71875rem var(--ui-font);
+}
+.pcx-pick-hex input:focus-visible { outline: 2px solid var(--pc-accent); outline-offset: 1px; }
+.pcx-pick-presets { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; }
+.pcx-pick-presets button {
+  aspect-ratio: 1; padding: 0; border: 1px solid var(--pc-line-2); border-radius: 5px; cursor: pointer;
+}
+.pcx-pick-presets button:hover { box-shadow: 0 0 0 2px color-mix(in srgb, var(--pc-accent) 55%, transparent); }
+.pcx-pick-foot { display: flex; align-items: center; gap: 6px; }
+.pcx-pick-clear {
+  flex: 1; padding: 7px 9px; border: 1px solid var(--pc-line-2); border-radius: 7px;
+  background: transparent; color: var(--pc-muted); font: 500 0.6875rem var(--ui-font);
+  cursor: pointer;
+}
+.pcx-pick-clear:hover { color: var(--pc-text); border-color: var(--pc-accent); }
+/* The action that FINISHES. Choosing a colour has no natural end — every drag is a new value — so
+   without this the only way out was to press something that was not the picker. */
+.pcx-pick-done {
+  flex: 1; padding: 7px 12px; border: 0; border-radius: 7px;
+  background: var(--pc-accent); color: var(--pc-surface);
+  font: 600 0.71875rem var(--ui-font); cursor: pointer;
+}
+.pcx-pick-done:hover { filter: brightness(1.06); }
+
+/* «بداية، لا قالب» — A START, NOT A TEMPLATE. Picking one rearranges the card once and then stops
+   having an opinion, which is why these are cards to press rather than a mode to stay in. */
+/* A segmented choice that says what it is choosing. An unlabelled row of three words in a panel of
+   sliders explains nothing about itself. */
+.pcx-seg-field { display: flex; flex-direction: column; gap: 6px; }
+.pcx-seg-label { font: 500 0.6875rem var(--ui-font); color: var(--pc-muted); }
+
+/* A HEADING INSIDE A SECTION. The stroke is a fourth readability device and belongs under the same
+   title as the other three, but it is not one of their modes — so it is named, with a rule above it
+   to say where the mode list ends and the stroke begins, rather than given a section of its own. */
+.pcx-substep {
+  display: flex; align-items: center; gap: 8px;
+  margin-block-start: 2px; padding-block-start: 9px;
+  border-block-start: 1px solid var(--pc-line-2);
+}
+
+.pcx-comps { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.pcx-comp {
+  display: flex; align-items: center; gap: 9px; padding: 7px 9px; text-align: start;
+  border: 1px solid var(--pc-line-2); border-radius: 8px; background: transparent;
+  color: var(--pc-text); font: 500 0.71875rem var(--ui-font); cursor: pointer;
+  transition: border-color 0.14s linear, background 0.14s linear;
+}
+.pcx-comp:hover { border-color: color-mix(in srgb, var(--pc-accent) 45%, transparent); }
+.pcx-comp.on { border-color: var(--pc-accent); background: color-mix(in srgb, var(--pc-accent) 10%, transparent); }
+/* Three bars standing for quote, title and credit — the arrangement, at a glance. */
+.pcx-comp-thumb {
+  flex: none; inline-size: 20px; block-size: 26px; padding: 3px;
+  display: flex; flex-direction: column; gap: 2px;
+  border-radius: 3px; background: var(--pc-sunk-2);
+}
+.pcx-comp-thumb i { display: block; block-size: 3px; border-radius: 1px; background: var(--pc-muted); opacity: 0.6; }
+.pcx-comp-thumb i:first-child { block-size: 9px; opacity: 0.85; }
+.pcx-comp.on .pcx-comp-thumb i { background: var(--pc-accent); }
+.pcx-comp-thumb.calm i { margin-inline: auto; inline-size: 78%; }
+.pcx-comp-thumb.manuscript i { inline-size: 100%; }
+.pcx-comp-thumb.manuscript i:not(:first-child) { inline-size: 62%; }
+.pcx-comp-thumb.gilded { flex-direction: column-reverse; }
+.pcx-comp-thumb.gilded i { margin-inline: auto; inline-size: 70%; }
+.pcx-comp-thumb.night i:first-child { block-size: 13px; }
+.pcx-comp-thumb.night i:not(:first-child) { inline-size: 55%; }
+
+/* THE STAMPS. A checkbox marked "Date" asks the user to imagine the result; these show it — the
+   second line is the very characters the card will print, in the card's own manner. */
+.pcx-stamp {
+  display: flex; align-items: center; gap: 9px; padding: 8px 9px;
+  border: 1px solid var(--pc-line); border-radius: 9px; background: transparent;
+  transition: border-color 0.14s linear, background 0.14s linear;
+}
+.pcx-stamp.on { border-color: color-mix(in srgb, var(--text) 8%, transparent); background: var(--pc-sunk); }
+.pcx-stamp-ico {
+  width: 28px; height: 28px; flex: none; display: grid; place-items: center;
+  border-radius: 8px; background: var(--pc-sunk-2); color: var(--pc-muted);
+}
+.pcx-stamp.on .pcx-stamp-ico {
+  background: color-mix(in srgb, var(--pc-accent) 14%, transparent); color: var(--pc-accent);
+}
+.pcx-stamp-txt { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+.pcx-stamp-txt b { font: 600 0.78125rem var(--ui-font); }
+.pcx-stamp-txt i {
+  font: 400 0.71875rem var(--ui-font); font-style: normal; color: var(--pc-muted-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pcx-stamp.on .pcx-stamp-txt i { color: var(--pc-accent); }
+
+/* One switch shape for the whole editor. */
+.pcx-switch {
+  flex: none; inline-size: 34px; block-size: 20px; padding: 0; position: relative;
+  border: 1px solid var(--pc-line-2); border-radius: 999px;
+  background: var(--pc-sunk-2); cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease;
+}
+.pcx-switch-knob {
+  position: absolute; inset-block: 2px; inline-size: 14px; inset-inline-start: 2px;
+  border-radius: 50%; background: var(--pc-muted);
+  transition: inset-inline-start 0.16s ease, background 0.16s ease;
+}
+.pcx-switch[aria-checked="true"] { background: var(--pc-accent); border-color: var(--pc-accent); }
+.pcx-switch[aria-checked="true"] .pcx-switch-knob { inset-inline-start: 16px; background: var(--pc-surface); }
+
+.pcx-segs { display: flex; gap: 3px; padding: 3px; border-radius: 8px; background: var(--pc-sunk-2); }
+.pcx-segs button {
+  flex: 1; min-inline-size: 0; padding: 6px 4px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--pc-muted); font: 500 0.6875rem var(--ui-font);
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pcx-segs button:hover:not(:disabled) { color: var(--pc-text); }
+.pcx-segs button.on { background: var(--pc-surface); color: var(--pc-accent); }
+.pcx-segs button:disabled { opacity: 0.35; cursor: default; }
+
+.pcx-text {
+  inline-size: 100%; min-block-size: 76px; resize: vertical; padding: 9px 10px;
+  border: 1px solid var(--pc-line-2); border-radius: 8px; background: var(--pc-surface);
+  color: var(--pc-text); font: 400 0.78125rem/1.6 var(--ui-font);
+}
+.pcx-text:focus-visible { outline: 2px solid var(--pc-accent); outline-offset: 1px; }
+
+.pcx-solid {
+  padding: 8px 10px; border: 0; border-radius: 7px;
+  background: var(--pc-text); color: var(--pc-desk); font: 600 0.71875rem var(--ui-font); cursor: pointer;
+}
+.pcx-ghost {
+  padding: 8px 10px; border: 1px solid var(--pc-line-2); border-radius: 7px; background: transparent;
+  color: var(--pc-text); font: 500 0.71875rem var(--ui-font); cursor: pointer;
+}
+.pcx-ghost:hover { border-color: var(--pc-accent); color: var(--pc-accent); }
+.pcx-imgprev {
+  block-size: 96px; border-radius: 9px; border: 1px solid var(--pc-line-2);
+  background: var(--pc-surface) center / cover no-repeat;
+}
+.pcx-imgprev[data-empty] {
+  background-image: repeating-conic-gradient(var(--pc-line) 0% 25%, transparent 0% 50%);
+  background-size: 14px 14px;
+}
+/* ---- a track and a number, which answer different questions -----------------------------------
+   Dragging asks "how does this look"; typing asks "what exactly is it". Neither is a substitute for
+   the other, so both are here and they share one value. The TRACK covers the useful middle of the
+   range — a slider whose travel is mostly sizes nobody uses is a slider you cannot aim — while the
+   field beside it still reaches the whole range. */
+.pcx-sf { display: flex; align-items: center; gap: 8px; }
+.pcx-sf-label {
+  flex: none; min-inline-size: 52px;
+  font: 500 0.6875rem var(--ui-font); color: var(--pc-muted-2);
+}
+.pcx-sf-range {
+  flex: 1; min-inline-size: 0; margin: 0; block-size: 18px;
+  accent-color: var(--pc-accent); cursor: pointer;
+}
+/* The track runs the way the panel does, so dragging toward the end of the line raises the value in
+   both directions — a slider that counts backwards in Arabic is a slider that lies. */
+[dir="rtl"] .pcx-sf-range { direction: rtl; }
+.pcx-sf .pcx-scrub { flex: none; }
+/* What the size field says while the fit is finding the number. */
+.pcx-autonote {
+  flex: 1; font: 400 0.71875rem var(--ui-font); font-style: italic; color: var(--pc-muted-2);
+}
+.pcx-stamp.compact { padding: 7px 9px; }
+
+.pcx-remove {
+  flex: none; padding: 9px; border: 1px solid color-mix(in srgb, var(--pc-danger) 35%, transparent);
+  border-radius: 8px; background: transparent; color: var(--pc-danger);
+  font: 600 0.71875rem var(--ui-font); cursor: pointer;
+}
+.pcx-remove:hover { background: color-mix(in srgb, var(--pc-danger) 12%, transparent); }
+
+/* The swatch carries its own picker, so pressing it answers where it was pressed. */
+.pcx-tb-colour { position: relative; display: inline-flex; }
+.pcx-tb-colour .pcx-pick {
+  position: absolute; top: calc(100% + 9px); inset-inline-start: 50%; transform: translateX(-50%);
+  z-index: 46; inline-size: 236px;
+}
+/* An auto-fitted quote has no size to show, so it says what it is doing instead of inventing one. */
+.pcx-tb-auto {
+  height: 26px; padding: 0 10px; border: 1px dashed var(--pc-line-2); border-radius: 7px;
+  background: transparent; color: var(--pc-muted); font: 600 0.6875rem var(--ui-font); cursor: pointer;
+}
+.pcx-tb-auto:hover { color: var(--pc-accent); border-color: var(--pc-accent); }
+
+/* ---- the composer's hands: selection, drag and resize -----------------------------------------
+   Drawn OVER the card and never inside it. The card node is the node that rasterises, so anything
+   in here would otherwise reach the exported PNG. Quiet by default and definite when selected — a
+   composition surface should look like the card, not like a diagram of the card. */
+.pc-ov { position: absolute; inset: 0; direction: ltr; touch-action: none; }
+/* While the ground is the thing being worked on, the whole canvas is what you are pushing. */
+.pc-ov.ground { cursor: grab; }
+/* THE MARK'S HANDLE. Quiet until pointed at — the mark is part of the picture, not a control sitting
+   on top of one — and then plainly grabbable. */
+.pc-ov-brand {
+  position: absolute; box-sizing: border-box; cursor: grab;
+  border: 1px dashed transparent; border-radius: var(--r-xs);
+  transition: border-color 0.12s linear, background 0.12s linear;
+}
+.pc-ov-brand:hover {
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.pc-ov-brand:active { cursor: grabbing; }
+.pc-ov.ground:active { cursor: grabbing; }
+.pc-ov-el {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
+  cursor: move;
+  transition: border-color 0.12s linear, background 0.12s linear;
+}
+.pc-ov-el:hover { border-color: color-mix(in srgb, var(--accent) 42%, transparent); }
+/* A part the preset is still drawing. Invisible until pointed at, because the card must look like a
+   finished card — the affordance appears under the cursor, not as permanent scaffolding. */
+.pc-ov-part {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px dashed transparent;
+  border-radius: var(--r-xs);
+  cursor: text;
+  transition: border-color 0.12s linear, background 0.12s linear;
+}
+.pc-ov-part:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.pc-ov-part:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pc-ov-el.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+}
+/* While a gesture is live the fill goes, so the user judges the composition and not the chrome. */
+.pc-ov-el.live { background: transparent; }
+.pc-ov-el:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* TYPING ON THE CARD ITSELF. One click selects, two open the words where they are — so the common
+   edit never leaves the canvas. The box borrows the element's own type at the preview's scale, and
+   the card stops drawing that element while this is open, or every keystroke would appear twice. */
+.pc-ov-write {
+  position: absolute; inset: 0; inline-size: 100%; block-size: 100%;
+  margin: 0; padding: 0; resize: none; border: 0; background: transparent;
+  color: inherit; overflow: hidden; cursor: text;
+  outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-xs);
+}
+.pc-ov-grip {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  transform: translate(-50%, -50%);
+  border-radius: 2px;
+  background: var(--accent);
+  border: 1.5px solid var(--chrome-bg);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
 /* RAWY-50: the quote area is flex:1 with min-height:0 + overflow:hidden, so a long quote can
    never grow past its share and push the credit/footer off the card — the footer details are
    always reserved; the QUOTE fits (fit-to-box shrinks it), never the footer. */
@@ -4266,7 +5402,13 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .pc-credit { position: relative; }
 .pc-rule { border-radius: 2px; }
 .pc-footrow { position: relative; display: flex; align-items: flex-end; justify-content: space-between; gap: 8%; }
-.pc-brand { display: flex; align-items: center; opacity: 0.9; flex: none; }
+/* The Sard mark, fixed in the card's corner. `direction: ltr` because the lockup is a piece of
+   artwork rather than a sentence: reversing it in Arabic would produce a wordmark nobody drew. Which
+   CORNER it sits in still follows the card — that part is placement, not drawing. */
+.pc-brandmark {
+  display: flex; align-items: center; direction: ltr;
+  pointer-events: none; user-select: none; z-index: 3;
+}
 .pc-brand-div { width: 1px; opacity: 0.5; }
 .pc-toast {
   position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
@@ -4278,144 +5420,163 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
    basket button. Pinned to the physical RIGHT (D21: `right` is physical, so it never flips with the
    UI language); only its labels translate (dir set on the element). Reader-theme tokens so it
    matches the chrome while reading. z-index above the chrome/panels, below the composer (50). ---- */
+/* ── THE QUOTES COLLECTION ────────────────────────────────────────────────────────────────────
+   A surface for reading back what you have gathered, not a list of things to manage. Everything
+   here follows from that: the passage is set in the book's face at reading size and holds the row;
+   its number hangs in the margin the way a numbered passage sits in a printed collection; and the
+   handling — the grip, the removal — stays quiet until the row is under the pointer. A column of
+   crosses down the edge made the collection read as a delete queue. */
 .pc-basket-tray {
-  position: fixed; top: 78px; right: 14px; z-index: 44; /* RAWY-66: matches the enlarged .rc-top */
-  width: 322px; max-width: calc(100vw - 28px); max-height: 66vh;
+  /* Placed from the control's own box and clamped to the window (see PhotoBasketTray). The width
+     falls back for a narrow window; `max-height` arrives with the measurement. */
+  position: fixed; z-index: 44;
+  width: min(348px, calc(100vw - 24px)); max-height: 66vh;
   display: flex; flex-direction: column;
   background: var(--chrome-bg); color: var(--text);
-  border: 1px solid var(--chrome-border); border-radius: 14px;
-  box-shadow: 0 18px 48px rgba(20, 14, 6, 0.28); overflow: hidden;
+  border: 1px solid var(--chrome-border); border-radius: 16px;
+  box-shadow: 0 20px 52px rgba(20, 14, 6, 0.3); overflow: hidden;
   --rc-surface: color-mix(in srgb, var(--chrome-bg) 90%, white 10%);
 }
-:root[data-dark="true"] .pc-basket-tray { box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5); }
-.pbt-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding: 14px 15px 11px; border-bottom: 1px solid var(--chrome-border); }
-.pbt-title { font: 600 0.875rem var(--ui-font); color: var(--text); }
-.pbt-count { font: 500 0.71875rem var(--ui-font); color: var(--muted); margin-top: 2px; }
-.pbt-close { flex: none; border: none; background: transparent; color: var(--muted); font: 300 1rem var(--ui-font); cursor: pointer; width: 28px; height: 28px; border-radius: 7px; }
-.pbt-close:hover { background: var(--rc-surface); color: var(--text); }
-.pbt-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 7px; }
-.pbt-empty { padding: 22px 8px; text-align: center; font: 400 0.78125rem var(--ui-font); color: var(--muted); }
-.pbt-row {
-  display: flex; align-items: flex-start; gap: 9px; padding: 9px 10px;
-  background: var(--rc-surface); border: 1px solid var(--chrome-border); border-radius: 10px; cursor: grab;
+:root[data-dark="true"] .pc-basket-tray { box-shadow: 0 20px 52px rgba(0, 0, 0, 0.52); }
+
+.pbt-head {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+  padding: 14px 16px 12px; border-bottom: 1px solid var(--chrome-border);
 }
-/* The dragged row lifts while reordering (RAWY-61 pointer-drag). */
-.pbt-row.dragging { border-color: var(--accent); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.22); opacity: 0.96; cursor: grabbing; }
-/* The grip is the pointer-drag handle: touch-action:none so the gesture isn't stolen by scroll. */
-.pbt-grip { flex: none; color: var(--muted); font-size: 0.9375rem; line-height: 1.4; letter-spacing: -1px; user-select: none; cursor: grab; touch-action: none; padding: 0 2px; align-self: center; }
-.pbt-grip:hover { color: var(--text); }
-.pbt-row.dragging .pbt-grip { cursor: grabbing; }
+.pbt-titles { min-width: 0; }
+.pbt-title { font: 600 0.9375rem var(--ui-font); color: var(--text); }
+.pbt-count { font: 400 0.71875rem var(--ui-font); color: var(--muted); margin-top: 3px; }
+.pbt-close {
+  flex: none; border: none; background: transparent; color: var(--muted);
+  font: 400 0.8125rem var(--ui-font); cursor: pointer;
+  width: 28px; height: 28px; border-radius: 8px; line-height: 1;
+}
+.pbt-close:hover { background: var(--rc-surface); color: var(--text); }
+
+.pbt-list { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 0; }
+
+/* A row is a passage. No card, no second background — a hairline between entries is enough to
+   separate them, and it keeps the reading unbroken down the column. */
+.pbt-row {
+  display: flex; align-items: flex-start; gap: 11px;
+  padding: 12px 16px; border-top: 1px solid transparent;
+  transition: background 0.14s linear;
+}
+.pbt-row + .pbt-row { border-top-color: color-mix(in srgb, var(--chrome-border) 70%, transparent); }
+.pbt-row:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+/* THE ONE IN THE HAND. While it is held it is off the page: raised above its neighbours, on its
+   own ground, with a shadow saying it is no longer lying in the list. It carries no transform of
+   its own — the pointer sets that inline, frame by frame — and nothing here may give it a
+   transition, or the row would lag behind the hand holding it. */
+.pbt-row.dragging {
+  position: relative; z-index: 3;
+  background: color-mix(in srgb, var(--accent) 14%, var(--chrome-bg));
+  border-radius: 10px; border-top-color: transparent;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.3); cursor: grabbing;
+}
+.pbt-row.dragging + .pbt-row { border-top-color: transparent; }
+/* The ordinal hangs in the margin: it says there IS an order without a control saying so. */
+.pbt-n {
+  flex: none; margin-block-start: 2px; min-inline-size: 18px;
+  font: 600 0.6875rem var(--ui-font); font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--accent) 82%, var(--text));
+  text-align: center; opacity: 0.9;
+}
 .pbt-body { flex: 1; min-width: 0; }
-.pbt-text { font: 400 0.78125rem/1.45 var(--book); color: var(--text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* THE HERO. The book's face, at a size you can actually read, three lines before it gives way. */
+.pbt-text {
+  font: 400 0.84375rem/1.62 var(--book); color: var(--text);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
 .pbt-text.ar { font-family: var(--ar); }
-.pbt-chapter { font: 600 0.59375rem var(--ui-font); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
+.pbt-chapter {
+  font: 500 0.65625rem var(--ui-font); color: var(--muted); margin-top: 5px;
+  letter-spacing: .07em; text-transform: uppercase;
+}
 .pc-basket-tray[dir="rtl"] .pbt-chapter { letter-spacing: 0; text-transform: none; }
-.pbt-remove { flex: none; border: none; background: transparent; color: var(--muted); font: 300 1.0625rem var(--ui-font); cursor: pointer; width: 1.65rem; height: 1.65rem; border-radius: 6px; }
-.pbt-remove:hover { background: color-mix(in srgb, #b24a4a 18%, transparent); color: #d06868; }
-.pbt-foot { display: flex; align-items: center; gap: 8px; padding: 11px 13px; border-top: 1px solid var(--chrome-border); }
-.pbt-create { flex: 1; border: none; border-radius: 9px; padding: 10px 12px; background: var(--accent); color: var(--paper-bg); font: 600 0.78125rem var(--ui-font); cursor: pointer; }
-.pbt-create:disabled { opacity: .5; cursor: default; }
-.pbt-clear { flex: none; border: 1px solid var(--chrome-border); border-radius: 9px; padding: 10px 14px; background: transparent; color: var(--muted); font: 500 0.78125rem var(--ui-font); cursor: pointer; }
+
+/* Both handles live together at the row's end, and both keep out of the way until wanted. They stay
+   reachable by keyboard, and on a touch pointer — where there is no hover — they are always shown. */
+.pbt-tools { flex: none; display: flex; align-items: center; gap: 2px; opacity: 0; transition: opacity 0.14s linear; }
+.pbt-row:hover .pbt-tools, .pbt-row.dragging .pbt-tools { opacity: 1; }
+.pbt-tools:focus-within { opacity: 1; }
+@media (hover: none) { .pbt-tools { opacity: 1; } }
+.pbt-grip {
+  color: var(--muted); font-size: 0.875rem; line-height: 1.2; letter-spacing: -1px;
+  user-select: none; cursor: grab; touch-action: none;
+  width: 1.6rem; height: 1.6rem; border-radius: 7px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.pbt-grip:hover { color: var(--text); background: var(--rc-surface); }
+.pbt-row.dragging .pbt-grip { cursor: grabbing; color: var(--text); }
+.pbt-remove {
+  border: none; background: transparent; color: var(--muted);
+  font: 400 0.75rem var(--ui-font); cursor: pointer;
+  width: 1.6rem; height: 1.6rem; border-radius: 7px; line-height: 1;
+}
+.pbt-remove:hover { background: color-mix(in srgb, #b24a4a 16%, transparent); color: #d06868; }
+
+/* Nothing gathered yet: say what the surface is for, and how to put something in it. */
+.pbt-empty { padding: 26px 20px 30px; text-align: center; }
+.pbt-empty-title { font: 500 0.8125rem var(--ui-font); color: var(--text); }
+.pbt-empty-hint { font: 400 0.71875rem/1.6 var(--ui-font); color: var(--muted); margin-top: 6px; }
+
+/* What becomes of them, set apart from the handling above. */
+.pbt-foot { padding: 11px 13px 12px; border-top: 1px solid var(--chrome-border); }
+.pbt-actions { display: flex; align-items: center; gap: 8px; }
+.pbt-create {
+  flex: 1; border: none; border-radius: 10px; padding: 11px 12px;
+  background: var(--accent); color: var(--paper-bg);
+  font: 600 0.8125rem var(--ui-font); cursor: pointer;
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.pbt-create:hover:not(:disabled) { filter: brightness(1.06); }
+.pbt-create:disabled { opacity: .5; cursor: default; box-shadow: none; }
+.pbt-clear {
+  flex: none; border: 1px solid var(--chrome-border); border-radius: 10px; padding: 11px 14px;
+  background: transparent; color: var(--muted); font: 500 0.78125rem var(--ui-font); cursor: pointer;
+}
 .pbt-clear:hover:not(:disabled) { color: var(--text); border-color: var(--muted); }
 .pbt-clear:disabled { opacity: .5; cursor: default; }
-
-/* controls panel */
-.pc-panel { width: 344px; background: var(--pc-panel-bg); border-inline-start: 1px solid var(--pc-border); display: flex; flex-direction: column; }
-.pc-panel-head { height: 40px; display: flex; align-items: center; justify-content: flex-end; padding-inline-end: 12px; }
-.pc-close { border: none; background: transparent; color: var(--pc-muted); font: 300 1.0625rem var(--ui-font); cursor: pointer; width: 30px; height: 30px; border-radius: var(--r-sm); }
-.pc-close:hover { background: var(--pc-border); }
-.pc-panel-body { padding: 4px 26px 22px; flex: 1; display: flex; flex-direction: column; gap: var(--sp-7); overflow-y: auto; }
-.pc-panel-name { font: 600 1.0625rem var(--ui-font); color: var(--pc-text); }
-.pc-panel-sub { font: 400 0.75rem var(--ui-font); color: var(--pc-muted); margin-top: 2px; }
-.pc-group-label { font: 600 0.6875rem var(--ui-font); letter-spacing: .12em; color: var(--pc-muted); margin-bottom: 11px; }
-.pc-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
-.pc-swatch {
-  width: 40px; height: 34px; border-radius: var(--r-sm); border: 1px solid var(--pc-border); cursor: pointer;
-  font: 600 0.8125rem var(--book); display: flex; align-items: center; justify-content: center;
-}
-.pc-swatch.on { box-shadow: 0 0 0 2px var(--pc-accent), 0 0 0 4px var(--pc-panel-bg); }
-.pc-formats { display: flex; gap: var(--sp-4); }
-.pc-format { flex: 1; border: none; background: transparent; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: var(--sp-4); padding: 0; }
-.pc-format-ico { display: block; height: 30px; width: auto; border: 1.5px solid var(--pc-muted); border-radius: 2px; }
-.pc-format.on .pc-format-ico { border-color: var(--pc-accent); background: color-mix(in srgb, var(--pc-accent) 12%, transparent); }
-.pc-format-label { font: 500 0.625rem var(--ui-font); color: var(--pc-muted); }
-.pc-format.on .pc-format-label { color: var(--pc-accent); font-weight: 600; }
-/* RAWY-81 (#1): the independent quote-font picker — a themed native select. */
-.pc-select-wrap { position: relative; }
-.pc-select {
-  width: 100%; appearance: none; -webkit-appearance: none; cursor: pointer;
-  border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text);
-  font: 500 0.8125rem var(--ui-font); padding: 10px 34px 10px 12px; border-radius: 9px;
-}
-.pc-select:focus-visible { outline: none; border-color: var(--pc-accent); }
-.pc-select option { background: var(--pc-panel-bg); color: var(--pc-text); }
-.pc-select-caret { position: absolute; inset-inline-end: 12px; top: 50%; transform: translateY(-50%); color: var(--pc-muted); pointer-events: none; font-size: 0.6875rem; }
-/* RAWY-150: CARD STYLE picker — a wrap of pill buttons (the style is chosen independently of the
-   paper). And the TEXT SIZE stepper — −/+ around the five presets XS–XL. */
-.pc-styles { display: flex; flex-wrap: wrap; gap: var(--sp-4); }
-.pc-style {
-  border: 1px solid var(--pc-border); background: transparent; color: var(--pc-muted);
-  font: 500 0.75rem var(--ui-font); padding: 7px 12px; border-radius: var(--r-md); cursor: pointer;
-}
-.pc-style:hover { color: var(--pc-text); }
-.pc-style.on { border-color: var(--pc-accent); color: var(--pc-accent); background: color-mix(in srgb, var(--pc-accent) 12%, transparent); font-weight: 600; }
-.pc-sizerow { display: flex; align-items: stretch; gap: 8px; }
-.pc-size-step {
-  flex: none; width: 34px; border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text);
-  font: 400 1.125rem var(--ui-font); line-height: 1; border-radius: var(--r-md); cursor: pointer;
-}
-.pc-size-step:hover { border-color: var(--pc-muted); }
-.pc-size-presets { flex: 1; display: flex; gap: 4px; }
-.pc-size-preset {
-  flex: 1; border: 1px solid var(--pc-border); background: transparent; color: var(--pc-muted);
-  font: 600 0.6875rem var(--ui-font); padding: 8px 0; border-radius: var(--r-sm); cursor: pointer;
-}
-.pc-size-preset:hover { color: var(--pc-text); }
-.pc-size-preset.on { border-color: var(--pc-accent); color: var(--pc-accent); background: color-mix(in srgb, var(--pc-accent) 12%, transparent); }
-/* RAWY-154: a 3-option segmented control — the quote WEIGHT / LINE SPACING / ALIGNMENT pickers. */
-.pc-seg { display: flex; gap: 6px; }
-.pc-seg-btn {
-  flex: 1; border: 1px solid var(--pc-border); background: transparent; color: var(--pc-muted);
-  font: 500 0.75rem var(--ui-font); padding: 8px 4px; border-radius: var(--r-md); cursor: pointer; white-space: nowrap;
-}
-.pc-seg-btn:hover { color: var(--pc-text); }
-.pc-seg-btn.on { border-color: var(--pc-accent); color: var(--pc-accent); background: color-mix(in srgb, var(--pc-accent) 12%, transparent); font-weight: 600; }
-.pc-toggles { display: flex; flex-direction: column; gap: 13px; }
-.pc-toggle { display: flex; align-items: center; justify-content: space-between; font: 500 0.8125rem var(--ui-font); color: var(--pc-text); }
-.pc-switch { width: 36px; height: 21px; border: none; background: var(--pc-border); border-radius: 21px; position: relative; cursor: pointer; padding: 0; transition: background .15s; }
-.pc-switch.on { background: var(--pc-accent); }
-.pc-knob { position: absolute; top: 2px; inset-inline-start: 2px; width: 17px; height: 17px; background: var(--pc-panel-bg); border-radius: 50%; transition: inset-inline-start .15s; }
-.pc-switch.on .pc-knob { inset-inline-start: 17px; }
-/* Export actions pinned to the panel bottom (RAWY-56) — a fixed footer outside the scroll body,
-   so Copy · Save · "Save in app" are always visible without scrolling. */
-.pc-panel-foot {
-  flex: none; display: flex; flex-direction: column; gap: var(--sp-5);
-  padding: 14px 26px 18px; border-top: 1px solid var(--pc-border); background: var(--pc-panel-bg);
-}
-.pc-actions { display: flex; gap: var(--sp-5); }
-.pc-save { flex: 1; border: none; background: var(--pc-accent); color: var(--pc-modal-bg); font: 600 0.875rem var(--ui-font); padding: 13px 0; border-radius: 9px; cursor: pointer; }
-.pc-copy { border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text); font: 500 0.8125rem var(--ui-font); padding: 13px 16px; border-radius: 9px; cursor: pointer; }
-.pc-save:disabled, .pc-copy:disabled { opacity: 0.55; cursor: default; }
+/* Says what pressing it will DO, which the button's own name cannot. */
+.pbt-note { margin: 8px 2px 0; font: 400 0.65625rem/1.5 var(--ui-font); color: var(--muted); }
 
 /* ============================================================================
    Photo Mode part 2a (RAWY-52) — "Save in app" button + the saved-cards gallery.
    ============================================================================ */
 /* composer: the tertiary "Save in app" action under the Save/Copy row */
-.pc-saveinapp {
-  display: flex; align-items: center; justify-content: center; gap: var(--sp-4); width: 100%;
-  border: 1px solid var(--pc-border); background: transparent; color: var(--pc-text);
-  font: 600 0.8125rem var(--ui-font); padding: 11px 0; border-radius: 9px; cursor: pointer;
-}
-.pc-saveinapp:hover { background: var(--pc-border); }
-.pc-saveinapp:disabled { opacity: 0.55; cursor: default; }
-.pc-saveinapp-ico { width: 15px; height: 12px; border: 1.6px solid currentColor; border-radius: 2px; position: relative; flex: none; }
-.pc-saveinapp-ico::before { content: ""; position: absolute; left: 2.5px; top: 3px; width: 8px; height: 1.6px; background: currentColor; }
 
 /* gallery — a cross-book grid, styled from the app theme tokens */
 .pg-root { display: flex; flex-direction: column; padding: 24px 30px 0; overflow-y: auto; scrollbar-gutter: stable; } /* RAWY-269 (3) — see .lib-rows */
-.pg-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; }
+.pg-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
+/* The action sits on the text baseline of the heading rather than being stretched by it. */
+.pg-head .pg-new { align-self: center; }
 .pg-title { margin: 0; font: 600 1.625rem var(--ui-font); color: var(--text); }
 .pg-count { font: 500 0.8125rem var(--ui-font); color: var(--muted); }
+/* THE WAY TO MAKE ONE FROM NOTHING. It had no rule of its own at all — a browser default button,
+   2px outset in Arial, with the pointer arrow rather than a hand. It is the primary action of this
+   shelf, so it now carries the accent the way the editor's own primary does, and it sits at the end
+   of the header line where the eye arrives after the title and the count. */
+.pg-new {
+  /* BESIDE THE SECTION IT BELONGS TO, not pushed to the far edge of the window. `margin-inline-start:
+     auto` sent it to the opposite corner from the heading, where it read as a stray control that
+     happened to share a row with the title. It now follows the title and the count directly, so the
+     three read as one line: what this is, how much of it there is, and how to make another. */
+  flex: none;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 15px; border-radius: 10px; cursor: pointer;
+  border: 1px solid transparent; background: var(--accent); color: var(--paper-bg);
+  font: 600 0.8125rem var(--ui-font); white-space: nowrap;
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--accent) 28%, transparent);
+  transition: filter 0.14s linear, box-shadow 0.14s linear, transform 0.1s ease;
+}
+.pg-new svg { flex: none; opacity: 0.92; }
+.pg-new:hover { filter: brightness(1.06); box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 34%, transparent); }
+.pg-new:active { transform: translateY(1px); box-shadow: 0 1px 6px color-mix(in srgb, var(--accent) 30%, transparent); }
+.pg-new:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 2px;
+}
+
 .pg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 24px 22px; align-content: start; padding-bottom: 30px; }
 .pg-cell { display: flex; flex-direction: column; background: none; border: none; padding: 0; cursor: pointer; text-align: start; }
 .pg-thumb {
@@ -5573,3 +6734,181 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 /* The drawer's compact variant keeps its own tighter step — it sits INSIDE a section head, where a
    34px control would out-weigh the heading it belongs to. */
 .rs-sec-head .rs-seg-item { min-height: var(--ctl-sm); }
+
+/* ── THE WAY OUT OF ANY SURFACE ────────────────────────────────────────────────────────────────
+   Sard had a dozen close controls and no close BUTTON. Every one was `border: none; background:
+   transparent` with a glyph in it: legible, but nothing about it said it could be pressed, and its
+   hit area was whatever the glyph happened to occupy. Several had no visible response until the
+   pointer was already on them, and none had a focus ring.
+
+   The Photo Card editor's X was the exception — a chip with its own ground, its own edge and full
+   text contrast — so it is the pattern rather than a fourteenth variation, and this raises the rest
+   to it.
+
+   ## Sizing is contextual, the language is not
+
+   A close on a colour popover should not be the size of one on a full editor. So the treatment is
+   fixed and the SIZE is a variable: a surface sets `--x-size` and gets the same control, larger or
+   smaller. `--x-ink`, `--x-bg` and `--x-line` exist for the one case that genuinely differs — a
+   control sitting on a photograph rather than on the theme's chrome.
+
+   ## It must not read as "back"
+
+   Sard has real back controls, and a chevron in a right-to-left interface points the other way. An
+   X does not mirror, does not point, and cannot be mistaken for navigation — which is why every one
+   of these is an X and none is an arrow. The rule deliberately sets no `transform`, so nothing here
+   can flip with direction. */
+.ui-close.ui-close {
+  --x-size: 30px;
+  inline-size: var(--x-size);
+  block-size: var(--x-size);
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  padding: 0;
+  line-height: 1;
+  border: 1px solid var(--x-line, color-mix(in srgb, var(--text) 15%, transparent));
+  border-radius: 9px;
+  background: var(--x-bg, color-mix(in srgb, var(--text) 5%, transparent));
+  color: var(--x-ink, var(--text));
+  cursor: pointer;
+  transition: background 0.14s linear, border-color 0.14s linear, color 0.14s linear;
+}
+.ui-close.ui-close:hover:not(:disabled) {
+  background: var(--x-bg-hover, color-mix(in srgb, var(--text) 9%, transparent));
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.ui-close.ui-close:active:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.ui-close.ui-close:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  outline-offset: 2px;
+}
+.ui-close.ui-close:disabled { opacity: 0.5; cursor: default; }
+/* The glyph, whether it arrives as a character or as a drawn icon. */
+.ui-close.ui-close svg { display: block; }
+
+/* ---- contextual sizes ----------------------------------------------------------------------
+   Only where the default would be wrong for the surface. */
+.pcx-pick-x.ui-close.ui-close.ui-close { --x-size: 24px; border-radius: 7px; }   /* inside a colour popover */
+.nec-x.ui-close.ui-close.ui-close { --x-size: 28px; }                            /* the note editor's own head */
+.pbt-close.ui-close.ui-close.ui-close { --x-size: 28px; }                        /* the quotes tray */
+.note-close.ui-close.ui-close.ui-close { --x-size: 30px; }
+.rp-x.ui-close.ui-close.ui-close { --x-size: 32px; }                             /* reader side panels */
+.rp-x.rp-x-round.ui-close.ui-close { border-radius: 50%; }
+.rc-icon.ui-close.ui-close.ui-close { --x-size: 32px; }                          /* the settings sheet */
+.arch-sheet-close.ui-close.ui-close.ui-close { --x-size: 30px; }
+.vm-x.ui-close.ui-close.ui-close { --x-size: 30px; }
+
+/* THE ONE THAT DOES NOT SIT ON CHROME. The gallery's close lies over a photograph, where the
+   theme's ink would disappear against whatever the picture happens to be — so it keeps a light
+   control on a dark scrim, and takes only the frame, the hit area and the states from above. */
+.pg-lb-close.ui-close.ui-close {
+  --x-size: 34px;
+  --x-ink: #F3ECDB;
+  --x-bg: rgba(0, 0, 0, 0.38);
+  --x-bg-hover: rgba(0, 0, 0, 0.52);
+  --x-line: rgba(255, 255, 255, 0.22);
+  border-radius: 50%;
+  backdrop-filter: blur(4px);
+}
+
+/* ================================================================================================
+   THE FUNCTIONAL SURFACE — what a reader has to READ stands on this.
+   ================================================================================================
+   THE RULE THIS WRITES DOWN. Sard puts a photograph behind the library, and the surfaces over it are
+   deliberately translucent — that is the feature. The owner's ruling that took the library's scrim
+   floor to zero says what protects readability in exchange, in as many words: «the chrome that
+   carries text — the sidebar, the toolbar's control plates, the dialogs — keeps its own opaque
+   ground». See `LIB_SCRIM_MIN` in `lib/background.ts`.
+
+   So there are two kinds of surface, and the difference is not taste:
+
+     ATMOSPHERIC   a page's own ground, a decorative sheet, a plate whose content is a picture. It
+                   may be as glassy as the reader's texture setting asks, because nothing on it has
+                   to be read at a guaranteed contrast.
+     FUNCTIONAL    anything bearing words, a control, a status, a navigation. Its legibility may not
+                   depend on what the photograph behind it happens to be doing.
+
+   WHY A TOKEN AND NOT A PERCENTAGE. Raising a translucent surface's alpha is the tempting fix and it
+   is not one: the composite still moves with the picture, so the guarantee is "usually legible",
+   which is not a guarantee. Two layers make it absolute — an opaque colour, and the chrome tint
+   painted over it — and it holds whatever a theme, a texture step or a scrim does afterwards.
+
+   `backdrop-filter` is switched off with it, deliberately. A blur under an opaque ground is paint
+   nobody can see, and leaving it declared invites the next reader of the file to conclude that the
+   surface is meant to be see-through.
+   ================================================================================================ */
+:root {
+  /* The opaque floor, and the tint that carries the theme's own chrome colour over it. */
+  --solid-base: var(--paper-bg);
+  --solid-tint: var(--chrome-bg);
+}
+
+.ui-solid {
+  background-color: var(--solid-base);
+  background-image: linear-gradient(var(--solid-tint), var(--solid-tint));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  isolation: isolate;
+}
+
+/* THE FRAMED PAGE HEADER, and why it is conditional.
+
+   Measured over a photograph at full presence, with the scrim floor at zero: the title of every
+   collection page that draws its header as bare text came out between 4.03 and 4.20 against what was
+   behind it — under AA — while the one page that frames its title measured 11.78. The frame is not a
+   decoration; it is the difference between a page title that can be read and one that cannot.
+
+   It is scoped to `[data-bg-library="on"]` because with no photograph there is nothing to protect
+   against, and a box drawn around a title on plain paper is noise. The treatment appears with the
+   condition that makes it necessary. */
+:root[data-bg-library="on"] .ui-page-title {
+  /* CONTENT-SIZED, AND IT HAS TO DEFEND THAT ITSELF.
+
+     `inline-flex` decides how an element lays out its OWN children; it says nothing about how its
+     parent sizes it. The notes archive's header is a COLUMN flex container, so `align-items:
+     stretch` — the default — pulled the plate across the full width of the pane and turned a title
+     chip into a band over the whole top of the page.
+
+     So the plate refuses to be stretched or grown, whatever holds it: `fit-content` on the width,
+     `align-self: start` against a stretching cross axis, and `flex: 0 0 auto` against a main axis
+     that would grow it. The next page to use this class cannot inherit the same trap.
+
+     THE CLASS ALSO BELONGS ON THE CONTENT, not on a page's own header row. A row carries the
+     page's padding, and a plate drawn around that padding is a panel rather than a chip — which
+     is the other half of what went wrong here. Wrap the title and its count; leave the row. */
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-5, 10px);
+  width: fit-content;
+  max-width: 100%;
+  align-self: start;
+  flex: 0 0 auto;
+  padding: 4px 12px;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-lg, 12px);
+  background-color: var(--solid-base);
+  background-image: linear-gradient(var(--solid-tint), var(--solid-tint));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  isolation: isolate;
+}
+
+/* A HEADER BLOCK, when the page has something to say as well as a name.
+
+   The two lines are one surface, not two: a title chip with a second chip under it would be the
+   collection of floating boxes this treatment exists to avoid. The line holding the title and its
+   count keeps its baseline alignment; the block stacks it above the sentence. */
+:root[data-bg-library="on"] .ui-page-title--stack {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 8px 12px 9px;
+}
+.ui-page-title-line { display: inline-flex; align-items: baseline; gap: var(--sp-5, 10px); }
+/* Inside the plate the sentence takes the plate's padding, not the page's. */
+:root[data-bg-library="on"] .ui-page-title .arch-lede { padding: 0; }
+

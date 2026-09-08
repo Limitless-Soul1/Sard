@@ -754,7 +754,14 @@ export class Paginator extends HTMLElement {
         const flow = this.getAttribute('flow')
         if (flow === 'scrolled') {
             // FIXME: vertical-rl only, not -lr
-            this.setAttribute('dir', vertical ? 'rtl' : 'ltr')
+            // SARD PATCH 8: `rtl` was ignored here, so a right-to-left book in scrolled flow got
+            // dir="ltr" and its scroll container put the vertical scrollbar on the RIGHT — the side an
+            // RTL line STARTS on. The text column ends flush against that scrollbar, so pressing just
+            // before a line's first character landed on the scrollbar track and paged the view by a
+            // screen instead of starting a selection. The paged branch below already honours `rtl`;
+            // this makes the scrolled branch agree with it, which moves the scrollbar to the leading
+            // side and leaves LTR books untouched.
+            this.setAttribute('dir', vertical || rtl ? 'rtl' : 'ltr')
             this.#top.style.padding = '0'
             const columnWidth = maxInlineSize
 

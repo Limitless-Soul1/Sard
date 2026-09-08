@@ -121,6 +121,13 @@ export function BookTile(props: BookTileProps) {
   const paint = { bg: pres.paint, ink: pres.ink };
   const src = pres.kind === "image" ? coverSrc(book) : null;
   const spineSrc = book.spine_image ? convertFileSrc(book.spine_image) : null;
+  // A PLAIN SPINE IS PLAIN ON THE SHELF TOO.
+  //
+  // `spine_mode` was written by the editor, stored, migrated and read back — and then read by
+  // nobody. The shelf drew the title unconditionally, so choosing the plain spine changed a value
+  // in the database and a colour in the editor's own preview while the shelf went on looking
+  // exactly as it had. That is the whole of the defect: not a missing feature, a missing reader.
+  const spinePlain = book.spine_mode === "none";
   const drawn = !src || imgFailed;
   const pct = progressPct(book);
   const finished = isFinished(book);
@@ -308,7 +315,7 @@ export function BookTile(props: BookTileProps) {
               alt=""
               style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
             />
-          ) : (
+          ) : spinePlain ? null : (
             <span
               style={{
                 transform: "rotate(-90deg)",

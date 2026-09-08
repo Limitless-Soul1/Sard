@@ -435,6 +435,11 @@ const SKIP_CONTINUE_MS = 600;
 let skipSettleTimer: ReturnType<typeof setTimeout> | null = null;
 let skipLeadTarget = -1; // the index the leading (immediate) skip of the current session synthesized
 let skipLastTarget = -1; // the most recent skip's target — moved ONLY by skip(), never by auto-advance
+// The generation the leading play was started under. Every skip bumps `gen` and calls `stopSource()`,
+// so a LATER skip silently kills the leading play — even one that resolves to the very same sentence.
+// Without this stamp the settle could not tell "the leading play is still running" from "it was killed
+// and nothing replaced it", and chose by target alone. See `settleNeedsReplay`.
+let skipLeadGen = -1;
 let lastSkipAt = 0; // performance.now() of the previous skip — detects a continuing skipping session
 const clearSkipSettle = () => {
   if (skipSettleTimer) { clearTimeout(skipSettleTimer); skipSettleTimer = null; }
@@ -1026,11 +1031,83 @@ export function toggleTtsPlayback(): boolean {
  *  un-mirrored ⏭/⏮ buttons and the universal media convention (YouTube/Spotify seek). Returns whether it
  *  acted, so the caller preventDefault()s ONLY then; otherwise the arrows keep their normal reader behaviour
  *  (page-turn — which DOES mirror in RTL — / scroll) when TTS is off. */
+/**
+ * WHERE A TRANSPORT SKIP LANDS — a sentence, or the end of the chapter.
+ *
+ * Every move but one lands on a sentence, clamped into range: back from the first stays on the first,
+ * and a forward move stops at the last. The exception is pressing FORWARD while already on the last
+ * sentence. Clamping resolves that to the sentence already playing, so it was played again — the
+ * reader pressed "next" and heard the same words a second time, with no way to reach the next chapter
+ * from the keyboard.
+ *
+ * Forward from the last sentence means the chapter is done. That is a state Sard already has, reached
+ * by listening to the end, and the caller hands this answer to the SAME `playFrom` path that handles
+ * it — no second notion of a chapter ending, and a footnote still simply ends there because that path
+ * decides it.
+ */
+/**
+ * WHEN A SETTLED SKIP MUST START AUDIO ITSELF.
+ *
+ * A skipping session plays its FIRST skip immediately (the leading edge, so a lone press is instant) and
+ * then only moves the index until the presses stop; when they do, the settle decides whether the landing
+ * still needs playing. It used to decide by target alone: "the landing is where the leading play started,
+ * so that play is still running — just warm the look-ahead".
+ *
+ * THAT PREMISE IS FALSE, and at the start of a chapter it is false every time. Every skip unconditionally
+ * calls `stopSource()` and bumps the generation, which cancels the leading play. Press backward twice
+ * quickly on the first sentence and both presses resolve to index 0: the second kills the audio the first
+ * started, contributes no play of its own because it is a continuation, and the settle then sees the
+ * landing and the leading target are equal and only prefetches. The result is the reported fault exactly
+ * — the sentence highlighted and tracked, `status` saying "playing", and silence.
+ *
+ * The generation says what the target cannot: if it has moved past the leading play, that play is dead
+ * and the landing needs starting, whether or not it is the same sentence.
+ */
+export function settleNeedsReplay(lastTarget: number, leadTarget: number, leadGen: number, nowGen: number): boolean {
+  return lastTarget !== leadTarget || nowGen !== leadGen;
+}
+
+export type SkipLanding =
+  | { kind: "sentence"; index: number }
+  | { kind: "chapter-end" }
+  /** Nowhere further to go. The press is still CLAIMED — see below for why that matters. */
+  | { kind: "stay" };
+
+/**
+ * `atEnd` — the chapter has already ended and the offer is on screen.
+ *
+ * THE PRESS MUST STILL BE CLAIMED THERE. `handleNavKey` gives the arrows to read-aloud only while it
+ * says it wants them, and falls through to turning a PAGE otherwise. Chapter-end was not in the set
+ * that wanted them, so once the offer appeared the arrows quietly went back to paging: pressing
+ * forward moved the reader to the next page while read-aloud stayed anchored to the last sentence of
+ * the previous one (measured — the reading cfi moved and the tts index did not), and pressing back
+ * paged backwards instead of returning to the chapter, which is why the offer could never be reached a
+ * second time.
+ *
+ * So at the end, forward stays — there is nothing after the last sentence but the button — and backward
+ * is an ORDINARY backward move from the sentence the end state is standing on. Returning to the last
+ * sentence itself was tried first and is wrong in practice: it is the shortest sentence-worth of audio
+ * away from ending again, so the chapter simply re-ended a second later and the reader appeared to be
+ * stuck (measured — the state read `chapter-end` again 2.6s after the press). Stepping back off it
+ * leaves the end state properly, and a forward press then reaches the end again the same way it did the
+ * first time, which is the whole point of being able to leave.
+ */
+export function resolveSkip(index: number, delta: number, count: number, atEnd = false): SkipLanding {
+  if (atEnd && delta > 0) return { kind: "stay" };
+  if (delta > 0 && count > 0 && index >= count - 1) return { kind: "chapter-end" };
+  return { kind: "sentence", index: Math.max(0, Math.min(count - 1, index + delta)) };
+}
+
 export function skipSentenceForArrow(key: string): boolean {
   const st = useTts.getState();
   // RAWY-231: "buffering" is an active-playback state (a transient synth wait) — arrows must still skip out
   // of it, so it joins playing/paused here (skip() itself already permits it; only "preparing" blocks).
-  if (!st.active || (st.status !== "playing" && st.status !== "paused" && st.status !== "buffering")) return false;
+  // "chapter-end" joins them for the reason `resolveSkip` gives: while the offer is up the arrows still
+  // belong to read-aloud. Backward returns to the last sentence; forward has nowhere to go and is
+  // claimed anyway, so the reader stays on the page the final sentence is on instead of paging away
+  // from the state being offered.
+  if (!st.active || (st.status !== "playing" && st.status !== "paused" &&
+      st.status !== "buffering" && st.status !== "chapter-end")) return false;
   const isRight = key === "ArrowRight";
   const isLeft = key === "ArrowLeft";
   if (!isRight && !isLeft) return false;
@@ -1516,6 +1593,7 @@ export const useTts = create<TtsState>((set, get) => ({
     clearSkipSettle(); // RAWY-185: a fresh Listen cancels any pending rapid-skip landing synth
     skipLeadTarget = -1;
     skipLastTarget = -1;
+    skipLeadGen = -1;
     lastSkipAt = 0; // RAWY-186: the first skip of a new session must lead (not read as a continuation)
     scheduler.clearCache(); // RAWY-231: fresh chapter — drop cached audio (keeps the session's E counters)
     failStreak = 0; // RAWY-159: a fresh Listen starts the dead-end counter clean
@@ -1616,7 +1694,24 @@ export const useTts = create<TtsState>((set, get) => ({
     // the complete set of callers. This closes the hole at the STORE, where the invariant belongs, so a
     // future control cannot reopen it — it is not fixing a live symptom.
     if (!st.active || st.status === "preparing" || st.status === "error" || st.status === "edge-error") return;
-    const target = Math.max(0, Math.min(sentences.length - 1, st.index + delta));
+    // FORWARD FROM THE LAST SENTENCE IS THE END OF THE CHAPTER, not the last sentence again. The clamp
+    // that serves every other move resolved this one back onto the sentence already playing, so the
+    // press replayed it. Routed into the existing end-of-chapter path — the one reaching the end by
+    // listening has always used — so the pill and the kashida offer «الفصل التالي» exactly as they do
+    // then, and nothing here decides what an ending means.
+    const landing = resolveSkip(st.index, delta, sentences.length, st.status === "chapter-end");
+    // Claimed, and deliberately nothing: the chapter is over and the offer is already on screen. The
+    // press must not fall through to a page turn, and it must not disturb the state being offered.
+    if (landing.kind === "stay") return;
+    if (landing.kind === "chapter-end") {
+      const endGen = ++gen;
+      stopSource();
+      stopKaraoke();
+      clearSkipSettle(); // nothing may play after this press
+      void playFrom(sentences.length, endGen, false);
+      return;
+    }
+    const target = landing.index;
     const myGen = ++gen;
     stopSource();
     stopKaraoke(); // RAWY-127: drop the old sentence's pill; playFrom restarts karaoke for the new one
@@ -1640,6 +1735,7 @@ export const useTts = create<TtsState>((set, get) => ({
     lastSkipAt = now;
     if (!continuing) {
       skipLeadTarget = target;
+      skipLeadGen = myGen; // so the settle can tell whether this play is still the live one
       void playFrom(target, myGen, false); // leading: play it now (responsive); scheduler prioritizes it
     }
     // (Re)arm the settle. If skipping moved past the leading play, play the LANDING with its lead
@@ -1648,8 +1744,9 @@ export const useTts = create<TtsState>((set, get) => ({
     skipSettleTimer = setTimeout(() => {
       skipSettleTimer = null;
       if (!get().active) return; // stopped during the window (stop() also clears this timer)
-      if (skipLastTarget !== skipLeadTarget) void playFrom(skipLastTarget, ++gen, true); // establishLead
-      else prefetchFrom(skipLeadTarget);
+      if (settleNeedsReplay(skipLastTarget, skipLeadTarget, skipLeadGen, gen)) {
+        void playFrom(skipLastTarget, ++gen, true); // establishLead
+      } else prefetchFrom(skipLeadTarget);
     }, SKIP_SETTLE_MS);
   },
 
@@ -1729,6 +1826,7 @@ export const useTts = create<TtsState>((set, get) => ({
     clearSkipSettle(); // RAWY-185: cancel any deferred rapid-skip landing synth
     skipLeadTarget = -1;
     skipLastTarget = -1;
+    skipLeadGen = -1;
     lastSkipAt = 0; // RAWY-186
     scheduler.reset(); // RAWY-231: session over — drop the cache AND zero the recurrence counters (E)
     resetSeries(awaitLatency); // RAWY-257: the latency series are per-SESSION, like the counters beside them

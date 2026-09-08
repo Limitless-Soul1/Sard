@@ -22,6 +22,8 @@ import {
   FORCE_RTL_CLASS, // RAWY-253 (root A): the dir-correction marker class
   EMPTY_P_CLASS, // RAWY-253 (root B): the empty-paragraph collapse marker class
   LTR_ALIGN_CLASS, // RAWY-253 (addendum): align a kept-LTR paragraph to the book's margin
+  TEXT_HOST_CLASS, // the block container that DIRECTLY holds prose, when the book uses none of p/li/div
+  PARA_BREAK_CLASS, // the box that gives a <br>-separated run a paragraph gap to be spaced by
   type BookThemeFlags,
   type ReadingStyle,
   type RevealLabels,
@@ -1177,6 +1179,192 @@ function markInBodyHeading(doc: Document, tocLabel: string | null): void {
 // `style="text-align:center"` and the `[align=center]`/`<center>` presentational hints. It is also the
 // guard that keeps the book's centred poetry intact the day that stylesheet defect is fixed, at which
 // point the hardened !important alignment above would otherwise flatten every centred block.
+// PROSE WITH NO BLOCK CONTAINER — give the typography selectors something they can match.
+//
+// The four reader controls (leading, alignment, paragraph spacing, first-line indent) are written
+// against container ELEMENTS: p, li, blockquote, div. A .txt-to-EPUB conversion need not produce any of
+// them — the whole chapter can be bare text nodes in <body>, split by <br>, with <span> for styling.
+// MEASURED on such a book: line-height computed `normal`, text-align `start`, text-indent `0px`, and
+// dragging every slider from one end to the other moved not a single rendered line box, while the same
+// settings moved all of them on a conventional <p> book. See the table in `injectedCss.ts`.
+//
+// WHY A DOM PASS AND NOT A SELECTOR. There is no CSS selector for "an element that directly contains
+// text": `:has()` matches elements, never text nodes. The condition is therefore decided here and handed
+// to CSS as a class — the same device `markBookAlignedBlocks`, `markParagraphDirection` and
+// `markEmptyParagraphs` already use. A class is an ATTRIBUTE, so no node is added, removed or moved:
+// CFIs, Ranges, highlights, references, replacements, search hits and speech units all stay valid, and
+// selection is untouched. Nothing is normalised or rewritten.
+//
+// WHAT IS TAGGED. For each text node carrying real content, the nearest ancestor that is not `display:
+// inline` — the block container the text is actually laid out in, which for `<body>text</body>` and for
+// `<body><span>text</span></body>` alike is the BODY. It is tagged only if the existing selectors do not
+// already cover it, and never if it is a HEADING: the book's heading typography is deliberately left
+// alone, and tagging an <h2> would hand it the reader's body leading and indent.
+//
+// A CONVENTIONAL BOOK TAGS NOTHING. Its prose sits in <p>, which is covered, so the set comes back empty
+// and not one element gains a class — the regression guarantee holds by construction, not by care.
+//
+// KNOWN LIMIT — PARAGRAPH SPACING ON <br>-SEPARATED RUNS. Leading, alignment and indent all INHERIT, so
+// tagging the real container reaches the text (measured: leading 34 to 59.06px, ragged edge 59 to 0px,
+// indent +34px). `margin-block` does not inherit and needs a box, and <br>-separated runs are one block
+// with no paragraph boxes in it. Three CSS-only mechanisms were measured and all three failed to move
+// the gap: a margin on the host (34 to 34px), `br { display: block; margin-block-end }` (34 to 34px) and
+// `br { display: block; height }` (34 to 34px) — Chromium generates no box for a <br> whatever `display`
+// computes to. Manufacturing one means wrapping the runs in real elements, which changes the DOM and
+// breaks every CFI recorded against the section, so it is deliberately NOT done.
+const TEXT_HOST_SKIP = new Set([
+  // already covered by the element selectors in `injectedCss`
+  "p", "li", "blockquote", "div",
+  // the book's own heading typography is deliberately never touched
+  "h1", "h2", "h3", "h4", "h5", "h6",
+  // carry text nodes that are never rendered as prose
+  "script", "style", "title", "template", "head",
+]);
+// Fallback for the case where computed style is unavailable: a frame that is genuinely not laid out
+// returns empty strings in Chromium, and `display === "inline"` would then be false for EVERY element —
+// which would tag the immediate <span> parent instead of the block that actually contains the line
+// boxes, and `text-align` on an inline box does nothing at all. These are the HTML elements that are
+// inline by default; anything else is treated as a container.
+const INLINE_BY_DEFAULT = new Set([
+  "a", "abbr", "b", "bdi", "bdo", "br", "cite", "code", "data", "dfn", "em", "i", "kbd", "mark", "q",
+  "rp", "rt", "ruby", "s", "samp", "small", "span", "strong", "sub", "sup", "time", "u", "var", "wbr",
+  "img", "picture", "audio", "video", "font", "big", "tt", "strike", "acronym", "nobr",
+]);
+
+function markTextHosts(doc: Document): void {
+  const win = doc.defaultView;
+  if (!win || !doc.body) return;
+  const frame = win.frameElement as HTMLElement | null;
+  const hidden = frame?.style.display === "none";
+  try {
+    // foliate measures with the frame briefly displayed (computed style inside a `display:none` iframe
+    // cannot be trusted in every engine); do the same, for the same reason — see the fallback above.
+    if (frame && hidden) frame.style.display = "block";
+    const inlineCache = new Map<Element, boolean>();
+    const isInline = (el: Element): boolean => {
+      const seen = inlineCache.get(el);
+      if (seen !== undefined) return seen;
+      let inline: boolean;
+      try {
+        const d = win.getComputedStyle(el).display;
+        inline = d ? d === "inline" : INLINE_BY_DEFAULT.has(el.localName);
+      } catch {
+        inline = INLINE_BY_DEFAULT.has(el.localName);
+      }
+      inlineCache.set(el, inline);
+      return inline;
+    };
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n: Node) =>
+        NEVER_RENDERED.has(n.parentElement?.localName ?? "") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+    });
+    const hosts = new Set<HTMLElement>();
+    let n: Node | null;
+    while ((n = walker.nextNode())) {
+      if (!(n.textContent ?? "").trim()) continue; // whitespace between blocks is not prose
+      let el: HTMLElement | null = n.parentElement;
+      while (el && isInline(el)) el = el.parentElement;
+      if (!el || TEXT_HOST_SKIP.has(el.localName)) continue;
+      hosts.add(el);
+    }
+    for (const el of hosts) el.classList.add(TEXT_HOST_CLASS);
+  } catch {
+    /* observation only: a book that throws here keeps exactly today's behaviour */
+  } finally {
+    if (frame && hidden) frame.style.display = "none";
+  }
+}
+
+// PARAGRAPH SPACING FOR PROSE THAT HAS NO PARAGRAPHS.
+//
+// `markTextHosts` gives leading, alignment and indent somewhere to land, because all three INHERIT.
+// Paragraph spacing does not: `margin-block` needs a BOX, and a chapter written as <br>-separated runs
+// is ONE block with no paragraph boxes in it. Six CSS-only mechanisms were measured against the real
+// engine and all six failed (see the note on PARA_BREAK_CLASS): Blink builds a `LayoutBR` for <br> and
+// discards `display` on it — the computed value reads `block` while layout ignores it.
+//
+// So the box has to be real, and that means touching the DOM. THREE PROPERTIES MAKE THAT SAFE, and all
+// three were measured before this was written rather than argued afterwards:
+//
+//   1. ELEMENT FOR ELEMENT. One <br> becomes one <span>, in the same position, with no children. A CFI
+//      child step counts NODES, not tag names, so no index anywhere in the document moves. MEASURED:
+//      the CFIs over four fixed slices are byte-identical across the swap
+//      (`epubcfi(/6/2!/4,/1:5,/1:40)` before and after), and CFIs recorded BEFORE the swap still
+//      resolve after it. The body's text is unchanged — neither node contributes any.
+//   2. UNCONDITIONAL. The swap does NOT depend on the spacing value; only the CSS height does. Making
+//      it conditional would mean the DOM changed shape whenever the slider moved, and every CFI stored
+//      against the section would shift under the reader. At height 0 the box collapses and the layout
+//      is exactly what <br> gave (measured: the gap equals the ordinary line advance).
+//   3. PRECEDENTED. `wrapTashkil` already SPLITS text nodes and inserts <span>s into this same document
+//      on every section load, before any CFI is generated. Structural transformation is how this reader
+//      already works; this one is strictly smaller — it moves no text at all.
+//
+// SCOPE: only a <br> that is a DIRECT CHILD of a tagged host. A <br> inside a <p> is a line break within
+// a paragraph — a poem's line ending, an address — and must stay one. MEASURED: a <br> inside a <p>
+// inside a tagged host does NOT match the child combinator, while a descendant selector WOULD have
+// caught it, which is why the child relationship is the rule rather than a convenience.
+//
+// RUNS AND EDGES (measured, not assumed — see the counts inside). A run of consecutive <br> is ONE
+// paragraph boundary plus the blank lines the author asked for, so only the first of a run becomes a
+// spacing box; and a run with no content on one side of it is not a boundary at all, so it is left
+// untouched. Both rules keep the reader's paragraph spacing applied exactly once per real boundary.
+//
+// Idempotent: a converted run begins with the box rather than a <br>, so a second pass finds no run
+// whose first element is a <br> in a position it would convert.
+function markParagraphBreaks(doc: Document): void {
+  if (!doc.body) return;
+  try {
+    for (const host of doc.querySelectorAll<HTMLElement>(`.${TEXT_HOST_CLASS}`)) {
+      // Walk the host's own child NODES, so whitespace between two <br> is seen for what it is —
+      // formatting, not content — and the two still count as consecutive.
+      const kids = [...host.childNodes];
+      const isBr = (n: Node) => n.nodeType === 1 && (n as Element).localName === "br";
+      const isBlank = (n: Node) => n.nodeType === 3 && !(n.textContent ?? "").trim();
+      /** Is there real content between `from` and `to` (exclusive), in that direction? */
+      const hasContentOutside = (from: number, dir: -1 | 1) => {
+        for (let i = from + dir; i >= 0 && i < kids.length; i += dir) {
+          const n = kids[i];
+          if (isBlank(n) || isBr(n)) continue;
+          if (n.nodeType === 3) return true;                       // a real text node
+          if (n.nodeType === 1) return !!(n.textContent ?? "").trim() || (n as Element).localName === "img";
+        }
+        return false;
+      };
+
+      // Group maximal runs of consecutive <br>, then decide what each RUN means.
+      for (let i = 0; i < kids.length; i++) {
+        if (!isBr(kids[i])) continue;
+        let end = i;
+        for (let j = i + 1; j < kids.length; j++) {
+          if (isBr(kids[j])) { end = j; continue; }
+          if (isBlank(kids[j])) continue;
+          break;
+        }
+        // A PARAGRAPH BREAK SEPARATES TWO PARAGRAPHS. A run with nothing to separate on one side —
+        // the trailing <br> a converter leaves at the end of a chapter, or a leading one — is not a
+        // boundary at all, and turning it into one adds a gap where the text has already stopped.
+        // Left exactly as the book wrote it: no element is touched, so this case cannot even in
+        // principle disturb a CFI.
+        if (hasContentOutside(i, -1) && hasContentOutside(end, 1)) {
+          // ONE BOUNDARY PER RUN, whatever its length. MEASURED across the reader's own library:
+          // 5266 runs of a single <br> against 29 of two, 5 of three and 5 of five — a single <br>
+          // IS the paragraph separator in these books, so a run of N means one boundary plus N-1
+          // blank lines the author asked for. Converting every <br> would apply the reader's
+          // paragraph spacing N times, which is the doubling this fixes; converting none would throw
+          // the author's extra separation away. So the FIRST becomes the spacing box and the rest
+          // stay ordinary <br>, still breaking their lines at the book's own leading.
+          const box = doc.createElement("span");
+          box.className = PARA_BREAK_CLASS;
+          (kids[i] as Element).replaceWith(box);
+        }
+        i = end;
+      }
+    }
+  } catch {
+    /* observation only: a book that throws here keeps exactly today's behaviour */
+  }
+}
+
 function markBookAlignedBlocks(doc: Document, dir?: string): void {
   const root = doc.documentElement;
   if (!root) return;
@@ -1192,7 +1380,13 @@ function markBookAlignedBlocks(doc: Document, dir?: string): void {
     if (frame && hidden) frame.style.display = "block";
     // Two passes: read EVERY computed value first, tag second. Adding a class invalidates style for
     // that subtree, so interleaving the two would force a fresh style resolve on each read.
-    const blocks = doc.querySelectorAll<HTMLElement>("p, li, blockquote, div, td, th, dd, dt");
+    // `.sard-text-host` is in this list because `markTextHosts` has just made those elements targets
+    // of the forced alignment. Without it, a no-block book that centres its <body> would keep that
+    // intent today (nothing matched it) and lose it the moment the host class starts matching — the
+    // exact regression this measurement exists to prevent, arriving through the new selector.
+    const blocks = doc.querySelectorAll<HTMLElement>(
+      `p, li, blockquote, div, td, th, dd, dt, .${TEXT_HOST_CLASS}`,
+    );
     const keep: HTMLElement[] = [];
     for (const el of blocks) {
       const ta = win.getComputedStyle(el).textAlign;
@@ -2045,6 +2239,12 @@ export class FoliateController {
       // RAWY-195: measure the book's OWN alignment and open the alignment gate. Must run before
       // anything paints, and before alignNeutralLines (which sets dir=, not text-align, but keep the
       // pristine document for the measurement anyway).
+      // Must run BEFORE markBookAlignedBlocks: that pass measures the book's own alignment over the
+      // elements the forced rule can reach, and this is what decides which those are.
+      markTextHosts(doc);
+      // After markTextHosts (it needs the host class) and before the alignment measurement, so that
+      // pass reads the document the reader will actually see.
+      markParagraphBreaks(doc);
       markBookAlignedBlocks(doc, this.dir);
       alignNeutralLines(doc, this.dir); // RAWY-134 (A): "…"-only scene breaks follow the book's RTL side
       markParagraphDirection(doc, this.dir); // RAWY-253 (root A): RTL-correct paragraphs mislabeled dir="ltr"

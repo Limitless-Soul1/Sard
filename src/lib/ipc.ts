@@ -628,6 +628,17 @@ export interface HighlightRow {
   // RAWY-259: this highlight's OWN ink density (the editor's «كثافة الحبر»). `null` = follow the theme's
   // default, which is what every highlight created before the feature does — so old marks are unchanged.
   alpha: number | null;
+  /**
+   * This highlight's tag NAMES, resolved through the note ATTACHED to it.
+   *
+   * A highlight has no tags of its own: `note_tags` anchors to `notes.id`, and RAWY-205 made an
+   * empty-body note a pure tag ANCHOR precisely so a body-less highlight could be tagged. "The tags on
+   * a highlight" therefore already means "the tags on its note" — the same resolution the cross-book
+   * Inbox has used since RAWY-203, rather than a second tag relationship.
+   *
+   * `[]` for an untagged highlight and for one with no note, which is every pre-existing mark.
+   */
+  tags: string[];
 }
 
 export interface NoteRow {
@@ -642,6 +653,14 @@ export interface NoteRow {
   updated_at: number | null;
   /** RAWY-282: optional heading, independent of `body`. `null` = no title (every pre-migration note). */
   title: string | null;
+  /**
+   * This note's tag NAMES (RAWY-203), resolved through the `note_tags` join.
+   *
+   * Names rather than ids, matching `AnnoItem.tags`, because every consumer either shows a tag or
+   * filters by one. An untagged note gets `[]` — which is what every note written before this field
+   * existed returns, so nothing had to be migrated and no caller needs a null check.
+   */
+  tags: string[];
 }
 
 export const highlightsForBook = (bookId: string): Promise<HighlightRow[]> =>
@@ -705,6 +724,29 @@ export interface Tag {
 export const tagsList = (): Promise<Tag[]> => invoke<Tag[]>("tags_list");
 export const tagCreate = (name: string): Promise<Tag | null> => invoke<Tag | null>("tag_create", { name });
 export const tagDelete = (id: string): Promise<boolean> => invoke<boolean>("tag_delete", { id });
+
+/**
+ * The outcome of renaming a tag. `status` is a stable token, not a message: the interface owns the
+ * wording so it can be translated.
+ *
+ *   ok        — renamed; `tag` is the row as it now stands
+ *   unchanged — the new name equalled the old one; nothing was written, `tag` is returned
+ *   empty     — the name was blank or whitespace only
+ *   taken     — another tag already has that name; REFUSED rather than merged, because merging would
+ *               silently move annotations between tags
+ *   missing   — no tag with that id
+ */
+export interface TagRename {
+  status: "ok" | "unchanged" | "empty" | "taken" | "missing";
+  tag: Tag | null;
+}
+
+/**
+ * Rename a tag IN PLACE — an UPDATE of the existing row, so `id` never changes and every note and
+ * highlight linked to it keeps its link and simply resolves the new name.
+ */
+export const tagRename = (id: string, name: string): Promise<TagRename> =>
+  invoke<TagRename>("tag_rename", { id, name });
 export const noteTagsFor = (noteId: string): Promise<Tag[]> => invoke<Tag[]>("note_tags_for", { noteId });
 export const noteTagsSet = (noteId: string, tagIds: string[]): Promise<boolean> =>
   invoke<boolean>("note_tags_set", { noteId, tagIds });

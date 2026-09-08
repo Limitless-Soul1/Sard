@@ -196,6 +196,7 @@ macro_rules! sard_invoke_handler {
             commands::tags_list,
             commands::tag_create,
             commands::tag_delete,
+            commands::tag_rename,
             commands::note_tags_for,
             commands::note_tags_set,
             commands::font_import,

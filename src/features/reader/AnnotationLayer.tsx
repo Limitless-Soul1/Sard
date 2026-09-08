@@ -605,7 +605,7 @@ function NoteEditorModal({
             {/* TagPicker provides search, multi-select, create and remove — the tag behaviour the design
                 shows, kept intact; `.nec-tags` applies the compact chip sizing. */}
             <div className="nec-tags">
-              <TagPicker selected={tagIds} onChange={setTagIds} />
+              <TagPicker selected={tagIds} onChange={setTagIds} onTagsChanged={() => void useAnnotations.getState().load()} />
             </div>
           </div>
 
@@ -753,7 +753,14 @@ export function AnnotationLayer({
       // empty is there no note (and nothing to tag): the row goes and its links cascade away.
       // RAWY-282: a TITLE alone is enough for the same reason — see `saveNoteForHighlight`.
       const saved = await store().saveNoteForHighlight(activeHi, body, tagIds.length > 0, title);
-      if (saved) await noteTagsSet(saved.id, tagIds);
+      if (saved) {
+        await noteTagsSet(saved.id, tagIds);
+        // The row `saveNoteForHighlight` returned was read BEFORE the links were written, so its
+        // `tags` are the previous ones. Re-read the book's notes so the panel's cards and its tag
+        // filter both see what was just saved — without this, a tag applies but nothing shows it
+        // until the book is reopened.
+        await store().load();
+      }
     }
     setActive(null);
   };

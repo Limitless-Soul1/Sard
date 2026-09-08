@@ -839,6 +839,12 @@ export const en = {
   "panel.notes": "Notes",
   "panel.highlights": "Highlights",
   "panel.noNotes": "No notes yet — select text and add one, or note this spot.",
+  // The TAG filter in the annotations sidebar, beside the book-scope control -- the two read as a
+  // pair. Applies to notes and highlights, the two kinds that carry tags.
+  "panel.tag.all": "All tags",
+  "panel.tag.none": "No tags yet",
+  // Shown when a chosen tag matches nothing in the current scope -- a legitimate answer, not an error.
+  "panel.tag.empty": "Nothing with this tag in this scope.",
   "panel.noHighlights": "No highlights yet — select text in the book to highlight it.",
   "panel.references": "References",
   "panel.replacements": "Replacements",
@@ -902,6 +908,10 @@ export const en = {
   "tag.add": "Add tag",
   "tag.toggle": "Apply / remove tag on this note",
   "tag.delete": "Delete tag everywhere",
+  // Renaming edits the tag ITSELF, so every note and highlight carrying it shows the new name at once.
+  "tag.rename": "Rename tag",
+  "tag.renameTaken": "A tag with that name already exists.",
+  "tag.renameEmpty": "A name cannot be empty.",
   // RAWY-202: bookmarks shelf
   "bm.percent": "{p}% read",
   "bm.empty.title": "No bookmarks yet",

@@ -1045,6 +1045,12 @@ pub fn tag_create(name: String, state: State<AppState>) -> Result<Option<library
 }
 
 #[tauri::command]
+pub fn tag_rename(id: String, name: String, state: State<AppState>) -> Result<library::TagRename, String> {
+    let conn = state.conn();
+    library::tag_rename(&conn, &id, &name).map_err(err)
+}
+
+#[tauri::command]
 pub fn tag_delete(id: String, state: State<AppState>) -> Result<bool, String> {
     let conn = state.conn();
     library::tag_delete(&conn, &id).map_err(err)?;

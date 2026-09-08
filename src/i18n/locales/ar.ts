@@ -838,6 +838,13 @@ export const ar: Record<TKey, string> = {
   "panel.notes": "الملاحظات",
   "panel.highlights": "التظليلات",
   "panel.noNotes": "لا ملاحظات بعد — حدّد نصًّا وأضِف ملاحظة، أو علِّق على هذا الموضع.",
+  // The TAG filter in the annotations sidebar, beside the book-scope control. It reads as a pair
+  // with it: «كل الكتب» × «كل الوسوم». Applies to notes and highlights, the two kinds that carry tags.
+  "panel.tag.all": "كل الوسوم",
+  "panel.tag.none": "لا وسوم بعد",
+  // Shown when a chosen tag matches nothing in the current scope. That is a legitimate answer, not
+  // an error: the tag exists elsewhere in the library, and the reader can widen the scope or clear it.
+  "panel.tag.empty": "لا شيء بهذا الوسم في هذا النطاق.",
   "panel.noHighlights": "لا تظليلات بعد — حدّد نصًّا في الكتاب لتظليله.",
   "panel.references": "المراجع",
   "panel.replacements": "الاستبدالات",
@@ -899,6 +906,10 @@ export const ar: Record<TKey, string> = {
   "tag.add": "إضافة وسم",
   "tag.toggle": "تطبيق / إزالة الوسم على هذه الملاحظة",
   "tag.delete": "حذف الوسم من كل مكان",
+  // Renaming edits the tag ITSELF, so every note and highlight carrying it shows the new name at once.
+  "tag.rename": "إعادة تسمية الوسم",
+  "tag.renameTaken": "يوجد وسم بهذا الاسم.",
+  "tag.renameEmpty": "الاسم لا يمكن أن يكون فارغًا.",
   // RAWY-202: رفّ الإشارات المرجعية
   "bm.percent": "{p}٪ مقروء",
   "bm.empty.title": "لا إشارات مرجعية بعد",

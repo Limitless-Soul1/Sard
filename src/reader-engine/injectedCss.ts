@@ -536,6 +536,50 @@ const alignForRtlBook = (a: Align): string => (a === "center" ? "center" : a ===
 const hardList = (sels: string[], prefix = ":root:root", suffix = NEVER): string =>
   sels.map((s) => `${prefix} ${s}${suffix}`).join(",\n    ");
 
+// PROSE THAT LIVES IN NO BLOCK CONTAINER AT ALL.
+//
+// Every typography selector here names a container ELEMENT, because that is what a paragraph is in
+// almost every EPUB. It need not be: a .txt→EPUB conversion can put a whole chapter into <body> as bare
+// text nodes split by <br>, with <span> used only for styling. MEASURED on exactly such a book against
+// a conventional one, under the identical settings changes:
+//
+//                          conventional <p>            no block container
+//   line spacing 1.5→2.6   34.08px → 59.06px           34px → 34px   (computed `normal`)
+//   align → justify        ragged edge 42px → 0px      59px → 59px   (computed `start`)
+//   align → centre         lines move, spread 22px     no movement
+//   first-line indent      first line +34px            +0px          (computed `0px`)
+//
+// All four controls are inert, because not one selector can match. CSS cannot fix that alone: there is
+// no selector for "an element that directly contains text" — `:has()` matches elements, never text
+// nodes. So the condition is decided in the DOM by `markTextHosts` (FoliateController) and handed to CSS
+// as a class. A class is an ATTRIBUTE: no node is added, removed or moved, so every CFI, Range,
+// highlight, reference and speech unit recorded against the document stays exactly as valid as before.
+//
+// A CONVENTIONAL BOOK TAGS NOTHING — its prose is inside <p>, which is already covered — so this adds no
+// selector that can match it, and its rendering is unchanged. That is the regression guarantee, and it
+// holds by construction rather than by care.
+export const TEXT_HOST_CLASS = "sard-text-host";
+const TEXT_HOST = `.${TEXT_HOST_CLASS}`;
+
+// THE PARAGRAPH BREAK, when the book has no paragraphs to space.
+//
+// The host class above gives leading, alignment and indent somewhere to land, because all three
+// INHERIT. Paragraph spacing does not: `margin-block` needs a BOX, and <br>-separated runs are one
+// block with no paragraph boxes inside it. Six CSS mechanisms were measured against the real engine and
+// all six failed — `content` + `display:block` + height or margin or padding, `display:block` + height,
+// `br::after` with a block, and a raised `line-height` on the <br> itself. Blink builds a `LayoutBR` for
+// <br> and discards `display` on it: the COMPUTED value reads `block` while layout ignores it entirely,
+// which is what made the earlier attempts look plausible and measure dead.
+//
+// So `markParagraphBreaks` (FoliateController) replaces each such <br> with an empty
+// <span class="sard-para-break">, ELEMENT FOR ELEMENT, and this rule gives that span the box. Measured:
+// the gap moves 43.16 → 63.03 → 82.91px for spacing 0/14/28, the leading INSIDE a run never moves, and
+// at 0 the gap equals the ordinary line advance — exactly the layout <br> gave.
+//
+// Hardened like the rest of the funnel: a book that writes `span { display: inline !important }` would
+// otherwise flatten the box and silently take the control away again.
+export const PARA_BREAK_CLASS = "sard-para-break";
+
 // The book's own paragraph-ish blocks. TEXT_BLOCKS = every leaf text element the reader's leading and
 // alignment apply to — headings are deliberately ABSENT so the book's heading typography survives.
 // PARA_BLOCKS (spacing + indent) is narrower: <p> plus a "leaf" text div — some EPUBs use <div>, not
@@ -543,8 +587,14 @@ const hardList = (sels: string[], prefix = ":root:root", suffix = NEVER): string
 // divs are spared and the page isn't stretched apart. <li> is excluded: margins there blow lists apart.
 const LEAF_DIV =
   "body div:not(:has(p, div, ul, ol, table, section, article, aside, figure, blockquote, h1, h2, h3, h4, h5, h6, hr))";
-const TEXT_BLOCKS = ["p", "li", "blockquote", "div"];
-const PARA_BLOCKS = ["p", LEAF_DIV];
+const TEXT_BLOCKS = ["p", "li", "blockquote", "div", TEXT_HOST];
+const PARA_BLOCKS = ["p", LEAF_DIV, TEXT_HOST];
+// Paragraph spacing is the one property here that does NOT inherit, so it needs a real box of its own —
+// and <body> is not one for this purpose. There is only one body, so a margin on it spaces nothing from
+// anything: it would simply pad the section and fight the `html, body { margin: 0 }` reset that owns the
+// page box. A tagged <section>/<td>/<dd> IS a genuine prose block with siblings to be spaced from, so it
+// keeps the margin. See the KNOWN LIMIT on <br>-separated runs in `markTextHosts`.
+const SPACED_BLOCKS = ["p", LEAF_DIV, `${TEXT_HOST}:not(body)`];
 
 // RAWY-195: the hide-box rule carries a SECOND id guard so it outranks the forced typography rules
 // above (which sit at one ID column). Without it, the hardened `margin-block` would beat this rule's
@@ -739,8 +789,18 @@ export function buildReadingCss(
           rhythm it has today (migration 9 lifts an already-stored 0 to it — that 0 meant "leave it
           alone", not "collapse it"). `KEEP` spares deliberately-centred blocks: a poem's lines would
           otherwise be prised apart by the reader's paragraph spacing. */ ""}
-    ${hardList(PARA_BLOCKS, ":root:root", `${KEEP}${NEVER}`)}
+    ${hardList(SPACED_BLOCKS, ":root:root", `${KEEP}${NEVER}`)}
       { margin-block: ${T.paragraphSpacingPx}px !important; }
+    ${/* The same control, for a book whose paragraphs are <br>-separated runs rather than boxes. The
+          element is Sard's own (see PARA_BREAK_CLASS), so this needs no `KEEP` — it can never be a
+          block the book deliberately centred — but it IS hardened, because a book-wide
+          `span { display: inline }` would otherwise collapse the box and kill the control. `height`
+          rather than `margin`: an empty block's margins collapse through each other, which is the
+          trap the first attempt at this fell into. */ ""}
+    :root:root .${PARA_BREAK_CLASS}${NEVER} {
+      display: block !important;
+      height: ${T.paragraphSpacingPx}px !important;
+    }
     ${/* First-line indent — ALSO always emitted, and hardened (RAWY-195). Same shape of defect: OFF
           emitted nothing, so the indent was whatever the rest of the cascade said rather than an
           explicit zero, and ON would lose to any book class that zeroes the indent the moment book CSS
@@ -942,6 +1002,15 @@ export function buildReadingCss(
           book, which is the opposite of what this is for. */ ""}
     :where(h1, h2, h3, h4, h5, h6) {
       line-height: normal;
+    }
+    ${/* The same reasoning, for the same reason, one property along. `text-indent` INHERITS too, and it
+          only became inheritable onto a heading when TEXT_HOST joined PARA_BLOCKS: a tagged <body> or
+          <section> passes its indent down to every heading inside it, which would push chapter titles in
+          by 1.5em. Before the host class existed this could not arise — PARA_BLOCKS was <p> plus a LEAF
+          div, and a LEAF div is by definition one with no heading in it. Zero-specificity `:where()`
+          again: enough to stop INHERITANCE, while losing to any indent the book itself declares. */ ""}
+    :where(h1, h2, h3, h4, h5, h6) {
+      text-indent: 0;
     }
     ${hardList(TEXT_BLOCKS, `:root:root.${ALIGN_GATE_CLASS}`, `${KEEP}${NEVER}`)} {
       text-align: ${style.align} !important;

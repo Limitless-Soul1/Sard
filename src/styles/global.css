@@ -1281,14 +1281,27 @@ html, body, #root {
    Inbox sits on --app-bg, so its --chrome-bg control reads as a raised chip; INSIDE this panel the
    background IS --chrome-bg, so the control would be flat-on-flat. Tint it with the SAME token the
    segmented control already uses (color-mix of --text) — an existing value, not a new colour. */
-.rp-src { padding: 8px 14px 4px; flex: 0 0 auto; }
-.rp-src-wrap { display: block; }
+/* THE FILTER ROW: book scope, then tags — one pair, side by side.
+   It was a stack of two full-width blocks, which is why the second control sat UNDER the first and
+   each menu (`inset-inline: 0`) spanned the whole row and covered the other. Each control now owns its
+   own half and its menu is anchored to that half, so the two can never occupy the same space. */
+.rp-src {
+  padding: 8px 14px 4px; flex: 0 0 auto;
+  display: flex; gap: var(--sp-2); align-items: center;
+}
+/* `flex: 1 1 0` + `min-width: 0` splits the row evenly and lets a long Arabic tag name CLIP rather
+   than push its neighbour off the panel. `.inbox-ctl-wrap` already provides `position: relative`,
+   which is what anchors each menu to its own control. */
+.rp-src-wrap { flex: 1 1 0; min-width: 0; }
 .rp-src-ctl {
   inline-size: 100%; max-width: none; text-align: start;
   background: color-mix(in srgb, var(--text) 8%, transparent);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .rp-src-ctl:hover { background: color-mix(in srgb, var(--text) 14%, transparent); }
-.rp-src-menu { inset-inline: 0; min-width: 0; }
+/* Anchored to its own control, and SCROLLS rather than truncating: the tag menu lists every tag in
+   the library, which can be a long list in a well-annotated one. */
+.rp-src-menu { inset-inline: 0; min-width: 0; max-height: min(46vh, 340px); overflow-y: auto; }
 /* A cross-book row is READ-ONLY: the whole card is the open affordance (no edit/delete controls). */
 .rp-x-item { cursor: pointer; display: block; }
 .rp-x-item:hover { border-color: color-mix(in srgb, var(--swatch, var(--accent)) 78%, transparent); }
@@ -1298,6 +1311,26 @@ html, body, #root {
 }
 .rp-x-text { font: 400 var(--fs-small)/1.5 var(--ui-font); color: var(--text); overflow-wrap: anywhere; }
 .rp-x-tags { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: 6px; }
+
+/* ---- Note tags in the in-reader annotations sidebar (RAWY-203) --------------------------------
+   The chip is the one the cross-book Inbox already uses (`.inbox-tag`), so a tag looks the same
+   wherever it is read. No new colour, no new radius and no new type ramp.
+
+   Direction-agnostic on purpose: flex with logical spacing throughout, so everything fills from the
+   right in Arabic and from the left in English without a `[dir]` rule of its own. */
+/* The header's tag control when a tag IS selected. It reuses the Inbox control the book scope already
+   uses, so the only thing this adds is "something is filtering" -- the same accent fill `.inbox-tag`
+   uses for "this annotation carries a tag", because it is the same idea seen from the other end. */
+.inbox-ctl.rp-src-ctl.on {
+  color: color-mix(in srgb, var(--accent) 88%, var(--text));
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* The tags ON a card -- a note's or a highlight's. INDICATORS, not controls: filtering is the header's
+   single job. Same wrap and rhythm as the cross-book list's `.rp-x-tags`, and the chip itself is the
+   Inbox's `.inbox-tag` untouched, so one tag looks the same everywhere it is read. */
+.rp-note-tags { display: flex; flex-wrap: wrap; gap: var(--sp-2); margin-top: 6px; }
 
 /* ---- RAWY-114: TTS read-aloud player — the design-5a COMPACT FLOATING PILL ---- */
 /* A ~330px pill floating ~26px above the page bottom, centred over the READING AREA (--reading-shift
@@ -3855,6 +3888,24 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 }
 .tag-chip:hover .tag-del, .tag-chip:focus-within .tag-del { width: 15px; padding-right: 7px; opacity: 0.65; }
 .tag-del:hover { opacity: 1 !important; }
+/* RENAME, on the chip that already exists — the same quiet reveal as the remove ✕, so the row stays
+   uncrowded until the reader reaches for it. Two affordances, one chip, no management screen. */
+.tag-ren {
+  border: 0; background: none; color: inherit; cursor: pointer; line-height: 1; font-size: 0.78rem;
+  width: 0; padding: 0; opacity: 0; overflow: hidden; transition: width 0.12s ease, opacity 0.12s ease;
+}
+.tag-chip:hover .tag-ren, .tag-chip:focus-within .tag-ren { width: 15px; padding-right: 5px; opacity: 0.65; }
+.tag-ren:hover { opacity: 1 !important; }
+/* While renaming, the chip IS the field: same pill, same size, so nothing jumps as it turns editable. */
+.tag-chip.renaming { padding: 0; }
+.tag-rename-input {
+  border: 0; background: transparent; color: inherit; font: inherit;
+  padding: 3px 10px; border-radius: inherit; min-width: 6ch; max-width: 18ch;
+  outline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+}
+/* A refused name (blank, or already taken) keeps the field open and says so — nothing is lost. */
+.tag-rename-input.err { outline-color: var(--danger, #c0563c); }
+.nec-tags .tag-chip:hover .tag-ren, .nec-tags .tag-chip:focus-within .tag-ren { width: 17px; padding-right: 6px; opacity: 0.85; }
 /* the add-field: input + inline + read as ONE unit (shared frame) */
 .tag-add {
   display: flex; align-items: stretch; border-radius: 7px;

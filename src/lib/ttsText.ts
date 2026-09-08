@@ -57,3 +57,69 @@ export function hasExtendedDigits(text: string): boolean {
   EXTENDED_DIGIT.lastIndex = 0;
   return EXTENDED_DIGIT.test(text ?? "");
 }
+
+// ---------------------------------------------------------------------------------------------
+// AN EMPTY CONTAINER HAS NOTHING TO SAY.
+// ---------------------------------------------------------------------------------------------
+//
+// THE DEFECT. Books converted from other formats keep their dialogue markers as angle brackets, and a
+// conversion that lost the dialogue leaves the marker behind with nothing inside it — the source reads
+// `&lt;&gt;`, the page shows `<>`, and the sentence is grammatically complete without it. Measured in a
+// real book, four consecutive paragraphs end that way.
+//
+// What the endpoint does with that is VOICE-DEPENDENT, which is exactly why the rule cannot be about
+// voices. Measured on the same two sentences:
+//
+//   ar-EG-SalmaNeural            `<>` alone → 0 bytes; inside a sentence it is ignored, and the audio
+//                                is byte-identical with and without it (15696B / 2.616s, either way).
+//   en-AU-WilliamMultilingualNeural  `<>` alone → 3600 bytes, 0.600s, ZERO word boundaries, peak 0.164 —
+//                                audible sound that is not speech. Inside the two real sentences it cost
+//                                552ms and 648ms, and removing it left the SAME three words in each.
+//
+// Neither bracket does this alone (`<` and `>` each measured silent on that voice); the PAIR does. So
+// the question Sard asks is not "does this voice make a noise" but "is there anything here to say",
+// which is decidable from the text and gives the same answer for every voice and every book.
+//
+// THE RULE. Remove an angle-bracket span that contains no letter and no digit. `SPEAKABLE` is the same
+// test the reader uses to decide whether a segment is worth speaking at all (`hasSpeech` in
+// FoliateController) — deliberately a separate copy, because that one decides whether a UNIT exists and
+// this one decides whether a SPAN inside a unit carries anything; conflating them would make a change to
+// either silently change the other.
+//
+// Nested pairs collapse from the inside out, so `<<>>` and `<<<>>>` go the same way as `<>`. A span that
+// holds real content is kept WHOLE — `<نعم>`, `<hello>`, `<007>` are speech and are none of this rule's
+// business. In `<نعم <> العالم>` only the empty inner pair goes; the outer span has content and stays.
+//
+// A SPACE, NOT NOTHING. Replacing with the empty string would join the words either side — `word<>word`
+// would be spoken as one word. A space cannot do that, and an extra space is inaudible.
+//
+// WHY THIS IS NOT IN `speakableText`. That function is LENGTH-PRESERVING BY CONTRACT and word tracking
+// depends on it: `setReadingWords` searches `speakableText(displayed)` for each word Edge reports, and
+// its comment states that an index into that string is the same index into the displayed text. This
+// rule removes characters, so putting it there would silently break the reading pill. It belongs on the
+// synthesis path only, which is where the caller applies it — the displayed text is never touched.
+//
+// It is also NOT xml escaping: escaping makes text safe to TRANSPORT inside SSML and happens later, at
+// the Rust boundary. This decides what is worth speaking at all. Two responsibilities, two places.
+
+/** Does this carry anything a voice could pronounce? A letter or a digit, in any script. */
+const SPEAKABLE = /[\p{L}\p{N}]/u;
+
+/** An angle-bracket span with no bracket inside it — the innermost pair at any depth. */
+const ANGLE_SPAN = /<[^<>]*>/g;
+
+/**
+ * The text with empty angle-bracket containers removed. Everything else is returned untouched,
+ * including every kind of ordinary punctuation, which this rule never looks at.
+ */
+export function withoutEmptyMarkup(text: string): string {
+  // The overwhelming majority of sentences contain no angle bracket at all and cost one indexOf.
+  if (!text || !text.includes("<")) return text;
+  let out = text;
+  for (;;) {
+    // Each pass strictly shortens the string or returns, so this terminates.
+    const next = out.replace(ANGLE_SPAN, (span) => (SPEAKABLE.test(span.slice(1, -1)) ? span : " "));
+    if (next === out) return out;
+    out = next;
+  }
+}

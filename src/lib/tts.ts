@@ -22,7 +22,7 @@ import { type BookScript, voiceCompatibility, isImplausiblyShortAudio } from "./
 import { diagNote, diagPublishAudio } from "@diag";
 import { settingsGet, settingsSet, ttsEdgeVoices, ttsStop } from "./ipc";
 import { LatencySeries, newSeries, recordSeries, resetSeries, seriesSummary, SynthScheduler } from "./ttsScheduler";
-import { speakableText } from "./ttsText";
+import { speakableText, withoutEmptyMarkup } from "./ttsText";
 
 /**
  * RAWY-281 — the selectable playback speeds, as an EXPLICIT ORDERED SET.
@@ -625,7 +625,11 @@ async function synthInvoke(i: number): Promise<ArrayBuffer> {
   // numbers return byte-identical audio — and it rewrites them to the Arabic-Indic forms the endpoint
   // does speak. Length-preserving, so the word boundaries Edge returns still map onto the displayed
   // text; see `lib/ttsText.ts` for the measurements and the invariants.
-  const buf = await rawSynth(curEngine, curVoice, speakableText(text));
+  // `withoutEmptyMarkup` drops an angle-bracket container with nothing speakable inside it. It is
+  // applied HERE and not inside `speakableText` because it removes characters, and `setReadingWords`
+  // requires `speakableText` to stay length-preserving. Applied once, on the only path that reaches an
+  // engine, so every kind of read-aloud — chapter, note and selection — gets it identically.
+  const buf = await rawSynth(curEngine, curVoice, withoutEmptyMarkup(speakableText(text)));
   if (isImplausiblyShortAudio(text, buf?.byteLength ?? 0)) {
     throw new Error(`${VOICE_MISMATCH_MARKER}: ${curVoice} returned ${buf?.byteLength ?? 0} bytes for ${text.length} chars`);
   }

@@ -947,6 +947,16 @@ pub struct HighlightRow {
     /// RAWY-259: this highlight's OWN ink density. `None` = follow the theme's default, which is what
     /// every pre-existing highlight does — so the column needs no backfill and old rows are unchanged.
     pub alpha: Option<f64>,
+    /// This highlight's tag NAMES, resolved through the note attached to it.
+    ///
+    /// A HIGHLIGHT HAS NO TAGS OF ITS OWN, and deliberately so: `note_tags` anchors to `notes.id`, and
+    /// RAWY-205 made an EMPTY-BODY note a legitimate thing — a pure tag ANCHOR for a highlight the
+    /// reader tagged without writing anything. So "the tags on a highlight" already means "the tags on
+    /// its note", which is exactly what the cross-book Inbox has resolved since RAWY-203. Reading it
+    /// the same way here keeps ONE tag relationship in the schema instead of a second, parallel one.
+    ///
+    /// Empty for a highlight with no note at all, and for one whose note carries no tags.
+    pub tags: Vec<String>,
 }
 
 fn highlight_row(r: &rusqlite::Row) -> rusqlite::Result<HighlightRow> {
@@ -959,10 +969,25 @@ fn highlight_row(r: &rusqlite::Row) -> rusqlite::Result<HighlightRow> {
         chapter_label: r.get(5)?,
         created_at: r.get(6)?,
         alpha: r.get(7)?,
+        // APPENDED at index 8, the same discipline every earlier column was added under.
+        // GROUP_CONCAT yields NULL when the highlight has no note, or none of its note's tags exist.
+        tags: r
+            .get::<_, Option<String>>(8)?
+            .map(|v| v.split('\n').filter(|x| !x.is_empty()).map(str::to_string).collect())
+            .unwrap_or_default(),
     })
 }
 
 const HL_COLS: &str = "id, book_id, start_cfi, color, text_excerpt, chapter_label, created_at, alpha";
+
+/// The tags on the note ATTACHED to this highlight — see `HighlightRow.tags` for why a highlight has
+/// none of its own. One correlated subquery, the same shape `annotations_all` and `NOTE_TAGS_SUB` use,
+/// so all three surfaces resolve a tag identically and cannot drift apart. Qualified `highlights.id`
+/// because these queries select `FROM highlights` unaliased.
+const HL_TAGS_SUB: &str = "(SELECT GROUP_CONCAT(tg.name, char(10)) FROM note_tags nt \
+     JOIN tags tg ON tg.id = nt.tag_id \
+     JOIN notes n ON n.id = nt.note_id \
+     WHERE n.highlight_id = highlights.id)";
 
 pub fn highlights_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<HighlightRow>> {
     // RAWY-283: NEWEST FIRST, matching `notes_for_book` and the cross-book `annotations_all`. The two
@@ -972,14 +997,14 @@ pub fn highlights_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result
     // before handing it to the renderer — see `annotationsStore.load` — so which of two OVERLAPPING
     // marks paints on top is unchanged. Sorting here without that would have been a silent visual change.
     let mut stmt = conn.prepare(&format!(
-        "SELECT {HL_COLS} FROM highlights WHERE book_id = ?1 ORDER BY created_at DESC"
+        "SELECT {HL_COLS}, {HL_TAGS_SUB} FROM highlights WHERE book_id = ?1 ORDER BY created_at DESC"
     ))?;
     let rows = stmt.query_map([book_id], highlight_row)?;
     rows.collect()
 }
 
 fn get_highlight(conn: &Connection, id: &str) -> rusqlite::Result<Option<HighlightRow>> {
-    conn.query_row(&format!("SELECT {HL_COLS} FROM highlights WHERE id = ?1"), [id], highlight_row)
+    conn.query_row(&format!("SELECT {HL_COLS}, {HL_TAGS_SUB} FROM highlights WHERE id = ?1"), [id], highlight_row)
         .optional()
 }
 
@@ -1175,6 +1200,17 @@ pub struct NoteRow {
     /// RAWY-282: optional, independent of `body`. `None` = this note has no title, which is what every
     /// note written before migration 14 is — the list then renders exactly as it always did.
     pub title: Option<String>,
+    /// This note's tag NAMES, resolved through the `note_tags` join (RAWY-203).
+    ///
+    /// NAMES, not ids, for the same reason `AnnoItem.tags` carries names: every consumer of this row
+    /// either displays a tag or filters by one, and an id would force a second lookup at each of them.
+    /// The tag ENTITIES stay the source of truth -- this is a projection of the join, never a copy, so
+    /// renaming or deleting a tag is still one write in one place and no note can hold a stale name.
+    ///
+    /// An untagged note gets an empty vector, which is exactly what every note written before this
+    /// field existed produces: the subquery returns NULL and NULL becomes `vec![]`. No migration is
+    /// needed, and "never tagged" and "tags removed" are indistinguishable, as they should be.
+    pub tags: Vec<String>,
 }
 
 fn note_row(r: &rusqlite::Row) -> rusqlite::Result<NoteRow> {
@@ -1189,6 +1225,13 @@ fn note_row(r: &rusqlite::Row) -> rusqlite::Result<NoteRow> {
         created_at: r.get(7)?,
         updated_at: r.get(8)?,
         title: r.get(9)?,
+        // APPENDED at index 10 -- the same discipline `title` was added under, so every index above
+        // keeps its position and nothing that already read a column can read the wrong one.
+        // GROUP_CONCAT yields NULL for a note with no tags, which becomes an empty list.
+        tags: r
+            .get::<_, Option<String>>(10)?
+            .map(|v| v.split('\n').filter(|x| !x.is_empty()).map(str::to_string).collect())
+            .unwrap_or_default(),
     })
 }
 
@@ -1197,20 +1240,27 @@ fn note_row(r: &rusqlite::Row) -> rusqlite::Result<NoteRow> {
 const NOTE_COLS: &str =
     "id, book_id, highlight_id, locator_cfi, color, body, chapter_label, created_at, updated_at, title";
 
+/// This note's tag names, as ONE correlated subquery -- the same shape `annotations_all` has used for
+/// the cross-book Inbox since RAWY-203, so the in-book list and the Inbox resolve tags identically and
+/// cannot drift apart. Qualified `notes.id` because these queries select `FROM notes` unaliased.
+/// A note with no tags yields NULL, which `note_row` reads as an empty list.
+const NOTE_TAGS_SUB: &str = "(SELECT GROUP_CONCAT(tg.name, char(10)) FROM note_tags nt \
+     JOIN tags tg ON tg.id = nt.tag_id WHERE nt.note_id = notes.id)";
+
 pub fn notes_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<NoteRow>> {
     // RAWY-282: NEWEST FIRST. This was `ORDER BY created_at` (ascending), which put the note just
     // written at the very BOTTOM of the panel — the opposite of every note-taking app, and of this
     // app's own cross-book Inbox, whose `annotations_all` has always ordered `created_at DESC`. The
     // two views disagreed; this makes the in-book list agree with the one that was already right.
     let mut stmt = conn.prepare(&format!(
-        "SELECT {NOTE_COLS} FROM notes WHERE book_id = ?1 ORDER BY created_at DESC"
+        "SELECT {NOTE_COLS}, {NOTE_TAGS_SUB} FROM notes WHERE book_id = ?1 ORDER BY created_at DESC"
     ))?;
     let rows = stmt.query_map([book_id], note_row)?;
     rows.collect()
 }
 
 fn get_note(conn: &Connection, id: &str) -> rusqlite::Result<Option<NoteRow>> {
-    conn.query_row(&format!("SELECT {NOTE_COLS} FROM notes WHERE id = ?1"), [id], note_row)
+    conn.query_row(&format!("SELECT {NOTE_COLS}, {NOTE_TAGS_SUB} FROM notes WHERE id = ?1"), [id], note_row)
         .optional()
 }
 
@@ -1299,6 +1349,59 @@ pub fn tag_create(conn: &Connection, name: &str) -> rusqlite::Result<Option<Tag>
     )?;
     conn.query_row("SELECT id, name, created_at FROM tags WHERE name = ?1", [name], tag_row)
         .optional()
+}
+
+/// The outcome of a rename, as a value the interface can act on.
+///
+/// A rename can fail for reasons that are not errors — the name is blank, or another tag already has
+/// it — and those need to be TOLD to the reader, not swallowed or turned into an exception string that
+/// cannot be translated. `status` is a stable token the interface maps to its own words.
+#[derive(Serialize)]
+pub struct TagRename {
+    /// "ok" | "empty" | "taken" | "missing" | "unchanged"
+    pub status: String,
+    /// The tag as it now stands — present for "ok" and "unchanged", absent otherwise.
+    pub tag: Option<Tag>,
+}
+
+/// Rename a tag IN PLACE.
+///
+/// THE IDENTITY NEVER CHANGES. This is an `UPDATE` of `tags.name` on the existing row, so `tags.id` is
+/// untouched and every `note_tags` link keeps pointing at the same tag. Nothing is re-assigned, nothing
+/// is created, and no annotation is read or written — which is precisely why every note and highlight
+/// carrying the tag shows the new name the moment the row changes: they never stored the name at all,
+/// they resolve it through the join.
+///
+/// Validation follows the rules `tag_create` already established, rather than inventing new ones: the
+/// name is TRIMMED, an empty name is refused, and names are UNIQUE. A name another tag already holds is
+/// REFUSED rather than merged — merging would silently move annotations between tags, which the reader
+/// did not ask for and could not undo. Renaming a tag to what it already is succeeds and does nothing.
+pub fn tag_rename(conn: &Connection, id: &str, name: &str) -> rusqlite::Result<TagRename> {
+    let name = name.trim();
+    let none = |st: &str| TagRename { status: st.to_string(), tag: None };
+    if name.is_empty() {
+        return Ok(none("empty"));
+    }
+    let current: Option<String> = conn
+        .query_row("SELECT name FROM tags WHERE id = ?1", [id], |r| r.get(0))
+        .optional()?;
+    let Some(current) = current else { return Ok(none("missing")) };
+    if current == name {
+        // Not a failure: the reader confirmed the name they already had.
+        let tag = conn.query_row("SELECT id, name, created_at FROM tags WHERE id = ?1", [id], tag_row)?;
+        return Ok(TagRename { status: "unchanged".into(), tag: Some(tag) });
+    }
+    // `tags.name` is UNIQUE, so this is also enforced by the schema; asking first lets the interface
+    // say WHICH problem it is instead of surfacing a constraint violation.
+    let taken: Option<String> = conn
+        .query_row("SELECT id FROM tags WHERE name = ?1", [name], |r| r.get(0))
+        .optional()?;
+    if taken.is_some() {
+        return Ok(none("taken"));
+    }
+    conn.execute("UPDATE tags SET name = ?1 WHERE id = ?2", rusqlite::params![name, id])?;
+    let tag = conn.query_row("SELECT id, name, created_at FROM tags WHERE id = ?1", [id], tag_row)?;
+    Ok(TagRename { status: "ok".into(), tag: Some(tag) })
 }
 
 /// Delete a tag. ON DELETE CASCADE clears its `note_tags` links; the `notes` table has NO FK to tags,
@@ -1434,6 +1537,311 @@ pub fn annotations_all(conn: &Connection) -> rusqlite::Result<Vec<AnnoItem>> {
 #[cfg(test)]
 mod tests {
     use super::{escape_like, fold_search};
+
+    // ── A NOTE CARRIES ITS TAGS ──────────────────────────────────────────────────────────────────
+    //
+    // `notes_for_book` projects the `note_tags` join into `NoteRow.tags` through one correlated
+    // subquery, so the in-book Notes sidebar can show and filter tags without a second round trip per
+    // note. What matters, and is easy to get silently wrong, is the empty case: a note that has never
+    // been tagged must come back with an EMPTY list, not a null and not a list containing "". Every
+    // note written before tags existed is that case, which is why it is asserted first.
+    mod note_tags {
+        use crate::library::{notes_for_book, note_tags_set, tag_create};
+        use rusqlite::Connection;
+
+        /// Only the tables this query touches. The real migrations are exercised elsewhere; what is
+        /// under test here is the projection, and a minimal schema makes a failure unambiguous.
+        fn db() -> Connection {
+            let c = Connection::open_in_memory().unwrap();
+            c.execute_batch(
+                "CREATE TABLE notes (
+                   id TEXT PRIMARY KEY, book_id TEXT, highlight_id TEXT, locator_cfi TEXT,
+                   color TEXT, body TEXT, chapter_label TEXT, created_at INTEGER,
+                   updated_at INTEGER, title TEXT);
+                 CREATE TABLE highlights (
+                   id TEXT PRIMARY KEY, book_id TEXT, start_cfi TEXT, color TEXT,
+                   text_excerpt TEXT, chapter_label TEXT, created_at INTEGER, alpha REAL);
+                 CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_at INTEGER);
+                 CREATE TABLE note_tags (
+                   note_id TEXT NOT NULL, tag_id TEXT NOT NULL, PRIMARY KEY (note_id, tag_id));",
+            )
+            .unwrap();
+            c
+        }
+
+        fn add_note(c: &Connection, id: &str, created: i64) {
+            c.execute(
+                "INSERT INTO notes(id, book_id, body, created_at) VALUES(?1, 'b1', 'text', ?2)",
+                rusqlite::params![id, created],
+            )
+            .unwrap();
+        }
+
+        #[test]
+        fn an_untagged_note_comes_back_with_an_empty_list() {
+            // EVERY note written before tags existed is this note. It must need no migration and no
+            // null check anywhere above it.
+            let c = db();
+            add_note(&c, "n1", 100);
+            let rows = notes_for_book(&c, "b1").unwrap();
+            assert_eq!(rows.len(), 1);
+            assert!(rows[0].tags.is_empty(), "expected no tags, got {:?}", rows[0].tags);
+        }
+
+        #[test]
+        fn one_tag_comes_back_by_name() {
+            let c = db();
+            add_note(&c, "n1", 100);
+            let t = tag_create(&c, "characters").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[t.id]).unwrap();
+            let rows = notes_for_book(&c, "b1").unwrap();
+            assert_eq!(rows[0].tags, vec!["characters".to_string()]);
+        }
+
+        #[test]
+        fn several_tags_all_come_back() {
+            // The sidebar shows every tag on the card and matches ANY of them when filtering, so a
+            // truncated list would silently hide a note from a filter it belongs under.
+            let c = db();
+            add_note(&c, "n1", 100);
+            let a = tag_create(&c, "characters").unwrap().unwrap();
+            let b = tag_create(&c, "places").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[a.id, b.id]).unwrap();
+            let rows = notes_for_book(&c, "b1").unwrap();
+            let mut got = rows[0].tags.clone();
+            got.sort();
+            assert_eq!(got, vec!["characters".to_string(), "places".to_string()]);
+        }
+
+        #[test]
+        fn removing_every_tag_returns_the_note_to_the_untagged_case() {
+            // "Never tagged" and "tags removed" must be indistinguishable, or a note could linger in a
+            // filter it no longer belongs to.
+            let c = db();
+            add_note(&c, "n1", 100);
+            let t = tag_create(&c, "characters").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[t.id]).unwrap();
+            note_tags_set(&c, "n1", &[]).unwrap();
+            let rows = notes_for_book(&c, "b1").unwrap();
+            assert!(rows[0].tags.is_empty(), "expected no tags, got {:?}", rows[0].tags);
+        }
+
+        #[test]
+        fn a_tag_is_shared_by_name_across_notes() {
+            // Tags are library-wide entities keyed by a UNIQUE name, so tagging a second note with the
+            // same word must REUSE the row rather than mint a second one that only looks the same.
+            let c = db();
+            add_note(&c, "n1", 100);
+            add_note(&c, "n2", 200);
+            let first = tag_create(&c, "characters").unwrap().unwrap();
+            let again = tag_create(&c, "characters").unwrap().unwrap();
+            assert_eq!(first.id, again.id, "the same name must be the same tag");
+            note_tags_set(&c, "n1", &[first.id.clone()]).unwrap();
+            note_tags_set(&c, "n2", &[again.id]).unwrap();
+            let count: i64 = c
+                .query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(count, 1, "one name must be one tag row");
+            for row in notes_for_book(&c, "b1").unwrap() {
+                assert_eq!(row.tags, vec!["characters".to_string()]);
+            }
+        }
+
+        // ── A HIGHLIGHT'S TAGS ARE ITS NOTE'S TAGS ───────────────────────────────────────────────
+        //
+        // There is no highlight->tag relationship in the schema and there must not be one: `note_tags`
+        // anchors to `notes.id`, and RAWY-205 made an EMPTY-BODY note a legitimate tag ANCHOR so a
+        // body-less highlight could be tagged. `highlights_for_book` resolves through that note, which
+        // is what lets ONE tag filter serve both kinds in the sidebar.
+        #[test]
+        fn a_highlight_carries_the_tags_of_its_attached_note() {
+            let c = db();
+            c.execute(
+                "INSERT INTO highlights(id, book_id, start_cfi, color, created_at)                  VALUES('h1','b1','epubcfi(/2)','amber',100)",
+                [],
+            )
+            .unwrap();
+            // an ANCHOR note: no body at all, existing only to hold the tag
+            c.execute(
+                "INSERT INTO notes(id, book_id, highlight_id, created_at) VALUES('n1','b1','h1',100)",
+                [],
+            )
+            .unwrap();
+            let t = tag_create(&c, "quote").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[t.id]).unwrap();
+            let rows = crate::library::highlights_for_book(&c, "b1").unwrap();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].tags, vec!["quote".to_string()]);
+        }
+
+        // -- RENAMING A TAG ------------------------------------------------------------------------
+        //
+        // The identity must not move. Everything below is one claim from several angles: the row is
+        // UPDATED, so `tags.id` and every `note_tags` link survive, and no note or highlight is read or
+        // written at all -- which is exactly why the new name simply appears on them.
+        #[test]
+        fn renaming_keeps_the_same_tag_and_all_its_links() {
+            let c = db();
+            add_note(&c, "n1", 100);
+            add_note(&c, "n2", 200);
+            let t = tag_create(&c, "old").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[t.id.clone()]).unwrap();
+            note_tags_set(&c, "n2", &[t.id.clone()]).unwrap();
+
+            let out = crate::library::tag_rename(&c, &t.id, "new").unwrap();
+            assert_eq!(out.status, "ok");
+            assert_eq!(out.tag.as_ref().unwrap().id, t.id, "the id must not change");
+            assert_eq!(out.tag.as_ref().unwrap().name, "new");
+
+            // one tag row still, both links still there -- the SAME tag, under a new name
+            let tags: i64 = c.query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0)).unwrap();
+            let links: i64 = c.query_row("SELECT COUNT(*) FROM note_tags", [], |r| r.get(0)).unwrap();
+            assert_eq!((tags, links), (1, 2));
+            for row in notes_for_book(&c, "b1").unwrap() {
+                assert_eq!(row.tags, vec!["new".to_string()], "note {} lost the tag", row.id);
+            }
+        }
+
+        #[test]
+        fn renaming_never_touches_the_annotations_themselves() {
+            // The dangerous implementation is "create + reassign + delete", which can drop a note
+            // through the cascade. Nothing here may change the notes table at all.
+            let c = db();
+            add_note(&c, "n1", 100);
+            let t = tag_create(&c, "old").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[t.id.clone()]).unwrap();
+            let before: i64 = c.query_row("SELECT COUNT(*) FROM notes", [], |r| r.get(0)).unwrap();
+            crate::library::tag_rename(&c, &t.id, "new").unwrap();
+            let after: i64 = c.query_row("SELECT COUNT(*) FROM notes", [], |r| r.get(0)).unwrap();
+            assert_eq!(before, after, "a rename must not add or remove a note");
+        }
+
+        #[test]
+        fn a_name_another_tag_already_holds_is_refused_not_merged() {
+            // Merging would silently move annotations between tags. Refusing is recoverable.
+            let c = db();
+            add_note(&c, "n1", 100);
+            let a = tag_create(&c, "alpha").unwrap().unwrap();
+            let b = tag_create(&c, "beta").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[a.id.clone()]).unwrap();
+
+            let out = crate::library::tag_rename(&c, &b.id, "alpha").unwrap();
+            assert_eq!(out.status, "taken");
+            assert!(out.tag.is_none());
+            let names: Vec<String> =
+                crate::library::tags_list(&c).unwrap().into_iter().map(|t| t.name).collect();
+            assert_eq!(names, vec!["alpha".to_string(), "beta".to_string()]);
+            assert_eq!(notes_for_book(&c, "b1").unwrap()[0].tags, vec!["alpha".to_string()]);
+        }
+
+        #[test]
+        fn a_blank_name_is_refused_and_changes_nothing() {
+            let c = db();
+            let t = tag_create(&c, "keep").unwrap().unwrap();
+            for blank in ["", "   ", " \t \n "] {
+                let out = crate::library::tag_rename(&c, &t.id, blank).unwrap();
+                assert_eq!(out.status, "empty", "blank {blank:?} should be refused");
+            }
+            assert_eq!(crate::library::tags_list(&c).unwrap()[0].name, "keep");
+        }
+
+        #[test]
+        fn a_name_is_trimmed_exactly_as_creation_trims_it() {
+            // ONE naming rule, not two: `tag_create` trims, so rename must trim identically or the two
+            // routes would produce names that look the same and are not.
+            let c = db();
+            let t = tag_create(&c, "old").unwrap().unwrap();
+            let out = crate::library::tag_rename(&c, &t.id, "  spaced  ").unwrap();
+            assert_eq!(out.status, "ok");
+            assert_eq!(out.tag.unwrap().name, "spaced");
+        }
+
+        #[test]
+        fn renaming_a_tag_to_its_own_name_succeeds_and_writes_nothing() {
+            let c = db();
+            let t = tag_create(&c, "same").unwrap().unwrap();
+            let out = crate::library::tag_rename(&c, &t.id, "same").unwrap();
+            assert_eq!(out.status, "unchanged");
+            assert_eq!(out.tag.unwrap().id, t.id);
+        }
+
+        #[test]
+        fn arabic_english_mixed_and_long_names_all_round_trip() {
+            let c = db();
+            add_note(&c, "n1", 100);
+            let t = tag_create(&c, "start").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[t.id.clone()]).unwrap();
+            let names = [
+                "\u{634}\u{62e}\u{635}\u{64a}\u{627}\u{62a}",
+                "Notes \u{648}\u{645}\u{644}\u{627}\u{62d}\u{638}\u{627}\u{62a}",
+                "a very long tag name that a reader might reasonably type out in full and expect to keep",
+            ];
+            for name in names {
+                let out = crate::library::tag_rename(&c, &t.id, name).unwrap();
+                assert_eq!(out.status, "ok", "rename to {name:?}");
+                assert_eq!(notes_for_book(&c, "b1").unwrap()[0].tags, vec![name.to_string()]);
+            }
+        }
+
+        #[test]
+        fn renaming_an_unknown_tag_reports_missing_rather_than_creating_one() {
+            let c = db();
+            let out = crate::library::tag_rename(&c, "no-such-id", "whatever").unwrap();
+            assert_eq!(out.status, "missing");
+            let n: i64 = c.query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0)).unwrap();
+            assert_eq!(n, 0, "a rename must never create a tag");
+        }
+
+        #[test]
+        fn an_unrelated_tag_is_untouched_by_a_rename() {
+            let c = db();
+            add_note(&c, "n1", 100);
+            add_note(&c, "n2", 200);
+            let a = tag_create(&c, "alpha").unwrap().unwrap();
+            let b = tag_create(&c, "beta").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[a.id.clone()]).unwrap();
+            note_tags_set(&c, "n2", &[b.id.clone()]).unwrap();
+            crate::library::tag_rename(&c, &a.id, "gamma").unwrap();
+            let by: std::collections::HashMap<_, _> = notes_for_book(&c, "b1")
+                .unwrap()
+                .into_iter()
+                .map(|r| (r.id, r.tags))
+                .collect();
+            assert_eq!(by["n1"], vec!["gamma".to_string()]);
+            assert_eq!(by["n2"], vec!["beta".to_string()], "the other tag must be untouched");
+        }
+
+        #[test]
+        fn a_highlight_with_no_note_has_no_tags() {
+            // Every highlight made before tags existed is this one. It must need no backfill.
+            let c = db();
+            c.execute(
+                "INSERT INTO highlights(id, book_id, start_cfi, color, created_at)                  VALUES('h1','b1','epubcfi(/2)','amber',100)",
+                [],
+            )
+            .unwrap();
+            let rows = crate::library::highlights_for_book(&c, "b1").unwrap();
+            assert!(rows[0].tags.is_empty(), "expected none, got {:?}", rows[0].tags);
+        }
+
+        #[test]
+        fn each_note_gets_only_its_own_tags() {
+            let c = db();
+            add_note(&c, "n1", 100);
+            add_note(&c, "n2", 200);
+            let a = tag_create(&c, "characters").unwrap().unwrap();
+            let b = tag_create(&c, "places").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[a.id]).unwrap();
+            note_tags_set(&c, "n2", &[b.id]).unwrap();
+            let rows = notes_for_book(&c, "b1").unwrap();
+            // newest first, so n2 leads
+            let by_id: std::collections::HashMap<_, _> =
+                rows.iter().map(|r| (r.id.as_str(), r.tags.clone())).collect();
+            assert_eq!(by_id["n1"], vec!["characters".to_string()]);
+            assert_eq!(by_id["n2"], vec!["places".to_string()]);
+        }
+    }
+
     // ── «كثافة الحبر» AT ZERO ────────────────────────────────────────────────────────────────────
     //
     // The scale used to begin at its floor, and the floor was enforced HERE as well as in the

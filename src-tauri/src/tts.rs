@@ -306,9 +306,59 @@ enum EdgeSynth {
 /// returned with the result; on timeout the worker is abandoned — its client drops when synthesize finally
 /// returns, closing the socket. `MSEdgeTTSClient<TcpStream>` + `SpeechConfig` are Send, so the move is sound.
 /// RAWY-257 (C1): `budget` is what is LEFT of the call's total deadline, not a fresh per-attempt ceiling.
+/// XML-escape book text on its way into the Edge SSML payload.
+///
+/// THE DEFECT THIS CLOSES. `msedge-tts` builds the request by interpolating the text straight into
+/// XML character data (0.4.0, `src/tts/mod.rs:150`):
+///
+/// ```text
+/// format!("<speak ...><voice name='{}'><prosody ...>{}</prosody></voice></speak>", .., text)
+/// ```
+///
+/// so a sentence carrying `<`, `>` or `&` produces a malformed document. The reported case is the
+/// guillemet pair `<<`, which .txt-to-EPUB conversions use for quotation marks throughout a book:
+/// the endpoint accepts the request and answers with audio that never plays, and read-aloud
+/// eventually reports that the voice cannot read this book.
+///
+/// WHY HERE. This is the last line Sard owns before the crate sees the text, and there is exactly one
+/// of them: `tts_synthesize` dispatches on the engine name, `edge_synthesize` is the only arm, and it
+/// reaches the crate through this one call. Escaping in the frontend instead would push an XML concern
+/// into the IPC contract and pre-escape text for any future engine that does not speak XML; escaping
+/// inside the crate would mean patching a vendored dependency for a problem Sard can solve at its own
+/// boundary.
+///
+/// WHY IT CHANGES NOTHING AUDIBLE. This is a transport encoding, and the receiver undoes it: the
+/// endpoint's XML parser decodes `&lt;` back to `<` before synthesis, so the spoken text — and the word
+/// boundaries Edge reports against it, which drive the karaoke cursor — are exactly what they were.
+///
+/// ONE PASS, so double-escaping is impossible BY CONSTRUCTION rather than by ordering care. Each source
+/// character is examined once and its replacement is written to the output, which is never re-read — so
+/// the `&` of an `&lt;` this function itself produced can never be escaped again. The result is
+/// identical to escaping `&` first and then the angle brackets: `&<>` becomes `&amp;&lt;&gt;`, and the
+/// reported `<<` becomes `&lt;&lt;`, never `&amp;lt;&amp;lt;`.
+///
+/// Book text is SOURCE TEXT, not markup: a book that literally prints `&lt;` is four characters the
+/// reader can see, so its `&` is escaped like any other and the endpoint decodes `&amp;lt;` back to the
+/// four characters the page shows.
+///
+/// Quotes are deliberately NOT escaped. The text lands in character data, between `<prosody>` and its
+/// closing tag, never inside an attribute value, so `"` and `'` carry no meaning there.
+fn escape_ssml_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 fn edge_synth_once(mut running: EdgeRunning, text: &str, budget: std::time::Duration) -> EdgeSynth {
     let (tx, rx) = std::sync::mpsc::channel();
-    let text = text.to_string();
+    let text = escape_ssml_text(text); // the crate interpolates this straight into SSML
     std::thread::spawn(move || {
         let res = running.client.synthesize(&text, &running.config);
         let _ = tx.send((running, res)); // if we already timed out, this send fails and drops the client
@@ -433,7 +483,7 @@ pub async fn tts_stop(engine: State<'_, TtsEngine>) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{arabic_fallback_voices, merge_arabic_fallback, Voice};
+    use super::{arabic_fallback_voices, escape_ssml_text, merge_arabic_fallback, Voice};
 
     fn mk(short: &str, locale: &str) -> Voice {
         Voice {
@@ -477,5 +527,116 @@ mod tests {
         // the fallback carries a valid full Name (SpeechConfig::from uses it for the SSML voice name)
         let salma = merged.iter().find(|v| v.short_name.as_deref() == Some("ar-SA-HamedNeural")).unwrap();
         assert_eq!(salma.name, "Microsoft Server Speech Text to Speech Voice (ar-SA, HamedNeural)");
+    }
+    // ---- SSML escaping (the `<<` defect) ------------------------------------------------------
+    //
+    // `msedge-tts` interpolates the text straight into XML character data, so anything Sard hands it
+    // is markup unless it was escaped first. These fix that contract in place.
+
+    /// The reported case, and the one that must NOT come out double-escaped.
+    #[test]
+    fn escapes_the_guillemet_pair() {
+        assert_eq!(escape_ssml_text("<<"), "&lt;&lt;");
+        assert_ne!(escape_ssml_text("<<"), "&amp;lt;&amp;lt;");
+    }
+
+    #[test]
+    fn escapes_each_sensitive_character() {
+        assert_eq!(escape_ssml_text("<"), "&lt;");
+        assert_eq!(escape_ssml_text(">"), "&gt;");
+        assert_eq!(escape_ssml_text("&"), "&amp;");
+        assert_eq!(escape_ssml_text(">>"), "&gt;&gt;");
+    }
+
+    /// The ordering property: the ampersand is escaped as a SOURCE character, and the ampersands this
+    /// function writes are never re-read. Escaping `<` first and `&` second would give `&amp;lt;` here.
+    #[test]
+    fn the_ampersand_is_escaped_before_the_angle_brackets() {
+        assert_eq!(escape_ssml_text("&<>"), "&amp;&lt;&gt;");
+        assert_eq!(escape_ssml_text("<&>"), "&lt;&amp;&gt;");
+        assert!(!escape_ssml_text("<").contains("&amp;lt;"));
+    }
+
+    /// A book that literally prints `&lt;` shows the reader four characters. They are source text, so
+    /// the ampersand is escaped exactly once and the endpoint decodes them back to what the page shows.
+    #[test]
+    fn an_entity_looking_sequence_is_treated_as_source_text() {
+        assert_eq!(escape_ssml_text("&lt;"), "&amp;lt;");
+        assert_eq!(escape_ssml_text("&amp;"), "&amp;amp;");
+    }
+
+    #[test]
+    fn mixed_text_carrying_all_three() {
+        assert_eq!(escape_ssml_text("a < b & c > d"), "a &lt; b &amp; c &gt; d");
+    }
+
+    #[test]
+    fn ordinary_text_is_returned_unchanged() {
+        // Arabic prose, with the punctuation and the Arabic-Indic digits read-aloud relies on.
+        let arabic = "كان الفصل ٤٦، وهو جميل؟";
+        assert_eq!(escape_ssml_text(arabic), arabic);
+        let latin = "The quick brown fox; it jumped (twice) - 42% of the time!";
+        assert_eq!(escape_ssml_text(latin), latin);
+        assert_eq!(escape_ssml_text(""), "");
+    }
+
+    // ---- the SSML payload itself ---------------------------------------------------------------
+    //
+    // A helper can be correct and still not be REACHED, so this asserts the property at the shape the
+    // crate actually sends. The template mirrors `msedge-tts` 0.4.0 `src/tts/mod.rs:150` verbatim; if
+    // that crate is re-pinned, re-derive this copy from the new source.
+    fn ssml_payload(escaped_text: &str) -> String {
+        format!(
+            "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>\
+<voice name='ar-EG-SalmaNeural'><prosody pitch='+0Hz' rate='+0%' volume='+0%'>{escaped_text}\
+</prosody></voice></speak>"
+        )
+    }
+
+    /// Parse the payload with a real XML reader and read the character data back out.
+    fn parse_text_of(payload: &str) -> Result<String, String> {
+        let mut reader = quick_xml::Reader::from_str(payload);
+        let mut found = String::new();
+        loop {
+            match reader.read_event() {
+                Ok(quick_xml::events::Event::Text(e)) => {
+                    found.push_str(&e.unescape().map_err(|err| format!("unescape: {err}"))?);
+                }
+                Ok(quick_xml::events::Event::Eof) => break,
+                Ok(_) => {}
+                Err(e) => return Err(format!("parse: {e}")),
+            }
+        }
+        Ok(found)
+    }
+
+    /// THE REGRESSION. Hostile book text, escaped by the function production uses, put into the shape
+    /// the crate sends: the document must parse, and the text the endpoint would synthesize must be
+    /// character-for-character the sentence from the book.
+    #[test]
+    fn the_payload_is_well_formed_and_says_what_the_book_says() {
+        for original in [
+            "<<",
+            "قال: <<أهلاً>> & مضى",
+            "a < b & c > d",
+            "&lt;",
+            "plain sentence",
+        ] {
+            let payload = ssml_payload(&escape_ssml_text(original));
+            let spoken = parse_text_of(&payload)
+                .unwrap_or_else(|e| panic!("payload for {original:?} did not parse: {e}"));
+            assert_eq!(spoken, original, "the endpoint would speak the wrong text for {original:?}");
+        }
+    }
+
+    /// The test above must be able to FAIL, or it proves nothing. Unescaped, the same text is not a
+    /// well-formed document — which is precisely the defect.
+    #[test]
+    fn the_unescaped_payload_is_what_breaks() {
+        let payload = ssml_payload("<<");
+        assert!(
+            parse_text_of(&payload).is_err(),
+            "raw `<<` must not parse — if it does, the escaping test above is vacuous"
+        );
     }
 }

@@ -25,6 +25,8 @@ import {
   COMPOSITION_VERSION, formatSize, GROUND_SCALE_MAX, GROUND_SCALE_MIN, referencedAssets,
   serializeComposition, type Composition,
 } from "./composition";
+import { OVERLAY_HOST_CLASS } from "../library/design/overlay";
+import { inspectorFits } from "./workspace";
 import { ElementsLayer, GroundLayer, type AssetUrl } from "./CardLayers";
 import { CardToolbar } from "./CardToolbar";
 import { ScrubField } from "./ScrubField";
@@ -123,6 +125,7 @@ const clamp01 = (base: number, delta: number, limit: number) =>
 
 const STAGE_MAX_W = 700;
 const STAGE_MAX_H = 640;
+
 
 // RAWY-81 (#1): the quote's own font, chosen independently of the book. Keys map to the
 // app-document @font-face families (global.css) — the card lives in the app document, not the
@@ -1332,21 +1335,62 @@ export function PhotoComposer({
    */
   const workRef = useRef<HTMLDivElement>(null);
   const [workBox, setWorkBox] = useState({ w: STAGE_MAX_W, h: STAGE_MAX_H });
+  /**
+   * DOES THE INSPECTOR STILL FIT BESIDE THE CARD?
+   *
+   * Measured, not guessed at from the window: the workspace already measures itself, and the same
+   * rectangle answers this. `roomWithInspector` is what the stage would get if the panel keeps its
+   * reservation; below `STAGE_MIN` the card used to stop shrinking and overflow back out under the
+   * panel, which is the defect this whole change is about.
+   */
+  const [inspectorHasRoom, setInspectorHasRoom] = useState(true);
   useLayoutEffect(() => {
     const el = workRef.current;
     if (!el) return;
     const read = () => {
       const r = el.getBoundingClientRect();
+      // Before the first layout the element has no box. Flooring that to a number invented a stage
+      // out of nothing; keeping the previous value simply waits for a real measurement.
+      if (r.width <= 0 || r.height <= 0) return;
       const cs = getComputedStyle(el);
       const padX = parseFloat(cs.paddingInlineStart) + parseFloat(cs.paddingInlineEnd);
       const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-      setWorkBox({ w: Math.max(240, r.width - padX), h: Math.max(240, r.height - padY) });
+      // THE FLOOR IS GONE, AND THAT IS THE FIX. `Math.max(240, …)` did not keep the card usable — it
+      // made the card LIE about the room it had, so `fitScale` scaled to 240 inside a box measured
+      // at 8px and the difference spilled out of `.pcx-work` on both sides. The card now fits what
+      // is actually there, and staying usable is the breakpoint's job below, not a clamp's.
+      setWorkBox({ w: Math.max(1, r.width - padX), h: Math.max(1, r.height - padY) });
+      // The reservation and the gutter are declared in the stylesheet; reading them back keeps one
+      // definition rather than a second copy here that could drift from it.
+      const mcs = getComputedStyle(el.closest(".pcx-modal") ?? el);
+      const reserve = parseFloat(mcs.getPropertyValue("--pcx-insp-reserve")) || 372;
+      const gutter = parseFloat(mcs.getPropertyValue("--pcx-gutter")) || 44;
+      // HYSTERESIS, so a window dragged along the boundary does not flap: it takes a little more
+      // room to bring the panel back than it took to send it away.
+      setInspectorHasRoom((was) => inspectorFits(r.width, reserve, gutter, was));
     };
     read();
     const ro = new ResizeObserver(read);
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+  /**
+   * WHETHER THE INSPECTOR IS ON SCREEN — geometry, unless the reader has said otherwise.
+   *
+   * `inspectorOpen` was a prop passed a literal `true`, and `.pcx-strip.with-inspector` already
+   * varied by it: the machinery for a panel that can be absent was drawn and never wired. This
+   * wires it, and nothing more.
+   *
+   * WHERE THERE IS ROOM, NOTHING CHANGES: the panel is open, the reservation stands, and no control
+   * appears — the wide layout is the one that shipped. Where there is not, the panel steps aside so
+   * the card can have the room, and a control appears beside the zoom so it can be brought back. The
+   * reader's own press wins over the geometry for as long as they stay at that width; moving back
+   * into open country clears it, so the override cannot be carried somewhere it would be confusing.
+   */
+  const [inspectorChoice, setInspectorChoice] = useState<boolean | null>(null);
+  useEffect(() => { setInspectorChoice(null); }, [inspectorHasRoom]);
+  const inspectorOpen = inspectorChoice ?? inspectorHasRoom;
+
   const fitScale = useMemo(
     () => Math.min(workBox.w / natW, workBox.h / natH),
     [workBox, natW, natH],
@@ -1565,6 +1609,20 @@ export function PhotoComposer({
         dir={lang === "ar" ? "rtl" : "ltr"}
         onPointerDown={(e) => e.stopPropagation()}
       >
+        {/* WHERE THE COMPOSER'S FLOATING SURFACES ARE DRAWN.
+            The same host the Library uses, declared again here because this modal is its own shell:
+            it defines `--pc-*` on this element, so a surface portalled into the Library's host would
+            land outside those tokens. `overlayHost(el)` finds the nearest one, which from inside the
+            composer is this.
+            IT IS HERE TO ESCAPE A STACKING CONTEXT, measured rather than assumed. The floating
+            toolbar `.pcx-tb` is `position: absolute; z-index: 32`, so it IS a stacking context, and
+            the colour picker inside it carries `z-index: 46` — higher than the inspector's 34 and
+            still painted underneath it, because 46 is ranked within 32. At 900px the inspector
+            covered the toolbar's own swatch: `elementsFromPoint` over it returned
+            `textarea.pcx-text · section.pcx-sec · aside.pcx-insp` ABOVE `button.pcx-tb-swatch`, so
+            the control could not be pressed at all. No z-index on the picker can reach past that;
+            only leaving the context can. */}
+        <div className={OVERLAY_HOST_CLASS} />
 
         {/* ── TOP BAR ─────────────────────────────────────────────────────────────────────────
             Where the card is, what it belongs to, and what to do with it when it is finished. */}
@@ -1884,14 +1942,18 @@ export function PhotoComposer({
           </nav>
 
           {/* ── WORKSPACE. The canvas is the centre; everything else floats over it. ─────────── */}
-          <div className="pcx-work" ref={workRef} onPointerDown={() => { setSelectedId(null); setBgMode(false); }}>
+          <div className={`pcx-work${inspectorOpen ? "" : " solo"}`} ref={workRef} onPointerDown={() => { setSelectedId(null); setBgMode(false); }}>
             <ObjectsStrip
               comp={composition}
               selectedId={selectedId}
               onSelect={(id) => { setBgMode(false); setSelectedId(id); }}
               zoom={zoom}
               onZoom={(z) => setZoom(z === "fit" ? 1 : z)}
-              inspectorOpen
+              inspectorOpen={inspectorOpen}
+              /* Offered only where the geometry is tight. At comfortable widths the panel is simply
+                 there, and a control to dismiss something that is not in the way would be one more
+                 thing in a row that is already the busiest part of the workspace. */
+              onToggleInspector={inspectorHasRoom ? undefined : () => setInspectorChoice(!inspectorOpen)}
             />
 
             <div className="pcx-wrap" style={{ width: natW * viewScale, height: naturalH * viewScale }}>
@@ -1957,7 +2019,14 @@ export function PhotoComposer({
               )}
             </div>
 
-            {/* ── INSPECTOR: an overlay beside the canvas, never a column of the page ────────── */}
+            {/* ── INSPECTOR: an overlay beside the canvas, never a column of the page ──────────
+                STILL AN OVERLAY, and still never a column: what changed is only whether it is on
+                screen at all. Below the width where the card and the panel stop fitting together it
+                is not rendered, its 372px reservation is released to the stage, and the strip offers
+                the way back. Opening it there puts it back over the canvas exactly as it always sat
+                — the model is unchanged, the room is simply no longer held for a panel that is not
+                there. */}
+            {inspectorOpen && (
             <aside className="pcx-insp" onPointerDown={(e) => e.stopPropagation()}>
               <header className="pcx-insp-head">
                 <span className={`pcx-insp-dot ${bgMode ? "bg" : selected ? selected.kind : "doc"}`} aria-hidden />
@@ -2105,6 +2174,7 @@ export function PhotoComposer({
               />
               )}
             </aside>
+            )}
           </div>
         </div>
         {/* ── WHAT TO DO WITH IT, WHERE YOU ARRIVE HAVING FINISHED ────────────────────────────

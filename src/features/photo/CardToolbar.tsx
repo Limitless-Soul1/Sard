@@ -12,7 +12,7 @@
 // dragged. Dragging a value horizontally is how every real editor does it, and it is why NewQu has
 // no slider here at all.
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { useI18n } from "../../i18n";
 import { ColourPicker } from "./ColourPicker";
@@ -50,6 +50,9 @@ export function CardToolbar({
   // the inspector was how the old toolbar did it, and it meant the toolbar could not be trusted on
   // its own: press the swatch, and the answer appeared somewhere else on the screen.
   const [colour, setColour] = useState(false);
+  // The picker is drawn in the overlay host, so it needs the control it belongs to in order to place
+  // itself against it.
+  const swatchRef = useRef<HTMLButtonElement | null>(null);
   if (selected.kind === "unknown") return null;
 
   const px = (f: number) => f * canvasW;
@@ -122,6 +125,7 @@ export function CardToolbar({
 
           <span className="pcx-tb-colour">
             <button
+              ref={swatchRef}
               className="pcx-tb-swatch"
               style={{ background: swatch }}
               onClick={() => setColour((v) => !v)}
@@ -129,6 +133,10 @@ export function CardToolbar({
             />
             {colour && (
               <ColourPicker
+                /* Anchored, so the panel is drawn in the composer's overlay host instead of inside
+                   this toolbar — which is a stacking context at z-index 32 and put the picker under
+                   the inspector at every width measured. */
+                anchor={swatchRef}
                 value={selected.style.color ?? null}
                 onChange={(hex) => onStyle({ color: hex })}
                 title={t("photo.el.colour")}

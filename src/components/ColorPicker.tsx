@@ -105,21 +105,53 @@ export function ColorPicker({
 }) {
   const { t } = useI18n();
   const safe = isHex(value) ? value : "#000000";
-  const [h, s, l] = rgbToHsl(toRgb(safe));
 
-  // The hue a reader is working at is not recoverable from a grey — every grey is hue 0, so sweeping
-  // to the edge of the plane and back would snap the hue to red. Holding it locally keeps the strip
-  // where the reader put it, which is what makes the plane feel like one surface rather than two.
-  const [hue, setHue] = useState(h);
-  useEffect(() => { if (s > 0.004) setHue(h); }, [h, s]);
+  /**
+   * THE POSITION IS HELD HERE, NOT READ BACK OUT OF THE COLOUR.
+   *
+   * The plane is HSL: across is saturation, down is lightness. Both used to be re-derived from the
+   * committed hex on every render — `rgbToHsl(toRgb(value))` — which makes the dot a round trip
+   * through eight-bit RGB, and that trip does not come back. Near the top and bottom edges almost
+   * every saturation collapses onto the same few bytes (at the bottom the whole width is #060606 to
+   * #0B0600), so the saturation read back out is not the one the reader is pointing at, and a pure
+   * grey reads as saturation 0 — the left edge — whatever the pointer is doing.
+   *
+   * MEASURED, dragging along the bottom edge of the reader's own picker: the pointer moved evenly
+   * from 4px to 206px while the DOT went 0 → 35 → 57 → 70 → 95 → 105 → 140 → 172 → 175 → 210, worst
+   * error 11.2px, twice moving BACKWARDS against the pointer. That is the reported jumping, the
+   * dancing, and the pull toward the black corner: one fault, visible only where the colour space
+   * cannot carry the coordinate. Mid-plane the same drag tracks to within 1.8px, which is why it
+   * looked intermittent.
+   *
+   * So the picker owns its own position and the colour is what it EMITS, never what it reads. The
+   * hue was already held for exactly this reason (every grey is hue 0); this is that same argument
+   * followed to the other two axes, which removes the special case rather than adding one.
+   */
+  const [hsl, setHsl] = useState<[number, number, number]>(() => rgbToHsl(toRgb(safe)));
+  /** The last hex THIS picker produced, so an echo of it is not mistaken for an outside change. */
+  const mine = useRef<string | null>(null);
+  useEffect(() => {
+    // A value we just emitted tells us nothing we do not already know, and re-deriving from it is
+    // precisely the lossy step. Anything else — a preset, a typed hex, the owner changing it — is a
+    // real instruction and the position must follow it.
+    if (mine.current && mine.current === safe.toUpperCase()) return;
+    setHsl(rgbToHsl(toRgb(safe)));
+  }, [safe]);
+  const [h, s, l] = hsl;
+  const hue = h;
 
   // The field shows what the reader typed while they are typing, and the committed value otherwise.
   const [typed, setTyped] = useState<string | null>(null);
   const [bad, setBad] = useState(false);
   useEffect(() => { setTyped(null); setBad(false); }, [value]);
 
-  const emit = (nh: number, ns: number, nl: number) =>
-    onChange(toHex(hslToRgb([nh, clamp01(ns), clamp01(nl)])).toUpperCase());
+  const emit = (nh: number, ns: number, nl: number) => {
+    const next: [number, number, number] = [nh, clamp01(ns), clamp01(nl)];
+    setHsl(next);
+    const hex = toHex(hslToRgb(next)).toUpperCase();
+    mine.current = hex;
+    onChange(hex);
+  };
 
   const plane = useDrag((e) => {
     const p = at(e.currentTarget, e.clientX, e.clientY);
@@ -127,9 +159,7 @@ export function ColorPicker({
   });
   const hueBar = useDrag((e) => {
     const p = at(e.currentTarget, e.clientX, e.clientY);
-    const nh = p.x * 360;
-    setHue(nh);
-    emit(nh, s, l);
+    emit(p.x * 360, s, l);
   });
   const alphaBar = useDrag((e) => {
     if (!onOpacity) return;

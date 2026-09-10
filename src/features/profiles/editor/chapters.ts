@@ -25,6 +25,10 @@ export const CHAPTERS = [
   // Directly after the marks, because the reading cursor IS one: it is drawn on the page while Sard
   // reads aloud, and it is set the way the highlight and the bookmark are — a colour and a strength.
   { id: "voice",      name: "profiles.chapter.voice",      q: "profiles.chapter.voice.q" },
+  // And directly after the reading cursor, because the reference mark is the third thing Sard draws
+  // ON the text rather than around it — the highlight, the cursor, then the pair of rules under a word
+  // the reader has annotated. Same kind of object, same kind of question.
+  { id: "refs",       name: "profiles.chapter.refs",       q: "profiles.chapter.refs.q" },
   { id: "texture",    name: "profiles.chapter.texture",    q: "profiles.chapter.texture.q" },
 ] as const satisfies readonly { id: string; name: TKey; q: TKey }[];
 
@@ -80,6 +84,9 @@ export const FOCUS: Record<ChapterId, Focus> = {
   // The sentence being read and the word inside it: one specimen, because the two marks are set
   // against each other and framing either alone would misstate what the chapter does.
   voice:      { face: "book",    label: "profiles.focus.voice",    targets: [".pf-page-spot"] },
+  // The marked word and the rules under it — one specimen, because the mark is only legible against
+  // the text it belongs to.
+  refs:       { face: "book",    label: "profiles.focus.refs",     targets: [".pf-page-ref"] },
   // The panel the interface texture is actually visible on.
   texture:    { face: "library", label: "profiles.focus.texture",  targets: [".pf-lib-side"] },
 };

@@ -15,7 +15,7 @@ import { isImage, isText } from "./elements";
 import type { Composition } from "./composition";
 
 export function ObjectsStrip({
-  comp, selectedId, onSelect, zoom, onZoom, inspectorOpen,
+  comp, selectedId, onSelect, zoom, onZoom, inspectorOpen, onToggleInspector,
 }: {
   comp: Composition;
   selectedId: string | null;
@@ -24,6 +24,11 @@ export function ObjectsStrip({
   zoom: number;
   onZoom: (z: number | "fit") => void;
   inspectorOpen: boolean;
+  /**
+   * Given only where the workspace is too narrow to hold the inspector beside the card. Absent at
+   * comfortable widths, so the strip there is exactly the row that shipped.
+   */
+  onToggleInspector?: () => void;
 }) {
   const { t } = useI18n();
 
@@ -54,6 +59,26 @@ export function ObjectsStrip({
           </button>
         ))}
       </div>
+
+      {onToggleInspector && (
+        /* THE WAY BACK TO THE INSPECTOR. It sits in the strip because the strip is the row that
+           already knows whether the panel is there — `with-inspector` is its own class — and beside
+           the zoom because that is where this row keeps the controls that are about the WORKSPACE
+           rather than about the card. It is a pill in the same shape as the zoom cluster, so it
+           reads as one of the workspace's own controls rather than a new kind of thing. */
+        <button
+          className={`pcx-insp-toggle${inspectorOpen ? " on" : ""}`}
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={onToggleInspector}
+          aria-expanded={inspectorOpen}
+          title={t(inspectorOpen ? "photo.insp.hide" : "photo.insp.show")}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" />
+          </svg>
+          <span>{t("photo.insp.panel")}</span>
+        </button>
+      )}
 
       <div className="pcx-zoom" onPointerDown={(e) => e.stopPropagation()}>
         <button onClick={() => onZoom(Math.max(0.25, zoom - 0.1))} title={t("photo.zoom.out")}>

@@ -9,7 +9,9 @@
 // renamed `.zip`, or a profile renamed anything at all, both land where they belong. Nothing is
 // unpacked and nothing is written — inspect reads one bounded member into memory and returns text.
 import { profileImportInspect } from "../../lib/ipc";
-import { depositInspect } from "../../lib/ipc";
+import { depositInspect, fontImportDropped, fontInspect } from "../../lib/ipc";
+import { useFontDrop } from "../fonts/dropped";
+import { useFonts } from "../../lib/fonts";
 import { useIncomingDeposit } from "../deposit/store";
 import { useDropped } from "./dropped";
 import { profileChangePending } from "./session";
@@ -58,6 +60,61 @@ export async function routeDroppedPaths(
       // this file is a profile, and answering it with a book error would be a wrong reaction.
       if (profileChangePending()) return;
       useDropped.getState().offer(text, paths[0]);
+      return;
+    }
+
+    // A FONT, ASKED LAST AND THE SAME WAY. `font_inspect` reads the file, validates the container and
+    // parses its `name` table, and changes nothing — so a file that is not a font is refused here for
+    // free and goes on to have its ordinary turn as a book below. Asking last is what keeps this
+    // change incapable of affecting the two gates above it: a deposit and a هيئة are both ZIPs and
+    // have already answered by the time this runs.
+    //
+    // NO PRECEDENCE GUARD, unlike the two above, and the difference is the point: those open a SHEET,
+    // so they must not stack a second question on an unsaved-change dialog. A font import asks
+    // nothing — it reports. There is no question to stack.
+    let font: Awaited<ReturnType<typeof fontInspect>> | null = null;
+    try {
+      font = await fontInspect(paths[0]);
+    } catch (e) {
+      // A `font.err.*` key means "this IS a font-shaped file and it is not acceptable" — a renamed
+      // text file, a truncated face, a format Sard will not take. Say so rather than handing it to
+      // the book importer, which would answer a broken font with "not an EPUB".
+      const key = String(e);
+      // WHICH REFUSALS ARE THIS GATE'S TO ANSWER, and it is not all of them.
+      //
+      // `font.err.type` means the EXTENSION is not a font's — which is every EPUB, every image, every
+      // ordinary file a reader drops. Answering those in words would have swallowed the drop: measured,
+      // a dropped `.epub` reached the bookshelf before this gate existed and stopped reaching it after,
+      // because the gate refused it as "not a font Sard takes" and returned. It falls through instead,
+      // silently, exactly as a file that is not a deposit does.
+      //
+      // The CONTENT refusals are this gate's: a `.ttf` that is a renamed text file, a truncated face, a
+      // file that cannot be read. Those are font-shaped and the reader meant them as fonts, so handing
+      // them to the book importer would answer a broken font with "not an EPUB".
+      if (key.startsWith("font.err.") && key !== "font.err.type") {
+        useFontDrop.getState().say({ key: key as never, bad: true });
+        return;
+      }
+      // Anything else — including a file whose extension was never a font's. Fall through, silently.
+    }
+    if (font) {
+      try {
+        const done = await fontImportDropped(paths[0]);
+        // The picker's list is a store, so it has to be told; otherwise the font is installed and
+        // invisible until the next launch.
+        await useFonts.getState().reload();
+        useFontDrop.getState().say({
+          key: done.outcome === "imported" ? "font.drop.imported" : "font.drop.duplicate",
+          name: done.family,
+          bad: false,
+        });
+      } catch (e) {
+        const key = String(e);
+        useFontDrop.getState().say({
+          key: key.startsWith("font.err.") ? (key as never) : "font.err.failed",
+          bad: true,
+        });
+      }
       return;
     }
   }

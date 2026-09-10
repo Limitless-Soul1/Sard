@@ -25,7 +25,11 @@ import {
   type ReadingStyle,
 } from "../../../../reader-engine/injectedCss";
 import { resolvePill, resolveSpotlight, TRACK_SHAPE } from "../../../../reader-engine/ttsTrack";
+// RAWY-281: the reference mark's own geometry. The preview draws the rules with the SAME resolver the
+// book draws them with, so the specimen cannot be a near-miss of the mark.
+import { refRuleBars, resolveRefRule } from "../../../../reader-engine/refRule";
 import { bookFaceCss } from "../../mini";
+import { refStyleFor } from "../../model/profile";
 import type { Profile } from "../../model/profile";
 
 /**
@@ -277,6 +281,33 @@ export function BookFace({
       ? trackLen(TRACK_SHAPE.ruleHeight, TRACK_SHAPE.ruleHeightMin, true)
       : "0px",
   } as CSSProperties;
+  /**
+   * THE REFERENCE MARK, RESOLVED BY THE ENGINE ITSELF — same argument as the read-aloud marks above.
+   *
+   * `resolveRefRule` is the function `FoliateController` calls to decide what to paint, and it is
+   * called here with the same three inputs: the style the reader would be reading under, the accent a
+   * هيئة with no colour of its own falls back to, and the FONT SIZE the marked run is actually set at.
+   * That last one is why the specimen is honest: both size controls are em-relative with px clamps, so
+   * a preview drawn at some fixed size would agree with the page only by accident.
+   *
+   * The style is the هيئة's block over the reader's live one, exactly as the chapter's controls sit —
+   * so a هيئة carrying no reference opinion previews the mark the reader already has.
+   */
+  const refStyle: ReadingStyle = refStyleFor(profile, readerStyle);
+  const refDraw = resolveRefRule(refStyle, c.accent, READER_BASE_PX * AR.zoom);
+  // The SAME bar geometry as the page, against a unit box. `refRuleBars` measures DOWN from the
+  // content box (the SVG convention the overlayer needs); CSS `bottom` measures UP, so the sign flips
+  // and nothing else does.
+  const refBars = refRuleBars({ left: 0, width: 0, bottom: 0 }, refDraw);
+  const refBar = (b: { y: number; height: number; rx: number }): CSSProperties => ({
+    position: "absolute",
+    insetInline: 0,
+    bottom: -(b.y + b.height),
+    height: b.height,
+    borderRadius: b.rx,
+    background: refDraw.color,
+  });
+
   const pillVars = {
     "--pill-fill": pill.fill,
     "--pill-op": String(pill.op),
@@ -410,7 +441,19 @@ export function BookFace({
           </p>
 
           <p className="pf-page-ar" style={arStyle} dir="rtl">
-            {withRuns("حدّث في سنة ٤٠٧ عن ثلاثةٍ وعشرين رجلًا، ثمّ عاد إلى الفصل ۱۲ فقرأ الصفحة 348 — ولم يبدأ حتى سكن المجلس. يقول: إنّ الحكاية لا تُروى مرّتين على وجهٍ واحد، لأنّ الذي يسمعها في المرّة الثانية ليس هو الذي سمعها أوّل مرّة.")}
+            {withRuns("حدّث في سنة ٤٠٧ عن ثلاثةٍ وعشرين رجلًا، ثمّ عاد إلى ")}
+            {/* A WORD THE READER HAS ANNOTATED, with the twin rule under it. It sits in the running
+                prose rather than in a sample box, because that is the only place the mark can be
+                judged: its whole design is a clearance measured from the text's own baseline, and the
+                two size controls move it against the letterforms around it. Always drawn, like every
+                other mark on this page — a specimen that appeared only while its own chapter was open
+                would be showing a page the reader never gets. */}
+            <span className="pf-page-ref">
+              {withRuns("الفصل ۱۲")}
+              <span style={refBar(refBars[0])} aria-hidden />
+              <span style={refBar(refBars[1])} aria-hidden />
+            </span>
+            {withRuns(" فقرأ الصفحة 348 — ولم يبدأ حتى سكن المجلس. يقول: إنّ الحكاية لا تُروى مرّتين على وجهٍ واحد، لأنّ الذي يسمعها في المرّة الثانية ليس هو الذي سمعها أوّل مرّة.")}
           </p>
 
           {/* THE SENTENCE SARD IS READING, AND THE WORD IT IS ON. The voice chapter's own specimen:

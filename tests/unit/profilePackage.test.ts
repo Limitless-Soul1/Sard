@@ -129,7 +129,6 @@ describe("the firewall", () => {
     ["textColor", { textColor: "#ff0000" }],
     ["pageColor", { pageColor: "#ff0000" }],
     ["immHidePill", { immHidePill: true }],
-    ["refRuleWeight", { refRuleWeight: 2 }],
   ])("refuses a package carrying %s", (field, extra) => {
     const r = inspectPackage(wrap({ theme: { base: "ivory" }, ...extra }));
     expect(r.ok).toBe(false);
@@ -146,6 +145,8 @@ describe("the firewall", () => {
     ["marginPx", { type: { reading: { marginPx: 120 } } }],
     ["diacritics", { type: { reading: { diacritics: "hide" } } }],
     ["the read-aloud marks", { voice: { ttsSpotlightColor: "#6E7F5B" } }],
+    // The reference mark joined them: a هيئة carries it, so it must cross the border with one.
+    ["the reference mark", { refs: { refRuleWeight: 2, refRuleOffset: 1.4, refRuleColor: "#7A2E1E" } }],
   ])("but ADMITS %s, which a هيئة owns", (_name, extra) => {
     const r = inspectPackage(wrap({ theme: { base: "ivory" }, ...extra }));
     expect(r.ok, JSON.stringify((r as { refusal?: unknown }).refusal)).toBe(true);

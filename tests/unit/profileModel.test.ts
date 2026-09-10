@@ -19,6 +19,7 @@ import {
   PROFILE_READING_FIELDS,
   TYPOGRAPHY_KEYS,
   PROFILE_WRITES,
+  REF_KEYS,
   VOICE_KEYS,
   parseProfileData,
   profileReadingTheme,
@@ -91,9 +92,11 @@ describe("the boundary — what a profile may write", () => {
     Object.assign(blob, patch.set);
   };
 
-  /** The three the patch always carries, plus the seven read-aloud marks it now always carries too. */
+  /** The three the patch always carries, plus the seven read-aloud marks and the three reference-mark
+   *  fields it now always carries too. Derived from the key lists, so a field added to either reaches
+   *  this expectation in one edit and a field that stops being written fails here. */
   const ALWAYS = ["arabicFont", "backgroundColor", "latinFont", "numberColor", "pageColor",
-    ...VOICE_KEYS].sort();
+    ...VOICE_KEYS, ...REF_KEYS].sort();
 
   it("a profile with no typography opinion patches the faces, the number ink, the overlay and the page", () => {
     // `backgroundColor` joins for the same reason `numberColor` did: it is a LOOK the profile owns,
@@ -675,5 +678,64 @@ describe("two palettes, and what happens to a profile written before there were 
     expect(s.get("theme_id")).toBe(p.id);
     expect(s.get("book_theme_id")).toBe(readingThemeId(p.id));
     expect(s.get("book_theme_id")).not.toBe(s.get("theme_id"));
+  });
+});
+
+// ---- THE REFERENCE MARK, as a هيئة's own opinion -------------------------------------------------
+//
+// The mark under a referenced word is two drawn strokes with three properties — a colour and the two
+// em-relative figures that place them. A هيئة now carries them, on exactly the terms the read-aloud
+// marks are carried on: the whole block is the three-state, `null` means "Sard's own", and activating
+// a هيئة ASSERTS all three so one cannot be worn in another's mark.
+describe("the reference mark a هيئة carries", () => {
+  const withRefs = (refs: unknown) => parseProfileData(JSON.stringify({ refs }));
+
+  it("is absent on every هيئة written before it existed, and that is safe", () => {
+    // The legacy case: no field at all. `null` and "the design's own mark" are the same drawing, so
+    // nothing already saved changes appearance.
+    expect(parseProfileData("{}").refs).toBeNull();
+    expect(parseProfileData("not json").refs).toBeNull();
+  });
+
+  it("keeps a mark that is within the ranges the controls can reach", () => {
+    expect(withRefs({ refRuleColor: "#7A2E1E", refRuleWeight: 1.6, refRuleOffset: 0.75 }).refs)
+      .toEqual({ refRuleColor: "#7A2E1E", refRuleWeight: 1.6, refRuleOffset: 0.75 });
+  });
+
+  it("drops a field that has drifted outside them, onto the design rather than onto nothing", () => {
+    // `null` is a real value in this block, so a drifted number lands on the design's own figure.
+    const r = withRefs({ refRuleColor: "not a colour", refRuleWeight: 9, refRuleOffset: 0 }).refs;
+    expect(r).toEqual({ refRuleColor: null, refRuleWeight: null, refRuleOffset: null });
+  });
+
+  it("survives being written out and read back", () => {
+    const p = profile();
+    p.data.refs = { refRuleColor: "#5E7A52", refRuleWeight: 2, refRuleOffset: 0.5 };
+    expect(parseProfileData(serialiseProfileData(p.data)).refs).toEqual(p.data.refs);
+  });
+
+  it("is asserted on activation whether the هيئة holds one or not", () => {
+    // THE LEAK THIS PREVENTS, and it is the same one the read-aloud marks record: a هيئة that says
+    // nothing must RESTORE Sard's own mark, not inherit the previous هيئة's. Omitting the fields would
+    // leave the last one's colour and sizes standing in the reader's blob for ever.
+    const none = readingPatch(profile()).set;
+    expect(none.refRuleColor).toBeNull();
+    expect(none.refRuleWeight).toBeNull();
+    expect(none.refRuleOffset).toBeNull();
+
+    const p = profile();
+    p.data.refs = { refRuleColor: "#97582F", refRuleWeight: 2, refRuleOffset: 2 };
+    const set = readingPatch(p).set;
+    expect(set.refRuleColor).toBe("#97582F");
+    expect(set.refRuleWeight).toBe(2);
+    expect(set.refRuleOffset).toBe(2);
+    // and it is a WRITE, never a clear — the reader's blob must end up holding the value.
+    expect(readingPatch(p).clear).not.toContain("refRuleColor");
+  });
+
+  it("is one of the fields a هيئة owns, so it crosses the package border", () => {
+    for (const k of ["refRuleColor", "refRuleWeight", "refRuleOffset"]) {
+      expect(PROFILE_READING_FIELDS as readonly string[]).toContain(k);
+    }
   });
 });

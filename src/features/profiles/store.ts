@@ -12,6 +12,8 @@
 
 import { create } from "zustand";
 
+import { LANG_KEY, translate, type Lang } from "../../i18n";
+
 import {
   PROFILE_ACTIVE_KEY,
   profileDelete,
@@ -25,19 +27,19 @@ import {
 } from "../../lib/ipc";
 import {
   BOOKMARK_DEFAULT_COLOR, BOOKMARK_DEFAULT_POS, BOOKMARK_DEFAULT_SHAPE, BOOKMARK_DEFAULT_SIZE,
-  useBookmarkStyle,
+  initBookmarkStyle, useBookmarkStyle,
 } from "../../lib/bookmarkStyle";
 import { BG_DEFAULT_PARAMS, applyBackgrounds, initBackground, useBackground } from "../../lib/background";
 import { applyTexture } from "../../lib/texture";
-import { applyUiFontVar, useFonts } from "../../lib/fonts";
-import { READ_MARKER_DEFAULT, useReadMarkerStyle } from "../../lib/readMarkerStyle";
+import { applyUiFontVar, initFonts, useFonts } from "../../lib/fonts";
+import { READ_MARKER_DEFAULT, initReadMarkerStyle, useReadMarkerStyle } from "../../lib/readMarkerStyle";
 import { PAGE_WIDTH_DEFAULT, type ReadingStyle } from "../../reader-engine/injectedCss";
 import { useReader } from "../../reader-engine/store";
-import { noteGlobalStyleRow, primeGlobalStyle } from "../reader/perBookSettings";
+import { noteGlobalStyleRow, peekGlobalStyle, primeGlobalStyle } from "../reader/perBookSettings";
 import { applyTheme } from "../../theme/applyTheme";
 import { resolveTheme, setCustomThemes } from "../../theme/resolve";
 import { DEFAULT_LIGHT, THEMES } from "../../theme/themes";
-import { useTheme } from "../../theme/store";
+import { initTheme, useTheme } from "../../theme/store";
 import type { CustomThemeId, Theme, ThemeId } from "../../theme/tokens";
 import {
   ICON_FRAME_DEFAULT,
@@ -51,6 +53,10 @@ import {
   readingThemeId,
   type ProfileTheme,
   EMPTY_TYPOGRAPHY,
+  PROFILE_WRITES,
+  REF_KEYS,
+  TYPOGRAPHY_KEYS,
+  VOICE_KEYS,
   readingPatch,
   type ReadingPatch,
   serialiseProfileData,
@@ -193,6 +199,20 @@ export async function initProfiles(): Promise<void> {
   // The Library must be able to answer "has this هيئة been changed?" too, and reading values are only
   // resolvable with the direction they were resolved for — so make both available before anything asks.
   await primeGlobalStyle().catch(() => {});
+
+  // AND ONLY THEN, THE READER WHO ARRIVED FROM BEFORE ANY OF THIS EXISTED. It runs last because the
+  // capture reads the reading row through `peekGlobalStyle`, which the line above is what primes; it
+  // runs at all only when there are no هيئات, and it writes a marker so it cannot run twice. See
+  // `materialiseLegacyLook`. `refreshProfiles` inside it puts the new هيئة into the store, so nothing
+  // here has to repeat that.
+  if (profiles.length === 0) {
+    await materialiseLegacyLook(profiles).catch((e) => {
+      // Never fatal: a reader whose look could not be captured still gets a working Sard, and the
+      // marker is unwritten so the next launch tries again.
+      console.error("legacy look not captured", e);
+      return null;
+    });
+  }
 }
 
 /**
@@ -454,6 +474,9 @@ export async function captureCurrent(): Promise<ProfileData> {
     // profile captured from "how Sard looks now" would then impose the reader's current spotlight on
     // every switch, and `null` is what prevents that. The reader opts in from the voice chapter.
     voice: null,
+    // NOR ANY OPINION ABOUT THE REFERENCE MARK, for the same reason: a هيئة made from "how Sard looks
+    // now" would otherwise impose the reader's current reference colour and sizes on every switch.
+    refs: null,
     // Texture has no global setting to capture: today every surface is opaque, and `opaque` writes
     // nothing, so a profile made from "how Sard looks now" is byte-identical to today.
     texture: "opaque",
@@ -508,6 +531,8 @@ export function defaultProfileData(): ProfileData {
       reading: { ref: null, params: { ...BG_DEFAULT_PARAMS }, sameAsLibrary: false, overlay: null },
     },
     voice: null,
+    // Sard's own reference mark: the design exactly, in whatever accent the theme carries.
+    refs: null,
     texture: "opaque",
     seal: { face: "profile", glyph: "initial" },
     icon: { ...ICON_FRAME_DEFAULT },
@@ -643,4 +668,152 @@ export async function removeProfile(p: Profile, fallback: ThemeId): Promise<void
     useTheme.setState({ themeId: fallback, bookThemeId: fallback });
     useProfiles.setState({ activeId: null });
   }
+}
+
+// ---- THE LOOK A READER ALREADY HAD, BEFORE هيئات EXISTED -------------------------------------------
+//
+// THE LOSS THIS PREVENTS, traced rather than guessed. A reader who customised Sard before this system
+// existed has all of it persisted — `reading_style`, `theme_id`, `book_theme_id`, the two background
+// bindings, `ui_font`, the bookmark and the read marker — and ZERO هيئات. `initProfiles` loaded that
+// list, found it empty, and did nothing else.
+//
+// Then the first هيئة they wear calls `readingPatch`, whose whole contract is that a هيئة is a
+// COMPLETE look: it asserts what it names and CLEARS what it does not, so that nothing of the previous
+// هيئة survives. That contract is right, and against a reader who is wearing no هيئة at all it is
+// destructive — the values it clears are not a previous هيئة's, they are years of the reader's own
+// settings, and nothing holds a copy.
+//
+// AND THE ONE GUARD THAT WOULD HAVE ASKED DOES NOT APPLY. `guardUnsaved` compares the ACTIVE هيئة with
+// what is on screen; with `activeId === null` there is nothing to compare, so the switch proceeds
+// silently. The safety net is real and this reader is standing beside it.
+//
+// SO THE FIRST THING SARD DOES, ONCE, IS GIVE THEM THE هيئة THEY ALREADY HAD. Their look becomes a
+// هيئة, they are wearing it, and from that moment the ordinary machinery protects them: switching away
+// asks, switching back restores, and the look they arrived with is a row they can return to or delete.
+// Nothing about what they see changes at the moment it happens — the هيئة IS the look.
+const LEGACY_KEY = "profiles_legacy_captured";
+
+/**
+ * The current look as a COMPLETE هيئة, reading values included.
+ *
+ * WHY NOT `captureCurrent`. That function deliberately takes no typography, no read-aloud and no
+ * reference opinion, and the refusal is right for what it is for: a هيئة made from "how Sard looks
+ * now" must not silently claim the reader's measure. This is the opposite case. The measure IS what is
+ * being rescued — it is the largest part of what a pre-هيئة reader customised — so every field is
+ * taken, and `null` is preserved where the reader genuinely has no opinion.
+ */
+export async function captureLegacyLook(): Promise<ProfileData> {
+  const data = await captureCurrent();
+  const live = peekGlobalStyle();
+  if (!live) return data;
+  data.type.reading = Object.fromEntries(
+    TYPOGRAPHY_KEYS.map((k) => [k, live[k] ?? null]),
+  ) as unknown as ProfileData["type"]["reading"];
+  data.voice = Object.fromEntries(VOICE_KEYS.map((k) => [k, live[k]])) as unknown as ProfileData["voice"];
+  data.refs = Object.fromEntries(REF_KEYS.map((k) => [k, live[k]])) as unknown as ProfileData["refs"];
+  // The digits are a هيئة-owned colour with no control of its own outside this system.
+  data.theme = {
+    ...data.theme,
+    reading: { ...data.theme.reading, numbers: live.numberColor ?? null },
+  };
+  return data;
+}
+
+/**
+ * Has this reader ever set anything a هيئة would overwrite?
+ *
+ * THE LIST IS NOT INVENTED. `PROFILE_WRITES` names exactly the settings rows activating a هيئة writes
+ * over, plus `reading_style`, which `readingPatch` rewrites — so "what would be lost" and "what is
+ * checked here" are one list, and a key added to a هيئة's reach is checked here without anyone
+ * remembering to. `profile_active` is excluded: it is this system's own bookkeeping, not a look.
+ */
+async function hasLegacyLook(): Promise<boolean> {
+  const keys = [...PROFILE_WRITES.filter((k) => k !== "profile_active"), READING_KEY];
+  for (const k of keys) {
+    const v = await settingsGet(k).catch(() => null);
+    if (v !== null && v !== undefined && v !== "") return true;
+  }
+  return false;
+}
+
+/**
+ * Once, and only for a reader who arrived with a look and no هيئات.
+ *
+ * IDEMPOTENT BY TWO INDEPENDENT FACTS, either of which alone would do: a marker row, and the
+ * `profiles.length === 0` precondition — a second run cannot see an empty list, because the first run
+ * put a هيئة in it. So no launch after the first can produce a duplicate even if the marker is lost.
+ *
+ * A READER WHO NEVER CUSTOMISED ANYTHING GETS NOTHING, which is why the marker is written in that case
+ * too: they are not asked to carry a هيئة named after a look they never had, and the check does not
+ * run again on every launch.
+ */
+/**
+ * In-flight guard.
+ *
+ * THE MARKER IS NOT ENOUGH ON ITS OWN, and this was measured rather than foreseen: `initProfiles` is
+ * invoked twice on a launch (React runs the effect twice in development, and nothing forbids a second
+ * caller in general). Both invocations reached this function before either had written the marker, both
+ * saw zero هيئات, and the reader got their look captured TWICE — two rows with one name. Sharing the
+ * single run is what makes "once" true against concurrency as well as against restarts.
+ */
+let legacyRun: Promise<Profile | null> | null = null;
+
+export function materialiseLegacyLook(profiles: Profile[]): Promise<Profile | null> {
+  if (!legacyRun) legacyRun = runLegacyCapture(profiles);
+  return legacyRun;
+}
+
+async function runLegacyCapture(profiles: Profile[]): Promise<Profile | null> {
+  if (profiles.length > 0) return null;
+  // Re-read rather than trust the caller's snapshot: by the time this runs the list may have been
+  // filled by whoever else was starting up.
+  const live = await profilesList().catch(() => [] as ProfileRow[]);
+  if ((live ?? []).length > 0) return null;
+  const done = await settingsGet(LEGACY_KEY).catch(() => null);
+  if (done) return null;
+  if (!(await hasLegacyLook())) {
+    await settingsSet(LEGACY_KEY, "none").catch(() => {});
+    return null;
+  }
+  // ── THE CAPTURE CAN ONLY SEE WHAT HAS BEEN LOADED ────────────────────────────────────────────
+  //
+  // `captureCurrent` reads the LIVE STORES — theme, fonts, bookmark, read marker, background — and
+  // at this moment most of them are still holding the values they were CONSTRUCTED with, not the
+  // reader's. `App.tsx` starts them all without awaiting, and it sequences `initTheme` AFTER
+  // `initProfiles` on purpose, so the theme store is not merely likely to be unloaded here: it is
+  // guaranteed to be. `useTheme` is constructed with `themeId: DEFAULT_LIGHT`, and `DEFAULT_LIGHT`
+  // is «ivory».
+  //
+  // MEASURED, from a tester upgrading with a customised look: the هيئة was created and the reader's
+  // chrome went to Ivory. It was captured as Ivory — from a store that had never been told what the
+  // reader's `theme_id` was — and then `applyProfile` wrote that capture back over the real
+  // `theme_id` and `book_theme_id`, destroying the setting it existed to rescue. The background
+  // survived only because `initBackground` happened to win the race; nothing guaranteed it.
+  //
+  // The reading row already had this treatment — `primeGlobalStyle` is awaited before this function
+  // for exactly this reason. It was simply never extended to the other four sources. So every source
+  // the capture reads is loaded first, and this is deliberately NOT a list of fields: a value added
+  // to any of these stores later is captured correctly without anyone remembering this comment.
+  //
+  // They are all idempotent settings loaders, and this branch runs only for a reader who has no
+  // هيئات and a look worth keeping — so nothing else pays for it, and `App.tsx` re-running them a
+  // moment later reads the same rows to the same values.
+  await Promise.all([
+    initTheme().catch(() => {}),
+    initFonts().catch(() => {}),
+    initBookmarkStyle().catch(() => {}),
+    initReadMarkerStyle().catch(() => {}),
+    initBackground().catch(() => {}),
+  ]);
+
+  const lang = ((await settingsGet(LANG_KEY).catch(() => null)) as Lang | null) ?? "ar";
+  const data = await captureLegacyLook();
+  const made = await createProfile(translate(lang, "profiles.legacy.name"), data, null);
+  // Written BEFORE activation: if applying were to fail, the reader still has the هيئة and Sard will
+  // not try to make a second one on the next launch.
+  await settingsSet(LEGACY_KEY, made.id).catch(() => {});
+  // Wearing it changes nothing on screen — the هيئة is the look it was captured from — and it is what
+  // brings this reader inside the guard, so the NEXT هيئة they choose stops and asks.
+  await applyProfile(made, { worn: false });
+  return made;
 }

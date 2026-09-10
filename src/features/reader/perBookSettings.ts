@@ -133,6 +133,12 @@ export async function loadGlobalStyle(dir?: string): Promise<ReadingStyle> {
     if (typeof s.pageWidth === "number" && s.pageWidth > 1.5) {
       s.pageWidth = Math.max(0, Math.min(1, (s.pageWidth - 480) / 560));
     }
+    // The withdrawn `dim`. A row saved while the third chip existed still says so, and nothing in a
+    // JSON row is type-checked — so it would arrive as a value no control can show and no rule can
+    // paint, leaving the segmented control with nothing selected. It reads as `show`, which is what
+    // the page already looked like once the rule for it was gone. `remember` is given the CORRECTED
+    // row so the next write persists the migration rather than re-reading the old answer for ever.
+    if ((s.diacritics as string) === "dim") s.diacritics = "show";
     remember(s);
     return { ...base, ...s };
   } catch {

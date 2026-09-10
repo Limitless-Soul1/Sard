@@ -203,12 +203,18 @@ pub const MAX_ASSET_BYTES: u64 = 256 * 1024 * 1024;
 /// field to a هيئة and this list must lose it; add a field to `ReadingStyle` and this list must gain
 /// it. The test says which.
 ///
+/// THE THREE REFERENCE FIELDS LEFT THIS LIST when a هيئة gained an opinion about the reference mark.
+/// They were refused here on the same reasoning the measure once was — "a per-book reading setting" —
+/// and that reasoning expired for the same reason: `refRuleColor`, `refRuleWeight` and `refRuleOffset`
+/// are now named by `PROFILE_READING_FIELDS`, so a shared هيئة carries the mark it was designed with.
+/// Refusing them would have meant a هيئة that could set the mark locally and never send it.
+///
 /// The last two are not `ReadingStyle` fields at all — they are the SETTINGS ROWS. A package naming
 /// `reading_style` or `book_style` is malformed however it got there, and `book_style` in particular
 /// is the removed per-book style scope trying to return by post.
-const FORBIDDEN: [&str; 12] = [
+const FORBIDDEN: [&str; 9] = [
     "pageFitWindow", "textColor", "pageColor", "backgroundColor", "flowMode",
-    "immHidePill", "immHideScrollbar", "refRuleColor", "refRuleWeight", "refRuleOffset",
+    "immHidePill", "immHideScrollbar",
     "reading_style", "book_style",
 ];
 

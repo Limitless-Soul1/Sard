@@ -18,6 +18,7 @@ import {
   buildDynamicCss,
   buildFontFaceCss, // RAWY-208: the @font-face sheet, isolated from the geometry sheet
   ALIGN_GATE_CLASS,
+  REF_RULE_KEYS,
   BOOK_ALIGN_CLASS,
   FORCE_RTL_CLASS, // RAWY-253 (root A): the dir-correction marker class
   EMPTY_P_CLASS, // RAWY-253 (root B): the empty-paragraph collapse marker class
@@ -83,7 +84,10 @@ const FONT_STYLE_KEYS: (keyof ReadingStyle)[] = ["arabicFont", "latinFont"];
 // Reading-style fields that only affect PAINT (ink colour, tashkīl visibility) — applied via the
 // dynamic sheet with NO reflow. Every other field that appears in buildReadingCss (fonts, size/zoom,
 // line-height, alignment, weight, spacing, flow) is GEOMETRY → a real re-inject. Fields absent from
-// both lists (marginPx, pageWidth, pageFitWindow) are chrome-side (RAWY-36) — they touch neither.
+// both lists (pageWidth, pageFitWindow) are chrome-side (RAWY-36) — they touch neither. `marginPx`
+// was named there too and is not simply chrome-side: in SCROLLED flow the host's inline inset is
+// zeroed and the sheet carries the margin as `body { padding-inline }`. It is decided per change in
+// `applyStyle`, which can see the flow — this list cannot.
 // RAWY-201: pageColor joins the PAINT keys — its background rule is emitted in buildDynamicCss, so a
 // change repaints via the in-place dynamic sheet with NO reflow (RAWY-140), exactly like textColor.
 // backgroundColor is NOT here: it never touches the iframe (it's a reader-scoped chrome var applied by
@@ -124,7 +128,8 @@ const TRACK_STYLE_KEYS: (keyof ReadingStyle)[] = [
 // they touch neither the injected sheet nor the dynamic paint sheet, so a change is a pure overlayer
 // redraw with NO re-inject and NO reflow. That is what makes the settings panel update live: the reader
 // drags the slider, `applyStyle` sees only these keys move, and the pair repaints in place.
-const REF_STYLE_KEYS: (keyof ReadingStyle)[] = ["refRuleColor", "refRuleWeight", "refRuleOffset"];
+// The engine's own list, so the re-draw trigger and what a هيئة carries can never disagree.
+const REF_STYLE_KEYS: readonly (keyof ReadingStyle)[] = REF_RULE_KEYS;
 
 export interface RelocateInfo {
   cfi: string | null;
@@ -2631,7 +2636,8 @@ export class FoliateController {
   /** Update typography (size/font/spacing/margins/align/diacritics). RAWY-140: a change that only
    *  touches PAINT (font colour, tashkīl) is pushed through the in-book dynamic <style> with no
    *  reflow; a GEOMETRY change (fonts/size/spacing/align/flow) still re-injects the full sheet
-   *  (which re-lays-out — inherent). A chrome-only change (margin/page-width) touches neither. */
+   *  (which re-lays-out — inherent). A chrome-only change (page width) touches neither. The MARGIN is
+   *  one or the other depending on the flow — see `marginGeom` below. */
   applyStyle(style: ReadingStyle): void {
     const prev = this.style;
     this.style = style;
@@ -2641,7 +2647,24 @@ export class FoliateController {
       this.applyDynamic();
       return;
     }
-    const geom = GEOMETRY_STYLE_KEYS.some((k) => prev[k] !== style[k]);
+    // THE MARGIN IS GEOMETRY IN SCROLLED FLOW, AND ONLY THERE.
+    //
+    // It was in neither list, on the ground that the margin is chrome-side — the desk publishes
+    // `--page-margin` and `.page-host` insets itself by it, with the sheet untouched. That is true in
+    // PAGED flow and false in scrolled: `global.css` zeroes the host's inline inset under
+    // `.flow-scrolled`, and `buildReadingCss` emits `body { padding-inline: marginPx }` for exactly
+    // that case. So in scrolled flow the margin lives in the SHEET, and nothing ever asked for the
+    // sheet to be rewritten.
+    //
+    // MEASURED, scrolled flow, dragging the margin 8 → 120 → 8 → 160: `--page-margin` followed every
+    // step, `.page-host` stayed 1060px wide throughout (its inset is zeroed), and the book frame kept
+    // the `padding-inline: 40px` it was opened with. The value moved, the page did not — and
+    // reopening the book rebuilt the sheet, which is why it "only worked after leaving the book".
+    //
+    // Gated on the flow so paged reading is untouched: there the sheet does not mention the margin,
+    // so re-injecting would buy a reflow and a repaint for a byte-identical stylesheet.
+    const marginGeom = style.flowMode !== "paged" && prev.marginPx !== style.marginPx;
+    const geom = marginGeom || GEOMETRY_STYLE_KEYS.some((k) => prev[k] !== style[k]);
     const paint = PAINT_STYLE_KEYS.some((k) => prev[k] !== style[k]);
     const track = TRACK_STYLE_KEYS.some((k) => prev[k] !== style[k]);
     const ref = REF_STYLE_KEYS.some((k) => prev[k] !== style[k]); // RAWY-281

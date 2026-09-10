@@ -22,6 +22,7 @@ import { initTheme, reapplyTitlebarTheme, resolveTheme, useTheme } from "./theme
 import { initProfiles } from "./features/profiles/store"; // PROFILES: register authored themes first
 import { UnsavedChange } from "./features/profiles/UnsavedChange";
 import { DroppedProfile } from "./features/profiles/DroppedProfile";
+import { FontDropNotice } from "./features/fonts/FontDropNotice";
 import { DroppedDeposit } from "./features/deposit/DroppedDeposit";
 import { useIncomingDeposit } from "./features/deposit/store";
 import { useBookDetailsRequest } from "./features/library/bookDetailsRequest";
@@ -136,6 +137,8 @@ function Root() {
       {/* A profile dropped onto the window. The Library's drop listener already ran it through the
           import gate; this shows the ordinary preview so the drop and the picker end in one place. */}
       <DroppedProfile />
+      {/* The answer a dropped font gets — app-level, because a font may be dropped anywhere. */}
+      <FontDropNotice />
       <DroppedDeposit />
     </>
   );

@@ -201,6 +201,16 @@ interface FontsState {
   setUiWeight: (weight: number) => void;
   setUiScale: (scale: number) => void;
   importFont: () => Promise<CustomFont | null>;
+  /**
+   * Re-read the imported fonts and re-register their faces.
+   *
+   * `importFont` already does this for the file PICKER by folding its own result in. A font that
+   * arrives another way — dropped on the window — is imported by Rust without passing through that
+   * method, so the list and the `@font-face` block would otherwise stay as they were and the new
+   * family would be installed and invisible until the next launch. This is the same two steps
+   * `initFonts` takes, named so any future entrance can take them too.
+   */
+  reload: () => Promise<void>;
   removeFont: (id: string) => Promise<void>;
   /** Built-in chrome fonts + every imported font, as selectable UI-font choices. */
   uiChoices: () => FontChoice[];
@@ -240,6 +250,11 @@ export const useFonts = create<FontsState>((set, get) => ({
     injectCustomFaces(custom);
     set({ custom });
     return f;
+  },
+  reload: async () => {
+    const custom = await fontsList().catch(() => [] as CustomFont[]);
+    injectCustomFaces(custom);
+    set({ custom });
   },
   removeFont: async (id) => {
     await fontRemove(id);

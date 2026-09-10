@@ -120,3 +120,67 @@ describe("the preview's running head is sized by the same control as the body", 
     expect(rule).toMatch(/margin-bottom:\s*2\.095em/);
   });
 });
+
+// ---- THE REFERENCE SPECIMEN ----------------------------------------------------------------------
+//
+// The reference chapter is only worth having if the preview shows what it does. That means two
+// properties, and neither is about pixels:
+//
+//   1. the specimen is drawn by the ENGINE'S OWN resolver, at the size the specimen is actually set
+//      at — so it cannot be a near-miss of the mark the book draws, which is the failure `RefRuleControls`
+//      already records for the panel's own sample;
+//   2. it lives in the running prose, not in a box of its own — the mark is a clearance measured from
+//      the text's baseline, so a specimen away from text would be showing a relationship it has not got.
+describe("the preview shows what the reference chapter changes", () => {
+  it("resolves the mark with the same function the page draws it with", () => {
+    expect(SRC).toContain('from "../../../../reader-engine/refRule"');
+    expect(SRC).toContain("resolveRefRule(refStyle, c.accent, READER_BASE_PX * AR.zoom)");
+    // The bars come from the shared geometry too, so there is one place the design can be wrong.
+    expect(SRC).toContain("refRuleBars({ left: 0, width: 0, bottom: 0 }, refDraw)");
+  });
+
+  it("previews the هيئة's own mark over the reader's live one", () => {
+    // The same shape the read-aloud specimen uses: a هيئة carrying no reference opinion previews the
+    // mark the reader already has, rather than a set of defaults nobody chose.
+    //
+    // THROUGH THE ONE DERIVATION, not a copy of it. This used to assert the composition written out
+    // here inline — and the هيئة editor's own section had the same rule written out differently a few
+    // files away. The property is unchanged; what enforces it is now a single function, so the control
+    // and the page beside it cannot be set from two rules that merely happen to agree. The wider
+    // invariant is held by `refStyleSource.test.ts`.
+    expect(SRC).toContain("const refStyle: ReadingStyle = refStyleFor(profile, readerStyle);");
+    expect(SRC).not.toMatch(/\.\.\.readerStyle,\s*\.\.\.\(?\s*profile\.data\.refs/);
+  });
+
+  it("draws it inside a paragraph of the set body, not as a sample block", () => {
+    const at = SRC.indexOf('className="pf-page-ref"');
+    expect(at).toBeGreaterThan(-1);
+    const body = SRC.indexOf('className={`pf-page-body${diaClass}`}');
+    expect(body).toBeGreaterThan(-1);
+    expect(at).toBeGreaterThan(body);
+  });
+
+  it("and the chapter frames it, so opening References points at the word", () => {
+    const chapters = readFileSync(
+      join(import.meta.dirname, "..", "..", "src/features/profiles/editor/chapters.ts"),
+      "utf8",
+    );
+    expect(chapters).toContain('{ id: "refs"');
+    expect(chapters).toContain('targets: [".pf-page-ref"]');
+  });
+
+  it("the stroke geometry is inline, never in the stylesheet", () => {
+    // A height or an offset in CSS would be a second source for numbers the engine owns — which is
+    // precisely how a preview drifts from the page it previews.
+    const css = readFileSync(
+      join(import.meta.dirname, "..", "..", "src/styles/profiles.css"),
+      "utf8",
+    );
+    const rule = /\.pf-page-ref\s*\{([^}]*)\}/.exec(css);
+    expect(rule).not.toBeNull();
+    expect(rule![1]).toContain("position: relative");
+    for (const forbidden of ["height", "bottom", "background", "border-radius"]) {
+      expect(rule![1]).not.toContain(forbidden);
+    }
+  });
+});

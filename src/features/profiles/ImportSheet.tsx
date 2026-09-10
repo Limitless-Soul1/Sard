@@ -339,12 +339,21 @@ export function ImportSheet({
             <span className="pf-imported-body">{t("profiles.import.yoursNow")}</span>
           </span>
         </div>
+        {/* THREE WAYS OUT, AND THE QUIET ONE LEADS. The frame's own sentence has already said the
+            هيئة is added and is yours, so by the time it is read the receiving is DONE — and yet the
+            only two ways to leave it were to edit the thing or to start wearing it. A reader who
+            wanted neither had to pick one anyway, which is what made a finished action read as a
+            demand. «تمّ» is the primary for the same reason it is the primary on the refusal frame:
+            it is the answer that changes nothing further. Editing and wearing stay, as offers. */}
         <div className="pf-dialog-actions">
           <button className="pf-btn" onClick={() => { onClose(); onEdit(p); }}>
             {t("profiles.card.edit")}
           </button>
-          <button className="pf-btn primary" onClick={() => { void applyProfile(p); onClose(); }}>
+          <button className="pf-btn" onClick={() => { void applyProfile(p); onClose(); }}>
             {t("profiles.import.useNow")}
+          </button>
+          <button className="pf-btn primary" onClick={onClose}>
+            {t("profiles.share.close")}
           </button>
         </div>
       </>,

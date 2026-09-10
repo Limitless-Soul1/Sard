@@ -9,7 +9,12 @@ import type { Theme } from "../theme/tokens";
 // note below): the design specifies the theme accent at 100%, and the mark is no longer CSS at all. Both
 // helpers keep their other callers (`highlightInk.ts` / the settings contrast guards) and are untouched.
 
-export type DiacriticsMode = "show" | "dim" | "hide";
+// TWO ANSWERS, NOT THREE. There was a `dim` between these — tashkīl at 0.28 opacity — and it was
+// withdrawn from both places a reader could choose it. The type is the narrowing that finds the rest:
+// anything still naming the third value stops compiling rather than lingering as a dead branch. A row
+// SAVED as `dim` is another matter and is handled where such rows are read — `parseReading` drops it
+// back to "no opinion", and `loadGlobalStyle` migrates the reader's own row to `show`.
+export type DiacriticsMode = "show" | "hide";
 // LOGICAL, not physical (RAWY-207): `start`/`end` follow the book's direction, so one stored value
 // reads correctly in both an RTL and an LTR book — in Arabic `start` IS the right edge. Physical
 // left/right would freeze one direction into the setting. These flow straight into `text-align`
@@ -333,6 +338,17 @@ export const REF_RULE_DEFAULTS: Pick<ReadingStyle, "refRuleColor" | "refRuleWeig
   refRuleWeight: null,
   refRuleOffset: null,
 };
+
+/**
+ * THE ENGINE'S OWN LIST, re-exported rather than repeated — exactly as `TTS_TRACKING_KEYS` is.
+ *
+ * The same three names now decide four things: what the controller re-draws on, what a هيئة carries,
+ * what activating one writes, and what `parseRefs` accepts. Written out four times they would drift
+ * on the day a fourth is added; named once, an addition reaches all four or fails to compile.
+ */
+export const REF_RULE_KEYS = [
+  "refRuleColor", "refRuleWeight", "refRuleOffset",
+] as const satisfies readonly (keyof typeof REF_RULE_DEFAULTS)[];
 
 // Per-script sensible defaults — beautiful before the user touches a control.
 export const ARABIC_DEFAULTS: ReadingStyle = {
@@ -759,12 +775,11 @@ export function buildReadingCss(
     ? `::highlight(sard-num) { color: ${style.numberColor}; }`
     : "";
 
+  // `hide` is the only mode that paints anything of its own; `show` is the page as the book wrote it.
+  // A row still carrying the withdrawn `dim` reaches here already normalised, and would fall to the
+  // empty rule in any case — which is `show`, the safe way for a retired setting to land.
   const diacriticsRule =
-    style.diacritics === "dim"
-      ? ".sard-tashkil { opacity: 0.28; }"
-      : style.diacritics === "hide"
-        ? ".sard-tashkil { font-size: 0 !important; }"
-        : "";
+    style.diacritics === "hide" ? ".sard-tashkil { font-size: 0 !important; }" : "";
 
   // Typography extras (RAWY-23). Weight applies to body text (not headings → keep hierarchy).
   // Letter-spacing is LATIN-ONLY — it inserts gaps that break Arabic cursive joining.
@@ -1122,12 +1137,9 @@ export function buildDynamicCss(style: ReadingStyle, theme?: Theme, flags?: Book
     ? `::highlight(sard-num) { color: ${style.numberColor}; }`
     : "";
 
+  // The same two answers the geometry sheet emits — kept in step with `diacriticsRule` above.
   const diacriticsRule =
-    style.diacritics === "dim"
-      ? ".sard-tashkil { opacity: 0.28; }"
-      : style.diacritics === "hide"
-        ? ".sard-tashkil { font-size: 0 !important; }"
-        : "";
+    style.diacritics === "hide" ? ".sard-tashkil { font-size: 0 !important; }" : "";
   let inkCss = "";
   let pageCss = "";
   if (theme) {

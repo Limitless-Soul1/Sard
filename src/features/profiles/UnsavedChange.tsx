@@ -21,8 +21,11 @@ import { THEMES, isBuiltinThemeId } from "../../theme/themes";
 import { liveValues, profileValues, useSession, type SessionKey } from "./session";
 import type { Profile, ProfileData } from "./model/profile";
 import { useReader } from "../../reader-engine/store";
-import { TTS_TRACKING_KEYS } from "../../reader-engine/injectedCss";
-import { TYPOGRAPHY_KEYS } from "./model/profile";
+// The same stand-in `liveValues` uses when no book is open, so the drift that is REPORTED and the
+// drift that is SAVED are read from one source.
+import { peekGlobalStyle } from "../reader/perBookSettings";
+import { REF_RULE_KEYS, TTS_TRACKING_KEYS } from "../../reader-engine/injectedCss";
+import { TYPOGRAPHY_KEYS, type ProfileRefs } from "./model/profile";
 import { useDialog } from "../../components/useDialog";
 
 /**
@@ -58,6 +61,10 @@ export function describe(keys: SessionKey[], t: (k: TKey) => string): string {
     ttsKaraokeOn: "profiles.unsaved.what.voice",
     ttsKaraokeColor: "profiles.unsaved.what.voice",
     ttsKaraokeOpacity: "profiles.unsaved.what.voice",
+    // The three are one thing to a reader — "the reference mark" — exactly as the seven marks are.
+    refRuleColor: "profiles.unsaved.what.refs",
+    refRuleWeight: "profiles.unsaved.what.refs",
+    refRuleOffset: "profiles.unsaved.what.refs",
   };
   // The seven marks are ONE thing to a reader, so they are named once however many of them moved.
   const seen = new Set<string>();
@@ -116,6 +123,7 @@ export function UnsavedChange() {
     if (active) {
       data.type.reading = { ...active.data.type.reading };
       data.voice = active.data.voice ? { ...active.data.voice } : null;
+      data.refs = active.data.refs ? { ...active.data.refs } : null;
     }
     if (isBuiltinThemeId(live.theme_id)) {
       const th = THEMES[live.theme_id];
@@ -132,22 +140,50 @@ export function UnsavedChange() {
     // case: the colour on screen is precisely what the reader is asking to keep.
     // The digits are drawn in a BOOK, so the reading palette carries them.
     data.theme = { ...data.theme, reading: { ...data.theme.reading, numbers: live.numberColor || null } };
-    // AND THE READ-ALOUD MARKS, for exactly the same reason the number ink is folded in: they are
-    // هيئة-owned and settable from the reading drawer, so the marks on screen are precisely what the
-    // reader is asking to keep. Only while a book is open — with none, the reading style is unknown
-    // rather than empty (see `driftOf`), and the هيئة's own block restored above stands.
-    const liveStyle = useReader.getState().style;
-    if (liveStyle) {
-      data.voice = Object.fromEntries(
-        TTS_TRACKING_KEYS.map((k) => [k, liveStyle[k]]),
-      ) as ProfileData["voice"];
+    // AND THE READ-ALOUD MARKS AND THE MEASURE, for exactly the same reason the number ink is folded
+    // in: they are هيئة-owned and settable from the reading drawer, so what is set is precisely what
+    // the reader is asking to keep.
+    //
+    // THE ROW STANDS IN WHEN NO BOOK IS OPEN, and it has to. This read `useReader.getState().style`
+    // alone, on the stated ground that with no book the reading style is "unknown rather than empty".
+    // That ceased to be true when `liveValues` gained its own fallback to the persisted row — and the
+    // two functions then disagreed, which is the whole of the reported loss:
+    //
+    //   `driftOf` compared against the ROW, so leaving a book and switching هيئة correctly reported
+    //   the size, the leading, the margins and the read-aloud marks as changed, and the dialog listed
+    //   them by name — and then Save read the live reader, found null, folded none of them in, and
+    //   wrote a payload in which those fields had been restored from the هيئة itself a few lines
+    //   above. The reader was shown their changes, told they were being saved, and lost them.
+    //
+    // هيئات are switched from the LIBRARY — the switcher is in the library's own foot — so a reader
+    // who changes their reading inside a book and then switches took that path every single time.
+    // One source for both, resolved the same way, so what the dialog names is what the save writes.
+    const liveStyle = useReader.getState().style ?? peekGlobalStyle();
+    if (liveStyle && active) {
+      const asserted = profileValues(active);
+      // THE MARKS BECOME AN OPINION ONLY ONCE ONE HAS MOVED. Writing all seven whenever anything else
+      // drifted would turn a هيئة that deliberately holds none — `voice: null`, "leave the reader's
+      // own marks alone" — into one that imposes Sard's defaults, as a side effect of confirming an
+      // unrelated colour. The same rule the measure below has always followed.
+      if (TTS_TRACKING_KEYS.some((k) => String(liveStyle[k] ?? "") !== asserted[k])) {
+        data.voice = Object.fromEntries(
+          TTS_TRACKING_KEYS.map((k) => [k, liveStyle[k]]),
+        ) as ProfileData["voice"];
+      }
+      // AND THE REFERENCE MARK, on the same rule and for the same reason: an opinion only once one of
+      // the three has moved, so confirming an unrelated change cannot turn a هيئة that carries none
+      // into one that pins the design's own figures.
+      if (REF_RULE_KEYS.some((k) => String(liveStyle[k] ?? "") !== asserted[k])) {
+        data.refs = Object.fromEntries(
+          REF_RULE_KEYS.map((k) => [k, liveStyle[k]]),
+        ) as unknown as ProfileRefs;
+      }
       // AND THE MEASURE, but only where it actually DIFFERS from what the هيئة asserts.
       //
       // Not "capture everything on screen": a هيئة that names no margin asserts Sard's own, and
       // writing that number back would turn a هيئة with no opinion into one with ten, freezing this
       // book's direction defaults into it. Only a field the reader has genuinely moved becomes an
       // opinion; the rest stay exactly as authored, `null` included.
-      const asserted = profileValues(active!);
       for (const k of TYPOGRAPHY_KEYS) {
         if (String(liveStyle[k] ?? "") === asserted[k]) continue;
         (data.type.reading as unknown as Record<string, unknown>)[k] = liveStyle[k];

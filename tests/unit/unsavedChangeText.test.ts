@@ -58,3 +58,45 @@ suite("describe — the list of changed values", () => {
     expect(ar["profiles.unsaved.listSep"]).toBe("، ");
   });
 });
+
+// ---- what the dialog PROMISES must be what Save writes --------------------------------------------
+//
+// THE DEFECT THIS PINS, and it is the whole of the reported "Appearance settings are lost".
+//
+// `driftOf` asks what changed by comparing the هيئة against `liveValues()`, and `liveValues` falls
+// back to the persisted `reading_style` row when no book is open — deliberately, because هيئات are
+// switched from the LIBRARY, where `useReader.style` is null. The SAVE read `useReader.getState()
+// .style` alone. So leaving a book and switching هيئة reported the size, the leading, the margins and
+// the read-aloud marks as changed, named them in the dialog — and then wrote a payload in which every
+// one of them had been restored from the هيئة itself, because the live reader was null.
+//
+// MEASURED, same scenario both ways: with the two sources disagreeing, «احفظ في هذه الهيئة» left
+// `zoom`, `marginPx`, `lineHeight` and `voice` all null after the reader had set 1.45 / 128 / 2.2 and
+// a spotlight colour; with them agreeing, the هيئة held exactly those values, and still held them
+// after switching away, back, and reloading the application.
+//
+// The two reads must therefore be the same expression. A unit test cannot switch a هيئة, but it can
+// refuse to let the two drift apart again.
+suite("the drift that is reported and the drift that is saved read one source", () => {
+  it("the save resolves the live style the same way `liveValues` does", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const dialog = readFileSync(resolve(__dirname, "../../src/features/profiles/UnsavedChange.tsx"), "utf8");
+    const session = readFileSync(resolve(__dirname, "../../src/features/profiles/session.ts"), "utf8");
+    const EXPR = "useReader.getState().style ?? peekGlobalStyle()";
+    expect(session).toContain(EXPR);
+    expect(dialog).toContain(EXPR);
+    // And the guarded block must not fall back to the live reader alone.
+    expect(dialog).not.toContain("const liveStyle = useReader.getState().style;");
+  });
+
+  it("a هيئة with no read-aloud opinion does not acquire one from an unrelated change", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const dialog = readFileSync(resolve(__dirname, "../../src/features/profiles/UnsavedChange.tsx"), "utf8");
+    // The marks are written only once one of them has actually moved — the same rule the measure
+    // follows. Without this, confirming a colour change would turn `voice: null` ("leave the reader's
+    // own marks alone") into seven asserted values.
+    expect(dialog).toContain('if (TTS_TRACKING_KEYS.some((k) => String(liveStyle[k] ?? "") !== asserted[k])) {');
+  });
+});

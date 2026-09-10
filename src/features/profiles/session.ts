@@ -29,6 +29,8 @@ import { create } from "zustand";
 
 import { useReader } from "../../reader-engine/store";
 import {
+  REF_RULE_DEFAULTS,
+  REF_RULE_KEYS,
   TTS_TRACKING_DEFAULTS,
   TTS_TRACKING_KEYS,
   defaultsForDir,
@@ -104,6 +106,12 @@ export function profileValues(p: Profile): Record<SessionKey, string> {
     ...Object.fromEntries(
       TTS_TRACKING_KEYS.map((k) => [k, String((p.data.voice ?? TTS_TRACKING_DEFAULTS)[k] ?? "")]),
     ),
+    // THE REFERENCE MARK, on the same rule as the read-aloud marks: a هيئة carrying no opinion still
+    // ASSERTS Sard's own on activation (see `readingPatch`), so that IS what it says the mark should
+    // be, and a reader who changes one has changed something the هيئة would put back.
+    ...Object.fromEntries(
+      REF_RULE_KEYS.map((k) => [k, String((p.data.refs ?? REF_RULE_DEFAULTS)[k] ?? "")]),
+    ),
     // THE MEASURE, RESOLVED THE WAY ACTIVATION RESOLVES IT.
     //
     // A هيئة does not assert a number for a field it does not name — `readingPatch` CLEARS it, and
@@ -173,6 +181,7 @@ export function liveValues(): Record<SessionKey, string> {
     latinFont: String(s?.latinFont ?? ""),
     numberColor: String(s?.numberColor ?? ""),
     ...Object.fromEntries(TTS_TRACKING_KEYS.map((k) => [k, String(s?.[k] ?? "")])),
+    ...Object.fromEntries(REF_RULE_KEYS.map((k) => [k, String(s?.[k] ?? "")])),
     // The live measure. `useReader.style` is the RESOLVED style, so every one of these is a real
     // value while a book is open and the comparison is like for like.
     ...Object.fromEntries(TYPOGRAPHY_KEYS.map((k) => [k, String(s?.[k] ?? "")])),

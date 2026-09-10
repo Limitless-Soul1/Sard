@@ -69,6 +69,7 @@ import {
   groupShelf,
   isGroupedView,
   asShelfOrder,
+  orderRuleFor,
   vistaArrangeable,
   isLibraryTree,
   isVirtualShelf,
@@ -925,12 +926,22 @@ export function LibraryDesign(props: LibraryDesignProps) {
       // `order_rule` on a rule shelf and the shelf would have been re-sorted out of its rule's
       // order, while `rowsFor` — which the grouped formats draw from — went on returning the lens
       // sequence raw. Same shelf, two orders, decided by which format was on screen.
-      if (s.auto_rule) return list;
-      const base = sortBooks(list, s.order_rule);
-      if (s.order_rule !== "hand") return base;
+      //
+      // The LIBRARY'S chosen criterion still reaches it, because that is presentation and not the
+      // shelf's own order: «العنوان» means titles wherever the reader is standing, and the flat
+      // formats have always read it that way. Under «ترتيب الرفّ» the rule's sequence stands
+      // untouched, which is the case this guard was written for.
+      const chosen = asShelfOrder(sort);
+      if (s.auto_rule) return chosen === "hand" ? list : sortBooks(list, chosen);
+      // ONE PRECEDENCE FOR EVERY FORMAT. `orderRuleFor` decides between the library's criterion and
+      // this shelf's own rule; before it, that decision was made differently by each format, so the
+      // same shelf drew three sequences depending on which one was on screen.
+      const rule = orderRuleFor(chosen, s.order_rule);
+      const base = sortBooks(list, rule);
+      if (rule !== "hand") return base;
       return runOf(base, sectionKey ?? s.id);
     },
-    [shelfRows, lenses, byId, runOf],
+    [shelfRows, lenses, byId, runOf, sort],
   );
 
   /** The name every other path knows this by. One function, two spellings, no second answer. */
@@ -970,14 +981,27 @@ export function LibraryDesign(props: LibraryDesignProps) {
           .map((b, i) => ({ ...byBook.get(b.id)!, position: i }));
       }
       const seen = lenses[shelf.id] ?? [];
-      return seen
-        .filter((id) => {
-          const home = arrangement.containerOf(id);
-          return !home || !drawnContainers.has(home);
-        })
-        .map((id, i) => ({ book_id: id, position: i, category_id: null }));
+      const visible = seen.filter((id) => {
+        const home = arrangement.containerOf(id);
+        return !home || !drawnContainers.has(home);
+      });
+      // A LENS'S ROWS ARE ORDERED BY THE SAME DECISION AS EVERY OTHER SECTION'S.
+      //
+      // The filter above is about WHICH books — a book whose own shelf is on screen is drawn there
+      // instead — and it must not also decide their sequence. It used to: the survivors were handed
+      // back in the lens's own order whatever the reader had chosen, and Covers and Spines draw from
+      // here. Measured standing in «قيد القراءة» with «العنوان» chosen: Grid, Details and Vista gave
+      // the titles in order and Covers and Spines gave the rule's sequence, unchanged from
+      // «ترتيب الرفّ». Under «ترتيب الرفّ» the rule's own order still stands, which is the whole of
+      // what a lens's order means.
+      const chosen = asShelfOrder(sort);
+      const ordered = chosen === "hand"
+        ? visible
+        : sortBooks(visible.map((id) => byId.get(id)).filter((b): b is BookRow => !!b), chosen)
+            .map((b) => b.id);
+      return ordered.map((id, i) => ({ book_id: id, position: i, category_id: null }));
     },
-    [shelfRows, lenses, arrangement, sectionBooks],
+    [shelfRows, lenses, arrangement, sectionBooks, sort, byId],
   );
 
   const rendered: CaseRender[] = useMemo(() => {
@@ -1403,7 +1427,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
    * any one view — and because every view now renders through it.
    */
   const emptyState = flatBooks.length === 0
-    ? emptyKind({ query: props.query, totalBooks: props.books.length, scoped: !atRoot })
+    ? emptyKind({ query: props.query, totalBooks: props.books.length, scoped: !atRoot, filtered: props.format != null })
     : null;
 
   /**
@@ -2599,7 +2623,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
         {vista && <VistaEnvironment dark={dark} hasUserBackground={hasUserBackground} />}
 
         <Header
-          bare={libraryIsBare({ query: props.query, totalBooks: props.books.length })}
+          bare={libraryIsBare({ query: props.query, totalBooks: props.books.length, filtered: props.format != null })}
           crumbs={crumbs}
           heading={heading}
           subcount={t("lib.count", { n: num(flatBooks.length) })}
@@ -2689,6 +2713,10 @@ export function LibraryDesign(props: LibraryDesignProps) {
               t={t}
               onAddBooks={props.onAddBooks}
               onClearQuery={() => props.onQuery("")}
+              /* Which narrowing this nothing belongs to, so the one action offered is the one that
+                 undoes it. A query is cleared; a format is returned to «كل الصيغ». */
+              narrowedBy={props.query.trim() !== "" ? "query" : props.format != null ? "format" : null}
+              onClearFormat={() => props.onFormat(null)}
             />
           </div>
         ) : vista ? (
@@ -3016,11 +3044,16 @@ function LibraryEmpty({
   t,
   onAddBooks,
   onClearQuery,
+  narrowedBy,
+  onClearFormat,
 }: {
   kind: EmptyKind;
   t: (k: TKey) => string;
   onAddBooks: () => void;
   onClearQuery: () => void;
+  /** What is narrowing the view, when this nothing is the result of a choice rather than an empty library. */
+  narrowedBy: "query" | "format" | null;
+  onClearFormat: () => void;
 }) {
   const welcome = kind === "library";
   return (
@@ -3050,10 +3083,15 @@ function LibraryEmpty({
 
       {/* ONE ACTION, AND IT IS THE ONE THE STATE IS ABOUT. */}
       <div className="libd-empty-act">
-        {kind === "search" ? (
+        {/* THE ACTION UNDOES WHAT CAUSED THE NOTHING, and there are now two things that can cause it.
+            This branch was reached only by a query, so it always cleared the query; a format that
+            matched nothing now reaches it too, and clearing a query the reader never typed would be
+            a button that visibly does nothing. Same button, same place, same shape — it just asks
+            the right question. */}
+        {kind === "search" && narrowedBy ? (
           <button
             className="libd-hov"
-            onClick={onClearQuery}
+            onClick={narrowedBy === "format" ? onClearFormat : onClearQuery}
             style={{
               minHeight: "var(--ctl-lg)",
               padding: "0 15px",
@@ -3063,7 +3101,7 @@ function LibraryEmpty({
               font: "500 .75rem var(--ui)",
             }}
           >
-            {t("lib.clearSearch")}
+            {narrowedBy === "format" ? t("lib.filter.all") : t("lib.clearSearch")}
           </button>
         ) : (
           <button

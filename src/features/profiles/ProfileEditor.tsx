@@ -61,6 +61,7 @@ import { BookmarkShape } from "../reader/BookmarkShape";
 import { ACCENTS, CustomPaper, PAPERS_DARK, PAPERS_LIGHT } from "./CustomPaper";
 import { MeasureSection } from "./editor/MeasureSection";
 import { VoiceSection } from "./editor/VoiceSection";
+import { RefsSection } from "./editor/RefsSection";
 import { ColorPicker } from "../../components/ColorPicker";
 import { EditorShell } from "./editor/EditorShell";
 import { FOCUS, type ChapterId, type Focus } from "./editor/chapters";
@@ -146,6 +147,8 @@ function chapterSlice(p: Profile, id: ChapterId): unknown {
     // the reader can change, so the dot has to light when they change it.
     case "voice":
       return d.voice;
+    case "refs":
+      return d.refs;
     case "texture":
       return d.texture;
   }
@@ -519,6 +522,14 @@ export function ProfileEditor({
         ].filter(Boolean);
         return on.length ? on.join(" · ") : t("profiles.voice.none");
       }
+      case "refs": {
+        const r = draft.data.refs;
+        if (!r) return t("profiles.refs.follows");
+        // The two sizes read as percentages here exactly as they do on their own sliders — 100% is
+        // the design — and the colour is named only when the هيئة actually pins one.
+        const pct = (v: number | null) => localeDigits(`${Math.round((v ?? 1) * 100)}%`, lang);
+        return `${pct(r.refRuleWeight)} · ${pct(r.refRuleOffset)}`;
+      }
       case "texture":
         return t(`profiles.texture.${draft.data.texture}`);
     }
@@ -600,6 +611,8 @@ export function ProfileEditor({
         return <MarksSection draft={draft} patch={patch} />;
       case "voice":
         return <VoiceSection draft={draft} patch={patch} readerStyle={readerStyle} />;
+      case "refs":
+        return <RefsSection draft={draft} patch={patch} readerStyle={readerStyle} />;
       case "texture":
         return <TextureSection draft={draft} patch={patch} libBg={libBg} />;
     }
@@ -2151,16 +2164,61 @@ function BackgroundSection({
 
   return (
     <>
+      {/* A DECISION, NOT A TICKBOX — and the naming was never the whole of it.
+          Renaming «الصورة نفسها» to «صورة المكتبة نفسها» said WHERE the picture comes from and still
+          left the shape of the thing wrong: a lone checkbox under «خلفية الكتاب», with an image
+          chooser beneath it, reads as an extra qualifier on the chooser rather than as the OTHER
+          option. Nothing on screen said the two were alternatives, so a reader could not tell that
+          ticking the box is what decides which picture the book page wears.
+          It is the two answers it always was, drawn the way this editor already draws a choice
+          between kinds — the same segmented control the mark's own row uses, with the consequences
+          under it (`.pf-icon-acts`'s tier). The library's own picture rides in the option that names
+          it, because "where does the image come from" is best answered by showing it. */}
       {reading && (
-        <label className="pf-samecheck">
-          <input
-            type="checkbox"
-            checked={draft.data.bg.reading.sameAsLibrary}
-            disabled={!draft.data.bg.library.ref}
-            onChange={(e) => patch((d) => { d.bg.reading.sameAsLibrary = e.target.checked; })}
-          />
-          <span>{t("profiles.bg.sameAsLibrary")}</span>
-        </label>
+        <>
+          <div
+            className="pf-icon-kinds pf-bg-kinds"
+            role="radiogroup"
+            aria-label={t("profiles.section.bookBg")}
+          >
+            {([
+              { own: false, label: "profiles.bg.kind.library" as const, sub: "profiles.bg.kind.librarySub" as const, ref: draft.data.bg.library.ref },
+              { own: true, label: "profiles.bg.kind.own" as const, sub: "profiles.bg.kind.ownSub" as const, ref: slot.ref },
+            ]).map((k) => {
+              const on = draft.data.bg.reading.sameAsLibrary === !k.own;
+              // The library option cannot be chosen when there is no library picture to follow.
+              const off = !k.own && !draft.data.bg.library.ref;
+              const thumb = rows.find((r) => r.id === k.ref) ?? null;
+              return (
+                <button
+                  key={k.label}
+                  type="button"
+                  role="radio"
+                  aria-checked={on}
+                  disabled={off}
+                  className={`pf-icon-kind pf-bg-kind${on ? " on" : ""}`}
+                  onClick={() => patch((d) => { d.bg.reading.sameAsLibrary = !k.own; })}
+                >
+                  <span
+                    className={`pf-bg-kind-thumb${thumb ? "" : " empty"}`}
+                    style={thumb ? { backgroundImage: `url("${bgSrcUrl(thumb)}")` } : undefined}
+                    aria-hidden
+                  />
+                  <span className="pf-bg-kind-text">
+                    <span className="pf-icon-kind-label">{t(k.label)}</span>
+                    {/* EACH ROW SAYS WHAT IT DOES, and the refusing one says why instead.
+                        The reason used to be a `title` — invisible to anyone not hovering a control
+                        they cannot press — and the consequence used to be one paragraph under BOTH
+                        options, which described whichever was selected and therefore never explained
+                        the other one. Saying it per row is what removes the paragraph. */}
+                    <span className="pf-bg-kind-sub">{t(off ? "profiles.bg.sameAsLibraryNeedsOne" : k.sub)}</span>
+                  </span>
+                  {on && <span className="pf-bg-kind-tick" aria-hidden>✓</span>}
+                </button>
+              );
+            })}
+          </div>
+        </>
       )}
 
       {!row ? (

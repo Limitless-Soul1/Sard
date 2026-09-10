@@ -262,6 +262,44 @@
 }
 .pf-samecheck input { accent-color: var(--accent); }
 .pf-samecheck:has(input:disabled) { color: var(--muted); cursor: default; }
+/* The book background's two answers, drawn as the mark's own kinds are (`.pf-icon-kind` supplies the
+   tier, the ring and the chosen state — one definition, so the two choosers cannot drift apart).
+   What each option is carries a picture of itself: "where does the image come from" is a question
+   best answered by showing the image. */
+/* TWO SOURCES, STACKED, EACH EXPLAINING ITSELF.
+   Side by side these were two short chips with a paragraph under them, and the paragraph described
+   whichever was SELECTED — so the option the reader had not chosen, which is the one they are trying
+   to understand, was never explained at all. Stacked, each row has room for its own consequence, and
+   the one that cannot be chosen states its reason where its consequence would be instead of hiding it
+   in a `title` nobody hovers. Same `.pf-icon-kind` tier, ring and chosen state as the mark's own
+   chooser — a column of them rather than a row, which is the whole of the visual change. */
+.pf-bg-kinds { flex-direction: column; }
+.pf-bg-kind { align-items: center; gap: 10px; text-align: start; }
+.pf-bg-kind-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.pf-bg-kind .pf-icon-kind-label { white-space: normal; }
+.pf-bg-kind-sub { font: 400 0.6875rem/1.45 var(--ui-font); color: var(--muted); }
+/* The chosen row says so twice — the accent ring it shares with every other chooser, and a tick, so
+   the state survives a reader who cannot separate the two rings by colour alone. */
+.pf-bg-kind-tick { flex: none; color: var(--accent); font-size: 0.8125rem; line-height: 1; }
+.pf-bg-kind-thumb {
+  width: 34px; height: 34px; flex: none; border-radius: 7px;
+  background-color: var(--paper-bg); background-size: cover; background-position: center;
+  box-shadow: inset 0 0 0 1px var(--chrome-border);
+}
+/* NOTHING CHOSEN YET is drawn as an empty frame, not as a filled square: a solid paper-coloured chip
+   beside a photograph reads as "a picture that failed to load" rather than as "no picture". */
+.pf-bg-kind-thumb.empty {
+  background-color: transparent;
+  box-shadow: none;
+  border: 1px dashed color-mix(in srgb, var(--text) 26%, transparent);
+}
+.pf-bg-kind:disabled { opacity: 0.55; cursor: default; }
+.pf-bg-kind:disabled:hover { background: transparent; }
+/* The line that says what checking the box does. It belongs to the box, so the gap that used to sit
+   under the box now sits under the PAIR — otherwise the explanation reads as the next thing down
+   rather than as part of this one. `.pf-hint`'s own top margin supplies the space between them. */
+.pf-samecheck:has(+ .pf-samecheck-hint) { margin-bottom: 0; }
+.pf-samecheck-hint { margin-top: 4px; margin-bottom: 12px; }
 
 .pf-deferred { font: 400 0.8125rem/1.7 var(--ui-font); color: var(--muted); }
 
@@ -681,6 +719,14 @@
 }
 .pf-page-ar { position: relative; margin: 0 0 20px; font-size: 18px; line-height: 2.15; }
 .pf-page-hl { padding: 0.05em 0.2em 0.09em; border-radius: 0.12em; }
+/* THE REFERENCE MARK'S ANCHOR, and the whole of what CSS contributes to it.
+   The twin rule is two absolutely-positioned strokes whose height, radius, colour and distance all
+   arrive inline from `resolveRefRule` — the same resolver the book draws with — so the only thing
+   needed here is the box they are positioned against. Giving them any geometry in this file would be
+   a second source for numbers the engine already owns, which is exactly how a preview drifts from the
+   page it is previewing. No padding and no background: the mark is drawn BELOW the words and must not
+   move them, or the two size controls would re-wrap the line as the reader dragged them. */
+.pf-page-ref { position: relative; }
 /* A RUN OF SELECTED TEXT, drawn the way the reading surface draws one: the palette's selection wash
    behind the words and nothing else. `::selection` sets a background and no other property — no
    radius, no padding, no change of ink — so neither does this. The colour arrives inline, from the
@@ -1368,6 +1414,10 @@
   width: 36px; height: 36px; flex: none; border-radius: 9px; display: grid; place-items: center;
   background: var(--paper-bg); color: var(--text); font-size: 17px; line-height: 1;
   box-shadow: inset 0 0 0 1px var(--chrome-border);
+  /* IT CLIPS, like every other box that owns a mark — see the grouped rule at the end of this file.
+     Stated here too because this is the one that did not, and a reader met it: a هيئة whose sender
+     had zoomed its picture arrived with the picture hanging outside the card it arrived in. */
+  overflow: hidden;
 }
 .pf-import-id-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .pf-import-name { font: 600 1.0625rem/1.4 var(--ui-font); color: var(--text); }
@@ -1505,12 +1555,14 @@
    `.pf-page-ar`'s own font-size/line-height live here historically; they are overridden inline now,
    which is deliberate — the inline value IS the profile's answer. */
 .pf-page-body { position: relative; }
-/* Diacritics — the reading engine's own two declarations, on its own class name.
-   `injectedCss` wraps every Arabic mark in `.sard-tashkil` and then dims it to 0.28 or collapses it
-   to `font-size: 0`. The specimen wraps its marks in the SAME class and applies the SAME values, so
-   this is the reader's treatment rather than a resemblance to it. A block-level fade would have been
-   the easy approximation and would have dimmed the letters along with their vowels. */
-.pf-page-body.pf-dia-dim .sard-tashkil { opacity: 0.28; }
+/* Diacritics — the reading engine's own declaration, on its own class name.
+   `injectedCss` wraps every Arabic mark in `.sard-tashkil` and then collapses it to `font-size: 0`.
+   The specimen wraps its marks in the SAME class and applies the SAME value, so this is the reader's
+   treatment rather than a resemblance to it. A block-level fade would have been the easy
+   approximation and would have hidden the letters along with their vowels.
+   There was a `.pf-dia-dim` beside this at 0.28 opacity; it went when «تعتيم» did, and it had to go
+   from here too — the specimen is what the reader is shown the choice ON, so a rule for a choice
+   that no longer exists would have been the one place it could still be seen to work. */
 .pf-page-body.pf-dia-hide .sard-tashkil { font-size: 0; }
 
 /* ================================================================================================
@@ -1659,4 +1711,22 @@
   position: absolute; inset: 0;
   background: linear-gradient(to top left, transparent calc(50% - 1px),
     var(--muted) calc(50% - 1px), var(--muted) calc(50% + 1px), transparent calc(50% + 1px));
+}
+
+/* ---- every box that owns a mark clips it ----
+   `markFrame` magnifies a mark's LAYER past its box above 1×, and an element cannot clip itself, so
+   the clipping belongs to the box. That was five separate rules each remembering to say so, and the
+   sixth — the import preview's seal — did not: a picture framed above 1× by whoever sent the هيئة
+   painted straight out of the card it arrived in, which is why it looked like it depended on the
+   picture. It depends on the framing.
+
+   ONE RULE, so a surface added later is covered by naming it here rather than by remembering. The
+   individual declarations stay where they are: each says WHY its own box clips, and this says that
+   all of them must. Guarded by `tests/unit/markFrame.test.ts`, which reads this file. */
+.pf-seal,
+.pf-editor-seal,
+.pf-import-seal,
+.pf-lib-avatar,
+.pf-switch-mini {
+  overflow: hidden;
 }

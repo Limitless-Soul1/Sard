@@ -1,9 +1,14 @@
 // THE MARK'S FRAMING — the six surfaces that draw a profile's picture now ask one function how.
 //
-// Two things are pinned here and both are things that were once wrong in the product. That the
-// DEFAULT emits exactly what those surfaces painted before framing existed, so a profile nobody has
-// framed cannot move; and that the pan converts a pointer distance using the picture's real travel,
-// which is what stops a drag crawling on a panorama and racing on a square.
+// Three things are pinned here and all three are things that were once wrong in the product. That
+// the DEFAULT emits exactly what those surfaces painted before framing existed, so a profile nobody
+// has framed cannot move; that the pan converts a pointer distance using the picture's real travel,
+// which is what stops a drag crawling on a panorama and racing on a square; and that every box
+// holding a mark CLIPS it, which the import preview's seal did not — so a هيئة arriving with a
+// zoomed picture painted it outside the card.
+
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -91,5 +96,44 @@ describe("what a stored framing is allowed to be", () => {
   it("ignores nonsense field by field", () => {
     expect(of({ focalX: "left", focalY: null, scale: NaN })).toEqual(ICON_FRAME_DEFAULT);
     expect(of("a string")).toEqual(ICON_FRAME_DEFAULT);
+  });
+});
+
+describe("the box that owns a mark", () => {
+  // THE FAULT THIS PREVENTS, exactly as a tester met it. `markFrame` returns `transform: scale(n)`
+  // for any framing above 1×, which makes the LAYER larger than the box on purpose; an element
+  // cannot clip itself, so the box has to. Five mark surfaces said `overflow: hidden` and the sixth,
+  // `.pf-import-seal`, never had — so an ordinary picture looked fine and a zoomed one hung outside
+  // the receiving card. Nothing in the type system can catch that, and no unit test can see a pixel,
+  // but the DECLARATION is readable, and its absence is what the defect was.
+  const css = readFileSync(join(import.meta.dirname, "..", "..", "src/styles/profiles.css"), "utf8");
+
+  /** The rule bodies that name `sel` in their selector list, comments stripped. */
+  const bodiesFor = (sel: string): string[] => {
+    const bare = css.replace(/\/\*[\s\S]*?\*\//g, "");
+    const out: string[] = [];
+    for (const m of bare.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const selectors = m[1].split(",").map((s) => s.trim());
+      if (selectors.includes(sel)) out.push(m[2]);
+    }
+    return out;
+  };
+
+  // Every surface `markFrame` is spread onto — the list the helper's own header names.
+  it.each(["pf-seal", "pf-editor-seal", "pf-import-seal", "pf-lib-avatar", "pf-switch-mini"])(
+    ".%s clips what its layer overflows",
+    (cls) => {
+      const bodies = bodiesFor(`.${cls}`);
+      expect(bodies.length).toBeGreaterThan(0);
+      expect(bodies.some((b) => /overflow:\s*hidden/.test(b))).toBe(true);
+    },
+  );
+
+  it("magnifies past the box, which is the whole reason the box must clip", () => {
+    // The premise, stated so the rule above cannot be dismissed as belt-and-braces: at any scale a
+    // sender can save, the layer really is bigger than what holds it.
+    expect(markFrame({ focalX: 50, focalY: 50, scale: ICON_SCALE_MAX }).transform)
+      .toBe(`scale(${ICON_SCALE_MAX})`);
+    expect(markFrame({ focalX: 50, focalY: 50, scale: 1 }).transform).toBeUndefined();
   });
 });

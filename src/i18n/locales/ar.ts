@@ -118,7 +118,6 @@ export const ar: Record<TKey, string> = {
   "type.alignEnd": "نهاية",
   "type.diacritics": "التشكيل",
   "diacritics.show": "إظهار",
-  "diacritics.dim": "تعتيم",
   "diacritics.hide": "إخفاء",
 
   "settings.language": "اللغة",
@@ -657,6 +656,10 @@ export const ar: Record<TKey, string> = {
   "photo.zoom.out": "تصغير",
   "photo.zoom.in": "تكبير",
   "photo.zoom.fit": "ملاءمة",
+  // اللوحة الجانبية تنسحب حين تضيق النافذة عن حملها بجوار البطاقة، وهذا هو طريق العودة إليها.
+  "photo.insp.panel": "اللوحة",
+  "photo.insp.show": "أظهر اللوحة الجانبية",
+  "photo.insp.hide": "أخفِ اللوحة الجانبية",
   "photo.insp.card": "البطاقة",
   "photo.insp.cardSub": "لا شيء محدَّد",
   "photo.insp.elSub": "العنصر المحدَّد",
@@ -1514,6 +1517,15 @@ export const ar: Record<TKey, string> = {
   "profiles.voice.clear": "أعِدها إلى علامات سَرْد",
   "profiles.voice.none": "بلا علامات",
 
+  // علامة المرجع: الخطّان تحت الكلمة الموسومة. الصياغة على منوال القراءة الصوتيّة لأنّ الحال واحدة —
+  // علامةٌ تُرسَم على الصفحة، للهيئة أن تحملها وليس عليها ذلك.
+  "profiles.refs.hint":
+    "علامةُ المرجع خطّان يُرسمان تحت الكلمة الموسومة، فللهيئة أن تحمل لونهما ومقاسهما. وليس عليها ذلك: الهيئةُ التي لا تحملهما تعيدهما إلى علامة سَرْد كما صُمِّمت، بلون نَبْرِ الهيئة نفسه.",
+  "profiles.refs.label": "علامة المرجع",
+  "profiles.refs.follows": "الافتراضيّة",
+  "profiles.refs.carried": "من الهيئة",
+  "profiles.refs.clear": "أعِدها إلى علامة سَرْد",
+
   "profiles.measure.hint": "ليس على الهيئة أن ترى رأيًا. ما تُترك «كما هو » يبقى على ما اخترته أثناء القراءة.",
   "profiles.measure.follows": "كما هو",
   "profiles.measure.clear": "اتركه كما هو",
@@ -1527,6 +1539,8 @@ export const ar: Record<TKey, string> = {
   "profiles.chapter.marks.q": "ما الذي يدلّك على موضعك؟",
   "profiles.chapter.voice": "القراءة الصوتيّة",
   "profiles.chapter.voice.q": "كيف يتتبّع سَرْد الكلامَ وهو يقرأ لك؟",
+  "profiles.chapter.refs": "المراجع",
+  "profiles.chapter.refs.q": "كيف تبدو الكلمة التي علّقتَ عليها؟",
   "profiles.chapter.texture": "الملمس",
   "profiles.chapter.texture.q": "كيف تبدو واجهة سَرْد؟",
   "profiles.focus.identity": "الهيئة النشِطة",
@@ -1535,6 +1549,7 @@ export const ar: Record<TKey, string> = {
   "profiles.focus.fonts": "الحرف المقروء",
   "profiles.focus.marks": "العلامة والتظليل",
   "profiles.focus.voice": "الجملة والكلمة",
+  "profiles.focus.refs": "الكلمة الموسومة",
   "profiles.focus.texture": "لوحات الواجهة",
   "profiles.editor.stageLibrary": "المكتبة",
   "profiles.editor.stageBook": "الكتاب",
@@ -1548,9 +1563,22 @@ export const ar: Record<TKey, string> = {
   "profiles.section.bookBg": "خلفية الكتاب",
   "profiles.section.fonts": "الخطوط",
   "profiles.section.marks": "العلامات والملمس",
-  "profiles.bg.sameAsLibrary": "الصورة نفسها",
+  // خلفية الكتاب: جوابان لا خانة واحدة. تسمية «الصورة نفسها» لم تكن وحدها موضع اللبس؛ الشكل كذلك،
+  // فخانةٌ مفردة فوق زرّ اختيار صورة تُقرأ كشرطٍ على الزرّ لا كالخيار الآخر. صارا خيارين ظاهرين،
+  // ومع كلٍّ منهما صورته، وتحتهما سطرٌ يقول ما يفعله المختار.
+  "profiles.bg.kind.library": "صورة المكتبة نفسها",
+  // سطرٌ تحت كلّ خيار يقول ما يفعله هو، فلا حاجة إلى فقرةٍ تشرح المختار وتترك الآخر بلا بيان.
+  "profiles.bg.kind.librarySub": "تظهر خلف صفحة الكتاب أيضًا، أهدأ منها في المكتبة",
+  "profiles.bg.kind.own": "صورةٌ خاصّة بالكتاب",
+  "profiles.bg.kind.ownSub": "صورةٌ لصفحة الكتاب وحدها، لا تتبع المكتبة",
+  // يبقى المفتاح القديم: تستعمله سطور أخرى تسمّي الخيار خارج هذا القسم.
+  "profiles.bg.sameAsLibrary": "صورة المكتبة نفسها",
+  "profiles.bg.sameAsLibraryNeedsOne": "اختر خلفيةً للمكتبة أوّلًا.",
+  // يبقى مختصرًا كما هو: في سطر الفصل يأتي بعد اسم صورة المكتبة مباشرةً، فالمرجع فيه ظاهر.
   "profiles.bg.sameAsLibraryShort": "الصورة نفسها · أهدأ",
 
+  // اسم الهيئة التي تُصنَع مرّةً واحدة لقارئٍ جاء من نسخةٍ قبل الهيئات: هي مظهره كما كان، لا شيء جديد.
+  "profiles.legacy.name": "هيئتك السابقة",
   "profiles.unnamed": "هيئة بلا اسم",
   "profiles.identity.name": "الاسم",
   "profiles.identity.nameRequired": "لا يمكن أن تفقد الهيئة اسمها.",
@@ -1711,6 +1739,7 @@ export const ar: Record<TKey, string> = {
   "profiles.unsaved.what.measure": "مقاس النصّ",
   "profiles.unsaved.what.numbers": "لون الأرقام",
   "profiles.unsaved.what.voice": "علامات القراءة الصوتيّة",
+  "profiles.unsaved.what.refs": "علامة المرجع",
   "profiles.unsaved.listSep": "، ",
   "profiles.saved.applied": "حُفِظت «{name}» وطُبِّقت",
   "profiles.saved.only": "حُفِظت «{name}»",
@@ -1783,7 +1812,18 @@ export const ar: Record<TKey, string> = {
   "dep.layer.theirs.notes": "الملاحظات",
   "dep.layer.theirs.references": "المراجع",
   "dep.layer.theirs.replacements": "الاستبدالات",
-  "dep.recv.open": "افتح نسخة",
+  // «نسخة» وحدها تحتمل النسخة بمعنى الطبعة والنسخة بمعنى الملفّ المنسوخ. الزرّ يفتح «نسخة قراءة»،
+  // وهو المصطلح الذي تستعمله بقيّة الواجهة لهذا الشيء، والإنجليزيّة تقوله أصلًا: "Open a reading copy".
+
+  // ---- خطٌّ أُسقِط على النافذة ----
+  // الجواب سطرٌ واحد لا حوار: الإضافة لا تسأل شيئًا، والرفض كذلك.
+  "font.drop.imported": "أُضيف خطّ «{name}»",
+  "font.drop.duplicate": "خطّ «{name}» عندك أصلًا",
+  "font.err.type": "هذه الصيغة ليست خطًّا تقبله سَرْد. الصيغ المقبولة: ttf وotf وwoff وwoff2.",
+  "font.err.invalid": "هذا الملفّ ليس خطًّا سليمًا.",
+  "font.err.unreadable": "تعذّرت قراءة الملفّ.",
+  "font.err.failed": "تعذّرت إضافة الخطّ.",
+  "dep.recv.open": "افتح نسخة قراءة",
   "dep.recv.chooseCopy": "أي نسخة عندك هي هذا الكتاب؟",
   "dep.recv.copyNote": "علاماته ستوضع حيث يوافق نصّ نسختك تمامًا، وما لا يوافق يبقى بلا موضع.",
   "dep.recv.placedLater": "ما وُضع منها يظهر وأنت تقرأ فصوله.",

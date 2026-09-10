@@ -62,6 +62,37 @@ export interface CustomFont {
 export const fontImport = (path: string): Promise<CustomFont> =>
   invoke<CustomFont>("font_import", { path });
 
+/** What a font file says about itself — the drop gate's answer. Rejection is a `font.err.*` key. */
+export interface FontFacts {
+  family: string;
+  style: string | null;
+  /** ttf · otf · ttc · woff · woff2 */
+  format: string;
+  /** True when the family came from the font's own `name` table rather than from the filename. */
+  named_by_font: boolean;
+}
+
+/** What a dropped font did. */
+export interface FontDrop {
+  outcome: "imported" | "duplicate";
+  family: string;
+  style: string | null;
+  format: string;
+}
+
+/**
+ * Read a font file and change NOTHING — the routing gate for a dropped file.
+ *
+ * Rejects with a `font.err.*` key, which is what lets the drop fall through to the next candidate
+ * exactly as a file that is not a deposit does.
+ */
+export const fontInspect = (path: string): Promise<FontFacts> =>
+  invoke<FontFacts>("font_inspect", { path });
+
+/** Import a dropped font under the family the FILE names; says whether it was already here. */
+export const fontImportDropped = (path: string): Promise<FontDrop> =>
+  invoke<FontDrop>("font_import_dropped", { path });
+
 /** List imported fonts (newest first). */
 export const fontsList = (): Promise<CustomFont[]> => invoke<CustomFont[]>("fonts_list");
 

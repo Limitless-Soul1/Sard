@@ -708,7 +708,15 @@ html, body, #root {
   bottom: 56px;
   z-index: var(--z-drawer);
   width: min(384px, 94vw);
-  background: var(--chrome-bg);
+  /* Enrolled in the interface texture on the same terms as `.reader-panel`, and for the same reason
+     the comment above already gives: it is "consistent with the Contents/Notes drawers", so it is
+     one of them here too. Measured stuck at a flat `--chrome-bg` in the same run. Leaving it out
+     would have traded one inconsistency for a worse one — Contents frosted, Settings opaque, in the
+     same reader, a button apart. Own value 100%, so `opaque` is unchanged. */
+  background: color-mix(in srgb, var(--chrome-bg)
+    calc(var(--ui-floor, 0%) + (100% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
+  backdrop-filter: blur(var(--ui-frost, 0px)) saturate(var(--ui-sat, 1)) brightness(var(--ui-bright, 1));
+  -webkit-backdrop-filter: blur(var(--ui-frost, 0px)) saturate(var(--ui-sat, 1)) brightness(var(--ui-bright, 1));
   transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
   display: flex;
   flex-direction: column;
@@ -1011,6 +1019,23 @@ html, body, #root {
    picture. The rules are drawn INLINE from the shared resolver (ReadingSettings RefRuleControls); nothing
    about their geometry lives here. The bottom padding is generous on purpose: it is the room the pair
    needs at the top of the distance range, and without it the lower rule would clip against the box. */
+/* ---- the reference group's own spacing hierarchy ----
+   THE FAULT THIS FIXES, measured in the هيئة editor at 1440x900: every gap inside this group was 2px
+   — the colour label to its swatches, the swatches to the first slider, and one slider to the next —
+   because the group declared no vertical rhythm at all and `.rs-slider-row` carries only a horizontal
+   gap. The three controls read as a single dense block.
+   THREE STEPS, FROM THE TOKEN SCALE, and each says something:
+     --sp-3   inside one control: its label and the thing it labels belong together
+     --sp-4   between the two sliders: separate rows, same kind of thing
+     --sp-6   between the colour control and the sliders: a different kind of control begins
+   The rows also take the compact control height, so a label, its track and its value have room to be
+   read as one band rather than three lines that happen to be adjacent. Scoped to `.rs-ref`, so the
+   slider rows other sections use for other jobs are untouched. */
+.rs-ref .rs-sec-head { margin-bottom: var(--sp-3); }
+.rs-ref .rs-inks { margin-bottom: var(--sp-6); }
+.rs-ref .rs-slider-row { min-height: var(--ctl-sm); }
+.rs-ref .rs-slider-row + .rs-slider-row { margin-top: var(--sp-4); }
+
 .rs-ref-preview {
   display: flex; justify-content: center; align-items: center;
   padding: 18px 14px 30px; margin-top: 12px; border-radius: var(--r-md);
@@ -1119,7 +1144,28 @@ html, body, #root {
   max-inline-size: 86vw;
   display: flex;
   flex-direction: column;
-  background: var(--chrome-bg);
+  /* THE DRAWER IS CHROME, and it was the one piece of reader chrome the texture feature never
+     reached. Measured in the reader, one book open and the contents listed, across all three steps:
+     `.rc-top`/`.rc-bottom` — a few pixels above and below this surface, and enrolled — moved 0.96 →
+     0.729 → 0.63 with their frost, while this painted a flat `--chrome-bg` at every step. So a
+     reader wearing Glass got frosted bars around an opaque table of contents. Nothing was wrong with
+     the state: the root carried `--ui-k`, `--ui-floor` and `--ui-frost` correctly throughout and the
+     bars in the same subtree consumed them. This rule simply never asked.
+
+     ITS OWN VALUE IS 100%, so `opaque` (k=1) reduces the formula to `var(--chrome-bg)` exactly and a
+     reader who never touches texture renders byte-identically to before — the invariant the whole
+     feature rests on. The floor-anchored form is the one every other enrolled surface uses, which is
+     what keeps the drawer's place in the hierarchy rather than flattening it onto the bars.
+
+     THE FROST IS THE VARIABLE ONE, as on `.lib-sidebar` and unlike the bars. The bars take a fixed
+     small blur because they span the FULL window over scrolled reading text (RAWY-177); this drawer
+     docks BESIDE the page — the reading area is inset by `PANEL_LEAD`/`PANEL_TRAIL` to make room —
+     so what shows through it is the desk, which does not scroll. Same case as the library sidebar,
+     same treatment. */
+  background: color-mix(in srgb, var(--chrome-bg)
+    calc(var(--ui-floor, 0%) + (100% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
+  backdrop-filter: blur(var(--ui-frost, 0px)) saturate(var(--ui-sat, 1)) brightness(var(--ui-bright, 1));
+  -webkit-backdrop-filter: blur(var(--ui-frost, 0px)) saturate(var(--ui-sat, 1)) brightness(var(--ui-bright, 1));
   color: var(--text);
   z-index: var(--z-panel);
   box-shadow: 0 18px 44px rgba(20, 14, 6, 0.22);
@@ -4419,6 +4465,12 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
    The CARD keeps its own paper, chosen in the inspector. That is the point of the card. What follows
    the reader's theme is everything AROUND it. */
 .pcx-modal {
+  /* THE COMPOSER'S INLINE GEOMETRY, named once. `--pcx-insp-reserve` is the inspector's 348px plus
+     the 24px gap that keeps the card off it; `--pcx-gutter` is the plain desk margin on the other
+     side. They are read back in `PhotoComposer.tsx` to decide whether the inspector still fits, so
+     the breakpoint and the layout cannot drift apart — the number exists here and nowhere else. */
+  --pcx-insp-reserve: 372px;
+  --pcx-gutter: 44px;
   --pc-desk: var(--app-bg);
   --pc-chrome: var(--chrome-bg);
   /* A raised control. `--paper-bg` is Sard's reading surface and sits above the chrome in every
@@ -4868,10 +4920,23 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   background: var(--pc-desk); display: grid; place-items: center;
   /* The head room is for the CONTEXTUAL TOOLBAR, which floats just above the card. At 56px the card
      began where the objects strip already was, and the toolbar landed on top of the chips —
-     photographed, not deduced. The strip needs ~48px and the toolbar ~48 more. */
-  padding: 112px 372px 44px 44px;
+     photographed, not deduced. The strip needs ~48px and the toolbar ~48 more.
+
+     THE INLINE PADDING IS THE INSPECTOR'S ROOM, and it is now stated once, logically, instead of as
+     a physical pair plus an RTL override. `padding-inline: gutter reserve` resolves to 44/372 in
+     LTR and 372/44 in RTL, which is exactly what the two rules said — and it is the same axis
+     `.pcx-insp` is pinned to by `inset-inline-end`, so the reservation and the panel can no longer
+     disagree about which side they are on. */
+  padding-block: 112px 44px;
+  padding-inline: var(--pcx-gutter) var(--pcx-insp-reserve);
 }
-[dir="rtl"] .pcx-work { padding: 112px 44px 44px 372px; }
+/* THE RESERVATION IS ONLY OWED WHILE THE INSPECTOR IS THERE.
+   Below the width where the three regions stop fitting, the inspector steps aside and this padding
+   would otherwise go on holding 372px of empty desk — which is the whole of the defect: the card was
+   fitted to the leftover, hit a 240px floor, and overflowed symmetrically back OUT of the content
+   box and underneath the panel that had already gone. With the room returned, the stage simply has
+   it: measured at 760px wide, 8px of usable content becomes 338px. */
+.pcx-work.solo { padding-inline: var(--pcx-gutter); }
 
 /* `overflow: visible` so a handle on an element at the card's edge stays hittable — clipping it was
    a measured bug, not a hypothetical one. */
@@ -5344,6 +5409,14 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   position: absolute; top: calc(100% + 9px); inset-inline-start: 50%; transform: translateX(-50%);
   z-index: 46; inline-size: 236px;
 }
+/* THE PANEL WHEN IT IS DRAWN IN THE OVERLAY HOST rather than beside its trigger.
+   The rule above still stands for every picker that is not anchored; this one replaces only its
+   PLACEMENT, and deliberately not one thing about how the panel looks. `z-index: 46` was measured
+   losing to the inspector's 34 — it sat inside `.pcx-tb`'s own context at 32 — so there is no
+   z-index here at all: the host is already the top layer of the modal, and rank inside it would
+   only start the same argument again. The coordinates come from the component, which measures the
+   trigger and clamps to the window. */
+.pcx-pick--float { position: fixed; inline-size: 236px; }
 /* An auto-fitted quote has no size to show, so it says what it is doing instead of inventing one. */
 .pcx-tb-auto {
   height: 26px; padding: 0 10px; border: 1px dashed var(--pc-line-2); border-radius: 7px;
@@ -6718,26 +6791,42 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 /* ================================================================================================
    INTERFACE TEXTURE — the three named steps, suppressed under the three accessibility preferences.
    ================================================================================================
-   The eight chrome surfaces above read `--ui-k`, `--ui-floor` and `--ui-frost`. Each lands at
+   The chrome surfaces above read `--ui-k`, `--ui-floor` and `--ui-frost`. Each lands at
    `floor + (own − floor) × k`, so a surface keeps its own place in the hierarchy — a drawer is
    deliberately not a toolbar — and no step can ever fall under the measured floor, which the old
    proportional scale did (90% × the glass factor reached 78%, below it). `opaque` removes all
    three, so the fallbacks reduce the formula to the surface's own value exactly and a reader who
    never touches texture has no declaration in the tree at all.
 
+   THE LIST IS THE PART THAT ROTS, and it did. It said "the eight" and named eight, and the sentence
+   above about a drawer not being a toolbar was written while NO drawer was enrolled: the reader's
+   four — Contents, Notes, Search (all `.reader-panel`) and Settings — painted a flat `--chrome-bg`
+   at every step, measured, with the enrolled bars a few pixels away moving 0.96 → 0.729 → 0.63.
+   Enrolment is a per-rule opt-in that nothing checks, so a surface added later simply does not
+   participate and nobody finds out until a reader wearing Glass opens the table of contents. That
+   is what `tests/unit/texture.test.ts` now checks: not that these classes exist, but that no chrome
+   surface floating over the desk or the page is left painting a flat `--chrome-bg`. Adding a ninth
+   without enrolling it fails there rather than in someone's reading.
+
    THESE SUPPRESSIONS ARE NEW, AND THEY HAD TO BE. The three existing accessibility blocks are scoped
-   to `.lib-sidebar`, `.lib-root`, `.reader-desk` and `.page-sheet`; none of them names any of the
-   eight. Those surfaces were never suppressed because at 90–98% they were never really translucent
+   to `.lib-sidebar`, `.lib-root`, `.reader-desk` and `.page-sheet`; none of them names any of these.
+   Those surfaces were never suppressed because at 90–98% they were never really translucent
    and needed no protection. Driving them from a texture variable makes them translucent for the
    first time, so the protection has to be extended or the preference would silently stop being
    honoured. Same contract as everywhere else in this file: SUPPRESS the feature, never soften it —
    a reader who asked the OS for high contrast, forced colours or reduced transparency has stated a
    requirement, not a preference. The stored step is untouched; only the rendering stops.
 
+   `.rc-top` WAS MISSING FROM THIS LIST, and that was a live defect rather than tidying. It shares
+   one rule with `.rc-bottom` — `.rc-top, .rc-bottom { … }` — so it has always been textured, but
+   only `.rc-bottom` was named here. A reader who asked the OS for reduced transparency got an
+   opaque bottom bar and a 0.63 top bar. The same hand-maintained list, failing the same way.
+
    THE PAGE IS DELIBERATELY ABSENT. Page translucency belongs to the book background and is floored
    separately at 0.84; the design states that the page is outside texture's reach, and it is. */
 @media (forced-colors: active), (prefers-contrast: more), (prefers-reduced-transparency: reduce) {
   :root[data-ui-texture] .page-chevron,
+  :root[data-ui-texture] .rc-top,
   :root[data-ui-texture] .rc-bottom,
   :root[data-ui-texture] .tts-pill,
   :root[data-ui-texture] .tts-speed-menu,
@@ -6745,15 +6834,30 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   :root[data-ui-texture] .tts-menu-section,
   :root[data-ui-texture] .tts-mini--kashida,
   :root[data-ui-texture] .upd-latest,
-  :root[data-ui-texture] .lib-sidebar {
+  :root[data-ui-texture] .lib-sidebar,
+  :root[data-ui-texture] .reader-panel,
+  :root[data-ui-texture] .settings-panel {
     background: var(--chrome-bg);
   }
   /* The frost is part of the feature, so it is suppressed with it. Leaving the blur behind would
      honour the preference for the alpha and quietly ignore it for the transparency the blur reveals,
-     which is the same failure in a different property. */
-  :root[data-ui-texture] .lib-sidebar,
+     which is the same failure in a different property.
+     THIS LIST SAID THAT AND NAMED THREE. Five textured surfaces carrying a blur — the chevron, the
+     read-aloud menu and its section headers, the kashida bead and the update card — were left out,
+     so the contract in the paragraph above was not true of them. Every textured surface that
+     declares a `backdrop-filter` is named here now; `.tts-speed-menu` is absent because it declares
+     none, not because it is exempt. */
+  :root[data-ui-texture] .page-chevron,
+  :root[data-ui-texture] .rc-top,
+  :root[data-ui-texture] .rc-bottom,
   :root[data-ui-texture] .tts-pill,
-  :root[data-ui-texture] .rc-bottom {
+  :root[data-ui-texture] .tts-menu,
+  :root[data-ui-texture] .tts-menu-section,
+  :root[data-ui-texture] .tts-mini--kashida,
+  :root[data-ui-texture] .upd-latest,
+  :root[data-ui-texture] .lib-sidebar,
+  :root[data-ui-texture] .reader-panel,
+  :root[data-ui-texture] .settings-panel {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
@@ -6963,3 +7067,18 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 /* Inside the plate the sentence takes the plate's padding, not the page's. */
 :root[data-bg-library="on"] .ui-page-title .arch-lede { padding: 0; }
 
+
+/* THE WAY BACK TO THE INSPECTOR, offered only while the workspace is too narrow to hold it.
+   Shaped as the zoom cluster beside it — same pill, same ground, same border — because it belongs to
+   the same row of workspace controls and should not read as a new kind of thing. `.on` marks the
+   panel as currently showing, the way `.pcx-tb-mini.on` does in the toolbar. */
+.pcx-insp-toggle {
+  display: inline-flex; align-items: center; gap: 6px; flex: none; pointer-events: auto;
+  height: 29px; padding: 0 9px; border-radius: 9px;
+  background: color-mix(in srgb, var(--pc-surface) 92%, transparent);
+  border: 1px solid var(--pc-line); color: var(--pc-text);
+  font: 500 0.6875rem var(--ui-font); cursor: pointer; white-space: nowrap;
+}
+.pcx-insp-toggle:hover { background: var(--pc-surface); }
+.pcx-insp-toggle.on { color: var(--pc-accent); border-color: color-mix(in srgb, var(--pc-accent) 45%, transparent); }
+.pcx-insp-toggle svg { flex: none; }

@@ -29,15 +29,26 @@ import { THEMES, isBuiltinThemeId } from "../../../theme/themes";
 import type { BuiltinThemeId, CustomThemeId, Theme, ThemeColors } from "../../../theme/tokens";
 import { HIGHLIGHT_SLOTS } from "../../../theme/tokens";
 import { isHex, reliefRoom, withPanelRelief } from "./palette";
+// The mark's own bounds, from the module that defines the mark. `refRule.ts` is deliberately tiny and
+// imports nothing from the engine, which is why the model may read it.
+import {
+  REF_OFFSET_MAX,
+  REF_OFFSET_MIN,
+  REF_WEIGHT_MAX,
+  REF_WEIGHT_MIN,
+} from "../../../reader-engine/refRule";
 import {
   PAGE_WIDTH_MAX,
   PAGE_WIDTH_MIN,
+  REF_RULE_DEFAULTS,
+  REF_RULE_KEYS,
   TTS_TRACKING_DEFAULTS,
   TTS_TRACKING_KEYS,
   ZOOM_MAX,
   ZOOM_MIN,
   type Align,
   type DiacriticsMode,
+  type ReadingStyle,
 } from "../../../reader-engine/injectedCss";
 
 /**
@@ -140,6 +151,50 @@ export type ProfileVoice = typeof TTS_TRACKING_DEFAULTS;
  * once, an addition reaches all three or fails to compile.
  */
 export const VOICE_KEYS: readonly (keyof ProfileVoice)[] = TTS_TRACKING_KEYS;
+
+/**
+ * A هيئة's opinion about THE REFERENCE MARK — the twin rule drawn under a referenced word.
+ *
+ * IT IS THE READING STYLE'S OWN TYPE, `Pick`ed through the defaults the engine publishes, exactly as
+ * `ProfileVoice` is. Three fields, and they are the three the reference UI actually controls: the
+ * stroke's colour, its thickness, and its distance from the text. There is no fourth — the mark is
+ * two drawn strokes, not text, so it has no face, no size and no weight of its own to carry. The two
+ * size fields ARE its typography: both are stored as a MULTIPLE of the design value and resolved
+ * against the text's own em, so they track the reader's zoom and the book's font rather than freezing
+ * a pixel that would be wrong at the next size.
+ */
+export type ProfileRefs = typeof REF_RULE_DEFAULTS;
+
+/** The engine's own list again, for the same reason `VOICE_KEYS` re-exports its own. */
+export const REF_KEYS: readonly (keyof ProfileRefs)[] = REF_RULE_KEYS;
+
+/**
+ * THE ONE PLACE THAT ANSWERS "what reference mark does this هيئة imply?".
+ *
+ * WHY IT EXISTS. The mark is resolved by one function — `resolveRefRule` in the engine — and that has
+ * never been in doubt. What WAS duplicated is the step before it: composing the هيئة's own block over
+ * the reader's live style, so an unsaved draft can be drawn. The editor's section and the editor's
+ * preview each wrote that composition inline, in two different shapes:
+ *
+ *     preview   { ...readerStyle, ...(profile.data.refs ?? {}) }
+ *     section   carried ? { ...readerStyle, ...refs } : readerStyle
+ *
+ * They agreed by arithmetic rather than by construction. Change the rule in one — fall back to the
+ * ENGINE's defaults rather than the reader's live mark, say — and the control beside the page would
+ * be setting one mark while the page beside it drew another, which is precisely the divergence the
+ * single-source rule exists to prevent.
+ *
+ * WHAT IT IS NOT. This is not a second source. `ProfileData.refs` remains the authored value and the
+ * only persisted one; activation writes it into the reader's own `reading_style` row through
+ * `readingPatch`, exactly as every other هيئة-owned reading field is written. This is the DERIVATION
+ * an editor needs because a draft has not been activated yet, named once so it cannot be re-derived
+ * differently in two places.
+ */
+export function refStyleFor(p: Profile, readerStyle: ReadingStyle): ReadingStyle {
+  // A هيئة carrying no opinion resolves to the reader's own mark — what they are actually looking at,
+  // which is the honest thing to draw beside a control they have not touched.
+  return { ...readerStyle, ...(p.data.refs ?? {}) };
+}
 
 export interface ProfileTypography {
   zoom: number | null;
@@ -324,6 +379,14 @@ export interface ProfileData {
    * The read-aloud marks, or `null` for a هيئة that has no opinion about them. See `ProfileVoice`.
    */
   voice: ProfileVoice | null;
+  /**
+   * The reference mark, or `null` for a هيئة that has no opinion about it. See `ProfileRefs`.
+   *
+   * Absent on every هيئة written before this existed, which is why it is nullable rather than
+   * defaulted: `null` and "the design's own mark" are the same drawing, so nothing already saved
+   * changes appearance.
+   */
+  refs: ProfileRefs | null;
   texture: TextureStep;
   seal: ProfileSeal;
   /** How an image mark is framed. Meaningless — and ignored — for the other two kinds. */
@@ -412,8 +475,37 @@ function parseVoice(v: unknown): ProfileVoice | null {
   };
 }
 
+/**
+ * A هيئة's reference mark, or `null` when it carries none.
+ *
+ * TOTAL, like every parser here: a blob that is not an object, or whose fields have drifted out of the
+ * range the controls can reach, yields `null` for that field rather than throwing — and `null` is a
+ * real value in this block ("the theme's accent" for the colour, "the design's own figure" for the two
+ * sizes), so a drifted number lands on the design rather than on nothing.
+ *
+ * THE RANGES ARE THE MARK'S OWN. `resolveRefRule` already floors the offset so the strokes cannot sit
+ * on the letterforms whatever arrives; this is the outer gate, not a substitute for it.
+ */
+function parseRefs(v: unknown): ProfileRefs | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  const ink = (x: unknown): string | null => (typeof x === "string" && isHex(x) ? x : null);
+  const mult = (x: unknown, lo: number, hi: number): number | null =>
+    typeof x === "number" && Number.isFinite(x) && x >= lo && x <= hi ? x : null;
+  return {
+    refRuleColor: ink(o.refRuleColor),
+    refRuleWeight: mult(o.refRuleWeight, REF_WEIGHT_MIN, REF_WEIGHT_MAX),
+    refRuleOffset: mult(o.refRuleOffset, REF_OFFSET_MIN, REF_OFFSET_MAX),
+  };
+}
+
 const ALIGNS: readonly Align[] = ["justify", "start", "center", "end"];
-const DIACRITICS: readonly DiacriticsMode[] = ["show", "dim", "hide"];
+// `dim` was withdrawn, and its absence here is what retires it from every هيئة already written.
+// `parseReading` answers an unrecognised value with `null`, which in a هيئة means "no opinion, follow
+// the reader" — the model's own answer for a field it cannot honour, and the honest one: the هيئة did
+// not ask for `show`, it asked for something that no longer exists. Nothing has to be rewritten on
+// disk, and a هيئة that never mentioned tashkīl is unaffected either way.
+const DIACRITICS: readonly DiacriticsMode[] = ["show", "hide"];
 
 function parseColors(v: unknown, base: ThemeColors): ThemeColors {
   const o = (v ?? {}) as Record<string, unknown>;
@@ -547,6 +639,9 @@ export function parseProfileData(raw: string): ProfileData {
     // written before this chapter existed means, and what keeps a switch from repainting somebody's
     // reading cursor.
     voice: parseVoice(o.voice),
+    // Absent reads as "this هيئة has no opinion about the reference mark" — what every هيئة written
+    // before this chapter existed means, and the same drawing as the design's own default.
+    refs: parseRefs(o.refs),
     texture: pick<TextureStep>(o.texture, (x) => TEXTURE_STEPS.includes(x as TextureStep), "opaque"),
     // Absent reads as "the profile's own face, and its initial" — what every seal drawn before this
     // existed already looked like, so nothing that is already saved changes appearance.
@@ -769,7 +864,7 @@ export const PROFILE_WRITES = [
  * border and ignored by the rest, which is the safe direction for a list to fail in.
  */
 export const PROFILE_READING_FIELDS = [
-  "arabicFont", "latinFont", "numberColor", ...TYPOGRAPHY_KEYS, ...VOICE_KEYS,
+  "arabicFont", "latinFont", "numberColor", ...TYPOGRAPHY_KEYS, ...VOICE_KEYS, ...REF_KEYS,
 ] as const;
 
 /**
@@ -873,6 +968,14 @@ export function readingPatch(p: Profile): ReadingPatch {
   // ("the theme's own colour"), which absence could not express.
   const voice = p.data.voice ?? TTS_TRACKING_DEFAULTS;
   for (const k of VOICE_KEYS) out[k] = voice[k];
+  // THE REFERENCE MARK: ALL THREE, ALWAYS — the same argument as the read-aloud marks above, and it
+  // matters for the same reason. Omitting them would leave the PREVIOUS هيئة's reference colour and
+  // sizes standing in the reader's blob, so wearing a هيئة that says nothing about references would
+  // read every book under the last one's mark. `REF_RULE_DEFAULTS` is all `null`, which is the mark's
+  // own spelling of "draw the design exactly, in this theme's accent" — so writing them is how a هيئة
+  // with no opinion actively restores Sard's own rather than inheriting somebody else's.
+  const refs = p.data.refs ?? REF_RULE_DEFAULTS;
+  for (const k of REF_KEYS) out[k] = refs[k];
   return { set: out, clear };
 }
 

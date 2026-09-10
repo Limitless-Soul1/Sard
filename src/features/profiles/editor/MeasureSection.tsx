@@ -38,9 +38,11 @@ const ALIGNS: { key: Align; label: TKey }[] = [
   { key: "center", label: "type.alignCenter" },
   { key: "end", label: "type.alignEnd" },
 ];
+// Two, since «تعتيم» was withdrawn: the marks are on the page or they are not. The row that reads
+// this also reads the CURRENT value to name it, so a هيئة saved with the old third answer would have
+// had nothing to name — which is why the value is retired in `parseReading` before it arrives here.
 const DIA: { key: DiacriticsMode; label: TKey }[] = [
   { key: "show", label: "diacritics.show" },
-  { key: "dim", label: "diacritics.dim" },
   { key: "hide", label: "diacritics.hide" },
 ];
 
@@ -255,10 +257,16 @@ export function MeasureSection({
         />
       </Row>
 
+      {/* A value this row cannot name reads as no opinion rather than throwing. The `!` here was
+          sound while every stored answer was one of three; it is one assertion too many now that one
+          of them has been withdrawn, and a هيئة is precisely the thing that arrives from elsewhere. */}
       <Row
         label={t("type.diacritics")}
         set={set("diacritics")}
-        shown={set("diacritics") ? t(DIA.find((d) => d.key === v("diacritics"))!.label) : t("profiles.measure.follows")}
+        shown={t(
+          (set("diacritics") && DIA.find((d) => d.key === v("diacritics"))?.label) ||
+            "profiles.measure.follows",
+        )}
         onClear={() => clear("diacritics")}
       >
         <Choice<DiacriticsMode>

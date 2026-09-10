@@ -10,9 +10,11 @@
 // learned from every other picker: white in one corner, black along the bottom, the pure hue in the
 // far corner.
 
-import { useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { useI18n } from "../../i18n";
+import { overlayHost, placeAnchored } from "../library/design/overlay";
 
 // ---- colour maths, kept here so nothing else has to know about it ------------------------------
 
@@ -60,7 +62,7 @@ export const COLOUR_PRESETS = ["#2B2521", "#F5EEDD", "#9C5A3C", "#C9A227", "#5E7
 // ---- the control -------------------------------------------------------------------------------
 
 export function ColourPicker({
-  value, onChange, title, onClose, showClear, onClear, clearLabel,
+  value, onChange, title, onClose, showClear, onClear, clearLabel, anchor,
 }: {
   /** The current colour as a hex, or null when it is following the theme. */
   value: string | null;
@@ -70,6 +72,12 @@ export function ColourPicker({
   showClear?: boolean;
   onClear?: () => void;
   clearLabel?: string;
+  /**
+   * The control this picker belongs to. Given one, the panel is drawn in the composer's overlay
+   * host instead of beside the trigger — see `float` below. Without one, nothing changes: the
+   * picker renders where it always did, which is what the inspector's own pickers still do.
+   */
+  anchor?: React.RefObject<HTMLElement | null>;
 }) {
   const { t } = useI18n();
   const hsv = hexToHsv(value ?? "#9C5A3C") ?? { h: 20, s: 0.6, v: 0.6 };
@@ -92,8 +100,54 @@ export function ColourPicker({
     onChange(hsvToHex(h, hsv.s || 1, hsv.v || 1));
   };
 
-  return (
-    <div className="pcx-pick" onPointerDown={(e) => e.stopPropagation()}>
+  /* WHERE THE PANEL GOES WHEN IT IS ANCHORED.
+     Two separate problems, and a high z-index answers neither of them.
+
+     STACKING. `.pcx-tb` is `position: absolute; z-index: 32`, which makes it a stacking context, and
+     this panel already carried `z-index: 46` inside it. Measured in the running composer at four
+     widths: the inspector (`z-index: 34`) owned every overlapping pixel, and at 900px it covered the
+     toolbar's own swatch so the picker could not be opened at all. 46 loses to 34 because 46 is
+     ranked inside 32. Leaving the context is the only move; the overlay host is where the rest of
+     Sard already goes to do it.
+
+     CLIPPING AND THE EDGE. `.pcx-work` and `.pcx-modal` are both `overflow: hidden`, and a panel
+     placed against a trigger near an edge hangs outside the window. `position: fixed` in the host
+     escapes the first; the clamp below answers the second, the same way `InkCustom` does — measure,
+     then slide back inside, rather than guess a side. */
+  const [box, setBox] = useState<{ left: number; top: number } | null>(null);
+  const panel = useRef<HTMLDivElement | null>(null);
+  const floating = !!anchor;
+  useLayoutEffect(() => {
+    if (!floating) return;
+    const place = () => {
+      const a = anchor?.current;
+      const el = panel.current;
+      if (!a || !el) return;
+      const r = a.getBoundingClientRect();
+      setBox(placeAnchored(
+        { left: r.left, top: r.top, width: r.width, height: r.height },
+        { width: el.offsetWidth || PANEL_W, height: el.offsetHeight },
+        { width: window.innerWidth, height: window.innerHeight },
+        { gap: GAP, edge: EDGE },
+      ));
+    };
+    place();
+    // The trigger moves with the selection, the stage and the window, so the panel follows all three.
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [floating, anchor]);
+
+  const body = (
+    <div
+      ref={panel}
+      className={`pcx-pick${floating ? " pcx-pick--float" : ""}`}
+      style={floating ? { left: box?.left ?? -9999, top: box?.top ?? -9999, visibility: box ? undefined : "hidden" } : undefined}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
       <header className="pcx-pick-head">
         <span className="pcx-pick-chip" style={{ background: value ?? "transparent" }} />
         <span className="pcx-pick-title">{title}</span>
@@ -153,4 +207,15 @@ export function ColourPicker({
       </div>
     </div>
   );
+
+  // `overlayHost` is asked from the TRIGGER, so the panel lands in the nearest shell that offers a
+  // host — the composer's own, inside `.pcx-modal`, where `--pc-*` is defined. Portalling to
+  // `document.body` instead would fix the stacking and lose every token, which is the failure the
+  // Library's own overlay note records.
+  return floating ? createPortal(body, overlayHost(anchor?.current ?? null)) : body;
 }
+
+/** The panel's own width, and the margin it keeps from the window's edge. */
+const PANEL_W = 236;
+const GAP = 9;
+const EDGE = 8;

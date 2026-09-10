@@ -208,6 +208,26 @@ export const DESIGN_SORTS: DesignSort[] = ["recent", "added", "title", "author",
  */
 export const asShelfOrder = (s: DesignSort): ShelfOrder => (s === "shelf" ? "hand" : s);
 
+/**
+ * WHICH ORDER ACTUALLY GOVERNS A PLACE'S BOOKS — the one decision, made once.
+ *
+ * Two settings can both speak about the same books: «ترتيب حسب» in the toolbar, which is the
+ * library's own presentation choice, and a shelf's `order_rule`, which is that shelf's. They had no
+ * agreed precedence, and the answer was decided by WHICH FORMAT WAS ON SCREEN. Measured standing
+ * inside one eight-book shelf, with every title, author and date distinct: Grid and Details followed
+ * the toolbar and produced two different sequences for «العنوان» and «المؤلف»; Covers, Spines and
+ * Vista ignored it and drew one sequence for both — and not even the same one as each other, since
+ * a hand shelf's saved arrangement is kept per format.
+ *
+ * The precedence is the one the flat formats already implemented: a chosen CRITERION is presentation
+ * and wins while it is chosen, and «ترتيب الرفّ» — which reaches here as `hand` — is the reader
+ * asking for the order the place itself keeps. So the criterion governs everywhere, and under
+ * «ترتيب الرفّ» each place falls back to its own rule exactly as before. Nothing is written either
+ * way: sorting is a projection, and the arrangement waits untouched underneath it.
+ */
+export const orderRuleFor = (librarySort: ShelfOrder, shelfRule: ShelfOrder): ShelfOrder =>
+  librarySort === "hand" ? shelfRule : librarySort;
+
 // There is deliberately no title/author matcher here. The design's own file had one, but Sard
 // searches in SQL, where `library_list_books` folds Arabic the way RAWY-178 requires — an
 // unvocalized query finds a vocalized title, and hamza/alef variants match. A naive
@@ -464,7 +484,7 @@ export function vistaView(input: VistaInput): VistaView {
       kind: unshelved ? "unshelved" : rule ? "rule" : "shelf",
       name: s.shelf.name,
       ink: null,
-      books: sortBooks(books, s.shelf.order_rule).slice(0, SAMPLE_SHELF),
+      books: sortBooks(books, orderRuleFor(librarySort, s.shelf.order_rule)).slice(0, SAMPLE_SHELF),
       total: books.length,
       children: s.shelf.categories.length,
       // خارج الأرفف is always given the room to show what it holds: it is the one container a
@@ -504,7 +524,7 @@ export function vistaView(input: VistaInput): VistaView {
           books: run?.books.length ?? 0, children: 0 },
         cases: [],
         children: [],
-        books: sortBooks(run?.books ?? [], found.shelf.order_rule),
+        books: sortBooks(run?.books ?? [], orderRuleFor(librarySort, found.shelf.order_rule)),
         bookDrop: canDrop ? { shelfId: found.shelf.id, categoryId: scope.categoryId } : null,
         bookSource: found.shelf,
         caseInk,
@@ -519,7 +539,7 @@ export function vistaView(input: VistaInput): VistaView {
     if (!named) {
       return {
         here, cases: [], children: [],
-        books: sortBooks(all, found.shelf.order_rule),
+        books: sortBooks(all, orderRuleFor(librarySort, found.shelf.order_rule)),
         bookDrop: canDrop ? { shelfId: found.shelf.id, categoryId: null } : null,
         bookSource: found.shelf,
         caseInk,
@@ -533,7 +553,7 @@ export function vistaView(input: VistaInput): VistaView {
         kind: "category" as VistaKind,
         name: g.name ?? "",
         ink: null,
-        books: sortBooks(g.books, found.shelf.order_rule).slice(0, SAMPLE_CATEGORY),
+        books: sortBooks(g.books, orderRuleFor(librarySort, found.shelf.order_rule)).slice(0, SAMPLE_CATEGORY),
         total: g.books.length,
         children: 0,
         wide: true,
@@ -637,6 +657,26 @@ export function makeLooseShelf(name: string, count: number): ShelfNode {
 
 /** The management panel's `caseNode` id when it is standing over the unfiled shelves. */
 export const UNFILED_CASE_ID = "__unfiled";
+
+/**
+ * Is there anything in the group «خارج الخزائن» stands over?
+ *
+ * THE GROUP HOLDS TWO KINDS OF THING, and the heading used to know about only one. It was rendered
+ * on `loose.length > 0`, while the «خارج الأرفف» run beneath it was rendered on the group's own
+ * COLLAPSE state — so a library with unshelved books and no loose shelves drew that run at the end
+ * of the tree with no heading above it and nothing able to collapse it. The run was a member of the
+ * group by every other measure: it sits inside the group's container and answers to the group's
+ * open/closed state. Only the gate disagreed, and a reader met the result as a row belonging to
+ * nothing.
+ *
+ * So membership is asked once, here, in the terms the group is actually made of. An empty group
+ * still renders nothing — the heading follows real content and is never a placeholder for absent
+ * content, which is why this is a question about what exists rather than a constant `true`.
+ */
+export const hasUnfiledContent = (
+  loose: readonly ShelfNode[],
+  unshelved: ShelfNode | null | undefined,
+): boolean => loose.length > 0 || !!unshelved;
 
 /**
  * The synthesised case that lets the management panel stand over shelves belonging to no case.

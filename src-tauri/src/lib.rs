@@ -200,6 +200,8 @@ macro_rules! sard_invoke_handler {
             commands::note_tags_for,
             commands::note_tags_set,
             commands::font_import,
+            commands::font_inspect,
+            commands::font_import_dropped,
             commands::fonts_list,
             commands::font_remove,
             commands::background_choose, // RAWY-265: managed background images (import + bind, atomic)

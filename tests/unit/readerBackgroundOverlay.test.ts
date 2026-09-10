@@ -29,6 +29,10 @@ const read = (p: string) => readFileSync(join(R, p), "utf8");
 const CSS = read("src/styles/global.css");
 const READER = read("src/features/reader/Reader.tsx");
 const SETTINGS = read("src/features/reader/ReadingSettings.tsx");
+// The per-book colour row moved out of the panel into its own module when the reference controls
+// became shared with the هيئة editor — one definition, two importers. The assertion below is
+// unchanged; only the file it reads moved with the markup it is about.
+const COLOR_ROW = read("src/features/reader/ColorRow.tsx");
 const EDITOR = read("src/features/profiles/ProfileEditor.tsx");
 const BG = read("src/lib/background.ts");
 
@@ -163,7 +167,7 @@ describe("the third state is offered where it makes sense and nowhere else", () 
 
   it("the swatch is hollow, because it stands for the absence of a colour", () => {
     expect(CSS).toContain(".rs-ink-none");
-    expect(SETTINGS).toContain('className={`rs-ink rs-ink-none${overlay.kind === "none" ? " on" : ""}`}');
+    expect(COLOR_ROW).toContain('className={`rs-ink rs-ink-none${overlay.kind === "none" ? " on" : ""}`}');
   });
 });
 

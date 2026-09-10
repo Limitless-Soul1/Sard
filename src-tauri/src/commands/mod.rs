@@ -1123,6 +1123,25 @@ pub fn font_import(path: String, state: State<AppState>) -> Result<fonts::Custom
     fonts::import(&conn, &app_data_dir, &path)
 }
 
+/// Read a font file and say what it is, changing NOTHING — the routing gate for a dropped file.
+///
+/// The same shape `deposit_inspect` and `profile_import_inspect` already have, and for the same
+/// reason: the window's single drop listener has to decide what a file IS before anything acts on
+/// it, and the only honest way to ask is the real reader. `Err` means "not a font", and the drop
+/// falls through to the next candidate exactly as a non-deposit does.
+#[tauri::command]
+pub fn font_inspect(path: String) -> Result<fonts::FontFacts, String> {
+    fonts::inspect(&path)
+}
+
+/// Import a dropped font under the family the FILE names, and say whether it was already here.
+#[tauri::command]
+pub fn font_import_dropped(path: String, state: State<AppState>) -> Result<fonts::FontDrop, String> {
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.conn();
+    fonts::import_dropped(&conn, &app_data_dir, &path)
+}
+
 #[tauri::command]
 pub fn fonts_list(state: State<AppState>) -> Result<Vec<fonts::CustomFont>, String> {
     let conn = state.conn();

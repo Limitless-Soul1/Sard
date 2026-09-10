@@ -13,14 +13,14 @@ import { ProfileSwitcher } from "../../profiles/ProfileSwitcher";
 import { localeNum } from "../../../lib/format";
 import { Hoopoe } from "../Hoopoe";
 import { CaseManageMenu, ShelfOrderMenu } from "./Menus";
-import { DENSITY_MAX, DENSITY_MIN, DENSITY_STEP, DESIGN_SORTS, dropIndex, isVirtualShelf, UNFILED_CASE_ID, type DesignSort, type DesignView } from "./model";
+import { DENSITY_MAX, DENSITY_MIN, DENSITY_STEP, DESIGN_SORTS, dropIndex, hasUnfiledContent, isVirtualShelf, UNFILED_CASE_ID, type DesignSort, type DesignView } from "./model";
 import { createEdgeScroller, type EdgeScroller } from "./dragScroll";
 import { Icon, type IconName } from "../../../components/Icon";
 import { openTransient } from "./transient";
 import { SelectionTick, type AllState } from "../../../components/listSelection";
 
 
-import { displayFaceFor, scriptOf } from "../../../lib/typography";
+import { displayFaceFor, labelFaceFor, scriptOf } from "../../../lib/typography";
 export type Section = "library" | "inbox" | "cards" | "bookmarks" | "refs";
 
 /** What the main pane is currently scoped to. */
@@ -124,6 +124,26 @@ const NAV_ICON: Record<string, IconName> = {
 // The reference's own numbers: gap 11, padding 8/10, radius 6, and — the part that reads as
 // depth rather than a flat tint — a 1px inset ring on the selected row. The height is decided by
 // the padding, not fixed, so a wrapped label cannot be clipped.
+/**
+ * The chip both "make a place" actions wear — one object, because they are a pair.
+ *
+ * It is the outlined chip the shelf action already had, kept exactly: the accent for its ink through
+ * `--accent-text` (the accent walked toward the text colour until it clears Sard's own 3.0 floor), a
+ * hairline of the same hue, and no fill at rest — unmistakably a control without becoming a card, and
+ * impossible to mistake for the rows above it, which carry neither edge nor accent. The states come
+ * from the stylesheet through custom properties, because an inline `background` would otherwise beat
+ * every `:hover` rule. Margins are the GROUP's now, so the two chips sit at one rhythm.
+ */
+const MAKE_CHIP: React.CSSProperties = {
+  justifyContent: "flex-start",
+  padding: "6px 10px",
+  font: "600 .75rem var(--ui)",
+  color: "var(--newshelf-ink, var(--accent-text))",
+  background: "var(--newshelf-bg, transparent)",
+  border: "1px solid var(--newshelf-edge, color-mix(in srgb, var(--accent) 32%, transparent))",
+  borderRadius: "var(--r-md)",
+};
+
 const navRow = (active: boolean): React.CSSProperties => ({
   display: "flex",
   alignItems: "center",
@@ -232,6 +252,17 @@ export function Sidebar(props: SidebarProps) {
   const looseOpen = props.openCases.has(UNFILED_CASE_ID);
   // Standing IN the unfiled group — a scope, not a case selection.
   const unfiledActive = props.scope.caseId === UNFILED_CASE_ID && !props.scope.shelfId;
+  /* WHAT BELONGS TO THIS GROUP — asked once, so the heading and the rows cannot disagree.
+     They did. The heading was gated on `loose.length > 0` while the «غير مرفوف» run below it was
+     gated on the group's COLLAPSE state, so a library with no loose shelves but unshelved books
+     rendered that run at the end of the tree with no heading over it and nothing to collapse it —
+     a bare row after the cases, belonging to nothing. The run was already a member of the group by
+     every other measure: it renders inside the group's container and answers to the group's own
+     open/closed state. Only the gate disagreed. */
+  const hasUnfiled = hasUnfiledContent(props.loose, props.unshelved);
+  // The heading's own words decide its treatment, not the interface language: a reader running Sard
+  // in English still sees «خارج الخزائن» if that is what the string resolves to.
+  const unfiledLabel = t("lib.unfiled");
 
   const nav: { id: Section; label: string; count?: number }[] = [
     { id: "library", label: t("lib.nav.library"), count: props.bookCount },
@@ -503,14 +534,7 @@ export function Sidebar(props: SidebarProps) {
           padding: "20px 10px 6px",
         }}
       >
-        <span
-          style={{
-            font: "600 .625rem var(--ui)",
-            letterSpacing: ".14em",
-            textTransform: "uppercase",
-            color: "var(--faint)",
-          }}
-        >
+        <span style={{ ...treeLabel(t("lib.cases")), color: "var(--faint)" }}>
           {t("lib.cases")}
         </span>
       </div>
@@ -767,30 +791,6 @@ export function Sidebar(props: SidebarProps) {
           </button>
         )}
 
-        {/* MAKING A CASE, SAID IN WORDS.
-            The action already existed — a bare "+" at `--ctl-xs` in `--mut`, beside the section
-            heading — and it is why a reader looking for "add a case" found nothing: an unlabelled
-            glyph the size of an icon, next to a title, reads as decoration. It is now the same
-            chip the shelf action wears, in the same place relative to its own list, so the two
-            read as a pair without either becoming a card. Both now open the same dialog. */}
-        {(
-          <button
-            className="libd-newshelf"
-            onClick={props.onCreateCase}
-            style={{
-              justifyContent: "flex-start",
-              margin: "5px 2px 2px",
-              padding: "6px 10px",
-              font: "600 .75rem var(--ui)",
-              color: "var(--newshelf-ink, var(--accent-text))",
-              background: "var(--newshelf-bg, transparent)",
-              border: "1px solid var(--newshelf-edge, color-mix(in srgb, var(--accent) 32%, transparent))",
-              borderRadius: "var(--r-md)",
-            }}
-          >
-            {t("lib.newCaseAction")}
-          </button>
-        )}
 
         {/* Shelves in no case, and — importantly — the ONLY way to make one.
             "New shelf" previously lived only inside a case, so a library with no cases had no
@@ -801,11 +801,11 @@ export function Sidebar(props: SidebarProps) {
               reference draws — mark, name, count — and the group it sits in gets the single
               management entry, the same way a case row does. That keeps an unfiled shelf fully
               manageable without adding one control to the row the design specifies. */}
-          {props.loose.length > 0 && (
+          {hasUnfiled && (
             <div style={{ display: "flex", alignItems: "center", padding: "6px 4px 4px 10px" }}>
               {/* The heading collapses the group, the way a case's disc collapses a case. The
                   caret is the case row's own — same 7px box, same 1.6px strokes, same rotation
-                  and the same RTL flip — sized to sit against a small uppercase label rather
+                  and the same RTL flip — sized to sit against a small label rather
                   than inside a disc, because this is a heading and not a case row. */}
               {/* The caret collapses; the NAME navigates. Exactly the division a case row makes
                   between its disc and its title, so the two behave alike without this heading
@@ -823,8 +823,10 @@ export function Sidebar(props: SidebarProps) {
                     display: "block",
                     width: 6,
                     height: 6,
-                    borderRight: "1.6px solid var(--faint)",
-                    borderBottom: "1.6px solid var(--faint)",
+                    // The caret carries the heading's ink, not the counts' — it is the group's own
+                    // collapse affordance and has to be as findable as the word beside it.
+                    borderRight: "1.6px solid var(--mut)",
+                    borderBottom: "1.6px solid var(--mut)",
                     transform: `rotate(${looseOpen ? "45deg" : rtl ? "135deg" : "-45deg"}) translate(-1px,-1px)`,
                     transition: "transform .18s ease-out",
                   }}
@@ -841,12 +843,20 @@ export function Sidebar(props: SidebarProps) {
                   padding: "2px 6px",
                   marginInlineStart: "var(--sp-1)",
                   borderRadius: 5,
-                  font: "600 .625rem var(--ui)",
-                  letterSpacing: ".14em",
-                  textTransform: "uppercase",
-                  // Active, but not the way a case is: the accent alone, with no case's colour bar
-                  // behind it, so "not in a case" can never be mistaken for one.
-                  color: unfiledActive ? "var(--acc)" : "var(--faint)",
+                  /* The tree's own label treatment — see `treeLabel`. This heading was set as a
+                     Latin small-caps caption over Arabic: measured on screen at 9.84px with 1.38px
+                     of letter-spacing, `uppercase` (which Arabic has no capitals for), through a
+                     stack led by the LATIN face — so the one word naming this group rendered small,
+                     loose and faint enough to read as a disabled caption rather than a heading. */
+                  ...treeLabel(unfiledLabel),
+                  /* THE INK IS THE HEADING'S, NOT ITS CHILDREN'S. Measured across the tree, a shelf
+                     row is .75rem/500 in `--mut` — so a heading at .75rem/600 in `--mut` was
+                     separated from the rows it parents by weight alone, which is not enough for the
+                     one row that owns the others. `--txt` is what every other row that heads a group
+                     uses. The SIZE is what keeps it secondary: .75rem against the cases' .8125rem,
+                     and none of a case's signals — no colour bar, no disc, no grip, no count — so
+                     the cabinets stay the primary structure and this stays the quieter grouping. */
+                  color: unfiledActive ? "var(--acc)" : "var(--txt)",
                   background: unfiledActive ? "var(--act)" : "transparent",
                 }}
               >
@@ -871,46 +881,74 @@ export function Sidebar(props: SidebarProps) {
               </button>
             </div>
           )}
-          {(looseOpen || props.loose.length === 0) && props.loose.map(shelfRow)}
-          {(looseOpen || props.loose.length === 0) && props.unshelved && shelfRow(props.unshelved)}
-          {(looseOpen || props.loose.length === 0) && (
-            <button
-              // MAKING A SHELF IS AN ACTION, AND LOOKED LIKE A CAPTION.
-              //
-              // It was `--faint` — the quietest colour Sard has, the one the contrast audit found
-              // washed out — at .6875rem, with no ground and no edge, sitting directly under the
-              // shelf rows it is not one of. Nothing about it said "press me": it read as a label
-              // for the list above it.
-              //
-              // It is now an outlined chip: the accent for its ink (through `--accent-text`, which
-              // is the accent walked toward the text colour until it clears Sard's own 3.0 floor),
-              // a hairline of the same hue, and no fill at rest — so it is unmistakably a control
-              // without becoming a card, and it cannot be mistaken for the rows above it, which
-              // carry neither edge nor accent. The states come from the stylesheet through custom
-              // properties, because an inline `background` would otherwise beat every `:hover` rule
-              // — the same mechanism the ⋯ control uses.
-              className="libd-newshelf"
-              // Standing inside a case, that case is what the dialog opens on — a starting point
-              // and never a decision, which is why the dialog shows the destination either way.
-              onClick={() =>
-                props.onCreateShelf(
-                  props.scope.caseId && props.scope.caseId !== UNFILED_CASE_ID ? props.scope.caseId : null,
-                )
-              }
+          {/* THE GROUP'S CHILDREN, ON THE CABINET'S OWN CONNECTOR.
+              A case ties its shelves to its title with exactly this indent and this rail
+              (`marginInlineStart: 22` + `borderInlineStart`), and it is the only device in the tree
+              that says "these rows belong to the row above". This group had none of it: measured on
+              screen, `margin-inline-start: 0px` and `border-inline-start-width: 0px`, so its shelves
+              simply followed the heading in a flat column with nothing joining them — the heading
+              read as a caption sitting above unrelated rows rather than as their parent.
+              The rail is where the two kinds of content become ONE group: the loose shelves and the
+              «غير مرفوف» run sit on the same line, under the same heading, and collapse together.
+              WHAT IS DELIBERATELY NOT BORROWED: the case's colour bar, its grip and its disc. Those
+              say "this is a cabinet", and this group is precisely the things that are not in one. */}
+          {looseOpen && (
+            <div
               style={{
-                justifyContent: "flex-start",
-                margin: "5px 8px 3px 10px",
-                padding: "6px 10px",
-                font: "600 .75rem var(--ui)",
-                color: "var(--newshelf-ink, var(--accent-text))",
-                background: "var(--newshelf-bg, transparent)",
-                border: "1px solid var(--newshelf-edge, color-mix(in srgb, var(--accent) 32%, transparent))",
-                borderRadius: "var(--r-md)",
+                display: "flex",
+                flexDirection: "column",
+                gap: 1,
+                padding: "1px 0 6px 0",
+                marginInlineStart: 22,
+                borderInlineStart: "1px solid var(--brd)",
               }}
             >
-              {t("lib.newShelf")}
-            </button>
-            )}
+              {props.loose.map(shelfRow)}
+              {props.unshelved && shelfRow(props.unshelved)}
+            </div>
+          )}
+        </div>
+
+        {/* THE TWO WAYS TO MAKE A PLACE, TOGETHER AND OUTSIDE EVERY COLLAPSIBLE.
+            THE FAULT THIS FIXES. «+ رفّ جديد» was the last child of the unfiled group and rendered
+            as `{(looseOpen || loose.length === 0) && …}` — so collapsing «خارج الأرفف» took away the
+            only way to make a shelf, and the group's own comment said as much ("the ONLY way to make
+            one"). A creation action cannot depend on whether a list happens to be open.
+            IT WAS NEVER THAT GROUP'S ACTION EITHER, and its own handler says so: it creates the shelf
+            in the CURRENT SCOPE's case when the reader is standing in one, and a loose shelf only when
+            they are not. That is a Library-level action that had been filed under one of the places it
+            can write to.
+            So both actions stand together at the end of the tree, after the places and before the
+            foot: the cases, then the shelves outside them, then the two ways to add either. Nothing
+            about what they create changed — same handlers, same scope argument, same dialogs — and
+            neither is inside anything that can be collapsed. */}
+        <div
+          className="libd-makes"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "var(--sp-1)",
+            margin: "var(--sp-4) 8px 2px 10px",
+            paddingTop: "var(--sp-3)",
+            borderTop: "1px solid var(--brd)",
+          }}
+        >
+          <button className="libd-newshelf" onClick={props.onCreateCase} style={MAKE_CHIP}>
+            {t("lib.newCaseAction")}
+          </button>
+          <button
+            className="libd-newshelf"
+            // Standing inside a case, that case is what the dialog opens on — a starting point and
+            // never a decision, which is why the dialog shows the destination either way. Unchanged.
+            onClick={() =>
+              props.onCreateShelf(
+                props.scope.caseId && props.scope.caseId !== UNFILED_CASE_ID ? props.scope.caseId : null,
+              )
+            }
+            style={MAKE_CHIP}
+          >
+            {t("lib.newShelf")}
+          </button>
         </div>
       </div>
 
@@ -1194,6 +1232,29 @@ function PlaceHeading({ place }: { place: PlaceLine }) {
     </div>
   );
 }
+
+/**
+ * A LABEL IN THE TREE THAT DOES NOT BREAK ARABIC.
+ *
+ * The same treatment `fieldLabel` settled on in CreateDialog, and the one `.libd-place-cat` was
+ * corrected to: tracked capitals are a LATIN caption device, and applying it to Arabic reaches for
+ * capitals the script does not have while letter-spacing pulls its cursive joins apart. Both labels
+ * in this tree were still setting Arabic that way — measured at 9.84px with 1.38px of tracking,
+ * through a font stack led by the Latin face — so the words naming the Library's two groupings were
+ * the least legible text in it.
+ *
+ * Latin keeps the caption it was drawn for. Arabic gets its own face, at its own size, untracked.
+ * The COLOUR is deliberately left to the caller: these two labels are not the same kind of thing —
+ * one is a static caption above the list, the other heads a collapsible group inside it.
+ */
+const treeLabel = (text: string): React.CSSProperties => {
+  const arabic = scriptOf(text) === "arabic";
+  return {
+    font: `600 ${arabic ? ".75rem" : ".625rem"} ${labelFaceFor(text)}`,
+    letterSpacing: arabic ? "normal" : ".14em",
+    textTransform: arabic ? "none" : "uppercase",
+  };
+};
 
 const ctlBtn = (active: boolean): React.CSSProperties => ({
   display: "flex",

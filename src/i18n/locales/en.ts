@@ -116,7 +116,6 @@ export const en = {
   "type.alignEnd": "End",
   "type.diacritics": "Diacritics",
   "diacritics.show": "Show",
-  "diacritics.dim": "Dim",
   "diacritics.hide": "Hide",
 
   "settings.language": "Language",
@@ -655,6 +654,11 @@ export const en = {
   "photo.zoom.out": "Zoom out",
   "photo.zoom.in": "Zoom in",
   "photo.zoom.fit": "Fit",
+  // The side panel steps aside when the window is too narrow to hold it beside the card; this is
+  // the way back to it.
+  "photo.insp.panel": "Panel",
+  "photo.insp.show": "Show the side panel",
+  "photo.insp.hide": "Hide the side panel",
   "photo.insp.card": "Card",
   "photo.insp.cardSub": "Nothing selected",
   "photo.insp.elSub": "Selected element",
@@ -1559,6 +1563,15 @@ export const en = {
   "profiles.voice.clear": "Back to Sard's own marks",
   "profiles.voice.none": "No marks",
 
+  // The reference mark — the twin rule under a marked word. Worded on the read-aloud pattern because
+  // it is the same case: a mark drawn on the page, which a profile may carry and need not.
+  "profiles.refs.hint":
+    "The reference mark is a pair of rules under a marked word, so a profile may carry their colour and their size. It need not: a profile that carries neither puts the mark back to Sard's own, drawn in that profile's accent.",
+  "profiles.refs.label": "Reference mark",
+  "profiles.refs.follows": "Sard's own",
+  "profiles.refs.carried": "From the profile",
+  "profiles.refs.clear": "Back to Sard's own mark",
+
   "profiles.measure.hint": "A profile need not have an opinion. Anything left as « as it is » keeps whatever you have chosen while reading.",
   "profiles.measure.follows": "as it is",
   "profiles.measure.clear": "Leave it as it is",
@@ -1572,6 +1585,8 @@ export const en = {
   "profiles.chapter.marks.q": "What shows you where you are?",
   "profiles.chapter.voice": "Read-aloud",
   "profiles.chapter.voice.q": "How should Sard follow the words as it reads to you?",
+  "profiles.chapter.refs": "References",
+  "profiles.chapter.refs.q": "How should a word you have annotated look?",
   "profiles.chapter.texture": "Texture",
   "profiles.chapter.texture.q": "How should Sard's interface look?",
   "profiles.focus.identity": "The active profile",
@@ -1580,6 +1595,7 @@ export const en = {
   "profiles.focus.fonts": "The type you read",
   "profiles.focus.marks": "The mark and the highlight",
   "profiles.focus.voice": "The sentence and the word",
+  "profiles.focus.refs": "The marked word",
   "profiles.focus.texture": "The interface panels",
   "profiles.editor.stageLibrary": "Library",
   "profiles.editor.stageBook": "Book",
@@ -1598,9 +1614,26 @@ export const en = {
   // The two background sections are drawn but not yet filled. They must not borrow the firewall's
   // sentence to say so: that sentence is about the reader's own layout settings, and reading it
   // under "Library background" tells the reader something untrue about backgrounds.
-  "profiles.bg.sameAsLibrary": "The same image",
+  // Two answers, not a tickbox. Naming the source was not the whole of it: a lone checkbox above an
+  // image chooser reads as a qualifier ON the chooser rather than as the other option, so nothing on
+  // screen said the two were alternatives. They are drawn as the choice they are, each carrying its
+  // own picture, with a line under them saying what the chosen one does.
+  "profiles.bg.kind.library": "The library's image",
+  // A line under each option saying what THAT option does, so there is no paragraph describing the
+  // selected one and leaving the other unexplained.
+  "profiles.bg.kind.librarySub": "Shows behind the book page too, quieter than in the library",
+  "profiles.bg.kind.own": "An image of its own",
+  "profiles.bg.kind.ownSub": "A picture for the book page alone, not the library's",
+  // The old key stays: other lines name the option outside this section.
+  "profiles.bg.sameAsLibrary": "The library's own image",
+  "profiles.bg.sameAsLibraryNeedsOne": "Choose a library background first.",
+  // The short form stays: in the chapter line it follows the library image's own name, so what it
+  // refers to is already on the line.
   "profiles.bg.sameAsLibraryShort": "The same image, quieter",
 
+  // The name of the one profile made for a reader who arrived from a version before profiles existed:
+  // it is the look they already had, not a new one.
+  "profiles.legacy.name": "Your previous look",
   "profiles.unnamed": "Unnamed profile",
   "profiles.identity.name": "Name",
   "profiles.identity.nameRequired": "A profile cannot lose its name.",
@@ -1756,6 +1789,7 @@ export const en = {
   "profiles.unsaved.what.measure": "how the text is set",
   "profiles.unsaved.what.numbers": "the digits' ink",
   "profiles.unsaved.what.voice": "the read-aloud marks",
+  "profiles.unsaved.what.refs": "the reference mark",
   // The separator between the named values, when more than one changed at once. It is a
   // TRANSLATED string because the comma itself differs by script: Arabic sets «،» (U+060C),
   // English «,». Hardcoding either one puts the wrong script's punctuation in the other's sentence.
@@ -1836,6 +1870,14 @@ export const en = {
   "dep.layer.theirs.notes": "Notes",
   "dep.layer.theirs.references": "References",
   "dep.layer.theirs.replacements": "Replacements",
+
+  // ---- a font dropped on the window ----
+  "font.drop.imported": "Added the font “{name}”",
+  "font.drop.duplicate": "You already have the font “{name}”",
+  "font.err.type": "That format is not a font Sard accepts. Use ttf, otf, woff or woff2.",
+  "font.err.invalid": "That file is not a valid font.",
+  "font.err.unreadable": "The file could not be read.",
+  "font.err.failed": "The font could not be added.",
   "dep.recv.open": "Open a reading copy",
   "dep.recv.chooseCopy": "Which of your copies is this book?",
   "dep.recv.copyNote": "Their marks land only where your copy's text agrees exactly; what does not agree stays unplaced.",

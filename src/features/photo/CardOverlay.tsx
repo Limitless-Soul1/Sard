@@ -109,7 +109,7 @@ const GRIPS: { grip: ResizeGrip; ix: number; iy: number; cursorRtl: string; curs
 
 export function CardOverlay({
   comp, width, height, rtl, selectedId, onSelect, onMove, onResize, onCommit, parts, onLiftPart,
-  editingId, onBeginEdit, onEditText, onEndEdit, family, autoFrac, ground, brand,
+  editingId, onBeginEdit, onEditText, onEndEdit, family, autoFrac, ground, brand, emptyLabel,
 }: {
   comp: Composition;
   /** The drawn size of the card on screen, in CSS pixels — the overlay matches it exactly. */
@@ -145,6 +145,13 @@ export function CardOverlay({
   family?: string;
   /** What an auto-fitted quote is drawn at. Without it the editor would type at a default size. */
   autoFrac?: number;
+  /**
+   * What an EMPTY text element should say in the editor — the role's own name, in its own type.
+   *
+   * A function rather than a string because only the caller knows the reader's language and which
+   * role an element is; and it is optional so the overlay stays usable without one.
+   */
+  emptyLabel?: (el: TextElement) => string;
   /**
    * MOVING AND ZOOMING THE GROUND BY HAND.
    *
@@ -328,7 +335,8 @@ export function CardOverlay({
         return (
           <div
             key={el.id}
-            className={`pc-ov-el${selected ? " on" : ""}${active === el.id ? " live" : ""}`}
+            className={`pc-ov-el${selected ? " on" : ""}${active === el.id ? " live" : ""}`
+              + (isText(el) && !el.text.trim() ? " empty" : "")}
             style={{ left: box.left, top: box.top, width: box.w, height: box.h,
                      pointerEvents: ground ? "none" : undefined }}
             onPointerDown={(e) => {
@@ -355,6 +363,40 @@ export function CardOverlay({
             tabIndex={0}
             aria-label={el.kind}
           >
+            {/* AN EMPTY TEXT ELEMENT, MADE FINDABLE.
+                A text element with no words paints no ink — measured in the editor: the box was
+                there, 425×27, selectable, and completely invisible the moment it lost the selection
+                outline. So a reader who switched «المؤلف» on for a book with no author was left
+                asking where it had gone.
+
+                THE AFFORDANCE LIVES HERE, IN THE OVERLAY, and that placement is the whole of the
+                guarantee that it can never reach the artwork: this layer is a SIBLING of the card
+                and is not what gets exported (see the note at the top of this file). The card's own
+                layer draws exactly what the reader typed — nothing when they have typed nothing.
+
+                It is set in the ELEMENT'S OWN TYPE — its face, size, alignment and direction — so it
+                reads as "your words will sit here, and look like this", rather than as a control
+                that has been dropped onto the card. */}
+            {isText(el) && !editing && !el.text.trim() && (
+              /* THE CHIP SITS WHERE THE FIRST WORD WILL, and is only as big as itself.
+                 It filled the element's whole box before, and a credit line's box is the card's
+                 full text column — so an empty role read as a wide empty bar rather than as a place
+                 to type. The MEASURE is still the element's and still the reader's; what is drawn
+                 while it is empty is a mark at the head of that measure, not the measure itself. */
+              <span className="pc-ov-ghost" style={{
+                justifyContent: (el.style.align ?? "start") === "center" ? "center"
+                  : (el.style.align ?? "start") === "end" ? "flex-end" : "flex-start",
+              }}>
+                <i style={{
+                  fontFamily: el.style.family ?? family ?? undefined,
+                  fontSize: (el.style.size ?? autoFrac ?? 0.03) * width,
+                  fontWeight: el.style.weight ?? 400,
+                  letterSpacing: el.style.letterSpacing ? `${el.style.letterSpacing}em` : undefined,
+                }} dir={el.style.dir === "auto" ? undefined : el.style.dir}>
+                  {emptyLabel?.(el) ?? ""}
+                </i>
+              </span>
+            )}
             {editing && isText(el) && (
               <InlineText
                 el={el}
@@ -365,8 +407,20 @@ export function CardOverlay({
                 onDone={() => onEndEdit?.()}
               />
             )}
-            {selected && !editing &&
-              GRIPS.map((g) => (
+            {/* THE HANDLES A TEXT BOX HONESTLY HAS.
+                Text whose size is the user's is the height of its words — the box follows them, so a
+                height handle would be a control that snaps back the instant it is let go. What IS
+                the reader's to set is the MEASURE, so those are the handles offered: the two inline
+                ones, and nothing that promises a height it cannot keep.
+
+                A QUOTE KEEPS ALL EIGHT, and so does an auto-fitted text: for both of those the box
+                is a ROOM the words are set inside rather than a shape the words dictate, so its
+                height is a real thing to drag and it stays where it is dragged to. */}
+            {selected && !editing && !(isText(el) && !el.text.trim()) &&
+              (isText(el) && el.kind !== "quote" && el.style.size != null
+                ? GRIPS.filter((g) => g.grip === "is" || g.grip === "ie")
+                : GRIPS
+              ).map((g) => (
                 <span
                   key={g.grip}
                   className="pc-ov-grip"

@@ -63,6 +63,16 @@ interface Props {
   // (not the global store), so changing them affects only this book.
   bookThemeId: ThemeId;
   onPickTheme: (id: ThemeId) => void;
+  /**
+   * THIS BOOK's answer about pronouncing decorative marks, and the هيئة's, so the row can show which
+   * one is actually in force. `null` = the book has not been asked and follows the هيئة.
+   *
+   * Three values rather than a boolean because "no" and "not asked" are different answers: a reader
+   * who silences the marks for one book must still be able to hand that book back to their هيئة.
+   */
+  speakSymbolsOverride?: boolean | null;
+  speakSymbolsAppearance?: boolean;
+  onSpeakSymbols?: (v: boolean | null) => void;
 }
 
 // Per-book text-colour presets, keyed by theme polarity (RAWY-40, Band I). The first is "Default"
@@ -537,7 +547,10 @@ function SelectRow<T extends string>({
   );
 }
 
-export function ReadingSettings({ style, update, isRtlBook, section = "typography", bookThemeId, onPickTheme }: Props) {
+export function ReadingSettings({
+  style, update, isRtlBook, section = "typography", bookThemeId, onPickTheme,
+  speakSymbolsOverride = null, speakSymbolsAppearance = false, onSpeakSymbols,
+}: Props) {
   const { t, lang } = useI18n();
   // THE SCOPE SUFFIXES ARE GONE WITH THE SCOPE. They existed to say which of two models a control
   // was writing under — "this book" or "all books" — and there is only one model now: every reading
@@ -813,6 +826,37 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
         themeInk={theme.colors.text}
         deskBg={theme.colors.surfaceBg}
       />
+
+      {/* THIS BOOK'S OWN ANSWER, under the هيئة's. The toggle above belongs to the worn هيئة and moves
+          every book with it; this row is where ONE book departs from that, and it names which of the
+          two is actually in force so the reader is never guessing. Three choices rather than a switch,
+          because «لا» and «حسب الهيئة» are different answers and a switch cannot express the way back. */}
+      {onSpeakSymbols && (
+        <div className="rs-sec">
+          <div className="rs-sec-head">
+            <span className="rs-label">{t("track.speakSymbolsBook")}</span>
+            <span className="rs-value">
+              {speakSymbolsOverride == null
+                ? t(speakSymbolsAppearance ? "track.speakSymbols.onViaProfile" : "track.speakSymbols.offViaProfile")
+                : t(speakSymbolsOverride ? "track.speakSymbols.on" : "track.speakSymbols.off")}
+            </span>
+          </div>
+          <div className="rs-seg">
+            {([[null, "track.speakSymbols.follow"], [true, "track.speakSymbols.on"], [false, "track.speakSymbols.off"]] as const)
+              .map(([v, key]) => (
+                <button
+                  key={key}
+                  className={`rs-seg-item${speakSymbolsOverride === v ? " on" : ""}`}
+                  onClick={() => onSpeakSymbols(v)}
+                  aria-pressed={speakSymbolsOverride === v}
+                >
+                  {t(key)}
+                </button>
+              ))}
+          </div>
+          <div className="rs-sec-hint">{t("track.speakSymbolsBookHint")}</div>
+        </div>
+      )}
 
       {/* RAWY-257 (Phase 1) / RAWY-255: the diagnostic switch. Last in the tab, under a divider — it is a
           troubleshooting aid, not a reading control, and must not compete with the tracking highlights above. */}

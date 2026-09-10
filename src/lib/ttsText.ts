@@ -123,3 +123,86 @@ export function withoutEmptyMarkup(text: string): string {
     out = next;
   }
 }
+
+// ---------------------------------------------------------------------------------------------
+// FORMATTING MARKS THE VOICE READS OUT LOUD.
+// ---------------------------------------------------------------------------------------------
+//
+// THE DEFECT. A reader listening to a book hears «hash», «tilde», «star» — the endpoint pronounces
+// certain marks as words. They are formatting, not language: nothing is lost by not saying them, and
+// the page must go on showing them exactly as the book wrote them.
+//
+// WHAT WAS MEASURED, on the real endpoint, on ar-EG-SalmaNeural AND en-AU-WilliamMultilingualNeural,
+// reading Edge's own `WordBoundary` metadata rather than guessing from audio length. A byte delta
+// cannot tell «pronounced» from «paused», and «،» lengthening a sentence is correct prosody, not a
+// defect — so the question asked of every candidate was: does the endpoint emit it as its OWN WORD?
+//
+//   ALWAYS ITS OWN WORD, both voices:   # ~ * ^ &
+//   NEVER ITS OWN WORD, both voices:    - – — / | ( ) [ ] : , …
+//
+// The first group is this rule's business. The second is prosody and is left completely alone —
+// `,` and `.` in particular are how the voice breathes, and removing them would damage the reading
+// this rule exists to improve.
+//
+// WHY WELDING DOES NOT MATTER FOR THE FIVE. «الرمز a#b هنا» and «الرمز a # b هنا» return
+// BYTE-IDENTICAL audio and the identical word list — `["الرمز","a","#","b","هنا"]`. The endpoint
+// already splits the mark out, so the neighbouring tokens were never joined to begin with, and
+// replacing it with a space reproduces exactly the token stream Edge produced, minus the mark.
+//
+// A SPACE, NOT NOTHING — the same rule `withoutEmptyMarkup` arrived at, for the same reason. The
+// empty string would make `a#b` into one word `ab`, which the endpoint would then pronounce as a
+// word it never saw. A space cannot join anything, and an extra space is inaudible.
+//
+// THE HYPHEN IS DIFFERENT, AND THE DIFFERENCE IS MEASURED. A single «-» is NOT spoken: «نص عربي - نص
+// آخر» returns four words and no dash, and so does the Arabic dialogue opener «- ومن يكون هذا
+// الرجل؟». Welded, it is part of a single token — `a-b`, `-5`, `2026-09-10`, `1990-2000` and
+// `الخالد-المرتد` each come back as ONE word, and splitting them changes the reading outright
+// («2026-09-10» becomes «2026, 09, 10»). But a RUN of two or more, standing on its own, is spoken
+// once per character: «--» → `-`,`-` and «---» → `-`,`-`,`-`. The threshold is exactly two.
+// Underscore behaves the same way, so both are handled by one rule.
+//
+// WHAT THIS DELIBERATELY DOES NOT TOUCH. `& @ % + =` are spoken when they stand alone, and are still
+// left alone here: they carry meaning that suppressing them would destroy — `Tom & Jerry`, `R&D`,
+// `AT&T`, `a@b.com`, `10%`, and arithmetic each came back as a single token, or as a word the reader
+// wants to hear. A mark that MEANS something is not decoration, and `&` is the one member of the
+// "always spoken" set that is usually a word: silencing it would turn «Tom & Jerry» into two names
+// with nothing between them.
+//
+// WHY IT IS NOT IN `speakableText`. That function is length-preserving by contract and word tracking
+// depends on it. This one removes characters, so it belongs on the synthesis path only — exactly
+// where `withoutEmptyMarkup` sits, and applied by the same caller.
+
+/**
+ * The marks the endpoint reads out as their own word wherever they appear AND that mean nothing.
+ *
+ * `&` is measured in the same "always its own word" group and is deliberately NOT here: it is read as
+ * a word because it usually IS one.
+ */
+const DECORATIVE_MARK = /[#~*^]/;
+
+/** …collapsed a run at a time, so `###` costs one space rather than three. */
+const DECORATIVE_MARK_RUN = /[#~*^]+/g;
+
+/**
+ * A rule drawn out of connectors — two or more of them, standing on its own between spaces or at an
+ * edge. The run length is what separates a decorative rule from a hyphen doing real work: one is
+ * never spoken and often joins a token, two or more are always spoken and never join anything.
+ */
+const DECORATIVE_RULE = /(?:^|\s)(?:-{2,}|_{2,})(?=\s|$)/g;
+
+/**
+ * The text with formatting marks the voice would otherwise pronounce replaced by a space.
+ *
+ * Total and idempotent: it only ever rewrites marks to spaces, so a second pass finds nothing left to
+ * do. It can never empty a speech-bearing sentence, because it never touches a letter or a digit —
+ * which is what keeps `isImplausiblyShortAudio` from seeing a request that has become empty.
+ */
+export function withoutDecorativeSymbols(text: string): string {
+  if (!text) return text;
+  let out = text;
+  // Non-global for the test, global for the replace: a `/g` regex carries `lastIndex` between calls,
+  // and testing with one is how a shared regex starts answering for the previous string.
+  if (DECORATIVE_MARK.test(out)) out = out.replace(DECORATIVE_MARK_RUN, " ");
+  if (out.includes("-") || out.includes("_")) out = out.replace(DECORATIVE_RULE, " ");
+  return out;
+}

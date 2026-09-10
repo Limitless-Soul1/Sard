@@ -179,6 +179,23 @@ export function TtsTrackingControls(props: Props) {
       {/* Karaoke is driven by Edge word timings. It is a real, persisted preference; a sentence that
           arrives without timing simply renders at sentence level. (RAWY-193 lesson: no silent lie.) */}
       <EffectBlock {...props} kind="karaoke" hint={t("track.karaokeEdgeOnly")} />
+      {/* WHAT THE VOICE SAYS, not what the page shows — the only control in this group that is about
+          the AUDIO rather than the marks drawn over it, which is why it sits apart from both blocks
+          and carries a hint saying so. Same `rs-toggle-row` language as the baseline-rule sub-toggle;
+          no new visual vocabulary for one setting. */}
+      <button
+        className="rs-toggle-row rs-track-subtoggle"
+        onClick={() => props.update({ ttsSpeakSymbols: !props.style.ttsSpeakSymbols })}
+        aria-pressed={props.style.ttsSpeakSymbols}
+      >
+        <span className="rs-toggle-text">
+          <span className="rs-toggle-label">{t("track.speakSymbols")}</span>
+          <span className="rs-toggle-hint">{t("track.speakSymbolsHint")}</span>
+        </span>
+        <span className={`rs-switch${props.style.ttsSpeakSymbols ? " on" : ""}`} aria-hidden>
+          <span className="rs-knob" />
+        </span>
+      </button>
     </div>
   );
 }

@@ -99,6 +99,16 @@ export interface ReadingStyle {
   ttsKaraokeOn: boolean; // default true — the word pill (driven by Edge word timings)
   ttsKaraokeColor: string | null; // null = the per-theme terracotta
   ttsKaraokeOpacity: number | null; // null = the per-theme pill opacity (0.9)
+  /**
+   * Whether the voice PRONOUNCES decorative formatting marks — `#`, `~`, `*`, `^` and rules drawn out
+   * of `--` / `__`. Measured: the endpoint returns each of them as its own word, so a book that writes
+   * «# عنوان» is read aloud as «hash عنوان».
+   *
+   * SPEECH ONLY. Nothing here touches the book, the page, or the text the reader can select — see
+   * `lib/ttsText.withoutDecorativeSymbols`, which is applied at the synthesis boundary and nowhere
+   * else. `false` (the default) simply declines to say them.
+   */
+  ttsSpeakSymbols: boolean;
   // RAWY-212: immersive-mode PER-ELEMENT hide sub-toggles. The MASTER (`immersive`, global — theme store)
   // stays a single on/off; these TWO decide, per D43 (unified default + per-book override), WHICH elements
   // fade on a deliberate scroll-away while immersive is on. They only bite when the master is on AND the user
@@ -289,7 +299,7 @@ const LATIN_RANGE = "U+0000-024F, U+2000-206F, U+2070-209F, U+20A0-20BF";
 export const TTS_TRACKING_DEFAULTS: Pick<
   ReadingStyle,
   | "ttsSpotlightOn" | "ttsSpotlightColor" | "ttsSpotlightOpacity" | "ttsSpotlightRule"
-  | "ttsKaraokeOn" | "ttsKaraokeColor" | "ttsKaraokeOpacity"
+  | "ttsKaraokeOn" | "ttsKaraokeColor" | "ttsKaraokeOpacity" | "ttsSpeakSymbols"
 > = {
   ttsSpotlightOn: true,
   ttsSpotlightColor: null,
@@ -298,6 +308,10 @@ export const TTS_TRACKING_DEFAULTS: Pick<
   ttsKaraokeOn: true,
   ttsKaraokeColor: null,
   ttsKaraokeOpacity: null,
+  // FALSE = the marks are not said. This is the shipped behaviour it replaces, made optional rather
+  // than reversed: the reader who wants «hash» read out can now ask for it, and nobody who did not
+  // ask hears a change.
+  ttsSpeakSymbols: false,
 };
 
 /**
@@ -316,7 +330,7 @@ export const TTS_TRACKING_DEFAULTS: Pick<
  */
 export const TTS_TRACKING_KEYS = [
   "ttsSpotlightOn", "ttsSpotlightColor", "ttsSpotlightOpacity", "ttsSpotlightRule",
-  "ttsKaraokeOn", "ttsKaraokeColor", "ttsKaraokeOpacity",
+  "ttsKaraokeOn", "ttsKaraokeColor", "ttsKaraokeOpacity", "ttsSpeakSymbols",
 ] as const satisfies readonly (keyof typeof TTS_TRACKING_DEFAULTS)[];
 
 // RAWY-212: immersive per-element hide defaults, shared by BOTH per-script default sets so they can never

@@ -18,7 +18,7 @@
 // SWITCHING IS IMMEDIATE AND UNCONFIRMED, exactly as choosing a paper is. `applyProfile` repaints the
 // running surface; there is no dialog, because there is nothing to lose.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 
 import { useI18n } from "../../i18n";
 import { bgSrcUrl } from "../../lib/background";
@@ -60,6 +60,39 @@ export function ProfileSwitcher({ onManage }: { onManage: () => void }) {
       alive = false;
     };
   }, [profiles]);
+
+  /**
+   * HOW TALL THE MENU IS ALLOWED TO BE — measured, not assumed.
+   *
+   * The menu opens UPWARD from a trigger in the sidebar foot, so the room it has is the distance from
+   * the trigger to the top of the window. `.lib-menu` caps nothing, so with enough هيئات the column
+   * grew straight past the top edge: measured with 38, it stood at y = -510 in a 900px window (16 rows
+   * wholly above the edge) and y = -788 at 620px (24 rows), and a wheel over it moved nothing because
+   * no element in the chain scrolls. The rows were all rendered — they were simply unreachable.
+   *
+   * A CONSTANT WOULD ONLY BE RIGHT ON ONE WINDOW, which is why this reads the trigger's own rect
+   * instead. `GAP` is the 8px the stylesheet already leaves between menu and trigger; `EDGE` keeps the
+   * menu off the very top of the window so it reads as a panel rather than as something cut off.
+   *
+   * `FLOOR` is not a guess at the right height — it is a refusal to compute an unusable one. On a
+   * window too short to hold even a few rows, a clamped-to-nothing menu would be worse than one that
+   * slightly overhangs, and the list still scrolls inside it.
+   *
+   * Re-measured on resize while open, because the window can move under an open menu.
+   */
+  const [maxH, setMaxH] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    if (!open) { setMaxH(null); return; }
+    const GAP = 8, EDGE = 8, FLOOR = 160;
+    const measure = () => {
+      const btn = wrap.current?.querySelector<HTMLElement>(".pf-switch-btn");
+      if (!btn) return;
+      setMaxH(Math.max(FLOOR, Math.round(btn.getBoundingClientRect().top - GAP - EDGE)));
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [open]);
 
   // Close on an outside click or Escape — the idiom every other menu in the sidebar uses.
   useEffect(() => {
@@ -168,24 +201,36 @@ export function ProfileSwitcher({ onManage }: { onManage: () => void }) {
       </button>
 
       {open && (
-        <div className="pf-switch-menu lib-menu" role="menu">
-          {profiles.map((p) => (
-            <button
-              key={p.id}
-              role="menuitemradio"
-              aria-checked={p.id === activeId}
-              onClick={() => {
-                setOpen(false);
-                if (p.id !== activeId) guardUnsaved(() => void applyProfile(p));
-              }}
-            >
-              <span className="pf-switch-row-mini" aria-hidden>
-                <SardMini p={miniOf(p)} />
-              </span>
-              <span className="pf-switch-row-name" dir="auto">{profileLabel(p.name, t("profiles.unnamed"))}</span>
-              {p.id === activeId && <span className="pf-switch-check" aria-hidden>✓</span>}
-            </button>
-          ))}
+        <div
+          className="pf-switch-menu lib-menu"
+          role="menu"
+          // The measured ceiling. A custom property rather than an inline `maxHeight` so the rule that
+          // uses it stays in the stylesheet beside the rest of the menu's geometry, and so an
+          // unmeasured menu falls back to `none` — exactly what it did before.
+          style={maxH == null ? undefined : ({ "--pf-switch-max": `${maxH}px` } as CSSProperties)}
+        >
+          {/* THE ROWS SCROLL; THE RULE AND «إدارة الهيئات» BELOW THEM DO NOT. Putting the list in its
+              own box is what keeps the way into the Profiles area reachable no matter how many هيئات
+              there are — scrolling the whole menu would carry it off with them. */}
+          <div className="pf-switch-list">
+            {profiles.map((p) => (
+              <button
+                key={p.id}
+                role="menuitemradio"
+                aria-checked={p.id === activeId}
+                onClick={() => {
+                  setOpen(false);
+                  if (p.id !== activeId) guardUnsaved(() => void applyProfile(p));
+                }}
+              >
+                <span className="pf-switch-row-mini" aria-hidden>
+                  <SardMini p={miniOf(p)} />
+                </span>
+                <span className="pf-switch-row-name" dir="auto">{profileLabel(p.name, t("profiles.unnamed"))}</span>
+                {p.id === activeId && <span className="pf-switch-check" aria-hidden>✓</span>}
+              </button>
+            ))}
+          </div>
           <div className="pf-switch-rule" />
           <button role="menuitem" onClick={() => { setOpen(false); onManage(); }}>
             <span className="pf-switch-row-name">{t("profiles.manage")}</span>

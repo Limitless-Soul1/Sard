@@ -70,6 +70,16 @@ export interface FontFacts {
   format: string;
   /** True when the family came from the font's own `name` table rather than from the filename. */
   named_by_font: boolean;
+  /**
+   * Does the font carry Arabic letters? Read from its `cmap`, never from its name.
+   *
+   * `null` is a real third state, not a "no": a `.woff`/`.woff2` keeps every table deflated, so the
+   * scripts cannot be read without a decompressor the core deliberately does not carry. The preview
+   * says "could not be determined" for those rather than claiming either answer.
+   */
+  arabic: boolean | null;
+  /** The same question for Latin, from the same source, with the same third state. */
+  latin: boolean | null;
 }
 
 /** What a dropped font did. */

@@ -188,6 +188,8 @@ describe("the boundary — what a profile may write", () => {
       ttsKaraokeOn: false,
       ttsKaraokeColor: null,
       ttsKaraokeOpacity: 0.5,
+      // The block is all-or-nothing, so a هيئة that carries the marks carries this answer too.
+      ttsSpeakSymbols: true,
     };
     const patch = readingPatch(p).set as Record<string, unknown>;
     for (const k of VOICE_KEYS) expect(Object.hasOwn(patch, k), k).toBe(true);
@@ -612,6 +614,7 @@ describe("stage 4 — backgrounds and texture", () => {
     p.data.voice = {
       ttsSpotlightOn: true, ttsSpotlightColor: "#7E6A9E", ttsSpotlightOpacity: 0.25,
       ttsSpotlightRule: false, ttsKaraokeOn: true, ttsKaraokeColor: null, ttsKaraokeOpacity: null,
+      ttsSpeakSymbols: true,
     };
     const text = JSON.stringify(serialiseProfile(p, "1.2.2"));
     const seen = inspectPackage(text);

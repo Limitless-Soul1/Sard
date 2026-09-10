@@ -21,6 +21,9 @@ import {
   stepPdfZoom, zoomForWheel, isFitMode, type PdfZoom, type PdfThemeId,
 } from "../../reader-engine/pdfView";
 import {
+  speakSymbolsKey, speakSymbolsAttr, parseSpeakSymbols, effectiveSpeakSymbols,
+} from "./speakSymbols";
+import {
   ARABIC_DEFAULTS,
   PAGE_WIDTH_DEFAULT,
   pageWidthPx,
@@ -325,6 +328,19 @@ export function Reader({
   // position and not a timer.
   const tocPendingRef = useRef<{ landing: Landing | null } | null>(null);
   const [furthestUi, setFurthestUi] = useState<FurthestMark | null>(null);
+  /**
+   * THIS BOOK'S ANSWER about pronouncing decorative marks, and the third state.
+   *
+   * `null` is "this book has not been asked" — it follows the worn هيئة, and keeps following it as the
+   * reader changes هيئة. A `false` is a real answer and outranks the هيئة exactly as a `true` does; the
+   * two must stay distinguishable, which is why this is `boolean | null` and never a bare boolean.
+   *
+   * Kept in BOTH a ref and state on purpose: the drawer renders from the state, while the three
+   * read-aloud entry points read the ref at the instant they build a queue and must not be a render
+   * behind a row that has just loaded or a toggle the reader has just pressed.
+   */
+  const speakSymbolsRef = useRef<boolean | null>(null);
+  const [speakSymbolsOverride, setSpeakSymbolsOverride] = useState<boolean | null>(null);
   // RAWY-250 (PART 0.4 / D66): per-chapter tracking for the SHARED end-signal. `atStart` = the chapter was
   // entered at its beginning (a mid-chapter jump must never mark it read); `endOnArrival` = its end-condition
   // was already true when we landed (a chapter shorter than one screen) — that one completes only when the
@@ -599,7 +615,7 @@ export function Reader({
       // and the same call site, exercised once loading had finished, correctly merged (`[1]` → `[1,6]`).
       // Nothing here depends on the view, so the reads simply belong before it. No flag, no guard, no
       // deferral of the handler: the data is just present before anything can read it.
-      const [readRaw, seenRaw, spoilerRaw, invertRaw, pdfThemeRaw, pdfZoomRaw, furthestRaw] = await Promise.all([
+      const [readRaw, seenRaw, spoilerRaw, invertRaw, pdfThemeRaw, pdfZoomRaw, furthestRaw, speakSymRaw] = await Promise.all([
         settingsGet(`chapters_read:${target.id}`).catch(() => null),
         settingsGet(`seen_start:${target.id}`).catch(() => null),
         settingsGet(`spoiler_safe:${target.id}`).catch(() => null),
@@ -612,8 +628,15 @@ export function Reader({
         // The furthest point reached. Same additive settings-row pattern as the two sets above —
         // no schema change, no migration, and an absent key simply means this book has no mark yet.
         settingsGet(`furthest_read:${target.id}`).catch(() => null),
+        // This book's own answer to "say the decorative marks?", or nothing at all — the third state,
+        // which is what lets a book go back to following the worn هيئة. Same additive row pattern.
+        settingsGet(speakSymbolsKey(target.id)).catch(() => null),
       ]);
       if (stale()) return;
+      // Held in a ref as well as state: the three read-aloud entry points resolve it at the moment
+      // they build a queue, and a ref cannot be a render behind the row that was just loaded.
+      speakSymbolsRef.current = parseSpeakSymbols(speakSymRaw);
+      setSpeakSymbolsOverride(speakSymbolsRef.current);
       // RAWY-250 (PART 4) / RAWY-256 (addendum, case 6): the read-chapter set and the "beginning seen" set,
       // both per book, both plain settings rows (additive, no migration). An absent key = nothing recorded.
       readChaptersRef.current = new Set(parseSecs(readRaw));
@@ -2065,6 +2088,36 @@ export function Reader({
       : t("panel.chapter", { n: localeNum(own, lang) });
   };
 
+  /**
+   * Does the voice say the decorative marks, for the queue about to start?
+   *
+   * The book's own answer when it has one; the worn هيئة's otherwise. `effectiveSpeakSymbols` owns that
+   * precedence so the drawer and the synthesis path cannot come to disagree about it.
+   *
+   * Read from the REF and from the live store rather than from render-time values: a queue built a
+   * moment after the reader flips either control must use what they have just chosen, not what was on
+   * screen a render ago. The هيئة's value arrives on `reading_style`, which is what activating one
+   * writes — so switching هيئة moves this for every book that has not answered for itself.
+   */
+  const speakSymbolsNow = (): boolean =>
+    effectiveSpeakSymbols(
+      speakSymbolsRef.current,
+      useReader.getState().style?.ttsSpeakSymbols ?? ARABIC_DEFAULTS.ttsSpeakSymbols,
+    );
+
+  /**
+   * The drawer's setter: record this book's own answer, or clear it to follow the هيئة again.
+   *
+   * CLEARING WRITES AN EMPTY ROW rather than deleting one, because `parseSpeakSymbols` reads anything
+   * that is not `"1"` or `"0"` as "not asked". That keeps the third state expressible with the settings
+   * API the rest of the reader already uses, and needs no delete path of its own.
+   */
+  const setBookSpeakSymbols = (v: boolean | null) => {
+    speakSymbolsRef.current = v;
+    setSpeakSymbolsOverride(v);
+    settingsSet(speakSymbolsKey(bookRef.current), v === null ? "" : speakSymbolsAttr(v)).catch(() => {});
+  };
+
   // RAWY-105: start read-aloud from the current chapter (top-bar Listen). Voice defaults by the BOOK's
   // direction (Arabic book → Arabic voice). RAWY-227: if a session is already reading THIS chapter, resume
   // it in place instead of restarting at the top; and when a saved cursor belongs to this chapter, CONTINUE
@@ -2115,7 +2168,7 @@ export function Reader({
       else startIndex = Math.min(Math.max(0, at), sentences.length - 1);
     }
     // WP-5A: the SNIFFED script rides along so the pre-flight can refuse before any synthesis.
-    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: captionRef.current(), bookScript: useReader.getState().bookScript });
+    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: captionRef.current(), bookScript: useReader.getState().bookScript, speakSymbols: speakSymbolsNow() });
   };
   // RAWY-186 (Part A): the Play/Pause gesture (pill button AND Space). Read-aloud audio is decoupled from
   // the view (RAWY-129: you can browse while listening), so pressing Play after navigating to a DIFFERENT
@@ -2191,6 +2244,8 @@ export function Reader({
           // WHAT THIS QUEUE IS. Without it the player treats the end of a two-sentence footnote as the
           // end of the chapter and offers to advance the book — see `StartOpts.source`.
           source: "note",
+          // A footnote is read under the same answer as the chapter it hangs off.
+          speakSymbols: speakSymbolsNow(),
         });
         return;
       }
@@ -2207,7 +2262,7 @@ export function Reader({
     if (startIndex < 0) startIndex = 0;
     // RAWY-182: call start() even when empty (it surfaces the empty-chapter state), so the "preparing"
     // pill shown above never gets stuck — consistent with startListen.
-    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: captionRef.current() });
+    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: captionRef.current(), speakSymbols: speakSymbolsNow() });
   };
 
   // Responsive page width (RAWY-23): the slider fraction → a window-relative preferred width
@@ -2660,6 +2715,9 @@ export function Reader({
         pdfZoom={pdfZoom}
         onPdfZoomStep={pdfZoomStep}
         onPdfZoomMode={(m) => applyPdfZoom(m)}
+        speakSymbolsOverride={speakSymbolsOverride}
+        speakSymbolsAppearance={style?.ttsSpeakSymbols ?? ARABIC_DEFAULTS.ttsSpeakSymbols}
+        onSpeakSymbols={setBookSpeakSymbols}
       />
 
       {/* RAWY-85: no in-context selection toolbar (highlight/note/Photo Mode) for PDFs — they're

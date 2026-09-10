@@ -198,6 +198,133 @@ pub struct FontFacts {
     pub format: String,
     /// True when `family` came from the font's own `name` table rather than from the filename.
     pub named_by_font: bool,
+    /// Does the font actually carry Arabic letters? `None` = it could not be determined.
+    ///
+    /// READ FROM `cmap`, NEVER FROM THE NAME. A family called "Arabic Something" proves nothing, and
+    /// neither does a filename — the preview would otherwise promise a script the reader cannot see.
+    /// `None` is an honest third state and is what a compressed container yields: a `.woff`/`.woff2`
+    /// stores every table deflated, so its `cmap` is unreachable without a decompressor this crate
+    /// deliberately does not carry (see the note above `inspect`).
+    pub arabic: Option<bool>,
+    /// The same question for Latin. Same source, same third state.
+    pub latin: Option<bool>,
+}
+
+/// Representative code points for a script — enough to be sure, few enough to stay cheap.
+///
+/// A font is credited with a script only when it maps EVERY one of these. A single stray glyph (a
+/// lone `ا` in an otherwise Latin face, a `?`-shaped placeholder) must not read as coverage, and
+/// requiring the whole set is what stops that without needing to count glyphs.
+const ARABIC_PROBE: [u32; 6] = [0x0627, 0x0628, 0x062C, 0x0644, 0x0645, 0x064A]; // ا ب ج ل م ي
+const LATIN_PROBE: [u32; 6] = [0x0041, 0x005A, 0x0061, 0x007A, 0x0030, 0x0039]; // A Z a z 0 9
+
+/// Is `cp` mapped by this `cmap` subtable? Formats 4 and 12 only — between them they cover every
+/// modern font's Unicode subtable, and an unrecognised format simply answers "not here".
+fn subtable_has(b: &[u8], at: usize, cp: u32) -> bool {
+    match be16(b, at) {
+        // Format 4: segmented mapping, the BMP workhorse.
+        Some(4) => {
+            if cp > 0xFFFF {
+                return false;
+            }
+            let cp = cp as u16;
+            let segs = match be16(b, at + 6) {
+                Some(v) => (v / 2) as usize,
+                None => return false,
+            };
+            let ends = at + 14;
+            let starts = ends + segs * 2 + 2;
+            let deltas = starts + segs * 2;
+            let ranges = deltas + segs * 2;
+            for i in 0..segs {
+                let end = match be16(b, ends + i * 2) { Some(v) => v, None => return false };
+                if cp > end {
+                    continue;
+                }
+                let start = match be16(b, starts + i * 2) { Some(v) => v, None => return false };
+                if cp < start {
+                    return false; // segments are ordered: past it means absent
+                }
+                let range_off = match be16(b, ranges + i * 2) { Some(v) => v, None => return false };
+                if range_off == 0 {
+                    let delta = match be16(b, deltas + i * 2) { Some(v) => v, None => return false };
+                    return cp.wrapping_add(delta) != 0;
+                }
+                // The spec's own pointer arithmetic, into the glyph-id array that follows.
+                let idx = ranges + i * 2 + range_off as usize + 2 * (cp - start) as usize;
+                return matches!(be16(b, idx), Some(g) if g != 0);
+            }
+            false
+        }
+        // Format 12: grouped ranges, for anything beyond the BMP and for large faces.
+        Some(12) => {
+            let groups = match be32(b, at + 12) { Some(v) => v as usize, None => return false };
+            if groups > 200_000 {
+                return false;
+            }
+            for i in 0..groups {
+                let g = at + 16 + i * 12;
+                let (lo, hi) = match (be32(b, g), be32(b, g + 4)) {
+                    (Some(a), Some(b2)) => (a, b2),
+                    _ => return false,
+                };
+                if cp >= lo && cp <= hi {
+                    return true;
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Which scripts an sfnt actually carries, by asking its `cmap`.
+///
+/// Every Unicode subtable is consulted, because a font may split its coverage across a BMP format-4
+/// and a supplementary format-12; a code point found in either is present in the font.
+fn sfnt_scripts(b: &[u8], base: usize) -> (Option<bool>, Option<bool>) {
+    let num = match be16(b, base + 4) { Some(v) => v as usize, None => return (None, None) };
+    if num == 0 || num > 512 {
+        return (None, None);
+    }
+    let mut cmap_at: Option<usize> = None;
+    for i in 0..num {
+        let rec = base + 12 + i * 16;
+        let Some(tag) = b.get(rec..rec + 4) else { return (None, None) };
+        if tag == b"cmap" {
+            let Some(off) = be32(b, rec + 8) else { return (None, None) };
+            if (off as usize) < b.len() {
+                cmap_at = Some(off as usize);
+            }
+        }
+    }
+    // No `cmap` is not "no coverage" — it is "not stated", and the difference matters to the reader.
+    let Some(cm) = cmap_at else { return (None, None) };
+    let tables = match be16(b, cm + 2) { Some(v) => v as usize, None => return (None, None) };
+    if tables == 0 || tables > 64 {
+        return (None, None);
+    }
+    let mut subs: Vec<usize> = Vec::new();
+    for i in 0..tables {
+        let rec = cm + 4 + i * 8;
+        let (plat, off) = match (be16(b, rec), be32(b, rec + 4)) {
+            (Some(p), Some(o)) => (p, o as usize),
+            _ => continue,
+        };
+        // Unicode (0) and Windows (3) are the platforms whose subtables map code points; a Mac
+        // platform-1 table maps a legacy byte encoding and would answer a different question.
+        if (plat == 0 || plat == 3) && cm + off < b.len() {
+            subs.push(cm + off);
+        }
+    }
+    if subs.is_empty() {
+        return (None, None);
+    }
+    let has = |cp: u32| subs.iter().any(|&s| subtable_has(b, s, cp));
+    (
+        Some(ARABIC_PROBE.iter().all(|&cp| has(cp))),
+        Some(LATIN_PROBE.iter().all(|&cp| has(cp))),
+    )
 }
 
 fn be16(b: &[u8], at: usize) -> Option<u16> {
@@ -378,12 +505,16 @@ pub fn inspect(src_path: &str) -> Result<FontFacts, String> {
     match base {
         Some(at) => {
             let (family, style) = sfnt_names(&bytes, at)?;
+            // Asked of the SAME parsed bytes, so the answer belongs to the file the reader chose.
+            let (arabic, latin) = sfnt_scripts(&bytes, at);
             match family {
                 Some(f) => Ok(FontFacts {
                     family: f,
                     style,
                     format: format.into(),
                     named_by_font: true,
+                    arabic,
+                    latin,
                 }),
                 // Parsed cleanly, named nothing. The stem is the honest fallback, and the flag says so.
                 None => Ok(FontFacts {
@@ -391,6 +522,8 @@ pub fn inspect(src_path: &str) -> Result<FontFacts, String> {
                     style,
                     format: format.into(),
                     named_by_font: false,
+                    arabic,
+                    latin,
                 }),
             }
         }
@@ -400,6 +533,10 @@ pub fn inspect(src_path: &str) -> Result<FontFacts, String> {
             style: None,
             format: format.into(),
             named_by_font: false,
+            // A compressed container keeps its `cmap` deflated, so the scripts cannot be read
+            // here. `None` says that, rather than guessing from the name.
+            arabic: None,
+            latin: None,
         }),
     }
 }

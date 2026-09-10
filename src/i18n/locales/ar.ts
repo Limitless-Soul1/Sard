@@ -673,6 +673,9 @@ export const ar: Record<TKey, string> = {
   "photo.sec.place": "الموضع والحجم",
 
   "photo.brand.size": "الحجم",
+  "photo.quote.tooLong": "النصّ أطول ممّا تتّسع له البطاقة بهذا الحجم — اختصره أو صغّر الحجم.",
+  "photo.brand.font": "خطّ العلامة",
+  "photo.brand.fontOwn": "خطّ سَرْد",
   "photo.brand.dragHint": "اسحب العلامة على البطاقة لتضعها حيث شئت.",
   // The one question this editor asks, and only when there is something to lose.
   "photo.close.title": "لديك تغييرات غير محفوظة",
@@ -689,7 +692,6 @@ export const ar: Record<TKey, string> = {
   "photo.act.keep": "حفظ في سَرْد",
   "photo.act.keepSub": "بطاقة تفتحها وتعدّلها لاحقًا",
 
-  "photo.fit.autoHint": "دع النصّ الطويل يجد حجمه بنفسه",
   "photo.fit.autoNow": "محسوب بالملاءمة",
 
   "photo.role.showIt": "أظهره على البطاقة",
@@ -774,7 +776,6 @@ export const ar: Record<TKey, string> = {
   "photo.comp.night": "ليلي",
   "photo.comp.note": "بداية، لا قالب",
   "photo.paper.sample": "أب",
-  "photo.fit.auto": "ملء البطاقة",
   "photo.fit.exact": "حجم محدّد",
   "photo.weight.light": "خفيف",
   "photo.weight.regular": "عادي",
@@ -1105,6 +1106,16 @@ export const ar: Record<TKey, string> = {
   "track.karaokeEdgeOnly": "يظهر مع صوت Edge",
   "track.opacity": "الشفافية",
   "track.contrastWarn": "قد يجعل هذا الإبراز النصّ صعب القراءة.",
+  // نطق الرموز الزخرفية: خيار صوتيّ بحت. الكتاب لا يتغيّر، والصفحة تبقى كما هي — الفرق في ما يُنطق فقط.
+  "track.speakSymbols": "نطق الرموز الزخرفية",
+  "track.speakSymbolsHint": "مثل # و~ و* و^ والفواصل المرسومة بـ — — . لا يتغيّر نصّ الكتاب.",
+  "track.speakSymbolsBook": "الرموز الزخرفية في هذا الكتاب",
+  "track.speakSymbolsBookHint": "«حسب الهيئة» يتبع هيئتك الحالية، ويتغيّر معها. الاختيار هنا يخصّ هذا الكتاب وحده.",
+  "track.speakSymbols.follow": "حسب الهيئة",
+  "track.speakSymbols.on": "تُنطق",
+  "track.speakSymbols.off": "لا تُنطق",
+  "track.speakSymbols.onViaProfile": "تُنطق · حسب الهيئة",
+  "track.speakSymbols.offViaProfile": "لا تُنطق · حسب الهيئة",
   "color.contrastOk": "التباين جيّد. يُنبّه سَرْد إلى الألوان الباهتة التي يصعب قراءتها على هذه الورقة.",
   "color.contrastWarn": "باهت على سمة {theme} — اختر لونًا أغمق أو غيّر الورقة.",
 
@@ -1819,6 +1830,27 @@ export const ar: Record<TKey, string> = {
   // الجواب سطرٌ واحد لا حوار: الإضافة لا تسأل شيئًا، والرفض كذلك.
   "font.drop.imported": "أُضيف خطّ «{name}»",
   "font.drop.duplicate": "خطّ «{name}» عندك أصلًا",
+  // صفحة الخطّ الوارد. النصّ المعروض نفسه ليس هنا — فهو مضمون لا واجهة، ويبقى عربيًّا مهما كانت لغة
+  // الواجهة، لأنّ الغرض من الصفحة أن يرى القارئ عربيّة الخطّ.
+  "font.specimen.title": "خطٌّ جديد في سَرْد",
+  "font.specimen.already": "هذا الخطّ عندك أصلًا",
+  "font.specimen.arabic": "بالعربيّة",
+  "font.specimen.english": "باللاتينيّة",
+  "font.specimen.reading": "في صفحة كتاب",
+  "font.specimen.details": "تفاصيل الحروف",
+  "font.specimen.installed": "متاح الآن في سَرْد",
+  "font.specimen.loading": "ما زال المحرف يُحمَّل… ما تراه الآن قد لا يكون الخطّ نفسه.",
+  "font.specimen.coverage.both": "يدعم العربيّة واللاتينيّة",
+  "font.specimen.coverage.arabic": "يدعم العربيّة",
+  "font.specimen.coverage.latin": "يدعم اللاتينيّة",
+  "font.specimen.coverage.neither": "لا يحمل حروفًا عربيّة ولا لاتينيّة",
+  "font.specimen.coverage.unknown": "لم نتمكّن من قراءة تغطيته",
+  "font.specimen.neitherNote":
+    "أُضيف الخطّ ويمكنك اختياره، لكنّه لا يحمل الحروف العربيّة ولا اللاتينيّة — قد يكون مخصَّصًا لكتابةٍ أخرى أو للأيقونات.",
+  "font.specimen.unknownNote":
+    "هذا الملفّ مضغوط (woff/woff2)، وجداوله مطويّة، فلم نقرأ الحروف التي يحملها. الخطّ مضاف ويعمل، والمعاينة أعلاه هي الحكم.",
+  "font.specimen.where": "تجده الآن في اختيار الخطوط: خطّ الواجهة في الإعدادات، وخطّ الكتاب في إعدادات القراءة.",
+  "font.specimen.done": "تمّ",
   "font.err.type": "هذه الصيغة ليست خطًّا تقبله سَرْد. الصيغ المقبولة: ttf وotf وwoff وwoff2.",
   "font.err.invalid": "هذا الملفّ ليس خطًّا سليمًا.",
   "font.err.unreadable": "تعذّرت قراءة الملفّ.",

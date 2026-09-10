@@ -68,6 +68,7 @@ export function VoiceSection({
         ttsKaraokeOn: shown.ttsKaraokeOn,
         ttsKaraokeColor: shown.ttsKaraokeColor,
         ttsKaraokeOpacity: shown.ttsKaraokeOpacity,
+        ttsSpeakSymbols: shown.ttsSpeakSymbols,
       };
       d.voice = { ...next, ...(p as Partial<ProfileVoice>) };
     });

@@ -6,6 +6,7 @@
 
 import { useEffect, useState, type ChangeEvent, type ReactNode } from "react";
 
+import { announceImportedFont } from "../fonts/arrive";
 import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
 import type { TKey } from "../../i18n/locales/en";
@@ -389,6 +390,11 @@ function AddFontButton() {
             setUiFont(f.family_name); // make the just-imported font the active UI font
             setAdded(f.family_name);
             window.setTimeout(() => setAdded(null), 2400);
+            // THE SAME ANSWER A DROPPED FONT GETS. `announceImportedFont` is the one place a
+            // successful import decides what happens next, so the picker and the window drop end on
+            // the same specimen rather than on two different confirmations. It re-registers and
+            // re-checks the face before opening, which `importFont` alone does not promise.
+            await announceImportedFont(f, "imported");
           }
         } catch (e) {
           console.error(e);

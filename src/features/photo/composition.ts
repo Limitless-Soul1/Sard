@@ -287,6 +287,65 @@ export interface Preset {
   /** Fraction of the card's width. Absent means the size the mark has always been. */
   brandSize?: number;
   brandOpacity?: number;
+  /**
+   * THE MARK'S OWN FACE. Absent means Sard's, which is what it has always been drawn in.
+   *
+   * ONE PROPERTY FOR BOTH HALVES OF THE LOCKUP, on purpose. «Sard» and «سَرْد» are one piece of
+   * artwork, not two runs of text, and letting them diverge would produce a lockup nobody drew — so
+   * a chosen family sets both, and the browser's own fallback picks up whichever script a given
+   * family does not cover. The mark's SIZE, spacing and place are untouched by this: they are
+   * measured from `brandSize`, so a different face changes the letters and nothing else.
+   */
+  brandFont?: string | null;
+}
+
+/** Where the mark sits when nothing has moved it: this far up from the card's foot. */
+export const BRAND_BASELINE = 0.045;
+/** Its drawn height, as a multiple of `brandSize` — the tallest of the bird and the two words. */
+export const BRAND_HEIGHT = 1.6;
+/**
+ * Clear air between the mark and whatever the card puts above it.
+ *
+ * It absorbs a real error, not just taste: the layout pass ESTIMATES how tall a credit line will be
+ * (see the note in  on why it estimates rather than measures), and the box then settles
+ * onto its true height once the text is drawn. Measured with 0.022 of clearance, that settling was
+ * enough to put an attribution one pixel into the mark. This is the slack that difference needs.
+ */
+export const BRAND_CLEARANCE = 0.038;
+
+/**
+ * WHAT THE MARK COSTS THE CARD — as a fraction of the card's HEIGHT, measured from its foot.
+ *
+ * THE PROBLEM THIS SOLVES. The mark is drawn absolutely, at a fixed distance from the bottom edge,
+ * and the credit block is laid out from the bottom edge upward. Two systems owned the same band and
+ * neither knew about the other, so an author line and a wordmark could be placed in the same
+ * millimetres — which is a composition fault, not a stacking one, and no z-index answers it.
+ *
+ * The rule is that the footer AREA ADAPTS TO WHAT IS ACTUALLY ON THE CARD: when the mark is drawn
+ * where the card puts it, it claims a band, and everything else lays out above that band. Three
+ * things follow from the shape of that rule, and each is deliberate:
+ *
+ *   THE MARK IS OFF          nothing is claimed, so a card without one gets the whole foot back.
+ *   THE READER MOVED IT      `brandPos` means they placed it themselves, against the composition
+ *                            they can see. Reserving a band as well would be the editor overruling
+ *                            a deliberate act — so it claims nothing, and overlapping becomes their
+ *                            arrangement rather than the card's accident.
+ *   IT SCALES WITH THE MARK   the band is measured from `brandSize`, so a bigger mark takes more
+ *                            room and a small one takes almost none. Nothing is reserved "just in
+ *                            case", which is what would have made a large permanent hole.
+ *
+ * `w` and `h` are the card's own pixel dimensions: `brandSize` is a fraction of the WIDTH and this
+ * returns a fraction of the HEIGHT, and that conversion is exactly what a caller must not have to
+ * remember for itself.
+ */
+export function brandBand(preset: Preset, meta: { brand: boolean }, w: number, h: number): number {
+  if (!meta.brand) return 0;
+  if (preset.brandPos) return 0;
+  const size = preset.brandSize ?? 0.036;
+  const variant = preset.brandVariant ?? "lockup";
+  // The bird is the tall part; without it the lockup is only as tall as its own words.
+  const tall = variant === "wordmark" ? 1.3 : BRAND_HEIGHT;
+  return (BRAND_BASELINE + size * tall + BRAND_CLEARANCE) * (w / h);
 }
 
 export interface Composition {
@@ -412,7 +471,20 @@ export function newCustomComposition(themeId: string, format: CardFormat, text: 
     ground: { kind: "theme", themeId },
     preset: {
       ...DEFAULT_PRESET,
-      meta: { date: false, time: false, title: false, chapter: false, author: false, brand: false },
+      /**
+       * A BLANK CARD IS BLANK OF THE BOOK, NOT OF SARD.
+       *
+       * There is no book behind this card, so every part that would name one stays off: no title,
+       * no chapter, no author, and no date or time unless they are asked for. THE MARK IS NOT ONE
+       * OF THOSE — it says whose card this is, not which book it came from, and a card made in
+       * Sard should leave the editor already being one.
+       *
+       * IT IS A CREATION DEFAULT AND NOTHING MORE. This factory runs once, when «أنشئ بطاقة مصوّرة»
+       * is pressed. Nothing re-applies it on a render, a save, a reload or a restart: a reader who
+       * switches the mark off is switching off `preset.meta.brand` in their own document, and that
+       * is what gets serialized and what comes back when they open the card again.
+       */
+      meta: { date: false, time: false, title: false, chapter: false, author: false, brand: true },
     },
     // ITS WORDS ARE A QUOTE LIKE ANY OTHER, and saying so is what lets a blank card be composed.
     // Without `origin` the composition system read this as a loose element, so choosing a
@@ -598,6 +670,14 @@ function parsePreset(v: unknown): Preset {
   }
   if (typeof p.brandSize === "number") out.brandSize = clamp(p.brandSize, 0.012, 0.18);
   if (typeof p.brandOpacity === "number") out.brandOpacity = clamp(p.brandOpacity, 0.05, 1);
+  // A FAMILY VALUE, and nothing that could be a declaration. It reaches CSS verbatim — the card's
+  // own faces are `var(--ar-font)` and the like, so this cannot be restricted to bare names — and a
+  // saved document is untrusted input, so anything carrying a brace, a semicolon, a quote or a
+  // comment marker is refused rather than sanitised into something that might still parse.
+  if (typeof p.brandFont === "string" && p.brandFont.trim()
+      && !/[{};"'\\<>]/.test(p.brandFont) && !p.brandFont.includes("/*")) {
+    out.brandFont = p.brandFont.trim().slice(0, 120);
+  }
   return out;
 }
 

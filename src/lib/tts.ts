@@ -22,7 +22,7 @@ import { type BookScript, voiceCompatibility, isImplausiblyShortAudio } from "./
 import { diagNote, diagPublishAudio } from "@diag";
 import { settingsGet, settingsSet, ttsEdgeVoices, ttsStop } from "./ipc";
 import { LatencySeries, newSeries, recordSeries, resetSeries, seriesSummary, SynthScheduler } from "./ttsScheduler";
-import { speakableText, withoutEmptyMarkup } from "./ttsText";
+import { speakableText, withoutDecorativeSymbols, withoutEmptyMarkup } from "./ttsText";
 
 /**
  * RAWY-281 — the selectable playback speeds, as an EXPLICIT ORDERED SET.
@@ -215,7 +215,18 @@ interface StartOpts { sentences: string[]; lang: TtsLang; startIndex?: number; c
    * book. That is a state-ownership error, not a display one, and it is fixed here rather than hidden
    * in the player.
    */
-  source?: TtsSource }
+  source?: TtsSource;
+  /**
+   * Whether the voice PRONOUNCES decorative formatting marks for this queue — the effective answer,
+   * already resolved by the caller from the book's own override and the worn هيئة.
+   *
+   * It arrives per QUEUE rather than being read from a store here, for the same reason `sentences`
+   * does: this module plays what it is handed. Resolving it at the Reader keeps the precedence rule
+   * in one place, and keeps this file unaware of هيئات and of per-book rows alike.
+   *
+   * Absent = do not suppress, which is what every existing caller means by not passing it.
+   */
+  speakSymbols?: boolean }
 
 /** A read-aloud queue is either the chapter on screen or an open footnote. Default: the chapter. */
 export type TtsSource = "chapter" | "note";
@@ -296,6 +307,13 @@ interface Synthesized { bytes: ArrayBuffer; durationSec: number; words: TtsWord[
 // ---- imperative playback engine (WebAudio), kept outside the reactive store ----
 let ctx: AudioContext | null = null;
 let sentences: string[] = [];
+/**
+ * Whether this queue's voice says the decorative marks. Set from `StartOpts` beside `sentences`,
+ * because it belongs to the same queue and must change only when the queue does — reading it live
+ * mid-playback would let a settings change alter sentences already synthesized and cached, so the
+ * reader would hear the old text for a while and the new text after, with no way to tell why.
+ */
+let speakSymbols = true;
 
 // ---- RAWY-264: the playback substrate — HTMLMediaElement, not AudioBufferSourceNode -----------------
 //
@@ -629,7 +647,22 @@ async function synthInvoke(i: number): Promise<ArrayBuffer> {
   // applied HERE and not inside `speakableText` because it removes characters, and `setReadingWords`
   // requires `speakableText` to stay length-preserving. Applied once, on the only path that reaches an
   // engine, so every kind of read-aloud — chapter, note and selection — gets it identically.
-  const buf = await rawSynth(curEngine, curVoice, withoutEmptyMarkup(speakableText(text)));
+  // `withoutDecorativeSymbols` silences the formatting marks the endpoint pronounces as words (# ~ * ^
+  // and rules drawn out of -- / __), for the same reason and in the same place — but only when the
+  // reader has asked for it. `speakSymbols` is the effective answer for this queue: true means say
+  // them, which is the untransformed string this line produced before the setting existed. It is
+  // OUTERMOST because it describes the string that actually reaches the voice; the parts commute in
+  // any case, since it never adds or removes a letter or digit and so cannot change whether a span
+  // counts as speakable.
+  //
+  // ALL OF IT IS STRICTLY DOWNSTREAM OF SEGMENTATION. `sentences` arrives already split by
+  // `FoliateController`'s `Intl.Segmenter`, and nothing here is fed back into it — so unit count,
+  // sentence boundaries, chunk indices and the ranges the highlight is drawn from cannot move,
+  // whichever way the setting is set.
+  const markupSafe = withoutEmptyMarkup(speakableText(text));
+  const buf = await rawSynth(
+    curEngine, curVoice, speakSymbols ? markupSafe : withoutDecorativeSymbols(markupSafe),
+  );
   if (isImplausiblyShortAudio(text, buf?.byteLength ?? 0)) {
     throw new Error(`${VOICE_MISMATCH_MARKER}: ${curVoice} returned ${buf?.byteLength ?? 0} bytes for ${text.length} chars`);
   }
@@ -1587,6 +1620,9 @@ export const useTts = create<TtsState>((set, get) => ({
   start: async (opts) => {
     lastStart = opts;
     const { sentences: sen, lang, startIndex = 0, chapterLabel, bookScript = null, source = "chapter" } = opts;
+    // Fixed for the life of this queue, beside `sentences` and for the same reason. A caller that does
+    // not pass it means "say them", which is what every call meant before the setting existed.
+    speakSymbols = opts.speakSymbols ?? true;
     // Recorded BEFORE anything can end: `playFrom` reads it to decide whether running out of sentences
     // means "this chapter is finished" or "this footnote is finished", and those are different events.
     set({ source });

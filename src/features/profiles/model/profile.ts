@@ -472,6 +472,9 @@ function parseVoice(v: unknown): ProfileVoice | null {
     ttsKaraokeOn: bool(o.ttsKaraokeOn, TTS_TRACKING_DEFAULTS.ttsKaraokeOn),
     ttsKaraokeColor: ink(o.ttsKaraokeColor),
     ttsKaraokeOpacity: alpha(o.ttsKaraokeOpacity),
+    // Absent on every هيئة written before this field existed, which is exactly what the default is
+    // for: they keep the behaviour they were saved with.
+    ttsSpeakSymbols: bool(o.ttsSpeakSymbols, TTS_TRACKING_DEFAULTS.ttsSpeakSymbols),
   };
 }
 

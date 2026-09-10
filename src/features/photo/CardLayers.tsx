@@ -74,10 +74,17 @@ function FitText({
    */
   stroke?: StrokeStyle;
   /**
-   * How much room this text needs at the size it has been given, as a MULTIPLE of the box it was
-   * given, whenever that is more than one. A ratio rather than a pixel count so the caller never
-   * has to know the scale the card happens to be drawn at. Only meaningful when the size is the
-   * USER'S: an auto-fitted text answers the question by shrinking instead.
+   * HOW MUCH ROOM THE WORDS ACTUALLY NEED, as a MULTIPLE of the box they were given — reported
+   * whenever it differs from one, in EITHER direction.
+   *
+   * It used to fire only when the words overflowed, and that asymmetry is the whole of the metadata
+   * bug: an attribution arrived with a box a fifth of the card tall, one short line was measured at
+   * 29px inside 66px of box, and nothing ever told anyone. Delete text and the box kept the height
+   * the longest version had reached. A box that only ever grows is not a box that follows its text.
+   *
+   * A ratio rather than a pixel count, so the caller never has to know the scale the card happens
+   * to be drawn at. Only meaningful when the size is the USER'S: an auto-fitted text answers the
+   * question by shrinking its type instead, and its box is the thing being filled.
    */
   onNeedsRoom?: (ratio: number) => void;
 }) {
@@ -91,12 +98,22 @@ function FitText({
     if (!box) return;
     if (!auto) {
       el.style.fontSize = `${(style.size as number) * cardW}px`;
-      // AND THEN SAY WHETHER IT FITS. The size is the user's and is not up for negotiation here, so
-      // the only honest answer to a box that is too small is how much room the words actually need.
-      // Someone above decides what to do about it; what must not happen is the box quietly cropping
-      // the sentence, which is what an `overflow: hidden` parent does on its own.
-      if (onNeedsRoom && box.clientHeight > 0 && el.scrollHeight > box.clientHeight + 1) {
-        onNeedsRoom(el.scrollHeight / box.clientHeight);
+      // AND THEN SAY HOW TALL THE WORDS ARE. The size is the user's and is not up for negotiation
+      // here, so the box is what follows — and it follows in both directions, or a field that has
+      // been long once is stuck at that height for ever.
+      //
+      // AN EMPTY FIELD IS ONE LINE, not nothing: an empty block measures zero, and a zero-height
+      // element cannot be seen, selected or typed into. One line is the affordance, and it is also
+      // exactly what the first character will need.
+      if (onNeedsRoom && box.clientHeight > 0) {
+        const line = parseFloat(getComputedStyle(el).lineHeight);
+        const need = el.scrollHeight > 0
+          ? el.scrollHeight
+          : (Number.isFinite(line) ? line : (style.size as number) * cardW * 1.6);
+        // ROUND THE BOX UP, NEVER DOWN. The box is `overflow: hidden`, so a height a fraction of a
+        // pixel short of the text does not merely look tight — it clips a descender or an Arabic
+        // kasra off the last line. One pixel of slack costs nothing and cannot do that.
+        onNeedsRoom((need + 2) / box.clientHeight);
       }
       return;
     }

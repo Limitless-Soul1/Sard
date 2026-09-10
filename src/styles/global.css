@@ -4730,47 +4730,12 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 }
 
 /* ---- the one question this editor asks ------------------------------------------------------ */
-.pcx-ask {
-  /* Covers the EDITOR, which is the window this question belongs to. The padding is what guarantees
-     the card can never touch an edge at any window size - it is the responsive part, not a
-     breakpoint. */
-  position: absolute; inset: 0; z-index: 70; display: grid; place-items: center;
-  padding: clamp(16px, 4vmin, 40px);
-  background: color-mix(in srgb, var(--pc-desk) 40%, rgba(0, 0, 0, 0.55));
-  backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
-}
-.pcx-ask-card {
-  /* SIZED BY WHAT IT SAYS, between two sensible bounds. `max-content` lets a short question be a
-     small box and a longer one grow; the clamps stop it becoming either a slot or a wall. The
-     percentages resolve against the padded area above, so a narrow window shrinks the card rather
-     than cropping it - the previous `min(420px, 82%)` was a fixed box that only looked right at one
-     size. */
-  inline-size: max-content;
-  min-inline-size: min(300px, 100%);
-  max-inline-size: min(460px, 100%);
-  max-block-size: 100%; overflow: auto;
-  display: flex; flex-direction: column; gap: 6px;
-  padding: 22px 24px; border-radius: 14px;
-  background: var(--pc-chrome); border: 1px solid var(--pc-line-2);
-  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.38);
-}
-.pcx-ask-card b { font: 600 1rem var(--ui-font); color: var(--pc-text); }
-.pcx-ask-card p {
-  margin: 0; font: 400 0.84375rem/1.65 var(--ui-font); color: var(--pc-muted-2); text-wrap: pretty;
-}
-/* The answers are a group of their own, set apart from what is being asked. */
-.pcx-ask-row {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  margin-block-start: 12px; padding-block-start: 14px;
-  border-block-start: 1px solid var(--pc-line-2);
-}
-.pcx-ask-row .pcx-act { padding: 9px 16px; }
-/* Discarding is a real answer, so it is offered — quietly, and last. */
-.pcx-ask-drop {
-  margin-inline-start: auto; padding: 9px 10px; border: 0; background: transparent;
-  color: var(--pc-danger); font: 500 0.78125rem var(--ui-font); cursor: pointer; border-radius: 8px;
-}
-.pcx-ask-drop:hover { background: color-mix(in srgb, var(--pc-danger) 12%, transparent); }
+/* THE EDITOR'S ONE QUESTION now uses Sard's dialog layer (`.pf-dialog-scrim` on `document.body`,
+   via `useDialog`/`useScrimDismiss`), so it needs no geometry of its own — only two things the
+   shared dialog cannot know: that it opens OVER the composer, whose own scrim sits at z-index 90,
+   and that discarding stands apart from the two answers that keep the work. */
+.pcx-ask-scrim { z-index: 120; }
+.pcx-ask-drop { margin-inline-end: auto; }
 
 /* ── body: rail + workspace ───────────────────────────────────────────────────────────────── */
 .pcx-body { display: grid; grid-template-columns: 288px 1fr; min-height: 0; }
@@ -5485,6 +5450,41 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   color: inherit; overflow: hidden; cursor: text;
   outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-xs);
 }
+/* AN EMPTY TEXT ELEMENT, WAITING FOR ITS WORDS.
+   Drawn only in the editor — this whole layer is a sibling of the card and is never exported, so an
+   empty role can be findable here and still leave the artwork with nothing in it.
+
+   THE WRAPPER SPANS THE MEASURE; THE CHIP INSIDE IS ONLY AS BIG AS ITSELF. That separation is the
+   point: a credit line's measure is the card's full text column, and drawing the affordance across
+   it made an empty role look like a wide empty bar. The wrapper is how the chip finds the place the
+   first word will occupy — the head of the measure, or its middle when the line is centred. */
+.pc-ov-ghost {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  pointer-events: none; user-select: none;
+}
+.pc-ov-ghost i {
+  font-style: normal; white-space: nowrap;
+  padding: 1px 7px; border-radius: var(--r-xs);
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px dashed color-mix(in srgb, var(--accent) 42%, transparent);
+  opacity: 0.85;
+}
+/* Selected, it is what the reader is looking straight at, so the dashes firm up. */
+.pc-ov-el.on .pc-ov-ghost i {
+  opacity: 1;
+  border-color: color-mix(in srgb, var(--accent) 72%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+}
+/* AND THE ELEMENT'S OWN OUTLINE STANDS DOWN while it is empty. The chip IS the selection at that
+   point; drawing a second box the width of the whole column around it says the thing the reader
+   just told us was wrong — that the empty field is enormous. The box still takes the pointer, so it
+   can be selected and dragged from anywhere along its measure. */
+.pc-ov-el.empty, .pc-ov-el.empty.on, .pc-ov-el.empty:hover {
+  outline: none; box-shadow: none;
+  border-color: transparent; background: transparent;
+}
+
 .pc-ov-grip {
   position: absolute;
   width: 11px;

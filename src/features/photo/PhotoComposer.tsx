@@ -12,6 +12,7 @@
 // being trimmed. DATE and TIME are two independent switches. Everything the editor had is kept.
 
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { toBlob } from "html-to-image";
 import { save } from "@tauri-apps/plugin-dialog";
 
@@ -22,10 +23,11 @@ import { familiesOnce, useFonts } from "../../lib/fonts";
 import { THEME_ORDER, resolveTheme, type ThemeId } from "../../theme";
 import { BRAND_ARABIC, BRAND_LATIN, CHROME, displayFace } from "../../lib/typography";
 import {
-  COMPOSITION_VERSION, formatSize, GROUND_SCALE_MAX, GROUND_SCALE_MIN, referencedAssets,
-  serializeComposition, type Composition,
+  brandBand, COMPOSITION_VERSION, formatSize, GROUND_SCALE_MAX, GROUND_SCALE_MIN, referencedAssets,
+  serializeComposition, type Composition, type TextElement,
 } from "./composition";
 import { OVERLAY_HOST_CLASS } from "../library/design/overlay";
+import { useDialog, useScrimDismiss } from "../../components/useDialog";
 import { inspectorFits } from "./workspace";
 import { ElementsLayer, GroundLayer, type AssetUrl } from "./CardLayers";
 import { CardToolbar } from "./CardToolbar";
@@ -33,13 +35,14 @@ import { ScrubField } from "./ScrubField";
 import { SliderField } from "./SliderField";
 import { ObjectsStrip } from "./ObjectsStrip";
 import {
-  applyComposition, makeRoleElement, seedComposition, type CompositionId, type RoleText,
+  addRoleLaidOut, applyComposition, seedComposition, type CompositionId, type RoleText,
 } from "./compositions";
-import { defaultRectFor, defaultStyleFor } from "./autoLayout";
+import { defaultRectFor, defaultStyleFor, quoteRegion } from "./autoLayout";
 import { CardOverlay } from "./CardOverlay";
 import { FlipRow, Inspector } from "./Inspector";
+import { Picker } from "./Picker";
 import {
-  addElement, bringForward, bringToFront, findElement, isText, makeImage, moveBy, removeElement, resizeBy, sendBackward, sendToBack, setHidden, setPlacement, updateImage,
+  addElement, bringForward, bringToFront, findElement, isText, makeImage, MIN_SIZE, moveBy, removeElement, resizeBy, sendBackward, sendToBack, setHidden, setPlacement, updateImage,
   updateStyle, updateText, type ResizeGrip,
 } from "./elements";
 import { backgroundsList, photocardStageImage, type BackgroundRow } from "../../lib/ipc";
@@ -366,6 +369,20 @@ function PhotoCard({
    * sentence, and reversing it would produce a wordmark nobody drew. Which SIDE it sits on follows
    * the card, because that is the corner the eye leaves from.
    */
+  /**
+   * The mark's family list: the reader's choice first, Sard's own behind it.
+   *
+   * The fallback is not politeness — it is what keeps the lockup whole. A Latin-only family chosen
+   * for «Sard» has nothing to draw «سَرْد» with, and without Sard's own face behind it the Arabic
+   * half would land in whatever the browser reaches for last.
+   */
+  const brandFamily = (chosen: string | null | undefined, fallback: string) =>
+    // VERBATIM, NOT QUOTED. A choice from this list is already a CSS font-family VALUE — the card's
+    // own faces arrive as `var(--ar-font)` and the like — so wrapping it in quotes makes it a
+    // literal family name that does not exist, and the mark silently keeps the face it had.
+    // Measured: choosing «Arabic» set `"var(--ar-font)"` and changed nothing on the card.
+    chosen ? `${chosen}, ${fallback}` : fallback;
+
   const brandMark = (color: string) => {
     if (!meta.brand) return null;
     const p = composition.preset;
@@ -402,9 +419,15 @@ function PhotoCard({
         )}
         {v !== "bird" && (
           <>
-            <span style={{ font: `600 ${bs}px ${BRAND_LATIN}`, color, letterSpacing: "0.01em" }}>Sard</span>
+            {/* THE MARK'S FACE IS A PROPERTY, not a constant baked into this line.
+                It was `BRAND_LATIN` and `BRAND_ARABIC` — two hard-coded tokens that resolved to the
+                INTERFACE font, so the one piece of type on the card that could not be changed was
+                the one belonging to the card's own maker. A chosen family sets both halves and
+                falls back to Sard's own; the sizes, the gap and the divider are still measured from
+                `brandSize`, so choosing a face moves nothing. */}
+            <span style={{ font: `600 ${bs}px ${brandFamily(p.brandFont, BRAND_LATIN)}`, color, letterSpacing: "0.01em" }}>Sard</span>
             <span className="pc-brand-div" style={{ background: color, height: bs * 1.05 }} />
-            <span style={{ font: `400 ${bs * 1.24}px ${BRAND_ARABIC}`, color, transform: `translateY(${-bs * 0.06}px)` }}>سَرْد</span>
+            <span style={{ font: `400 ${bs * 1.24}px ${brandFamily(p.brandFont, BRAND_ARABIC)}`, color, transform: `translateY(${-bs * 0.06}px)` }}>سَرْد</span>
           </>
         )}
       </div>
@@ -534,6 +557,14 @@ function PhotoCard({
 
   // ---- per-style inner content + padding (the card root + growth behaviour is shared) ----
   let pad = `${s(0.11)}px ${s(0.1)}px`;
+  /**
+   * THE BAND THE MARK CLAIMS, in this card's pixels — see `brandBand` for the rule.
+   *
+   * It is applied as the card's block-END padding below, which is what puts the credit block above
+   * the mark instead of on it. A card that never had a mark, or whose mark the reader has placed by
+   * hand, gets zero and keeps exactly the foot it always had.
+   */
+  const markBand = brandBand(composition.preset, meta, W, H) * H;
   let inner: React.ReactNode;
 
   if (style === "minimal") {
@@ -715,6 +746,9 @@ function PhotoCard({
         background: paperBg,
         color: c.text,
         padding: pad,
+        // The mark's band, added to whatever foot this style already keeps — never replacing it, so
+        // a style with a generous bottom margin does not lose it to a small mark.
+        paddingBlockEnd: `calc(${pad.split(" ")[0]} + ${markBand}px)`,
         position: "relative",
       }}
     >
@@ -861,6 +895,8 @@ export function PhotoComposer({
    */
   const [brandPos, setBrandPos] = useState<{ x: number; y: number } | null>(seed?.brandPos ?? null);
   const [brandSize, setBrandSize] = useState<number>(seed?.brandSize ?? 0.036);
+  /** The mark's face. null = Sard's own, which is what every card made before this carries. */
+  const [brandFont, setBrandFont] = useState<string | null>(seed?.brandFont ?? null);
   const [brandOpacity, setBrandOpacity] = useState<number>(seed?.brandOpacity ?? 0.78);
   /** The element being typed into ON THE CARD. Double-click opens it; blurring closes it. */
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1013,7 +1049,10 @@ export function PhotoComposer({
     // book's name and its writer on the card twice — photographed doing exactly that. It stays in
     // `roleText` because the rail offers it, and it appears when the user asks for it.
     const { attribution: _, ...seedText } = roleText;
-    setElements(seedComposition(compId, seedText, layoutCanvas));
+    // AND AROUND THE MARK. The mark is drawn at the foot before any of these elements exist, so
+    // seeding without its band is what put an author line and a wordmark in the same millimetres.
+    setElements(seedComposition(compId, seedText, layoutCanvas,
+      brandBand({ ...composition.preset, meta }, meta, layoutCanvas.w, layoutCanvas.h)));
     // Seeding is a one-time act at mount, so it deliberately does not track its inputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1045,19 +1084,24 @@ export function PhotoComposer({
       preset: {
         style: cardStyle, textSize, meta, quoteFont, quoteWeight, quoteSpacing, quoteAlign,
         brandVariant, brandAlign, brandSize, brandOpacity,
+        ...(brandFont ? { brandFont } : {}),
         ...(brandPos ? { brandPos } : {}),
       },
       elements,
       ...(initialComposition?.custom ? { custom: true as const } : {}),
       ...(initialComposition?.ext ? { ext: initialComposition.ext } : {}),
     }),
-    [format, themeId, cardStyle, textSize, meta, quoteFont, quoteWeight, quoteSpacing, quoteAlign, brandVariant, brandAlign, brandPos, brandSize, brandOpacity, elements, ground, canvasSize, cardDir, initialComposition],
+    [format, themeId, cardStyle, textSize, meta, quoteFont, quoteWeight, quoteSpacing, quoteAlign, brandVariant, brandAlign, brandPos, brandSize, brandOpacity, brandFont, elements, ground, canvasSize, cardDir, initialComposition],
   );
 
   // EVERY edit goes through the document. The editor keeps no second copy of an element's geometry,
   // so what the overlay drags and what the exporter draws cannot drift apart.
   const compRef = useRef<Composition>(composition);
   compRef.current = composition;
+  // The mark's band is read from live state inside , which must not be re-created on
+  // every meta change or a keystroke mid-edit would rebuild the measurement callback.
+  const metaRef = useRef(meta);
+  metaRef.current = meta;
   const edit = useCallback((fn: (c: Composition) => Composition) => {
     setElements(fn(compRef.current).elements);
   }, []);
@@ -1510,31 +1554,127 @@ export function PhotoComposer({
   useEffect(() => { selectedRef.current = selectedId; }, [selectedId]);
 
   /**
-   * A BOX THAT IS TOO SMALL GROWS; IT DOES NOT CROP.
+   * A TEXT BOX IS THE HEIGHT OF ITS TEXT. Not a minimum, not a maximum — the height.
    *
-   * With auto-fit ON the size is negotiable, so the text shrinks into whatever box it is given and
-   * this never fires. With auto-fit OFF the size is the USER'S and is not ours to change - so the
-   * BOX is what gives way. The height they set becomes a minimum, and the box takes the room the
-   * words actually need; if that would run off the foot of the card, it slides up instead.
+   * THE MODEL, and it is the reason metadata behaved the way it did. A text element has three
+   * possible relationships with its box:
    *
-   * This is the whole of the fix for text vanishing on resize. The box is `overflow: hidden`
-   * because an element must not bleed past the card's edge in the export, and that is exactly what
-   * was quietly eating the end of a sentence when someone dragged a handle inwards.
+   *   the size is the USER'S   the type is fixed, so the BOX follows the words. Set the measure by
+   *                            dragging the width; the height is not a thing to be chosen, any more
+   *                            than the height of a paragraph in a book is.
+   *   the size is AUTO-FIT     the box is fixed and the TYPE follows it, shrinking to fill. Only a
+   *                            card saved before «ملء البطاقة» was withdrawn is still in this mode.
+   *   IT IS THE QUOTE          the box still follows the words, but it does so around its CENTRE
+   *                            rather than its top — see the anchor below. The composition chose a
+   *                            point in the room for the passage to sit around, and holding that
+   *                            point is what keeps a two-word quote and a nine-line one both
+   *                            balanced. Anchoring by the top instead was measured putting a quoted
+   *                            passage 0.112 of the card above the middle of its own room.
    *
-   * It cannot oscillate: growing the height does not change how many lines the words take, because
-   * the WIDTH is untouched - so the next measurement agrees with this one and it settles.
+   * The old version of this only ever GREW, which meant the first relationship was only half
+   * implemented. Measured in the running editor: an attribution arrived 0.12 of the card tall, one
+   * short Arabic line needed 29px of a 66px box, and deleting text back down left the box at the
+   * tallest it had ever been. That is the "long empty rectangle" — an authored height that nothing
+   * was ever allowed to take back.
+   *
+   * IT CANNOT OSCILLATE. Only the height moves; the WIDTH is untouched, so the words wrap into
+   * exactly the same lines and the next measurement reports the same need. It settles in one pass.
+   *
+   * THE FLOOR IS `MIN_SIZE`, the same floor dragging obeys, so a box can never become too small to
+   * grab. THE CEILING is the card, and a box that would run off the foot slides up instead of
+   * hanging over the edge.
    */
-  const growToFit = useCallback((id: string, needed: number) => {
-    if (!Number.isFinite(needed)) return;
+  /**
+   * WHAT AN EMPTY ELEMENT SAYS WHILE IT IS WAITING FOR WORDS.
+   *
+   * The role's own name, taken from the same list the rail is built from — so the thing the reader
+   * switched on and the thing that appears on the card are named identically, and there is no second
+   * table of labels to drift. Anything that is not a literary role is a line of their own text, and
+   * says so.
+   */
+  const emptyLabel = useCallback((el: TextElement) => {
+    const role = el.origin ? LITERARY_ROLES.find((r) => r.part === el.origin) : undefined;
+    return t(role ? role.label : "photo.el.textPlaceholder");
+  }, [t]);
+
+  /**
+   * Set while a quote is being clamped, and read once the render has settled — a toast raised from
+   * inside a state updater would be a render-time side effect, and would also fire on every
+   * keystroke of a long passage rather than once when it stops fitting.
+   */
+  const tooLongRef = useRef(false);
+  const wasTooLong = useRef(false);
+  useEffect(() => {
+    if (tooLongRef.current === wasTooLong.current) { tooLongRef.current = false; return; }
+    wasTooLong.current = tooLongRef.current;
+    if (tooLongRef.current) flash(t("photo.quote.tooLong"));
+    tooLongRef.current = false;
+  });
+
+  const fitToText = useCallback((id: string, needed: number) => {
+    if (!Number.isFinite(needed) || needed <= 0) return;
     setElements((prev) => {
       const el = prev.find((e) => e.id === id);
       if (!el || !isText(el)) return prev;
       const rect = el.placement.rect;
-      const want = Math.min(needed, 1);
-      if (want <= rect.h + 0.002) return prev;
-      const y = rect.y + want > 1 ? Math.max(0, 1 - want) : rect.y;
-      const grown = { ...el, placement: { ...el.placement, rect: { ...rect, y, h: want } } };
-      return prev.map((e) => (e.id === id ? grown : e));
+      const want = Math.min(Math.max(needed, MIN_SIZE), 1);
+      /**
+       * A QUOTE KEEPS ITS CENTRE; EVERYTHING ELSE KEEPS ITS TOP.
+       *
+       * A metadata line belongs to a stack that is built downward from a known edge, so its top is
+       * the fixed thing and its height grows and shrinks below it. A quote is the opposite: the
+       * composition chose a POINT in the room for it to sit around, and the words are centred in
+       * its box. Anchor that box by its top and every change of length walks the passage upward —
+       * measured before this: the box collapsed onto the text and stayed pinned to the room's top
+       * edge, and the ink ended up 0.112 of the card above the middle.
+       *
+       * Holding the centre makes the box breathe symmetrically, so a two-word quote and a nine-line
+       * one are both balanced on the same point, and shortening a long quote gives the room back
+       * instead of leaving a box that has been stretched once and never returns.
+       */
+      let h = want;
+      let y: number;
+      if (el.kind === "quote") {
+        /**
+         * AND IT STAYS IN ITS ROOM.
+         *
+         * The size is the reader's, so the box is what gives way — but "gives way" was unbounded,
+         * and a box may only take space that is not already spoken for. The room is the same one
+         * the composing pass works in (`quoteRegion`): the format's margin, whatever sits below the
+         * passage, and the band the mark has claimed.
+         *
+         * The centre is re-found INSIDE that room rather than kept absolutely, so a growing passage
+         * opens upward as well as downward and only stops when the room does. What it never does is
+         * step over the credit or the mark, which is what it did before: measured, a 13-line
+         * passage at 42px took the whole card and covered all four credit lines and the mark.
+         */
+        const others = prev
+          .filter((e) => e.id !== id && e.kind !== "unknown" && !e.hidden)
+          .map((e) => (e as TextElement).placement.rect);
+        const room = quoteRegion(format, rect, others,
+          brandBand(compRef.current.preset, metaRef.current, layoutCanvas.w, layoutCanvas.h));
+        const roomH = Math.max(MIN_SIZE, room.bottom - room.top);
+        h = Math.min(want, roomH);
+        const centre = rect.y + rect.h / 2;
+        y = Math.min(Math.max(room.top, centre - h / 2), room.bottom - h);
+        // WHEN THE ROOM IS NOT ENOUGH, SAY SO rather than quietly making the card worse. The size
+        // stays theirs, the composition stays intact, and the one thing Sard can honestly do is
+        // tell them the passage is longer than the card has room for at that size.
+        if (want > roomH + 0.002) tooLongRef.current = true;
+      } else {
+        y = rect.y + want > 1 ? Math.max(0, 1 - want) : rect.y;
+      }
+      /**
+       * NOTHING TO DO IS THE COMMON CASE, and it has to be recognised on the FINAL geometry.
+       *
+       * It used to bail on `want` — the height the words asked for — which is fine while that is
+       * what they get and fatal once it is clamped: a passage asking for more than its room asked
+       * again on every measurement, was clamped to the same height every time, and was written back
+       * as a new array every time. Measured: the editor rendered until the card disappeared.
+       */
+      if (Math.abs(h - rect.h) <= 0.002 && Math.abs(y - rect.y) <= 0.002) return prev;
+      const fitted = { ...el, placement: { ...el.placement, rect: { ...rect, y, h } } };
+      return prev.map((e) => (e.id === id ? fitted : e));
     });
   }, []);
 
@@ -1793,10 +1933,21 @@ export function PhotoComposer({
                   if (!on) return;
                   // Nothing on the card and nothing in the preset: make it. On a blank card there
                   // are no words to make it from, so it arrives empty and open to type.
-                  const el = makeRoleElement(compId, role.part, words, layoutCanvas, roleText);
-                  setElements((prev) => addElement({ ...compRef.current, elements: prev }, el).elements);
-                  setSelectedId(el.id);
-                  if (!words) setEditingId(el.id);
+                  // THE STACK MAKES ROOM, and the mark's band travels with it: a role added by
+                  // hand lands above the mark, and the credit lines already on the card move up to
+                  // let it in — unless the reader has placed one of them themselves.
+                  const band = brandBand(composition.preset, meta, layoutCanvas.w, layoutCanvas.h);
+                  let bornId: string | null = null;
+                  setElements((prev) => {
+                    const next = addRoleLaidOut(prev, compId, role.part, words, layoutCanvas, roleText, band);
+                    const born = next[next.length - 1];
+                    bornId = born && born.kind !== "unknown" ? born.id : null;
+                    return next;
+                  });
+                  if (bornId) setSelectedId(bornId);
+                  // Nothing to show yet, so it opens for typing — which is also what gives an empty
+                  // field its one-line affordance instead of a rectangle waiting to be noticed.
+                  if (!words && bornId) setEditingId(bornId);
                 };
                 return (
                   <div key={role.part} className={`pcx-role${visible ? " here" : ""}${chosen ? " on" : ""}${here && !visible ? " off" : ""}`}>
@@ -1896,6 +2047,24 @@ export function PhotoComposer({
                       </button>
                     ))}
                   </div>
+                  {/* THE MARK'S FACE — one control, and only one.
+                      It is a lockup, not a paragraph: the reader chooses the family and everything
+                      else about it (its size, the gap, the divider, where it sits) stays measured
+                      from `brandSize`, so this cannot move the mark or change what it collides
+                      with. There is deliberately no weight, no spacing and no second family for the
+                      Arabic half — the two halves are one piece of artwork and are set together.
+                      «خطّ سَرْد» is the same `Picker`, with the same faces, that the toolbar offers
+                      for any other text, so a face imported into Sard is available here too. */}
+                  <Picker
+                    width={148}
+                    title={t("photo.brand.font")}
+                    value={brandFont ?? ""}
+                    options={[
+                      { value: "", label: t("photo.brand.fontOwn") },
+                      ...fontChoices.map((f) => ({ value: f.key, label: f.label, family: f.key })),
+                    ]}
+                    onPick={(v: string) => setBrandFont(v || null)}
+                  />
                   <SliderField
                     label={t("photo.brand.size")}
                     value={Math.round(brandSize * composition.canvas.w)}
@@ -1974,7 +2143,7 @@ export function PhotoComposer({
                   composition={composition}
                   assetUrl={assetUrl}
                   editingId={editingId}
-                  onNeedsRoom={growToFit}
+                  onNeedsRoom={fitToText}
                 />
               </div>
               {/* Outside the scaled wrapper: a handle inside it would shrink with the preview, and a
@@ -1996,6 +2165,7 @@ export function PhotoComposer({
                 brand={meta.brand ? brandHand : undefined}
                 family={resolvedQuoteFont}
                 autoFrac={autoFrac}
+                emptyLabel={emptyLabel}
                 onBeginEdit={(id) => { setSelectedId(id); setEditingId(id); }}
                 onEditText={(text) => selected && edit((c) => updateText(c, selected.id, text))}
                 onEndEdit={() => setEditingId(null)}
@@ -2155,7 +2325,6 @@ export function PhotoComposer({
                 comp={composition}
                 selected={selected}
                 canvas={{ w: composition.canvas.w, h: composition.canvas.h }}
-                autoFrac={autoFrac}
                 doc={docControls}
                 onStyle={(patch) => selected && edit((c) => updateStyle(c, selected.id, patch))}
                 onText={(text) => selected && edit((c) => updateText(c, selected.id, text))}
@@ -2262,31 +2431,64 @@ export function PhotoComposer({
 </button>
           </div>
         </footer>
-        {/* THE ONE QUESTION THIS EDITOR ASKS.
-            Three answers, in the order a person wants them: go back to what I was doing, keep it, or
-            yes really throw it away. Discarding is last and quiet; continuing is the default and is
-            what Escape does. */}
-        {askClose && (
-          <div className="pcx-ask" onPointerDown={(e) => e.stopPropagation()}>
-            <div className="pcx-ask-card" role="alertdialog" aria-labelledby="pcx-ask-t">
-              <b id="pcx-ask-t">{t("photo.close.title")}</b>
-              <p>{t("photo.close.body")}</p>
-              <div className="pcx-ask-row">
-                <button className="pcx-act primary" onClick={() => { setAskClose(false); void onSaveInApp(); }}>
-                  <span><b>{t("photo.act.keep")}</b></span>
-                </button>
-                <button className="pcx-act" onClick={() => setAskClose(false)}>
-                  <span><b>{t("photo.close.stay")}</b></span>
-                </button>
-                <button className="pcx-ask-drop" onClick={() => { setAskClose(false); onClose(); }}>
-                  {t("photo.close.discard")}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
         {toast && <div className="pc-toast">{toast}</div>}
       </div>
+      <AskBeforeLeaving
+        open={askClose}
+        onKeep={() => { setAskClose(false); void onSaveInApp(); }}
+        onStay={() => setAskClose(false)}
+        onDiscard={() => { setAskClose(false); onClose(); }}
+      />
     </div>
+  );
+}
+
+/**
+ * THE ONE QUESTION THIS EDITOR ASKS — on Sard's dialog layer, not on the editor's.
+ *
+ * It used to be a `<div class="pcx-ask">` inside the composer, `position: absolute; inset: 0`. That
+ * reads as correct and is not: `.pcx-modal` is the containing block, so measured at 1600×1000 the
+ * backdrop covered 1502×938 and stopped at the editor's rounded edge. The 48px of desk around it was
+ * live — `elementFromPoint` in that margin returned the composer's own scrim, so the question that
+ * claimed to be modal could be clicked straight past. It also had no focus trap, no Escape, and no
+ * accessible name, because none of that comes with an absolutely positioned div.
+ *
+ * Sard already answers all of it: `useDialog` (focus in, Tab trapped, Escape, name, focus restored),
+ * `useScrimDismiss` (press-outside with a near-miss guard), `.pf-dialog-scrim` on `document.body`.
+ * The editor gets the same dialog every other Sard surface asks its questions with, and the answers
+ * are unchanged — keep, stay, discard, with Escape meaning STAY.
+ */
+function AskBeforeLeaving({ open, onKeep, onStay, onDiscard }: {
+  open: boolean;
+  onKeep: () => void;
+  onStay: () => void;
+  onDiscard: () => void;
+}) {
+  const { t } = useI18n();
+  // Escape and a press outside both mean STAY: a stray gesture must never save or discard for them.
+  const dlg = useDialog({ onDismiss: onStay });
+  const scrim = useScrimDismiss(onStay);
+  if (!open) return null;
+  return createPortal(
+    <div className="pf-dialog-scrim pcx-ask-scrim" {...scrim.scrimProps}>
+      <div
+        className="pf-dialog"
+        onClick={(e) => e.stopPropagation()}
+        ref={(node) => { dlg.ref(node); scrim.panelRef(node); }}
+        {...dlg.props}
+      >
+        <div className="pf-dialog-title" id={dlg.titleId}>{t("photo.close.title")}</div>
+        <p className="pf-dialog-body">{t("photo.close.body")}</p>
+        <div className="pf-dialog-actions">
+          {/* Discarding is the quiet one and stands apart from the two that keep the work. */}
+          <button className="pf-btn danger pcx-ask-drop" onClick={onDiscard}>
+            {t("photo.close.discard")}
+          </button>
+          <button className="pf-btn" onClick={onStay}>{t("photo.close.stay")}</button>
+          <button className="pf-btn primary" onClick={onKeep}>{t("photo.act.keep")}</button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }

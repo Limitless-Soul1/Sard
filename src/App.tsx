@@ -23,6 +23,7 @@ import { initProfiles } from "./features/profiles/store"; // PROFILES: register 
 import { UnsavedChange } from "./features/profiles/UnsavedChange";
 import { DroppedProfile } from "./features/profiles/DroppedProfile";
 import { FontDropNotice } from "./features/fonts/FontDropNotice";
+import { FontSpecimen } from "./features/fonts/FontSpecimen";
 import { DroppedDeposit } from "./features/deposit/DroppedDeposit";
 import { useIncomingDeposit } from "./features/deposit/store";
 import { useBookDetailsRequest } from "./features/library/bookDetailsRequest";
@@ -139,6 +140,10 @@ function Root() {
       <DroppedProfile />
       {/* The answer a dropped font gets — app-level, because a font may be dropped anywhere. */}
       <FontDropNotice />
+      {/* A font that has just arrived, shown as a page. Mounted here, beside the notice, because
+          a font can be imported from the window drop or from Global Settings and the specimen has
+          to appear either way. It renders nothing until one arrives. */}
+      <FontSpecimen />
       <DroppedDeposit />
     </>
   );

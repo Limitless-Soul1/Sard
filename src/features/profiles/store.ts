@@ -634,6 +634,20 @@ export async function importProfile(manifestJson: string, archivePath?: string |
   // The archive rides along so `commit` can register the assets beside the row — one place, as the
   // boundary intended. Absent (a v1 package, or a manifest with no assets) is settings only.
   const row = await profileImportCommit(manifestJson, newId(), archivePath ?? null);
+  // A FACE THAT ARRIVED WITH THE هيئة HAS TO BE REGISTERED BEFORE IT CAN BE WORN.
+  //
+  // `commit` installs the font into `custom_fonts` and copies its file, but the running session's
+  // `@font-face` block is built once by `initFonts` and folded again only by `importFont`. A family
+  // that arrives any OTHER way is, in `lib/fonts.ts`'s own words, "installed and invisible until the
+  // next launch" — which is exactly what a shared هيئة does. Measured on a real package carrying
+  // Cascadia Code: `document.fonts` held ZERO faces for the family immediately after the commit, and
+  // one after a reload. So the هيئة named a face the document could not resolve, and the book went on
+  // being drawn in the face it already had — the reported defect, and it repaired itself on restart.
+  //
+  // `dropRoute` already takes this step for a dropped FONT file; this is the same step for the other
+  // door a font can come through. It is awaited before the profile is handed back, so the caller
+  // cannot activate a هيئة whose face is not yet registered.
+  if (archivePath) await useFonts.getState().reload().catch(() => {});
   await refreshProfiles();
   return toProfile(row);
 }

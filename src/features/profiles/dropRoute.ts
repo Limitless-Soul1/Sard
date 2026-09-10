@@ -9,7 +9,8 @@
 // renamed `.zip`, or a profile renamed anything at all, both land where they belong. Nothing is
 // unpacked and nothing is written — inspect reads one bounded member into memory and returns text.
 import { profileImportInspect } from "../../lib/ipc";
-import { depositInspect, fontImportDropped, fontInspect } from "../../lib/ipc";
+import { depositInspect, fontImportDropped, fontInspect, fontsList } from "../../lib/ipc";
+import { announceImportedFont } from "../fonts/arrive";
 import { useFontDrop } from "../fonts/dropped";
 import { useFonts } from "../../lib/fonts";
 import { useIncomingDeposit } from "../deposit/store";
@@ -98,21 +99,52 @@ export async function routeDroppedPaths(
       // Anything else — including a file whose extension was never a font's. Fall through, silently.
     }
     if (font) {
+      let done: Awaited<ReturnType<typeof fontImportDropped>> | null = null;
       try {
-        const done = await fontImportDropped(paths[0]);
-        // The picker's list is a store, so it has to be told; otherwise the font is installed and
-        // invisible until the next launch.
-        await useFonts.getState().reload();
-        useFontDrop.getState().say({
-          key: done.outcome === "imported" ? "font.drop.imported" : "font.drop.duplicate",
-          name: done.family,
-          bad: false,
-        });
+        done = await fontImportDropped(paths[0]);
       } catch (e) {
         const key = String(e);
         useFontDrop.getState().say({
           key: key.startsWith("font.err.") ? (key as never) : "font.err.failed",
           bad: true,
+        });
+        return;
+      }
+      // FROM HERE THE FONT IS IN. Nothing below may turn that into a failure, and the narrowed `try`
+      // above is what guarantees it: showing the new screen is a courtesy after the import, not part
+      // of it, so a stumble while looking the row up or reading its tables must never tell a reader
+      // their font was refused when it is sitting in their list. (Measured: with the announcement
+      // inside the original `try`, an unavailable `fonts_list` reported `font.err.failed` for a font
+      // that had imported perfectly.)
+      //
+      // ONE ANSWER FOR BOTH DOORS. `announceImportedFont` registers the face and opens the specimen;
+      // it is the same call Global Settings makes after ITS import, so a dropped font and a picked one
+      // end on the same screen. It also owns the `reload()` that used to be here — the step that keeps
+      // a stored family from being "installed and invisible until the next launch".
+      //
+      // THE ROW IS LOOKED UP RATHER THAN RETURNED, because the drop command answers with what HAPPENED
+      // (`imported` / `duplicate`) and the specimen needs the stored row: its `file_path` is what the
+      // facts are read from.
+      let shown = false;
+      try {
+        const row = useFonts.getState().custom.find((f) => f.family_name === done.family)
+          ?? (await fontsList().catch(() => [])).find((f) => f.family_name === done.family)
+          ?? null;
+        if (row) {
+          await announceImportedFont(row, done.outcome === "imported" ? "imported" : "duplicate");
+          shown = true;
+        }
+      } catch {
+        /* the specimen is optional; the answer below is not */
+      }
+      if (!shown) {
+        // No row to specimen, or the screen could not be prepared: the answer this path has always
+        // given, unchanged.
+        await useFonts.getState().reload().catch(() => {});
+        useFontDrop.getState().say({
+          key: done.outcome === "imported" ? "font.drop.imported" : "font.drop.duplicate",
+          name: done.family,
+          bad: false,
         });
       }
       return;

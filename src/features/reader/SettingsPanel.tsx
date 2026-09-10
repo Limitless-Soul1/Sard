@@ -30,6 +30,16 @@ interface Props {
   onPdfZoomStep?: (dir: 1 | -1) => void;
   onPdfZoomMode?: (mode: "fit-width" | "fit-page") => void;
   onPdfCopy?: () => void;
+  /**
+   * THIS BOOK's answer about pronouncing decorative marks, the هيئة's, and the setter.
+   *
+   * Per book, like the zoom above and unlike the PDF appearance beside it: whether a particular book's
+   * formatting marks are worth hearing is a property of how that book was typed, not of the reader.
+   * `null` = not asked, which is how a book goes back to following the worn هيئة.
+   */
+  speakSymbolsOverride?: boolean | null;
+  speakSymbolsAppearance?: boolean;
+  onSpeakSymbols?: (v: boolean | null) => void;
 }
 
 // The reading-settings drawer (RAWY-34, design band I). A right-edge drawer docked BETWEEN the
@@ -54,6 +64,9 @@ export function SettingsPanel({
   pdfZoom,
   onPdfZoomStep,
   onPdfZoomMode,
+  speakSymbolsOverride,
+  speakSymbolsAppearance,
+  onSpeakSymbols,
 }: Props) {
   const { t } = useI18n();
   // RAWY-216: five CONCEPT tabs (was Text/Page/Theme, which mixed typography with colour and read-aloud).
@@ -187,6 +200,9 @@ export function SettingsPanel({
           section={section}
           bookThemeId={bookThemeId}
           onPickTheme={onPickTheme}
+          speakSymbolsOverride={speakSymbolsOverride}
+          speakSymbolsAppearance={speakSymbolsAppearance}
+          onSpeakSymbols={onSpeakSymbols}
         />
       </div>
     </aside>

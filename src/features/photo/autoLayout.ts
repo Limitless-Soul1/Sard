@@ -38,7 +38,9 @@
 // back in and undo a change the user made.
 
 import { newId, type PresetPart, type Rect, type TextElement, type TextStyle } from "./composition";
-import type { CardFormat } from "./photo";
+import { formatDims, type CardFormat } from "./photo";
+// The one floor an element may be sized to, shared so the layout and the editor cannot disagree.
+import { MIN_SIZE } from "./elements";
 
 /** The words a card can be made of. Absent or blank means the card simply has not got that part. */
 export type RoleText = Partial<Record<PresetPart, string>>;
@@ -199,11 +201,36 @@ export function autoLayout(opts: {
   h: number;
   text: RoleText;
   flavour?: Flavour;
+  /**
+   * A BAND AT THE FOOT THAT IS ALREADY SPOKEN FOR, as a fraction of the card's height.
+   *
+   * The Sard mark is what claims it — see `brandBand`. This pass lays the credit out from the
+   * bottom edge upward, so without being told, it lays an author line into the same millimetres the
+   * mark is drawn in. Passing the band here is what makes the two agree, and it is a NUMBER rather
+   * than knowledge of the mark on purpose: this pass arranges text and should not learn what a
+   * wordmark is.
+   */
+  reserveBottom?: number;
+  /**
+   * PARTS THAT ARE ON THE CARD WITH NOTHING IN THEM YET.
+   *
+   * Words are what this pass normally arranges, and a part with none is skipped — rightly: a book
+   * with no chapter must not get an empty chapter line sitting on the card waiting to be noticed.
+   * But a part the READER has switched on is a different thing with the same empty string: it has an
+   * element, a box and an editing affordance in it, and it needs a line of the stack to sit in.
+   *
+   * The two cases cannot be told apart from the text, so they are not asked of it. This is the list
+   * of parts that are present, and only a caller that knows the document can supply it.
+   */
+  present?: PresetPart[];
 }): AutoLayout {
   const { format, w, h, text } = opts;
   const flavour = FLAVOUR[opts.flavour ?? "calm"];
   const fmt = FORMAT[format] ?? FORMAT.portrait;
   const aspect = w / h;
+  // Never less than the format's own margin: a small mark must not let the credit sit lower than it
+  // otherwise would.
+  const footReserve = Math.max(0, Math.min(0.4, opts.reserveBottom ?? 0));
 
   const quote = (text.quote ?? "").trim();
   const advance = isArabicText(quote) ? ADVANCE.ar : ADVANCE.latin;
@@ -222,24 +249,39 @@ export function autoLayout(opts: {
     { part: "author", cap: 0.034, maxLines: 1, opacity: 0.9 },
     { part: "attribution", cap: 0.026, maxLines: 2, opacity: 0.62 },
   ];
+  const present = new Set(opts.present ?? []);
   const credit: CreditPiece[] = [];
   for (const wpiece of wanted) {
     const words = (text[wpiece.part] ?? "").trim();
-    if (!words) continue;
+    // No words and not on the card: nobody asked for this part, and it takes no room.
+    if (!words && !present.has(wpiece.part)) continue;
     const adv = isArabicText(words) ? ADVANCE.ar : ADVANCE.latin;
-    const size = Math.min(wpiece.cap, sizeToFit(words.length, boxW, wpiece.maxLines, adv));
+    // With no words there is nothing to fit, so it takes its natural cap on a single line.
+    const size = words ? Math.min(wpiece.cap, sizeToFit(words.length, boxW, wpiece.maxLines, adv)) : wpiece.cap;
     credit.push({
       part: wpiece.part,
       text: words,
       size,
-      lines: linesFor(words.length, size, boxW, adv),
+      lines: words ? linesFor(words.length, size, boxW, adv) : 1,
       style: { weight: wpiece.weight, opacity: wpiece.opacity },
     });
   }
 
   const CREDIT_LINE = 1.34;
   const CREDIT_GAP = 0.016; // between credit lines, as a fraction of the card's height
-  const creditH = credit.reduce((sum, c) => sum + heightOf(c.lines, c.size, CREDIT_LINE, aspect), 0)
+  /**
+   * A CREDIT LINE'S SLOT — never smaller than an element is allowed to BE.
+   *
+   * `MIN_SIZE` is the floor a box may be dragged to, and an empty one settles onto exactly that. A
+   * credit line of small type estimates shorter than the floor, so two neighbouring EMPTY roles were
+   * each floored to more than their slot and overlapped each other — the reader's own «الفصل» and
+   * «المؤلف» affordances sitting on top of one another. Measured in the editor.
+   *
+   * Giving every slot at least the floor costs a populated card nothing (a line taller than the
+   * floor keeps its own height) and makes the stack agree with what an element can actually be.
+   */
+  const slotH = (c: CreditPiece) => Math.max(heightOf(c.lines, c.size, CREDIT_LINE, aspect), MIN_SIZE);
+  const creditH = credit.reduce((sum, c) => sum + slotH(c), 0)
     + Math.max(0, credit.length - 1) * CREDIT_GAP;
 
   // ── the quote gets the rest, and its size comes out of how much that is ──────────────────────
@@ -264,9 +306,12 @@ export function autoLayout(opts: {
   // (It was not always. Letting the credit follow the quote and pulling it up only when it
   // overflowed meant a long passage pushed it past the foot, where the clamp that keeps elements on
   // the card stacked its lines on the same line. Measured: chapter over author, on a square.)
-  const creditTop = credit.length ? 1 - my - creditH : 1 - my;
+  // The foot the credit is laid out from: the format's margin, or the mark's band when that is
+  // deeper. Everything above it — the credit stack, then the quote — moves up together.
+  const foot = Math.max(my, footReserve);
+  const creditTop = credit.length ? 1 - foot - creditH : 1 - foot;
   const roomTop = my;
-  const roomBottom = credit.length ? creditTop - gap : 1 - my;
+  const roomBottom = credit.length ? creditTop - gap : 1 - foot;
   const room = Math.max(0.12, roomBottom - roomTop);
 
   // The quote's box is the room LESS the optical trim: text centred by arithmetic sits a touch low
@@ -319,7 +364,22 @@ export function autoLayout(opts: {
     size, weight: 400, lineHeight: shape.line, align: flavour.align, color: null, opacity: 1, dir: "auto",
   };
 
-  const quoteTop = roomTop;
+  /**
+   * AND WHERE IN THE ROOM THAT BOX SITS.
+   *
+   * `bias` has always been documented as "where the quote sits (0 = top, .5 = centred)", and it was
+   * only ever spent SHORTENING the box — `boxFor` trims the room by it — while the box itself stayed
+   * pinned to `roomTop`. So every point of trim came off the BOTTOM, and the airier the shape the
+   * higher the passage rode. Measured on a portrait card made from a book quote: the box filled 78%
+   * of its room and the ink sat 0.071 of the card's height above the room's middle, with all the
+   * slack pooled underneath it.
+   *
+   * The slack is now shared the way the bias says: none of it above at 0, half of it above at 0.5.
+   * A short passage therefore centres in its room and a long one still fills it, which is the
+   * behaviour the comment above `boxFor` describes and the card never had.
+   */
+  const slack = Math.max(0, room - quoteBoxH);
+  const quoteTop = roomTop + slack * Math.min(1, Math.max(0, shape.bias * 2));
   if (quote) {
     elements.push({
       id: newId(),
@@ -334,7 +394,7 @@ export function autoLayout(opts: {
   // ── the credit, on the card's own baseline ───────────────────────────────────────────────────
   let y = creditTop;
   for (const c of credit) {
-    const lineH = heightOf(c.lines, c.size, CREDIT_LINE, aspect);
+    const lineH = slotH(c);
     elements.push({
       id: newId(),
       kind: "attribution",
@@ -362,19 +422,82 @@ function r(x: number, y: number, wd: number, ht: number): Rect {
  * should arrive somewhere sensible rather than at the origin. These are the same regions the
  * automatic layout uses, so a hand-built card and a generated one have the same bones.
  */
+/**
+ * WHERE A NEW ELEMENT ARRIVES — and, for text, how tall it arrives.
+ *
+ * The heights here are a SEED, not a decision: a text box is the height of its text (see
+ * `fitToText`), so the first measurement replaces whatever is written here. What the seed still has
+ * to be is close, because it is what gets painted for the frame before that measurement lands — and
+ * `0.1` of the card for a new empty text field is what a reader saw as "a long empty rectangle".
+ * One line of the type it arrives in is both closer and honest.
+ */
+/**
+ * THE ROOM A QUOTE MAY OCCUPY, on a card that already exists.
+ *
+ * `autoLayout` works this out for itself while composing — it is `roomTop`..`roomBottom` in the pass
+ * above — but that answer is computed from words and thrown away. EDITING needs the same answer
+ * about a card that is already arranged: when a reader replaces a passage with a much longer one,
+ * the box has to know where to stop. Measured without it: a 13-line passage at the reader's 42px
+ * took a box the size of the whole card, 0.392 of the card past its room, over all four credit
+ * lines and the mark.
+ *
+ * It is the same shape of answer as the composing pass, derived from the same two things — the
+ * format's own margin and whatever is actually below the quote — so the two cannot drift.
+ *
+ *   `others`  every OTHER visible element's rect. Anything whose top is below the quote's own top
+ *             bounds the room; anything above it raises the floor of the room instead.
+ *   `reserve` the band the mark has claimed at the foot — see `brandBand`. Zero when there is none.
+ */
+export function quoteRegion(
+  format: CardFormat,
+  quote: Rect,
+  others: Rect[],
+  reserve = 0,
+): { top: number; bottom: number } {
+  const fmt = FORMAT[format] ?? FORMAT.portrait;
+  const my = fmt.my;
+  const mid = quote.y + quote.h / 2;
+  let top = my;
+  let bottom = 1 - Math.max(my, Math.max(0, reserve));
+  for (const r of others) {
+    // Below the quote's middle: it is the floor. Above it: it is the ceiling.
+    if (r.y + r.h / 2 >= mid) bottom = Math.min(bottom, r.y - CREDIT_AIR);
+    else top = Math.max(top, r.y + r.h + CREDIT_AIR);
+  }
+  // A room that has been squeezed out of existence is not a room; hand back something usable and
+  // let the caller decide what to do about a passage that will not fit in it.
+  if (bottom - top < MIN_SIZE) bottom = top + MIN_SIZE;
+  return { top, bottom };
+}
+
+/** The air a quote keeps between itself and whatever it shares the card with. */
+const CREDIT_AIR = 0.012;
+
 export function defaultRectFor(part: PresetPart | "text" | "image", format: CardFormat): Rect {
   const fmt = FORMAT[format] ?? FORMAT.portrait;
   const mx = fmt.mx;
   const boxW = 1 - 2 * mx;
   switch (part) {
     case "quote": return r(mx, 0.20, boxW, 0.38);
-    case "title": return r(mx, 0.655, boxW, 0.075);
-    case "chapter": return r(mx, 0.742, boxW, 0.045);
-    case "author": return r(mx, 0.792, boxW, 0.05);
-    case "attribution": return r(mx, 0.858, boxW, 0.042);
+    case "title": return r(mx, 0.655, boxW, oneLine("title", format));
+    case "chapter": return r(mx, 0.742, boxW, oneLine("chapter", format));
+    case "author": return r(mx, 0.792, boxW, oneLine("author", format));
+    case "attribution": return r(mx, 0.858, boxW, oneLine("attribution", format));
     case "image": return r(0.28, 0.30, 0.44, 0.30);
-    default: return r(mx, 0.44, boxW, 0.1);
+    default: return r(mx, 0.44, boxW, oneLine("text", format));
   }
+}
+
+/**
+ * One line of this part's own type, as a fraction of the card's HEIGHT.
+ *
+ * `size` is a fraction of the card's WIDTH — that is the document's one length unit — so the aspect
+ * ratio is what converts it, and getting that conversion wrong is how a seed drifts from its text.
+ */
+function oneLine(part: PresetPart | "text", format: CardFormat): number {
+  const style = defaultStyleFor(part, format);
+  const dims = formatDims(format);
+  return (style.size ?? 0.03) * (style.lineHeight ?? 1.6) * (dims.w / dims.h);
 }
 
 /** And the type it arrives in — a real size from the start, never zero and never "work it out". */

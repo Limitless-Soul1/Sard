@@ -6,7 +6,18 @@
 // sentence by consuming the word's own length.
 import { describe, expect, it } from "vitest";
 
-import { hasExtendedDigits, speakableText, withoutEmptyMarkup } from "../../src/lib/ttsText";
+import {
+  hasExtendedDigits,
+  speakableText,
+  withoutDecorativeSymbols,
+  withoutEmptyMarkup,
+} from "../../src/lib/ttsText";
+import {
+  effectiveSpeakSymbols,
+  parseSpeakSymbols,
+  speakSymbolsAttr,
+  speakSymbolsKey,
+} from "../../src/features/reader/speakSymbols";
 
 describe("speakableText", () => {
   it("rewrites extended Arabic-Indic digits to the forms Edge speaks", () => {
@@ -147,6 +158,358 @@ describe("an empty angle-bracket container is not speech", () => {
     // The function takes only text. There is no voice, engine or endpoint in its signature, so it
     // cannot behave differently for one voice than another.
     expect(withoutEmptyMarkup.length).toBe(1);
+  });
+});
+
+describe("a formatting mark the voice would say out loud", () => {
+  // MEASURED, both voices, from Edge's own word boundaries rather than from audio length: `# ~ * ^ &`
+  // always come back as their own word, and `- – — / | ( ) [ ] : , …` never do. Of the first group only
+  // `# ~ * ^` are this rule's business: `&` is read aloud because it usually IS a word.
+
+  it("silences the marks the endpoint pronounces", () => {
+    expect(withoutDecorativeSymbols("#")).toBe(" ");
+    expect(withoutDecorativeSymbols("~")).toBe(" ");
+    expect(withoutDecorativeSymbols("*")).toBe(" ");
+    expect(withoutDecorativeSymbols("^")).toBe(" ");
+  });
+
+  it("KEEPS «&» — measured in the same group, but it is usually a word", () => {
+    // `&` is read aloud like `#` is, and that is the difference: «Tom & Jerry» wants the conjunction
+    // said. Silencing it would leave two names with nothing between them.
+    expect(withoutDecorativeSymbols("&")).toBe("&");
+    expect(withoutDecorativeSymbols("Tom & Jerry")).toBe("Tom & Jerry");
+    expect(withoutDecorativeSymbols("R&D")).toBe("R&D");
+    expect(withoutDecorativeSymbols("AT&T")).toBe("AT&T");
+    expect(withoutDecorativeSymbols("البحث & التطوير")).toBe("البحث & التطوير");
+  });
+
+  it("collapses a run to ONE space rather than one per character", () => {
+    expect(withoutDecorativeSymbols("###")).toBe(" ");
+    expect(withoutDecorativeSymbols("~~~")).toBe(" ");
+    expect(withoutDecorativeSymbols("***")).toBe(" ");
+    expect(withoutDecorativeSymbols("### عنوان الفصل")).toBe("  عنوان الفصل");
+  });
+
+  it("never joins the words on either side — a space, not nothing", () => {
+    // `a#b` and `a # b` return byte-identical audio and the same word list, so the tokens were never
+    // joined; the empty string would invent a word `ab` that the endpoint never saw.
+    expect(withoutDecorativeSymbols("a#b")).toBe("a b");
+    expect(withoutDecorativeSymbols("a~b")).toBe("a b");
+    expect(withoutDecorativeSymbols("word*word")).toBe("word word");
+  });
+
+  it("handles the shapes the owner reported, in Arabic", () => {
+    expect(withoutDecorativeSymbols("# عنوان الفصل")).toBe("  عنوان الفصل");
+    expect(withoutDecorativeSymbols("عنوان الفصل #")).toBe("عنوان الفصل  ");
+    expect(withoutDecorativeSymbols("~ نص عربي هنا")).toBe("  نص عربي هنا");
+    expect(withoutDecorativeSymbols("نص عربي هنا ~")).toBe("نص عربي هنا  ");
+  });
+});
+
+describe("a rule drawn out of hyphens or underscores", () => {
+  // The threshold is exactly two, measured: a single «-» produces NO word boundary, «--» produces two
+  // and «---» three. Welded, a hyphen is part of one token and splitting it changes the reading.
+
+  it("silences a decorative run standing on its own", () => {
+    expect(withoutDecorativeSymbols("نص عربي -- نص آخر")).toBe("نص عربي  نص آخر");
+    expect(withoutDecorativeSymbols("نص عربي --- نص آخر")).toBe("نص عربي  نص آخر");
+    expect(withoutDecorativeSymbols("نص عربي ---- نص آخر")).toBe("نص عربي  نص آخر");
+    expect(withoutDecorativeSymbols("__")).toBe(" ");
+    expect(withoutDecorativeSymbols("___")).toBe(" ");
+  });
+
+  it("KEEPS a single hyphen — it is not spoken, and it is often doing real work", () => {
+    // Measured: «نص عربي - نص آخر» comes back as four words with no dash at all.
+    expect(withoutDecorativeSymbols("نص عربي - نص آخر")).toBe("نص عربي - نص آخر");
+    // The Arabic dialogue opener. A reader would notice this one immediately.
+    expect(withoutDecorativeSymbols("- ومن يكون هذا الرجل؟")).toBe("- ومن يكون هذا الرجل؟");
+  });
+
+  it("KEEPS a hyphen welded into a token — each of these is ONE word to the endpoint", () => {
+    for (const t of ["a-b", "A-B", "well-known", "الخالد-المرتد", "-5", "2026-09-10", "1990-2000", "3-4"]) {
+      expect(withoutDecorativeSymbols(t)).toBe(t);
+    }
+    // …including a welded RUN: nothing here is standing on its own.
+    expect(withoutDecorativeSymbols("a--b")).toBe("a--b");
+    expect(withoutDecorativeSymbols("a__b")).toBe("a__b");
+  });
+
+  it("KEEPS a single underscore, which is how identifiers are written", () => {
+    expect(withoutDecorativeSymbols("a_b")).toBe("a_b");
+    expect(withoutDecorativeSymbols("snake_case_name")).toBe("snake_case_name");
+  });
+
+  it("does not treat a dash that is not a hyphen as one", () => {
+    // U+2013 and U+2014 are neither spoken nor this rule's business.
+    expect(withoutDecorativeSymbols("نص – نص")).toBe("نص – نص");
+    expect(withoutDecorativeSymbols("قال — وهو يبتسم — إنه ذهب")).toBe("قال — وهو يبتسم — إنه ذهب");
+  });
+});
+
+describe("what the rule must never touch", () => {
+  it("leaves the punctuation the voice BREATHES with completely alone", () => {
+    // `,` and `.` are prosody. Measured as never producing a word boundary, and removing them would
+    // damage the reading this rule exists to improve.
+    for (const t of ["قال: نعم.", "نعم، ثم مضى.", "؟!", "…", "...", ":", ";", "،", "؛", "!", "؟"]) {
+      expect(withoutDecorativeSymbols(t)).toBe(t);
+    }
+    const sentence = "قال الرجل: نعم، ثم مضى… وهو يبتسم.";
+    expect(withoutDecorativeSymbols(sentence)).toBe(sentence);
+  });
+
+  it("leaves the marks that CARRY MEANING alone — @ % + = were excluded on purpose", () => {
+    for (const t of ["a@b.com", "10%", "42%", "a+b", "a=b", "C++", "sard.app/help", "A/B", "a|b"]) {
+      expect(withoutDecorativeSymbols(t)).toBe(t);
+    }
+  });
+
+  it("leaves brackets alone — the empty-container rule owns those, and only when empty", () => {
+    for (const t of ["()", "[]", "{}", "(نعم)", "[42]"]) {
+      expect(withoutDecorativeSymbols(t)).toBe(t);
+    }
+  });
+
+  it("leaves ordinary prose byte-identical, in both scripts", () => {
+    const ar = "كان الفصل ٤٦، وهو جميل؟ ثم مضى في طريقه.";
+    const en = "The quick brown fox jumped (twice) - 42% of the time!";
+    expect(withoutDecorativeSymbols(ar)).toBe(ar);
+    expect(withoutDecorativeSymbols(en)).toBe(en);
+  });
+});
+
+describe("the invariants the synthesis path depends on", () => {
+  it("is idempotent", () => {
+    for (const t of ["a#b", "### عنوان", "نص -- نص", "__", "a-b", "قال: نعم.", "", "   "]) {
+      expect(withoutDecorativeSymbols(withoutDecorativeSymbols(t))).toBe(withoutDecorativeSymbols(t));
+    }
+  });
+
+  it("NEVER empties a sentence that carries speech", () => {
+    // This is what keeps `isImplausiblyShortAudio` from seeing an empty request and raising a
+    // PERMANENT voice-mismatch failure. The rule only ever rewrites marks to spaces.
+    const speakable = /[\p{L}\p{N}]/u;
+    for (const t of ["# عنوان", "a#b", "نص -- نص", "### 42 ###", "~ ن ~", "&a&", "_ _ a _ _"]) {
+      expect(speakable.test(t)).toBe(true);
+      expect(speakable.test(withoutDecorativeSymbols(t))).toBe(true);
+    }
+  });
+
+  it("never removes a letter or a digit, whatever it is given", () => {
+    const letters = (s: string) => (s.match(/[\p{L}\p{N}]/gu) ?? []).join("");
+    for (const t of ["#a~b*c^d&e", "الخالد-المرتد -- 2026-09-10", "__x__", "###"]) {
+      expect(letters(withoutDecorativeSymbols(t))).toBe(letters(t));
+    }
+  });
+
+  it("handles empty and whitespace input without throwing", () => {
+    expect(withoutDecorativeSymbols("")).toBe("");
+    expect(withoutDecorativeSymbols("   ")).toBe("   ");
+  });
+
+  it("survives a global-regex call sequence without state leaking between calls", () => {
+    // Both inner regexes are `/g`; a shared one that kept `lastIndex` would start answering for the
+    // previous string. Same call, twice, must give the same answer.
+    expect(withoutDecorativeSymbols("a#b")).toBe("a b");
+    expect(withoutDecorativeSymbols("a#b")).toBe("a b");
+    expect(withoutDecorativeSymbols("نص -- نص")).toBe("نص  نص");
+    expect(withoutDecorativeSymbols("نص -- نص")).toBe("نص  نص");
+  });
+
+  it("takes only text, so it cannot behave differently for one voice than another", () => {
+    expect(withoutDecorativeSymbols.length).toBe(1);
+  });
+});
+
+describe("speakableText is untouched by the new rule", () => {
+  it("is still length-preserving, which is what keeps word tracking aligned", () => {
+    // The tracking path calls `speakableText` ALONE (`FoliateController.setReadingWords`). If the new
+    // rule had been folded into it, an index into the result would no longer be an index into the
+    // displayed sentence and the reading pill would drift.
+    for (const t of ["العدد ۶۳ هنا", "# عنوان ۱۴۰۵", "نص -- نص ۳۶"]) {
+      expect(speakableText(t)).toHaveLength(t.length);
+    }
+  });
+
+  it("still leaves formatting marks exactly where they are", () => {
+    // Proof that suppression happens on the synthesis path and NOWHERE else.
+    expect(speakableText("# عنوان")).toBe("# عنوان");
+    expect(speakableText("نص -- نص")).toBe("نص -- نص");
+  });
+});
+
+describe("whose answer wins: the book's, or the هيئة's", () => {
+  // THREE STATES, AND THE THIRD IS THE POINT. "no" and "not asked" have to stay distinguishable, or a
+  // reader who silenced the marks for one book could never hand that book back to their هيئة.
+
+  it("the four-state matrix", () => {
+    expect(effectiveSpeakSymbols(null, true)).toBe(true);    // هيئة on,  book unset  → on
+    expect(effectiveSpeakSymbols(null, false)).toBe(false);  // هيئة off, book unset  → off
+    expect(effectiveSpeakSymbols(false, true)).toBe(false);  // هيئة on,  book says no → no
+    expect(effectiveSpeakSymbols(true, false)).toBe(true);   // هيئة off, book says yes→ yes
+  });
+
+  it("changing هيئة moves a book that has NOT answered, and not one that has", () => {
+    // The same book, the same override, under two different هيئات.
+    expect(effectiveSpeakSymbols(null, false)).toBe(false);
+    expect(effectiveSpeakSymbols(null, true)).toBe(true);   // followed the change
+    expect(effectiveSpeakSymbols(false, false)).toBe(false);
+    expect(effectiveSpeakSymbols(false, true)).toBe(false); // did NOT follow the change
+  });
+
+  it("clearing the book's answer hands it back to the هيئة", () => {
+    expect(effectiveSpeakSymbols(true, false)).toBe(true);
+    expect(effectiveSpeakSymbols(null, false)).toBe(false);
+  });
+
+  it("`false` is a real answer and never collapses into `unset`", () => {
+    expect(parseSpeakSymbols("0")).toBe(false);
+    expect(parseSpeakSymbols("0")).not.toBe(null);
+    expect(effectiveSpeakSymbols(parseSpeakSymbols("0"), true)).toBe(false);
+  });
+
+  it("survives the round trip through a settings row, which is how it persists", () => {
+    for (const v of [true, false] as const) {
+      expect(parseSpeakSymbols(speakSymbolsAttr(v))).toBe(v);
+    }
+    // An absent row — a book never asked, or one whose answer was cleared — is the third state.
+    expect(parseSpeakSymbols(null)).toBe(null);
+    expect(parseSpeakSymbols(undefined)).toBe(null);
+    expect(parseSpeakSymbols("")).toBe(null);
+    // Total: anything unrecognised degrades to following the هيئة rather than to a guess.
+    expect(parseSpeakSymbols("yes")).toBe(null);
+    expect(parseSpeakSymbols("2")).toBe(null);
+  });
+
+  it("the row is per book, and namespaced so it cannot collide", () => {
+    expect(speakSymbolsKey("abc")).toBe("tts.speakSymbols.abc");
+    expect(speakSymbolsKey("abc")).not.toBe(speakSymbolsKey("abd"));
+  });
+});
+
+describe("the synthesis boundary composes the setting the way production does", () => {
+  // Production: `speakSymbols ? markupSafe : withoutDecorativeSymbols(markupSafe)`, where
+  // `markupSafe = withoutEmptyMarkup(speakableText(text))`. These assert BOTH branches.
+  const markupSafe = (t: string) => withoutEmptyMarkup(speakableText(t));
+  const spoken = (t: string, speak: boolean) =>
+    (speak ? markupSafe(t) : withoutDecorativeSymbols(markupSafe(t)));
+
+  const SENTENCE = "# الفصل: نص عربي -- نص آخر، وفي 2026-09-10 نسبة 10% مع Tom & Jerry.";
+
+  it("ON — the marks are said, and the string is exactly what it was before the feature", () => {
+    // The whole point of the disabled branch: byte-identical to the old pipeline.
+    expect(spoken(SENTENCE, true)).toBe(markupSafe(SENTENCE));
+    expect(spoken(SENTENCE, true)).toContain("#");
+    expect(spoken(SENTENCE, true)).toContain("--");
+  });
+
+  it("OFF — only the decorative marks go", () => {
+    const out = spoken(SENTENCE, false);
+    expect(out).not.toContain("#");
+    expect(out).not.toContain("--");
+    // …and everything that carries meaning stays.
+    expect(out).toContain("2026-09-10");
+    expect(out).toContain("10%");
+    expect(out).toContain("Tom & Jerry");
+    expect(out).toContain("،");
+    expect(out).toContain(".");
+  });
+
+  it("both branches keep the digit repair and the empty-container rule", () => {
+    for (const speak of [true, false]) {
+      expect(spoken("العدد ۳۶: <>.", speak)).toContain("٣٦");
+      expect(spoken("العدد ۳۶: <>.", speak)).not.toContain("<>");
+    }
+  });
+});
+
+describe("segmentation cannot move, because the rule runs after it", () => {
+  // THE REGRESSION THIS GUARDS. Segmentation happens in `FoliateController`: `Intl.Segmenter` splits the
+  // DISPLAYED text into `ttsUnits`, `hasSpeech` drops the ones carrying no letter or digit, and the
+  // survivors are handed to `tts.ts` as `sentences[]` — already split, already indexed, already paired
+  // with the Ranges the highlight is drawn from. The new rule is applied inside `synthInvoke`, per
+  // sentence, on the way to the engine. It is therefore incapable of changing any of that, and these
+  // assertions state the property rather than trusting the arrangement to stay as it is.
+  const HAS_SPEECH = /[\p{L}\p{N}]/u; // the same predicate as FoliateController's `hasSpeech`
+  const segment = (t: string) =>
+    [...new Intl.Segmenter("ar", { granularity: "sentence" }).segment(t)]
+      .map((s) => s.segment)
+      .filter((s) => HAS_SPEECH.test(s));
+
+  const CHAPTER = [
+    "# الفصل الأول: البداية.",
+    "قال الرجل: نعم، ثم مضى في طريقه… وهو يبتسم.",
+    "نص عربي -- نص آخر.",
+    "كان ذلك في 2026-09-10، ونسبة النجاح 10%.",
+    "~ ملاحظة على الهامش ~.",
+    "الخالد-المرتد كتاب معروف؟ نعم!",
+    "راسل a@b.com أو زر sard.app/help.",
+    "- ومن يكون هذا الرجل؟",
+  ].join(" ");
+
+  it("segments the SAME chapter text into the same units either way", () => {
+    // The rule is never applied before segmentation; this proves the units do not depend on it.
+    const units = segment(CHAPTER);
+    expect(units.length).toBeGreaterThan(1);
+    expect(segment(CHAPTER)).toEqual(units);
+  });
+
+  it("applying the rule per unit changes neither the count nor the order", () => {
+    const units = segment(CHAPTER);
+    const spoken = units.map(withoutDecorativeSymbols);
+    expect(spoken).toHaveLength(units.length);
+    // Index i still corresponds to unit i — which is what keeps the spoken queue, the sentence bands
+    // and the word ranges pointing at the same sentence.
+    spoken.forEach((s, i) => expect(HAS_SPEECH.test(s)).toBe(units[i] !== undefined));
+  });
+
+  it("no unit becomes empty or unspeakable, so no new permanent-failure path opens", () => {
+    // `isImplausiblyShortAudio` raises VOICE_MISMATCH_MARKER — a PERMANENT failure that skips the retry
+    // ladder — when a request that had text comes back with almost no audio. A rule that emptied a unit
+    // would create exactly that. It cannot: it never removes a letter or a digit.
+    for (const unit of segment(CHAPTER)) {
+      expect(HAS_SPEECH.test(withoutDecorativeSymbols(unit))).toBe(true);
+      expect(withoutDecorativeSymbols(unit).trim()).not.toBe("");
+    }
+  });
+
+  it("every word the tracker looks for still survives in the spoken text", () => {
+    // Tracking searches `speakableText(displayed)` for each word Edge reports, BY CONTENT. The
+    // suppressed marks are ones Edge emits as their OWN word, never as part of one, so the words either
+    // side are untouched and still findable.
+    for (const unit of segment(CHAPTER)) {
+      const words = unit.split(/\s+/).filter((w) => HAS_SPEECH.test(w));
+      const spoken = withoutDecorativeSymbols(unit);
+      for (const w of words) {
+        // A word may lose a leading/trailing mark; its speakable core must remain.
+        const core = w.replace(/^[#~*^]+|[#~*^]+$/g, "");
+        if (core) expect(spoken).toContain(core);
+      }
+    }
+  });
+});
+
+describe("the three transforms compose the way production composes them", () => {
+  // Production calls `withoutDecorativeSymbols(withoutEmptyMarkup(speakableText(text)))`, at the single
+  // engine boundary in `tts.ts`. These assert the whole composition, not any one part.
+  const spoken = (t: string) => withoutDecorativeSymbols(withoutEmptyMarkup(speakableText(t)));
+
+  it("does all three jobs at once", () => {
+    // extended digits normalised, empty container gone, formatting mark silenced.
+    expect(spoken("العدد ۳۶ # هنا: <>.")).toBe("العدد ٣٦   هنا:  .");
+  });
+
+  it("the order does not matter, because the parts commute", () => {
+    // The new rule never adds or removes a letter or digit, so it cannot change whether a bracketed
+    // span counts as speakable — which is the only thing `withoutEmptyMarkup` decides.
+    for (const t of ["<۳۶>", "a#b", "<نعم> # <>", "نص -- نص <>"]) {
+      expect(withoutDecorativeSymbols(withoutEmptyMarkup(speakableText(t))))
+        .toBe(withoutEmptyMarkup(withoutDecorativeSymbols(speakableText(t))));
+    }
+  });
+
+  it("ordinary prose survives the whole composition unchanged", () => {
+    const t = "قال الرجل: نعم، ثم مضى.";
+    expect(spoken(t)).toBe(t);
   });
 });
 

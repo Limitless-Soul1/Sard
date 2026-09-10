@@ -672,6 +672,9 @@ export const en = {
   "photo.sec.place": "Position & size",
 
   "photo.brand.size": "Size",
+  "photo.quote.tooLong": "That passage is longer than the card has room for at this size — shorten it, or set a smaller size.",
+  "photo.brand.font": "Mark face",
+  "photo.brand.fontOwn": "Sard's own",
   "photo.brand.dragHint": "Drag the mark on the card to place it anywhere.",
   // The one question this editor asks, and only when there is something to lose.
   "photo.close.title": "You have unsaved changes",
@@ -688,7 +691,6 @@ export const en = {
   "photo.act.keep": "Save in Sard",
   "photo.act.keepSub": "A card you can reopen and change",
 
-  "photo.fit.autoHint": "Let a long passage find its own size",
   "photo.fit.autoNow": "found by fitting",
 
   "photo.role.showIt": "Show it on the card",
@@ -773,7 +775,6 @@ export const en = {
   "photo.comp.night": "Night",
   "photo.comp.note": "A start, not a template",
   "photo.paper.sample": "Aa",
-  "photo.fit.auto": "Fit to the card",
   "photo.fit.exact": "Exact size",
   "photo.weight.light": "Light",
   "photo.weight.regular": "Regular",
@@ -1109,6 +1110,16 @@ export const en = {
   "track.karaokeEdgeOnly": "Shows with the Edge voice",
   "track.opacity": "Opacity",
   "track.contrastWarn": "This highlight may make the text hard to read.",
+  // Speech only. The book is not edited and the page is unchanged; only what is said aloud differs.
+  "track.speakSymbols": "Pronounce decorative symbols",
+  "track.speakSymbolsHint": "Marks like # ~ * ^ and rules drawn with ——. The book's text is unchanged.",
+  "track.speakSymbolsBook": "Decorative symbols in this book",
+  "track.speakSymbolsBookHint": "“Follow appearance” tracks your current appearance and changes with it. A choice here applies to this book only.",
+  "track.speakSymbols.follow": "Follow appearance",
+  "track.speakSymbols.on": "Pronounced",
+  "track.speakSymbols.off": "Not pronounced",
+  "track.speakSymbols.onViaProfile": "Pronounced · from appearance",
+  "track.speakSymbols.offViaProfile": "Not pronounced · from appearance",
   "color.contrastOk": "Contrast looks good. Sard flags colours too faint to read on this paper.",
   "color.contrastWarn": "Too faint on {theme} — pick a darker shade or change the paper.",
 
@@ -1874,6 +1885,27 @@ export const en = {
   // ---- a font dropped on the window ----
   "font.drop.imported": "Added the font “{name}”",
   "font.drop.duplicate": "You already have the font “{name}”",
+  // The specimen page. The specimen TEXT itself is not here: it is content rather than interface, and
+  // the Arabic passage stays Arabic in an English interface — seeing the font's Arabic is the point.
+  "font.specimen.title": "A new font in Sard",
+  "font.specimen.already": "You already have this font",
+  "font.specimen.arabic": "In Arabic",
+  "font.specimen.english": "In Latin",
+  "font.specimen.reading": "On a book page",
+  "font.specimen.details": "Letterform details",
+  "font.specimen.installed": "Available in Sard now",
+  "font.specimen.loading": "The face is still loading — what you see may not be the font yet.",
+  "font.specimen.coverage.both": "Supports Arabic and Latin",
+  "font.specimen.coverage.arabic": "Supports Arabic",
+  "font.specimen.coverage.latin": "Supports Latin",
+  "font.specimen.coverage.neither": "Carries neither Arabic nor Latin letters",
+  "font.specimen.coverage.unknown": "Its coverage could not be read",
+  "font.specimen.neitherNote":
+    "The font was added and you can select it, but it carries neither Arabic nor Latin letters — it may be for another script, or for icons.",
+  "font.specimen.unknownNote":
+    "This file is compressed (woff/woff2) and its tables are packed, so the letters it carries could not be read. The font is installed and works; the specimen above is the evidence.",
+  "font.specimen.where": "You will find it in the font pickers: the interface font in Settings, and the book face in reading settings.",
+  "font.specimen.done": "Done",
   "font.err.type": "That format is not a font Sard accepts. Use ttf, otf, woff or woff2.",
   "font.err.invalid": "That file is not a valid font.",
   "font.err.unreadable": "The file could not be read.",

@@ -133,14 +133,13 @@ export interface DocControls {
 }
 
 export function Inspector({
-  comp, selected, canvas, autoFrac, doc, onStyle, onText, onImage, onRect, onRotate, onRemove,
+  comp, selected, canvas, doc, onStyle, onText, onImage, onRect, onRotate, onRemove,
   onOrder, onReplaceImage, onClearImage,
 }: {
   comp: Composition;
   selected: CardElement | null;
   canvas: { w: number; h: number };
   /** What an auto-fitted quote is drawn at, as a fraction — where taking it by hand starts. */
-  autoFrac: number;
   doc: DocControls;
   onStyle: (patch: Partial<TextStyle>) => void;
   onText: (text: string) => void;
@@ -328,25 +327,15 @@ export function Inspector({
                 <span className="pcx-autonote">{t("photo.fit.autoNow")}</span>
               </div>
             )}
-            {/* The convenience, offered as one: a long passage can be left to find its own size
-                rather than being trimmed. Off by default, and off is the ordinary state. */}
-            {selected.origin === "quote" && (
-              <div className="pcx-stamp compact">
-                <span className="pcx-stamp-txt">
-                  <b>{t("photo.fit.auto")}</b>
-                  <i>{t("photo.fit.autoHint")}</i>
-                </span>
-                <button
-                  className="pcx-switch"
-                  role="switch"
-                  aria-checked={selected.style.size == null}
-                  aria-label={t("photo.fit.auto")}
-                  onClick={() => onStyle({ size: selected.style.size == null ? autoFrac : null })}
-                >
-                  <span className="pcx-switch-knob" aria-hidden />
-                </button>
-              </div>
-            )}
+            {/* «ملء البطاقة» STOOD HERE, and it is gone on purpose.
+                It offered a second way to size text — "let it fill the card" against "give it a
+                size" — and the two were never peers: one is a size, the other is a mode that takes
+                the size away and then has to explain itself. Text has a size; that is the whole
+                model, and the track above is it.
+
+                The `size: null` it wrote still READS: a card saved while the switch existed opens
+                with its auto-fitted text exactly as it was, and the note above says so rather than
+                showing an empty track. Nothing new is written that way. */}
             <Picker
               value={String(selected.style.weight ?? 400)}
               options={[

@@ -270,6 +270,36 @@ jobs:
           # release asset for people who want it; it is simply not the update payload.
           updaterJsonPreferNsis: true
 
+      # ---- THE LEGAL SOURCE THE VERIFICATION BELOW NEEDS ---------------------------------------------
+      #
+      # `verify-artifact.mjs` makes three checks of the vendored legal text. Two need only this
+      # repository: that the snapshot hashes to the fingerprint it declares, and that the built bundle
+      # actually carries that revision. The third re-derives the snapshot from the repository that OWNS
+      # those documents, and it is the only one that can see a snapshot which is internally consistent
+      # and simply older than the terms it claims to reproduce.
+      #
+      # For a PUBLIC RELEASE the verifier treats the source being absent as a failure rather than a
+      # note, on the grounds that "we could not check" is not a reason to ship. That is correct, and
+      # nothing here relaxes it. What was missing was the input: CI checked out Sard and nothing else,
+      # so the third check could never be satisfied, and v1.3.0 was refused by a gate that was right
+      # about what it could not prove. `sard-legal` is a public repository, so reading it needs no
+      # credential.
+      #
+      # DELIBERATELY UNPINNED. The question this answers is whether the vendored text still matches the
+      # documents as they stand NOW; pinning a ref would compare the snapshot against a copy frozen at
+      # the same moment, which would agree with itself for ever and prove nothing.
+      #
+      # PLACED HERE, after the build, so it cannot become an input to it. The tree gates above read
+      # tracked files (`git ls-files`), the bundle declares no extra resources and Vite copies only
+      # `public/` — but the shortest argument that a directory did not reach the product is that it did
+      # not exist until the product had already been built.
+      - name: Check out the legal source the verification compares against
+        uses: actions/checkout@v4
+        with:
+          repository: Limitless-Soul1/sard-legal
+          path: sard-legal
+          persist-credentials: false
+
       # The artifact itself is asked what it is, AFTER it exists. Every check above is about intent;
       # this one is about bytes, and it is the only one that could have caught a diagnostic build that
       # got this far. It reads the PE version resource (the same field a user sees under Properties →
@@ -281,6 +311,11 @@ jobs:
       # the gate a post-mortem rather than a gate.
       - name: Verify the artifact is a PUBLIC RELEASE build
         shell: bash
+        env:
+          # An absolute, runner-provided path. `verify-artifact.mjs` otherwise looks beside the
+          # repository, at `../sard-legal`, which is where a local checkout sits and where a CI one
+          # cannot: `actions/checkout` refuses any path outside the workspace.
+          SARD_LEGAL_SRC: ${{ github.workspace }}/sard-legal
         run: node scripts/verify-artifact.mjs --kind=release --exe=src-tauri/target/release/Sard.exe
 
       # ONLY NOW does the release become real. Everything above has passed: the ref is on main, the

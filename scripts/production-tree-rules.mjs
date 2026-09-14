@@ -131,6 +131,12 @@ export const PRODUCTION_ALWAYS = [
   // the whole directory once a second, development-only workflow existed.
   /^\.github\/workflows\/release\.yml$/,
   /^(README|BUILD|LICENSE|CHANGELOG|CONTRIBUTING|SECURITY|CODE_OF_CONDUCT|NOTICE|AUTHORS)(\.md|\.txt)?$/,
+  // AGENTS.md — contributor guidance, in the same category as CONTRIBUTING.md and shipped for the
+  // same reason: it tells whoever works on this repository how to work in it, and the published
+  // repository is where they will be reading it. Named explicitly rather than by widening the
+  // root-document pattern, so the blanket exclusion above keeps its meaning and the next root
+  // document still has to be argued for.
+  /^AGENTS\.md$/,
 ];
 
 /**

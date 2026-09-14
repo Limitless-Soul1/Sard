@@ -20,11 +20,22 @@ const IPC = read("src/lib/ipc.ts");
 const DETAILS = read("src/features/library/design/BookDetails.tsx");
 const DESIGN = read("src/features/library/design/LibraryDesign.tsx");
 
-/** One Rust function body, by the signature line that starts it. */
+/**
+ * One Rust function body, by the signature line that starts it.
+ *
+ * The closing brace is matched whatever the line endings are. This file is stored with CRLF, so an
+ * LF-only needle found nothing and `indexOf` answered -1 — `slice(at, -1)` then returned almost the
+ * whole rest of the file, and the "body" under test quietly became every command that follows it. A
+ * `not.toContain` catches that by failing; a `toContain` would have passed on text belonging to some
+ * other function entirely. So the terminator is now required to exist, and its absence is a failure
+ * with a name rather than a silently enormous slice.
+ */
 const rustFn = (name: string): string => {
   const at = COMMANDS.indexOf(`pub fn ${name}(`);
   expect(at, `no command ${name}`).toBeGreaterThan(-1);
-  return COMMANDS.slice(at, COMMANDS.indexOf("\n}\n", at));
+  const end = COMMANDS.slice(at).search(/\r?\n\}\r?\n/);
+  expect(end, `no closing brace for ${name}`).toBeGreaterThan(-1);
+  return COMMANDS.slice(at, at + end);
 };
 
 describe("the additive command", () => {

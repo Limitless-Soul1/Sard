@@ -10,6 +10,7 @@ import { resolveSpotlight, resolvePill } from "../../reader-engine/ttsTrack";
 import { compositeOver, contrastIsReadable, effectivePaper } from "../../lib/contrast";
 import { currentDeskScrim, effectivePageOpacity, useBackground } from "../../lib/background"; // RAWY-265
 import { useI18n } from "../../i18n";
+import { InkCustom } from "../../components/InkCustom";
 
 // Calm terracotta-adjacent presets, per theme polarity (mirrors the text-colour presets' structure).
 const TRACK_PRESETS_LIGHT = ["#9C5A3C", "#B08968", "#6E7F5B", "#7E6A9E"];
@@ -115,14 +116,13 @@ function EffectBlock({
                 aria-label={hex}
               />
             ))}
-            <label className="rs-ink rs-ink-custom" title={t("color.custom")}>
-              <span className="rs-ink-plus" aria-hidden>+</span>
-              <input
-                type="color"
-                value={/^#[0-9a-fA-F]{6}$/.test(color ?? "") ? (color as string) : "#9C5A3C"}
-                onChange={(e) => setColor(e.target.value)}
-              />
-            </label>
+            <InkCustom
+              value={color}
+              fallback={effColor}
+              onPick={(hex) => setColor(hex)}
+              presets={presets}
+              title={t("color.custom")}
+            />
           </div>
 
           <div className="rs-slider-row rs-track-opacity">
@@ -176,10 +176,26 @@ export function TtsTrackingControls(props: Props) {
         <span className="rs-label">{t("track.heading")}</span>
       </div>
       <EffectBlock {...props} kind="spotlight" />
-      {/* Karaoke is Edge-only (Piper has no word timing). The hint states that plainly so the control
-          never implies it works with Piper — it IS a real, persisted preference that applies whenever
-          Edge is the engine; it just cannot render under Piper. (RAWY-193 lesson: no silent lie.) */}
+      {/* Karaoke is driven by Edge word timings. It is a real, persisted preference; a sentence that
+          arrives without timing simply renders at sentence level. (RAWY-193 lesson: no silent lie.) */}
       <EffectBlock {...props} kind="karaoke" hint={t("track.karaokeEdgeOnly")} />
+      {/* WHAT THE VOICE SAYS, not what the page shows — the only control in this group that is about
+          the AUDIO rather than the marks drawn over it, which is why it sits apart from both blocks
+          and carries a hint saying so. Same `rs-toggle-row` language as the baseline-rule sub-toggle;
+          no new visual vocabulary for one setting. */}
+      <button
+        className="rs-toggle-row rs-track-subtoggle"
+        onClick={() => props.update({ ttsSpeakSymbols: !props.style.ttsSpeakSymbols })}
+        aria-pressed={props.style.ttsSpeakSymbols}
+      >
+        <span className="rs-toggle-text">
+          <span className="rs-toggle-label">{t("track.speakSymbols")}</span>
+          <span className="rs-toggle-hint">{t("track.speakSymbolsHint")}</span>
+        </span>
+        <span className={`rs-switch${props.style.ttsSpeakSymbols ? " on" : ""}`} aria-hidden>
+          <span className="rs-knob" />
+        </span>
+      </button>
     </div>
   );
 }

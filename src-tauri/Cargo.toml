@@ -1,7 +1,7 @@
 [package]
 name = "sard"
-version = "1.2.2"
-description = "Sard (سَرْد) — a beautiful, Arabic-first ebook reader"
+version = "1.3.0"
+description = "Sard (سَرْد) — a beautiful ebook reader"
 authors = ["Sard"]
 edition = "2021"
 
@@ -25,6 +25,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [features]
 default = []
 diag = []
+# Compiles `books::corpus_tests`, whose source ships only with the private workspace because the book
+# corpus it reads is not distributed. Off by default so a tree without that file still builds its
+# test target; the workspace that has it runs `cargo test --features corpus-tests`.
+corpus-tests = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -32,19 +36,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-opener = "2"
-# The OFFICIAL in-app updater: fetches a signed manifest from GitHub Releases, verifies the
-# minisign signature against the public key in tauri.conf.json, then runs the NSIS installer with
-# `/UPDATE`. It replaces the hand-rolled check-only path this project carried before — one update
-# system, not two. Sard is desktop-only, so this needs no per-platform cfg guard.
-tauri-plugin-updater = "2"
-# `relaunch()` after an install. On Windows the NSIS installer restarts Sard itself (the plugin
-# passes `/ARGS`), so this is belt-and-braces there — but it is the documented path on macOS and
-# Linux, and having it means the frontend has one restart call that is correct everywhere.
-tauri-plugin-process = "2"
 tauri-plugin-dialog = "2"
-# RAWY-173 (AUD-9): a second launch focuses the existing window instead of starting a rival instance
-# that would attach the same WAL DB + fight over per-session state.
-tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # RAWY-178 (AUD-12): `functions` enables `create_scalar_function` for the `afold` Arabic search fold
@@ -54,9 +46,6 @@ rusqlite = { version = "0.32", features = ["bundled", "functions"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
 quick-xml = "0.36"
-# TTS (RAWY-105): download Piper voice models on demand (voices are NOT bundled — installer stays small).
-# ureq 3 (RAWY-111): bumped from 2 so it dedupes with msedge-tts's ureq (one copy in the tree).
-ureq = "3"
 # RAWY-265 (backgrounds): decode + Lanczos3 downscale + LOSSLESS PNG encode for the render-ceiling
 # derivative, and EXIF-orientation resolution. `default-features = false` keeps the tree to exactly the
 # three formats the spec accepts — notably NO `gif`, so an animated GIF cannot even be decoded here
@@ -74,6 +63,46 @@ msedge-tts = "0.4"
 # rustls, so `ClientConfig::builder()`'s auto-detection is ambiguous and PANICS (hanging the Edge WS
 # connect). We install aws-lc-rs as the explicit process default at startup to disambiguate.
 rustls = { version = "0.23", features = ["aws_lc_rs"] }
+
+# DESKTOP-ONLY PLUGINS. All three are unavailable on Android and iOS, and one of them does not merely
+# fail at run time — it fails to COMPILE:
+#
+#   single-instance   `src/lib.rs` opens with `#![cfg(not(any(target_os = "android", target_os =
+#                     "ios")))]`, a CRATE-level attribute. On mobile the crate compiles to nothing, so
+#                     `tauri_plugin_single_instance::init` does not exist and the call site is an
+#                     unresolved path. This is the hard blocker.
+#   updater           Compiles on mobile but declares `platforms.support.{android,ios}.level =
+#   process           "none"`, and both stores forbid an application updating itself outside the
+#                     store. The plugin's own README states the rule this section follows: "you can
+#                     add the dependencies on the `[dependencies]` section if you do not target
+#                     mobile". `process` travels with it because it exists to serve the updater flow.
+#
+# WHY A `target` SECTION AND NOT `cfg(desktop)`. Tauri's `desktop`/`mobile` aliases are emitted by
+# tauri-build at COMPILE time (tauri-build/src/lib.rs), so Cargo — which resolves dependencies before
+# any build script runs — cannot see them. Dependency gating has to use a built-in cfg; the call
+# sites in `lib.rs` use `cfg(desktop)`, which is the same set expressed where the alias does exist.
+#
+# Desktop resolution is unchanged: on Windows, macOS and Linux this predicate is true, so the three
+# crates are still ordinary dependencies and `Cargo.lock` does not move.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+# RAWY-173 (AUD-9): a second launch focuses the existing window instead of starting a rival instance
+# that would attach the same WAL DB + fight over per-session state.
+tauri-plugin-single-instance = "2"
+# The OFFICIAL in-app updater: fetches a signed manifest from GitHub Releases, verifies the
+# minisign signature against the public key in tauri.conf.json, then runs the NSIS installer with
+# `/UPDATE`. It replaces the hand-rolled check-only path this project carried before — one update
+# system, not two.
+tauri-plugin-updater = "2"
+# `relaunch()` after an install. On Windows the NSIS installer restarts Sard itself (the plugin
+# passes `/ARGS`), so this is belt-and-braces there — but it is the documented path on macOS and
+# Linux, and having it means the frontend has one restart call that is correct everywhere.
+tauri-plugin-process = "2"
+# Discord Rich Presence (PR: disc/rpc): what the user is reading, shown on their Discord profile.
+# v1.x is a from-scratch rewrite that speaks Discord's IPC protocol directly — no GameSDK, no
+# bundled DLL, and no build-time download (the old discord-sdk path fetched a binary from Discord).
+# Same client id + asset keys as any Discord application; the id lives in src/presence.rs, one
+# constant, because it must be supplied by the app owner (see the comment there). MIT.
+discord-rich-presence = "1.1"
 
 # RAWY-196: reach WebView2's own settings to strip the browser chrome (find bar, reload, print,
 # context menu). Tauri exposes none of these, so they are set through `with_webview` -> the WebView2

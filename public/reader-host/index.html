@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Sard reader host</title>
+<!-- The reader-host origin: the reading engine, running where it can reach nothing that matters.
+
+     There is no inline script anywhere in this document on purpose: the policy this origin ships
+     under is `script-src 'self'`, so an inline block would be refused. If one ever appears here and
+     the page still works, the policy has stopped being applied and that is a defect, not a
+     convenience.
+
+     `/bundle.js` is emitted by scripts/build-reader-host.mjs and is absent from a Windows build,
+     where no reader host is registered and this document is never served. -->
+<style>
+  html, body { margin: 0; height: 100%; background: #f7f2e8; }
+  /* The engine measures its own container, so the host must give it a real one to measure. */
+  body > .page-host { height: 100%; }
+</style>
+</head>
+<body>
+  <script type="module" src="/bundle.js"></script>
+  <!-- The boundary self-check. It measures, from INSIDE this origin, what this origin can reach —
+       which is the one thing no external observer can establish. Inert without `?selfcheck=1`, so a
+       normal open runs none of it. It stays because the security criteria have to be re-measurable
+       against the real host after every change, not only against a throwaway build of it. -->
+  <script src="/host.js"></script>
+</body>
+</html>

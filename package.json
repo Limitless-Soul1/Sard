@@ -1,14 +1,14 @@
 {
   "name": "sard",
   "private": true,
-  "version": "1.2.2",
+  "version": "1.3.0",
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && node scripts/build-reader-host.mjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "verify:release": "node scripts/verify-artifact.mjs --kind=release --exe=src-tauri/target/release/Sard.exe"

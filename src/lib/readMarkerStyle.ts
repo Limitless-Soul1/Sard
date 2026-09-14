@@ -29,7 +29,8 @@ export const READ_MARKERS: { key: ReadMarkerKey; label: TKey }[] = [
 ];
 
 // The owner's explicit choice. A fresh install — and any existing profile that has never set this — gets it.
-const DEFAULT_MARKER: ReadMarkerKey = "accentTrail";
+export const READ_MARKER_DEFAULT: ReadMarkerKey = "accentTrail";
+const DEFAULT_MARKER = READ_MARKER_DEFAULT;
 const K_MARKER = "read_marker";
 
 const isMarker = (v: unknown): v is ReadMarkerKey => READ_MARKERS.some((m) => m.key === v);

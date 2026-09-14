@@ -17,10 +17,6 @@ interface Props {
   // Per-book scope (RAWY-40): the book's own theme + a reset of all its overrides.
   bookThemeId: ThemeId;
   onPickTheme: (id: ThemeId) => void;
-  bookTitle: string | null;
-  hasOverride: boolean;
-  onReset: () => void;
-  unified: boolean; // RAWY-43 — the banner + Reset reflect the active book-style scope
   // RAWY-85/86: for a PDF the drawer becomes a "read-only" panel. RAWY-141 pared it to what actually
   // works on a fixed-layout PDF — the honest limits, an INVERT appearance (approximate night mode, NOT
   // real themes), and copy-selection. The reading-direction toggle (cosmetic on a fixed-layout PDF) and
@@ -34,6 +30,16 @@ interface Props {
   onPdfZoomStep?: (dir: 1 | -1) => void;
   onPdfZoomMode?: (mode: "fit-width" | "fit-page") => void;
   onPdfCopy?: () => void;
+  /**
+   * THIS BOOK's answer about pronouncing decorative marks, the هيئة's, and the setter.
+   *
+   * Per book, like the zoom above and unlike the PDF appearance beside it: whether a particular book's
+   * formatting marks are worth hearing is a property of how that book was typed, not of the reader.
+   * `null` = not asked, which is how a book goes back to following the worn هيئة.
+   */
+  speakSymbolsOverride?: boolean | null;
+  speakSymbolsAppearance?: boolean;
+  onSpeakSymbols?: (v: boolean | null) => void;
 }
 
 // The reading-settings drawer (RAWY-34, design band I). A right-edge drawer docked BETWEEN the
@@ -52,16 +58,15 @@ export function SettingsPanel({
   onSection,
   bookThemeId,
   onPickTheme,
-  bookTitle,
-  hasOverride,
-  onReset,
-  unified,
   isPdf,
   pdfThemeId,
   onPdfTheme,
   pdfZoom,
   onPdfZoomStep,
   onPdfZoomMode,
+  speakSymbolsOverride,
+  speakSymbolsAppearance,
+  onSpeakSymbols,
 }: Props) {
   const { t } = useI18n();
   // RAWY-216: five CONCEPT tabs (was Text/Page/Theme, which mixed typography with colour and read-aloud).
@@ -82,7 +87,7 @@ export function SettingsPanel({
       <aside className={`settings-panel${open ? " show" : ""}`} aria-hidden={!open} inert={!open}>
         <div className="sp-head">
           <span className="sp-title">{t("pdf.options")}</span>
-          <button className="rc-icon" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
+          <button className="rc-icon ui-close" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
         </div>
         <div className="sp-body sp-pdf">
           <div className="sp-pdf-note">
@@ -172,27 +177,7 @@ export function SettingsPanel({
     <aside className={`settings-panel${open ? " show" : ""}`} aria-hidden={!open} inert={!open}>
       <div className="sp-head">
         <span className="sp-title">{t("reader.settings")}</span>
-        <button className="rc-icon" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
-      </div>
-      {/* Scope banner (RAWY-40/43) — reflects the active book-style model. Per-book: "applies to
-          this book · won't change others" + Reset. Unified: "applies to all books". RAWY-216: the
-          title is now composed from the SHARED scope noun rather than its own sentence, so the banner
-          and every in-panel scope suffix say the same words. */}
-      <div className={`sp-scope${unified ? " unified" : ""}`}>
-        <span className="sp-scope-ico" aria-hidden>{unified ? "⊞" : "▤"}</span>
-        <span className="sp-scope-text">
-          <span className="sp-scope-title">
-            {t("perbook.appliesTo")} {unified ? t("scope.allBooks") : t("scope.thisBook")}
-          </span>
-          <span className="sp-scope-sub" dir="auto">
-            {unified ? t("perbook.scopeAllSub") : (bookTitle ? `${bookTitle} · ` : "") + t("perbook.scopeSub")}
-          </span>
-        </span>
-        {!unified && (
-          <button className="sp-reset" onClick={onReset} disabled={!hasOverride} title={t("perbook.reset")}>
-            ↻ {t("perbook.reset")}
-          </button>
-        )}
+        <button className="rc-icon ui-close" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
       </div>
       <div className="sp-tabs" role="tablist">
         {tabs.map((tb) => (
@@ -215,7 +200,9 @@ export function SettingsPanel({
           section={section}
           bookThemeId={bookThemeId}
           onPickTheme={onPickTheme}
-          unified={unified}
+          speakSymbolsOverride={speakSymbolsOverride}
+          speakSymbolsAppearance={speakSymbolsAppearance}
+          onSpeakSymbols={onSpeakSymbols}
         />
       </div>
     </aside>

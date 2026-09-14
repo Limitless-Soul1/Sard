@@ -27,7 +27,7 @@ interface RefState {
   byPhrase: (phrase: string) => RefRow | undefined;
   byId: (id: string) => RefRow | undefined;
   /** Create OR edit — one path, matching the single dialog. An empty note is rejected by the caller. */
-  save: (phrase: string, note: string) => Promise<RefRow | null>;
+  save: (phrase: string, note: string, cfi?: string | null) => Promise<RefRow | null>;
   remove: (id: string) => Promise<void>;
 }
 
@@ -61,13 +61,17 @@ export const useReferences = create<RefState>((set, get) => ({
   },
   byId: (id) => get().refs.find((r) => r.id === id),
 
-  save: async (phrase, note) => {
+  // WHERE IT WAS MADE TRAVELS WITH IT. The selection that starts a reference knows its cfi, and
+  // that place is the only truthful one this rule will ever have: the phrase's other occurrences are
+  // where the WORD is, not where the reader was. Omitted (the library screen), the stored place is
+  // left alone rather than overwritten with nothing.
+  save: async (phrase, note, cfi) => {
     const { bookId, ctrl } = get();
     if (!bookId) return null;
     const fold = foldPhrase(phrase);
     if (!fold) return null; // nothing selectable to match on (punctuation/whitespace only)
     try {
-      const row = await refSave(bookId, phrase.trim(), fold, phraseWordCount(phrase), note);
+      const row = await refSave(bookId, phrase.trim(), fold, phraseWordCount(phrase), note, cfi);
       if (!row) return null;
       // Upsert by id: the backend keys on (book, folded phrase), so an edit returns the ORIGINAL row id
       // and this replaces it in place instead of appending a duplicate.

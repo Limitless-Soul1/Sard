@@ -5,15 +5,25 @@
 // SEMANTIC slot so it adapts to the theme. State lives in useAnnotations so the side panel
 // (AnnotationsPanel) reflects every change.
 
-import { useEffect, useRef, useState, type CSSProperties, type RefObject } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type RefObject,
+} from "react";
 
 import { useI18n } from "../../i18n";
-import { THEMES, useTheme } from "../../theme";
+import { ColorPicker } from "../../components/ColorPicker";
+import { resolveTheme, useTheme } from "../../theme";
 import type { AnchorRect, AnnotationHit, FoliateController, SelectionInfo } from "../../reader-engine/FoliateController";
 import { useAnnotations } from "./annotationsStore";
 import { useReader } from "../../reader-engine/store"; // RAWY-259: the book title for the metadata block
 import { useReferences } from "./referencesStore"; // RAWY-260
 import { ReferenceDialog, ReferencePopup } from "./ReferenceDialog"; // RAWY-260
+import { ReplacementDialog } from "./ReplacementDialog";
+import { useReplacements } from "./replacementsStore";
 import { HIGHLIGHT_SLOTS, isHex } from "./highlightColors";
 import { TagPicker } from "./TagPicker";
 import { localeNum, uiDateTimeFormat } from "../../lib/format";
@@ -23,17 +33,18 @@ import {
   resolveHighlightInk,
   DEFAULT_INK,
   INK_MIN,
+  INK_NONE,
   INK_PAD_X_EM,
   INK_PAD_TOP_EM,
   INK_PAD_BOTTOM_EM,
   INK_RADIUS_EM,
   INK_EDGE_EM,
 } from "../../lib/highlightInk";
-import { noteTagsFor, noteTagsSet, type HighlightColor, type HighlightRow, type NoteRow, type RefRow } from "../../lib/ipc";
+import { noteTagsFor, noteTagsSet, type HighlightColor, type HighlightRow, type NoteRow, type RefRow, type RepRow } from "../../lib/ipc";
 
 function useHl() {
   const id = useTheme((s) => s.themeId);
-  return THEMES[id].colors.highlight;
+  return resolveTheme(id).colors.highlight;
 }
 
 // The "+" affordance (an SVG, perfectly centred — RAWY-122 ISSUE C) and the back chevron.
@@ -57,17 +68,6 @@ const BackChevron = () => (
 
 // RAWY-123: a hue → a PALE highlight wash #hex. Fixed L≈72%, S≈60% (per the design) so black/light text
 // stays readable under it (the highlight is drawn with the usual translucent wash opacity on top).
-function hueHex(h: number): string {
-  const s = 0.6;
-  const l = 0.72;
-  const c = (1 - Math.abs(2 * l - 1)) * s;
-  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-  const m = l - c / 2;
-  const [r, g, b] =
-    h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
-  const hx = (n: number) => Math.round((n + m) * 255).toString(16).padStart(2, "0");
-  return `#${hx(r)}${hx(g)}${hx(b)}`;
-}
 
 // RAWY-123: the hybrid custom-colour picker (design "1c — curated first, hue if you want it"). Opened
 // from the "+", it REPLACES the popover's rows IN PLACE: a back-to-presets button + title, the eight
@@ -87,34 +87,7 @@ function CustomColorPicker({
 }) {
   const { t } = useI18n();
   const [selected, setSelected] = useState<HighlightColor>(HIGHLIGHT_SLOTS[0]);
-  const [hue, setHue] = useState<number | null>(null); // set once the hue bar is dragged
-  const barRef = useRef<HTMLDivElement>(null);
-  const dragging = useRef(false);
   const selHex = isHex(selected) ? (selected as string) : hl[selected as string] ?? hl.amber;
-
-  const hueFromX = (clientX: number) => {
-    const el = barRef.current;
-    if (!el) return 0;
-    const r = el.getBoundingClientRect();
-    return Math.max(0, Math.min(360, ((clientX - r.left) / r.width) * 360));
-  };
-  const pickHue = (clientX: number) => {
-    const h = hueFromX(clientX);
-    setHue(h);
-    setSelected(hueHex(h) as HighlightColor);
-  };
-  const onHueDown = (e: React.PointerEvent) => {
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
-    dragging.current = true;
-    pickHue(e.clientX);
-  };
-  const onHueMove = (e: React.PointerEvent) => {
-    if (dragging.current) pickHue(e.clientX);
-  };
-  const onHueUp = (e: React.PointerEvent) => {
-    dragging.current = false;
-    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
-  };
 
   return (
     <div className="hl-cpick">
@@ -131,7 +104,7 @@ function CustomColorPicker({
             type="button"
             className={`hl-cpick-swatch${selected === c ? " on" : ""}`}
             style={{ background: hl[c] }}
-            onClick={() => { setHue(null); setSelected(c); }}
+            onClick={() => setSelected(c)}
             aria-label={c}
           />
         ))}
@@ -141,10 +114,12 @@ function CustomColorPicker({
         <span className="hl-cpick-or-label">{t("hl.orHue")}</span>
         <span className="hl-cpick-rule" />
       </div>
-      <div className="hl-cpick-hue" ref={barRef} onPointerDown={onHueDown} onPointerMove={onHueMove} onPointerUp={onHueUp}>
-        <div className="hl-cpick-thumb" style={{ left: `${((hue ?? 0) / 360) * 100}%` }}>
-          <span className="hl-cpick-thumb-dot" style={{ background: hue != null ? hueHex(hue) : "transparent" }} />
-        </div>
+      {/* The SAME picker every other custom colour in Sard opens. It replaces a bare hue strip that
+          could only sweep the circle at one fixed tint and had nowhere to type a value — so a reader
+          with a hex code in hand could not use it. `Apply` stays the commit, because this popover
+          hangs off a live selection and must not recolour on every drag. */}
+      <div className="hl-cpick-space">
+        <ColorPicker value={selHex} onChange={(hex) => setSelected(hex as HighlightColor)} />
       </div>
       <div className="hl-cpick-foot">
         <div className="hl-cpick-preview">
@@ -166,6 +141,13 @@ function CustomColorPicker({
 // invisible, and DEFAULT_INK is what an untouched highlight (alpha NULL = follow the theme) shows in the
 // control, so opening the editor on an old highlight never silently changes it.
 const INK_BARS = 9; // the design draws the density as nine bars
+/**
+ * Where the strip stops meaning «بلا».
+ *
+ * Half a bar: the reader has to have travelled into the first bar before any colour is laid down, so
+ * "no shading" is a place you can actually land on rather than one pixel at the very end.
+ */
+const HALF_BAR = 0.5 / INK_BARS;
 // Metadata timestamps: day + month is enough for a note, and it localises without a date library.
 const fmtStamp = (unix: number, lang: string): string =>
   uiDateTimeFormat(lang, { day: "numeric", month: "long" }).format(new Date(unix * 1000));
@@ -202,11 +184,168 @@ export function ColorRow({ active, onPick }: { active?: string | null; onPick: (
   );
 }
 
-// Place the floating UI centred over the selection; clamp to the viewport, flip below if
-// there isn't room above. `below` is decided by the caller via the rect's top.
-function anchorStyle(rect: AnchorRect, below: boolean): CSSProperties {
-  const left = Math.min(Math.max(rect.left + rect.width / 2, 140), window.innerWidth - 140);
-  return below ? { left, top: rect.bottom + 10 } : { left, top: rect.top - 10 };
+// Place the floating UI over the selection, INSIDE the window, whatever size it happens to be.
+//
+// WHAT THIS REPLACES, and why the old version could not have worked. It clamped `left` against a
+// hard-coded half-width of 140px and clamped `top` NOT AT ALL:
+//
+//     const left = Math.min(Math.max(rect.left + rect.width / 2, 140), window.innerWidth - 140);
+//     return below ? { left, top: rect.bottom + 10 } : { left, top: rect.top - 10 };
+//
+// `.hl-pop` is `position: fixed` under `translate(-50%, -100%)`, so above the selection its TOP
+// lands at `rect.top - 10 - height` -- negative near the top of the window -- and below it its
+// BOTTOM lands at `rect.bottom + 10 + height`, past `innerHeight` near the bottom. Nothing bounded
+// either. Opening the colour picker then roughly triples the height (a 132px plane plus hue, alpha
+// and a footer), so a popup that fitted a moment ago does not. Full screen changes `innerHeight` and
+// nothing else, which is why it was no better there.
+//
+// THE FIX IS TO MEASURE. The popup reports its own box after every render that can change its size,
+// and the placement is computed from that box rather than from a constant: the side is chosen by
+// which one the popup actually fits in, and both axes are clamped to the viewport with a margin. A
+// popup larger than the window is pinned to the margin rather than centred off-screen.
+
+/** Space kept between the popup and the window edge, in px. */
+export const POP_EDGE = 8;
+/** Distance from the selection to the popup, in px -- the design's own offset. */
+export const POP_GAP = 10;
+
+/**
+ * Where the popup is placed when it is RAISED — the anchor it aims for, and the on-screen position the
+ * viewport allows. The clamps exist so a freshly raised toolbar is never cut off by the window; they
+ * are an initial-placement concern only (see `attachment`).
+ */
+export function anchorPlacement(
+  rect: AnchorRect,
+  below: boolean,
+  box: { w: number; h: number } | null,
+  vw: number = window.innerWidth,
+  vh: number = window.innerHeight,
+): { left: number; top: number; wantX: number; wantY: number; clamped: boolean } {
+  // Before the first measurement, fall back to the design's own half-width so the very first paint
+  // is no worse than it used to be; the measured pass lands on the next frame.
+  const halfW = box ? box.w / 2 : 140;
+  const h = box ? box.h : 0;
+  const loX = halfW + POP_EDGE;
+  const hiX = Math.max(loX, vw - halfW - POP_EDGE);
+  const wantX = rect.left + rect.width / 2;
+  const left = Math.min(Math.max(wantX, loX), hiX);
+  // `below` puts the popup's TOP at `top`; above puts its BOTTOM there (translateY(-100%)).
+  const loY = below ? POP_EDGE : h + POP_EDGE;
+  const hiY = below ? Math.max(loY, vh - h - POP_EDGE) : Math.max(loY, vh - POP_EDGE);
+  const wantY = below ? rect.bottom + POP_GAP : rect.top - POP_GAP;
+  const top = Math.min(Math.max(wantY, loY), hiY);
+  return { left, top, wantX, wantY, clamped: top !== wantY || left !== wantX };
+}
+
+/** The placement as a style. Unchanged for every caller that only wants to position something. */
+export function anchorStyle(
+  rect: AnchorRect,
+  below: boolean,
+  box: { w: number; h: number } | null,
+  vw: number = window.innerWidth,
+  vh: number = window.innerHeight,
+): CSSProperties {
+  const { left, top } = anchorPlacement(rect, below, box, vw, vh);
+  return { left, top };
+}
+
+/**
+ * Which side the popup fits on, decided from its MEASURED height rather than from the anchor alone.
+ *
+ * Prefers above, as the design does. Falls below when there is not room above, and when there is
+ * room in neither it takes the larger of the two -- the clamp then pins it, which is still on screen.
+ */
+export function fitsBelow(rect: AnchorRect, h: number, vh: number = window.innerHeight): boolean {
+  const roomAbove = rect.top - POP_GAP - POP_EDGE;
+  const roomBelow = vh - rect.bottom - POP_GAP - POP_EDGE;
+  if (h <= roomAbove) return false;
+  if (roomBelow >= h) return true;
+  return roomBelow > roomAbove;
+}
+
+/**
+ * RAWY-FM3 — THE TOOLBAR IS UI ATTACHED TO THE SELECTION, not to the viewport.
+ *
+ * WHAT WENT WRONG, TWICE, and why both were the same mistake. Following the selection to the edge, and
+ * then either clamping at the edge or holding "the last honoured position", both ended with the toolbar
+ * sitting at the top of the window while the selected words were long gone. Both defined its position
+ * in VIEWPORT space — a clamp between `POP_EDGE` and `vh − POP_EDGE`, then a held `{left, top}` in those
+ * same coordinates — and a viewport coordinate is, by construction, independent of where the text is.
+ * The reader's mental model is the plain one: the toolbar belongs to the words. Scroll the words off
+ * the screen and it goes with them; scroll them back and it comes back.
+ *
+ * SO, AFTER THE INITIAL PLACEMENT, THE POSITION IS AN OFFSET FROM THE SELECTION AND NOTHING ELSE. When
+ * the toolbar is raised, `anchorPlacement` chooses its side and keeps it on screen, exactly as it
+ * always has — that is the moment the reader is looking at it, and a toolbar cut off by the window
+ * would be useless. The difference between that placement and the bare anchor (`wantX`/`wantY`) is
+ * captured ONCE as `dx`/`dy`, and from then on every render is `anchor + offset`. No clamp is applied
+ * again, so no coordinate of the viewport ever enters into it: with room around the selection the
+ * offset is zero and the toolbar rides the text one-for-one; raised near a window edge, it keeps the
+ * small shift it was given and rides the text with that shift, as a sticky note would.
+ *
+ * The side is part of the attachment for the same reason — a note stuck above a paragraph does not
+ * move underneath it because the page scrolled.
+ *
+ * Off the screen it is simply off the screen: `position: fixed` with a `top` beyond the window paints
+ * nothing, and there is nothing to stand down or dismiss. A DOCUMENT CHANGE is the one thing that
+ * retires the selection, and that is the engine's (`refreshSelectionRect`), not this file's.
+ */
+export interface Attachment {
+  below: boolean;
+  /** Placement minus anchor, captured when the toolbar was raised. Zero unless the window forced a shift. */
+  dx: number;
+  dy: number;
+}
+
+/** The attachment a freshly raised toolbar has to its selection. */
+export function attachment(
+  placed: { left: number; top: number; wantX: number; wantY: number },
+  below: boolean,
+): Attachment {
+  return { below, dx: placed.left - placed.wantX, dy: placed.top - placed.wantY };
+}
+
+/** Where an attached toolbar is now: the selection's anchor point plus the attachment. Never clamped. */
+export function attachedPosition(rect: AnchorRect, a: Attachment): { left: number; top: number } {
+  const wantX = rect.left + rect.width / 2;
+  const wantY = a.below ? rect.bottom + POP_GAP : rect.top - POP_GAP;
+  return { left: wantX + a.dx, top: wantY + a.dy };
+}
+
+/**
+ * Measure a floating element and keep the measurement current.
+ *
+ * A ResizeObserver catches the picker opening and closing inside the popup without the caller having
+ * to know which render changed the size, and the window listener catches entering or leaving full
+ * screen, which is a resize.
+ */
+function useMeasured(): [
+  React.RefObject<HTMLDivElement | null>,
+  { w: number; h: number } | null,
+] {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [box, setBox] = useState<{ w: number; h: number } | null>(null);
+  useLayoutEffect(() => {
+    const read = () => {
+      const el = ref.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      setBox((prev) =>
+        prev && Math.abs(prev.w - r.width) < 0.5 && Math.abs(prev.h - r.height) < 0.5
+          ? prev
+          : { w: r.width, h: r.height },
+      );
+    };
+    read();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(read) : null;
+    if (ro && ref.current) ro.observe(ref.current);
+    window.addEventListener("resize", read);
+    return () => {
+      ro?.disconnect();
+      window.removeEventListener("resize", read);
+    };
+  }, []);
+  return [ref, box];
 }
 
 // Action-tier line icons (design's SVGs; stroke = currentColor so they inherit the button ink).
@@ -215,9 +354,11 @@ const PenIcon = () => (
     <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
   </svg>
 );
-const CopyIcon = () => (
+// Two arrows exchanging places — the same "one thing stands in for another" the design's ⟵ says in the
+// list. Not a pencil: a replacement does not edit the book, it reads it differently.
+const ReplaceIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-    <rect x="9" y="9" width="11" height="11" rx="2.4" /><path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
+    <path d="M4 8h13l-3.2-3.2M20 16H7l3.2 3.2" />
   </svg>
 );
 const PhotoIcon = () => (
@@ -248,7 +389,7 @@ function SelectionToolbar({
   onListen,
   onReference,
   onNote,
-  onCopy,
+  onReplace,
   onAddToCard,
   onPhotoCard,
 }: {
@@ -257,19 +398,45 @@ function SelectionToolbar({
   onListen: () => void;
   onReference: () => void;
   onNote: () => void;
-  onCopy: () => void;
+  onReplace: () => void;
   onAddToCard: () => void;
   onPhotoCard: () => void;
 }) {
   const { t } = useI18n();
   const hl = useHl();
-  const below = sel.rect.top < 90;
+  const [popRef, popBox] = useMeasured();
+  // MEASURED, not guessed. `sel.rect.top < 90` asked whether the selection was near the top, which
+  // is not the same question as whether the popup fits above it -- and it could not be, because the
+  // popup's height changes when the colour picker opens inside it.
+  const wantBelow = popBox ? fitsBelow(sel.rect, popBox.h) : sel.rect.top < 90;
   // RAWY-123: the "+" opens the hybrid custom-colour picker IN PLACE of the two tiers (back returns).
   const [picking, setPicking] = useState(false);
+  const attached = useRef<{ key: string; a: Attachment } | null>(null);
+  // RAWY-FM3: the toolbar is attached to its selection. On the first MEASURED render it is placed the
+  // way it always was (side chosen, kept on screen) and the attachment is captured; every render after
+  // that is anchor + attachment, with no clamp — see `attachment`. A ref because it must survive the
+  // renders that scrolling causes, and keyed on the selection so a new selection is placed afresh.
+  const key = sel.cfi + "\u0000" + sel.text;
+  if (attached.current && attached.current.key !== key) attached.current = null;
+  let below: boolean;
+  let place: { left: number; top: number };
+  if (attached.current) {
+    below = attached.current.a.below;
+    place = attachedPosition(sel.rect, attached.current.a);
+  } else {
+    below = wantBelow;
+    const raised = anchorPlacement(sel.rect, below, popBox);
+    place = raised;
+    // Only a measured placement is worth attaching to: before `useMeasured` has answered, `wantBelow`
+    // is the pre-measurement guess, and attaching to a guess would keep the wrong side for the life of
+    // the selection.
+    if (popBox) attached.current = { key, a: attachment(raised, below) };
+  }
   return (
     <div
+      ref={popRef}
       className={`hl-pop${below ? " below" : ""}`}
-      style={anchorStyle(sel.rect, below)}
+      style={{ left: place.left, top: place.top }}
       onPointerDown={(e) => e.stopPropagation()}
     >
       {picking ? (
@@ -297,7 +464,11 @@ function SelectionToolbar({
             {/* RAWY-260: ONE new action added to the existing toolbar — the toolbar itself is untouched,
                 and RAWY-124's warning still holds: never drop one of the other five. */}
             <button className="hl-pop-act" onClick={onReference}><RefIcon />{t("ref.add")}</button>
-            <button className="hl-pop-act" onClick={onCopy}><CopyIcon />{t("hl.copy")}</button>
+            {/* RAWY-124's warning still holds — never DROP one of these silently. Copy is not dropped
+                here by accident, it is REPLACED by Replace at the owner's decision: the selection is the
+                natural place to say "read this word as something else", and the toolbar is already full.
+                The system copy gesture (Ctrl+C and the context menu) is untouched and still copies. */}
+            <button className="hl-pop-act" onClick={onReplace}><ReplaceIcon />{t("rep.action")}</button>
             <button className="hl-pop-act" onClick={onAddToCard}><AddCardIcon />{t("photo.addToCard")}</button>
             <button className="hl-pop-act primary" onClick={onPhotoCard}><PhotoIcon />{t("photo.card")}</button>
           </div>
@@ -358,8 +529,8 @@ function NoteEditorModal({
 
   const hl = useHl();
   const themeId = useTheme((s) => s.themeId);
-  const themeDark = THEMES[themeId].dark;
-  const themePaper = THEMES[themeId].colors.paperBg;
+  const themeDark = resolveTheme(themeId).dark;
+  const themePaper = resolveTheme(themeId).colors.paperBg;
   const inkHex = isHex(hi.color) ? hi.color : (hl[hi.color as keyof typeof hl] ?? hi.color);
   // The preview ink comes from the SHARED resolver the page renderer uses, with the density being dragged —
   // so this is the mark itself, not a representation of it.
@@ -375,7 +546,9 @@ function NoteEditorModal({
     if (!el) return;
     const r = el.getBoundingClientRect();
     const raw = dir === "rtl" ? (r.right - clientX) / r.width : (clientX - r.left) / r.width;
-    const v = Math.max(INK_MIN, Math.min(1, raw));
+    // THE FIRST BAR IS «بلا». Past it the floor applies as it always has, so every density the
+    // reader could already choose still means what it meant; only the far end of the strip is new.
+    const v = raw <= HALF_BAR ? INK_NONE : Math.max(INK_MIN, Math.min(1, raw));
     setAlpha(v);
     onAlpha(v); // live redraw of THIS mark only
   };
@@ -462,7 +635,7 @@ function NoteEditorModal({
         <aside className="nec-rail">
           <div className="nec-rail-head">
             <span className="nec-rail-title">{t("ne.title")}</span>
-            <button type="button" className="nec-x" onClick={onClose} aria-label={t("ne.close")} title={t("ne.close")}>✕</button>
+            <button type="button" className="nec-x ui-close" onClick={onClose} aria-label={t("ne.close")} title={t("ne.close")}>✕</button>
           </div>
 
           <div className="nec-group">
@@ -488,14 +661,15 @@ function NoteEditorModal({
                 const step = e.key === "ArrowLeft" ? -0.05 : e.key === "ArrowRight" ? 0.05 : 0;
                 if (!step) return;
                 e.preventDefault();
-                const v = Math.max(INK_MIN, Math.min(1, alpha + step));
+                const next = alpha + step;
+                const v = next <= HALF_BAR ? INK_NONE : Math.max(INK_MIN, Math.min(1, next));
                 setAlpha(v);
                 onAlpha(v);
               }}
               role="slider"
               tabIndex={0}
               aria-label={t("ne.density")}
-              aria-valuemin={Math.round(INK_MIN * 100)}
+              aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={Math.round(alpha * 100)}
             >
@@ -507,7 +681,12 @@ function NoteEditorModal({
                 />
               ))}
             </div>
-            <span className="nec-value nec-pct">{localeNum(Math.round(alpha * 100), lang)}٪</span>
+            {/* AT ZERO IT SAYS SO IN WORDS. «٠٪» is a number a reader has to interpret; «بلا» is the
+                answer to the question they were actually asking, and it is the same word the card's
+                own readability control uses for the same idea. */}
+            <span className="nec-value nec-pct">
+              {alpha <= INK_NONE ? t("ne.densityNone") : `${localeNum(Math.round(alpha * 100), lang)}٪`}
+            </span>
           </div>
 
           <div className="nec-group">
@@ -515,7 +694,7 @@ function NoteEditorModal({
             {/* TagPicker provides search, multi-select, create and remove — the tag behaviour the design
                 shows, kept intact; `.nec-tags` applies the compact chip sizing. */}
             <div className="nec-tags">
-              <TagPicker selected={tagIds} onChange={setTagIds} />
+              <TagPicker selected={tagIds} onChange={setTagIds} onTagsChanged={() => void useAnnotations.getState().load()} />
             </div>
           </div>
 
@@ -621,11 +800,16 @@ export function AnnotationLayer({
     clearSel();
     if (row) setActive({ cfi: row.cfi, rect }); // open the popover to type
   };
-  const onCopy = () => {
-    if (!selection) return;
-    navigator.clipboard.writeText(selection.text).catch(console.error);
+  const onReplace = () => {
+    const s = selection;
+    if (!s) return;
+    const phrase = s.text.trim();
     setSelection(null);
     clearSel();
+    // Replacing a phrase that already has a rule EDITS it rather than creating a second one that would
+      // fight the first over the same words. Matched from EITHER side: once a rule is live the
+      // page shows the replacement, so the words a reader selects are the new ones, not the author's.
+    setRepDialog({ phrase, cfi: s.cfi, existing: useReplacements.getState().byText(phrase) ?? null });
   };
   // RAWY-124: Listen from the selection — hand the passage up to start read-aloud from here.
   const onListenSel = () => {
@@ -658,7 +842,14 @@ export function AnnotationLayer({
       // empty is there no note (and nothing to tag): the row goes and its links cascade away.
       // RAWY-282: a TITLE alone is enough for the same reason — see `saveNoteForHighlight`.
       const saved = await store().saveNoteForHighlight(activeHi, body, tagIds.length > 0, title);
-      if (saved) await noteTagsSet(saved.id, tagIds);
+      if (saved) {
+        await noteTagsSet(saved.id, tagIds);
+        // The row `saveNoteForHighlight` returned was read BEFORE the links were written, so its
+        // `tags` are the previous ones. Re-read the book's notes so the panel's cards and its tag
+        // filter both see what was just saved — without this, a tag applies but nothing shows it
+        // until the book is reopened.
+        await store().load();
+      }
     }
     setActive(null);
   };
@@ -671,7 +862,11 @@ export function AnnotationLayer({
   // the reader taps a marked phrase. A tap on the popup opens the dialog on that reference, which is the
   // edit path — no extra button, and the note is immediately editable.
   const refs = useReferences();
-  const [refDialog, setRefDialog] = useState<{ phrase: string; existing: RefRow | null } | null>(null);
+  // THE PLACE IS TAKEN AT THE SELECTION, not at the save. By the time the dialog is answered the
+  // selection has been cleared - which is why it is carried here, alongside the phrase it came from.
+  const [refDialog, setRefDialog] = useState<{ phrase: string; cfi?: string; existing: RefRow | null } | null>(null);
+  const [repDialog, setRepDialog] = useState<{ phrase: string; cfi: string; existing: RepRow | null } | null>(null);
+  const reps = useReplacements();
   const [refPopup, setRefPopup] = useState<{ row: RefRow; rect: AnchorRect } | null>(null);
   useEffect(() => {
     ctrlRef.current?.onReferenceHit((hit) => {
@@ -686,7 +881,7 @@ export function AnnotationLayer({
     setSelection(null);
     clearSel();
     // Referencing a phrase that already has one EDITS it rather than creating a duplicate.
-    setRefDialog({ phrase, existing: useReferences.getState().byPhrase(phrase) ?? null });
+    setRefDialog({ phrase, cfi: s.cfi, existing: useReferences.getState().byPhrase(phrase) ?? null });
   };
 
   return (
@@ -699,15 +894,27 @@ export function AnnotationLayer({
           <ReferencePopup
             row={refPopup.row}
             rect={refPopup.rect}
+            // EDITING one that already exists, not making one: there is no selection behind this,
+            // so no place is sent and the one the row already holds is left as it is.
             onOpen={() => { setRefDialog({ phrase: refPopup.row.phrase, existing: refPopup.row }); setRefPopup(null); }}
           />
         </>
+      )}
+      {repDialog && (
+        <ReplacementDialog
+          phrase={repDialog.phrase}
+          existing={repDialog.existing}
+          bookTitle={useReader.getState().bookTitle ?? ""}
+          onSave={async (from, to) => { await reps.save(from, to, repDialog.cfi); setRepDialog(null); }}
+          onDelete={async () => { if (repDialog.existing) await reps.remove(repDialog.existing.id); setRepDialog(null); }}
+          onClose={() => setRepDialog(null)}
+        />
       )}
       {refDialog && (
         <ReferenceDialog
           phrase={refDialog.phrase}
           existing={refDialog.existing}
-          onSave={async (note) => { await refs.save(refDialog.phrase, note); setRefDialog(null); }}
+          onSave={async (note) => { await refs.save(refDialog.phrase, note, refDialog.cfi); setRefDialog(null); }}
           onDelete={async () => { if (refDialog.existing) await refs.remove(refDialog.existing.id); setRefDialog(null); }}
           onClose={() => setRefDialog(null)}
         />
@@ -719,7 +926,7 @@ export function AnnotationLayer({
           onListen={onListenSel}
           onReference={onReference}
           onNote={onNote}
-          onCopy={onCopy}
+          onReplace={onReplace}
           onAddToCard={onAdd}
           onPhotoCard={() => {
             const s = selection;

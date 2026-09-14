@@ -1,0 +1,2043 @@
+/* ================================================================================================
+   PROFILES — the visual-identity area and its editor.
+
+   A FILE OF ITS OWN, deliberately. `global.css` is 4,700 lines that every surface depends on; a
+   feature that can be added without editing one of them should be. Nothing here overrides an
+   existing rule, so a reader who never opens Profiles renders exactly as before.
+
+   GEOMETRY IS THE DESIGN PACKAGE'S, NOT INVENTED:
+     · a 344px rail — the shape `.pc-panel` already uses for the photo composer, which is what the
+       design means by "it borrows the shape Sard already uses for its one creative surface";
+     · a 256px menu at 13px radius with 9px padding and a 0 14px 34px shadow;
+     · selection as 2px of accent with 4px of the surrounding ground between it and the card — the
+       swatch grid's own idiom, which reads on a pale card and a black one alike.
+
+   EVERY COLOUR IS A TOKEN. The only literals are shadows and the danger red, both of which are a
+   PAINT rather than a colour — the same exception the rest of Sard makes.
+   ================================================================================================ */
+
+.pf-actions { display: flex; align-items: center; gap: 8px; margin: 14px 0 18px; }
+.pf-count { margin-inline-start: auto; font: 400 0.75rem var(--ui-font); color: var(--muted); }
+
+.pf-btn {
+  padding: 7px 14px; border-radius: var(--r-md); border: 1px solid var(--chrome-border);
+  background: color-mix(in srgb, var(--text) 4%, transparent); color: var(--text);
+  font: 500 0.8125rem var(--ui-font); cursor: pointer;
+}
+.pf-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.pf-btn:disabled { opacity: 0.45; cursor: default; }
+.pf-btn.primary { background: var(--accent); border-color: transparent; color: var(--paper-bg); }
+.pf-btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 86%, black); }
+.pf-btn.danger { color: #9c3b3b; border-color: color-mix(in srgb, #9c3b3b 34%, transparent); }
+.pf-btn.danger:hover { background: color-mix(in srgb, #9c3b3b 10%, transparent); }
+
+/* ---- the grid: it wraps, so twelve profiles look the same as three ----
+   THE CARD IS THE THING BEING CHOSEN, so it is drawn at a size worth looking at: the track's floor
+   went 196 -> 274px, a 40% wider card and very nearly twice its area. `auto-fill` over `minmax` is
+   what keeps that a FLOOR rather than a fixed size — the row still reflows to the window and the
+   cards still share the remainder, so nothing has to be re-tuned per width.
+   Everything inside the artwork is proportional (`SardMini` is drawn at `width: 100%`), so the
+   miniature grows with the track instead of sitting in new empty space. The foot's own furniture is
+   raised more gently below: type set 40% larger would shout, and a card is a specimen. */
+.pf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(274px, 1fr)); gap: var(--sp-6); }
+
+.pf-card {
+  position: relative; border-radius: var(--r-lg); background: var(--chrome-bg);
+  border: 1px solid var(--chrome-border);
+}
+.pf-card.on {
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 6px var(--chrome-bg), 0 1px 2px rgba(40, 28, 14, 0.06);
+}
+.pf-card-face {
+  display: block; width: 100%; padding: 0; border: 0; background: none; cursor: pointer;
+  border-radius: 11px 11px 0 0; overflow: hidden;
+}
+/* Raised WITH the card, not by the card's own factor: the miniature above is 40% larger and the
+   foot follows at about a sixth of that, so the name still reads as a caption to a specimen rather
+   than as a heading of its own. */
+.pf-card-foot { display: flex; align-items: center; gap: var(--sp-4); padding: 11px 13px; }
+
+/* The seal: the profile's initial, in the profile's OWN face on its OWN paper — a type specimen
+   rather than clip art, which is what makes two profiles tell apart at a glance. */
+.pf-seal {
+  width: 36px; height: 36px; flex: none; border-radius: var(--r-md);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1.0625rem; line-height: 1; box-shadow: inset 0 0 0 1px var(--chrome-border);
+  /* A framed picture is deliberately larger than its box above 1x, and an element cannot clip
+     itself. Every other mark surface already clipped; this one had never needed to. */
+  overflow: hidden;
+}
+.pf-seal-dot { width: 18px; height: 18px; border-radius: 50%; }
+/* An image icon fills the seal's own box, so the three kinds are interchangeable wherever a profile
+   names itself — same size, same corner, same ring. */
+/* THE FRAMING IS NOT DECLARED HERE ANY MORE. `markFrame` supplies `background-size`, its position
+   and any magnification from the profile's own `data.icon`, so all six mark surfaces read one
+   source. Three of them used to say `50% 34%` and the rest `50% 50%`, which is how the editor came
+   to show a crop the cards did not use. */
+.pf-seal-img { width: 100%; height: 100%; border-radius: inherit; }
+
+.pf-card-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pf-card-name {
+  font: 600 0.9375rem/1.35 var(--ui-font); color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pf-card-sub {
+  font: 400 0.75rem/1.35 var(--ui-font); color: var(--lib-faint, var(--muted));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pf-badge {
+  flex: none; padding: 2px 7px; border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  /* THE ACCENT, READ RATHER THAN SEEN. Ten-pixel type on a tint of its own colour measured 2.47
+     in parchment — under Sard's own 3.0 floor in five of ten themes. `--accent-text` walks it
+     toward the text colour until it clears that floor, which is the correction `regroundFaint`
+     already makes for `--lib-faint`; the hue stays the accent's. */
+  color: var(--accent-text); font: 600 0.6875rem var(--ui-font);
+}
+.pf-card-more {
+  flex: none; width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent;
+  color: var(--muted); font-size: 0.9375rem; line-height: 1; cursor: pointer;
+}
+.pf-card-more:hover { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
+
+/* ---- the card menu ---- */
+/* 256px, the design's own width — and deliberately allowed to be WIDER than the card it hangs off,
+   which is why there is no max-width clamp. Clamping it to the card gave 199px and quietly lost the
+   measurement. `.pf-card` has no `overflow: hidden`, so it can overhang. */
+/* FIXED, AND PORTALLED OUT OF THE CARD. Absolute positioning put it inside `.gs-body`, which
+   scrolls, and an ancestor's `overflow` clips a descendant no matter what its `z-index` says — the
+   menu on the fourth card was measured running 130px past the pane and disappearing entirely.
+   z-index 50 sits ABOVE the settings window (41) and deliberately BELOW the dialog scrim (90), so a
+   modal still covers the menu rather than the other way round. */
+.pf-menu {
+  position: fixed; z-index: 50;
+  width: 256px; padding: 9px; border-radius: var(--r-xl);
+  background: var(--chrome-bg); border: 1px solid var(--chrome-border);
+  box-shadow: var(--sh3); display: flex; flex-direction: column; gap: 2px;
+}
+.pf-menu button {
+  display: block; width: 100%; text-align: start; padding: 7px 9px; border: 0; border-radius: var(--r-md);
+  background: transparent; color: var(--text); font: 500 0.8125rem var(--ui-font); cursor: pointer;
+}
+.pf-menu button:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 7%, transparent); }
+.pf-menu button:disabled { color: var(--muted); opacity: 0.5; cursor: default; }
+.pf-menu button.danger { color: #9c3b3b; }
+.pf-menu-rule { height: 1px; background: var(--chrome-border); margin: 4px 2px; }
+
+/* ---- first run: absence drawn, not described ---- */
+.pf-empty { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 22px 16px 8px; }
+.pf-empty-mini {
+  width: 260px; max-width: 100%; border-radius: var(--r-md); overflow: hidden;
+  box-shadow: var(--sh2); margin-bottom: 20px;
+}
+.pf-empty-title { font: 600 1rem var(--ui-font); color: var(--text); margin-bottom: 8px; }
+.pf-empty-body { max-width: 46ch; margin: 0 0 18px; font: 400 0.84375rem/1.7 var(--ui-font); color: var(--muted); }
+.pf-empty-actions { display: flex; gap: 8px; margin-bottom: 16px; }
+.pf-empty-reassure { font: 400 0.75rem var(--ui-font); color: var(--lib-faint, var(--muted)); }
+
+/* ---- dialogs ---- */
+/* ABOVE THE EDITOR, because the editor is one of the things it gates.
+   At z-index 60 this sat BELOW `.pf-editor` (70), so the unsaved-changes decision raised by the
+   editor's own ✕ rendered behind the editor and could not be reached. Measured: the button was
+   there, its box was 382x43 at (750, 509), and `elementFromPoint` at its own centre returned
+   `pf-lib-main` — the reader would press ✕, see nothing, and conclude the editor was stuck.
+   A decision that blocks an action has to outrank the surface that raised it; 90 clears the editor
+   (70) and the saved-toast (80), which are the only things above the settings window. */
+.pf-dialog-scrim {
+  position: fixed; inset: 0; z-index: 90; background: rgba(20, 14, 6, 0.42);
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+  display: flex; align-items: center; justify-content: center;
+}
+/* THE HEIGHT IS RESERVED THE SAME WAY THE WIDTH ALREADY WAS, and for a sharper reason.
+   The scrim centres with `align-items: center`, and a centred flex item taller than its container
+   overflows EQUALLY in both directions — so the half that goes off the TOP is simply unreachable:
+   nothing scrolls to it. Measured on the received-هيئة sheet, whose card is 846px tall: at 1280x900
+   it fitted, at 1100x720 its top sat at y = -57, at 1280x560 at y = -143 and at 1280x460 at y = -193,
+   with the title and the actions BOTH off screen. That is the reported "the top of the page is
+   hidden".
+   `max-width: calc(100vw - 32px)` was already here for exactly this reason on the other axis; this is
+   its missing half. `overflow-y: auto` is what makes the capped dialog usable rather than merely
+   contained, and it is inert whenever the content fits — the same idiom `.pf-cp` above already uses. */
+.pf-dialog {
+  width: 420px; max-width: calc(100vw - 32px); padding: 18px; border-radius: var(--r-xl);
+  max-height: calc(100vh - 32px); overflow-y: auto; overscroll-behavior: contain;
+  background: var(--chrome-bg); border: 1px solid var(--chrome-border);
+  box-shadow: var(--sh3);
+}
+.pf-dialog-title { font: 600 0.9375rem/1.5 var(--ui-font); color: var(--text); margin-bottom: 8px; }
+.pf-dialog-body { margin: 0 0 16px; font: 400 0.8125rem/1.7 var(--ui-font); color: var(--muted); }
+.pf-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+.pf-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.pf-field-label { font: 600 0.75rem var(--ui-font); color: var(--muted); }
+.pf-input,
+.pf-select {
+  width: 100%; padding: 8px 10px; border-radius: var(--r-md); border: 1px solid var(--chrome-border);
+  background: var(--paper-bg); color: var(--text); font: 400 0.875rem var(--ui-font);
+}
+.pf-input:focus, .pf-select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pf-startfrom {
+  padding: 8px 10px; border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text); font: 500 0.8125rem var(--ui-font);
+}
+.pf-hint { font: 400 0.75rem/1.6 var(--ui-font); color: var(--lib-faint, var(--muted)); margin-top: 8px; }
+
+/* ---- the icon: the two kinds a profile can carry without the asset pipeline ---- */
+/* ---- the icon: three kinds, one tier ----
+   ONE HEIGHT, SET BY THE TALLEST ITEM AND NOT BY A LABEL THAT WRAPPED. Measured before: 54px in all
+   three buttons, because a flex row is as tall as its tallest item and one label — «＋ اختيار صورة»,
+   a verb where the others were nouns — took two lines at 113px. With the wrap removed all three come
+   to 42px and nothing overflows. The label is now a noun and is kept on one line, so the row cannot
+   silently inflate again in a language whose word for "image" is longer. */
+.pf-icon-kinds { display: flex; gap: 8px; }
+.pf-icon-kind {
+  flex: 1; min-width: 0; min-height: 42px;
+  display: flex; align-items: center; gap: 8px; padding: 7px 9px;
+  border-radius: 9px; border: 1px solid var(--chrome-border); background: transparent;
+  color: var(--text); font: 500 0.8125rem var(--ui-font); cursor: pointer; text-align: start;
+}
+.pf-icon-kind-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-icon-kind:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.pf-icon-kind.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.pf-icon-kind .pf-seal { width: 26px; height: 26px; font-size: 0.8125rem; }
+
+/* The second tier: what belongs to the kind that was chosen. Quieter and shorter than the choice
+   above it, so the page reads as a decision followed by its consequences rather than as six
+   buttons. One row, never two paths to the same act. */
+.pf-icon-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.pf-icon-acts .pf-btn { min-height: var(--ctl-lg); }
+.pf-icon-acts-note { font: 400 0.75rem/1.6 var(--ui-font); color: var(--lib-faint, var(--muted)); }
+
+/* ---- "Start from": the design's three ---- */
+.pf-startfrom-list { display: flex; flex-direction: column; gap: 4px; }
+.pf-startfrom-opt {
+  padding: 8px 10px; border-radius: var(--r-md); border: 1px solid var(--chrome-border);
+  background: transparent; color: var(--text); font: 500 0.8125rem var(--ui-font);
+  cursor: pointer; text-align: start;
+}
+.pf-startfrom-opt.on {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.pf-startfrom-swatches { margin-top: 10px; grid-template-columns: repeat(8, 1fr); }
+
+/* ---- a paper of your own: two colours, four whole Sards ---- */
+.pf-cp { width: 560px; max-height: calc(100vh - 64px); overflow-y: auto; }
+.pf-cp-from { font: 400 0.75rem var(--ui-font); color: var(--lib-faint, var(--muted)); margin-bottom: 14px; }
+.pf-cp-row { margin-bottom: 14px; }
+.pf-cp-swatches { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.pf-cp-swatch { width: 26px; height: 26px; border: 0; border-radius: var(--r-sm); cursor: pointer; box-shadow: inset 0 0 0 1px var(--chrome-border); }
+.pf-cp-swatch.on { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg); }
+/* The hue strip: a free colour without a platform picker, per the design. */
+.pf-cp-hue {
+  height: 14px; border-radius: var(--r-sm); cursor: ew-resize; touch-action: none;
+  box-shadow: inset 0 0 0 1px var(--chrome-border);
+  background: linear-gradient(to right in srgb, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);
+}
+[dir="rtl"] .pf-cp-hue { background: linear-gradient(to left in srgb, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%); }
+.pf-cp-hex { font: 400 0.6875rem var(--ui-font); color: var(--lib-faint, var(--muted)); margin-top: 5px; font-variant-numeric: tabular-nums; }
+.pf-cp-flip {
+  margin: -6px 0 14px; padding: 5px 10px; border-radius: var(--r-sm); border: 1px solid var(--chrome-border);
+  background: transparent; color: var(--muted); font: 500 0.71875rem var(--ui-font); cursor: pointer;
+}
+.pf-cp-flip:hover { background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
+
+.pf-cp-harmony-label { margin-top: 4px; }
+.pf-cp-harmony-hint { margin: 2px 0 10px; }
+.pf-cp-harmonies { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--sp-5); }
+.pf-cp-harmony {
+  display: flex; flex-direction: column; gap: 4px; padding: 6px; border-radius: var(--r-md);
+  border: 1px solid var(--chrome-border); background: transparent; cursor: pointer; text-align: start;
+}
+.pf-cp-harmony.on { border-color: transparent; box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg); }
+.pf-cp-harmony-mini { display: block; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 2px rgba(40, 28, 14, 0.18); }
+.pf-cp-harmony-name { font: 600 var(--fs-base) var(--ui-font); color: var(--text); }
+.pf-cp-harmony-note { font: 400 0.6875rem/1.5 var(--ui-font); color: var(--lib-faint, var(--muted)); }
+
+/* These buttons carry a label and a chevron. The chevron used to be a character, so it sat inline;
+   a drawn icon is a block box and pushed itself onto a second line, which doubled the button's
+   height. Laying the button out as a row puts them back on one line. */
+.pf-cp-open {
+  margin-top: 12px; padding: 0; border: 0; background: transparent;
+  color: var(--accent-text); font: 600 var(--fs-base) var(--ui-font); cursor: pointer;
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+}
+.pf-cp-open:hover { text-decoration: underline; text-underline-offset: 3px; }
+/* "The same image, quieter" — a link, not a copy. Disabled until the library has an image to share,
+   because linking to nothing is not a state the design has. */
+.pf-samecheck {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 12px;
+  font: 400 0.8125rem var(--ui-font); color: var(--text); cursor: pointer;
+}
+.pf-samecheck input { accent-color: var(--accent); }
+.pf-samecheck:has(input:disabled) { color: var(--muted); cursor: default; }
+/* The book background's two answers, drawn as the mark's own kinds are (`.pf-icon-kind` supplies the
+   tier, the ring and the chosen state — one definition, so the two choosers cannot drift apart).
+   What each option is carries a picture of itself: "where does the image come from" is a question
+   best answered by showing the image. */
+/* TWO SOURCES, STACKED, EACH EXPLAINING ITSELF.
+   Side by side these were two short chips with a paragraph under them, and the paragraph described
+   whichever was SELECTED — so the option the reader had not chosen, which is the one they are trying
+   to understand, was never explained at all. Stacked, each row has room for its own consequence, and
+   the one that cannot be chosen states its reason where its consequence would be instead of hiding it
+   in a `title` nobody hovers. Same `.pf-icon-kind` tier, ring and chosen state as the mark's own
+   chooser — a column of them rather than a row, which is the whole of the visual change. */
+.pf-bg-kinds { flex-direction: column; }
+.pf-bg-kind { align-items: center; gap: 10px; text-align: start; }
+.pf-bg-kind-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.pf-bg-kind .pf-icon-kind-label { white-space: normal; }
+.pf-bg-kind-sub { font: 400 0.6875rem/1.45 var(--ui-font); color: var(--muted); }
+/* The chosen row says so twice — the accent ring it shares with every other chooser, and a tick, so
+   the state survives a reader who cannot separate the two rings by colour alone. */
+.pf-bg-kind-tick { flex: none; color: var(--accent); font-size: 0.8125rem; line-height: 1; }
+.pf-bg-kind-thumb {
+  width: 34px; height: 34px; flex: none; border-radius: 7px;
+  background-color: var(--paper-bg); background-size: cover; background-position: center;
+  box-shadow: inset 0 0 0 1px var(--chrome-border);
+}
+/* NOTHING CHOSEN YET is drawn as an empty frame, not as a filled square: a solid paper-coloured chip
+   beside a photograph reads as "a picture that failed to load" rather than as "no picture". */
+.pf-bg-kind-thumb.empty {
+  background-color: transparent;
+  box-shadow: none;
+  border: 1px dashed color-mix(in srgb, var(--text) 26%, transparent);
+}
+.pf-bg-kind:disabled { opacity: 0.55; cursor: default; }
+.pf-bg-kind:disabled:hover { background: transparent; }
+/* The line that says what checking the box does. It belongs to the box, so the gap that used to sit
+   under the box now sits under the PAIR — otherwise the explanation reads as the next thing down
+   rather than as part of this one. `.pf-hint`'s own top margin supplies the space between them. */
+.pf-samecheck:has(+ .pf-samecheck-hint) { margin-bottom: 0; }
+.pf-samecheck-hint { margin-top: 4px; margin-bottom: 12px; }
+
+.pf-deferred { font: 400 0.8125rem/1.7 var(--ui-font); color: var(--muted); }
+
+/* ---- the editor: a stage and a 344px rail ---- */
+.pf-editor { position: fixed; inset: 0; z-index: 70; background: var(--app-bg); display: flex; flex-direction: column; }
+/* 60px, the design's toolbar height, stated rather than left to whatever the tallest child happens
+   to be (it measured 56px). `min-height` so a longer profile name can still grow the bar. */
+.pf-editor-head {
+  display: flex; align-items: center; gap: 12px; padding: 0 16px; min-height: 60px;
+  border-bottom: 1px solid var(--chrome-border); background: var(--chrome-bg);
+}
+/* The profile's own face in the toolbar, at the design's 34px. A chosen image fills it; a chosen
+   colour becomes the dot; otherwise the initial is set in the profile's own book face, which is the
+   same three-way — and the same fallback — the card uses. */
+/* The design's four seals, at its 46px. Each is drawn on the profile's own paper in its own ink, so
+   the choice is made by looking at the thing rather than at a font name. */
+.pf-seal-faces { display: flex; gap: 8px; margin-top: 10px; }
+.pf-seal-face {
+  width: 46px; height: 46px; flex: none; border-radius: var(--r-md); cursor: pointer; border: 0;
+  display: grid; place-items: center; font-size: 1.25rem; line-height: 1;
+  box-shadow: inset 0 0 0 1px var(--chrome-border);
+}
+.pf-seal-face.on { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg); }
+
+/* The chosen icon at the design's 64px, with its double ring — accent, then the chrome it sits on,
+   which is what makes the ring read as a selection rather than as a border. */
+.pf-icon-now {
+  width: 64px; height: 64px; flex: none; border-radius: 12px;
+  display: grid; place-items: center; overflow: hidden; margin-bottom: 12px;
+  font-size: 1.75rem;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg);
+}
+.pf-icon-now-img { width: 100%; height: 100%; }
+.pf-icon-now-dot { width: 26px; height: 26px; border-radius: 50%; }
+
+/* ---- identity: the first page's lead ----
+   The mark and the name as one pair, not two stacked fields of equal weight. `gap` and `flex` are
+   direction-agnostic, so this mirrors in Arabic with no second rule; the name is given the larger
+   setting because it is the thing being named.
+
+   IT SITS HERE, AFTER `.pf-input` AND `.pf-icon-now`, AND THAT IS LOAD-BEARING. All of these are
+   single-class selectors, so specificity is equal and the later rule wins. Declared earlier in the
+   file — where it first went — the mark stayed 64px and the name stayed at 14px: the markup said
+   "lead" and the cascade said otherwise. Measured before moving it: markPx 64, nameFont 13.986px. */
+.pf-identity-lead { display: flex; align-items: center; gap: 16px; margin-bottom: 22px; }
+.pf-identity-namefield { flex: 1 1 auto; margin-bottom: 0; min-width: 0; }
+.pf-icon-now--lead { width: 76px; height: 76px; margin-bottom: 0; font-size: 2rem; }
+.pf-input--lead { font: 500 1.0625rem var(--ui-font); padding: 10px 12px; }
+
+/* THE MARK AS A CONTROL. It is a button only where there is something to do to it — with a picture
+   it opens the framing, with none it asks for one. For a seal or a colour it stays what it always
+   was, presentational, because the tier below already owns those two choices and a button that does
+   nothing is worse than no button. */
+.pf-icon-now--live { padding: 0; border: 0; cursor: pointer; font: inherit; }
+.pf-icon-now--live:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
+.pf-icon-now--live.on {
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 5px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+/* Nothing chosen yet: the mark IS the invitation, rather than a sentence under a row of buttons.
+   Quiet by construction — a dashed edge on the profile's own paper, no accent until it is hovered,
+   because an empty state that shouts is an error message. */
+.pf-icon-now--empty {
+  box-shadow: none; color: var(--muted);
+  border: 1px dashed color-mix(in srgb, var(--text) 30%, transparent);
+}
+.pf-icon-now--empty:hover { border-color: var(--accent); color: var(--text); }
+.pf-icon-now-plus { font-size: 1.75rem; line-height: 1; }
+
+/* ---- framing: a crop control, not an image editor ----
+   One stage, one slider, one way back. It commits as it moves, like every other control in this
+   editor, so the mark above and the sizes below travel with the hand. */
+.pf-frame {
+  margin-top: 12px; padding: 12px 12px 10px; border-radius: 12px;
+  border: 1px solid var(--chrome-border);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+.pf-frame-stage {
+  position: relative; width: 100%; max-width: 220px; aspect-ratio: 1 / 1;
+  margin-inline: auto; border-radius: 14px; overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--chrome-border);
+  /* THE STAGE DOES NOT MIRROR. Its numbers come from pointer coordinates, which have no reading
+     direction; the background's focal control has carried the same rule since it was built. */
+  direction: ltr;
+  /* So a drag on a touch screen frames the picture instead of scrolling the chapter. */
+  touch-action: none;
+}
+.pf-frame-stage.movable { cursor: grab; }
+.pf-frame-stage.movable:active { cursor: grabbing; }
+.pf-frame-stage:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.pf-frame-img { position: absolute; inset: 0; }
+.pf-frame .pf-ms-head { margin-top: 12px; }
+/* ADJUSTING IS A MODE, SO IT HAS A DOOR. The hint says what the stage does; «تمّ» ends it. It does
+   not save — the draft has been changing all along, and the profile's own «حفظ» still owns that. */
+.pf-frame-foot { display: flex; align-items: flex-end; gap: 12px; margin-top: 10px; }
+.pf-frame-hint {
+  flex: 1; min-width: 0; font: 400 0.75rem/1.6 var(--ui-font); color: var(--lib-faint, var(--muted));
+}
+.pf-frame-done { flex: none; min-height: 30px; padding-block: 0; }
+
+/* WHERE IT ACTUALLY APPEARS. Chosen at 220px, then lived with at 22 — so the three real sizes are
+   drawn here, in their real proportions, through the same helper. The switcher's is 16:10 and the
+   others are square, which is the whole point: `cover` keeps a different part of one picture at a
+   different aspect, and a framing that only survives large is visibly one that only survives large. */
+.pf-frame-sizes { display: flex; align-items: center; gap: var(--sp-5); margin-top: 12px; }
+.pf-frame-sizes-label {
+  font: 500 0.6875rem var(--ui-font); color: var(--muted); margin-inline-end: 2px;
+}
+.pf-frame-size {
+  position: relative; flex: none; overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--chrome-border);
+}
+.pf-frame-size > span { position: absolute; inset: 0; }
+.pf-frame-size.s-card { width: 30px; height: 30px; border-radius: var(--r-md); }
+.pf-frame-size.s-chip { width: 22px; height: 22px; border-radius: 6px; }
+.pf-frame-size.s-switch { width: 34px; height: 21px; border-radius: var(--r-xs); }
+
+/* ---- Sard's own focus, on the identity controls ----
+   THE PAGE HAD NONE. Three `:focus-visible` rules existed in this stylesheet and not one of them was
+   an identity control, so a reader arriving by keyboard got the browser's ring on a page whose whole
+   subject is how a thing looks. Same ring, same offset, every control. */
+.pf-icon-kind:focus-visible,
+.pf-seal-face:focus-visible,
+.pf-bm-color:focus-visible,
+.pf-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Hover was missing on both swatch rows: the seal faces and the mark colours were the only
+   pressable things here that never acknowledged the pointer. */
+.pf-seal-face:hover {
+  box-shadow: inset 0 0 0 1px var(--chrome-border),
+    0 0 0 2px color-mix(in srgb, var(--accent) 38%, transparent);
+}
+.pf-bm-color:hover { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08), 0 0 0 2px var(--chrome-bg),
+  0 0 0 3.5px color-mix(in srgb, var(--accent) 44%, transparent); }
+/* The pressed state of a toggle that opens a panel — the framing button, and anything like it. */
+.pf-btn.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.pf-input::placeholder { color: var(--muted); opacity: 0.7; }
+
+.pf-editor-seal {
+  width: 34px; height: 34px; flex: none; border-radius: 9px;
+  display: grid; place-items: center; overflow: hidden;
+  font-size: 0.9375rem; box-shadow: inset 0 0 0 1px var(--chrome-border);
+}
+.pf-editor-seal-img { width: 100%; height: 100%; }
+.pf-editor-seal-dot { width: 14px; height: 14px; border-radius: 50%; }
+.pf-editor-ident { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.pf-editor-title { font: 600 0.9375rem var(--ui-font); color: var(--text); }
+/* What the thing is, under its name — so a profile's own name never has to carry that job. */
+.pf-editor-sub { font: 400 0.625rem var(--ui-font); color: var(--lib-faint, var(--muted)); }
+.pf-editor-dirty { font: 400 0.75rem var(--ui-font); color: var(--accent); }
+/* The same fact, said quietly, where the active profile is always named. It replaces the subtitle
+   rather than adding a badge: one line saying "unsaved" is calmer than two lines competing, and the
+   theme name it stands in for is the least urgent thing on the row. */
+.pf-switch-sub { transition: color 140ms ease; }
+.pf-editor-spacer { flex: 1; }
+.pf-editor-x {
+  width: 28px; height: 28px; border: 0; border-radius: var(--r-sm); background: transparent;
+  color: var(--muted); font-size: 0.9375rem; cursor: pointer;
+}
+.pf-editor-x:hover { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
+.pf-editor-body { flex: 1; min-height: 0; display: flex; }
+
+/* ---- the preview stage (design frame 2a) ----
+   THE STAGE IS THE PREVIEW'S COORDINATE SYSTEM. Everything inside it is an absolutely-positioned
+   sibling in one fixed paint order — image, scrim, segmented control, face, focus frame — and
+   nothing sits in normal flow. That is the design's own structure, and it is what makes the rest
+   possible: a face can fill the stage, the focus frame can carry the design's insets because they
+   are measured against exactly this box, and the reading bar can anchor to the stage's bottom edge.
+
+   IT REPLACED A 16:10 "SPECIMEN CARD" WHICH THE DESIGN DOES NOT HAVE, and that card was the root of
+   the whole cluster of preview faults: it is what made a postage-stamp card thumbnail reusable as
+   the library face, what squeezed the page to 79% of a card with no desk left around it, and what
+   left the design's focus insets meaningless so they were dropped rather than drawn.
+
+   THE STAGE OWNS THE CLIP *AND* THE CONTAINING BLOCK — it must own both, or neither holds.
+   `overflow: hidden` alone did not contain the background image. Nothing between the image layer and
+   the root was positioned, so it resolved its containing block against the whole editor, and a
+   clipper only clips descendants whose containing block lies INSIDE it. Measured: `inset: -8%` of
+   the 1100 × 720 window is exactly −88px / −57.6px, and the image painted a 1276 × 835 sheet over
+   the rail, the chapter column and the toolbar — enabling a book background replaced the editor with
+   the picture. `position: relative` makes this element the containing block as well as the clipper,
+   so the rule is structural rather than remembered: a layer inside the stage cannot leave the stage.
+
+   THE `--p*` PROPERTIES ARE SET HERE, from the draft. The stage is the palette scope as well as the
+   coordinate system, exactly as the design's frame is, so both faces are plain CSS consumers and a
+   colour typed in the Paper chapter repaints them without a value being threaded through. */
+.pf-stage {
+  flex: 1; min-width: 0; position: relative; overflow: hidden; background: var(--pd);
+  container-type: size;
+}
+
+/* THE COMPOSITION, AT THE SIZE THE DESIGN DREW IT, SCALED TO FIT.
+   The design's stage is 656 × 720. Every number inside this box is therefore the design's own,
+   literally — a 452px page, 56px face insets, 18px type, the focus insets exactly as written — and
+   ONE factor scales the whole picture. Nothing is re-derived, so nothing can be re-derived wrongly.
+
+   WHY IT IS NEEDED, MEASURED. A fixed 452px page is exactly right at the design's 1180px frame and
+   wrong at every other width, in BOTH directions: at a 1000px window the page took 95% of the stage
+   and left 12px of desk; at 1920 it took 32%, and the `paper` chapter's focus frame — whose insets
+   are PERCENTAGES of the stage — had grown 246px wider than the page it is supposed to be pointing
+   at, so it framed bare desk. The design's percentage insets only mean anything if the page scales
+   with the stage, which is what this box makes true again.
+
+   IT IS NOT THE OLD `.pf-stage-frame`. That was an invented 16:10 CARD with a radius, a shadow and a
+   clip, which is what made a card thumbnail reusable as the library face. This is an invisible
+   layout box at the design's own stage ratio; the desk image, the scrim and the segmented control
+   stay full-bleed on the stage, exactly where the design puts them.
+
+   CENTRED BY `inset: 0` + `margin: auto`, not by a 50% offset and a translate. A logical offset
+   paired with a physical translate does not centre anything in an RTL frame — it lands the box one
+   full width off — which is the same trap the reading bar fell into and was measured at −157.1px.
+   This pair is direction-independent, and `scale` keeps its default centre origin.
+
+   THE FALLBACK IS DELIBERATE. `scale` is its own property rather than part of a `transform`: if a
+   renderer will not divide two lengths, `scale` is invalid at computed-value time and falls back to
+   1, and the centring — which owes nothing to the transform — still holds. The composition then
+   renders at exactly the design's size, centred, clipped only if the stage is smaller than it:
+   degraded, never broken. Folded into one `transform`, an invalid factor would take the centring
+   down with it. */
+.pf-stage-fit {
+  /* The composition's own pixels: 656 wide, the design's width, and as tall as the stage actually
+     is. It used to be a fixed 656 x 720 scaled by the SMALLER of the two ratios, which letterboxed
+     it against any stage of a different shape — measured at a 2036 x 1317 stage, a 1200-wide
+     composition with 418px of dead margin on each side, using 59% of the width it was given. That is
+     what made both faces read as small cards adrift in a canvas.
+
+     Taking the height from the stage instead means the environment IS the stage, and one factor
+     still scales the whole picture, so every number inside is the design's own and none of them had
+     to be re-derived. `top`/`left` and a 0 0 origin are PHYSICAL on purpose: a logical offset with a
+     physical origin does not line up in an RTL frame. */
+  --pf-k: calc(100cqw / 656px);
+  position: absolute; top: 0; left: 0;
+  width: calc(100cqw / var(--pf-k));
+  height: calc(100cqh / var(--pf-k));
+  scale: var(--pf-k);
+  transform-origin: 0 0;
+}
+/* THE REFERENCE WINDOW: 1440 x 900.
+   Every chrome dimension in the running application is FIXED PIXELS, not a proportion — the library
+   sidebar is `width: 244px; flex: none` at every window size, and the reading page is an absolute
+   measure (480..1400px, `pageWidthPx`) capped only by `min(100%)`. Measured across 1180..3200, the
+   same 244px sidebar occupies 20.68% of the window down to 7.63% of it, and the page at one unchanged
+   setting occupies 100% down to 43.8%.
+
+   A scale model of a fixed-pixel interface is therefore meaningless until you say WHICH window it is a
+   model of. Without that, "the sidebar is too wide" is unfalsifiable: it is too wide for a 2560 window
+   and too narrow for a 1180 one, and both are the same drawing.
+
+   1440 x 900 is that window. Each face carries its own scale, because each face's box stands for the
+   window in a different way: the library is a framed PANE inset in the composition (604 design-px, so
+   244px -> 102), while the book face's desk is the full composition (656 design-px, so a 940px default
+   measure -> 428). Anything here that models a real element is derived from that window and says so;
+   anything that is a deliberate abstraction of the design's (the reading pill, the bookmark's
+   proportion) keeps its drawn shape and is only scaled. */
+/* THE PICTURE LAYERS. Where they live differs per face, because the two real surfaces differ.
+   The bleed is there so a blur samples beyond the edge instead of fading to nothing at it; the
+   owning element's clip is what keeps the paint inside.
+
+   LIBRARY: the picture belongs to the library window, which is what the face depicts, so it lives
+   inside `.pf-lib` and is bounded by it — the real Library's background fills the Library.
+
+   BOOK: the picture belongs to the READING ENVIRONMENT, not to the sheet lying on it, so it lives
+   on the composition and the page sits over it. That is what makes the page and its environment two
+   independent spaces: changing the measure resizes the page and reveals more environment around it,
+   because the environment never hears about the page at all. Hung inside the page instead, it was a
+   child of the thing being resized and scaled with it. */
+.pf-lib-bg,
+.pf-stage-bg {
+  position: absolute; inset: -40px; background-size: cover; background-position: 62% 44%;
+  /* THE READER SOFTENS ITS DESK AND THIS DID NOT. `.reader-desk::before` carries
+     `filter: blur(var(--bg-rd-blur))`, so a reader with any blur set sees a soft environment behind
+     the page while this showed the photograph at full sharpness — which is what put hard
+     photographic structure directly behind the sample text. `--pfrost` is the page's own frost, the
+     same value the reading surface applies for the same reason: a page thin enough to see through
+     needs the thing behind it to stop competing with the words. */
+  filter: blur(var(--pblur, 0px));
+}
+.pf-lib-scrim,
+.pf-stage-scrim { position: absolute; inset: 0; background: var(--pd); }
+
+.pf-stage-segbar {
+  position: absolute; inset-block-start: 14px; inset-inline: 0;
+  display: flex; align-items: center; justify-content: center; gap: var(--sp-5); z-index: 4;
+}
+.pf-stage-seg {
+  display: flex; gap: 2px; padding: 3px; border-radius: 9px;
+  background: color-mix(in srgb, var(--pc) 92%, transparent);
+  border: 1px solid var(--pb); box-shadow: 0 3px 10px rgba(20, 14, 6, 0.18);
+}
+.pf-stage-seg button {
+  padding: 6px 14px; border: 0; border-radius: 7px; background: transparent;
+  color: var(--pm); font: 500 0.75rem var(--ui-font); cursor: pointer;
+}
+.pf-stage-seg button.on { background: var(--pp); color: var(--px); }
+
+/* ---- the library face ---- */
+.pf-lib {
+  position: absolute; inset: 56px 26px 26px; border-radius: 8px; overflow: hidden;
+  box-shadow: 0 18px 44px rgba(20, 14, 6, 0.3); display: flex;
+}
+/* Where interface texture is actually visible. The whole sidebar fades, its content included — the
+   same treatment `SardMini` gives the card, so the two pictures of one profile cannot disagree. */
+/* THE LIBRARY'S CONTENTS SIT ABOVE ITS PICTURE. Both are `position: relative` for painting order,
+   not for placement: the picture layers are absolutely positioned, and positioned descendants paint
+   AFTER static ones in the same stacking context — so a static shelf grid ends up underneath the
+   very background it is supposed to be seen against. The sidebar happened to survive that because
+   `opacity` below 1 makes it a stacking context of its own; the main area had nothing to save it and
+   the shelves vanished behind the scrim. Measured: `elementFromPoint` at the centre of the main area
+   returned the scrim rather than the grid. */
+/* 244px of a 1440px window, drawn on the 604px pane: 244 / 1440 x 604 = 102. The sidebar is `flex:
+   none` in both places because it is fixed in both places — it does not share the window's width, it
+   is subtracted from it. The main area is then 502 design-px, which is the real 1196px stage at the
+   same scale; the two agree to a pixel, which is what says the reference is being applied and not
+   just asserted. */
+/* THE SURFACE THINS, NOT THE PANEL.
+   `opacity` fades an element AND everything inside it, so at Glass the preview's brand, its rows
+   and its text all faded with the panel — which is not what the real sidebar does. The real one
+   thins its GROUND and leaves its contents at full strength. Mixing the ground toward transparent
+   is that behaviour, and it is what makes the preview a preview rather than an impression. */
+.pf-lib-side {
+  position: relative;
+  width: 102px; flex: none;
+  /* THE SAME FORMULA THE APPLICATION USES, character for character, reading the same three variables
+     the draft writes. The old line multiplied a raw alpha and could not match: measured in the
+     release, the panel here read 90/85.6/78% while the real sidebar rendered 85/80/80%. A preview
+     that computes its own answer is not a preview. */
+  background: color-mix(in srgb, var(--pc)
+    calc(var(--ui-floor, 0%) + (var(--ui-base, 100%) - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
+  backdrop-filter: blur(var(--ui-frost, 0px))
+    saturate(calc(1.1 * var(--ui-sat, 1))) brightness(var(--ui-bright, 1));
+  -webkit-backdrop-filter: blur(var(--ui-frost, 0px))
+    saturate(calc(1.1 * var(--ui-sat, 1))) brightness(var(--ui-bright, 1));
+  border-inline-end: 1px solid var(--pb); padding: 14px 12px;
+  display: flex; flex-direction: column; gap: 16px;
+}
+.pf-lib-brand { display: flex; align-items: center; gap: 7px; }
+.pf-lib-brand-dot { width: 14px; height: 14px; flex: none; border-radius: 50%; background: var(--pa); }
+.pf-lib-brand-rule { flex: 1; height: 2px; background: var(--px); opacity: 0.3; }
+.pf-lib-bars { display: flex; flex-direction: column; gap: 11px; margin-top: 6px; }
+.pf-lib-bar { border-radius: 2px; }
+.pf-lib-bar.a { height: 3px; width: 80%; background: var(--pa); }
+.pf-lib-bar.b { height: 2px; width: 62%; background: var(--pm); }
+.pf-lib-bar.c { height: 2px; width: 70%; background: var(--pm); opacity: 0.7; }
+.pf-lib-bar.d { height: 2px; width: 52%; background: var(--pm); opacity: 0.55; }
+/* The active profile, where Sard actually shows it — this is what `identity` points at. */
+.pf-lib-chip {
+  margin-top: auto; display: flex; align-items: center; gap: 7px; padding: 6px;
+  border-radius: 7px; background: color-mix(in srgb, var(--px) 5%, transparent);
+}
+.pf-lib-avatar {
+  width: 22px; height: 22px; flex: none; border-radius: 6px; background-color: var(--pp);
+  position: relative; overflow: hidden;
+}
+.pf-lib-avatar-img { position: absolute; inset: 0; }
+.pf-lib-avatar.seal {
+  display: grid; place-items: center; font-size: 12px; font-style: normal; color: var(--px);
+}
+.pf-lib-chip-rule { flex: 1; height: 2px; background: var(--px); opacity: 0.34; }
+.pf-lib-main { position: relative; flex: 1; min-width: 0; padding: 16px 16px 0; }
+.pf-lib-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 14px; }
+/* PX, NOT REM, EVERYWHERE INSIDE THE FIT BOX. `rem` would make this type follow the application's
+   UI scale as well as the box's own scale, which is two scales over one picture — measured here as
+   16.6px where the design draws 18, because the app's root is ~14.8px rather than the mock's 16.
+   The box's scale factor is the only scale the composition has, so the design's px are literal. */
+.pf-lib-title { font: 700 17px var(--ui-font); color: var(--px); }
+.pf-lib-count { font: 500 10px var(--ui-font); color: var(--pf); }
+/* EIGHT columns, because eight is what a shelf actually shows at the reference window: measured
+   covers of 118.6 x 177.9 on a 138.6px pitch across a 1196px stage. Five made each spine half again
+   too wide, which read as a picture-book shelf rather than a library. The 2/3 spine is the real
+   cover's own ratio, measured at 0.667 at every viewport, so only the count and the column gap
+   (20px real -> 8) are derived here; the row gap stays the design's vertical rhythm. */
+.pf-lib-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 14px 8px; }
+.pf-lib-spine { aspect-ratio: 2 / 3; border-radius: 3px; box-shadow: 0 5px 12px rgba(20, 14, 6, 0.28); }
+
+/* ---- the book face ---- */
+/* THE PAGE IS THE FULL HEIGHT OF THE ENVIRONMENT, which is what stops the picture escaping above it.
+   `.page-sheet` is `block-size: 100%` in the reading surface, so the real page is exactly as tall as
+   the desk it lies on and the environment can only ever be seen BESIDE it. Measured on a real open
+   book: 0px of image above the page, 0px below, 300px either side.
+
+   This face used to inset the page 56px from the top to clear the face switch, which opened a
+   56 design-px band across the full width where the picture showed above the page — a band the
+   reading surface does not have. At a wide measure the side margins are ~9px, so that band was
+   practically the only place the environment was visible, and it read as the image floating free of
+   the page rather than being seen through it.
+
+   The face switch now overlays the page's top, exactly as the reader's own top bar does (the reading
+   area keeps `inset-block-start: 0` underneath it — RAWY-142). The bookmark overhangs by 2px and is
+   clipped by the stage, which is the same 2px the reading surface clips against its own page edge.
+
+   The picture is NOT clipped to the page and must not be: it stays on the composition, sized to the
+   environment, so changing the measure reveals more environment beside the page instead of resizing
+   the image. The page is where it is SEEN, not what it is sized to. */
+.pf-bookface { position: absolute; inset: 0; display: flex; justify-content: center; }
+/* THE DEFAULT MEASURE IS 428px: the reader's own default of 940px (`pageWidthPx(0.5)`) on the
+   reference window, 940 / 1440 x 656. The desk stays visible on both sides, which is the only way
+   page translucency — and the image it is translucent against — can be judged at all. */
+/* The measure is the READER'S, borrowed for the preview and never written back — see
+   `previewPageWidth`. Absent, it is their default drawn at the reference. */
+.pf-page {
+  position: relative; width: var(--pf-page-w, 428px); padding: 48px 42px 0;
+  box-shadow: 0 0 30px rgba(20, 14, 6, 0.28); color: var(--px);
+}
+/* The paper UNDER the type rather than the type's own background, so the sheet thins over the image
+   while the words stay fully opaque — the same compositing the real reading surface uses. */
+.pf-page-paper { position: absolute; inset: 0; background: var(--pp); opacity: var(--pgo); }
+/* THE RUNNING HEAD CARRIES NO SIZE OF ITS OWN.
+   It held `font: 600 10.5px/1`, a flat value in a box where everything else is stated in the READER's
+   pixels and reduced once by the miniature's zoom. So the body answered the text-size control and this
+   could not: measured across the 0.8-2.5 range the body ran 12.8 -> 40px while this stayed at 10.5,
+   and their relationship drifted 3.12x (0.82 down to 0.26).
+   The size now arrives from BookFace, as the body's does, so the one control moves both. The 10.5 the
+   design chose is not lost — it is the RATIO that expression carries (see LABEL_RATIO).
+   The gap below is stated in `em` for the same reason: it was a flat 22px, so a growing head crowded
+   the body it heads. 22/10.5 is the proportion the design drew. */
+.pf-page-label {
+  position: relative; font-weight: 600; line-height: 1; font-family: var(--ui-font);
+  letter-spacing: 0.02em; color: var(--pf); margin-bottom: 2.095em;
+}
+.pf-page-ar { position: relative; margin: 0 0 20px; font-size: 18px; line-height: 2.15; }
+.pf-page-hl { padding: 0.05em 0.2em 0.09em; border-radius: 0.12em; }
+/* THE REFERENCE MARK'S ANCHOR, and the whole of what CSS contributes to it.
+   The twin rule is two absolutely-positioned strokes whose height, radius, colour and distance all
+   arrive inline from `resolveRefRule` — the same resolver the book draws with — so the only thing
+   needed here is the box they are positioned against. Giving them any geometry in this file would be
+   a second source for numbers the engine already owns, which is exactly how a preview drifts from the
+   page it is previewing. No padding and no background: the mark is drawn BELOW the words and must not
+   move them, or the two size controls would re-wrap the line as the reader dragged them. */
+.pf-page-ref { position: relative; }
+/* A RUN OF SELECTED TEXT, drawn the way the reading surface draws one: the palette's selection wash
+   behind the words and nothing else. `::selection` sets a background and no other property — no
+   radius, no padding, no change of ink — so neither does this. The colour arrives inline, from the
+   reading palette's own `selection`, because that is the field the `marks` chapter is showing.
+   It replaced an accent UNDERLINE, which was the one mark on this page that showed something Sard
+   does not draw: nothing in the reading surface underlines a run of text.
+
+   `.pf-page-sel` therefore has no rule of its own, and that is the faithful answer rather than an
+   omission: a selection is one background colour, the colour is the palette's and arrives inline, and
+   anything added here would be a treatment the reading surface does not give it. */
+
+/* THE READ-ALOUD MARKS, AS THE OVERLAY PAINTS THEM.
+   The band is the span's own background, the baseline rule a second layer pinned to its bottom edge,
+   and the word token an overlay above the glyphs — the same three shapes, in the same order, that
+   `drawReadingSpotlight` and `drawReadingPill` append to the SVG. Their colours, strengths and
+   proportions all arrive as custom properties from `BookFace`, resolved by the reading engine's own
+   `resolveSpotlight` / `resolvePill` and `TRACK_SHAPE`, so there is no second opinion here about what
+   the marks look like — only about how the same answer is painted. */
+.pf-page-spot.on {
+  /* PER LINE FRAGMENT, exactly as the overlay draws it. `drawReadingSpotlight` walks the range's
+     client rects and appends one rounded band and one baseline rule PER RECT, so a sentence spanning
+     two lines gets two complete marks. A CSS background on a wrapped inline defaults to `slice`,
+     which spreads ONE box across the fragments: the rounded ends appear only at the sentence's start
+     and finish, and `background-position: bottom` puts the baseline rule under the LAST line alone.
+     `clone` gives each fragment its own box, which is the same rule stated in the other medium. */
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  background-color: var(--spot-band);
+  background-image: linear-gradient(var(--spot-rule), var(--spot-rule));
+  background-repeat: no-repeat;
+  background-position: bottom left;
+  background-size: 100% var(--spot-rule-h);
+  border-radius: var(--spot-r);
+}
+.pf-page-pill { position: relative; }
+/* A LAYER OVER THE WORD, NOT A BACKGROUND UNDER IT, and that is the whole of the pill's design: the
+   token is near-solid, and what keeps the glyphs readable through it is the blend (multiply on paper,
+   screen on dark), which needs something painted ON TOP of the text to blend WITH. `opacity` on the
+   span itself would fade the letters instead, which is the mistake `.pf-page-hl` records above. */
+.pf-page-pill.on::after {
+  content: ""; position: absolute; inset-block: 0;
+  inset-inline: calc(-1 * var(--pill-pad));
+  background: var(--pill-fill); opacity: var(--pill-op); mix-blend-mode: var(--pill-blend);
+  border-radius: var(--pill-r); pointer-events: none;
+}
+.pf-page-la {
+  position: relative; margin: 0; font-size: 15px; line-height: 1.85;
+  direction: ltr; text-align: start; opacity: 0.92;
+}
+/* Hanging over the page's top edge, as the reader's own marker does. `left` is physical on purpose —
+   the marker does not flip with the interface language, so a mirrored preview would be showing
+   something the reader will never see. The page therefore must NOT clip: `overflow: hidden` here
+   would cut the tab off at exactly the edge the design lets it overhang. */
+.pf-page-mark { position: absolute; inset-block-start: -2px; transform: translateX(-50%); }
+
+/* Sard's reading bar, on the desk below the page. It carries the interface texture because it is
+   chrome, which is what makes `texture` legible on the book face at all. */
+/* `left`, not `inset-inline-start`. The design's frame is RTL-only, so it can pair a logical offset
+   with a PHYSICAL `translateX`; this stage is RTL too but the pair does not centre anything. In RTL
+   `inset-inline-start: 50%` resolves to `right: 50%`, which puts the box's right edge on the centre
+   line, and `translateX(-50%)` then moves it physically left — landing the pill exactly one full
+   width off centre. Measured: −157.1px against a 157.1px pill. Physical `left` centres in both
+   directions, which is what the design draws. */
+/* A STATUS MARK, NOT A CONTROL — and the weight has to say so.
+   In the reading surface this chrome is HIDDEN while you read: `.reader-root` carries `chrome-hidden`
+   and `.rc-bottom` is translated away until you ask for it, and even then it is a quiet 56px bar
+   holding controls, not a raised object. So the loudest thing on the book face should not be the one
+   piece of chrome that is normally not on screen at all. It is here only so that panel colour and
+   interface texture can be judged against the page, which is a job for something small.
+
+   ⚠ THE SHADOW WAS THE FAULT, MORE THAN THE SIZE. Everything in this pill is in the composition's
+   design-px and is multiplied by the composition's scale, which reaches 3.10 on a 2560 window — so
+   `0 14px 34px` was rendering as a 43px-offset, 105px-wide bloom under a 377x81 lozenge. That is what
+   read as a floating primary button. A shadow this small has no business scaling at all: it is now a
+   whisper that survives magnification, and the hairline border does the separating.
+
+   The type and padding come down with it (10px -> 9px, 5/12 -> 3/8), which lands the pill at about
+   19 design-px against the page's 18px body line — subordinate to the words, which is the hierarchy
+   the reading surface actually has. */
+.pf-readbar {
+  position: absolute; inset-block-end: 16px; left: 50%;
+  transform: translateX(-50%); display: flex; align-items: center; gap: var(--sp-4);
+  padding: 3px 8px; border-radius: 999px;
+  /* Its own 88%, scaled by the step — the same shape as the reader surfaces, which are scaled
+     rather than overwritten so the hierarchy between them survives. */
+  background: color-mix(in srgb, var(--pc) calc(88% * var(--po, 1)), transparent);
+  border: 1px solid var(--pb); box-shadow: var(--sh1);
+}
+.pf-readbar-name { font: 500 9px/1.4 var(--ui-font); color: var(--pm); }
+.pf-readbar-rule { width: 1px; height: 9px; background: var(--pb); }
+.pf-readbar-pct { font: 600 9px/1.4 var(--ui-font); color: var(--pa); }
+
+/* ---- the shell: rail · chapter · preview ----
+   Three columns, because the editor has three jobs and they do not take turns: the rail says where
+   you are, the chapter holds one set of controls, and the preview answers. The rail sits at the
+   inline START — the right in Arabic, the left in English — and the preview takes what is left.
+   The chapter column is fixed at 392px so a specimen is read at a stable measure rather than
+   reflowing every time the window moves. */
+.pfe { flex: 1; min-height: 0; display: flex; }
+
+/* THE DESIGN'S OWN WIDTHS (frame 2a): rail 132, chapter 392, preview the remainder. The rail was
+   268px — twice the design — and it took that space from the preview, which measured 452px against
+   the design's ~654. The page was drawn at 452 inside that ~654 at the time, so a 452px stage left
+   the paper filling the preview edge to edge with none of the desk the chapter exists to let you
+   balance. (The page measure is now 428, derived from the reference window — see `.pf-stage-fit`.)
+   The type comes down with the width: the design sets rail names at .75rem and values at .625rem,
+   which is what makes 132px a comfortable column rather than a cramped one. */
+/* THE RAIL GROWS A LITTLE WITH THE WINDOW, because it was the only column that did not.
+   The rail and the chapter are fixed columns and the preview takes the remainder, so every pixel a
+   wider window brought went to the preview alone: measured, the controls hold 41% of a 1280 window
+   and 20% of a 2560 one, against a preview that goes from 756px to 2036px. The navigation did not
+   get smaller, but it read as smaller every time the window grew, and its second lines — a profile's
+   name, the chosen paper, the background's file — were being clipped at every size.
+
+   `clamp` keeps the design's 132px as the FLOOR, so nothing below about 1280 changes at all, and
+   caps the growth at 216 so this stays a rail and never becomes a panel: 132 → 151 → 202 → 216
+   across the four sizes. That is enough for the second line to finish its word, and it moves the
+   controls' share of a 2560 window from 20% back to 24% without taking the preview's primacy away. */
+.pfe-rail {
+  width: clamp(132px, 10.5vw, 216px); flex: none; background: var(--chrome-bg);
+  border-inline-end: 1px solid var(--chrome-border); overflow-y: auto; padding: 14px 10px;
+  display: flex; flex-direction: column; gap: var(--sp-2);
+}
+/* `relative` so the active marker below has something to sit in. */
+.pfe-rail-item {
+  position: relative;
+  display: flex; flex-direction: column; align-items: stretch; gap: 4px; width: 100%;
+  padding: 11px 11px 12px; border: 0; border-radius: 9px; background: transparent;
+  cursor: pointer; text-align: start;
+}
+.pfe-rail-item:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.pfe-rail-item.is-open { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+/* WHERE YOU ARE, said twice — a ground and an edge. The ground alone was doing all the work at 12%
+   of the accent, which on the darker papers is nearly the rail's own colour; the marker is the part
+   that survives every one of them because it is the accent at full strength. Logical inset, so it
+   sits at the reading-start edge in both directions, and inset from the ends so it reads as a mark
+   on the item rather than a rule down the column. */
+.pfe-rail-item.is-open::before {
+  content: ""; position: absolute; inset-inline-start: 0; inset-block: 9px;
+  width: 2px; border-radius: 2px; background: var(--accent);
+}
+/* The section name is the thing you scan, so it carries the size; the value underneath is support
+   and stays clearly below it. 0.75/0.625rem put both in the same faint band — at 1280 that is
+   11.3px over 9.4px, which is small type doing two different jobs at almost one weight. */
+.pfe-rail-name {
+  display: flex; align-items: center; gap: var(--sp-2);
+  font: 600 0.8125rem/1.35 var(--ui-font); color: var(--text); letter-spacing: 0.004em;
+}
+.pfe-rail-item.is-open .pfe-rail-name { color: var(--accent); }
+/* The dot is the whole point of the rail: "what have I changed", seen rather than remembered. */
+.pfe-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); flex: none; }
+.pfe-rail-value {
+  font: 400 0.6875rem/1.3 var(--ui-font); color: var(--lib-faint, var(--muted));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.pfe-chapter {
+  width: 392px; flex: none; overflow-y: auto; padding: 18px 18px 24px;
+  border-inline-end: 1px solid var(--chrome-border);
+}
+.pfe-ch-title { margin: 0; font: 600 1.0625rem var(--ui-font); color: var(--text); }
+.pfe-ch-q { margin: 4px 0 16px; font: 400 0.8125rem/1.6 var(--ui-font); color: var(--muted); }
+.pfe-ch-body { min-width: 0; }
+/* Between two surfaces inside one chapter — the only place a chapter body needs an internal break. */
+.pfe-ch-rule {
+  height: 1px; margin: 18px 0 14px; background: var(--chrome-border); border: 0;
+}
+
+.pfe-preview { flex: 1; min-width: 0; display: flex; }
+/* WHAT THE OPEN CHAPTER GOVERNS, drawn around the object itself. Its position and size are set
+   inline from the target's measured bounds — see `FocusFrame` for why a static inset could not work.
+   The frame is EDITOR chrome, so it takes the app's own accent rather than the profile's: it belongs
+   to the tool, not to the thing being edited. */
+.pf-focus {
+  position: absolute; border: 1px solid color-mix(in srgb, var(--accent) 62%, transparent);
+  border-radius: 6px; pointer-events: none; z-index: 3;
+}
+/* TYPOGRAPHY ONLY — this changes nothing about the frame. The frame's box is set inline from its
+   target's measured bounds, so the label is a child that cannot move it.
+   It was 9px/600, which read as faint against a photograph. Now it follows the interface scale like
+   the rest of the editor's chrome (the label lives OUTSIDE the scaled composition), carries the
+   weight to hold its own on a busy background, and has a shadow to separate it from one.
+   The offset moves −9px → −11px purely to keep the design's relationship: the pill straddles the
+   frame's top edge, so a taller pill has to start higher to stay centred on that line. */
+.pf-focus-label {
+  position: absolute; inset-block-start: -11px; inset-inline-end: 8px;
+  padding: 3px 9px; border-radius: 999px; background: var(--accent); color: var(--paper-bg);
+  font: 700 0.75rem/1.4 var(--ui-font); letter-spacing: 0.01em; white-space: nowrap;
+  box-shadow: var(--sh1);
+}
+/* `inset-block-start` above is the DESIGN's hang, and the resting value. `FocusFrame` overrides it
+   inline when the frame is too near the top of the stage to hang a pill above it — see
+   `LABEL_OVERHANG` there for why that is computed from the measured box rather than chosen here. */
+
+/* ---- the Paper chapter's colour editor, in the chapter (design frame 2a) ----
+   Three rows the reader owns, each with a code field that is always there, then the three that are
+   derived from them named with their relationship. Sizes are the design's. */
+.pf-ink { display: flex; flex-direction: column; gap: var(--sp-4); margin-top: 16px; }
+.pf-ink-head { display: flex; align-items: center; gap: 8px; }
+.pf-ink-title { font: 600 0.6875rem var(--ui-font); color: var(--muted); }
+.pf-ink-rule { flex: 1; height: 1px; background: var(--chrome-border); }
+.pf-ink-resetall {
+  border: 0; background: transparent; padding: 0; cursor: pointer;
+  font: 500 0.625rem var(--ui-font); color: var(--lib-faint, var(--muted));
+}
+.pf-ink-resetall:hover { color: var(--accent); }
+.pf-ink-hint { font: 400 0.625rem/1.65 var(--ui-font); color: var(--lib-faint, var(--muted)); margin-top: -4px; }
+.pf-ink-row {
+  display: flex; align-items: center; gap: var(--sp-5); padding: 9px 10px;
+  border-radius: 9px; background: var(--paper-bg); border: 1px solid var(--chrome-border);
+}
+.pf-ink-chip {
+  width: 30px; height: 30px; flex: none; border-radius: var(--r-md);
+  box-shadow: inset 0 0 0 1px var(--chrome-border);
+}
+.pf-ink-chip.sm { width: 13px; height: 13px; border-radius: var(--r-xs); }
+.pf-ink-id { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pf-ink-name { font: 600 0.75rem var(--ui-font); color: var(--text); }
+.pf-ink-note { font: 400 0.625rem/1.4 var(--ui-font); color: var(--lib-faint, var(--muted)); }
+/* A hex code is a Latin token: monospace, isolated, and never reordered by the surrounding script. */
+.pf-ink-field {
+  width: 84px; flex: none; padding: 5px 7px; border-radius: var(--r-sm);
+  background: var(--chrome-bg); border: 1px solid var(--chrome-border); color: var(--text);
+  font: 500 0.75rem ui-monospace, "SFMono-Regular", Menlo, monospace;
+  letter-spacing: 0.02em; unicode-bidi: isolate;
+}
+.pf-ink-field:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.pf-ink-field.bad { border-color: #b05220; }
+.pf-ink-bad { font: 500 0.625rem/1.5 var(--ui-font); color: #b05220; }
+.pf-ink-follows {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  padding: 7px 10px; border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+.pf-ink-follows-label { font: 400 0.625rem var(--ui-font); color: var(--lib-faint, var(--muted)); flex: none; }
+.pf-ink-follow { display: flex; align-items: center; gap: var(--sp-2); }
+.pf-ink-follow-name { font: 400 0.5625rem var(--ui-font); color: var(--muted); }
+.pf-ink-follow-tag { font: 400 0.5625rem var(--ui-font); color: var(--lib-faint, var(--muted)); }
+
+/* PANEL RELIEF. The chapter's one control that is not a colour, so it is set apart from the ink rows
+   by a rule rather than by a heading — it belongs to the same chapter and should not read as a new
+   one. Borrows `.gs-slider*` wholesale: this is the same slider language the rest of Sard speaks,
+   and a second one would be a second answer to "what does a slider look like here". */
+.pf-relief {
+  display: flex; flex-direction: column; gap: var(--sp-2);
+  padding-block-start: var(--sp-4);
+  border-block-start: 1px solid var(--chrome-border);
+}
+.pf-relief .gs-slider-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-4); }
+
+.pf-swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-5); }
+.pf-swatch-cell { display: flex; flex-direction: column; align-items: center; gap: 6px; border: 0; background: none; padding: 0; cursor: pointer; }
+/* A FIXED 44px TILE, not a ratio. The design sizes the specimen by the height a letter needs to be
+   read at, which does not change with the column's width. */
+.pf-swatch {
+  width: 100%; height: 44px; border-radius: 6px; display: flex;
+  align-items: center; justify-content: center; gap: 4px;
+  box-shadow: inset 0 0 0 1px var(--chrome-border);
+}
+/* The book face, not the interface font: the letter is a specimen of what this paper reads like. */
+.pf-swatch-glyph { font: 400 1rem Literata, serif; }
+.pf-swatch-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.pf-swatch-cell.on .pf-swatch { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg); }
+.pf-swatch-name { font: 500 0.625rem/1.3 var(--ui-font); color: var(--muted); text-align: center; }
+
+/* The measured verdict, shown as a NUMBER rather than a badge: the reader can see what a choice
+   actually buys, and the repair is offered rather than imposed. */
+.pf-contrast {
+  margin-top: 12px; padding: 7px 9px; border-radius: var(--r-md); font: 500 0.75rem var(--ui-font);
+  background: color-mix(in srgb, var(--accent) 8%, transparent); color: var(--muted);
+}
+.pf-contrast.warn { background: color-mix(in srgb, #9c3b3b 12%, transparent); color: #9c3b3b; }
+
+.pf-specimen {
+  margin: -6px 0 14px; padding: 10px; border-radius: var(--r-md); background: var(--paper-bg);
+  color: var(--text); font-size: 1.25rem; line-height: 1.6; text-align: center;
+}
+
+.pf-bm-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px; margin: 8px 0 12px; }
+.pf-bm-cell {
+  display: flex; align-items: flex-start; justify-content: center; height: 40px; padding: 2px;
+  border: 1px solid var(--chrome-border); border-radius: var(--r-sm); background: transparent;
+  cursor: pointer; overflow: hidden;
+}
+.pf-bm-cell.on {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.pf-bm-colors { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 16px; }
+.pf-bm-color { width: 22px; height: 22px; border: 0; border-radius: 50%; cursor: pointer; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08); }
+.pf-bm-color.on { box-shadow: 0 0 0 2px var(--chrome-bg), 0 0 0 3.5px var(--text); }
+/* ---- the mark's colour: eight choices and one act ----
+   WHAT THIS REPLACES. The custom entry was the Reader's own 2.35rem chip shrunk to 22px and dropped
+   at the end of the swatch row — a colour wheel in a circle, among eight circles, that did not
+   choose a colour but opened a panel. It read as a ninth swatch that had gone wrong.
+   So the row now says what it is: the eight, a hairline, and a chip at the ACTION tier carrying the
+   colour it would open on. The chip takes the swatches' own selected ring when the mark is wearing
+   a colour none of the eight can express, which is the only time the row cannot answer for itself. */
+.pf-mark-colours { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-5); margin-bottom: 16px; }
+.pf-mark-colours .pf-bm-colors { margin-bottom: 0; }
+.pf-mark-sep {
+  inline-size: 1px; block-size: 18px; flex: none;
+  background: var(--chrome-border);
+}
+.pf-mark-custom {
+  display: inline-flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 11px;
+  border-radius: var(--r-md); border: 1px solid var(--chrome-border);
+  background: color-mix(in srgb, var(--text) 4%, transparent); color: var(--text);
+  font: 500 0.75rem var(--ui-font); cursor: pointer; white-space: nowrap;
+}
+.pf-mark-custom-dot {
+  inline-size: 14px; block-size: 14px; flex: none; border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.14);
+}
+.pf-mark-custom:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.pf-mark-custom.open { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+/* The same selected ring the swatches wear, because when it is on, it IS the selection. */
+.pf-mark-custom.on { border-color: transparent; box-shadow: 0 0 0 2px var(--chrome-bg), 0 0 0 3.5px var(--text); }
+.pf-mark-custom:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.pf-rm-list { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.pf-rm-cell {
+  display: flex; align-items: center; gap: var(--sp-5); padding: 6px 8px; border: 1px solid transparent;
+  border-radius: var(--r-md); background: transparent; cursor: pointer; text-align: start;
+}
+.pf-rm-cell.on {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.pf-rm-name { font: 500 var(--fs-base) var(--ui-font); color: var(--text); }
+
+/* The firewall: the rail's last block, and not a control. */
+/* The rail's closing block. It stays the quietest thing in the column — it is a promise, not a
+   control, and must never compete with the six sections above it. The design set it at .625/.5625rem
+   for a 132px rail; now that the rail reaches 216 it takes one step up (.6875/.625rem) so it reads as
+   small print rather than as unreadable, and keeps its distance through colour and weight instead of
+   through being too small to see. Nine words per line at 132px was the real problem. */
+/* The direction wrapper is the rail's flex child, so it is what carries the push to the bottom. */
+.pfe-rail-foot { margin-top: auto; }
+.pf-firewall { padding: 12px 11px; border-top: 1px solid var(--chrome-border); }
+.pf-firewall-title { font: 600 0.6875rem var(--ui-font); color: var(--muted); margin-bottom: 5px; }
+.pf-firewall-body { margin: 0; font: 400 0.625rem/1.65 var(--ui-font); color: var(--lib-faint, var(--muted)); }
+
+/* ---- accessibility: the same rule the background system already applies ----
+   A reader who has asked the OS for reduced transparency has stated a requirement, not a
+   preference. The dialog scrim is the only translucent surface Profiles adds. */
+@media (prefers-reduced-transparency: reduce) {
+  .pf-dialog-scrim { backdrop-filter: none; -webkit-backdrop-filter: none; background: rgba(20, 14, 6, 0.62); }
+}
+
+/* ---- interface texture: three named steps ---- */
+.pf-texture { display: flex; gap: 6px; }
+.pf-texture-step {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 9px 6px; border-radius: 9px; border: 1px solid var(--chrome-border);
+  background: transparent; color: var(--text); font: 500 0.75rem var(--ui-font); cursor: pointer;
+}
+.pf-texture-step:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.pf-texture-step.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+/* The swatch shows the step itself: a chrome panel over a striped ground, so "solid" hides the
+   stripes entirely and "glass" lets them through. It is the control's own preview, not a colour. */
+.pf-texture-swatch {
+  width: 100%; height: 26px; border-radius: 6px; position: relative; overflow: hidden;
+  background-image: repeating-linear-gradient(
+    45deg, var(--accent) 0 5px, color-mix(in srgb, var(--accent) 30%, transparent) 5px 10px);
+}
+.pf-texture-swatch::after {
+  content: ""; position: absolute; inset: 0; background: var(--chrome-bg);
+}
+/* EACH SWATCH AT ITS OWN REAL ALPHA. `--sw-a` is `surfaceAlpha(step, …)` — the step's wish already
+   clamped against the live scrim — computed by the section and handed down per step, because three
+   steps are on screen at once while the root's `--ui-*` describe only the selected one.
+   The hardcoded 85% and 70% that stood here were never what the application paints; over a bright
+   desk the floor lifts both toward each other, and the swatches now SHOW that convergence instead
+   of denying it.
+
+   NO FROST HERE, AND THAT IS THE POINT. Frost was applied briefly so that "glass" would read as
+   glass, and it inverted the whole row. Measured at four times size, hatch contrast per swatch:
+
+       مُعتِم  90%  frost 0px   spread 1.96      ← the ONLY one showing any stripe
+       خفيف   77%  frost 14px  spread 0.06
+       زجاجي  71%  frost 40px  spread 0.00      ← perfectly flat
+
+   The stripe is what shows THROUGH, so it must grow as the panel thins. It did the reverse: the
+   swatch is 26px tall and the stripe repeats every 10px, so a 40px blur dissolves it completely
+   while `brightness(3.6)` lifts what is left to a flat wash. The most transparent step rendered as
+   the most solid tile in the row — the control read backwards.
+
+   A stripe is the wrong thing to frost. Real frost blurs a PHOTOGRAPH, which is low-frequency and
+   survives it; a 10px hatch is high-frequency and cannot. So the row keeps the one question it can
+   answer honestly at 26px — how much shows through — and frost is shown where it is legible, on the
+   live plate below, at reading size and over the reader's own desk. */
+.pf-texture-swatch::after {
+  background: color-mix(in srgb, var(--chrome-bg) var(--sw-a, 100%), transparent);
+}
+
+/* The rendered percentage, under the step's name. Small, muted, and factual — it is the answer to
+   "why do these two look the same", available before the reader has to ask. */
+.pf-texture-pct {
+  font: 400 0.625rem var(--ui-font);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- THE LIVE PLATE ---------------------------------------------------------------------------
+   The selected step at reading size, over the reader's own desk. It carries the APPLICATION'S
+   formula, the same one `.pf-lib-side` uses character for character, reading the same three
+   variables the draft writes — so the plate cannot promise a panel the app will not paint.
+   Its height is what makes the chapter feel finished: three 26px swatches left most of the surface
+   empty, and the honest thing to put in that space is a bigger, truer version of the same answer. */
+.pf-texture-plate {
+  position: relative;              /* the picture and its scrim are absolute inside this */
+  margin-top: var(--sp-4);
+  border-radius: var(--r-lg);
+  border: 1px solid var(--chrome-border);
+  overflow: hidden;                /* clips the bleed the shared `-bg` rule gives the picture */
+  /* The ground when no picture is set: the theme's own desk, which is exactly what that reader
+     will see. A synthetic gradient here would make the plate prettier and less true. */
+  background: var(--pd, var(--app-bg));
+  padding: var(--sp-5);
+  min-height: 132px;
+  display: flex;
+  align-items: stretch;
+}
+/* The panel must sit ABOVE the picture and its scrim, both of which are absolute within the plate. */
+.pf-texture-plate-panel { position: relative; z-index: 1; }
+.pf-texture-plate-panel {
+  flex: 1;
+  border-radius: var(--r-md);
+  border: 1px solid var(--chrome-border);
+  padding: var(--sp-4) var(--sp-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  background: color-mix(in srgb, var(--pc, var(--chrome-bg))
+    calc(var(--ui-floor, 0%) + (var(--ui-base, 100%) - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
+  backdrop-filter: blur(var(--ui-frost, 0px))
+    saturate(calc(1.1 * var(--ui-sat, 1))) brightness(var(--ui-bright, 1));
+  -webkit-backdrop-filter: blur(var(--ui-frost, 0px))
+    saturate(calc(1.1 * var(--ui-sat, 1))) brightness(var(--ui-bright, 1));
+  transition: background 0.18s ease-out;
+}
+.pf-texture-plate-title { font: 600 0.875rem var(--ui-font); color: var(--px, var(--text)); }
+.pf-texture-plate-body {
+  font: 400 0.75rem/1.6 var(--ui-font);
+  color: var(--px, var(--text));
+  opacity: 0.86;
+  text-wrap: pretty;
+}
+.pf-texture-plate-rule {
+  height: 1px; margin: var(--sp-1) 0;
+  background: var(--pb, var(--chrome-border));
+}
+.pf-texture-plate-foot { font: 400 0.6875rem var(--ui-font); color: var(--pm, var(--muted)); }
+
+/* The convergence note. Same voice as `.pf-hint`, one step warmer so it reads as an explanation
+   rather than as another instruction — and it is only ever on screen when it is true. */
+.pf-texture-note {
+  margin-top: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  border-radius: var(--r-md);
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  font: 400 0.75rem/1.6 var(--ui-font);
+  color: var(--text);
+  text-wrap: pretty;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pf-texture-plate-panel { transition: none; }
+}
+
+/* ================================================================================================
+   THE LIBRARY ACCESS POINT — one row in the sidebar foot.
+   ================================================================================================
+   The row sits above `.lib-settings-btn` inside the existing `.lib-sidefoot`, and the theme/language
+   caption beneath it is untouched. The menu opens UPWARD by the same idiom the foot's other menus
+   use (`top: auto; bottom: calc(100% + 8px)`), at the design's 256px, and it hangs off `.lib-menu`
+   so its ground, border, radius and shadow come from the same place every other sidebar menu gets
+   them rather than being restated here. */
+.pf-switch { position: relative; }
+.lib-sidefoot .pf-switch-btn {
+  display: flex; align-items: center; gap: var(--sp-4); width: 100%;
+  padding: 6px 9px; margin-bottom: 2px; border: none; border-radius: var(--r-sm);
+  background: transparent; color: var(--muted); cursor: pointer; text-align: start;
+}
+.lib-sidefoot .pf-switch-btn:hover { background: var(--lib-hover); color: var(--text); }
+.lib-sidefoot .pf-switch-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* The live miniature the design asks for, at the row's own scale. */
+.pf-switch-mini { flex: none; width: 34px; border-radius: var(--r-xs); overflow: hidden; box-shadow: 0 1px 3px rgba(20, 14, 6, 0.28); }
+.pf-switch-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.pf-switch-name {
+  font: 600 0.75rem/1.3 var(--ui-font); color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pf-switch-sub {
+  font: 400 0.625rem/1.3 var(--ui-font); color: var(--lib-faint, var(--muted));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* UPWARD, at the design's 256px. Higher specificity than `.lib-menu`'s own `top`, the same way
+   `.lib-sidefoot .lib-lang-menu` already overrides it for the language menu.
+
+   AND IT MAY NOT GROW PAST THE TOP OF THE WINDOW. The trigger sits in the sidebar foot and the menu
+   opens upward from it, so its height is spent against the distance to the top edge — and `.lib-menu`
+   carries neither a max-height nor an overflow. Measured with 38 هيئات: the column stood at
+   y = -510 in a 900px window (16 rows wholly above the edge), y = -788 at 620px (24 rows), and a
+   wheel over it moved nothing, because nothing in the chain scrolls. That is the reported bug.
+
+   The ceiling is NOT a constant here: `--pf-switch-max` is written by the component from the
+   trigger's own measured rect when the menu opens, so it follows the window rather than one
+   assumption about it. Absent — before the first measurement, or in a test that renders the menu
+   alone — `none` restores exactly the previous behaviour. */
+.lib-sidefoot .pf-switch-menu {
+  top: auto; bottom: calc(100% + 8px); inset-inline-start: 0; width: 256px; min-width: 256px;
+  max-height: var(--pf-switch-max, none);
+}
+/* THE LIST SCROLLS, THE MENU DOES NOT. `.lib-menu` is already a flex column, so the rows take the
+   space that is left and the rule and «إدارة الهيئات» beneath them stay pinned and reachable — which
+   is the point of scrolling the list rather than the whole menu. `min-height: 0` is what allows a
+   flex child to be shorter than its content at all; without it the column refuses to shrink and the
+   overflow never engages.
+
+   `overscroll-behavior: contain` keeps the wheel here once the ends are reached, so the Library
+   behind the menu never takes over the gesture. */
+.pf-switch-list {
+  display: flex; flex-direction: column; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+}
+/* The rows carry a miniature, so they need more room than `.lib-menu`'s plain text rows — and the
+   padding is stated here, and the selectors carry `.lib-sidefoot`, because the Library's own chrome
+   resets it: `.libd-chrome button:not(.lib-settings-btn) { padding: 0 }` outranks a bare `.pf-*`
+   rule and left these rows at 19px — the exact height of the miniature, with no breathing space at
+   all. Its specificity TIES this file's, and profiles.css loads first, so the tie goes to the reset —
+   hence the extra class rather than a bare one. The Library's reset is left alone. Measured. */
+.lib-sidefoot .pf-switch .pf-switch-menu button {
+  display: flex; align-items: center; gap: var(--sp-4); width: 100%;
+  padding: 7px 9px; border-radius: var(--r-sm); color: var(--text);
+  font: 500 0.8125rem var(--ui-font);
+}
+.lib-sidefoot .pf-switch .pf-switch-menu button:hover { background: var(--lib-hover, color-mix(in srgb, var(--text) 7%, transparent)); }
+.pf-switch-row-mini { flex: none; width: 30px; border-radius: 3px; overflow: hidden; }
+.pf-switch-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-switch-check { flex: none; color: var(--accent); }
+.pf-switch-count { flex: none; font: 400 0.6875rem var(--ui-font); color: var(--lib-faint, var(--muted)); }
+.pf-switch-rule { height: 1px; background: var(--chrome-border); margin: 4px 2px; }
+
+/* ---- A NAME STAYS BESIDE ITS PICTURE, WHATEVER SCRIPT IT IS IN ----------------
+   The name carries `dir="auto"` so its glyphs order by their own script, which is
+   right. But `dir` also moves `start`/`end` — and the name sits in a `flex: 1` box
+   that spans everything the miniature leaves over. So in an Arabic interface an
+   ENGLISH name became an LTR box and hugged its LEFT edge, while the picture it
+   belongs to stayed at the right: one row, two ends, a gap between them, and
+   nothing to say the two were a pair. An Arabic name, being RTL, sat correctly.
+
+   The rule the library already settled on for exactly this: DIRECTION FROM THE
+   CONTENT, ALIGNMENT FROM THE INTERFACE (see design/bidi.ts, and `fieldStyle`,
+   which states it in TypeScript for the Details columns). `dir="auto"` keeps the
+   first half; these rules supply the second, so the text begins where the reader's
+   language begins — hard against the picture — for Arabic, Latin and mixed names
+   alike. `isolate` keeps a trailing bracket or digit from reordering across the
+   boundary into the line beside it. */
+.pf-switch-name,
+.pf-switch-sub,
+.pf-switch-row-name,
+.pf-dest-name { unicode-bidi: isolate; }
+:root[dir="rtl"] .pf-switch-name,
+:root[dir="rtl"] .pf-switch-sub,
+:root[dir="rtl"] .pf-switch-row-name,
+:root[dir="rtl"] .pf-dest-name { text-align: right; }
+:root[dir="ltr"] .pf-switch-name,
+:root[dir="ltr"] .pf-switch-sub,
+:root[dir="ltr"] .pf-switch-row-name,
+:root[dir="ltr"] .pf-dest-name { text-align: left; }
+
+/* ---- frame 21: where an unsaved change goes ---- */
+.pf-dest-list { display: flex; flex-direction: column; gap: 6px; }
+.pf-dest {
+  display: flex; align-items: center; gap: var(--sp-5); width: 100%; padding: 11px 12px;
+  border-radius: 9px; border: 1px solid var(--chrome-border); background: transparent;
+  color: var(--text); font: 500 0.8125rem var(--ui-font); cursor: pointer; text-align: start;
+}
+.pf-dest:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 6%, transparent); border-color: var(--accent); }
+.pf-dest:disabled { opacity: 0.5; cursor: default; }
+.pf-dest-name { flex: 1; min-width: 0; }
+.pf-dest-tag {
+  flex: none; padding: 2px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  /* THE ACCENT, READ RATHER THAN SEEN. Ten-pixel type on a tint of its own colour measured 2.47
+     in parchment — under Sard's own 3.0 floor in five of ten themes. `--accent-text` walks it
+     toward the text colour until it clears that floor, which is the correction `regroundFaint`
+     already makes for `--lib-faint`; the hue stays the accent's. */
+  color: var(--accent-text); font: 600 0.625rem var(--ui-font);
+}
+/* ---- frame 22: saved, with a way back ---- */
+.pf-saved {
+  position: fixed; inset-block-end: 22px; inset-inline-start: 50%; transform: translateX(-50%);
+  z-index: 80; display: flex; align-items: center; gap: var(--sp-6); padding: 10px 14px;
+  border-radius: var(--r-lg); background: var(--chrome-bg); border: 1px solid var(--chrome-border);
+  box-shadow: var(--sh3);
+  font: 500 0.8125rem var(--ui-font); color: var(--text);
+}
+.pf-saved-undo {
+  border: 0; background: transparent; color: var(--accent);
+  font: 600 0.8125rem var(--ui-font); cursor: pointer; padding: 2px 4px;
+}
+
+/* ---- frame 10 / 12: the share sheet ---- */
+.pf-share-rows { display: flex; flex-direction: column; gap: 2px; margin-bottom: 14px; }
+.pf-share-row {
+  display: flex; align-items: center; gap: var(--sp-5); padding: 9px 2px;
+  border-bottom: 1px solid var(--chrome-border);
+}
+.pf-share-row:last-child { border-bottom: 0; }
+.pf-share-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pf-share-row-name { font: 600 0.8125rem var(--ui-font); color: var(--text); }
+/* The asset switch, at the design's own 40x23 with a 19px knob. `role="switch"` on a real button,
+   so it is reachable and announced without a checkbox to restyle. Logical insets: the knob sits at
+   the reading-END when on, which mirrors correctly in Arabic without a second rule. */
+.pf-switch-ctl {
+  width: 40px; height: 23px; flex: none; padding: 0; border: 0; cursor: pointer;
+  border-radius: 999px; position: relative;
+  background: color-mix(in srgb, var(--text) 22%, transparent);
+  transition: background 140ms ease;
+}
+.pf-switch-ctl.on { background: var(--accent); }
+.pf-switch-ctl i {
+  position: absolute; inset-block-start: 2px; inset-inline-start: 2px;
+  width: 19px; height: 19px; border-radius: 50%; background: var(--paper-bg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: inset-inline-start 140ms ease;
+}
+.pf-switch-ctl.on i { inset-inline-start: 19px; }
+/* What this row contributes to the archive. Tabular so the column of sizes reads as a column. */
+.pf-share-row-size {
+  min-width: 66px; text-align: end; font-variant-numeric: tabular-nums;
+  font: 500 0.6875rem var(--ui-font); color: var(--muted);
+}
+/* Same reason as the import row: a filename with nothing to break at overflows its column unless it
+   is allowed to break inside the word. */
+.pf-share-row-note {
+  font: 400 0.6875rem/1.5 var(--ui-font); color: var(--lib-faint, var(--muted));
+  overflow-wrap: anywhere;
+}
+/* No switch: a profile without its paper is not a profile, and nothing here can be excluded. */
+.pf-share-always {
+  flex: none; padding: 2px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--muted); font: 600 0.625rem var(--ui-font);
+}
+.pf-share-size {
+  display: flex; align-items: baseline; justify-content: space-between;
+  padding-top: 10px; border-top: 1px solid var(--chrome-border);
+  font: 400 0.75rem var(--ui-font); color: var(--muted);
+}
+.pf-share-size-v { font: 600 0.875rem var(--ui-font); color: var(--text); }
+.pf-share-file {
+  margin: 4px 0 12px; padding: 8px 10px; border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  font: 500 0.75rem/1.5 var(--ui-font); color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+/* ---- frames 14 / 15 / 17: the import sheet ---- */
+/* ---- FRAME 22 · the save, said out loud ----
+   The design's own pill: 10px/16px, a 20px corner, and a lifted shadow. Its colours are the pair the
+   application's existing toast already uses — the ink as the ground and the paper as the letter —
+   which is the same inversion the design draws on its Ivory paper and which keeps working when the
+   theme is dark and the pair swaps.
+
+   ⚠ THE ACTION IS NOT THE DESIGN'S GOLD, AND THAT IS DELIBERATE. Frame 22 sets "تراجع" in #E8C36A,
+   which is the HIGHLIGHT amber — a reading colour that Sard never publishes as an interface token
+   (`applyTheme` writes no highlight variable). Hard-coding it would put a fixed warm gold on a pill
+   whose ground inverts with the theme: legible on the dark pill of a light paper, and washed out on
+   the light pill of a dark one. So the action carries the toast's own ink at a heavier weight and
+   sits behind a hairline separator, which reads as the action in both directions without inventing a
+   token or contradicting the palette the reader chose. */
+/* Surface in global.css, with the rest of the message family. What is left here is what makes
+   THIS one different: it holds an Undo, so it is a row rather than a line. */
+.pf-toast {
+  position: fixed; inset-inline: 0; bottom: 28px; margin: 0 auto; width: max-content;
+  max-width: min(560px, calc(100vw - 32px));
+  z-index: 70; display: flex; align-items: center; gap: var(--sp-5); padding: 11px 18px;
+}
+.pf-toast-msg { font: 500 0.8125rem/1.5 var(--ui-font); }
+/* AN ACTION IN A MESSAGE IS STILL AN ACTION. It had no hover, no pressed state and no ring — the
+   separator was mixed from `--paper-bg`, which was the toast's own INK back when the surface was
+   inverted, so on the corrected ground it would have been drawn in the text colour. */
+.pf-toast-undo {
+  flex: none; border: 1px solid transparent; background: transparent; cursor: pointer;
+  margin-inline-start: 2px; padding: 5px 10px; border-radius: var(--r-sm);
+  font: 600 0.8125rem/1 var(--ui-font); color: var(--accent);
+  transition: background-color .12s ease-out, border-color .12s ease-out;
+}
+.pf-toast-undo:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.pf-toast-undo:active { background: color-mix(in srgb, var(--accent) 20%, transparent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.pf-toast-undo:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pf-toast-undo:disabled { opacity: 0.5; cursor: default; }
+.pf-toast-undo:disabled:hover { background: transparent; }
+@media (prefers-reduced-motion: no-preference) {
+  .pf-toast { animation: sard-fade 0.16s ease-out; }
+}
+
+/* ---- FRAME 14 · the arriving profile, and FRAME 15 · the one that arrived ----
+   The design draws frame 14 at 560px rather than the ordinary 420: it leads with a full-width
+   miniature, and a picture of Sard at 420 is a thumbnail rather than a preview. Everything below is
+   the design's own geometry — 20px gutters, a 10px corner on the picture, 36px for the seal, a 6px
+   bullet on each row. */
+.pf-import-card { width: 560px; padding: 20px; }
+/* The picture's own corner and lift. `overflow: hidden` is what makes the corner real, since
+   `SardMini` paints edge to edge. */
+.pf-import-hero {
+  border-radius: 10px; overflow: hidden; box-shadow: 0 3px 10px rgba(40, 28, 14, 0.18);
+}
+.pf-import-id { display: flex; align-items: center; gap: 12px; margin: 16px 0 6px; }
+/* The seal, at the design's 36px. A package carries no icon, so this is the seal the imported
+   profile will actually wear — drawn through `sealOf`, like every other seal in Sard. */
+.pf-import-seal {
+  width: 36px; height: 36px; flex: none; border-radius: 9px; display: grid; place-items: center;
+  background: var(--paper-bg); color: var(--text); font-size: 17px; line-height: 1;
+  box-shadow: inset 0 0 0 1px var(--chrome-border);
+  /* IT CLIPS, like every other box that owns a mark — see the grouped rule at the end of this file.
+     Stated here too because this is the one that did not, and a reader met it: a هيئة whose sender
+     had zoomed its picture arrived with the picture hanging outside the card it arrived in. */
+  overflow: hidden;
+}
+.pf-import-id-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pf-import-name { font: 600 1.0625rem/1.4 var(--ui-font); color: var(--text); }
+.pf-import-author {
+  font: 400 0.75rem/1.5 var(--ui-font); color: var(--lib-faint, var(--muted));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* One row per thing that travelled. The rule under each row is the design's, and the last one drops
+   it so the list ends on the firewall rather than on a line. */
+.pf-import-rows { display: flex; flex-direction: column; gap: 2px; margin: 8px 0 4px; }
+.pf-import-row {
+  display: flex; align-items: center; gap: var(--sp-5); padding: 8px 0;
+  border-block-end: 1px solid var(--chrome-border);
+}
+.pf-import-row:last-child { border-block-end: 0; }
+.pf-import-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--accent); }
+/* LABEL AND VALUE ARE TWO REGIONS, AND NEITHER MAY EAT THE OTHER.
+   A filename has no spaces to break at, and a flex item defaults to  — it refuses
+   to shrink below its own min-content, which for an unbroken run is the whole string. The label was
+   the only item allowed to shrink, so it took all the pressure: measured with a 90-character value,
+   the label collapsed to 0px and the value overran its row by 145px (178px in Arabic), scrolling the
+   dialog sideways. That is what reads as the value sitting on top of the label.
+   The label now keeps its natural width and shrinks only under real pressure; the value takes what
+   is left, is allowed to shrink to nothing, and may break INSIDE a word so a long name wraps in its
+   own column instead of pushing the row wider.  keeps it against the row's far
+   edge in both directions, which is where the design puts it. */
+.pf-import-row-name {
+  flex: 0 1 auto; min-width: 0; font: 500 0.8125rem/1.5 var(--ui-font); color: var(--text);
+}
+.pf-import-row-val {
+  flex: 1 1 0; min-width: 0; text-align: end; overflow-wrap: anywhere;
+  font: 400 0.75rem/1.5 var(--ui-font); color: var(--lib-faint, var(--muted));
+}
+
+/* FRAME 15 — the miniature moves BESIDE the sentence: the profile is no longer a file being
+   inspected, it is one of yours, so it is introduced the way a card introduces one. The double
+   shadow is the design's ring — accent, then the card's own ground, which is what makes it read as
+   mounted rather than outlined. */
+.pf-imported-head { display: flex; align-items: center; gap: 12px; }
+.pf-imported-mini {
+  width: 96px; flex: none; border-radius: var(--r-sm); overflow: hidden;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg);
+}
+.pf-imported-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.pf-imported-title { font: 600 0.9375rem/1.4 var(--ui-font); color: var(--text); }
+.pf-imported-body { font: 400 0.71rem/1.6 var(--ui-font); color: var(--muted); }
+/* The firewall, restated where someone else's profile is arriving — the moment it matters most. */
+.pf-import-firewall {
+  margin-top: 12px; padding: 11px 12px; border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.pf-import-firewall-title { font: 600 0.75rem var(--ui-font); color: var(--text); margin-bottom: 4px; }
+.pf-import-firewall-body { margin: 0; font: 400 0.6875rem/1.6 var(--ui-font); color: var(--muted); }
+.pf-refused-mark {
+  width: 30px; height: 30px; border-radius: 50%; margin-bottom: 10px;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, #9c3b3b 14%, transparent);
+  color: #9c3b3b; font: 700 1rem var(--ui-font);
+}
+
+/* ================================================================================================
+   THE COLOUR PICKER — the whole space, not a row of swatches.
+   ================================================================================================
+   The plane, the hue strip and the alpha strip are all `dir="ltr"` in the markup and are NOT
+   mirrored here. A spectrum has no reading direction: mirroring it would put red where the reader
+   last left violet purely because the interface is Arabic, and it would make the gradient disagree
+   with the pointer maths that reads the same element. `.pf-cp-hue` above IS mirrored, which is the
+   older approach and the reason its strip and its readout could drift apart. */
+.pf-pick { display: flex; flex-direction: column; gap: 8px; }
+.pf-pick-plane {
+  position: relative; height: 132px; border-radius: 9px; cursor: crosshair; touch-action: none;
+  box-shadow: inset 0 0 0 1px var(--chrome-border);
+}
+.pf-pick-hue,
+.pf-pick-alpha {
+  position: relative; height: 14px; border-radius: var(--r-sm); cursor: ew-resize; touch-action: none;
+  box-shadow: inset 0 0 0 1px var(--chrome-border);
+}
+.pf-pick-hue {
+  background: linear-gradient(to right in srgb, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%);
+}
+/* The chequer shows THROUGH a partly transparent colour, so the alpha strip reads as transparency
+   rather than as a colour that happens to get paler. */
+.pf-pick-alpha {
+  background-color: #fff;
+  background-image:
+    linear-gradient(45deg, #d8d2c8 25%, transparent 25%, transparent 75%, #d8d2c8 75%),
+    linear-gradient(45deg, #d8d2c8 25%, transparent 25%, transparent 75%, #d8d2c8 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 4px 4px;
+}
+.pf-pick-dot {
+  position: absolute; width: 14px; height: 14px; border-radius: 50%;
+  transform: translate(-50%, -50%); pointer-events: none;
+  box-shadow: 0 0 0 2px #fff, 0 0 0 3px rgba(0, 0, 0, 0.42);
+}
+.pf-pick-dot--bar { top: 50%; }
+.pf-pick-foot { display: flex; align-items: center; gap: 8px; }
+.pf-pick-hex {
+  width: 96px; flex: none; padding: 5px 7px; border-radius: var(--r-sm);
+  background: var(--chrome-bg); border: 1px solid var(--chrome-border); color: var(--text);
+  font: 500 0.75rem ui-monospace, "SFMono-Regular", Menlo, monospace;
+  letter-spacing: 0.02em; unicode-bidi: isolate; text-transform: uppercase;
+}
+.pf-pick-hex:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.pf-pick-hex.bad { border-color: #b05220; }
+.pf-pick-cr {
+  font: 500 0.6875rem var(--ui-font); color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.pf-pick-cr.warn { color: #b05220; }
+.pf-pick-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.pf-pick-preset {
+  width: 24px; height: 24px; border: 0; border-radius: var(--r-sm); cursor: pointer;
+  box-shadow: inset 0 0 0 1px var(--chrome-border);
+}
+.pf-pick-preset.on { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg); }
+
+/* The chip is now the way into the picker, so it has to read as pressable and show when it is open.
+   It was a `<span>`; as a `<button>` it needs its own reset — the editor's dialog rules do not reach
+   it, and a bare class would lose to them if they did. */
+.pf-ink-chip--open { border: 0; padding: 0; cursor: pointer; }
+.pf-ink-chip--open.on { box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--chrome-bg); }
+.pf-ink-chip--open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pf-ink-picker {
+  margin: 4px 0 10px; padding: 10px; border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+/* ================================================================================================
+   THE SET BODY — the measure chapter's specimen.
+   ================================================================================================
+   The paragraphs carry their own typography inline, computed by the reading engine's own
+   `renderTypography`, so nothing here may set leading, weight, alignment, indent or tracking: a
+   stylesheet value would silently win over the thing being previewed. This rule set is layout only.
+   `.pf-page-ar`'s own font-size/line-height live here historically; they are overridden inline now,
+   which is deliberate — the inline value IS the profile's answer. */
+.pf-page-body { position: relative; }
+/* Diacritics — the reading engine's own declaration, on its own class name.
+   `injectedCss` wraps every Arabic mark in `.sard-tashkil` and then collapses it to `font-size: 0`.
+   The specimen wraps its marks in the SAME class and applies the SAME value, so this is the reader's
+   treatment rather than a resemblance to it. A block-level fade would have been the easy
+   approximation and would have hidden the letters along with their vowels.
+   There was a `.pf-dia-dim` beside this at 0.28 opacity; it went when «تعتيم» did, and it had to go
+   from here too — the specimen is what the reader is shown the choice ON, so a rule for a choice
+   that no longer exists would have been the one place it could still be seen to work. */
+.pf-page-body.pf-dia-hide .sard-tashkil { font-size: 0; }
+
+/* ================================================================================================
+   THE MEASURE CHAPTER — grouped, and three-state throughout.
+   ================================================================================================
+   A row that holds an opinion is marked; a row that does not shows the reader's own value greyed, so
+   what would be overridden is visible before it is. The «as it is» button is the way back to no
+   opinion, and it only exists on rows that have one — there is nothing to undo otherwise. */
+.pf-ms { display: flex; flex-direction: column; gap: 2px; }
+.pf-ms-hint {
+  font: 400 0.6875rem/1.6 var(--ui-font); color: var(--muted);
+  margin: 0 0 10px; max-width: 46ch;
+}
+.pf-ms-group {
+  font: 600 0.6875rem/1 var(--ui-font); color: var(--muted);
+  letter-spacing: 0.06em; margin: 16px 0 6px;
+}
+.pf-ms-group:first-of-type { margin-top: 4px; }
+.pf-ms-row {
+  padding: 9px 10px; border-radius: 9px;
+  border: 1px solid transparent;
+}
+/* A held opinion reads as a held opinion, quietly. */
+.pf-ms-row.on {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.pf-ms-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 7px; }
+.pf-ms-label { font: 500 0.75rem var(--ui-font); color: var(--text); }
+.pf-ms-value {
+  font: 500 0.6875rem var(--ui-font); color: var(--accent);
+  font-variant-numeric: tabular-nums; margin-inline-start: auto;
+}
+.pf-ms-value.off { color: var(--muted); font-style: italic; }
+.pf-ms-clear {
+  padding: 2px 7px; border-radius: 6px; border: 1px solid var(--chrome-border);
+  background: transparent; color: var(--muted); font: 500 0.625rem var(--ui-font); cursor: pointer;
+}
+.pf-ms-clear:hover { color: var(--text); background: color-mix(in srgb, var(--text) 6%, transparent); }
+.pf-ms-slider { width: 100%; accent-color: var(--accent); }
+.pf-ms-note {
+  font: 400 0.625rem/1.6 var(--ui-font); color: var(--muted);
+  margin-top: 6px; max-width: 44ch;
+}
+.pf-ms-seg { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.pf-ms-segbtn {
+  padding: 5px 10px; border-radius: var(--r-sm); border: 1px solid var(--chrome-border);
+  background: transparent; color: var(--muted); font: 500 0.6875rem var(--ui-font); cursor: pointer;
+}
+.pf-ms-segbtn.on {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent); color: var(--text);
+}
+.pf-ms-segbtn:hover { color: var(--text); }
+
+/* The number ink — the specimen's half of the reading surface's `.sard-num` rule. The reader emits
+   `:root:root .sard-num { color: … }` into the book; here the value arrives as a variable on the set
+   body, and digits fall back to inheriting when the profile has no opinion, exactly as they do in a
+   book whose profile sets no number colour. */
+.pf-page-body .sard-num { color: var(--num-ink, inherit); }
+
+/* The picker's completion. The colour is applied as it is chosen — this ends the interaction rather
+   than committing anything, which is why it reads «تمّ» and not «تطبيق». Escape and a pointer-down
+   outside do the same thing; the button is here because neither of those is discoverable. */
+.pf-pick-done {
+  margin-inline-end: auto;
+  padding: 5px 12px; border-radius: var(--r-sm);
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--text); font: 500 0.6875rem var(--ui-font); cursor: pointer;
+}
+.pf-pick-done:hover { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+.pf-pick-done:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+
+/* ================================================================================================
+   THE CONTROL TIERS — declared, not left to emerge from font metrics.
+   ================================================================================================
+   Sard needs several sizes of control and this does not flatten them into one. What it removes is
+   the fragmentation MEASURED across the profiles surfaces — 22, 28, 29, 32, 35, 36, 36.6, 37 and
+   39px for controls doing the same kind of work — by naming which tier each belongs to and taking
+   the height from `--ctl-*` instead of from padding plus whatever the current script's ascender
+   happens to be.
+
+   THAT LAST PART MATTERS IN ARABIC. A height that emerges from line-box metrics changes when the
+   text does, so the same button was one size beside «حفظ» and another beside "Save". An explicit
+   min-height with centred content is the same size in both, and gives the ascenders and the shadda
+   room rather than taking it from the padding.
+
+   The tiers, and what each is for:
+     --ctl-xs  22  a control that sits among text — the card's ⋯
+     --ctl-md  30  compact utility — a close ✕, a small contextual action
+     --ctl-lg  34  the ACTION tier: the buttons a reader presses to do something
+     --ctl-xl  38  navigation rows
+     --ctl-2xl 44  the choice tier: a segmented option carrying its own specimen
+
+   DELIBERATELY NOT ON A TIER, and why:
+     .pfe-rail-item   two lines of content (name over summary) — height is what it holds
+     .pf-swatch-cell  a paper specimen; its box is an aspect ratio, not a control size
+     .pf-frame-stage  a picture being framed, sized to the picture
+     everything inside a miniature surface — those are drawings of Sard at a scale factor
+   ------------------------------------------------------------------------------------------------ */
+.pf-btn {
+  min-height: var(--ctl-lg); padding-block: 0;
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-3);
+}
+.pf-editor-x { width: var(--ctl-md); height: var(--ctl-md); }
+/* The three kinds carry a 26px specimen each, so this tier is the tallest one — a choice you look
+   at rather than a button you press. */
+.pf-icon-kind { min-height: var(--ctl-2xl); }
+/* The measure chapter's own segmented control — the same tier as every other segmented control,
+   which is where it always looked like it belonged. */
+.pf-ms-segbtn { min-height: var(--ctl-md); padding-block: 0; display: inline-flex; align-items: center; justify-content: center; }
+
+/* A field that is refusing, and the reason beside it. Quiet: the editor states the rule where the
+   reader is looking rather than interrupting them with it. */
+.pf-input--bad { border-color: #b05220; }
+.pf-field-note { font: 400 0.6875rem/1.5 var(--ui-font); color: #b05220; }
+/* A profile with no name of its own says so in the quiet ink, so it reads as a state rather than as
+   a name somebody chose. */
+.pf-card-name--unnamed { color: var(--muted); font-weight: 500; }
+
+/* THE READING PICTURE'S OVERLAY, in the appearance editor. Three choices in a row: the theme's own
+   desk colour, no colour at all, and a colour of the reader's own. The swatch sizing follows the
+   reader's `.rs-ink` so the same decision looks the same in both places. */
+/* The three-way choice reads as words inside the picker, not as a second row of swatches: the row
+   above already carries the chip, and two ways to say the same thing is how a control starts
+   meaning two things. */
+.pf-ink-modes { display: flex; gap: var(--sp-2); margin-block-end: var(--sp-3); }
+.pf-ink-modes button {
+  flex: 1; padding: 7px 10px; border-radius: var(--r-sm); cursor: pointer;
+  font: 500 0.75rem var(--ui-font);
+  border: 1px solid var(--chrome-border); background: transparent; color: var(--muted);
+}
+.pf-ink-modes button.on { border-color: var(--accent); color: var(--accent-text, var(--accent)); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.pf-ink-state { font: 400 0.625rem var(--ui-font); color: var(--lib-faint, var(--muted)); margin-inline-start: auto; }
+
+.pf-bg-inks { display: flex; align-items: center; gap: var(--sp-3); margin-block-start: var(--sp-2); }
+.pf-bg-ink {
+  width: 2.35rem; height: 2.35rem; border-radius: 9px; border: 0; padding: 0; cursor: pointer;
+  box-shadow: inset 0 0 0 1px var(--chrome-border);
+}
+.pf-bg-ink.on { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pf-bg-ink-none { background: transparent; position: relative; overflow: hidden; }
+.pf-bg-ink-none > span {
+  position: absolute; inset: 0;
+  background: linear-gradient(to top left, transparent calc(50% - 1px),
+    var(--muted) calc(50% - 1px), var(--muted) calc(50% + 1px), transparent calc(50% + 1px));
+}
+
+/* ---- every box that owns a mark clips it ----
+   `markFrame` magnifies a mark's LAYER past its box above 1×, and an element cannot clip itself, so
+   the clipping belongs to the box. That was five separate rules each remembering to say so, and the
+   sixth — the import preview's seal — did not: a picture framed above 1× by whoever sent the هيئة
+   painted straight out of the card it arrived in, which is why it looked like it depended on the
+   picture. It depends on the framing.
+
+   ONE RULE, so a surface added later is covered by naming it here rather than by remembering. The
+   individual declarations stay where they are: each says WHY its own box clips, and this says that
+   all of them must. Guarded by `tests/unit/markFrame.test.ts`, which reads this file. */
+.pf-seal,
+.pf-editor-seal,
+.pf-import-seal,
+.pf-lib-avatar,
+.pf-switch-mini {
+  overflow: hidden;
+}
+
+/* ---- A FONT'S OWN SPECIMEN (font import popup) ------------------------------------------------
+   IT IS A POPUP, NOT A PAGE. The first version took the whole window, and at that size the specimen
+   had to either float in a great deal of nothing or be stretched across it — which is exactly what
+   made it read as a testing harness rather than as Sard showing the reader something. It uses the
+   scrim the rest of Sard's dialogs use (`.pf-dialog-scrim`: fixed, centred, blurred), so the
+   backdrop, the stacking and the dismiss behaviour are the existing ones and not a second set.
+
+   AND IT IS SIX COMPOSITIONS, NOT ONE PAGE. The popup that replaced the full-window version still
+   read as a single document: every part sat on one surface, separated only by horizontal rules, at
+   sizes close enough that nothing announced itself. What separates the zones here is composition —
+   surface, alignment, measure, scale, and a different DEVICE per zone:
+
+     masthead    inset band, pinned, name at 44px          — identity
+     stage       open canvas, widest margins, 56px         — the hero
+     reading     marginal label + VERTICAL rule, indented  — the working face
+     detail      centred, small, tracked                   — figures and marks
+     latin       inset band, mirrored label, LTR           — secondary, and optional
+     completion  inset strip, confirmation beside «تمّ»    — the ending
+
+   Two inset bands (top and bottom) frame open canvas in the middle. That is a frame, not a stack of
+   cards: nothing in the flow is boxed, and no zone repeats the device of the zone above it. */
+.fs-modal {
+  /* WIDTH BUYS HEIGHT. At 900px the English sentence took two lines and the whole popup ran to
+     793px of scrolling content; the measures inside are unchanged, but a wider column lets the
+     sentence and the detail row each finish on one line, which is height the reader never has to
+     scroll past. The panel is still plainly a panel, and the text measures inside it stay narrow. */
+  width: min(1000px, calc(100vw - 56px));
+  max-height: min(calc(100vh - 48px), 880px);
+  display: flex; flex-direction: column;
+  background: var(--chrome-bg); border: 1px solid var(--chrome-border);
+  border-radius: var(--r-xl); box-shadow: var(--sh3); overflow: hidden;
+}
+
+/* ---- 1 · MASTHEAD. Pinned above the scroll, on its own surface. -------------------------------
+   Its own surface is what lets the stage below read as open canvas: the contrast does the work that
+   a rule was doing before. Pinned because the name is the caption for everything under it — scrolled
+   away, the specimen becomes an anonymous block of Arabic. */
+.fs-mast {
+  flex: none; position: relative;
+  padding: 20px 40px 18px;
+  background: color-mix(in srgb, var(--text) 6.5%, transparent);
+  border-bottom: 1px solid var(--chrome-border);
+}
+.fs-kicker {
+  font: 500 0.8125rem/1 var(--ui-font); letter-spacing: 0.04em;
+  color: var(--muted); margin: 0 0 9px;
+}
+/* Prominent, and still plainly smaller than the stage — the name introduces the face, it is not the
+   specimen. Set in the arriving font, so the relationship is visible rather than inferred. */
+.fs-name {
+  font-size: clamp(30px, 4vw, 44px); line-height: 1.1; color: var(--text);
+  margin: 0 0 6px; overflow-wrap: anywhere;
+}
+.fs-meta {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 12px;
+  font: 400 0.875rem var(--ui-font); color: var(--lib-faint, var(--muted));
+}
+.fs-dot { opacity: 0.5; }
+.fs-warn { font: 400 0.875rem var(--ui-font); color: var(--accent); margin: 12px 0 0; }
+/* Unobtrusive: no border, no fill, in the corner opposite the name, and only visible on approach. */
+.fs-x {
+  position: absolute; inset-block-start: 12px; inset-inline-end: 12px;
+  width: 30px; height: 30px; border: none; border-radius: var(--r-sm);
+  background: transparent; color: var(--muted); cursor: pointer; font-size: 13px; line-height: 1;
+}
+.fs-x:hover { background: var(--lib-hover); color: var(--text); }
+.fs-x:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* THE ONLY THING THAT SCROLLS, and it carries no padding: the zones are full-bleed so the two inset
+   bands can meet the popup's edges. The masthead and «تمّ» are outside it, so however tall a specimen
+   runs the way out never leaves the popup — and the Library behind it never becomes the scroller. */
+.fs-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  padding: 0;
+  /* When it does appear — short windows — it should read as an edge, not as a control. */
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text) 22%, transparent) transparent;
+}
+
+/* ---- 2 · THE STAGE. The one thing the popup is for. -------------------------------------------
+   Open canvas and the widest margins in the panel. The line breaks where the sentence breaks (two
+   spans, not one wrapped paragraph), so the shape is chosen rather than left to the box width.
+
+   THE MEASURE IS IN `em`, NOT `ch`: `ch` is the width of the arriving font's own "0", so one rule
+   yields a different measure for every font imported — measured, 24ch wrapped Arial into the intended
+   paragraph and left Andalus, whose figures are wide and whose Arabic is narrow, as a single 565px
+   row. `em` follows the type size and nothing else, so every font is composed alike.
+
+   THE LEADING IS SET BY THE TALLEST FACE, NOT BY TASTE. An Arabic display face carries its marks
+   high and its descenders low: measured at 56px, Amiri's own content box is 99px — 1.77em — against
+   a 1.5 line box of 84px, so the second line's shadda rode into the first line's descenders. 1.8
+   clears the tallest face measured here with room to spare, and a deliberate two-line couplet at
+   that leading reads as a couplet; the earlier objection to 1.85 was to a WRAPPED paragraph, whose
+   break was arbitrary, and that is no longer how this line is set. */
+/* Measured: with 32/30 the popup overflowed its own panel by 11px at 1280x900 — a scrollbar for
+   eleven pixels. The hero keeps every point of its size; the room around it gives them back. */
+.fs-stage { padding: 24px 40px 22px; }
+.fs-hero {
+  font-size: clamp(30px, 4.6vw, 56px); line-height: 1.8; color: var(--text);
+  margin: 0; max-width: 12em; overflow-wrap: anywhere;
+}
+.fs-hero-line { display: block; }
+
+/* ---- 3 · READING. A BAND, a marginal label, and a vertical rule. -------------------------------
+   Indented from the stage's column and set at book size, so position and scale together say "this is
+   a different question" — how the face behaves in prose, not how it performs at display size.
+
+   IT IS SURFACED NOW, and that is the fix for the real complaint: with only the stage's open ground
+   under it, this zone read as one more paragraph below the hero. Alternating open stage / surfaced
+   band / open detail / surfaced Latin gives the popup a rhythm the eye can follow without a single
+   extra rule, and nothing in the flow is boxed — every band runs the full width of the panel. */
+.fs-read {
+  display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 0 20px;
+  padding: 22px 40px 24px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+/* A LABEL, NOT A SPECIMEN — so it stays in the quiet tier. It was 11px, which on a 900px panel read
+   as a smudge in the margin rather than as a word; 12.5px is still plainly subordinate to everything
+   it names, and legible. */
+.fs-mark {
+  font: 500 0.875rem/1.6 var(--ui-font); letter-spacing: 0.04em;
+  color: var(--lib-faint, var(--muted)); margin: 0; padding-top: 7px;
+}
+.fs-passage {
+  /* The rule carries the accent at low strength: it is the one mark in the popup that says "this
+     is the sample that matters for reading", and a plain hairline was too quiet to say it. */
+  border-inline-start: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  padding-inline-start: 22px;
+  font-size: 22px; line-height: 1.85; margin: 0; max-width: 30em;
+  color: color-mix(in srgb, var(--text) 88%, transparent); overflow-wrap: anywhere;
+}
+
+/* ---- 4 · DETAIL. Centred — the only centred thing in the popup — and SET TO BE INSPECTED. ------
+   Figures and marks are what prose cannot show, and a reader choosing a book face does look for
+   them. They were 17px and 15px, which put them in the same range as the metadata: present, but too
+   small to actually read a numeral's shape or tell a shadda from a tanween. A specimen nobody can
+   inspect is decoration, so this zone now sits ABOVE the reading passage in size and below it in
+   voice — quieter ink, centred, and only a few words long, which is what keeps it secondary while
+   its glyphs stay legible.
+
+   Tracking opens the digits out so they read as a specimen rather than as a number. It is applied
+   only to the figures and marks, which are non-joining: letter-spacing on joined Arabic would break
+   the very shaping this popup exists to show. */
+/* A LABEL LIKE ITS NEIGHBOURS, and the same margin column, so the reader can name this zone as
+   easily as the other two — the labels are the rhythm; the surface and the alignment are what keep
+   the zones apart. Open ground between two bands, and the only centred content in the popup. */
+.fs-detail {
+  display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 0 20px;
+  padding: 22px 40px 24px;
+}
+.fs-detail-set {
+  display: flex; flex-wrap: wrap; justify-content: center; align-items: baseline; gap: 10px 40px;
+  text-align: center;
+}
+.fs-figure {
+  font-size: 24px; line-height: 1.5; letter-spacing: 0.12em; color: var(--muted);
+  margin: 0; overflow-wrap: anywhere;
+}
+/* THE DIACRITIC SPECIMEN. Arabic marks are delicate and sit ABOVE and BELOW the baseline, so this
+   line needs both size and leading: at 26px the shadda, the tanween, the hamza and the ta marbuta
+   are each separable, and 2.2 keeps a mark from touching the line above it when the words wrap. */
+/* 1.9 still clears the marks — measured, the ink of this line is 45px at 26px type — while 2.2 was
+   spending 8px a row on air this popup could not afford. */
+.fs-vowelled {
+  flex-basis: 100%; font-size: 26px; line-height: 1.9; color: var(--muted);
+  margin: 4px 0 0; overflow-wrap: anywhere;
+}
+
+/* ---- 5 · LATIN. A full-bleed inset band that echoes the masthead and closes the composition. ---
+   The same marginal-label device as the reading zone, mirrored into LTR — an echo, not a repetition,
+   because the whole band changes surface. Secondary by size, by ink and by position, because this
+   specimen is showing an Arabic face — the band exists only when the font's cmap carries Latin. */
+.fs-latin {
+  display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 0 20px;
+  padding: 20px 40px 24px;
+  background: color-mix(in srgb, var(--text) 6.5%, transparent);
+  border-top: 1px solid var(--chrome-border);
+}
+.fs-latin-line {
+  /* The measure is off the sentence, not on it: at 20em this wrapped to two lines and the Latin
+     band became a second page. The column bounds it now, and the sentence lands on one line. */
+  font-size: 26px; line-height: 1.55; color: var(--text);
+  margin: 0; max-width: 32em; overflow-wrap: anywhere;
+}
+/* The alphabet is an inventory rather than a sentence, so it is the quietest specimen here — but
+   still a specimen: at 13px its uppercase, lowercase and figures could not be told apart. */
+.fs-alphabet {
+  font-size: 17px; line-height: 1.7; letter-spacing: 0.02em; color: var(--muted);
+  margin: 10px 0 0; overflow-wrap: anywhere;
+}
+/* A FONT WITH NO ARABIC STILL NEEDS A HERO. Alone, the Latin band stops being a band: it becomes the
+   stage — open canvas, stage type — because there is nothing left for it to be subordinate to, and at
+   26px on an inset strip the popup was a caption where its specimen should have been. */
+.fs-latin.solo {
+  background: transparent; border-top: none; padding: 46px 40px 42px;
+}
+.fs-latin.solo .fs-latin-line {
+  font-size: clamp(28px, 4.2vw, 48px); line-height: 1.5; max-width: 13em;
+}
+/* The solo stage's inventory belongs to the support tier like every other alphabet — it was left
+   at 15px when the rest of the scale moved. */
+.fs-latin.solo .fs-alphabet { font-size: 18px; margin-top: 22px; }
+
+/* Coverage Sard could not specimen: a quiet centred note, sharing the detail zone's composition. */
+.fs-note {
+  font: 400 0.9375rem/1.75 var(--ui-font); color: var(--muted);
+  text-align: center; max-width: 34em; margin: 0 auto; padding: 24px 40px 26px;
+}
+
+/* ---- 6 · COMPLETION. An ending, not a footer with a button in the corner. ---------------------
+   The confirmation sits beside «تمّ» on the same anchored strip, so finishing and being told the font
+   is Sard's now are one moment. This is also why «متاح الآن في سَرْد» is NOT in the masthead metadata:
+   a status belongs to the end of the experience, not to the introduction. */
+.fs-foot {
+  flex: none; display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  padding: 12px 18px 12px 22px;
+  border-top: 1px solid var(--chrome-border);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+.fs-final { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.fs-installed { font: 500 0.875rem var(--ui-font); color: var(--accent); }
+.fs-where { font: 400 0.875rem/1.55 var(--ui-font); color: var(--muted); margin: 0; }
+.fs-foot .pf-btn { flex: none; }
+
+/* A SHORT WINDOW LOSES AIR, NOT STRUCTURE. Padding and leading come in and the type steps down, but
+   every zone keeps its own surface, alignment and device — the composition is the design, so
+   collapsing it into one narrow column to fit would be losing the thing that was built. */
+@media (max-height: 700px) {
+  .fs-mast { padding: 10px 28px 10px; }
+  .fs-kicker { margin-bottom: 4px; }
+  /* The name steps down FURTHER than the stage does: measured at 1000x620 on one curve it landed
+     at 34px against a 36px hero, which is no hierarchy at all. The introduction gives way. */
+  .fs-name { font-size: clamp(21px, 2.6vw, 26px); margin-bottom: 3px; }
+  .fs-stage { padding: 14px 28px 12px; }
+  /* Smaller type wants MORE em of measure, not fewer: at 12em a 36px hero filled less than half
+     the panel and left the rest of the line empty. The leading stays generous for the same reason
+     it does at full size — a tall Arabic face needs 1.77em before its marks meet the line above. */
+  /* The floor matters more than the ceiling here. Measured at 820x520 the hero fell to 29.5px
+     against a 21px detail line — still the largest thing in the popup, but only just, and the stage
+     is supposed to dominate rather than lead narrowly. A 30px floor keeps the gap visible. */
+  .fs-hero { font-size: clamp(30px, 4vw, 38px); line-height: 1.8; max-width: 16em; }
+  .fs-read { padding: 12px 28px 14px; }
+  .fs-detail { padding: 12px 28px 14px; }
+  .fs-detail-set { gap: 8px 32px; }
+  .fs-figure { font-size: 20px; letter-spacing: 0.1em; }
+  .fs-vowelled { font-size: 21px; line-height: 1.85; margin-top: 4px; }
+  .fs-alphabet { font-size: 16px; margin-top: 8px; }
+  .fs-passage { font-size: 19px; line-height: 1.9; }
+  .fs-latin { padding: 8px 28px 10px; }
+  .fs-latin-line { font-size: 22px; }
+  .fs-latin.solo { padding: 22px 28px 20px; }
+  .fs-foot { padding: 8px 18px 8px 22px; }
+  /* THE ONE THING THAT LEAVES. At 620px of window the popup could not hold everything without a
+     scrollbar, and of all the specimens the Latin ALPHABET is the one whose absence costs a reader
+     least: the English sentence directly above it already shows the Latin letterforms, and this line
+     only inventories them. It stays wherever there is room, and it stays on a Latin-only font, where
+     it is the only inventory there is. Nothing else is hidden, and nothing is shrunk to fit. */
+  .fs-latin:not(.solo) .fs-alphabet { display: none; }
+  .fs-note { padding: 12px 28px 14px; }
+}
+/* Narrow: the marginal labels have nowhere to sit, so they step above their zones. Everything else,
+   including which zones are surfaced, is unchanged. */
+@media (max-width: 760px) {
+  .fs-read, .fs-latin, .fs-detail { grid-template-columns: minmax(0, 1fr); }
+  .fs-mark { padding-top: 0; margin-bottom: 10px; }
+  .fs-passage { border-inline-start: none; padding-inline-start: 0; max-width: none; }
+  .fs-hero, .fs-latin-line { max-width: none; }
+}

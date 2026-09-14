@@ -27,8 +27,11 @@ export function formatDims(key: CardFormat): { w: number; h: number } {
 // (theme). Every style recolours from the selected theme's tokens (paper + ink + accent + muted),
 // so any style pairs with any of the 16 themes. "minimal" is the original card (unchanged), so an
 // existing card looks exactly as before; the four new styles ADD to it (the additive invariant).
-export type CardStyle = "minimal" | "moonlit" | "gilded" | "manuscript" | "editorial";
-export const CARD_STYLES: CardStyle[] = ["minimal", "moonlit", "gilded", "manuscript", "editorial"];
+export type CardStyle = "minimal" | "moonlit" | "gilded" | "manuscript" | "editorial" | "blank";
+export const CARD_STYLES: CardStyle[] = ["minimal", "moonlit", "gilded", "manuscript", "editorial", "blank"];
+// "blank" is the skin of the Blank composition: it draws no frame, no quotation mark, no rule and no
+// mark — a card that is its paper and whatever the reader puts on it. It is listed here so a card
+// saved with it reads back as itself rather than falling to "minimal" (see `parsePreset`).
 
 // RAWY-150: the quote text size. "auto" = fit-to-box (the original behaviour — short quotes grow,
 // long quotes shrink to fit the fixed card). The five presets XS–XL are a manual override: the

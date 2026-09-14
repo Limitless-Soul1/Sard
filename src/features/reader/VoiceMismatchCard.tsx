@@ -92,7 +92,7 @@ export function VoiceMismatchCard({
           </button>
         </div>
 
-        <button className="vm-x" onClick={onDismiss} aria-label={t("tts.close")} title={t("tts.close")}>
+        <button className="vm-x ui-close" onClick={onDismiss} aria-label={t("tts.close")} title={t("tts.close")}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden>
             <path d="M6 6l12 12M18 6L6 18" />
           </svg>

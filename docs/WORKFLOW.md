@@ -76,6 +76,58 @@ reports and plans, development scripts, or anything else not required to build a
 automated gates enforce this — one over file paths, one over file contents — and either failing blocks
 the release.
 
+## Database migrations
+
+**Number a new migration with a UTC timestamp. Never with the next integer.**
+
+```bash
+date -u +%Y%m%d%H%M%S          # e.g. 20260816112700
+```
+
+Name the file after it and register it in `MIGRATIONS`:
+
+```
+src-tauri/src/db/migrations_sql/20260816112700_add_shelf_colour.sql
+```
+
+Why: branches are developed in parallel, and two of them reaching for "the next number" both reach
+for the same one. That already happened — two branches took `17`, and on every database that had seen
+the other branch the second feature's table was never created. Nothing reported it, because a skipped
+migration and an applied one leave identical evidence behind: none. A timestamp cannot collide with a
+number chosen on another branch, in another worktree, by someone you never spoke to.
+
+UTC, not local time — local time repeats an hour every autumn and disagrees between contributors.
+
+**Versions 1–19 predate this and keep their numbers forever.** They have run on real databases;
+renumbering one changes what an upgrade does, retroactively. A test pins them.
+
+### Migrations may run out of order — so each one must stand alone
+
+A migration is applied when its version is **absent** from `schema_migrations`, not when it is newer
+than everything applied. That is what makes two branches safe in either merge order: each migration
+applies on its own account, and nothing ever needs renumbering.
+
+The price is one rule: **a migration must not assume that a lower-numbered migration has already
+run.** A database that took your branch's migration will later apply a lower-numbered one from
+someone else's. Migrations from independent branches touch independent tables, which is what makes
+this work in practice — but it is a rule, not a coincidence.
+
+Never edit a migration that has shipped. Append a new one.
+
+### What CI will not let you get away with
+
+`cargo test` runs on every pull request, on Windows and Linux, and fails on:
+
+- **a duplicate version** — the collision above, caught the moment both branches are in one tree;
+- **a version above 19 that is not a valid UTC timestamp**;
+- **a shipped version that has been renumbered or removed**;
+- **a `.sql` file nobody registered**, or an entry with no file;
+- **any change to how migrations are selected** that would re-run, skip, or reorder them — including
+  a database whose highest recorded version came from another branch.
+
+The full reasoning, and the reason `PRAGMA user_version` carries a count rather than a version
+number, is at the top of `src-tauri/src/db/migrations.rs`.
+
 ## `private/` — local only
 
 `private/` is a personal workspace for internal material: notes, investigations, evidence, local tools.

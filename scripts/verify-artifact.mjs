@@ -22,7 +22,8 @@
 // packed or unreadable, and the run FAILS as UNUSABLE rather than passing on a meaningless zero. That
 // distinction — "clean" versus "I could not look" — is the whole reason this file exists.
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { KINDS, extractBuildId, kindOf } from "./build-identity.mjs";
 
@@ -34,6 +35,8 @@ const args = Object.fromEntries(
 );
 
 const REPO = resolve(import.meta.dirname, "..");
+/** The web bundle `verifyBundle` read, so the legal check can look inside the shipped thing. */
+let LAST_BUNDLE = null;
 const problems = [];
 const notes = [];
 const ok = (m) => notes.push(`  PASS  ${m}`);
@@ -161,6 +164,25 @@ function verifyBinary(kind, exePath) {
     const wantPrefix = { diag: "DIAG", beta: "BETA", release: "REL" }[kind.id];
     if (id.startsWith(wantPrefix)) ok(`carries a build id: ${id}`);
     else bad(`build id ${id} declares the wrong kind (expected a ${wantPrefix}- prefix)`);
+
+    // ...AND THAT IT IS *THIS* BUILD, not merely a genuine one.
+    //
+    // The prefix check answers "is this a release?". It does not answer "is this the release I just
+    // asked for?", and on 2026-08-30 that gap shipped a stale binary as verified. `tauri build`
+    // could not replace `sard.exe` because a running copy held it — "Access is denied (os error 5)",
+    // "failed to build app" — AND STILL EXITED 0. The exe on disk was an hour old and carried the
+    // PREVIOUS id; `dist/` beside it was new, so the bundle half of this gate read the fresh files
+    // and passed. Everything looked green and the application did not contain the work.
+    //
+    // When the caller stamped an id, it is the only thing that decides. Comparing them is the whole
+    // of what was missing.
+    if (process.env.SARD_BUILD_ID) {
+      if (id === process.env.SARD_BUILD_ID) ok("and it is the id THIS build stamped");
+      else bad(
+        `STALE ARTIFACT — this build stamped ${process.env.SARD_BUILD_ID} but the executable carries ${id}. ` +
+        "The binary was not replaced. The usual cause is a running copy holding the file open; " +
+        "close it and build again.");
+    }
   }
 
   // The updater endpoint is the difference between "a diagnostic build someone ran once" and "a
@@ -195,6 +217,7 @@ function verifyBundle(kind, distDir) {
   // if B …" quietly stops covering anything the moment a C exists.
   //
   // Phrased as a property of the KIND instead: diagnostics belong to diagnostic builds, full stop.
+  LAST_BUNDLE = buf;
   const FRONTEND_DIAG = ["__sardDiag", "diagStart", "NOT ENTERED"];
   const mustCarry = kind.id === "diag";
   for (const m of FRONTEND_DIAG) {
@@ -203,6 +226,104 @@ function verifyBundle(kind, distDir) {
     else if (mustCarry && n === 0) bad(`the ${kind.label} web bundle is missing ${JSON.stringify(m)} — its instrumentation did not make it in`);
     else ok(`web bundle ${mustCarry ? "carries" : "free of"} ${JSON.stringify(m)}`);
   }
+}
+
+/**
+ * THE LEGAL TEXT THIS ARTIFACT CARRIES.
+ *
+ * WHY HERE. This file is the one gate nothing leaves the machine without, and "is this artifact
+ * safe to ship under this name?" is not only a question about instrumentation. An artifact whose
+ * legal text has drifted from the published documents asks a reader to accept something nobody
+ * approved — and it does so with a revision string that says the opposite, which is worse than
+ * carrying no legal text at all.
+ *
+ * THREE CHECKS, WEAKEST TO STRONGEST, and each one answers a question the previous cannot:
+ *
+ *   1. the snapshot is intact          — hashes to the fingerprint it declares, so it has not been
+ *                                        hand-edited. Needs nothing but this repository.
+ *   2. the ARTIFACT carries it         — the revision string is in the built web bundle. The first
+ *                                        check is about the repository; this one is about the thing
+ *                                        actually being shipped, which is what gets installed.
+ *   3. the snapshot matches its SOURCE — re-derived from the `sard-legal` repository. This is the
+ *                                        only check that can see a stale snapshot: one that is
+ *                                        internally consistent and simply older than the documents.
+ *
+ * The third needs a checkout of a second repository. For a PUBLIC RELEASE its absence is a failure,
+ * deliberately: a release built where the legal source cannot be consulted is a release nobody can
+ * say is current, and "we could not check" is not a reason to ship. Other kinds get a NOTE — a
+ * diagnostic build is measurement material and never reaches a reader as a product.
+ */
+function verifyLegal(kind, buf) {
+  const snapshot = resolve(REPO, "src/legal/content.generated.ts");
+  if (!existsSync(snapshot)) return bad(`no vendored legal text at ${snapshot}`);
+  const src = readFileSync(snapshot, "utf8");
+  const grab = (name) => {
+    const m = src.match(new RegExp(`export const ${name} = ("[^"]*");`));
+    return m ? JSON.parse(m[1]) : null;
+  };
+  const revision = grab("LEGAL_REVISION");
+  const stated = grab("LEGAL_CONTENT_HASH");
+  if (!revision || !stated) return bad("the vendored legal text carries no revision or no content hash");
+  notes.push(`  ---- legal: ${revision} ----`);
+
+  // 1 · intact
+  //
+  // The terminator accepts either line ending. It read `;\n` alone, and this file is checked out
+  // with CRLF wherever `core.autocrlf` is on — so the lazy match found no end, both documents came
+  // back null, and the gate rejected an artifact whose legal text was perfectly intact. The failure
+  // looked exactly like a tampered snapshot, which is the one thing this check exists to tell apart.
+  // Measured: with LF the documents parse and hash to the declared fingerprint; with CRLF, byte-for
+  // -byte the same content, nothing parses at all. `split(/\r?\n/)` above is the same idea.
+  const docOf = (name) => {
+    const m = src.match(new RegExp(`export const ${name}: LegalDocument = ([\\s\\S]*?);\\r?\\n`));
+    return m ? JSON.parse(m[1]) : null;
+  };
+  const terms = docOf("LEGAL_TERMS");
+  const privacy = docOf("LEGAL_PRIVACY");
+  if (!terms || !privacy) return bad("the vendored legal text is malformed");
+  const actual = createHash("sha256")
+    .update(JSON.stringify({ rev: revision, terms, privacy })).digest("hex").slice(0, 32);
+  if (actual !== stated) {
+    bad(`the vendored legal text has been edited by hand (declares ${stated}, hashes to ${actual})`);
+  } else {
+    ok(`the vendored legal text is intact (${actual})`);
+  }
+  if (revision !== `terms-${terms.version}+privacy-${privacy.version}`) {
+    bad(`the legal revision ${JSON.stringify(revision)} does not derive from its own documents`);
+  }
+  // No unfinished clause may ship. The governing law was a published TODO for a month; a reader
+  // must never be asked to accept a document that still says so.
+  for (const doc of [terms, privacy]) {
+    for (const lang of ["en", "ar"]) {
+      if ((doc[lang] || []).some((b) => /\bTODO\b/.test(b.t))) {
+        bad(`the ${lang} legal text still contains an unfinished TODO clause`);
+      }
+    }
+  }
+
+  // 2 · the artifact itself carries it
+  if (buf) {
+    const n = countIn(buf, revision);
+    if (n > 0) ok(`the web bundle carries the legal revision ${revision} (${n}x)`);
+    else bad(`the web bundle does not contain ${revision} — this artifact's legal text is not the one declared`);
+  }
+
+  // 3 · and it still matches the repository that owns it
+  const legalSrc = process.env.SARD_LEGAL_SRC || resolve(REPO, "..", "sard-legal");
+  if (!existsSync(resolve(legalSrc, "revision.json"))) {
+    const how = "  Point at a checkout with SARD_LEGAL_SRC=/path/to/sard-legal .";
+    if (kind.id === "release") {
+      bad(`the legal source is not available at ${legalSrc}, so this PUBLIC RELEASE cannot be shown to be current.\n${how}`);
+    } else {
+      notes.push(`  NOTE  legal source not available at ${legalSrc}; snapshot checked but not compared to it`);
+    }
+    return;
+  }
+  const r = spawnSync(process.execPath, [resolve(REPO, "scripts/sync-legal.mjs"), "--verify"], {
+    cwd: REPO, encoding: "utf8", env: { ...process.env, SARD_LEGAL_SRC: legalSrc },
+  });
+  if (r.status === 0) ok("the vendored legal text matches the sard-legal repository");
+  else bad(`the vendored legal text no longer matches its source:\n${(r.stderr || r.stdout || "").trim()}`);
 }
 
 // ---- run ---------------------------------------------------------------------------------------
@@ -218,6 +339,7 @@ console.log(`\nVERIFYING that this artifact is: ${kind.label}\n`);
 if (args.exe) verifyBinary(kind, args.exe);
 const skipDist = args.dist === false || args.dist === "false" || args.dist === "no";
 if (!skipDist) verifyBundle(kind, typeof args.dist === "string" ? args.dist : "dist");
+verifyLegal(kind, LAST_BUNDLE);
 if (!args.exe) notes.push("  NOTE  no --exe given; only the web bundle was checked");
 
 console.log(notes.join("\n"));

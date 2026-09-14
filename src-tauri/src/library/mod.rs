@@ -5,6 +5,10 @@
 #[cfg(test)]
 mod wp3_tests; // RESILIENCE-1 / WP-3 — the database is the single source of a book's name
 
+pub mod placement;
+pub mod view_order; // how books READ in a view, which is not where they belong
+pub mod structure; // cases, categories and the hand order that sit on top of these tables
+
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -87,6 +91,22 @@ pub struct BookRow {
     /// `spine_fragmented` = many sections with a tiny median, so 6B defaults the book to scrolled
     /// flow (where arbitrary section breaks are invisible).
     pub spine_fragmented: Option<i64>,
+    /// The imported file's size. The Spines view draws each book at its own thickness, and this
+    /// is the only measure of a book's extent the library holds — there is no page count until a
+    /// book has been opened and paginated at the reader's current type size.
+    pub size_bytes: Option<i64>,
+    /// Book Details' jacket controls, all stored the way `cover_fit` already is: as overrides with
+    /// no extracted base, so clearing one returns the book to what Sard derives for it.
+    /// `cover_paint` is a hex from the dialog's palette; NULL = the colour derived from the title.
+    pub cover_paint: Option<String>,
+    /// `"file"` = show the embedded image, `"typeset"` = show Sard's drawn jacket. NULL = use the
+    /// embedded image when there is one.
+    pub cover_mode: Option<String>,
+    /// `"typeset"` | `"none"` — how the Spines view draws this book. NULL = typeset.
+    pub spine_mode: Option<String>,
+    /// A chosen spine image, resolved to an absolute path on the way out exactly as `cover_path`
+    /// is. NULL = this book has none.
+    pub spine_image: Option<String>,
 }
 
 // Effective fields = a metadata_overrides value when present, else the extracted column.
@@ -101,7 +121,7 @@ const OV_AUTHOR: &str = "COALESCE((SELECT value FROM metadata_overrides WHERE bo
 // the query term, so the LIKE compares folded-to-folded. NOTE: this omits `normalizeForSearch`'s
 // leading NFKC pass (Rust has no NFKC without a new crate) — for normal (NFC) titles that's a no-op;
 // the tashkīl/tatweel strip + alef/ya/teh folding + lowercase + whitespace-drop below cover the
-// Arabic-first cases the audit names. Both sides use THIS function, so the library is self-consistent.
+// Arabic cases the audit names. Both sides use THIS function, so the library is self-consistent.
 pub fn fold_search(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
@@ -143,7 +163,11 @@ fn book_select() -> String {
          COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='cover'), b.cover_path), \
          b.added_at, b.last_opened_at, p.fraction, p.updated_at, \
          (SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='cover_fit'), \
-         b.meta_provenance, b.script_detected, b.toc_degenerate, b.spine_fragmented"
+         b.meta_provenance, b.script_detected, b.toc_degenerate, b.spine_fragmented, b.size_bytes, \
+         (SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='cover_paint'), \
+         (SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='cover_mode'), \
+         (SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='spine_mode'), \
+         (SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='spine_image')"
     )
 }
 
@@ -166,6 +190,11 @@ fn row_from(r: &rusqlite::Row) -> rusqlite::Result<BookRow> {
         script_detected: r.get(14)?,
         toc_degenerate: r.get(15)?,
         spine_fragmented: r.get(16)?,
+        size_bytes: r.get(17)?,
+        cover_paint: r.get(18)?,
+        cover_mode: r.get(19)?,
+        spine_mode: r.get(20)?,
+        spine_image: r.get(21)?,
     })
 }
 
@@ -197,7 +226,7 @@ pub fn list_books(
         args.push(Box::new(f.to_string()));
     }
     if let Some(c) = collection.filter(|s| !s.is_empty()) {
-        clauses.push("b.id IN (SELECT book_id FROM book_collections WHERE collection_id = ?)".into());
+        clauses.push("b.id IN (SELECT book_id FROM placements WHERE container = ?)".into());
         args.push(Box::new(c.to_string()));
     }
     if let Some(s) = search.filter(|s| !s.is_empty()) {
@@ -341,16 +370,27 @@ pub fn update_book(
     language: Option<&str>,
     dir: Option<&str>,
     cover_fit: Option<&str>,
+    cover_paint: Option<&str>,
+    cover_mode: Option<&str>,
+    spine_mode: Option<&str>,
 ) -> rusqlite::Result<Option<BookRow>> {
     apply_field(conn, id, "title", "title", title)?;
     apply_field(conn, id, "author", "author", author)?;
     apply_field(conn, id, "language", "language", language)?;
     apply_field(conn, id, "dir", "dir", dir)?;
-    // cover_fit has no extracted base — set when given (crop/fit), clear when empty.
-    match cover_fit {
-        Some(v) if !v.is_empty() => set_override(conn, id, "cover_fit", v)?,
-        Some(_) => clear_override(conn, id, "cover_fit")?,
-        None => {}
+    // These four have no extracted base — set when given, clear when given empty, leave alone when
+    // absent. An empty string is therefore how a caller says "return this to Sard's own choice".
+    for (field, value) in [
+        ("cover_fit", cover_fit),
+        ("cover_paint", cover_paint),
+        ("cover_mode", cover_mode),
+        ("spine_mode", spine_mode),
+    ] {
+        match value {
+            Some(v) if !v.is_empty() => set_override(conn, id, field, v)?,
+            Some(_) => clear_override(conn, id, field)?,
+            None => {}
+        }
     }
     // RAWY-178 (AUD-12): a title/author edit changes the EFFECTIVE value, so refresh the folded search
     // shadow from the effective (override-or-base) value — whether the override was set OR cleared.
@@ -433,6 +473,10 @@ pub fn resolve_row_cover(app_data_dir: &Path, row: &mut BookRow) {
     if let Some(c) = row.cover_path.as_deref() {
         row.cover_path = Some(resolve_cover(app_data_dir, c));
     }
+    // The spine image is stored and resolved by exactly the same rule.
+    if let Some(s) = row.spine_image.as_deref() {
+        row.spine_image = Some(resolve_cover(app_data_dir, s));
+    }
 }
 
 /// Remove every custom cover of this book except `keep` — the file just written, or `None` to remove
@@ -440,8 +484,22 @@ pub fn resolve_row_cover(app_data_dir: &Path, row: &mut BookRow) {
 /// fail the replacement the reader asked for. This also collects files left by earlier naming
 /// schemes, so covers/ converges on exactly one custom file per book without a migration.
 fn sweep_custom_covers(covers: &Path, id: &str, keep: Option<&Path>) {
-    let prefix = format!("{id}-custom");
-    let Ok(rd) = std::fs::read_dir(covers) else { return };
+    sweep_managed(covers, id, "custom", keep)
+}
+
+/// Test-only door onto the sweep, so the cover/spine separation can be asserted without
+/// reaching into a private function from another module.
+#[cfg(test)]
+pub(crate) fn sweep_custom_covers_for_test(dir: &Path, id: &str, keep: Option<&Path>) {
+    sweep_custom_covers(dir, id, keep)
+}
+
+/// The same sweep, for one KIND of managed image. Covers are `{id}-custom-…` and spines are
+/// `{id}-spine-…`, so the two live in one directory and neither sweep can ever reach the other's
+/// file — which is why a spine survives replacing a cover, and vice versa.
+fn sweep_managed(dir: &Path, id: &str, kind: &str, keep: Option<&Path>) {
+    let prefix = format!("{id}-{kind}");
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
     for e in rd.flatten() {
         let p = e.path();
         if keep == Some(p.as_path()) {
@@ -464,6 +522,16 @@ fn sweep_custom_covers(covers: &Path, id: &str, keep: Option<&Path>) {
 /// damage, and fall through to the renderer for anything we simply do not know — which needs no
 /// allow-list and gains new formats for free as the engine does.
 pub fn stage_cover(app_data_dir: &Path, id: &str, image_path: &str) -> Result<StagedCover, String> {
+    stage_image(app_data_dir, id, image_path, "custom")
+}
+
+/// STAGE a spine image. Identical custody, validation and content-addressing to a cover — the
+/// only difference is the name prefix, which is what keeps the two sweeps from ever meeting.
+pub fn stage_spine(app_data_dir: &Path, id: &str, image_path: &str) -> Result<StagedCover, String> {
+    stage_image(app_data_dir, id, image_path, "spine")
+}
+
+fn stage_image(app_data_dir: &Path, id: &str, image_path: &str, kind: &str) -> Result<StagedCover, String> {
     let meta = std::fs::metadata(image_path).map_err(|e| format!("Couldn't read that image: {e}"))?;
     if !meta.is_file() {
         return Err("That is not a file.".into());
@@ -516,8 +584,8 @@ pub fn stage_cover(app_data_dir: &Path, id: &str, image_path: &str) -> Result<St
 
     let covers = app_data_dir.join(COVERS_REL);
     std::fs::create_dir_all(&covers).map_err(|e| e.to_string())?;
-    let name = format!("{id}-custom-{hash}.{ext}");
-    std::fs::write(covers.join(&name), &bytes).map_err(|e| format!("Couldn't save that cover: {e}"))?;
+    let name = format!("{id}-{kind}-{hash}.{ext}");
+    std::fs::write(covers.join(&name), &bytes).map_err(|e| format!("Couldn't save that image: {e}"))?;
 
     Ok(StagedCover {
         rel: format!("{COVERS_REL}/{name}"),
@@ -536,6 +604,25 @@ pub fn commit_cover(conn: &Connection, app_data_dir: &Path, id: &str, rel: &str)
     set_override(conn, id, "cover", rel).map_err(|e| e.to_string())?;
     // Only AFTER the new cover is recorded, and never the file just written.
     sweep_custom_covers(&covers, id, Some(dest.as_path()));
+    get_book(conn, id).map_err(|e| e.to_string())
+}
+
+/// Adopt a staged spine image, and drop the book's previous one.
+pub fn commit_spine(conn: &Connection, app_data_dir: &Path, id: &str, rel: &str) -> Result<Option<BookRow>, String> {
+    let dir = app_data_dir.join(COVERS_REL);
+    let dest = app_data_dir.join(rel);
+    if !dest.is_file() {
+        return Err("That spine image is no longer there.".into());
+    }
+    set_override(conn, id, "spine_image", rel).map_err(|e| e.to_string())?;
+    sweep_managed(&dir, id, "spine", Some(dest.as_path()));
+    get_book(conn, id).map_err(|e| e.to_string())
+}
+
+/// Remove a book's spine image entirely, returning it to whatever the spine mode derives.
+pub fn clear_spine(conn: &Connection, app_data_dir: &Path, id: &str) -> Result<Option<BookRow>, String> {
+    clear_override(conn, id, "spine_image").map_err(|e| e.to_string())?;
+    sweep_managed(&app_data_dir.join(COVERS_REL), id, "spine", None);
     get_book(conn, id).map_err(|e| e.to_string())
 }
 
@@ -586,6 +673,44 @@ pub fn revert_cover(conn: &Connection, app_data_dir: &Path, id: &str) -> Result<
 /// notes, bookmarks, book_index) and `foreign_keys=ON` (db::open_database), so `DELETE FROM books`
 /// removes them automatically. Three things have NO FK and are deleted explicitly: `photo_cards`
 /// (book_id is a plain nullable column — a saved card would otherwise dangle) and the per-book
+/// Is `path` a file that Sard itself manages, sitting DIRECTLY in `dir`?
+///
+/// Every path Sard deletes from disk on a reader's behalf goes through this first, and it answers
+/// only for paths the application put there: the managed `.epub`/`.pdf` in `library/`, and the cover
+/// images in `library/covers/`. Anything it cannot PROVE belongs is refused.
+///
+/// WHY THE PARENT, CANONICALISED — and not `starts_with`, which is what `fonts::remove` uses.
+/// Measured on Windows against the real stored values, `Path::starts_with` is wrong in two opposite
+/// and equally unwanted directions:
+///
+///   * it is CASE-SENSITIVE, so a path differing only in case is refused and its file orphaned;
+///   * it does NOT collapse `..`, so `…/library/../../elsewhere/x.epub` PASSES it while pointing
+///     clean outside the directory it is supposed to confine.
+///
+/// Canonicalising resolves case, separator form, junctions and `..` in one step. Comparing the
+/// PARENT rather than a prefix also rejects a file one level deeper: `library/covers/x.jpg` is not a
+/// book file and must not be reachable by the rule that governs books.
+///
+/// The PARENT is canonicalised rather than the file because THE FILE IS OFTEN ALREADY GONE — a
+/// missing file is the ordinary case here, and `canonicalize` fails on one that does not exist. The
+/// parent directory exists whenever the answer could be "yes".
+///
+/// Fails closed: an unresolvable path, an unresolvable directory, or a path with no parent all
+/// return `false`. Refusing costs an orphaned file; admitting wrongly costs a reader their book.
+fn is_managed_file(path: &Path, dir: &Path) -> bool {
+    let (Some(parent), Ok(want)) = (path.parent(), dir.canonicalize()) else {
+        return false;
+    };
+    matches!(parent.canonicalize(), Ok(got) if got == want)
+}
+
+/// Test-only door onto the containment rule, so the suite can assert it without making the helper
+/// part of the module's public surface.
+#[cfg(test)]
+pub(crate) fn is_managed_file_for_test(path: &Path, dir: &Path) -> bool {
+    is_managed_file(path, dir)
+}
+
 /// `settings` rows `book_style:<id>` (RAWY-19/40) + `tts_position:<id>` (RAWY-162, last-spoken
 /// sentence). Files removed best-effort AFTER the commit: the
 /// managed `.epub`, the extracted cover, a replaced-cover file (the 'cover' override), and each
@@ -623,18 +748,42 @@ pub fn delete_book(conn: &Connection, app_data_dir: &Path, id: &str) -> Result<b
     tx.commit().map_err(|e| e.to_string())?;
 
     // Files: best-effort (a missing file is fine — the DB is already consistent).
-    let _ = std::fs::remove_file(&epub_path);
+    //
+    // THE THREE PATHS BELOW COME OUT OF THE DATABASE, and they are the only ones here that do — the
+    // cover sweep and the photo-card names are BUILT from `app_data_dir`. That difference is not
+    // academic: a test run against a copied database whose `books.file_path` still pointed into the
+    // reader's own library deleted four of their books, while every constructed path correctly
+    // stayed inside the sandbox. A stored path is an INPUT, so it is checked like one.
+    //
+    // Refusing only ever leaves a file behind. It never leaves the library inconsistent, because the
+    // rows are already gone above — a book whose path cannot be proven safe is still fully removed
+    // from the reader's library, which is what they asked for.
+    let library_dir = app_data_dir.join("library");
+    let covers_dir = app_data_dir.join(COVERS_REL);
+
+    let epub = Path::new(&epub_path);
+    if is_managed_file(epub, &library_dir) {
+        let _ = std::fs::remove_file(epub);
+    }
     if let Some(c) = cover_path {
-        let _ = std::fs::remove_file(&c);
+        let cover = Path::new(&c);
+        if is_managed_file(cover, &covers_dir) {
+            let _ = std::fs::remove_file(cover);
+        }
     }
     // Resolved, because the stored reference is relative on rows written by this version and
     // absolute on older ones — removing it raw would leave the file behind for every new row.
     if let Some(c) = custom_cover {
-        let _ = std::fs::remove_file(resolve_cover(app_data_dir, &c));
+        let resolved = resolve_cover(app_data_dir, &c);
+        let custom = Path::new(&resolved);
+        if is_managed_file(custom, &covers_dir) {
+            let _ = std::fs::remove_file(custom);
+        }
     }
     // And anything the book left behind under an earlier name, so deleting really does reach zero
-    // orphans (D31) rather than zero-orphans-for-the-currently-referenced-file.
-    sweep_custom_covers(&app_data_dir.join(COVERS_REL), id, None);
+    // orphans (D31) rather than zero-orphans-for-the-currently-referenced-file. CONSTRUCTED from
+    // `app_data_dir`, never read from a row, so it needs no containment check of its own.
+    sweep_custom_covers(&covers_dir, id, None);
     let cards_dir = app_data_dir.join("photocards");
     for cid in card_ids {
         let _ = std::fs::remove_file(cards_dir.join(format!("{cid}.png")));
@@ -661,6 +810,18 @@ pub struct CollectionRow {
     pub count: i64,
 }
 
+/// The shelves, for the surfaces that want a flat list of them.
+///
+/// ⚠ `count` IS ALWAYS ZERO, and has been since the arrangement moved to `placements`. It counts
+/// `book_collections`, which that migration deliberately left in place as a record of what the
+/// arrangement used to be; the table has held no rows since. The field is not a multi-membership
+/// bug — it was already zero when a book had one placement.
+///
+/// It is left exactly as it is because NOTHING READS IT. `Library.tsx` is the only caller, and it
+/// uses these rows for a shelf's `name` — on rename, on delete, and for a toast — never for the
+/// count, which is not passed on to `LibraryDesign`. Correcting a field no surface displays would be
+/// a change without a reader; removing it touches a public shape for no gain. Recorded here so the
+/// next person to reach for `CollectionRow.count` knows what they are picking up.
 pub fn collections_list(conn: &Connection) -> rusqlite::Result<Vec<CollectionRow>> {
     let mut stmt = conn.prepare(
         "SELECT c.id, c.name, COUNT(bc.book_id) \
@@ -708,33 +869,74 @@ pub fn collection_rename(conn: &Connection, id: &str, name: &str) -> rusqlite::R
 /// Delete a shelf. `book_collections` rows cascade away (FK ON DELETE CASCADE); the
 /// BOOKS remain in the library.
 pub fn collection_delete(conn: &Connection, id: &str) -> rusqlite::Result<Vec<CollectionRow>> {
+    // THE MEMBERSHIPS GO FIRST. `container` is not a foreign key — it holds a shelf id or the
+    // unfiled sentinel — so nothing cascades, and a row left behind would point at a shelf that no
+    // longer exists: the "no place" state this model abolishes.
+    //
+    // Only THIS shelf's memberships go. A book that also sits on another shelf keeps it and simply
+    // stops appearing here; a book that had nowhere else joins «خارج الأرفف», at the end. Which of
+    // the two happens is not decided here at all — `remove_from` ends in `settle_unfiled`, which is
+    // the one place that knows what "on no shelf" means.
+    let leaving = placement::container_books(conn, id)?;
+    for (book_id, _) in leaving {
+        placement::remove_from(conn, &book_id, id)?;
+    }
     conn.execute("DELETE FROM collections WHERE id = ?1", [id])?;
     collections_list(conn)
 }
 
-/// Add a book to a shelf (idempotent — re-adding is a no-op).
+/// PUT A BOOK ON A SHELF, KEEPING THE SHELVES IT IS ALREADY ON.
+///
+/// It swept. Measured against a book on three shelves, through the registered command: «s7-a, s7-b,
+/// s7-c» went in and «s7-b» came out — arriving somewhere deleted everywhere else, under a name that
+/// says «add». That was correct while a book had one place, and was left alone through the stages
+/// that widened the table because switching a verb underneath live callers is how a move silently
+/// becomes a copy, or the reverse.
+///
+/// IT HAS NO CALLERS. The command is registered and reachable over IPC, and nothing in this
+/// application invokes it: the interface's own additive path is `library_add_book_to_shelf`, and the
+/// only shelf picker left — Book Details — reads its memberships from the arrangement. So there is
+/// no caller whose meaning could change, and what remains is a command whose name and behaviour
+/// disagree, waiting for whoever wires it up next.
+///
+/// It now means what it is called, in the vocabulary the rest of the model uses:
+/// [`placement::ensure_on`] — be on this shelf, say nothing about where on it, and leave every other
+/// membership standing. Idempotent, like the command beside it. A caller that genuinely wants «here
+/// and nowhere else» has [`placement::place_book`], which still sweeps and is still tested.
 pub fn collection_add_book(conn: &Connection, collection_id: &str, book_id: &str) -> rusqlite::Result<Vec<CollectionRow>> {
-    conn.execute(
-        "INSERT OR IGNORE INTO book_collections(book_id, collection_id) VALUES(?1, ?2)",
-        rusqlite::params![book_id, collection_id],
-    )?;
+    placement::ensure_on(conn, book_id, collection_id, None)
+        .map_err(rusqlite::Error::InvalidParameterName)?;
     collections_list(conn)
 }
 
-/// Remove a book from a shelf (the book itself is untouched).
+/// Take a book off ONE shelf. It does not vanish, and it does not leave its other shelves.
+///
+/// This asked "is the book's container this shelf?" before acting — a question with one answer only
+/// while a book had one placement. It now removes the named membership and nothing else, which is
+/// both the correct multi-membership behaviour and, for a book that is on a single shelf, exactly
+/// what it did before: that book had nowhere else, so it joins the books on no shelf, at the end.
+///
+/// What it never touches: the `books` row, the file, the reading progress, the highlights, the notes
+/// and the references. Every one of those is keyed on the book, not on where the book is filed.
 pub fn collection_remove_book(conn: &Connection, collection_id: &str, book_id: &str) -> rusqlite::Result<Vec<CollectionRow>> {
-    conn.execute(
-        "DELETE FROM book_collections WHERE book_id = ?1 AND collection_id = ?2",
-        rusqlite::params![book_id, collection_id],
-    )?;
+    placement::remove_from(conn, book_id, collection_id)?;
     collections_list(conn)
 }
 
-/// The shelf ids a book currently belongs to (drives the edit-dialog chips).
+/// EVERY SHELF A BOOK IS ON. Empty when it is on none.
+///
+/// It is a list because it always was, and it holds what it says again. In between it was written
+/// as a `query_row` — «the» container, wrapped in a one-element vector — on the reasoning that a
+/// book could no longer be in more than one place. Against a book on three shelves that returns
+/// whichever row SQLite yields first and drops the other two silently, which is worse than a wrong
+/// answer: the caller cannot tell it was given one of several.
+///
+/// The unfiled container is not a shelf and is not listed, exactly as before.
 pub fn collections_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<String>> {
-    let mut stmt = conn.prepare("SELECT collection_id FROM book_collections WHERE book_id = ?1")?;
-    let rows = stmt.query_map([book_id], |r| r.get::<_, String>(0))?;
-    rows.collect()
+    Ok(placement::containers_of(conn, book_id)?
+        .into_iter()
+        .filter(|c| c != placement::UNFILED)
+        .collect())
 }
 
 fn now_unix() -> i64 {
@@ -751,7 +953,11 @@ fn now_unix() -> i64 {
 // ---------------------------------------------------------------------------
 
 /// 24-hex id derived from stable parts → re-acting on the same range/target is idempotent.
-fn gen_id(seed: &str) -> String {
+///
+/// `pub(crate)` so the deposit importer can compute the SAME id a local action would, and skip a mark
+/// the reader already has rather than writing a second one. Deriving it twice in two places is how the
+/// two would drift.
+pub(crate) fn gen_id(seed: &str) -> String {
     let mut h = Sha256::new();
     h.update(seed.as_bytes());
     h.finalize().iter().take(12).map(|b| format!("{b:02x}")).collect()
@@ -769,6 +975,16 @@ pub struct HighlightRow {
     /// RAWY-259: this highlight's OWN ink density. `None` = follow the theme's default, which is what
     /// every pre-existing highlight does — so the column needs no backfill and old rows are unchanged.
     pub alpha: Option<f64>,
+    /// This highlight's tag NAMES, resolved through the note attached to it.
+    ///
+    /// A HIGHLIGHT HAS NO TAGS OF ITS OWN, and deliberately so: `note_tags` anchors to `notes.id`, and
+    /// RAWY-205 made an EMPTY-BODY note a legitimate thing — a pure tag ANCHOR for a highlight the
+    /// reader tagged without writing anything. So "the tags on a highlight" already means "the tags on
+    /// its note", which is exactly what the cross-book Inbox has resolved since RAWY-203. Reading it
+    /// the same way here keeps ONE tag relationship in the schema instead of a second, parallel one.
+    ///
+    /// Empty for a highlight with no note at all, and for one whose note carries no tags.
+    pub tags: Vec<String>,
 }
 
 fn highlight_row(r: &rusqlite::Row) -> rusqlite::Result<HighlightRow> {
@@ -781,10 +997,25 @@ fn highlight_row(r: &rusqlite::Row) -> rusqlite::Result<HighlightRow> {
         chapter_label: r.get(5)?,
         created_at: r.get(6)?,
         alpha: r.get(7)?,
+        // APPENDED at index 8, the same discipline every earlier column was added under.
+        // GROUP_CONCAT yields NULL when the highlight has no note, or none of its note's tags exist.
+        tags: r
+            .get::<_, Option<String>>(8)?
+            .map(|v| v.split('\n').filter(|x| !x.is_empty()).map(str::to_string).collect())
+            .unwrap_or_default(),
     })
 }
 
 const HL_COLS: &str = "id, book_id, start_cfi, color, text_excerpt, chapter_label, created_at, alpha";
+
+/// The tags on the note ATTACHED to this highlight — see `HighlightRow.tags` for why a highlight has
+/// none of its own. One correlated subquery, the same shape `annotations_all` and `NOTE_TAGS_SUB` use,
+/// so all three surfaces resolve a tag identically and cannot drift apart. Qualified `highlights.id`
+/// because these queries select `FROM highlights` unaliased.
+const HL_TAGS_SUB: &str = "(SELECT GROUP_CONCAT(tg.name, char(10)) FROM note_tags nt \
+     JOIN tags tg ON tg.id = nt.tag_id \
+     JOIN notes n ON n.id = nt.note_id \
+     WHERE n.highlight_id = highlights.id)";
 
 pub fn highlights_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<HighlightRow>> {
     // RAWY-283: NEWEST FIRST, matching `notes_for_book` and the cross-book `annotations_all`. The two
@@ -794,14 +1025,14 @@ pub fn highlights_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result
     // before handing it to the renderer — see `annotationsStore.load` — so which of two OVERLAPPING
     // marks paints on top is unchanged. Sorting here without that would have been a silent visual change.
     let mut stmt = conn.prepare(&format!(
-        "SELECT {HL_COLS} FROM highlights WHERE book_id = ?1 ORDER BY created_at DESC"
+        "SELECT {HL_COLS}, {HL_TAGS_SUB} FROM highlights WHERE book_id = ?1 ORDER BY created_at DESC"
     ))?;
     let rows = stmt.query_map([book_id], highlight_row)?;
     rows.collect()
 }
 
 fn get_highlight(conn: &Connection, id: &str) -> rusqlite::Result<Option<HighlightRow>> {
-    conn.query_row(&format!("SELECT {HL_COLS} FROM highlights WHERE id = ?1"), [id], highlight_row)
+    conn.query_row(&format!("SELECT {HL_COLS}, {HL_TAGS_SUB} FROM highlights WHERE id = ?1"), [id], highlight_row)
         .optional()
 }
 
@@ -830,6 +1061,24 @@ pub fn highlight_set_color(conn: &Connection, id: &str, color: &str) -> rusqlite
     get_highlight(conn, id)
 }
 
+/// CLAMP DEFENSIVELY, BUT DO NOT OVERRULE THE READER.
+///
+/// The floor was 0.05 for a good reason: a density that reached zero by ACCIDENT — a bad write, a
+/// stray drag — would leave a mark claiming a passage and showing nothing, with no way back except
+/// the control that had just been lost. That reasoning holds for every value between zero and the
+/// floor, and it is why they are still lifted to it.
+///
+/// It does not hold for zero ITSELF, which the control now offers as «بلا». A reader asking for a
+/// mark with no colour is making a decision, not an accident: the note, the tags and the place all
+/// survive, and only the wash goes. So zero passes through exactly as it was given.
+fn alpha_for_store(v: f64) -> f64 {
+    if v <= 0.0 { 0.0 } else { v.clamp(0.05, 1.0) }
+}
+
+#[cfg(test)]
+pub(crate) fn alpha_for_store_for_test(v: f64) -> f64 {
+    alpha_for_store(v)
+}
 /// RAWY-259: set (or clear) a highlight's OWN ink density. `None` restores "follow the theme default",
 /// so the control can always be returned to the state every highlight had before this feature existed.
 /// Touches one row by id — editing one highlight can never move another.
@@ -838,9 +1087,7 @@ pub fn highlight_set_alpha(
     id: &str,
     alpha: Option<f64>,
 ) -> rusqlite::Result<Option<HighlightRow>> {
-    // Clamp defensively: the value comes from a UI control, and a stored out-of-range alpha would make a
-    // highlight invisible (0) or opaque enough to bury the text (>1) with no way back except this control.
-    let a = alpha.map(|v| v.clamp(0.05, 1.0));
+    let a = alpha.map(alpha_for_store);
     conn.execute("UPDATE highlights SET alpha = ?2 WHERE id = ?1", rusqlite::params![id, a])?;
     get_highlight(conn, id)
 }
@@ -864,10 +1111,14 @@ pub struct BookmarkRow {
     pub chapter_label: Option<String>,
     pub fraction: Option<f64>,
     pub label: Option<String>,
+    /// The dye this place was marked in. `None` for a bookmark placed before the reader could
+    /// choose one — the view resolves that to the global colour rather than inventing a choice.
+    pub color: Option<String>,
     pub created_at: Option<i64>,
 }
 
-const BM_COLS: &str = "id, book_id, locator_cfi, chapter_label, fraction, label, created_at";
+const BM_COLS: &str =
+    "id, book_id, locator_cfi, chapter_label, fraction, label, color, created_at";
 
 fn bookmark_row(r: &rusqlite::Row) -> rusqlite::Result<BookmarkRow> {
     Ok(BookmarkRow {
@@ -877,7 +1128,8 @@ fn bookmark_row(r: &rusqlite::Row) -> rusqlite::Result<BookmarkRow> {
         chapter_label: r.get(3)?,
         fraction: r.get(4)?,
         label: r.get(5)?,
-        created_at: r.get(6)?,
+        color: r.get(6)?,
+        created_at: r.get(7)?,
     })
 }
 
@@ -896,14 +1148,19 @@ pub fn bookmark_create(
     chapter: Option<&str>,
     fraction: Option<f64>,
     label: Option<&str>,
+    color: Option<&str>,
 ) -> rusqlite::Result<Option<BookmarkRow>> {
     let id = gen_id(&format!("bm:{book_id}:{cfi}"));
     conn.execute(
-        "INSERT INTO bookmarks(id, book_id, locator_cfi, chapter_label, fraction, label, created_at) \
-         VALUES(?1,?2,?3,?4,?5,?6,?7) \
+        // COALESCE ON THE UPDATE ARM, deliberately: re-marking a place that already has words or a
+        // dye must not blank them because this particular call had none to give.
+        "INSERT INTO bookmarks(id, book_id, locator_cfi, chapter_label, fraction, label, color, created_at) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8) \
          ON CONFLICT(id) DO UPDATE SET chapter_label=excluded.chapter_label, \
-            fraction=excluded.fraction, label=excluded.label",
-        rusqlite::params![id, book_id, cfi, chapter, fraction, label, now_unix()],
+            fraction=excluded.fraction, \
+            label=COALESCE(excluded.label, bookmarks.label), \
+            color=COALESCE(excluded.color, bookmarks.color)",
+        rusqlite::params![id, book_id, cfi, chapter, fraction, label, color, now_unix()],
     )?;
     conn.query_row(&format!("SELECT {BM_COLS} FROM bookmarks WHERE id = ?1"), [&id], bookmark_row)
         .optional()
@@ -924,6 +1181,7 @@ pub struct BookmarkItem {
     pub chapter_label: Option<String>,
     pub fraction: Option<f64>,
     pub label: Option<String>,
+    pub color: Option<String>,
     pub cfi: String,
     pub created_at: Option<i64>,
 }
@@ -933,7 +1191,7 @@ pub fn bookmarks_all(conn: &Connection) -> rusqlite::Result<Vec<BookmarkItem>> {
     let sql = format!(
         "SELECT k.id, k.book_id, {OV_TITLE}, b.file_path, \
             COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='dir'), b.dir), \
-            k.chapter_label, k.fraction, k.label, k.locator_cfi, k.created_at \
+            k.chapter_label, k.fraction, k.label, k.color, k.locator_cfi, k.created_at \
          FROM bookmarks k JOIN books b ON b.id = k.book_id \
          ORDER BY k.created_at DESC"
     );
@@ -948,8 +1206,9 @@ pub fn bookmarks_all(conn: &Connection) -> rusqlite::Result<Vec<BookmarkItem>> {
             chapter_label: r.get(5)?,
             fraction: r.get(6)?,
             label: r.get(7)?,
-            cfi: r.get(8)?,
-            created_at: r.get(9)?,
+            color: r.get(8)?,
+            cfi: r.get(9)?,
+            created_at: r.get(10)?,
         })
     })?;
     rows.collect()
@@ -969,6 +1228,17 @@ pub struct NoteRow {
     /// RAWY-282: optional, independent of `body`. `None` = this note has no title, which is what every
     /// note written before migration 14 is — the list then renders exactly as it always did.
     pub title: Option<String>,
+    /// This note's tag NAMES, resolved through the `note_tags` join (RAWY-203).
+    ///
+    /// NAMES, not ids, for the same reason `AnnoItem.tags` carries names: every consumer of this row
+    /// either displays a tag or filters by one, and an id would force a second lookup at each of them.
+    /// The tag ENTITIES stay the source of truth -- this is a projection of the join, never a copy, so
+    /// renaming or deleting a tag is still one write in one place and no note can hold a stale name.
+    ///
+    /// An untagged note gets an empty vector, which is exactly what every note written before this
+    /// field existed produces: the subquery returns NULL and NULL becomes `vec![]`. No migration is
+    /// needed, and "never tagged" and "tags removed" are indistinguishable, as they should be.
+    pub tags: Vec<String>,
 }
 
 fn note_row(r: &rusqlite::Row) -> rusqlite::Result<NoteRow> {
@@ -983,6 +1253,13 @@ fn note_row(r: &rusqlite::Row) -> rusqlite::Result<NoteRow> {
         created_at: r.get(7)?,
         updated_at: r.get(8)?,
         title: r.get(9)?,
+        // APPENDED at index 10 -- the same discipline `title` was added under, so every index above
+        // keeps its position and nothing that already read a column can read the wrong one.
+        // GROUP_CONCAT yields NULL for a note with no tags, which becomes an empty list.
+        tags: r
+            .get::<_, Option<String>>(10)?
+            .map(|v| v.split('\n').filter(|x| !x.is_empty()).map(str::to_string).collect())
+            .unwrap_or_default(),
     })
 }
 
@@ -991,20 +1268,27 @@ fn note_row(r: &rusqlite::Row) -> rusqlite::Result<NoteRow> {
 const NOTE_COLS: &str =
     "id, book_id, highlight_id, locator_cfi, color, body, chapter_label, created_at, updated_at, title";
 
+/// This note's tag names, as ONE correlated subquery -- the same shape `annotations_all` has used for
+/// the cross-book Inbox since RAWY-203, so the in-book list and the Inbox resolve tags identically and
+/// cannot drift apart. Qualified `notes.id` because these queries select `FROM notes` unaliased.
+/// A note with no tags yields NULL, which `note_row` reads as an empty list.
+const NOTE_TAGS_SUB: &str = "(SELECT GROUP_CONCAT(tg.name, char(10)) FROM note_tags nt \
+     JOIN tags tg ON tg.id = nt.tag_id WHERE nt.note_id = notes.id)";
+
 pub fn notes_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<NoteRow>> {
     // RAWY-282: NEWEST FIRST. This was `ORDER BY created_at` (ascending), which put the note just
     // written at the very BOTTOM of the panel — the opposite of every note-taking app, and of this
     // app's own cross-book Inbox, whose `annotations_all` has always ordered `created_at DESC`. The
     // two views disagreed; this makes the in-book list agree with the one that was already right.
     let mut stmt = conn.prepare(&format!(
-        "SELECT {NOTE_COLS} FROM notes WHERE book_id = ?1 ORDER BY created_at DESC"
+        "SELECT {NOTE_COLS}, {NOTE_TAGS_SUB} FROM notes WHERE book_id = ?1 ORDER BY created_at DESC"
     ))?;
     let rows = stmt.query_map([book_id], note_row)?;
     rows.collect()
 }
 
 fn get_note(conn: &Connection, id: &str) -> rusqlite::Result<Option<NoteRow>> {
-    conn.query_row(&format!("SELECT {NOTE_COLS} FROM notes WHERE id = ?1"), [id], note_row)
+    conn.query_row(&format!("SELECT {NOTE_COLS}, {NOTE_TAGS_SUB} FROM notes WHERE id = ?1"), [id], note_row)
         .optional()
 }
 
@@ -1095,6 +1379,59 @@ pub fn tag_create(conn: &Connection, name: &str) -> rusqlite::Result<Option<Tag>
         .optional()
 }
 
+/// The outcome of a rename, as a value the interface can act on.
+///
+/// A rename can fail for reasons that are not errors — the name is blank, or another tag already has
+/// it — and those need to be TOLD to the reader, not swallowed or turned into an exception string that
+/// cannot be translated. `status` is a stable token the interface maps to its own words.
+#[derive(Serialize)]
+pub struct TagRename {
+    /// "ok" | "empty" | "taken" | "missing" | "unchanged"
+    pub status: String,
+    /// The tag as it now stands — present for "ok" and "unchanged", absent otherwise.
+    pub tag: Option<Tag>,
+}
+
+/// Rename a tag IN PLACE.
+///
+/// THE IDENTITY NEVER CHANGES. This is an `UPDATE` of `tags.name` on the existing row, so `tags.id` is
+/// untouched and every `note_tags` link keeps pointing at the same tag. Nothing is re-assigned, nothing
+/// is created, and no annotation is read or written — which is precisely why every note and highlight
+/// carrying the tag shows the new name the moment the row changes: they never stored the name at all,
+/// they resolve it through the join.
+///
+/// Validation follows the rules `tag_create` already established, rather than inventing new ones: the
+/// name is TRIMMED, an empty name is refused, and names are UNIQUE. A name another tag already holds is
+/// REFUSED rather than merged — merging would silently move annotations between tags, which the reader
+/// did not ask for and could not undo. Renaming a tag to what it already is succeeds and does nothing.
+pub fn tag_rename(conn: &Connection, id: &str, name: &str) -> rusqlite::Result<TagRename> {
+    let name = name.trim();
+    let none = |st: &str| TagRename { status: st.to_string(), tag: None };
+    if name.is_empty() {
+        return Ok(none("empty"));
+    }
+    let current: Option<String> = conn
+        .query_row("SELECT name FROM tags WHERE id = ?1", [id], |r| r.get(0))
+        .optional()?;
+    let Some(current) = current else { return Ok(none("missing")) };
+    if current == name {
+        // Not a failure: the reader confirmed the name they already had.
+        let tag = conn.query_row("SELECT id, name, created_at FROM tags WHERE id = ?1", [id], tag_row)?;
+        return Ok(TagRename { status: "unchanged".into(), tag: Some(tag) });
+    }
+    // `tags.name` is UNIQUE, so this is also enforced by the schema; asking first lets the interface
+    // say WHICH problem it is instead of surfacing a constraint violation.
+    let taken: Option<String> = conn
+        .query_row("SELECT id FROM tags WHERE name = ?1", [name], |r| r.get(0))
+        .optional()?;
+    if taken.is_some() {
+        return Ok(none("taken"));
+    }
+    conn.execute("UPDATE tags SET name = ?1 WHERE id = ?2", rusqlite::params![name, id])?;
+    let tag = conn.query_row("SELECT id, name, created_at FROM tags WHERE id = ?1", [id], tag_row)?;
+    Ok(TagRename { status: "ok".into(), tag: Some(tag) })
+}
+
 /// Delete a tag. ON DELETE CASCADE clears its `note_tags` links; the `notes` table has NO FK to tags,
 /// so the notes themselves are never touched — deleting a tag only unlinks it, never deletes a note.
 pub fn tag_delete(conn: &Connection, id: &str) -> rusqlite::Result<()> {
@@ -1153,6 +1490,13 @@ pub struct AnnoItem {
     /// RAWY-282: the attached note's title, or `None`. Lets the cross-book Inbox render the same
     /// title/preview shape as the in-book list without a second query.
     pub note_title: Option<String>,
+    /// WHOSE MARK THIS IS, when it is not the reader's own.
+    ///
+    /// A mark that arrived in a reading deposit keeps its sender's name; a mark the reader made has
+    /// none, which is how the archive tells the two apart. APPENDED, like every column before it, so
+    /// no existing field shifts. The receiving sheet promises the archive will say this — until this
+    /// column existed, it could not.
+    pub sender: Option<String>,
 }
 
 fn anno_item(r: &rusqlite::Row) -> rusqlite::Result<AnnoItem> {
@@ -1162,6 +1506,8 @@ fn anno_item(r: &rusqlite::Row) -> rusqlite::Result<AnnoItem> {
     // RAWY-282: column 14, APPENDED after the tags for the same reason RAWY-203 appended 12 and 13 —
     // every earlier index keeps its position, so no existing field can shift under a reader.
     let note_title: Option<String> = r.get(14)?;
+    // Column 15, appended for the same reason: an arriving mark's sender, NULL for the reader's own.
+    let sender: Option<String> = r.get(15)?;
     let tags = tag_str
         .map(|s| s.split('\n').filter(|t| !t.is_empty()).map(str::to_string).collect())
         .unwrap_or_default();
@@ -1181,6 +1527,7 @@ fn anno_item(r: &rusqlite::Row) -> rusqlite::Result<AnnoItem> {
         note_id: r.get(12)?,
         tags,
         note_title,
+        sender,
     })
 }
 
@@ -1192,16 +1539,20 @@ pub fn annotations_all(conn: &Connection) -> rusqlite::Result<Vec<AnnoItem>> {
     // and every existing field an item carried before is still returned in the same position.
     let tags_sub = "(SELECT GROUP_CONCAT(tg.name, char(10)) FROM note_tags nt \
                      JOIN tags tg ON tg.id = nt.tag_id WHERE nt.note_id = n.id)";
+    // WHO GAVE IT. A mark the reader made has no row in `mark_origin`, so this is NULL for everything
+    // he wrote himself — which is exactly the distinction the archive needs to draw.
+    let hl_sender = "(SELECT d.sender FROM mark_origin mo JOIN deposits d ON d.id = mo.deposit_id                       WHERE mo.kind = 'highlight' AND mo.mark_id = h.id)";
+    let note_sender = "(SELECT d.sender FROM mark_origin mo JOIN deposits d ON d.id = mo.deposit_id                         WHERE mo.kind = 'note' AND mo.mark_id = n.id)";
     let sql = format!(
         "SELECT h.id, 'highlight', h.book_id, {OV_TITLE}, b.file_path, \
             COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='dir'), b.dir), \
-            h.chapter_label, h.color, h.text_excerpt, n.body, h.start_cfi, h.created_at, n.id, {tags_sub}, n.title \
+            h.chapter_label, h.color, h.text_excerpt, n.body, h.start_cfi, h.created_at, n.id, {tags_sub}, n.title, \n            {hl_sender}  \
          FROM highlights h JOIN books b ON b.id = h.book_id \
          LEFT JOIN notes n ON n.highlight_id = h.id \
          UNION ALL \
          SELECT n.id, 'note', n.book_id, {OV_TITLE}, b.file_path, \
             COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='dir'), b.dir), \
-            n.chapter_label, n.color, n.body, NULL, n.locator_cfi, n.created_at, n.id, {tags_sub}, n.title \
+            n.chapter_label, n.color, n.body, NULL, n.locator_cfi, n.created_at, n.id, {tags_sub}, n.title, \n            {note_sender}  \
          FROM notes n JOIN books b ON b.id = n.book_id \
          WHERE n.highlight_id IS NULL \
          ORDER BY created_at DESC"
@@ -1214,6 +1565,490 @@ pub fn annotations_all(conn: &Connection) -> rusqlite::Result<Vec<AnnoItem>> {
 #[cfg(test)]
 mod tests {
     use super::{escape_like, fold_search};
+
+    // ── A NOTE CARRIES ITS TAGS ──────────────────────────────────────────────────────────────────
+    //
+    // `notes_for_book` projects the `note_tags` join into `NoteRow.tags` through one correlated
+    // subquery, so the in-book Notes sidebar can show and filter tags without a second round trip per
+    // note. What matters, and is easy to get silently wrong, is the empty case: a note that has never
+    // been tagged must come back with an EMPTY list, not a null and not a list containing "". Every
+    // note written before tags existed is that case, which is why it is asserted first.
+    mod note_tags {
+        use crate::library::{notes_for_book, note_tags_set, tag_create};
+        use rusqlite::Connection;
+
+        /// Only the tables this query touches. The real migrations are exercised elsewhere; what is
+        /// under test here is the projection, and a minimal schema makes a failure unambiguous.
+        fn db() -> Connection {
+            let c = Connection::open_in_memory().unwrap();
+            c.execute_batch(
+                "CREATE TABLE notes (
+                   id TEXT PRIMARY KEY, book_id TEXT, highlight_id TEXT, locator_cfi TEXT,
+                   color TEXT, body TEXT, chapter_label TEXT, created_at INTEGER,
+                   updated_at INTEGER, title TEXT);
+                 CREATE TABLE highlights (
+                   id TEXT PRIMARY KEY, book_id TEXT, start_cfi TEXT, color TEXT,
+                   text_excerpt TEXT, chapter_label TEXT, created_at INTEGER, alpha REAL);
+                 CREATE TABLE tags (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_at INTEGER);
+                 CREATE TABLE note_tags (
+                   note_id TEXT NOT NULL, tag_id TEXT NOT NULL, PRIMARY KEY (note_id, tag_id));",
+            )
+            .unwrap();
+            c
+        }
+
+        fn add_note(c: &Connection, id: &str, created: i64) {
+            c.execute(
+                "INSERT INTO notes(id, book_id, body, created_at) VALUES(?1, 'b1', 'text', ?2)",
+                rusqlite::params![id, created],
+            )
+            .unwrap();
+        }
+
+        #[test]
+        fn an_untagged_note_comes_back_with_an_empty_list() {
+            // EVERY note written before tags existed is this note. It must need no migration and no
+            // null check anywhere above it.
+            let c = db();
+            add_note(&c, "n1", 100);
+            let rows = notes_for_book(&c, "b1").unwrap();
+            assert_eq!(rows.len(), 1);
+            assert!(rows[0].tags.is_empty(), "expected no tags, got {:?}", rows[0].tags);
+        }
+
+        #[test]
+        fn one_tag_comes_back_by_name() {
+            let c = db();
+            add_note(&c, "n1", 100);
+            let t = tag_create(&c, "characters").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[t.id]).unwrap();
+            let rows = notes_for_book(&c, "b1").unwrap();
+            assert_eq!(rows[0].tags, vec!["characters".to_string()]);
+        }
+
+        #[test]
+        fn several_tags_all_come_back() {
+            // The sidebar shows every tag on the card and matches ANY of them when filtering, so a
+            // truncated list would silently hide a note from a filter it belongs under.
+            let c = db();
+            add_note(&c, "n1", 100);
+            let a = tag_create(&c, "characters").unwrap().unwrap();
+            let b = tag_create(&c, "places").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[a.id, b.id]).unwrap();
+            let rows = notes_for_book(&c, "b1").unwrap();
+            let mut got = rows[0].tags.clone();
+            got.sort();
+            assert_eq!(got, vec!["characters".to_string(), "places".to_string()]);
+        }
+
+        #[test]
+        fn removing_every_tag_returns_the_note_to_the_untagged_case() {
+            // "Never tagged" and "tags removed" must be indistinguishable, or a note could linger in a
+            // filter it no longer belongs to.
+            let c = db();
+            add_note(&c, "n1", 100);
+            let t = tag_create(&c, "characters").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[t.id]).unwrap();
+            note_tags_set(&c, "n1", &[]).unwrap();
+            let rows = notes_for_book(&c, "b1").unwrap();
+            assert!(rows[0].tags.is_empty(), "expected no tags, got {:?}", rows[0].tags);
+        }
+
+        #[test]
+        fn a_tag_is_shared_by_name_across_notes() {
+            // Tags are library-wide entities keyed by a UNIQUE name, so tagging a second note with the
+            // same word must REUSE the row rather than mint a second one that only looks the same.
+            let c = db();
+            add_note(&c, "n1", 100);
+            add_note(&c, "n2", 200);
+            let first = tag_create(&c, "characters").unwrap().unwrap();
+            let again = tag_create(&c, "characters").unwrap().unwrap();
+            assert_eq!(first.id, again.id, "the same name must be the same tag");
+            note_tags_set(&c, "n1", &[first.id.clone()]).unwrap();
+            note_tags_set(&c, "n2", &[again.id]).unwrap();
+            let count: i64 = c
+                .query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(count, 1, "one name must be one tag row");
+            for row in notes_for_book(&c, "b1").unwrap() {
+                assert_eq!(row.tags, vec!["characters".to_string()]);
+            }
+        }
+
+        // ── A HIGHLIGHT'S TAGS ARE ITS NOTE'S TAGS ───────────────────────────────────────────────
+        //
+        // There is no highlight->tag relationship in the schema and there must not be one: `note_tags`
+        // anchors to `notes.id`, and RAWY-205 made an EMPTY-BODY note a legitimate tag ANCHOR so a
+        // body-less highlight could be tagged. `highlights_for_book` resolves through that note, which
+        // is what lets ONE tag filter serve both kinds in the sidebar.
+        #[test]
+        fn a_highlight_carries_the_tags_of_its_attached_note() {
+            let c = db();
+            c.execute(
+                "INSERT INTO highlights(id, book_id, start_cfi, color, created_at)                  VALUES('h1','b1','epubcfi(/2)','amber',100)",
+                [],
+            )
+            .unwrap();
+            // an ANCHOR note: no body at all, existing only to hold the tag
+            c.execute(
+                "INSERT INTO notes(id, book_id, highlight_id, created_at) VALUES('n1','b1','h1',100)",
+                [],
+            )
+            .unwrap();
+            let t = tag_create(&c, "quote").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[t.id]).unwrap();
+            let rows = crate::library::highlights_for_book(&c, "b1").unwrap();
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].tags, vec!["quote".to_string()]);
+        }
+
+        // -- RENAMING A TAG ------------------------------------------------------------------------
+        //
+        // The identity must not move. Everything below is one claim from several angles: the row is
+        // UPDATED, so `tags.id` and every `note_tags` link survive, and no note or highlight is read or
+        // written at all -- which is exactly why the new name simply appears on them.
+        #[test]
+        fn renaming_keeps_the_same_tag_and_all_its_links() {
+            let c = db();
+            add_note(&c, "n1", 100);
+            add_note(&c, "n2", 200);
+            let t = tag_create(&c, "old").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[t.id.clone()]).unwrap();
+            note_tags_set(&c, "n2", &[t.id.clone()]).unwrap();
+
+            let out = crate::library::tag_rename(&c, &t.id, "new").unwrap();
+            assert_eq!(out.status, "ok");
+            assert_eq!(out.tag.as_ref().unwrap().id, t.id, "the id must not change");
+            assert_eq!(out.tag.as_ref().unwrap().name, "new");
+
+            // one tag row still, both links still there -- the SAME tag, under a new name
+            let tags: i64 = c.query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0)).unwrap();
+            let links: i64 = c.query_row("SELECT COUNT(*) FROM note_tags", [], |r| r.get(0)).unwrap();
+            assert_eq!((tags, links), (1, 2));
+            for row in notes_for_book(&c, "b1").unwrap() {
+                assert_eq!(row.tags, vec!["new".to_string()], "note {} lost the tag", row.id);
+            }
+        }
+
+        #[test]
+        fn renaming_never_touches_the_annotations_themselves() {
+            // The dangerous implementation is "create + reassign + delete", which can drop a note
+            // through the cascade. Nothing here may change the notes table at all.
+            let c = db();
+            add_note(&c, "n1", 100);
+            let t = tag_create(&c, "old").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[t.id.clone()]).unwrap();
+            let before: i64 = c.query_row("SELECT COUNT(*) FROM notes", [], |r| r.get(0)).unwrap();
+            crate::library::tag_rename(&c, &t.id, "new").unwrap();
+            let after: i64 = c.query_row("SELECT COUNT(*) FROM notes", [], |r| r.get(0)).unwrap();
+            assert_eq!(before, after, "a rename must not add or remove a note");
+        }
+
+        #[test]
+        fn a_name_another_tag_already_holds_is_refused_not_merged() {
+            // Merging would silently move annotations between tags. Refusing is recoverable.
+            let c = db();
+            add_note(&c, "n1", 100);
+            let a = tag_create(&c, "alpha").unwrap().unwrap();
+            let b = tag_create(&c, "beta").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[a.id.clone()]).unwrap();
+
+            let out = crate::library::tag_rename(&c, &b.id, "alpha").unwrap();
+            assert_eq!(out.status, "taken");
+            assert!(out.tag.is_none());
+            let names: Vec<String> =
+                crate::library::tags_list(&c).unwrap().into_iter().map(|t| t.name).collect();
+            assert_eq!(names, vec!["alpha".to_string(), "beta".to_string()]);
+            assert_eq!(notes_for_book(&c, "b1").unwrap()[0].tags, vec!["alpha".to_string()]);
+        }
+
+        #[test]
+        fn a_blank_name_is_refused_and_changes_nothing() {
+            let c = db();
+            let t = tag_create(&c, "keep").unwrap().unwrap();
+            for blank in ["", "   ", " \t \n "] {
+                let out = crate::library::tag_rename(&c, &t.id, blank).unwrap();
+                assert_eq!(out.status, "empty", "blank {blank:?} should be refused");
+            }
+            assert_eq!(crate::library::tags_list(&c).unwrap()[0].name, "keep");
+        }
+
+        #[test]
+        fn a_name_is_trimmed_exactly_as_creation_trims_it() {
+            // ONE naming rule, not two: `tag_create` trims, so rename must trim identically or the two
+            // routes would produce names that look the same and are not.
+            let c = db();
+            let t = tag_create(&c, "old").unwrap().unwrap();
+            let out = crate::library::tag_rename(&c, &t.id, "  spaced  ").unwrap();
+            assert_eq!(out.status, "ok");
+            assert_eq!(out.tag.unwrap().name, "spaced");
+        }
+
+        #[test]
+        fn renaming_a_tag_to_its_own_name_succeeds_and_writes_nothing() {
+            let c = db();
+            let t = tag_create(&c, "same").unwrap().unwrap();
+            let out = crate::library::tag_rename(&c, &t.id, "same").unwrap();
+            assert_eq!(out.status, "unchanged");
+            assert_eq!(out.tag.unwrap().id, t.id);
+        }
+
+        #[test]
+        fn arabic_english_mixed_and_long_names_all_round_trip() {
+            let c = db();
+            add_note(&c, "n1", 100);
+            let t = tag_create(&c, "start").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[t.id.clone()]).unwrap();
+            let names = [
+                "\u{634}\u{62e}\u{635}\u{64a}\u{627}\u{62a}",
+                "Notes \u{648}\u{645}\u{644}\u{627}\u{62d}\u{638}\u{627}\u{62a}",
+                "a very long tag name that a reader might reasonably type out in full and expect to keep",
+            ];
+            for name in names {
+                let out = crate::library::tag_rename(&c, &t.id, name).unwrap();
+                assert_eq!(out.status, "ok", "rename to {name:?}");
+                assert_eq!(notes_for_book(&c, "b1").unwrap()[0].tags, vec![name.to_string()]);
+            }
+        }
+
+        #[test]
+        fn renaming_an_unknown_tag_reports_missing_rather_than_creating_one() {
+            let c = db();
+            let out = crate::library::tag_rename(&c, "no-such-id", "whatever").unwrap();
+            assert_eq!(out.status, "missing");
+            let n: i64 = c.query_row("SELECT COUNT(*) FROM tags", [], |r| r.get(0)).unwrap();
+            assert_eq!(n, 0, "a rename must never create a tag");
+        }
+
+        #[test]
+        fn an_unrelated_tag_is_untouched_by_a_rename() {
+            let c = db();
+            add_note(&c, "n1", 100);
+            add_note(&c, "n2", 200);
+            let a = tag_create(&c, "alpha").unwrap().unwrap();
+            let b = tag_create(&c, "beta").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[a.id.clone()]).unwrap();
+            note_tags_set(&c, "n2", &[b.id.clone()]).unwrap();
+            crate::library::tag_rename(&c, &a.id, "gamma").unwrap();
+            let by: std::collections::HashMap<_, _> = notes_for_book(&c, "b1")
+                .unwrap()
+                .into_iter()
+                .map(|r| (r.id, r.tags))
+                .collect();
+            assert_eq!(by["n1"], vec!["gamma".to_string()]);
+            assert_eq!(by["n2"], vec!["beta".to_string()], "the other tag must be untouched");
+        }
+
+        #[test]
+        fn a_highlight_with_no_note_has_no_tags() {
+            // Every highlight made before tags existed is this one. It must need no backfill.
+            let c = db();
+            c.execute(
+                "INSERT INTO highlights(id, book_id, start_cfi, color, created_at)                  VALUES('h1','b1','epubcfi(/2)','amber',100)",
+                [],
+            )
+            .unwrap();
+            let rows = crate::library::highlights_for_book(&c, "b1").unwrap();
+            assert!(rows[0].tags.is_empty(), "expected none, got {:?}", rows[0].tags);
+        }
+
+        #[test]
+        fn each_note_gets_only_its_own_tags() {
+            let c = db();
+            add_note(&c, "n1", 100);
+            add_note(&c, "n2", 200);
+            let a = tag_create(&c, "characters").unwrap().unwrap();
+            let b = tag_create(&c, "places").unwrap().unwrap();
+            note_tags_set(&c, "n1", &[a.id]).unwrap();
+            note_tags_set(&c, "n2", &[b.id]).unwrap();
+            let rows = notes_for_book(&c, "b1").unwrap();
+            // newest first, so n2 leads
+            let by_id: std::collections::HashMap<_, _> =
+                rows.iter().map(|r| (r.id.as_str(), r.tags.clone())).collect();
+            assert_eq!(by_id["n1"], vec!["characters".to_string()]);
+            assert_eq!(by_id["n2"], vec!["places".to_string()]);
+        }
+    }
+
+    // ── «كثافة الحبر» AT ZERO ────────────────────────────────────────────────────────────────────
+    //
+    // The scale used to begin at its floor, and the floor was enforced HERE as well as in the
+    // interface — so a reader who dialled a mark to nothing had the value quietly raised to 0.05 on
+    // its way into the database, and got a faint wash back. Measured in the running application
+    // before this: writing 0 returned 0.05, and it was still 0.05 after a restart.
+    mod ink_density {
+        use super::super::alpha_for_store_for_test as store;
+
+        #[test]
+        fn zero_is_stored_as_zero() {
+            // The reader asking for no colour is a decision, not an accident.
+            assert_eq!(store(0.0), 0.0);
+        }
+
+        #[test]
+        fn a_value_between_zero_and_the_floor_is_still_lifted() {
+            // The floor still does the job it was put there for: a density that reached almost-zero
+            // by accident must not leave a mark that claims a passage and shows nothing.
+            assert_eq!(store(0.01), 0.05);
+            assert_eq!(store(0.049), 0.05);
+        }
+
+        #[test]
+        fn every_ordinary_value_is_untouched() {
+            for v in [0.05, 0.1, 0.15, 0.3, 0.5, 0.75, 0.9, 1.0] {
+                assert_eq!(store(v), v, "density {v} changed on its way into the database");
+            }
+        }
+
+        #[test]
+        fn the_ceiling_still_holds() {
+            // Above 1 a mark buries the words it marks, and the control cannot reach that.
+            assert_eq!(store(1.4), 1.0);
+        }
+
+        #[test]
+        fn a_negative_value_is_nothing_rather_than_an_error() {
+            // It cannot arrive from the control; if it ever did, "no colour" is the honest reading.
+            assert_eq!(store(-0.5), 0.0);
+        }
+    }
+
+    // ── F-2: the containment rule that gates every database-derived file deletion ────────────────
+    //
+    // These build a REAL directory tree under the OS temp dir, because the rule is defined by what
+    // `canonicalize` does — case folding, separator form, `..` collapsing, junction resolution — and
+    // none of that can be exercised against a path that does not exist. A pure-string test here
+    // would assert the implementation instead of the behaviour, and would have passed just as
+    // happily for the `starts_with` version this replaces.
+    mod containment {
+        use super::super::is_managed_file_for_test as is_managed;
+        use std::path::{Path, PathBuf};
+
+        /// `<temp>/sard_f2_<tag>/{library, library/covers, library2, elsewhere}`
+        fn tree(tag: &str) -> PathBuf {
+            let root = std::env::temp_dir().join(format!("sard_f2_{tag}"));
+            let _ = std::fs::remove_dir_all(&root);
+            for d in ["library/covers", "library2", "elsewhere"] {
+                std::fs::create_dir_all(root.join(d)).unwrap();
+            }
+            root
+        }
+
+        #[test]
+        fn accepts_the_paths_the_importer_actually_writes() {
+            let root = tree("accept");
+            let lib = root.join("library");
+            let covers = lib.join("covers");
+            // `library/{id}.epub` and `library/{id}.pdf` — the two shapes import_epub/import_pdf build.
+            assert!(is_managed(&lib.join("abc123.epub"), &lib), "managed .epub");
+            assert!(is_managed(&lib.join("abc123.pdf"), &lib), "managed .pdf");
+            // `library/covers/{name}` — the extracted cover and the replaced-cover override.
+            assert!(is_managed(&covers.join("abc123.jpg"), &covers), "managed cover");
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn a_missing_file_is_still_judged_by_its_parent() {
+            // The ordinary case: the row is being deleted precisely because the book is going away,
+            // and the file may already be gone. Canonicalising the FILE would fail here; the parent
+            // is what the rule looks at, and it exists.
+            let root = tree("missing");
+            let lib = root.join("library");
+            let gone = lib.join("never-existed.epub");
+            assert!(!gone.exists());
+            assert!(is_managed(&gone, &lib), "a missing file inside the directory is still managed");
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn refuses_a_sibling_directory_sharing_the_prefix() {
+            // `library2` starts with `library` as a STRING but is a different directory.
+            let root = tree("sibling");
+            let lib = root.join("library");
+            assert!(!is_managed(&root.join("library2").join("x.epub"), &lib));
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn refuses_a_traversal_that_escapes_the_directory() {
+            // THE CASE `starts_with` GETS WRONG: this passes a prefix test and points outside.
+            let root = tree("traversal");
+            let lib = root.join("library");
+            let escape = lib.join("..").join("elsewhere").join("x.epub");
+            assert!(!is_managed(&escape, &lib), "`library/../elsewhere/x.epub` must be refused");
+            // and the deeper form, out of the app data dir entirely
+            let far = lib.join("..").join("..").join("x.epub");
+            assert!(!is_managed(&far, &lib));
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn refuses_an_absolute_path_outside() {
+            let root = tree("outside");
+            let lib = root.join("library");
+            assert!(!is_managed(&root.join("elsewhere").join("x.epub"), &lib));
+            assert!(!is_managed(Path::new("C:/Windows/System32/x.epub"), &lib));
+            assert!(!is_managed(Path::new("/etc/passwd"), &lib));
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn refuses_a_path_whose_parent_does_not_exist() {
+            // Fails closed: nothing to canonicalise ⇒ nothing proven ⇒ refuse.
+            let root = tree("unresolved");
+            let lib = root.join("library");
+            assert!(!is_managed(&lib.join("no-such-dir").join("x.epub"), &lib));
+            assert!(!is_managed(Path::new("x.epub"), &lib), "a bare relative name has no usable parent");
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn refuses_when_the_managed_directory_itself_is_missing() {
+            // If `library/` cannot be resolved, no path can be proven to be in it.
+            let root = tree("nodir");
+            let absent = root.join("library-that-was-deleted");
+            assert!(!is_managed(&absent.join("x.epub"), &absent));
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[test]
+        fn a_cover_is_not_a_book_and_a_book_is_not_a_cover() {
+            // The parent must match EXACTLY. One level deeper is a different kind of file with a
+            // different lifetime, and the rule that governs books must not reach it.
+            let root = tree("depth");
+            let lib = root.join("library");
+            let covers = lib.join("covers");
+            assert!(!is_managed(&covers.join("x.jpg"), &lib), "a cover is not in library/");
+            assert!(!is_managed(&lib.join("x.epub"), &covers), "a book is not in library/covers/");
+            let _ = std::fs::remove_dir_all(&root);
+        }
+
+        #[cfg(windows)]
+        #[test]
+        fn case_and_separator_forms_are_both_accepted() {
+            // BOTH forms occur in the owner's real database — 43 rows use the platform separator and
+            // one uses forward slashes — and `starts_with` accepts the separator difference but
+            // REFUSES a case difference, which would silently orphan a legitimate file.
+            //
+            // Written with `MAIN_SEPARATOR` and `join` rather than a spelled-out separator: this file
+            // has been through enough layers of escaping already, and a test that asserts the wrong
+            // string proves nothing.
+            let root = tree("case");
+            let lib = root.join("library");
+            let shown = lib.to_string_lossy().to_string();
+
+            let forward = format!("{}/x.epub", shown.replace(std::path::MAIN_SEPARATOR, "/"));
+            assert!(is_managed(Path::new(&forward), &lib), "forward slashes");
+
+            let upper = Path::new(&shown.to_uppercase()).join("X.EPUB");
+            assert!(is_managed(&upper, &lib), "upper-cased path");
+
+            let lower = Path::new(&shown.to_lowercase()).join("x.epub");
+            assert!(is_managed(&lower, &lib), "lower-cased path");
+
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
 
     // RAWY-178 (AUD-12): the library fold matches the in-book search intent — an unvocalized query
     // folds to the same string as the vocalized/variant title, so LIKE compares folded-to-folded.
@@ -1260,6 +2095,10 @@ pub struct RefRow {
     pub phrase_fold: String,
     pub word_count: i64,
     pub note: String,
+    /// Where the reader stood when they made it. NULL for a rule typed into the library rather
+    /// than taken from a selection, and for every row written before the column existed. Never
+    /// guessed: the places the phrase occurs are where the WORD is, not where the reader was.
+    pub cfi: Option<String>,
     pub created_at: Option<i64>,
     pub updated_at: Option<i64>,
 }
@@ -1272,16 +2111,40 @@ fn ref_row(r: &rusqlite::Row) -> rusqlite::Result<RefRow> {
         phrase_fold: r.get(3)?,
         word_count: r.get(4)?,
         note: r.get(5)?,
-        created_at: r.get(6)?,
-        updated_at: r.get(7)?,
+        cfi: r.get(6)?,
+        created_at: r.get(7)?,
+        updated_at: r.get(8)?,
     })
 }
 
-const REF_COLS: &str = "id, book_id, phrase, phrase_fold, word_count, note, created_at, updated_at";
+const REF_COLS: &str =
+    "id, book_id, phrase, phrase_fold, word_count, note, cfi, created_at, updated_at";
 
 /// Every reference for one book — the whole set, loaded once when the book opens and then held in memory
 /// for per-section matching. A book's references are counted in tens, not thousands, so this is one small
 /// query per open rather than a lookup per section (let alone per word).
+/// EVERY reference, and every replacement, in ONE statement.
+///
+/// WHY THIS EXISTS. The shelf draws a preview of what the reader made in each book, so it needs the
+/// contents of every listed book and not merely a count. It got them by asking per book, which is two
+/// IPC round trips per row: correct, and the note beside it recorded the assumption it rested on —
+/// "a reader has tens of these, not thousands".
+///
+/// MEASURED against 2,000 books carrying references or replacements: ~3,400 round trips on opening
+/// the page, 1,121ms of the main thread inside `fetch` alone, and the screen unusable while it ran.
+/// The assumption was reasonable and it is simply not true of a large library.
+///
+/// The ORDER is the per-book order — longest phrase first, then oldest — so a caller that groups by
+/// `book_id` gets exactly what the per-book query would have handed it, row for row. The per-book
+/// functions stay: they are still the right call when one book is being reloaded after an edit.
+pub fn refs_all(conn: &Connection) -> rusqlite::Result<Vec<RefRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {REF_COLS} FROM refs ORDER BY book_id, word_count DESC, created_at"
+    ))?;
+    let rows = stmt.query_map([], ref_row)?;
+    rows.collect()
+}
+
 pub fn refs_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<RefRow>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT {REF_COLS} FROM refs WHERE book_id = ?1 ORDER BY word_count DESC, created_at"
@@ -1302,16 +2165,21 @@ pub fn ref_save(
     phrase_fold: &str,
     word_count: i64,
     note: &str,
+    cfi: Option<&str>,
 ) -> rusqlite::Result<Option<RefRow>> {
     let id = gen_id(&format!("ref:{book_id}:{phrase_fold}"));
     let now = now_unix();
     conn.execute(
-        "INSERT INTO refs(id, book_id, phrase, phrase_fold, word_count, note, created_at, updated_at) \
-         VALUES(?1,?2,?3,?4,?5,?6,?7,?7) \
+        // COALESCE, so an edit can never erase a place. The library screen saves the same rule
+        // with no selection behind it, and writing NULL over the cfi there would quietly take the
+        // rule off the map. A place is gained here, never lost.
+        "INSERT INTO refs(id, book_id, phrase, phrase_fold, word_count, note, cfi, created_at, updated_at) \
+         VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?8) \
          ON CONFLICT(book_id, phrase_fold) DO UPDATE SET \
             phrase=excluded.phrase, word_count=excluded.word_count, note=excluded.note, \
+             cfi=COALESCE(excluded.cfi, refs.cfi), \
             updated_at=excluded.updated_at",
-        rusqlite::params![id, book_id, phrase, phrase_fold, word_count, note, now],
+        rusqlite::params![id, book_id, phrase, phrase_fold, word_count, note, cfi, now],
     )?;
     // The conflict target is (book_id, phrase_fold), not the id, so on an edit the row keeps its ORIGINAL
     // id — re-derive it from the unique key rather than assuming the id we just generated.
@@ -1329,5 +2197,165 @@ pub fn ref_save(
 pub fn ref_delete(conn: &Connection, id: &str) -> rusqlite::Result<()> {
     conn.execute("DELETE FROM refs WHERE id = ?1", [id])?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// REPLACEMENTS: a reading-time substitution bound to a PHRASE, per book
+// (see 20260902100000_replacements.sql). Deliberately shaped like `refs` above — same folding, same
+// per-book identity, same load-once-per-open access pattern — so the two features stay one idea.
+// ---------------------------------------------------------------------------
+
+/// One replacement rule. `phrase` is the author's wording as the reader gave it; `replacement` is what
+/// they want to read instead; `enabled` is a SWITCH, never a delete, because turning a rule off has to
+/// restore the author's wording without losing the rule.
+#[derive(Serialize)]
+pub struct RepRow {
+    pub id: String,
+    pub book_id: String,
+    pub phrase: String,
+    pub phrase_fold: String,
+    pub replacement: String,
+    pub word_count: i64,
+    pub enabled: bool,
+    /// Where the reader stood when they made it. NULL for a rule typed into the library rather
+    /// than taken from a selection, and for every row written before the column existed. Never
+    /// guessed: the places the phrase occurs are where the WORD is, not where the reader was.
+    pub cfi: Option<String>,
+    pub created_at: Option<i64>,
+    pub updated_at: Option<i64>,
+}
+
+const REP_COLS: &str =
+    "id, book_id, phrase, phrase_fold, replacement, word_count, enabled, cfi, created_at, updated_at";
+
+fn rep_row(r: &rusqlite::Row) -> rusqlite::Result<RepRow> {
+    Ok(RepRow {
+        id: r.get(0)?,
+        book_id: r.get(1)?,
+        phrase: r.get(2)?,
+        phrase_fold: r.get(3)?,
+        replacement: r.get(4)?,
+        word_count: r.get(5)?,
+        enabled: r.get::<_, i64>(6)? != 0,
+        cfi: r.get(7)?,
+        created_at: r.get(8)?,
+        updated_at: r.get(9)?,
+    })
+}
+
+/// Every replacement for one book, longest phrase first so a multi-word rule wins over a single-word one
+/// nested inside it — the same precedence `findPhraseHits` applies, kept here so the order the reader
+/// sees and the order the matcher uses cannot drift apart.
+/// Every replacement, in one statement — the companion to `refs_all`, same reasoning, same order.
+pub fn reps_all(conn: &Connection) -> rusqlite::Result<Vec<RepRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {REP_COLS} FROM reps ORDER BY book_id, word_count DESC, created_at"
+    ))?;
+    let rows = stmt.query_map([], rep_row)?;
+    rows.collect()
+}
+
+pub fn reps_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<RepRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {REP_COLS} FROM reps WHERE book_id = ?1 ORDER BY word_count DESC, created_at"
+    ))?;
+    let rows = stmt.query_map([book_id], rep_row)?;
+    rows.collect()
+}
+
+/// Create or UPDATE the rule for a phrase in a book. Idempotent per (book, folded phrase): replacing the
+/// same word twice edits the existing rule rather than leaving two rules fighting over the same text.
+/// `enabled` is deliberately NOT touched on update — an edit to the wording must not silently switch a
+/// rule the reader had turned off back on.
+pub fn rep_save(
+    conn: &Connection,
+    book_id: &str,
+    phrase: &str,
+    phrase_fold: &str,
+    replacement: &str,
+    word_count: i64,
+    cfi: Option<&str>,
+) -> rusqlite::Result<Option<RepRow>> {
+    let id = gen_id(&format!("rep:{book_id}:{phrase_fold}"));
+    let now = now_unix();
+    conn.execute(
+        // COALESCE, so an edit can never erase a place. The library screen saves the same rule
+        // with no selection behind it, and writing NULL over the cfi there would quietly take the
+        // rule off the map. A place is gained here, never lost.
+        "INSERT INTO reps(id, book_id, phrase, phrase_fold, replacement, word_count, enabled, cfi, created_at, updated_at) \
+         VALUES(?1,?2,?3,?4,?5,?6,1,?7,?8,?8) \
+         ON CONFLICT(book_id, phrase_fold) DO UPDATE SET \
+            phrase=excluded.phrase, replacement=excluded.replacement, \
+            word_count=excluded.word_count, cfi=COALESCE(excluded.cfi, reps.cfi), \
+            updated_at=excluded.updated_at",
+        rusqlite::params![id, book_id, phrase, phrase_fold, replacement, word_count, cfi, now],
+    )?;
+    // The conflict target is (book_id, phrase_fold), so on an edit the row keeps its ORIGINAL id —
+    // re-read by the unique key rather than assuming the id just generated.
+    conn.query_row(
+        &format!("SELECT {REP_COLS} FROM reps WHERE book_id = ?1 AND phrase_fold = ?2"),
+        rusqlite::params![book_id, phrase_fold],
+        rep_row,
+    )
+    .optional()
+}
+
+/// Turn one rule on or off. The row is left otherwise untouched, so the author's wording returns with
+/// nothing lost and the rule can be switched back at any time.
+pub fn rep_set_enabled(conn: &Connection, id: &str, enabled: bool) -> rusqlite::Result<Option<RepRow>> {
+    conn.execute(
+        "UPDATE reps SET enabled = ?2, updated_at = ?3 WHERE id = ?1",
+        rusqlite::params![id, i64::from(enabled), now_unix()],
+    )?;
+    conn.query_row(
+        &format!("SELECT {REP_COLS} FROM reps WHERE id = ?1"),
+        [id],
+        rep_row,
+    )
+    .optional()
+}
+
+pub fn rep_delete(conn: &Connection, id: &str) -> rusqlite::Result<()> {
+    conn.execute("DELETE FROM reps WHERE id = ?1", [id])?;
+    Ok(())
+}
+
+/// Every book that holds a reference or a replacement, with both counts and the most recent touch — the
+/// shelf level of the References & Replacements surface, which lists exactly the books the reader has
+/// made something in. Done in SQL so the frontend never loads every rule of every book just to count.
+pub fn refs_reps_books(conn: &Connection) -> rusqlite::Result<Vec<RefsRepsBook>> {
+    let mut stmt = conn.prepare(
+        "SELECT b.id, b.title, b.author, \
+                (SELECT COUNT(*) FROM refs r WHERE r.book_id = b.id) AS n_refs, \
+                (SELECT COUNT(*) FROM reps p WHERE p.book_id = b.id) AS n_reps, \
+                MAX(COALESCE((SELECT MAX(updated_at) FROM refs r WHERE r.book_id = b.id), 0), \
+                    COALESCE((SELECT MAX(updated_at) FROM reps p WHERE p.book_id = b.id), 0)) AS touched \
+         FROM books b \
+         WHERE EXISTS(SELECT 1 FROM refs r WHERE r.book_id = b.id) \
+            OR EXISTS(SELECT 1 FROM reps p WHERE p.book_id = b.id) \
+         ORDER BY touched DESC",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok(RefsRepsBook {
+            id: r.get(0)?,
+            title: r.get(1)?,
+            author: r.get(2)?,
+            refs_count: r.get(3)?,
+            reps_count: r.get(4)?,
+            touched: r.get(5)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// One row of the References & Replacements shelf.
+#[derive(Serialize)]
+pub struct RefsRepsBook {
+    pub id: String,
+    pub title: String,
+    pub author: Option<String>,
+    pub refs_count: i64,
+    pub reps_count: i64,
+    pub touched: Option<i64>,
 }
 

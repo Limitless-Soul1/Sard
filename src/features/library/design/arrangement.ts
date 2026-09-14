@@ -1,0 +1,285 @@
+/**
+ * THE ARRANGEMENT — one answer to "where is this book", derived once and read everywhere.
+ *
+ * Five formats used to work this out for themselves. The flat views read the membership rows and
+ * never named a rule shelf; the grouped views used whichever band had drawn the tile; the drag
+ * engine used a third rule. On a real library those three disagreed — the same book reported
+ * `outside every shelf` in Grid and `قيد القراءة` in Covers, and was therefore offered 42
+ * destinations in one and 6 in the other. Nothing here is view-aware, and no view may re-derive any
+ * of it; that is the whole mechanism by which the formats cannot drift apart again.
+ *
+ * ## Why "where is this book" is no longer a question with one answer
+ *
+ * A book may now sit on «روايات عربية» and on «المفضلة» and on «هذا الأسبوع» at once, and must be
+ * visible in all three. So the old `containerOf(bookId)` is gone rather than renamed. It was a
+ * `Map<book, container>` filled by a loop, which meant the LAST row read won — an arbitrary home
+ * decided by nothing but the order persistence happened to return. Every reader of it would have
+ * gone on compiling and quietly begun lying.
+ *
+ * What replaces it is a scope: ask for the membership IN a container, or ask for all of them.
+ * [`soleContainerOf`] is the one bridge for a caller that has no scope at all, and it answers only
+ * when the answer is unambiguous — one membership, or null. It never picks.
+ *
+ * ## The pieces
+ *
+ *  · a MEMBERSHIP is a book in one container, with the rank and category it has THERE. A book has
+ *    zero or more, and none of them is its home — there is no home.
+ *  · a CONTAINER is an ordered list that can hold placements: a shelf, or the unfiled run.
+ *  · a LENS is a rule shelf — it observes books and never holds them, so it is not a container.
+ *  · a GAP is a destination: a container, and the book to land in front of (or the end).
+ *
+ * ## Why a gap names a neighbour rather than an index
+ *
+ * An index has to be corrected for the moving book's own removal, and it has to still agree with a
+ * list that was drawn some milliseconds earlier. Both were sources of silent, off-by-one error. A
+ * neighbour survives the list being redrawn, and it means the same thing to the view that displayed
+ * it and to the transaction that honours it.
+ */
+
+import type { Placement } from "../../../lib/ipc";
+import { UNFILED } from "../../../lib/ipc";
+import { byRank, type Rank } from "./rank";
+
+export { UNFILED };
+
+/**
+ * THE ORDER OF A BOOK THAT HAS NO ORDER YET.
+ *
+ * A real key is base 62 and every one of its characters is a digit or a letter; `{` is the first
+ * ASCII character above them all, so this compares greater than any key that could be written and a
+ * book carrying it sorts last wherever it appears.
+ *
+ * It is never written and never sent. Placement names a NEIGHBOUR — «put it in front of this book» —
+ * and the database computes the key from the rows it actually holds, so no caller can pass this on
+ * to persistence even by accident. It exists so that a book with no row still has somewhere to be on
+ * screen, and it stops being used the moment a row is written for that book.
+ */
+export const UNRANKED: Rank = "{unranked";
+
+/** A book in a container, in rank order. */
+export interface Placed {
+  id: string;
+  rank: Rank;
+  categoryId: string | null;
+}
+
+/** One book's presence in one container: everything that is true of it THERE and nowhere else. */
+export interface Membership {
+  container: string;
+  rank: Rank;
+  /** The category it carries on THIS shelf. Categories belong to a shelf, never to a book. */
+  categoryId: string | null;
+}
+
+/** A destination: somewhere a book may be put. */
+export interface Gap {
+  container: string;
+  /** The book to land in front of, or `null` for the end of the container. */
+  before: string | null;
+}
+
+export interface Arrangement {
+  /**
+   * EVERY CONTAINER HOLDING THIS BOOK, in the order containers sort. Empty when the library has
+   * never heard of it. No element of this list is privileged over the others.
+   */
+  membershipsOf: (bookId: string) => readonly Membership[];
+  /** This book's membership of ONE container, or null when that container does not hold it. */
+  membershipIn: (container: string, bookId: string) => Membership | null;
+  /** Whether this container holds this book. */
+  holds: (container: string, bookId: string) => boolean;
+  /**
+   * THE CONTAINER, WHEN THERE IS EXACTLY ONE — and null when there are several or none.
+   *
+   * The bridge for the few callers that have no scope to ask with. It refuses to guess on purpose:
+   * a function that returned "a" container would put the arbitrary home straight back, one call
+   * site at a time, and the caller could not tell that it had been handed one. A null says «this
+   * question does not have an answer here», which is something a caller can act on.
+   */
+  soleContainerOf: (bookId: string) => string | null;
+  /** A container's books, in order. Empty for a container that holds nothing — and for a lens. */
+  orderOf: (container: string) => readonly Placed[];
+  /** A book's index within its container, or -1. For display and for checks; never for placement. */
+  indexIn: (container: string, bookId: string) => number;
+  /** The book after this one in its container, or null when it is last. */
+  after: (container: string, bookId: string) => string | null;
+  /** Every container that holds at least one book, plus every one named in `known`. */
+  containers: readonly string[];
+}
+
+/**
+ * Build the arrangement from what persistence returned.
+ *
+ * `known` names the containers that exist even when they hold nothing — an empty shelf is a real
+ * destination, and a model that only knew about containers with books in them would quietly make it
+ * unreachable. That is the shape of the "empty shelves cannot receive books" fault.
+ *
+ * ## `books`, and why a book with no rows at all is still somewhere
+ *
+ * `library` names every book the library is currently listing. It is what makes UNPLACED a state the
+ * model can express rather than a hole it falls through.
+ *
+ * The database states the rule in one line: an [`UNFILED`] row exists **if and only if** no real
+ * shelf holds the book. Read carefully, that makes «no real shelf holds it» the FACT and the
+ * [`UNFILED`] row the fact's written form — a place to hang an order on, not the thing itself. This
+ * used to derive the run from the written form alone, so a book whose row was missing for any reason
+ * belonged to no container at all: absent from the grouped formats, absent from «خارج الأرفف»,
+ * absent from the heading that counts it, while `books` still held it and de-duplication still
+ * recognised it. A book cannot be both in the library and nowhere in it.
+ *
+ * So membership of the unfiled run is derived from the fact. A book the library lists and no row
+ * places is unfiled, because there is no shelf holding it — which is the same sentence the database
+ * enforces, asked of the books rather than of the rows. Nothing is fabricated in persistence and
+ * nothing is written: the row remains the only home of the ORDER, and a book without one simply
+ * sorts last, exactly where `settle_unfiled` puts a book that has just lost its last shelf.
+ *
+ * This is also self-healing rather than merely tolerant. The next placement write that touches such
+ * a book runs `settle_unfiled`, which writes the row it never had — so a library repairs itself as
+ * it is used, and needs no migration to become visible in the meantime.
+ */
+export function buildArrangement(
+  placements: readonly Placement[],
+  known: readonly string[] = [],
+  library: readonly string[] = [],
+): Arrangement {
+  const byContainer = new Map<string, Placed[]>();
+  // A BOOK'S MEMBERSHIPS, ALL OF THEM. This was `Map<book, container>` — one slot per book, filled
+  // by the loop below, so the last row read silently won. With one placement per book that was the
+  // truth; with several it is an arbitrary choice made by the order persistence returned.
+  const byBook = new Map<string, Membership[]>();
+
+  for (const c of known) if (!byContainer.has(c)) byContainer.set(c, []);
+  if (!byContainer.has(UNFILED)) byContainer.set(UNFILED, []);
+
+  for (const p of placements) {
+    const mine = byBook.get(p.book_id);
+    const membership: Membership = {
+      container: p.container,
+      rank: p.rank,
+      categoryId: p.category_id ?? null,
+    };
+    if (mine) mine.push(membership);
+    else byBook.set(p.book_id, [membership]);
+    const list = byContainer.get(p.container);
+    const entry: Placed = { id: p.book_id, rank: p.rank, categoryId: p.category_id ?? null };
+    if (list) list.push(entry);
+    else byContainer.set(p.container, [entry]);
+  }
+  // Sorted here, once, by the one comparator. Persistence returns them in rank order already; doing
+  // it again costs nothing and means a caller that hands us an unsorted list still gets the truth.
+  for (const list of byContainer.values()) list.sort(byRank);
+
+  // THE BOOKS NO ROW PLACES. Zero placement rows means no shelf holds the book, and «no shelf holds
+  // it» is precisely what the unfiled run means — so the book belongs there, and is put there.
+  //
+  // AFTER the sort, and deliberately: these carry no ordering key, because an ordering key is
+  // written by the database and none was ever written for them. Appending leaves every book that DOES
+  // have one exactly where its key puts it, and lands the rest at the end — which is where
+  // `settle_unfiled` appends a book that has just lost its last shelf, so the two agree about where
+  // an unplaced book turns up.
+  const unfiledList = byContainer.get(UNFILED) ?? [];
+  for (const id of library) {
+    if (byBook.has(id)) continue;
+    const membership: Membership = { container: UNFILED, rank: UNRANKED, categoryId: null };
+    byBook.set(id, [membership]);
+    unfiledList.push({ id, rank: UNRANKED, categoryId: null });
+  }
+  byContainer.set(UNFILED, unfiledList);
+
+  const indexBy = new Map<string, number>();
+  for (const [container, list] of byContainer) {
+    list.forEach((p, i) => indexBy.set(container + " " + p.id, i));
+  }
+
+  for (const list of byBook.values()) list.sort((a, b) => (a.container < b.container ? -1 : 1));
+
+  const membershipsOf = (bookId: string): readonly Membership[] => byBook.get(bookId) ?? [];
+  const membershipIn = (container: string, bookId: string): Membership | null =>
+    membershipsOf(bookId).find((m) => m.container === container) ?? null;
+
+  return {
+    membershipsOf,
+    membershipIn,
+    holds: (container, bookId) => membershipIn(container, bookId) !== null,
+    soleContainerOf: (bookId) => {
+      const mine = membershipsOf(bookId);
+      return mine.length === 1 ? mine[0].container : null;
+    },
+    orderOf: (container) => byContainer.get(container) ?? [],
+    indexIn: (container, bookId) => indexBy.get(container + " " + bookId) ?? -1,
+    after: (container, bookId) => {
+      const list = byContainer.get(container);
+      if (!list) return null;
+      const at = indexBy.get(container + " " + bookId);
+      if (at === undefined) return null;
+      return at + 1 < list.length ? list[at + 1].id : null;
+    },
+    containers: [...byContainer.keys()],
+  };
+}
+
+/**
+ * EVERY PLACE A BOOK MAY GO.
+ *
+ * Every gap of every writable container: in front of each book, and at the end. Not "the gaps of
+ * the shelf it came from", which is what the old model offered and what made a book's freedom
+ * depend on the size of its own shelf — measured on a real library, 42 destinations for a book in
+ * the unfiled run and 4 for a book alone on a shelf, for no reason the reader could see.
+ *
+ * THE SET DOES NOT DEPEND ON THE BOOK AT ALL. A container with N books offers N + 1 places, always
+ * — one in front of each book and one at the end — whoever is being carried.
+ *
+ * Two of those places would leave a given book exactly where it is: in front of itself, and in
+ * front of whatever already follows it. Leaving them out was tried, and it quietly reintroduced the
+ * fault this model exists to remove: the number of places then depended on WHICH book was in hand,
+ * so a book inside a container was offered fewer than a book arriving from elsewhere. Measured on
+ * the reader's library, four places against six for the same five-book shelf. The flat views
+ * suppressed them and the grouped views did not, so the formats disagreed as well.
+ *
+ * They are offered, and releasing into one writes nothing and says nothing — see `isNoMove`, which
+ * the placement path consults, and the transaction, which re-checks it against the container as it
+ * actually stands. A no-op is decided at the moment of the release, not by hiding the target.
+ */
+export function gapsFor(
+  arrangement: Arrangement,
+  _bookId: string,
+  writable: readonly string[],
+): Gap[] {
+  const out: Gap[] = [];
+  for (const container of writable) {
+    for (const p of arrangement.orderOf(container)) out.push({ container, before: p.id });
+    out.push({ container, before: null });
+  }
+  return out;
+}
+
+/**
+ * Whether releasing here would leave the arrangement exactly as it is.
+ *
+ * Asked OF THE GAP'S OWN CONTAINER. It used to ask where the book was and compare, which needed a
+ * single home to compare against; the question it actually wants is "is the book already in this
+ * container, in this gap", and that one has an answer however many shelves the book is on.
+ */
+export function isNoMove(arrangement: Arrangement, bookId: string, gap: Gap): boolean {
+  if (!arrangement.holds(gap.container, bookId)) return false;
+  if (gap.before === bookId) return true;
+  if (gap.before === null) {
+    const order = arrangement.orderOf(gap.container);
+    return order.length > 0 && order[order.length - 1].id === bookId;
+  }
+  return arrangement.after(gap.container, bookId) === gap.before;
+}
+
+/*
+ * `inArrangementOrder` USED TO LIVE HERE, and is deliberately gone rather than adapted.
+ *
+ * It ordered a flat list by "which container each book lives in, then its index there" — the one
+ * shape this model cannot express, since a book now lives in several and the function would have
+ * had to pick. It was already dead: the root run takes its sequence from `view_orders` through
+ * `runOf(list, WHOLE_RUN)`, because ordering the root by containers put an invisible seam inside a
+ * list with no shelf on screen and made the last visible slot the end of whichever container
+ * happened to sort last — a book dragged there was FILED there.
+ *
+ * Leaving it exported would have left a correctly-named, well-documented trap for the next caller
+ * who needed "a flat order" and did not know that root ordering had moved.
+ */

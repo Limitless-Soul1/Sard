@@ -7,7 +7,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::db::{self, AppState};
-use crate::{backgrounds, books, fonts, library, photocards, settings};
+use crate::{backgrounds, books, deposit, fonts, library, photocards, profiles, settings};
 
 #[derive(Serialize)]
 pub struct AppInfo {
@@ -220,6 +220,55 @@ pub fn settings_set(key: String, value: String, state: State<AppState>) -> Resul
     Ok(true)
 }
 
+// ---- PROFILES (stage 1) — storage only ------------------------------------------------------
+//
+// CRUD over the `profiles` table and nothing else. None of these applies a profile, resolves a
+// theme, or touches `reading_style` or any `book_style:<id>` row — a profile carries how Sard
+// LOOKS, never how the reader READS, and that boundary is kept by there being no code here capable
+// of crossing it.
+//
+// The active profile is a plain settings key (`profile_active`) read through `settings_get`, not a
+// column here: it is one value for the installation, it is exactly the shape `settings` exists for,
+// and keeping it there means no schema change when the reader switches.
+
+#[tauri::command]
+pub fn profiles_list(state: State<AppState>) -> Result<Vec<profiles::Profile>, String> {
+    let conn = state.conn();
+    profiles::list(&conn).map_err(err)
+}
+
+#[tauri::command]
+pub fn profile_get(id: String, state: State<AppState>) -> Result<Option<profiles::Profile>, String> {
+    let conn = state.conn();
+    profiles::get(&conn, &id).map_err(err)
+}
+
+#[tauri::command]
+pub fn profile_save(profile: profiles::Profile, state: State<AppState>) -> Result<bool, String> {
+    let conn = state.conn();
+    profiles::save(&conn, &profile).map_err(err)?;
+    Ok(true)
+}
+
+/// Stamp a profile as worn, so the list can order by use.
+///
+/// FIRE AND FORGET, on purpose. The frontend calls this when a profile is APPLIED, and applying must
+/// not be able to fail because a stamp did — the reader has already got the look they asked for.
+/// The error still travels back for a caller that wants it; the caller does not have to wait.
+#[tauri::command]
+pub fn profile_touch(id: String, state: State<AppState>) -> Result<bool, String> {
+    let conn = state.conn();
+    profiles::touch(&conn, &id).map_err(err)?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn profile_delete(id: String, state: State<AppState>) -> Result<bool, String> {
+    let conn = state.conn();
+    profiles::delete(&conn, &id).map_err(err)?;
+    Ok(true)
+}
+
 /// Ensure a minimal `books` row exists for `book_id` (FK bridge until real import).
 #[tauri::command]
 pub fn book_register(
@@ -307,7 +356,20 @@ pub fn collection_rename(id: String, name: String, state: State<AppState>) -> Re
 #[tauri::command]
 pub fn collection_delete(id: String, state: State<AppState>) -> Result<Vec<library::CollectionRow>, String> {
     let conn = state.conn();
-    library::collection_delete(&conn, &id).map_err(err)
+    let out = library::collection_delete(&conn, &id).map_err(err)?;
+    // THE SHELF'S ORDERS GO WITH THE SHELF.
+    //
+    // `forget_section` was written for this and then never called, so every deleted shelf left its
+    // `view_orders` rows behind — one set per format that had ever arranged it. Harmless while the
+    // id stayed unique, and not harmless as a habit: the rows outlive the thing they describe, they
+    // are invisible to every screen, and nothing else would ever remove them.
+    //
+    // Failing to sweep must not fail the delete: the shelf is already gone by here, and reporting
+    // an error would tell the reader their deletion did not happen when it did.
+    if let Err(e) = library::view_order::forget_section(&conn, &id) {
+        eprintln!("[Sard] the deleted shelf's view orders could not be swept: {e}");
+    }
+    Ok(out)
 }
 
 #[tauri::command]
@@ -335,6 +397,337 @@ pub fn collection_remove_book(
 pub fn collections_for_book(book_id: String, state: State<AppState>) -> Result<Vec<String>, String> {
     let conn = state.conn();
     library::collections_for_book(&conn, &book_id).map_err(err)
+}
+
+// ---------------------------------------------------------------------------
+// Library structure — cases, categories and hand order. Every write returns the
+// refreshed tree, the same one-round-trip contract the RAWY-31 shelf writes use.
+// ---------------------------------------------------------------------------
+
+use library::structure;
+
+#[tauri::command]
+pub fn library_tree(state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::tree(&conn).map_err(err)
+}
+
+/// THE WHOLE ARRANGEMENT, IN ONE READ.
+///
+/// Every book's container and rank, and the shelf tree they hang on, fetched together. One call
+/// rather than one per shelf: the old code asked each shelf in turn, so two answers could come from
+/// either side of a write and the screen could show a book on two shelves or on none. A single
+/// statement cannot be read half-way through.
+/// What a lens currently matches. A rule shelf owns nothing, so this is a view of the library
+/// rather than part of it — the ids are here so the reader can still SEE «قيد القراءة» without any
+/// of those books acquiring a second home.
+#[derive(serde::Serialize)]
+pub struct Lens {
+    pub shelf_id: String,
+    pub book_ids: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+pub struct Arrangement {
+    pub tree: structure::LibraryTree,
+    pub placements: Vec<library::placement::Placement>,
+    pub lenses: Vec<Lens>,
+    /// The baseline a run with no saved order is measured against, so reading-aware promotion can
+    /// be decided for it without a second call. Carried here because this read already happens
+    /// once per library load and nothing else would justify a round trip of its own.
+    pub view_order_epoch: i64,
+}
+
+#[tauri::command]
+pub fn library_arrangement(state: State<AppState>) -> Result<Arrangement, String> {
+    let conn = state.conn();
+    read_arrangement(&conn)
+}
+
+/// Everything the library is, in one consistent read.
+fn read_arrangement(conn: &rusqlite::Connection) -> Result<Arrangement, String> {
+    let tree = structure::tree(conn).map_err(err)?;
+    let mut lenses = Vec::new();
+    for shelf in tree.cases.iter().flat_map(|c| c.shelves.iter()).chain(tree.loose.iter()) {
+        if shelf.auto_rule.is_none() {
+            continue;
+        }
+        let items = structure::shelf_items(conn, &shelf.id).map_err(err)?;
+        lenses.push(Lens {
+            shelf_id: shelf.id.clone(),
+            book_ids: items.into_iter().map(|i| i.book_id).collect(),
+        });
+    }
+    Ok(Arrangement {
+        tree,
+        placements: library::placement::list(conn).map_err(err)?,
+        lenses,
+        view_order_epoch: library::view_order::epoch(conn),
+    })
+}
+
+/// MOVE A BOOK IN FRONT OF ANOTHER — the one arrangement write.
+///
+/// `before` is the book the release landed in front of, or absent for the end of the container.
+/// The reply carries the arrangement as it now stands, so the screen is drawn from what was
+/// actually persisted rather than from a guess or from a second read that could race the first.
+/// `changed` is false when the book was already exactly there; nothing was written, and nothing
+/// should be announced.
+#[derive(serde::Serialize)]
+pub struct PlaceResult {
+    pub placed: library::placement::Placed,
+    pub arrangement: Arrangement,
+}
+
+/// `from` names the ONE shelf this move leaves. Without it, the book simply arrives and leaves
+/// nothing — because every caller that omits it means exactly that.
+///
+/// IT USED TO SWEEP WHEN `from` WAS ABSENT, and that was reachable. The select tray asks which shelf
+/// a multi-shelf selection is leaving and offers «الاحتفاظ بمكانها» — keep them where they are —
+/// as the last choice; the code calling it says in as many words that this is «an honest add».
+/// It passed `None`. Measured through the command, a book on «s8-a» and «s8-c» moved to «s8-d» came
+/// back on «s8-d» ALONE: the option labelled keep-them-where-they-are deleted every shelf they were
+/// on. The drag path could reach the same write whenever the section a tile was carried from was
+/// not a shelf that actually held it.
+///
+/// So absence of a source now means absence of a removal, which is what both callers intend and
+/// what the label promises. `placement::place_book` still exists and still means «here and nowhere
+/// else» — it is simply not what any interface gesture means, so no command spends it.
+#[tauri::command]
+pub fn library_place_book(
+    book_id: String,
+    container: String,
+    before: Option<String>,
+    category_id: Option<String>,
+    from: Option<String>,
+    state: State<AppState>,
+) -> Result<PlaceResult, String> {
+    let conn = state.conn();
+    let placed = match from.as_deref() {
+        Some(source) => library::placement::move_between(
+            &conn,
+            &book_id,
+            source,
+            &container,
+            before.as_deref(),
+            category_id.as_deref(),
+        )?,
+        None => library::placement::add_to(
+            &conn,
+            &book_id,
+            &container,
+            before.as_deref(),
+            category_id.as_deref(),
+        )?,
+    };
+    Ok(PlaceResult { placed, arrangement: read_arrangement(&conn)? })
+}
+
+/// ADD A BOOK TO A SHELF, KEEPING EVERY SHELF IT IS ALREADY ON.
+///
+/// The additive half of the pair, and a separate command from `library_place_book` on purpose. That
+/// one means "here and nowhere else" and sweeps the other memberships; this one means "here as
+/// well". Two verbs, two entry points — a flag would have made the difference invisible at the call
+/// site, which is exactly how a move and a copy came to be confused before.
+///
+/// Idempotent: adding a book to a shelf it is already on writes nothing and reports
+/// `changed: false`, so the interface may offer the action without first knowing the answer. The
+/// database enforces the same from underneath — the primary key is (book, container).
+///
+/// The book itself is untouched. One `books` row, one file, one set of notes and one reading
+/// position, however many shelves come to hold it.
+#[tauri::command]
+pub fn library_add_book_to_shelf(
+    book_id: String,
+    container: String,
+    category_id: Option<String>,
+    state: State<AppState>,
+) -> Result<PlaceResult, String> {
+    let conn = state.conn();
+    let placed = library::placement::ensure_on(&conn, &book_id, &container, category_id.as_deref())?;
+    Ok(PlaceResult { placed, arrangement: read_arrangement(&conn)? })
+}
+
+// ---------------------------------------------------------------------------
+// VIEW ORDER — how books read in a view, which is not where they belong.
+// ---------------------------------------------------------------------------
+//
+// These two commands cannot change membership. Not by being careful: a `view_orders` row has no
+// container column, so there is nowhere to write one. `placements` is not read for writing here and
+// is never written. The separation is the point — `library_place_book` above moves a book between
+// shelves and touches no order; these move a book within a run and touch no shelf.
+
+/// Every saved order for one place in the library, all its sections at once.
+///
+/// ONE STATEMENT FOR THE WHOLE SCREEN. A grouped format draws every section of a scope together, so
+/// asking per section would be one query per shelf on screen. The rows arrive already ordered.
+#[tauri::command]
+pub fn view_orders_for_scope(
+    format: String,
+    scope: String,
+    state: State<AppState>,
+) -> Result<Vec<library::view_order::ViewOrderRow>, String> {
+    let conn = state.conn();
+    library::view_order::for_scope(&conn, &format, &scope).map_err(err)
+}
+
+/// Move one book within one run. `before` is the book to land in front of, or null for the end.
+///
+/// `present` is the run as the view would draw it with no saved order — used only to materialise a
+/// run the first time it is arranged, and to take in books that have arrived since. Which books are
+/// in a run is a question about rules, scopes and sections, so it stays with the caller that can
+/// actually answer it.
+#[tauri::command]
+pub fn view_order_reorder(
+    format: String,
+    scope: String,
+    section: String,
+    book_id: String,
+    before: Option<String>,
+    present: Vec<String>,
+    state: State<AppState>,
+) -> Result<library::view_order::Reordered, String> {
+    let mut conn = state.conn();
+    let key = library::view_order::RunKey { format, scope, section };
+    library::view_order::reorder(&mut conn, &key, &book_id, before.as_deref(), &present)
+}
+
+/// One shelf's books in the shelf's own order, with their category.
+#[tauri::command]
+pub fn library_shelf_items(
+    collection_id: String,
+    state: State<AppState>,
+) -> Result<Vec<structure::ShelfItem>, String> {
+    let conn = state.conn();
+    structure::shelf_items(&conn, &collection_id).map_err(err)
+}
+
+#[tauri::command]
+pub fn case_create(
+    name: String,
+    ink: Option<String>,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::case_create(&conn, &name, ink.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+pub fn case_rename(id: String, name: String, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::case_rename(&conn, &id, &name).map_err(err)
+}
+
+#[tauri::command]
+pub fn case_delete(id: String, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::case_delete(&conn, &id).map_err(err)
+}
+
+#[tauri::command]
+pub fn case_reorder(id: String, to_index: i64, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::case_reorder(&conn, &id, to_index).map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_create(
+    name: String,
+    case_id: Option<String>,
+    auto_rule: Option<String>,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_create(&conn, &name, case_id.as_deref(), auto_rule.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_set_case(
+    id: String,
+    case_id: Option<String>,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_set_case(&conn, &id, case_id.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_set_order(
+    id: String,
+    order_rule: String,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_set_order(&conn, &id, &order_rule).map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_set_collapsed(
+    id: String,
+    collapsed: bool,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_set_collapsed(&conn, &id, collapsed).map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_place_book(
+    collection_id: String,
+    book_id: String,
+    category_id: Option<String>,
+    index: i64,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_place_book(&conn, &collection_id, &book_id, category_id.as_deref(), index)
+        .map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_set_ink(id: String, ink: Option<String>, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_set_ink(&conn, &id, ink.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+pub fn case_set_ink(id: String, ink: Option<String>, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::case_set_ink(&conn, &id, ink.as_deref()).map_err(err)
+}
+
+#[tauri::command]
+pub fn shelf_reorder(id: String, to_index: i64, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::shelf_reorder(&conn, &id, to_index).map_err(err)
+}
+
+#[tauri::command]
+pub fn category_reorder(id: String, to_index: i64, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::category_reorder(&conn, &id, to_index).map_err(err)
+}
+
+#[tauri::command]
+pub fn category_create(
+    collection_id: String,
+    name: String,
+    state: State<AppState>,
+) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::category_create(&conn, &collection_id, &name).map_err(err)
+}
+
+#[tauri::command]
+pub fn category_rename(id: String, name: String, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::category_rename(&conn, &id, &name).map_err(err)
+}
+
+#[tauri::command]
+pub fn category_delete(id: String, state: State<AppState>) -> Result<structure::LibraryTree, String> {
+    let conn = state.conn();
+    structure::category_delete(&conn, &id).map_err(err)
 }
 
 /// RAWY-17 — import EPUB files into the library (copy-in, hash/dedup, extract metadata +
@@ -402,6 +795,10 @@ pub struct BookPatch {
     pub language: Option<String>,
     pub dir: Option<String>,
     pub cover_fit: Option<String>,
+    /// Book Details' jacket controls. Empty string clears the override.
+    pub cover_paint: Option<String>,
+    pub cover_mode: Option<String>,
+    pub spine_mode: Option<String>,
 }
 
 /// RESILIENCE-1 / WP-3 — read ONE book's authoritative row (effective title/author, i.e.
@@ -435,6 +832,9 @@ pub fn book_update(
         patch.language.as_deref(),
         patch.dir.as_deref(),
         patch.cover_fit.as_deref(),
+        patch.cover_paint.as_deref(),
+        patch.cover_mode.as_deref(),
+        patch.spine_mode.as_deref(),
     )
     .map_err(err)
 }
@@ -482,6 +882,47 @@ pub fn book_commit_cover(
     let app_data_dir = state.app_data_dir.clone();
     let conn = state.conn();
     let mut row = library::commit_cover(&conn, &app_data_dir, &id, &rel)?;
+    if let Some(r) = row.as_mut() {
+        library::resolve_row_cover(&app_data_dir, r);
+    }
+    Ok(row)
+}
+
+/// Stage a spine image — same validation and custody as a cover, its own name prefix.
+#[tauri::command]
+pub fn book_stage_spine(
+    id: String,
+    image_path: String,
+    state: State<AppState>,
+) -> Result<library::StagedCover, String> {
+    safe_id(&id)?;
+    library::stage_spine(&state.app_data_dir, &id, &image_path)
+}
+
+/// Adopt a staged spine image.
+#[tauri::command]
+pub fn book_commit_spine(
+    id: String,
+    rel: String,
+    state: State<AppState>,
+) -> Result<Option<library::BookRow>, String> {
+    safe_id(&id)?;
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.conn();
+    let mut row = library::commit_spine(&conn, &app_data_dir, &id, &rel)?;
+    if let Some(r) = row.as_mut() {
+        library::resolve_row_cover(&app_data_dir, r);
+    }
+    Ok(row)
+}
+
+/// Remove a book's spine image and its file.
+#[tauri::command]
+pub fn book_clear_spine(id: String, state: State<AppState>) -> Result<Option<library::BookRow>, String> {
+    safe_id(&id)?;
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.conn();
+    let mut row = library::clear_spine(&conn, &app_data_dir, &id)?;
     if let Some(r) = row.as_mut() {
         library::resolve_row_cover(&app_data_dir, r);
     }
@@ -654,6 +1095,12 @@ pub fn tag_create(name: String, state: State<AppState>) -> Result<Option<library
 }
 
 #[tauri::command]
+pub fn tag_rename(id: String, name: String, state: State<AppState>) -> Result<library::TagRename, String> {
+    let conn = state.conn();
+    library::tag_rename(&conn, &id, &name).map_err(err)
+}
+
+#[tauri::command]
 pub fn tag_delete(id: String, state: State<AppState>) -> Result<bool, String> {
     let conn = state.conn();
     library::tag_delete(&conn, &id).map_err(err)?;
@@ -682,11 +1129,20 @@ pub fn bookmark_create(
     chapter_label: Option<String>,
     fraction: Option<f64>,
     label: Option<String>,
+    color: Option<String>,
     state: State<AppState>,
 ) -> Result<Option<library::BookmarkRow>, String> {
     let conn = state.conn();
-    library::bookmark_create(&conn, &book_id, &cfi, chapter_label.as_deref(), fraction, label.as_deref())
-        .map_err(err)
+    library::bookmark_create(
+        &conn,
+        &book_id,
+        &cfi,
+        chapter_label.as_deref(),
+        fraction,
+        label.as_deref(),
+        color.as_deref(),
+    )
+    .map_err(err)
 }
 
 #[tauri::command]
@@ -715,6 +1171,25 @@ pub fn font_import(path: String, state: State<AppState>) -> Result<fonts::Custom
     let app_data_dir = state.app_data_dir.clone();
     let conn = state.conn();
     fonts::import(&conn, &app_data_dir, &path)
+}
+
+/// Read a font file and say what it is, changing NOTHING — the routing gate for a dropped file.
+///
+/// The same shape `deposit_inspect` and `profile_import_inspect` already have, and for the same
+/// reason: the window's single drop listener has to decide what a file IS before anything acts on
+/// it, and the only honest way to ask is the real reader. `Err` means "not a font", and the drop
+/// falls through to the next candidate exactly as a non-deposit does.
+#[tauri::command]
+pub fn font_inspect(path: String) -> Result<fonts::FontFacts, String> {
+    fonts::inspect(&path)
+}
+
+/// Import a dropped font under the family the FILE names, and say whether it was already here.
+#[tauri::command]
+pub fn font_import_dropped(path: String, state: State<AppState>) -> Result<fonts::FontDrop, String> {
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.conn();
+    fonts::import_dropped(&conn, &app_data_dir, &path)
 }
 
 #[tauri::command]
@@ -795,6 +1270,312 @@ pub async fn background_choose(
     Ok(row)
 }
 
+/// Import an image WITHOUT binding it to a surface — the profile editor's path.
+///
+/// WHY THIS EXISTS SEPARATELY FROM `background_choose`. That command imports and binds in one
+/// indivisible step, which is exactly right for a control that changes the live surface. A profile
+/// editor is editing a DRAFT: choosing an image there must not repaint the running application, and
+/// must not write a global binding that only `applyProfile` is allowed to write. So it imports, and
+/// the reference is recorded on the profile row when the draft is saved.
+///
+/// THE ROW IS UNREFERENCED UNTIL THEN, AND THAT IS CORRECT. `gc()` runs inside `set_surface()`, so
+/// nothing collects between here and the save; and an image imported for a draft the reader then
+/// abandons SHOULD be collected — it is an orphan by definition. What must never happen is the
+/// reverse, an image still named by a saved profile being collected, and that is what the profiles
+/// column in the collector's reference set prevents.
+///
+/// Staged exactly like `background_choose`: prepare and materialize hold no lock, so a large image
+/// does not freeze the window.
+#[tauri::command]
+pub async fn background_import(
+    path: String,
+    state: State<'_, AppState>,
+) -> Result<backgrounds::Background, String> {
+    let app_data_dir = state.app_data_dir.clone();
+
+    let prep = backgrounds::prepare(&path)?;
+    {
+        let conn = state.conn();
+        if let Some(existing) = backgrounds::dedup_or_repair(&conn, prep.id())? {
+            // Already managed — the same content never costs a second copy on disk, which is what
+            // lets two profiles (or both surfaces of one) share an image for free.
+            return Ok(existing);
+        }
+    }
+    let mat = backgrounds::materialize(prep)?;
+    let conn = state.conn();
+    backgrounds::commit(&conn, &app_data_dir, mat)
+}
+
+/// READING DEPOSITS (phase 1, the sender) — what can travel with this book, priced, and where every
+/// mark falls in it.
+///
+/// Resolved in Rust because every answer needs a managed path or a parsed spine: the sheet then
+/// renders exactly what `deposit_export` will write, rather than a second picture that can disagree.
+/// Reads only.
+#[tauri::command]
+pub fn deposit_plan(book_id: String, state: State<AppState>) -> Result<deposit::Plan, String> {
+    let conn = state.conn();
+    deposit::plan(&conn, &state.app_data_dir, &book_id)
+}
+
+/// Write the deposit to the path the sender chose.
+///
+/// The manifest is produced and shown by the frontend and written verbatim: what the sender read in
+/// the preview is byte-for-byte what leaves. The two optional files are copied file-to-file, so a
+/// book's bytes never cross this boundary.
+#[tauri::command]
+pub fn deposit_export(
+    path: String,
+    manifest_json: String,
+    book_member: Option<String>,
+    book_source: Option<String>,
+    cover_member: Option<String>,
+    cover_source: Option<String>,
+) -> Result<(), String> {
+    let book = match (book_member.as_deref(), book_source.as_deref()) {
+        (Some(member), Some(source)) => Some(deposit::package::MemberIn { member, source }),
+        _ => None,
+    };
+    let cover = match (cover_member.as_deref(), cover_source.as_deref()) {
+        (Some(member), Some(source)) => Some(deposit::package::MemberIn { member, source }),
+        _ => None,
+    };
+    deposit::package::export(&path, &manifest_json, book, cover)
+}
+
+/// READING DEPOSITS (phase 2, the receiver) — read the manifest and change NOTHING.
+///
+/// Separate from commit on purpose: the reader sees what a file contains before any of it enters.
+#[tauri::command]
+pub fn deposit_inspect(path: String) -> Result<String, String> {
+    deposit::package::inspect(&path)
+}
+
+/// One member's bytes, so the sheet can DRAW an arriving cover rather than name a file. Reads only.
+#[tauri::command]
+pub fn deposit_member(path: String, member: String) -> Result<Vec<u8>, String> {
+    deposit::package::read_member(&path, &member)
+}
+
+/// Everything the operating system has handed Sard since this was last asked.
+///
+/// DRAINING, not peeking: a path is returned once. The frontend routes each through the same door a
+/// dropped file takes, so a deposit opened from a file manager and one dragged onto the window are the
+/// same event as far as the rest of the app is concerned.
+#[tauri::command]
+pub fn opened_files_take(state: tauri::State<'_, crate::OpenedFiles>) -> Vec<String> {
+    state.take()
+}
+
+/// THE TRUST BOUNDARY. Re-validates the manifest rather than trusting that inspection happened,
+/// resolves the book, and applies exactly what the receiver kept — in one transaction, additively.
+#[tauri::command]
+pub fn deposit_commit(
+    path: String,
+    manifest_json: String,
+    accept: deposit::apply::Acceptance,
+    // The reader's own answer to "which of my books is this?", when the hash cannot answer it. Never
+    // inferred: binding to the wrong book would attach a stranger's marks to an unrelated text.
+    bind_to: Option<String>,
+    state: State<AppState>,
+) -> Result<deposit::apply::Outcome, String> {
+    let app_data_dir = state.app_data_dir.clone();
+    let mut conn = state.conn();
+    deposit::apply::commit(&mut conn, &app_data_dir, &manifest_json, &path, &accept, bind_to.as_deref())
+}
+
+/// READING DEPOSITS (phase 3) — what a book still has to place, and where each mark stands.
+///
+/// Cheap and indexed; for the overwhelming majority of books the answer is empty and the reader does
+/// nothing further.
+#[tauri::command]
+pub fn deposit_pending_marks(
+    book_id: String,
+    state: State<AppState>,
+) -> Result<Vec<deposit::placement::PendingMark>, String> {
+    let conn = state.conn();
+    deposit::placement::pending(&conn, &book_id)
+}
+
+/// Record what the reader's own engine decided about each mark.
+///
+/// Every write is gated on `mark_origin`, so a mark the reader made cannot be reached from here — which
+/// is what makes "an import never overwrites your own annotations" structural rather than careful.
+#[tauri::command]
+pub fn deposit_place_marks(
+    verdicts: Vec<deposit::placement::Verdict>,
+    state: State<AppState>,
+) -> Result<u32, String> {
+    let mut conn = state.conn();
+    deposit::placement::record(&mut conn, &verdicts)
+}
+
+/// PROFILES (stage 6) — write a package to the path the reader chose.
+///
+/// The manifest text is produced and shown by the frontend, and written verbatim: what the reader
+/// inspected before sending is byte-for-byte what leaves.
+///
+/// The ASSETS are chosen by the frontend, which owns the share sheet and its switches; this only
+/// moves the bytes. Absent = a settings-only package, exactly what a v1 caller wrote.
+#[tauri::command]
+pub fn profile_export(
+    path: String,
+    manifest_json: String,
+    assets: Option<Vec<profiles::package::AssetIn>>,
+) -> Result<(), String> {
+    profiles::package::export(&path, &manifest_json, &assets.unwrap_or_default())
+}
+
+/// SHOW A FILE WHERE IT ACTUALLY IS — the system's own file manager, with the file selected.
+///
+/// The share sheet used to offer the reader the PATH: a string to copy, and the raw path printed on
+/// screen beside it. That asks a reader to be a filesystem, and it is the wrong answer to the
+/// question they are actually asking, which is "where did my file go". This answers it the way
+/// every other application does: their file manager opens, at the right folder, with the file
+/// already picked out.
+///
+/// WHAT HAPPENS WHEN IT IS NOT THERE. A package can be moved, renamed or deleted between being
+/// written and being asked about, so the file existing is checked rather than assumed. If it has
+/// gone, the FOLDER is opened instead — which is still the honest answer to "where did it go" — and
+/// only a folder that has also gone is an error. The caller is told which of the three happened, so
+/// the interface can say something true rather than claiming success.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Revealed {
+    /// "file" — the file was selected; "folder" — the file was gone, its folder was opened.
+    pub showed: String,
+}
+
+#[tauri::command]
+pub fn reveal_path(path: String) -> Result<Revealed, String> {
+    let p = std::path::Path::new(&path);
+    if p.as_os_str().is_empty() {
+        return Err("reveal.err.nothing".into());
+    }
+    let file = p.is_file();
+    let dir = if file { p.parent().map(|d| d.to_path_buf()) } else { None }
+        .or_else(|| if p.is_dir() { Some(p.to_path_buf()) } else { p.parent().map(|d| d.to_path_buf()) });
+    let dir = match dir {
+        Some(d) if d.is_dir() => d,
+        // Neither the package nor the folder it lived in is there any more.
+        _ => return Err("reveal.err.gone".into()),
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        // `/select,` takes ONE argument in which the comma and the path are a single token, and the
+        // path must be in the operating system's own form — a forward slash here opens the user's
+        // Documents folder instead, which looks like a bug in Sard and is a quoting mistake.
+        if file {
+            let mut arg = std::ffi::OsString::from("/select,");
+            arg.push(p.as_os_str());
+            std::process::Command::new("explorer.exe")
+                .arg(arg)
+                .spawn()
+                .map_err(|e| format!("reveal.err.failed: {e}"))?;
+        } else {
+            std::process::Command::new("explorer.exe")
+                .arg(dir.as_os_str())
+                .spawn()
+                .map_err(|e| format!("reveal.err.failed: {e}"))?;
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut cmd = std::process::Command::new("open");
+        if file { cmd.arg("-R").arg(p.as_os_str()); } else { cmd.arg(dir.as_os_str()); }
+        cmd.spawn().map_err(|e| format!("reveal.err.failed: {e}"))?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // The freedesktop file managers answer this over D-Bus; the ones that do not still open a
+        // folder, which is the same fallback a missing file gets.
+        let selected = file
+            && std::process::Command::new("dbus-send")
+                .args([
+                    "--session",
+                    "--dest=org.freedesktop.FileManager1",
+                    "--type=method_call",
+                    "/org/freedesktop/FileManager1",
+                    "org.freedesktop.FileManager1.ShowItems",
+                    &format!("array:string:file://{}", p.display()),
+                    "string:",
+                ])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+        if !selected {
+            std::process::Command::new("xdg-open")
+                .arg(dir.as_os_str())
+                .spawn()
+                .map_err(|e| format!("reveal.err.failed: {e}"))?;
+        }
+    }
+
+    Ok(Revealed { showed: if file { "file".into() } else { "folder".into() } })
+}
+
+/// What CAN travel with this profile, with real sizes.
+///
+/// The share sheet needs to name each asset, price it, and hand back what the reader chose. Every
+/// one of those needs a managed path, so the resolution happens in Rust and the sheet renders what
+/// `profile_export` will actually write — not a second picture of it that can disagree.
+#[tauri::command]
+pub fn profile_asset_plan(
+    library_ref: Option<String>,
+    reading_ref: Option<String>,
+    icon_ref: Option<String>,
+    families: Vec<String>,
+    state: State<AppState>,
+) -> Result<Vec<profiles::package::PlannedAsset>, String> {
+    let conn = state.conn();
+    profiles::package::plan(
+        &conn,
+        library_ref.as_deref(),
+        reading_ref.as_deref(),
+        icon_ref.as_deref(),
+        &families,
+    )
+}
+
+/// One asset's BYTES from a package, so the preview can DRAW what is arriving rather than name it.
+/// Reads only: nothing is unpacked, registered or written, so "preview first" is untouched.
+#[tauri::command]
+pub fn profile_package_asset(path: String, member: String) -> Result<Vec<u8>, String> {
+    profiles::package::read_member(&path, &member)
+}
+
+/// Read a package's manifest and change NOTHING. The reader sees the profile before it enters, and
+/// the same refusal codes reach them here as from the frontend validator.
+#[tauri::command]
+pub fn profile_import_inspect(path: String) -> Result<String, String> {
+    profiles::package::inspect(&path)
+}
+
+/// Commit an inspected package as a new profile.
+///
+/// SEPARATE FROM `profile_save` DELIBERATELY, even though a settings-only import overlaps with it.
+/// This is the import BOUNDARY: it re-checks the manifest rather than trusting that inspection
+/// happened, assigns a fresh id so a sender's id can never collide with or overwrite a local row,
+/// and drops provenance. When assets arrive, unpacking and registering them belongs here — beside
+/// the row write, in one place — rather than being retrofitted into a general-purpose save.
+#[tauri::command]
+pub fn profile_import_commit(
+    manifest_json: String,
+    new_id: String,
+    // The archive the manifest came from. Present = register its assets too; absent = settings only,
+    // which is what a v1 package and the drag-and-drop preview of one both amount to.
+    path: Option<String>,
+    state: State<AppState>,
+) -> Result<profiles::Profile, String> {
+    safe_id(new_id.trim_start_matches("u:"))?;
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.conn();
+    let from = path.as_deref().map(|p| (p, app_data_dir.as_path()));
+    profiles::package::commit(&conn, &manifest_json, &new_id, from)
+}
+
 #[tauri::command]
 pub fn backgrounds_list(state: State<AppState>) -> Result<Vec<backgrounds::Background>, String> {
     let conn = state.conn();
@@ -860,6 +1641,11 @@ pub fn stage_png(request: tauri::ipc::Request<'_>) -> Result<String, String> {
 }
 
 // ---- Saved photo cards + gallery (RAWY-52, Photo Mode part 2a). ----
+//
+// `doc` is the card's composition; `images` is the set of managed background ids that composition
+// uses. The ids are sent EXPLICITLY rather than parsed out of `doc`, because `backgrounds::gc()`
+// must be able to learn what a card references without reading frontend-owned JSON — see
+// `photocards::referenced_backgrounds`, the collector's fifth reference source.
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn photocard_save(
@@ -874,6 +1660,8 @@ pub fn photocard_save(
     quote: Option<String>,
     passages: Option<String>,
     quote_font: Option<String>,
+    doc: Option<String>,
+    images: Option<Vec<String>>,
     created_at: i64,
     png_path: String, // RAWY-177 (AUD-4): a staged temp file, not a JSON number-array of the bytes
     state: State<AppState>,
@@ -896,9 +1684,26 @@ pub fn photocard_save(
         quote,
         passages,
         quote_font,
+        doc,
+        images: images.unwrap_or_default(),
         created_at,
     };
     photocards::save(&conn, &app_data_dir, meta, &data)
+}
+
+/// Import an image for a card that is still being composed, binding it in the same transaction.
+/// See `photocards::stage_image` — this exists so an imported sticker cannot be collected before the
+/// card is saved.
+#[tauri::command]
+pub fn photocard_stage_image(
+    card_id: String,
+    path: String,
+    state: State<AppState>,
+) -> Result<crate::backgrounds::Background, String> {
+    safe_id(&card_id)?;
+    let app_data_dir = state.app_data_dir.clone();
+    let conn = state.conn();
+    photocards::stage_image(&conn, &app_data_dir, &card_id, &path)
 }
 
 #[tauri::command]
@@ -934,10 +1739,12 @@ pub fn ref_save(
     phrase_fold: String,
     word_count: i64,
     note: String,
+    // Where the selection stood, when the rule came from one. None from the library screen.
+    cfi: Option<String>,
     state: State<AppState>,
 ) -> Result<Option<library::RefRow>, String> {
     let conn = state.conn();
-    library::ref_save(&conn, &book_id, &phrase, &phrase_fold, word_count, &note).map_err(err)
+    library::ref_save(&conn, &book_id, &phrase, &phrase_fold, word_count, &note, cfi.as_deref()).map_err(err)
 }
 
 #[tauri::command]
@@ -945,6 +1752,74 @@ pub fn ref_delete(id: String, state: State<AppState>) -> Result<bool, String> {
     let conn = state.conn();
     library::ref_delete(&conn, &id).map_err(err)?;
     Ok(true)
+}
+
+/// Every replacement for a book — loaded once on open and held in memory, exactly like references, and
+/// consulted per section rather than per word.
+#[tauri::command]
+pub fn reps_for_book(book_id: String, state: State<AppState>) -> Result<Vec<library::RepRow>, String> {
+    let conn = state.conn();
+    library::reps_for_book(&conn, &book_id).map_err(err)
+}
+
+/// Create OR update — one path serves both the "new replacement" panel and editing an existing rule.
+#[tauri::command]
+pub fn rep_save(
+    book_id: String,
+    phrase: String,
+    phrase_fold: String,
+    replacement: String,
+    word_count: i64,
+    // Where the selection stood, when the rule came from one. None from the library screen.
+    cfi: Option<String>,
+    state: State<AppState>,
+) -> Result<Option<library::RepRow>, String> {
+    let conn = state.conn();
+    library::rep_save(&conn, &book_id, &phrase, &phrase_fold, &replacement, word_count, cfi.as_deref())
+        .map_err(err)
+}
+
+/// Switch one rule on or off. Not a delete: the author's wording returns and the rule is kept.
+#[tauri::command]
+pub fn rep_set_enabled(
+    id: String,
+    enabled: bool,
+    state: State<AppState>,
+) -> Result<Option<library::RepRow>, String> {
+    let conn = state.conn();
+    library::rep_set_enabled(&conn, &id, enabled).map_err(err)
+}
+
+#[tauri::command]
+pub fn rep_delete(id: String, state: State<AppState>) -> Result<bool, String> {
+    let conn = state.conn();
+    library::rep_delete(&conn, &id).map_err(err)?;
+    Ok(true)
+}
+
+/// THE WHOLE SHELF'S CONTENTS, in one call each.
+///
+/// The shelf previews what the reader made in every listed book, so it needs the contents rather
+/// than a count — and it used to fetch them PER BOOK, two round trips a row. See `library::refs_all`
+/// for the measurement that made that untenable on a large library. The per-book commands stay:
+/// they are still the right call when one book is reloaded after an edit.
+#[tauri::command]
+pub fn refs_all(state: State<AppState>) -> Result<Vec<library::RefRow>, String> {
+    let conn = state.conn();
+    library::refs_all(&conn).map_err(err)
+}
+
+#[tauri::command]
+pub fn reps_all(state: State<AppState>) -> Result<Vec<library::RepRow>, String> {
+    let conn = state.conn();
+    library::reps_all(&conn).map_err(err)
+}
+
+/// The shelf level of References & Replacements: every book holding either, with both counts.
+#[tauri::command]
+pub fn refs_reps_books(state: State<AppState>) -> Result<Vec<library::RefsRepsBook>, String> {
+    let conn = state.conn();
+    library::refs_reps_books(&conn).map_err(err)
 }
 
 #[cfg(test)]

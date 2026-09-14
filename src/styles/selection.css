@@ -1,0 +1,339 @@
+/* ================================================================================================
+   CHOOSING SEVERAL THINGS AT ONCE — the one appearance, wherever a list offers it.
+   ================================================================================================
+   Every rule here is written in LOGICAL properties, so the bar reads correctly in both directions
+   without this sheet knowing which one it is in: the tick leads, the actions trail, and in Arabic
+   that is the right-hand side without a single mirrored rule.
+
+   Nothing here positions the bar. It is an ordinary block in the list's own row of controls, so it
+   scrolls or sticks according to the surface it was placed in. What it must never be is a floating
+   slab over the rows the reader is trying to choose.
+   ================================================================================================ */
+
+/* ── THE SURFACE, AND WHY IT IS BUILT OUT OF TWO LAYERS ──────────────────────────────────────────
+   THE READABILITY DEFECT. The library can carry a photograph behind everything, and the surfaces
+   over it are deliberately glassy — `.libd-plate` mixes `--chrome-bg` with transparency and blurs
+   what is behind it. A control that names `--chrome-bg` and nothing else is one theme token away
+   from joining them, and the moment it does, the photograph is showing through the button that
+   deletes things.
+
+   So the ground is TWO layers and the lower one cannot be see-through: an opaque `background-color`
+   under a `background-image` that paints the chrome tint over it. Whatever the tint's alpha turns
+   out to be, the picture never reaches the reader's eye. `isolation: isolate` keeps the control out
+   of any blending its parent is doing, and `backdrop-filter: none` is stated rather than assumed —
+   every surface around this one has a blur, and the next rule written for "the plates in this view"
+   would otherwise catch it too.
+
+   AND AN EDGE THAT CAN ACTUALLY BE SEEN. `--chrome-border` is a hairline at ten per cent, which is
+   right for a surface already standing on a contrasting ground and invisible for a plate whose fill
+   is the same cream as the page under it. Measured on the cards shelf: the plate was opaque and
+   still indistinguishable. The edge is mixed with the text colour instead, so it holds on any of
+   the sixteen papers.
+   ------------------------------------------------------------------------------------------------ */
+
+/* THE SLOT. It carries the height and nothing else: with the mode off there is one small button in
+   it, and a plate around a single button is a box inside a box. The surface belongs to the TOOLBAR,
+   which is a group, and to the button, which is a control — not to the empty space between them. */
+.sel-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  height: var(--sel-h, 38px);
+}
+
+/* ONE SURFACE, WORN BY BOTH: the offer, and the toolbar it becomes. Sharing it is what makes the
+   transition read as one control growing rather than as two controls swapping places. */
+.sel-enter,
+.sel-bar.on {
+  background-color: var(--paper-bg);
+  background-image: linear-gradient(var(--chrome-bg), var(--chrome-bg));
+  border: 1px solid color-mix(in srgb, var(--text) 20%, var(--chrome-border));
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.1), 0 4px 14px rgb(0 0 0 / 0.1);
+  border-radius: var(--r-md, 8px);
+  isolation: isolate;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.sel-bar.on {
+  padding: 0 10px;
+  position: relative;
+  z-index: 2;
+}
+
+/* THE MODE IS ANNOUNCED AT THE EDGE, NOT ACROSS THE GROUND. Repainting the whole surface made the
+   bar look like a different object in each state — and a tinted ground is the one that can go
+   translucent over a photograph. The edge says it, and the tick says it exactly. */
+.sel-bar.on {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--chrome-border));
+}
+
+/* THE OFFER, before anything is chosen. A list action, at the height of the page actions beside it:
+   the same surface as the toolbar it opens, so the two are recognisably one thing in two states. */
+.sel-enter {
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  height: var(--sel-h, 38px);
+  cursor: pointer;
+  color: var(--text);
+  font: 600 var(--fs-tiny, 0.75rem) var(--ui-font);
+  padding: 0 15px;
+}
+.sel-enter:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.sel-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text);
+  font: 600 var(--fs-tiny, 0.75rem) var(--ui-font);
+  padding: 0 6px;
+  border-radius: 6px;
+}
+.sel-all:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.sel-all-label { white-space: nowrap; }
+
+.sel-count {
+  font: 500 var(--fs-tiny, 0.75rem) var(--ui-font);
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Pushes the actions to the trailing edge — `auto` on a flex child, so it follows the direction. */
+.sel-spacer { flex: 1 1 auto; min-width: 10px; }
+
+/* One bar, two halves: what the selection IS, and what may be done to it. The same reasoning as the
+   plate's own edge — `--chrome-border` is a ten-per-cent hairline, and a divider nobody can see is
+   not a divider. */
+.sel-sep {
+  inline-size: 1px;
+  block-size: 18px;
+  background: color-mix(in srgb, var(--text) 22%, transparent);
+  flex: 0 0 auto;
+}
+
+.sel-act {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text);
+  font: 600 var(--fs-tiny, 0.75rem) var(--ui-font);
+  padding: 0 9px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.sel-act:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.sel-act.danger { color: #b5524a; }
+.sel-act.danger:hover { color: #fff; background: #b5524a; }
+/* NOTHING CHOSEN IS NOT AN ERROR, so the action is dimmed rather than removed: a control that
+   appears only once a condition is met cannot teach the reader what the condition was. */
+.sel-act:disabled { opacity: 0.42; cursor: default; background: transparent; color: var(--muted); }
+
+/* THE QUESTION, IN THE BUTTON. Filled rather than tinted, so the reader can see that the next press
+   is the one that acts — the same shape the photo-card lightbox uses for its own confirmation. */
+.sel-act.asking { background: #b5524a; color: #fff; }
+.sel-act.danger.asking:hover { background: #a04740; }
+
+.sel-cancel {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--muted);
+  font: 500 var(--fs-tiny, 0.75rem) var(--ui-font);
+  padding: 0 8px;
+  border-radius: 6px;
+}
+.sel-cancel:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+
+/* ── THE TICK ──────────────────────────────────────────────────────────────────────────────────
+   Three states in one box. An empty box that is clearly a box is what makes "unchosen" readable —
+   a row with nothing drawn on it reads as a row with no choice available. */
+.sel-tick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  border: 1.5px solid color-mix(in srgb, var(--text) 42%, transparent);
+  border-radius: 4px;
+  color: var(--paper-bg);
+  background: transparent;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.sel-tick.all,
+.sel-tick.some {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ── THE ROW'S OWN TICK ───────────────────────────────────────────────────────────────────────── */
+.sel-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  flex: 0 0 auto;
+}
+.sel-box:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.sel-box:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* A CHOSEN ROW IS MARKED ON THE ROW, not only in its corner. The tick says what this row is; the
+   wash says which of the twenty on screen the pending action would take. */
+.sel-on {
+  background: color-mix(in srgb, var(--accent) 12%, transparent) !important;
+  border-color: var(--accent) !important;
+}
+
+/* While the mode is on, a row's ordinary press is not what it was — it chooses instead of opening.
+   The cursor is the only honest warning available before the press. */
+.sel-mode .sel-row { cursor: pointer; }
+
+/* ── THE TWO PLACES THE SURFACE IS NOT WANTED, and why ─────────────────────────────────────────
+   The notes archive and the reading panel are the reference implementations, and both already give
+   their controls an opaque ground of their own — the archive's filter plate, the panel's own head.
+   A second surface inside either is a box in a box, so the bar and its offer go back to the quiet
+   outlined form they wear there. Nothing about those two changes.
+
+   It is an EXCEPTION rather than the default, because the surface is what makes the controls safe
+   over a photograph, and a context has to earn the right to drop it by supplying its own. */
+.arch-tools .sel-bar,
+.rp-scroll .sel-bar {
+  background-color: transparent;
+  background-image: none;
+  border: 0;
+  box-shadow: none;
+  width: auto;
+  padding: 0;
+  z-index: auto;
+}
+.arch-tools .sel-enter,
+.rp-scroll .sel-enter {
+  background-color: transparent;
+  background-image: none;
+  border-color: var(--chrome-border);
+  box-shadow: none;
+  height: 26px;
+  padding: 0 11px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.arch-tools .sel-enter:hover,
+.rp-scroll .sel-enter:hover { color: var(--text); border-color: var(--accent); }
+/* The tools plate lays its controls out in a row; the bar is one more of them, at their height. */
+.arch-tools .sel-bar { height: auto; }
+/* ── IN A READING PANEL ────────────────────────────────────────────────────────────────────────
+   The bar belongs to its list, so it lives inside the scroller with the rows — but it must not
+   scroll away from them: a reader choosing the fortieth highlight still needs «تحديد الكل» and the
+   count. Sticky rather than fixed, so it stays inside the panel and cannot cover another surface.
+
+   The panel's own ground, opaque, so rows pass BEHIND it rather than through it. */
+.rp-scroll .sel-bar {
+  position: sticky;
+  top: -6px; /* cancels `.rp-scroll`'s own top padding, so nothing shows above the bar */
+  z-index: 3;
+  background-color: var(--chrome-bg);
+  margin-inline: -4px;
+  padding-inline: 10px;
+}
+.rp-scroll .sel-bar.on {
+  background-color: color-mix(in srgb, var(--accent) 9%, var(--chrome-bg));
+  border: 0;
+  box-shadow: none;
+}
+/* ── IN THE SAVED-CARDS GALLERY ────────────────────────────────────────────────────────────────
+   ONE ROW, WHICH IS THE PAGE'S OWN. The selection controls used to have a strip of their own under
+   the head, at the far edge — so «أنشئ بطاقة مصوّرة» sat on one line and «تحديد» on another, and the
+   two read as competing sets rather than as one row of actions. They are in the head now, beside
+   the action they belong with.
+
+   The head is given a floor equal to the controls it holds, so hiding «أنشئ» while the reader is
+   choosing cannot change the row's height and move the grid. `align-self: center` because the head
+   aligns its children on the TEXT baseline, which is right for a title and a count and wrong for a
+   toolbar. */
+/* ONE HEIGHT FOR THE WHOLE ROW, taken from the page action already in it. `--sel-h` is what the
+   offer and the toolbar are both built to, so «تحديد» is exactly as tall as «أنشئ بطاقة مصوّرة»
+   beside it — and the floor holds the row at that height when the page action stands down, which
+   is what stops the grid moving on the press that begins a selection. */
+.pg-head { min-height: 39px; --sel-h: 39px; }
+.pg-head .sel-bar { align-self: center; }
+
+/* The cell is already a button, so its tick is a MARK on the thumbnail rather than a control of
+   its own — a button inside a button is neither valid markup nor reachable by keyboard. */
+.pg-cell .pg-thumb { position: relative; }
+.pg-pick {
+  position: absolute;
+  inset-block-start: 8px;
+  inset-inline-start: 8px;
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--paper-bg) 78%, transparent);
+  backdrop-filter: blur(2px);
+}
+/* ── IN THE NOTES ARCHIVE ──────────────────────────────────────────────────────────────────────
+   A slip is a button too, so it is marked the same way a saved card is. */
+.arch-slip { position: relative; }
+.arch-slip-pick {
+  position: absolute;
+  inset-block-start: 7px;
+  inset-inline-end: 7px;
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--paper-bg) 80%, transparent);
+}
+
+/* ── IN THE REFERENCES AND REPLACEMENTS SECTION ────────────────────────────────────────────────
+   A definition card is a block, not a row, so its tick sits over it; a rule row is already a flex
+   line and simply gains one more item at its lead. */
+.rr-def-wrap { position: relative; }
+.rr-def-wrap > .sel-box {
+  position: absolute;
+  inset-block-start: 6px;
+  inset-inline-end: 6px;
+  z-index: 2;
+}
+
+/* ── A GALLERY CELL IS A CARD, ONCE THERE IS A PICTURE BEHIND IT ───────────────────────────────
+   The thumbnail is opaque and the LABEL under it is not: it sits on the page, so over a photograph
+   it stands on whatever the photograph is doing. Measured at full presence: the card's own title
+   came out at 1.11:1 over a light picture and 1.22:1 over a dark one — not "hard to read", not
+   there at all.
+
+   The treatment is the one the notes archive already uses for a slip: the cell carries ONE ground
+   from its picture to its last line, so the label belongs to the card rather than to the page. It
+   costs the grid nothing, because the cells were already separated by their own gap.
+
+   Conditional, like the framed page title, and for the same reason: with no photograph the label
+   stands on paper and a plate around it would be noise. */
+:root[data-bg-library="on"] .pg-cell {
+  background-color: var(--solid-base);
+  background-image: linear-gradient(var(--solid-tint), var(--solid-tint));
+  border: 1px solid var(--chrome-border);
+  border-radius: 10px;
+  padding: 8px 8px 10px;
+  isolation: isolate;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}

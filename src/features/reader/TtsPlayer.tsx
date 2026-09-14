@@ -1,7 +1,7 @@
 // TTS player — the design-5a COMPACT FLOATING PILL (RAWY-114). A ~330px pill centred ~26px above the
 // page bottom, floating over the reading page (NOT a full-width bar — that overlapped the Contents
 // panel; RAWY-113). Two calm rows: transport + a progress hairline with a position dot; then a
-// segmented Engine toggle (Piper | Edge, Edge carrying the teal online dot) + a Voices chip (current
+// a Voices chip (current
 // voice) + a tap-to-cycle Speed chip. Logic is reused from RAWY-105–113 (engine dispatch, Edge
 // default, both synth paths, the voices picker, per-language persistence, and the RAWY-193 explicit
 // "Edge unavailable" pause state); this is the pill's markup/CSS, re-binding the same controls. Mirrors RTL.
@@ -40,14 +40,14 @@ export function TtsPlayer({
   // Previously `useTts()` re-rendered the pill on EVERY store change — including the karaoke `words`/
   // `wordIndex` ticks (several/sec on Edge) it doesn't even read — which made size toggles feel heavy and
   // could swallow a click landing mid-re-render. Actions are stable Zustand refs, so they never re-render.
-  const { active, status, endDismissed, engine, voice, index, total, speed, volume, progress, chapterLabel, error, underruns, abandoned, lastFailure, mismatch, debug, retryAttempt, skip, setSpeed, setVolume, setEngine, retry, resumeEdge, stop } = useTts(
+  const { active, status, endDismissed, engine, voice, index, total, speed, volume, chapterLabel, error, underruns, abandoned, lastFailure, mismatch, debug, retryAttempt, skip, setSpeed, setVolume, retry, resumeEdge, stop } = useTts(
     useShallow((s) => ({
       active: s.active, status: s.status, endDismissed: s.endDismissed, engine: s.engine, voice: s.voice, index: s.index, total: s.total,
-      speed: s.speed, volume: s.volume, progress: s.progress, chapterLabel: s.chapterLabel, error: s.error, underruns: s.underruns, abandoned: s.abandoned, lastFailure: s.lastFailure,
+      speed: s.speed, volume: s.volume, chapterLabel: s.chapterLabel, error: s.error, underruns: s.underruns, abandoned: s.abandoned, lastFailure: s.lastFailure,
       mismatch: s.mismatch, // WP-5C: which voice the pre-flight refused, so the state can name it
       debug: s.debug, // RAWY-257/255: reactive, so toggling the setting shows/hides the readout immediately
       retryAttempt: s.retryAttempt, // RAWY-257 2B (D68): which backoff attempt is in flight (0 = none)
-      skip: s.skip, setSpeed: s.setSpeed, setVolume: s.setVolume, setEngine: s.setEngine, retry: s.retry, resumeEdge: s.resumeEdge, stop: s.stop,
+      skip: s.skip, setSpeed: s.setSpeed, setVolume: s.setVolume, retry: s.retry, resumeEdge: s.resumeEdge, stop: s.stop,
     })),
   );
   // RAWY-186 (Part A): the play/pause action. The Reader supplies `onPlayPause` (which reads the CURRENT
@@ -110,7 +110,7 @@ export function TtsPlayer({
     if (!active) setSize("full");
   }, [active]);
   // RAWY-193 (HARD CONDITION 1): a genuine Edge error is exactly when interrupting the reader is correct —
-  // pull the pill out of the minimized kashida into the full state so the Retry / Switch-to-Piper choice is
+  // pull the pill out of the minimized kashida into the full state so the Retry action is
   // unmistakable. Fires only on the error status; normal minimized listening is untouched.
   useEffect(() => {
     if (status === "edge-error" || status === "voice-mismatch") setSize("full");
@@ -146,7 +146,6 @@ export function TtsPlayer({
   if (!active) return null;
 
   const playing = status === "playing";
-  const downloading = status === "downloading";
   const preparing = status === "preparing";
   const buffering = status === "buffering"; // RAWY-231: a transient mid-playback synth wait (visible, not silent)
   const errored = status === "error";
@@ -158,15 +157,13 @@ export function TtsPlayer({
   // WP-5C: a DIFFERENT terminal state from edge-error, with different actions. "Retry" is useless here
   // (a voice that cannot render this script will not learn to), so it is not offered.
   const voiceMismatch = status === "voice-mismatch";
-  const busy = preparing || downloading;
-  const dlPct = Math.round(progress * 100);
-  const trackPct = downloading ? progress * 100 : total > 1 ? (index / (total - 1)) * 100 : 0;
+  const busy = preparing;
+  const trackPct = total > 1 ? (index / (total - 1)) * 100 : 0;
   /** "1", "1.15", "2" — never "1.00". `String` already drops trailing zeros for these values. */
   const speedLabel = (v: number) => localeDigits(String(v), lang);
   const volPct = Math.round(volume * 100); // RAWY-180 (Part A): inline volume slider 0–100%
   const sub =
     errored ? ` · ${t("tts.error")}` :
-    downloading ? ` · ${t("tts.downloading", { pct: localeNum(dlPct, lang) })}` :
     preparing ? ` · ${t("tts.preparing")}` :
     // RAWY-257 2B (D68): a retry is VISIBLE waiting, not a dead player. It takes precedence over the plain
     // "buffering" wording because it says something the user can act on: it is still trying, and how far in.
@@ -221,18 +218,15 @@ export function TtsPlayer({
       <div className={`tts-pill${expanded ? " expanded" : ""}${errored || edgeErrored ? " errored" : ""}${chapterEnd ? " chapter-end" : ""}`} dir={dir} role="group" aria-label={t("tts.player")} onClickCapture={releaseButtonFocusAfterPointerClick}>
         {edgeErrored ? (
           /* RAWY-193: the Edge engine failed (and the one bounded retry failed) — an EXPLICIT, actionable
-             PAUSE. Nothing plays in a voice the user didn't choose: they either Retry Edge or make an explicit
-             Switch to Piper (a normal, persisted engine switch — no hidden "temporary" mode). Rendered in
-             EVERY pill state (the kashida force-expands to full on this status), and announced via role=alert. */
+             PAUSE. Nothing plays in a voice the user didn't choose, and there is no alternative engine to fall
+             back to, so Retry is the only action offered. Rendered in EVERY pill state (the kashida
+             force-expands to full on this status), and announced via role=alert. */
           <div className="tts-pill-end tts-pill-edge-error" role="alert">
             <span className="tts-end-msg">{t("tts.edgeUnavailable")}</span>
             <div className="tts-end-actions">
               <button className="tts-end-next" onClick={() => resumeEdge()}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 11a8 8 0 1 1-2.3-5.6M20 4v6h-6" /></svg>
                 <span>{t("tts.retry")}</span>
-              </button>
-              <button className="tts-end-next tts-switch-piper" onClick={() => setEngine("piper")}>
-                <span>{t("tts.switchToPiper")}</span>
               </button>
               <button className="tts-ghost tts-x" onClick={stop} aria-label={t("tts.close")} title={t("tts.close")}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>
@@ -346,24 +340,13 @@ export function TtsPlayer({
             {diag && diag.maxConcurrent > 1 && <span className="tts-pill-pos" title="RAWY-257 C4: peak concurrent dispatches — D60 single-flight says this must never exceed 1">⚑ {localeNum(diag.maxConcurrent, lang)}</span>}
             {/* RAWY-247 (Part 3): opt-in LAST-FAILURE readout — the failing unit's length + classification (+ bytes). */}
             {ttsDebug && lastFailure && <span className="tts-pill-pos" title="RAWY-247 last synth failure">✖ {lastFailure}</span>}
-            <span className="tts-pill-pos">{errored || downloading ? "" : t("tts.pos", { n: localeNum(index + 1, lang), m: localeNum(total, lang) })}</span>
+            <span className="tts-pill-pos">{errored ? "" : t("tts.pos", { n: localeNum(index + 1, lang), m: localeNum(total, lang) })}</span>
           </div>
         </div>
 
-        {/* row 2 — Engine toggle (Piper | Edge) + Voices + Speed */}
+        {/* row 2 — Voices + Speed */}
         {expanded && (
           <div className="tts-pill-controls">
-            <div className="tts-engine-toggle" role="group" aria-label={t("tts.engine")}>
-              <button className={`tts-eng-seg${engine === "piper" ? " on" : ""}`} onClick={() => engine !== "piper" && setEngine("piper")} aria-pressed={engine === "piper"}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><rect x="7" y="7" width="10" height="10" rx="1.5" /><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3" /></svg>
-                <span>Piper</span>
-              </button>
-              <button className={`tts-eng-seg${engine === "edge" ? " on" : ""}`} onClick={() => engine !== "edge" && setEngine("edge")} aria-pressed={engine === "edge"}>
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M17.5 19a4.5 4.5 0 0 0 .5-9 6 6 0 0 0-11.6-1.6A4 4 0 0 0 6 19z" /></svg>
-                <span>Edge</span>
-                {engine === "edge" && <span className="tts-teal-dot" aria-hidden />}
-              </button>
-            </div>
             <div className="tts-voices-speed">
               <button className={`tts-voices-chip${picking ? " on" : ""}`} onClick={() => setPicking((p) => !p)} aria-label={t("tts.voices")} title={t("tts.voices")}>
                 <svg className="tts-voices-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 3v18M8 7v10M16 7v10M4 10v4M20 10v4" /></svg>

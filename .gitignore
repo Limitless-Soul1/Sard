@@ -12,9 +12,38 @@ dist
 dist-ssr
 *.local
 
+# TypeScript's incremental build cache. A local timing artifact, rewritten by every `tsc -b`.
+*.tsbuildinfo
+
 # Rust / Tauri build artifacts
 /src-tauri/target
 /src-tauri/gen/schemas
+
+# GENERATED MOBILE PLATFORM PROJECTS — never committed, never published.
+#
+# `tauri android init` and `tauri ios init` write a Gradle project and an Xcode project under
+# `src-tauri/gen/`. Those trees are generated build scaffolding, not product source: they carry
+# absolute paths from the machine that ran the generator, and they are where a release keystore
+# reference or a team identifier ends up.
+#
+# `gen/schemas` above is already ignored for the same reason; these two lines complete the directory
+# rather than continuing to name one child of it.
+#
+# As with `/private/`, this is a LOCAL boundary and deliberately not the only one — the
+# production-tree gate refuses `src-tauri/gen/` independently, so a force-add or a stale index cannot
+# publish what this rule was the only thing stopping.
+/src-tauri/gen/android/
+/src-tauri/gen/apple/
+
+# Code-signing material. Nothing here is ever committed on any branch: a signing artifact that
+# reaches a public repository cannot be withdrawn from it.
+**/keystore.properties
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+*.provisioningprofile
+ExportOptions.plist
 
 # THE PRIVATE WORKSPACE — local only, never committed, never pushed, never published.
 #
@@ -71,6 +100,11 @@ dist-ssr
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
+# Visual Studio's workspace cache. `*.suo` below covers one file inside it; the directory itself was
+# not listed, so `git add -A` staged the whole thing — including DocumentLayout.json, which records
+# the absolute path of the machine it was opened on. The production-content gate refused the tree
+# over exactly that, which is the gate working. Ignoring the directory stops it recurring.
+.vs/
 .idea
 .DS_Store
 *.suo
@@ -78,6 +112,10 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python bytecode from the local probe/measurement scripts.
+__pycache__/
+*.pyc
 
 # No archives in public/. Vite copies public/ verbatim into dist/ and Tauri embeds dist/ into the
 # executable, so a stray archive here is compiled into every build and inflates every artifact.

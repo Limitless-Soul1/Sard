@@ -2,7 +2,18 @@ const pdfjsPath = path => new URL(`vendor/pdfjs/${path}`, import.meta.url).toStr
 
 import './vendor/pdfjs/pdf.mjs'
 const pdfjsLib = globalThis.pdfjsLib
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsPath('pdf.worker.mjs')
+// SARD LOCAL PATCH 12 (see VENDOR.txt) — the worker Sard loads is `sard-pdf-worker.mjs`, which
+// imports the PDF compatibility layer and then the vendored worker, unmodified.
+//
+// A worker is its own realm: the layer that index.html installs on the page does not reach it, and
+// the worker is where the two worst failures live — `Promise.try` on the first request of every PDF
+// (pdf.worker.mjs:60114) and `toHex` on the document fingerprint (:59575). Pointing at the bare
+// vendored worker leaves those unguarded on an older engine, and the failure is a silent hang.
+//
+// Resolved against this file rather than through `pdfjsPath`, which prefixes `vendor/pdfjs/`: the
+// entry is Sard's, so it lives beside Sard's other additions and leaves the vendored directory
+// byte-identical to upstream.
+pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('sard-pdf-worker.mjs', import.meta.url).toString()
 
 const fetchText = async url => await (await fetch(url)).text()
 

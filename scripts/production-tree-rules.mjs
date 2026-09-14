@@ -40,6 +40,18 @@ export const DEVELOPMENT_ONLY = [
   // been added yet; a force-add, a stale index or a rule someone edits would slip straight past it.
   // This is the second, independent control, and it is the one the release actually consults.
   { re: /^private\//, why: "the private workspace — internal material, local only" },
+  // GENERATED MOBILE PLATFORM PROJECTS. `tauri android init` and `tauri ios init` write a Gradle
+  // project and an Xcode project under `src-tauri/gen/`. They are generated build scaffolding, not
+  // product source, and they carry two things that must never be published: absolute paths from the
+  // machine that ran the generator, and the release signing configuration.
+  //
+  // Same shape of protection as `private/` above, and here for the same reason: `.gitignore` stops
+  // them being committed, and this stops them being PUBLISHED even if they were. `gen/schemas` has
+  // always been generated too, so the rule covers the directory rather than naming children of it.
+  //
+  // This rule is deliberately older than the code it guards — it exists before any generator has been
+  // run, because the cheapest moment to refuse a generated tree is before one exists.
+  { re: /^src-tauri\/gen\//, why: "a generated mobile platform project — build scaffolding carrying local machine paths and release signing configuration, not the product" },
   // Only the release workflow ships (PRODUCTION_ALWAYS below pins it, because CI runs it from `main`).
   // Every other workflow validates `develop`: it runs the unit suite, the harness rules and the gate
   // scripts, none of which the published tree carries, so on `main` it would be a workflow that could
@@ -51,7 +63,7 @@ export const DEVELOPMENT_ONLY = [
   // The backstop described at the top of this file. Anything at the root that is not one of the
   // product's own documents (PRODUCTION_ALWAYS, checked first) is development material: reports,
   // studies, plans, checkpoints, status notes, tester instructions, scratch notes. Subdirectory
-  // documents are NOT caught here — public/foliate-js/README.md and the Piper LICENSES/README.md
+  // documents are NOT caught here — public/foliate-js/README.md
   // belong to shipped third-party code and must travel with it.
   { re: /^[^/]+\.(md|txt)$/i, why: "a root-level document that is not one of the product's own README/BUILD/LICENSE/CHANGELOG/NOTICE" },
 
@@ -119,6 +131,12 @@ export const PRODUCTION_ALWAYS = [
   // the whole directory once a second, development-only workflow existed.
   /^\.github\/workflows\/release\.yml$/,
   /^(README|BUILD|LICENSE|CHANGELOG|CONTRIBUTING|SECURITY|CODE_OF_CONDUCT|NOTICE|AUTHORS)(\.md|\.txt)?$/,
+  // AGENTS.md — contributor guidance, in the same category as CONTRIBUTING.md and shipped for the
+  // same reason: it tells whoever works on this repository how to work in it, and the published
+  // repository is where they will be reading it. Named explicitly rather than by widening the
+  // root-document pattern, so the blanket exclusion above keeps its meaning and the next root
+  // document still has to be argued for.
+  /^AGENTS\.md$/,
 ];
 
 /**

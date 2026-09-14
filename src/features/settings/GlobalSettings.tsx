@@ -6,23 +6,26 @@
 
 import { useEffect, useState, type ChangeEvent, type ReactNode } from "react";
 
+import { announceImportedFont } from "../fonts/arrive";
 import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
 import type { TKey } from "../../i18n/locales/en";
+import { Icon, type IconName } from "../../components/Icon";
 import { getVersion } from "@tauri-apps/api/app";
 import { appInfo } from "../../lib/ipc"; // BETA identification in About (build id)
 
 import { Hoopoe } from "../library/Hoopoe";
+import { ProfilesSection } from "../profiles/ProfilesSection";
 import { settingsGet, settingsSet } from "../../lib/ipc";
 import { useUpdater } from "../../lib/updater";
-import { FONT_CATALOGUE, UI_SCALE_MAX, UI_SCALE_MIN, useFonts } from "../../lib/fonts";
+import { familiesOnce, FONT_CATALOGUE, UI_SCALE_MAX, UI_SCALE_MIN, useFonts } from "../../lib/fonts";
 // RAWY-265: the Library background surface (measured constants + the apply layer live in the module).
-import { BG_BLUR_MAX, BG_PRESENCE_MAX, bgSrcUrl, useBackground } from "../../lib/background";
+import { BG_BLUR_MAX, BG_PRESENCE_MAX, bgSrcUrl, imageLabel, useBackground } from "../../lib/background";
 import { BOOKMARK_COLORS, BOOKMARK_SHAPES, BOOKMARK_SIZE_MAX, BOOKMARK_SIZE_MIN, useBookmarkStyle } from "../../lib/bookmarkStyle";
 import { BookmarkShape } from "../reader/BookmarkShape";
 import { READ_MARKERS, useReadMarkerStyle } from "../../lib/readMarkerStyle"; // RAWY-256
-import { TtsTrackingControls } from "../reader/TtsTrackingControls"; // RAWY-200
-import { useStyleScope } from "../../lib/styleScope";
+import { usePresence } from "../../lib/presence"; // DISC/RPC: the Discord on/off switch
+import { LegalDocuments } from "../legal/LegalDocuments";
 import {
   ARABIC_FONTS,
   LATIN_DEFAULTS,
@@ -31,18 +34,30 @@ import {
   type LatinFont,
   type ReadingStyle,
 } from "../../reader-engine/injectedCss";
-import { THEMES, THEME_ORDER, currentMode, useTheme, type ThemeMode } from "../../theme";
+import { THEMES, THEME_ORDER, currentMode, resolveTheme, useTheme, type ThemeMode } from "../../theme";
+import { useDialog } from "../../components/useDialog";
 
 const STYLE_KEY = "reading_style";
 
-type Section = "appearance" | "fonts" | "reading" | "bookmark" | "language" | "about";
-const NAV: { key: Section; label: TKey; icon: string }[] = [
-  { key: "appearance", label: "gs.nav.appearance", icon: "◑" },
-  { key: "fonts", label: "gs.nav.fonts", icon: "A" },
-  { key: "reading", label: "gs.nav.reading", icon: "▤" },
-  { key: "bookmark", label: "gs.nav.bookmark", icon: "▸" },
-  { key: "language", label: "gs.nav.language", icon: "⌘" },
-  { key: "about", label: "gs.nav.about", icon: "ⓘ" },
+type Section = "appearance" | "profiles" | "fonts" | "bookmark" | "language" | "presence" | "about";
+// The row marks were text characters chosen for what existed, not for what the sections hold: the
+// bookmark row was a triangle, the language row was the command symbol, and six of the eight were
+// being drawn by Cambria Math with the "about" mark falling through to MS PGothic. Each is now an
+// icon of its own section, read from the section body. `fonts` deliberately keeps a LETTER -- it is
+// a type specimen shown in the app's own face, which is the one case where the character is the
+// right mark and has no fallback problem.
+const NAV: { key: Section; label: TKey; icon?: IconName; letter?: string }[] = [
+  { key: "appearance", label: "gs.nav.appearance", icon: "appearance" },
+  // PROFILES: one row added, beside the bookmark and read-marker that already live here. The design
+  // package draws a RESTRUCTURED settings window — Fonts, Bookmark and Language gone, three new
+  // entries in their place — and that restructure is a different piece of work, deliberately not
+  // done here. Every existing section keeps working exactly as it did.
+  { key: "profiles", label: "gs.nav.profiles", icon: "profiles" },
+  { key: "fonts", label: "gs.nav.fonts", letter: "A" },
+  { key: "bookmark", label: "gs.nav.bookmark", icon: "bookmark" },
+  { key: "language", label: "gs.nav.language", icon: "language" },
+  { key: "presence", label: "gs.nav.presence", icon: "activity" },
+  { key: "about", label: "gs.nav.about", icon: "about" },
 ];
 
 const LANGS = [
@@ -53,16 +68,21 @@ const LANGS = [
 export function GlobalSettings({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t, dir } = useI18n();
   const [section, setSection] = useState<Section>("appearance");
+  // IT ALREADY CLAIMED TO BE A MODAL DIALOG. Measured, it took no focus, trapped no Tab, carried no
+  // name and ignored Escape — while its scrim blocked the pointer, so a keyboard could reach the
+  // library it had covered. Nothing here changes what Settings looks like or does; it makes the
+  // claim true. Escape closes, which is what the scrim and the ✕ already meant.
+  const dlg = useDialog({ onDismiss: onClose, initialFocus: "none" });
   if (!open) return null;
   return (
     <>
       <div className="panel-scrim show" onClick={onClose} />
-      <div className="gs" role="dialog" aria-modal="true" dir={dir}>
+      <div className="gs" ref={dlg.ref} {...dlg.props} dir={dir}>
         {/* left nav */}
         <nav className="gs-nav">
           <div className="gs-brand">
             <Hoopoe size={22} />
-            <span className="gs-brand-name">{t("gs.title")}</span>
+            <span className="gs-brand-name" id={dlg.titleId}>{t("gs.title")}</span>
           </div>
           <div className="gs-nav-list">
             {NAV.map((n) => (
@@ -71,7 +91,9 @@ export function GlobalSettings({ open, onClose }: { open: boolean; onClose: () =
                 className={`gs-nav-item${section === n.key ? " on" : ""}`}
                 onClick={() => setSection(n.key)}
               >
-                <span className="gs-nav-ico" aria-hidden>{n.icon}</span>
+                <span className="gs-nav-ico" aria-hidden>
+                  {n.icon ? <Icon name={n.icon} size="md" /> : n.letter}
+                </span>
                 {t(n.label)}
               </button>
             ))}
@@ -83,14 +105,20 @@ export function GlobalSettings({ open, onClose }: { open: boolean; onClose: () =
         {/* content */}
         <div className="gs-content">
           <div className="gs-topbar">
-            <button className="gs-x" onClick={onClose} aria-label="✕">✕</button>
+            {/* The name was the symbol itself (`aria-label="✕"`), which is the exact thing
+                RAWY-119 introduced `panel.close` to stop — its own note reads "a real label so it
+                isn't a bare glyph". */}
+            <button className="gs-x" onClick={onClose} aria-label={t("panel.close")} title={t("panel.close")}>
+              <Icon name="close" size="sm" />
+            </button>
           </div>
           <div className="gs-body">
             {section === "appearance" && <AppearanceSection />}
+            {section === "profiles" && <ProfilesSection />}
             {section === "fonts" && <FontsSection />}
-            {section === "reading" && <ReadingDefaultsSection />}
             {section === "bookmark" && <BookmarkSection />}
             {section === "language" && <LanguageSection />}
+            {section === "presence" && <PresenceSection />}
             {section === "about" && <AboutSection />}
           </div>
         </div>
@@ -180,7 +208,7 @@ function AppearanceSection() {
 function LibraryBackgroundSection() {
   const { t, lang } = useI18n();
   const themeId = useTheme((s) => s.themeId);
-  const theme = THEMES[themeId];
+  const theme = resolveTheme(themeId);
   const { enabled, library, libraryParams, setEnabled, setParams, choose, clear, resetParams } = useBackground();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -232,7 +260,9 @@ function LibraryBackgroundSection() {
               }}
               aria-hidden
             />
-            <span className="bg-ctl-name" dir="auto">{library.source_name ?? ""}</span>
+            <span className="bg-ctl-name" dir="auto" title={imageLabel(library.source_name).full}>
+              {imageLabel(library.source_name).label}
+            </span>
             <button className="bg-ctl-act" disabled={busy} aria-busy={busy} onClick={pick}>
               {busy && <span className="bg-ctl-spin" aria-hidden />}
               {busy ? t("gs.bg.preparing") : t("gs.bg.replace")}
@@ -361,6 +391,11 @@ function AddFontButton() {
             setUiFont(f.family_name); // make the just-imported font the active UI font
             setAdded(f.family_name);
             window.setTimeout(() => setAdded(null), 2400);
+            // THE SAME ANSWER A DROPPED FONT GETS. `announceImportedFont` is the one place a
+            // successful import decides what happens next, so the picker and the window drop end on
+            // the same specimen rather than on two different confirmations. It re-registers and
+            // re-checks the face before opening, which `importFont` alone does not promise.
+            await announceImportedFont(f, "imported");
           }
         } catch (e) {
           console.error(e);
@@ -487,7 +522,7 @@ function FontsSection() {
       </span>
     );
   // imported fonts (script unknown) offered in BOTH book pickers, mirroring RAWY-44/92.
-  const customOpts = custom.map((c) => (
+  const customOpts = familiesOnce(custom).map((c) => (
     <option key={c.family_name} value={c.family_name}>{`${c.family_name} · ${t("gs.imported")}`}</option>
   ));
 
@@ -593,133 +628,6 @@ function FontsSection() {
           ))}
         </div>
       </section>
-    </>
-  );
-}
-
-// ---- Book styles: the style MODE (unified vs per-book) and — in per-book ONLY — the global
-//      reading_style baseline a NEW book starts from ----
-//
-// RAWY-284: the reading-APPEARANCE controls (line spacing + the read-aloud tracking group) used to be
-// rendered here unconditionally, and in UNIFIED scope that was a pure duplicate of controls the reader
-// already has in the open book: line spacing is the Typography tab's `type.lineSpacing`, and the
-// tracking group is the SAME `TtsTrackingControls` component the Read-aloud tab renders (RAWY-200 made
-// it shared precisely so the two surfaces could not drift). Under unified, `Reader.update` writes the
-// GLOBAL row (Reader.tsx — `if (unified) globalStyleRef.current = next` → `saveGlobalStyle`), i.e. the
-// very row this section edits. So the duplicate was not merely redundant, it was the WORSE of the two
-// copies: identical destination, no live preview.
-//
-// It survives in PER-BOOK scope because there it is NOT a duplicate. The reader then writes
-// `book_style:<id>` instead, and this global row is the baseline a not-yet-opened book starts from —
-// which is also why it is the one place in the app where "you cannot preview it" is inherent rather
-// than a defect: the book it describes is not open. The heading says exactly that.
-//
-// The controls are a SEPARATE COMPONENT rather than a `scope === "perbook" &&` around the JSX so that
-// under unified they are not mounted at all: no `settingsGet` IPC, no style state, and none of the four
-// `useBackground` subscriptions the two EffectBlocks take. Gating inside the component would have kept
-// all of them alive to render nothing.
-function ReadingDefaultsSection() {
-  const { t } = useI18n();
-  const { scope, setScope } = useStyleScope();
-  return (
-    <>
-      <SecHead>{t("gs.reading")}</SecHead>
-
-      {/* RAWY-43: choose whether all books share one style (unified) or each keeps its own.
-          RAWY-271: Unified is listed FIRST because it is the default (styleScope.ts) — the old order
-          read as if Per-book were the primary option. Order only; the stored value is untouched.
-          RAWY-284: this block is deliberately unchanged — it is app-level, needs no preview, and is
-          the setting that decides what the rest of this section means. */}
-      <div className="gs-sec">
-        <Label>{t("gs.scope")}</Label>
-        <Seg<"unified" | "perbook">
-          value={scope}
-          onPick={(s) => setScope(s)}
-          options={[
-            { key: "unified", label: t("gs.scope.unified") },
-            { key: "perbook", label: t("gs.scope.perbook") },
-          ]}
-        />
-        <div className="gs-note">{scope === "unified" ? t("gs.scope.unifiedHint") : t("gs.scope.perbookHint")}</div>
-      </div>
-
-      {/* RAWY-284: no disabled/greyed leftovers under unified — the controls are GONE, replaced by
-          where they actually are. Says the panel name a reader can act on, not just "in the reader". */}
-      {scope === "perbook" ? <NewBookDefaults /> : <div className="gs-banner">▤ {t("gs.reading.inReader")}</div>}
-    </>
-  );
-}
-
-// RAWY-284: mounted ONLY in per-book scope (see the note above). Everything inside is byte-for-byte the
-// pre-RAWY-284 markup and the same `patch` funnel writing the same `reading_style` key — the ticket
-// changes WHERE these are shown, never what they store.
-function NewBookDefaults() {
-  const { t, lang } = useI18n();
-  const { bookThemeId } = useTheme();
-  // The tracking preview + contrast guard use the shared BOOK theme (D29) — the one a new book opens in
-  // — so the swatches show the real per-theme terracotta and warn against the real paper. Theme choice
-  // does NOT affect what is persisted (the track values are theme-independent); it is preview only.
-  const gTheme = THEMES[bookThemeId];
-  const [style, setStyle] = useState<ReadingStyle | null>(null);
-
-  useEffect(() => {
-    (async () => {
-      const raw = await settingsGet(STYLE_KEY).catch(() => null);
-      let parsed: Partial<ReadingStyle> = {};
-      if (raw) {
-        try {
-          parsed = JSON.parse(raw) as Partial<ReadingStyle>;
-        } catch {
-          parsed = {};
-        }
-      }
-      setStyle({ ...LATIN_DEFAULTS, ...parsed });
-    })();
-  }, []);
-
-  const patch = (p: Partial<ReadingStyle>) => {
-    setStyle((cur) => {
-      if (!cur) return cur;
-      const next = { ...cur, ...p };
-      settingsSet(STYLE_KEY, JSON.stringify(next)).catch(console.error);
-      return next;
-    });
-  };
-
-  // RAWY-284: null, not a bare heading — the parent already rendered the section head and the style
-  // MODE switch, so the panel is never a blank frame while this one `settingsGet` is in flight (UI
-  // Rules: no blank frames, no visible rebuilding). Before this split the whole panel was one heading.
-  if (!style) return null;
-  return (
-    <>
-      {/* RAWY-284: the banner moved BELOW the mode switch so it scopes the group it describes. Under
-          unified it said "the baseline for new books" about a row that is every book's LIVE style —
-          true only in per-book, which is now the only scope that renders it. */}
-      <div className="gs-banner">↻ {t("gs.readingBanner")}</div>
-
-      {/* Book font, weight & size now live in the Fonts panel (RAWY-91); line spacing stays here. */}
-      <div className="gs-sec">
-        <div className="gs-slider-head"><span>{t("gs.defaultLineSpacing")}</span><span className="gs-slider-val">{localeDigits(style.lineHeight.toFixed(2), lang)}</span></div>
-        {/* RAWY-65: an RTL-mirror fix was investigated (see the Slider component's comment in
-            ReadingSettings.tsx) and found unnecessary — this runtime already auto-mirrors native
-            <input type=range> correctly for RTL, both visually and for click/drag, with no code. */}
-        <input className="gs-slider" type="range" min={1.2} max={2.6} step={0.05} value={style.lineHeight}
-          onChange={(e) => patch({ lineHeight: Math.round(Number(e.target.value) * 100) / 100 })} />
-      </div>
-      <div className="gs-note">{t("gs.reading.fontsHint")}</div>
-
-      {/* RAWY-200: read-aloud tracking defaults — the same six controls as the in-book panel, writing
-          the GLOBAL reading_style row (the per-book panel writes book_style:<id>). */}
-      <div className="gs-sec">
-        <TtsTrackingControls
-          style={style}
-          update={patch}
-          dark={gTheme.dark}
-          paperBg={gTheme.colors.paperBg}
-          themeInk={gTheme.colors.text}
-          deskBg={gTheme.colors.surfaceBg}
-        />
-      </div>
     </>
   );
 }
@@ -856,6 +764,54 @@ function LanguageSection() {
   );
 }
 
+// DISC/RPC: the one switch. One row while off, one row while on — the smallest possible surface
+// for a feature whose whole point is "show me, unless I say stop". Reuses the house toggle idiom
+// (`rs-toggle-row` / `BgToggle`) so the knob, the RTL pin and the a11y wiring are the ones the
+// rest of the app already uses.
+function PresenceSection() {
+  const { t } = useI18n();
+  const enabled = usePresence((s) => s.enabled);
+  const setEnabled = usePresence((s) => s.setEnabled);
+  const showBook = usePresence((s) => s.showBook);
+  const setShowBook = usePresence((s) => s.setShowBook);
+  const showPosition = usePresence((s) => s.showPosition);
+  const setShowPosition = usePresence((s) => s.setShowPosition);
+  const showBrowsing = usePresence((s) => s.showBrowsing);
+  const setShowBrowsing = usePresence((s) => s.setShowBrowsing);
+  return (
+    <>
+      <SecHead>{t("gs.presence")}</SecHead>
+      <div className="gs-sec">
+        <BgToggle
+          label={t("gs.presence.enabled")}
+          hint={t("gs.presence.enabledHint")}
+          on={enabled}
+          onToggle={() => setEnabled(!enabled)}
+        />
+        <BgToggle
+          label={t("gs.presence.showBook")}
+          hint={t("gs.presence.showBookHint")}
+          on={showBook}
+          onToggle={() => setShowBook(!showBook)}
+        />
+        <BgToggle
+          label={t("gs.presence.showPosition")}
+          hint={t("gs.presence.showPositionHint")}
+          on={showPosition}
+          onToggle={() => setShowPosition(!showPosition)}
+        />
+        <BgToggle
+          label={t("gs.presence.showBrowsing")}
+          hint={t("gs.presence.showBrowsingHint")}
+          on={showBrowsing}
+          onToggle={() => setShowBrowsing(!showBrowsing)}
+        />
+      </div>
+      <div className="gs-note">{t("gs.presence.note")}</div>
+    </>
+  );
+}
+
 // RAWY-290: About's update row is now a SECOND TRIGGER for the one shared updater, not a second
 // implementation of it. It calls the same `manual()` the Library rosette calls, and the outcome —
 // "up to date", the update dialog, or an error — is rendered by the shared store and dialog. This
@@ -894,7 +850,11 @@ function AboutSection() {
       <div className="gs-about">
         <Hoopoe size={34} />
         <div>
-          <div className="gs-about-name">Sard · سَرْد</div>
+          {/* The bilingual wordmark. Two spans, because one element cannot carry two faces and
+              the mark's halves are set in different ones — see src/lib/typography.ts. */}
+          <div className="gs-about-name">
+            Sard <span aria-hidden>·</span> <span className="brand-ar">سَرْد</span>
+          </div>
           <div className="gs-about-tag">{t("gs.about.tagline")}</div>
           <div className="gs-about-ver">{t("gs.about.version")} {ver}</div>
           {betaId && (
@@ -917,8 +877,78 @@ function AboutSection() {
             failure all open the shared dialog, so this row never renders a second copy of them. */}
         {updState.k === "uptodate" && <div className="gs-update-msg">{t("upd.uptodate")}</div>}
       </div>
+      {/* WHO MADE IT. Placed between the product's identity and its legal record because that is
+          the order the question arrives in: what this is, who is behind it, what you agreed to. */}
+      <SecHead>{t("gs.contact")}</SecHead>
+      <ContactRow />
+      {/* THE DOCUMENTS STAY REACHABLE. Accepting them at the gate should not be the last time a
+          reader can see them, and the record of what this installation agreed to belongs where the
+          build's own identity already is. Reading only — nothing here decides anything. */}
+      <SecHead>{t("legal.section")}</SecHead>
+      <LegalDocuments />
       <TwoLevelCard />
     </>
+  );
+}
+
+/**
+ * THE TWO PLACES SARD'S AUTHOR CAN BE REACHED.
+ *
+ * MARKS RATHER THAN ADDRESSES. A URL printed in a settings panel is a string a reader has to parse;
+ * the two marks are recognised without reading, and the address is still there for anyone who wants
+ * it — in the tooltip, and in the browser the moment it opens. Drawn inline, as the update button a
+ * few lines above already draws its own, rather than joining Sard's icon set: these are somebody
+ * else's trademarks and do not belong in the vocabulary the interface speaks in.
+ *
+ * `openUrl` is how Sard already leaves for a browser — the WebView2 recovery path uses exactly this
+ * — and it is wrapped the same way, because a contact link that throws is worse than one that does
+ * nothing.
+ */
+const CONTACTS = [
+  {
+    key: "x",
+    label: "X",
+    href: "https://x.com/Lll9we",
+    // The X wordmark, as a path rather than a font, so it needs nothing installed.
+    path: "M18.9 2.2h3.4l-7.4 8.4 8.7 11.5h-6.8l-5.3-7-6.1 7H1.9l7.9-9L1.5 2.2h7l4.8 6.4ZM17.7 20h1.9L7.4 4.2H5.3Z",
+  },
+  {
+    key: "github",
+    label: "GitHub",
+    href: "https://github.com/Limitless-Soul1",
+    path: "M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48l-.01-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.53 2.34 1.09 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.5 9.5 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85l-.01 2.75c0 .27.18.58.69.48A10 10 0 0 0 12 2Z",
+  },
+] as const;
+
+function ContactRow() {
+  const { t } = useI18n();
+  const open = (href: string) => {
+    void (async () => {
+      try {
+        const { openUrl } = await import("@tauri-apps/plugin-opener");
+        await openUrl(href);
+      } catch {
+        /* a contact link that cannot open must not become an error */
+      }
+    })();
+  };
+  return (
+    <div className="gs-contact">
+      {CONTACTS.map((c) => (
+        <button
+          key={c.key}
+          className="gs-contact-link"
+          title={c.href}
+          aria-label={`${t("gs.contact")} — ${c.label}`}
+          onClick={() => open(c.href)}
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+            <path d={c.path} />
+          </svg>
+          <span>{c.label}</span>
+        </button>
+      ))}
+    </div>
   );
 }
 

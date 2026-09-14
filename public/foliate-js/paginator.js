@@ -249,7 +249,17 @@ class View {
         // and the Tauri IPC bridge) while keeping 100% of Sard's own reading/theming/highlight
         // functionality, which all depends on `allow-same-origin` for `iframe.contentDocument`
         // access. Re-apply on any re-vendor, alongside the RAWY-21 --sard-measure patch above.
-        this.#iframe.setAttribute('sandbox', 'allow-same-origin')
+        //
+        // SARD LOCAL PATCH 1b — the value is READ, not hardcoded. The paragraph above is exactly
+        // right about Chromium and exactly wrong about WebKit: MEASURED on WebKitGTK, a script-
+        // disabled iframe never receives the pointer events the parent listens for, so on that
+        // engine the reasoning above produces a book nobody can touch. The parent decides, because
+        // only the parent knows which engine it is on and whether it is running inside the isolated
+        // reader host (where `allow-scripts` costs nothing, since the host holds nothing to steal).
+        // Unset — every Windows build — yields the same literal string as before, so this line is
+        // behaviour-identical there. Same global-hook shape as PATCH 5 in epub.js, and reverted the
+        // same way: delete the `??` and its left operand.
+        this.#iframe.setAttribute('sandbox', globalThis.__sardSectionSandbox ?? 'allow-same-origin')
         this.#iframe.setAttribute('scrolling', 'no')
     }
     get element() {
@@ -744,7 +754,14 @@ export class Paginator extends HTMLElement {
         const flow = this.getAttribute('flow')
         if (flow === 'scrolled') {
             // FIXME: vertical-rl only, not -lr
-            this.setAttribute('dir', vertical ? 'rtl' : 'ltr')
+            // SARD PATCH 8: `rtl` was ignored here, so a right-to-left book in scrolled flow got
+            // dir="ltr" and its scroll container put the vertical scrollbar on the RIGHT — the side an
+            // RTL line STARTS on. The text column ends flush against that scrollbar, so pressing just
+            // before a line's first character landed on the scrollbar track and paged the view by a
+            // screen instead of starting a selection. The paged branch below already honours `rtl`;
+            // this makes the scrolled branch agree with it, which moves the scrollbar to the leading
+            // side and leaves LTR books untouched.
+            this.setAttribute('dir', vertical || rtl ? 'rtl' : 'ltr')
             this.#top.style.padding = '0'
             const columnWidth = maxInlineSize
 
@@ -1040,7 +1057,17 @@ export class Paginator extends HTMLElement {
     #canGoToIndex(index) {
         return index >= 0 && index <= this.sections.length - 1
     }
+    // ---- SARD LOCAL PATCH 12a (P7) — refuse an index that does not name a section ----
+    // `#adjacentIndex` RETURNS UNDEFINED at the ends of the book (its for-loop simply falls out), and
+    // two callers pass that straight through: `#turnPage` below, and prevSection/nextSection. The
+    // line under this one then evaluates `this.sections[undefined].load()` — and because that `.load()`
+    // is OUTSIDE the `.catch()` on the promise chain, the TypeError is thrown SYNCHRONOUSLY and escapes
+    // `#goTo` entirely rather than being logged as "Failed to load section".
+    // The predicate is upstream's own, unchanged; it already rejects `undefined` (`undefined >= 0` is
+    // false) and an empty `sections` array (length - 1 === -1), which is the still-loading case.
     async #goTo({ index, anchor, select}) {
+        if (!this.#canGoToIndex(index)) return
+        // ---- end SARD LOCAL PATCH 12a ----
         if (index === this.#index) await this.#display({ index, anchor, select })
         else {
             const oldIndex = this.#index
@@ -1110,14 +1137,23 @@ export class Paginator extends HTMLElement {
             return
         }
         this.#locked = true
-        const prev = dir === -1
-        const shouldGo = await (prev ? this.#scrollPrev(distance) : this.#scrollNext(distance))
-        if (shouldGo) await this.#goTo({
-            index: this.#adjacentIndex(dir),
-            anchor: prev ? () => 1 : () => 0,
-        })
-        if (shouldGo || !this.hasAttribute('animated')) await wait(100)
-        this.#locked = false
+        // ---- SARD LOCAL PATCH 12b (P7) — release the lock even if the body rejects ----
+        // Upstream clears `#locked` on the statement after the awaits, so ONE rejection anywhere above
+        // leaves it set for the lifetime of the view and every later turn takes the early return at the
+        // top of this function. Page turning is then dead in BOTH directions, silently, with nothing
+        // after the original throw to say so. `finally` is the whole fix; the happy path is unchanged.
+        try {
+            const prev = dir === -1
+            const shouldGo = await (prev ? this.#scrollPrev(distance) : this.#scrollNext(distance))
+            if (shouldGo) await this.#goTo({
+                index: this.#adjacentIndex(dir),
+                anchor: prev ? () => 1 : () => 0,
+            })
+            if (shouldGo || !this.hasAttribute('animated')) await wait(100)
+        } finally {
+            this.#locked = false
+        }
+        // ---- end SARD LOCAL PATCH 12b ----
         const pending = this.#pendingTurn
         if (pending) {
             this.#pendingTurn = null

@@ -6,7 +6,10 @@
 // The original 4 (RAWY-13) + 11 added in RAWY-29 (from docs/design/themes.json — the canonical
 // token export, since the design editing project ≠ the read-only MCP project). 15 total.
 // RAWY-145: + Moonlit Sky (gold-on-night, from the design handoff) = 16.
-export type ThemeId =
+//
+// These sixteen are the ones Sard SHIPS, and they stay a closed union: `THEMES` is keyed by this
+// type, so a typo in a preset is a compile error and `THEME_ORDER` cannot silently drop one.
+export type BuiltinThemeId =
   | "ivory"
   | "sepia"
   | "slate"
@@ -23,6 +26,26 @@ export type ThemeId =
   | "nocturne"
   | "linen"
   | "moonlit";
+
+/**
+ * A theme authored by the reader, carried by a Profile rather than by `THEMES`.
+ *
+ * The `u:` prefix is load-bearing three ways: it keeps `isThemeId` DECIDABLE without consulting any
+ * store, it makes the sixteen built-in ids unambiguous forever (no future preset can collide with a
+ * user id), and it makes a stray id obvious in a database dump. Everything after the prefix is
+ * opaque to this module.
+ */
+export type CustomThemeId = `u:${string}`;
+
+/**
+ * Any theme id Sard can be asked to render — shipped or authored.
+ *
+ * WIDENED, not replaced: every existing type position keeps working, and `THEMES` stays keyed by
+ * `BuiltinThemeId` so the preset table is still exhaustively checked. What changes is that an id is
+ * no longer PROOF that `THEMES` holds it — which is why `THEMES[id]` is no longer the way to get a
+ * theme. Use `resolveTheme(id)` (theme/resolve.ts); it is the one place an unknown id is handled.
+ */
+export type ThemeId = BuiltinThemeId | CustomThemeId;
 
 // Highlight palette (RAWY-22): 8 semantic slots (was 5). Stored colours are EITHER one of
 // these slot names (adapts per theme) OR a literal #hex (a custom colour) — resolveColor

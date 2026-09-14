@@ -30,8 +30,15 @@
 //!
 //! `bg_library_id` / `bg_reading_id` hold which background each surface uses. They are plain strings
 //! so `gc()` can read them WITHOUT parsing the frontend-owned parameter JSON. That makes "zero
-//! orphans" (D31) a property of the schema — every row not named by one of those keys is unreferenced
+//! orphans" (D31) a property of the schema — every row named by no reference source is unreferenced
 //! and its files go — rather than a promise the UI has to remember to keep.
+//!
+//! There are now THREE reference sources, not two: those two settings keys, and the `bg_library` /
+//! `bg_reading` columns on `profiles`. A profile keeps its pair as columns for the same reason the
+//! surfaces keep theirs as plain keys — so the collector can see them without parsing JSON. Anything
+//! that becomes a fourth source must be added to `gc()` in the same breath as the write path that
+//! creates it: `gc()` runs inside `set_surface()`, so an unknown reference is not a latent problem,
+//! it is a deleted image the next time any surface is bound.
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -542,7 +549,8 @@ pub fn import(conn: &Connection, app_data_dir: &Path, src_path: &str) -> Result<
     commit(conn, app_data_dir, materialize(prep)?)
 }
 
-/// Delete every background not named by a surface key, with its files (D31 — zero orphans).
+/// Delete every background not named by a surface key OR BY A PROFILE, with its files (D31 — zero
+/// orphans).
 ///
 /// Enumerating the table and subtracting the two bindings is deliberate: a refcount would drift the
 /// first time a write path forgot to decrement, whereas this recomputes the truth from scratch every
@@ -558,6 +566,22 @@ pub fn gc(conn: &Connection, app_data_dir: &Path) -> Result<usize, String> {
             }
         }
     }
+    // THE THIRD REFERENCE SOURCE, wired here rather than re-queried: `profiles::referenced_backgrounds`
+    // has existed since the profiles table did, deliberately unwired until backgrounds could actually
+    // enter a profile. That moment is now. It reads the `bg_library` / `bg_reading` COLUMNS, never
+    // `data`, so the collector still answers this question without parsing frontend-owned JSON.
+    keep.extend(crate::profiles::referenced_backgrounds(conn).map_err(|e| e.to_string())?);
+    // THE FOURTH REFERENCE SOURCE — a profile's ICON. Named separately rather than folded into the
+    // query above, because it asks a different question of a different, OVERLOADED column: only an
+    // `image` icon holds a content hash at all. An icon this did not count would not merely leak —
+    // it would be DELETED on the next surface bind, because the sweep below removes any managed file
+    // no row claims, and `choose()` collects inline.
+    keep.extend(crate::profiles::referenced_icons(conn).map_err(|e| e.to_string())?);
+    // THE FIFTH REFERENCE SOURCE — images used by a saved PHOTO CARD, ground and stickers alike.
+    // Read from `photo_card_images`, a table written in the same transaction as the card row, so the
+    // collector never has to parse the card's frontend-owned `doc` JSON to learn what it holds. Added
+    // here in the same change as that write path, per the rule in this module's header.
+    keep.extend(crate::photocards::referenced_backgrounds(conn).map_err(|e| e.to_string())?);
     let mut removed = 0usize;
     for row in list(conn)? {
         if keep.iter().any(|k| *k == row.id) {
@@ -637,6 +661,25 @@ pub fn set_surface(
     }
     gc(conn, app_data_dir)?;
     Ok(())
+}
+
+/// The test PNG writer, shared with the package tests so the portability round trip runs against a
+/// real decodable image rather than a second, weaker fixture.
+#[cfg(test)]
+pub mod tests_support {
+    use std::path::Path;
+
+    pub fn write_png(dir: &Path, name: &str, w: u32, h: u32, base: u8) -> String {
+        let _ = std::fs::create_dir_all(dir);
+        let p = dir.join(name);
+        let img = image::RgbImage::from_fn(w, h, |x, y| {
+            image::Rgb([base, (x % 251) as u8, (y % 241) as u8])
+        });
+        image::DynamicImage::ImageRgb8(img)
+            .save_with_format(&p, image::ImageFormat::Png)
+            .unwrap();
+        p.display().to_string()
+    }
 }
 
 #[cfg(test)]
@@ -789,6 +832,260 @@ mod tests {
         assert!(Path::new(&rb.original_path).exists(), "the bound file is spared");
         assert_eq!(managed_files(&dir).len(), 1, "zero orphans left in the managed dir");
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Bind `bg` to a saved photo card, the way `photocards::save` does — the row and the binding
+    /// together, since that pairing is the whole point of the fifth reference source.
+    fn card_using(conn: &Connection, card: &str, bg: &str) {
+        conn.execute(
+            "INSERT OR REPLACE INTO photo_cards(id, book_id, book_title, chapter_label, cfi, format,              theme_id, quote, created_at) VALUES(?1, NULL, 'B', NULL, NULL, 'portrait', 'ivory', 'q', 0)",
+            [card],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO photo_card_images(card_id, background_id) VALUES(?1, ?2)",
+            rusqlite::params![card, bg],
+        )
+        .unwrap();
+    }
+
+    // THE REGRESSION TEST FOR THE FIFTH REFERENCE SOURCE.
+    //
+    // A card's background is named by nothing else: no surface key holds it, no profile mentions it.
+    // Delete the `photocards::referenced_backgrounds` line from `gc()` and this fails — the image is
+    // deleted, row and file, the next time anyone changes their wallpaper, while the gallery goes on
+    // listing a card whose picture is gone. That is the exact fault this source exists to prevent.
+    #[test]
+    fn an_image_a_photo_card_names_survives_collection() {
+        let (conn, dir) = fresh("gccard");
+        let art = write_png(&dir, "art.png", 300, 300, 120);
+        let wall = write_png(&dir, "wall.png", 260, 180, 60);
+
+        let card_bg = import(&conn, &dir, &art).unwrap();
+        card_using(&conn, "card-1", &card_bg.id);
+
+        // Someone changes their wallpaper — which is what runs the collector.
+        let bound = choose(&conn, &dir, KEY_LIBRARY_ID, &wall).unwrap();
+
+        assert!(get(&conn, &card_bg.id).unwrap().is_some(), "the card's image survives");
+        assert!(Path::new(&card_bg.original_path).exists(), "and so does its file");
+        assert!(get(&conn, &bound.id).unwrap().is_some(), "the wallpaper is still bound");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // THE WINDOW BETWEEN PICKING AN IMAGE AND SAVING THE CARD.
+    //
+    // A bare `import` leaves the row unreferenced, and `gc()` runs inside `set_surface()` — so a
+    // sticker chosen in an open composer could be deleted the moment the reader changed their
+    // wallpaper, before Save was ever pressed. `stage_image` writes the binding in the same
+    // transaction as the import, which closes the window by construction rather than by being quick.
+    #[test]
+    fn an_image_staged_into_an_unsaved_card_survives_a_wallpaper_change() {
+        let (conn, dir) = fresh("gcstage");
+        let art = write_png(&dir, "sticker.png", 240, 240, 170);
+        let wall = write_png(&dir, "w3.png", 220, 160, 50);
+
+        // The composer has not saved anything: there is no photo_cards row for this id yet.
+        let staged = crate::photocards::stage_image(&conn, &dir, "card-being-composed", &art).unwrap();
+        assert!(
+            conn.query_row("SELECT COUNT(*) FROM photo_cards WHERE id = 'card-being-composed'", [], |r| r.get::<_, i64>(0)).unwrap() == 0,
+            "precondition: the card really is unsaved",
+        );
+
+        choose(&conn, &dir, KEY_LIBRARY_ID, &wall).unwrap(); // this runs the collector
+        assert!(get(&conn, &staged.id).unwrap().is_some(), "the staged image survives");
+        assert!(Path::new(&staged.original_path).exists(), "and so does its file");
+
+        // Between sessions, a binding for a card that was never saved is rubbish — and only then.
+        crate::photocards::sweep_draft_bindings(&conn).unwrap();
+        gc(&conn, &dir).unwrap();
+        assert!(get(&conn, &staged.id).unwrap().is_none(), "an abandoned import is reclaimed at startup");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The sweep must never touch a binding whose card WAS saved.
+    #[test]
+    fn the_startup_sweep_spares_a_saved_card() {
+        let (conn, dir) = fresh("gcsweep");
+        let art = write_png(&dir, "kept.png", 200, 200, 90);
+        let staged = crate::photocards::stage_image(&conn, &dir, "real-card", &art).unwrap();
+        card_using(&conn, "real-card", &staged.id); // the composer pressed Save
+
+        crate::photocards::sweep_draft_bindings(&conn).unwrap();
+        gc(&conn, &dir).unwrap();
+        assert!(get(&conn, &staged.id).unwrap().is_some(), "a saved card keeps its image");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Two cards sharing one imported image: losing one card must not collect the other's picture.
+    #[test]
+    fn a_shared_image_survives_until_the_last_card_lets_go() {
+        let (conn, dir) = fresh("gcshare");
+        let art = write_png(&dir, "shared.png", 280, 280, 150);
+        let wall = write_png(&dir, "w2.png", 200, 200, 40);
+        let shared = import(&conn, &dir, &art).unwrap();
+        card_using(&conn, "card-a", &shared.id);
+        card_using(&conn, "card-b", &shared.id);
+
+        conn.execute("DELETE FROM photo_card_images WHERE card_id = 'card-a'", []).unwrap();
+        choose(&conn, &dir, KEY_LIBRARY_ID, &wall).unwrap();
+        assert!(get(&conn, &shared.id).unwrap().is_some(), "the other card still holds it");
+
+        conn.execute("DELETE FROM photo_card_images WHERE card_id = 'card-b'", []).unwrap();
+        gc(&conn, &dir).unwrap();
+        assert!(get(&conn, &shared.id).unwrap().is_none(), "with no card left, it is collected");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Insert a profile row naming `lib` / `read` as its backgrounds. Only the columns the collector
+    /// reads matter here, so `data` is the minimum the NOT NULL constraint accepts.
+    fn profile_with(conn: &Connection, id: &str, lib: Option<&str>, read: Option<&str>) {
+        conn.execute(
+            "INSERT INTO profiles(id, name, description, author, icon_kind, icon_ref, data, \
+             derived_from, created_at, updated_at, bg_library, bg_reading) \
+             VALUES(?1, 'p', NULL, NULL, 'seal', NULL, '{}', NULL, 0, 0, ?2, ?3)",
+            rusqlite::params![id, lib, read],
+        )
+        .unwrap();
+    }
+
+    /// A profile whose ICON names an image, and which names no background at all — so the only thing
+    /// that can save the image is the fourth reference source.
+    fn profile_with_icon(conn: &Connection, id: &str, kind: &str, icon: Option<&str>) {
+        conn.execute(
+            "INSERT INTO profiles(id, name, description, author, icon_kind, icon_ref, data, \
+             derived_from, created_at, updated_at, bg_library, bg_reading) \
+             VALUES(?1, 'p', NULL, NULL, ?2, ?3, '{}', NULL, 0, 0, NULL, NULL)",
+            rusqlite::params![id, kind, icon],
+        )
+        .unwrap();
+    }
+
+    // THE REGRESSION TEST FOR THE FOURTH REFERENCE SOURCE.
+    //
+    // Delete the `referenced_icons` line from `gc()` and this fails: the icon is imported, named by
+    // nothing but the profile's `icon_ref`, and the next surface bind collects it — row, file and
+    // all — because `choose()` runs the collector inline and the sweep removes unclaimed files.
+    #[test]
+    fn an_image_a_profile_icon_names_survives_collection() {
+        let (conn, dir) = fresh("gcicon");
+        let icon = write_png(&dir, "icon.png", 320, 320, 90);
+        let other = write_png(&dir, "other.png", 240, 160, 200);
+
+        let row = import(&conn, &dir, &icon).unwrap();
+        profile_with_icon(&conn, "u:iconholder", "image", Some(&row.id));
+
+        // The exact moment an uncounted icon would die.
+        let bound = choose(&conn, &dir, KEY_LIBRARY_ID, &other).unwrap();
+
+        assert!(
+            get(&conn, &row.id).unwrap().is_some(),
+            "an image named by a profile ICON must survive the collector",
+        );
+        assert!(
+            Path::new(&row.original_path).exists(),
+            "and its file must survive the managed-directory sweep",
+        );
+        assert!(get(&conn, &bound.id).unwrap().is_some(), "the surface-bound row survives too");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // `icon_ref` is overloaded: a COLOUR icon stores a hex string there, and a seal stores nothing.
+    // Neither is a reference, and neither may pin an image.
+    #[test]
+    fn a_colour_or_seal_icon_pins_nothing() {
+        let (conn, dir) = fresh("gciconkind");
+        let loose = write_png(&dir, "loose.png", 200, 120, 44);
+        let other = write_png(&dir, "other.png", 240, 160, 200);
+
+        let row = import(&conn, &dir, &loose).unwrap();
+        // A colour icon that happens to carry a string, and a seal that carries none.
+        profile_with_icon(&conn, "u:colour", "color", Some("#B8893C"));
+        profile_with_icon(&conn, "u:seal", "seal", None);
+
+        choose(&conn, &dir, KEY_LIBRARY_ID, &other).unwrap();
+
+        assert!(
+            get(&conn, &row.id).unwrap().is_none(),
+            "an unreferenced image must still be collected — a colour icon is not a reference",
+        );
+        assert!(
+            crate::profiles::referenced_icons(&conn).unwrap().is_empty(),
+            "neither a colour nor a seal icon may appear in the keep-list",
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // THE REGRESSION TEST FOR THE THIRD REFERENCE SOURCE. Before `gc()` learned to read the profiles
+    // table this deleted the image out from under the profile — and it did so on the NEXT surface
+    // bind, not at some later sweep, because `set_surface()` collects inline.
+    #[test]
+    fn a_background_a_profile_names_survives_collection() {
+        let (conn, dir) = fresh("gcprofile");
+        let held = write_png(&dir, "held.png", 220, 140, 30);
+        let other = write_png(&dir, "other.png", 240, 160, 200);
+
+        // Imported for a profile: present in the table, named by no SURFACE key.
+        let row = import(&conn, &dir, &held).unwrap();
+        profile_with(&conn, "u:holder", Some(&row.id), None);
+
+        // Any surface bind runs the collector. This is the exact moment the image used to die.
+        let bound = choose(&conn, &dir, KEY_LIBRARY_ID, &other).unwrap();
+
+        assert!(
+            get(&conn, &row.id).unwrap().is_some(),
+            "a background named by a profile must survive the collector",
+        );
+        assert!(Path::new(&row.original_path).exists(), "and so must its file");
+        assert!(get(&conn, &bound.id).unwrap().is_some(), "the surface-bound row still survives too");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // The reading column is a reference in its own right, and a profile that names nothing must not
+    // accidentally pin anything.
+    #[test]
+    fn the_profile_reading_column_counts_and_an_empty_profile_pins_nothing() {
+        let (conn, dir) = fresh("gcreading");
+        let kept = write_png(&dir, "k.png", 200, 120, 44);
+        let doomed = write_png(&dir, "d.png", 200, 120, 88);
+        let trigger = write_png(&dir, "t.png", 200, 120, 120);
+
+        let kept_row = import(&conn, &dir, &kept).unwrap();
+        let doomed_row = import(&conn, &dir, &doomed).unwrap();
+        profile_with(&conn, "u:reader", None, Some(&kept_row.id));
+        profile_with(&conn, "u:empty", None, None); // names nothing
+
+        choose(&conn, &dir, KEY_READING_ID, &trigger).unwrap();
+
+        assert!(get(&conn, &kept_row.id).unwrap().is_some(), "bg_reading is a real reference");
+        assert!(
+            get(&conn, &doomed_row.id).unwrap().is_none(),
+            "an unreferenced row is still collected — widening must not become 'keep everything'",
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Deleting the profile releases its hold: the image is collected on the next sweep, so a profile
+    // cannot leak an image by being removed.
+    #[test]
+    fn deleting_the_profile_releases_its_background() {
+        let (conn, dir) = fresh("gcrelease");
+        let img = write_png(&dir, "i.png", 200, 120, 55);
+        let trigger = write_png(&dir, "t2.png", 200, 120, 150);
+        let row = import(&conn, &dir, &img).unwrap();
+        profile_with(&conn, "u:temp", Some(&row.id), None);
+
+        choose(&conn, &dir, KEY_LIBRARY_ID, &trigger).unwrap();
+        assert!(get(&conn, &row.id).unwrap().is_some(), "held while the profile exists");
+
+        conn.execute("DELETE FROM profiles WHERE id = 'u:temp'", []).unwrap();
+        gc(&conn, &dir).unwrap();
+        assert!(get(&conn, &row.id).unwrap().is_none(), "released once the profile is gone");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

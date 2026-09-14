@@ -94,7 +94,7 @@ describe("the cached reading style is resolved on read, not on load", () => {
     saveGlobalStyle({ ...defaultsForDir("rtl"), zoom: 1.9, align: "end" });
     expect(peekGlobalStyle()?.zoom).toBe(1.9);
     expect(peekGlobalStyle()?.align).toBe("end");
-    expect(peekGlobalDir()).toBe("rtl", "and it does not forget the direction");
+    expect(peekGlobalDir(), "and it does not forget the direction").toBe("rtl");
   });
 
   it("an unreadable row still leaves a usable, direction-correct answer", async () => {

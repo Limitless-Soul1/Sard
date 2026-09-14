@@ -15,7 +15,12 @@
 import { describe, expect, it } from "vitest";
 
 import { STROKE_MAX_EM, backingColor, strokeColor, strokeStyle } from "../../src/features/photo/legibility";
-import { parseComposition, serializeComposition, newCustomComposition } from "../../src/features/photo/composition";
+import {
+  parseComposition,
+  serializeComposition,
+  newCustomComposition,
+  type TextStyle,
+} from "../../src/features/photo/composition";
 
 const INK = "#241a10";
 const PAPER = "#f6efe2";
@@ -79,12 +84,27 @@ describe("the stroke", () => {
 });
 
 describe("the stroke, in a saved document", () => {
-  const roundTrip = (style: Record<string, unknown>) => {
-    const c = newCustomComposition("ivory", "portrait", "نصّ");
-    const el = c.elements[0];
-    const doc = { ...c, elements: [{ ...el, style: { ...(el as { style: object }).style, ...style } }] };
-    const back = parseComposition(serializeComposition(doc as never));
-    return (back!.elements[0] as { style: Record<string, unknown> }).style;
+  /**
+   * A real blank card, carried out to a document and back, with the keys under test written into its
+   * first element the way a saved file carries them — including values only a newer version could
+   * have written.
+   *
+   * The keys go in at the DOCUMENT layer rather than into the typed card, and that is deliberate
+   * twice over. It is the parser's job to decide what survives, so handing it text is what the test
+   * is actually about; and a typed card cannot hold `strokeWidth: 9` in the first place, so writing
+   * it there meant forcing the value past the compiler and then asking the parser about a value the
+   * product could never have produced. `serializeComposition` writes a text element out verbatim, so
+   * the two orderings are the same document.
+   */
+  const roundTrip = (style: Record<string, unknown>): TextStyle => {
+    const written = serializeComposition(newCustomComposition("ivory", "portrait", "نصّ"));
+    const doc = JSON.parse(written) as { elements: { style?: Record<string, unknown> }[] };
+    doc.elements[0].style = { ...doc.elements[0].style, ...style };
+    const back = parseComposition(JSON.stringify(doc));
+    if (!back) throw new Error("the round-tripped card did not parse");
+    const el = back.elements[0];
+    if (!("style" in el)) throw new Error(`expected a text element, found ${el.kind}`);
+    return el.style;
   };
 
   it("persists, and survives being read back", () => {

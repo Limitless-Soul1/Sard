@@ -20,7 +20,12 @@ import {
   isLegibilityShape,
   type Legibility,
 } from "../../src/features/photo/legibility";
-import { parseComposition, serializeComposition } from "../../src/features/photo/composition";
+import {
+  parseComposition,
+  serializeComposition,
+  type Composition,
+  type TextStyle,
+} from "../../src/features/photo/composition";
 
 const PALE = "#F5EEDD";
 const INK = "#2B2521";
@@ -59,10 +64,15 @@ describe("every treatment is nothing at zero, and its own kind of thing above it
   });
 
   it("halo is light on the glyphs and nothing behind them — the picture stays whole", () => {
+    // NOTHING BEHIND THEM, stated against every property that could put something there. This once
+    // named `padding`, which the treatments stopped being able to return when the air around the
+    // words became a painted spread — so the claim was being made against a property that no longer
+    // exists, which is a claim about nothing. A halo is `textShadow` and only `textShadow`.
     const s = on("halo");
     expect(s.textShadow).toBeTruthy();
     expect(s.background).toBeUndefined();
-    expect(s.padding).toBeUndefined();
+    expect(s.boxShadow).toBeUndefined();
+    expect(s.borderRadius).toBeUndefined();
     expect(s.inner).toBeUndefined();
   });
 
@@ -247,8 +257,26 @@ describe("the choice survives being saved and reopened", () => {
       preset: "minimal",
       elements: [{ id: "e1", kind: "quote", text: "كلمات", placement: { rect: { x: 0.1, y: 0.1, w: 0.8, h: 0.3 } }, style }],
     });
-  const styleOf = (json: string) =>
-    (parseComposition(json).elements[0] as { style: Record<string, unknown> }).style;
+  /** The document, parsed. A fixture that does not parse is a broken fixture, not a result. */
+  const parsed = (json: string): Composition => {
+    const comp = parseComposition(json);
+    if (!comp) throw new Error("the fixture document did not parse");
+    return comp;
+  };
+  /**
+   * The first element's style, as the text style it actually is.
+   *
+   * Narrowed rather than cast: only a text element carries a `style`, so `in` is what proves this
+   * one is a text element, and a fixture that stopped producing one says so instead of failing
+   * somewhere later. Typing the answer `TextStyle` rather than a bag of unknowns is the point of
+   * doing it this way — a control misspelled in an assertion below now fails to compile, where
+   * before it would have read `undefined` and passed.
+   */
+  const styleOf = (json: string): TextStyle => {
+    const el = parsed(json).elements[0];
+    if (!("style" in el)) throw new Error(`expected a text element, found ${el.kind}`);
+    return el.style;
+  };
 
   it("round-trips every control", () => {
     const src = docWith({
@@ -261,14 +289,14 @@ describe("the choice survives being saved and reopened", () => {
     expect(first.legibilitySoftness).toBeCloseTo(0.25);
     expect(first.legibilityColor).toBe("#3A2A18");
     expect(first.legibilityShape).toBe("lines");
-    const again = styleOf(serializeComposition(parseComposition(src)));
+    const again = styleOf(serializeComposition(parsed(src)));
     expect(again).toEqual(first);
   });
 
   it("leaves a card saved before the feature exactly as it was", () => {
     const st = styleOf(docWith({ align: "center" }));
     expect(st.legibility).toBeUndefined();
-    expect(on((st.legibility as Legibility) ?? "none", { strength: DEFAULT_LEGIBILITY_STRENGTH })).toEqual({});
+    expect(on(st.legibility ?? "none", { strength: DEFAULT_LEGIBILITY_STRENGTH })).toEqual({});
   });
 
   it("refuses a treatment or shape name it does not know", () => {

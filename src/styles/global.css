@@ -2951,6 +2951,21 @@ html, body, #root {
   padding: 9px 13px; border-radius: 8px;
 }
 .reader-error-actions { display: flex; gap: 12px; margin-top: 4px; }
+
+/* THE FAILURE CARD IS PART OF THE INTERFACE, NOT PART OF THE BOOK.
+   `.reader-root` above is `direction: ltr` deliberately — the reading stage works its geometry out
+   in one direction whatever the book's own is — and the card, mounted inside it, inherited that. In
+   Arabic the result is an Arabic paragraph laid out left to right: the sentence's closing full stop
+   lands at the wrong end of its line, which is the artefact visible in every screenshot of this
+   screen. Measured: the closing stop sat 261px from the left of a 318px paragraph, i.e. on the
+   wrong side of it. The card follows the INTERFACE, which is what its words are written in.
+   Two children keep the stage's direction on purpose. The action row, so the buttons stay in the
+   arrangement they have always had — nobody asked for them to be rearranged, and their labels carry
+   no punctuation to misplace. And the diagnostic block, whose contents are engine text: reordering
+   an exception under bidi would scramble the one thing in the card that has to be read literally. */
+:root[dir="rtl"] .reader-error-overlay .reader-error-card { direction: rtl; }
+:root[dir="rtl"] .reader-error-overlay .reader-error-actions,
+:root[dir="rtl"] .reader-error-overlay .reader-error-detail { direction: ltr; }
 .reader-error-btn {
   font: 500 0.875rem var(--ui-font); padding: 10px 22px; border-radius: 9px; cursor: pointer;
   border: 1px solid var(--chrome-border); background: transparent; color: var(--muted);

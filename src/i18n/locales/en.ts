@@ -1407,9 +1407,25 @@ export const en = {
   //
   // FAULT ATTRIBUTION IS EXPLICIT IN THE WORDING, because "is this the book, my machine, or the
   // app?" is the first thing a reader wants to know and the thing a raw exception never answered.
+  //
+  // And where it has NOT been established, saying so is the answer. A failure is attributed to
+  // Sard, to the book or to the machine only where the classifier actually determined it — see
+  // `internal` below, which determines none of the three.
   "err.runtime.title": "Your Windows WebView2 needs updating",
+  // Nobody is declared innocent here. What was established is that capabilities the rendering
+  // needs are absent from this engine AND are not ones Sard supplies for it, so the update is
+  // what adds them. The book was never opened, so nothing was established about the book.
   "err.runtime.body":
-    "This book needs a newer version of the Microsoft Edge WebView2 runtime than the one on this computer. Nothing is wrong with the book or with Sard — updating WebView2 will fix it.",
+    "This book needs browser capabilities newer than the ones the Microsoft Edge WebView2 runtime on this computer provides, and they are not ones Sard can supply for it. Updating WebView2 is what adds them.",
+  "err.incomplete.title": "Sard couldn’t prepare the reader for this book",
+  "err.incomplete.body":
+    "The rendering needed a capability Sard is meant to supply, and it was not there when it was asked for — and the reason is not clear. Try again first; Details holds the technical description.",
+  "err.unreachable.title": "Sard couldn’t reach this book’s file",
+  "err.unreachable.body":
+    "Sard could not read this book’s file just now. That does not mean it has been deleted — it may be open in another program, blocked from being read, or on a drive that isn’t available. Try again; Details holds the technical description.",
+  "err.section.title": "Part of this book wouldn’t display",
+  "err.section.body":
+    "One part of the book stopped loading, and the reason is not clear — it may be that part itself, and it may be something it depends on. Try again; Details holds the technical description.",
   "err.missing.title": "Sard can’t find this book’s file",
   "err.missing.body":
     "The copy Sard keeps for this book is no longer on disk. Import the file again to restore it, or remove it from your library.",
@@ -1417,13 +1433,15 @@ export const en = {
   "err.damaged.body":
     "Sard couldn’t read the file as an ebook — it looks incomplete or corrupted. If you still have the original, importing it again usually fixes this.",
   "err.unreadable.title": "Sard can’t read this book",
+  // The structure is named because the structure is what failed. "not with Sard" was a second
+  // claim the classification never established, and it is gone.
   "err.unreadable.body":
-    "The file opened, but its internal structure isn’t something Sard can render. Importing the same file again won’t change that. This is a problem with the book, not with Sard.",
+    "The file opened, but its internal structure isn’t something Sard can render. Importing the same file again won’t change that.",
   "err.temporary.title": "Something got in the way",
   "err.temporary.body": "The book couldn’t be opened just now. This is usually momentary — try again.",
-  "err.internal.title": "Sard ran into a problem",
+  "err.internal.title": "This book could not be opened",
   "err.internal.body":
-    "This one is on Sard, not on your book or your computer. Trying again may work. Opening Details gives you something to send us.",
+    "Opening it stopped before it finished, and the reason is not clear — it may be momentary, and it may lie with the book, with this computer, or with Sard. Try again first; Details holds the technical description.",
   // Recovery actions. Every failure offers at least one that is not "Details".
   "err.act.retry": "Try again",
   "err.act.updateRuntime": "How to update WebView2",

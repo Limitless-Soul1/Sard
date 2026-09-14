@@ -11,7 +11,7 @@
 // disposable realm out of the file's own source instead, so the semantics under test are the shipped
 // ones and nothing leaks.
 import { describe, expect, it } from "vitest";
-import { CAPABILITY_FEATURES, FEATURE_LABELS, readEnv } from "../../src/lib/runtime";
+import { CAPABILITY_FEATURES, FEATURE_LABELS, SUPPLIED_BY_COMPAT, readEnv } from "../../src/lib/runtime";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import vm from "node:vm";
@@ -361,6 +361,27 @@ describe("the gate and the layer cannot drift apart", () => {
     for (const name of UNGATED_BY_DESIGN) {
       expect(supplied(), `${name} should still be supplied`).toContain(name);
       expect(CAPABILITY_FEATURES.pdf.map((f) => FEATURE_LABELS[f]), `${name} must not be gated`).not.toContain(name);
+    }
+  });
+
+  it("SUPPLIED_BY_COMPAT names exactly the built-ins this file installs", () => {
+    // WHAT RESTS ON THIS LIST. `bookErrors.ts` decides whether a missing capability means the reader's
+    // engine is behind or that this layer failed to load, and it decides it by asking whether the
+    // missing feature is one Sard supplies. If the list drifts from what the file actually installs,
+    // that decision silently inverts: a genuine layer failure starts telling readers to update a
+    // runtime that is fine, or a genuinely old engine stops being told to update at all.
+    const declared = SUPPLIED_BY_COMPAT.map((f) => FEATURE_LABELS[f]).sort();
+    const actually = supplied().filter((n) => !UNGATED_BY_DESIGN.includes(n)).sort();
+    expect(declared, "the declared list must match what the shipped layer installs").toEqual(actually);
+  });
+
+  it("and Sard supplies none of what the EPUB capability needs", () => {
+    // The other half of the same decision: `Object.groupBy` and `Map.groupBy` are the whole EPUB
+    // capability and this layer does not touch them, which is why their absence — and only their
+    // absence — proves the engine itself is behind.
+    for (const f of CAPABILITY_FEATURES.epub) {
+      expect(SUPPLIED_BY_COMPAT, `${FEATURE_LABELS[f]} must not be claimed as supplied`).not.toContain(f);
+      expect(supplied(), `${FEATURE_LABELS[f]} must not be installed by the layer`).not.toContain(FEATURE_LABELS[f]);
     }
   });
 

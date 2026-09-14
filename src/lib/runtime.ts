@@ -81,6 +81,32 @@ export const CAPABILITY_FEATURES: Record<Capability, readonly (keyof RuntimeEnv)
   pdf: ["promiseTry", "promiseWithResolvers", "uint8ToHex", "mapGetOrInsertComputed"],
 };
 
+/**
+ * WHICH OF THOSE FEATURES SARD SUPPLIES ITSELF.
+ *
+ * `public/foliate-js/sard-pdf-compat.mjs` installs these four behind a `typeof` guard, in the page
+ * and again inside the PDF worker's own realm. That single fact decides what a MISSING feature
+ * actually proves, and the two answers are not the same:
+ *
+ *   * A feature NOT on this list is one only the engine can provide. `Object.groupBy` and
+ *     `Map.groupBy` are the whole EPUB capability and Sard supplies neither, so if they are absent
+ *     the engine really is behind and updating it really is the answer.
+ *
+ *   * A feature ON this list is one Sard installs. If it is absent at the moment the capability is
+ *     read, the layer did not reach that realm — which is a problem with this installation, not with
+ *     the reader's WebView2. Telling them to update it would send them to fix something that is not
+ *     broken, and the update would not help.
+ *
+ * `pdfCompat.test.ts` holds this list against what the shipped file actually installs, so the two
+ * cannot drift apart.
+ */
+export const SUPPLIED_BY_COMPAT: readonly (keyof RuntimeEnv)[] = [
+  "promiseTry",
+  "promiseWithResolvers",
+  "uint8ToHex",
+  "mapGetOrInsertComputed",
+];
+
 /** The human-readable feature names, for the Details panel and for bug reports. */
 export const FEATURE_LABELS: Record<keyof RuntimeEnv, string> = {
   objectGroupBy: "Object.groupBy",
@@ -110,6 +136,18 @@ export function readEnv(): RuntimeEnv {
 export function capabilitiesOf(env: RuntimeEnv): Record<Capability, boolean> {
   const has = (cap: Capability) => CAPABILITY_FEATURES[cap].every((f) => env[f]);
   return { epub: has("epub"), pdf: has("pdf") };
+}
+
+/**
+ * Pure: is the ENGINE itself behind for this capability?
+ *
+ * True only when something is missing that Sard does not supply — the one condition under which
+ * "this runtime is too old" is a statement of fact rather than a guess. When every missing feature
+ * is one the compatibility layer installs, the engine's age is not what has been established, and
+ * the caller must say something else.
+ */
+export function engineIsBehind(env: RuntimeEnv, cap: Capability): boolean {
+  return CAPABILITY_FEATURES[cap].some((f) => !env[f] && !SUPPLIED_BY_COMPAT.includes(f));
 }
 
 /** Pure: which named features are missing for a capability (for the Details text). */

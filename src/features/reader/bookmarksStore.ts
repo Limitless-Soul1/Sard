@@ -14,7 +14,15 @@ interface BookmarksState {
   /** Add a bookmark at a location (CFI + chapter + whole-book fraction — the fraction is still stored for
    *  the cross-book Bookmarks shelf's %-read, D51). Create-only: the Reader decides add-vs-remove from the
    *  VISIBLE bookmark, so a click only reaches here when nothing is bookmarked at the current spot. */
-  add: (cfi: string, chapterLabel: string | null, fraction: number) => Promise<void>;
+  add: (
+    cfi: string,
+    chapterLabel: string | null,
+    fraction: number,
+    /** The opening words of the block the place sits in — what the shelf shows instead of a figure. */
+    words?: string | null,
+    /** The dye it is marked in, so the ribbons on a cover show a palette and not one repeated swatch. */
+    color?: string | null,
+  ) => Promise<void>;
   remove: (id: string) => Promise<void>;
 }
 
@@ -26,10 +34,15 @@ export const useBookmarks = create<BookmarksState>((set, get) => ({
     const rows = await bookmarksForBook(bookId).catch(() => [] as BookmarkRow[]);
     if (get().bookId === bookId) set({ bookmarks: rows });
   },
-  add: async (cfi, chapterLabel, fraction) => {
+  add: async (cfi, chapterLabel, fraction, words, color) => {
     const bookId = get().bookId;
     if (!bookId) return;
-    const row = await bookmarkCreate({ bookId, cfi, chapterLabel, fraction }).catch(() => null);
+    // Either may be absent: a place whose words could not be read stores none rather than a guess,
+    // and the shelf falls back to its chapter. The Rust upsert COALESCEs, so re-marking a place
+    // never blanks what an earlier marking captured.
+    const row = await bookmarkCreate({
+      bookId, cfi, chapterLabel, fraction, label: words ?? null, color: color ?? null,
+    }).catch(() => null);
     if (row && get().bookId === bookId) {
       set({ bookmarks: [...get().bookmarks.filter((b) => b.id !== row.id), row].sort((a, b) => (a.fraction ?? 0) - (b.fraction ?? 0)) });
     }

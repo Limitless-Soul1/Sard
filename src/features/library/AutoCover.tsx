@@ -1,3 +1,5 @@
+
+import { CHROME, displayFace, scriptOf } from "../../lib/typography";
 // Auto-generated cover for books with no embedded cover (band E · E8). A deterministic
 // colour is drawn from the title (so a book always regenerates the same cover); title &
 // author are set in the Sard type system — Literata for Latin, Amiri for Arabic — with
@@ -18,7 +20,6 @@ const PALETTE = [
   { bg: "#D8C29A", ink: "#4A3B2A" },
 ] as const;
 
-const ARABIC = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
 
 function hashIndex(s: string, n: number): number {
   let h = 0;
@@ -58,7 +59,9 @@ interface Props {
 }
 
 export function AutoCover({ title, author, dir, variant = "full" }: Props) {
-  const arabic = dir === "rtl" || ARABIC.test(title);
+  // The TITLE's own script, not the book's direction: a Latin title on an Arabic book is still
+  // Latin, and setting it in Amiri is how the same string came out in two faces across formats.
+  const arabic = scriptOf(title, dir) === "arabic";
   const c = PALETTE[hashIndex(title, PALETTE.length)];
 
   if (variant === "mini") {
@@ -74,7 +77,7 @@ export function AutoCover({ title, author, dir, variant = "full" }: Props) {
         className="ac-title"
         style={{
           color: c.ink,
-          fontFamily: arabic ? "Amiri, serif" : "Literata, serif",
+          fontFamily: displayFace(arabic),
           fontWeight: arabic ? 700 : 600,
           fontSize: titleSize(title.length, arabic),
         }}
@@ -84,7 +87,9 @@ export function AutoCover({ title, author, dir, variant = "full" }: Props) {
       {author ? (
         <div
           className="ac-author"
-          style={{ color: tint(c.ink, 0.82), fontFamily: arabic ? "Amiri, serif" : "Inter, sans-serif" }}
+          // The reference sets a typeset cover's author line in the chrome face for BOTH
+          // scripts — `font:400 .5rem var(--ui)`. Only the TITLE is art.
+          style={{ color: tint(c.ink, 0.82), fontFamily: CHROME }}
         >
           {author}
         </div>

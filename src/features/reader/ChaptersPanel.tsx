@@ -12,6 +12,11 @@ import { useI18n } from "../../i18n";
 import type { ReadMarkerKey } from "../../lib/readMarkerStyle"; // RAWY-256
 import { extractChapterNumber, localeNum } from "../../lib/format";
 import type { TocEntry } from "../../reader-engine/FoliateController";
+// The dock side is DECLARED, not spelled here: `panelSides.ts` is the one place that says which
+// physical edge this panel uses, and the toolbar groups its control from the same entry (RAWY-32).
+import { panelDockClass } from "./panelSides";
+import { offerReturn } from "./furthestRead";
+import { FurthestReturn } from "./FurthestReturn";
 
 // RAWY-175 (AUD-3): one TOC row, MEMOIZED. On a chapter change only the two rows whose `active` flips
 // re-render — the other ~1,300 rows are skipped (their props are unchanged) instead of re-reconciling
@@ -93,6 +98,11 @@ interface Props {
   hideTitles: boolean;
   onJump: (href: string) => void;
   fraction: number;
+  /** The contents entry holding the furthest point the reader has reached, or null when unknown. */
+  furthestHref?: string | null;
+  /** Offer the way back to it? False whenever the reader is already at or beyond it. */
+  furthestOffered?: boolean;
+  onGoFurthest?: () => void;
 }
 
 // RAWY-175 (AUD-3): MEMOIZED so an unrelated Reader re-render (a search-results batch ~every 90 ms, a
@@ -112,6 +122,9 @@ function ChaptersPanelInner({
   onJump,
   fraction,
   synthesised = false,
+  furthestHref = null,
+  furthestOffered = false,
+  onGoFurthest,
 }: Props) {
   const { t, lang, dir } = useI18n();
   const pct = Math.round(fraction * 100);
@@ -156,8 +169,8 @@ function ChaptersPanelInner({
   // Collisions are impossible by construction: within one book the two sources are never mixed.
   //
   // RESILIENCE-1 — the "two designators" bar was far too low, and it was MEASURED, not reasoned:
-  // `extractChapterNumber` matched 25 of 264 entries in "أوفرلورد" (9.5 %), which was enough to
-  // select OWN and leave the other 239 rows unnumbered — every one of them rendering "Section N".
+  // `extractChapterNumber` matched 25 of 264 entries in one reported book (9.5 %), which was enough
+  // to select OWN and leave the other 239 rows unnumbered — every one of them rendering "Section N".
   // Worse, the 25 matches were WRONG: labels read "المجلد 12 الفصل 214 : …", so the extractor took
   // the VOLUME (12), not the chapter (214), and rows 215/216 both resolved to 12 — the very
   // collision RAWY-287 exists to prevent, reintroduced through the back door.
@@ -167,7 +180,7 @@ function ChaptersPanelInner({
   // threshold taken from the corpus rather than invented — measured match rates:
   //
   //     numbers itself : LotM 100 % · halaqat 100 % · red-rising 83 % · Alice 71 %
-  //     does not       : metamorphosis 40 % · أوفرلورد 9.5 % · ad-daa 3 % · shawqiyyat 1 %
+  //     does not       : metamorphosis 40 % · reported-book 9.5 % · ad-daa 3 % · shawqiyyat 1 %
   //
   // Nothing lies between 40 % and 71 %, so a half majority separates them with room on both sides.
   // The original "two, not one" guard is KEPT as well, so a one-entry TOC cannot reach OWN at 100 %.
@@ -180,6 +193,35 @@ function ChaptersPanelInner({
     return numbersItself ? own : toc.map((_, i) => i + 1);
   }, [toc]);
 
+  // THE FURTHEST POINT, NAMED THE WAY THIS LIST NAMES EVERYTHING ELSE.
+  //
+  // The mark itself is a cfi and knows nothing about chapter numbers — deliberately, because numbering
+  // is this panel's decision and it is made once per book (`bookNumbers` above). So the mark arrives as
+  // an href, is looked up as one of these rows, and is named by the same two lines every row uses. Two
+  // consequences worth stating: the number shown here can never disagree with the number shown on the
+  // row it points at, and while chapter titles are hidden this shows the neutral "الفصل N" like the
+  // rest of the list — a control that leaked the title of a chapter you have not read yet would defeat
+  // the setting it sits above.
+  const furthest = useMemo(() => {
+    if (!furthestOffered || !furthestHref) return null;
+    const i = toc.findIndex((c) => c.href === furthestHref);
+    if (i < 0) return null; // the contents changed under an old mark — say nothing rather than guess
+    // Already in the chapter you got to (or past it)? Then there is nothing to return to.
+    if (!offerReturn(i, activeIndex)) return null;
+    const num = bookNumbers[i];
+    const name =
+      num == null
+        ? t("panel.tocSection", { n: localeNum(i + 1, lang) })
+        : t("panel.chapter", { n: localeNum(num, lang) });
+    // EXACTLY WHAT THE ROW SAYS, and nothing beside it. Naming the chapter twice — the computed
+    // "Chapter 10" next to a title that already reads "CHAPTER X. The Lobster Quadrille" — was how the
+    // first build read, and in a book whose entries carry their own numbers (the 1,000-chapter case
+    // this feature is for) it says the number twice in a row. The row's own rule is one line long and
+    // is the right one: the book's title when there is one, the computed name when there is not, and
+    // the computed name alone while titles are hidden.
+    return { name: hideTitles ? name : toc[i].label || name };
+  }, [furthestOffered, furthestHref, activeIndex, toc, bookNumbers, hideTitles, t, lang]);
+
   return (
     // RAWY-288: `inert` alongside `aria-hidden`. The panel stays MOUNTED when closed (that is what keeps
     // the ~1,400-row TOC instant to reopen) and is only moved off-screen by transform — so every row
@@ -187,7 +229,7 @@ function ChaptersPanelInner({
     // stops (42%) landed on controls inside `aria-hidden` closed panels. `inert` is the standard
     // primitive that removes a subtree from BOTH the tab order and the a11y tree, so the two can no
     // longer disagree; no per-control tabIndex bookkeeping, and nothing to undo when the panel opens.
-    <aside className={`reader-panel rp-lead${open ? " show" : ""}`} dir={dir} aria-hidden={!open} inert={!open}>
+    <aside className={`reader-panel ${panelDockClass("contents")}${open ? " show" : ""}`} dir={dir} aria-hidden={!open} inert={!open}>
       {/* header (RAWY-33; RAWY-36): title + chapter/percent meta + close. */}
       <div className="rp-head">
         <div className="rp-head-titles">
@@ -201,7 +243,7 @@ function ChaptersPanelInner({
           {synthesised && <span className="rp-synth-note">{t("panel.contentsSynthesised")}</span>}
         </div>
         <div className="rp-head-actions">
-          <button className="rp-x" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
+          <button className="rp-x ui-close" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
         </div>
       </div>
 
@@ -209,6 +251,17 @@ function ChaptersPanelInner({
           drawer — the same two global flags, same state, two places, worded differently. They now live
           ONLY in the drawer's "All books" tab, which is also their honest scope label. `hideTitles` is
           still a PROP because the TOC rows below render the "الفصل N"/"Chapter N" placeholder from it. */}
+
+      {/* THE WAY BACK TO THE FURTHEST POINT REACHED.
+          It lives here — between the header and the list — because this panel IS chapter navigation: a
+          reader who left chapter 488 for 320 left through this list and comes back through it, so the
+          way back belongs where the way out was, not as another button in the reader's chrome.
+          Outside the scroller on purpose: nothing to make sticky, nothing to paint an opaque ground
+          for, and the rows below it never slide under it.
+          It renders ONLY when there is a point to return to and the reader is behind it — at the
+          furthest point (where a resumed book normally opens) the panel looks exactly as it always
+          has. */}
+      {furthest && onGoFurthest && <FurthestReturn label={furthest.name} onGo={onGoFurthest} />}
 
       {/* RAWY-256: the chosen variant scopes the marker CSS for the whole list (one class, not per row),
           so switching variants costs a single attribute change even on a 1432-row panel. */}

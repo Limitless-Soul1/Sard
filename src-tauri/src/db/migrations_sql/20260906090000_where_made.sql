@@ -1,0 +1,28 @@
+-- WHERE A REFERENCE OR A REPLACEMENT WAS MADE.
+--
+-- Both key on a PHRASE and apply wherever that phrase occurs — that is the feature, and none of it
+-- changes here. What was never recorded is a different fact: the place in the book where the reader
+-- was standing when they made the rule. One is about the whole book; the other is one point in it,
+-- and only the second can be drawn on a map.
+--
+-- The reading map draws twenty-four bands across the book and stacks every kind of mark into the
+-- band its chapter falls in. Highlights and notes have always had a cfi, so they have always had a
+-- band; references and replacements had none, so `deposit_plan` built a MarkSection for the first
+-- two kinds only and the map could show nothing of the other two. Every attempt to draw them
+-- without a position — a footnote, a chip, a stripe, a row of evenly spread marks — was a picture
+-- of a NUMBER rather than a map of a reading, because a number is all there was.
+--
+--   cfi   where the selection stood when the rule was made. NULL for every row written before this
+--         column existed, and for a rule typed into the library rather than made from a selection.
+--
+-- NULLABLE ON PURPOSE, AND NEVER BACKFILLED. A rule made before this migration has no recoverable
+-- position: the phrase's occurrences are not it — they are where the WORD is, which is a different
+-- fact wearing the same shape, and the map would then be showing a place the reader never chose. An
+-- unplaced row keeps its NULL and is counted with the other marks whose cfi names no position, which
+-- the map already reports in words rather than drawing at a guess.
+--
+-- The phrase, its folded key, the word count, the note, the replacement and the enabled switch are
+-- untouched: matching, substitution and every existing behaviour read exactly the same columns they
+-- read before.
+ALTER TABLE refs ADD COLUMN cfi TEXT;
+ALTER TABLE reps ADD COLUMN cfi TEXT;

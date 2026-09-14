@@ -41,11 +41,13 @@ describe("fixture generator", () => {
       if (name !== "control-wellformed") {
         // `WP-n` for planned work; `NAV-n` / `TRACK-n` for a defect found mid-milestone and fixed
         // out of band (the milestone already carries NAV-1..3 that way); `PPC-n` for a POSTPONED
-        // item being closed later (BETA-1.md §3 — PPC-1 is the first fixture to arrive this way).
+        // item being closed later (BETA-1.md §3 — PPC-1 is the first fixture to arrive this way);
+        // `ISSUE-n` for an item from the owner's own numbered audit of reported defects, which is
+        // where the typography fixtures come from.
         // The rule is TRACEABILITY — every fixture must say which investigation it belongs to — not
         // the prefix itself, so a new class of work id is added here rather than worked around in
         // the fixture's own description.
-        expect(f.proves, `${name} must name the work it belongs to`).toMatch(/(WP|NAV|TRACK|PPC)-\d/);
+        expect(f.proves, `${name} must name the work it belongs to`).toMatch(/(WP|NAV|TRACK|PPC|ISSUE)-\d/);
       }
     }
   });

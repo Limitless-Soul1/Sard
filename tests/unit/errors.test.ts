@@ -31,6 +31,86 @@ beforeEach(() => {
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
+describe("what a path-bearing failure hands over", () => {
+  // MEASURED BEFORE THIS EXISTED: five of six realistic failures put an absolute path on screen
+  // behind Details and onto the clipboard with it — the OS naming the file it could not find,
+  // SQLite naming its database, and a failed asset fetch carrying the book's own percent-encoded
+  // path inside the URL it reported. That is where the reader keeps their library and what they
+  // were reading, in a block whose whole purpose is to be pasted somewhere else.
+  const PATH = /(?:[A-Za-z]:[\\/]|\\\\[^\\]+\\|\/(?:home|Users|mnt)\/)/;
+
+  const CASES: [string, unknown, string][] = [
+    ["the OS naming the file it could not find",
+     new Error("The system cannot find the file specified. (os error 2): D:\\كتب\\book.epub"), ".epub"],
+    ["SQLite naming its own database file",
+     new Error("unable to open database file: C:\\Users\\someone\\AppData\\Roaming\\Sard\\sard.db"), ".db"],
+    ["a POSIX path, for the platforms that are not Windows",
+     new Error("ENOENT: /home/reader/Books/private.epub"), ".epub"],
+    ["a UNC share",
+     new Error("EPERM: operation not permitted, open \\\\NAS\\share\\library\\book.epub"), ".epub"],
+  ];
+
+  for (const [label, thrown, ext] of CASES) {
+    it(`redacts ${label}, keeping only that it was a ${ext}`, () => {
+      const out = describeError(thrown);
+      expect(out, "no path may survive").not.toMatch(PATH);
+      expect(out, "the extension is what a diagnostic actually uses").toContain(`<path ${ext}>`);
+    });
+  }
+
+  it("redacts the encoded path a failed asset fetch carries in its URL", () => {
+    // foliate throws `new ResponseError(status, { cause: res })`, and the Response is followed by
+    // the cause chain — which is how the book's own path reached the pane by a second route.
+    const e = Object.assign(new Error("404 Not Found"), {
+      name: "ResponseError",
+      cause: { url: "http://asset.localhost/D%3A%2F%D9%83%D8%AA%D8%A8%2Fbook.epub", status: 404 },
+    });
+    const out = describeError(e);
+    expect(out).toContain("ResponseError: 404 Not Found");
+    expect(out).not.toContain("%D9%83");
+    expect(out).toContain("<path .epub>");
+  });
+
+  it("redacts a filename that has SPACES in it, which is most of them", () => {
+    // THE FIRST ATTEMPT AT THIS STOPPED THE PATH AT THE FIRST SPACE, and a stopped path leaves the
+    // rest of the name standing: `/books/My Private Book.epub` came out as `<path> Private
+    // Book.epub`, which hands over the title while looking as though it had not.
+    const out = describeError(new Error("Failed to read /home/reader/Books/My Private Book.epub"));
+    expect(out).not.toMatch(/Private|Book\.epub/);
+    expect(out).toContain("<path .epub>");
+  });
+
+  it("keeps the host of an asset URL, which is the useful half of that message", () => {
+    // ALSO FROM THE FIRST ATTEMPT: `http://` matched the drive-letter rule at `p:/`, so the whole
+    // URL vanished — including `asset.localhost`, which is what says WHICH ROUTE was being used.
+    const out = describeError(new Error("fetch failed: http://asset.localhost/C%3A%2Fbooks%2Fx.epub"));
+    expect(out).toContain("http://asset.localhost/");
+    expect(out).toContain("<path .epub>");
+    expect(out).not.toMatch(/books/);
+  });
+
+  it("does not take the engine's own words with it", () => {
+    // A path is closed by a character a filename cannot contain, so the reason survives beside it.
+    expect(describeError(new Error("could not read C:\\books\\x.epub: access denied"))).toBe(
+      "could not read <path .epub>: access denied",
+    );
+  });
+
+  it("leaves a message that has no path in it completely alone", () => {
+    // The redaction must not cost the diagnostic its content — this is the reported PDF failure.
+    expect(describeError(new Error("hashOriginal.toHex is not a function"))).toBe(
+      "hashOriginal.toHex is not a function",
+    );
+  });
+
+  it("does not let a folder name decide how a failure is classified", () => {
+    // A reader whose books live in a folder called `zips` was one substring away from being told a
+    // perfectly good file was a damaged archive, because the `corrupt` rule matches "zip".
+    const out = describeError(new Error("could not read C:\\zips\\novel.epub"));
+    expect(out).not.toMatch(/zips/);
+  });
+});
+
 describe("describeError", () => {
   it("keeps an explicitly-set name (the PDF.js convention)", () => {
     // PDF.js's BaseException assigns `this.name`, which is why the reported string carried

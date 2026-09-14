@@ -45,20 +45,21 @@ and the interface gets out of the way until you ask for it.
 
 ## Why Sard exists
 
-Most readers treat Arabic as a localisation task: mirror the layout, swap the strings, ship it.
-That produces software where the diacritics collide with the line above, the justification tears
-holes in the text, search misses a word because it carries a fatḥa, and the "next page" arrow
-points the wrong way.
+Most readers are built for one writing system and bolt the rest on afterwards: mirror the layout,
+swap the strings, ship it. That produces software where diacritics collide with the line above, the
+justification tears holes in the text, search misses a word because it carries a mark, and the
+"next page" arrow points the wrong way.
 
-Sard was written the other way round. Right-to-left is not a mode — it is one of two directions
-the layout is built in from the start. Tashkīl can be shown, dimmed or hidden. Search folds
-diacritics, so «الليل» finds «اللَّيْلُ». Numerals render Eastern-Arabic in an Arabic interface.
-Naskh and Ruqʿa faces ship with the app.
+Sard was written the other way round. Right-to-left is not a mode — it is one of two directions the
+layout is built in from the start, and a book brings its own. Tashkīl can be shown, dimmed or
+hidden. Search folds diacritics, so «الليل» finds «اللَّيْلُ». Numerals follow the interface. Naskh
+and Ruqʿa ship beside Literata, Source Serif and Inter, and each script keeps its own face, size and
+leading.
 
-And none of that comes at the expense of everything else. Arabic is first-class here; it is not
-the whole point. The same care goes into English typography, into how a panel opens, into whether
-hiding a toolbar shifts the text under it. The priority order is **beauty › smooth › lightweight**,
-and each one is measured rather than asserted.
+None of it comes at the expense of anything else. Every script Sard supports is first-class; none of
+them is the whole point. The same care goes into English typography, into how a panel opens, into
+whether hiding a toolbar shifts the text under it. The priority order is
+**beauty › smooth › lightweight**, and each one is measured rather than asserted.
 
 ## Key features
 

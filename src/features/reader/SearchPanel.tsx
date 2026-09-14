@@ -12,12 +12,26 @@ import { useI18n } from "../../i18n";
 import { localeNum } from "../../lib/format";
 import { displayTitle } from "../../lib/bookMeta"; // WP-3: one rule for a missing title
 import type { SearchHit } from "../../reader-engine/FoliateController";
+import { FurthestReturn } from "./FurthestReturn";
 
+import { isArabicText } from "../../lib/typography";
+// The dock side is DECLARED, not spelled here: `panelSides.ts` is the one place that says which
+// physical edge this panel uses, and the toolbar groups its control from the same entry (RAWY-32).
+import { panelDockClass } from "./panelSides";
 interface Props {
   open: boolean;
   onClose: () => void;
   bookTitle: string | null;
-  positionLabel: string; // the reader's current chapter/position, for the toggle + "you are here"
+  /** What the spoiler-safe boundary is CALLED. It is the reader's current chapter while they stand
+   *  at their furthest point, and the furthest point itself once they have moved back behind it. */
+  positionLabel: string;
+  /** Has the boundary parted company with the reader's current position? Only the WORDING depends
+   *  on this — calling the furthest chapter "your position now" while they read an earlier one
+   *  would be false, and the whole point of this panel is that it tells the truth about what it
+   *  is hiding. */
+  boundaryIsFurthest?: boolean;
+  /** Take the reader back to the furthest point they have read. Absent for a PDF or with no mark. */
+  onGoFurthest?: () => void;
   bookDir: "rtl" | "ltr"; // the BOOK's direction — snippets follow it (not the UI)
   query: string;
   onQuery: (q: string) => void;
@@ -50,7 +64,9 @@ const ResultRow = memo(function ResultRow({
         {ahead && <span className="sr-ahead-tag">{aheadLabel}</span>}
         <span className="sr-loc">٪{localeNum(Math.round(hit.frac * 100), lang)}</span>
       </span>
-      <span className="sr-snippet" dir={bookDir}>
+      {/* A snippet is the BOOK'S words, so its script decides its face — Amiri for Arabic, as
+          everywhere else in Sard. `isArabicText` is the one script rule, in lib/typography.ts. */}
+      <span className={`sr-snippet${isArabicText(`${hit.pre}${hit.match}${hit.post}`) ? " ar" : ""}`} dir={bookDir}>
         {hit.pre}
         <mark className="sr-hit">{hit.match}</mark>
         {hit.post}
@@ -60,7 +76,7 @@ const ResultRow = memo(function ResultRow({
 });
 
 export function SearchPanel({
-  open, onClose, bookTitle, positionLabel, bookDir,
+  open, onClose, bookTitle, positionLabel, boundaryIsFurthest = false, onGoFurthest, bookDir,
   query, onQuery, searching, searchProgress, hits,
   spoilerSafe, onToggleSpoiler, revealAhead, onRevealAhead,
   activeCfi, onJump,
@@ -73,6 +89,10 @@ export function SearchPanel({
     if (open) inputRef.current?.focus();
   }, [open]);
 
+  // MEASURED AND LEFT ALONE. Splitting the list in one memoised pass instead of two filters per render
+  // was tried against 15,481 matches in a real book: 393ms blocked without it, 404ms with it — no
+  // difference outside the noise, because the quadratic de-duplication in the engine was the whole
+  // cost and these two passes never were. Kept as it was rather than carrying a memo that buys nothing.
   const upTo = hits.filter((h) => !h.ahead);
   const ahead = hits.filter((h) => h.ahead);
   const reveal = !spoilerSafe || revealAhead; // show the ahead snippets?
@@ -100,14 +120,14 @@ export function SearchPanel({
 
   return (
     // RAWY-288: see ChaptersPanel — `inert` keeps the closed panel out of the tab order.
-    <aside className={`reader-panel rp-lead search-panel${open ? " show" : ""}`} dir={dir} aria-hidden={!open} inert={!open}>
+    <aside className={`reader-panel ${panelDockClass("search")} search-panel${open ? " show" : ""}`} dir={dir} aria-hidden={!open} inert={!open}>
       <div className="rp-head">
         <div className="rp-head-titles">
           <span className="rp-title">{t("search.title")}</span>
           <span className="rp-submeta" dir="auto">{displayTitle({ title: bookTitle }, t)}</span>
         </div>
         <div className="rp-head-actions">
-          <button className="rp-x" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
+          <button className="rp-x ui-close" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
         </div>
       </div>
 
@@ -133,11 +153,22 @@ export function SearchPanel({
         <span className="sp-spoiler-text">
           <span className="sp-spoiler-label">{t("search.spoiler")}</span>
           <span className="sp-spoiler-sub" dir="auto">
-            {t("search.spoilerSub", { pos: positionLabel })}
+            {t(boundaryIsFurthest ? "search.furthestHere" : "search.spoilerSub", { pos: positionLabel })}
           </span>
         </span>
         <span className={`rp-switch${spoilerSafe ? " on" : ""}`} aria-hidden><span className="rp-knob" /></span>
       </button>
+
+      {/* THE WAY BACK TO THE FURTHEST POINT READ — the same control the Contents panel offers, here
+          because this is the other place a reader learns they are behind it: the line directly above
+          has just told them the boundary is somewhere they are not standing. Offered on exactly the
+          same condition, so the two can never disagree, and shown whether or not anything has been
+          typed — a reader may open Search for this alone.
+
+          It is INDEPENDENT of the return pill. That one appears after jumping to a result and offers
+          the way back to where the reader was a moment ago; this one is durable and offers the furthest
+          point they ever read to. Both may be on screen at once, and neither suppresses the other. */}
+      {boundaryIsFurthest && onGoFurthest && <FurthestReturn label={positionLabel} onGo={onGoFurthest} />}
 
       <div className="rp-scroll sp-results" ref={resultsRef} onScroll={onResultsScroll}>
         {/* before typing */}
@@ -200,7 +231,7 @@ export function SearchPanel({
             {!searching && allUpToShown && ahead.length > 0 && (
               <div className="sp-here" dir="auto">
                 <span className="sp-here-line" />
-                <span className="sp-here-label">{t("search.youAreHere", { pos: positionLabel })}</span>
+                <span className="sp-here-label">{t(boundaryIsFurthest ? "search.furthestHere" : "search.youAreHere", { pos: positionLabel })}</span>
                 <span className="sp-here-line" />
               </div>
             )}
@@ -226,7 +257,7 @@ export function SearchPanel({
               </div>
             )}
 
-            {/* Arabic-first: a quiet reminder that matching ignores tashkīl (design's Arabic panel note) */}
+            {/* A quiet reminder that matching ignores tashkīl (design's Arabic panel note) */}
             {!searching && allShown && bookDir === "rtl" && <div className="sp-tashkil-note">{t("search.tashkilNote")}</div>}
           </>
         )}

@@ -1,0 +1,455 @@
+/* REFERENCES & REPLACEMENTS — the Library surface.
+ *
+ * Its own namespace, `.rr-*`, so it borrows nothing from the archive's `.arch-*` or the library's
+ * `.libd-*` and cannot be moved by a change to either. Every colour comes from the theme tokens, and
+ * every radius and step from the scale, so the surface follows the sixteen themes without a per-theme
+ * rule of its own.
+ *
+ * The design's two structural decisions are the two things this file must get right: the items are
+ * DEFINITIONS, not cards (no borders, no plates, no shadows around an entry — just a word and what it
+ * means, in a two-column list), and the item that is being edited becomes the editor IN PLACE rather
+ * than opening anything on top of it. */
+
+.rr {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  padding: var(--sp-6) var(--sp-7) var(--sp-6);
+  font-family: var(--ui-font);
+  color: var(--text);
+}
+
+
+/* ---- THE LADDER ---------------------------------------------------------------------------
+   Five rungs, and every one of them reads the interface-texture variables, so the whole feature
+   follows the reader's own setting and the picture behind it rather than stating colours of its own.
+   `--rr-glass(n)` cannot be a function in CSS, so each rung is spelled out; the shape is identical
+   and only the density changes:  floor + (own − floor) × k.
+
+     picture   the reader's background — nothing of ours
+     sheet     92%   large, so the lightest: a page laid on the desk
+     plate     96%   small and alone on the desk, so denser
+     control   90%   a control has to read as a control ON the picture, which is why the resting
+                     state is a GROUND and not a hairline. This was the defect: the sort button and
+                     «متابعة القراءة» measured rgba(0,0,0,0) over a photograph with a 7%-white
+                     border, so there was nothing there to recognise. Their ink was never wrong —
+                     they had no ground for the theme's own ink pairing to work against.
+     active    the accent, carried into the control's ground rather than replacing it, so a selected
+               tab is unmistakable without becoming a solid button.
+
+   Borders step up with it: `--chrome-border` is 7% white on the dark themes, which disappears over a
+   picture, so controls take a firmer edge while surfaces keep the quiet one. */
+.rr {
+  /* ATMOSPHERIC. The page's own sheet, which carries no words of its own — the picture may show
+     through it as far as the reader's texture setting asks. */
+  --rr-sheet: color-mix(in srgb, var(--chrome-bg)
+    calc(var(--ui-floor, 0%) + (92% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
+
+  /* FUNCTIONAL, AND THEREFORE SOLID.
+
+     WHAT WAS WRONG. Every rung below was a `color-mix(chrome, transparent)` whose alpha travels
+     with the reader's texture step — and every surface in this section that uses them carries
+     words: the reference rows, the replacement rules and their switches, the search field, the
+     tabs, the actions, and the back button. Measured over a photograph at full presence, with the
+     ladder at its MOST OPAQUE rung, the back button composited to 2.92:1 against its own mark and
+     the search field to 3.23:1 — both under AA, before the reader has moved the texture control at
+     all. At «glass» each of them collapses to the floor and it can only get worse.
+
+     The floor was not the mistake either. It was derived when the library still had a 0.77 scrim
+     beneath it; the owner's ruling took that floor to zero so the photograph could actually be
+     seen, and stated what pays for it — the chrome that carries text keeps its own opaque ground.
+     This is that ground, and it is the shared one: see `.ui-solid` in `global.css`.
+
+     The picture is not lost. It shows AROUND the rows, which is where a background belongs; what
+     it no longer does is decide whether a rule the reader wrote can be read. */
+  --rr-plate-base: var(--solid-base);
+  --rr-plate: var(--solid-tint);
+  --rr-control-base: var(--solid-base);
+  --rr-control: var(--solid-tint);
+  --rr-edge: color-mix(in srgb, var(--text) 14%, transparent);
+
+  /* A blur under an opaque ground is paint nobody can see. It stays defined for the atmospheric
+     sheet and is `none` for everything that has to be read. */
+  --rr-frost: none;
+  --rr-frost-sheet: blur(calc(var(--bg-lib-blur, 0px) + var(--ui-frost, 0px)))
+    saturate(var(--ui-sat, 1)) brightness(var(--ui-bright, 1));
+}
+
+/* ---- header ------------------------------------------------------------------------------ */
+.rr-head { display: flex; align-items: center; gap: var(--sp-5); flex: none; }
+.rr-spacer { flex: 1; }
+/* Sized to the header it sits beside rather than to a glyph: the title chip is 55px tall, so a 44px
+   control reads as its companion instead of as a utility stuck in the corner. */
+.rr-back {
+  width: 44px; height: 44px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--rr-edge); border-radius: var(--r-md);
+  background: var(--rr-control);
+  backdrop-filter: var(--rr-frost); -webkit-backdrop-filter: var(--rr-frost);
+  /* THE WAY OUT OF A PAGE IS NOT SECONDARY TEXT.
+     `--muted` is derived to a 3:1 floor, which is the right target for a caption beside something
+     louder and the wrong one for the control a reader reaches for to leave. Measured on its own
+     opaque plate: 3.03:1 at rest, 11.5:1 on hover — so it was already drawn correctly, once you
+     had found it and pointed at it. The resting state now matches the hover it was going to reach. */
+  color: var(--text); cursor: pointer;
+  transition: color 0.15s linear, border-color 0.15s linear, background 0.15s linear;
+}
+.rr-back:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.rr-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rr-chip {
+  display: flex; align-items: center; gap: var(--sp-5);
+  padding: var(--sp-4) var(--sp-6);
+  border: 1px solid var(--chrome-border); border-radius: var(--r-lg);
+  background: var(--chrome-bg); min-width: 0;
+}
+.rr-chip-cover {
+  width: 26px; height: 39px; flex: none; border-radius: var(--r-xs); overflow: hidden;
+  box-shadow: var(--sh1);
+}
+.rr-chip-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.rr-chip-txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+/* Inside a book the title is the one permanent statement of context, so it carries the most weight on
+   the surface — the design gives it 17-18px at 700 against the plate's 15.5 at 600. */
+.rr-chip-title {
+  font: 700 1.06rem var(--ui-font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rr-chip-title.ar { font-size: 1.125rem; }
+.rr-chip-meta {
+  display: flex; align-items: center; gap: var(--sp-4);
+  font: 400 0.75rem var(--ui-font); color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.rr-ghost {
+  flex: none; height: 32px; padding: 0 var(--sp-5);
+  border: 1px solid var(--rr-edge); border-radius: var(--r-md);
+  background: var(--rr-control);
+  backdrop-filter: var(--rr-frost); -webkit-backdrop-filter: var(--rr-frost);
+  color: var(--muted); font: 500 0.78rem var(--ui-font); cursor: pointer;
+}
+.rr-ghost:hover { color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+/* Inside the sheet a control is no longer over the picture — it is over a surface of its own colour,
+   where the control glass reads as nothing. There it goes back to a bordered quiet. */
+.rr-inner .rr-ghost {
+  background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none;
+}
+
+/* ---- toolbar ----------------------------------------------------------------------------- */
+.rr-tools { display: flex; align-items: center; gap: var(--sp-4); flex: none; padding-top: var(--sp-5); }
+.rr-search {
+  display: flex; align-items: center; gap: var(--sp-4);
+  height: 34px; padding: 0 var(--sp-5);
+  border: 1px solid var(--rr-edge); border-radius: var(--r-md);
+  background: var(--rr-control);
+  backdrop-filter: var(--rr-frost); -webkit-backdrop-filter: var(--rr-frost);
+  flex: 1; max-width: 380px; min-width: 170px; color: var(--muted);
+}
+.rr-search:focus-within { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.rr-search input {
+  flex: 1; min-width: 0; border: 0; outline: 0; background: transparent;
+  color: var(--text); font: 400 0.78rem var(--ui-font);
+}
+.rr-clear { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 3px; }
+.rr-tabs {
+  display: flex; gap: 3px; padding: 3px; border-radius: var(--r-lg); flex: none;
+  border: 1px solid var(--rr-edge); background: var(--rr-control);
+  backdrop-filter: var(--rr-frost); -webkit-backdrop-filter: var(--rr-frost);
+}
+.rr-tab {
+  display: flex; align-items: center; gap: var(--sp-4);
+  height: 28px; padding: 0 var(--sp-5); border: 0; border-radius: var(--r-md);
+  background: transparent; color: var(--muted); font: 500 0.78rem var(--ui-font); cursor: pointer;
+}
+.rr-tab.on {
+  background: color-mix(in srgb, var(--accent) 18%, var(--chrome-bg));
+  color: var(--text); box-shadow: var(--sh1);
+}
+.rr-tab.on .rr-tab-n { opacity: 1; color: var(--accent-text, var(--accent)); }
+/* The mark identifies the tab, the word names it. State is carried by INK ALONE — the marks inherit
+   `currentColor`, so an inactive tab's muted colour reaches them without a second opacity axis that
+   would fade them out of legibility at 16px. */
+.rr-tab svg { flex: none; }
+.rr-tab:not(.on):hover { color: var(--text); background: color-mix(in srgb, var(--text) 7%, transparent); }
+.rr-tab-n { font-variant-numeric: tabular-nums; opacity: 0.75; font-size: 0.72rem; }
+.rr-primary {
+  height: 32px; padding: 0 var(--sp-5); flex: none; white-space: nowrap;
+  border: 0; border-radius: var(--r-md); background: var(--accent); color: var(--paper-bg);
+  font: 600 0.78rem var(--ui-font); cursor: pointer;
+}
+.rr-primary:hover { background: color-mix(in srgb, var(--accent) 88%, var(--text)); }
+.rr-dark {
+  margin-top: var(--sp-6); height: 34px; padding: 0 var(--sp-5);
+  border: 0; border-radius: var(--r-md); background: var(--text); color: var(--paper-bg);
+  font: 600 0.78rem var(--ui-font); cursor: pointer;
+}
+
+/* ---- level 1: the shelf ------------------------------------------------------------------ */
+.rr-scroll { flex: 1; min-height: 0; overflow-y: auto; margin-top: var(--sp-6); }
+/* THE ENCLOSING SHEET IS GONE, and this is the third attempt at the same problem — worth stating why
+   the first two failed. An OPAQUE ground was a black wall on the dark themes. Glass fixed the colour
+   but not the shape: the container still spans the widest row and the tallest column, so five short
+   references in 330px tracks produced a large, mostly empty rectangle sitting over the reader's
+   picture. Air between the entries could not fix that, because the emptiness was INSIDE the surface,
+   not between the items.
+
+   So the surface moved onto the ITEMS. Each reference and each rule now carries its own ground — the
+   same 96% glass the shelf plates use, so the two levels are still one material — and the picture
+   shows between them. One reference is one small plate; ten wrap into a field of them; nothing is
+   ever a wall. This is also what the Highlights & Notes shelf beside it already does. */
+.rr-inner { flex: 0 1 auto; max-height: 100%; min-height: 0; display: flex; width: 100%; }
+.rr-inner .rr-scroll { margin-top: var(--sp-6); padding-bottom: var(--sp-7); }
+
+/* SUPPRESSED, NOT SOFTENED. A reader who asked the OS for high contrast, forced colours or reduced
+   transparency has stated a requirement; the same contract the eight chrome surfaces already follow. */
+@media (forced-colors: active), (prefers-contrast: more), (prefers-reduced-transparency: reduce) {
+  .rr-plate, .rr-def-wrap, .rr-rule-row, .rr-search, .rr-ghost, .rr-back, .rr-tabs {
+    background: var(--chrome-bg);
+    backdrop-filter: none; -webkit-backdrop-filter: none;
+  }
+}
+.rr-shelf {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+  gap: var(--sp-5); padding-bottom: var(--sp-7);
+}
+/* ONE GLASS, TWO STEPS. The plate and the sheet it opens into are the same surface at different
+   densities — a plate is denser because it is small and sits alone on the desk, the sheet lighter
+   because it is large and would otherwise become a wall. Both read the interface-texture variables, so
+   they follow the reader's own setting and the picture behind them the way every other chrome surface
+   in Sard does, instead of stating a colour of their own. */
+/* A <button> DOES NOT INHERIT INK. The UA sets `color: buttontext` on it, which resolves to black on
+   every theme, so anything inside that does not name its own colour is painted black — measured at
+   rgb(0,0,0) in Charcoal AND Ivory while the surface root correctly carried `--text`. The author line
+   and the footer only looked right because they each declare `--muted`; the title and the preview
+   words declared nothing and so were black on a dark plate.
+   `--text` is the token for primary text, and stating it on the button hands it to every descendant
+   at once rather than patching them one at a time — the same class of bug cannot come back the next
+   time a line is added to this plate. */
+.rr-plate {
+  display: flex; gap: var(--sp-6); text-align: start; cursor: pointer;
+  color: var(--text);
+  border: 1px solid var(--chrome-border); border-radius: var(--r-lg);
+  background: var(--rr-plate);
+  backdrop-filter: var(--rr-frost); -webkit-backdrop-filter: var(--rr-frost);
+  padding: var(--sp-5) var(--sp-5);
+  transition: transform 0.15s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.15s linear, box-shadow 0.15s linear;
+}
+.rr-plate:hover {
+  transform: translateY(-1px); box-shadow: var(--sh2);
+  border-color: color-mix(in srgb, var(--text) 18%, transparent);
+}
+.rr-cover {
+  width: 62px; height: 93px; flex: none; border-radius: var(--r-xs); overflow: hidden;
+  box-shadow: var(--sh1); display: flex; align-items: center; justify-content: center;
+}
+.rr-cover.sm { width: 40px; height: 60px; }
+.rr-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* A coverless book falls back to its TITLE in the reading face at cover proportions, so the shelf and
+   the rail stay even rather than showing a hole where a cover should be. */
+.rr-cover-fallback {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 100%; padding: var(--sp-4); text-align: center;
+  font: 400 0.82rem/1.5 var(--book); color: var(--muted);
+  overflow: hidden;
+}
+.rr-cover.sm .rr-cover-fallback { font-size: 0.62rem; padding: var(--sp-2); }
+.rr-plate-body { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* THE TITLE IS THE PLATE'S IDENTITY, so it is read first. It was losing that fight: at 0.92rem it sat
+   BELOW the sample words at 1.05rem, so the eye landed on a stray phrase from the book and had to hunt
+   upward for which book it came from. The design's own values put them almost level — 15.5px at 600 in
+   the chrome face against 16px at 400 in the reading face — and weight, not size, is what separates
+   them. Restored to that. */
+.rr-plate-title { font: 600 0.97rem var(--ui-font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rr-plate-author {
+  padding-top: 3px; font: 400 0.72rem var(--ui-font); color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rr-preview { display: flex; flex-wrap: wrap; gap: var(--sp-4) var(--sp-7); padding-top: var(--sp-5); flex: 1; align-content: flex-start; }
+.rr-pv { display: inline-flex; align-items: baseline; gap: var(--sp-4); max-width: 100%; }
+.rr-pv-word {
+  font: 400 0.94rem/1.5 var(--book);
+  max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rr-pv-word.ar { font-size: 1rem; }
+.rr-muted { color: var(--muted); }
+.rr-pv-arrow { font: 400 0.8rem var(--ui-font); color: var(--accent); opacity: 0.8; }
+.rr-pv-arrow.off { opacity: 0.3; }
+.rr-blank { font: 400 0.88rem/1.7 var(--book); color: var(--muted); }
+.rr-plate-foot {
+  display: flex; align-items: center; gap: var(--sp-4); padding-top: var(--sp-5);
+  font: 400 0.72rem var(--ui-font); color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.rr-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); flex: none; }
+
+/* THE TWIN RULE — the reference's mark, at the reader's own geometry, so the list and the page speak
+   the same language. Two hairlines under the word, drawn as backgrounds so they cannot affect layout. */
+.rr-rule {
+  display: inline-block;
+  background-image: linear-gradient(var(--accent), var(--accent)), linear-gradient(var(--accent), var(--accent));
+  background-size: 100% 2px, 100% 2px;
+  background-position: 0 calc(100% - 5px), 0 100%;
+  background-repeat: no-repeat;
+  padding-bottom: var(--sp-4);
+}
+
+/* ---- level 2: definitions and rules ------------------------------------------------------ */
+/* A FLEX WRAP, NOT AN AUTO-FILL GRID. `auto-fill` needs a definite container to count tracks into, so
+   it forces the sheet to full width and then leaves empty columns — the very thing that made one
+   reference sit in an acre of ground. Wrapping items of their own width means two references occupy
+   two columns' worth and the sheet is that wide; eight wrap to the cap and scroll. */
+.rr-defs {
+  display: flex; flex-wrap: wrap; align-content: flex-start;
+  /* THE ROW GAP WAS 2px, which is what stitched the definitions into one block: entries a couple of
+     pixels apart read as rows of a single structure, not as separate references. The design's own
+     2px works there because each cell carries far more internal air than a 330px column leaves; here
+     the separation has to be stated. A definition is still not a card — no border, no plate — it is
+     given room and a hairline between rows, which is the editorial way to say "these are two". */
+  gap: var(--sp-5); padding-bottom: var(--sp-7);
+  max-width: 1100px;
+}
+/* A FIXED COLUMN, not a flexible one. Under a shrink-to-fit parent a flexible item reports its
+   max-content — the whole note on one line — so a single reference asked for a 1035px sheet. Fixing the
+   track makes the note wrap inside it, so one reference is one column wide and five are three. */
+/* SIZED TO WHAT IT HOLDS, not to a fixed track. A 330px column around the word «علاوة» and the note
+   «بلايب» is mostly ground, and five of them made the rectangle. Growing from a comfortable minimum to
+   a readable maximum lets a short reference be a small plate and a long one a wide one. */
+.rr-def-wrap {
+  flex: 1 1 auto; min-width: 200px; max-width: 340px;
+  border: 1px solid var(--chrome-border); border-radius: var(--r-md);
+  background: var(--rr-plate);
+  backdrop-filter: var(--rr-frost); -webkit-backdrop-filter: var(--rr-frost);
+}
+.rr-def {
+  display: block; width: 100%; text-align: start; border: 0; background: transparent; cursor: pointer;
+  color: var(--text); /* same reason as `.rr-plate` above — a button starts at `buttontext`, not inherit */
+  padding: var(--sp-5) var(--sp-6) var(--sp-6);
+  border-radius: var(--r-md); transition: background 0.15s linear;
+}
+.rr-def-wrap:hover { border-color: color-mix(in srgb, var(--text) 18%, transparent); }
+/* NO RULE UNDER A DEFINITION, deliberately. A hairline works on the single-column rules list below,
+   but here three entries sit side by side and their three hairlines land at the same y — which draws a
+   continuous line across the row and rebuilds the very grid this was meant to break. Air does it
+   instead: a word sits ~9px from its own note and ~32px from the next entry, so the eye groups by the
+   ratio rather than by a border, which is also how the design's own definition list reads. */
+.rr-def-word { font: 400 1.35rem/1.4 var(--book); color: var(--text); }
+.rr-def-note { display: block; padding-top: var(--sp-4); font: 400 0.9rem/1.8 var(--ui-font); color: var(--muted); }
+
+/* The design caps a rule row at 760: `from ⟵ to` with its switch at the end, stranded any wider. */
+.rr-rules {
+  width: 760px; max-width: 100%; padding-bottom: var(--sp-7);
+  display: flex; flex-direction: column; gap: var(--sp-5);
+}
+/* The rules were flush against one another and read as a table. Air plus the same hairline gives each
+   rule its own line without turning a list into a stack of cards. */
+.rr-rule-row {
+  display: flex; align-items: center; gap: var(--sp-7);
+  padding: var(--sp-5) var(--sp-6);
+  border: 1px solid var(--chrome-border); border-radius: var(--r-md);
+  background: var(--rr-plate);
+  backdrop-filter: var(--rr-frost); -webkit-backdrop-filter: var(--rr-frost);
+  transition: border-color 0.15s linear;
+}
+.rr-rule-row:hover { border-color: color-mix(in srgb, var(--text) 18%, transparent); }
+
+.rr-rule-main {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--sp-7);
+  border: 0; background: transparent; cursor: pointer; padding: 2px 0; text-align: start;
+  color: var(--text); /* same reason as `.rr-plate` above */
+}
+.rr-big {
+  font: 400 1.4rem/1.4 var(--book); color: var(--text); flex: none;
+  max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.rr-off { font: 500 0.72rem var(--ui-font); color: var(--muted); flex: none; }
+/* The switch, at the design's geometry. `justify-content` moves the knob, so the travel needs no
+   transform and stays correct in both directions without a mirrored rule. */
+.rr-switch {
+  width: 40px; height: 23px; border-radius: 23px; border: 0; padding: 2px; flex: none; cursor: pointer;
+  display: inline-flex; justify-content: flex-start;
+  background: color-mix(in srgb, var(--text) 18%, transparent); transition: background 0.18s linear;
+}
+.rr-switch.on { justify-content: flex-end; background: var(--accent); }
+.rr-knob { width: 19px; height: 19px; border-radius: 50%; background: var(--paper-bg); display: block; }
+
+/* ---- the in-place editor ----------------------------------------------------------------- */
+.rr-new, .rr-edit {
+  padding: var(--sp-5) var(--sp-6) var(--sp-6); margin: var(--sp-2) 0 var(--sp-6);
+  border-radius: var(--r-md); background: var(--chrome-bg);
+  border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent);
+}
+.rr-new { max-width: 640px; }
+.rr-new-h { font: 700 0.7rem var(--ui-font); color: var(--accent); padding-bottom: var(--sp-5); letter-spacing: 0.04em; }
+.rr-new-acts, .rr-edit-acts { display: flex; align-items: center; gap: var(--sp-5); padding-top: var(--sp-6); }
+.rr-new-hint { font: 400 0.72rem var(--ui-font); color: var(--muted); }
+.rr-edit-word {
+  width: 100%; height: 42px; padding: 0 var(--sp-5);
+  border: 1px solid var(--chrome-border); border-radius: var(--r-sm);
+  background: var(--paper-bg); color: var(--text);
+  font: 400 1.35rem var(--book); outline: 0;
+}
+.rr-edit-note {
+  width: 100%; margin-top: var(--sp-4); padding: var(--sp-4) var(--sp-5);
+  border: 1px solid var(--chrome-border); border-radius: var(--r-sm);
+  background: var(--paper-bg); color: var(--text);
+  font: 400 0.92rem/1.8 var(--ui-font); outline: 0; resize: vertical;
+}
+.rr-edit-word:focus, .rr-edit-note:focus { border-color: var(--accent); }
+.rr-del, .rr-danger {
+  height: 30px; padding: 0 var(--sp-5); border: 0; border-radius: var(--r-sm); cursor: pointer;
+  font: 500 0.75rem var(--ui-font);
+}
+.rr-del { background: transparent; color: var(--muted); }
+.rr-del:hover { color: #A2503C; background: color-mix(in srgb, #A2503C 12%, transparent); }
+:root[data-dark="true"] .rr-del:hover { color: #E08585; }
+.rr-danger { background: #A2503C; color: var(--paper-bg); font-weight: 600; }
+
+/* ---- empty states ------------------------------------------------------------------------ */
+.rr-empty { max-width: 46ch; padding: var(--sp-8) var(--sp-4) 0; }
+.rr-empty-h { font: 700 1.25rem/1.4 var(--ui-font); }
+.rr-empty-h2 { font: 600 1.05rem/1.5 var(--ui-font); }
+.rr-empty-b { padding-top: var(--sp-5); font: 400 0.95rem/1.95 var(--book); color: var(--muted); }
+.rr-empty-b2 { padding-top: var(--sp-5); font: 400 0.88rem/1.85 var(--ui-font); color: var(--muted); }
+.rr-empty-n { padding-top: var(--sp-6); font: 400 0.78rem var(--ui-font); color: var(--muted); }
+.rr-empty-cta { margin-top: var(--sp-6); }
+
+/* ---- the toast: it says what the switch just did, in the reader's own words ---- */
+/* Surface in global.css, with the rest of the message family. A fixed 38px height went with the
+   pill it used to be: a message that wraps to two lines has to be allowed to be two lines tall. */
+.rr-toast {
+  position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: var(--z-pill-over);
+  display: flex; align-items: center; gap: var(--sp-6);
+  min-height: 38px; padding: 9px var(--sp-6);
+  max-width: min(560px, calc(100vw - 32px));
+}
+
+/* THE FACE IS A ROLE, NOT A NAME. Latin book words take `--book`, Arabic always takes `--ar` — Literata
+   has no Arabic glyphs, so an Arabic word left on the Latin role falls out of Sard's faces entirely. */
+.rr-cover-fallback.ar, .rr-pv-word.ar, .rr-blank.ar,
+.rr-def-word.ar, .rr-big.ar, .rr-edit-word.ar { font-family: var(--ar); }
+
+/* ================================================================================================
+   THE TWO LAYERS, stated last so nothing can undo them.
+   ================================================================================================
+   Every selector above sets `background:` — the SHORTHAND, which resets `background-image` — so a
+   two-layer ground declared before them is silently flattened by the very rules it exists to make
+   safe. Source order is what settles it between rules of equal specificity, so it is settled here.
+
+   These are the functional surfaces of this section: the rows a reader reads, the field they type
+   in, the tabs they choose with, and the control they leave by. See `.ui-solid` in `global.css` for
+   why an opaque floor under the tint, rather than a higher alpha, is the only version of this that
+   is actually a guarantee.
+   ================================================================================================ */
+.rr-back,
+.rr-ghost,
+.rr-search,
+.rr-tabs,
+.rr-plate,
+.rr-def-wrap,
+.rr-rule-row {
+  background-color: var(--solid-base);
+  background-image: linear-gradient(var(--solid-tint), var(--solid-tint));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  isolation: isolate;
+}

@@ -14,18 +14,23 @@
 
 import {
   buildReadingCss,
+  renderTypography, // the one resolver the book's sheets and a note's presentation both read
   buildDynamicCss,
   buildFontFaceCss, // RAWY-208: the @font-face sheet, isolated from the geometry sheet
   ALIGN_GATE_CLASS,
+  REF_RULE_KEYS,
   BOOK_ALIGN_CLASS,
   FORCE_RTL_CLASS, // RAWY-253 (root A): the dir-correction marker class
   EMPTY_P_CLASS, // RAWY-253 (root B): the empty-paragraph collapse marker class
   LTR_ALIGN_CLASS, // RAWY-253 (addendum): align a kept-LTR paragraph to the book's margin
+  TEXT_HOST_CLASS, // the block container that DIRECTLY holds prose, when the book uses none of p/li/div
+  PARA_BREAK_CLASS, // the box that gives a <br>-separated run a paragraph gap to be spaced by
   type BookThemeFlags,
   type ReadingStyle,
   type RevealLabels,
 } from "./injectedCss";
 import { navIntent } from "./navIntent";
+import { wheelBoundary, type WheelAction } from "./wheelBoundary";
 // RAWY-229: pure, and therefore shared. The hosted transport applies the same rule in the
 // application, because `bookmarkVisible` is read from a React render body that cannot await.
 import { sameSection } from "./cfiSection";
@@ -35,9 +40,10 @@ import { diagAttachDocument, diagNote, diagPublishUnits } from "@diag"; // DIAGN
 import { renderStageOk as rStageOk, renderStageFail as rStageFail, renderDiagAdoptDoc, renderDiagNotEpub, renderDiagReset, renderDiagSurface, renderDiagTheme } from "@renderDiag"; // DIAGNOSTIC BUILD ONLY
 import { sanitiseBookCss, type BookCssMode } from "./cssSanitiser"; // WP-7 stage 3
 import { synthesiseToc, type SectionHeading, type SynthToc } from "./tocSynth"; // WP-6A // → is always the next page; see that file for why
-import { resolveSpotlight, resolvePill } from "./ttsTrack"; // RAWY-200: pure per-theme track resolution
+import { resolveSpotlight, resolvePill, TRACK_SHAPE } from "./ttsTrack"; // RAWY-200: pure per-theme track resolution
 import type { Theme } from "../theme/tokens";
 import { extractChapterNumber, toWesternDigits } from "../lib/format";
+import { speakableText } from "../lib/ttsText"; // the ONE rewrite that separates spoken text from shown text
 // RAWY-259: the ONE ink resolution, shared with the Notes editor preview so both surfaces cannot drift.
 import {
   resolveHighlightInk,
@@ -49,7 +55,16 @@ import {
 } from "../lib/highlightInk";
 // RAWY-260: the reference matching engine — folding + whole-phrase scanning, kept out of this file so the
 // rules stay testable and identical between the create path and the render path.
-import { foldChar, findPhraseHits, type RefLite } from "../lib/references";
+import { foldCharInto, foldPhrase, findPhraseHits, type RefLite } from "../lib/references";
+import {
+  applyToSection,
+  expandQuery,
+  restoreSection,
+  shiftOffset,
+  type NodeEdit,
+  type RepLite,
+  type SectionPlan,
+} from "../lib/replacements";
 // RAWY-281: the reference twin rule's geometry resolver — shared with the settings panel, so the numbers
 // the reader adjusts and the numbers this file draws are one object.
 import { resolveRefRule, refRuleReach, refRuleBars } from "./refRule";
@@ -70,12 +85,20 @@ const FONT_STYLE_KEYS: (keyof ReadingStyle)[] = ["arabicFont", "latinFont"];
 // Reading-style fields that only affect PAINT (ink colour, tashkīl visibility) — applied via the
 // dynamic sheet with NO reflow. Every other field that appears in buildReadingCss (fonts, size/zoom,
 // line-height, alignment, weight, spacing, flow) is GEOMETRY → a real re-inject. Fields absent from
-// both lists (marginPx, pageWidth, pageFitWindow) are chrome-side (RAWY-36) — they touch neither.
+// both lists (pageWidth, pageFitWindow) are chrome-side (RAWY-36) — they touch neither. `marginPx`
+// was named there too and is not simply chrome-side: in SCROLLED flow the host's inline inset is
+// zeroed and the sheet carries the margin as `body { padding-inline }`. It is decided per change in
+// `applyStyle`, which can see the flow — this list cannot.
 // RAWY-201: pageColor joins the PAINT keys — its background rule is emitted in buildDynamicCss, so a
 // change repaints via the in-place dynamic sheet with NO reflow (RAWY-140), exactly like textColor.
 // backgroundColor is NOT here: it never touches the iframe (it's a reader-scoped chrome var applied by
 // React), so it needs neither a re-inject nor a dynamic-sheet rewrite.
-const PAINT_STYLE_KEYS: (keyof ReadingStyle)[] = ["textColor", "diacritics", "pageColor"];
+// numberColor joins them for the same reason pageColor did: it is a COLOUR. Its rule is emitted by
+// `buildDynamicCss` onto `.sard-num`, so a change repaints in place with no reflow. Leaving it out of
+// both lists is what made the feature inert in the reader — the value reached `ReadingStyle`, the
+// digits were wrapped, and nothing ever asked the sheet to be rewritten, so the rule was never
+// applied. Absent from both lists means "chrome-side, touches neither", which this is not.
+const PAINT_STYLE_KEYS: (keyof ReadingStyle)[] = ["textColor", "diacritics", "pageColor", "numberColor"];
 const GEOMETRY_STYLE_KEYS: (keyof ReadingStyle)[] = [
   "zoom",
   "arabicFont",
@@ -106,7 +129,8 @@ const TRACK_STYLE_KEYS: (keyof ReadingStyle)[] = [
 // they touch neither the injected sheet nor the dynamic paint sheet, so a change is a pure overlayer
 // redraw with NO re-inject and NO reflow. That is what makes the settings panel update live: the reader
 // drags the slider, `applyStyle` sees only these keys move, and the pair repaints in place.
-const REF_STYLE_KEYS: (keyof ReadingStyle)[] = ["refRuleColor", "refRuleWeight", "refRuleOffset"];
+// The engine's own list, so the re-draw trigger and what a هيئة carries can never disagree.
+const REF_STYLE_KEYS: readonly (keyof ReadingStyle)[] = REF_RULE_KEYS;
 
 export interface RelocateInfo {
   cfi: string | null;
@@ -162,6 +186,21 @@ export interface SelectionInfo {
   cfi: string;
   text: string;
   rect: AnchorRect;
+  /**
+   * The selection was made in an open NOTE rather than in the reading frame.
+   *
+   * Every action downstream is the same action; what differs is the CONTEXT some of them read. Three
+   * were taking it from the reader's ambient state because that was the only place a selection could
+   * have come from: read-aloud segmented the chapter on screen, the reading spotlight drew into that
+   * chapter's overlayer, and the excerpt was filed against it. MEASURED before this existed: pressing
+   * «استماع» on a footnote started reading the CURRENT chapter from sentence 0 — `start()` received
+   * 165 sentences of the chapter behind the note and `startIndex: 0`.
+   *
+   * One flag, because the alternative is for each of those to guess. It is a plain boolean so the
+   * payload stays structured-cloneable; the DOM side of a note selection (its live range, its surface)
+   * stays in the engine, exactly as the reading frame's does.
+   */
+  fromNote?: boolean;
   // RAWY-227: a SNAPSHOT of the selection's DOM range (cloned at capture, so clearing the live selection
   // in the toolbar doesn't invalidate it). Lets listen-from-selection map to the exact TTS unit by DOM
   // position instead of a brittle text match. Optional — a text-match fallback covers its absence.
@@ -439,8 +478,9 @@ function drawReadingSpotlight(rects: Iterable<DOMRect>, options: { dark?: boolea
   const p = resolveSpotlight(options.style, options.dark ?? false);
   for (const r of rects) {
     if (!(r.width > 0) || !(r.height > 0)) continue; // skip zero-width fragments (e.g. hyphen columns)
-    const radius = Math.min(6, r.height * 0.2); // design ~.3em rounded ends, per line fragment
-    const ruleH = Math.max(1.5, r.height * 0.08); // design ~.12em baseline rule
+    // The one set of proportions, shared with the profile editor's preview — see `TRACK_SHAPE`.
+    const radius = Math.min(TRACK_SHAPE.spotRadiusMax, r.height * TRACK_SHAPE.spotRadius);
+    const ruleH = Math.max(TRACK_SHAPE.ruleHeightMin, r.height * TRACK_SHAPE.ruleHeight);
     // soft warm band
     const band = document.createElementNS(NS, "rect");
     band.setAttribute("x", String(r.left));
@@ -487,12 +527,12 @@ function drawReadingPill(rects: Iterable<DOMRect>, options: { dark?: boolean; st
     if (!(r.width > 0) || !(r.height > 0)) continue;
     const rect = document.createElementNS(NS, "rect");
     // a touch of horizontal breathing room so the token reads as a pill around the word, not a tight box
-    const padX = Math.min(3, r.height * 0.12);
+    const padX = Math.min(TRACK_SHAPE.pillPadMax, r.height * TRACK_SHAPE.pillPad);
     rect.setAttribute("x", String(r.left - padX));
     rect.setAttribute("y", String(r.top));
     rect.setAttribute("width", String(r.width + padX * 2));
     rect.setAttribute("height", String(r.height));
-    rect.setAttribute("rx", String(Math.min(6, r.height * 0.22))); // design ~.28em rounded token
+    rect.setAttribute("rx", String(Math.min(TRACK_SHAPE.pillRadiusMax, r.height * TRACK_SHAPE.pillRadius)));
     g.append(rect);
   }
   return g;
@@ -670,6 +710,57 @@ interface OpenOptions {
 const MARKS = "\\u0610-\\u061A\\u064B-\\u065F\\u0670\\u06D6-\\u06DC\\u06DF-\\u06E4\\u06E7\\u06E8\\u06EA-\\u06ED";
 const TASHKIL = new RegExp(`[${MARKS}]`);
 const TASHKIL_SPLIT = new RegExp(`([${MARKS}]+)`);
+
+// DIGITS, MARKED WITHOUT TOUCHING THE BOOK.
+//
+// THE FIRST VERSION WRAPPED THEM IN SPANS, AND THAT WAS WRONG. Measured on a real library through
+// foliate's own `select(cfi)`: of six existing highlights in an Arabic book, ONE resolved to its
+// recorded text with the wrappers in place and SIX resolved correctly once they were removed. The
+// spans split text nodes, which shifts the child-step indices and text offsets a CFI is made of, so
+// every highlight, bookmark, resume position and TTS range recorded before the feature existed moved
+// to the wrong words. Nothing errored; the highlight simply landed somewhere else.
+//
+// This file already states the rule, at the reference-rule note in `injectedCss`: a mark "mutates
+// NOTHING in the book, so foliate's CFI child-step indices stay untouched and every stored bookmark,
+// resume position, highlight and TTS range keeps resolving". The wrapper broke that invariant.
+//
+// The CSS Custom Highlight API keeps it: a `Highlight` is a set of live `Range`s registered on the
+// window, styled through `::highlight(sard-num)`. The DOM is not touched at all — no nodes added, no
+// text split — so CFIs are exactly what they were. Its styleable set is text-only (colour,
+// background-colour, text-decoration, text-shadow), which is why the reference rule could not use it;
+// COLOUR is all a number ink needs, so the limit does not bite here.
+const DIGITS = "0-9\u0660-\u0669\u06F0-\u06F9";
+const NUMERAL_RUN = new RegExp(`[${DIGITS}]+`, "g");
+
+function markNumbers(doc: Document): void {
+  const win = doc.defaultView as (Window & {
+    CSS?: { highlights?: Map<string, unknown> };
+    Highlight?: new (...ranges: Range[]) => unknown;
+  }) | null;
+  // Absent on an engine without the API: the digits simply inherit, exactly as before the feature.
+  if (!win?.CSS?.highlights || typeof win.Highlight !== "function") return;
+  const body = doc.body;
+  if (!body) return;
+
+  const walker = doc.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+  const ranges: Range[] = [];
+  let n: Node | null;
+  while ((n = walker.nextNode())) {
+    const text = (n as Text).data;
+    if (!text) continue;
+    NUMERAL_RUN.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = NUMERAL_RUN.exec(text))) {
+      const r = doc.createRange();
+      r.setStart(n, m.index);
+      r.setEnd(n, m.index + m[0].length);
+      ranges.push(r);
+    }
+  }
+  // `set` REPLACES, so running this again on the same document is idempotent by construction —
+  // there is no accumulating layer and no guard flag to get wrong.
+  win.CSS.highlights.set("sard-num", new win.Highlight(...ranges));
+}
 
 function wrapTashkil(doc: Document): void {
   const body = doc.body;
@@ -873,6 +964,50 @@ export interface TocSectionEntry {
 
 /** Where a TOC anchor sits relative to what the reader can currently see. */
 export type AnchorPosition = "passed" | "visible" | "ahead" | "missing";
+
+/**
+ * A section's OWN heading — the one rule, shared by the synthesised contents (`getSynthesisedToc`)
+ * and by the front-matter name below, so the two can never come to disagree about what a section is
+ * called. Only the heading is read; the section's text is deliberately never touched, because a label
+ * derived from a book's opening sentence would look like a title the author wrote, and none exists.
+ */
+export function sectionHeading(doc: Document | null | undefined): string {
+  const h = doc?.body?.querySelector("h1,h2,h3,h4,h5,h6");
+  return (h?.textContent ?? "").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * RESILIENCE-1 (NAV-3, corrected) — how a position BEFORE the book's first contents entry is named.
+ *
+ * A cover, a title page, a copyright page, a dedication and a readable table of contents are all
+ * ordinary linear reading content that a book's own contents list routinely omits. None of them is
+ * Chapter 1, and the fact that Chapter 1 is the next entry does not make any of them it — which is
+ * precisely what the first version of this rule concluded, by returning the first entry AFTER the
+ * section.
+ *
+ * So such a position is named after ITSELF and belongs to no contents row: the caller publishes the
+ * name with a null href, which keeps RAWY-287's `tocIndex` at `-1` and leaves the Contents panel
+ * correctly highlighting nothing.
+ *
+ * `heading` is a THUNK so the document is only read when the answer actually depends on it — this
+ * runs on relocate, and for a book whose contents point nowhere the answer is null without looking.
+ *
+ * Returns null when:
+ *   · the contents point nowhere (`firstContentsSection` is null) — such a book belongs entirely to
+ *     `getSynthesisedToc`, and inventing a second naming path here would give it two;
+ *   · the position is at or after the first entry — foliate's own answer stands, untouched;
+ *   · the section has no heading — it simply has no name, and the chrome says so neutrally. Nothing
+ *     is invented to fill the gap.
+ */
+export function frontMatterName(
+  index: number,
+  firstContentsSection: number | null,
+  heading: () => string,
+): string | null {
+  if (firstContentsSection === null) return null;
+  if (index >= firstContentsSection) return null;
+  return heading() || null;
+}
 
 /**
  * RESILIENCE-1 (NAV-2) — the active-entry rule, as a pure function.
@@ -1094,6 +1229,192 @@ function markInBodyHeading(doc: Document, tocLabel: string | null): void {
 // `style="text-align:center"` and the `[align=center]`/`<center>` presentational hints. It is also the
 // guard that keeps the book's centred poetry intact the day that stylesheet defect is fixed, at which
 // point the hardened !important alignment above would otherwise flatten every centred block.
+// PROSE WITH NO BLOCK CONTAINER — give the typography selectors something they can match.
+//
+// The four reader controls (leading, alignment, paragraph spacing, first-line indent) are written
+// against container ELEMENTS: p, li, blockquote, div. A .txt-to-EPUB conversion need not produce any of
+// them — the whole chapter can be bare text nodes in <body>, split by <br>, with <span> for styling.
+// MEASURED on such a book: line-height computed `normal`, text-align `start`, text-indent `0px`, and
+// dragging every slider from one end to the other moved not a single rendered line box, while the same
+// settings moved all of them on a conventional <p> book. See the table in `injectedCss.ts`.
+//
+// WHY A DOM PASS AND NOT A SELECTOR. There is no CSS selector for "an element that directly contains
+// text": `:has()` matches elements, never text nodes. The condition is therefore decided here and handed
+// to CSS as a class — the same device `markBookAlignedBlocks`, `markParagraphDirection` and
+// `markEmptyParagraphs` already use. A class is an ATTRIBUTE, so no node is added, removed or moved:
+// CFIs, Ranges, highlights, references, replacements, search hits and speech units all stay valid, and
+// selection is untouched. Nothing is normalised or rewritten.
+//
+// WHAT IS TAGGED. For each text node carrying real content, the nearest ancestor that is not `display:
+// inline` — the block container the text is actually laid out in, which for `<body>text</body>` and for
+// `<body><span>text</span></body>` alike is the BODY. It is tagged only if the existing selectors do not
+// already cover it, and never if it is a HEADING: the book's heading typography is deliberately left
+// alone, and tagging an <h2> would hand it the reader's body leading and indent.
+//
+// A CONVENTIONAL BOOK TAGS NOTHING. Its prose sits in <p>, which is covered, so the set comes back empty
+// and not one element gains a class — the regression guarantee holds by construction, not by care.
+//
+// KNOWN LIMIT — PARAGRAPH SPACING ON <br>-SEPARATED RUNS. Leading, alignment and indent all INHERIT, so
+// tagging the real container reaches the text (measured: leading 34 to 59.06px, ragged edge 59 to 0px,
+// indent +34px). `margin-block` does not inherit and needs a box, and <br>-separated runs are one block
+// with no paragraph boxes in it. Three CSS-only mechanisms were measured and all three failed to move
+// the gap: a margin on the host (34 to 34px), `br { display: block; margin-block-end }` (34 to 34px) and
+// `br { display: block; height }` (34 to 34px) — Chromium generates no box for a <br> whatever `display`
+// computes to. Manufacturing one means wrapping the runs in real elements, which changes the DOM and
+// breaks every CFI recorded against the section, so it is deliberately NOT done.
+const TEXT_HOST_SKIP = new Set([
+  // already covered by the element selectors in `injectedCss`
+  "p", "li", "blockquote", "div",
+  // the book's own heading typography is deliberately never touched
+  "h1", "h2", "h3", "h4", "h5", "h6",
+  // carry text nodes that are never rendered as prose
+  "script", "style", "title", "template", "head",
+]);
+// Fallback for the case where computed style is unavailable: a frame that is genuinely not laid out
+// returns empty strings in Chromium, and `display === "inline"` would then be false for EVERY element —
+// which would tag the immediate <span> parent instead of the block that actually contains the line
+// boxes, and `text-align` on an inline box does nothing at all. These are the HTML elements that are
+// inline by default; anything else is treated as a container.
+const INLINE_BY_DEFAULT = new Set([
+  "a", "abbr", "b", "bdi", "bdo", "br", "cite", "code", "data", "dfn", "em", "i", "kbd", "mark", "q",
+  "rp", "rt", "ruby", "s", "samp", "small", "span", "strong", "sub", "sup", "time", "u", "var", "wbr",
+  "img", "picture", "audio", "video", "font", "big", "tt", "strike", "acronym", "nobr",
+]);
+
+function markTextHosts(doc: Document): void {
+  const win = doc.defaultView;
+  if (!win || !doc.body) return;
+  const frame = win.frameElement as HTMLElement | null;
+  const hidden = frame?.style.display === "none";
+  try {
+    // foliate measures with the frame briefly displayed (computed style inside a `display:none` iframe
+    // cannot be trusted in every engine); do the same, for the same reason — see the fallback above.
+    if (frame && hidden) frame.style.display = "block";
+    const inlineCache = new Map<Element, boolean>();
+    const isInline = (el: Element): boolean => {
+      const seen = inlineCache.get(el);
+      if (seen !== undefined) return seen;
+      let inline: boolean;
+      try {
+        const d = win.getComputedStyle(el).display;
+        inline = d ? d === "inline" : INLINE_BY_DEFAULT.has(el.localName);
+      } catch {
+        inline = INLINE_BY_DEFAULT.has(el.localName);
+      }
+      inlineCache.set(el, inline);
+      return inline;
+    };
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, {
+      acceptNode: (n: Node) =>
+        NEVER_RENDERED.has(n.parentElement?.localName ?? "") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+    });
+    const hosts = new Set<HTMLElement>();
+    let n: Node | null;
+    while ((n = walker.nextNode())) {
+      if (!(n.textContent ?? "").trim()) continue; // whitespace between blocks is not prose
+      let el: HTMLElement | null = n.parentElement;
+      while (el && isInline(el)) el = el.parentElement;
+      if (!el || TEXT_HOST_SKIP.has(el.localName)) continue;
+      hosts.add(el);
+    }
+    for (const el of hosts) el.classList.add(TEXT_HOST_CLASS);
+  } catch {
+    /* observation only: a book that throws here keeps exactly today's behaviour */
+  } finally {
+    if (frame && hidden) frame.style.display = "none";
+  }
+}
+
+// PARAGRAPH SPACING FOR PROSE THAT HAS NO PARAGRAPHS.
+//
+// `markTextHosts` gives leading, alignment and indent somewhere to land, because all three INHERIT.
+// Paragraph spacing does not: `margin-block` needs a BOX, and a chapter written as <br>-separated runs
+// is ONE block with no paragraph boxes in it. Six CSS-only mechanisms were measured against the real
+// engine and all six failed (see the note on PARA_BREAK_CLASS): Blink builds a `LayoutBR` for <br> and
+// discards `display` on it — the computed value reads `block` while layout ignores it.
+//
+// So the box has to be real, and that means touching the DOM. THREE PROPERTIES MAKE THAT SAFE, and all
+// three were measured before this was written rather than argued afterwards:
+//
+//   1. ELEMENT FOR ELEMENT. One <br> becomes one <span>, in the same position, with no children. A CFI
+//      child step counts NODES, not tag names, so no index anywhere in the document moves. MEASURED:
+//      the CFIs over four fixed slices are byte-identical across the swap
+//      (`epubcfi(/6/2!/4,/1:5,/1:40)` before and after), and CFIs recorded BEFORE the swap still
+//      resolve after it. The body's text is unchanged — neither node contributes any.
+//   2. UNCONDITIONAL. The swap does NOT depend on the spacing value; only the CSS height does. Making
+//      it conditional would mean the DOM changed shape whenever the slider moved, and every CFI stored
+//      against the section would shift under the reader. At height 0 the box collapses and the layout
+//      is exactly what <br> gave (measured: the gap equals the ordinary line advance).
+//   3. PRECEDENTED. `wrapTashkil` already SPLITS text nodes and inserts <span>s into this same document
+//      on every section load, before any CFI is generated. Structural transformation is how this reader
+//      already works; this one is strictly smaller — it moves no text at all.
+//
+// SCOPE: only a <br> that is a DIRECT CHILD of a tagged host. A <br> inside a <p> is a line break within
+// a paragraph — a poem's line ending, an address — and must stay one. MEASURED: a <br> inside a <p>
+// inside a tagged host does NOT match the child combinator, while a descendant selector WOULD have
+// caught it, which is why the child relationship is the rule rather than a convenience.
+//
+// RUNS AND EDGES (measured, not assumed — see the counts inside). A run of consecutive <br> is ONE
+// paragraph boundary plus the blank lines the author asked for, so only the first of a run becomes a
+// spacing box; and a run with no content on one side of it is not a boundary at all, so it is left
+// untouched. Both rules keep the reader's paragraph spacing applied exactly once per real boundary.
+//
+// Idempotent: a converted run begins with the box rather than a <br>, so a second pass finds no run
+// whose first element is a <br> in a position it would convert.
+function markParagraphBreaks(doc: Document): void {
+  if (!doc.body) return;
+  try {
+    for (const host of doc.querySelectorAll<HTMLElement>(`.${TEXT_HOST_CLASS}`)) {
+      // Walk the host's own child NODES, so whitespace between two <br> is seen for what it is —
+      // formatting, not content — and the two still count as consecutive.
+      const kids = [...host.childNodes];
+      const isBr = (n: Node) => n.nodeType === 1 && (n as Element).localName === "br";
+      const isBlank = (n: Node) => n.nodeType === 3 && !(n.textContent ?? "").trim();
+      /** Is there real content between `from` and `to` (exclusive), in that direction? */
+      const hasContentOutside = (from: number, dir: -1 | 1) => {
+        for (let i = from + dir; i >= 0 && i < kids.length; i += dir) {
+          const n = kids[i];
+          if (isBlank(n) || isBr(n)) continue;
+          if (n.nodeType === 3) return true;                       // a real text node
+          if (n.nodeType === 1) return !!(n.textContent ?? "").trim() || (n as Element).localName === "img";
+        }
+        return false;
+      };
+
+      // Group maximal runs of consecutive <br>, then decide what each RUN means.
+      for (let i = 0; i < kids.length; i++) {
+        if (!isBr(kids[i])) continue;
+        let end = i;
+        for (let j = i + 1; j < kids.length; j++) {
+          if (isBr(kids[j])) { end = j; continue; }
+          if (isBlank(kids[j])) continue;
+          break;
+        }
+        // A PARAGRAPH BREAK SEPARATES TWO PARAGRAPHS. A run with nothing to separate on one side —
+        // the trailing <br> a converter leaves at the end of a chapter, or a leading one — is not a
+        // boundary at all, and turning it into one adds a gap where the text has already stopped.
+        // Left exactly as the book wrote it: no element is touched, so this case cannot even in
+        // principle disturb a CFI.
+        if (hasContentOutside(i, -1) && hasContentOutside(end, 1)) {
+          // ONE BOUNDARY PER RUN, whatever its length. MEASURED across the reader's own library:
+          // 5266 runs of a single <br> against 29 of two, 5 of three and 5 of five — a single <br>
+          // IS the paragraph separator in these books, so a run of N means one boundary plus N-1
+          // blank lines the author asked for. Converting every <br> would apply the reader's
+          // paragraph spacing N times, which is the doubling this fixes; converting none would throw
+          // the author's extra separation away. So the FIRST becomes the spacing box and the rest
+          // stay ordinary <br>, still breaking their lines at the book's own leading.
+          const box = doc.createElement("span");
+          box.className = PARA_BREAK_CLASS;
+          (kids[i] as Element).replaceWith(box);
+        }
+        i = end;
+      }
+    }
+  } catch {
+    /* observation only: a book that throws here keeps exactly today's behaviour */
+  }
+}
+
 function markBookAlignedBlocks(doc: Document, dir?: string): void {
   const root = doc.documentElement;
   if (!root) return;
@@ -1109,7 +1430,13 @@ function markBookAlignedBlocks(doc: Document, dir?: string): void {
     if (frame && hidden) frame.style.display = "block";
     // Two passes: read EVERY computed value first, tag second. Adding a class invalidates style for
     // that subtree, so interleaving the two would force a fresh style resolve on each read.
-    const blocks = doc.querySelectorAll<HTMLElement>("p, li, blockquote, div, td, th, dd, dt");
+    // `.sard-text-host` is in this list because `markTextHosts` has just made those elements targets
+    // of the forced alignment. Without it, a no-block book that centres its <body> would keep that
+    // intent today (nothing matched it) and lose it the moment the host class starts matching — the
+    // exact regression this measurement exists to prevent, arriving through the new selector.
+    const blocks = doc.querySelectorAll<HTMLElement>(
+      `p, li, blockquote, div, td, th, dd, dt, .${TEXT_HOST_CLASS}`,
+    );
     const keep: HTMLElement[] = [];
     for (const el of blocks) {
       const ta = win.getComputedStyle(el).textAlign;
@@ -1136,6 +1463,171 @@ function alignNeutralLines(doc: Document, dir?: string): void {
   }
 }
 
+/**
+ * THE BOOK'S OWN NOTES — detected by the engine, not by us.
+ *
+ * `public/foliate-js/footnotes.js` carries a two-tier detector Sard has never used. The first tier is
+ * the standard: `epub:type` of noteref/biblioref/glossref, or the matching ARIA role. The second is a
+ * heuristic for books that declare nothing — a link that IS superscript (or whose only child, or whose
+ * parent, is) and is NOT a backlink. Surveyed across this library, 34 note references are declared and
+ * 103 are found only by the heuristic, so both tiers are needed to serve the books that are actually
+ * on the shelf.
+ *
+ * It is loaded the way `ensureFoliateDefined` loads the engine, and for the same stated reason: Vite's
+ * import analysis rejects a static import from `public/`, so the specifier is kept opaque to it. The
+ * module is fetched ONCE and cached on the module scope.
+ *
+ * WHY IT IS PRELOADED RATHER THAN AWAITED AT THE CLICK. `view.js` emits the link event cancelably —
+ * `Promise.resolve(this.#emit('link', …, true)).then(x => x ? this.goTo(href) : null)` — so a listener
+ * suppresses navigation only by calling `preventDefault()` SYNCHRONOUSLY. Awaiting a module inside the
+ * listener would return first and the page would navigate anyway. So the handler is built while the
+ * book opens; a tap that somehow beats it simply navigates as it always did.
+ */
+let footnoteModule: { FootnoteHandler: new () => EventTarget & { handle(book: unknown, e: Event): unknown } } | null = null;
+/** The reading document's own base size. MEASURED out of a rendered book: html, body and p all
+ *  compute to 16px, and the reader's size control rides on top of it as `zoom`. */
+const NOTE_BASE_PX = 16;
+/** A read-aloud unit set built from a NOTE, not from a spine section. No section index can equal it,
+ *  which is what keeps `showReadingHighlight` from painting a note's sentence over the book's text. */
+const NOTE_UNITS_INDEX = -7;
+
+/**
+ * THE ENGINE'S OWN OVERLAY, for a surface the engine does not render.
+ *
+ * `overlayer.js` is where every mark in this application is drawn: a highlight, the read-aloud
+ * spotlight, the word pill, a search flash. It is also, read plainly, document-agnostic — it owns an
+ * SVG, takes any `Range`, asks it for `getClientRects()` and hands those rects to a draw function. It
+ * has no idea which document the range came from.
+ *
+ * That is exactly what a note needs. A note is drawn by the application, outside the reading frame, so
+ * `view.addAnnotation` cannot reach it: `#getOverlayer(index)` looks for the SECTION's overlayer among
+ * the rendered contents and finds nothing, which is why a highlight made in a note was stored and never
+ * shown. Giving the note its own instance of the same class means the same `drawHighlight` and the same
+ * `drawReadingSpotlight` paint it — the same ink, the same density resolver, the same spotlight
+ * palette — rather than a second annotation system that would have to be kept in step by hand.
+ *
+ * Loaded exactly like `footnotes.js`, and for the same two reasons: it lives in `public/`, which import
+ * analysis refuses as a literal, and the shipped application serves `script-src 'self'` with no
+ * `'unsafe-eval'`, so the specifier is computed rather than evaluated.
+ */
+// Written with PROPERTY signatures rather than method ones on purpose: `readerSurface.test.ts` reads
+// this file as text to find the engine's public members, and a method declared at member indentation is
+// exactly what it looks for. An interface's members are not the engine's surface, and this shape keeps
+// the guard honest without weakening it.
+interface NoteOverlayer {
+  element: SVGElement;
+  add: (key: string, range: Range, draw: (r: Iterable<DOMRect>, o: never) => SVGGElement, options?: unknown) => void;
+  remove: (key: string) => void;
+  redraw: () => void;
+  /** The same registry lookup the page's overlayer offers, and the reason a note's marks can answer a
+   *  gesture without a second hit-testing scheme of their own. */
+  hitTest: (p: { x: number; y: number }) => [string?, MarkGeometry?];
+}
+let overlayerModule: { Overlayer: new () => NoteOverlayer } | null = null;
+async function ensureOverlayerModule(): Promise<typeof overlayerModule> {
+  if (overlayerModule) return overlayerModule;
+  const url = new URL("/foliate-js/overlayer.js", location.origin).href;
+  overlayerModule = await import(/* @vite-ignore */ url);
+  return overlayerModule;
+}
+
+/** The note overlay's reserved keys. Namespaced so a note's marks can never collide with the book's. */
+const NOTE_READ_KEY = "sard-note-reading";
+const NOTE_WORD_KEY = "sard-note-word";
+const NOTE_HL_PREFIX = "sard-note-hl:";
+
+async function ensureFootnoteModule(): Promise<typeof footnoteModule> {
+  if (footnoteModule) return footnoteModule;
+  // THE SPECIFIER IS COMPUTED, AND IT MUST NOT BE A LITERAL OR AN EVAL.
+  //
+  // Two constraints meet here, and they rule out the obvious answers between them.
+  //
+  // A LITERAL is refused by import analysis: "This file is in /public and will be copied as-is during
+  // build without going through the plugin transforms, and therefore should not be imported from
+  // source code." `@vite-ignore` does not lift that — the specifier is still resolved before the
+  // comment is considered. This is the same rule the header of this file records for `view.js`, which
+  // is why the engine is loaded through a script tag rather than an import.
+  //
+  // AN EVAL is refused by the shipped application. `new Function` was the first answer here, and it
+  // was wrong in the way that is hardest to catch: it worked in development, where no CSP applies,
+  // and failed in the release, which serves `script-src 'self'` with no `'unsafe-eval'`. MEASURED in
+  // a release build — a `script-src` violation with blockedURI "eval" fired the moment a book
+  // opened, the rejection was swallowed below, and every note reference navigated exactly as it had
+  // before the feature existed. Nothing in the console said so, and nothing on screen changed.
+  //
+  // A URL built from `location` is opaque to import analysis for the same reason the eval was, and it
+  // is ordinary code that no content policy has an opinion about. The engine is already on the page by
+  // this point, so this resolves against the app origin exactly as `view.js` does.
+  const url = new URL("/foliate-js/footnotes.js", location.origin).href;
+  footnoteModule = await import(/* @vite-ignore */ url);
+  return footnoteModule;
+}
+
+/**
+ * A note the reader asked for — as CONTENT, not as a living view.
+ *
+ * The engine renders each note into a `<foliate-view>` of its own, and that view is the wrong thing to
+ * keep. Measured, holding one is a losing game: it is created detached (so it never loads until
+ * something attaches it), it re-creates its document when it is moved, and stylesheets written into
+ * that document are discarded with it — five different attempts to dress it were each provably made
+ * and each provably lost. What the engine offers at `render`, in the same tick, is the finished
+ * extraction as an ELEMENT: measured on a real book, `<dl id="note_1" class="footnote">…`, 495
+ * characters, already complete.
+ *
+ * So Sard takes the HTML and drops the view. Detection, href resolution and extraction — the parts
+ * worth having — are still entirely the engine's. Presentation becomes Sard's, which is what makes the
+ * note inherit the reading surface rather than approximate it.
+ */
+export interface FootnoteHit {
+  /** The extracted note, as the engine produced it. Never modified — only sanitised for safety. */
+  html: string;
+  /** The note's href, for the escalation path — the same target the link would have navigated to. */
+  href: string;
+  /** footnote | endnote | biblioentry | definition | note | null — the engine's own classification. */
+  type: string | null;
+  /**
+   * The reference's own text — "1", "78". The note surface opens with it, which is how the reader
+   * knows the leaf in front of them belongs to the numeral they just touched.
+   *
+   * It replaced a screen rectangle. The note used to be pinned to the word, and a pinned surface can
+   * never be more than a tooltip: it moves with every reference, it cannot be given the reading
+   * measure, and it shrinks to whatever space is left beside the tap. The surface is composed now
+   * rather than positioned, so WHERE the reference sits stopped being interesting and WHICH one it is
+   * started being.
+   */
+  marker: string;
+  /** The section the reader is IN — the book-relative path of the document that carried the
+   *  reference. A link inside a note that leads back here leads nowhere; see `resolveNoteLink`. */
+  sourcePath: string;
+}
+
+/**
+ * The reading surface's own measurements, for a note rendered OUTSIDE the book document.
+ *
+ * The note is drawn in the application's document now, so it cannot inherit the book's sheets. These
+ * are the same numbers those sheets are built from, handed over so one resolver decides both and the
+ * note cannot drift from the page it belongs to.
+ */
+export interface NotePresentation {
+  fontFamily: string;
+  /** The reading document's own base, measured at 16px on html/body — see NOTE_BASE_PX. */
+  fontSize: string;
+  /** The size control, applied the way the book applies it: as `zoom` on the container, not by
+   *  multiplying the base. Keeping the same model is what lets a note be compared to the page. */
+  zoom: number;
+  lineHeight: string;
+  direction: "rtl" | "ltr";
+  textAlign: string;
+  /** The @font-face sheet the note needs, since the application document never declares book faces. */
+  faceCss: string;
+  /** The reading INK and PAPER, resolved exactly as the book's own sheets resolve them, because a note
+   *  is drawn on a sheet of the same paper rather than on a panel of interface colour. */
+  ink: string;
+  paper: string;
+  accent: string;
+  muted: string;
+}
+
 async function ensureFoliateDefined(): Promise<void> {
   if (customElements.get("foliate-view")) return;
   await new Promise<void>((resolve, reject) => {
@@ -1158,8 +1650,7 @@ async function ensureFoliateDefined(): Promise<void> {
 // boundary feels too heavy/light. 140 ms (RAWY-26, down from 220): still well above the gap
 // between wheel events inside one continuous scroll (~16–80 ms), so same-gesture chaining is
 // still blocked, but a deliberate second flick advances more readily (lighter).
-const BOUNDARY_PAUSE_MS = 140;
-const BOUNDARY_EDGE_PX = 4;
+// Both live in `wheelBoundary.ts` now, beside the one decision that reads them.
 // RAWY-250: how close to a section's top still counts as "entered at the beginning" (scrolled flow). A
 // natural advance / TOC click / resume-at-top lands at exactly 0; a mid-chapter jump lands hundreds of px in.
 // Deliberately small — this gate exists to keep a mid-chapter jump from marking a chapter read.
@@ -1226,7 +1717,7 @@ function normChar(ch: string): string {
 // pre/match/post is exact, so we re-find it here, tolerantly: normalise both sides (drop whitespace +
 // tashkil, RAWY-88's `normalizeForSearch`) so diacritics/spacing can't defeat the match, using the
 // pre/post context to pick the right occurrence, then map the normalised hit back to a real DOM Range.
-function findMatchRange(doc: Document, pre: string, match: string, post: string): Range | null {
+function findMatchRange(doc: Document, pre: string, match: string, post: string, root?: Element): Range | null {
   const m = match ?? "";
   if (!m) return null;
   const preW = (pre ?? "").slice(-40); // a context window keeps the needle unique without being unwieldy
@@ -1241,7 +1732,7 @@ function findMatchRange(doc: Document, pre: string, match: string, post: string)
   const nodes: Text[] = [];
   const offs: number[] = [];
   try {
-    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+    const walker = doc.createTreeWalker(root ?? doc.body, NodeFilter.SHOW_TEXT);
     let n: Node | null;
     while ((n = walker.nextNode())) {
       const t = n as Text;
@@ -1339,6 +1830,29 @@ if (typeof globalThis !== "undefined") {
 
 export class FoliateController {
   private view: any | null = null;
+  /**
+   * Is `view` a view that can actually be NAVIGATED?
+   *
+   * `view` alone cannot answer that, and the gap is not cosmetic. The element is assigned to
+   * `this.view` BEFORE `view.open()` is awaited, and `prev`/`next` are prototype methods on foliate's
+   * `View extends HTMLElement` — present from `createElement`, long before a book is. So on a view
+   * that is still opening, or that failed to open, `this.view?.prev?.()` passes BOTH optional chains
+   * and calls a real method whose entire body is:
+   *
+   *     async prev(distance) { await this.renderer.prev(distance) }        // view.js:513
+   *
+   * `renderer` belongs to the open that has not finished. That is the whole of the reported
+   * `TypeError: Cannot read properties of undefined (reading 'prev')`.
+   *
+   * Optional chaining proves a METHOD EXISTS. Only this proves the view is LOADED. The two look
+   * identical at the call site, which is why the guard that was there did not guard anything.
+   *
+   * It is set at the very END of `open()` rather than when the renderer appears, because there is a
+   * SECOND window between those two points: the renderer exists but its sections do not, and an
+   * arrow landing there throws from inside foliate instead
+   * (`paginator.js:1062  this.sections[index].load()`). Measured, both windows threw.
+   */
+  private navReady = false;
   private style: ReadingStyle | null = null;
   private theme: Theme | undefined = undefined;
   private flags: BookThemeFlags = { overrideBookColor: false, hideChapterTitles: false, hideFirstLine: false };
@@ -1347,6 +1861,8 @@ export class FoliateController {
   private relocateCb: ((info: RelocateInfo) => void) | null = null;
   // Highlights (RAWY-20): cfi → semantic colour slot; re-applied per section render.
   private annotations = new Map<string, string>();
+  /** RAWY deposits (phase 3): notified once a section's rendered document exists. */
+  private sectionRenderedCb: ((index: number) => void) | undefined = undefined;
   // RAWY-259: each highlight’s OWN ink density, keyed by the same CFI as `annotations`. Absent = follow
   // the theme default (every highlight made before the feature), so the map stays empty until a reader
   // actually sets a density and nothing about the untouched case changes.
@@ -1409,6 +1925,7 @@ export class FoliateController {
   dispose(): void {
     const v = this.view;
     this.view = null;
+    this.navReady = false;
     this.annotations.clear();
     // RAWY-FINAL: release everything that holds a reference INTO a section document, so closing a book
     // (or switching one) cannot pin the outgoing book's DOM. `refRanges` holds Ranges; `contentDoc` /
@@ -1483,6 +2000,7 @@ export class FoliateController {
 
     const view = document.createElement("foliate-view") as any;
     this.view = view; // claim ownership before awaits; a later open() will replace this
+    this.navReady = false; // ownership is not readiness — nothing may navigate until this open finishes
     container.replaceChildren(view);
 
     // DIAGNOSTIC BUILD ONLY — stages 5-7. `view.open()` is where the book is fetched, the format is
@@ -1538,6 +2056,18 @@ export class FoliateController {
       diagStageFail("controller.open", e, { source: String(source).slice(0, 200) });
       rStageFail("book.opened", e, { source: String(source).slice(0, 200) }); // DIAGNOSTIC BUILD ONLY
       void diagProbeChain("view.open() threw");
+      // RELEASE A VIEW THAT COULD NOT BE OPENED.
+      //
+      // Every other member reaches the view through `this.view?.…`, so holding a half-built element
+      // here quietly disarmed all of them at once, not only paging. Dropping it restores the
+      // invariant the rest of the class already assumes — `this.view` is non-null only when it is a
+      // view that opened — and detaches the element, so a dead <foliate-view> cannot sit under the
+      // error card still holding its own listeners.
+      if (this.view === view) {
+        this.view = null;
+        this.navReady = false;
+      }
+      try { view.remove(); } catch { /* already detached */ }
       throw e;
     }
     if (this.view !== view) return; // superseded by a newer open()
@@ -1549,11 +2079,39 @@ export class FoliateController {
     // was why RAWY-85's PDF was stuck: no chevrons + a scroll no-op).
     const fxl = this.isFixedLayout;
     this.scrolledMode = !fxl && opts.flow !== "paged";
-    if (!fxl) view.renderer.setAttribute("flow", this.scrolledMode ? "scrolled" : "paginated");
+    if (!fxl) {
+      view.renderer.setAttribute("flow", this.scrolledMode ? "scrolled" : "paginated");
+      // THE PAGE MARGIN IS SARD'S, AND IT IS ONE MARGIN.
+      //
+      // foliate's paginator carries `--_gap: 7%`, and in SCROLLED flow it spends the whole of it as
+      // padding on the book's own `<html>`: `scrolled()` writes `padding: 0 ${gap}px` with
+      // `!important`, where `gap = -g/(g-1) * size` — 7/93 of the container, 7.53% a side. That is a
+      // column gutter's arithmetic applied where there are no columns.
+      //
+      // MEASURED, at 1440x940 with the reader's own margin set to 16px: the sheet is 1400, the host
+      // 1368 (the 16 a side Sard applies), and inside it `<html>` took 102.968px a side — exactly
+      // 0.075269 x 1368. So 206px of the 1368 went to a margin the reader never asked for, ON TOP of
+      // theirs, and because it is a proportion of the container it does not shrink when the type
+      // grows: at zoom 2.5 the strip was the same 103px and the line simply held fewer words.
+      //
+      // ZERO IN SCROLLED, UNTOUCHED IN PAGED. Sard already insets the host by the reader's own
+      // `marginPx` (`.page-host { inset-inline: var(--page-margin) }`), so in scrolled flow foliate's
+      // gap is a second margin with no control attached to it. In PAGED flow the same number is the
+      // gutter BETWEEN the two columns and half of it is the outer padding — it is doing its real job
+      // there, and collapsing it would run the facing columns together.
+      //
+      // Set through the renderer's own `gap` attribute, which `attributeChangedCallback` forwards to
+      // `--_gap`. No vendored line is touched, and the mechanism is the one RAWY-21 already uses to
+      // drive the measure through the closed shadow boundary.
+      view.renderer.setAttribute("gap", this.scrolledMode ? "0%" : "7%");
+    }
 
     // RAWY-88: seed the spoiler-safe boundary at the resume position + load the CFI comparator (EPUB
-    // only — a PDF has no CFI/whole-book text search). Done before reading starts so relocate can
-    // advance `furthestCfi` synchronously.
+    // only — a PDF has no CFI/whole-book text search).
+    //
+    // THE SEED IS A FLOOR, NOT THE ANSWER. The application owns the furthest-read mark and pushes it
+    // with `setFurthestBoundary` as soon as the book is open; this only ensures that a search run
+    // before it speaks hides the same matches the old behaviour hid, rather than none.
     this.furthestCfi = fxl ? null : (opts.resumeCfi ?? null);
     if (!fxl) await this.ensureCfiCompare();
     if (this.view !== view) return; // superseded during the await
@@ -1563,9 +2121,42 @@ export class FoliateController {
     // RESILIENCE-1 (NAV-2): the per-section TOC grouping belongs to THIS book — clear it on open,
     // or a cross-book follow would refine the new book against the old book's table of contents.
     this.tocBySection = null;
+    this.firstListedSection = undefined; // likewise: where THIS book's contents begin
     this.requestedTocHref = null; // a navigation intent belongs to the book it was made in
     this.forcedDir = opts.dir ?? undefined;
     if (this.forcedDir && view.book) view.book.dir = this.forcedDir;
+
+    // THE BOOK'S OWN NOTES. The handler is built while the book opens, never at the click: the link
+    // event is cancelable only synchronously, so awaiting anything here would let the page navigate
+    // first. A tap that beats the load simply navigates, exactly as it did before this existed.
+    void this.ensureFootnotes();
+    view.addEventListener("link", (e: any) => {
+      const a = e?.detail?.a as HTMLAnchorElement | undefined;
+      if (!a || !this.footnotes || !view.book) return; // not a link we can serve → foliate navigates
+      // Captured BEFORE `handle`, because the engine renders the note asynchronously and the event —
+      // with the element that was tapped — is long gone by the time it emits `render`.
+      //
+      // The MARKER is the reference's own text, trimmed and bounded: a book writes "1" or "78" there,
+      // and one that writes an essay is not going to have it used as a heading.
+      //
+      // The SECTION is where the reader is. `sections[i].id` is the item's own book-relative path,
+      // which is the base every href in that document resolves against.
+      const here = view.renderer?.getContents?.()?.[0]?.index;
+      this.pendingNote = {
+        marker: (a.textContent ?? "").trim().slice(0, 12),
+        sourcePath: typeof here === "number" ? String(view.book.sections?.[here]?.id ?? "") : "",
+      };
+      // `handle` decides. It returns a promise for a reference it claims (having already suppressed
+      // the navigation) and nothing at all for an ordinary link, a backlink, or plain EPUB navigation
+      // — which then behaves exactly as before.
+      const taken = this.footnotes.handle(view.book, e);
+      if (!taken) this.pendingNote = null;
+    });
+
+    // RAWY-FM2: the engine's IMMEDIATE movement signal. The paginator re-dispatches its container's
+    // scroll on itself, undebounced (paginator.js:597), which is the only thing that fires in the frame
+    // the text actually moves — `relocate` behind it is debounced by 250 ms. See `refreshSelectionRect`.
+    view.renderer?.addEventListener("scroll", () => this.refreshSelectionRect());
 
     view.addEventListener("relocate", (e: any) => {
       let fraction = typeof e.detail?.fraction === "number" ? e.detail.fraction : 0;
@@ -1580,25 +2171,32 @@ export class FoliateController {
         const n = this.pdfPageCount;
         if (n > 0) fraction = (pageIdx + 0.5) / n;
       }
-      // RAWY-88: advance the furthest-read boundary (never retreat — re-reading earlier never un-hides
-      // spoiler-safe results). EPUB only; the comparator is preloaded so this stays synchronous.
+      // THE SPOILER-SAFE BOUNDARY IS NO LONGER DECIDED HERE.
+      //
+      // It used to advance on EVERY relocate, which made it "the furthest position ever DISPLAYED".
+      // Two consequences, both wrong once the application grew a real furthest-read mark: opening a
+      // search hit or an annotation in chapter 900 moved the boundary to 900 although the reader had
+      // only looked; and the boundary was in-memory, seeded from the resume position, so closing a
+      // book at chapter 320 after reaching 592 un-hid everything between them on the next open.
+      //
+      // The application already answers this question — one mark, advanced only when the reading
+      // position is genuinely written (never behind a return-anchor freeze) and persisted per book. So
+      // it is TOLD to this engine through `setFurthestBoundary` rather than guessed at again here.
       const cfi = e.detail?.cfi ?? null;
-      if (!fxl && cfi) {
-        if (!this.furthestCfi || (this.cfiCompareFn?.(cfi, this.furthestCfi) ?? 0) > 0) this.furthestCfi = cfi;
-      }
       // RESILIENCE-1 (NAV-2): refine WHICH TOC entry the reader is inside when a section holds more
       // than one. See `refineTocEntry` — foliate's own answer is kept verbatim for every other book.
       const sectionIndex = e.detail?.section?.current;
       const refined = fxl ? null : this.refineTocEntry(sectionIndex, e.detail?.range);
-      // RESILIENCE-1 (NAV-3): a section no TOC entry points at — a cover or a full-page
-      // illustration. foliate reports nothing for it, which left the page belonging to no entry at
-      // all. Only consulted when foliate itself has no answer, so no book that HAS an entry for its
-      // section is affected.
-      const orphan =
+      // RESILIENCE-1 (NAV-3, corrected): a position before the book's first contents entry — a cover,
+      // a title page, a readable table of contents. foliate reports nothing for it, which left the page
+      // belonging to no entry at all; it is now named after its own document rather than after the
+      // chapter that follows it, and it still belongs to no contents row. Only consulted when foliate
+      // itself has no answer, so no book that HAS an entry for its section is affected.
+      const frontMatter =
         !fxl && !refined && !e.detail?.tocItem && typeof sectionIndex === "number"
-          ? this.firstTocEntryAfterSection(sectionIndex)
+          ? this.frontMatterLabel(sectionIndex, e.detail?.range)
           : null;
-      const chosen = refined ?? orphan;
+      const chosen = refined;
       // WP-4F: carry foliate's own position through instead of dropping it. `location.current` can
       // be 0-based or absent depending on the book, so it is only published when it is a real number
       // and the total is positive — a readout that says "0 of 0" is worse than no readout.
@@ -1610,12 +2208,18 @@ export class FoliateController {
       this.relocateCb?.({
         cfi,
         fraction,
-        chapterLabel: chosen?.label ?? e.detail?.tocItem?.label ?? null,
+        // A NAME WITHOUT A ROW, deliberately. `frontMatter` can only be set where foliate has no
+        // entry, and leaving the href null is what keeps RAWY-287's `tocIndex` at -1, so no contents
+        // row is marked active for a page that is inside none of them.
+        chapterLabel: chosen?.label ?? e.detail?.tocItem?.label ?? frontMatter,
         chapterHref: chosen?.href ?? e.detail?.tocItem?.href ?? null,
         location: usable(loc) ? { current: loc.current, total: loc.total } : null,
         section: usable(sec) ? { current: sec.current, total: sec.total } : null,
         pageLabel: e.detail?.pageItem?.label != null ? String(e.detail.pageItem.label) : null,
       });
+      // RAWY-FM2: the reading position moved, so the selection toolbar's anchor is stale. See
+      // `refreshSelectionRect` — this is the only signal foliate surfaces when the text moves.
+      this.refreshSelectionRect();
     });
     view.addEventListener("load", (e: any) => {
       const doc: Document | undefined = e.detail?.doc;
@@ -1690,18 +2294,31 @@ export class FoliateController {
       }
       this.contentDoc = doc; // RAWY-122: kept so clearSelection() can drop a lingering text selection
       wrapTashkil(doc); // enable the diacritics toggle for this section
+      markNumbers(doc); // the number colour, WITHOUT touching the book (see `markNumbers`)
       this.writeFonts(doc); // RAWY-208: this section's @font-face sheet — survives every setStyles
       this.writeDynamic(doc); // RAWY-140: this section's in-place PAINT sheet (colour/tashkīl skip re-inject)
       markInBodyHeading(doc, sectionTocLabel(view, index)); // RAWY-67: hide-titles catches this too
       // RAWY-195: measure the book's OWN alignment and open the alignment gate. Must run before
       // anything paints, and before alignNeutralLines (which sets dir=, not text-align, but keep the
       // pristine document for the measurement anyway).
+      // Must run BEFORE markBookAlignedBlocks: that pass measures the book's own alignment over the
+      // elements the forced rule can reach, and this is what decides which those are.
+      markTextHosts(doc);
+      // After markTextHosts (it needs the host class) and before the alignment measurement, so that
+      // pass reads the document the reader will actually see.
+      markParagraphBreaks(doc);
       markBookAlignedBlocks(doc, this.dir);
       alignNeutralLines(doc, this.dir); // RAWY-134 (A): "…"-only scene breaks follow the book's RTL side
       markParagraphDirection(doc, this.dir); // RAWY-253 (root A): RTL-correct paragraphs mislabeled dir="ltr"
       markEmptyParagraphs(doc, this.dir); // RAWY-253 (root B): collapse scrape-padding empty <p>
       // RAWY-260: mark this section's reference occurrences. Runs ONCE per section render, over this
       // section's own text — the book is never rescanned, so the cost is independent of its length.
+      // Replacements substitute the section's TEXT, so they must land after `wrapTashkil` (which splits
+      // the nodes this holds references to) and before anything that builds a Range over the result.
+      // `markNumbers` already ran above and its Ranges are now stale, so it is re-run — it is idempotent
+      // by construction (`CSS.highlights.set` REPLACES), which is why re-running is the whole fix.
+      this.applyReplacements(doc, index);
+      if (this.repPlans.get(index)?.count) markNumbers(doc);
       this.applyReferences(doc, index);
       // RAWY-70: the two-step reveal for the hide-first-line placeholder. Handled from the parent
       // frame (the content iframe runs no scripts, RAWY-64) via cross-frame DOM access, like the
@@ -1748,7 +2365,7 @@ export class FoliateController {
           ev.preventDefault();
           ev.stopPropagation();
           this.clearSelection();
-          this.selectionCb?.(null);
+          this.emitSelection(null);
           this.showCb?.(hit);
         } catch {
           /* a throw here must not break reading — the gesture is simply not claimed */
@@ -1767,7 +2384,7 @@ export class FoliateController {
         // real text selection so it can't re-fire (the reading frame has focus, so its own Esc is here).
         else if (ev.key === "Escape") {
           this.clearSelection();
-          this.selectionCb?.(null);
+          this.emitSelection(null);
         }
         // RAWY-136: F11 must toggle fullscreen from ANYWHERE, including with focus inside the book.
         // The content iframe is a separate frame, so its keydown does NOT bubble to the parent `window`
@@ -1827,7 +2444,7 @@ export class FoliateController {
       );
       // Selection → in-context toolbar (RAWY-20). Also a tap → wake the chrome (RAWY-72).
       doc.addEventListener("pointerdown", (ev: PointerEvent) => {
-        this.selectionCb?.(null);
+        this.emitSelection(null);
         // RAWY-132: remember the selection as the gesture starts, so pointerup can tell a fresh
         // drag-select from a plain click inside a lingering selection (see below + downSelText).
         this.downSelText = doc.getSelection()?.toString() ?? "";
@@ -1849,7 +2466,7 @@ export class FoliateController {
         // or double-click-a-word → different text) reaches the raise; an unchanged one clears for real.
         if (sel.toString() === this.downSelText) {
           this.clearSelection();
-          this.selectionCb?.(null);
+          this.emitSelection(null);
           return;
         }
         const range = sel.getRangeAt(0);
@@ -1859,7 +2476,7 @@ export class FoliateController {
         } catch {
           return;
         }
-        this.selectionCb?.({ cfi, text, rect: this.rectInParent(range.getBoundingClientRect(), doc), range: range.cloneRange() });
+        this.emitSelection({ cfi, text, rect: this.rectInParent(range.getBoundingClientRect(), doc), range: range.cloneRange() });
       });
     });
 
@@ -1912,7 +2529,7 @@ export class FoliateController {
       const sel = this.contentDoc?.getSelection?.();
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
         this.clearSelection();
-        this.selectionCb?.(null);
+        this.emitSelection(null);
       }
     });
     view.addEventListener("create-overlay", (e: any) => {
@@ -1958,6 +2575,15 @@ export class FoliateController {
     else if (opts.resumeFraction != null && opts.resumeFraction > 0) await view.goToFraction(opts.resumeFraction);
     else if (this.scrolledMode) await view.goToFraction(0); // start at the top of section 0
     else await view.renderer.next();
+
+    // NAVIGABLE FROM HERE, and not one statement earlier. Each branch above awaits the FIRST render,
+    // so this is the first moment a page exists to turn away from. Setting it when the renderer
+    // appeared would have re-opened the second window: `#turnPage` would be entered with
+    // `sections` still empty and throw from `paginator.js:1062` instead — and because that function
+    // takes `#locked` before the throw and releases it outside a `finally`, an early arrow would also
+    // leave page turning permanently dead for that book. Refusing to enter it is the fix; the lock's
+    // own fragility is a vendored defect, recorded separately rather than patched here.
+    if (this.view === view) this.navReady = true;
   }
 
   /** Re-inject the full stylesheet (typography + theme) — the single visual funnel. RAWY-140: this
@@ -2067,7 +2693,8 @@ export class FoliateController {
   /** Update typography (size/font/spacing/margins/align/diacritics). RAWY-140: a change that only
    *  touches PAINT (font colour, tashkīl) is pushed through the in-book dynamic <style> with no
    *  reflow; a GEOMETRY change (fonts/size/spacing/align/flow) still re-injects the full sheet
-   *  (which re-lays-out — inherent). A chrome-only change (margin/page-width) touches neither. */
+   *  (which re-lays-out — inherent). A chrome-only change (page width) touches neither. The MARGIN is
+   *  one or the other depending on the flow — see `marginGeom` below. */
   applyStyle(style: ReadingStyle): void {
     const prev = this.style;
     this.style = style;
@@ -2077,7 +2704,24 @@ export class FoliateController {
       this.applyDynamic();
       return;
     }
-    const geom = GEOMETRY_STYLE_KEYS.some((k) => prev[k] !== style[k]);
+    // THE MARGIN IS GEOMETRY IN SCROLLED FLOW, AND ONLY THERE.
+    //
+    // It was in neither list, on the ground that the margin is chrome-side — the desk publishes
+    // `--page-margin` and `.page-host` insets itself by it, with the sheet untouched. That is true in
+    // PAGED flow and false in scrolled: `global.css` zeroes the host's inline inset under
+    // `.flow-scrolled`, and `buildReadingCss` emits `body { padding-inline: marginPx }` for exactly
+    // that case. So in scrolled flow the margin lives in the SHEET, and nothing ever asked for the
+    // sheet to be rewritten.
+    //
+    // MEASURED, scrolled flow, dragging the margin 8 → 120 → 8 → 160: `--page-margin` followed every
+    // step, `.page-host` stayed 1060px wide throughout (its inset is zeroed), and the book frame kept
+    // the `padding-inline: 40px` it was opened with. The value moved, the page did not — and
+    // reopening the book rebuilt the sheet, which is why it "only worked after leaving the book".
+    //
+    // Gated on the flow so paged reading is untouched: there the sheet does not mention the margin,
+    // so re-injecting would buy a reflow and a repaint for a byte-identical stylesheet.
+    const marginGeom = style.flowMode !== "paged" && prev.marginPx !== style.marginPx;
+    const geom = marginGeom || GEOMETRY_STYLE_KEYS.some((k) => prev[k] !== style[k]);
     const paint = PAINT_STYLE_KEYS.some((k) => prev[k] !== style[k]);
     const track = TRACK_STYLE_KEYS.some((k) => prev[k] !== style[k]);
     const ref = REF_STYLE_KEYS.some((k) => prev[k] !== style[k]); // RAWY-281
@@ -2137,6 +2781,83 @@ export class FoliateController {
   onSelection(cb: (sel: SelectionInfo | null) => void): void {
     this.selectionCb = cb;
   }
+
+  /**
+   * THE SELECTION TOOLBAR FOLLOWS THE SELECTION (RAWY-FM2).
+   *
+   * THE DEFECT, MEASURED. `SelectionInfo.rect` was computed once, at `pointerup`, and never again. The
+   * toolbar is `position: fixed` and that rect is in parent-VIEWPORT coordinates, so the two agree
+   * exactly at the moment of selection and diverge from the first scroll onward. Measured on a long
+   * section, wheeling down and back: the selected text's top moved 222 → 22 → −178 → −578 → 222 with
+   * the scroll, while the toolbar's bottom stayed at 212 throughout. The gap that should have been a
+   * constant −10 px reached +790 px, and returned to −10 only when the scroll returned to 0.
+   *
+   * WHICH SIGNAL, AND WHY NOT `relocate` ALONE. The first version of this fix listened only to
+   * `relocate`, on the strength of a measurement that found no scroll event anywhere. That measurement
+   * was WRONG: it attached listeners to the content document, its window, the parent window and every
+   * DESCENDANT of the renderer — and missed the renderer element itself, which is exactly where the
+   * paginator re-dispatches it (paginator.js:597). `relocate` meanwhile comes from `#afterScroll`,
+   * which the same constructor wraps in `debounce(…, 250)` (paginator.js:598-603), so it arrives a
+   * quarter-second after scrolling STOPS and never during the gesture.
+   *
+   * MEASURED with a per-frame sampler through one ordinary five-step wheel gesture: the selection's own
+   * top moved 347 → 287 → 227 → 167 → 107 → 47, each change landing in the same frame as a `scroll`
+   * event on the renderer (t = 24, 93, 172, 252, 331 ms) — while the toolbar sat at 230 the whole time
+   * and `relocate` did not fire ONCE in the following 1.4 s. That is the reported "lag, then chase":
+   * not a late correction but no correction at all until some later event happened to arrive.
+   *
+   * So the anchor now follows the renderer's own `scroll`, which is undebounced and fires in the frame
+   * the text moves, and `relocate` is KEPT as well — a paged-flow page turn translates the columns
+   * without scrolling the container, and chapter navigation replaces the document altogether.
+   *
+   * The geometry is already correct at that instant: the same sampler shows the range's rect carrying
+   * its new value in the very frame the scroll event fires, so nothing has to be deferred or retried.
+   *
+   * WHY THE RANGE IS ENOUGH. The payload already carries a cloned `Range`, and a clone still references
+   * the live nodes — so its rect is the text's CURRENT position, with no re-selection and no bookkeeping
+   * about what moved. Nothing about the selection itself is touched: the same cfi, the same text, the
+   * same range, so every toolbar action still targets what was selected.
+   *
+   * Re-emits only when the geometry actually changed, so an unmoved reader costs one rect comparison.
+   */
+  private liveSelection: SelectionInfo | null = null;
+
+  private emitSelection(sel: SelectionInfo | null): void {
+    this.liveSelection = sel;
+    this.selectionCb?.(sel);
+  }
+
+  /** Recompute the live selection's anchor. Called whenever the reading position moves. */
+  private refreshSelectionRect(): void {
+    const sel = this.liveSelection;
+    const range = sel?.range;
+    if (!sel || !range) return;
+    try {
+      const doc = range.startContainer?.ownerDocument;
+      if (!doc) return;
+      // RAWY-FM3 — A DOCUMENT CHANGE RETIRES THE SELECTION, where scrolling away does not.
+      //
+      // The toolbar now HOLDS its position when the reader scrolls past the selected words, because
+      // those words are still there and every action still applies to them. Navigating to another
+      // chapter is the different case: the document is replaced, the range is left pointing into
+      // something no longer rendered, and a toolbar offering to highlight it would be offering
+      // nothing. Asked of the renderer rather than inferred from a section number, so it is true for
+      // whatever the engine currently has on screen — and guarded on a non-empty answer, so a
+      // transient gap during a page turn cannot dismiss anything.
+      const contents = this.view?.renderer?.getContents?.() as { doc?: Document }[] | undefined;
+      if (contents?.length && !contents.some((c) => c?.doc === doc)) {
+        this.emitSelection(null);
+        return;
+      }
+      const rect = this.rectInParent(range.getBoundingClientRect(), doc);
+      const was = sel.rect;
+      if (Math.abs(rect.top - was.top) < 0.5 && Math.abs(rect.left - was.left) < 0.5
+        && Math.abs(rect.bottom - was.bottom) < 0.5 && Math.abs(rect.width - was.width) < 0.5) return;
+      this.emitSelection({ ...sel, rect });
+    } catch {
+      // A torn-down frame or a detached range: leave the toolbar where it is rather than break relocate.
+    }
+  }
   /** RAWY-230 (§4): return keyboard focus to the reading frame — so SPACE/arrows reach the reading shortcuts
    *  (onSpace/onArrow) instead of a chrome button that kept focus. Focuses the content iframe element (where a
    *  page click puts focus), falling back to the foliate-view host. */
@@ -2151,11 +2872,34 @@ export class FoliateController {
     }
   }
 
-  /** RAWY-122: drop any live text selection (content frame + parent). Dismissing the selection popover
-   *  used to only HIDE it — the browser selection lingered, so a later pointerup re-fired the toolbar
-   *  and the text stayed visibly selected. Callers clear it on Esc / click-away so a select-to-read is
-   *  effortless to cancel. */
+  /**
+   * RAWY-122: drop any live text selection (content frame + parent). Dismissing the selection popover
+   * used to only HIDE it — the browser selection lingered, so a later pointerup re-fired the toolbar
+   * and the text stayed visibly selected. Callers clear it on Esc / click-away so a select-to-read is
+   * effortless to cancel.
+   *
+   * THE SELECTION IS RETIRED HERE, NOT MERELY UN-DRAWN.
+   *
+   * Dropping the browser's ranges is only half of it. `liveSelection` is the one authoritative
+   * record of the selection the toolbar belongs to, and `refreshSelectionRect` — which runs on every
+   * renderer scroll and every relocate — re-emits from exactly that field. Leaving it set meant a
+   * dismissed selection could be brought back by work that had nothing to do with the reader's
+   * intent: measured, the toolbar returned at the old words after a dismissal and a wait, after a
+   * dismissal and a scroll, and while read-aloud moved the text underneath it.
+   *
+   * Emitting `null` is what makes all of that stale work harmless, rather than racing it: every
+   * delayed callback reads this same field, and an empty field has nothing to resurrect. No timer
+   * and no suppression window is involved, so nothing depends on how long "later" turns out to be.
+   *
+   * A LIVE SELECTION IS UNTOUCHED BY THIS. It is only called to dismiss, and a selection that is
+   * still alive still has its rect refreshed on scroll — which is what keeps the toolbar travelling
+   * with the words it belongs to, and leaving the viewport with them.
+   *
+   * One call site already paired the two by hand (`pointerup`, where an unchanged selection is a
+   * dismiss); pairing them here is what stops the next caller having to remember.
+   */
   clearSelection(): void {
+    this.emitSelection(null);
     try {
       this.contentDoc?.getSelection?.()?.removeAllRanges?.();
     } catch {
@@ -2169,6 +2913,19 @@ export class FoliateController {
   }
   onShowAnnotation(cb: (hit: AnnotationHit) => void): void {
     this.showCb = cb;
+  }
+
+  /**
+   * Surface a highlight hit that did not come from the reading frame.
+   *
+   * The page raises these from its own `dblclick` listener inside the content document; a note is not in
+   * that document, so its gesture is handled where it happens and the hit is published HERE — through
+   * the same callback and therefore into the same editor. The alternative was a second annotation UI,
+   * which is the one thing this must not become.
+   */
+  publishAnnotationHit(hit: AnnotationHit): void {
+    this.emitSelection(null);
+    this.showCb?.(hit);
   }
   /** RAWY-72: receive pointer activity from inside the content frame (parent-viewport coords + a
    *  tap flag) so the reader can wake the auto-hiding chrome on movement/tap over the reading text. */
@@ -2283,24 +3040,106 @@ export class FoliateController {
     this.annotations.set(cfi, color);
     if (alpha == null) this.hlAlpha.delete(cfi);
     else this.hlAlpha.set(cfi, alpha);
+    // The book's own surface, unchanged. For a mark made in a note this draws nothing — the note's
+    // section is not the one on screen, so `#getOverlayer` finds no overlayer — but it still returns
+    // the section's label, which is what files the row in the right place.
     const res = await this.view?.addAnnotation({ value: cfi, color });
-    return res?.label ?? null;
+    this.noteDrawHighlight(cfi, color, alpha ?? this.hlAlpha.get(cfi) ?? null);
+    if (!res) return null;
+    return await this.annotationLabel(res.index, res.label);
   }
+
+  /**
+   * THE SECTION LABEL AN ANNOTATION IS FILED UNDER — one rule, the reader's own.
+   *
+   * WHAT WAS WRONG. A bookmark took the reader's live `chapterLabel`; a highlight took foliate's
+   * `addAnnotation` label, which is `TOCProgress.getProgress(index)?.label ?? ''` (view.js:396). For a
+   * section no contents entry describes, `getProgress` is null and foliate answers `''` — and Sard's
+   * `label ?? state` kept the empty string, because `??` falls back only from null. MEASURED: at one
+   * front-matter position a bookmark recorded "The Title of the Book" while a highlight and a note on
+   * the same page recorded "". Two annotation types, one position, two answers.
+   *
+   * WHY NOT SIMPLY `||`. Because foliate's label is not merely a worse version of the reader's — it is
+   * the answer for the section the ANNOTATION is in, which is not always the section the reader is in.
+   * A selection made inside an open note belongs to the note's document, and `addHighlight` is what
+   * files it in the right place (see the note in that method). Falling back to the reading position
+   * would have mis-filed exactly those marks — the opposite defect, and a quieter one.
+   *
+   * SO THE RULE IS APPLIED TO THE ANNOTATION'S OWN SECTION, and it is the SAME rule, in the same
+   * order, that `relocate` publishes for the reading position:
+   *   · foliate's label — the section's own entry, or the nearest PRECEDING one it inherits;
+   *   · otherwise the section precedes every entry, so `frontMatterName` gives its own heading;
+   *   · otherwise it has no name, and `null` says so — which is what a bookmark already stored.
+   * No second labelling system: `frontMatterName` and `sectionHeading` are the same functions the
+   * reader uses, and nothing here can look forward to a later chapter.
+   */
+  private async annotationLabel(index: unknown, label: unknown): Promise<string | null> {
+    const fromEngine = typeof label === "string" ? label.trim() : "";
+    if (fromEngine) return fromEngine;
+    if (typeof index !== "number") return null;
+    try {
+      return frontMatterName(index, this.firstContentsSection(), () =>
+        sectionHeading(this.sectionDocument(index)));
+    } catch {
+      return null; // a label is never worth breaking the write that carries it
+    }
+  }
+
+  /** The rendered document for a section, when that section is the one on screen. */
+  private sectionDocument(index: number): Document | null {
+    const cs = this.view?.renderer?.getContents?.() as { index?: number; doc?: Document }[] | undefined;
+    const hit = cs?.find((c) => c?.index === index);
+    return hit?.doc ?? null;
+  }
+
+  /**
+   * Draw one highlight on the OPEN NOTE, if it belongs to it.
+   *
+   * The range is the one the reader actually selected, kept when the selection was reported, so this is
+   * the same mark in the same place rather than a second guess at where it was. A CFI with no remembered
+   * range simply is not in this note, and nothing is drawn: better a mark that is absent than one
+   * painted over the wrong words.
+   */
+  private noteDrawHighlight(cfi: string, color: string, alpha: number | null): void {
+    const ov = this.noteOverlay;
+    const range = this.noteHlRanges.get(cfi);
+    if (!ov || !range || range.collapsed) return;
+    try {
+      ov.remove(NOTE_HL_PREFIX + cfi);
+      // THE BOOK'S OWN TWO STEPS, and they are not optional. A stored highlight carries a SLOT NAME
+      // ("amber", "sky") rather than a colour, so `resolveColor` is what turns it into this theme's
+      // hex — without it `resolveHighlightInk` was handed the word "amber" and drew its fallback,
+      // which is exactly why a colour chosen in a note came out wrong. And the page draws from WORD
+      // rects, not line boxes (RAWY-258), which is what makes a mark hug the words instead of banding
+      // the whole line. Both are the same helpers `draw-annotation` calls a few hundred lines up; the
+      // note simply has to call them too.
+      ov.add(NOTE_HL_PREFIX + cfi, wordRectRange(range) as unknown as Range, drawHighlight as never, {
+        color: this.resolveColor(color), dark: this.theme?.dark ?? false, paper: this.inkPaper, alpha,
+      });
+    } catch { /* a stale range — the note has moved on */ }
+  }
+
   removeHighlight(cfi: string): void {
     this.annotations.delete(cfi);
     this.hlAlpha.delete(cfi);
     this.view?.deleteAnnotation({ value: cfi });
+    this.noteHlRanges.delete(cfi);
+    try { this.noteOverlay?.remove(NOTE_HL_PREFIX + cfi); } catch { /* not drawn */ }
   }
   /** RAWY-259: set this highlight’s ink density and redraw it alone; null = theme default. */
   setHighlightAlpha(cfi: string, alpha: number | null): void {
     if (alpha == null) this.hlAlpha.delete(cfi);
     else this.hlAlpha.set(cfi, alpha);
     const color = this.annotations.get(cfi);
-    if (color) this.view?.addAnnotation({ value: cfi, color }); // re-add → redraw this one mark only
+    if (color) {
+      this.view?.addAnnotation({ value: cfi, color }); // re-add → redraw this one mark only
+      this.noteDrawHighlight(cfi, color, alpha);
+    }
   }
   setHighlightColor(cfi: string, color: string): void {
     this.annotations.set(cfi, color);
     this.view?.addAnnotation({ value: cfi, color }); // re-add → redraw new colour
+    this.noteDrawHighlight(cfi, color, this.hlAlpha.get(cfi) ?? null);
   }
   async loadHighlights(list: { cfi: string; color: string; alpha?: number | null }[]): Promise<void> {
     for (const h of list) {
@@ -2405,26 +3244,66 @@ export class FoliateController {
   }
 
   /**
-   * RESILIENCE-1 (NAV-3) — a section that NO TOC entry points at.
+   * RESILIENCE-1 (NAV-3), CORRECTED — a position BEFORE the book's first contents entry.
    *
-   * A cover or a full-page illustration is usually absent from the table of contents: Alice's spine
-   * begins with `wrap0000.xhtml`, and its TOC's first entry points at the NEXT document. MEASURED on
-   * that page: foliate's `TOCProgress` returns `null` (its `map` has no group for the section and
-   * inherits nothing, progress.js:29-33), so no entry was current, the Contents panel highlighted
-   * nothing, and the page read as if it sat outside the book entirely.
+   * THE ORIGINAL DEFECT, WHICH STANDS. A cover or a full-page illustration is usually absent from the
+   * table of contents: one measured book's spine begins with a wrapper document its contents do not
+   * list. foliate's `TOCProgress` returns `null` there — its `map` inherits from the PRECEDING section
+   * (progress.js:29-33) and section 0 has no predecessor — so no entry was current, the Contents panel
+   * highlighted nothing, and the page read as if it sat outside the book entirely.
    *
-   * It does not. The reader is BEFORE the first entry that follows it, so that entry is the one they
-   * are heading toward — the same reasoning `pickActiveTocEntry` uses within a section, applied
-   * between sections. Front matter now belongs to the book's opening entry instead of to nothing.
+   * WHAT THE FIRST ANSWER GOT WRONG. It returned the first entry AFTER the section, reasoning that the
+   * reader is heading toward it. That is the opposite of every other rule in the reader: foliate
+   * inherits from the section BEFORE, and RAWY-287 resolves to "the last entry at or before your
+   * position, otherwise none". Three rules for one question — and the one that looked forward silently
+   * overrode RAWY-287 for exactly the sections RAWY-287 was written to answer honestly, because it
+   * publishes `chapterHref` and RAWY-287 matches that first.
+   *
+   * MEASURED on a book whose spine begins with its own readable table of contents (the contents
+   * document at spine 0, unlisted by itself, which is ordinary EPUB 3): sitting on that page — 199 list
+   * items, no prose — the chrome said "Chapter 1" and the Contents panel highlighted Chapter 1. Jumping
+   * to the real Chapter 1 moved the spine section from 0 to 1 and changed neither. A cover, a table of
+   * contents and Chapter 1 are three different things, and two of them were being called the third.
+   *
+   * THE RULE NOW: front matter is named after ITSELF — the section's own heading, by the same rule
+   * `getSynthesisedToc` uses. Nothing is invented: a section with no heading has no name, and the chrome
+   * renders its neutral caption. No contents row is marked active, because the reader is inside none of
+   * them, which is what RAWY-287's `-1` already means.
+   *
+   * Null unless the book HAS contents and none of them begins at or before this section — so a book
+   * whose contents are empty or unusable is left entirely to `getSynthesisedToc`.
    */
-  private firstTocEntryAfterSection(index: number): { href: string; label: string } | null {
-    const bySection = this.tocHrefSectionMap();
-    for (const entry of flattenToc(this.view?.book?.toc)) {
+  private frontMatterLabel(index: number, range: unknown): string | null {
+    try {
+      return frontMatterName(index, this.firstContentsSection(), () => {
+        // The document the POSITION is in, taken from the relocate range rather than from whichever
+        // section happened to load last — through a run of fast page turns those are not always the
+        // same. `contentDoc` is the fallback for a relocate that carries no range.
+        const root = (range as Range | undefined)?.startContainer?.getRootNode?.();
+        const doc = root && (root as Document).body ? (root as Document) : this.contentDoc;
+        return sectionHeading(doc);
+      });
+    } catch {
+      return null; // a torn-down frame or a detached range must never break relocate
+    }
+  }
+
+  /** Where THIS book's contents begin, cached for the life of the view (see `open` for the reset). */
+  private firstListedSection: number | null | undefined;
+
+  /** The first spine section the displayed contents point into; null when they point nowhere. */
+  private firstContentsSection(): number | null {
+    if (this.firstListedSection !== undefined) return this.firstListedSection;
+    const entries = this.getToc();
+    const bySection = this.tocHrefSectionMap(entries);
+    let first: number | null = null;
+    for (const entry of entries) {
       if (!entry.href) continue;
       const sec = bySection.get(entry.href) ?? bySection.get(entry.href.split("#")[0]);
-      if (typeof sec === "number" && sec > index) return { href: entry.href, label: entry.label };
+      if (typeof sec === "number" && (first === null || sec < first)) first = sec;
     }
-    return null;
+    this.firstListedSection = first;
+    return first;
   }
 
   /**
@@ -2576,39 +3455,22 @@ export class FoliateController {
   // wheel = one gesture state, and the two paths are mutually exclusive per event (the frame
   // boundary), so sharing wheelTs/gestureEdge/gestureActed is exactly right. Returns what the
   // caller should do: advance a section, hold at the edge, or scroll normally.
-  private wheelBoundaryAction(deltaY: number): "next" | "prev" | "hold" | "scroll" {
+  private wheelBoundaryAction(deltaY: number): WheelAction {
     const r = this.view?.renderer;
     if (!r) return "scroll";
-    const viewSize = r.viewSize as number;
-    const size = r.size as number;
-    const start = r.start as number;
-    // Renderer not laid out yet (getters 0/NaN) → never trap the wheel, or we'd freeze the page.
-    if (!(viewSize > 0) || !(size > 0)) return "scroll";
-    const now = performance.now();
-    const fresh = now - this.wheelTs > BOUNDARY_PAUSE_MS;
-    this.wheelTs = now;
-    const scrollable = viewSize - size > BOUNDARY_EDGE_PX;
-    const atBottom = scrollable ? viewSize - (start + size) <= BOUNDARY_EDGE_PX : true;
-    const atTop = start <= BOUNDARY_EDGE_PX;
-    if (fresh) {
-      this.gestureEdge = atBottom ? "bottom" : atTop ? "top" : null;
-      this.gestureActed = false;
-    }
-    const down = deltaY > 0;
-    if (down && atBottom) {
-      if (this.gestureEdge === "bottom" && !this.gestureActed) {
-        this.gestureActed = true;
-        return "next";
-      }
-      return "hold";
-    } else if (!down && atTop) {
-      if (this.gestureEdge === "top" && !this.gestureActed) {
-        this.gestureActed = true;
-        return "prev";
-      }
-      return "hold";
-    }
-    return "scroll";
+    // THE DECISION IS PURE AND LIVES IN `wheelBoundary.ts`; the gesture STATE lives here, because the
+    // two wheel paths — the content frame's own event and the one forwarded from the reading margins
+    // — are one physical gesture and must share one set of it.
+    const { action, state } = wheelBoundary(
+      deltaY,
+      { viewSize: r.viewSize as number, size: r.size as number, start: r.start as number },
+      { wheelTs: this.wheelTs, edge: this.gestureEdge, acted: this.gestureActed },
+      performance.now(),
+    );
+    this.wheelTs = state.wheelTs;
+    this.gestureEdge = state.edge;
+    this.gestureActed = state.acted;
+    return action;
   }
 
   private onBoundaryWheel(e: WheelEvent): void {
@@ -2641,6 +3503,140 @@ export class FoliateController {
   /** Flattened TOC (chapters panel, RAWY-21). Empty if the book exposes none. */
   getToc(): TocEntry[] {
     return flattenToc(this.view?.book?.toc);
+  }
+
+  // ---------------------------------------------------------------------------------------------
+  // READING DEPOSITS (phase 3) — placing a stranger's marks in THIS reader's copy.
+  //
+  // A deposit bound to a different edition carries cfis that mean nothing here, so each mark has to
+  // earn its place by its own text. The engine owns the two halves that need a document; the decision
+  // itself is a pure function elsewhere (`model/placement.ts`), and this never decides anything.
+  //
+  // WHY THE COUNT AND THE ANCHOR ARE SEPARATE. Counting is text, so it runs over the RAW documents and
+  // needs no rendering — the same `createDocument()` walk `getSynthesisedToc` already uses, chunked for
+  // the same reason. Minting a cfi is NOT safe there: measured over two books, a cfi minted in a raw
+  // document and resolved the way the engine draws it failed on 2 of 55 ranges, because Sard's cfis are
+  // made against the RENDERED document. So the anchor is minted in the section itself, when it renders.
+  // ---------------------------------------------------------------------------------------------
+
+  /** Which spine section the sender's chapter label names here, or null when nothing matches it. */
+  sectionForChapterLabel(label: string | null | undefined): number | null {
+    const want = (label ?? "").trim().toLowerCase();
+    if (!want) return null;
+    const entries = this.getToc();
+    const map = this.tocHrefSectionMap(entries);
+    for (const t of entries) {
+      if ((t.label ?? "").trim().toLowerCase() !== want) continue;
+      const i = t.href ? map.get(t.href) ?? map.get(t.href.split("#")[0]) : undefined;
+      if (typeof i === "number") return i;
+    }
+    return null;
+  }
+
+  /**
+   * Count each needle across the whole book, once, over raw documents.
+   *
+   * Yields to the event loop between sections for the reason `getSynthesisedToc` states: a long
+   * synchronous walk freezes the window (the RAWY-182 lesson). Nothing is rendered, navigated or drawn.
+   */
+  async placementScan(
+    needles: { id: string; needle: string }[],
+    fold: (s: string) => string,
+    countIn: (hay: string, needle: string) => number,
+  ): Promise<Map<string, { total: number; sole: number | null; perSection: Map<number, number> }>> {
+    const out = new Map<string, { total: number; sole: number | null; perSection: Map<number, number> }>();
+    for (const n of needles) out.set(n.id, { total: 0, sole: null, perSection: new Map() });
+    const sections: { createDocument?: () => Promise<Document>; linear?: string }[] =
+      (this.view?.book?.sections as never) ?? [];
+    for (let i = 0; i < sections.length; i++) {
+      const sec = sections[i];
+      if (!sec?.createDocument) continue;
+      let text = "";
+      try {
+        const doc = await sec.createDocument();
+        text = fold(doc?.body?.textContent ?? "");
+      } catch {
+        continue; // an unreadable section simply contributes no occurrences
+      }
+      for (const n of needles) {
+        const c = countIn(text, n.needle);
+        if (!c) continue;
+        const rec = out.get(n.id)!;
+        rec.total += c;
+        rec.perSection.set(i, c);
+        rec.sole = rec.total === 1 ? i : null;
+      }
+      // one section per turn of the loop, so the window keeps painting
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    return out;
+  }
+
+  /**
+   * Mint a cfi for `needle` inside a RENDERED section — the only place a cfi may be made.
+   *
+   * Returns null unless the needle occurs EXACTLY ONCE in that section: the count is taken again here,
+   * against the text the reader is actually looking at, so a section whose rendered text differs from
+   * its raw text refuses rather than guessing.
+   */
+  placementAnchor(
+    index: number,
+    needle: string,
+    foldCh: (c: string) => string,
+  ): { status: "placed"; cfi: string } | { status: "notRendered" | "notUnique" | "notFound" } {
+    const contents = (this.view?.renderer?.getContents?.() as { index: number; doc?: Document }[]) ?? [];
+    const doc = contents.find((c) => c.index === index)?.doc;
+    // NOT RENDERED IS NOT A VERDICT. The section simply is not on screen yet, and saying anything about
+    // the mark now would condemn it for the reader's position rather than for its own text.
+    if (!doc?.body || !needle) return { status: "notRendered" };
+
+    // The same one-pass folded walk `applyReferences` performs: every folded character remembers the
+    // text node and offset it came from, so a hit maps straight back to a Range with no second walk.
+    let hay = "";
+    const nodes: Text[] = [];
+    const offs: number[] = [];
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
+    let n: Node | null;
+    while ((n = walker.nextNode())) {
+      const t = n as Text;
+      const data = t.data;
+      for (let i = 0; i < data.length; i++) {
+        const fc = foldCh(data[i]);
+        for (let k = 0; k < fc.length; k++) {
+          hay += fc[k];
+          nodes.push(t);
+          offs.push(i);
+        }
+      }
+    }
+
+    let at = -1;
+    let from = 0;
+    for (;;) {
+      const i = hay.indexOf(needle, from);
+      if (i < 0) break;
+      if (at >= 0) return { status: "notUnique" }; // a second occurrence here — refuse rather than choose
+      at = i;
+      from = i + 1;
+    }
+    if (at < 0) return { status: "notFound" };
+
+    const end = at + needle.length - 1;
+    if (!nodes[at] || !nodes[end]) return { status: "notFound" };
+    try {
+      const range = doc.createRange();
+      range.setStart(nodes[at], offs[at]);
+      range.setEnd(nodes[end], offs[end] + 1);
+      const cfi = (this.view as unknown as { getCFI(i: number, r: Range): string }).getCFI(index, range);
+      return cfi ? { status: "placed", cfi } : { status: "notFound" };
+    } catch {
+      return { status: "notFound" };
+    }
+  }
+
+  /** Register a listener called after a section has rendered, so a located mark can be anchored in it. */
+  onSectionRendered(cb: ((index: number) => void) | null): void {
+    this.sectionRenderedCb = cb ?? undefined;
   }
 
   /**
@@ -2699,8 +3695,7 @@ export class FoliateController {
       }
       // ONLY the heading is read. The section's text is deliberately never touched: a label derived
       // from a book's opening sentence would look like a title the author wrote, and none exists.
-      const h = doc?.body?.querySelector("h1,h2,h3,h4,h5,h6");
-      material.push({ heading: (h?.textContent ?? "").replace(/\s+/g, " ").trim() });
+      material.push({ heading: sectionHeading(doc) });
       spineIndex.push(i);
       if (material.length % UNITS_CHUNK === 0) await breathe();
     }
@@ -2756,6 +3751,57 @@ export class FoliateController {
    *  for the same chapter (foliate emits the same spine step for a section). NOT the visible range (that
    *  made the marker vanish mid-chapter and let the button add a 2nd bookmark) and NOT the whole-book
    *  fraction window (that lit the marker in every chapter of a long book — the original FEEDBACK 1.6 bug). */
+  /**
+   * THE WORDS A SAVED PLACE IS RECOGNISED BY.
+   *
+   * A reader knows where they were by what was written there — a percentage has to be decoded before
+   * it means anything. So a bookmark records the opening of the block it sits in, captured at the
+   * moment it is placed, and the shelf shows those words instead of a figure.
+   *
+   * Only ever called for a place in the section on screen (a bookmark is made where the reader is),
+   * which is what makes it cheap: the section's document is already rendered, so the CFI resolves
+   * against a live document and nothing has to be re-parsed. A place in any other section, or a CFI
+   * the book cannot resolve, yields null — the caller stores nothing rather than storing a guess.
+   *
+   * `async` so it needs no entry in the crossing table: everything not listed there is forwarded
+   * verbatim, and this returns a plain string that a port can carry.
+   */
+  async placeWords(cfi: string): Promise<string | null> {
+    const view = this.view as {
+      book?: { resolveCFI?: (c: string) => { index?: number; anchor?: (d: Document) => Range } | null };
+      renderer?: { getContents?: () => { index: number; doc?: Document }[] };
+    } | null;
+    const book = view?.book;
+    if (!book?.resolveCFI) return null;
+    let target: { index?: number; anchor?: (d: Document) => Range } | null = null;
+    try {
+      target = book.resolveCFI(cfi);
+    } catch {
+      return null;
+    }
+    if (!target?.anchor) return null;
+    const here = (view?.renderer?.getContents?.() ?? []).find((c) => c.index === target?.index);
+    if (!here?.doc) return null;
+    let range: Range | null = null;
+    try {
+      range = target.anchor(here.doc);
+    } catch {
+      return null;
+    }
+    if (!range) return null;
+    // Up to the block the place sits in — a text node alone is a fragment of a sentence, and the
+    // design asks for the opening LINE, which is a block's worth of words.
+    let node: Node | null = range.startContainer;
+    while (node && node.nodeType !== 1) node = node.parentNode;
+    let el = node as Element | null;
+    const BLOCK = /^(P|DIV|LI|BLOCKQUOTE|H1|H2|H3|H4|H5|H6|SECTION|TD)$/;
+    while (el && !BLOCK.test(el.tagName)) el = el.parentElement;
+    const raw = (el?.textContent ?? range.toString() ?? "").replace(/\s+/g, " ").trim();
+    if (!raw) return null;
+    // Two lines' worth is all the row shows; storing a chapter would be storing the book again.
+    return raw.length > 220 ? raw.slice(0, 220).trimEnd() : raw;
+  }
+
   bookmarkVisible(bookmarkCfi: string | null | undefined, currentCfi: string | null | undefined): boolean {
     // Delegates to `cfiSection.ts`. The rule is pure and the hosted transport has to apply it in the
     // application — `Reader.tsx:300` calls this inside a React render body, which cannot await a
@@ -2853,6 +3899,24 @@ export class FoliateController {
       this.ttsLang = lang;
       return units;
     }
+    const units = await this.unitsForRoot(doc.body, doc, lang);
+    this.ttsUnits = units;
+    this.ttsUnitsIndex = content?.index ?? -1;
+    this.ttsLang = lang; // RAWY-129: remember it so a return-to-chapter rebuild segments identically
+    publishDiagUnits(this.ttsUnitsIndex, units.length, this.view?.renderer?.getContents?.()?.[0]?.index ?? null);
+    return units;
+  }
+
+  /**
+   * Segment ONE root into read-aloud units. Lifted out of `getChapterUnits` unchanged so a note can be
+   * segmented by the very same code; the only thing that ever differed was which element to walk.
+   */
+  private async unitsForRoot(
+    root: Element,
+    docIn: Document | null,
+    lang?: string,
+  ): Promise<{ text: string; range: Range | null }[]> {
+    const doc = docIn ?? root.ownerDocument;
     const win = doc.defaultView;
     const CONTAINER = "p, h1, h2, h3, h4, h5, h6, li, blockquote, div, section, article";
     const norm = (s: string) => s.replace(/\s+/g, " ").trim();
@@ -2880,7 +3944,7 @@ export class FoliateController {
     // input is handled and the thread breathes. The order (document order), the leaf filter, the per-leaf
     // `segmentBlock`, and the whole-body fallback are UNCHANGED, so the produced units are IDENTICAL
     // (spotlight 126 / karaoke 127 / resume 162 alignment is unaffected).
-    const all = doc.body.querySelectorAll(CONTAINER);
+    const all = root.querySelectorAll(CONTAINER);
     const units: { text: string; range: Range | null }[] = [];
     let anyLeaf = false;
     for (let i = 0; i < all.length; i++) {
@@ -2897,10 +3961,10 @@ export class FoliateController {
       if ((i + 1) % UNITS_CHUNK === 0 && i + 1 < all.length) await breathe();
     }
     if (!anyLeaf) {
-      // No visible leaf held text: the chapter has NO block-level container at all. Measured on the
-      // reported book "داو الخالد العجيب" (a .txt→EPUB conversion): every chapter is `<span>`s
-      // separated by `<br>` directly inside `<body>`, so `CONTAINER` — which lists only block
-      // elements — matched 0 nodes in all 88 chapter documents.
+      // No visible leaf held text: the chapter has NO block-level container at all. Measured on a
+      // reported `.txt`→EPUB conversion whose chapters are `<span>`s separated by `<br>` directly
+      // inside `<body>`, so `CONTAINER` — which lists only block elements — matched 0 nodes in
+      // every one of that book's 88 chapter documents.
       //
       // This used to read `body.textContent` and emit units with `range: null` — "honest
       // no-highlight". But that is the one failure the reader cannot understand: `text` still feeds
@@ -2914,23 +3978,15 @@ export class FoliateController {
       // gives these chapters exactly the same units, ranges and RAWY-247 length-splitting as any
       // other book, through the same proven code. This branch is unreachable for a chapter that has
       // even one block container, so no well-formed book takes it.
-      this.segmentBlock(doc.body, doc, seg, norm, units);
+      this.segmentBlock(root, doc, seg, norm, units);
       // Last resort, preserving the original guarantee that a text-bearing chapter is never reported
       // empty — e.g. a body whose only text sits in nodes `segmentBlock` declines to map.
       if (units.length === 0) {
-        const whole = norm(doc.body.textContent ?? "");
+        const whole = norm(root.textContent ?? "");
         if (hasSpeech(whole)) units.push({ text: whole, range: null });
       }
     }
 
-    this.ttsUnits = units;
-    this.ttsUnitsIndex = content?.index ?? -1;
-    this.ttsLang = lang; // RAWY-129: remember it so a return-to-chapter rebuild segments identically
-    // DIAGNOSTIC BUILD: publish the section these units belong to. `followReadingSentence` and the
-    // overlay handler both refuse to draw unless this equals the DISPLAYED section, and that
-    // comparison is invisible from outside the controller — it is the single fact needed to tell
-    // "no highlight because the sections disagree" from "no highlight for some other reason".
-    publishDiagUnits(this.ttsUnitsIndex, units.length, this.view?.renderer?.getContents?.()?.[0]?.index ?? null);
     return units;
   }
 
@@ -3086,6 +4142,25 @@ export class FoliateController {
    *  isn't the one the units were built for (a chapter change → clear), or the sentence has no range
    *  (whole-body fallback → honest no-highlight). */
   showReadingHighlight(i: number): void {
+    this.ttsReadingIndex = i;
+    // A NOTE'S SENTENCE IS DRAWN ON THE NOTE. The units were built from the note's own DOM, so their
+    // ranges are in the application's document and the section overlayer below cannot reach them —
+    // the guard further down would (correctly) refuse to draw and read-aloud would run a note with
+    // nothing marked. This is the same call, the same index and the same `drawReadingSpotlight` with
+    // the same options; only the surface differs, which is the one thing that actually differs.
+    if (this.ttsUnitsIndex === NOTE_UNITS_INDEX) {
+      const ov = this.noteOverlay;
+      if (!ov) return;
+      try { ov.remove(NOTE_READ_KEY); ov.remove(NOTE_WORD_KEY); } catch { /* not present */ }
+      if (this.style && this.style.ttsSpotlightOn === false) return;
+      const range = this.ttsUnits[i]?.range;
+      if (!range || range.collapsed) return;
+      try {
+        ov.add(NOTE_READ_KEY, range, drawReadingSpotlight as never,
+          { dark: this.theme?.dark ?? false, style: this.style });
+      } catch { /* a range whose note has closed — nothing to draw */ }
+      return;
+    }
     // RAWY-295: PDF takes the span-marking branch. Same caller, same index, same `ttsUnits` — the
     // only thing that differs is the surface, because a fixed-layout page has no overlayer.
     if (this.isFixedLayout) {
@@ -3127,6 +4202,9 @@ export class FoliateController {
 
   /** Remove the reading spotlight AND the word pill (stop / play closed / left the chapter). */
   clearReadingHighlight(): void {
+    this.ttsReadingIndex = -1;
+    try { this.noteOverlay?.remove(NOTE_READ_KEY); } catch { /* not present */ }
+    try { this.noteOverlay?.remove(NOTE_WORD_KEY); } catch { /* not present */ }
     // RAWY-295: forget the index FIRST, so a text-layer rebuild racing this call cannot repaint the
     // mark we are removing. Clearing is unconditional — a book can switch from PDF to EPUB while the
     // controller is reused (`Reader` renders one instance with no `key`), so both surfaces are cleared.
@@ -3155,20 +4233,40 @@ export class FoliateController {
   setReadingWords(sentenceIndex: number, words: { text: string }[] | undefined): void {
     this.wordRanges = [];
     if (this.isFixedLayout || !words?.length) return;
-    const content = this.view?.renderer?.getContents?.()?.[0];
-    if (!content || content.index !== this.ttsUnitsIndex) return;
+    // WHICHEVER DOCUMENT THE UNITS CAME FROM. Word timings are mapped onto the sentence's own range, and
+    // a note's ranges live in the application's document rather than the section's; the section check
+    // below is the right guard for a chapter and the wrong one for a note, which is why the pill —
+    // the finer half of the reading tracking — never appeared in a note.
+    const readingNote = this.ttsUnitsIndex === NOTE_UNITS_INDEX;
+    const content = readingNote ? null : this.view?.renderer?.getContents?.()?.[0];
+    if (!readingNote && (!content || content.index !== this.ttsUnitsIndex)) return;
     const range = this.ttsUnits[sentenceIndex]?.range;
-    const doc: Document | undefined = content.doc;
+    const doc: Document | undefined = readingNote ? (this.noteSurface?.ownerDocument ?? undefined) : content?.doc;
     if (!range || !doc) return;
     const map = this.rangeNodeMap(range, doc);
     if (!map) return;
     const { full, sub } = map; // `full` = the sentence's raw text; `sub(a,b)` → a Range for [a,b)
+    // MATCH IN THE ALPHABET EDGE WAS GIVEN, not the one on the page.
+    //
+    // `lib/ttsText.speakableText` rewrites Extended Arabic-Indic digits on the way to the voice,
+    // because Edge drops them from the audio entirely. Edge therefore reports the word as `١٤٠٥`
+    // while the page shows `۱۴۰۵`, so a search through the DISPLAYED text misses it and drops to the
+    // consume-the-length fallback below. Measured, that fallback painted the pill on `:` in
+    // «وقال آخر: ۶۳» — a sentence where the same rewrite makes two Edge words identical (`٦٣`),
+    // so the second lookup had nothing left to find. Pointing at the wrong words is worse than not
+    // pointing at all, which is what made this worth fixing rather than accepting.
+    //
+    // The rewrite is length-preserving by construction, so an index into `hay` is the SAME index
+    // into `full`: the needle is found in the spoken alphabet, and the Range is still built from the
+    // displayed text. Sentences with no extended digits get back the identical string, so this is a
+    // no-op for every other book.
+    const hay = speakableText(full);
     let cursor = 0;
     const ranges: (Range | null)[] = [];
     for (const w of words) {
       const text = w.text ?? "";
       if (!text) { ranges.push(null); continue; }
-      let pos = full.indexOf(text, cursor);
+      let pos = hay.indexOf(text, cursor);
       let len = text.length;
       if (pos < 0) {
         // not found verbatim — skip whitespace, then consume the word's own length from the cursor
@@ -3187,6 +4285,20 @@ export class FoliateController {
    *  Painted OVER the sentence band (added after it), under the reserved WORD_KEY — transient. */
   showReadingWord(w: number): void {
     if (this.isFixedLayout) return;
+    // A NOTE'S PILL GOES ON THE NOTE, exactly as its sentence band does. Same key, same
+    // `drawReadingPill`, same options: the only thing that differs is which overlay it is added to.
+    if (this.ttsUnitsIndex === NOTE_UNITS_INDEX) {
+      const ov = this.noteOverlay;
+      if (!ov) return;
+      try { ov.remove(NOTE_WORD_KEY); } catch { /* not present */ }
+      if (this.style && this.style.ttsKaraokeOn === false) return;
+      const r = w >= 0 ? this.wordRanges[w] : null;
+      if (!r || r.collapsed) return;
+      try {
+        ov.add(NOTE_WORD_KEY, r, drawReadingPill as never, { dark: this.theme?.dark ?? false, style: this.style });
+      } catch { /* a stale range — the note has closed */ }
+      return;
+    }
     const content = this.view?.renderer?.getContents?.()?.[0];
     const overlayer = content?.overlayer as
       | { add: (k: string, r: Range, d: typeof drawReadingPill, o: unknown) => void; remove: (k: string) => void }
@@ -3377,10 +4489,22 @@ export class FoliateController {
    * rather than introducing a new convention.
    */
   forward(): void {
-    this.view?.next?.();
+    this.navView()?.next?.();
   }
   backward(): void {
-    this.view?.prev?.();
+    this.navView()?.prev?.();
+  }
+
+  /**
+   * The view, but only when there is something to navigate — the one gate every page turn passes.
+   *
+   * Deliberately NOT a try/catch around the throw. Catching would hide the symptom while the reader
+   * still held a broken view, and the next member to reach for `this.view` would meet the same trap;
+   * "is this loaded?" has to be ANSWERABLE, not merely survivable. `renderer` is re-checked here and
+   * not just trusted from the flag, so a view disposed between the two cannot slip through.
+   */
+  private navView(): any | null {
+    return this.navReady && this.view?.renderer ? this.view : null;
   }
 
   /** RAWY-227: the chapter the end-of-chapter "next chapter" control advances FROM. It MUST be the chapter
@@ -3809,6 +4933,29 @@ export class FoliateController {
     return this.furthestCfi;
   }
 
+  /** Tell the engine how far the reader has actually read, so `searchBook` can seal what lies past it.
+   *  The application owns this — see the relocate handler for why the engine stopped deciding it. */
+  setFurthestBoundary(cfi: string | null): void {
+    if (this.isFixedLayout) return; // a PDF has no cfi and no whole-book search to seal
+    this.furthestCfi = cfi && cfi.length > 0 ? cfi : null;
+  }
+
+  /** Where `a` stands relative to `b` in the book's own order: negative before, positive after, 0 the
+   *  same place. Null when the engine's comparator is unavailable, so a caller can fall back rather
+   *  than guess.
+   *
+   *  A METHOD RETURNING A NUMBER, not the comparator itself. Handing out the function would be the
+   *  shorter code and it cannot cross the reader host's port — a function is not cloneable, so on the
+   *  hosted path every caller would receive nothing usable. Numbers cross; functions do not. Document
+   *  order is the engine's to define either way, and this is the same comparator the spoiler-safe
+   *  boundary already uses rather than a second copy of it. */
+  async compareLocators(a: string, b: string): Promise<number | null> {
+    if (!a || !b) return null;
+    await this.ensureCfiCompare();
+    const c = this.cfiCompareFn?.(a, b);
+    return typeof c === "number" && Number.isFinite(c) ? c : null;
+  }
+
   /** RAWY-88: in-book search over the WHOLE book (EPUB only). Streams foliate's search generator into
    *  a flat, ordered list of hits — each with its chapter label, location fraction, split excerpt, and
    *  whether it lies AHEAD of the furthest-read position (for spoiler-safe). Diacritics-/case-
@@ -3830,6 +4977,19 @@ export class FoliateController {
     const compare = this.cfiCompareFn;
     const boundary = this.furthestCfi;
     const hits: SearchHit[] = [];
+    // THE DE-DUPLICATION SET. Two expanded terms can reach the same passage, so a cfi already taken is
+    // skipped — but the test used to be `hits.some(h => h.cfi === s.cfi)`, a linear scan of everything
+    // found so far, run once per match. That is O(n²) in the number of MATCHES, and matches are exactly
+    // what a common term produces a great many of.
+    //
+    // MEASURED on a real book, searching one letter: 15,481 matches, and `searchBook`'s own body was the
+    // single largest cost in the profile at 806ms of self time — roughly 120 million string comparisons
+    // for one search. It is quadratic, so it is also the term that explains why a long book with tens of
+    // thousands of matches stops answering altogether rather than merely being slow.
+    //
+    // A Set answers the same question in constant time. Identical results, identical order, identical
+    // count — the only thing removed is the scanning.
+    const seen = new Set<string>();
     let curIndex = 0;
     let scanFrac = 0;
     // Throttle the UI callbacks — a 1000+ section book yields ~1000 progress ticks; firing setState on
@@ -3879,36 +5039,46 @@ export class FoliateController {
       // Sard's four real draw functions are all TYPED `: SVGGElement`, so the compiler already guarantees
       // they return a node; this inline callback was the one untyped path and the only violator.
       const drawNothing = () => document.createElementNS("http://www.w3.org/2000/svg", "g");
-      for await (const r of view.search({ query: q, draw: drawNothing })) {
-        if (opts.signal?.aborted) break;
-        if (r === "done") break;
-        const now = performance.now();
-        if (now - lastYield > 30) {
-          await new Promise<void>((res) => setTimeout(res, 0));
-          lastYield = performance.now();
-        }
-        if (typeof (r as any).progress === "number") {
-          scanFrac = (r as any).progress;
-          curIndex = Math.max(0, Math.round(scanFrac * n) - 1);
-          emit(false);
-          continue;
-        }
-        const rr = r as any;
-        if (Array.isArray(rr.subitems)) {
-          for (const s of rr.subitems) {
-            if (!s?.cfi) continue;
-            hits.push({
-              cfi: s.cfi,
-              sectionIndex: curIndex,
-              chapterLabel: rr.label ?? "",
-              pre: s.excerpt?.pre ?? "",
-              match: s.excerpt?.match ?? "",
-              post: s.excerpt?.post ?? "",
-              frac: fractions[curIndex] ?? 0,
-              ahead: boundary && compare ? compare(s.cfi, boundary) > 0 : false,
-            });
+      // BOTH WORDINGS FIND THE PASSAGE. Search reads the book through foliate's own `createDocument()` —
+      // a fresh parse that never sees the rendered page — so it always scans the AUTHOR's text. Typing
+      // the author's word therefore already works; typing what is ON THE PAGE would find nothing, so the
+      // query is expanded to include the author's phrase for any rule whose replacement it matches.
+      // With no rule in force `expandQuery` returns the single original term and this loop runs once,
+      // which is exactly the code path that existed before.
+      for (const term of expandQuery(q, this.reps, foldPhrase)) {
+        for await (const r of view.search({ query: term, draw: drawNothing })) {
+          if (opts.signal?.aborted) break;
+          if (r === "done") break;
+          const now = performance.now();
+          if (now - lastYield > 30) {
+            await new Promise<void>((res) => setTimeout(res, 0));
+            lastYield = performance.now();
           }
-          emit(false);
+          if (typeof (r as any).progress === "number") {
+            scanFrac = (r as any).progress;
+            curIndex = Math.max(0, Math.round(scanFrac * n) - 1);
+            emit(false);
+            continue;
+          }
+          const rr = r as any;
+          if (Array.isArray(rr.subitems)) {
+            for (const s of rr.subitems) {
+              if (!s?.cfi) continue;
+              if (seen.has(s.cfi)) continue; // two terms can reach the same passage
+              seen.add(s.cfi);
+              hits.push({
+                cfi: s.cfi,
+                sectionIndex: curIndex,
+                chapterLabel: rr.label ?? "",
+                pre: s.excerpt?.pre ?? "",
+                match: s.excerpt?.match ?? "",
+                post: s.excerpt?.post ?? "",
+                frac: fractions[curIndex] ?? 0,
+                ahead: boundary && compare ? compare(s.cfi, boundary) > 0 : false,
+              });
+            }
+            emit(false);
+          }
         }
       }
     } catch {
@@ -4101,6 +5271,131 @@ export class FoliateController {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // REPLACEMENTS: read a word as something else, without changing the book.
+  // ---------------------------------------------------------------------------
+
+  /** The book's ENABLED rules. A disabled rule is not in this list at all, so "off" costs nothing. */
+  private reps: RepLite[] = [];
+  /** Per rendered section, what was substituted — enough to translate an offset and to put it back. */
+  private repPlans = new Map<number, SectionPlan>();
+  /** How many occurrences are standing in the sections on screen, for the reader-facing notice. */
+  private repCount = 0;
+  private onRepsApplied: ((count: number) => void) | null = null;
+
+  /** Tell the reader how many substitutions are showing, so it can say so plainly rather than surprise. */
+  setReplacementListener(fn: ((count: number) => void) | null): void {
+    this.onRepsApplied = fn;
+  }
+
+  /** The rules in force — a search expands through exactly the set the page is showing. */
+  activeReplacements(): RepLite[] {
+    return this.reps;
+  }
+
+  /**
+   * Replace the rule set and re-apply it to every rendered section.
+   *
+   * ORDER MATTERS AND IS NOT OBVIOUS. Writing `textNode.data` collapses any live Range the DOM is
+   * tracking, and every drawn highlight IS a live Range held by the overlayer. So the marks come down
+   * first, the text is restored and re-substituted, and only then are they drawn again — at which point
+   * they resolve through the coordinate hooks and land on the same words they were put on.
+   */
+  setReplacements(list: RepLite[]): void {
+    const had = this.repPlans.size > 0 || this.reps.length > 0;
+    this.reps = list;
+    const contents = this.view?.renderer?.getContents?.() as { index: number; doc?: Document }[] | undefined;
+    if (!contents?.length) {
+      this.repPlans.clear();
+      this.installRepHooks();
+      return;
+    }
+    if (had) for (const [cfi] of this.annotations) this.view?.deleteAnnotation({ value: cfi });
+    for (const c of contents) {
+      if (!c?.doc) continue;
+      const prev = this.repPlans.get(c.index);
+      if (prev) restoreSection(prev);
+      this.repPlans.set(c.index, applyToSection(c.doc, this.reps));
+    }
+    this.installRepHooks();
+    this.refreshRepCount();
+    // The text has a different length now, so every reference mark's Range is stale — remark, then redraw.
+    for (const c of contents) if (c?.doc) this.applyReferences(c.doc, c.index);
+    for (const [cfi, color] of this.annotations) this.view?.addAnnotation({ value: cfi, color });
+  }
+
+  /**
+   * Substitute one freshly loaded section. Called from the `load` handler, which is BEFORE the overlayer
+   * exists, so no live Range can be disturbed and the marks that follow are built on the final text.
+   */
+  private applyReplacements(doc: Document, index: number): void {
+    const prev = this.repPlans.get(index);
+    if (prev) restoreSection(prev);
+    this.repPlans.delete(index);
+    // Drop plans for sections that unloaded — their nodes went with the document.
+    const live = new Set(
+      ((this.view?.renderer?.getContents?.() as { index: number }[] | undefined) ?? []).map((c) => c.index),
+    );
+    live.add(index);
+    for (const idx of Array.from(this.repPlans.keys())) if (!live.has(idx)) this.repPlans.delete(idx);
+    if (this.reps.length) this.repPlans.set(index, applyToSection(doc, this.reps));
+    this.installRepHooks();
+    this.refreshRepCount();
+    // A DEPOSIT'S MARK CAN ONLY BE ANCHORED WHERE IT LIVES. This is the moment a section's rendered
+    // document exists, which is the only document a cfi may be made against — so a mark the count pass
+    // located here is anchored now, beside the substitution and reference work that already runs per
+    // section. It is a no-op for every book that has nothing waiting.
+    try {
+      this.sectionRenderedCb?.(index);
+    } catch {
+      /* placement must never be able to break a section's render */
+    }
+  }
+
+  private refreshRepCount(): void {
+    let n = 0;
+    for (const p of this.repPlans.values()) n += p.count;
+    if (n === this.repCount) return;
+    this.repCount = n;
+    this.onRepsApplied?.(n);
+  }
+
+  /**
+   * Install the two coordinate hooks foliate's CFI code calls (see VENDOR.txt PATCH 10).
+   *
+   * They are REMOVED outright when nothing is substituted rather than left in place returning the same
+   * number: an absent hook means the vendored code runs its original path, so a library that never makes
+   * a replacement is untouched by this feature rather than merely equivalent to it.
+   */
+  private installRepHooks(): void {
+    const g = globalThis as unknown as {
+      __sardRepToAuthor?: (n: Node, o: number, e: boolean) => number;
+      __sardRepToPage?: (n: Node, o: number, e: boolean) => number;
+    };
+    let any = false;
+    for (const p of this.repPlans.values()) if (p.edits.size) any = true;
+    if (!any) {
+      delete g.__sardRepToAuthor;
+      delete g.__sardRepToPage;
+      return;
+    }
+    const editsFor = (node: Node): NodeEdit[] | undefined => {
+      for (const p of this.repPlans.values()) {
+        const e = p.edits.get(node as Text);
+        if (e) return e;
+      }
+      return undefined;
+    };
+    g.__sardRepToAuthor = (node, off, isEnd) => shiftOffset(editsFor(node), off, isEnd, false);
+    g.__sardRepToPage = (node, off, isEnd) => {
+      const out = shiftOffset(editsFor(node), off, isEnd, true);
+      // A stored offset can sit past the end of a node a shrinking rule made shorter; clamp rather than
+      // let the DOM throw IndexSizeError, which would drop the mark entirely.
+      const len = (node as Text).length ?? 0;
+      return out > len ? len : out;
+    };
+  }
+
   /**
    * Mark this section's occurrences. Walks the section's text nodes ONCE, building the folded haystack and
    * a per-character map back to (node, offset) — the same technique `findMatchRange` uses for search hits —
@@ -4161,7 +5456,10 @@ export class FoliateController {
         const t = n as Text;
         const s = t.data;
         for (let i = 0; i < s.length; i++) {
-          const fc = foldChar(s[i]);
+          // A RUN OF WHITESPACE FOLDS TO ONE SPACE, the same collapsing `foldPhrase` applies to the
+          // stored phrase — the rule lives in `references` so the two folds cannot drift. Skipping an
+          // emission cannot disturb the index→node mapping below: only emitted characters advance it.
+          const fc = foldCharInto(s[i], hay.charCodeAt(hay.length - 1) === 32);
           for (let k = 0; k < fc.length; k++) { hay += fc[k]; nodes.push(t); offs.push(i); }
         }
       }
@@ -4353,6 +5651,497 @@ export class FoliateController {
     this.referenceCb = cb;
   }
   private referenceCb: ((hit: { refId: string; rect: AnchorRect }) => void) | null = null;
+
+  // ---- the book's own footnotes (see `ensureFootnoteModule`) ------------------------------------
+  private footnotes: (EventTarget & { handle(book: unknown, e: Event): unknown }) | null = null;
+  private footnoteCb: ((hit: FootnoteHit) => void) | null = null;
+  /** Captured at the click, because by the time the engine has rendered the note the event is gone.
+   *  Its presence is also the record that `handle` claimed this link — see the click listener. */
+  private pendingNote: { marker: string; sourcePath: string } | null = null;
+
+  /** The reader tapped a reference and the engine rendered its note. */
+  onFootnote(cb: (hit: FootnoteHit) => void): void {
+    this.footnoteCb = cb;
+  }
+
+  /**
+   * The note's own place in the book, resolved ahead of being needed.
+   *
+   * A note is drawn outside the reading frame, so a selection made in it has no CFI — and without
+   * one it could be copied but never highlighted, noted or referenced. It does have a place, though:
+   * the fragment came out of a real spine document at `hit.href`, and the same text can be found there
+   * again. `findMatchRange` already does exactly that lookup for search hits, tolerant of whitespace
+   * and tashkil, so a note selection can be given a REAL anchor in the book rather than a private one.
+   *
+   * The work is started when the note OPENS, not when text is selected, because the reader has to read
+   * the note before they can select anything in it — which is all the time this needs. By the time a
+   * selection happens the document is parsed and the answer is immediate.
+   */
+  private noteAnchor: { href: string; source: Promise<{ doc: Document; index: number } | null> } | null = null;
+  /**
+   * The open note's own text element, and the reader's live selection inside it.
+   *
+   * These are DOM, so they stay here rather than travelling in `SelectionInfo` — the same division
+   * the reading frame already keeps, where the payload is cloneable and the range is the engine's.
+   * The surface is what read-aloud segments and what the spotlight is measured against.
+   */
+  private noteSurface: HTMLElement | null = null;
+  /** The note's own overlay, and the element it is drawn into. Created with the surface, dropped with
+   *  it, so nothing can outlive the note it belongs to. */
+  private noteOverlay: NoteOverlayer | null = null;
+  /** The sentence the read-aloud mark is on, so a note overlay created mid-session can catch up. */
+  private ttsReadingIndex = -1;
+  private noteLayer: HTMLElement | null = null;
+  /** Highlights offered for the open note before its overlay existed. See `noteDrawStored`. */
+  private notePendingRows: { cfi: string; color: string; text_excerpt?: string | null; alpha?: number | null }[] = [];
+  /**
+   * The live range each note highlight was made from, keyed by the CFI it was anchored to.
+   *
+   * EXACT, not re-found. When the reader highlights a selection in an open note, the range they made it
+   * from is right here — there is nothing to search for and nothing to guess. Re-finding text is
+   * reserved for a note opened LATER, where the range is genuinely gone (see `noteDrawStored`).
+   */
+  private noteHlRanges = new Map<string, Range>();
+  private noteSelRange: Range | null = null;
+  /** The selected TEXT, kept beside the range because the range does not always survive the trip.
+   *  MEASURED: the plan resolves the right unit when built from the range immediately, and the wrong
+   *  one when built after read-aloud's own start-up has run — so the range is the precise answer and
+   *  the text is the one that keeps. Both are tried, in that order. */
+  private noteSelText = "";
+  /**
+   * The note sheet registers its text element and its overlay layer while it is open, and gives them
+   * back when it closes.
+   *
+   * The overlay is created here rather than by the sheet, because the DRAWING belongs to the engine:
+   * `drawHighlight` and `drawReadingSpotlight` live in this file with the ink and spotlight resolvers
+   * they read, and the note gets exactly those.
+   */
+  setNoteSurface(el: HTMLElement | null, layer?: HTMLElement | null): void {
+    this.noteSurface = el;
+    this.noteLayer = el ? (layer ?? null) : null;
+    if (!el) {
+      this.noteSelRange = null;
+      this.noteSelText = "";
+      this.noteHlRanges.clear();
+      this.notePendingRows = [];
+      this.noteOverlay = null;   // its SVG went with the sheet that owned the layer
+      return;
+    }
+    if (!layer) return;
+    void (async () => {
+      const mod = await ensureOverlayerModule().catch((e) => {
+        console.error("[sard] the note overlay is unavailable:", e);
+        return null;
+      });
+      // The sheet may have closed during the load; a stale overlay must not be attached to a dead layer.
+      if (!mod || this.noteLayer !== layer) return;
+      const ov = new mod.Overlayer();
+      layer.replaceChildren(ov.element);
+      this.noteOverlay = ov;
+      this.noteRedraw();
+      this.noteReplayReading();
+      if (this.notePendingRows.length) this.noteDrawStored(this.notePendingRows);
+    })();
+  }
+
+  /**
+   * Keep the overlay over the words, and redraw what it holds.
+   *
+   * NO COORDINATE ARITHMETIC. `getClientRects()` answers in VIEWPORT coordinates and `Overlayer` hands
+   * those numbers straight to the draw function, so the only surface that can receive them without
+   * translation is one whose own box IS the viewport. The layer is therefore `position: fixed; inset: 0`
+   * and the SVG fills it, which makes the two coordinate systems the same by construction.
+   *
+   * Two earlier attempts got this wrong and are worth recording, because both LOOKED right in the DOM.
+   * Translating a note-sized SVG left the marks outside the SVG's own box, and an SVG clips to its box:
+   * measured, a highlight rect at (521, 395) inside an SVG ending at y=286, correct geometry that
+   * nothing could see. Offsetting `left`/`top` by the layer's rect then missed by the difference between
+   * a border box and a padding box.
+   *
+   * What the layer must still do is not let a mark escape the note: the text scrolls and the layer does
+   * not, so it is CLIPPED to the text's own rectangle, recomputed here. That is why this runs on scroll
+   * as well as on resize — the same reason the reading frame redraws when the page relocates.
+   */
+  noteRedraw(): void {
+    const ov = this.noteOverlay;
+    const layer = this.noteLayer;
+    if (!ov || !layer) return;
+    const r = layer.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) {
+      const svg = ov.element;
+      svg.setAttribute("viewBox", `${r.left} ${r.top} ${r.width} ${r.height}`);
+      svg.setAttribute("preserveAspectRatio", "none");
+    }
+    try { ov.redraw(); } catch { /* a range whose note has gone — the next open rebuilds it */ }
+  }
+
+  /**
+   * Which stored highlight, if any, is under this point in the OPEN NOTE.
+   *
+   * THE PAGE'S OWN SHAPE, step for step. `highlightAtPoint` asks the section's overlayer to hit-test
+   * itself, checks the answer is a stored highlight rather than some other overlay, and derives the
+   * anchor from the mark's client rects; this asks the note's overlayer exactly the same three things.
+   * The hit area is therefore the painted mark itself — per line fragment, adjacent marks distinct
+   * — for free, with no second registry to keep in step.
+   *
+   * The only difference is that no coordinate conversion is needed: a note is drawn in the application's
+   * own document, so its rects are already in the space the editor is positioned in.
+   */
+  noteHighlightAtPoint(x: number, y: number): AnnotationHit | null {
+    const [key, mark] = this.noteOverlay?.hitTest?.({ x, y }) ?? [];
+    if (!key || !mark || !key.startsWith(NOTE_HL_PREFIX)) return null;
+    const cfi = key.slice(NOTE_HL_PREFIX.length);
+    // Not a stored highlight (the reading spotlight and the word pill live on this overlay too) —
+    // the same guard the page applies, so a gesture over the read-aloud band opens nothing.
+    if (!this.annotations.has(cfi)) return null;
+    const rect = unionRect(mark.getClientRects());
+    if (!rect) return null;
+    return { cfi, rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height, bottom: rect.bottom } };
+  }
+
+  /**
+   * Draw the highlights that belong to a note the reader has just OPENED.
+   *
+   * PROVENANCE FIRST, TEXT SECOND. The exact range is gone by then — it belonged to a note that has
+   * since closed — so a mark has to be located again, and the obvious way to do that is to look for
+   * the words the row stores. That is not safe, and it was measured to be unsafe: matching stored
+   * excerpts inside the note drew SIX of the reader's unrelated highlights onto a hundred-character
+   * footnote, because the search normalisation folds whitespace and letters and short excerpts from
+   * elsewhere in the book then occur inside it by chance.
+   *
+   * So a row must first PROVE it belongs to this note. Its CFI is resolved against the book, which
+   * gives the spine section and a range in that section's own document; the row is considered only if
+   * that section is the note's, and only if the range lies INSIDE the very element this note was
+   * extracted from. Nothing else can pass: a highlight in another chapter fails on the section, and one
+   * in a neighbouring note in the same appendix fails on the element.
+   *
+   * Only then is the text used, and only to place the mark within the note it has been proven to belong
+   * to — refused if those words occur there more than once, because a mark on the wrong phrase of
+   * the right note is still a mark in the wrong place. A row that cannot pass every gate is simply not
+   * drawn.
+   */
+  noteDrawStored(rows: { cfi: string; color: string; text_excerpt?: string | null; alpha?: number | null }[]): void {
+    // REMEMBERED, BECAUSE THE OVERLAY ARRIVES LATER. Its module is fetched when the note opens, so the
+    // rows are always offered before there is anything to draw them on; keeping them lets the overlay
+    // draw them the moment it exists.
+    this.notePendingRows = rows;
+    if (!this.noteOverlay || !this.noteSurface) return;
+    void this.noteRestoreStored(rows);
+  }
+
+  private async noteRestoreStored(
+    rows: { cfi: string; color: string; text_excerpt?: string | null; alpha?: number | null }[],
+  ): Promise<void> {
+    const source = await this.noteAnchor?.source;
+    const root = this.noteSurface;
+    const view = this.view as { book?: { resolveCFI?: (c: string) => { index?: number; anchor?: (d: Document) => Range } | null } } | null;
+    const book = view?.book;
+    if (!source || !root || !this.noteOverlay || !book?.resolveCFI) return;
+    // The element this note was extracted from, named by the fragment in its own href.
+    const frag = (this.noteAnchor?.href ?? "").split("#")[1] ?? "";
+    const noteEl = frag ? source.doc.getElementById(frag) : null;
+    if (!noteEl) return;   // a note with no addressable element cannot prove anything belongs to it
+    const hay = normalizeForSearch(root.textContent ?? "");
+    for (const row of rows) {
+      // A range already known is the exact one the reader made, and is reused rather than re-found.
+      let range = this.noteHlRanges.get(row.cfi) ?? null;
+      if (!range || range.collapsed) {
+        let inSource: Range | null = null;
+        try {
+          const t = book.resolveCFI(row.cfi);
+          if (!t || t.index !== source.index || !t.anchor) continue;   // another section entirely
+          inSource = t.anchor(source.doc);
+        } catch { continue; }                                          // an unresolvable anchor
+        if (!inSource || !noteEl.contains(inSource.commonAncestorContainer)) continue; // another note
+        const words = inSource.toString().trim() || (row.text_excerpt ?? "").trim();
+        const needle = words ? normalizeForSearch(words) : "";
+        if (!needle || hay.split(needle).length - 1 !== 1) continue;   // ambiguous within the note
+        range = findMatchRange(root.ownerDocument, "", words, "", root);
+        if (!range || range.collapsed) continue;
+        this.noteHlRanges.set(row.cfi, range);
+      }
+      this.noteDrawHighlight(row.cfi, row.color, row.alpha ?? null);
+    }
+  }
+
+  /** Re-draw the read-aloud mark after the overlay is (re)created mid-session. */
+  private noteReplayReading(): void {
+    if (this.ttsUnitsIndex === NOTE_UNITS_INDEX && this.ttsReadingIndex >= 0) {
+      this.showReadingHighlight(this.ttsReadingIndex);
+    }
+  }
+
+  /**
+   * The note's own text as read-aloud units, and which of them the selection starts in.
+   *
+   * THE SAME SEGMENTER, on a different document. `segmentBlock` was already written to take any
+   * element in any document — it is the sentence splitter plus the offset-to-Range mapping, and
+   * nothing in it knows about the reading frame. So a note is segmented by the code that segments a
+   * chapter, with the same `Intl.Segmenter`, the same leaf-container rule and the same normalisation.
+   * There is no second read-aloud here, only a second input.
+   *
+   * `ttsUnitsIndex` is set to a sentinel no spine section can equal, which is what keeps the reading
+   * spotlight OFF the book: `showReadingHighlight` clears and returns when the loaded section is not
+   * the one the units were built for, so a note session cannot paint a stripe over unrelated prose.
+   *
+   * THE NOTE HAS NO SPOTLIGHT OF ITS OWN, and that is a limitation rather than a decision. Painting one
+   * with the CSS Custom Highlight API was built and then removed: the ranges these units carry are alive
+   * when the plan is made — measured, `comparePoint` resolves the selected sentence correctly — and
+   * collapsed by the time read-aloud is playing, so the mark registered and drew nothing (one range,
+   * `collapsed: true`, zero client rects, measured in a release). Speech is correct either way; what is
+   * missing is the moving stripe, and an empty highlight that looks like the feature working is worse
+   * than none.
+   */
+  async noteListenPlan(lang?: string): Promise<{ sentences: string[]; startIndex: number } | null> {
+    const root = this.noteSurface;
+    if (!root) return null;
+    const units = await this.unitsForRoot(root, root.ownerDocument, lang);
+    if (!units.length) return null;
+    this.ttsUnits = units;
+    this.ttsUnitsIndex = NOTE_UNITS_INDEX;
+    this.ttsLang = lang;
+    // WHERE THE READER ASKED FROM. The same containment test the chapter path uses, against the range
+    // this engine kept when the selection was reported; the first unit is the honest fallback, because
+    // a note is short and starting at its top is not the same mistake as starting a chapter at its top.
+    let startIndex = -1;
+    const sel = this.noteSelRange;
+    if (sel) {
+      for (let i = 0; i < units.length && startIndex < 0; i++) {
+        const r = units[i].range;
+        if (!r) continue;
+        try {
+          if (r.comparePoint(sel.startContainer, sel.startOffset) === 0) startIndex = i;
+        } catch { /* a range whose nodes have been replaced cannot be compared — try the next */ }
+      }
+    }
+    // THE TEXT, when the range no longer answers. This is the reading frame's own fallback, applied to
+    // the note's units instead of the chapter's — where, unlike the chapter, the words are certain
+    // to be present, because they were selected out of this very text. MEASURED without it: the plan
+    // resolved unit 1 when built directly and unit 0 when built through the button, because by then the
+    // kept range no longer compared against the live nodes.
+    if (startIndex < 0 && this.noteSelText) {
+      const norm = (t: string) => t.replace(/\s+/g, " ").trim();
+      const needle = norm(this.noteSelText).slice(0, 24);
+      if (needle) startIndex = units.findIndex((u) => norm(u.text).includes(needle));
+    }
+    if (startIndex < 0) startIndex = 0;
+    return { sentences: units.map((u) => u.text), startIndex };
+  }
+
+  /**
+   * Resolve the note's own place in the book, ahead of being needed.
+   *
+   * Started when the note OPENS rather than when text is selected, because the reader has to read the
+   * note before they can select any of it — which is all the time this lookup needs.
+   */
+  prepareNoteAnchor(href: string): void {
+    if (this.noteAnchor?.href === href) return;
+    const book = this.view?.book as {
+      resolveHref?: (h: string) => { index?: number } | null;
+      sections?: { createDocument?: () => Promise<Document> }[];
+    } | undefined;
+    if (!book || !href) {
+      this.noteAnchor = null;
+      return;
+    }
+    this.noteAnchor = {
+      href,
+      source: (async () => {
+        const target = await Promise.resolve(book.resolveHref?.(href));
+        const index = target?.index;
+        if (typeof index !== "number") return null;
+        const doc = await book.sections?.[index]?.createDocument?.();
+        return doc ? { doc, index } : null;
+      })().catch(() => null),
+    };
+  }
+
+  /**
+   * Publish a selection the reader made in a note, through the SAME channel the reading frame uses.
+   *
+   * There is one selection callback in this application and one toolbar listening to it. A note that
+   * raised its own would be a second implementation of a solved problem, and the two would drift the
+   * first time an action was added to either. So the note hands its selection here, the engine gives it
+   * a CFI, and every consumer downstream is unable to tell where it came from — which is the point.
+   *
+   * Without a CFI it is NOT published. A toolbar whose highlight and note buttons write an anchor that
+   * resolves to nothing is worse than no toolbar: the row would persist, appear in the Notes panel, and
+   * lead nowhere. The lookup fails only if the note's text cannot be found in the document it came out
+   * of, which should not happen — so it says so rather than failing quietly.
+   */
+  async reportNoteSelection(
+    sel: { pre: string; text: string; post: string; rect: AnchorRect; range?: Range } | null,
+  ): Promise<void> {
+    if (!sel) {
+      this.noteSelRange = null;
+      this.noteSelText = "";
+      this.emitSelection(null);
+      return;
+    }
+    // KEPT HERE, NOT PUBLISHED. Read-aloud needs the live range to know which sentence of the note the
+    // reader asked from; the payload must stay cloneable. The reading frame keeps its ranges the same
+    // way, in `ttsUnits`, rather than shipping them through the callback.
+    this.noteSelRange = sel.range ?? null;
+    this.noteSelText = sel.text;
+    const anchor = await this.noteAnchor?.source;
+    const view = this.view;
+    let cfi = "";
+    if (anchor && view) {
+      const range = findMatchRange(anchor.doc, sel.pre, sel.text, sel.post);
+      if (range) {
+        try {
+          cfi = (view as unknown as { getCFI(i: number, r: Range): string }).getCFI(anchor.index, range) || "";
+        } catch { /* an unanchorable range is reported below, not thrown */ }
+      }
+    }
+    if (!cfi) {
+      console.error("[sard] a selection in a note could not be anchored in the book:", sel.text.slice(0, 60));
+      return;
+    }
+    // NO `range`. The reading frame attaches one so read-aloud can map a selection to a TTS unit by
+    // DOM position; a range from THIS document points into the note, which is not the document those
+    // units were built from, so it would be worse than absent. `SelectionInfo.range` is optional for
+    // exactly this reason and the text match covers it.
+    // KEPT AGAINST THE CFI. If the reader highlights this selection, `addHighlight` arrives with the
+    // CFI alone; this is what lets it draw the mark exactly where they made it instead of looking for
+    // the words again. Bounded by the note's own lifetime — the map is cleared with the surface.
+    if (sel.range && !sel.range.collapsed) this.noteHlRanges.set(cfi, sel.range);
+    this.emitSelection({ cfi, text: sel.text, rect: sel.rect, fromNote: true });
+  }
+
+  /**
+   * Build the handler once and wire what it emits. Called while the book opens, never at the click.
+   *
+   * `before-render` arrives with the note's own view after `open()` and before `goTo()` — the one
+   * moment anything can be done to that view before it loads. What Sard needs there is small and
+   * mechanical: give it a home, so that it loads at all.
+   */
+  private async ensureFootnotes(): Promise<void> {
+    if (this.footnotes) return;
+    // NOT SILENT. The swallow here is what let a release ship with the feature entirely absent: the
+    // module failed to load, `this.footnotes` stayed null, the link listener below returned early, and
+    // the application behaved precisely as it had before. A note is not worth breaking reading over,
+    // so this still recovers — but it says so.
+    const mod = await ensureFootnoteModule().catch((e) => {
+      console.error("[sard] the book's own footnotes are unavailable:", e);
+      return null;
+    });
+    if (!mod || this.footnotes) return;
+    const h = new mod.FootnoteHandler();
+    h.addEventListener("before-render", (ev: Event) => {
+      const nv = (ev as CustomEvent).detail?.view as (HTMLElement & {
+        addEventListener(t: string, f: (e: Event) => void): void;
+      }) | undefined;
+      if (!nv) return;
+      // ATTACH IT, OR IT NEVER LOADS. `#showFragment` creates the view and calls `goTo` without ever
+      // putting it in the document, and a detached element's iframe does not load in Chromium — so the
+      // section never arrives, `load` never fires, and the engine's own `render` never comes. Measured:
+      // the link event fired, the navigation was suppressed, and nothing appeared. `before-render` is
+      // the moment the engine offers for exactly this, between `open` and `goTo`.
+      //
+      // It is parked OFF-SCREEN rather than hidden: `display:none` gives an iframe no layout to render
+      // into, which is the same dead end by another route. It is never seen and never shown — the
+      // moment the extraction arrives at `render`, its content is taken and the view is dropped.
+      nv.setAttribute(
+        "style",
+        "position:fixed;inset-block-start:-10000px;inset-inline-start:0;width:34rem;height:24rem;border:0;background:transparent;",
+      );
+      document.body.appendChild(nv);
+    });
+    h.addEventListener("render", (ev: Event) => {
+      const d = (ev as CustomEvent).detail ?? {};
+      const pending = this.pendingNote;
+      this.pendingNote = null;
+      const view = d.view as HTMLElement | undefined;
+      // TAKEN NOW, IN THIS TICK, AND FROM THE BODY. The engine has just replaced the note document's
+      // body with the extracted fragment, so the content is complete exactly here and nowhere later.
+      //
+      // The body, not the target element, because the two disagree. `extractFootnote` selects the NODE
+      // for most notes but its CONTENTS for an `<li>` or an `<aside>` (`selectNodeContents`), and
+      // `extractContents` then empties the element it was given — so `target.outerHTML` is the whole
+      // note for a `<dl>` and an empty `<li>` for a declared endnote, which is exactly the standards
+      // case. The body holds the fragment in both. It is also all the engine needs to have done: no
+      // renderer, no contents registry, nothing that might not be ready yet.
+      //
+      // A `target` of null means the engine never found the anchor and left the body as the whole
+      // section. There is no note to show then, and showing a chapter in a popover would be worse than
+      // showing nothing, so this yields "" and the panel never opens.
+      const target = d.target as (Node & { ownerDocument: Document | null }) | null | undefined;
+      const html = target ? (target.ownerDocument?.body?.innerHTML ?? "") : "";
+      // AND THE VIEW IS RELEASED. It was attached only so it would load at all; nothing needs it now,
+      // and keeping it is what every earlier attempt got wrong.
+      try { view?.remove(); } catch { /* already gone */ }
+      if (!pending || !html) return;
+      this.footnoteCb?.({
+        html, href: String(d.href ?? ""), type: d.type ?? null,
+        marker: pending.marker, sourcePath: pending.sourcePath,
+      });
+    });
+    this.footnotes = h;
+  }
+
+  /**
+   * The numbers a note must be drawn with, so it matches the page it came from.
+   *
+   * The same style and theme the book's own sheets are built from — read once, here, rather than
+   * re-derived by the panel, so the note and the page can never disagree about what the reader chose.
+   */
+  notePresentation(): NotePresentation | null {
+    if (!this.style) return null;
+    const T = renderTypography(this.style, { rtl: this.dir === "rtl" });
+    const c = this.theme?.colors;
+    return {
+      fontFamily: "'SardArabic', 'SardLatin', 'SardArabicFallback', serif",
+      fontSize: `${NOTE_BASE_PX}px`,
+      zoom: T.zoom,
+      lineHeight: String(T.lineHeight),
+      direction: this.dir === "rtl" ? "rtl" : "ltr",
+      textAlign: T.textAlign,
+      faceCss: buildFontFaceCss(this.style),
+      // THE SAME TWO EXPRESSIONS THE BOOK'S OWN SHEETS USE, and deliberately not a token lookup: a
+      // per-book ink or page colour lives in the STYLE, not in the theme, so reading the theme alone
+      // would give the wrong paper in exactly those books someone has bothered to set one for.
+      //
+      // The page OPACITY is not carried over, though the book's own paper applies it. That control
+      // exists to let a background image show through the page; a note is a sheet laid ON the page for
+      // a moment, and a translucent one would be showing the reader the very text it covers.
+      ink: this.style.textColor || c?.text || "inherit",
+      paper: this.style.pageColor || c?.paperBg || "inherit",
+      accent: c?.accent || "inherit",
+      muted: c?.muted || "inherit",
+    };
+  }
+
+  /**
+   * What a link INSIDE an open note means.
+   *
+   * Measured across this library: every link a note contains is a BACKLINK — 24 of 24, 79 of 79, and
+   * every declared endnote in the third book — and not one note anywhere references another note. So
+   * the case worth getting right is not a nested note; it is the arrow that says "return to the text".
+   *
+   * Following it would be actively wrong. It points at the very reference the reader tapped, which is
+   * on screen behind the panel: the book would navigate to where it already is, and the return pill
+   * would arm for a journey nobody took. Dismissing the note IS the return, so that is what happens.
+   *
+   * Two ways to know one, no book-specific handling in either. The standard says so outright, with
+   * `epub:type="backlink"` or `role="doc-backlink"`. Books that declare nothing are caught by what is
+   * true of a backlink regardless: it resolves into the document the reader is reading. Anything else
+   * is a genuine cross-reference and is followed for real.
+   */
+  resolveNoteLink(hit: FootnoteHit, rawHref: string, declaredBacklink: boolean): { href: string; back: boolean } {
+    // Resolved against the NOTE's own document, which is where this href was written — not against
+    // the section the reader is in. A fabricated origin keeps `URL` to pure path arithmetic.
+    let path = "";
+    let href = rawHref;
+    try {
+      const base = new URL(hit.href || "x", "sard://b/");
+      const u = new URL(rawHref, base);
+      path = decodeURI(u.pathname).replace(/^\//, "");
+      href = path + u.hash;
+    } catch { /* an href the platform will not parse is simply not a backlink */ }
+    const back = declaredBacklink || (!!path && !!hit.sourcePath && path === hit.sourcePath);
+    return { href, back };
+  }
 
   /** RAWY-85: a fixed-layout book (a PDF) — read-only, no injected typography/theme. */
   get isFixedLayout(): boolean {

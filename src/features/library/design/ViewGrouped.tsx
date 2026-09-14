@@ -13,9 +13,12 @@ import type { BookRow, CaseNode, ShelfNode, ShelfOrder } from "../../../lib/ipc"
 import { useI18n } from "../../../i18n";
 import { localeNum } from "../../../lib/format";
 import { BookTile } from "./BookTile";
+import type { BookActionsProps } from "./BookActions";
 import { ShelfOrderMenu } from "./Menus";
-import { type BookGroup, type DesignView, isVirtualShelf, itemWidth, sortKey, UNFILED_CASE_ID } from "./model";
+import { atDensity, type BookGroup, type DesignView, isVirtualShelf, itemWidth, sortKey, UNFILED_CASE_ID } from "./model";
 import type { CoverMode } from "./coverPresentation";
+import { Icon } from "../../../components/Icon";
+import { displayFaceFor, isArabicText, labelFaceFor } from "../../../lib/typography";
 
 export interface ShelfRender {
   shelf: ShelfNode;
@@ -33,6 +36,8 @@ export interface GroupedProps {
   cases: CaseRender[];
   view: DesignView;
   density: number;
+  /** Library preference: keep book names hidden until a book is touched. Covers and Vista only. */
+  hideTitles?: boolean;
   paneWidth: number;
   mode: "browse" | "select" | "arrange";
   selected: Set<string>;
@@ -43,12 +48,19 @@ export interface GroupedProps {
   onFocusShelf: (id: string) => void;
   onToggleShelf: (s: ShelfNode) => void;
   onOpenBook: (b: BookRow) => void;
-  onEditBook: (b: BookRow) => void;
+  /** The shelf the tile was drawn in — a book can be on several, and a move must leave that one. */
+  onEditBook: (b: BookRow, fromShelf?: string | null) => void;
+  /** The book's real position on a shelf — see `positionIn` in LibraryDesign. */
+  positionIn: (shelfId: string | null | undefined, bookId: string) => number;
   onToggleSelect: (id: string) => void;
   onPickUp: (b: BookRow, shelfId: string, x: number, y: number) => void;
   /** Arrange mode: the pointer went down on a book. The surface decides when it becomes a drag. */
   onArrangeDown: (b: BookRow, shelfId: string, x: number, y: number, el: Element) => void;
   onRemoveFromShelf: (bookId: string, shelfId: string) => void;
+  /** Delete the book itself — the library's one delete path. */
+  onDeleteBook: (book: BookRow) => void;
+  /** The shared per-book action set — the same object Details spreads into its own menu. */
+  actions: (b: BookRow) => BookActionsProps;
   onSetFinished: (b: BookRow, finished: boolean) => void;
   onNewShelf: (caseId: string) => void;
   onManageCase: (id: string | null) => void;
@@ -61,7 +73,6 @@ export interface GroupedProps {
   onRenameShelf: (shelfId: string | null) => void;
   onCommitRename: (shelfId: string, name: string) => void;
   onDeleteShelf: (shelfId: string) => void;
-  onNewCategory: (shelfId: string) => void;
   onShelfInk: (shelfId: string, ink: string | null) => void;
   onSetShelfCase: (shelfId: string, caseId: string | null) => void;
   onMoveShelf: (shelfId: string, direction: number) => void;
@@ -72,10 +83,12 @@ export interface GroupedProps {
   /** Width of the book in hand, for the spine-shaped drop slot. */
   carryWidth: number;
   /** True when the book in hand came from the unshelved run, which it cannot be dropped back into. */
-  carryFromUnshelved: boolean;
   /** The library Crop/Fit default, passed through to each tile. */
   libraryCoverMode: CoverMode;
-  onPlace: (shelfId: string, categoryId: string | null, index: number) => void;
+  onPlace: (gap: { container: string; before: string | null }, categoryId: string | null) => void;
+  /** The one ordering-gap renderer. A view says how a gap LOOKS; it never says what it means. */
+  orderGap: (o: { section: string; before: string | null; key: string; className?: string;
+    style?: React.CSSProperties; label?: string }) => React.ReactNode;
 }
 
 /** Spine heights per density step — the reference's numbers. */
@@ -99,13 +112,17 @@ export function ViewGrouped(props: GroupedProps) {
    * Whether this band can take the book currently in hand — which is what decides whether it
    * lights up or dims while a drag is live.
    *
-   * The unshelved run counts: dropping there means "take it off its shelf", so it is a target for
-   * anything that came from a real shelf, and for nothing that was already unshelved.
+   * ONE RULE, FOR EVERY BAND: a lens cannot take a book, because its contents are a query and a
+   * row written to it is never read back. Everything else can, the books on no shelf included.
+   *
+   * That run used to be refused to any book that was already in it, on the reasoning that dropping
+   * there meant «take it off its shelf» and a book already off every shelf had nothing to take. It
+   * is a container with an order of its own now, so refusing it meant a book among those thirty-nine
+   * could be reordered in Grid and Details and not in Covers, Spines or Vista — measured, 49 places
+   * against 6 for the same book in the same library. A sorted shelf can take one too: the sort
+   * simply decides where it sits once it arrives.
    */
-  // A SORTED shelf can take a book — the sort simply decides where it sits once it arrives. Only
-  // a rule shelf cannot, because its contents are a query rather than a list.
-  const canTake = (s: ShelfNode) =>
-    isVirtualShelf(s.id) ? !props.carryFromUnshelved : !s.auto_rule;
+  const canTake = (s: ShelfNode) => !s.auto_rule;
 
   const ruleLabel = (s: ShelfNode) =>
     s.auto_rule === "reading"
@@ -124,29 +141,53 @@ export function ViewGrouped(props: GroupedProps) {
   // The unshelved run takes a drop too, and it means the opposite: the book leaves the shelf it
   // came from and joins nothing. Without it there was no way to drag a book OFF a shelf — only
   // the book's own ⋯ could do that — so a drag could file a book and never unfile one.
-  const gap = (shelfId: string, categoryId: string | null, index: number, key: string) =>
-    carrying && !(isVirtualShelf(shelfId) && props.carryFromUnshelved) ? (
-      <button
-        key={key}
-        // The slot names its own destination, so a RELEASE can find it by hit-testing the point
-        // under the pointer. Clicking it still works and does the same thing.
-        data-drop-shelf={shelfId}
-        data-drop-cat={categoryId ?? ""}
-        data-drop-index={index}
-        onClick={() => props.onPlace(shelfId, categoryId, index)}
-        title={isVirtualShelf(shelfId) ? t("lib.takeOffShelf") : t("lib.placeHere")}
-        aria-label={isVirtualShelf(shelfId) ? t("lib.takeOffShelf") : t("lib.placeHere")}
-        style={{
-          display: "block",
-          width: spines ? props.carryWidth : "100%",
-          ...(spines ? { height: SPINE_HEIGHTS[props.density] } : { aspectRatio: "2/3" }),
-          border: "2px dashed var(--acc)",
-          borderRadius: 3,
-          background: "var(--act)",
-          animation: "sard-open .14s ease-out",
-        }}
-      />
-    ) : null;
+  //
+  // AND IT IS ONLY DRAWN WHERE A RELEASE WOULD ACTUALLY BE ACCEPTED.
+  //
+  // `canTake` already existed and already decided this — it is what dims a shelf to 0.45 while a
+  // book is in hand. The gaps did not ask it, so a shelf that fills itself was greyed out AS IF it
+  // could not take the book and simultaneously offered seventeen dashed places, each of which lit
+  // up under the pointer. Releasing on one produced «رفّ بقاعدة — الترتيب تلقائيّ» and moved
+  // nothing. Measured exactly that. A destination the interface offers and then refuses is worse
+  // than one it never offered: the reader has already decided where the book goes.
+  // A place names the BOOK it sits in front of, or nothing at all for the end of the shelf. It
+  // used to name an index into the run this view had just drawn, and that number restarted at zero
+  // for every category and stopped at the two-row cap — so the same position meant different things
+  // in different formats, and a position past the cap could not be named at all.
+  /**
+   * A LANDING PLACE, DRAWN BY THE ONE RENDERER THAT KNOWS WHAT ONE MEANS.
+   *
+   * This built its own button stamped with `data-drop-shelf` — the MEMBERSHIP attribute — so a
+   * release read an ordering gap as a move onto that shelf, and then did nothing, because the book
+   * was already there. Covers and Spines carried the same fault as Vista, unseen only because the
+   * tests happened to release on TILES, which resolve correctly, rather than on these.
+   *
+   * How a gap LOOKS is still this view's business, and stays here.
+   */
+  const gap = (shelf: ShelfNode, categoryId: string | null, before: string | null, key: string) =>
+    carrying && canTake(shelf)
+      ? props.orderGap({
+          section: categoryId ? `${shelf.id}/${categoryId}` : shelf.id,
+          before,
+          key,
+          label: isVirtualShelf(shelf.id) ? t("lib.takeOffShelf") : t("lib.placeHere"),
+          // THE SAME BOX A COVER TAKES: the grid track's width at the cover's own 2:3, which is
+          // exactly how `BookTile` sizes a cover (`aspectRatio: "2/3"` at the tile's width). A
+          // spine's place is the width of the book in hand at this density's spine height, as the
+          // spines themselves are. Nothing here is a second number for the same thing.
+          style: {
+            display: "block",
+            width: spines ? props.carryWidth : "100%",
+            ...(spines ? { height: Math.round(atDensity(SPINE_HEIGHTS, props.density)) } : { aspectRatio: "2/3" }),
+            border: "2px dashed var(--acc)",
+            borderRadius: "var(--r-xs)",
+            background: "var(--act)",
+            // A landing place is also a click target (lift, then click where it goes).
+            cursor: "pointer",
+            animation: "sard-open .14s ease-out",
+          },
+        })
+      : null;
 
   return (
     <>
@@ -155,6 +196,9 @@ export function ViewGrouped(props: GroupedProps) {
         // set under a synthetic id. It used to render the same disc and caret as a case and then
         // ignore the click — a control that looked collapsible and was not.
         const id = c.node?.id ?? UNFILED_CASE_ID;
+        // The name as drawn, so the face that draws it can be chosen FROM it rather than from
+        // the interface's language.
+        const caseName = c.node ? c.node.name : t("lib.unfiled");
         const open = props.openCases.has(id);
         const shelfCount = c.shelves.length;
         // DISTINCT books, never the sum of the shelf totals — a book on two shelves of the same
@@ -187,8 +231,16 @@ export function ViewGrouped(props: GroupedProps) {
               // chrome a little toward the paper, which is the intended restraint.
               background: "color-mix(in srgb, var(--chr) 88%, transparent)",
               border: "1px solid var(--brd)",
+              // The case's ink runs down this card as a spine, so the two corners it passes through
+              // square off to the spine's own 4px and the far side keeps the card radius. Both have
+              // to be stated logically: border-inline-start follows the writing direction but the
+              // border-radius shorthand is physical and does not, so in Arabic the spine bowed
+              // around the 14px curve while the bare edge kept the square corners cut for it.
               borderInlineStart: `4px solid ${spine}`,
-              borderRadius: "4px 14px 14px 4px",
+              borderStartStartRadius: 4,
+              borderEndStartRadius: 4,
+              borderStartEndRadius: 14,
+              borderEndEndRadius: 14,
               boxShadow: "var(--sh1)",
               overflow: "hidden",
             }}
@@ -214,12 +266,12 @@ export function ViewGrouped(props: GroupedProps) {
                   // read as a centred title. The reference's `headBtn` sets no justification at
                   // all, i.e. start, and mirrors with the UI direction on its own.
                   justifyContent: "flex-start",
-                  gap: 12,
+                  gap: "var(--sp-5)",
                   minWidth: 0,
                   flex: 1,
                   margin: "-7px 0 -7px -8px",
                   padding: "7px 12px 7px 8px",
-                  borderRadius: 10,
+                  borderRadius: "var(--r-md)",
                   textAlign: "start",
                 }}
               >
@@ -230,9 +282,9 @@ export function ViewGrouped(props: GroupedProps) {
                     flex: "none",
                     display: "grid",
                     placeItems: "center",
-                    width: 26,
-                    height: 26,
-                    borderRadius: 8,
+                    width: "var(--ctl-sm)",
+                    height: "var(--ctl-sm)",
+                    borderRadius: "var(--r-md)",
                     background: open ? `color-mix(in srgb, ${ink} 20%, transparent)` : "var(--soft)",
                     border: `1px solid ${open ? `color-mix(in srgb, ${ink} 53%, transparent)` : "var(--brd)"}`,
                     transition: "background .14s ease-out",
@@ -250,6 +302,7 @@ export function ViewGrouped(props: GroupedProps) {
                     }}
                   />
                 </span>
+                {/* The case name decides its own script; see the note on the font below. */}
                 {/* The name carries the case's colour as an inset underline — the reference's
                     own `box-shadow: inset 0 -6px 0 -2px {ink}55`. Renaming happens in the
                     management panel that "Manage" opens, which is where the reference puts it. */}
@@ -257,7 +310,13 @@ export function ViewGrouped(props: GroupedProps) {
                   dir="auto"
                   style={{
                     flex: "none",
-                    font: rtl ? "700 1.125rem var(--ar)" : "600 1.0625rem var(--book)",
+                    // THE NAME'S OWN SCRIPT, not the interface's language. `rtl` here is `lang === "ar"`, so in an
+                    // Arabic interface a shelf called "To read" was routed to the ARABIC role: with a Latin-only app
+                    // font chosen it fell through to Plex while every other Latin surface showed the chosen face, and
+                    // with an Arabic display face chosen it was drawn in that face's rudimentary Latin. One shelf name
+                    // disagreeing with the whole interface, because a property of the WINDOW decided a property of the
+                    // TEXT. Weight and size follow the same flag for the same reason: Amiri needs more of both.
+                    font: `${isArabicText(caseName) ? "700 1.125rem" : "600 1.0625rem"} ${displayFaceFor(caseName)}`,
                     color: "var(--txt)",
                     overflow: "hidden",
                     textOverflow: "ellipsis",
@@ -267,7 +326,7 @@ export function ViewGrouped(props: GroupedProps) {
                       : undefined,
                   }}
                 >
-                  {c.node ? c.node.name : t("lib.unfiled")}
+                  {caseName}
                 </span>
                 <span
                   style={{
@@ -348,23 +407,36 @@ export function ViewGrouped(props: GroupedProps) {
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "space-between",
-                      gap: 12,
+                      gap: "var(--sp-5)",
                       padding: "0 0 9px",
                     }}
                   >
                     <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+                      {/* The shelf's collapse toggle took its size from its own glyph -- 12x14 --
+                          inside a row 26px tall, while the same faint-glyph control in the case
+                          editor is 22x22 on a 6px radius. The extra width is absorbed by a negative
+                          inline-end margin rather than by the row gap: this row holds three items,
+                          so narrowing the gap would also have pulled the count in against the name. */}
                       <button
                         onClick={() => props.onToggleShelf(shelf)}
                         aria-label={shelf.name}
-                        style={{ color: "var(--faint)", fontSize: 9, width: 12 }}
+                        style={{
+                          color: "var(--faint)", fontSize: 9, flex: "none",
+                          width: "var(--ctl-xs)", height: "var(--ctl-xs)", borderRadius: "var(--r-sm)",
+                          marginInlineEnd: -8,
+                        }}
                       >
-                        {shelf.collapsed ? "▸" : "▾"}
+                        <Icon name={shelf.collapsed ? "caretRight" : "caretDown"} size="sm" />
                       </button>
                       <button
                         className="libd-hov-txt"
                         onClick={() => props.onFocusShelf(shelf.id)}
                         dir="auto"
-                        style={{ font: rtl ? "700 .9375rem var(--ar)" : "600 .875rem var(--ui)", color: "var(--txt)" }}
+                        // The shelf's OWN name decides its script — see the note on the case name above.
+                        style={{
+                          font: `${isArabicText(shelf.name) ? "700 .9375rem" : "600 .875rem"} ${labelFaceFor(shelf.name)}`,
+                          color: "var(--txt)",
+                        }}
                       >
                         {shelf.name}
                       </button>
@@ -372,15 +444,15 @@ export function ViewGrouped(props: GroupedProps) {
                         {num(total)}
                       </span>
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, position: "relative" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)", position: "relative" }}>
                       {isVirtualShelf(shelf.id) ? null : shelf.auto_rule ? (
                         <span
                           title={t("lib.ruleFixed")}
                           style={{
                             display: "inline-flex",
                             alignItems: "center",
-                            gap: 6,
-                            height: 26,
+                            gap: "var(--sp-3)",
+                            height: "var(--ctl-sm)",
                             padding: "0 10px",
                             borderRadius: 20,
                             font: "500 .6875rem var(--ui)",
@@ -398,8 +470,8 @@ export function ViewGrouped(props: GroupedProps) {
                           style={{
                             display: "inline-flex",
                             alignItems: "center",
-                            gap: 6,
-                            height: 26,
+                            gap: "var(--sp-3)",
+                            height: "var(--ctl-sm)",
                             padding: "0 10px",
                             borderRadius: 20,
                             font: "500 .6875rem var(--ui)",
@@ -408,10 +480,15 @@ export function ViewGrouped(props: GroupedProps) {
                             border: "1px solid var(--brd)",
                           }}
                         >
-                          {shelf.order_rule === "hand"
-                            ? t("lib.byHand")
-                            : `⇅ ${t(sortKey(shelf.order_rule))}`}
-                          <span style={{ color: "var(--faint)", fontSize: 9 }}>▾</span>
+                          {shelf.order_rule === "hand" ? (
+                            t("lib.byHand")
+                          ) : (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--sp-2)" }}>
+                              <Icon name="sort" size="sm" />
+                              {t(sortKey(shelf.order_rule))}
+                            </span>
+                          )}
+                          <span style={{ color: "var(--faint)", display: "flex" }} aria-hidden><Icon name="caretDown" size="sm" /></span>
                         </button>
                       )}
                       {props.orderMenuFor === shelf.id && (
@@ -420,7 +497,6 @@ export function ViewGrouped(props: GroupedProps) {
                           onOrder={(o) => props.onSetOrder(shelf.id, o)}
                           onRename={() => props.onRenameShelf(shelf.id)}
                           onDelete={() => props.onDeleteShelf(shelf.id)}
-                          onNewCategory={() => props.onNewCategory(shelf.id)}
                           onClose={() => props.onOpenOrder(null)}
                           cases={props.cases.map((x) => x.node).filter((x): x is CaseNode => !!x)}
                           onSetCase={(caseId) => props.onSetShelfCase(shelf.id, caseId)}
@@ -446,7 +522,7 @@ export function ViewGrouped(props: GroupedProps) {
                         width: 260,
                         background: "var(--soft)",
                         border: "1px solid var(--brd)",
-                        borderRadius: 7,
+                        borderRadius: "var(--r-md)",
                         padding: "6px 9px",
                         font: "500 .8125rem var(--ui)",
                         outline: "none",
@@ -460,9 +536,9 @@ export function ViewGrouped(props: GroupedProps) {
                       style={{
                         display: "flex",
                         alignItems: "center",
-                        gap: 2,
+                        gap: "var(--sp-1)",
                         padding: "8px 10px",
-                        borderRadius: 9,
+                        borderRadius: "var(--r-md)",
                         background: "var(--soft)",
                         border: "1px solid var(--brd)",
                         width: "100%",
@@ -478,7 +554,7 @@ export function ViewGrouped(props: GroupedProps) {
                             style={{
                               display: "block",
                               width: 4,
-                              height: 22,
+                              height: "var(--ctl-xs)",
                               borderRadius: 1,
                               background: "var(--faint)",
                               opacity: 0.7,
@@ -489,7 +565,7 @@ export function ViewGrouped(props: GroupedProps) {
                         style={{
                           font: "500 .6875rem var(--ui)",
                           color: "var(--faint)",
-                          marginInlineStart: 8,
+                          marginInlineStart: "var(--sp-4)",
                         }}
                       >
                         {t("lib.collapsed")} · {num(total)}
@@ -506,7 +582,7 @@ export function ViewGrouped(props: GroupedProps) {
                     <div
                       style={{
                         border: "1px dashed var(--rule)",
-                        borderRadius: 9,
+                        borderRadius: "var(--r-md)",
                         padding: "16px 18px",
                         background: "var(--soft)",
                         font: "400 .8125rem var(--ui)",
@@ -523,7 +599,7 @@ export function ViewGrouped(props: GroupedProps) {
                       let budget = capFor(shelf.id);
                       // A shelf whose only categories are empty groups to NOTHING, so there is no
                       // run to hang a slot off. Give the drop somewhere to land.
-                      if (!groups.length) return gap(shelf.id, null, 0, "gap-empty");
+                      if (!groups.length) return gap(shelf, null, null, "gap-empty");
                       return groups.map((g) => {
                         const take = spines ? g.books.length : Math.max(0, Math.min(g.books.length, budget));
                         if (!spines) budget -= take;
@@ -557,7 +633,7 @@ export function ViewGrouped(props: GroupedProps) {
                                       alignItems: "flex-end",
                                       flexWrap: "wrap",
                                       gap: 6,
-                                      minHeight: SPINE_HEIGHTS[props.density],
+                                      minHeight: Math.round(atDensity(SPINE_HEIGHTS, props.density)),
                                       ...(g.name ? { marginBottom: 16 } : {}),
                                     }
                                   : {
@@ -568,20 +644,28 @@ export function ViewGrouped(props: GroupedProps) {
                                     }
                               }
                             >
-                              {shownBooks.map((b, i) => (
+                              {shownBooks.map((b) => (
                                 <Fragment key={b.id}>
-                                  {gap(shelf.id, g.categoryId, i, `gap-${b.id}`)}
+                                  {gap(shelf, g.categoryId, b.id, `gap-${b.id}`)}
                                   <BookTile
                                     book={b}
                                     view={props.view}
                                     density={props.density}
+                                    hideTitles={props.hideTitles}
                                     itemW={iw}
                                     selected={props.selected.has(b.id)}
                                     inHand={props.carryId === b.id}
                                     arrangeOn={props.mode === "arrange"}
+                                    // The tile is a landing place too: it names the shelf it is
+                                    // drawn under and its index there, so a release ON A COVER
+                                    // resolves to a real position instead of finding nothing.
+                                    srcShelfId={shelf.id}
+                                    // NOT `i`: that is the tile's place in a capped slice of one
+                                    // category run, which is not where the book sits on the shelf.
+                                    srcIndex={props.positionIn(shelf.id, b.id)}
                                     selectOn={props.mode === "select"}
                                     onOpen={() => props.onOpenBook(b)}
-                                    onEdit={() => props.onEditBook(b)}
+                                    onEdit={() => props.onEditBook(b, shelf.id)}
                                     onToggleSelect={() => props.onToggleSelect(b.id)}
                                     onPickUp={(x, y) => props.onPickUp(b, shelf.id, x, y)}
                                     onArrangeDown={(x, y, el) => props.onArrangeDown(b, shelf.id, x, y, el)}
@@ -593,12 +677,14 @@ export function ViewGrouped(props: GroupedProps) {
                                         ? null
                                         : () => props.onRemoveFromShelf(b.id, shelf.id)
                                     }
+                                    actions={props.actions(b)}
+                                    onDelete={() => props.onDeleteBook(b)}
                                     onSetFinished={(f) => props.onSetFinished(b, f)}
                                     libraryCoverMode={props.libraryCoverMode}
                                   />
                                 </Fragment>
                               ))}
-                              {gap(shelf.id, g.categoryId, shownBooks.length, "gap-end")}
+                              {gap(shelf, g.categoryId, null, "gap-end")}
                             </div>
                           </div>
                         );

@@ -3,9 +3,13 @@
 // THE DEFECT THIS EXISTS FOR. Sard vendors two rendering engines under `public/foliate-js/`, and
 // both need browser features newer than the WebView2 runtime some machines actually have:
 //
-//   * PDF.js 5.5.207 calls `Uint8Array.prototype.toHex()` on the unconditional PDF-open path
-//     (pdf.worker.mjs:59575). Where that method is missing, EVERY PDF fails with
-//     `UnknownErrorException: hashOriginal.toHex is not a function` — the reported defect.
+//   * PDF.js 5.5.207 calls four built-ins on the unconditional PDF-open path with no feature
+//     detection of its own: `Promise.try` and `Promise.withResolvers` (the message handler, on the
+//     first request of every PDF), `Uint8Array.prototype.toHex` (the document fingerprint,
+//     pdf.worker.mjs:59575) and `Map.prototype.getOrInsertComputed` (page render). Missing `toHex`
+//     fails every PDF with `UnknownErrorException: hashOriginal.toHex is not a function` — the
+//     reported defect — and missing `Promise.try` is worse: it throws inside a `message` handler,
+//     where nothing can reject, so `getDocument()` never settles and the open hangs silently.
 //   * foliate's `epub.js` calls `Object.groupBy` / `Map.groupBy` in the OPF metadata parser
 //     (epub.js:178, :200, :206, :258). Where those are missing, NO book of any kind opens.
 //
@@ -22,6 +26,29 @@
 //
 // ⚠ ON RE-VENDOR: re-derive these probes from what the new engine calls. `public/foliate-js/VENDOR.txt`
 // carries the standing instruction.
+//
+// WHAT THIS PROBE MEANS NOW. `public/foliate-js/sard-pdf-compat.mjs` is loaded from index.html BEFORE
+// the application bundle, so by the time anything here reads a global, the compatibility layer has
+// already supplied whatever the engine lacked. The question this module answers is therefore "can
+// SARD render this here", not "did this engine ship the built-in natively" — which is the honest
+// question, and it keeps the refusal truthful: if the layer ever failed to load, these probes read
+// false and the reader is told, instead of meeting a hang.
+//
+// The PDF set was wrong in BOTH directions before this, and both errors were measured:
+//
+//   DEMANDED AND NEVER USED   `Uint8Array.prototype.toBase64` and `Uint8Array.fromBase64`. They serve
+//                             `createFontFaceRule` (the fallback taken only where the FontFace API is
+//                             absent), signature handling, and XFA — which Sard does not enable. With
+//                             each deleted from the page realm a real PDF still opened, paginated,
+//                             extracted text and rendered. Requiring them refused engines that work.
+//   REQUIRED AND UNGUARDED    `Promise.try`, `Promise.withResolvers` and
+//                             `Map.prototype.getOrInsertComputed`. Deleting the last of these threw
+//                             at render; the first two are reached on the first worker request of
+//                             every PDF, and their absence hangs rather than throws.
+//
+// `URL.parse` is supplied by the layer but deliberately NOT gated: its absence costs the worker, not
+// correctness (pdf.js falls back to parsing on the main thread), so it is a performance fix rather
+// than a capability.
 
 /** What Sard can do on this machine. Each maps to a whole content format, not to a nicety. */
 export type Capability = "epub" | "pdf";
@@ -34,38 +61,74 @@ export type Capability = "epub" | "pdf";
 export interface RuntimeEnv {
   objectGroupBy: boolean;
   mapGroupBy: boolean;
+  promiseTry: boolean;
+  promiseWithResolvers: boolean;
   uint8ToHex: boolean;
-  uint8ToBase64: boolean;
-  uint8FromBase64: boolean;
+  mapGetOrInsertComputed: boolean;
 }
 
 /** Which named features each capability needs — used for the decision AND for the Details text. */
 export const CAPABILITY_FEATURES: Record<Capability, readonly (keyof RuntimeEnv)[]> = {
   // foliate epub.js:178/:200/:206/:258 — the OPF metadata parser, run for every EPUB.
   epub: ["objectGroupBy", "mapGroupBy"],
-  // PDF.js 5.5.207 — pdf.worker.mjs:59575 (every getDocument), pdf.mjs:7434 (embedded fonts),
-  // pdf.mjs:24263/:24267 (signatures).
-  pdf: ["uint8ToHex", "uint8ToBase64", "uint8FromBase64"],
+  // PDF.js 5.5.207, every one of them on the unconditional open/render path:
+  // pdf.worker.mjs:60114 + pdf.mjs:8404 (`Promise.try`, the message handler — `sendWithPromise` at
+  // pdf.mjs:8445 always sets a callbackId, so the worker takes that branch on the first request),
+  // pdf.mjs/worker `Promise.withResolvers` (×40, including `sendWithPromise` itself),
+  // pdf.worker.mjs:59575 (`toHex`, the fingerprint, awaited at :62425 on every GetDoc), and
+  // `Map.prototype.getOrInsertComputed` (pdf.mjs ×9 / worker ×6, reached through `_intentStates` and
+  // `#methodPromises` when a page renders).
+  pdf: ["promiseTry", "promiseWithResolvers", "uint8ToHex", "mapGetOrInsertComputed"],
 };
+
+/**
+ * WHICH OF THOSE FEATURES SARD SUPPLIES ITSELF.
+ *
+ * `public/foliate-js/sard-pdf-compat.mjs` installs these four behind a `typeof` guard, in the page
+ * and again inside the PDF worker's own realm. That single fact decides what a MISSING feature
+ * actually proves, and the two answers are not the same:
+ *
+ *   * A feature NOT on this list is one only the engine can provide. `Object.groupBy` and
+ *     `Map.groupBy` are the whole EPUB capability and Sard supplies neither, so if they are absent
+ *     the engine really is behind and updating it really is the answer.
+ *
+ *   * A feature ON this list is one Sard installs. If it is absent at the moment the capability is
+ *     read, the layer did not reach that realm — which is a problem with this installation, not with
+ *     the reader's WebView2. Telling them to update it would send them to fix something that is not
+ *     broken, and the update would not help.
+ *
+ * `pdfCompat.test.ts` holds this list against what the shipped file actually installs, so the two
+ * cannot drift apart.
+ */
+export const SUPPLIED_BY_COMPAT: readonly (keyof RuntimeEnv)[] = [
+  "promiseTry",
+  "promiseWithResolvers",
+  "uint8ToHex",
+  "mapGetOrInsertComputed",
+];
 
 /** The human-readable feature names, for the Details panel and for bug reports. */
 export const FEATURE_LABELS: Record<keyof RuntimeEnv, string> = {
   objectGroupBy: "Object.groupBy",
   mapGroupBy: "Map.groupBy",
+  promiseTry: "Promise.try",
+  promiseWithResolvers: "Promise.withResolvers",
   uint8ToHex: "Uint8Array.prototype.toHex",
-  uint8ToBase64: "Uint8Array.prototype.toBase64",
-  uint8FromBase64: "Uint8Array.fromBase64",
+  mapGetOrInsertComputed: "Map.prototype.getOrInsertComputed",
 };
 
 /** Read the real globals. The ONLY place this module touches the environment. */
 export function readEnv(): RuntimeEnv {
-  const u8 = Uint8Array as unknown as { fromBase64?: unknown; prototype: Record<string, unknown> };
+  const u8 = Uint8Array as unknown as { prototype: Record<string, unknown> };
+  const promise = Promise as unknown as { try?: unknown; withResolvers?: unknown };
+  const map = Map as unknown as { groupBy?: unknown; prototype: Record<string, unknown> };
   return {
     objectGroupBy: typeof (Object as unknown as { groupBy?: unknown }).groupBy === "function",
-    mapGroupBy: typeof (Map as unknown as { groupBy?: unknown }).groupBy === "function",
+    mapGroupBy: typeof map.groupBy === "function",
+    promiseTry: typeof promise.try === "function",
+    promiseWithResolvers: typeof promise.withResolvers === "function",
     uint8ToHex: typeof u8.prototype?.toHex === "function",
-    uint8ToBase64: typeof u8.prototype?.toBase64 === "function",
-    uint8FromBase64: typeof u8.fromBase64 === "function",
+    mapGetOrInsertComputed: typeof map.prototype?.getOrInsertComputed === "function",
   };
 }
 
@@ -73,6 +136,18 @@ export function readEnv(): RuntimeEnv {
 export function capabilitiesOf(env: RuntimeEnv): Record<Capability, boolean> {
   const has = (cap: Capability) => CAPABILITY_FEATURES[cap].every((f) => env[f]);
   return { epub: has("epub"), pdf: has("pdf") };
+}
+
+/**
+ * Pure: is the ENGINE itself behind for this capability?
+ *
+ * True only when something is missing that Sard does not supply — the one condition under which
+ * "this runtime is too old" is a statement of fact rather than a guess. When every missing feature
+ * is one the compatibility layer installs, the engine's age is not what has been established, and
+ * the caller must say something else.
+ */
+export function engineIsBehind(env: RuntimeEnv, cap: Capability): boolean {
+  return CAPABILITY_FEATURES[cap].some((f) => !env[f] && !SUPPLIED_BY_COMPAT.includes(f));
 }
 
 /** Pure: which named features are missing for a capability (for the Details text). */

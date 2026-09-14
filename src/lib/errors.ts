@@ -27,8 +27,20 @@ export type Fault =
   /** A choice the user made can be changed to fix it (e.g. a voice that cannot speak this book).
    *  No WP-1 failure emits this; it exists because WP-5 needs it and the vocabulary must be shared. */
   | "configuration"
-  /** Sard itself. Anything unmapped lands here, on purpose — see `classify` below. */
-  | "sard";
+  /** Sard itself — where the failure has actually been traced to Sard. */
+  | "sard"
+  /**
+   * NOT ESTABLISHED. The failure was recognised by no rule, so which layer produced it is unknown:
+   * it could be the book, this machine, the WebView2 runtime, the filesystem, an installation that
+   * is not intact, or Sard.
+   *
+   * This exists because the honest answer was not previously expressible. Anything unmapped was
+   * filed as `sard`, and that value is not private — it is written into the diagnostics line as
+   * `fault=sard`, which a reader can read behind Details and paste into a report. Saying "Sard" for
+   * a failure nobody has traced is a guess wearing the clothes of a finding, and it sends whoever
+   * reads that report looking in one particular place for no reason.
+   */
+  | "unknown";
 
 /**
  * What the user can DO. Ordered by the presentation, first = primary.
@@ -75,6 +87,58 @@ export interface Classified<K extends string = string> {
 const RAW_CAP = 4000; // a runaway string must not bloat the settings row
 
 /**
+ * An absolute path, in the shapes the layers under Sard actually produce: a Windows path, a UNC
+ * share, a POSIX home, and the percent-encoded path that a failed asset fetch carries inside its
+ * URL. Anchored on how a path BEGINS, so it cannot be mistaken for ordinary prose.
+ *
+ * `(?!\/)` after the drive is what keeps a URL scheme out of it: without it, `http://…` matched
+ * where the scheme's own colon and slash sit, and the redaction swallowed the host — and
+ * `asset.localhost` is the useful half of that message, since it says which route was being used.
+ *
+ * THE TAIL RUNS TO THE END OF THE LINE, SPACES INCLUDED, and that is deliberate. A path stopped at
+ * the first space leaves the rest of the filename standing, which is exactly the part worth hiding:
+ * `/books/My Private Book.epub` came out as `<path> Private Book.epub`. Real messages put the path
+ * last or in quotes, so the tail is closed by a quote, a newline, or one of the characters a
+ * filename cannot contain — a colon among them, which is what stops `…book.epub: access denied`
+ * from taking the reason with it. Where that still takes a word too many, it takes a word of the
+ * engine's prose; the other kind of mistake takes the name of what someone is reading.
+ */
+const ABSOLUTE_PATH =
+  /(?:[A-Za-z]:[\\/](?!\/)|\\\\[^\\/\s"']+[\\/]|\/(?:home|Users|mnt|media|var|tmp)\/|[A-Za-z]%3A%2F)[^\r\n"'<>|*?:]*/gi;
+
+/**
+ * REPLACE AN ABSOLUTE PATH WITH ITS SHAPE.
+ *
+ * WHY THIS IS HERE AND NOT AT THE PLACE IT IS DISPLAYED. `raw` is whatever the failing layer said,
+ * and the layers under Sard say paths: the OS names the file it could not find, SQLite names its
+ * database file, and a failed fetch of a book carries that book's own path, percent-encoded, in the
+ * URL it reports. All of it is rendered behind «التفاصيل», copied to the clipboard by the button
+ * beside it, and persisted into the diagnostics row — so a reader pasting a bug report would be
+ * handing over where they keep their library and the name of what they were reading. Normalising is
+ * the one place every one of those routes passes through.
+ *
+ * WHAT SURVIVES. That it was a path, and its extension — which is the part a diagnostic uses: "it
+ * could not find a .epub" is the whole content of the message. The drive, the folders and the
+ * filename are the reader's and no report needs them.
+ *
+ * It also makes classification honest: the rules match on what an engine SAID, and a reader whose
+ * books live in a folder called `zips` was previously one substring away from being told their
+ * book was a damaged archive.
+ */
+export function redactPaths(text: string): string {
+  return text.replace(ABSOLUTE_PATH, (p) => {
+    let decoded = p;
+    try {
+      decoded = decodeURIComponent(p);
+    } catch {
+      /* a malformed escape means the raw text is all there is to read */
+    }
+    const ext = /\.([A-Za-z0-9]{1,8})$/.exec(decoded);
+    return ext ? `<path .${ext[1].toLowerCase()}>` : "<path>";
+  });
+}
+
+/**
  * Turn anything at all into one diagnostic string, following `cause` chains.
  *
  * Deliberately lossless-ish and deliberately UGLY: this is the text a developer reads, so it keeps
@@ -82,6 +146,12 @@ const RAW_CAP = 4000; // a runaway string must not bloat the settings row
  * that a bug report needs.
  */
 export function describeError(e: unknown, depth = 0): string {
+  // Every route to the user — the card, the clipboard, the persisted diagnostics ring — is built
+  // from this one string, so the redaction belongs here rather than at any of them.
+  return redactPaths(rawDescribe(e, depth));
+}
+
+function rawDescribe(e: unknown, depth: number): string {
   if (e == null) return "";
   if (typeof e === "string") return e.slice(0, RAW_CAP);
   if (e instanceof Error) {
@@ -130,10 +200,12 @@ export interface Rule<K extends string> {
 /**
  * Run an ordered rule list against a normalised error string.
  *
- * `fallback` is returned when nothing matches, and that MUST be the "Sard's fault" kind. Following
- * the precedent `updater.ts` already set: anything unrecognised gets the honest generic answer
- * rather than being force-fitted into a category that would tell the reader something untrue about
- * their own book or machine. A wrong confident message is worse than an honest vague one.
+ * `fallback` is returned when nothing matches, and it MUST be a kind that claims nothing about
+ * where the failure came from. Anything unrecognised gets the honest generic answer rather than
+ * being force-fitted into a category that would tell the reader something untrue about their own
+ * book or machine. A wrong confident message is worse than an honest vague one — and that cuts both
+ * ways, which is what the `unknown` fault is for: naming Sard as the culprit is as much a guess as
+ * naming the book would be.
  */
 export function matchRule<K extends string>(raw: string, rules: readonly Rule<K>[], fallback: K): K {
   for (const r of rules) if (r.test.test(raw)) return r.kind;

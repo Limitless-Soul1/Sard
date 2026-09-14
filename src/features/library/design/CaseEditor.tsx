@@ -22,6 +22,7 @@ import {
   categoryReorder,
   collectionDelete,
   collectionRemoveBook,
+  libraryAddBookToShelf,
   collectionRename,
   libraryTree,
   shelfCreate,
@@ -37,6 +38,9 @@ import { resolveBookMeta, displayTitle } from "../../../lib/bookMeta";
 import { autoCoverPaint } from "../AutoCover";
 import { dropIndex, isFinished, pctText, groupShelf, placementPlan, sortKey, type BookGroup } from "./model";
 import { createEdgeScroller, type EdgeScroller } from "./dragScroll";
+import { Icon } from "../../../components/Icon";
+import { displayFaceFor, isArabicText } from "../../../lib/typography";
+
 
 /** The case inks, shared with the sidebar's picker. */
 const INKS = ["#BFA8D6", "#8DC3BA", "#9DC0D6", "#E8C36A", "#D69C9C", "#A8C08D", "#C9A88D", "#9C8DC3"];
@@ -79,7 +83,8 @@ export interface CaseEditorProps {
   /** Re-read everything after a write. */
   onChanged: () => void;
   onClose: () => void;
-  onOpenBookDetails: (b: BookRow) => void;
+  /** The shelf the row was drawn in — a book can be on several, and a move must leave that one. */
+  onOpenBookDetails: (b: BookRow, fromShelf?: string | null) => void;
   /** The Library's toast — every deletion and every failed write is announced through it. */
   notify: (msg: string) => void;
 }
@@ -306,8 +311,15 @@ export function CaseEditor(props: CaseEditorProps) {
     let ok = true;
     try {
       if (moveTo) {
+        // JOIN THE DESTINATION — the deletion below takes care of leaving.
+        //
+        // This was `shelfPlaceBook`, which means «here and nowhere else» and would have stripped
+        // every OTHER shelf these books were on as a side effect of emptying this one. Deleting
+        // «تست» must not quietly take its books off «المفضلة» too. `collectionDelete` already
+        // removes this shelf's own memberships one at a time and unfiles only what is left with
+        // none, so an add is the whole of the move.
         for (const g of shelfBooks(s)) {
-          for (const b of g.books) await shelfPlaceBook(moveTo, b.id, null, 0);
+          for (const b of g.books) await libraryAddBookToShelf(b.id, moveTo, null);
         }
       }
       await collectionDelete(s.id);
@@ -329,7 +341,14 @@ export function CaseEditor(props: CaseEditorProps) {
     try {
       const run2 = shelfBooks(s).find((g) => g.categoryId === catId);
       if (run2) {
-        for (const b of run2.books) await shelfPlaceBook(s.id, b.id, moveTo, 0);
+        // RE-GROUP WITHIN THIS SHELF, and touch nothing else.
+        //
+        // Two faults in the old call, both from `shelfPlaceBook` meaning «here and nowhere else».
+        // Setting a book's category deleted every other shelf it was on — so tidying the groups
+        // inside «روايات» unfiled the same book from «المفضلة». And it re-ranked to index 0, so a
+        // category change also threw the books to the top of the shelf. `libraryAddBookToShelf`
+        // against a shelf the book is already on writes the category alone and leaves the rank.
+        for (const b of run2.books) await libraryAddBookToShelf(b.id, s.id, moveTo);
       }
       tree = await categoryDelete(catId);
     } catch (e) {
@@ -520,8 +539,17 @@ export function CaseEditor(props: CaseEditorProps) {
           flexDirection: "column",
           background: "var(--chr)",
           border: "1px solid var(--brd)",
+          // The case's ink runs down the shell as a spine, so the two corners it passes through
+          // square off to the spine's own 4px and only the far side keeps the dialog radius.
+          // Both halves have to be stated logically: border-inline-start follows the writing
+          // direction, but the border-radius shorthand is physical and does not, so in Arabic
+          // the spine bowed around the 16px curve while the bare edge kept the square corners
+          // that were meant for it.
           borderInlineStart: `4px solid ${c.ink ?? "var(--acc)"}`,
-          borderRadius: "4px 16px 16px 4px",
+          borderStartStartRadius: 4,
+          borderEndStartRadius: 4,
+          borderStartEndRadius: "var(--r-xl)",
+          borderEndEndRadius: "var(--r-xl)",
           boxShadow: "var(--sh4)",
           overflow: "hidden",
           animation: "sard-rise .16s ease-out",
@@ -534,7 +562,7 @@ export function CaseEditor(props: CaseEditorProps) {
             flex: "none",
             display: "flex",
             alignItems: "flex-start",
-            gap: 16,
+            gap: "var(--sp-6)",
             padding: "20px 24px 16px",
             borderBottom: "1px solid var(--brd)",
           }}
@@ -556,7 +584,9 @@ export function CaseEditor(props: CaseEditorProps) {
               <div
                 style={{
                   padding: "7px 0",
-                  font: rtl ? "700 1.125rem var(--ar)" : "600 1.0625rem var(--book)",
+                  // A translated label, so its script IS the interface language — but it is asked of
+                  // the string rather than assumed, so this reads the same as every other name here.
+                  font: `${isArabicText(t("lib.unfiled")) ? 700 : 600} ${isArabicText(t("lib.unfiled")) ? "1.125rem" : "1.0625rem"} ${displayFaceFor(t("lib.unfiled"))}`,
                   color: "var(--txt)",
                 }}
               >
@@ -573,9 +603,11 @@ export function CaseEditor(props: CaseEditorProps) {
                   width: "100%",
                   background: "var(--soft)",
                   border: "1px solid var(--brd)",
-                  borderRadius: 8,
+                  borderRadius: "var(--r-md)",
                   padding: "7px 10px",
-                  font: rtl ? "700 1.125rem var(--ar)" : "600 1.0625rem var(--book)",
+                  // The case's OWN name, not the interface language: a Latin case name in an Arabic
+                  // interface was being set in the Arabic role.
+                  font: `${isArabicText(name) ? 700 : 600} ${isArabicText(name) ? "1.125rem" : "1.0625rem"} ${displayFaceFor(name)}`,
                   color: "var(--txt)",
                   outline: "none",
                 }}
@@ -587,7 +619,7 @@ export function CaseEditor(props: CaseEditorProps) {
                 {t("lib.shelvesCount", { n: num(c.shelves.length) })}
               </span>
               {/* No colour picker here: an unfiled group has no ink of its own to set. */}
-              <div style={{ display: props.unfiled ? "none" : "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ display: props.unfiled ? "none" : "flex", alignItems: "center", gap: "var(--sp-3)" }}>
                 <button
                   title={t("lib.inkNone")}
                   aria-label={t("lib.inkNone")}
@@ -633,12 +665,12 @@ export function CaseEditor(props: CaseEditorProps) {
             </div>
           </div>
           <button
-            className="libd-hov libd-hov-txt"
+            className="libd-hov libd-hov-txt ui-close"
             onClick={props.onClose}
             aria-label={t("panel.close")}
-            style={{ flex: "none", width: 30, height: 30, borderRadius: 9, color: "var(--mut)", fontSize: 14 }}
+            style={{ flex: "none", width: "var(--ctl-md)", height: "var(--ctl-md)", borderRadius: "var(--r-md)", color: "var(--mut)", fontSize: 14 }}
           >
-            ✕
+            <Icon name="close" size="sm" />
           </button>
         </div>
 
@@ -660,7 +692,7 @@ export function CaseEditor(props: CaseEditorProps) {
                   padding: "10px 0 14px",
                   borderBottom: "1px solid var(--brd)",
                   opacity: shelfHeld || (rowDrag?.kind === "shelf" && rowDrag.id === s.id) ? 0.4 : 1,
-                  ...(s.auto_rule ? { background: "var(--soft)", borderRadius: 10, paddingInline: 12 } : {}),
+                  ...(s.auto_rule ? { background: "var(--soft)", borderRadius: "var(--r-md)", paddingInline: "var(--sp-5)" } : {}),
                 }}
               >
                 {/* where a dragged shelf would land */}
@@ -689,7 +721,7 @@ export function CaseEditor(props: CaseEditorProps) {
                       touchAction: "none",
                     }}
                   >
-                    ⠿
+                    <Icon name="grip" size="sm" />
                   </button>
                   {/* `collection_rename` answers with the collection ROWS, not the tree — every
                       other write here answers with the tree. The cast that used to bridge that
@@ -720,7 +752,14 @@ export function CaseEditor(props: CaseEditorProps) {
                       }}
                       style={chip(s.order_rule === "hand")}
                     >
-                      {s.order_rule === "hand" ? t("lib.byHand") : `⇅ ${t(sortKey(s.order_rule))}`}
+                      {s.order_rule === "hand" ? (
+                        t("lib.byHand")
+                      ) : (
+                        <span style={{ display: "inline-flex", alignItems: "center", gap: "var(--sp-2)" }}>
+                          <Icon name="sort" size="sm" />
+                          {t(sortKey(s.order_rule))}
+                        </span>
+                      )}
                     </button>
                   )}
                   {/* WHICH CASE HOLDS THIS SHELF. The one control that stops a shelf becoming an
@@ -744,9 +783,9 @@ export function CaseEditor(props: CaseEditorProps) {
                       setMovingShelf(null);
                       setConfirmShelf(confirmShelf === s.id ? null : s.id);
                     }}
-                    style={{ width: 24, height: 24, borderRadius: 7, color: "var(--faint)", fontSize: 12 }}
+                    style={{ width: "var(--icon-xl)", height: "var(--icon-xl)", borderRadius: "var(--r-md)", color: "var(--faint)", fontSize: 12 }}
                   >
-                    ✕
+                    <Icon name="close" size="sm" />
                   </button>
                 </div>
 
@@ -820,7 +859,7 @@ export function CaseEditor(props: CaseEditorProps) {
                         </button>
                       )}
                       {g.name != null && (
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0 7px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)", padding: "6px 0 7px" }}>
                           <button
                             title={t("lib.moveCategoryHint")}
                             aria-label={t("lib.moveCategoryHint")}
@@ -837,7 +876,7 @@ export function CaseEditor(props: CaseEditorProps) {
                               touchAction: "none",
                             }}
                           >
-                            ⠿
+                            <Icon name="grip" size="sm" />
                           </button>
                           <CatName
                             name={g.name}
@@ -857,9 +896,9 @@ export function CaseEditor(props: CaseEditorProps) {
                                   confirmCat?.cat === g.categoryId ? null : { shelf: s.id, cat: g.categoryId! },
                                 )
                               }
-                              style={{ width: 22, height: 22, borderRadius: 6, color: "var(--faint)", fontSize: 11 }}
+                              style={{ width: "var(--ctl-xs)", height: "var(--ctl-xs)", borderRadius: "var(--r-sm)", color: "var(--faint)", fontSize: 11 }}
                             >
-                              ✕
+                              <Icon name="close" size="sm" />
                             </button>
                           )}
                         </div>
@@ -889,8 +928,8 @@ export function CaseEditor(props: CaseEditorProps) {
                           flexWrap: "wrap",
                           alignItems: "stretch",
                           gap: 7,
-                          minHeight: 44,
-                          borderRadius: 9,
+                          minHeight: "var(--ctl-2xl)",
+                          borderRadius: "var(--r-md)",
                           marginBottom: 10,
                           ...(hand?.kind === "book" && takeable
                             ? { outline: "1px dashed var(--brd)", outlineOffset: 6 }
@@ -930,7 +969,7 @@ export function CaseEditor(props: CaseEditorProps) {
                               if (holdRef.current) window.clearTimeout(holdRef.current);
                               holdRef.current = null;
                             }}
-                            onDetails={() => props.onOpenBookDetails(b)}
+                            onDetails={() => props.onOpenBookDetails(b, s.id)}
                           />
                         ))}
                         {target?.shelfId === s.id &&
@@ -973,7 +1012,7 @@ export function CaseEditor(props: CaseEditorProps) {
                         width: 240,
                         background: "var(--soft)",
                         border: "1px solid var(--brd)",
-                        borderRadius: 8,
+                        borderRadius: "var(--r-md)",
                         padding: "7px 10px",
                         font: "500 .8125rem var(--ui)",
                         outline: "none",
@@ -1036,11 +1075,11 @@ export function CaseEditor(props: CaseEditorProps) {
                 if (v) run(() => shelfCreate(v, props.unfiled ? null : c.id));
               }}
               style={{
-                marginTop: 12,
+                marginTop: "var(--sp-5)",
                 width: 280,
                 background: "var(--soft)",
                 border: "1px solid var(--brd)",
-                borderRadius: 8,
+                borderRadius: "var(--r-md)",
                 padding: "8px 11px",
                 font: "500 .8125rem var(--ui)",
                 outline: "none",
@@ -1055,7 +1094,7 @@ export function CaseEditor(props: CaseEditorProps) {
             flex: "none",
             display: "flex",
             alignItems: "center",
-            gap: 12,
+            gap: "var(--sp-5)",
             padding: "13px 24px",
             borderTop: "1px solid var(--brd)",
           }}
@@ -1067,9 +1106,9 @@ export function CaseEditor(props: CaseEditorProps) {
               setCreatingShelf(true);
             }}
             style={{
-              height: 30,
+              height: "var(--ctl-md)",
               padding: "0 13px",
-              borderRadius: 9,
+              borderRadius: "var(--r-md)",
               border: "1px solid var(--brd)",
               background: "var(--chr)",
               font: "500 .75rem var(--ui)",
@@ -1100,9 +1139,9 @@ export function CaseEditor(props: CaseEditorProps) {
                 setTarget(null);
               }}
               style={{
-                height: 30,
+                height: "var(--ctl-md)",
                 padding: "0 12px",
-                borderRadius: 9,
+                borderRadius: "var(--r-md)",
                 border: "1px solid var(--brd)",
                 font: "500 .75rem var(--ui)",
                 color: "var(--mut)",
@@ -1119,9 +1158,9 @@ export function CaseEditor(props: CaseEditorProps) {
                   className="libd-hov"
                   onClick={() => setConfirmCase(false)}
                   style={{
-                    height: 30,
+                    height: "var(--ctl-md)",
                     padding: "0 12px",
-                    borderRadius: 9,
+                    borderRadius: "var(--r-md)",
                     border: "1px solid var(--brd)",
                     font: "500 .75rem var(--ui)",
                     color: "var(--mut)",
@@ -1145,9 +1184,9 @@ export function CaseEditor(props: CaseEditorProps) {
                     else setConfirmCase(false);
                   }}
                   style={{
-                    height: 30,
+                    height: "var(--ctl-md)",
                     padding: "0 12px",
-                    borderRadius: 9,
+                    borderRadius: "var(--r-md)",
                     border: "1px solid #c0503a",
                     font: "600 .75rem var(--ui)",
                     color: "#c0503a",
@@ -1160,7 +1199,7 @@ export function CaseEditor(props: CaseEditorProps) {
               <button
                 className="libd-hov"
                 onClick={() => setConfirmCase(true)}
-                style={{ height: 30, padding: "0 12px", borderRadius: 9, font: "500 .75rem var(--ui)", color: "#c0503a" }}
+                style={{ height: "var(--ctl-md)", padding: "0 12px", borderRadius: "var(--r-md)", font: "500 .75rem var(--ui)", color: "#c0503a" }}
               >
                 {t("lib.deleteCase")}
               </button>
@@ -1169,9 +1208,9 @@ export function CaseEditor(props: CaseEditorProps) {
             className="libd-hov-bright"
             onClick={props.onClose}
             style={{
-              height: 30,
+              height: "var(--ctl-md)",
               padding: "0 16px",
-              borderRadius: 9,
+              borderRadius: "var(--r-md)",
               background: "var(--acc)",
               color: "var(--pap)",
               font: "600 .75rem var(--ui)",
@@ -1195,7 +1234,7 @@ export function CaseEditor(props: CaseEditorProps) {
             zIndex: 210,
             pointerEvents: "none",
             padding: "5px 11px",
-            borderRadius: 7,
+            borderRadius: "var(--r-md)",
             border: "1px solid var(--brd)",
             borderInlineStart: "3px solid var(--acc)",
             background: "var(--chr)",
@@ -1224,7 +1263,7 @@ export function CaseEditor(props: CaseEditorProps) {
             insetInlineStart: 0,
             zIndex: 200,
             pointerEvents: "none",
-            width: 22,
+            width: "var(--ctl-xs)",
             height: 32,
             borderRadius: 2,
             boxShadow: "var(--sh3)",
@@ -1243,8 +1282,8 @@ function DropSlot() {
       style={{
         flex: "none",
         width: 56,
-        height: 44,
-        borderRadius: 8,
+        height: "var(--ctl-2xl)",
+        borderRadius: "var(--r-md)",
         border: "2px dashed var(--acc)",
         background: "var(--act)",
         animation: "sard-open .14s ease-out",
@@ -1297,10 +1336,10 @@ function Chip({
         style={{
           display: "flex",
           alignItems: "center",
-          gap: 8,
+          gap: "var(--sp-4)",
           maxWidth: 250,
           padding: "5px 7px 5px 5px",
-          borderRadius: 8,
+          borderRadius: "var(--r-md)",
           border: `1px solid ${hover && takeable ? "var(--acc)" : "var(--brd)"}`,
           background: hover ? "var(--hov)" : "var(--pap)",
           textAlign: "start",
@@ -1311,7 +1350,7 @@ function Chip({
         <span
           style={{
             flex: "none",
-            width: 22,
+            width: "var(--ctl-xs)",
             height: 32,
             borderRadius: 2,
             boxShadow: "var(--sh1)",
@@ -1347,9 +1386,9 @@ function Chip({
               e.stopPropagation();
               onDetails();
             }}
-            style={{ flex: "none", width: 20, height: 20, borderRadius: 6, color: "var(--mut)", fontSize: 12 }}
+            style={{ flex: "none", width: "var(--icon-lg)", height: "var(--icon-lg)", borderRadius: "var(--r-sm)", color: "var(--mut)", fontSize: 12 }}
           >
-            ⋯
+            <Icon name="more" size="sm" />
           </button>
         )}
       </div>
@@ -1374,17 +1413,17 @@ function ConfirmBar({
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 12,
+        gap: "var(--sp-5)",
         flexWrap: "wrap",
         margin: "0 0 12px",
         padding: "10px 12px",
-        borderRadius: 10,
+        borderRadius: "var(--r-md)",
         background: "var(--act)",
         border: "1px solid var(--acc)",
       }}
     >
       <span style={{ font: "500 .75rem var(--ui)", color: "var(--txt)" }}>{text}</span>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap" }}>
         {targets.map((x) => (
           <button
             key={x.id || "__none"}
@@ -1393,7 +1432,7 @@ function ConfirmBar({
             style={{
               height: 28,
               padding: "0 11px",
-              borderRadius: 8,
+              borderRadius: "var(--r-md)",
               border: "1px solid var(--brd)",
               background: "var(--chr)",
               font: "500 .75rem var(--ui)",
@@ -1426,7 +1465,7 @@ function ShelfName({ shelf, onRename }: { shelf: ShelfNode; onRename: (v: string
         flex: "0 1 240px",
         background: "var(--soft)",
         border: "1px solid var(--brd)",
-        borderRadius: 7,
+        borderRadius: "var(--r-md)",
         padding: "5px 9px",
         font: "600 .8125rem var(--ui)",
         color: "var(--txt)",
@@ -1461,7 +1500,7 @@ function CatName({
         flex: "0 1 200px",
         background: disabled ? "transparent" : "var(--soft)",
         border: `1px solid ${disabled ? "transparent" : "var(--brd)"}`,
-        borderRadius: 6,
+        borderRadius: "var(--r-sm)",
         padding: "3px 7px",
         font: "600 .6875rem var(--ui)",
         letterSpacing: ".08em",

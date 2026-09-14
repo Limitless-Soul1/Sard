@@ -77,12 +77,27 @@ describe("paged mode must not make <body> a scroll container", () => {
     expect(css).not.toMatch(/html\s*\{[^}]*height:\s*100%/i);
   });
 
-  it("the paged and scrolled sheets differ ONLY in the section-box rule", () => {
-    // A guard on the blast radius: if a future edit makes flow mode change anything else in this
-    // sheet, that is a separate decision and should be visible here.
+  it("the paged and scrolled sheets differ only in the section box and the page margin", () => {
+    // A guard on the blast radius. Flow mode is allowed to change exactly two things in this sheet,
+    // and both are named here; anything else a future edit makes flow-dependent fails this test, which
+    // is the point — that would be a separate decision and should be visible.
+    //   1. the section box on `html` — RAWY-04 in paged flow, and RAWY-25's reason for keeping it out
+    //      of scrolled flow (asserted above);
+    //   2. the page margin on `body` — in scrolled flow the margin belongs to the BOOK rather than to
+    //      the reading host, so a press at the start of a line reaches the text instead of the app
+    //      document beside it (see readingMarginOwner.test.ts for why the two halves must agree).
     const p = buildReadingCss(paged(LATIN_DEFAULTS));
     const s = buildReadingCss(scrolled(LATIN_DEFAULTS));
-    const strip = (css: string) => css.replace(/html\s*\{[^}]*\}/g, "").replace(/\s+/g, " ").trim();
+    // Assert each difference is really there before stripping it, so this cannot pass vacuously.
+    expect(p).toMatch(/html\s*\{[^}]*overflow:\s*hidden/i);
+    expect(s).toMatch(/body\s*\{\s*padding-inline:\s*\d/);
+    expect(p).not.toMatch(/body\s*\{\s*padding-inline:/);
+    const strip = (css: string) =>
+      css
+        .replace(/html\s*\{[^}]*\}/g, "")
+        .replace(/body\s*\{\s*padding-inline:[^}]*\}/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
     expect(strip(p)).toBe(strip(s));
   });
 });

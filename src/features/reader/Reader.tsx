@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties, useMemo } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { pdfAttemptStarted, stageOk } from "@pdfDiag"; // DIAGNOSTIC BUILD ONLY
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { setCloseFlush } from "../../lib/closeFlush"; // what this view needs saved before the window goes
 
 import { setBookCssMode } from "../../reader-engine/FoliateController";
 import { FoliateController, type SearchHit, type SelectionInfo, type TocEntry } from "../../reader-engine/FoliateController";
@@ -11,6 +11,7 @@ import { createReader, needsReaderHost } from "../../reader-transport";
 import { PhotoComposer } from "../photo/PhotoComposer";
 import type { CardData } from "../photo/photo";
 import { useReader } from "../../reader-engine/store";
+import { useProfiles } from "../profiles/store";
 import { parseSectionHref, sectionHref } from "../../reader-engine/sectionHref"; // WP-6A: generated-row hrefs
 import { positionReadout } from "../../reader-engine/position";
 import { loadBookCssMode } from "../../reader-engine/bookCssSetting"; // WP-7 stage 3 // WP-4F: one place decides the readout
@@ -20,8 +21,10 @@ import {
   stepPdfZoom, zoomForWheel, isFitMode, type PdfZoom, type PdfThemeId,
 } from "../../reader-engine/pdfView";
 import {
+  speakSymbolsKey, speakSymbolsAttr, parseSpeakSymbols, effectiveSpeakSymbols,
+} from "./speakSymbols";
+import {
   ARABIC_DEFAULTS,
-  defaultsForDir,
   PAGE_WIDTH_DEFAULT,
   pageWidthPx,
   type ReadingStyle,
@@ -41,20 +44,17 @@ import { openWebView2Help } from "../../lib/webview2";
 import { ErrorCard } from "../../app/ErrorCard";
 import { useI18n } from "../../i18n";
 import { extractChapterNumber, localeNum } from "../../lib/format";
-import { applyTheme, THEMES, useTheme, type ThemeId } from "../../theme";
-import {
-  clearBookOverride,
-  effectiveStyle,
-  hasOverride as calcHasOverride,
-  loadBookOverride,
-  loadGlobalStyle,
-  saveBookOverride,
-  saveGlobalStyle,
-  type BookOverride,
-} from "./perBookSettings";
-import { useStyleScope } from "../../lib/styleScope";
+import { resolveTheme, useTheme, type ThemeId } from "../../theme";
+import type { FootnoteHit } from "../../reader-engine/FoliateController";
+import { loadGlobalStyle, saveGlobalStyle } from "./perBookSettings";
 // RAWY-265 (Phase 3): the page-opacity gate + the desk scrim, both resolved in one place.
-import { currentDeskScrim, effectivePageOpacity, useBackground } from "../../lib/background";
+import {
+  bgOverlayOf,
+  currentDeskScrim,
+  effectivePageOpacity,
+  overlayTint,
+  useBackground,
+} from "../../lib/background";
 import { AnnotationLayer } from "./AnnotationLayer";
 import { AnnotationsPanel } from "./AnnotationsPanel";
 import { PhotoBasketTray } from "./PhotoBasketTray";
@@ -64,12 +64,27 @@ import { SearchPanel } from "./SearchPanel";
 import { PageBookmark } from "./PageBookmark";
 import { useAnnotations } from "./annotationsStore";
 import { useReferences } from "./referencesStore"; // RAWY-260: phrase-bound references, per book
+import { useReplacements } from "./replacementsStore"; // phrase-bound reading-time substitutions, per book
 import { useBookmarks } from "./bookmarksStore";
+import { useBookmarkStyle } from "../../lib/bookmarkStyle"; // the dye a new place is marked in
 import { ReaderChrome, type SettingsSection } from "./ReaderChrome";
+import { NoteSheet } from "./NoteSheet";
 import { SettingsPanel } from "./SettingsPanel";
 import { useReadMarkerStyle } from "../../lib/readMarkerStyle"; // RAWY-256: the global read-marker variant
 import { endReadingSession, startReadingSession, updateReadingSession } from "../../lib/presence"; // DISC/RPC
 import { ReturnPill } from "./ReturnPill"; // RAWY-250: the return-to-reading-position pill
+import { landingStep } from "./readAnchor";
+import {
+  advanceFurthest,
+  boundaryHasParted,
+  movedOnFrom,
+  type Landing,
+  markFromResume,
+  parseFurthest,
+  serialiseFurthest,
+  type FurthestMark,
+} from "./furthestRead"; // the furthest point reached — the maximum of the reading position
+import { ReplacementNotice } from "./ReplacementNotice";
 import { TtsPlayer } from "./TtsPlayer";
 import { releaseButtonFocusAfterPointerClick, skipSentenceForArrow, useTts } from "../../lib/tts";
 import { useChromeOnIntent } from "./useChromeOnIntent";
@@ -186,7 +201,11 @@ export function Reader({
   // does for its own view, lifted one layer up to the whole open sequence.
   const openEpoch = useRef(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>("typography");
+  // OPENS ON COLOUR. With one entrance instead of three, the drawer needs a place to land, and
+  // colour is the setting a reader reaches for while actually reading — the light in the room
+  // changed, not the typography. After that the section is remembered, so reopening returns the
+  // reader to whichever tab they were last using rather than resetting under them.
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("colour");
   // RAWY-89: Contents + Search share the physical-left, so only ONE is open at a time — a single
   // source of truth makes that structural (no two-setter races; the persisted-open effect can't
   // re-open Contents over a Search the user just opened). `chaptersOpen`/`searchOpen` are derived.
@@ -243,8 +262,85 @@ export function Reader({
   // overwrite the anchor, it still points at the original reading position. The anchor IS the freeze (one
   // piece of state, so the pill and the freeze can never disagree). `anchorRef` is what the once-registered
   // onRelocate closure reads; `anchorUi` mirrors it for rendering.
+  // RAWY-250 (addendum 7): HOW FAR IS "I CARRIED ON READING".
+  //
+  // The freeze treats a jump as an inspection and holds the real position until the reader says
+  // otherwise — the pill's ×, or reaching the end of the chapter they landed in. Measured, that last
+  // signal is too late to be the only automatic one: a reader who opens an annotation and simply keeps
+  // reading loses everything after it, because leaving before the chapter ends restores the pre-jump
+  // position.
+  //
+  // The distance is measured in foliate's own LOCATIONS, the only unit here that means the same thing
+  // in every book: it is byte-derived, so it does not move with font size, margins, page width, window
+  // size or flow mode. Measured across three books of 129, 80 and 2913 locations, one location is
+  // consistently two to three page turns — so THREE locations is six to nine pages of continuous
+  // reading. Well past a glance at a highlight and its surroundings, and well short of the chapter-end
+  // rule it complements (a chapter is ~9 locations in the smallest of those books, ~24 in the largest).
+  // A book whose engine reports no locations never trips this and keeps the chapter-end signal alone.
+  const THAW_LOCATIONS = 3;
   const anchorRef = useRef<ReadAnchor | null>(null);
+  // Where the jump LANDED, in locations — recorded on the first relocate after an anchor is taken,
+  // because the landing is not known at the moment the anchor is. Null while no anchor holds.
+  const anchorLocRef = useRef<number | null>(null);
+  // A JUMP IS NOT OVER UNTIL ITS NAVIGATION IS.
+  //
+  // `beginJump` already suppresses the SECTION-change thaw deterministically, by pre-arming the chapter
+  // tracker with the section the jump will land in — its own comment gives the reason: one jump emits
+  // several relocates ("an `onExpand` re-anchor emits another"), and a rule that fires on any of them
+  // cannot be trusted. The LOCATION rule added later (addendum 7 — three locations past the landing
+  // means the reader is reading here now) never got that protection. It takes the FIRST relocate as the
+  // landing and measures every later one against it, so a jump that settles further on than it first
+  // landed thaws itself and the pill vanishes the instant it appeared.
+  //
+  // `goToSearchHit` settles twice by construction: it navigates to the cfi, then re-finds the hit's real
+  // text in the rendered document and scrolls to THAT. So the search path — the one this pill exists for
+  // — is precisely the path that can move after landing.
+  //
+  // This counts jumps in flight. While one is, the landing keeps being re-recorded instead of measured
+  // against, so the baseline is where the jump FINISHED, not where it first touched down. It is cleared
+  // by the navigation's own promise, not by a timer: the engine says when it is done.
+  const jumpsInFlight = useRef(0);
   const [anchorUi, setAnchorUi] = useState<ReadAnchor | null>(null);
+  // THE FURTHEST POINT REACHED IN THIS BOOK — the destination of "take me back to where I got to".
+  //
+  // It is the running MAXIMUM of the very value the row below already persists, so it is not a second
+  // opinion about where the reader is: it advances inside the same debounce, behind the same anchor
+  // freeze, from the same relocate. See `furthestRead.ts` for why that is the whole definition.
+  // `furthestRef` is what the once-registered onRelocate closure reads; `furthestUi` mirrors it for
+  // rendering, exactly as the anchor pair does.
+  const furthestRef = useRef<FurthestMark | null>(null);
+  // WHEN THE READER WAS SENT SOMEWHERE RATHER THAN READING THERE.
+  //
+  // A search hit, an annotation, a bookmark or a cross-reference already announces itself: it takes a
+  // return anchor, the reading position freezes, and nothing below can advance the mark. A CONTENTS
+  // row does not — it is ordinary navigation, it writes the reading position immediately, and that is
+  // long-standing behaviour this feature must not disturb (close the book after picking a chapter and
+  // it still reopens there).
+  //
+  // But picking chapter 900 from the list to look at it is not READING to chapter 900, and the mark —
+  // which now also decides what search seals — must not treat it as such. So the jump is stamped here
+  // and the mark alone consults it. Nothing else does: the reading position, the read-chapter
+  // set and the anchor rules all behave exactly as before. Read ON from the landing and the next
+  // position is no longer jump-driven, so the mark advances then — genuine forward reading, which is
+  // the whole distinction being drawn.
+  // Armed by an explicit contents jump, disarmed once the reader has moved ON from where it put them.
+  // `null` inside means the landing has not been seen yet. See `movedOnFrom` for why this is a
+  // position and not a timer.
+  const tocPendingRef = useRef<{ landing: Landing | null } | null>(null);
+  const [furthestUi, setFurthestUi] = useState<FurthestMark | null>(null);
+  /**
+   * THIS BOOK'S ANSWER about pronouncing decorative marks, and the third state.
+   *
+   * `null` is "this book has not been asked" — it follows the worn هيئة, and keeps following it as the
+   * reader changes هيئة. A `false` is a real answer and outranks the هيئة exactly as a `true` does; the
+   * two must stay distinguishable, which is why this is `boolean | null` and never a bare boolean.
+   *
+   * Kept in BOTH a ref and state on purpose: the drawer renders from the state, while the three
+   * read-aloud entry points read the ref at the instant they build a queue and must not be a render
+   * behind a row that has just loaded or a toggle the reader has just pressed.
+   */
+  const speakSymbolsRef = useRef<boolean | null>(null);
+  const [speakSymbolsOverride, setSpeakSymbolsOverride] = useState<boolean | null>(null);
   // RAWY-250 (PART 0.4 / D66): per-chapter tracking for the SHARED end-signal. `atStart` = the chapter was
   // entered at its beginning (a mid-chapter jump must never mark it read); `endOnArrival` = its end-condition
   // was already true when we landed (a chapter shorter than one screen) — that one completes only when the
@@ -284,12 +380,12 @@ export function Reader({
   // Per-book settings (RAWY-40): the global reading defaults (baseline), this book's PARTIAL
   // override, and the global theme captured on entry (restored to the chrome on exit).
   const globalStyleRef = useRef<ReadingStyle | null>(null);
-  const overrideRef = useRef<BookOverride>({});
-  // The LIBRARY theme captured on entry, restored to the chrome on exit (RAWY-48/D29 — the
-  // Library has its OWN theme, independent of any book/unified theme).
-  const libraryThemeRef = useRef<ThemeId>(useTheme.getState().themeId);
+  // RAWY-48/D29's `libraryThemeRef` is GONE, and its absence is the point. It existed to put the
+  // Library's palette back on exit, because the Reader used to overwrite `:root` on entry. It writes
+  // nothing global now, so there is nothing to put back — and the ref could only ever restore a
+  // STALE value: it was captured when the book opened, so switching profiles mid-book and then going
+  // back handed the Library its previous profile's colours.
   const [bookThemeId, setBookThemeId] = useState<ThemeId>(useTheme.getState().bookThemeId);
-  const [hasOv, setHasOv] = useState(false);
   const [photoCard, setPhotoCard] = useState<CardData | null>(null); // RAWY-49 Photo Mode composer
   const [devCardFont, setDevCardFont] = useState<string | null>(null); // RAWY-81 DEV capture only
   const [basketOpen, setBasketOpen] = useState(false); // RAWY-60 passages tray
@@ -301,9 +397,6 @@ export function Reader({
   const ttsWordIndex = useTts((s) => s.wordIndex); // RAWY-127: active word (drives the karaoke pill)
 
   const { status, dir, cfi, fraction, chapterLabel, chapterHref, error, style, bookTitle, location, pageLabel } = useReader();
-  // RAWY-43: unified (all books share one style) vs per-book. Drives where changes are written
-  // and how a book's effective style/theme is resolved.
-  const scope = useStyleScope((s) => s.scope);
   // RAWY-41: the current book's bookmarks; the marker shows ONLY in the bookmark's chapter.
   // RAWY-229 (corrected): a bookmark is a per-CHAPTER mark — its marker shows anywhere in that chapter, at
   // any scroll position (top to bottom), and hides only when the reader LEAVES the chapter. `bookmarkVisible`
@@ -384,9 +477,13 @@ export function Reader({
       chapTrackRef.current = { sec: -1, atStart: false }; // sec < 0 ⇒ the completion rule cannot fire
       seenStartRef.current = new Set(); // replaced by THIS book's persisted set below, before the view exists
       readChaptersRef.current = new Set();
+      furthestRef.current = null;      // this book's mark is restored below, before the view exists
+      tocPendingRef.current = null;
+      setFurthestUi(null);
       jumpNavAtRef.current = 0;
       nextChapterArmedRef.current = false;
       anchorRef.current = null;         // RAWY-250: an anchor belongs to the book it was taken in
+      anchorLocRef.current = null;
       setAnchorUi(null);
       setSearchQuery("");               // book A's hits are meaningless CFIs in book B
       setActiveHitCfi(null);
@@ -401,6 +498,41 @@ export function Reader({
       });
       stageOk("library.row", { bookId: target.id });
       stageOk("path.resolved", { filePath: target.filePath, length: target.filePath?.length ?? 0 });
+
+      /**
+       * THE PAGE'S COLOUR IS RESOLVED BEFORE ANYTHING ELSE IS WAITED FOR.
+       *
+       * `.page-sheet` renders on the Reader's first frame, so whatever the effective style is at that
+       * moment is what the reader SEES. It used to be published after seven awaits, and the page wore
+       * the fallback until then. Measured inside a real open, with marks:
+       *
+       *     49 ms  bookRegister      the asset path
+       *     47 ms  bookGet           the book row
+       *     86 ms  progressGet       the saved position
+       *      8 ms  everything else, INCLUDING both style reads and the publish
+       *
+       * 182 of those 194 ms are three commands the page colour does not depend on. They are not slow
+       * in themselves — about 1 ms each when called on their own — they are slow HERE, because their
+       * round trips queue behind the Reader mounting. So this is not a micro-optimisation of the two
+       * reads; it is removing a dependency that was never real. Both of their inputs, the book's id
+       * and its direction, are on `target` from the first line of this function.
+       *
+       * Nothing about precedence moves: the effective style is the global row, as it always was
+       * under the shared model. Only the moment it becomes known has changed.
+       */
+      // ONE READING STYLE, AND IT IS THE GLOBAL ROW. The per-book/unified scope is gone: a هيئة is
+      // the complete reading appearance now, and a second per-book layer over it could only compete
+      // for the same fields. Any `book_style:<id>` a reader stored is left on disk untouched and is
+      // simply never read — the same "ignore, never delete" rule unified scope always followed.
+      const ts = useTheme.getState();
+      const global = await loadGlobalStyle(target.dir ?? undefined);
+      if (stale()) return;
+      globalStyleRef.current = global;
+      // The book's theme comes from the shared BOOK theme (D29), NOT the Library theme.
+      const effTheme = ts.bookThemeId;
+      let initialStyle = global;
+      set({ style: initialStyle });
+      setBookThemeId(effTheme);
 
       const url = convertFileSrc(target.filePath);
       stageOk("asset.url", { assetUrl: url, scheme: (() => { try { return new URL(url).protocol + "//" + new URL(url).host; } catch { return "UNPARSEABLE"; } })() });
@@ -429,31 +561,48 @@ export function Reader({
       isPdfRef.current = targetIsPdf; // RAWY-285: the close flush reads this, not its mount-time capture
       // RAWY-27: an inbox item passes a jump CFI that wins over the saved reading position.
       const resumeCfi = target.cfi ?? (targetIsPdf ? null : saved?.cfi) ?? null;
+
+      // OPENING A BOOK AT A LOCATOR IS A JUMP TOO — and it was the one jump that took no anchor.
+      //
+      // RAWY-250 freezes the reading position across a jump, so that inspecting an annotation cannot
+      // overwrite where the reader actually was, and every jump WITHIN an open book goes through
+      // `beginJump` and gets that freeze. Reaching an annotation from the LIBRARY does not: it opens
+      // the book AT the annotation's locator, so there is no jump to intercept and no live position to
+      // capture — the reader has not been in this book yet this session.
+      //
+      // Measured before this: with a real reading position in chapter VI, opening an annotation from
+      // the archive landed in chapter III and the row was overwritten with the annotation's own
+      // locator on the first relocate. No pill appeared, because no anchor existed, so leaving there
+      // meant the reading position was simply gone — the very defect the freeze was built to prevent,
+      // arriving through the one door it was not watching.
+      //
+      // The SAVED row is the position to protect, so it becomes the anchor. `sec` is -1 and the label
+      // unknown because the view has not loaded yet; neither is needed to go back — `returnToAnchor`
+      // navigates by CFI — and the pill simply appears without a chapter name. Everything after this
+      // is the existing behaviour: the row is frozen, the pill offers the way back, dismissing it
+      // adopts the new place, and reading to the end of the landed chapter thaws it.
+      if (!targetIsPdf && target.cfi && saved?.cfi && saved.cfi !== target.cfi) {
+        const a: ReadAnchor = { cfi: saved.cfi, label: null, sec: -1 };
+        anchorRef.current = a;
+        anchorLocRef.current = null; // the landing is recorded by the first relocate
+        setAnchorUi(a);
+      }
       const resumeFraction = targetIsPdf ? (saved?.fraction ?? null) : null;
 
-      // RAWY-40/43: per-book → effective = GLOBAL defaults with THIS book's PARTIAL override on
-      // top, theme = override theme else global. UNIFIED → the GLOBAL style/theme, IGNORING (never
-      // deleting) the override so switching back to per-book restores it. RAWY-176 (AUD-6): the
-      // saved global row loads OVER this book's DIRECTION baseline (loadGlobalStyle(target.dir)), so
+      // ONE STYLE FOR EVERY BOOK, resolved per DIRECTION. RAWY-176 (AUD-6): the saved global row
+      // loads OVER this book's direction baseline (loadGlobalStyle(target.dir)), so
       // any field the row lacks falls back to the Arabic baseline for an RTL book — on a fresh
       // install (no row) an Arabic book now opens at zoom 1.15 / line-height 1.9 / start, not Latin.
-      const ts = useTheme.getState();
-      const unified = useStyleScope.getState().scope === "unified";
+      // Both are resolved at the top of this function now - see the note there for why.
       // RESILIENCE-1 / WP-7 (stage 3): tell the engine what this book's own stylesheet may contain,
       // BEFORE `ctrl.open()` — the sanitiser hook runs while the book's resources are being loaded,
       // so the mode has to be current by then. Ships `off`, so today this loads a setting whose value
       // makes the sanitiser return an empty sheet.
       setBookCssMode(await loadBookCssMode());
       if (stale()) return;
-      const global = await loadGlobalStyle(target.dir ?? undefined);
+      // Guards the block below — ctrl.open, which would otherwise run on a null/superseded stage
+      // and throw A's error onto B.
       if (stale()) return;
-      const override = await loadBookOverride(target.id);
-      // Guards the block below — the ref writes, module-level applyTheme, and ctrl.open (which would
-      // otherwise run on a null/superseded stage and throw A's error onto B).
-      if (stale()) return;
-      libraryThemeRef.current = ts.themeId; // restore this to the chrome on exit
-      globalStyleRef.current = global;
-      overrideRef.current = override;
 
       // RAWY-285: EVERY per-book persisted value is loaded HERE — before `onRelocate` is registered and
       // before `ctrl.open()`, which is the first moment the engine can emit a position.
@@ -466,7 +615,7 @@ export function Reader({
       // and the same call site, exercised once loading had finished, correctly merged (`[1]` → `[1,6]`).
       // Nothing here depends on the view, so the reads simply belong before it. No flag, no guard, no
       // deferral of the handler: the data is just present before anything can read it.
-      const [readRaw, seenRaw, spoilerRaw, invertRaw, pdfThemeRaw, pdfZoomRaw] = await Promise.all([
+      const [readRaw, seenRaw, spoilerRaw, invertRaw, pdfThemeRaw, pdfZoomRaw, furthestRaw, speakSymRaw] = await Promise.all([
         settingsGet(`chapters_read:${target.id}`).catch(() => null),
         settingsGet(`seen_start:${target.id}`).catch(() => null),
         settingsGet(`spoiler_safe:${target.id}`).catch(() => null),
@@ -476,11 +625,41 @@ export function Reader({
         // because the right magnification depends on that file's page size and scan quality.
         settingsGet(PDF_THEME_KEY).catch(() => null),
         settingsGet(pdfZoomKey(target.id)).catch(() => null),
+        // The furthest point reached. Same additive settings-row pattern as the two sets above —
+        // no schema change, no migration, and an absent key simply means this book has no mark yet.
+        settingsGet(`furthest_read:${target.id}`).catch(() => null),
+        // This book's own answer to "say the decorative marks?", or nothing at all — the third state,
+        // which is what lets a book go back to following the worn هيئة. Same additive row pattern.
+        settingsGet(speakSymbolsKey(target.id)).catch(() => null),
       ]);
       if (stale()) return;
+      // Held in a ref as well as state: the three read-aloud entry points resolve it at the moment
+      // they build a queue, and a ref cannot be a render behind the row that was just loaded.
+      speakSymbolsRef.current = parseSpeakSymbols(speakSymRaw);
+      setSpeakSymbolsOverride(speakSymbolsRef.current);
       // RAWY-250 (PART 4) / RAWY-256 (addendum, case 6): the read-chapter set and the "beginning seen" set,
       // both per book, both plain settings rows (additive, no migration). An absent key = nothing recorded.
       readChaptersRef.current = new Set(parseSecs(readRaw));
+      // The furthest mark is restored BEFORE the first relocate can arrive, so a book reopened at
+      // chapter 320 knows it once reached 488 from the moment it opens — the reader never has to
+      // read forward again to win back what they had already reached.
+      //
+      // NO STORED MARK? THE SAVED READING POSITION IS ONE. Every book read before this existed has no
+      // `furthest_read` row, and treating that as "has reached nowhere" would be both false and a
+      // regression: the spoiler-safe search boundary follows this mark now, so a null mark would seal
+      // nothing and reveal the whole book. Where the reader stopped reading IS a point they reached,
+      // so it becomes the opening mark, and it is written straight away — held only in memory it
+      // would be lost the moment they read backwards and closed the book.
+      //
+      // `saved`, deliberately, not `resumeCfi`: the two differ when the library opens a book AT an
+      // annotation, and that locator is somewhere the reader was SENT, not somewhere they got to.
+      const stored = targetIsPdf ? null : parseFurthest(furthestRaw);
+      const restored = targetIsPdf ? null : markFromResume(stored, saved);
+      furthestRef.current = restored;
+      setFurthestUi(restored);
+      if (!stored && restored) {
+        settingsSet(`furthest_read:${target.id}`, serialiseFurthest(restored)).catch(() => {});
+      }
       seenStartRef.current = new Set(parseSecs(seenRaw));
       setReadVersion((v) => v + 1); // RAWY-256: publish the loaded set to the Contents markers
       // RAWY-285: the two per-book PREFERENCES that used to be read by their own `[]`-dep effects. Those
@@ -494,12 +673,6 @@ export function Reader({
       // silently discarded, and nobody who never used invert gets a dark theme they did not ask for.
       setPdfThemeId(isPdfThemeId(pdfThemeRaw) ? pdfThemeRaw : invertRaw === "1" ? "night" : "normal");
       setPdfZoom(parseStoredZoom(pdfZoomRaw) ?? "fit-page");
-      // The book's theme comes from the shared BOOK theme (D29), NOT the Library theme:
-      // unified → the shared book theme; per-book → this book's override, else the shared book theme.
-      const bookDefault = ts.bookThemeId;
-      const effTheme = unified ? bookDefault : (override.themeId ?? bookDefault);
-      let initialStyle = unified ? global : effectiveStyle(global, override);
-
       // RESILIENCE-1 / WP-6B — a FRAGMENTED spine defaults to SCROLLED flow.
       //
       // MEASURED across the corpus: exactly one book qualifies — `word-generated--unknown-title`,
@@ -512,9 +685,19 @@ export function Reader({
       // A DEFAULT, not a lock: it applies only when this book has no saved flow of its own, so a
       // reader who chooses paged keeps paged, on this book, for ever. The global preference is left
       // alone — one degenerate book must not change how every other book opens.
-      if (meta?.spineFragmented && !unified && override.style?.flowMode == null) {
-        initialStyle = { ...initialStyle, flowMode: "scrolled" };
-      }
+      // THE ONE FIELD HERE THAT GENUINELY NEEDS `meta`, and it is not a colour. Applied where the row
+      // becomes available, over the style already published above; the page is unaffected either way.
+      // THE FRAGMENTED-SPINE DEFAULT IS GONE WITH THE PER-BOOK LAYER IT DEPENDED ON.
+      //
+      // It read "if this book's spine is fragmented AND this book has no flow of its own, open it
+      // scrolled" — a default for ONE book, which only meant anything while a book could hold a flow
+      // of its own. Without that layer the condition can only be about the reader's own preference,
+      // and then it is either a no-op (their flow is already scrolled, which is the default) or a
+      // silent refusal of the paged flow they explicitly chose. Measured: it forced a paged reader
+      // back to scrolled on such a book, with no way to say otherwise.
+      //
+      // So the reader's flow is the reader's, for every book. A fragmented spine paginates poorly and
+      // they can switch — which is the same control they would have used before.
 
       // On the hosted path this is the first moment the reader is actually needed, and the awaits
       // above have already given the host time to load. On Windows `ctrlRef.current` was assigned
@@ -596,21 +779,75 @@ export function Reader({
         // RAWY-250 (PART 1): while the anchor holds (a jump is being previewed), the reader's REAL position
         // must stay untouched in the row — so resume-on-open still lands where he was actually reading.
         // Every other write path is unchanged; the freeze ends via the pill's × or the end-signal above.
-        if (anchorRef.current) return;
+        // RAWY-250 (addendum 7): READING ON IS NOT INSPECTING. While the freeze holds, watch how far
+        // the reader has travelled FORWARD from where the jump landed. The first relocate after the
+        // anchor records the landing; once they are `THAW_LOCATIONS` beyond it they are plainly reading
+        // rather than looking, so the freeze ends and this very relocate is saved — the same effect as
+        // dismissing the pill, reached without asking them to do it.
+        //
+        // Forward only: paging back toward the passage they jumped to is still inspection.
+        if (anchorRef.current) {
+          const here = location?.current ?? null;
+          if (here != null) {
+            const step = landingStep(anchorLocRef.current, here, jumpsInFlight.current > 0, THAW_LOCATIONS);
+            anchorLocRef.current = step.baseline;
+            if (step.thaw) thawRef.current();
+          }
+          if (anchorRef.current) return; // still frozen — the row stays exactly as it was
+        }
         progressTimer.current = window.setTimeout(() => {
           // RAWY-85: a PDF has no CFI — persist it by fraction (empty cfi) so it still resumes.
           if (cfi || targetIsPdf) progressSave(bookRef.current, cfi ?? "", fraction).catch(console.error);
+          // THE FURTHEST MARK RIDES THIS WRITE. Reaching this line already means everything the
+          // reading model requires: the anchor freeze did not hold, the position settled for the
+          // debounce, and the row is being written. So the only question left is whether this is
+          // further than the book has ever been — and the answer is no for every backward page
+          // turn, which is precisely why paging back through half a book costs no writes at all.
+          // EPUB only: a PDF resumes by fraction and has no cfi to order.
+          // THE LANDING OF A CONTENTS JUMP IS NOT A READING ADVANCE — and neither is a re-layout that
+          // reports the same place again. The first relocate after the jump records where it put the
+          // reader; the mark stays sealed until they move forward from there.
+          const pending = tocPendingRef.current;
+          if (pending) {
+            const now: Landing = { loc: location?.current ?? null, frac: fraction };
+            if (!pending.landing) pending.landing = now;
+            else if (movedOnFrom(pending.landing, now)) tocPendingRef.current = null;
+          }
+          if (!targetIsPdf && cfi && !tocPendingRef.current) {
+            void (async () => {
+              // The ENGINE orders two positions — it owns the book's document order, and on the hosted
+              // path it is the only side that can answer at all. A number crosses that boundary; the
+              // comparator itself would not.
+              const held = furthestRef.current;
+              const order = held ? await ctrl.compareLocators(cfi, held.cfi) : null;
+              // Another relocate may have moved the mark while that answer was in flight. It moved it
+              // FORWARD (nothing else can), so the newer mark is the better one and this one stands down
+              // rather than racing it backwards.
+              if (furthestRef.current !== held) return;
+              const grown = advanceFurthest(
+                held,
+                { cfi, fraction, label: chapterLabel, href: chapterHref, sec: curSec },
+                order,
+              );
+              if (!grown) return;
+              furthestRef.current = grown;
+              setFurthestUi(grown);
+              ctrl.setFurthestBoundary(grown.cfi); // search seals from the new point on
+              settingsSet(`furthest_read:${bookRef.current}`, serialiseFurthest(grown)).catch(() => {});
+            })();
+          }
         }, SAVE_DEBOUNCE_MS);
       });
 
-      // The whole reader (chrome + page) takes the book's effective theme while reading; the
-      // Library keeps the global default (restored on exit). The global store is NOT mutated.
-      applyTheme(THEMES[effTheme]);
+      // THE BOOK'S THEME NO LONGER GOES TO `:root`. It reaches the page through `--reader-page`
+      // and `data-book-dark` above, and the book document through `ctrl.applyTheme` below. Writing
+      // it globally is what made the Reader's chrome wear the book's paper, and what made the page
+      // paint the Library's paper first. The Library keeps `:root`; the exit restore stays.
       await ctrl.open(url, stageRef.current!, {
         resumeCfi,
         resumeFraction, // RAWY-85: PDFs resume by page fraction
         style: initialStyle,
-        theme: THEMES[effTheme],
+        theme: resolveTheme(effTheme),
         flags: { overrideBookColor: ts.overrideBookColor, hideChapterTitles: ts.hideChapterTitles, hideFirstLine: ts.hideFirstLine, pageOpacity: effectivePageOpacity(), deskScrim: currentDeskScrim() },
         dir: target.dir ?? undefined, // RAWY-85: a PDF's manual RTL override lives in books.dir too
         flow: initialStyle.flowMode, // scrolled (default) or paged — RAWY-25
@@ -619,9 +856,11 @@ export function Reader({
       // Superseded during the (async) open → don't publish ready/toc or bind the shared stores; the
       // newer open owns them now.
       if (stale()) return;
+      // THE SPOILER-SAFE BOUNDARY IS THIS MARK. The engine no longer works it out from what has been
+      // displayed; it is told, here and on every advance below, so search seals exactly what the
+      // reader has not read — and keeps sealing it after they page back to an earlier chapter.
+      ctrl.setFurthestBoundary(furthestRef.current?.cfi ?? null);
 
-      setBookThemeId(effTheme);
-      setHasOv(!unified && calcHasOverride(override)); // Reset is a per-book affordance
       // RESILIENCE-1 / WP-3 — the DATABASE names this book, not the file.
       //
       // `bookTitle` used to be `ctrl.title`: foliate's `dc:title`, straight out of the EPUB. That made
@@ -768,6 +1007,11 @@ export function Reader({
       // section from that set as it renders — no per-section query, and the book is never rescanned.
       useReferences.getState().bind(ctrl, target.id);
       await useReferences.getState().load();
+      // This book's replacement rules, on the same footing and for the same reason: loaded once, held in
+      // memory, and applied per section as it renders. Loaded BEFORE the first section is substituted, so
+      // the page is never briefly shown in the author's wording and then rewritten under the reader.
+      useReplacements.getState().bind(ctrl, target.id);
+      await useReplacements.getState().load();
       // RAWY-285: the read-chapter / beginning-seen sets and the two per-book preferences used to be read
       // HERE, after the view was already emitting relocates. They are now loaded before `ctrl.open()` —
       // see the ordering note above. Nothing replaces them at this point.
@@ -816,9 +1060,24 @@ export function Reader({
       // exit path (Back to Library, a cross-book follow, the error screen) because all of them
       // either unmount the Reader or change `initial.id`, and this cleanup covers both.
       endReadingSession();
-      // Restore the LIBRARY theme to the chrome on exit (RAWY-40/48) — the book theme was only
-      // for this reading session; the Library shows its own independent theme again.
-      applyTheme(THEMES[libraryThemeRef.current]);
+      // AND THE READING SESSION ENDS IN THE STORE TOO.
+      //
+      // `useReader` is a module-level singleton and nothing ever put it back: `status` and `style`
+      // kept the last book's values from the moment it closed until the next one finished opening.
+      // Two faults came out of that one omission, both measured:
+      //
+      //   · THE PREVIOUS BOOK'S PAGE COLOUR painted the next one. `--reader-page` reads
+      //     `style.pageColor`, and the open path publishes this book's style only AFTER `ctrl.open`
+      //     resolves — so opening a book straight after one with a different page colour showed the
+      //     WRONG book's colour for 125 ms.
+      //   · A STALE `status: "ready"` let the profile-switch effect below through its own guard on
+      //     the new Reader's MOUNT, where `overrideRef` is still empty — so it republished the
+      //     GLOBAL style over a book that overrides it, turning a correctly-painted page wrong.
+      //
+      // `null`/`idle` is the state the app already runs in whenever the Library is on screen, and
+      // every consumer is written for it: `driftOf` says so in as many words, and the two profile
+      // readers fall back to the persisted row "when the reader is standing in the Library".
+      useReader.getState().set({ status: "idle", style: null });
     };
     // Open the book the Library handed us; re-open if the selection changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -834,13 +1093,19 @@ export function Reader({
   // flush first, so WE must destroy). `destroy()` needs `core:window:allow-destroy` — which was NOT
   // granted, so it rejected and, since preventDefault had already blocked the native close, the ✕ did
   // NOTHING inside a book (the Library, with no handler, still closed natively). The permission is now
-  // granted (capabilities/default.json), and this handler ALWAYS reaches the close on success/timeout/
-  // error (try/finally + a bounded flush), so ✕ closes promptly every time.
+  // granted (capabilities/default.json).
+  //
+  // THE HANDLER ITSELF NO LONGER LIVES HERE, and that is a lifecycle fix, not a tidy-up. Tauri blocks
+  // the native close whenever its `js_event_listeners` registry says a `tauri://close-requested`
+  // listener exists, and that registry is emptied only by an explicit `unlisten` IPC — never on
+  // navigation. A page RELOAD therefore destroys this component's handler while leaving the entry
+  // behind: the next close is prevented, and nothing is left alive to finish it (measured: window
+  // enabled, message loop pumping, process alive indefinitely). A handler owned by a component that
+  // comes and goes cannot satisfy a registration that does not. So the Reader now PUBLISHES what it
+  // needs flushed and `App` owns the close for the whole life of the page. See `lib/closeFlush.ts`
+  // for the measurements that separate the stale entry (harmless) from the missing handler (the bug).
   useEffect(() => {
-    const win = getCurrentWindow();
-    let unlisten: (() => void) | undefined;
-    let closing = false; // flush + close exactly once; a second ✕ during the flush is left to the first
-    // RAWY-285: this handler registers ONCE, so it must read the book from the SAME live sources every
+    // RAWY-285: the flush must read the book from the SAME live sources every
     // other writer uses — `bookRef` / `isPdfRef`, both updated by `openBook` — never from the props this
     // effect happened to close over. It used to capture `initial.id`/`initial.format` at MOUNT, so after a
     // cross-book follow the ✕ wrote the book on screen's read-aloud cursor under the PREVIOUS book's key.
@@ -864,23 +1129,10 @@ export function Reader({
         if (cur) await settingsSet(`tts_position:${bookRef.current}`, JSON.stringify(cur)).catch(() => {});
       }
     };
-    win
-      .onCloseRequested(async (event) => {
-        event.preventDefault(); // hold the native close so we can flush; WE own the destroy below
-        if (closing) return; // a second ✕ while still flushing — the first invocation will close it
-        closing = true;
-        try {
-          // flush the last progress + TTS cursor, but NEVER let a slow/failed flush block the close
-          await Promise.race([flush(), new Promise((r) => setTimeout(r, 1500))]);
-        } finally {
-          // ALWAYS close now — destroy() bypasses this handler (no re-fire loop). It needs
-          // core:window:allow-destroy (granted, RAWY-174); wrapped so nothing can leave the ✕ dead.
-          try { await win.destroy(); } catch { /* no other JS path can force the close */ }
-        }
-      })
-      .then((u) => { unlisten = u; })
-      .catch(() => {});
-    return () => unlisten?.();
+    // Publish it for the app-root close handler, and take it back on unmount. Registration is
+    // synchronous, so unlike the old `onCloseRequested(...).then(u => unlisten = u)` there is no
+    // window in which a cleanup can run before the subscription exists and quietly leak it.
+    return setCloseFlush(flush);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -893,7 +1145,7 @@ export function Reader({
   // this repaints in place with no reflow.
   useEffect(() => {
     if (status !== "ready") return;
-    ctrlRef.current?.applyTheme(THEMES[bookThemeId], { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
+    ctrlRef.current?.applyTheme(resolveTheme(bookThemeId), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim]);
 
@@ -904,26 +1156,66 @@ export function Reader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lang]);
 
-  // RAWY-43: toggling the unified/per-book scope LIVE re-resolves the open book's effective
-  // style + theme immediately. Unified → the global style/theme (overrides ignored, kept);
-  // per-book → global ∪ this book's preserved override.
+  /**
+   * A PROFILE SWITCHED WHILE READING REACHES THE PAGE — persisting is not applying.
+   *
+   * `applyProfile` writes the profile's reading fields (the two faces, the number ink, each
+   * typography opinion) into the `reading_style` row and stops there. `globalStyleRef` was read once
+   * when the book opened, so nothing on screen moved: measured, switching to a profile whose Arabic
+   * face is `thmanyahserifdisplay` left the page set in `amiri`, and its number ink unapplied.
+   *
+   * That was visible twice over. The reader saw the previous profile's type until the next launch —
+   * and because `driftOf` compares the live reading style against what the profile SAYS, the
+   * difference then read as an unsaved change: switching profiles a second time asked
+   * «تغييرات لم تُحفظ» about edits nobody had made. Applying what was written fixes both; nothing
+   * about the dirty check itself needed loosening.
+   *
+   * The same shape the backgrounds already carry in `applyProfile` ("re-read rather than re-map"):
+   * the row is re-READ through `loadGlobalStyle`, so an absent field resolves against the book's own
+   * direction, which a patch straight into the live style could not have promised.
+   */
+  // KEYED ON THE APPLICATION, NOT ON THE ID. Re-applying the هيئة already worn — which is what
+  // «تجاهل التغييرات» does, since re-applying IS the discard — leaves `activeId` untouched, so an
+  // effect keyed on it never ran and the page kept the very drift the reader had just discarded.
+  const applyTick = useProfiles((s) => s.applyTick);
   useEffect(() => {
     if (status !== "ready") return;
-    const global = globalStyleRef.current;
-    if (!global) return;
-    const unified = scope === "unified";
-    const override = overrideRef.current;
-    const effStyle = unified ? global : effectiveStyle(global, override);
-    const bookDefault = useTheme.getState().bookThemeId;
-    const effTheme = unified ? bookDefault : (override.themeId ?? bookDefault);
-    useReader.getState().set({ style: effStyle });
-    setBookThemeId(effTheme);
-    setHasOv(!unified && calcHasOverride(override));
-    applyTheme(THEMES[effTheme]);
-    ctrlRef.current?.applyTheme(THEMES[effTheme], { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
-    ctrlRef.current?.applyStyle(effStyle);
+    let alive = true;
+    void (async () => {
+      const global = await loadGlobalStyle(dir ?? undefined);
+      if (!alive) return;
+      globalStyleRef.current = global;
+      useReader.getState().set({ style: global });
+      ctrlRef.current?.applyStyle(global);
+    })();
+    return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scope]);
+  }, [applyTick]);
+
+  /**
+   * AND SO DOES THE PALETTE THAT SWITCH BROUGHT WITH IT.
+   *
+   * The effect above re-reads the reading STYLE — the faces, the number ink, the typography — and
+   * stops there. `bookThemeId` is component state, captured when the book opened, so the profile's
+   * reading COLOURS never reached an open book. That was invisible for as long as the page took its
+   * colour from the global paper, because `applyProfile` writes that on its own: the page did change,
+   * just to the new profile's LIBRARY paper rather than its reading one. With the page reading a
+   * reader-scoped colour, a switch mid-book left the previous profile's paper on screen — measured,
+   * A -> B -> A with crossed palettes never moved off B's #0D3B14.
+   *
+   * Kept separate from the style effect above on purpose: this one is synchronous and depends on the
+   * THEME store, not on the profile row, so it is also correct for any other route that changes the
+   * default reading theme under an open book. A per-book theme still wins — the same three lines the
+   * scope effect uses, for the same reason.
+   */
+  const defaultBookTheme = useTheme((st) => st.bookThemeId);
+  useEffect(() => {
+    if (status !== "ready") return;
+    const effTheme = defaultBookTheme;
+    setBookThemeId(effTheme);
+    ctrlRef.current?.applyTheme(resolveTheme(effTheme), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [defaultBookTheme]);
 
   // Pin the chrome open only while an ACTIVELY-DRIVEN drawer is open — Settings/Notes/basket, which
   // you interact with via the top bar. The Contents panel is DELIBERATELY excluded (RAWY-73): it is
@@ -991,11 +1283,14 @@ export function Reader({
     });
   }, [signalMove, signalScroll]);
 
-  // When the basket empties (Clear, or removing the last passage) the top-bar button hides, so
-  // close the now-orphaned tray too (RAWY-60).
-  useEffect(() => {
-    if (basketCount === 0) setBasketOpen(false);
-  }, [basketCount]);
+  // WHEN IT EMPTIES, THE TRAY STAYS. It used to close itself the moment the last passage went, on
+  // the grounds that its button in the bar had hidden and the tray was orphaned. Two things were
+  // wrong with that. The surface vanished out from under the pointer at the exact moment the
+  // reader acted, which reads as a glitch rather than as a result; and it made the empty state
+  // unreachable — the one place that says how passages are collected could never be seen.
+  //
+  // The bar stays clean either way: with nothing collected there is still no button on it. This is
+  // only about the panel the reader has open in front of them, which they close themselves.
 
   // RAWY-126 (TTS reading indicator, Phase 1): drive the sentence "spotlight" off the queue's current
   // sentence. The units were built in lockstep with the queue at start (startListen*), so
@@ -1227,22 +1522,13 @@ export function Reader({
     const next = { ...current, ...patch };
     useReader.getState().set({ style: next });
 
-    const unified = useStyleScope.getState().scope === "unified";
-    if (unified) {
-      // UNIFIED (RAWY-43): the change is the new GLOBAL baseline → write the global row (affects
-      // every book). The per-book override is left untouched (ignored, not deleted).
-      globalStyleRef.current = next;
-    } else {
-      // PER-BOOK (RAWY-40): fold the patch into this book's partial override — a field back at the
-      // global default drops out (so it keeps following global), otherwise it's recorded.
-      const ovStyle: Partial<ReadingStyle> = { ...(overrideRef.current.style ?? {}) };
-      for (const k of Object.keys(patch) as (keyof ReadingStyle)[]) {
-        if (next[k] === global[k]) delete ovStyle[k];
-        else (ovStyle as Record<string, unknown>)[k] = next[k];
-      }
-      overrideRef.current = { ...overrideRef.current, style: ovStyle };
-      setHasOv(calcHasOverride(overrideRef.current));
-    }
+    // ONE BASELINE, ONE ROW. Every reading change is the global one now, so there is no second
+    // place a value could go and nothing that could outrank the active هيئة.
+    //
+    // THE READ-ALOUD SPECIAL CASE IS GONE WITH IT. It existed to keep those seven out of a book's
+    // override while everything else still went there; with no override to keep them out of, the
+    // rule is simply the rule for every field.
+    globalStyleRef.current = next;
 
     // flowMode is a renderer attribute set at open() — switching it re-opens at the current CFI
     // (preserves position); every other field is the live injected-CSS funnel.
@@ -1252,7 +1538,7 @@ export function Reader({
       ctrlRef.current?.open(convertFileSrc(initial.filePath), stageRef.current!, {
         resumeCfi: cfi,
         style: next,
-        theme: THEMES[bookThemeId],
+        theme: resolveTheme(bookThemeId),
         flags: {
           overrideBookColor: useTheme.getState().overrideBookColor,
           hideChapterTitles: useTheme.getState().hideChapterTitles,
@@ -1281,44 +1567,22 @@ export function Reader({
     }
     if (styleTimer.current) clearTimeout(styleTimer.current);
     styleTimer.current = window.setTimeout(() => {
-      if (useStyleScope.getState().scope === "unified") saveGlobalStyle(useReader.getState().style!);
-      else saveBookOverride(bookRef.current, overrideRef.current);
+      saveGlobalStyle(useReader.getState().style!);
     }, SAVE_DEBOUNCE_MS);
   };
   updateRef.current = update;
 
   // THEME change from the Theme tab. Applies to the reading surface (:root while reading + the
-  // book iframe) but NEVER to the Library's own theme (RAWY-48/D29). PER-BOOK (RAWY-40): change
-  // ONLY this book's paper+ink (persisted in the book override). UNIFIED (RAWY-43): set the shared
-  // BOOK theme (`book_theme_id`) so every book follows it — the Library theme (`theme_id`) is left
-  // untouched, so returning to the Library still shows its own theme.
+  // book iframe) but NEVER to the Library's own theme (RAWY-48/D29). It sets the shared BOOK theme
+  // (`book_theme_id`) so every book follows it — the Library theme (`theme_id`) is left untouched,
+  // so returning to the Library still shows its own theme.
+  //
+  // THE PER-BOOK BRANCH IS GONE, and with it the «↻ إعادة الضبط» that existed only to undo it: a
+  // book no longer keeps a paper of its own, because the هيئة is what decides how Sard looks.
   const setBookTheme = (id: ThemeId) => {
     setBookThemeId(id);
-    applyTheme(THEMES[id]);
-    ctrlRef.current?.applyTheme(THEMES[id], { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
-    if (useStyleScope.getState().scope === "unified") {
-      useTheme.getState().setBookTheme(id); // shared BOOK theme — persists book_theme_id, not the Library
-    } else {
-      const bookDefault = useTheme.getState().bookThemeId;
-      overrideRef.current = { ...overrideRef.current, themeId: id === bookDefault ? undefined : id };
-      setHasOv(calcHasOverride(overrideRef.current));
-      saveBookOverride(bookRef.current, overrideRef.current);
-    }
-  };
-
-  // Reset this book to the app defaults (RAWY-40, Band I "↻ Reset"): drop the whole override.
-  const resetBook = () => {
-    overrideRef.current = {};
-    setHasOv(false);
-    clearBookOverride(bookRef.current);
-    const global = globalStyleRef.current ?? defaultsForDir(dir);
-    useReader.getState().set({ style: global });
-    // Reset → follow the shared BOOK theme (D29), not the Library theme.
-    const bookDefault = useTheme.getState().bookThemeId;
-    setBookThemeId(bookDefault);
-    applyTheme(THEMES[bookDefault]);
-    ctrlRef.current?.applyTheme(THEMES[bookDefault], { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
-    ctrlRef.current?.applyStyle(global);
+    ctrlRef.current?.applyTheme(resolveTheme(id), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
+    useTheme.getState().setBookTheme(id); // shared BOOK theme — persists book_theme_id, not the Library
   };
 
   // RAWY-41: toggle a bookmark at the CURRENT reading location (CFI + fraction + chapter). If the
@@ -1333,8 +1597,16 @@ export function Reader({
     const ctrl = ctrlRef.current;
     if (!st.cfi || !ctrl) return;
     const existing = useBookmarks.getState().bookmarks.find((b) => ctrl.bookmarkVisible(b.cfi, st.cfi));
-    if (existing) useBookmarks.getState().remove(existing.id);
-    else useBookmarks.getState().add(st.cfi, st.chapterLabel, st.fraction);
+    if (existing) { useBookmarks.getState().remove(existing.id); return; }
+    // WHAT THIS PLACE WILL BE RECOGNISED BY, read while the reader is still standing in it — the
+    // words of the block, and the dye currently chosen. Neither can be recovered later: the section
+    // will not be rendered when the shelf asks, and a dye changed afterwards would rewrite history.
+    // The place is saved either way; the words are an enrichment, never a precondition.
+    const color = useBookmarkStyle.getState().color;
+    void ctrl
+      .placeWords(st.cfi)
+      .catch(() => null)
+      .then((words) => useBookmarks.getState().add(st.cfi!, st.chapterLabel, st.fraction, words, color));
   };
 
   // RAWY-85: PDF Phase 0 is READ-ONLY. `isPdf` gates the EPUB-only affordances (themes/fonts/
@@ -1540,7 +1812,17 @@ export function Reader({
   // programmatic jump navigates. ONE-DEEP (the owner's choice): if an anchor already exists, a further jump
   // keeps pointing at the ORIGINAL reading position rather than at the previous jump's landing.
   // `target` = the CFI/href the jump is about to navigate to, so the landing section can be pre-armed.
+  /** Clear the in-flight mark once the navigation has resolved AND the browser has shown the result —
+   *  the last relocate of a landing arrives with that paint. Never a delay: both are real events. */
+  const settleJump = useCallback((nav?: unknown) => {
+    void Promise.resolve(nav)
+      .catch(() => {})
+      .then(() => nextPaint())
+      .finally(() => { jumpsInFlight.current = Math.max(0, jumpsInFlight.current - 1); });
+  }, []);
+
   const beginJump = useCallback((target?: string) => {
+    jumpsInFlight.current += 1;
     // RAWY-250 (addendum 6): DETERMINISTIC jump suppression. Resolve the section the jump will land in and
     // pre-arm the chapter tracker with it, so the landing relocate is NOT a section change and therefore can
     // never reach the thaw rule — regardless of how long the load takes, how busy the machine is, or how many
@@ -1558,6 +1840,7 @@ export function Reader({
     if (!st.cfi) return; // nothing real to return to yet (a PDF, or before the first relocate)
     const a: ReadAnchor = { cfi: st.cfi, label: st.chapterLabel, sec: ctrlRef.current?.currentSectionIndex() ?? -1 };
     anchorRef.current = a;
+    anchorLocRef.current = null; // the landing is recorded by the first relocate after the jump
     setAnchorUi(a);
   }, []);
 
@@ -1566,7 +1849,7 @@ export function Reader({
     beginJump(hit.cfi); // RAWY-250: freeze the real position + pre-arm the landing section (§6.2)
     // RAWY-139: pass the split excerpt so goToSearchHit can re-find the hit's exact text in the rendered
     // doc (the search CFI is unreliable there — the rendered structure differs from the search doc).
-    ctrlRef.current?.goToSearchHit(hit.cfi, { pre: hit.pre, match: hit.match, post: hit.post });
+    settleJump(ctrlRef.current?.goToSearchHit(hit.cfi, { pre: hit.pre, match: hit.match, post: hit.post }));
   }, []);
   // RESILIENCE-1 / WP-4F: the position readout, decided in ONE pure place (reader-engine/position.ts)
   // and formatted with the app's locale digits — the same formatter the PDF page counter already uses.
@@ -1741,6 +2024,100 @@ export function Reader({
       : t("panel.chapter", { n: localeNum(own, lang) });
   })();
 
+  // WHAT THE SPOILER-SAFE BOUNDARY IS CALLED, and whether it is still simply "where you are".
+  //
+  // The three strings the search panel builds from this label all describe the BOUNDARY — what is
+  // hidden past it, what lies before it, where the list divides. They read as "your position" only
+  // because the boundary used to BE the current position. Now that it is the furthest point reached,
+  // the label names that point, and the wording says so whenever the two have parted company —
+  // telling a reader in chapter 320 that their position is chapter 592 would be a plain untruth.
+  //
+  // Named the way the Contents list names it, and by the same rule as the chrome caption above: the
+  // book's own title for the row, the computed name when it has none, and the neutral name alone
+  // while chapter titles are hidden. A mark whose row cannot be found — a book migrated from before
+  // the mark existed still carries no contents href — falls back to its stored label and then to a
+  // percentage, so the boundary is always nameable.
+  const furthestTocIndex = useMemo(
+    () => (furthestUi?.href ? toc.findIndex((c) => c.href === furthestUi.href) : -1),
+    [furthestUi, toc],
+  );
+  const boundaryIsFurthest = boundaryHasParted(furthestUi, furthestTocIndex, tocIndex, fraction);
+  const searchBoundaryLabel = (() => {
+    if (!boundaryIsFurthest || !furthestUi) return searchPositionLabel;
+    if (furthestTocIndex >= 0) {
+      const own = tocOwnNumbers ? tocOwnNumbers[furthestTocIndex] : furthestTocIndex + 1;
+      const neutral =
+        own == null
+          ? t("panel.tocSection", { n: localeNum(furthestTocIndex + 1, lang) })
+          : t("panel.chapter", { n: localeNum(own, lang) });
+      return hideChapterTitles ? neutral : toc[furthestTocIndex].label || neutral;
+    }
+    return (
+      furthestUi.label ||
+      t("reader.percentRead", { p: localeNum(Math.round(furthestUi.fraction * 100), lang) })
+    );
+  })();
+
+  /**
+   * THE CHAPTER CAPTION, RESOLVED AT THE MOMENT IT IS USED.
+   *
+   * `chapter` above is a RENDER value: it is computed from `chapterLabel`/`tocIndex`, which are set by
+   * the relocate event. `nextChapter` navigates and then starts read-aloud inside the SAME closure, so
+   * the caption it captured is the chapter the reader just left — the pill then showed chapter N while
+   * the audio read N+1, and only corrected on the following advance, one chapter late every time.
+   *
+   * So the caption is derived here from the CONTROLLER's own current section, which is true the instant
+   * navigation finishes rather than when React next renders. The display rules are unchanged — the same
+   * toc entry, the same hide-titles numbering — only their input is taken from the authoritative place.
+   */
+  const captionRef = useRef(() => chapter);
+  captionRef.current = () => {
+    const sec = ctrlRef.current?.currentSectionIndex?.() ?? -1;
+    if (sec < 0) return chapter;
+    // The same nearest-preceding rule `tocIndex` uses, applied to the section the controller is on.
+    let idx = -1, bestSec = -1;
+    toc.forEach((cc, i) => {
+      const cs = cc.href ? tocSecMap.get(cc.href) : undefined;
+      if (typeof cs === "number" && cs <= sec && cs >= bestSec) { idx = i; bestSec = cs; }
+    });
+    if (idx < 0) return chapter;
+    if (!hideChapterTitles) return toc[idx]?.label || chapterLabel || t("reader.chapterFallback");
+    const own = tocOwnNumbers ? tocOwnNumbers[idx] : idx + 1;
+    return own == null
+      ? t("panel.tocSection", { n: localeNum(idx + 1, lang) })
+      : t("panel.chapter", { n: localeNum(own, lang) });
+  };
+
+  /**
+   * Does the voice say the decorative marks, for the queue about to start?
+   *
+   * The book's own answer when it has one; the worn هيئة's otherwise. `effectiveSpeakSymbols` owns that
+   * precedence so the drawer and the synthesis path cannot come to disagree about it.
+   *
+   * Read from the REF and from the live store rather than from render-time values: a queue built a
+   * moment after the reader flips either control must use what they have just chosen, not what was on
+   * screen a render ago. The هيئة's value arrives on `reading_style`, which is what activating one
+   * writes — so switching هيئة moves this for every book that has not answered for itself.
+   */
+  const speakSymbolsNow = (): boolean =>
+    effectiveSpeakSymbols(
+      speakSymbolsRef.current,
+      useReader.getState().style?.ttsSpeakSymbols ?? ARABIC_DEFAULTS.ttsSpeakSymbols,
+    );
+
+  /**
+   * The drawer's setter: record this book's own answer, or clear it to follow the هيئة again.
+   *
+   * CLEARING WRITES AN EMPTY ROW rather than deleting one, because `parseSpeakSymbols` reads anything
+   * that is not `"1"` or `"0"` as "not asked". That keeps the third state expressible with the settings
+   * API the rest of the reader already uses, and needs no delete path of its own.
+   */
+  const setBookSpeakSymbols = (v: boolean | null) => {
+    speakSymbolsRef.current = v;
+    setSpeakSymbolsOverride(v);
+    settingsSet(speakSymbolsKey(bookRef.current), v === null ? "" : speakSymbolsAttr(v)).catch(() => {});
+  };
+
   // RAWY-105: start read-aloud from the current chapter (top-bar Listen). Voice defaults by the BOOK's
   // direction (Arabic book → Arabic voice). RAWY-227: if a session is already reading THIS chapter, resume
   // it in place instead of restarting at the top; and when a saved cursor belongs to this chapter, CONTINUE
@@ -1762,7 +2139,7 @@ export function Reader({
     // and `new AudioContext()` inits on first play. Show the loading pill FIRST (instant feedback), let
     // it paint, THEN do the walk + start playback — so the work happens UNDER the visible "preparing"
     // state instead of a dead frozen frame. (The sidecar spawn / Edge connect / synth were already async.)
-    useTts.setState({ active: true, status: "preparing", chapterLabel: chapter, error: null });
+    useTts.setState({ active: true, status: "preparing", chapterLabel: captionRef.current(), error: null });
     // RAWY-162: read the saved TTS cursor BEFORE playback starts (playback overwrites it via the save
     // effect). RAWY-227: it is now the DEFAULT continue point, not a prompt. A stale/absent value → top.
     let saved: { cfi?: string; sec?: number; idx: number; snip?: string } | null = null;
@@ -1791,7 +2168,7 @@ export function Reader({
       else startIndex = Math.min(Math.max(0, at), sentences.length - 1);
     }
     // WP-5A: the SNIFFED script rides along so the pre-flight can refuse before any synthesis.
-    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: chapter, bookScript: useReader.getState().bookScript });
+    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: captionRef.current(), bookScript: useReader.getState().bookScript, speakSymbols: speakSymbolsNow() });
   };
   // RAWY-186 (Part A): the Play/Pause gesture (pill button AND Space). Read-aloud audio is decoupled from
   // the view (RAWY-129: you can browse while listening), so pressing Play after navigating to a DIFFERENT
@@ -1847,8 +2224,32 @@ export function Reader({
     const bookLang = isRtlBook ? "ar" : "en";
     // RAWY-181 (BUG 1): same freeze-avoidance as startListen — show the loading pill + paint before the
     // synchronous chapter walk.
-    useTts.setState({ active: true, status: "preparing", chapterLabel: chapter, error: null });
+    useTts.setState({ active: true, status: "preparing", chapterLabel: captionRef.current(), error: null });
     await nextPaint();
+    // A NOTE IS ITS OWN TEXT. Everything below segments the chapter ON SCREEN and then looks for the
+    // selection inside it, which is right for a selection made in the reading frame and wrong for one
+    // made in a note: the note's words are not in that chapter, so the range match fails, the text
+    // match fails, and `startIndex` falls back to 0. MEASURED before this branch existed — pressing
+    // «استماع» on a footnote handed `start()` 165 sentences of the chapter behind the note and index 0,
+    // so read-aloud began at the top of the chapter the reader was already looking at.
+    //
+    // The note's plan comes from the SAME segmenter, run over the note's own DOM. `chapterLabel` stays
+    // the reader's chapter, which is the honest caption: this is a footnote belonging to what they are
+    // reading, not a separate chapter.
+    if (sel.fromNote) {
+      const plan = await ctrl.noteListenPlan(bookLang);
+      if (plan) {
+        useTts.getState().start({
+          sentences: plan.sentences, lang: bookLang, startIndex: plan.startIndex, chapterLabel: captionRef.current(),
+          // WHAT THIS QUEUE IS. Without it the player treats the end of a two-sentence footnote as the
+          // end of the chapter and offers to advance the book — see `StartOpts.source`.
+          source: "note",
+          // A footnote is read under the same answer as the chapter it hangs off.
+          speakSymbols: speakSymbolsNow(),
+        });
+        return;
+      }
+    }
     const sentences = await ctrl.getCurrentChapterSentences(bookLang); // RAWY-182: async + chunked (non-blocking)
     // RAWY-227: exact range → unit mapping first (units were just built for this on-screen chapter); the
     // 24-char normalised text match is only a FALLBACK, and the chapter top is the last resort.
@@ -1861,7 +2262,7 @@ export function Reader({
     if (startIndex < 0) startIndex = 0;
     // RAWY-182: call start() even when empty (it surfaces the empty-chapter state), so the "preparing"
     // pill shown above never gets stuck — consistent with startListen.
-    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: chapter });
+    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: captionRef.current(), speakSymbols: speakSymbolsNow() });
   };
 
   // Responsive page width (RAWY-23): the slider fraction → a window-relative preferred width
@@ -1898,6 +2299,7 @@ export function Reader({
   const thawAnchor = useCallback(() => {
     if (!anchorRef.current) return;
     anchorRef.current = null;
+    anchorLocRef.current = null;
     setAnchorUi(null);
     const st = useReader.getState();
     if (st.cfi) progressSave(bookRef.current, st.cfi, st.fraction).catch(() => {});
@@ -1908,9 +2310,37 @@ export function Reader({
     const a = anchorRef.current;
     if (!a) return;
     anchorRef.current = null;
+    anchorLocRef.current = null;
     setAnchorUi(null);
     ctrlRef.current?.goToLocator(a.cfi);
   }, []);
+
+  // GO TO THE FURTHEST POINT REACHED.
+  //
+  // This takes the CONTENTS path, not the jump path, and the difference is the whole feature.
+  //
+  // Sard's two families are `beginJump` — search hit, annotation, bookmark, cross-reference — which
+  // FREEZE the reading position because the reader is looking at something and will want to come
+  // back; and plain navigation — a contents row, a page turn — which simply moves and lets the
+  // position follow. A jump here would freeze the row at chapter 320 while showing chapter 488, so
+  // closing the book would reopen it at 320: the reader would have asked to get back to where they
+  // had read to, and Sard would have quietly refused to remember it. That is the one outcome this
+  // feature exists to prevent, so the position must genuinely become the destination.
+  //
+  // Nothing is lost by not freezing. The mark still stands at 488, and 320 was not a place the reader
+  // was sent to — they navigated there themselves and can navigate back the same way.
+  //
+  // Whichever panel offered it closes, because this action is terminal: it means "put me back and let
+  // me read", unlike a contents row, which is browsing and leaves the list up. Both the Contents panel
+  // and the Search panel offer it, and it means the same thing from either.
+  const goToFurthest = useCallback(() => {
+    const m = furthestRef.current;
+    if (!m?.cfi) return;
+    setLeftPanel(null);
+    ctrlRef.current?.goToLocator(m.cfi);
+    restoreReadingFocus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restoreReadingFocus]);
   // RAWY-250 (PART 4): record a chapter as READ (idempotent) and persist the set for this book.
   // RAWY-256 (addendum, case 6 — owner's decision): remember that this chapter's BEGINNING has been seen,
   // and PERSIST it per book. A 1432-chapter book is read across many sessions; if the fact died with the
@@ -1954,6 +2384,37 @@ export function Reader({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tocSecMap, readVersion]);
 
+  // IS THERE A MARK AT ALL? Whether it is worth OFFERING is the Contents panel's call, because that
+  // is where the comparison can be made in the unit the control speaks in — the contents row the
+  // reader is in against the one the mark is in (`offerReturn`). A PDF has no cfi and no mark.
+  const furthestAhead = !isPdf && !!furthestUi?.cfi;
+
+  /**
+   * THE BOOK'S OWN NOTE.
+   *
+   * ONE at a time, deliberately. A stack was written here first, on the assumption that a note may
+   * reference another note — and the library says otherwise: across every book that has notes at all,
+   * 136 of them, not one note references another. What notes DO contain is a backlink, every time, and
+   * a backlink is not a second note to stack. So there is a single slot and no `Back` affordance for a
+   * depth that real books never reach.
+   *
+   * The reading position is never involved: the engine's link event was suppressed, so the main view
+   * has not moved and there is nothing to restore.
+   */
+  const [note, setNote] = useState<FootnoteHit | null>(null);
+  useEffect(() => {
+    ctrlRef.current?.onFootnote((hit) => {
+      // Start resolving the note's own place in the book now. Selecting text in it needs a CFI, and
+      // the reader has to read the note before they can select any of it — which is all the time
+      // the lookup needs to finish in.
+      ctrlRef.current?.prepareNoteAnchor(hit.href);
+      setNote(hit);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+  // A note belongs to the book it was opened in.
+  useEffect(() => { setNote(null); }, [initial.id]);
+
   // RAWY-250 (addendum 3): the Contents panel is ORDINARY NAVIGATION, NOT a jump — clicking a chapter targets
   // a PLACE the reader intends to read FROM, not a piece of content he wants to look at. It therefore does NOT
   // freeze and shows no pill; progress saves normally. (RAWY-232's path table measured which paths WRITE
@@ -1963,6 +2424,7 @@ export function Reader({
   // deliberately stays open, so the close-transition rule above never fired for this path.
   const jumpHref = useCallback(
     (href: string) => {
+      tocPendingRef.current = { landing: null }; // arriving by the list is not reading to there
       // WP-6A: a synthesised row carries a spine index, not a real href.
       const section = parseSectionHref(href);
       const r = section != null ? ctrlRef.current?.goToSection(section) : ctrlRef.current?.goToHref(href);
@@ -1975,10 +2437,11 @@ export function Reader({
     (cfi: string) => {
       beginJump(cfi);
       const r = ctrlRef.current?.goToLocator(cfi);
+      settleJump(r);
       restoreReadingFocus();
       return r;
     },
-    [beginJump, restoreReadingFocus],
+    [beginJump, settleJump, restoreReadingFocus],
   );
   const closeContents = useCallback(() => setLeftPanel((p) => (p === "contents" ? null : p)), []);
   const closeSearch = useCallback(() => setLeftPanel((p) => (p === "search" ? null : p)), []);
@@ -2005,13 +2468,18 @@ export function Reader({
   // UI language. Physical paddingLeft/Right match those fixed sides regardless of <html dir>.
   // The three right-edge drawers (Settings 384 / Notes 300) are mutually exclusive; Contents
   // (left) coexists. Shift the desk by whichever right drawer is open so the page recenters.
-  // ⚠ These MUST match the panels' CSS widths (`.reader-panel` / `.rp-trail` in global.css). The width
-  // lives in two places — here it drives the desk padding + `--reading-shift` (the TTS pill, the kashida
-  // and the resume hint all read it), so changing only the CSS silently de-centres the page and slides
-  // those off-target. RAWY-206 widened the NOTES panel (trailing) to 340 for its book+chapter labels;
-  // Contents/Search (leading) stay 300.
-  const PANEL_LEAD = 300;
-  const PANEL_TRAIL = 340;
+  // ⚠ These MUST match the panels' CSS width — now a single value on `.reader-panel` in global.css,
+  // which no panel overrides. The width lives in two places: here it drives the desk padding +
+  // `--reading-shift` (the TTS pill, the kashida and the resume hint all read it), so changing only
+  // the CSS silently de-centres the page and slides those off-target.
+  //
+  // That is exactly what had happened: RAWY-88 set Search to 340 from its design (2026-07-03), and
+  // RAWY-206 later added PANEL_LEAD = 300 with a comment claiming Contents/Search were both 300 —
+  // untrue when written. The desk reserved 300 while Search rendered 340, so 40px of the page sat
+  // UNDER the panel and `--reading-shift` was 20px off. Both are 340 now: Notes and Search already
+  // were, Contents was the last at 300, and one width means the two places cannot disagree again.
+  const PANEL_LEAD = 380;
+  const PANEL_TRAIL = 380;
   // Contents + Search both live on the physical-left and are mutually exclusive — either shifts the desk.
   const leftPad = chaptersOpen || searchOpen ? PANEL_LEAD : 0;
   // The Notes drawer pushes the desk so the page sits beside it. The SETTINGS drawer does NOT
@@ -2019,8 +2487,12 @@ export function Reader({
   // control shows its real effect live while you adjust it (pushing the desk capped the sheet to
   // the narrowed space → "page width does nothing"). The top cluster stays clickable above both.
   const rightPad = annoOpen ? PANEL_TRAIL : 0;
+  // The measure, named once: the page wears it, and so does a note, so that a note's lines break the
+  // way the book's do. It cannot simply be inherited — it is declared on the desk, and the note's
+  // scrim is a sibling of the desk rather than a child of it.
+  const measurePx = pageWidthPx(pageFraction);
   const deskStyle = {
-    "--page-pref": `${pageWidthPx(pageFraction)}px`,
+    "--page-pref": `${measurePx}px`,
     // Page margin insets the foliate host within the sheet (RAWY-36) — reliable across flow modes
     // (foliate's !important html padding can't be beaten from injected CSS).
     "--page-margin": `${style?.marginPx ?? 56}px`,
@@ -2036,14 +2508,45 @@ export function Reader({
   // RAWY-114: centre the floating read-aloud pill over the READING AREA (not the raw viewport), so an
   // open Contents/Notes panel shifts it clear of the panel — the compact pill reads this var.
   // RAWY-201: the per-book custom PAGE + BACKGROUND colours ride READER-SCOPED vars set here on
-  // .reader-root (never the global --paper-bg/--app-bg → no chrome/accent bleed). Set ONLY when a real
-  // colour is stored; when null the var is absent and the CSS falls back to the theme value — so an
-  // untouched book is byte-identical. `--reader-page` feeds the .page-sheet margin (the iframe surface
-  // gets the same value via injectedCss → no seam); `--reader-bg` feeds .reader-root + .reader-desk.
+  // .reader-root (never the global --paper-bg/--app-bg → no chrome/accent bleed). `--reader-page`
+  // feeds the .page-sheet margin (the iframe surface gets the same value via injectedCss → no seam);
+  // `--reader-bg` feeds .reader-root + .reader-desk.
+  // `--reader-page` is no longer conditional — see the block below for why the fallback had to go.
+  // THE OVERLAY'S THREE STATES, read through the one function that defines them. `theme` leaves the
+  // var absent so the stylesheet falls through to the desk colour exactly as before; `colour` sets
+  // it; `none` sets nothing here and instead marks the desk so the scrim layer is dropped entirely.
+  const bgOverlay = bgOverlayOf(style?.backgroundColor);
+  const overlayPaint = overlayTint(bgOverlay);
+
+  /**
+   * THE BOOK'S OWN PALETTE, SCOPED TO THE READER — and the whole of the colour boundary.
+   *
+   * `--reader-page` used to be set ONLY when a book carried its own `pageColor`, so with no override
+   * `.page-sheet` fell through to `var(--paper-bg)` — a global slot the Library and the Reader took
+   * turns writing. Two faults came out of that one fallback:
+   *
+   *   · THE FLASH. Opening a book painted the page with whatever `:root` held, which is the LIBRARY's
+   *     paper, and a later `applyTheme` corrected it. Measured across a profile switch: the page
+   *     painted #0D3B14 (the library paper) at t=299ms and became #F7F2E2 (the reading paper) at
+   *     t=481ms — 182ms of the wrong colour, on every cold open.
+   *   · THE BLEED. Correcting it meant writing the READING palette onto `:root`, where 31 Reader
+   *     chrome rules read `--paper-bg` as the ink that contrasts with the accent. The book's paper
+   *     became the colour of the highlight button and the read-aloud control.
+   *
+   * Setting it ALWAYS, from the resolved reading theme, ends both: the page is right on its first
+   * paint because there is nothing to fall through to, and `:root` is left to the Library. A
+   * per-book `pageColor` still wins — it is the same slot, written last.
+   */
+  const readingTheme = resolveTheme(bookThemeId);
   const rootVars = {
     "--reading-shift": `${(leftPad - rightPad) / 2}px`,
-    ...(style?.pageColor ? { "--reader-page": style.pageColor } : {}),
-    ...(style?.backgroundColor ? { "--reader-bg": style.backgroundColor } : {}),
+    "--reader-page": style?.pageColor ?? readingTheme.colors.paperBg,
+    // THE DESK IS THE PAGE'S ENVIRONMENT, NOT THE APP'S. `.reader-root` and `.reader-desk` paint
+    // `var(--reader-bg, var(--app-bg))`, and that fallback used to land on the reading palette only
+    // because the reading palette was being written to `:root`. It no longer is, so the desk is named
+    // here instead of inherited — the SAME colour it has always had, now stated rather than borrowed.
+    // An overlay colour still wins: it is the reader's own choice of what the page rests on.
+    "--reader-bg": overlayPaint.tint ?? readingTheme.colors.surfaceBg,
   } as CSSProperties;
 
   return (
@@ -2058,12 +2561,26 @@ export function Reader({
     // and the selection menu is a descendant of .reader-root (no portals), so a single capture-phase click
     // handler releases focus from any POINTER-clicked keys-swallower (button / [role=button] / link) before it
     // can capture SPACE/arrows — superseding the per-container onClickCapture the toolbar/pills still carry.
-    <div className={`reader-root${chromeShown ? "" : " chrome-hidden"}${ttsActive ? " tts-playing" : ""}${!isPaged && !isPdf ? " flow-scrolled" : ""}${immersive ? " immersive" : ""}${scrolledAway && !chromeShown ? " scrolled-away" : ""}${style?.immHidePill ? " im-hide-pill" : ""}${style?.immHideScrollbar ? " im-hide-scrollbar" : ""}${ttsStatus === "chapter-end" ? " tts-chapter-end" : ""}${ttsStatus === "edge-error" ? " tts-edge-error" : ""}`} style={rootVars} onClickCapture={releaseButtonFocusAfterPointerClick}>
+    <div
+      // THE PAGE'S OWN DARKNESS. `data-dark` on `:root` is the APP's polarity and is read by 30
+      // chrome rules; exactly one page rule needs the BOOK's instead — `.page-sheet`'s inset
+      // hairline, which must match the paper it is drawn on and not the surrounding interface.
+      data-book-dark={String(readingTheme.dark)}
+      // AND THE BOOK'S THEME BY NAME, for the decorations that belong to a particular reading paper.
+      // Moonlit draws a crescent and clouds into the desk margins; it is scenery for READING, and it
+      // was keyed on `:root[data-theme]` only because the reading theme used to be written there.
+      // Left alone it would have inverted — appearing when the LIBRARY is Moonlit and vanishing when
+      // the book is. This is the reader's own copy of the same question.
+      data-book-theme={readingTheme.id}
+      className={`reader-root${chromeShown ? "" : " chrome-hidden"}${ttsActive ? " tts-playing" : ""}${!isPaged && !isPdf ? " flow-scrolled" : ""}${immersive ? " immersive" : ""}${scrolledAway && !chromeShown ? " scrolled-away" : ""}${style?.immHidePill ? " im-hide-pill" : ""}${style?.immHideScrollbar ? " im-hide-scrollbar" : ""}${ttsStatus === "chapter-end" ? " tts-chapter-end" : ""}${ttsStatus === "edge-error" ? " tts-edge-error" : ""}`} style={rootVars} onClickCapture={releaseButtonFocusAfterPointerClick}>
       {/* desk + centered page sheet (the book) + page-turn affordances */}
       <div
         // RAWY-294: `pdf-view` marks EVERY PDF (it carries the scroll containment); the theme itself
         // is applied inside the page document, not by a class on this ancestor.
-        className={`reader-desk${isPdf ? " pdf-view" : ""}${style?.backgroundColor ? " custom-bg" : ""}`}
+        className={`reader-desk${isPdf ? " pdf-view" : ""}${overlayPaint.tint ? " custom-bg" : ""}`}
+        // `off` drops the scrim pseudo-element, so the picture is composited under nothing at all.
+        // Absent in the other two states, which keeps every existing book byte-identical.
+        data-overlay={overlayPaint.paint ? undefined : "off"}
         style={deskStyle}
         onWheel={onDeskWheel}
       >
@@ -2116,6 +2633,9 @@ export function Reader({
         readHrefs={readHrefs}
         readMarker={readMarker}
         fraction={fraction}
+        furthestHref={furthestUi?.href ?? null}
+        furthestOffered={furthestAhead}
+        onGoFurthest={goToFurthest}
       />
 
       {!isPdf && (
@@ -2123,7 +2643,9 @@ export function Reader({
           open={searchOpen}
           onClose={closeSearch}
           bookTitle={bookTitle}
-          positionLabel={searchPositionLabel}
+          positionLabel={searchBoundaryLabel}
+          boundaryIsFurthest={boundaryIsFurthest}
+          onGoFurthest={goToFurthest}
           bookDir={isRtlBook ? "rtl" : "ltr"}
           query={searchQuery}
           onQuery={setSearchQuery}
@@ -2159,16 +2681,15 @@ export function Reader({
         searchOpen={searchOpen}
         onListen={startListen}
         ttsActive={ttsActive}
-        onText={() => openSettings("typography")}
-        onTheme={() => openSettings("colour")}
-        onLayout={() => openSettings("layout")}
+        // Passing the section that is already showing is what makes the one button a TOGGLE:
+        // `openSettings` closes the drawer when asked for the tab it is already on.
+        onSettings={() => openSettings(isPdf ? "layout" : settingsSection)}
         onAnnotations={() => { setAnnoOpen((v) => !v); setSettingsOpen(false); }}
         onBookmark={onBookmark}
         bookmarked={!!activeBm}
         chaptersOpen={chaptersOpen}
         annoOpen={annoOpen}
         settingsOpen={settingsOpen}
-        settingsSection={settingsSection}
         basketCount={basketCount}
         basketOpen={basketOpen}
         onBasket={() => setBasketOpen((v) => !v)}
@@ -2188,16 +2709,15 @@ export function Reader({
         onSection={setSettingsSection}
         bookThemeId={bookThemeId}
         onPickTheme={setBookTheme}
-        bookTitle={bookTitle}
-        hasOverride={hasOv}
-        onReset={resetBook}
-        unified={scope === "unified"}
         isPdf={isPdf}
         pdfThemeId={pdfThemeId}
         onPdfTheme={choosePdfTheme}
         pdfZoom={pdfZoom}
         onPdfZoomStep={pdfZoomStep}
         onPdfZoomMode={(m) => applyPdfZoom(m)}
+        speakSymbolsOverride={speakSymbolsOverride}
+        speakSymbolsAppearance={style?.ttsSpeakSymbols ?? ARABIC_DEFAULTS.ttsSpeakSymbols}
+        onSpeakSymbols={setBookSpeakSymbols}
       />
 
       {/* RAWY-85: no in-context selection toolbar (highlight/note/Photo Mode) for PDFs — they're
@@ -2222,6 +2742,61 @@ export function Reader({
           chromeShown={chromeShown}
           onReturn={returnToAnchor}
           onDismiss={thawAnchor}
+        />
+      )}
+
+      {/* While a replacement is in force the page is not the author's wording, and the reader is told so
+          rather than left to discover it. Renders nothing at all when no rule is on. */}
+      <ReplacementNotice />
+
+      {/* The book's own footnote, held where the reader is. Invisible in a book that has none: nothing
+          renders until the engine claims a link as a reference, so a book without notes shows no
+          chrome and pays nothing. */}
+      {note && (
+        <NoteSheet
+          hit={note}
+          presentation={ctrlRef.current?.notePresentation() ?? null}
+          measurePx={measurePx}
+          isBacklink={(rawHref, declared) =>
+            ctrlRef.current?.resolveNoteLink(note, rawHref, declared).back ?? declared}
+          // Straight to the engine, which anchors it and publishes it through the SAME channel the
+          // reading frame uses. Nothing here interprets it: the toolbar and every action it offers are
+          // already listening, and they cannot tell a note selection from a page selection.
+          onSelect={(sel) => void ctrlRef.current?.reportNoteSelection(sel)}
+          onSurface={(el, layer) => {
+            ctrlRef.current?.setNoteSurface(el, layer);
+            // A note the reader has already marked opens with its marks on it. The rows come from the
+            // store, which owns them; the engine decides which of them this note can actually place.
+            if (el) ctrlRef.current?.noteDrawStored(useAnnotations.getState().highlights);
+          }}
+          onRedraw={() => ctrlRef.current?.noteRedraw()}
+          // THE PAGE'S OWN PATH, not a second editor. The engine answers which stored highlight is
+          // under the point, and the hit is published through `onShowAnnotation` — the very callback
+          // the reading frame fires — so the annotation editor that opens is the application's one
+          // and only, with its colours, its note field and its delete already wired.
+          onEditAt={(x, y) => {
+            const ctrl = ctrlRef.current;
+            const hit = ctrl?.noteHighlightAtPoint(x, y);
+            if (!hit) return;
+            ctrl?.clearSelection();
+            ctrl?.publishAnnotationHit(hit);
+          }}
+          // The sheet took focus out of the book to be a dialog at all; it goes straight back, which is
+          // this application's standing focus policy and what keeps the page-turn keys alive.
+          onClose={() => { setNote(null); restoreReadingFocus(); }}
+          onFollow={(rawHref, declaredBacklink) => {
+            const link = ctrlRef.current?.resolveNoteLink(note, rawHref, declaredBacklink);
+            setNote(null);
+            // A BACKLINK IS ALREADY HOME. It points at the reference behind the sheet, so dismissing
+            // the note is the whole of it — navigating there would move the book to where it already
+            // is and arm a return pill for a journey nobody took.
+            if (!link || link.back) { restoreReadingFocus(); return; }
+            // A GENUINE CROSS-REFERENCE is the one path from a note that really is navigation, and the
+            // only one that arms the pill. The note goes with it, so the pill is never left explaining
+            // a surface that is no longer there.
+            beginJump();      // freeze the real position → the return pill appears
+            settleJump(jumpHref(link.href));
+          }}
         />
       )}
 
@@ -2259,6 +2834,21 @@ export function Reader({
               "update-runtime": () => void openWebView2Help(),
             }}
             diagnosticsText={diagText}
+            // WHICH BOOK FAILED. The card's copy can only say "this book" — it is one string shared
+            // by every failure — so without this a reader with a large library is told a book is
+            // missing and not which one. That matters most exactly when it is least obvious: a
+            // cross-book note jump or a bookmark opens a book the reader never saw the cover of.
+            //
+            // It uses the card's existing `extra` slot (the startup gate's precedent) rather than a
+            // new surface, and the store's EFFECTIVE title — the reader's own rename if they made
+            // one — falling back to the hint the caller passed, since a pre-flight refusal fails
+            // before the row is read. Never the filename: the path is engine detail and belongs
+            // behind Details with everything else.
+            extra={
+              bookTitle || initial.title ? (
+                <p className="err-book-name">{bookTitle ?? initial.title}</p>
+              ) : undefined
+            }
           />
         </div>
       )}

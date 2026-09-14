@@ -1,6 +1,10 @@
 // Fonts (RAWY-39) — the app-wide font surface used by Global Settings.
-// - The INTERFACE font (chrome only, NOT book text) is driven by the `--ui-font` CSS var; the
-//   chosen family is stored under `ui_font` and re-applied at launch.
+// - The APPLICATION font is ONE choice, stored under `ui_font` and re-applied at launch. It drives
+//   every typography role in the interface — chrome, the names of books and shelves, and the
+//   wordmark — by being prepended to each role's family base (`applyUiFontVar` below).
+//   It deliberately does NOT reach the text INSIDE a book: that is the reading surface, and it has
+//   its own per-script, per-book pickers in Reading Settings (`reader-engine/injectedCss.ts`).
+//   Choosing how a book is set is a different act from choosing how the app is dressed.
 // - IMPORTED fonts are copied into app-data by the Rust `font_import` command and recorded in
 //   `custom_fonts`; here we register an @font-face for each (served via the asset protocol) so
 //   they are available app-wide, and expose them to the picker. Built-in chrome faces (Inter,
@@ -27,6 +31,65 @@ export const UI_SCALE_DEFAULT = 1.0;
 // Arabic (SardUIArabic) — so whatever the user picks, each script keeps a good default for glyphs the
 // chosen face lacks.
 const UI_FALLBACK = `"SardUILatin", "SardUIArabic", system-ui, "Segoe UI", sans-serif`;
+
+/**
+ * THE READER PICKS ONE FAMILY, AND EVERY ROLE IS BUILT FROM IT.
+ *
+ * These are the three family BASES `global.css` reads — `--ui`, `--book`, `--ar`, `--brand` and
+ * `--brand-ar` are all defined in terms of them. The chosen family is PREPENDED to each; what
+ * follows is that role's fallback chain, and the chains differ on purpose:
+ *
+ *   --ui-font    both scripts, via the unicode-ranged Plex pair
+ *   --book-font  Latin; falls back to Literata, the Latin book face
+ *   --ar-font    Arabic; falls back to Amiri, the Arabic book face
+ *
+ * So a reader who picks a Latin-only face still gets Amiri for Arabic rather than a system serif,
+ * and a reader who picks an Arabic-only face still gets Literata for Latin. The browser decides,
+ * per glyph, using coverage it already knows — no script detection is involved.
+ *
+ * Before this, `--ui-font` was the only one of the five anything ever wrote. The other four were
+ * constants, so the setting moved the chrome and stopped: Arabic titles, the Arabic half of the
+ * wordmark and the text on a generated card all stayed on families the reader could not change.
+ */
+const ROLE_BASES: ReadonlyArray<readonly [string, string]> = [
+  ["--ui-font", UI_FALLBACK],
+  // Each role keeps the APP FONT behind the reader's pick, and its own design face behind that. So a
+  // pick that cannot draw a script hands it to Plex — the application's own voice — rather than to a
+  // book face nobody asked for. These mirror the `:root` defaults in global.css, which is what a
+  // cleared choice falls back to.
+  ["--book-font", `"SardUILatin", "SardUIArabic", "Literata", Georgia, serif`],
+  ["--ar-font", `"SardUIArabic", "SardUILatin", "Amiri", serif`],
+];
+
+/**
+ * Which scripts a chosen family actually covers, from the catalogue Sard already keeps.
+ *
+ * An IMPORTED font is recorded with no script, and there is nothing honest to infer from a file
+ * name, so it is offered to both and the browser's per-glyph fallback decides. That is measurably
+ * fine: an imported face carrying both scripts draws both, and one carrying only Arabic simply
+ * fails to supply Latin glyphs and the next entry in the chain supplies them.
+ */
+export function coverageOf(family: string): { latin: boolean; arabic: boolean } {
+  const cat = FONT_CATALOGUE.find((f) => f.css === family);
+  if (!cat) return { latin: true, arabic: true }; // imported: unknown, so let the glyphs decide
+  return { latin: cat.scripts.includes("la"), arabic: cat.scripts.includes("ar") };
+}
+
+/**
+ * The chrome stack for a chosen family.
+ *
+ * Chrome is ONE stack covering both scripts, so ordering is the only lever: whichever face comes
+ * first supplies a glyph it has. A Latin-only pick therefore goes in front — Arabic falls past it to
+ * Plex Arabic. An ARABIC-only pick goes BEHIND the Latin default instead, because Aref Ruqaa and
+ * Noto Naskh do carry rudimentary Latin glyphs and would otherwise draw the whole interface's Latin
+ * in a display Arabic face nobody chose it for. Measured: without this, picking Aref Ruqaa set every
+ * Latin label in Aref Ruqaa's Latin.
+ */
+export function chromeStack(family: string): string {
+  const cov = coverageOf(family);
+  if (cov.latin) return `"${family}", ${UI_FALLBACK}`;
+  return `"SardUILatin", "${family}", ${UI_FALLBACK.replace(`"SardUILatin", `, "")}`;
+}
 
 export interface FontChoice {
   family: string; // the CSS font-family value
@@ -62,12 +125,34 @@ export const FONT_CATALOGUE: CatFont[] = [
 // App-font choices for the picker (family "" = the IBM Plex default). Imported fonts appended by the store.
 export const BUILTIN_UI_FONTS: FontChoice[] = FONT_CATALOGUE.map((f) => ({ family: f.css, label: f.label, builtin: true }));
 
-function applyUiFontVar(family: string | null): void {
+/**
+ * Apply the reader's chosen family to EVERY role base. Exported so the profile store applies the
+ * same thing rather than its own copy of one stack.
+ *
+ * Clearing removes the inline overrides, so the `:root` defaults in global.css apply again and the
+ * app looks exactly as it does out of the box.
+ */
+export function applyUiFontVar(family: string | null): void {
   const root = document.documentElement;
-  if (family && family.trim()) {
-    root.style.setProperty("--ui-font", `"${family}", ${UI_FALLBACK}`);
-  } else {
-    root.style.removeProperty("--ui-font"); // fall back to the global.css default
+  const chosen = family && family.trim();
+  // EMPTY MEANS "IBM PLEX", which is a choice like any other — the catalogue stores that face as an
+  // empty `css` because it is also the default. Clearing the overrides is therefore the right thing
+  // to do, but ONLY because the `:root` bases themselves now start from the Plex pair. When they
+  // named Literata and Amiri, this line is what handed Arabic titles and the wordmark to Amiri the
+  // moment a reader selected IBM.
+  if (!chosen) {
+    for (const [base] of ROLE_BASES) root.style.removeProperty(base);
+    return;
+  }
+  const cov = coverageOf(chosen);
+  for (const [base, fallback] of ROLE_BASES) {
+    // A face is only put in front of a script it actually covers. Sard knows the coverage of every
+    // built-in face, so a Latin-only pick never displaces Amiri for Arabic, and an Arabic-only pick
+    // never displaces Literata for Latin.
+    const covers = base === "--ar-font" ? cov.arabic : base === "--book-font" ? cov.latin : true;
+    if (base === "--ui-font") root.style.setProperty(base, chromeStack(chosen));
+    else if (covers) root.style.setProperty(base, `"${chosen}", ${fallback}`);
+    else root.style.removeProperty(base);
   }
 }
 
@@ -116,6 +201,16 @@ interface FontsState {
   setUiWeight: (weight: number) => void;
   setUiScale: (scale: number) => void;
   importFont: () => Promise<CustomFont | null>;
+  /**
+   * Re-read the imported fonts and re-register their faces.
+   *
+   * `importFont` already does this for the file PICKER by folding its own result in. A font that
+   * arrives another way — dropped on the window — is imported by Rust without passing through that
+   * method, so the list and the `@font-face` block would otherwise stay as they were and the new
+   * family would be installed and invisible until the next launch. This is the same two steps
+   * `initFonts` takes, named so any future entrance can take them too.
+   */
+  reload: () => Promise<void>;
   removeFont: (id: string) => Promise<void>;
   /** Built-in chrome fonts + every imported font, as selectable UI-font choices. */
   uiChoices: () => FontChoice[];
@@ -156,6 +251,11 @@ export const useFonts = create<FontsState>((set, get) => ({
     set({ custom });
     return f;
   },
+  reload: async () => {
+    const custom = await fontsList().catch(() => [] as CustomFont[]);
+    injectCustomFaces(custom);
+    set({ custom });
+  },
   removeFont: async (id) => {
     await fontRemove(id);
     const removed = get().custom.find((c) => c.id === id);
@@ -167,9 +267,30 @@ export const useFonts = create<FontsState>((set, get) => ({
   },
   uiChoices: () => [
     ...BUILTIN_UI_FONTS,
-    ...get().custom.map((c) => ({ family: c.family_name, label: c.family_name, builtin: false })),
+    ...familiesOnce(get().custom).map((c) => ({ family: c.family_name, label: c.family_name, builtin: false })),
   ],
 }));
+
+/** ONE ENTRY PER IMPORTED FAMILY, for the pickers.
+ *
+ *  `fonts::import` records a row per FILE and derives the family from the file stem with weight words
+ *  stripped (`family_from_stem`), so importing a face's Regular AND Bold — an ordinary thing to do —
+ *  writes two rows under a single family name. Every picker keys its options on that name, so React
+ *  saw two children with the same key and warned that it may duplicate or omit one of them; the reader
+ *  saw the same font offered twice, and both entries resolved to the same face because
+ *  `customFontUrl` matches by family and takes the first row.
+ *
+ *  A family is ONE choice, so the pickers offer it once, keeping the first row — the same row
+ *  `customFontUrl` already resolves to, so what is selected is what renders. The FONT LIBRARY is
+ *  deliberately left alone: there each file is its own removable card. */
+export function familiesOnce<T extends { family_name: string }>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  return rows.filter((r) => {
+    if (seen.has(r.family_name)) return false;
+    seen.add(r.family_name);
+    return true;
+  });
+}
 
 /** An imported font's asset-protocol URL by family name (RAWY-44) — used to declare its
  *  @font-face INSIDE the foliate iframe via the injectedCss resolver. */

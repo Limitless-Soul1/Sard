@@ -69,13 +69,48 @@ export function localeDigits(s: string, _lang?: string): string {
 
 /** A UI date/time formatter. Use INSTEAD OF `new Intl.DateTimeFormat(...)` so the numbering
  *  policy can never be bypassed; pass whatever options the surface needs. */
+/**
+ * CACHED BY SHAPE, for the reason stated above the number formatters: CONSTRUCTION is the expensive
+ * part of Intl, and it was being paid per row.
+ *
+ * MEASURED. On a library of 2,000 books with 23,000 marks, opening «المراجع والاستبدالات» spent
+ * 1,193ms of main-thread self time inside this one function — the largest single entry in the CPU
+ * profile, and the reason that screen froze for two seconds. Every caller formats a date PER ROW:
+ * a card's stamp, a drawer's last-opened, a rule's date. Each call built a fresh ICU formatter and
+ * threw it away.
+ *
+ * A formatter is immutable and `format()` has no state, so two calls with the same locale and the
+ * same options can only ever return the same object. The cache is therefore invisible: identical
+ * output, identical digits, identical Arabic month names.
+ *
+ * The key includes the options because a shape is part of the formatter's identity — `{month:
+ * "short"}` and `{month: "long"}` are different formatters and must not share an entry.
+ */
+const dateTimeFormats = new Map<string, Intl.DateTimeFormat>();
+
 export function uiDateTimeFormat(lang: string, options: Intl.DateTimeFormatOptions): Intl.DateTimeFormat {
-  return new Intl.DateTimeFormat(uiLocale(lang), options);
+  const locale = uiLocale(lang);
+  const key = locale + "\u0000" + JSON.stringify(options);
+  let f = dateTimeFormats.get(key);
+  if (!f) {
+    f = new Intl.DateTimeFormat(locale, options);
+    dateTimeFormats.set(key, f);
+  }
+  return f;
 }
 
 /** A UI relative-time formatter ("قبل 5 أيام"). Same rule as uiDateTimeFormat. */
+const relativeFormats = new Map<string, Intl.RelativeTimeFormat>();
+
 export function uiRelativeTimeFormat(lang: string, options: Intl.RelativeTimeFormatOptions): Intl.RelativeTimeFormat {
-  return new Intl.RelativeTimeFormat(uiLocale(lang), options);
+  const locale = uiLocale(lang);
+  const key = locale + "\u0000" + JSON.stringify(options);
+  let f = relativeFormats.get(key);
+  if (!f) {
+    f = new Intl.RelativeTimeFormat(locale, options);
+    relativeFormats.set(key, f);
+  }
+  return f;
 }
 
 // ── READ-ONLY direction: parsing what the BOOK wrote ─────────────────────────

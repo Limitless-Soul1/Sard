@@ -22,6 +22,7 @@ import { type BookScript, voiceCompatibility, isImplausiblyShortAudio } from "./
 import { diagNote, diagPublishAudio } from "@diag";
 import { settingsGet, settingsSet, ttsEdgeVoices, ttsStop } from "./ipc";
 import { LatencySeries, newSeries, recordSeries, resetSeries, seriesSummary, SynthScheduler } from "./ttsScheduler";
+import { speakableText, withoutDecorativeSymbols, withoutEmptyMarkup } from "./ttsText";
 
 /**
  * RAWY-281 — the selectable playback speeds, as an EXPLICIT ORDERED SET.
@@ -202,7 +203,33 @@ type Status = "idle" | "preparing" | "playing" | "paused" | "error" | "chapter-e
 // so the old "start only the first sentence" hack is obsolete.
 interface StartOpts { sentences: string[]; lang: TtsLang; startIndex?: number; chapterLabel: string;
   /** WP-5A: the script SNIFFED from the book (never its declared language). null = do not gate. */
-  bookScript?: BookScript }
+  bookScript?: BookScript;
+  /**
+   * WHAT THIS QUEUE IS. Until footnotes, a queue was always a chapter, so "the sentences ran out" and
+   * "the chapter finished" were the same event and `playFrom` could set `chapter-end` unconditionally.
+   * They are not the same event any more: a footnote is auxiliary content a few sentences long, and
+   * reaching its end says nothing whatever about the chapter the reader is in.
+   *
+   * MEASURED before this existed: finishing a two-sentence footnote put the session in `chapter-end`,
+   * which is the state the player reads to offer «الفصل التالي» — so a note offered to advance the
+   * book. That is a state-ownership error, not a display one, and it is fixed here rather than hidden
+   * in the player.
+   */
+  source?: TtsSource;
+  /**
+   * Whether the voice PRONOUNCES decorative formatting marks for this queue — the effective answer,
+   * already resolved by the caller from the book's own override and the worn هيئة.
+   *
+   * It arrives per QUEUE rather than being read from a store here, for the same reason `sentences`
+   * does: this module plays what it is handed. Resolving it at the Reader keeps the precedence rule
+   * in one place, and keeps this file unaware of هيئات and of per-book rows alike.
+   *
+   * Absent = do not suppress, which is what every existing caller means by not passing it.
+   */
+  speakSymbols?: boolean }
+
+/** A read-aloud queue is either the chapter on screen or an open footnote. Default: the chapter. */
+export type TtsSource = "chapter" | "note";
 
 /** WP-5C: the settings prefix recording "I chose this voice anyway", for ONE voice id. Per-voice, so
  *  an override can never silently generalise to a different incompatible voice. */
@@ -230,6 +257,8 @@ interface TtsState {
   words: TtsWord[]; // RAWY-127: the current sentence's Edge word timings ([] = sentence-level only)
   wordIndex: number; // RAWY-127: active word within `words` (-1 = none / no karaoke) — drives the pill
   chapterLabel: string;
+  /** What the CURRENT queue is reading. See `StartOpts.source`. */
+  source: TtsSource;
   error: string | null;
   // RAWY-231 (invariant E, recurrence guard): LOCAL counters the owner can SEE (not just feel) — no
   // telemetry leaves the machine. `underruns` = times playback had to WAIT on synthesis (a stall);
@@ -278,6 +307,13 @@ interface Synthesized { bytes: ArrayBuffer; durationSec: number; words: TtsWord[
 // ---- imperative playback engine (WebAudio), kept outside the reactive store ----
 let ctx: AudioContext | null = null;
 let sentences: string[] = [];
+/**
+ * Whether this queue's voice says the decorative marks. Set from `StartOpts` beside `sentences`,
+ * because it belongs to the same queue and must change only when the queue does — reading it live
+ * mid-playback would let a settings change alter sentences already synthesized and cached, so the
+ * reader would hear the old text for a while and the new text after, with no way to tell why.
+ */
+let speakSymbols = true;
 
 // ---- RAWY-264: the playback substrate — HTMLMediaElement, not AudioBufferSourceNode -----------------
 //
@@ -417,6 +453,11 @@ const SKIP_CONTINUE_MS = 600;
 let skipSettleTimer: ReturnType<typeof setTimeout> | null = null;
 let skipLeadTarget = -1; // the index the leading (immediate) skip of the current session synthesized
 let skipLastTarget = -1; // the most recent skip's target — moved ONLY by skip(), never by auto-advance
+// The generation the leading play was started under. Every skip bumps `gen` and calls `stopSource()`,
+// so a LATER skip silently kills the leading play — even one that resolves to the very same sentence.
+// Without this stamp the settle could not tell "the leading play is still running" from "it was killed
+// and nothing replaced it", and chose by target alone. See `settleNeedsReplay`.
+let skipLeadGen = -1;
 let lastSkipAt = 0; // performance.now() of the previous skip — detects a continuing skipping session
 const clearSkipSettle = () => {
   if (skipSettleTimer) { clearTimeout(skipSettleTimer); skipSettleTimer = null; }
@@ -597,7 +638,31 @@ export const VOICE_MISMATCH_MARKER = "voice-language-mismatch";
 
 async function synthInvoke(i: number): Promise<ArrayBuffer> {
   const text = sentences[i];
-  const buf = await rawSynth(curEngine, curVoice, text);
+  // `speakableText` is the ONLY place the spoken string may differ from the displayed one. It exists
+  // because Edge silently drops standalone Extended Arabic-Indic digit runs — measured: two different
+  // numbers return byte-identical audio — and it rewrites them to the Arabic-Indic forms the endpoint
+  // does speak. Length-preserving, so the word boundaries Edge returns still map onto the displayed
+  // text; see `lib/ttsText.ts` for the measurements and the invariants.
+  // `withoutEmptyMarkup` drops an angle-bracket container with nothing speakable inside it. It is
+  // applied HERE and not inside `speakableText` because it removes characters, and `setReadingWords`
+  // requires `speakableText` to stay length-preserving. Applied once, on the only path that reaches an
+  // engine, so every kind of read-aloud — chapter, note and selection — gets it identically.
+  // `withoutDecorativeSymbols` silences the formatting marks the endpoint pronounces as words (# ~ * ^
+  // and rules drawn out of -- / __), for the same reason and in the same place — but only when the
+  // reader has asked for it. `speakSymbols` is the effective answer for this queue: true means say
+  // them, which is the untransformed string this line produced before the setting existed. It is
+  // OUTERMOST because it describes the string that actually reaches the voice; the parts commute in
+  // any case, since it never adds or removes a letter or digit and so cannot change whether a span
+  // counts as speakable.
+  //
+  // ALL OF IT IS STRICTLY DOWNSTREAM OF SEGMENTATION. `sentences` arrives already split by
+  // `FoliateController`'s `Intl.Segmenter`, and nothing here is fed back into it — so unit count,
+  // sentence boundaries, chunk indices and the ranges the highlight is drawn from cannot move,
+  // whichever way the setting is set.
+  const markupSafe = withoutEmptyMarkup(speakableText(text));
+  const buf = await rawSynth(
+    curEngine, curVoice, speakSymbols ? markupSafe : withoutDecorativeSymbols(markupSafe),
+  );
   if (isImplausiblyShortAudio(text, buf?.byteLength ?? 0)) {
     throw new Error(`${VOICE_MISMATCH_MARKER}: ${curVoice} returned ${buf?.byteLength ?? 0} bytes for ${text.length} chars`);
   }
@@ -1003,11 +1068,83 @@ export function toggleTtsPlayback(): boolean {
  *  un-mirrored ⏭/⏮ buttons and the universal media convention (YouTube/Spotify seek). Returns whether it
  *  acted, so the caller preventDefault()s ONLY then; otherwise the arrows keep their normal reader behaviour
  *  (page-turn — which DOES mirror in RTL — / scroll) when TTS is off. */
+/**
+ * WHERE A TRANSPORT SKIP LANDS — a sentence, or the end of the chapter.
+ *
+ * Every move but one lands on a sentence, clamped into range: back from the first stays on the first,
+ * and a forward move stops at the last. The exception is pressing FORWARD while already on the last
+ * sentence. Clamping resolves that to the sentence already playing, so it was played again — the
+ * reader pressed "next" and heard the same words a second time, with no way to reach the next chapter
+ * from the keyboard.
+ *
+ * Forward from the last sentence means the chapter is done. That is a state Sard already has, reached
+ * by listening to the end, and the caller hands this answer to the SAME `playFrom` path that handles
+ * it — no second notion of a chapter ending, and a footnote still simply ends there because that path
+ * decides it.
+ */
+/**
+ * WHEN A SETTLED SKIP MUST START AUDIO ITSELF.
+ *
+ * A skipping session plays its FIRST skip immediately (the leading edge, so a lone press is instant) and
+ * then only moves the index until the presses stop; when they do, the settle decides whether the landing
+ * still needs playing. It used to decide by target alone: "the landing is where the leading play started,
+ * so that play is still running — just warm the look-ahead".
+ *
+ * THAT PREMISE IS FALSE, and at the start of a chapter it is false every time. Every skip unconditionally
+ * calls `stopSource()` and bumps the generation, which cancels the leading play. Press backward twice
+ * quickly on the first sentence and both presses resolve to index 0: the second kills the audio the first
+ * started, contributes no play of its own because it is a continuation, and the settle then sees the
+ * landing and the leading target are equal and only prefetches. The result is the reported fault exactly
+ * — the sentence highlighted and tracked, `status` saying "playing", and silence.
+ *
+ * The generation says what the target cannot: if it has moved past the leading play, that play is dead
+ * and the landing needs starting, whether or not it is the same sentence.
+ */
+export function settleNeedsReplay(lastTarget: number, leadTarget: number, leadGen: number, nowGen: number): boolean {
+  return lastTarget !== leadTarget || nowGen !== leadGen;
+}
+
+export type SkipLanding =
+  | { kind: "sentence"; index: number }
+  | { kind: "chapter-end" }
+  /** Nowhere further to go. The press is still CLAIMED — see below for why that matters. */
+  | { kind: "stay" };
+
+/**
+ * `atEnd` — the chapter has already ended and the offer is on screen.
+ *
+ * THE PRESS MUST STILL BE CLAIMED THERE. `handleNavKey` gives the arrows to read-aloud only while it
+ * says it wants them, and falls through to turning a PAGE otherwise. Chapter-end was not in the set
+ * that wanted them, so once the offer appeared the arrows quietly went back to paging: pressing
+ * forward moved the reader to the next page while read-aloud stayed anchored to the last sentence of
+ * the previous one (measured — the reading cfi moved and the tts index did not), and pressing back
+ * paged backwards instead of returning to the chapter, which is why the offer could never be reached a
+ * second time.
+ *
+ * So at the end, forward stays — there is nothing after the last sentence but the button — and backward
+ * is an ORDINARY backward move from the sentence the end state is standing on. Returning to the last
+ * sentence itself was tried first and is wrong in practice: it is the shortest sentence-worth of audio
+ * away from ending again, so the chapter simply re-ended a second later and the reader appeared to be
+ * stuck (measured — the state read `chapter-end` again 2.6s after the press). Stepping back off it
+ * leaves the end state properly, and a forward press then reaches the end again the same way it did the
+ * first time, which is the whole point of being able to leave.
+ */
+export function resolveSkip(index: number, delta: number, count: number, atEnd = false): SkipLanding {
+  if (atEnd && delta > 0) return { kind: "stay" };
+  if (delta > 0 && count > 0 && index >= count - 1) return { kind: "chapter-end" };
+  return { kind: "sentence", index: Math.max(0, Math.min(count - 1, index + delta)) };
+}
+
 export function skipSentenceForArrow(key: string): boolean {
   const st = useTts.getState();
   // RAWY-231: "buffering" is an active-playback state (a transient synth wait) — arrows must still skip out
   // of it, so it joins playing/paused here (skip() itself already permits it; only "preparing" blocks).
-  if (!st.active || (st.status !== "playing" && st.status !== "paused" && st.status !== "buffering")) return false;
+  // "chapter-end" joins them for the reason `resolveSkip` gives: while the offer is up the arrows still
+  // belong to read-aloud. Backward returns to the last sentence; forward has nowhere to go and is
+  // claimed anyway, so the reader stays on the page the final sentence is on instead of paging away
+  // from the state being offered.
+  if (!st.active || (st.status !== "playing" && st.status !== "paused" &&
+      st.status !== "buffering" && st.status !== "chapter-end")) return false;
   const isRight = key === "ArrowRight";
   const isLeft = key === "ArrowLeft";
   if (!isRight && !isLeft) return false;
@@ -1228,6 +1365,14 @@ function prefetchFrom(idx: number): void {
 async function playFrom(i: number, myGen: number, establishLead = false) {
   const set = useTts.setState;
   if (i >= sentences.length) {
+    // A FOOTNOTE THAT ENDS HAS ENDED, and nothing more. It is not a chapter, so it must not enter the
+    // state the player reads to offer the next one; it closes the way a finished aside should, through
+    // the same `stop()` every other ending uses. The reader's chapter, position and navigation state are
+    // untouched because nothing here ever described them.
+    if (useTts.getState().source === "note") {
+      useTts.getState().stop();
+      return;
+    }
     // RAWY-184 (Part B): reached the LAST sentence — STOP and enter the "chapter-end" state (the owner
     // chose a "next chapter" button over auto-advance). The pill then offers Next chapter (if one exists)
     // or a gentle end-of-book state; playing/paused-gated shortcuts (Space, arrows) no-op here.
@@ -1450,6 +1595,7 @@ export const useTts = create<TtsState>((set, get) => ({
   words: [],
   wordIndex: -1,
   chapterLabel: "",
+  source: "chapter",
   error: null,
   underruns: 0,
   abandoned: 0,
@@ -1473,7 +1619,13 @@ export const useTts = create<TtsState>((set, get) => ({
 
   start: async (opts) => {
     lastStart = opts;
-    const { sentences: sen, lang, startIndex = 0, chapterLabel, bookScript = null } = opts;
+    const { sentences: sen, lang, startIndex = 0, chapterLabel, bookScript = null, source = "chapter" } = opts;
+    // Fixed for the life of this queue, beside `sentences` and for the same reason. A caller that does
+    // not pass it means "say them", which is what every call meant before the setting existed.
+    speakSymbols = opts.speakSymbols ?? true;
+    // Recorded BEFORE anything can end: `playFrom` reads it to decide whether running out of sentences
+    // means "this chapter is finished" or "this footnote is finished", and those are different events.
+    set({ source });
     audioCtx(); // create within the user gesture so autoplay policy unlocks it
     const myGen = ++gen;
     stopSource();
@@ -1481,6 +1633,7 @@ export const useTts = create<TtsState>((set, get) => ({
     clearSkipSettle(); // RAWY-185: a fresh Listen cancels any pending rapid-skip landing synth
     skipLeadTarget = -1;
     skipLastTarget = -1;
+    skipLeadGen = -1;
     lastSkipAt = 0; // RAWY-186: the first skip of a new session must lead (not read as a continuation)
     scheduler.clearCache(); // RAWY-231: fresh chapter — drop cached audio (keeps the session's E counters)
     failStreak = 0; // RAWY-159: a fresh Listen starts the dead-end counter clean
@@ -1581,7 +1734,24 @@ export const useTts = create<TtsState>((set, get) => ({
     // the complete set of callers. This closes the hole at the STORE, where the invariant belongs, so a
     // future control cannot reopen it — it is not fixing a live symptom.
     if (!st.active || st.status === "preparing" || st.status === "error" || st.status === "edge-error") return;
-    const target = Math.max(0, Math.min(sentences.length - 1, st.index + delta));
+    // FORWARD FROM THE LAST SENTENCE IS THE END OF THE CHAPTER, not the last sentence again. The clamp
+    // that serves every other move resolved this one back onto the sentence already playing, so the
+    // press replayed it. Routed into the existing end-of-chapter path — the one reaching the end by
+    // listening has always used — so the pill and the kashida offer «الفصل التالي» exactly as they do
+    // then, and nothing here decides what an ending means.
+    const landing = resolveSkip(st.index, delta, sentences.length, st.status === "chapter-end");
+    // Claimed, and deliberately nothing: the chapter is over and the offer is already on screen. The
+    // press must not fall through to a page turn, and it must not disturb the state being offered.
+    if (landing.kind === "stay") return;
+    if (landing.kind === "chapter-end") {
+      const endGen = ++gen;
+      stopSource();
+      stopKaraoke();
+      clearSkipSettle(); // nothing may play after this press
+      void playFrom(sentences.length, endGen, false);
+      return;
+    }
+    const target = landing.index;
     const myGen = ++gen;
     stopSource();
     stopKaraoke(); // RAWY-127: drop the old sentence's pill; playFrom restarts karaoke for the new one
@@ -1605,6 +1775,7 @@ export const useTts = create<TtsState>((set, get) => ({
     lastSkipAt = now;
     if (!continuing) {
       skipLeadTarget = target;
+      skipLeadGen = myGen; // so the settle can tell whether this play is still the live one
       void playFrom(target, myGen, false); // leading: play it now (responsive); scheduler prioritizes it
     }
     // (Re)arm the settle. If skipping moved past the leading play, play the LANDING with its lead
@@ -1613,8 +1784,9 @@ export const useTts = create<TtsState>((set, get) => ({
     skipSettleTimer = setTimeout(() => {
       skipSettleTimer = null;
       if (!get().active) return; // stopped during the window (stop() also clears this timer)
-      if (skipLastTarget !== skipLeadTarget) void playFrom(skipLastTarget, ++gen, true); // establishLead
-      else prefetchFrom(skipLeadTarget);
+      if (settleNeedsReplay(skipLastTarget, skipLeadTarget, skipLeadGen, gen)) {
+        void playFrom(skipLastTarget, ++gen, true); // establishLead
+      } else prefetchFrom(skipLeadTarget);
     }, SKIP_SETTLE_MS);
   },
 
@@ -1694,6 +1866,7 @@ export const useTts = create<TtsState>((set, get) => ({
     clearSkipSettle(); // RAWY-185: cancel any deferred rapid-skip landing synth
     skipLeadTarget = -1;
     skipLastTarget = -1;
+    skipLeadGen = -1;
     lastSkipAt = 0; // RAWY-186
     scheduler.reset(); // RAWY-231: session over — drop the cache AND zero the recurrence counters (E)
     resetSeries(awaitLatency); // RAWY-257: the latency series are per-SESSION, like the counters beside them

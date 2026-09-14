@@ -21,16 +21,21 @@
 //   • Cross-book data is fetched LAZILY (first time the source menu opens), so the default path costs
 //     nothing extra.
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { useI18n } from "../../i18n";
-import { THEMES, useTheme } from "../../theme";
+// Choosing several rows at once, said once for every list in Sard — see `listSelection`.
+import { SelectionBar, SelectionBox, rowSelectProps, useListSelection } from "../../components/listSelection";
+import type { TKey } from "../../i18n/locales/en";
+import { resolveTheme, useTheme } from "../../theme";
 import { useReader } from "../../reader-engine/store";
+import { filterByTag, tagFilterStillValid } from "./noteTags";
 import { useAnnotations } from "./annotationsStore";
 import { useBookmarks } from "./bookmarksStore";
 import { BookmarkShape } from "./BookmarkShape";
 import { useBookmarkStyle } from "../../lib/bookmarkStyle";
 import { ColorRow } from "./AnnotationLayer";
+import { TagPicker } from "./TagPicker";
 import { colorValue } from "./highlightColors";
 import { localeNum } from "../../lib/format";
 import {
@@ -38,6 +43,9 @@ import {
   annoIsNote,
   annotationsAll,
   bookmarksAll,
+  noteTagsFor,
+  noteTagsSet,
+  tagsList,
   type AnnoItem,
   type BookmarkItem,
   type BookmarkRow,
@@ -47,20 +55,47 @@ import {
 } from "../../lib/ipc";
 import type { OpenTarget } from "./Reader"; // type-only: erased, so no runtime import cycle
 
-export type AnnoTab = "notes" | "highlights" | "bookmarks";
+/**
+ * THE FIVE THINGS A READER LEAVES IN A BOOK.
+ *
+ * The order is not new: `dep.layer.mine.*` already fixes it for the four a reading copy carries —
+ * highlights, notes, references, replacements — running from the plainest mark on the text to the
+ * one that changes what the text says. Bookmarks come last because they are the odd one out: they
+ * keep a PLACE rather than mark a passage, which is also why a deposit does not carry them.
+ */
+export type AnnoTab = "highlights" | "notes" | "references" | "replacements" | "bookmarks";
+import { isArabicText } from "../../lib/typography";
+// The two newest kinds of mark, from the SAME stores the reader writes them with — no second copy of
+// the data and, for a replacement's on/off, no second copy of the truth. See `ReplacementsTab`.
+import { useReferences } from "./referencesStore";
+import { useReplacements } from "./replacementsStore";
+// The dock side is DECLARED, not spelled here: `panelSides.ts` is the one place that says which
+// physical edge this panel uses, and the toolbar groups its control from the same entry (RAWY-32).
+import { panelDockClass } from "./panelSides";
+
+/**
+ * The categories, in the order `AnnoTab` explains — the single place the tab track is written from.
+ * A new kind of mark is one entry here and one arm in the body below, never a fourth copy of a button.
+ */
+const CATEGORIES: { key: AnnoTab; label: TKey }[] = [
+  { key: "highlights", label: "panel.highlights" },
+  { key: "notes", label: "panel.notes" },
+  { key: "references", label: "panel.references" },
+  { key: "replacements", label: "panel.replacements" },
+  { key: "bookmarks", label: "panel.bookmarks" },
+];
 
 /** RAWY-282: a hard cap on the note title, enforced at the INPUT rather than by trimming on save, so a
  *  reader never types text that is silently discarded. It is a heading, not a second body — the body is
  *  the place for length — and it also bounds the widest single word the card has to wrap. */
 const NOTE_TITLE_MAX = 120;
 
-const ARABIC = /[؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
 // "current" | "all" | a book id
 type Source = string;
 
 function useHl() {
   const id = useTheme((s) => s.themeId);
-  return THEMES[id].colors.highlight;
+  return resolveTheme(id).colors.highlight;
 }
 
 interface Props {
@@ -108,7 +143,40 @@ export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, initialTab
 
   // RAWY-206: source filter. Resets to "current" every time the panel opens (no persistence).
   const [source, setSource] = useState<Source>("current");
-  const [srcMenu, setSrcMenu] = useState(false);
+  // ONE ACTIVE MENU, not one boolean per control.
+  //
+  // Two independent booleans let both dropdowns be open at once, and they overlapped — each was
+  // `position: absolute` under its own control with no knowledge of the other. Mutual exclusion by
+  // COORDINATION (each open handler closing the other) would work until a third control arrived and
+  // someone forgot; a single value cannot represent two open menus at all, so the bug is unavailable
+  // by construction rather than merely fixed.
+  const [menu, setMenu] = useState<"src" | "tag" | null>(null);
+  const srcMenu = menu === "src";
+  const tagMenu = menu === "tag";
+  const setSrcMenu = (on: boolean) => setMenu(on ? "src" : null);
+  const setTagMenu = (on: boolean) => setMenu(on ? "tag" : null);
+  // DISMISSAL. `.lib-clickaway` — the Inbox's device — cannot be used here: it is `position: fixed`
+  // and this panel is `transform`ed, which makes the panel its containing block, so the overlay could
+  // never cover the window. The reader's own TTS speed popover has the same problem and solves it the
+  // same way: document-level listeners in the CAPTURE phase, registered ONLY while a menu is open, so
+  // no control underneath can swallow the event first and nothing is listening the rest of the time.
+  const filterRowRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const onDown = (e: PointerEvent) => {
+      if (!filterRowRef.current?.contains(e.target as Node)) setMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      // Consume it: with a menu open, Escape belongs to the menu, not to whatever would close the panel.
+      if (e.key === "Escape") { e.stopPropagation(); setMenu(null); }
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [menu]);
   const [xItems, setXItems] = useState<AnnoItem[] | null>(null);
   const [xBms, setXBms] = useState<BookmarkItem[] | null>(null);
   useEffect(() => {
@@ -149,9 +217,73 @@ export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, initialTab
   const xHls = useMemo(() => xAll.filter(annoIsHighlight), [xAll]);
   const xMarks = useMemo(() => inSrc(xBms ?? []), [xBms, source]);
 
-  const nNotes = cross ? xNotes.length : notes.length;
-  const nHls = cross ? xHls.length : standaloneHighlights.length;
+  // ── THE TAG FILTER — a second GLOBAL filter, beside the book scope ─────────────────────────────
+  //
+  // It belongs to the annotations view as a whole, not to one tab, so it lives here and is applied to
+  // every list before the tabs ever see them. Notes and highlights BOTH carry tags — a highlight's are
+  // the tags on the note attached to it (RAWY-205's empty-body anchor note exists for exactly that) —
+  // so one filter is honest for both. References, replacements and bookmarks have no tag relationship
+  // at all, and the control is simply not offered on their tabs.
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  useEffect(() => { if (!open) setTagFilter(null); }, [open]);
+
+  // OPTIONS ARE THE LIBRARY'S TAGS, NOT THE SCOPE'S.
+  //
+  // These were derived from the annotations currently in view, on the reasoning that a menu should
+  // never offer a choice that yields nothing. That was wrong, and it made the control lie: a reader
+  // with tags on other books saw a short list and no way to reach the rest. The two ideas are
+  // separate and must not be conflated —
+  //
+  //     TAG OPTIONS   = every tag that exists (the `tags` table)
+  //     FILTER RESULT = annotations IN SCOPE carrying the chosen one
+  //
+  // — and an empty result is a legitimate answer, not a state to be prevented. `tagsList` is the same
+  // command the library Inbox and the TagPicker already read, so there is one source of tags.
+  const [allTags, setAllTags] = useState<string[]>([]);
+  const loadTags = () => { tagsList().then((ts) => setAllTags(ts.map((x) => x.name))).catch(console.error); };
+  // On open, and again whenever the annotations change — a tag can be created inline while writing a
+  // note, and it must appear here without reopening the panel.
+  useEffect(() => { if (open) loadTags(); }, [open, notes, highlights]);
+  const tagNames = allTags;
+
+  // The filter only goes stale if the TAG ITSELF is gone (deleted globally). It deliberately survives
+  // a change of book or scope: choosing a tag, then switching to the book that has it, is exactly how
+  // a reader finds their tagged passages, and clearing it there would defeat the control.
+  useEffect(() => {
+    if (allTags.length > 0 && !tagFilterStillValid(tagFilter, allTags)) setTagFilter(null);
+  }, [allTags, tagFilter]);
+
+  // A tag ENTITY changed under us. Tag names are never stored on an annotation — they are resolved
+  // through the join — so the ROWS have to be re-read for a rename to show on their cards. And if the
+  // renamed tag is the one currently filtering, the filter follows it: the reader chose that tag, and
+  // renaming it is not a reason to silently drop their choice.
+  const reloadAnnotations = useAnnotations((s2) => s2.load);
+  const onTagsChanged = (change?: { from: string; to: string }) => {
+    loadTags();
+    void reloadAnnotations();
+    if (change && tagFilter === change.from) setTagFilter(change.to);
+  };
+
+  const fNotes = useMemo(() => filterByTag(notes, tagFilter), [notes, tagFilter]);
+  const fHls = useMemo(() => filterByTag(standaloneHighlights, tagFilter), [standaloneHighlights, tagFilter]);
+  const fxNotes = useMemo(() => filterByTag(xNotes, tagFilter), [xNotes, tagFilter]);
+  const fxHls = useMemo(() => filterByTag(xHls, tagFilter), [xHls, tagFilter]);
+
+  const nNotes = cross ? fxNotes.length : fNotes.length;
+  const nHls = cross ? fxHls.length : fHls.length;
   const nBms = cross ? xMarks.length : bookmarks.length;
+  // REFERENCES AND REPLACEMENTS BELONG TO THE OPEN BOOK, always. Their stores are bound to it (see
+  // `bind`), and a rule that rewrites this book's words has no meaning in another — so unlike the
+  // three above they do not follow the cross-book source filter, and their numerals are the book's.
+  const refs = useReferences((s2) => s2.refs);
+  const reps = useReplacements((s2) => s2.reps);
+  const counts: Record<AnnoTab, number> = {
+    highlights: nHls,
+    notes: nNotes,
+    references: refs.length,
+    replacements: reps.length,
+    bookmarks: nBms,
+  };
 
   const srcLabel =
     source === "current" ? t("panel.src.current")
@@ -168,14 +300,10 @@ export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, initialTab
 
   return (
     <aside
-      className={`reader-panel rp-trail${open ? " show" : ""}`}
+      className={`reader-panel ${panelDockClass("notes")}${open ? " show" : ""}`}
       dir={dir}
       aria-hidden={!open}
       inert={!open} // RAWY-288: see ChaptersPanel — keeps the closed panel out of the tab order
-      // The source menu closes on select or on any other click INSIDE the panel: `.lib-clickaway` is
-      // position:fixed, and this panel is `transform`ed — which makes it the containing block — so a
-      // fixed overlay could never cover the window here.
-      onClick={(e) => { if (srcMenu && !(e.target as HTMLElement).closest(".rp-src-wrap")) setSrcMenu(false); }}
     >
       {/* RAWY-121 (design 2a "Segmented — quiet numerals, warm active wash"): a TWO-ROW header — a quiet
           eyebrow label + a round close ✕ on its own row, then a full-width segmented tab track — so the
@@ -184,33 +312,44 @@ export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, initialTab
       <div className="rp-head rp-head-anno">
         <div className="rp-eyebrow">
           <span className="rp-eyebrow-label">{t("panel.annoEyebrow")}</span>
-          <button className="rp-x rp-x-round" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>
+          <button className="rp-x rp-x-round ui-close" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden>
               <path d="M18 6 6 18M6 6l12 12" />
             </svg>
           </button>
         </div>
-        <div className="rp-tabs">
-          <button className={`rp-tab${tab === "notes" ? " on" : ""}`} onClick={() => setTab("notes")}>
-            <span className="rp-tab-label">{t("panel.notes")}</span>
-            <span className="rp-count">{localeNum(nNotes, lang)}</span>
-          </button>
-          <button className={`rp-tab${tab === "highlights" ? " on" : ""}`} onClick={() => setTab("highlights")}>
-            <span className="rp-tab-label">{t("panel.highlights")}</span>
-            <span className="rp-count">{localeNum(nHls, lang)}</span>
-          </button>
-          <button className={`rp-tab${tab === "bookmarks" ? " on" : ""}`} onClick={() => setTab("bookmarks")}>
-            <span className="rp-tab-label">{t("panel.bookmarks")}</span>
-            <span className="rp-count">{localeNum(nBms, lang)}</span>
-          </button>
+        {/* ONE TRACK, FIVE SEGMENTS, WRITTEN ONCE. Three hand-written buttons could be read at a
+            glance; five could not, and a sixth kind of mark would have meant a fourth copy of the
+            same markup. The list is the order — see `AnnoTab`. The track wraps rather than squeezing,
+            which is how the settings drawer already carries its own five (`.sp-tabs`): three then
+            two, each segment still wide enough for «الاستبدالات» and its numeral. */}
+        <div className="rp-tabs" role="tablist">
+          {CATEGORIES.map((c) => (
+            <button
+              key={c.key}
+              role="tab"
+              aria-selected={tab === c.key}
+              className={`rp-tab${tab === c.key ? " on" : ""}`}
+              onClick={() => setTab(c.key)}
+            >
+              <span className="rp-tab-label">{t(c.label)}</span>
+              <span className="rp-count">{localeNum(counts[c.key], lang)}</span>
+            </button>
+          ))}
         </div>
       </div>
 
+      {/* THE SOURCE FILTER BELONGS TO THE THREE KINDS THAT HAVE A CROSS-BOOK FORM. References and
+          replacements are the open book's own, so showing a book chooser above them would offer a
+          scope they cannot honour — it read as "this book" over a list that could never be anything
+          else. Hidden there rather than disabled, because there is no choice to grey out. */}
+      {tab !== "references" && tab !== "replacements" && (
+      <>
       {/* RAWY-206: the source filter — the Inbox's own control (`.inbox-ctl` + `.lib-menu`), no new
           design language. It sits OUTSIDE `.rp-scroll` so it stays put while the list scrolls. */}
-      <div className="rp-src">
+      <div className="rp-src" ref={filterRowRef}>
         <div className="inbox-ctl-wrap rp-src-wrap">
-          <button className="inbox-ctl rp-src-ctl" onClick={() => { loadCross(); setSrcMenu((o) => !o); }}>
+          <button className="inbox-ctl rp-src-ctl" onClick={() => { loadCross(); setMenu(srcMenu ? null : "src"); }}>
             {srcLabel} ▾
           </button>
           {srcMenu && (
@@ -225,7 +364,7 @@ export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, initialTab
                 <button
                   key={b.id}
                   className={source === b.id ? "active" : ""}
-                  dir={ARABIC.test(b.title) ? "rtl" : "ltr"}
+                  dir={isArabicText(b.title) ? "rtl" : "ltr"}
                   onClick={() => { setSource(b.id); setSrcMenu(false); }}
                 >
                   {b.title}
@@ -234,23 +373,195 @@ export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, initialTab
             </div>
           )}
         </div>
+
+        {/* THE SECOND FILTER. Same control, same menu, same row — it reads as a pair with the book
+            scope because it is one: «كل الكتب» × «كل الوسوم». Offered only on the two tabs whose rows
+            can carry a tag; bookmarks share this row but have no tag relationship, so showing it there
+            would promise a filter that could never do anything. */}
+        {(tab === "notes" || tab === "highlights") && (
+          <div className="inbox-ctl-wrap rp-src-wrap">
+            <button
+              className={`inbox-ctl rp-src-ctl${tagFilter ? " on" : ""}`}
+              onClick={() => setMenu(tagMenu ? null : "tag")}
+              dir={tagFilter && isArabicText(tagFilter) ? "rtl" : undefined}
+              title={tagFilter ?? t("panel.tag.all")}
+            >
+              {tagFilter ?? t("panel.tag.all")} ▾
+            </button>
+            {tagMenu && (
+              <div className="lib-menu inbox-menu rp-src-menu">
+                <button className={tagFilter === null ? "active" : ""} onClick={() => { setTagFilter(null); setTagMenu(false); }}>
+                  {t("panel.tag.all")}
+                </button>
+                {tagNames.length === 0 && <button disabled>{t("panel.tag.none")}</button>}
+                {tagNames.map((tg) => (
+                  <button
+                    key={tg}
+                    className={tagFilter === tg ? "active" : ""}
+                    dir={isArabicText(tg) ? "rtl" : "ltr"}
+                    onClick={() => { setTagFilter(tg); setTagMenu(false); }}
+                  >
+                    {tg}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
+      </>
+      )}
 
       <div className="rp-scroll">
-        {!cross ? (
+        {/* REFERENCES AND REPLACEMENTS ANSWER FIRST, whichever source is chosen. They are the open
+            book's own and have no cross-book form, so letting the filter fall through to `CrossTab`
+            would have shown an empty list for a book that has plenty. */}
+        {tab === "references" ? (
+          <ReferencesTab onJump={onJump} />
+        ) : tab === "replacements" ? (
+          <ReplacementsTab />
+        ) : !cross ? (
           // The DEFAULT: unchanged from before RAWY-206 — live store data, fully editable.
           tab === "notes" ? (
-            <NotesTab highlights={highlights} notes={notes} onJump={onJump} />
+            <NotesTab highlights={highlights} notes={fNotes} onJump={onJump} tagActive={tagFilter} onTagsChanged={onTagsChanged} />
           ) : tab === "highlights" ? (
-            <HighlightsTab highlights={standaloneHighlights} onJump={onJump} />
+            <HighlightsTab highlights={fHls} onJump={onJump} tagActive={tagFilter} />
           ) : (
             <BookmarksTab bookmarks={bookmarks} onJump={onJump} />
           )
         ) : (
-          <CrossTab tab={tab} notes={xNotes} highlights={xHls} marks={xMarks} loaded={!!xItems} onOpen={openRow} />
+          <CrossTab tab={tab} notes={fxNotes} highlights={fxHls} marks={xMarks} loaded={!!xItems} onOpen={openRow} tagActive={tagFilter} />
         )}
       </div>
     </aside>
+  );
+}
+
+/**
+ * THE REFERENCES THIS BOOK CARRIES.
+ *
+ * Built from `.rp-item` exactly as Notes and Highlights are — the phrase reads as the passage, the
+ * note beneath it as the writing, and one quiet destructive control sits in the head row. Nothing new
+ * was drawn for it, which is why it does not look like an addition.
+ */
+function ReferencesTab({ onJump }: { onJump: (cfi: string) => void }) {
+  const { t } = useI18n();
+  const refs = useReferences((s) => s.refs);
+  const remove = useReferences((s) => s.remove);
+  const sel = useListSelection(refs.map((r) => r.id));
+  void onJump; // a reference marks words, not a locator — there is nothing to jump to yet
+
+  if (refs.length === 0) return <div className="rp-empty">{t("panel.noReferences")}</div>;
+  return (
+    <>
+      <SelectionBar
+        sel={sel}
+        total={refs.length}
+        actions={[{
+          key: "delete",
+          icon: "trash" as const,
+          label: t("select.delete"),
+          danger: true,
+          // The SAME removal one row uses, run over the chosen ones — there is no second delete path
+          // that could behave differently from the one a reader already trusts.
+          run: () => { for (const id of sel.selected) void remove(id); sel.exit(); },
+        }]}
+      />
+      {refs.map((r) => (
+        <div
+          key={r.id}
+          className={`rp-item plain${sel.has(r.id) ? " sel-on" : ""}`}
+          {...rowSelectProps(sel, r.id)}
+        >
+          <div className="rp-item-head">
+            {sel.on && <SelectionBox on={sel.has(r.id)} onToggle={() => sel.toggle(r.id)} label={r.phrase} />}
+            <span className="rp-chapter" dir="auto">{r.phrase}</span>
+            {!sel.on && (
+              <button className="rp-mini danger" onClick={() => void remove(r.id)}>{t("ref.delete")}</button>
+            )}
+          </div>
+          <div className={`rp-excerpt${isArabicText(r.note) ? " ar" : ""}`} dir="auto">{r.note}</div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+/**
+ * THE REPLACEMENTS THIS BOOK CARRIES, each with the switch that is its whole point.
+ *
+ * The switch writes to `useReplacements().setEnabled`, which is the SAME state the rule was created
+ * with and the same one the library's own list uses: it persists through `rep_set_enabled` and then
+ * re-pushes the enabled set at the renderer, so the page changes because the rule left the set — not
+ * because a second flag somewhere said to ignore it. There is one truth about whether a replacement
+ * is on, and this control moves it.
+ *
+ * The switch itself is the reader's own `.rs-switch`/`.rs-knob`, the part every reading setting uses,
+ * which also means its knob travels the correct way in Arabic without this file knowing the direction.
+ */
+function ReplacementsTab() {
+  const { t } = useI18n();
+  const reps = useReplacements((s) => s.reps);
+  const setEnabled = useReplacements((s) => s.setEnabled);
+  const remove = useReplacements((s) => s.remove);
+  const sel = useListSelection(reps.map((r) => r.id));
+
+  if (reps.length === 0) return <div className="rp-empty">{t("panel.noReplacements")}</div>;
+  return (
+    <>
+      <SelectionBar
+        sel={sel}
+        total={reps.length}
+        actions={[{
+          key: "delete",
+          icon: "trash" as const,
+          label: t("select.delete"),
+          danger: true,
+          run: () => { for (const id of sel.selected) void remove(id); sel.exit(); },
+        }]}
+      />
+      {reps.map((r) => (
+        <div
+          key={r.id}
+          className={`rp-item plain rep-item${r.enabled ? "" : " off"}${sel.has(r.id) ? " sel-on" : ""}`}
+          {...rowSelectProps(sel, r.id)}
+        >
+          <div className="rp-item-head">
+            {sel.on && <SelectionBox on={sel.has(r.id)} onToggle={() => sel.toggle(r.id)} label={r.phrase} />}
+            {/* The state is announced only when it is OFF. A row that is doing its job needs no
+                badge; a row that is switched off is the one a reader has to be told about, which is
+                the same rule the library's list follows. */}
+            <span className="rp-chapter">{r.enabled ? "" : t("rep.off")}</span>
+            {!sel.on && (
+              <button className="rp-mini danger" onClick={() => void remove(r.id)}>{t("rep.delete")}</button>
+            )}
+          </div>
+          {/* THE RULE, NAMED RATHER THAN ARROWED. An arrow has to point somewhere, and this row can
+              hold Arabic on one side and Latin on the other, so no single direction is right for it —
+              the first attempt drew a glyph keyed to the PANEL's direction and pointed the wrong way
+              the moment a row read the other way. The two sides are labelled instead, with the words
+              the editor already uses, and a label cannot point wrongly. */}
+          <div className="rep-rule">
+            <span className="rep-key">{t("rep.fromLabel")}</span>
+            <span className={`rep-was${isArabicText(r.phrase) ? " ar" : ""}`} dir="auto">{r.phrase}</span>
+            <span className="rep-key">{t("rep.toLabel")}</span>
+            <span className={`rep-now${isArabicText(r.replacement) ? " ar" : ""}`} dir="auto">{r.replacement}</span>
+          </div>
+          {!sel.on && (
+          <button
+            className="rs-toggle-row rep-switch-row"
+            role="switch"
+            aria-checked={r.enabled}
+            aria-label={t("rep.toggle")}
+            onClick={() => void setEnabled(r.id, !r.enabled)}
+          >
+            <span className="rs-toggle-text"><span className="rs-toggle-label">{t("rep.toggle")}</span></span>
+            <span className={`rs-switch${r.enabled ? " on" : ""}`} aria-hidden><span className="rs-knob" /></span>
+          </button>
+          )}
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -264,6 +575,7 @@ function CrossTab({
   marks,
   loaded,
   onOpen,
+  tagActive,
 }: {
   tab: AnnoTab;
   notes: AnnoItem[];
@@ -271,6 +583,8 @@ function CrossTab({
   marks: BookmarkItem[];
   loaded: boolean;
   onOpen: (bookId: string, filePath: string, bookDir: string | null, cfi: string | null) => void;
+  /** The tag the sidebar is filtering by, so an empty list can say WHY it is empty. */
+  tagActive: string | null;
 }) {
   const { t, lang } = useI18n();
   const hl = useHl();
@@ -279,8 +593,13 @@ function CrossTab({
 
   const rows =
     tab === "notes" ? notes : tab === "highlights" ? highlights : [];
+  // A tag that matches nothing IN THIS SCOPE is a real answer, not an error — say that, rather than
+  // «no notes yet», which would tell the reader to write one they may already have in another book.
+  // Bookmarks carry no tags, so their message never changes.
   const empty =
-    tab === "notes" ? t("panel.noNotes") : tab === "highlights" ? t("panel.noHighlights") : t("panel.noBookmarks");
+    tab === "bookmarks" ? t("panel.noBookmarks")
+    : tagActive ? t("panel.tag.empty")
+    : tab === "notes" ? t("panel.noNotes") : t("panel.noHighlights");
 
   return (
     <>
@@ -307,7 +626,7 @@ function CrossTab({
             {/* `text` is the note BODY for a margin note, and the excerpt for a highlight. */}
             <div className="rp-x-text" dir="auto">{it.text}</div>
             {it.kind === "highlight" && (it.note ?? "").trim() !== "" && (
-              <div className="rp-note-body" dir="auto">{it.note}</div>
+              <div className={`rp-note-body${isArabicText(it.note) ? " ar" : ""}`} dir="auto">{it.note}</div>
             )}
             {it.tags.length > 0 && (
               <div className="rp-x-tags">
@@ -347,11 +666,34 @@ function BookmarksTab({ bookmarks, onJump }: { bookmarks: BookmarkRow[]; onJump:
   const { t, lang } = useI18n();
   const { shape, color } = useBookmarkStyle();
   const remove = useBookmarks((s) => s.remove);
+  const sel = useListSelection(bookmarks.map((b) => b.id));
   return (
     <>
+      <SelectionBar
+        sel={sel}
+        total={bookmarks.length}
+        actions={[{
+          key: "delete",
+          icon: "trash" as const,
+          label: t("select.delete"),
+          danger: true,
+          run: () => { for (const id of sel.selected) remove(id); sel.exit(); },
+        }]}
+      />
       {bookmarks.length === 0 && <div className="rp-empty">{t("panel.noBookmarks")}</div>}
       {bookmarks.map((b) => (
-        <div key={b.id} className="rp-item bm-item">
+        <div
+          key={b.id}
+          className={`rp-item bm-item${sel.has(b.id) ? " sel-on" : ""}`}
+          {...rowSelectProps(sel, b.id)}
+        >
+          {sel.on && (
+            <SelectionBox
+              on={sel.has(b.id)}
+              onToggle={() => sel.toggle(b.id)}
+              label={b.chapter_label || t("reader.chapterFallback")}
+            />
+          )}
           <span className="bm-item-mark" aria-hidden>
             <BookmarkShape shape={shape} color={color} h={30} />
           </span>
@@ -359,20 +701,30 @@ function BookmarksTab({ bookmarks, onJump }: { bookmarks: BookmarkRow[]; onJump:
             {b.chapter_label || t("reader.chapterFallback")}
             <span className="bm-item-pct">{localeNum(Math.round((b.fraction ?? 0) * 100), lang)}%</span>
           </span>
-          <button className="rp-mini danger" onClick={() => remove(b.id)}>{t("note.delete")}</button>
+          {!sel.on && (
+            <button className="rp-mini danger" onClick={() => remove(b.id)}>{t("note.delete")}</button>
+          )}
         </div>
       ))}
     </>
   );
 }
 
-function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; notes: NoteRow[]; onJump: (cfi: string) => void }) {
+function NotesTab({ highlights, notes, onJump, tagActive, onTagsChanged }: { highlights: HighlightRow[]; notes: NoteRow[]; onJump: (cfi: string) => void; tagActive: string | null; onTagsChanged: (change?: { from: string; to: string }) => void }) {
   const { t } = useI18n();
   const hl = useHl();
   const updateNote = useAnnotations((s) => s.updateNote);
   const deleteNote = useAnnotations((s) => s.deleteNote);
+
+  // The tag filter is the PANEL's, not this tab's — `notes` arrives already filtered by it, so this
+  // list renders whatever it is handed and has no filtering opinion of its own.
+  const sel = useListSelection(notes.map((n) => n.id));
   const addMarginNote = useAnnotations((s) => s.addMarginNote);
   const [editId, setEditId] = useState<string | null>(null);
+  // The tag ids of the note being edited. Ids, not names, because that is what `TagPicker` selects and
+  // what `noteTagsSet` writes; the card shows names because that is what a reader reads.
+  const [editTagIds, setEditTagIds] = useState<string[]>([]);
+  const reloadNotes = useAnnotations((s) => s.load);
   const [draft, setDraft] = useState("");
   const [draftTitle, setDraftTitle] = useState(""); // RAWY-282
   const [composing, setComposing] = useState(false);
@@ -416,7 +768,7 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
               maxLength={NOTE_TITLE_MAX}
             />
             <textarea
-              className="rp-textarea"
+              className={`rp-textarea${isArabicText(marginDraft) ? " ar" : ""}`}
               autoFocus
               value={marginDraft}
               onChange={(e) => setMarginDraft(e.target.value)}
@@ -435,21 +787,62 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
         )}
       </div>
 
-      {notes.length === 0 && <div className="rp-empty">{t("panel.noNotes")}</div>}
+      {/* THE TAG FILTER USED TO BE A CHIP ROW HERE. It moved to the panel header, beside the book
+          scope, once it became a filter for the annotations view as a whole rather than for this one
+          list — two controls doing the same job in one panel is worse than either alone. The tags
+          themselves still show on each card below, where they identify the note rather than filter it. */}
+
+      <SelectionBar
+        sel={sel}
+        total={notes.length}
+        actions={[{
+          key: "delete",
+          icon: "trash" as const,
+          label: t("select.delete"),
+          danger: true,
+          run: () => { for (const id of sel.selected) deleteNote(id); sel.exit(); },
+        }]}
+      />
+
+      {notes.length === 0 && <div className="rp-empty">{tagActive ? t("panel.tag.empty") : t("panel.noNotes")}</div>}
 
       {notes.map((n) => {
         const target = locate(n);
         const editing = editId === n.id;
         return (
-          <div key={n.id} className="rp-item note-item" style={{ "--swatch": colorValue(n.color, hl) } as CSSProperties}>
+          <div
+            key={n.id}
+            className={`rp-item note-item${sel.has(n.id) ? " sel-on" : ""}`}
+            style={{ "--swatch": colorValue(n.color, hl) } as CSSProperties}
+            {...rowSelectProps(sel, n.id)}
+          >
             <div className="rp-item-head">
+              {sel.on && (
+                <SelectionBox
+                  on={sel.has(n.id)}
+                  onToggle={() => sel.toggle(n.id)}
+                  label={n.title || n.chapter_label || t("panel.marginNote")}
+                />
+              )}
               <span className="rp-chapter" dir="auto" onClick={() => target && onJump(target)} role="button" tabIndex={0}>
                 {n.chapter_label || (n.highlight_id ? "" : t("panel.marginNote"))}
               </span>
+              {!sel.on && (
               <div className="rp-item-actions">
-                <button className="rp-mini" onClick={() => { setEditId(n.id); setDraft(n.body ?? ""); setDraftTitle(n.title ?? ""); }}>{t("note.edit")}</button>
+                <button
+                  className="rp-mini"
+                  onClick={() => {
+                    setEditId(n.id);
+                    setDraft(n.body ?? "");
+                    setDraftTitle(n.title ?? "");
+                    // The row carries tag NAMES; the picker needs ids, so read them for this one note.
+                    setEditTagIds([]);
+                    noteTagsFor(n.id).then((ts) => setEditTagIds(ts.map((x) => x.id))).catch(console.error);
+                  }}
+                >{t("note.edit")}</button>
                 <button className="rp-mini danger" onClick={() => deleteNote(n.id)}>{t("note.delete")}</button>
               </div>
+              )}
             </div>
             {editing ? (
               <div className="rp-compose">
@@ -462,10 +855,26 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
                   dir="auto"
                   maxLength={NOTE_TITLE_MAX}
                 />
-                <textarea className="rp-textarea" autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} dir="auto" rows={3} />
+                <textarea className={`rp-textarea${isArabicText(draft) ? " ar" : ""}`} autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} dir="auto" rows={3} />
+                {/* The SAME picker the note popover uses, so assigning and removing a tag is one
+                    gesture and one component wherever a note is written. Without it a note could be
+                    tagged only at the moment it was created. */}
+                <div className="nec-tags">
+                  <TagPicker selected={editTagIds} onChange={setEditTagIds} onTagsChanged={onTagsChanged} />
+                </div>
                 <div className="rp-compose-foot">
                   <button className="rp-mini" onClick={() => setEditId(null)}>{t("note.cancel")}</button>
-                  <button className="rp-mini primary" onClick={async () => { await updateNote(n.id, draft, n.color, draftTitle); setEditId(null); }}>{t("hl.save")}</button>
+                  <button
+                    className="rp-mini primary"
+                    onClick={async () => {
+                      await updateNote(n.id, draft, n.color, draftTitle);
+                      await noteTagsSet(n.id, editTagIds);
+                      // `updateNote` refreshed the row BEFORE the links were written, so re-read the
+                      // book's notes: without this the card and the filter would both show the old tags.
+                      await reloadNotes();
+                      setEditId(null);
+                    }}
+                  >{t("hl.save")}</button>
                 </div>
               </div>
             ) : (
@@ -476,7 +885,15 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
                   <div className="rp-note-title" dir="auto">{n.title}</div>
                 )}
                 {(n.body ?? "").trim() !== "" && (
-                  <div className="rp-note-body" dir="auto">{n.body}</div>
+                  <div className={`rp-note-body${isArabicText(n.body) ? " ar" : ""}`} dir="auto">{n.body}</div>
+                )}
+                {/* The note's own tags, in the same chip the cross-book list has always used, so one
+                    note looks the same wherever it is read. INDICATORS, not controls: filtering is the
+                    header's single job, and a second way to set the same state would be one too many. */}
+                {n.tags.length > 0 && (
+                  <div className="rp-note-tags">
+                    {n.tags.map((tg) => <span key={tg} className="inbox-tag" dir="auto">{tg}</span>)}
+                  </div>
                 )}
               </div>
             )}
@@ -487,23 +904,59 @@ function NotesTab({ highlights, notes, onJump }: { highlights: HighlightRow[]; n
   );
 }
 
-function HighlightsTab({ highlights, onJump }: { highlights: HighlightRow[]; onJump: (cfi: string) => void }) {
+function HighlightsTab({ highlights, onJump, tagActive }: { highlights: HighlightRow[]; onJump: (cfi: string) => void; tagActive: string | null }) {
   const { t } = useI18n();
   const hl = useHl();
   const setColor = useAnnotations((s) => s.setColor);
   const removeHighlight = useAnnotations((s) => s.removeHighlight);
+  const sel = useListSelection(highlights.map((h) => h.id));
 
   return (
     <>
-      {highlights.length === 0 && <div className="rp-empty">{t("panel.noHighlights")}</div>}
+      <SelectionBar
+        sel={sel}
+        total={highlights.length}
+        actions={[{
+          key: "delete",
+          icon: "trash" as const,
+          label: t("select.delete"),
+          danger: true,
+          run: () => { for (const id of sel.selected) removeHighlight(id); sel.exit(); },
+        }]}
+      />
+      {highlights.length === 0 && <div className="rp-empty">{tagActive ? t("panel.tag.empty") : t("panel.noHighlights")}</div>}
       {highlights.map((h) => (
-        <div key={h.id} className="rp-item hi-item" style={{ "--swatch": colorValue(h.color, hl) } as CSSProperties}>
+        <div
+          key={h.id}
+          className={`rp-item hi-item${sel.has(h.id) ? " sel-on" : ""}`}
+          style={{ "--swatch": colorValue(h.color, hl) } as CSSProperties}
+          {...rowSelectProps(sel, h.id)}
+        >
           <div className="rp-item-head">
+            {sel.on && (
+              <SelectionBox on={sel.has(h.id)} onToggle={() => sel.toggle(h.id)} label={h.text_excerpt ?? undefined} />
+            )}
             <span className="rp-chapter" dir="auto" onClick={() => onJump(h.cfi)} role="button" tabIndex={0}>{h.chapter_label}</span>
-            <button className="rp-mini danger" onClick={() => removeHighlight(h.id)}>{t("note.delete")}</button>
+            {!sel.on && (
+              <button className="rp-mini danger" onClick={() => removeHighlight(h.id)}>{t("note.delete")}</button>
+            )}
           </div>
-          <div className="rp-excerpt" dir="auto" onClick={() => onJump(h.cfi)}>{h.text_excerpt}</div>
-          <ColorRow active={h.color} onPick={(c) => setColor(h.id, c)} />
+          <div
+            className={`rp-excerpt${isArabicText(h.text_excerpt) ? " ar" : ""}`}
+            dir="auto"
+            onClick={() => onJump(h.cfi)}
+          >
+            {h.text_excerpt}
+          </div>
+          {/* A highlight's tags are the tags on the note attached to it (RAWY-205's anchor note exists
+              so a body-less highlight can still be tagged). Shown as INDICATORS, in the same chip a
+              note uses, so one tag looks the same wherever it appears. */}
+          {h.tags.length > 0 && (
+            <div className="rp-note-tags">
+              {h.tags.map((tg) => <span key={tg} className="inbox-tag" dir="auto">{tg}</span>)}
+            </div>
+          )}
+          {!sel.on && <ColorRow active={h.color} onPick={(c) => setColor(h.id, c)} />}
         </div>
       ))}
     </>

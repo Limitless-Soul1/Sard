@@ -47,14 +47,27 @@ export const BOOKMARK_COLORS: { key: string; name: string; hex: string }[] = [
   { key: "cream", name: "Cream", hex: "#E6D9BC" },
 ];
 
-const DEFAULT_SHAPE: BookmarkShapeKey = "ribbon";
-const DEFAULT_COLOR = "#9C5A3C"; // Terracotta
-const DEFAULT_POS = 0.84; // fraction along the top edge (0 = left, 1 = right), physical (fixed)
+export const BOOKMARK_DEFAULT_SHAPE: BookmarkShapeKey = "ribbon";
+const DEFAULT_SHAPE = BOOKMARK_DEFAULT_SHAPE;
+export const BOOKMARK_DEFAULT_COLOR = "#9C5A3C"; // Terracotta
+const DEFAULT_COLOR = BOOKMARK_DEFAULT_COLOR;
+export const BOOKMARK_DEFAULT_POS = 0.84;
+const DEFAULT_POS = BOOKMARK_DEFAULT_POS; // fraction along the top edge (0 = left, 1 = right), physical (fixed)
 // Marker HEIGHT in px (RAWY-48). The <BookmarkShape> scales entirely by this. User-sizable so the
 // on-page marker can be made bigger or smaller; the RAWY-42 non-occlusion offset still applies.
 export const BOOKMARK_SIZE_MIN = 40;
-export const BOOKMARK_SIZE_MAX = 120;
-const DEFAULT_SIZE = 68; // the RAWY-42 on-page height
+/**
+ * 200, raised from 120.
+ *
+ * VERIFIED THROUGH THE RENDERER, not just at the slider. `BookmarkShape` derives every dimension
+ * from `h` — the box, the strip, the notch — and `.page-bookmark` puts no size of its own on the
+ * element. Measured in the editor's preview before the change: 40 -> 27px, 80 -> 54px, 120 -> 81px,
+ * exactly linear, so nothing between the value and the pixels was capping it. The only two limits
+ * were this constant and the profile parser's clamp against it, and both move together.
+ */
+export const BOOKMARK_SIZE_MAX = 200;
+export const BOOKMARK_DEFAULT_SIZE = 68;
+const DEFAULT_SIZE = BOOKMARK_DEFAULT_SIZE; // the RAWY-42 on-page height
 
 const K_SHAPE = "bookmark_style";
 const K_COLOR = "bookmark_color";

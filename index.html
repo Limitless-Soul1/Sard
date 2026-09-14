@@ -4,6 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Sard</title>
+    <!-- PDF compatibility layer — IN THE HEAD, and before everything else, deliberately.
+         It supplies the built-ins pdf.js assumes on engines that lack them (see the file for the
+         traced call sites), and it must run before ANY application code: `canRender()` caches its
+         reading the first time it is asked, React asks during the first render, and a reading taken
+         before this file ran would describe the bare engine rather than what Sard can actually
+         render — refusing PDFs this build is able to open.
+         IT MUST STAY IN THE HEAD. Placed in the body it still preceded the bundle in the SOURCE, but
+         `vite build` lifts the application bundle into the head and leaves a body script behind it,
+         which inverted the order in the built product only. Measured in dist/index.html: bundle on
+         line 7, this on line 19. Module scripts execute in document order, so head-first is what
+         makes the guarantee survive the build.
+         Inert on a current engine — every install in it is feature-detected. -->
+    <script type="module" src="/foliate-js/sard-pdf-compat.mjs"></script>
   </head>
 
   <body>

@@ -7,20 +7,28 @@
 // with the design's own measurements.
 
 import { useEffect, useRef, useState } from "react";
-import type { CaseNode, ShelfNode } from "../../../lib/ipc";
+import type { CaseNode, ShelfNode, ShelfOrder } from "../../../lib/ipc";
 import { useI18n } from "../../../i18n";
+import { ProfileSwitcher } from "../../profiles/ProfileSwitcher";
 import { localeNum } from "../../../lib/format";
 import { Hoopoe } from "../Hoopoe";
-import { CaseManageMenu } from "./Menus";
-import { DENSITY_STEPS, DESIGN_SORTS, dropIndex, UNFILED_CASE_ID, type DesignSort, type DesignView } from "./model";
+import { CaseManageMenu, ShelfOrderMenu } from "./Menus";
+import { DENSITY_MAX, DENSITY_MIN, DENSITY_STEP, DESIGN_SORTS, dropIndex, hasUnfiledContent, isVirtualShelf, UNFILED_CASE_ID, type DesignSort, type DesignView } from "./model";
 import { createEdgeScroller, type EdgeScroller } from "./dragScroll";
+import { Icon, type IconName } from "../../../components/Icon";
+import { openTransient } from "./transient";
+import { SelectionTick, type AllState } from "../../../components/listSelection";
 
-export type Section = "library" | "inbox" | "cards" | "bookmarks";
+
+import { displayFaceFor, labelFaceFor, scriptOf } from "../../../lib/typography";
+export type Section = "library" | "inbox" | "cards" | "bookmarks" | "refs";
 
 /** What the main pane is currently scoped to. */
 export interface Scope {
   caseId: string | null;
   shelfId: string | null;
+  /** The category the reader is standing in — Vista's fourth level. See `NavScope`. */
+  categoryId: string | null;
 }
 
 interface SidebarProps {
@@ -28,9 +36,16 @@ interface SidebarProps {
   onSection: (s: Section) => void;
   cases: CaseNode[];
   loose: ShelfNode[];
+  /**
+   * «خارج الأرفف» as a place the reader can actually GO, not only a band that appears inside a
+   * view. It is a real Manual Ordering context — the books there have an order of their own — but
+   * the sidebar listed only cases and real shelves, so the one route to it was a scope no button
+   * produced. The synthesised node is built by the owner; this only draws it, with the same row
+   * every other shelf gets.
+   */
+  unshelved: ShelfNode | null;
   bookCount: number;
   /** Books started and not finished — the count the reference shows beside "Reading now". */
-  readingCount: number;
   scope: Scope;
   onScope: (s: Scope) => void;
   /**
@@ -44,8 +59,19 @@ interface SidebarProps {
   atRoot: boolean;
   openCases: Set<string>;
   onToggleCase: (id: string) => void;
-  onNewCase: (name: string) => void;
-  onNewShelf: (caseId: string | null, name: string) => void;
+  /**
+   * ASK FOR A SHELF, OR A CASE — the sidebar does not make either.
+   *
+   * It used to: a field opened in the list, with the destination as a row of chips above it, and
+   * the same form existed twice over. Both now open one dialog, which is the only thing that
+   * knows what making a shelf involves. All the sidebar contributes is the case it was asked
+   * from, which the dialog opens on and the reader can change.
+   */
+  onCreateCase: () => void;
+  onCreateShelf: (preselect: string | null) => void;
+  /** Renaming opens the same dialog, carrying what it is renaming and what it is called now. */
+  onRenameCaseDialog: (id: string, name: string) => void;
+  onRenameShelfDialog: (id: string, name: string) => void;
   onRenameCase: (id: string, name: string) => void;
   onDeleteCase: (id: string) => void;
   /** Direction is -1 (earlier) or +1 (later) among the case's peers. */
@@ -58,23 +84,66 @@ interface SidebarProps {
   onManageUnfiled: () => void;
   /** Open the management panel over one case — reachable from every view, not just the cards. */
   onManageCase: (id: string) => void;
+  /**
+   * ONE SHELF'S OPERATIONS — the set `ShelfOrderMenu` has always offered, handed to the one
+   * surface every format draws. These are the same handlers `ViewGrouped` receives, not a second
+   * implementation of them: the sidebar opens that component and gives it these.
+   */
+  onRenameShelf: (id: string, name: string) => void;
+  onDeleteShelf: (id: string) => void;
+  onSetShelfOrder: (id: string, order: ShelfOrder) => void;
+  onSetShelfCase: (id: string, caseId: string | null) => void;
+  onShelfInk: (id: string, ink: string | null) => void;
+  /** Direction is -1 (earlier) or +1 (later) among the shelf's siblings. */
+  onMoveShelf: (id: string, direction: number) => void;
   onSettings: () => void;
   themeName: string;
   langName: string;
 }
 
-const navGlyph = (id: string): React.CSSProperties => ({
-  flex: "none",
-  width: 13,
-  height: 13,
-  border: "1.5px solid currentColor",
-  borderRadius: id === "reading" ? "50%" : id === "inbox" ? 3 : 1,
-  opacity: 0.85,
-});
+/**
+ * The five destinations' marks.
+ *
+ * These were five 13x13 CSS boxes differing only in corner radius — and three of them (Library,
+ * Bookmarks, Photo cards) were the SAME square, so the sidebar's five rows could not be told apart
+ * without reading their labels. Direction 02 v3 gives each destination a silhouette from a different
+ * register — furniture, page, mark — which is what makes the column legible before any label is.
+ */
+const NAV_ICON: Record<string, IconName> = {
+  library: "navLibrary",
+  inbox: "navHighlightsNotes",
+  bookmarks: "navBookmarks",
+  // The destination was added to `nav` without an entry here, so the row rendered with no mark at all
+  // while its four neighbours had one — a map lookup that silently returns undefined, which no type
+  // error and no DOM assertion catches. The open spread is a work you CONSULT, distinct from the
+  // shelf furniture above it and from the ribbons and card below.
+  refs: "navReferences",
+  cards: "navPhotoCards",
+};
 
 // The reference's own numbers: gap 11, padding 8/10, radius 6, and — the part that reads as
 // depth rather than a flat tint — a 1px inset ring on the selected row. The height is decided by
 // the padding, not fixed, so a wrapped label cannot be clipped.
+/**
+ * The chip both "make a place" actions wear — one object, because they are a pair.
+ *
+ * It is the outlined chip the shelf action already had, kept exactly: the accent for its ink through
+ * `--accent-text` (the accent walked toward the text colour until it clears Sard's own 3.0 floor), a
+ * hairline of the same hue, and no fill at rest — unmistakably a control without becoming a card, and
+ * impossible to mistake for the rows above it, which carry neither edge nor accent. The states come
+ * from the stylesheet through custom properties, because an inline `background` would otherwise beat
+ * every `:hover` rule. Margins are the GROUP's now, so the two chips sit at one rhythm.
+ */
+const MAKE_CHIP: React.CSSProperties = {
+  justifyContent: "flex-start",
+  padding: "6px 10px",
+  font: "600 .75rem var(--ui)",
+  color: "var(--newshelf-ink, var(--accent-text))",
+  background: "var(--newshelf-bg, transparent)",
+  border: "1px solid var(--newshelf-edge, color-mix(in srgb, var(--accent) 32%, transparent))",
+  borderRadius: "var(--r-md)",
+};
+
 const navRow = (active: boolean): React.CSSProperties => ({
   display: "flex",
   alignItems: "center",
@@ -91,9 +160,9 @@ const navRow = (active: boolean): React.CSSProperties => ({
 
 export function Sidebar(props: SidebarProps) {
   const { t, lang } = useI18n();
-  const [creatingCase, setCreatingCase] = useState(false);
-  const [creatingShelfIn, setCreatingShelfIn] = useState<string | null | false>(false);
-  const [renamingCase, setRenamingCase] = useState<string | null>(null);
+
+  /** Which shelf row has its ⋯ menu open, and which is having its name typed. */
+  const [shelfMenuFor, setShelfMenuFor] = useState<string | null>(null);
   const [managing, setManaging] = useState<string | null>(null);
   // A case lifted by its grip, waiting for a rail to be clicked.
   const [caseHand, setCaseHand] = useState<string | null>(null);
@@ -106,7 +175,6 @@ export function Sidebar(props: SidebarProps) {
   // One scroller for the sidebar, kept across renders so a re-render cannot cancel a live drag.
   const scrollerRef = useRef<EdgeScroller | null>(null);
   if (!scrollerRef.current) scrollerRef.current = createEdgeScroller();
-  const [draft, setDraft] = useState("");
 
   /**
    * The grip's drag.
@@ -184,97 +252,222 @@ export function Sidebar(props: SidebarProps) {
   const looseOpen = props.openCases.has(UNFILED_CASE_ID);
   // Standing IN the unfiled group — a scope, not a case selection.
   const unfiledActive = props.scope.caseId === UNFILED_CASE_ID && !props.scope.shelfId;
+  /* WHAT BELONGS TO THIS GROUP — asked once, so the heading and the rows cannot disagree.
+     They did. The heading was gated on `loose.length > 0` while the «غير مرفوف» run below it was
+     gated on the group's COLLAPSE state, so a library with no loose shelves but unshelved books
+     rendered that run at the end of the tree with no heading over it and nothing to collapse it —
+     a bare row after the cases, belonging to nothing. The run was already a member of the group by
+     every other measure: it renders inside the group's container and answers to the group's own
+     open/closed state. Only the gate disagreed. */
+  const hasUnfiled = hasUnfiledContent(props.loose, props.unshelved);
+  // The heading's own words decide its treatment, not the interface language: a reader running Sard
+  // in English still sees «خارج الخزائن» if that is what the string resolves to.
+  const unfiledLabel = t("lib.unfiled");
 
-  const nav: { id: Section | "reading"; label: string; count?: number }[] = [
+  const nav: { id: Section; label: string; count?: number }[] = [
     { id: "library", label: t("lib.nav.library"), count: props.bookCount },
-    { id: "reading", label: t("lib.nav.readingNow"), count: props.readingCount },
     { id: "inbox", label: t("lib.nav.highlights") },
     { id: "bookmarks", label: t("lib.nav.bookmarks") },
+    { id: "refs", label: t("lib.nav.refs") },
     { id: "cards", label: t("lib.nav.cards") },
   ];
-
-  const commit = (fn: (name: string) => void) => {
-    const name = draft.trim();
-    setDraft("");
-    setCreatingCase(false);
-    setCreatingShelfIn(false);
-    if (name) fn(name);
-  };
-
-  const draftInput = (onCommit: () => void, placeholder: string, style: React.CSSProperties) => (
-    <input
-      autoFocus
-      value={draft}
-      dir="auto"
-      placeholder={placeholder}
-      onChange={(e) => setDraft(e.target.value)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") onCommit();
-        else if (e.key === "Escape") {
-          setDraft("");
-          setCreatingCase(false);
-          setCreatingShelfIn(false);
-        }
-      }}
-      onBlur={onCommit}
-      style={{
-        background: "var(--soft)",
-        border: "1px solid var(--brd)",
-        outline: "none",
-        ...style,
-      }}
-    />
-  );
 
   // The design's shelf row: a mark, the name, the count. Shelf management lives in the shelf's
   // own order popover in the main pane, which is where the design puts it — not here.
   const shelfRow = (s: ShelfNode) => {
     const active = props.scope.shelfId === s.id;
+    const ink = s.ink;
+    // THE UNSHELVED RUN IS NOT A COLLECTION. It is the books that belong to no shelf, gathered
+    // under a name so they can be reached — there is no row behind it to rename, re-file or
+    // delete. Everything else in this list is a real shelf and gets the whole menu.
+    const real = !isVirtualShelf(s.id);
+
     return (
       // The reference's shelf row: padded 6/8/6/10, radius 6, `500 .75rem` in `--mut`, and on
       // selection it takes `--act` and `--txt`. No height is set — the padding decides it.
-      <button
+      //
+      // MANAGING A SHELF WAS REACHABLE FROM TWO OF THE FIVE FORMATS.
+      //
+      // `ShelfOrderMenu` — order, colour, move, which case holds it, rename, delete — was drawn
+      // by `ViewGrouped`, and `isGroupedView` is Covers and Spines. So in Vista, Grid and Details
+      // a shelf could not be renamed, re-filed or DELETED at all: the only route to any of those
+      // was to switch to another format first and find the shelf's own header there. The backend
+      // has always carried every one of them.
+      //
+      // It is the same defect the drop destinations had, and it takes the same answer: the
+      // sidebar is rendered by the shell that wraps all five views and is handed every shelf in
+      // the library, so a control placed here is reachable from everywhere by construction. The
+      // menu is the SAME component the grouped views open, given the same handlers, so there is
+      // one shelf-management path rather than a second one free to drift from it.
+      //
+      // The row is a DIV holding the destination and the ⋯ side by side, because a button cannot
+      // contain a button. The drop attributes moved out here with it, which widens the landing
+      // area to the whole row rather than narrowing it: `dropTarget` resolves with `closest()`,
+      // so a book let go over the name, the count or the menu still finds this shelf.
+      <div
         key={s.id}
-        className="libd-hov"
-        onClick={() => props.onScope({ caseId: s.case_id ?? UNFILED_CASE_ID, shelfId: active ? null : s.id })}
+        // A SHELF IN THE SIDEBAR IS A PLACE A BOOK CAN BE PUT.
+        //
+        // Until now a destination existed only where the current view happened to have DRAWN it,
+        // so the same book in the same shelf could be sent elsewhere from Grid and Details and
+        // nowhere at all from Covers, Spines or Vista — those draw the shelf the reader is standing
+        // in and nothing else. At the library root the grouped views draw a SAMPLE of each case, so
+        // most books had no destination there either, and no book past the sample could be reached.
+        // Both are the same defect: the set of places a book may go was being decided by layout.
+        //
+        // The sidebar is the one surface that escapes it. It is rendered by the shell that wraps
+        // all five views, and it is handed `cases`, `loose` and `unshelved` — every shelf in the
+        // library — so it is untouched by the view, by the scope, by the search and by the sample.
+        // Vista's own note already says as much: taking the sidebar away cost "every destination in
+        // the library". So the destinations live where the shelves are listed, and every format
+        // inherits the same set by construction rather than by five separate agreements.
+        //
+        // Dropping here means the END of that shelf, which is the only position a name can honestly
+        // stand for; placing BETWEEN two particular books is what the shelf itself is for. A shelf
+        // that fills itself from a query is not offered, because a row written to it is never read
+        // back — an unmarked row here would be a destination the app cannot honour.
+        data-drop-shelf={s.auto_rule ? undefined : s.id}
+        // The END of that shelf — the only position a name can honestly stand for. Placing BETWEEN
+        // two particular books is what the shelf itself is for. This carried an INDEX until the
+        // destinations became neighbours; an empty string is how a place says «at the end».
+        data-drop-before={s.auto_rule ? undefined : ""}
+        className={`libd-shelf${active ? " is-on" : ""}`}
         style={{
+          position: "relative",
           display: "flex",
           alignItems: "center",
-          gap: 8,
-          width: "100%",
-          padding: "6px 8px 6px 10px",
-          borderRadius: 6,
-          font: "500 .75rem var(--ui)",
-          color: active ? "var(--txt)" : "var(--mut)",
-          background: active ? "var(--act)" : "transparent",
+          borderRadius: "var(--r-sm)",
+          // The ⋯ slot is held on every row, including the runs that have no menu, so the counts
+          // beside it stay in one column instead of shifting by the width of a button.
+          paddingInlineEnd: 2,
+          // UNSET, NOT TRANSPARENT, when the row is not the chosen one. An inline `background` beats
+          // every class, so declaring it here left `.libd-shelf:hover` painting nothing — measured
+          // with the pointer genuinely over the row: the ⋯ and the fixing responded and the ground
+          // stayed rgba(0,0,0,0). The same trap the ⋯ button's own note in the stylesheet records.
+          background: active ? "var(--act)" : undefined,
+          // The shelf's own colour, handed to the bracket in CSS. Absent means the hairline the
+          // group's rail is drawn in, which is what keeps an uncoloured shelf quiet.
+          ...(ink ? ({ "--shelf-ink": ink } as React.CSSProperties) : {}),
         }}
       >
-        {/* A rule shelf is an OUTLINED circle; a hand shelf is a filled square. The mark says
-            which kind of shelf it is, and stays `--faint` in both states. */}
-        <span
-          style={{
-            flex: "none",
-            width: 6,
-            height: 6,
-            ...(s.auto_rule
-              ? { borderRadius: "50%", border: "1.5px solid var(--faint)" }
-              : { borderRadius: 1, background: "var(--faint)" }),
-          }}
-        />
-        <span
+        <button
+          onClick={() => props.onScope({ caseId: s.case_id ?? UNFILED_CASE_ID, shelfId: active ? null : s.id, categoryId: null })}
           style={{
             flex: 1,
             minWidth: 0,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-            textAlign: "start",
+            display: "flex",
+            alignItems: "center",
+            gap: "var(--sp-4)",
+            // LOGICAL, so the bracket sits flush against the rail in both directions. The physical
+            // shorthand this replaces put its 10px on the left, which in an Arabic sidebar is the
+            // far side — the mark floated a third of the way into the row instead of springing
+            // from the connector, and that is half of why it read as a speck rather than a fixing.
+            paddingBlock: 5,
+            paddingInlineStart: 0,
+            paddingInlineEnd: 8,
+            borderRadius: "var(--r-sm)",
+            font: "500 .75rem var(--ui)",
+            // A SHELF IS A DESTINATION, and was set at the ink Sard uses for captions. Against a
+            // cabinet at `--txt`/600 the row read as washed out rather than as subordinate — the
+            // whole group looked like a list of labels for the row above it. The size and the
+            // weight are untouched, which is where the hierarchy actually lives; only the ink
+            // comes up, and it still sits clearly below the cabinet.
+            color: active ? "var(--txt)" : "color-mix(in srgb, var(--txt) 76%, transparent)",
           }}
         >
-          {s.name}
+          {/* A rule shelf is an OUTLINED circle; a hand shelf is a filled square. The SHAPE says
+              which kind of shelf it is; the COLOUR says which shelf it is.
+
+              THE MARK NEVER READ THE SHELF'S INK. It was `--faint` in both states, and its own
+              note here said so — so `shelf_set_ink`, the `InkPicker` in the shelf's ⋯ menu and
+              the `collections.ink` column behind them formed a complete path that ended nowhere:
+              a colour could be chosen, was written, survived a reload, and was drawn by nothing.
+              Measured before this line existed — the ink stored as #8DC3BA, and zero elements in
+              the whole document carrying it.
+
+              Colouring the mark is the treatment the app already uses for a shelf's ink, in the
+              move-a-book menu and in the case picker; both fill a small square with
+              `ink ?? var(--faint)`. It is the shelf's identity without a coloured row: the ground
+              still belongs to hover and to selection, which is what keeps both readable. */}
+          {/* THE BRACKET — see `.libd-shelfmark`. It carries the shelf's ink as chosen, raw and
+              unwalked, for the reason the old note here gave: a 7px mark run through a contrast
+              correction stopped being the colour the reader picked, which was the only thing it
+              was for. What has changed is its JOB. It used to be a speck floating inside the row;
+              it is now the fixing the board sits on, springing from the group's own rail — so the
+              colour reads as this shelf's identity rather than as one more dot in a column, and a
+              shelf without one simply shows the same hairline the rail is made of.
+
+              A RULE SHELF IS DRAWN BROKEN, which is the same distinction the outlined circle made
+              and the first one that survives being 3px tall. */}
+          <span className={`libd-shelfmark${s.auto_rule ? " is-rule" : ""}`} />
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              textAlign: "start",
+            }}
+          >
+            {s.name}
+          </span>
+          <span
+            className={`libd-shelfcount${s.count === 0 ? " is-empty" : ""}`}
+            // NOT `--faint`, which this never left — and that is the point. The colour did not
+            // change; the name beside it did, from `--mut` to 76% ink, and a count that had been
+            // one step behind its label became a hole next to it. See the ladder in the stylesheet.
+            style={{ font: "500 .6875rem var(--ui)", color: "var(--tree-meta)" }}
+          >
+            {num(s.count)}
+          </span>
+        </button>
+        {/* THE SLOT IS ALWAYS HERE, and is empty rather than absent on a run that has no menu to
+            open. Removing it moved every count on that row, which is why the numbers never formed
+            a column. `aria-hidden` keeps the placeholder out of the reading order. */}
+        <span style={{ position: "relative", flex: "none" }} aria-hidden={!real || undefined}>
+          {!real && <span style={{ display: "block", width: "var(--ctl-xs)", height: "var(--ctl-xs)" }} />}
+          {real && (
+            <>
+            <button
+              // Not `.libd-hov`: that class is (0,2,0) and the shell reset above it is (0,2,1),
+              // so inside the chrome it paints nothing. Rest, hover and keyboard all come from
+              // `.libd-shelfdots`, which is written to win.
+              className="libd-shelfdots"
+              title={t("lib.manageShelf")}
+              aria-label={t("lib.manageShelf")}
+              aria-expanded={shelfMenuFor === s.id}
+              onClick={(e) => {
+                e.stopPropagation();
+                setShelfMenuFor((m) => (m === s.id ? null : s.id));
+              }}
+              style={{
+                width: "var(--ctl-xs)",
+                height: "var(--ctl-xs)",
+                borderRadius: "var(--r-sm)",
+                fontSize: 13,
+                lineHeight: 1,
+              }}
+            >
+              <Icon name="more" size="sm" />
+            </button>
+            {shelfMenuFor === s.id && (
+              <ShelfOrderMenu
+                shelf={s}
+                cases={props.cases}
+                onOrder={(o) => props.onSetShelfOrder(s.id, o)}
+                onRename={() => props.onRenameShelfDialog(s.id, s.name)}
+                onDelete={() => props.onDeleteShelf(s.id)}
+                onSetCase={(caseId) => props.onSetShelfCase(s.id, caseId)}
+                onInk={(ink) => props.onShelfInk(s.id, ink)}
+                onMove={(d) => props.onMoveShelf(s.id, d)}
+                onClose={() => setShelfMenuFor(null)}
+              />
+            )}
+            </>
+          )}
         </span>
-        <span style={{ font: "500 .6875rem var(--ui)", color: "var(--faint)" }}>{num(s.count)}</span>
-      </button>
+      </div>
     );
   };
 
@@ -297,36 +490,40 @@ export function Sidebar(props: SidebarProps) {
       <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "0 8px 18px" }}>
         <Hoopoe size={22} />
         <span style={{ display: "inline-flex", alignItems: "baseline", gap: 7, direction: "ltr" }}>
-          <b style={{ font: "600 1.0625rem/1 var(--ui)" }}>Sard</b>
+          <b style={{ font: "600 1.0625rem/1 var(--brand)" }}>Sard</b>
+          {/* The rule between the two wordmarks. Its height is tuned to the cap-height of the
+              lettering either side of it, so it is a LENGTH, not an icon and not a spacing step —
+              and the app has no token for that, because it has no such concept: its nine dividers
+              are 13, 16, 19, 20, 22, 22, 26, 34 and 54px, each measured against what it stands
+              beside. A token would be invented for one caller, so the literal stays and says why. */}
           <i
             style={{
               width: 1.5,
+              // geometry-guard-allow: a divider length matched to cap-height, not an icon size
               height: 16,
               alignSelf: "center",
               background: "currentColor",
               opacity: 0.28,
             }}
           />
-          <em style={{ font: "700 1.1875rem/1 var(--ar)", fontStyle: "normal" }}>سَرْد</em>
+          <em style={{ font: "700 1.1875rem/1 var(--brand-ar)", fontStyle: "normal" }}>سَرْد</em>
         </span>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-1)" }}>
         {nav.map((n) => (
           <button
             key={n.id}
             className="libd-hov"
-            disabled={n.id === "reading"}
-            onClick={() => n.id !== "reading" && props.onSection(n.id as Section)}
+            onClick={() => props.onSection(n.id)}
             style={{
               // Library is active only AT the root. Every other section is active whenever it is
               // the section, because none of them can be focused into.
               ...navRow(n.id === props.section && (n.id !== "library" || props.atRoot)),
-              opacity: n.id === "reading" ? 0.6 : undefined,
-              cursor: n.id === "reading" ? "default" : "pointer",
+              cursor: "pointer",
             }}
           >
-            <span style={navGlyph(n.id)} />
+            <Icon name={NAV_ICON[n.id]} size="md" style={{ opacity: 0.85 }} />
             <span
               style={{
                 flex: 1,
@@ -355,37 +552,9 @@ export function Sidebar(props: SidebarProps) {
           padding: "20px 10px 6px",
         }}
       >
-        <span
-          style={{
-            font: "600 .625rem var(--ui)",
-            letterSpacing: ".14em",
-            textTransform: "uppercase",
-            color: "var(--faint)",
-          }}
-        >
+        <span style={{ ...treeLabel(t("lib.cases")), color: "var(--faint)" }}>
           {t("lib.cases")}
         </span>
-        <button
-          className="libd-hov libd-hov-txt"
-          title={t("lib.newCase")}
-          aria-label={t("lib.newCase")}
-          onClick={() => {
-            setDraft("");
-            setCreatingCase(true);
-          }}
-          style={{
-            width: 22,
-            height: 22,
-            borderRadius: 6,
-            display: "grid",
-            placeItems: "center",
-            color: "var(--mut)",
-            fontSize: 15,
-            lineHeight: 1,
-          }}
-        >
-          +
-        </button>
       </div>
 
       <div
@@ -394,7 +563,7 @@ export function Sidebar(props: SidebarProps) {
           overflowY: "auto",
           display: "flex",
           flexDirection: "column",
-          gap: 2,
+          gap: "var(--sp-1)",
           scrollbarWidth: "thin",
           paddingBottom: 8,
         }}
@@ -402,22 +571,6 @@ export function Sidebar(props: SidebarProps) {
         {props.cases.map((c, ci) => {
           const open = props.openCases.has(c.id);
           const active = props.scope.caseId === c.id && !props.scope.shelfId;
-          if (renamingCase === c.id) {
-            return (
-              <span key={c.id}>
-                {draftInput(
-                  () => {
-                    const name = draft.trim();
-                    setRenamingCase(null);
-                    setDraft("");
-                    if (name) props.onRenameCase(c.id, name);
-                  },
-                  t("lib.caseName"),
-                  { margin: "4px 2px", borderRadius: 7, padding: "7px 9px", font: "500 .8125rem var(--ui)" },
-                )}
-              </span>
-            );
-          }
           const ink = c.ink ?? "var(--acc)";
           const lifted = caseHand === c.id;
           return (
@@ -462,7 +615,7 @@ export function Sidebar(props: SidebarProps) {
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  borderRadius: 7,
+                  borderRadius: "var(--r-md)",
                   paddingInlineEnd: 2,
                   borderInlineStart: `3px solid ${ink}`,
                   background: active ? "var(--act)" : "transparent",
@@ -477,10 +630,10 @@ export function Sidebar(props: SidebarProps) {
                     flex: "none",
                     display: "grid",
                     placeItems: "center",
-                    width: 22,
-                    height: 22,
-                    marginInlineEnd: 2,
-                    borderRadius: 7,
+                    width: "var(--ctl-xs)",
+                    height: "var(--ctl-xs)",
+                    marginInlineEnd: "var(--sp-1)",
+                    borderRadius: "var(--r-md)",
                     // The disc fills with the case's own colour once it is open.
                     border: `1px solid ${open ? "var(--brd)" : "transparent"}`,
                     background: open ? `color-mix(in srgb, ${ink} 18%, transparent)` : "transparent",
@@ -499,13 +652,13 @@ export function Sidebar(props: SidebarProps) {
                   />
                 </button>
                 <button
-                  onClick={() => props.onScope({ caseId: c.id, shelfId: null })}
+                  onClick={() => props.onScope({ caseId: c.id, shelfId: null, categoryId: null })}
                   style={{
                     flex: 1,
                     minWidth: 0,
                     display: "flex",
                     alignItems: "center",
-                    gap: 8,
+                    gap: "var(--sp-4)",
                     textAlign: "start",
                     padding: "6px 0",
                   }}
@@ -524,7 +677,15 @@ export function Sidebar(props: SidebarProps) {
                   >
                     {c.name}
                   </span>
-                  <span style={{ font: "500 .6875rem var(--ui)", color: "var(--faint)" }}>
+                  {/* THE COUNT JOINS THE COLUMN ITS SHELVES ARE IN. Nothing else on this row
+                      moves: the bar, the name, the ⋯, the grip, the spacing and the open-state
+                      treatment are all as they were. What changed is underneath it. The shelf
+                      counts were given a weight that can be read, and a cabinet's own count left
+                      on `--faint` then measured WEAKER than the numbers it presides over — 2.89
+                      against 3.71 in sepia, 3.29 against 4.90 in nocturne — in a single column the
+                      eye scans straight down. A cabinet outranks its shelves on its NAME, at
+                      .8125rem/600 in full ink; it has never needed to outrank them twice. */}
+                  <span style={{ font: "500 .6875rem var(--ui)", color: "var(--tree-meta)" }}>
                     {num(c.count)}
                   </span>
                 </button>
@@ -561,9 +722,9 @@ export function Sidebar(props: SidebarProps) {
                   }}
                   style={{
                     flex: "none",
-                    width: 20,
-                    height: 22,
-                    borderRadius: 6,
+                    width: "var(--icon-lg)",
+                    height: "var(--ctl-xs)",
+                    borderRadius: "var(--r-sm)",
                     fontSize: 11,
                     lineHeight: 1,
                     cursor: dragging === c.id ? "grabbing" : "grab",
@@ -572,36 +733,35 @@ export function Sidebar(props: SidebarProps) {
                     background: lifted || dragging === c.id ? "var(--act)" : "transparent",
                   }}
                 >
-                  ⠿
+                  <Icon name="grip" size="sm" />
                 </button>
                 <span style={{ position: "relative", flex: "none" }}>
                   <button
-                    className="libd-hov libd-hov-txt"
+                    // THE SAME CONTROL THE SHELF ROW HAS, so it answers the same way. It wore
+                    // `.libd-hov libd-hov-txt` — the pair `.libd-shelfdots` exists because they
+                    // lose to the shell's button reset — and set its rest ink INLINE on top, which
+                    // outranks every rule there is. Hover, press and open-state all had nothing to
+                    // paint with. Rest ink now comes from the class, like the shelf's.
+                    className="libd-casedots"
                     title={t("lib.manage")}
                     aria-label={t("lib.manage")}
+                    aria-expanded={managing === c.id}
                     onClick={() => setManaging((m) => (m === c.id ? null : c.id))}
                     style={{
-                      width: 22,
-                      height: 22,
-                      borderRadius: 6,
-                      color: "var(--faint)",
+                      width: "var(--ctl-xs)",
+                      height: "var(--ctl-xs)",
+                      borderRadius: "var(--r-sm)",
                       fontSize: 13,
                       lineHeight: 1,
                     }}
                   >
-                    ⋯
+                    <Icon name="more" size="sm" />
                   </button>
                   {managing === c.id && (
                     <CaseManageMenu
                       onManage={() => props.onManageCase(c.id)}
-                      onRename={() => {
-                        setDraft(c.name);
-                        setRenamingCase(c.id);
-                      }}
-                      onNewShelf={() => {
-                        setDraft("");
-                        setCreatingShelfIn(c.id);
-                      }}
+                      onRename={() => props.onRenameCaseDialog(c.id, c.name)}
+                      onNewShelf={() => props.onCreateShelf(c.id)}
                       onNewRuleShelf={() => props.onNewRuleShelf(c.id)}
                       onMoveUp={() => props.onMoveCase(c.id, -1)}
                       onMoveDown={() => props.onMoveCase(c.id, 1)}
@@ -616,26 +776,22 @@ export function Sidebar(props: SidebarProps) {
 
               {open && (
                 <div
+                  className="libd-shelfgroup"
                   style={{
                     display: "flex",
                     flexDirection: "column",
-                    gap: 1,
-                    padding: "1px 0 6px 0",
+                    gap: 2,
+                    padding: "2px 0 8px 0",
                     marginInlineStart: 22,
-                    borderInlineStart: "1px solid var(--brd)",
+                    // NO INK IS HANDED TO THE RAIL ANY MORE. It used to take the cabinet's colour
+                    // for its first 18px, which made the connector change colour in mid-run and,
+                    // on the group with no cabinet behind it, disappear entirely for that stretch.
+                    // See `.libd-shelfgroup::before`. The group already says whose it is by being
+                    // indented directly under the cabinet, and the cabinet still says who it is
+                    // with the bar and the disc on its own row — both untouched.
                   }}
                 >
                   {c.shelves.map(shelfRow)}
-                  {/* The reference reaches "new shelf" through the case's own ⋯ menu, which is
-                      what opens this input — there is no standing button in the list, and adding
-                      one duplicated an affordance the case row already carries. */}
-                  {creatingShelfIn === c.id &&
-                    draftInput(() => commit((n) => props.onNewShelf(c.id, n)), t("lib.shelf.namePlaceholder"), {
-                      margin: "3px 8px 3px 10px",
-                      borderRadius: 6,
-                      padding: "5px 8px",
-                      font: "500 .75rem var(--ui)",
-                    })}
                 </div>
               )}
             </div>
@@ -672,13 +828,6 @@ export function Sidebar(props: SidebarProps) {
           </button>
         )}
 
-        {creatingCase &&
-          draftInput(() => commit(props.onNewCase), t("lib.caseName"), {
-            margin: "4px 2px",
-            borderRadius: 7,
-            padding: "7px 9px",
-            font: "500 .8125rem var(--ui)",
-          })}
 
         {/* Shelves in no case, and — importantly — the ONLY way to make one.
             "New shelf" previously lived only inside a case, so a library with no cases had no
@@ -689,11 +838,11 @@ export function Sidebar(props: SidebarProps) {
               reference draws — mark, name, count — and the group it sits in gets the single
               management entry, the same way a case row does. That keeps an unfiled shelf fully
               manageable without adding one control to the row the design specifies. */}
-          {props.loose.length > 0 && (
+          {hasUnfiled && (
             <div style={{ display: "flex", alignItems: "center", padding: "6px 4px 4px 10px" }}>
               {/* The heading collapses the group, the way a case's disc collapses a case. The
                   caret is the case row's own — same 7px box, same 1.6px strokes, same rotation
-                  and the same RTL flip — sized to sit against a small uppercase label rather
+                  and the same RTL flip — sized to sit against a small label rather
                   than inside a disc, because this is a heading and not a case row. */}
               {/* The caret collapses; the NAME navigates. Exactly the division a case row makes
                   between its disc and its title, so the two behave alike without this heading
@@ -704,15 +853,17 @@ export function Sidebar(props: SidebarProps) {
                 title={looseOpen ? t("lib.collapse") : t("lib.expand")}
                 aria-label={looseOpen ? t("lib.collapse") : t("lib.expand")}
                 aria-expanded={looseOpen}
-                style={{ flex: "none", width: 16, height: 16, borderRadius: 4, display: "grid", placeItems: "center" }}
+                style={{ flex: "none", width: "var(--icon-md)", height: "var(--icon-md)", borderRadius: 4, display: "grid", placeItems: "center" }}
               >
                 <span
                   style={{
                     display: "block",
                     width: 6,
                     height: 6,
-                    borderRight: "1.6px solid var(--faint)",
-                    borderBottom: "1.6px solid var(--faint)",
+                    // The caret carries the heading's ink, not the counts' — it is the group's own
+                    // collapse affordance and has to be as findable as the word beside it.
+                    borderRight: "1.6px solid var(--mut)",
+                    borderBottom: "1.6px solid var(--mut)",
                     transform: `rotate(${looseOpen ? "45deg" : rtl ? "135deg" : "-45deg"}) translate(-1px,-1px)`,
                     transition: "transform .18s ease-out",
                   }}
@@ -720,21 +871,29 @@ export function Sidebar(props: SidebarProps) {
               </button>
               <button
                 className="libd-hov-txt"
-                onClick={() => props.onScope({ caseId: UNFILED_CASE_ID, shelfId: null })}
+                onClick={() => props.onScope({ caseId: UNFILED_CASE_ID, shelfId: null, categoryId: null })}
                 title={t("lib.openUnfiled")}
                 style={{
                   flex: 1,
                   justifyContent: "flex-start",
                   textAlign: "start",
                   padding: "2px 6px",
-                  marginInlineStart: 2,
+                  marginInlineStart: "var(--sp-1)",
                   borderRadius: 5,
-                  font: "600 .625rem var(--ui)",
-                  letterSpacing: ".14em",
-                  textTransform: "uppercase",
-                  // Active, but not the way a case is: the accent alone, with no case's colour bar
-                  // behind it, so "not in a case" can never be mistaken for one.
-                  color: unfiledActive ? "var(--acc)" : "var(--faint)",
+                  /* The tree's own label treatment — see `treeLabel`. This heading was set as a
+                     Latin small-caps caption over Arabic: measured on screen at 9.84px with 1.38px
+                     of letter-spacing, `uppercase` (which Arabic has no capitals for), through a
+                     stack led by the LATIN face — so the one word naming this group rendered small,
+                     loose and faint enough to read as a disabled caption rather than a heading. */
+                  ...treeLabel(unfiledLabel),
+                  /* THE INK IS THE HEADING'S, NOT ITS CHILDREN'S. Measured across the tree, a shelf
+                     row is .75rem/500 in `--mut` — so a heading at .75rem/600 in `--mut` was
+                     separated from the rows it parents by weight alone, which is not enough for the
+                     one row that owns the others. `--txt` is what every other row that heads a group
+                     uses. The SIZE is what keeps it secondary: .75rem against the cases' .8125rem,
+                     and none of a case's signals — no colour bar, no disc, no grip, no count — so
+                     the cabinets stay the primary structure and this stays the quieter grouping. */
+                  color: unfiledActive ? "var(--acc)" : "var(--txt)",
                   background: unfiledActive ? "var(--act)" : "transparent",
                 }}
               >
@@ -747,44 +906,86 @@ export function Sidebar(props: SidebarProps) {
                 onClick={props.onManageUnfiled}
                 style={{
                   flex: "none",
-                  width: 22,
-                  height: 22,
-                  borderRadius: 6,
+                  width: "var(--ctl-xs)",
+                  height: "var(--ctl-xs)",
+                  borderRadius: "var(--r-sm)",
                   color: "var(--faint)",
                   fontSize: 13,
                   lineHeight: 1,
                 }}
               >
-                ⋯
+                <Icon name="more" size="sm" />
               </button>
             </div>
           )}
-          {(looseOpen || props.loose.length === 0) && props.loose.map(shelfRow)}
-          {(looseOpen || props.loose.length === 0) &&
-            (creatingShelfIn === null ? (
-            draftInput(() => commit((n) => props.onNewShelf(null, n)), t("lib.shelf.namePlaceholder"), {
-              margin: "3px 8px 3px 10px",
-              borderRadius: 6,
-              padding: "5px 8px",
-              font: "500 .75rem var(--ui)",
-            })
-          ) : (
-            <button
-              className="libd-hov-txt"
-              onClick={() => {
-                setDraft("");
-                setCreatingShelfIn(null);
-              }}
+          {/* THE GROUP'S CHILDREN, ON THE CABINET'S OWN CONNECTOR.
+              A case ties its shelves to its title with exactly this indent and this rail
+              (`marginInlineStart: 22` + `borderInlineStart`), and it is the only device in the tree
+              that says "these rows belong to the row above". This group had none of it: measured on
+              screen, `margin-inline-start: 0px` and `border-inline-start-width: 0px`, so its shelves
+              simply followed the heading in a flat column with nothing joining them — the heading
+              read as a caption sitting above unrelated rows rather than as their parent.
+              The rail is where the two kinds of content become ONE group: the loose shelves and the
+              «غير مرفوف» run sit on the same line, under the same heading, and collapse together.
+              WHAT IS DELIBERATELY NOT BORROWED: the case's colour bar, its grip and its disc. Those
+              say "this is a cabinet", and this group is precisely the things that are not in one. */}
+          {looseOpen && (
+            <div
+              className="libd-shelfgroup"
               style={{
-                justifyContent: "flex-start",
-                padding: "6px 10px",
-                font: "500 .6875rem var(--ui)",
-                color: "var(--faint)",
+                display: "flex",
+                flexDirection: "column",
+                gap: 2,
+                padding: "2px 0 8px 0",
+                marginInlineStart: 22,
               }}
             >
-              {t("lib.newShelf")}
-            </button>
-            ))}
+              {props.loose.map(shelfRow)}
+              {props.unshelved && shelfRow(props.unshelved)}
+            </div>
+          )}
+        </div>
+
+        {/* THE TWO WAYS TO MAKE A PLACE, TOGETHER AND OUTSIDE EVERY COLLAPSIBLE.
+            THE FAULT THIS FIXES. «+ رفّ جديد» was the last child of the unfiled group and rendered
+            as `{(looseOpen || loose.length === 0) && …}` — so collapsing «خارج الأرفف» took away the
+            only way to make a shelf, and the group's own comment said as much ("the ONLY way to make
+            one"). A creation action cannot depend on whether a list happens to be open.
+            IT WAS NEVER THAT GROUP'S ACTION EITHER, and its own handler says so: it creates the shelf
+            in the CURRENT SCOPE's case when the reader is standing in one, and a loose shelf only when
+            they are not. That is a Library-level action that had been filed under one of the places it
+            can write to.
+            So both actions stand together at the end of the tree, after the places and before the
+            foot: the cases, then the shelves outside them, then the two ways to add either. Nothing
+            about what they create changed — same handlers, same scope argument, same dialogs — and
+            neither is inside anything that can be collapsed. */}
+        <div
+          className="libd-makes"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "var(--sp-1)",
+            margin: "var(--sp-4) 8px 2px 10px",
+            paddingTop: "var(--sp-3)",
+            borderTop: "1px solid var(--brd)",
+          }}
+        >
+          <button className="libd-newshelf" onClick={props.onCreateCase} style={MAKE_CHIP}>
+            {t("lib.newCaseAction")}
+          </button>
+          <button
+            className="libd-newshelf"
+            // Standing inside a case, that case is what the dialog opens on — a starting point and
+            // never a decision, which is why the dialog shows the destination either way. Unchanged.
+            onClick={() =>
+              props.onCreateShelf(
+                props.scope.caseId && props.scope.caseId !== UNFILED_CASE_ID ? props.scope.caseId : null,
+              )
+            }
+            style={MAKE_CHIP}
+          >
+            {t("lib.newShelf")}
+          </button>
         </div>
       </div>
 
@@ -813,7 +1014,7 @@ export function Sidebar(props: SidebarProps) {
             zIndex: 200,
             pointerEvents: "none",
             padding: "5px 11px",
-            borderRadius: 7,
+            borderRadius: "var(--r-md)",
             border: "1px solid var(--brd)",
             borderInlineStart: `3px solid ${props.cases.find((c) => c.id === dragging)?.ink ?? "var(--acc)"}`,
             background: "var(--chr)",
@@ -828,6 +1029,10 @@ export function Sidebar(props: SidebarProps) {
       )}
 
       <div className="lib-sidefoot" style={{ display: "block", paddingTop: 10, borderTop: "1px solid var(--brd)" }}>
+        {/* PROFILES: the active profile joins the theme and the language in the foot. One row,
+            above Settings; the caption below is left exactly as it is. Self-contained — it reads
+            its own store, so the Library learns nothing about profiles by mounting it. */}
+        <ProfileSwitcher onManage={props.onSettings} />
         <button
           className="lib-settings-btn"
           onClick={props.onSettings}
@@ -835,7 +1040,7 @@ export function Sidebar(props: SidebarProps) {
           aria-label={t("gs.open")}
         >
           <span className="lib-settings-ico" aria-hidden>
-            ⚙
+            <Icon name="gear" size="sm" />
           </span>
           <span>{t("gs.open")}</span>
         </button>
@@ -844,7 +1049,7 @@ export function Sidebar(props: SidebarProps) {
             display: "flex",
             alignItems: "center",
             justifyContent: "space-between",
-            gap: 8,
+            gap: "var(--sp-4)",
             padding: "2px 11px 4px",
             font: "500 .6875rem var(--ui)",
             color: "var(--faint)",
@@ -866,18 +1071,84 @@ export function Sidebar(props: SidebarProps) {
 // Header — breadcrumbs, title row, and the console row.
 // ---------------------------------------------------------------------------
 
+/**
+ * WHERE THE READER IS STANDING, as one object.
+ *
+ * Vista replaces the crumb row and the title row with this. The two together said the location
+ * twice and weakly — a 12px trail in `--faint` above a heading that looked like a page title — so
+ * here the ancestors ARE the way out: the immediate parent is a button, the same button the sort
+ * and filter controls beside it are, because leaving is an action and not a caption.
+ *
+ * THE TITLE IS THE TITLE EVERY OTHER VIEW DRAWS. An earlier pass gave each level its own face —
+ * the serif for a case, the interface face for a shelf — which is the "typographic register" idea
+ * that was rejected twice: a register has to be decoded, and the trail and the case's ink already
+ * say what kind of place this is. One declaration, so Vista's heading and the Covers heading are
+ * the same object.
+ *
+ * The other four views keep the crumb-and-title rows they have always had.
+ */
+export interface PlaceLine {
+  level: "lib" | "case" | "shelf" | "category";
+  name: string;
+  /** A case's own colour, drawn as the inset underline under its name. Null everywhere else. */
+  ink: string | null;
+  /** The container's own counts — for a case, books AND shelves, so it reads as holding shelves. */
+  sub: string;
+  /** Root first, immediate parent last. The last one is drawn as the way out. */
+  trail: { label: string; go: () => void }[];
+}
+
 interface HeaderProps {
   crumbs: { label: string; go: () => void }[];
   heading: string;
   subcount: string;
+  /** Vista only. When set, this replaces the crumb row and the title. */
+  place?: PlaceLine | null;
   mode: "browse" | "select" | "arrange";
   onToggleSelect: () => void;
+  /** How much of what is on screen is ticked — see `allStateOf`. */
+  selectState: AllState;
+  onToggleSelectAll: () => void;
   onToggleArrange: () => void;
   onAddBooks: () => void;
+  /** OPEN A DEPOSIT SOMEONE SENT. It sits beside «أضِف كتبًا» because it is the other way a reading
+   *  enters this library — a book with someone's marks on it, rather than a bare file. */
+  onOpenDeposit?: () => void;
+  /**
+   * THE LIBRARY HAS NO BOOKS AND NOTHING IS BEING SEARCHED FOR.
+   *
+   * Search, sort, the format filter, Select, Manual arrange and the five view tabs all act on
+   * books; with none, they are chrome for content that does not exist, and they crowd out the one
+   * thing a new reader needs. They are removed rather than disabled — a row of greyed controls says
+   * no at length, and absence says it quietly. Every one of them returns the moment a first book
+   * does. See `libraryIsBare`.
+   */
+  bare?: boolean;
   importing: boolean;
   query: string;
   onQuery: (q: string) => void;
   view: DesignView;
+  /**
+   * Whether Manual Ordering can act on what is currently on screen.
+   *
+   * Computed by the owner, because only it knows the depth: in Vista the same view draws
+   * containers at the root and books inside a shelf, and the control must follow the CONTENT, not
+   * the view. `canArrange(view)` is one half of it; see `vistaArrangeable` for the other.
+   */
+  canArrangeHere: boolean;
+  /** Why it cannot act here, for the reader — null when it can. */
+  arrangeReason: string | null;
+  /**
+   * Whether the stage is one hand-orderable shelf, so "shelf order" names something.
+   * At the root, in a case, or on a computed shelf there is no single stored order to sort by.
+   */
+  canSortByShelf: boolean;
+  /**
+   * Whether the sequence on screen is the reader's own arrangement. The line under the toolbar is
+   * the one place the mode explains itself, so it must not promise a slot between two books when
+   * the sort in force cannot draw one.
+   */
+  handOrdered: boolean;
   onView: (v: DesignView) => void;
   density: number;
   onDensity: (d: number) => void;
@@ -888,9 +1159,139 @@ interface HeaderProps {
   /** Grid's own control, shown only while Grid is the view — as it was before. */
   coverMode: "crop" | "fit";
   onCoverMode: () => void;
+  /**
+   * NAMES OUT OF THE WAY UNTIL A BOOK IS TOUCHED.
+   *
+   * Offered only in the three COVER-LED views. Spines writes the title onto the spine — the words
+   * are the artwork there — and Details lists it in a column under its own heading; in both, hiding
+   * the name would empty the view rather than quiet it, so the control does not appear.
+   */
+  hideTitles: boolean;
+  onHideTitles: () => void;
   format: string | null;
   onFormat: (f: string | null) => void;
 }
+
+/**
+ * The place-line: the trail out, then the name of where you are, then what it holds.
+ *
+ * THE TITLE DOES NOT SHRINK WITH DEPTH. A ladder that quietens the deeper levels is backwards —
+ * deep is exactly where a reader is most likely to be lost — so every level is set at the same
+ * size and the FACE carries the difference.
+ */
+function PlaceHeading({ place }: { place: PlaceLine }) {
+  const { t, lang } = useI18n();
+  const rtl = lang === "ar";
+  return (
+    // THE ONE GROUP THAT HAS NO PLATE OF ITS OWN.
+    //
+    // Every control in this header stands on its own ground already — search, the view switcher,
+    // the size chips, format, sort, Select, Arrange, Add. This is bare text on a photograph, and it
+    // is the only reason the toolbar ever needed a plane behind it. `libd-plate` gives it the same
+    // material the plane was made of, sized to the words rather than to the window. It paints
+    // wherever a background image is set, in every format — the scrim that used to carry these
+    // words outside Vista is now the reader's to switch off.
+    <div className="libd-plate" style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)", minWidth: 0 }}>
+      {/* THE WAY OUT IS DRAWN ONLY WHERE THERE IS ONE.
+          `minHeight` reserved a row for the trail whether or not a trail existed, so at the library
+          root — where nothing is above you — Vista opened with an EMPTY 20px row and its 4px gap
+          above the title. Measured on the real header: one element, no text, 24px. Inside a case or
+          a shelf the trail is real navigation and is drawn exactly as before. */}
+      {place.trail.length > 0 && (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 7,
+          font: "500 .75rem var(--ui)",
+          color: "var(--faint)",
+          minHeight: "var(--icon-lg)",
+          flexWrap: "wrap",
+        }}
+      >
+        {place.trail.map((cr, i) => {
+          const last = i === place.trail.length - 1;
+          return (
+            <span key={`${cr.label}-${i}`} style={{ display: "inline-flex", alignItems: "center", gap: 7 }}>
+              {i > 0 && <span style={{ fontSize: 10, opacity: 0.5 }}>›</span>}
+              {last ? (
+                // THE WAY OUT, drawn as a control rather than as text. The old trail was 12px of
+                // faint prose in a corner, which is why leaving never felt like an offer.
+                <button
+                  className="libd-hov"
+                  onClick={cr.go}
+                  title={t("lib.vista.up")}
+                  aria-label={t("lib.vista.up") + ": " + cr.label}
+                  style={ctlBtn(false)}
+                >
+                  {/* In Arabic the way back points to the START of the line, which is the right —
+                      the chevron is semantic, not a mirrored glyph. */}
+                  <Icon name={rtl ? "caretRight" : "caretLeft"} size="sm" />
+                  {cr.label}
+                </button>
+              ) : (
+                <button className="libd-hov-txt" onClick={cr.go} style={{ color: "inherit" }}>
+                  {cr.label}
+                </button>
+              )}
+            </span>
+          );
+        })}
+      </div>
+      )}
+      <div style={{ display: "flex", alignItems: "baseline", gap: "var(--sp-5)", minWidth: 0 }}>
+        <h1
+          dir="auto"
+          className={place.level === "category" ? "libd-place-cat" : undefined}
+          style={{
+            margin: 0,
+            // `ledeTitleStyle` in the design of record. This named the LATIN book face with no
+            // Arabic branch at all, and Literata has no Arabic glyphs — so an Arabic case or
+            // shelf name fell out of Sard's faces entirely, into whatever serif the system
+            // happened to offer. Arabic is Amiri here as everywhere, at the reference's size.
+            font: `${scriptOf(place.name) === "arabic" ? "700 1.625rem/1.35" : "600 1.5rem/1.2"} ${displayFaceFor(place.name)}`,
+            color: "var(--txt)",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            // The case's own signature, the same inset underline the case cards draw.
+            boxShadow: place.ink
+              ? `inset 0 -8px 0 -3px color-mix(in srgb, ${place.ink} 40%, transparent)`
+              : undefined,
+          }}
+        >
+          {place.name}
+        </h1>
+        <span style={{ font: "500 .8125rem var(--ui)", color: "var(--faint)", whiteSpace: "nowrap" }}>
+          {place.sub}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A LABEL IN THE TREE THAT DOES NOT BREAK ARABIC.
+ *
+ * The same treatment `fieldLabel` settled on in CreateDialog, and the one `.libd-place-cat` was
+ * corrected to: tracked capitals are a LATIN caption device, and applying it to Arabic reaches for
+ * capitals the script does not have while letter-spacing pulls its cursive joins apart. Both labels
+ * in this tree were still setting Arabic that way — measured at 9.84px with 1.38px of tracking,
+ * through a font stack led by the Latin face — so the words naming the Library's two groupings were
+ * the least legible text in it.
+ *
+ * Latin keeps the caption it was drawn for. Arabic gets its own face, at its own size, untracked.
+ * The COLOUR is deliberately left to the caller: these two labels are not the same kind of thing —
+ * one is a static caption above the list, the other heads a collapsible group inside it.
+ */
+const treeLabel = (text: string): React.CSSProperties => {
+  const arabic = scriptOf(text) === "arabic";
+  return {
+    font: `600 ${arabic ? ".75rem" : ".625rem"} ${labelFaceFor(text)}`,
+    letterSpacing: arabic ? "normal" : ".14em",
+    textTransform: arabic ? "none" : "uppercase",
+  };
+};
 
 const ctlBtn = (active: boolean): React.CSSProperties => ({
   display: "flex",
@@ -905,19 +1306,44 @@ const ctlBtn = (active: boolean): React.CSSProperties => ({
   background: active ? "var(--act)" : "var(--pap)",
 });
 
-const VIEW_ICONS: Record<DesignView, string> = {
-  grid: "linear-gradient(90deg,currentColor 45%,transparent 45%),linear-gradient(180deg,currentColor 45%,transparent 45%)",
-  covers:
-    "linear-gradient(90deg,currentColor 45%,transparent 45%),linear-gradient(180deg,currentColor 45%,transparent 45%)",
-  spines: "repeating-linear-gradient(90deg,currentColor 0 2px,transparent 2px 4px)",
-  details: "repeating-linear-gradient(180deg,currentColor 0 2px,transparent 2px 5px)",
-  vista: "radial-gradient(circle at 50% 70%, currentColor 30%, transparent 32%)",
+/**
+ * EACH FORMAT'S MARK IS A MINIATURE OF ITS OWN LAYOUT.
+ *
+ * What was here was five CSS gradients painted on a 12px box, and three of them could not be told
+ * apart: `grid` and `covers` were the SAME STRING, character for character; `spines` and `details`
+ * were the same stripe turned two ways; `vista` was a dot. A gradient cannot draw a thumbnail
+ * beside two lines of text, or a horizon, so no amount of tuning those values could have made the
+ * set legible — the medium was the limit.
+ *
+ * They are drawings now, in the app's own icon set, at its 24x24 box and its `currentColor`, so
+ * they take the ink of the control that holds them and follow all sixteen themes with no
+ * per-theme artwork. See `components/Icon.tsx` for what each one draws and why.
+ */
+const VIEW_ICONS: Record<DesignView, IconName> = {
+  covers: "viewCovers",
+  grid: "viewGrid",
+  spines: "viewSpines",
+  details: "viewDetails",
+  vista: "viewVista",
 };
 
 export function Header(props: HeaderProps) {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
+  const rtl = lang === "ar";
   const [sortOpen, setSortOpen] = useState(false);
   const [formatOpen, setFormatOpen] = useState(false);
+  const sortRef = useRef<HTMLDivElement | null>(null);
+  const formatRef = useRef<HTMLDivElement | null>(null);
+  // Both menus register with the one dismissal stack, so opening either closes whatever was open,
+  // a press outside closes it, and Escape is spent on it rather than on the view underneath.
+  useEffect(() => {
+    if (!sortOpen) return;
+    return openTransient(() => setSortOpen(false), () => sortRef.current);
+  }, [sortOpen]);
+  useEffect(() => {
+    if (!formatOpen) return;
+    return openTransient(() => setFormatOpen(false), () => formatRef.current);
+  }, [formatOpen]);
 
   const views: { id: DesignView; label: string; hint: string }[] = [
     { id: "grid", label: t("lib.view.grid"), hint: t("lib.view.gridHint") },
@@ -933,7 +1359,10 @@ export function Header(props: HeaderProps) {
     title: t("lib.sort.title"),
     author: t("lib.sort.author"),
     progress: t("lib.sort.progress"),
+    shelf: t("lib.sort.shelf"),
   };
+  // The shelf's own order joins the list only where one shelf owns the stage.
+  const sorts: DesignSort[] = props.canSortByShelf ? [...DESIGN_SORTS, "shelf"] : DESIGN_SORTS;
 
   const groupStyle: React.CSSProperties = {
     display: "flex",
@@ -952,15 +1381,34 @@ export function Header(props: HeaderProps) {
     // over it. The ground belongs to `.lib-root`, and the scrim's own falloff already adds theme
     // weight at exactly this height so the title and search stay legible.
     <header
-      className="libd-chrome"
+      className={"libd-chrome" + (props.overEnvironment ? " libd-console" : "")}
       style={{
         flex: "none",
         position: "relative",
         zIndex: 3,
-        padding: "18px 30px 0",
-        backdropFilter: props.overEnvironment ? "blur(2px)" : undefined,
+        // VISTA'S BAND CARRIES A FOOT, NOT A SECOND HEADER'S WORTH OF AIR.
+        //
+        // Only Vista draws this header as a PLANE — `.libd-console`, a translucent chrome surface
+        // with a blur and a bottom border — so every pixel of its height is a pixel of the reader's
+        // photograph covered. It was given 18px beneath its content to match the 18px above, which
+        // is right for a band that floats and generous for one that is trying to stay out of the
+        // way. Measured against the other four formats: identical content (135px of it), identical
+        // top padding, and a band 19px taller — 18 of padding and 1 of border, all of it Vista's.
+        //
+        // The plane still needs a foot: with none at all the last control would sit against the
+        // border, which is what the other views avoid by having no border to sit against. Half the
+        // original is enough to read as a finished surface.
+        //
+        // Nothing above this line changes for any other view, and no control moves: the row
+        // heights, gaps and order are untouched.
+        padding: props.overEnvironment ? "18px 30px 8px" : "18px 30px 0",
       }}
     >
+      {/* A SINGLE CRUMB IS NOT A TRAIL. At the library root `crumbs` holds one entry, «المكتبة»,
+          whose button navigates to where the reader already is — and the heading directly beneath
+          says the same word. That restatement cost an 18px row and its 6px margin in four of the
+          five formats. Two or more crumbs is a path out, and is drawn exactly as before. */}
+      {!props.place && props.crumbs.length > 1 && (
       <div
         style={{
           display: "flex",
@@ -968,7 +1416,7 @@ export function Header(props: HeaderProps) {
           gap: 7,
           font: "500 .75rem var(--ui)",
           color: "var(--faint)",
-          marginBottom: 6,
+          marginBottom: "var(--sp-3)",
           minHeight: 18,
         }}
       >
@@ -981,14 +1429,34 @@ export function Header(props: HeaderProps) {
           </span>
         ))}
       </div>
+      )}
 
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 12, minWidth: 0 }}>
+      <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: "var(--sp-6)" }}>
+        {/* THE ARRANGE NOTE LIVES ON THIS LINE, not on one of its own.
+            It was the last child of the control row and declared `flex: 1 1 220px`, which says it
+            was always meant to sit BESIDE the controls. It never could: measured at a 1600px
+            window, that row is 1296px wide, its five controls take 1170px, and 126px is left — less
+            than the 220px basis — so it wrapped, and `flex-grow: 1` then stretched it across the
+            full width. An 18px line plus its 11px gap, in four of the five formats.
+            This line, meanwhile, was carrying 419px of content in 1296px: 877px of empty middle,
+            one row above. The note now occupies that space, which is what `space-between` was
+            already holding open. It truncates rather than wrapping so it can never push this row to
+            two lines, and keeps the full sentence in `title` for the narrow case.
+            Nothing about WHAT it says, or when it says it, changes. */}
+        {props.place ? (
+          <PlaceHeading place={props.place} />
+        ) : (
+        // THE SAME PLATE, FOR THE SAME REASON. `PlaceHeading` above is Vista's branch and carries
+        // one; this is every other format's, and it did not — which was fine only while those four
+        // lay under a flat scrim that gave the words a ground. The scrim now follows the reader's
+        // own control and can be nothing at all, so this is bare text on a photograph without it.
+        // The rule paints only when a background is actually set, so with none this is inert.
+        <div className="libd-plate" style={{ display: "flex", alignItems: "baseline", gap: "var(--sp-5)", minWidth: 0 }}>
           <h1
             dir="auto"
             style={{
               margin: 0,
-              font: "600 1.5rem/1.2 var(--book)",
+              font: `${scriptOf(props.heading) === "arabic" ? "700 1.625rem/1.35" : "600 1.5rem/1.2"} ${displayFaceFor(props.heading)}`,
               color: "var(--txt)",
               overflow: "hidden",
               textOverflow: "ellipsis",
@@ -1001,13 +1469,71 @@ export function Header(props: HeaderProps) {
             {props.subcount}
           </span>
         </div>
+        )}
+        {/* WITH NO BOOKS, NONE OF THESE HAS ANYTHING TO ACT ON — and the empty state below carries
+            «إضافة كتب» as its own primary action, so the toolbar's copy of it would compete with the
+            one thing the screen is for. */}
+        {!props.bare && (
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
           <button onClick={props.onToggleSelect} style={ctlBtn(props.mode === "select")}>
             {t("lib.select")}
           </button>
-          <button onClick={props.onToggleArrange} style={ctlBtn(props.mode === "arrange")}>
+          {/* IT APPEARS WITH THE MODE, beside the control that turned the mode on — «تحديد الكل» over
+              a library nobody is selecting from is an instruction with no object. The tick carries
+              the three states, so a partial selection says so rather than reading as "none". */}
+          {props.mode === "select" && (
+            <button
+              onClick={props.onToggleSelectAll}
+              aria-pressed={props.selectState === "all"}
+              style={{ ...ctlBtn(false), display: "inline-flex", alignItems: "center", gap: 6 }}
+            >
+              <SelectionTick state={props.selectState} />
+              {t("select.all")}
+            </button>
+          )}
+          {/* ALWAYS DRAWN — Manual Ordering is a feature of the library, not of one place in it.
+              Hiding it where the current scope holds nothing reorderable made it vanish from
+              twelve of the twenty view-and-depth combinations, including the unshelved run a
+              reader may well be standing in when they open the app, and that reads as the feature
+              having been taken away rather than as a property of where they are standing.
+
+              Disabled instead, with the reason on it, which is what this surface already does with
+              the sidebar's «reading now» row: `disabled`, six-tenths opacity, default cursor. */}
+          <button
+            onClick={props.onToggleArrange}
+            disabled={!props.canArrangeHere}
+            title={props.arrangeReason ?? undefined}
+            aria-label={
+              props.arrangeReason
+                ? `${t("lib.arrange")} — ${props.arrangeReason}`
+                : undefined
+            }
+            style={{
+              ...ctlBtn(props.mode === "arrange"),
+              ...(props.canArrangeHere ? {} : { opacity: 0.6, cursor: "default" }),
+            }}
+          >
             {props.mode === "arrange" ? t("lib.arranging") : t("lib.arrange")}
           </button>
+          {props.onOpenDeposit && (
+            /* IT WEARS THE SAME CONTROL AS ITS NEIGHBOURS. It had a hover ground and a focus ring
+               (`.libd-hov` gives those and nothing else) over ad-hoc inline sizing — no background,
+               no border — so beside Select and Manual arrange it read as a line of text that
+               happened to respond to the pointer. `ctlBtn` is the part those two are built from, so
+               using it settles the border, the ground, the ink, the height and the type in one
+               move, from tokens, in every theme.
+               `ctlBtn(false)` and not the accent fill: opening a deposit is a SECONDARY way a
+               reading enters the library, and «إضافة كتب» beside it is the primary one. Two filled
+               buttons would leave neither of them looking like the main action. */
+            <button
+              className="libd-hov"
+              onClick={props.onOpenDeposit}
+              title={t("dep.recv.open")}
+              style={ctlBtn(false)}
+            >
+              {t("dep.recv.open")}
+            </button>
+          )}
           <button
             className="libd-hov-bright"
             onClick={props.onAddBooks}
@@ -1015,7 +1541,7 @@ export function Header(props: HeaderProps) {
             style={{
               height: 32,
               padding: "0 14px",
-              borderRadius: 9,
+              borderRadius: "var(--r-md)",
               background: "var(--acc)",
               color: "var(--pap)",
               font: "600 .75rem var(--ui)",
@@ -1026,33 +1552,37 @@ export function Header(props: HeaderProps) {
             {t(props.importing ? "lib.importing" : "lib.add")}
           </button>
         </div>
+        )}
       </div>
 
+      {/* Search, the five views, the sort and the format filter — every one of them a way of
+          narrowing a set of books. */}
+      {!props.bare && (
       <div
         style={{
           display: "flex",
           alignItems: "center",
           gap: 9,
           flexWrap: "wrap",
-          marginTop: 12,
+          marginTop: "var(--sp-5)",
         }}
       >
         <div
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 8,
-            height: 34,
+            gap: "var(--sp-4)",
+            height: "var(--ctl-lg)",
             minWidth: 240,
             flex: "0 1 320px",
             padding: "0 11px",
-            borderRadius: 10,
+            borderRadius: "var(--r-md)",
             background: "var(--soft)",
             border: "1px solid var(--brd)",
           }}
         >
           <span style={{ color: "var(--faint)", fontSize: 13 }} aria-hidden>
-            ⌕
+            <Icon name="search" size="sm" />
           </span>
           <input
             value={props.query}
@@ -1074,7 +1604,7 @@ export function Header(props: HeaderProps) {
               aria-label={t("lib.clearSearch")}
               style={{ color: "var(--faint)", fontSize: 12, padding: "0 2px" }}
             >
-              ✕
+              <Icon name="close" size="sm" />
             </button>
           )}
         </div>
@@ -1086,26 +1616,42 @@ export function Header(props: HeaderProps) {
               role="tab"
               aria-selected={props.view === v.id}
               title={v.hint}
+              // Hover, the selected ink and the keyboard ring all come from the stylesheet — an
+              // inline `background` would beat every one of those rules. Only the ground the tab
+              // rests at is stated here, through a property those rules can reach.
+              className="libd-viewtab"
               onClick={() => props.onView(v.id)}
               style={{
                 ...ctlBtn(props.view === v.id),
                 height: 28,
                 padding: "0 10px",
                 border: "none",
-                background: props.view === v.id ? "var(--act)" : "transparent",
-                color: props.view === v.id ? "var(--acc)" : "var(--mut)",
+                background: props.view === v.id
+                  ? "var(--act)"
+                  : "var(--viewtab-bg, transparent)",
+                // `ctlBtn` carries a colour of its own, and it is spread above — so it is cleared
+                // here rather than merely left unset. Colour is what the rest, hover and selected
+                // states differ by, and an inline one beats every rule that would set them.
+                // `ctlBtn` itself is untouched: it dresses Select, Arrange and Add books too.
+                color: undefined,
               }}
             >
+              {/* A LIST MIRRORS AND A PICTURE DOES NOT.
+                  Details draws a thumbnail beside its lines, and in Arabic that thumbnail really
+                  is on the other side — so its mark follows the writing direction, or it stops
+                  being a miniature of what it opens. The other four are symmetrical about the
+                  vertical, and Vista is a photograph, which the app already refuses to mirror
+                  anywhere else. */}
               <span
                 aria-hidden
                 style={{
                   flex: "none",
-                  width: 12,
-                  height: 12,
-                  opacity: 0.85,
-                  background: VIEW_ICONS[v.id],
+                  display: "flex",
+                  transform: rtl && v.id === "details" ? "scaleX(-1)" : undefined,
                 }}
-              />
+              >
+                <Icon name={VIEW_ICONS[v.id]} size="md" />
+              </span>
               <span style={{ font: "500 .8125rem var(--ui)" }}>{v.label}</span>
             </button>
           ))}
@@ -1114,53 +1660,81 @@ export function Header(props: HeaderProps) {
         {props.view === "grid" && (
           <button onClick={props.onCoverMode} style={ctlBtn(false)}>
             {t(props.coverMode === "crop" ? "lib.cover.crop" : "lib.cover.fit")}
-            <span style={{ color: "var(--faint)", fontSize: 9 }}>▾</span>
+            <span style={{ color: "var(--faint)", display: "flex" }} aria-hidden><Icon name="caretDown" size="sm" /></span>
           </button>
         )}
 
-        {props.view !== "details" && props.view !== "grid" && (
-          <div style={groupStyle}>
-            {Array.from({ length: DENSITY_STEPS }, (_, i) => (
-              <button
-                key={i}
-                onClick={() => props.onDensity(i)}
-                aria-label={`${i + 1}`}
-                title={`${i + 1}`}
-                style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: 8,
-                  background: props.density === i ? "var(--act)" : "transparent",
-                }}
-              >
-                <span
-                  style={{
-                    display: "block",
-                    width: 4 + i * 3,
-                    height: 13,
-                    borderRadius: 1,
-                    background: props.density === i ? "var(--acc)" : "var(--faint)",
-                  }}
-                />
-              </button>
-            ))}
+        {(props.view === "grid" || props.view === "covers" || props.view === "vista") && (
+          <button
+            onClick={props.onHideTitles}
+            aria-pressed={props.hideTitles}
+            title={t("lib.titles.hint")}
+            style={ctlBtn(props.hideTitles)}
+          >
+            {/* NO GLYPH. The icon set holds nothing that means "a name, withheld" — the nearest
+                candidates all say something else — and `ctlBtn(active)` already carries "on" the way
+                every other toolbar toggle does, in border, ink and fill. Two words that say exactly
+                what the shelf becomes are quieter than a borrowed symbol that says almost it. */}
+            {t("lib.titles.quiet")}
+          </button>
+        )}
+
+        {/* HOW BIG THE BOOKS STAND — and it now includes Grid.
+            Four buttons stood here, one per authored step, and they were the only sizes a reader
+            could ask for: measured on a 1680px pane Covers reached 12, 9, 8 and 6 books to a row,
+            so ten and eleven could not be had at all. The steps are now anchors on a continuum
+            (`atDensity`) rather than the only places to stand, and this is the control for it.
+
+            IT IS A NATIVE RANGE, which is what a slider already is everywhere else in Sard —
+            `.gs-slider` is `accent-color: var(--accent)` over the platform control and nothing
+            more. That also buys RTL for free: RAWY-65 records that a native range mirrors itself.
+
+            The two bars are the ones the four buttons drew, kept as the small and large ends, so
+            the control reads as the same family rather than a generic slider dropped into the
+            toolbar. They are `aria-hidden` — the range carries the accessible name.
+
+            GRID IS INCLUDED NOW. It was excluded because it never read density at all: its CSS
+            said `minmax(148px, 1fr)`, a hardcoded floor which is exactly `DENSITY_WIDTHS[2]`.
+            Measured, all four steps drew an identical 179px card. That was a wiring gap, not a
+            decision. DETAILS is still out, and that one IS a decision: it is a row list, and cover
+            size is not what organises it. */}
+        {props.view !== "details" && (
+          <div style={{ ...groupStyle, gap: 7, paddingInline: "var(--sp-4)" }}>
+            <span aria-hidden style={{ display: "block", width: 4, height: 11, borderRadius: 1, background: "var(--faint)" }} />
+            <input
+              type="range"
+              className="libd-size"
+              min={DENSITY_MIN}
+              max={DENSITY_MAX}
+              step={DENSITY_STEP}
+              value={props.density}
+              onChange={(e) => props.onDensity(Number(e.target.value))}
+              aria-label={t("lib.size")}
+              title={t("lib.size")}
+              // What a screen reader says instead of "1.4": the size as a share of the range, which
+              // is the only thing the number means to a reader.
+              aria-valuetext={`${Math.round((props.density / DENSITY_MAX) * 100)}%`}
+            />
+            <span aria-hidden style={{ display: "block", width: 4, height: 15, borderRadius: 1, background: "var(--faint)" }} />
           </div>
         )}
 
         {/* RAWY-15's format filter, carried over from the old toolbar. It filters in SQL. */}
         <div style={{ position: "relative" }}>
           <button
+            onPointerDown={(e) => e.stopPropagation()}
             onClick={() => setFormatOpen((v) => !v)}
             title={t("lib.filter")}
             aria-label={t("lib.filter")}
             style={ctlBtn(!!props.format)}
           >
-            ⛛ {props.format ? props.format.toUpperCase() : t("lib.filter.all")}
+            <Icon name="filter" size="sm" />
+            {props.format ? props.format.toUpperCase() : t("lib.filter.all")}
           </button>
           {formatOpen && (
             <>
-              <div onClick={() => setFormatOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 69 }} />
               <div
+                ref={formatRef}
                 style={{
                   position: "absolute",
                   insetInlineEnd: 0,
@@ -1169,9 +1743,9 @@ export function Header(props: HeaderProps) {
                   width: 180,
                   background: "var(--chr)",
                   border: "1px solid var(--brd)",
-                  borderRadius: 12,
+                  borderRadius: "var(--r-lg)",
                   boxShadow: "var(--sh4)",
-                  padding: 6,
+                  padding: "var(--sp-3)",
                   animation: "sard-rise .12s ease-out",
                 }}
               >
@@ -1187,7 +1761,7 @@ export function Header(props: HeaderProps) {
                       width: "100%",
                       justifyContent: "flex-start",
                       padding: "7px 10px",
-                      borderRadius: 8,
+                      borderRadius: "var(--r-md)",
                       font: "500 .8125rem var(--ui)",
                       color: props.format === f ? "var(--txt)" : "var(--mut)",
                       background: props.format === f ? "var(--act)" : "transparent",
@@ -1202,7 +1776,11 @@ export function Header(props: HeaderProps) {
         </div>
 
         <div style={{ position: "relative" }}>
-          <button onClick={() => setSortOpen((v) => !v)} style={ctlBtn(false)}>
+          <button
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={() => setSortOpen((v) => !v)}
+            style={ctlBtn(false)}
+          >
             <span
               style={{
                 color: "var(--faint)",
@@ -1214,15 +1792,12 @@ export function Header(props: HeaderProps) {
               {t("lib.sortEyebrow")}
             </span>
             <span style={{ font: "500 .8125rem var(--ui)" }}>{sortLabel[props.sort]}</span>
-            <span style={{ color: "var(--faint)", fontSize: 9 }}>▾</span>
+            <span style={{ color: "var(--faint)", display: "flex" }} aria-hidden><Icon name="caretDown" size="sm" /></span>
           </button>
           {sortOpen && (
             <>
               <div
-                onClick={() => setSortOpen(false)}
-                style={{ position: "fixed", inset: 0, zIndex: 69 }}
-              />
-              <div
+                ref={sortRef}
                 style={{
                   position: "absolute",
                   insetInlineEnd: 0,
@@ -1231,13 +1806,13 @@ export function Header(props: HeaderProps) {
                   width: 216,
                   background: "var(--chr)",
                   border: "1px solid var(--brd)",
-                  borderRadius: 12,
+                  borderRadius: "var(--r-lg)",
                   boxShadow: "var(--sh4)",
-                  padding: 6,
+                  padding: "var(--sp-3)",
                   animation: "sard-rise .12s ease-out",
                 }}
               >
-                {DESIGN_SORTS.map((s) => (
+                {sorts.map((s) => (
                   <button
                     key={s}
                     className="libd-hov"
@@ -1249,14 +1824,14 @@ export function Header(props: HeaderProps) {
                       width: "100%",
                       justifyContent: "space-between",
                       padding: "7px 10px",
-                      borderRadius: 8,
+                      borderRadius: "var(--r-md)",
                       font: "500 .8125rem var(--ui)",
                       color: props.sort === s ? "var(--txt)" : "var(--mut)",
                     }}
                   >
                     <span>{sortLabel[s]}</span>
-                    <span style={{ color: "var(--acc)", fontSize: 11 }}>
-                      {props.sort === s ? "✓" : ""}
+                    <span style={{ color: "var(--acc)", display: "flex" }} aria-hidden>
+                      {props.sort === s ? <Icon name="check" size="sm" /> : null}
                     </span>
                   </button>
                 ))}
@@ -1265,18 +1840,8 @@ export function Header(props: HeaderProps) {
           )}
         </div>
 
-        <div
-          style={{
-            font: "400 .75rem var(--ui)",
-            color: "var(--faint)",
-            flex: "1 1 220px",
-            minWidth: 0,
-            textWrap: "pretty",
-          }}
-        >
-          {props.mode === "arrange" ? t("lib.arrangeHintOn") : t("lib.arrangeHintOff")}
-        </div>
       </div>
+      )}
     </header>
   );
 }

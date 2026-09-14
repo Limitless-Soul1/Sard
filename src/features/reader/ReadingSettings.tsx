@@ -4,9 +4,12 @@
 // chrome → inherits the UI direction and uses theme tokens. Replaces the old cramped
 // TypographyBar wall-of-buttons; the dev page-turn / book-switcher / status controls are gone.
 
-import { createContext, useContext, useEffect, useState, type CSSProperties, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useState,
+  type CSSProperties, type ReactNode, useRef, useId } from "react";
+import { createPortal } from "react-dom";
 
 import { useI18n } from "../../i18n";
+import { InkCustom } from "../../components/InkCustom";
 import { localeDigits } from "../../lib/format";
 import { listeningOutcomes, type OutcomeSummary } from "../../lib/listeningOutcomes"; // RAWY-263
 import type { SettingsSection } from "./ReaderChrome";
@@ -26,31 +29,29 @@ import {
   type LatinFont,
   type ReadingStyle,
 } from "../../reader-engine/injectedCss";
+import { useReader } from "../../reader-engine/store";
 import type { TKey } from "../../i18n/locales/en";
-import { DEFAULT_DARK, DEFAULT_LIGHT, THEMES, THEME_ORDER, useTheme, type ThemeId } from "../../theme";
+import { DEFAULT_DARK, DEFAULT_LIGHT, THEMES, THEME_ORDER, isBuiltinThemeId, resolveTheme, useTheme, type ThemeId } from "../../theme";
 import { contrastIsReadable, effectivePaper } from "../../lib/contrast";
 import { TtsTrackingControls } from "./TtsTrackingControls"; // RAWY-200
-// RAWY-281: the reference twin rule's geometry — the SAME resolver FoliateController draws with, so the
-// panel's preview and the mark on the page are one computation rather than two matched sets of numbers.
-import {
-  resolveRefRule,
-  refRuleBars,
-  REF_WEIGHT_MIN,
-  REF_WEIGHT_MAX,
-  REF_OFFSET_MIN,
-  REF_OFFSET_MAX,
-} from "../../reader-engine/refRule";
+// RAWY-281: the reference twin rule's controls. They live in their own module now, so the هيئة editor
+// can render THE READER'S OWN group rather than a copy of it — the arrangement `TtsTrackingControls`
+// already has. The colour row went with them, for the same reason.
+import { ColorRow } from "./ColorRow";
+import { RefRuleControls } from "./RefRuleControls";
 import { useTts } from "../../lib/tts"; // RAWY-257 (Phase 1 / RAWY-255): the read-aloud diagnostic toggle
-import { useFonts } from "../../lib/fonts";
+import { familiesOnce, useFonts } from "../../lib/fonts";
 // RAWY-265 (Phase 2): the reading DESK background. Constants, store and the presence→scrim mapping
 // all live in the module and are shared with the library surface — only the markup differs here.
 import {
   BG_BLUR_MAX,
-  presenceMaxFor,
   PAGE_OPACITY_MIN,
+  bgOverlayOf,
   bgSrcUrl,
   currentDeskScrim,
   effectivePageOpacity,
+  imageLabel,
+  presenceMaxFor,
   useBackground,
 } from "../../lib/background";
 
@@ -64,7 +65,16 @@ interface Props {
   // (not the global store), so changing them affects only this book.
   bookThemeId: ThemeId;
   onPickTheme: (id: ThemeId) => void;
-  unified: boolean; // RAWY-45 — the font label reflects the active scope (this book vs all books)
+  /**
+   * THIS BOOK's answer about pronouncing decorative marks, and the هيئة's, so the row can show which
+   * one is actually in force. `null` = the book has not been asked and follows the هيئة.
+   *
+   * Three values rather than a boolean because "no" and "not asked" are different answers: a reader
+   * who silences the marks for one book must still be able to hand that book back to their هيئة.
+   */
+  speakSymbolsOverride?: boolean | null;
+  speakSymbolsAppearance?: boolean;
+  onSpeakSymbols?: (v: boolean | null) => void;
 }
 
 // Per-book text-colour presets, keyed by theme polarity (RAWY-40, Band I). The first is "Default"
@@ -80,182 +90,14 @@ const BG_PRESETS_DARK = ["#0B1021", "#0E1526", "#14100E", "#101418"];
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 const r2 = (v: number) => Math.round(v * 100) / 100;
+// Two, since «تعتيم» was withdrawn. It goes from HERE as well as from the هيئة editor, and it has to:
+// this control writes the same `reading_style` row a هيئة captures, so leaving the third chip in the
+// reader would have left the retired answer one gesture away from being saved into a هيئة again.
 const DIA: { key: DiacriticsMode; label: TKey }[] = [
   { key: "show", label: "diacritics.show" },
-  { key: "dim", label: "diacritics.dim" },
   { key: "hide", label: "diacritics.hide" },
 ];
 const WEIGHT_KEY: Record<number, TKey> = { 400: "weight.normal", 500: "weight.medium", 700: "weight.bold" };
-
-// RAWY-201: a per-book colour row (Default + presets + native picker), reusing the exact rs-ink swatch
-// markup the text-colour control uses — NO new design. `value` is the stored override (null = follow the
-// theme); the Default swatch shows the theme's own value and clears the override.
-function ColorRow({
-  label,
-  value,
-  themeValue,
-  presets,
-  onPick,
-  t,
-}: {
-  label: string;
-  value: string | null;
-  themeValue: string;
-  presets: string[];
-  onPick: (v: string | null) => void;
-  t: (k: TKey) => string;
-}) {
-  return (
-    <>
-      <div className="rs-sec-head">
-        <span className="rs-label">{label}</span>
-      </div>
-      <div className="rs-inks">
-        <button
-          className={`rs-ink${value == null ? " on" : ""}`}
-          style={{ background: themeValue }}
-          onClick={() => onPick(null)}
-          title={t("color.default")}
-          aria-label={t("color.default")}
-        />
-        {presets.map((hex) => (
-          <button
-            key={hex}
-            className={`rs-ink${value?.toLowerCase() === hex.toLowerCase() ? " on" : ""}`}
-            style={{ background: hex }}
-            onClick={() => onPick(hex)}
-            title={hex}
-            aria-label={hex}
-          />
-        ))}
-        <label className="rs-ink rs-ink-custom" title={t("color.custom")}>
-          <span className="rs-ink-plus" aria-hidden>+</span>
-          <input
-            type="color"
-            value={/^#[0-9a-fA-F]{6}$/.test(value ?? "") ? (value as string) : themeValue}
-            onChange={(e) => onPick(e.target.value)}
-          />
-        </label>
-      </div>
-    </>
-  );
-}
-
-// ---- RAWY-281: THE REFERENCE INDICATOR (the twin rule) ----
-//
-// Three per-book controls over the mark under a referenced word — colour, thickness, distance from the
-// text. They live in the COLOUR tab because that is where every other per-book override of a reading
-// SURFACE already is (ink · page · background), and because RAWY-217 measured five tabs as this width's
-// ceiling: a sixth for one mark is not available. The group deliberately adds no tab, no toggle and no
-// new visual language — it is the existing `ColorRow` plus two `rs-slider-row`s, the same two primitives
-// `TtsTrackingControls` uses for the same job.
-//
-// The presets are SARD'S OWN THEME ACCENTS rather than invented colours (ivory · sepia · ink · sage on
-// light; slate · espresso · dusk · forest-night on dark), so every preset is a colour the app already
-// ships and has already been judged against these papers.
-const REF_PRESETS_LIGHT = ["#9C5A3C", "#97582F", "#7A2E1E", "#5E7A52"];
-const REF_PRESETS_DARK = ["#C98A5E", "#D49A6A", "#8FA6D8", "#82B08C"];
-// The preview draws at a fixed 20px because that is the size the design file specifies its flagship case
-// at ("20PX · 2PX RULES · 3PX GAP"), so an untouched control previews the design's own reference figure.
-const REF_PREVIEW_PX = 20;
-
-// Both size controls are a MULTIPLE of the design value and are shown as a percentage, where 100% is the
-// design exactly. A percentage is the right unit for both: the underlying quantities are em-based (they
-// track the reader's zoom and the book's font), so there is no px number that would stay true — and
-// "100% = the design" is a claim the reader can act on, unlike "0.30em".
-const refPct = (v: number | null) => Math.round((v ?? 1) * 100);
-
-function RefRuleControls({
-  style,
-  update,
-  accent,
-  dark,
-  t,
-}: {
-  style: ReadingStyle;
-  update: (patch: Partial<ReadingStyle>) => void;
-  accent: string;
-  dark: boolean; // the active theme's polarity — which preset column to offer, as everywhere else here
-  t: (k: TKey) => string;
-}) {
-  // The SAME resolver the page draws with (`reader-engine/refRule`), at the preview's own font size — so
-  // the preview cannot drift from the mark. This is the RAWY-259 lesson applied ahead of time: two
-  // surfaces showing one mark must share the computation, not a pair of matched constants.
-  const d = resolveRefRule(style, accent, REF_PREVIEW_PX);
-  // …and the SAME bar geometry, run against a unit box. `refRuleBars` returns the strokes measured DOWN
-  // from the content box (the SVG convention the overlayer needs); CSS `bottom` measures UP, so the sign
-  // flips and nothing else does. Deriving the preview from the shared function rather than re-deriving
-  // `-offset` / `-(offset + thickness + gap)` here is the point: there is exactly one place where the
-  // design's geometry can be wrong.
-  const bars = refRuleBars({ left: 0, width: 0, bottom: 0 }, d);
-  const bar = (b: { y: number; height: number; rx: number }): CSSProperties => ({
-    position: "absolute",
-    insetInline: 0,
-    bottom: -(b.y + b.height), // SVG top-down → CSS bottom-up, on the stroke's BOTTOM edge
-    height: b.height,
-    borderRadius: b.rx,
-    background: d.color,
-  });
-
-  return (
-    <>
-      <ColorRow
-        label={t("ref.color")}
-        value={style.refRuleColor}
-        themeValue={accent}
-        presets={dark ? REF_PRESETS_DARK : REF_PRESETS_LIGHT}
-        onPick={(v) => update({ refRuleColor: v })}
-        t={t}
-      />
-
-      <div className="rs-slider-row">
-        <span className="rs-slider-cap" style={{ fontSize: 12 }}>{t("ref.thickness")}</span>
-        <input
-          className="rs-slider"
-          type="range"
-          min={REF_WEIGHT_MIN}
-          max={REF_WEIGHT_MAX}
-          step={0.05}
-          aria-label={t("ref.thickness")}
-          value={style.refRuleWeight ?? 1}
-          onChange={(e) => update({ refRuleWeight: r2(Number(e.target.value)) })}
-        />
-        <span className="rs-slider-cap" style={{ fontSize: 12, minWidth: "2.5em", textAlign: "end" }}>
-          {refPct(style.refRuleWeight)}%
-        </span>
-      </div>
-
-      <div className="rs-slider-row">
-        <span className="rs-slider-cap" style={{ fontSize: 12 }}>{t("ref.offset")}</span>
-        <input
-          className="rs-slider"
-          type="range"
-          min={REF_OFFSET_MIN}
-          max={REF_OFFSET_MAX}
-          step={0.05}
-          aria-label={t("ref.offset")}
-          value={style.refRuleOffset ?? 1}
-          onChange={(e) => update({ refRuleOffset: r2(Number(e.target.value)) })}
-        />
-        <span className="rs-slider-cap" style={{ fontSize: 12, minWidth: "2.5em", textAlign: "end" }}>
-          {refPct(style.refRuleOffset)}%
-        </span>
-      </div>
-
-      {/* A live sample. Without it the two sliders are unreadable from inside the panel — the marked word
-          is very often not on screen, and neither quantity has a familiar unit. It is drawn from the
-          resolver above, so it is the mark, not a picture of it. Extra bottom padding leaves room for the
-          pair at the top of the offset range. */}
-      <div className="rs-ref-preview" aria-hidden>
-        <span style={{ position: "relative", fontSize: REF_PREVIEW_PX }}>
-          {t("ref.sample")}
-          <span style={bar(bars[0])} />
-          <span style={bar(bars[1])} />
-        </span>
-      </div>
-    </>
-  );
-}
 
 // ---- RAWY-265 (Phase 2): the READING DESK background ----
 //
@@ -276,7 +118,7 @@ function ReadingBackgroundSection() {
   // also the ground the "arrive correct" presence is solved against (a desk-coloured image can be
   // shown boldly; one that fights the desk arrives restrained).
   const bookThemeId = useTheme((s) => s.bookThemeId);
-  const deskGround = THEMES[bookThemeId].colors.surfaceBg;
+  const deskGround = resolveTheme(bookThemeId).colors.surfaceBg;
   // RAWY-278: the immersive blur step only exists while immersive mode is on, so its toggle follows
   // the same disabled + inert-note treatment the other immersive sub-options already use.
   const immersive = useTheme((s) => s.immersive);
@@ -295,6 +137,9 @@ function ReadingBackgroundSection() {
   };
   useEffect(() => () => { delete document.documentElement.dataset.bgImmPreview; }, []);
   const { reading, readingParams, setParams, choose, clear, resetParams } = useBackground();
+  // The overlay lives in the reading STYLE, not in the background params, so this section has to
+  // subscribe to it — the same value the editor reads, through the same function.
+  const overlayOff = useReader((st) => bgOverlayOf(st.style?.backgroundColor).kind === "none");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -346,7 +191,9 @@ function ReadingBackgroundSection() {
               }}
               aria-hidden
             />
-            <span className="bg-ctl-name" dir="auto">{reading.source_name ?? ""}</span>
+            <span className="bg-ctl-name" dir="auto" title={imageLabel(reading.source_name).full}>
+              {imageLabel(reading.source_name).label}
+            </span>
             <button className="bg-ctl-act" disabled={busy} aria-busy={busy} onClick={pick}>
               {busy && <span className="bg-ctl-spin" aria-hidden />}
               {busy ? t("gs.bg.preparing") : t("gs.bg.replace")}
@@ -370,16 +217,23 @@ function ReadingBackgroundSection() {
           {/* RAWY-279: the READING presence may travel past 100, down to a fully transparent overlay.
               The LIBRARY's may not — its scrim is a measured WCAG AA floor (see `presenceMaxFor`).
               0..100 is unchanged on both surfaces, so every existing profile renders identically. */}
+          {/* THE SAME RULE THE EDITOR APPLIES, from the same function. Presence is the strength of
+              the colour layer, and «بلا لون» removes that layer — so with no overlay there is
+              nothing for this to be the strength OF. Both surfaces read `bgOverlayOf`, so the two
+              cannot come to different conclusions about the same stored value. */}
           <Section label={t("gs.bg.presence")} value={localeDigits(String(readingParams.presence), lang)}>
             <Slider
               value={readingParams.presence}
               min={0}
               max={presenceMaxFor("reading")}
               step={1}
+              disabled={overlayOff}
               onInput={(v) => setParams("reading", { presence: v })}
             />
           </Section>
-          <div className="rs-sec-hint">{t("gs.bg.presenceHintReading")}</div>
+          <div className="rs-sec-hint">
+            {t(overlayOff ? "gs.bg.presenceNoOverlay" : "gs.bg.presenceHintReading")}
+          </div>
 
           <Section label={t("gs.bg.blur")} value={localeDigits(String(readingParams.blur), lang)}>
             <Slider
@@ -667,6 +521,68 @@ function TtsOutcomesRow() {
   );
 }
 
+/**
+ * THE NEAREST BOX THAT CAN HOLD A POPOVER WITHOUT CUTTING IT.
+ *
+ * An absolutely positioned box is clipped by — and counts toward the scrollable height of — any
+ * ancestor that both scrolls and is in its containing-block chain. The font list was anchored to its
+ * own row, and that row sits inside `.sp-body`, the settings drawer's `overflow-y: auto` scroller.
+ * So the drawer cut the list off AND grew its own scroll range by exactly the amount the list hung
+ * past the edge — one overflow, seen twice. Walking past every clipping ancestor to the first one
+ * that positions but does not clip is what takes the list out of that chain: the drawer is then not
+ * in its containing-block chain at all, so it can neither clip it nor count it.
+ *
+ * Returning null means nothing between here and the body qualified, and the caller falls back to
+ * the viewport — correct in this app, where the page itself never scrolls.
+ */
+function popoverHost(from: HTMLElement | null): HTMLElement | null {
+  let n = from?.parentElement ?? null;
+  // PAST THE CLIPPER, NOT UP TO IT. The control's own wrapper is positioned and clips nothing, so a
+  // walk that takes the first such ancestor stops one step from the trigger and escapes nothing —
+  // measured: the list was hung from an 18px-tall box, so it had no room to size itself against and
+  // came out at its floor every time, pointing down off the window. Only an ancestor OUTSIDE every
+  // clipping box between here and there is out of the chain, so the walk has to pass one first.
+  let escaped = false;
+  while (n && n !== document.body && n !== document.documentElement) {
+    const cs = getComputedStyle(n);
+    if (/(auto|scroll|hidden|clip)/.test(cs.overflowX + cs.overflowY)) escaped = true;
+    else if (escaped && cs.position !== "static") return n;
+    n = n.parentElement;
+  }
+  return null;
+}
+
+/** The scroller the control is riding in, so an open list can follow it or step aside. */
+function nearestScroller(from: HTMLElement | null): HTMLElement | null {
+  let n = from?.parentElement ?? null;
+  while (n && n !== document.documentElement) {
+    if (/(auto|scroll)/.test(getComputedStyle(n).overflowY)) return n;
+    n = n.parentElement;
+  }
+  return null;
+}
+
+/**
+ * A CHOICE, ON SARD'S OWN SURFACE.
+ *
+ * This was a native `<select>`, and both faults the reader reported came from that one fact.
+ *
+ * THE OPEN LIST WAS WINDOWS'. `appearance: none` restyles the closed control and nothing else — the
+ * popup is drawn by WebView2 in an OS layer no stylesheet reaches. The stylesheet admitted as much:
+ * `.rs-select option { color: #1a1a1a }` existed only to keep that white popup legible, which is
+ * the single lever CSS has over it. So a reader opening the font list left Sard and stood in a
+ * Windows menu, on every theme, over the glass.
+ *
+ * THE CLOSED CONTROL OVERFLOWED because a `<select>` sizes itself to its LONGEST OPTION rather than
+ * to the value it is showing, and as a flex item it defaults to `min-width: auto` — it refuses to
+ * shrink below that content. «IBM Plex Sans Arabic» therefore pushed straight through the field's
+ * rounded edge. That is why the fix is not a smaller type size: the box was never asked to fit.
+ *
+ * What replaces it is a button and a list, which is all a select is. The list is `--pap` on a
+ * hairline with the panel's own radius and the quiet scrollbar the rest of the chrome uses, so it
+ * belongs to the surface that opened it. The value truncates because it is now ordinary text in a
+ * box that is allowed to be smaller than it.
+ */
 function SelectRow<T extends string>({
   label,
   value,
@@ -675,41 +591,290 @@ function SelectRow<T extends string>({
 }: {
   label: string;
   value: T;
-  options: { key: T; label: string }[];
+  options: { key: T; label: string; note?: string }[];
   onChange: (k: T) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  /** Where the list fits, measured when it opens rather than assumed. */
+  const [place, setPlace] = useState<{ up: boolean; style: CSSProperties }>({ up: false, style: {} });
+  /** The box it hangs from — resolved from the tree rather than named. */
+  const [host, setHost] = useState<HTMLElement | null>(null);
+  const [active, setActive] = useState(0);
+  const trigger = useRef<HTMLButtonElement | null>(null);
+  const list = useRef<HTMLUListElement | null>(null);
+  const id = useId();
+
+  const at = Math.max(0, options.findIndex((o) => o.key === value));
+  const current = options[at]?.label ?? String(value);
+
+  /**
+   * WHERE IT FITS, MEASURED AGAINST THE BOX IT IS ACTUALLY IN.
+   *
+   * It used to ask the WINDOW how much room it had, while living inside a 436px scroll box — which
+   * is why it sized itself to 268px wherever it stood, and why the drawer then cut it off. Measured
+   * at every window size tried: the list hung 48px below `.sp-body` and was sliced there by a hard
+   * edge, and that same scroller's `scrollHeight` grew by the same 48px.
+   *
+   * So it hangs from `popoverHost` — the first ancestor that positions without clipping — and every
+   * figure below is read off THAT box. It leaves the scroller's containing-block chain, so it stops
+   * being clipped by it and stops enlarging it, and it is sized to the room the drawer really has.
+   *
+   * `position: fixed` is not the escape it looks like: the drawer carries a `backdrop-filter` AND a
+   * `transform`, and either one alone makes it the containing block for its fixed descendants —
+   * measured on the running app rather than assumed. A fixed list would resolve against the drawer
+   * regardless, while reading as though it resolved against the window. Saying `absolute` against a
+   * host we actually looked up says the same thing, truthfully.
+   */
+  const measure = useCallback(() => {
+    const t = trigger.current;
+    if (!t) return;
+    const h = popoverHost(t);
+    const view = new DOMRect(0, 0, window.innerWidth, window.innerHeight);
+    // TWO BOXES, TWO QUESTIONS, and they are deliberately not the same box.
+    //
+    // `origin` is the CONTAINING BLOCK — what the offsets below are counted from. It is the drawer,
+    // because that is the first thing outside the scroller that can hold the list whole.
+    //
+    // `room` is where the list is ALLOWED TO BE, and that is the band the rows themselves occupy:
+    // escaping the scroller's clipping is the fix, but a list free to cover the drawer's title and
+    // tabs would read as having escaped the panel too. Bounded by the rows and clipped by nobody is
+    // both of the things this needs to be. Intersected with the window so a drawer that hangs off
+    // the screen can never size the list to room it does not have.
+    const origin = h ? h.getBoundingClientRect() : view;
+    const bounds = nearestScroller(t)?.getBoundingClientRect() ?? origin;
+    const top = Math.max(bounds.top, view.top), bottom = Math.min(bounds.bottom, view.bottom);
+    const left = Math.max(bounds.left, view.left), right = Math.min(bounds.right, view.right);
+    const r = t.getBoundingClientRect();
+    const EDGE = 14;   // breathing room off the edge of that room
+    const GAP = 7;     // the list's own offset from the trigger
+    const WANT = 268;  // the height it would like, if the room is there
+    const below = bottom - r.bottom - GAP - EDGE;
+    const above = r.top - top - GAP - EDGE;
+    const up = below < Math.min(WANT, 200) && above > below;
+    // THE LIST IS THE CONTROL'S OWN RECTANGLE, CONTINUED. `r` is the whole selector — the label,
+    // the value and the caret — so taking its width and its leading edge makes the two boxes line up
+    // exactly, above or below, and makes the popover read as the same control opened rather than a
+    // menu that happened to appear near it. Both edges are physical and both come from the same
+    // rectangle, so there is no direction to get wrong.
+    const style: CSSProperties = {
+      position: h ? "absolute" : "fixed",
+      maxHeight: Math.max(120, Math.round(Math.min(WANT, up ? above : below))),
+      left: Math.round(r.left - origin.left),
+      width: Math.round(Math.min(r.width, right - left)),
+    };
+    if (up) style.bottom = Math.round(origin.bottom - r.top + GAP);
+    else style.top = Math.round(r.bottom - origin.top + GAP);
+    setHost(h);
+    setPlace({ up, style });
+  }, []);
+
+  useLayoutEffect(() => { if (open) measure(); }, [open, at, measure]);
+
+  // IT NO LONGER MOVES WITH THE PANEL, because it is no longer inside it — so it is told when the
+  // panel moves. And if the row it belongs to scrolls out of the drawer's window there is nothing
+  // left to hang from, so the list goes too rather than floating over the panel unattached.
+  useEffect(() => {
+    if (!open) return;
+    const scroller = nearestScroller(trigger.current);
+    const again = () => {
+      const t = trigger.current;
+      if (t && scroller) {
+        const r = t.getBoundingClientRect(), b = scroller.getBoundingClientRect();
+        if (r.bottom < b.top + 2 || r.top > b.bottom - 2) { setOpen(false); return; }
+      }
+      measure();
+    };
+    window.addEventListener("resize", again);
+    document.addEventListener("scroll", again, true);
+    return () => {
+      window.removeEventListener("resize", again);
+      document.removeEventListener("scroll", again, true);
+    };
+  }, [open, measure]);
+
+  // OPENING STARTS AT THE CURRENT CHOICE, which is what a select does and what makes Arrow keys
+  // feel like a continuation rather than a reset.
+  const show = () => {
+    setActive(at);
+    // IN THE SAME BATCH AS THE OPEN. Resolving the host in the layout effect instead would paint one
+    // frame against the fallback and then move it, which is a flinch on every open.
+    setHost(popoverHost(trigger.current));
+    setOpen(true);
+    // AND TAKE FOCUS. The keys are read on the trigger, so a list opened by a press the button did
+    // not receive focus from is a list the keyboard cannot reach — measured: Arrow and Enter went
+    // to the document and the selection never moved. Focusing here makes the two ways of opening
+    // it arrive in the same state.
+    trigger.current?.focus();
+  };
+  const hide = (refocus = true) => {
+    setOpen(false);
+    // AFTER THE LIST HAS GONE. Focusing in the same turn as the state change races the unmount —
+    // measured on the Escape path, which closed correctly and left focus on the body, so the next
+    // key went to the drawer instead of the control the reader was standing in.
+    if (refocus) requestAnimationFrame(() => trigger.current?.focus());
+  };
+  const choose = (k: T) => { onChange(k); hide(); };
+
+  // A press anywhere else closes it. Armed on the next frame so the press that OPENED it — still
+  // travelling toward the document — is not read as a press outside.
+  useEffect(() => {
+    if (!open) return;
+    let armed = false;
+    const f = requestAnimationFrame(() => { armed = true; });
+    const away = (e: PointerEvent) => {
+      if (!armed) return;
+      const n = e.target as Node;
+      // THE LIST IS NOT INSIDE THE CONTROL ANY MORE — it hangs from the drawer — so containment has
+      // to be asked of both, or choosing a font reads as a press outside and closes before it lands.
+      if (trigger.current?.contains(n) || list.current?.contains(n)) return;
+      setOpen(false);
+    };
+    document.addEventListener("pointerdown", away, true);
+    return () => { cancelAnimationFrame(f); document.removeEventListener("pointerdown", away, true); };
+  }, [open]);
+
+  /**
+   * Keep the highlighted row in view when the keys walk past the edge of a long list.
+   *
+   * BY MOVING THE LIST, NOT WHAT IS BEHIND IT. `scrollIntoView` walks every scrollable ancestor, so
+   * revealing the current font also scrolled the settings drawer — measured at 1440x900: opening the
+   * chooser took the drawer from scrollTop 0 to 179 in the same frame, which is the lurch the reader
+   * saw. The list is the only thing that should move here, so it is the only thing moved.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const l = list.current;
+    const el = l?.querySelector<HTMLElement>(`[data-at="${active}"]`);
+    if (!l || !el) return;
+    const top = el.offsetTop - l.clientTop;
+    const bottom = top + el.offsetHeight;
+    if (top < l.scrollTop) l.scrollTop = top;
+    else if (bottom > l.scrollTop + l.clientHeight) l.scrollTop = bottom - l.clientHeight;
+  }, [open, active]);
+
+  /**
+   * THE SEMANTICS A NATIVE SELECT GAVE FOR FREE, written out.
+   *
+   * Focus stays on the button and `aria-activedescendant` names the row being walked, rather than
+   * moving focus into the list — a listbox that takes focus has to give it back on every exit, and
+   * every path that forgets is a trap. There is nothing here to escape from.
+   */
+  const onKey = (e: React.KeyboardEvent) => {
+    if (!open) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        show();
+      }
+      return;
+    }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); hide(); return; }
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      const pick = options[active];
+      if (pick) choose(pick.key);
+      return;
+    }
+    if (e.key === "Tab") { setOpen(false); return; }
+    const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+    if (step) {
+      e.preventDefault();
+      setActive((i) => (i + step + options.length) % options.length);
+      return;
+    }
+    if (e.key === "Home") { e.preventDefault(); setActive(0); }
+    if (e.key === "End") { e.preventDefault(); setActive(options.length - 1); }
+  };
+
+  /**
+   * ONE SURFACE, NOT A BUTTON SITTING IN A BOX THAT LOOKS LIKE ONE.
+   *
+   * The rounded rectangle a reader sees IS this row, but only the value inside it used to take the
+   * press — so the label, the gap and the caret all looked pressable and did nothing, and the
+   * hotspot was visibly smaller than the control. The row carries nothing but this selector's own
+   * label and value, so the row is the control: it takes the press, the focus and the keys, and it
+   * is the rectangle the list is measured and aligned against.
+   */
   return (
-    <label className="rs-select-row">
-      <span className="rs-select-label">{label}</span>
-      <span className="rs-select-wrap">
-        <select className="rs-select" value={value} onChange={(e) => onChange(e.target.value as T)}>
-          {options.map((o) => (
-            <option key={o.key} value={o.key}>
-              {o.label}
-            </option>
+    <>
+      <button
+        type="button"
+        ref={trigger}
+        className="rs-select-row"
+        role="combobox"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-controls={`${id}-list`}
+        aria-labelledby={`${id}-label`}
+        aria-activedescendant={open ? `${id}-opt-${active}` : undefined}
+        onClick={() => (open ? hide(false) : show())}
+        onKeyDown={onKey}
+      >
+        <span className="rs-select-label" id={`${id}-label`}>{label}</span>
+        <span className="rs-sel">
+          <span className="rs-sel-value">{current}</span>
+          {options[at]?.note && <span className="rs-sel-note">{options[at].note}</span>}
+          <span className="rs-sel-caret" aria-hidden>▾</span>
+        </span>
+      </button>
+      {/* RENDERED INTO THE HOST, NOT HERE. In the tree it stays the trigger's sibling — React
+          keeps events, focus order and `aria-controls` intact across a portal — but in layout it
+          becomes a child of the drawer, which is the whole point: out of the scroller's
+          containing-block chain, so the scroller can neither cut it nor grow around it. */}
+      {open && createPortal(
+        <ul
+          className={`rs-sel-list${place.up ? " is-up" : ""}`}
+          id={`${id}-list`}
+          role="listbox"
+          ref={list}
+          aria-labelledby={`${id}-label`}
+          style={place.style}
+        >
+          {options.map((o, i) => (
+            <li
+              key={o.key}
+              id={`${id}-opt-${i}`}
+              data-at={i}
+              role="option"
+              aria-selected={o.key === value}
+              className={`rs-sel-opt${o.key === value ? " is-on" : ""}${i === active ? " is-at" : ""}`}
+              onPointerEnter={() => setActive(i)}
+              onClick={() => choose(o.key)}
+            >
+              <span className="rs-sel-name">{o.label}</span>
+              {/* «مستورد» ON EVERY ROW WAS THE LOUDEST THING IN THE LIST. It was part of the
+                  label string, so it sat in the same ink and the same size as the name it
+                  qualified and repeated down the whole column — and it rode into the closed
+                  control too, where it ate the width the name needed. It says something worth
+                  keeping (this face came from the reader's own files, not Sard's), so it stays —
+                  as a mark beside the name rather than more of the name. */}
+              {o.note && <span className="rs-sel-note">{o.note}</span>}
+            </li>
           ))}
-        </select>
-        <span className="rs-select-caret" aria-hidden>▾</span>
-      </span>
-    </label>
+        </ul>,
+        host ?? document.body,
+      )}
+    </>
   );
 }
 
-export function ReadingSettings({ style, update, isRtlBook, section = "typography", bookThemeId, onPickTheme, unified }: Props) {
+export function ReadingSettings({
+  style, update, isRtlBook, section = "typography", bookThemeId, onPickTheme,
+  speakSymbolsOverride = null, speakSymbolsAppearance = false, onSpeakSymbols,
+}: Props) {
   const { t, lang } = useI18n();
-  // RAWY-216: ONE scope wording for the whole drawer. Three phrasings used to say the same thing; the
-  // scope NOUN now lives in a single pair of keys, shared with the panel's banner, and a section
-  // heading appends it after an em dash. The noun is chosen by the ACTIVE book-style model (D43):
-  // unified writes the global row, per-book writes this book's override.
-  const scopeSuffix = `— ${unified ? t("scope.allBooks") : t("scope.thisBook")}`;
-  // The one row whose scope differs from its tab's (see the immersive master in Layout) states it
-  // explicitly, using the same noun rather than a fourth phrasing.
-  const scopeAllSuffix = `— ${t("scope.allBooks")}`;
+  // THE SCOPE SUFFIXES ARE GONE WITH THE SCOPE. They existed to say which of two models a control
+  // was writing under — "this book" or "all books" — and there is only one model now: every reading
+  // setting is the reader's, once, for every book. A suffix that can only ever say the same thing is
+  // not information, and one that still said "this book" would be false.
   // Override-book-colour + hide-chapter-title + hide-first-line stay GLOBAL flags (RAWY-40); the
   // THEME is per-book. RAWY-69 split hide-chapter-title/hide-first-line into two independent flags.
   const { overrideBookColor, hideChapterTitles, hideFirstLine, immersive, setOverride, setHideTitles, setHideFirstLine, setImmersive } = useTheme();
   const customFonts = useFonts((s) => s.custom); // RAWY-44 — imported fonts for the book pickers
-  const theme = THEMES[bookThemeId];
+  const theme = resolveTheme(bookThemeId);
+  // The theme's DISPLAYED name. The sixteen Sard ships are localised (`theme.<id>`); a
+  // reader-authored theme carries text the reader typed, which is not translatable and is shown as
+  // written — the same rule a Profile's own name follows.
+  const themeName = isBuiltinThemeId(theme.id) ? t(`theme.${theme.id}`) : theme.name;
   const dark = theme.dark;
   // RAWY-201: the EFFECTIVE page colour (custom, else the theme's) — the contrast guard checks the ink
   // against the surface the text ACTUALLY sits on, so a custom page colour is what an unreadable pair is
@@ -802,14 +967,14 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
 
       {/* ---- BOOK TEXT FONT (RAWY-45); imported fonts listed too (RAWY-44). RAWY-216: the heading no
            longer rewords itself by scope — it is one stable title plus the shared scope suffix. ---- */}
-      <div className="rs-sec-title">{t("type.font")} <span className="rs-scope">{scopeSuffix}</span></div>
+      <div className="rs-sec-title">{t("type.font")}</div>
       <SelectRow<string>
         label={t("type.latin")}
         value={style.latinFont}
         onChange={(k) => update({ latinFont: k })}
         options={[
           ...(Object.keys(LATIN_FONTS) as LatinFont[]).map((k) => ({ key: k, label: LATIN_FONTS[k].label })),
-          ...customFonts.map((c) => ({ key: c.family_name, label: `${c.family_name} · ${t("gs.imported")}` })),
+          ...familiesOnce(customFonts).map((c) => ({ key: c.family_name, label: c.family_name, note: t("gs.imported") })),
         ]}
       />
       <SelectRow<string>
@@ -818,7 +983,7 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
         onChange={(k) => update({ arabicFont: k })}
         options={[
           ...(Object.keys(ARABIC_FONTS) as ArabicFont[]).map((k) => ({ key: k, label: ARABIC_FONTS[k].label })),
-          ...customFonts.map((c) => ({ key: c.family_name, label: `${c.family_name} · ${t("gs.imported")}` })),
+          ...familiesOnce(customFonts).map((c) => ({ key: c.family_name, label: c.family_name, note: t("gs.imported") })),
         ]}
       />
       {/* RAWY-271: discoverability only. Imported fonts already appear in both lists above (RAWY-44),
@@ -876,7 +1041,7 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
       {/* ---- TEXT COLOUR (RAWY-40, Band I) — per-book ink within the active theme ---- */}
       <div className="rs-sec-head">
         <span className="rs-label">{t("color.text")}</span>
-        <span className="rs-value rs-na">{t("color.within", { theme: t(`theme.${theme.id}`) })}</span>
+        <span className="rs-value rs-na">{t("color.within", { theme: themeName })}</span>
       </div>
       <div className="rs-inks">
         {/* Default = follow the theme ink (textColor null) */}
@@ -898,18 +1063,18 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
           />
         ))}
         {/* Custom colour via the native picker */}
-        <label className="rs-ink rs-ink-custom" title={t("color.custom")}>
-          <span className="rs-ink-plus" aria-hidden>+</span>
-          <input
-            type="color"
-            value={/^#[0-9a-fA-F]{6}$/.test(style.textColor ?? "") ? (style.textColor as string) : theme.colors.text}
-            onChange={(e) => update({ textColor: e.target.value })}
+        <InkCustom
+            value={style.textColor}
+            fallback={theme.colors.text}
+            onPick={(hex) => update({ textColor: hex })}
+            presets={presets}
+            contrastAgainst={paper}
+            title={t("color.custom")}
           />
-        </label>
       </div>
       <div className={`rs-contrast${readable ? "" : " warn"}`}>
         <span aria-hidden>{readable ? "✓" : "⚠"}</span>
-        <span>{readable ? t("color.contrastOk") : t("color.contrastWarn", { theme: t(`theme.${theme.id}`) })}</span>
+        <span>{readable ? t("color.contrastOk") : t("color.contrastWarn", { theme: themeName })}</span>
       </div>
 
       {/* ---- PAGE COLOUR (RAWY-201) — the reading surface, per-book; null = the theme's own paper ---- */}
@@ -925,10 +1090,28 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
       {/* ---- BACKGROUND COLOUR (RAWY-201) — behind the page (replaces Moonlit decorations); null = theme ---- */}
       <ColorRow
         label={t("color.background")}
+        offerNone
         value={style.backgroundColor}
         themeValue={theme.colors.surfaceBg}
         presets={dark ? BG_PRESETS_DARK : BG_PRESETS_LIGHT}
         onPick={(v) => update({ backgroundColor: v })}
+        t={t}
+      />
+
+      {/* ---- NUMBER COLOUR — the digits in the book, on their own.
+           THE SAME FIELD A PROFILE CARRIES. `numberColor` is a `ReadingStyle` value, so this row and
+           the profile editor's «الأرقام» chip are two doors onto one setting rather than two settings
+           that have to be kept in step. The reader could already be given one by activating a profile
+           and had no way to see or change it here, which is the whole of the gap this closes.
+           `null` = the digits inherit the text ink, which is what an untouched book has always done —
+           and the paint is a CSS Custom Highlight over ranges the engine registers, so nothing in the
+           book's DOM changes and every CFI, highlight, note and read-aloud range is untouched. ---- */}
+      <ColorRow
+        label={t("color.numbers")}
+        value={style.numberColor}
+        themeValue={ink}
+        presets={presets}
+        onPick={(v) => update({ numberColor: v })}
         t={t}
       />
 
@@ -953,6 +1136,37 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
         themeInk={theme.colors.text}
         deskBg={theme.colors.surfaceBg}
       />
+
+      {/* THIS BOOK'S OWN ANSWER, under the هيئة's. The toggle above belongs to the worn هيئة and moves
+          every book with it; this row is where ONE book departs from that, and it names which of the
+          two is actually in force so the reader is never guessing. Three choices rather than a switch,
+          because «لا» and «حسب الهيئة» are different answers and a switch cannot express the way back. */}
+      {onSpeakSymbols && (
+        <div className="rs-sec">
+          <div className="rs-sec-head">
+            <span className="rs-label">{t("track.speakSymbolsBook")}</span>
+            <span className="rs-value">
+              {speakSymbolsOverride == null
+                ? t(speakSymbolsAppearance ? "track.speakSymbols.onViaProfile" : "track.speakSymbols.offViaProfile")
+                : t(speakSymbolsOverride ? "track.speakSymbols.on" : "track.speakSymbols.off")}
+            </span>
+          </div>
+          <div className="rs-seg">
+            {([[null, "track.speakSymbols.follow"], [true, "track.speakSymbols.on"], [false, "track.speakSymbols.off"]] as const)
+              .map(([v, key]) => (
+                <button
+                  key={key}
+                  className={`rs-seg-item${speakSymbolsOverride === v ? " on" : ""}`}
+                  onClick={() => onSpeakSymbols(v)}
+                  aria-pressed={speakSymbolsOverride === v}
+                >
+                  {t(key)}
+                </button>
+              ))}
+          </div>
+          <div className="rs-sec-hint">{t("track.speakSymbolsBookHint")}</div>
+        </div>
+      )}
 
       {/* RAWY-257 (Phase 1) / RAWY-255: the diagnostic switch. Last in the tab, under a divider — it is a
           troubleshooting aid, not a reading control, and must not compete with the tracking highlights above. */}
@@ -1007,19 +1221,17 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
       <div className="rs-divider" />
 
       {/* RAWY-210: immersive hide-on-scroll MASTER — a GLOBAL reading-behaviour flag (via useTheme, like the
-          hide-title toggles), not per-book typography, so it is NOT wired through `update`. RAWY-216: it is the
-          ONE deliberate exception to "scope is structural" — it stays in Layout because its two children are
-          per-book and functionally inseparable from it, so it carries the quiet "all books" suffix instead. */}
+          hide-title toggles), not typography, so it is NOT wired through `update`. It stays in Layout
+          because its two children are functionally inseparable from it; the "all books" suffix it used
+          to carry is gone with the scope that made it worth saying. */}
       <ToggleRow
         label={t("type.immersive")}
-        scope={scopeAllSuffix}
         hint={t("type.immersiveHint")}
         on={immersive}
         onToggle={() => setImmersive(!immersive)}
       />
-      {/* RAWY-212: two PER-BOOK sub-toggles (D43 — written via `update`, so unified writes the global default
-          and per-book writes this book's override). They gate each element's hide-on-scroll-away independently;
-          dimmed + inert while the master is off. The resume hint is intentionally NOT a toggle — it always
+      {/* RAWY-212: two sub-toggles gating each element's hide-on-scroll-away independently; dimmed +
+          inert while the master is off. The resume hint is intentionally NOT a toggle — it always
           shows in immersive mode (owner revision). */}
       <ToggleRow sub disabled={!immersive} label={t("type.immHidePill")} on={style.immHidePill} onToggle={() => update({ immHidePill: !style.immHidePill })} />
       <ToggleRow sub disabled={!immersive} label={t("type.immHideScrollbar")} on={style.immHideScrollbar} onToggle={() => update({ immHideScrollbar: !style.immHideScrollbar })} />
@@ -1030,13 +1242,12 @@ export function ReadingSettings({ style, update, isRtlBook, section = "typograph
 
       {section === "allbooks" && (
       <>
-      {/* ---- ALL BOOKS (RAWY-216) — the three GLOBAL flags (RAWY-40/69) that ignore the per-book/unified
-           scope. They used to sit at the bottom of the Theme tab under an "applies to all books" heading,
-           inside a drawer whose banner said "this book" (RAWY-80, audit #8). Now the TAB is the scope
-           signal, so a reader cannot flip one while reading "this book only" and silently change every
-           book. Hide chapter title / Hide first line ALSO lived in the Contents panel — that duplicate is
-           removed, and this is now their single home. ---- */}
-      <div className="rs-sec-hint">{t("settings.allbooksSub")}</div>
+      {/* ---- The three flags that act on the book's own content, plus the reading background. They
+           are stored outside `ReadingStyle` and were grouped here when the drawer still had two
+           scopes, to keep a reader from flipping one while reading "this book only". That contrast is
+           gone: every reading setting applies to every book now, so the group's old subtitle — "these
+           always apply to every book, not just this one" — would be saying something about a
+           distinction that no longer exists. The grouping is kept; the claim is not. ---- */}
       <ToggleRow label={t("theme.override")} on={overrideBookColor} onToggle={() => setOverride(!overrideBookColor)} />
       <ToggleRow label={t("theme.hideTitles")} on={hideChapterTitles} onToggle={() => setHideTitles(!hideChapterTitles)} />
       <ToggleRow

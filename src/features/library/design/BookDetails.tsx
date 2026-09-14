@@ -8,7 +8,7 @@
 // `metadata_overrides`, never a rewrite of the source EPUB. Clearing a control returns the book
 // to what Sard derives for it rather than to a second stored default.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import type { BookRow, CaseNode, ShelfNode } from "../../../lib/ipc";
@@ -21,7 +21,8 @@ import {
   bookStageSpine,
   bookUpdate,
   collectionRemoveBook,
-  shelfPlaceBook,
+  libraryAddBookToShelf,
+  libraryPlaceBook,
   progressSave,
 } from "../../../lib/ipc";
 import { useI18n } from "../../../i18n";
@@ -29,8 +30,13 @@ import { localeNum } from "../../../lib/format";
 import { resolveBookMeta, displayTitle } from "../../../lib/bookMeta";
 import { autoCoverPaint } from "../AutoCover";
 import { coverSrc } from "../coverSrc";
-import { isFinished, progressPct } from "./model";
+import { openTransient } from "./transient";
+import { useSettledBusy } from "./busy";
+import {
+  awaitsShelfChoice, isFinished, progressPct } from "./model";
 import { coverPresentation, type CoverMode } from "./coverPresentation";
+import { displayFace, labelFace, scriptOf } from "../../../lib/typography";
+
 import {
   draftFromBook,
   draftWithNoPaint,
@@ -41,8 +47,9 @@ import {
   previewRow,
   type BookDraft,
 } from "./bookEdits";
+import { useScrimDismiss, useDialog } from "../../../components/useDialog";
+import { Icon } from "../../../components/Icon";
 
-const ARABIC = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
 
 /** The dialog's palette, exactly as authored. */
 const PALETTE = [
@@ -89,7 +96,15 @@ export interface BookDetailsProps {
   cases: CaseNode[];
   loose: ShelfNode[];
   /** Which shelf currently holds this book, and the case above it. */
-  placement: { caseNode: CaseNode | null; shelf: ShelfNode; categoryId: string | null } | null;
+  /**
+   * EVERY SHELF THIS BOOK IS ON, in the arrangement's order. Empty for a book on no shelf.
+   *
+   * Plural because a book may sit on «روايات عربية» and «المفضلة» at once and must be shown on
+   * both. It was a single placement, which forced whoever computed it to choose one of several and
+   * present it as the answer — and a panel that then offered «move» against that choice would
+   * destroy a membership the reader never named.
+   */
+  placements: { caseNode: CaseNode | null; shelf: ShelfNode; categoryId: string | null }[];
   /** The Library toast — a failed organisation write says so rather than doing nothing visible. */
   notify: (msg: string) => void;
   onClose: () => void;
@@ -99,9 +114,179 @@ export interface BookDetailsProps {
   libraryCoverMode: CoverMode;
 }
 
+
+/**
+ * THE DESTINATIONS, AS PART OF THE SECTION RATHER THAN A CARD OVER IT.
+ *
+ * It was a floating panel: absolutely positioned, on the menu surface, with a shadow and a flip for
+ * when it ran off the window. Inside an already-floating dialog that reads as a second, unrelated
+ * rectangle — it overlapped the controls beneath it, it had to guess which way to open, and its
+ * relationship to the button that summoned it was something the reader had to infer from proximity.
+ *
+ * Opening IN THE FLOW removes all of that. There is no anchoring, no collision, no stacking order
+ * and no way for it to escape the dialog, because it is inside the dialog's own column and the
+ * dialog scrolls it like everything else. What is left to design is the only thing that mattered:
+ * the hierarchy.
+ *
+ * CABINET → SHELF, IN SARD'S OWN IDIOM. The sidebar already draws this relationship — a cabinet
+ * with its ink, and its shelves indented off a rail beneath it — so the chooser draws it the same
+ * way rather than inventing a second grammar for the same fact. A flat list of shelf names with a
+ * heading above them, which is what this was, reads as one column of equals: «روايات» sat in the
+ * same place and nearly the same weight as «test1» underneath it.
+ *
+ * The ink dot is what finally separates two shelves called «المفضّلة»: they hang off different
+ * rails, under different colours.
+ */
+function Chooser(props: {
+  groups: { id: string; name: string; ink: string | null; items: { id: string; name: string }[] }[];
+  current: string;
+  onPick: (id: string) => void;
+  onClose: () => void;
+  /** Show the search field once the list is at least this long. */
+  searchFrom: number;
+}) {
+  const { t } = useI18n();
+  const [q, setQ] = useState("");
+  const box = useRef<HTMLDivElement | null>(null);
+
+  // BRING IT INTO VIEW. It opens in the dialog's own column, below a button that may itself be near
+  // the foot of the scroll — so without this the panel appears somewhere the reader cannot see and
+  // the press looks as though it did nothing.
+  useEffect(() => {
+    box.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, []);
+
+  // Escape closes it. Nothing else is needed: it is in the flow, so a press elsewhere is a press on
+  // whatever it lands on, and the button that opened it is a toggle.
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.stopPropagation(); props.onClose(); }
+    };
+    document.addEventListener("keydown", esc, true);
+    return () => document.removeEventListener("keydown", esc, true);
+  }, [props.onClose]);
+
+  const total = props.groups.reduce((n, g) => n + g.items.length, 0);
+  const needle = q.trim().toLowerCase();
+  const shown = props.groups
+    .map((g) => ({
+      ...g,
+      items: needle
+        ? g.items.filter((it) => it.name.toLowerCase().includes(needle) || g.name.toLowerCase().includes(needle))
+        : g.items,
+    }))
+    .filter((g) => g.items.length);
+
+  return (
+    <div
+      ref={box}
+      data-chooser="1"
+      style={{
+        marginTop: 8,
+        border: "1px solid var(--brd)",
+        borderRadius: "var(--r-md)",
+        background: "var(--pap)",
+        overflow: "hidden",
+        animation: "sard-rise .12s ease-out",
+      }}
+    >
+      {total >= props.searchFrom && (
+        <div style={{ padding: "8px 8px 4px" }}>
+          <input
+            autoFocus
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={t("lib.searchShelves")}
+            style={{
+              width: "100%",
+              height: 30,
+              padding: "0 10px",
+              borderRadius: 8,
+              border: "1px solid var(--brd)",
+              background: "var(--chr)",
+              color: "var(--txt)",
+              font: "500 .75rem var(--ui)",
+            }}
+          />
+        </div>
+      )}
+      <div className="libd-quietscroll" style={{ maxHeight: 236, overflowY: "auto", padding: "4px 0 8px" }}>
+        {shown.length === 0 && (
+          <div style={{ padding: "10px 13px", font: "400 .75rem var(--ui)", color: "var(--faint)" }}>
+            {t("lib.noMatchingShelf")}
+          </div>
+        )}
+        {shown.map((g) => (
+          <div key={g.id}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 13px 4px" }}>
+              {/* THE CABINET'S OWN INK, the same 7px square the tree and the case chips carry. */}
+              <span
+                aria-hidden
+                style={{
+                  flex: "none",
+                  width: 7,
+                  height: 7,
+                  borderRadius: 2,
+                  background: g.ink ?? "var(--faint)",
+                }}
+              />
+              <span
+                style={{
+                  font: "600 .6875rem var(--ui)",
+                  color: "var(--mut)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {g.name}
+              </span>
+            </div>
+            {/* THE SHELVES HANG OFF A RAIL, indented under their cabinet — the sidebar's own
+                arrangement, so the relationship needs no explaining. */}
+            <div
+              style={{
+                marginInlineStart: 16,
+                paddingInlineStart: 6,
+                borderInlineStart: "1px solid var(--brd)",
+              }}
+            >
+              {g.items.map((it) => (
+                <button
+                  key={it.id || "none"}
+                  className="libd-hov"
+                  data-pick={it.id}
+                  onClick={() => props.onPick(it.id)}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "flex-start",
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    border: "none",
+                    textAlign: "start",
+                    cursor: "pointer",
+                    font: "500 .8125rem var(--ui)",
+                    background: props.current === it.id ? "var(--act)" : "transparent",
+                    color: props.current === it.id ? "var(--txt)" : "var(--txt)",
+                  }}
+                >
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {it.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function BookDetails(props: BookDetailsProps) {
   const { t, lang } = useI18n();
-  const rtl = lang === "ar";
   const num = (n: number) => localeNum(n, lang);
   const [book, setBook] = useState<BookRow>(props.book);
   // Every field edit lands HERE, not in the database. Save writes the difference; Cancel throws
@@ -109,6 +294,11 @@ export function BookDetails(props: BookDetailsProps) {
   // which is not something a buffer can hold honestly.
   const [draft, setDraft] = useState<BookDraft>(() => draftFromBook(props.book));
   const [busy, setBusy] = useState(false);
+  // `busy` stays the truth about whether a write is running; this is whether it has run long enough
+  // to be worth showing. A shelf change against a local database finishes in about eleven
+  // milliseconds, and dimming for eleven milliseconds is a flash rather than feedback — see
+  // `useSettledBusy`, which is where the reasoning and the threshold live.
+  const showBusy = useSettledBusy(busy);
 
   useEffect(() => {
     setBook(props.book);
@@ -121,7 +311,37 @@ export function BookDetails(props: BookDetailsProps) {
   const preview = previewRow(book, draft);
   const meta = resolveBookMeta(preview);
   const shown = displayTitle(meta, t);
-  const arabic = book.dir === "rtl" || ARABIC.test(shown);
+
+  /**
+   * THE PANEL ANSWERS TO ESCAPE, like every other surface that covers the library.
+   *
+   * Measured before this existed: Escape did nothing at all here. Vista's own handler already
+   * defers while this panel is open — `if (detailsFor || …) return` — precisely so the key is not
+   * spent navigating out from under an open dialog. But nothing then consumed it, so the most
+   * modal surface in the library was the one surface the key could not close.
+   *
+   * Joining the stack also means a book menu opened behind it cannot outlive it. It does NOT mean
+   * the stack takes the press outside: that listener sees only the press, and this sheet needs both
+   * ends of the gesture to tell a dismissal from a title dragged a pixel too far. The scrim below
+   * owns it.
+   */
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useEffect(
+    // NOT by an outside press: the scrim below owns that gesture, and it needs both ends of it.
+    () => openTransient(props.onClose, () => dialogRef.current, { outsidePress: false }),
+    [props.onClose],
+  );
+  /**
+   * ESCAPE IS ALREADY THIS DIALOG'S OWN — `openTransient` owns the stack that closes the nearest
+   * layer first. So no `onDismiss` here: two handlers for one key would be two chances to close
+   * the wrong thing. What was missing is everything else a modal owes a keyboard —
+   * the trap, and giving focus back to the tile that opened it.
+   */
+  const dlg = useDialog({ label: shown, initialFocus: "none" });
+  // The backdrop takes a press only when the gesture began there and ends clear of the sheet.
+  const scrim = useScrimDismiss(props.onClose);
+
+  const arabic = scriptOf(shown, book.dir) === "arabic";
   const derived = autoCoverPaint(shown);
   const src = coverSrc(book);
   const jacketSrc = draft.coverMode === "typeset" ? null : src;
@@ -134,8 +354,19 @@ export function BookDetails(props: BookDetailsProps) {
   const pct = progressPct(book);
   const done = isFinished(book);
   const dirty = isDirty(draft, book);
+  // `save` is declared above the placement rows that compute it, so the message reaches it by ref.
+  const awaitingShelfRef = useRef<string | null>(null);
+  // Raised when Save is pressed over an unfinished placement, so the footer can answer the press
+  // rather than the dialog simply not closing.
+  const [refused, setRefused] = useState(false);
 
   const save = async () => {
+    // A pending case choice is not a placement, and Save may not pretend it was. The dialog stays
+    // open and says what is still needed, rather than closing over a move that never happened.
+    if (awaitingShelfRef.current) {
+      setRefused(true);
+      return;
+    }
     const p = patchFromDraft(draft, book);
     if (Object.keys(p).length === 0) {
       props.onClose();
@@ -224,47 +455,149 @@ export function BookDetails(props: BookDetailsProps) {
   // `pickedCase` is that missing step: `undefined` follows the book, `null` means "not in a case",
   // a string names one. Choosing a case only narrows the shelf list; the write happens when a
   // SHELF is chosen, which is the level that actually corresponds to a membership row.
-  const place = props.placement;
+  const places = props.placements;
+  /**
+   * THE THREE STATES THIS PANEL HAS TO TELL APART.
+   *
+   * `place` alone cannot: it is null both for a book on NO shelf and for a book on SEVERAL, and the
+   * panel read that null as «not filed» everywhere. A book on two shelves was therefore shown its
+   * own memberships and told, underneath them, that it was not on any shelf yet — and «خارج
+   * الخزائن» was lit in the cabinet row because no single cabinet could be named.
+   *
+   * The count is the honest source. Nothing below asks `place` a question it cannot answer.
+   */
+  const multi = places.length > 1;
+  const unfiled = places.length === 0;
+  /**
+   * THE MEMBERSHIP THE PANEL'S SINGLE-DESTINATION CONTROLS ACT ON — and null unless there is
+   * exactly one.
+   *
+   * The case/shelf/category picker below edits ONE destination: it can say «put it there» and has
+   * no way to say «and also there». That is still the right shape for a book on one shelf, and for
+   * such a book everything here behaves exactly as it did. For a book on several there is no single
+   * destination to edit, so this is null and those controls fall quiet — the memberships are shown
+   * and removed individually above, and «add to another shelf» below is the additive verb.
+   */
+  const place = places.length === 1 ? places[0] : null;
   const [pickedCase, setPickedCase] = useState<string | null | undefined>(undefined);
   useEffect(() => setPickedCase(undefined), [book.id]);
 
-  const effectiveCaseId = pickedCase !== undefined ? pickedCase : (place?.caseNode?.id ?? null);
+  // `undefined` is «the reader has chosen nothing», and for a book across several cabinets that is
+  // the only true answer. It matches no chip, so none is lit — where `null` would have lit «خارج
+  // الخزائن» and told the reader the book is outside every cabinet while listing it inside two.
+  const effectiveCaseId: string | null | undefined =
+    pickedCase !== undefined ? pickedCase : multi ? undefined : (place?.caseNode?.id ?? null);
   const effectiveCase = effectiveCaseId ? (props.cases.find((c) => c.id === effectiveCaseId) ?? null) : null;
   // A rule shelf fills itself, so it can never be a destination — at any level.
   const shelvesOf = (c: CaseNode | null) =>
     (c ? c.shelves : props.loose).filter((s) => !s.auto_rule);
 
-  const moveTo = async (shelfId: string, categoryId: string | null) => {
+  /**
+   * EVERY SHELF IN THE LIBRARY THAT CAN HOLD A BOOK, with the cabinet that contains it.
+   *
+   * The additive row used to offer `shelvesOf(effectiveCase)` — the shelves of the chosen cabinet —
+   * and a multi-shelf book has no chosen cabinet, so it was offered the LOOSE shelves and nothing
+   * else. Measured: a book on two shelves of «خزانة الروايات» was offered «بسيب» and «أرشيف».
+   * Adding is not a hierarchy: it names one shelf, so it lists them all and carries each one's
+   * cabinet, which is also what tells two shelves of the same name apart.
+   */
+  const everyShelf: { shelf: ShelfNode; caseNode: CaseNode | null }[] = [
+    ...props.cases.flatMap((c) => c.shelves.map((sh) => ({ shelf: sh, caseNode: c }))),
+    ...props.loose.map((sh) => ({ shelf: sh, caseNode: null })),
+  ].filter((e) => !e.shelf.auto_rule);
+  const addable = everyShelf.filter((e) => !places.some((pl) => pl.shelf.id === e.shelf.id));
+
+  /** Which popover is open: the destination list, or one membership's categories. */
+  const [choosing, setChoosing] = useState<null | { mode: "add" } | { mode: "move"; from: string }>(null);
+  const [catFor, setCatFor] = useState<string | null>(null);
+  useEffect(() => { setChoosing(null); setCatFor(null); }, [book.id]);
+
+  /**
+   * The destinations, grouped by the cabinet that holds them.
+   *
+   * `exclude` is the shelf a MOVE is leaving: it is not a destination for itself, and the shelves
+   * the book is already on are not destinations at all — adding to one is a no-op and moving to one
+   * would read as a move that did nothing.
+   */
+  const destinationGroups = (exclude: string | null) => {
+    const free = everyShelf.filter(
+      (e) => e.shelf.id !== exclude && !places.some((pl) => pl.shelf.id === e.shelf.id),
+    );
+    const out: { id: string; name: string; ink: string | null; items: { id: string; name: string }[] }[] = [];
+    for (const c of props.cases) {
+      const items = free.filter((e) => e.caseNode?.id === c.id).map((e) => ({ id: e.shelf.id, name: e.shelf.name }));
+      if (items.length) out.push({ id: c.id, name: c.name, ink: c.ink ?? null, items });
+    }
+    const loose = free.filter((e) => !e.caseNode).map((e) => ({ id: e.shelf.id, name: e.shelf.name }));
+    if (loose.length) out.push({ id: "__loose", name: t("lib.unfiled"), ink: null, items: loose });
+    return out;
+  };
+
+  /** MOVE ONE MEMBERSHIP: arrive at the chosen shelf, leave the row's own — and no other. */
+  const moveMembership = async (from: string, to: ShelfNode) => {
     setBusy(true);
-    // Join the target FIRST: if that fails the book is still where it was, rather than nowhere.
     try {
-      await shelfPlaceBook(shelfId, book.id, categoryId, 0);
+      await libraryPlaceBook(book.id, to.id, null, null, from);
     } catch (e) {
       console.error(e);
-      setBusy(false);
       props.notify(t("lib.writeFailed"));
-      props.onChanged();
-      return;
-    }
-    // Leave ONLY the shelf this book was shown as sitting on. Any other shelf it belongs to is a
-    // placement someone made deliberately and is none of this move's business.
-    if (place && place.shelf.id !== shelfId) {
-      try {
-        await collectionRemoveBook(place.shelf.id, book.id);
-      } catch (e) {
-        console.error(e);
-        props.notify(t("lib.movedButNotRemoved"));
-      }
     }
     setBusy(false);
     props.onChanged();
   };
 
-  const unfile = async () => {
-    if (!place) return;
+  /** The category of ONE membership. `libraryAddBookToShelf` against a shelf the book is already
+      on writes the category alone and leaves the rank, which is what re-grouping means. */
+  const setCategory = async (shelfId: string, categoryId: string | null) => {
     setBusy(true);
     try {
-      await collectionRemoveBook(place.shelf.id, book.id);
+      await libraryAddBookToShelf(book.id, shelfId, categoryId);
+    } catch (e) {
+      console.error(e);
+      props.notify(t("lib.writeFailed"));
+    }
+    setBusy(false);
+    props.onChanged();
+  };
+
+
+  /**
+   * TAKE THE BOOK OFF ONE SHELF — that shelf, and no other.
+   *
+   * Named rather than implied. It used to remove «the» shelf the book was on, which only had a
+   * meaning while a book had one. The book itself is untouched: one row, one file, one reading
+   * position, and every other shelf it is on keeps it.
+   */
+  const removeFrom = async (shelfId: string) => {
+    setBusy(true);
+    try {
+      await collectionRemoveBook(shelfId, book.id);
+    } catch (e) {
+      console.error(e);
+      props.notify(t("lib.writeFailed"));
+    }
+    setBusy(false);
+    props.onChanged();
+  };
+
+  /**
+   * ADD THE BOOK TO ANOTHER SHELF, KEEPING EVERY SHELF IT IS ALREADY ON.
+   *
+   * The additive verb, and a separate call from the move above rather than the same one with a
+   * flag — `libraryAddBookToShelf` against `shelfPlaceBook`. Nothing is removed, nothing is
+   * duplicated: the same canonical book gains one more membership, which is what makes it appear
+   * on that shelf as well as where it already was.
+   *
+   * Idempotent from underneath, so the action can be offered without first knowing the answer: the
+   * primary key is (book, shelf), and the reply says whether anything was actually written.
+   */
+  const addToShelf = async (shelf: ShelfNode) => {
+    setBusy(true);
+    try {
+      const res = await libraryAddBookToShelf(book.id, shelf.id, null);
+      props.notify(
+        t(res.placed.changed ? "lib.addedToShelf" : "lib.alreadyOnShelf").replace("{shelf}", shelf.name),
+      );
     } catch (e) {
       console.error(e);
       props.notify(t("lib.writeFailed"));
@@ -284,7 +617,7 @@ export function BookDetails(props: BookDetailsProps) {
         flex: "none",
         width: w,
         height: h,
-        borderRadius: 3,
+        borderRadius: "var(--r-xs)",
         boxShadow: "var(--sh2)",
         position: "relative",
         overflow: "hidden",
@@ -301,7 +634,7 @@ export function BookDetails(props: BookDetailsProps) {
               top: "15%",
               textAlign: "center",
               color: ink,
-              font: arabic ? "700 .875rem/1.4 var(--ar)" : "600 .8125rem/1.25 var(--book)",
+              font: `${arabic ? 700 : 600} ${arabic ? ".875rem/1.4" : ".8125rem/1.25"} ${displayFace(arabic)}`,
             }}
           >
             {shown}
@@ -319,73 +652,34 @@ export function BookDetails(props: BookDetailsProps) {
     </div>
   );
 
-  const levels: { label: string; options: React.ReactNode; empty: string | null }[] = [
-    {
-      label: t("lib.caseWord"),
-      // Choosing a case does NOT write. It narrows the level below it, which is what makes
-      // Case → Shelf → Category a hierarchy rather than three independent guesses.
-      empty: props.cases.length ? null : t("lib.noCasesYet"),
-      options: (
-        <>
-          <button style={chip(effectiveCaseId === null)} onClick={() => setPickedCase(null)}>
-            {t("lib.unfiled")}
-          </button>
-          {props.cases.map((c) => (
-            <button key={c.id} style={chip(effectiveCaseId === c.id)} onClick={() => setPickedCase(c.id)}>
-              {c.ink && <span style={{ width: 7, height: 7, borderRadius: 2, background: c.ink }} />}
-              {c.name}
-            </button>
-          ))}
-        </>
-      ),
-    },
-    {
-      label: t("lib.shelfWord"),
-      // The shelves OF THE CHOSEN CASE — so "Case A + a shelf of Case B" cannot be expressed.
-      // A case with nothing in it says so, instead of leaving a level that looks broken.
-      empty: shelvesOf(effectiveCase).length
-        ? null
-        : effectiveCase
-          ? t("lib.caseHasNoShelves")
-          : t("lib.noShelves"),
-      options: (
-        <>
-          {shelvesOf(effectiveCase).map((s) => {
-            const on = place?.shelf.id === s.id;
-            return (
-              <button key={s.id} style={chip(on)} onClick={() => (on ? unfile() : moveTo(s.id, null))}>
-                {on ? `${s.name}  ✕` : s.name}
-              </button>
-            );
-          })}
-        </>
-      ),
-    },
-    {
-      label: t("lib.categoryWord"),
-      empty: place && place.shelf.categories.length ? null : t("lib.shelfHasNoCategories"),
-      options: place && place.shelf.categories.length ? (
-        <>
-          <button style={chip(!place.categoryId)} onClick={() => moveTo(place.shelf.id, null)}>
-            {t("lib.uncategorised")}
-          </button>
-          {place.shelf.categories.map((k) => (
-            <button
-              key={k.id}
-              style={chip(place.categoryId === k.id)}
-              onClick={() => moveTo(place.shelf.id, k.id)}
-            >
-              {k.name}
-            </button>
-          ))}
-        </>
-      ) : null,
-    },
-  ];
+  // A CASE IS NOT A DESTINATION, and the dialog has to say so.
+  //
+  // Choosing a case only narrows the shelves below it — a case contains shelves, so it cannot answer
+  // "which shelf?". The two rows used to look like one destination control with Save underneath, so
+  // picking a case and pressing Save read as "file it there" and did nothing at all, silently.
+  // `awaitingShelf` is that state, named: the reader has aimed at a case the book is not in and has
+  // not yet chosen a shelf inside it.
+  const currentCaseId = place?.caseNode?.id ?? null;
+  // Nothing chosen is not a pending choice: a book across several cabinets starts with no chip
+  // lit, and that is a resting state rather than a half-finished one.
+  const awaitingShelf =
+    effectiveCaseId === undefined
+      ? false
+      : awaitsShelfChoice(currentCaseId, effectiveCaseId, shelvesOf(effectiveCase).length);
+  const chooseShelfHere = effectiveCase
+    ? t("lib.chooseShelfInCase", { name: effectiveCase.name })
+    : t("lib.chooseLooseShelf");
+
+  awaitingShelfRef.current = awaitingShelf ? chooseShelfHere : null;
+  if (refused && !awaitingShelf) setRefused(false);
+
 
   return (
     <div
-      onClick={props.onClose}
+      // The backdrop dismisses only a gesture that BEGAN on it and ends clear of the sheet — see
+      // `useScrimDismiss`. Editing a title and releasing a pixel past the field used to close the
+      // whole sheet, because a click is dispatched at the common ancestor of press and release.
+      {...scrim.scrimProps}
       style={{
         position: "fixed",
         inset: 0,
@@ -398,6 +692,11 @@ export function BookDetails(props: BookDetailsProps) {
     >
       <div
         className="libd-dialog"
+        ref={(node) => { dialogRef.current = node; dlg.ref(node); scrim.panelRef(node); }}
+        // It behaves as a modal — it covers the library, takes the press outside, and answers to
+        // Escape — so it has to SAY it is one. Without this a screen reader announces an anonymous
+        // group and never tells the reader that the surface behind it has gone inert.
+        {...dlg.props}
         onClick={(e) => e.stopPropagation()}
         style={{
           display: "block",
@@ -406,10 +705,12 @@ export function BookDetails(props: BookDetailsProps) {
           overflowY: "auto",
           background: "var(--chr)",
           border: "1px solid var(--brd)",
-          borderRadius: 16,
+          borderRadius: "var(--r-xl)",
           boxShadow: "var(--sh4)",
           animation: "sard-rise .16s ease-out",
-          opacity: busy ? 0.75 : 1,
+          opacity: showBusy ? 0.75 : 1,
+          // A step is a flash; a fade is a state. Only ever seen when the write is genuinely slow.
+          transition: "opacity .12s ease-out",
         }}
       >
         {/* ---- head: jacket, editable name, the book's own facts ---- */}
@@ -441,10 +742,10 @@ export function BookDetails(props: BookDetailsProps) {
                 width: "100%",
                 background: "var(--soft)",
                 border: "1px solid var(--brd)",
-                borderRadius: 8,
+                borderRadius: "var(--r-md)",
                 padding: "7px 10px",
                 outline: "none",
-                font: arabic ? "700 1.125rem var(--ar)" : "600 1rem var(--ui)",
+                font: `${arabic ? 700 : 600} ${arabic ? "1.125rem" : "1rem"} ${labelFace(arabic)}`,
                 color: "var(--txt)",
               }}
             />
@@ -460,10 +761,10 @@ export function BookDetails(props: BookDetailsProps) {
                 width: "100%",
                 background: "var(--soft)",
                 border: "1px solid var(--brd)",
-                borderRadius: 8,
+                borderRadius: "var(--r-md)",
                 padding: "6px 10px",
                 outline: "none",
-                font: arabic ? "400 1rem var(--ar)" : "400 .8125rem var(--ui)",
+                font: `${arabic ? "400 1rem" : "400 .8125rem"} ${labelFace(arabic)}`,
                 color: "var(--mut)",
               }}
             />
@@ -472,7 +773,7 @@ export function BookDetails(props: BookDetailsProps) {
                 display: "flex",
                 alignItems: "center",
                 gap: 10,
-                marginTop: 12,
+                marginTop: "var(--sp-5)",
                 font: "500 .6875rem var(--ui)",
                 color: "var(--faint)",
                 flexWrap: "wrap",
@@ -491,10 +792,10 @@ export function BookDetails(props: BookDetailsProps) {
             </div>
           </div>
           <button
-            className="libd-hov libd-hov-txt"
+            className="libd-hov libd-hov-txt ui-close"
             onClick={props.onClose}
             aria-label={t("panel.close")}
-            style={{ flex: "none", width: 30, height: 30, borderRadius: 9, color: "var(--mut)", fontSize: 14 }}
+            style={{ flex: "none", width: "var(--ctl-md)", height: "var(--ctl-md)", borderRadius: "var(--r-md)", color: "var(--mut)", fontSize: 14 }}
           >
             ✕
           </button>
@@ -502,13 +803,14 @@ export function BookDetails(props: BookDetailsProps) {
 
         <div style={{ padding: "18px 24px 22px", display: "flex", flexDirection: "column", gap: 18 }}>
           {/* ---- cover and spine ---- */}
+
           <div style={{ display: "flex", gap: 26, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 250 }}>
               <div style={legend}>{t("lib.cover")}</div>
               <div style={{ font: "400 .6875rem var(--ui)", color: "var(--faint)", margin: "-4px 0 9px" }}>
                 {t("lib.coverUse")}
               </div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 9 }}>
+              <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap", marginBottom: 9 }}>
                 <button style={chip(typeset)} onClick={() => edit({ coverMode: "typeset" })}>
                   {t("lib.coverTypeset")}
                 </button>
@@ -530,8 +832,8 @@ export function BookDetails(props: BookDetailsProps) {
               </div>
 
               {/* COVER SIZING — how a cover fills its frame. RAWY-19's per-book override. */}
-              <div style={{ ...legend, marginTop: 4 }}>{t("lib.coverSizing")}</div>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 9 }}>
+              <div style={{ ...legend, marginTop: "var(--sp-2)" }}>{t("lib.coverSizing")}</div>
+              <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap", marginBottom: 9 }}>
                 {(["crop", "fit"] as const).map((m) => (
                   <button key={m} style={chip(draft.coverFit === m)} onClick={() => edit({ coverFit: m })}>
                     {t(m === "crop" ? "lib.cover.crop" : "lib.cover.fit")}
@@ -544,7 +846,7 @@ export function BookDetails(props: BookDetailsProps) {
                 </button>
               </div>
 
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap", alignItems: "center" }}>
                 {/* The FIRST swatch is "no chosen paint" — it clears the override and returns the
                     book to the colour Sard derives from its title. Without it the palette was a
                     one-way door: every swatch set a paint and none could unset one. It shows that
@@ -556,9 +858,9 @@ export function BookDetails(props: BookDetailsProps) {
                   onClick={() => setDraft(draftWithNoPaint)}
                   style={{
                     position: "relative",
-                    width: 22,
-                    height: 30,
-                    borderRadius: 3,
+                    width: "var(--ctl-xs)",
+                    height: "var(--ctl-md)",
+                    borderRadius: "var(--r-xs)",
                     background: derived.bg,
                     boxShadow:
                       draft.coverPaint === null
@@ -580,7 +882,7 @@ export function BookDetails(props: BookDetailsProps) {
                   />
                 </button>
 
-                <span style={{ width: 1, height: 22, background: "var(--brd)", flex: "none" }} />
+                <span style={{ width: 1, height: "var(--ctl-xs)", background: "var(--brd)", flex: "none" }} />
 
                 {PALETTE.map((k) => (
                   <button
@@ -589,9 +891,9 @@ export function BookDetails(props: BookDetailsProps) {
                     aria-pressed={draft.coverPaint === k}
                     onClick={() => setDraft((d) => draftWithPaint(d, k))}
                     style={{
-                      width: 22,
-                      height: 30,
-                      borderRadius: 3,
+                      width: "var(--ctl-xs)",
+                      height: "var(--ctl-md)",
+                      borderRadius: "var(--r-xs)",
                       background: k,
                       boxShadow:
                         draft.coverPaint === k
@@ -612,7 +914,7 @@ export function BookDetails(props: BookDetailsProps) {
                 <div
                   style={{
                     flex: "none",
-                    width: 44,
+                    width: "var(--ctl-2xl)",
                     height: 176,
                     borderRadius: 2,
                     boxShadow: "var(--sh2)",
@@ -628,7 +930,7 @@ export function BookDetails(props: BookDetailsProps) {
                       alt=""
                       style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
                     />
-                  ) : (
+                  ) : spineMode === "none" ? null : (
                     <span
                       style={{
                         transform: "rotate(-90deg)",
@@ -636,15 +938,17 @@ export function BookDetails(props: BookDetailsProps) {
                         maxWidth: 168,
                         overflow: "hidden",
                         textOverflow: "ellipsis",
-                        color: spineMode === "none" ? "var(--faint)" : ink,
-                        font: arabic ? "700 .8125rem var(--ar)" : "500 .75rem var(--ui)",
+                        // The plain spine draws nothing at all now, so the only spine that reaches
+                        // here is the typeset one and it uses the book's own ink.
+                        color: ink,
+                        font: `${arabic ? 700 : 500} ${arabic ? ".8125rem" : ".75rem"} ${labelFace(arabic)}`,
                       }}
                     >
                       {shown}
                     </span>
                   )}
                 </div>
-                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
                   <button
                     style={chip(!spineSrc && spineMode === "typeset")}
                     onClick={() => edit({ spineMode: "typeset" })}
@@ -667,6 +971,11 @@ export function BookDetails(props: BookDetailsProps) {
                       {t("lib.spineRemove")}
                     </button>
                   )}
+                  {/* WHICH IS WHICH. Two chips named "Typeset by Sard" and "Plain" do not say what
+                      they differ in, and that difference is the whole of the choice. */}
+                  <span style={{ font: "400 .625rem/1.5 var(--ui)", color: "var(--faint)", textWrap: "pretty" }}>
+                    {t("lib.spineModeNote")}
+                  </span>
                   <span style={{ font: "400 .625rem/1.5 var(--ui)", color: "var(--faint)", textWrap: "pretty" }}>
                     {t("lib.spineNote")}
                   </span>
@@ -676,78 +985,216 @@ export function BookDetails(props: BookDetailsProps) {
           </div>
 
           {/* ---- where it lives ---- */}
+
+          {/* ---- WHERE THE BOOK IS FILED ----------------------------------------------------
+              Two questions, asked in order and answered in two different shapes.
+
+              «أين يوجد الكتاب؟» is a fact, so it is a list: one row per shelf, the shelf named
+              plainly with its cabinet quietly beneath it. «أين يمكن أن يوضع؟» is an action, so it
+              is one button that opens a list of destinations — not a wall of them laid out on the
+              panel. Those were four rows of chips competing for the same glance: the cabinet row,
+              the shelf row, the category row and an add row that grew one chip per shelf in the
+              library. A reader had to decode which row meant «where it is» and which meant «where
+              it could go», and the two were drawn identically.
+
+              Nothing a row shows is a destination, and nothing the button offers is already held.
+              That is the whole distinction, and it is now carried by shape rather than by wording. */}
           <div>
             <div style={legend}>{t("lib.assignment")}</div>
+
             <div
               style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 9,
-                flexWrap: "wrap",
-                marginBottom: 14,
-                padding: "9px 12px",
-                borderRadius: 9,
-                background: "var(--pap)",
                 border: "1px solid var(--brd)",
+                borderRadius: "var(--r-md)",
+                background: "var(--pap)",
+                overflow: "hidden",
               }}
             >
-              <span style={{ font: "600 .8125rem var(--ui)", color: place ? "var(--txt)" : "var(--faint)" }}>
-                {place?.caseNode?.name ?? t("lib.unfiled")}
-              </span>
-              <span style={{ color: "var(--faint)", fontSize: 10 }}>{rtl ? "‹" : "›"}</span>
-              <span style={{ font: "500 .8125rem var(--ui)", color: place ? "var(--txt)" : "var(--faint)" }}>
-                {place?.shelf.name ?? "—"}
-              </span>
-              <span style={{ color: "var(--faint)", fontSize: 10 }}>{rtl ? "‹" : "›"}</span>
-              <span style={{ font: "400 .8125rem var(--ui)", color: "var(--mut)" }}>
-                {place
-                  ? place.shelf.categories.length
-                    ? place.shelf.categories.find((k) => k.id === place.categoryId)?.name ?? t("lib.uncategorised")
-                    : "—"
-                  : "—"}
-              </span>
+              {places.length === 0 ? (
+                <div style={{ padding: "11px 13px", font: "500 .8125rem var(--ui)", color: "var(--faint)" }}>
+                  {t("lib.unfiled")}
+                </div>
+              ) : (
+                places.map((pl, i) => {
+                  const cat = pl.shelf.categories.find((k) => k.id === pl.categoryId) ?? null;
+                  return (
+                    <div
+                      key={pl.shelf.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        padding: "9px 13px",
+                        borderTop: i ? "1px solid var(--brd)" : undefined,
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div
+                          style={{
+                            font: "600 .8125rem/1.35 var(--ui)",
+                            color: "var(--txt)",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {pl.shelf.name}
+                        </div>
+                        {/* THE HIERARCHY UNDER THE NAME, NOT BESIDE IT. Three names separated by
+                            chevrons read as a path to be parsed, and wrapped badly when any of them
+                            was long. A shelf with its cabinet beneath it reads as one fact, and the
+                            long-name case becomes an ellipsis rather than a second line. */}
+                        <div
+                          style={{
+                            font: "400 .6875rem/1.4 var(--ui)",
+                            color: "var(--faint)",
+                            marginTop: 1,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {pl.caseNode?.name ?? t("lib.unfiled")}
+                          {pl.shelf.categories.length > 0 && (
+                            <>
+                              {" · "}
+                              <button
+                                className="libd-hov-txt"
+                                onClick={() => setCatFor(catFor === pl.shelf.id ? null : pl.shelf.id)}
+                                style={{
+                                  border: "none",
+                                  background: "transparent",
+                                  padding: 0,
+                                  font: "inherit",
+                                  color: "var(--mut)",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                {cat ? cat.name : t("lib.uncategorised")}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                        {catFor === pl.shelf.id && (
+                          <Chooser
+                            groups={[{ id: pl.shelf.id, name: pl.shelf.name, ink: pl.caseNode?.ink ?? null,
+                              items: [{ id: "", name: t("lib.uncategorised") },
+                                      ...pl.shelf.categories.map((k) => ({ id: k.id, name: k.name }))] }]}
+                            current={pl.categoryId ?? ""}
+                            onPick={(id) => { setCatFor(null); void setCategory(pl.shelf.id, id || null); }}
+                            onClose={() => setCatFor(null)}
+                            searchFrom={999}
+                          />
+                        )}
+                      </div>
+
+                      {/* MOVE BELONGS TO A ROW, because a move leaves ONE shelf and this row is the
+                          shelf it leaves. It used to live in a Case → Shelf picker that had no way
+                          to say which membership it was acting on, so it only ever worked for a
+                          book that had exactly one. */}
+                      <button
+                        className="libd-hov libd-hov-txt"
+                        data-move-from={pl.shelf.id}
+                        onClick={() => setChoosing({ mode: "move", from: pl.shelf.id })}
+                        title={t("lib.moveTo")}
+                        style={{
+                          flex: "none",
+                          font: "500 .6875rem var(--ui)",
+                          color: "var(--mut)",
+                          background: "transparent",
+                          border: "1px solid var(--brd)",
+                          borderRadius: "var(--r-sm)",
+                          padding: "3px 9px",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {t("lib.moveTo")}
+                      </button>
+                      <button
+                        className="libd-hov libd-hov-txt"
+                        aria-label={`${t("lib.removeFromThisShelf")} — ${pl.shelf.name}`}
+                        title={t("lib.removeFromThisShelf")}
+                        data-remove-shelf={pl.shelf.id}
+                        onClick={() => removeFrom(pl.shelf.id)}
+                        style={{
+                          flex: "none",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          width: "var(--ctl-xs)",
+                          height: "var(--ctl-xs)",
+                          borderRadius: "var(--r-sm)",
+                          border: "1px solid transparent",
+                          background: "transparent",
+                          color: "var(--faint)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <Icon name="close" size="sm" />
+                      </button>
+                    </div>
+                  );
+                })
+              )}
             </div>
 
-            {levels.map((lv) => (
-              <div
-                key={lv.label}
+            {/* ONE BUTTON, NOT A WALL. A library with thirty shelves used to put thirty chips on
+                this panel; the destinations now live behind this and arrive grouped by cabinet,
+                with a search once there are enough of them to need one. */}
+            <div style={{ marginTop: 10 }}>
+              <button
+                data-add-open="1"
+                onClick={() => setChoosing(choosing?.mode === "add" ? null : { mode: "add" })}
+                disabled={addable.length === 0}
                 style={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: 12,
-                  padding: "8px 0",
-                  borderTop: "1px solid var(--brd)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 7,
+                  height: 30,
+                  padding: "0 12px",
+                  borderRadius: 9,
+                  font: "500 .75rem var(--ui)",
+                  border: "1px solid var(--brd)",
+                  background: "var(--pap)",
+                  color: addable.length ? "var(--acc)" : "var(--faint)",
+                  cursor: addable.length ? "pointer" : "default",
                 }}
               >
-                <span
-                  style={{
-                    flex: "none",
-                    width: 74,
-                    paddingTop: 7,
-                    font: "600 .625rem var(--ui)",
-                    letterSpacing: ".12em",
-                    textTransform: "uppercase",
-                    color: "var(--faint)",
-                  }}
-                >
-                  {lv.label}
+                <span aria-hidden style={{ font: "600 .875rem var(--ui)" }}>+</span>
+                {places.length ? t("lib.addToAnotherShelf") : t("lib.addToShelf")}
+              </button>
+              {addable.length === 0 && (
+                <span style={{ font: "400 .75rem var(--ui)", color: "var(--faint)", marginInlineStart: 10 }}>
+                  {t("lib.onEveryShelfAlready")}
                 </span>
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap", flex: 1, minWidth: 0 }}>
-                  {lv.empty ? (
-                    <span style={{ font: "400 .75rem var(--ui)", color: "var(--faint)", paddingTop: 8 }}>
-                      {lv.empty}
-                    </span>
-                  ) : (
-                    lv.options
-                  )}
-                </div>
-              </div>
-            ))}
+              )}
+              {choosing && (
+                <Chooser
+                  groups={destinationGroups(choosing.mode === "move" ? choosing.from : null)}
+                  current=""
+                  onPick={(id) => {
+                    const target = everyShelf.find((e) => e.shelf.id === id);
+                    const c = choosing;
+                    setChoosing(null);
+                    if (!target) return;
+                    if (c.mode === "move") void moveMembership(c.from, target.shelf);
+                    else void addToShelf(target.shelf);
+                  }}
+                  onClose={() => setChoosing(null)}
+                  searchFrom={9}
+                />
+              )}
+            </div>
 
             <div style={{ font: "400 .75rem var(--ui)", color: "var(--faint)", paddingTop: 10 }}>
-              {place ? t("lib.toggleHint") : t("lib.notFiledHint")}
+              {unfiled
+                ? t("lib.notFiledHint")
+                : multi
+                  ? t("lib.onSeveralShelvesHint").replace("{n}", String(places.length))
+                  : t("lib.onOneShelfHint")}
             </div>
           </div>
+
         </div>
 
         {/* ---- the editing footer ----
@@ -767,8 +1214,18 @@ export function BookDetails(props: BookDetailsProps) {
             background: "var(--chr)",
           }}
         >
-          <span style={{ flex: 1, font: "400 .75rem var(--ui)", color: "var(--faint)" }}>
-            {dirty ? t("lib.unsavedChanges") : t("lib.noChanges")}
+          <span
+            style={{
+              flex: 1,
+              font: "400 .75rem var(--ui)",
+              color: awaitingShelfRef.current && refused ? "var(--acc)" : "var(--faint)",
+            }}
+          >
+            {awaitingShelfRef.current && refused
+              ? awaitingShelfRef.current
+              : dirty
+                ? t("lib.unsavedChanges")
+                : t("lib.noChanges")}
           </span>
           <button
             className="libd-hov libd-hov-txt"
@@ -776,7 +1233,7 @@ export function BookDetails(props: BookDetailsProps) {
             style={{
               height: 32,
               padding: "0 14px",
-              borderRadius: 9,
+              borderRadius: "var(--r-md)",
               border: "1px solid var(--brd)",
               font: "500 .8125rem var(--ui)",
               color: "var(--mut)",
@@ -791,12 +1248,13 @@ export function BookDetails(props: BookDetailsProps) {
             style={{
               height: 32,
               padding: "0 18px",
-              borderRadius: 9,
+              borderRadius: "var(--r-md)",
               background: dirty ? "var(--acc)" : "var(--soft)",
               color: dirty ? "var(--pap)" : "var(--mut)",
               border: dirty ? "none" : "1px solid var(--brd)",
               font: "600 .8125rem var(--ui)",
-              opacity: busy ? 0.6 : 1,
+              opacity: showBusy ? 0.6 : 1,
+              transition: "opacity .12s ease-out",
             }}
           >
             {t("lib.save")}

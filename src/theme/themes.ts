@@ -5,7 +5,7 @@
 // Espresso, Forest Night, Mulberry, Charcoal, Nocturne, Linen. One token system drives chrome
 // (applyTheme) + book (injectedCss) + the 8-slot highlights — adding a preset is enough.
 
-import type { HighlightSlot, Theme, ThemeId } from "./tokens";
+import type { BuiltinThemeId, HighlightSlot, Theme, ThemeId } from "./tokens";
 
 // The 8 highlight inks (RAWY-22, design band D toolbar). Shared across themes — the on-page
 // "wick" adapts to the paper via per-theme blend mode + opacity (injectedCss), and the swatch
@@ -21,7 +21,9 @@ const PALETTE: Record<HighlightSlot, string> = {
   green: "#AEC798",
 };
 
-export const THEMES: Record<ThemeId, Theme> = {
+// Keyed by `BuiltinThemeId`, NOT `ThemeId`: this is the table of presets Sard ships, and keeping it
+// exhaustively checked is the point. A reader-authored theme never lives here — see theme/resolve.ts.
+export const THEMES: Record<BuiltinThemeId, Theme> = {
   ivory: {
     id: "ivory",
     name: "Ivory",
@@ -356,11 +358,25 @@ export const THEMES: Record<ThemeId, Theme> = {
   },
 };
 
-export const THEME_ORDER: ThemeId[] = [
+export const THEME_ORDER: BuiltinThemeId[] = [
   "ivory", "sepia", "slate", "trueblack", "sage", "rosequartz", "parchment", "dusk", "ink",
   "espresso", "forestnight", "mulberry", "charcoal", "nocturne", "linen", "moonlit",
 ];
-export const DEFAULT_LIGHT: ThemeId = "ivory";
-export const DEFAULT_DARK: ThemeId = "trueblack";
-export const isThemeId = (v: unknown): v is ThemeId =>
+export const DEFAULT_LIGHT: BuiltinThemeId = "ivory";
+export const DEFAULT_DARK: BuiltinThemeId = "trueblack";
+
+/** One of the sixteen Sard ships — i.e. a key of `THEMES`. */
+export const isBuiltinThemeId = (v: unknown): v is BuiltinThemeId =>
   typeof v === "string" && v in THEMES;
+
+/**
+ * Any renderable theme id: one of the sixteen, or a reader-authored `u:` id.
+ *
+ * DECIDABLE WITHOUT A STORE, deliberately — this is a shape test, not an existence test. A `u:` id
+ * that names no stored theme still passes here and is resolved by `resolveTheme`, which falls back.
+ * Persisted values that must be one of the SHIPPED sixteen should use `isBuiltinThemeId` instead;
+ * that is what every caller does today, and widening one of them is a behaviour change, not a
+ * refactor.
+ */
+export const isThemeId = (v: unknown): v is ThemeId =>
+  isBuiltinThemeId(v) || (typeof v === "string" && v.startsWith("u:") && v.length > 2);

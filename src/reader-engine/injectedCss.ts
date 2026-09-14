@@ -9,7 +9,12 @@ import type { Theme } from "../theme/tokens";
 // note below): the design specifies the theme accent at 100%, and the mark is no longer CSS at all. Both
 // helpers keep their other callers (`highlightInk.ts` / the settings contrast guards) and are untouched.
 
-export type DiacriticsMode = "show" | "dim" | "hide";
+// TWO ANSWERS, NOT THREE. There was a `dim` between these — tashkīl at 0.28 opacity — and it was
+// withdrawn from both places a reader could choose it. The type is the narrowing that finds the rest:
+// anything still naming the third value stops compiling rather than lingering as a dead branch. A row
+// SAVED as `dim` is another matter and is handled where such rows are read — `parseReading` drops it
+// back to "no opinion", and `loadGlobalStyle` migrates the reader's own row to `show`.
+export type DiacriticsMode = "show" | "hide";
 // LOGICAL, not physical (RAWY-207): `start`/`end` follow the book's direction, so one stored value
 // reads correctly in both an RTL and an LTR book — in Arabic `start` IS the right edge. Physical
 // left/right would freeze one direction into the setting. These flow straight into `text-align`
@@ -54,6 +59,15 @@ export interface ReadingStyle {
   // theme's own text colour. A set colour is forced through the same `:root:root` mechanism the
   // override uses (RAWY-38), so it wins over the book's own CSS. Contrast is guarded in the UI.
   textColor: string | null;
+  /**
+   * PER-PROFILE NUMBER INK (`null` = the surrounding text's colour).
+   *
+   * Digits are wrapped in `.sard-num` by the reader's text walker — CSS cannot select a run of digits
+   * inside a text node — and this colours that class. `null` emits no rule at all, so a book with no
+   * number colour set renders byte-identically to one from before the feature: the digits simply
+   * inherit, as they always did.
+   */
+  numberColor: string | null;
   // Per-book PAGE + BACKGROUND colour (RAWY-201): the reading SURFACE (`pageColor`, the paper the text
   // sits on) and the AREA BEHIND the page (`backgroundColor`, the desk where Moonlit draws its clouds).
   // Both `null` = follow the active theme's `paperBg` / `surfaceBg` — the null sentinel means "resolve
@@ -85,6 +99,16 @@ export interface ReadingStyle {
   ttsKaraokeOn: boolean; // default true — the word pill (driven by Edge word timings)
   ttsKaraokeColor: string | null; // null = the per-theme terracotta
   ttsKaraokeOpacity: number | null; // null = the per-theme pill opacity (0.9)
+  /**
+   * Whether the voice PRONOUNCES decorative formatting marks — `#`, `~`, `*`, `^` and rules drawn out
+   * of `--` / `__`. Measured: the endpoint returns each of them as its own word, so a book that writes
+   * «# عنوان» is read aloud as «hash عنوان».
+   *
+   * SPEECH ONLY. Nothing here touches the book, the page, or the text the reader can select — see
+   * `lib/ttsText.withoutDecorativeSymbols`, which is applied at the synthesis boundary and nowhere
+   * else. `false` (the default) simply declines to say them.
+   */
+  ttsSpeakSymbols: boolean;
   // RAWY-212: immersive-mode PER-ELEMENT hide sub-toggles. The MASTER (`immersive`, global — theme store)
   // stays a single on/off; these TWO decide, per D43 (unified default + per-book override), WHICH elements
   // fade on a deliberate scroll-away while immersive is on. They only bite when the master is on AND the user
@@ -125,6 +149,40 @@ export const PAGE_WIDTH_PX_MAX = 1400;
 export const pageWidthPx = (t: number): number =>
   PAGE_WIDTH_PX_MIN + Math.max(0, Math.min(1, t)) * (PAGE_WIDTH_PX_MAX - PAGE_WIDTH_PX_MIN);
 
+/**
+ * THE SHEET'S OWN RULE, as a function: `min(100%, --page-pref)`.
+ *
+ * `global.css` states it as `inline-size: min(100%, var(--page-pref, 720px))` — the requested measure,
+ * capped so the sheet never exceeds what the window can give. The profile editor's specimen needs the
+ * SAME constraint or it draws a page the reader would never draw: measured, the preview column came
+ * out 1015px against the reader's 654px at identical settings, so it fitted about half again as many
+ * characters per line as the real book. Expressed here so both sides read one rule.
+ */
+export const sheetWidthPx = (t: number, availablePx: number): number =>
+  Math.min(Math.max(0, availablePx), pageWidthPx(t));
+
+/**
+ * How much of the desk the reading sheet is given.
+ *
+ * MEASURED out of the running reader, not chosen: at a 1240px window the sheet computed to 900px.
+ * A ratio rather than a pixel constant, so the specimen stays right when the window is resized.
+ */
+export const READER_DESK_RATIO = 0.726;
+
+/**
+ * The TEXT COLUMN inside a sheet: the sheet less the reader's own margins, both sides.
+ *
+ * THIS REPLACED A MEASURED RATIO, AND THE RATIO WAS THE BUG. The reader's column was measured at
+ * 654px inside a 900px sheet and that 0.727 was taken as a constant — but the measurement already
+ * had the reader's `marginPx` of 120 applied, so subtracting the margin again double-counted it and
+ * the specimen drew 414px instead of 654. The arithmetic gives the real rule away: 900 − 2×120 = 660,
+ * which is the measured 654 to within the box's own rounding. Margins are what inset the text, so
+ * the margin control is what the column should be derived from — and now it responds to that control
+ * instead of being pinned to the proportion that happened to hold when it was measured.
+ */
+export const textColumnPx = (sheetPx: number, marginPx: number): number =>
+  Math.max(80, Math.round(sheetPx - 2 * Math.max(0, marginPx)));
+
 // RAWY-195: paragraph spacing now ALWAYS emits a rule, so `0` means a real zero — tighter than the
 // book. That makes the old default of 0 wrong: it would have jammed every book's paragraphs together
 // out of the box. The default is the gap a typical EPUB sets for itself (`p{margin:1em 0}` at a 16px
@@ -132,6 +190,52 @@ export const pageWidthPx = (t: number): number =>
 // user can now go BELOW it. DB migration 9 lifts an already-stored 0 (which meant "book default") to
 // this value, so existing books keep their current look and don't silently collapse.
 export const PARAGRAPH_SPACING_DEFAULT = 16;
+
+/**
+ * THE ONE PLACE THE READING MEASURE IS DECIDED, so a preview of it cannot drift from the thing it
+ * previews.
+ *
+ * `buildCss` below consumes this, and so does the profile editor's page specimen. Before it existed
+ * the editor had no typography at all; adding a second copy of these rules would have produced a
+ * preview that agreed with the reader on the day it was written and quietly stopped later — which is
+ * exactly the failure the texture and page-opacity previews already had.
+ *
+ * The only real decision here is TRACKING, and it is the reader's existing one, moved rather than
+ * rewritten: letter-spacing inserts gaps between glyphs, and Arabic is cursive — its letters join.
+ * Tracking an Arabic run does not space it out, it BREAKS it into disconnected shapes. So the value
+ * is withheld for RTL text, and `trackingWithheld` says so out loud, so a surface can explain the
+ * limit instead of silently ignoring the control.
+ */
+export interface TypographyRender {
+  zoom: number;
+  fontWeight: number;
+  lineHeight: number;
+  paragraphSpacingPx: number;
+  textIndent: string;
+  /** px, already gated: zero whenever this text must not take tracking. */
+  letterSpacingPx: number;
+  /** True when tracking is being withheld because the text is RTL, not because it is set to zero. */
+  trackingWithheld: boolean;
+  textAlign: Align;
+}
+
+export function renderTypography(
+  style: Pick<ReadingStyle,
+    "zoom" | "fontWeight" | "lineHeight" | "paragraphSpacing" | "firstLineIndent" | "letterSpacing" | "align">,
+  opts: { rtl: boolean },
+): TypographyRender {
+  const withheld = opts.rtl && style.letterSpacing > 0;
+  return {
+    zoom: style.zoom,
+    fontWeight: style.fontWeight,
+    lineHeight: style.lineHeight,
+    paragraphSpacingPx: style.paragraphSpacing,
+    textIndent: style.firstLineIndent ? "1.5em" : "0",
+    letterSpacingPx: opts.rtl ? 0 : style.letterSpacing,
+    trackingWithheld: withheld,
+    textAlign: style.align,
+  };
+}
 
 interface FontDef {
   regular: string;
@@ -195,7 +299,7 @@ const LATIN_RANGE = "U+0000-024F, U+2000-206F, U+2070-209F, U+20A0-20BF";
 export const TTS_TRACKING_DEFAULTS: Pick<
   ReadingStyle,
   | "ttsSpotlightOn" | "ttsSpotlightColor" | "ttsSpotlightOpacity" | "ttsSpotlightRule"
-  | "ttsKaraokeOn" | "ttsKaraokeColor" | "ttsKaraokeOpacity"
+  | "ttsKaraokeOn" | "ttsKaraokeColor" | "ttsKaraokeOpacity" | "ttsSpeakSymbols"
 > = {
   ttsSpotlightOn: true,
   ttsSpotlightColor: null,
@@ -204,7 +308,30 @@ export const TTS_TRACKING_DEFAULTS: Pick<
   ttsKaraokeOn: true,
   ttsKaraokeColor: null,
   ttsKaraokeOpacity: null,
+  // FALSE = the marks are not said. This is the shipped behaviour it replaces, made optional rather
+  // than reversed: the reader who wants «hash» read out can now ask for it, and nobody who did not
+  // ask hears a change.
+  ttsSpeakSymbols: false,
 };
+
+/**
+ * THE SEVEN READ-ALOUD FIELDS, BY NAME, AND WHY THE LIST EXISTS.
+ *
+ * The list survives the removal of the per-book style scope, and it is worth saying why it is still
+ * needed. It was written when a book could hold reading settings of its own: measured on the owner's
+ * library, two books carried their own tracking colours and in those two books switching هيئة changed
+ * nothing, because the book's override was laid over the profile's values. With one style for every
+ * book that resolver is gone and the seven can no longer be outranked by anything — but naming
+ * them once is still what keeps three separate things in step: what a هيئة carries, what activating
+ * one writes, and what the parser accepts.
+ *
+ * Derived from `TTS_TRACKING_DEFAULTS` so the two cannot fall out of step: a field added there and
+ * forgotten here would fail to compile.
+ */
+export const TTS_TRACKING_KEYS = [
+  "ttsSpotlightOn", "ttsSpotlightColor", "ttsSpotlightOpacity", "ttsSpotlightRule",
+  "ttsKaraokeOn", "ttsKaraokeColor", "ttsKaraokeOpacity", "ttsSpeakSymbols",
+] as const satisfies readonly (keyof typeof TTS_TRACKING_DEFAULTS)[];
 
 // RAWY-212: immersive per-element hide defaults, shared by BOTH per-script default sets so they can never
 // drift. These reproduce RAWY-210/211 exactly for an existing `immersive_scroll=1` profile — pill + scrollbar
@@ -226,6 +353,17 @@ export const REF_RULE_DEFAULTS: Pick<ReadingStyle, "refRuleColor" | "refRuleWeig
   refRuleOffset: null,
 };
 
+/**
+ * THE ENGINE'S OWN LIST, re-exported rather than repeated — exactly as `TTS_TRACKING_KEYS` is.
+ *
+ * The same three names now decide four things: what the controller re-draws on, what a هيئة carries,
+ * what activating one writes, and what `parseRefs` accepts. Written out four times they would drift
+ * on the day a fourth is added; named once, an addition reaches all four or fails to compile.
+ */
+export const REF_RULE_KEYS = [
+  "refRuleColor", "refRuleWeight", "refRuleOffset",
+] as const satisfies readonly (keyof typeof REF_RULE_DEFAULTS)[];
+
 // Per-script sensible defaults — beautiful before the user touches a control.
 export const ARABIC_DEFAULTS: ReadingStyle = {
   zoom: 1.15,
@@ -242,6 +380,7 @@ export const ARABIC_DEFAULTS: ReadingStyle = {
   firstLineIndent: false,
   letterSpacing: 0,
   textColor: null,
+  numberColor: null,
   pageColor: null,
   backgroundColor: null,
   flowMode: "scrolled",
@@ -264,6 +403,7 @@ export const LATIN_DEFAULTS: ReadingStyle = {
   firstLineIndent: false,
   letterSpacing: 0,
   textColor: null,
+  numberColor: null,
   pageColor: null,
   backgroundColor: null,
   flowMode: "scrolled",
@@ -426,6 +566,50 @@ const alignForRtlBook = (a: Align): string => (a === "center" ? "center" : a ===
 const hardList = (sels: string[], prefix = ":root:root", suffix = NEVER): string =>
   sels.map((s) => `${prefix} ${s}${suffix}`).join(",\n    ");
 
+// PROSE THAT LIVES IN NO BLOCK CONTAINER AT ALL.
+//
+// Every typography selector here names a container ELEMENT, because that is what a paragraph is in
+// almost every EPUB. It need not be: a .txt→EPUB conversion can put a whole chapter into <body> as bare
+// text nodes split by <br>, with <span> used only for styling. MEASURED on exactly such a book against
+// a conventional one, under the identical settings changes:
+//
+//                          conventional <p>            no block container
+//   line spacing 1.5→2.6   34.08px → 59.06px           34px → 34px   (computed `normal`)
+//   align → justify        ragged edge 42px → 0px      59px → 59px   (computed `start`)
+//   align → centre         lines move, spread 22px     no movement
+//   first-line indent      first line +34px            +0px          (computed `0px`)
+//
+// All four controls are inert, because not one selector can match. CSS cannot fix that alone: there is
+// no selector for "an element that directly contains text" — `:has()` matches elements, never text
+// nodes. So the condition is decided in the DOM by `markTextHosts` (FoliateController) and handed to CSS
+// as a class. A class is an ATTRIBUTE: no node is added, removed or moved, so every CFI, Range,
+// highlight, reference and speech unit recorded against the document stays exactly as valid as before.
+//
+// A CONVENTIONAL BOOK TAGS NOTHING — its prose is inside <p>, which is already covered — so this adds no
+// selector that can match it, and its rendering is unchanged. That is the regression guarantee, and it
+// holds by construction rather than by care.
+export const TEXT_HOST_CLASS = "sard-text-host";
+const TEXT_HOST = `.${TEXT_HOST_CLASS}`;
+
+// THE PARAGRAPH BREAK, when the book has no paragraphs to space.
+//
+// The host class above gives leading, alignment and indent somewhere to land, because all three
+// INHERIT. Paragraph spacing does not: `margin-block` needs a BOX, and <br>-separated runs are one
+// block with no paragraph boxes inside it. Six CSS mechanisms were measured against the real engine and
+// all six failed — `content` + `display:block` + height or margin or padding, `display:block` + height,
+// `br::after` with a block, and a raised `line-height` on the <br> itself. Blink builds a `LayoutBR` for
+// <br> and discards `display` on it: the COMPUTED value reads `block` while layout ignores it entirely,
+// which is what made the earlier attempts look plausible and measure dead.
+//
+// So `markParagraphBreaks` (FoliateController) replaces each such <br> with an empty
+// <span class="sard-para-break">, ELEMENT FOR ELEMENT, and this rule gives that span the box. Measured:
+// the gap moves 43.16 → 63.03 → 82.91px for spacing 0/14/28, the leading INSIDE a run never moves, and
+// at 0 the gap equals the ordinary line advance — exactly the layout <br> gave.
+//
+// Hardened like the rest of the funnel: a book that writes `span { display: inline !important }` would
+// otherwise flatten the box and silently take the control away again.
+export const PARA_BREAK_CLASS = "sard-para-break";
+
 // The book's own paragraph-ish blocks. TEXT_BLOCKS = every leaf text element the reader's leading and
 // alignment apply to — headings are deliberately ABSENT so the book's heading typography survives.
 // PARA_BLOCKS (spacing + indent) is narrower: <p> plus a "leaf" text div — some EPUBs use <div>, not
@@ -433,8 +617,14 @@ const hardList = (sels: string[], prefix = ":root:root", suffix = NEVER): string
 // divs are spared and the page isn't stretched apart. <li> is excluded: margins there blow lists apart.
 const LEAF_DIV =
   "body div:not(:has(p, div, ul, ol, table, section, article, aside, figure, blockquote, h1, h2, h3, h4, h5, h6, hr))";
-const TEXT_BLOCKS = ["p", "li", "blockquote", "div"];
-const PARA_BLOCKS = ["p", LEAF_DIV];
+const TEXT_BLOCKS = ["p", "li", "blockquote", "div", TEXT_HOST];
+const PARA_BLOCKS = ["p", LEAF_DIV, TEXT_HOST];
+// Paragraph spacing is the one property here that does NOT inherit, so it needs a real box of its own —
+// and <body> is not one for this purpose. There is only one body, so a margin on it spaces nothing from
+// anything: it would simply pad the section and fight the `html, body { margin: 0 }` reset that owns the
+// page box. A tagged <section>/<td>/<dd> IS a genuine prose block with siblings to be spaced from, so it
+// keeps the margin. See the KNOWN LIMIT on <br>-separated runs in `markTextHosts`.
+const SPACED_BLOCKS = ["p", LEAF_DIV, `${TEXT_HOST}:not(body)`];
 
 // RAWY-195: the hide-box rule carries a SECOND id guard so it outranks the forced typography rules
 // above (which sit at one ID column). Without it, the hardened `margin-block` would beat this rule's
@@ -550,7 +740,7 @@ function themeBlock(
            .sard-title-ph {
              display: inline-flex; align-items: baseline; gap: .4em; flex-wrap: wrap;
              margin: .15em 0 .75em; font-size: .82em; line-height: 1.6;
-             font-family: 'SardArabic', 'SardLatin', serif;
+             font-family: 'SardArabic', 'SardLatin', 'SardArabicFallback', serif;
              user-select: none; -webkit-user-select: none;
            }
            .sard-title-ph[data-sard-state="revealed"] { display: none; }
@@ -588,23 +778,35 @@ export function buildReadingCss(
   // <html> is the default black under a forced-background theme, which would vanish on a dark page.
   const scrollInk = style.textColor || theme?.colors?.text || "currentColor";
 
+  // Only when asked for. An absent colour emits nothing, so the digits inherit exactly as before.
+  // A HIGHLIGHT PSEUDO-ELEMENT, NOT A SELECTOR ON A WRAPPER.
+  //
+  // The digits carry no element of their own: `markNumbers` registers them as live Ranges in the
+  // document's own `CSS.highlights`, so the book's DOM — and therefore every CFI recorded against it
+  // — is untouched. A highlight pseudo-element paints over the text's own colour by definition, so
+  // this needs none of the `:not(#…)` hardening the element rules use to out-rank book CSS.
+  const numberRule = style.numberColor
+    ? `::highlight(sard-num) { color: ${style.numberColor}; }`
+    : "";
+
+  // `hide` is the only mode that paints anything of its own; `show` is the page as the book wrote it.
+  // A row still carrying the withdrawn `dim` reaches here already normalised, and would fall to the
+  // empty rule in any case — which is `show`, the safe way for a retired setting to land.
   const diacriticsRule =
-    style.diacritics === "dim"
-      ? ".sard-tashkil { opacity: 0.28; }"
-      : style.diacritics === "hide"
-        ? ".sard-tashkil { font-size: 0 !important; }"
-        : "";
+    style.diacritics === "hide" ? ".sard-tashkil { font-size: 0 !important; }" : "";
 
   // Typography extras (RAWY-23). Weight applies to body text (not headings → keep hierarchy).
   // Letter-spacing is LATIN-ONLY — it inserts gaps that break Arabic cursive joining.
   const latinText = bookDir !== "rtl";
+  // The same function the profile editor's specimen renders from — see `renderTypography`.
+  const T = renderTypography(style, { rtl: !latinText });
   const extras = `
     ${/* font-weight is deliberately NOT hardened (RAWY-195 audit): a book marks whole-block emphasis
           with a class (`.calibre5{font-weight:bold}`), which out-specifies this element rule and so
           still wins — that is the book's EMPHASIS surviving, exactly as the invariant requires.
           Forcing it would flatten a bold paragraph to the reader's body weight. */ ""}
     p, li, blockquote, div, td, th, dd, dt {
-      font-weight: ${style.fontWeight};
+      font-weight: ${T.fontWeight};
     }
     ${/* Paragraph spacing — ALWAYS emitted (RAWY-195). THIS is the bug the user actually hit, and it was
           reproduced on the pre-fix build: the rule was gated on `> 0`, so at the MINIMUM it emitted
@@ -616,8 +818,18 @@ export function buildReadingCss(
           rhythm it has today (migration 9 lifts an already-stored 0 to it — that 0 meant "leave it
           alone", not "collapse it"). `KEEP` spares deliberately-centred blocks: a poem's lines would
           otherwise be prised apart by the reader's paragraph spacing. */ ""}
-    ${hardList(PARA_BLOCKS, ":root:root", `${KEEP}${NEVER}`)}
-      { margin-block: ${style.paragraphSpacing}px !important; }
+    ${hardList(SPACED_BLOCKS, ":root:root", `${KEEP}${NEVER}`)}
+      { margin-block: ${T.paragraphSpacingPx}px !important; }
+    ${/* The same control, for a book whose paragraphs are <br>-separated runs rather than boxes. The
+          element is Sard's own (see PARA_BREAK_CLASS), so this needs no `KEEP` — it can never be a
+          block the book deliberately centred — but it IS hardened, because a book-wide
+          `span { display: inline }` would otherwise collapse the box and kill the control. `height`
+          rather than `margin`: an empty block's margins collapse through each other, which is the
+          trap the first attempt at this fell into. */ ""}
+    :root:root .${PARA_BREAK_CLASS}${NEVER} {
+      display: block !important;
+      height: ${T.paragraphSpacingPx}px !important;
+    }
     ${/* First-line indent — ALSO always emitted, and hardened (RAWY-195). Same shape of defect: OFF
           emitted nothing, so the indent was whatever the rest of the cascade said rather than an
           explicit zero, and ON would lose to any book class that zeroes the indent the moment book CSS
@@ -625,16 +837,16 @@ export function buildReadingCss(
           indented). KNOWN LIMIT: with indent ON, a book's left-aligned VERSE lines (Alice's `p.poem`)
           are <p> too, so they take the indent — acceptable for an off-by-default, opt-in control. */ ""}
     ${hardList(PARA_BLOCKS, ":root:root", `${KEEP}${NEVER}`)}
-      { text-indent: ${style.firstLineIndent ? "1.5em" : "0"} !important; }
+      { text-indent: ${T.textIndent} !important; }
     ${/* Tracking stays LATIN-ONLY and stays gated on `> 0` (RAWY-195 audit — a deliberate exception to
           the always-emit rule): its "minimum" IS the CSS initial value (`normal`), and forcing that on
           every paragraph would strip the book's own decorative tracking (Alice's `p.asterism` scene
           break) for no user gain. It IS hardened now, so when the user does ask for tracking the
           control actually wins on a class-styled book. */ ""}
     ${
-      latinText && style.letterSpacing > 0
+      T.letterSpacingPx > 0
         ? `${hardList(["p", "li", "blockquote", "div", "td", "th"], ":root:root", `${KEEP}${NEVER}`)}
-      { letter-spacing: ${style.letterSpacing}px !important; }`
+      { letter-spacing: ${T.letterSpacingPx}px !important; }`
         : ""
     }`;
 
@@ -686,6 +898,30 @@ export function buildReadingCss(
        html padding-inline here (inline styles always beat a stylesheet rule). So the page
        margin now insets the foliate host within the sheet (--page-margin -> .page-host), which
        foliate cannot override and which works identically in both flow modes. */
+    /* ...EXCEPT IN SCROLLED FLOW, WHERE THE MARGIN MUST BE PART OF THE PAGE. Insetting the host puts
+       the reading margin OUTSIDE the iframe, so it belongs to the app document, not the book. The text
+       then begins on the frame's very last pixel column, and a press in the margin never reaches the
+       book at all: no caret is placed, and because the gesture belongs to the parent document,
+       dragging inward cannot recover it either.
+       MEASURED (Arabic, scrolled, 1400x900): the frame spanned 170..1245 with body margin and padding
+       both 0, and the line's start edge WAS 1245. A press at x<=1244 placed a caret and the parent
+       window never saw it; at x>=1245 the parent saw the press and the selection stayed None. In an
+       RTL book the line STARTS at that edge, so aiming at or just before the first character — the
+       natural place to begin a selection — misses the reading surface entirely.
+       So in scrolled flow the same margin is applied INSIDE the document instead, and the host spans
+       the sheet (global.css, '.flow-scrolled .page-host'). The text lands in exactly the same place:
+       the body's width is the host's, and this padding takes the margin out of its CONTENT box, which
+       is what the host inset used to do from outside. What changes is only WHO owns the margin — the
+       book does, so a press there places a caret on the nearest line, as on any page.
+       'body' on purpose, not 'html': foliate's inline !important padding is on 'html' (see above), so a
+       rule there would lose. On 'body' the paginator's scrolled branch sets only max-width and margin,
+       never padding, so nothing overrides this. VERIFIED in the running app: the reading content box is
+       1075px wide either way — 1075 frame with no body padding before, 1155 frame less 40px of padding
+       on each side after — so the measure and the wrap points are unchanged, and only the OWNER of the
+       margin differs. Paged flow is untouched: there the host inset is also the column geometry.
+       A fixed-layout book or a PDF never reaches this sheet at all — 'FixedLayout' has no 'setStyles',
+       so 'renderer.setStyles?.()' no-ops and their margin stays the host inset it has always been. */
+    ${style.flowMode === "paged" ? "" : `body { padding-inline: ${Math.max(0, style.marginPx)}px; }`}
     /* RAWY-260 / RAWY-281 — REFERENCES. The mark for a referenced word or phrase is NOT drawn here any
        more, and the reason is a hard capability limit rather than a preference. RAWY-260 drew it with the
        CSS Custom Highlight API (::highlight(sard-ref)), whose styleable property set is text-only —
@@ -749,9 +985,13 @@ export function buildReadingCss(
     .sard-title-ph { display: none; direction: ${rl.dir}; unicode-bidi: isolate; }
     img, svg, video, table { max-width: 100%; max-height: 100%; }
 
-    /* per-script fonts: Arabic glyphs use the chosen Arabic face, Latin uses Literata */
+    /* per-script fonts: Arabic glyphs use the chosen Arabic face, Latin uses Literata.
+       SardArabicFallback catches Arabic-block characters the chosen face has no glyph for, so they
+       land on a bundled Arabic design instead of the generic serif — see buildFontFaceCss. It is
+       ordered after SardLatin deliberately: the two claim disjoint unicode-ranges, so a Latin
+       character can never reach it and Latin text is unaffected. */
     html, body, p, li, blockquote, div, span, h1, h2, h3, h4, h5, h6, td, th, a {
-      font-family: 'SardArabic', 'SardLatin', serif !important;
+      font-family: 'SardArabic', 'SardLatin', 'SardArabicFallback', serif !important;
     }
     ${/* RAWY-195. These two were the last PLAIN rules in the funnel: an element selector at specificity
           (0,0,1), no !important — while text COLOUR (themeBlock) and paragraph spacing had carried the
@@ -776,6 +1016,31 @@ export function buildReadingCss(
     ${hardList(TEXT_BLOCKS)} {
       line-height: ${style.lineHeight} !important;
     }
+    ${/* Keeping headings out of TEXT_BLOCKS is not enough on its own. `line-height` INHERITS, and the
+          UA sheet sets none on h1-h6, so a heading sitting inside one of those blocks — a <div>, which
+          is the ordinary EPUB wrapper — silently takes the reader's body ratio. Measured: at ratio 2.6
+          a 24px <h2> inside a <div> computed to 62.4px of leading, while a bare <h2> stayed `normal`.
+          That defeats the intent recorded above rather than serving it.
+
+          `:where()` carries ZERO specificity, which is the whole point of using it here. It is enough
+          to stop INHERITANCE — any declaration on the element beats an inherited value — while losing
+          to every rule the book itself writes, including a bare `h2 { line-height: 1.2 }` at (0,0,1).
+          So Sard stops imposing its leading on headings without imposing any leading of its own:
+          `normal` hands the heading back to the font, which is what it had before the ratio reached
+          it. No !important, no id guard, no hardening: hardening it would make Sard win over the
+          book, which is the opposite of what this is for. */ ""}
+    :where(h1, h2, h3, h4, h5, h6) {
+      line-height: normal;
+    }
+    ${/* The same reasoning, for the same reason, one property along. `text-indent` INHERITS too, and it
+          only became inheritable onto a heading when TEXT_HOST joined PARA_BLOCKS: a tagged <body> or
+          <section> passes its indent down to every heading inside it, which would push chapter titles in
+          by 1.5em. Before the host class existed this could not arise — PARA_BLOCKS was <p> plus a LEAF
+          div, and a LEAF div is by definition one with no heading in it. Zero-specificity `:where()`
+          again: enough to stop INHERITANCE, while losing to any indent the book itself declares. */ ""}
+    :where(h1, h2, h3, h4, h5, h6) {
+      text-indent: 0;
+    }
     ${hardList(TEXT_BLOCKS, `:root:root.${ALIGN_GATE_CLASS}`, `${KEEP}${NEVER}`)} {
       text-align: ${style.align} !important;
     }
@@ -785,6 +1050,7 @@ export function buildReadingCss(
 
     ${extras}
     ${diacriticsRule}
+    ${numberRule}
     ${themeBlock(theme, flags, style.textColor, style.pageColor)}
   `;
 }
@@ -840,6 +1106,26 @@ export function buildFontFaceCss(style: ReadingStyle): string {
       src: url('${latSrc}')${latImported ? "" : " format('truetype')"};
       ${latImported ? "" : `font-weight: ${latBuiltin!.variable ? "200 700" : "normal"};`}
       unicode-range: ${LATIN_RANGE};
+    }
+    /* THE ARABIC SAFETY NET.
+       An Arabic face need not cover the whole Arabic block, and a legitimate book may use any of it.
+       Measured on a real library: the reader's chosen face thmanyah serif display has no glyph for
+       FARSI YEH (U+06CC), KEHEH (U+06A9) or GAF (U+06AF), and a valid EPUB used all three — 2054, 346
+       and 19 times. SardArabic was then skipped for exactly those characters, SardLatin does not
+       claim the Arabic range, and the stack fell through to the generic serif — Times New Roman on
+       Windows. Every such character was drawn in a different design, at different metrics, and the
+       shaping run was split at both of its edges, so the LETTERS AROUND IT lost their joining context
+       too. The same book renders correctly in other readers only because their fonts happen to cover
+       the codepoints.
+       So the chain gains an Arabic rung before the generic one. It is bundled (no network), it claims
+       the same range, and it sits BELOW the reader's own choice — so it is consulted only for
+       characters that choice cannot draw, and text the chosen face covers is byte-identical to before.
+       Noto Naskh is the widest-covering Arabic face Sard ships, which is the only reason it is the net. */
+    @font-face {
+      font-family: 'SardArabicFallback';
+      src: url('${absFontUrl(ARABIC_FONTS.notoNaskh.regular)}') format('truetype');
+      font-weight: 100 900;
+      unicode-range: ${ARABIC_RANGE};
     }`;
 }
 
@@ -854,12 +1140,20 @@ export function buildFontFaceCss(style: ReadingStyle): string {
 // Keep the ink/diacritics expressions here in step with `themeBlock` + `diacriticsRule` above.
 export function buildDynamicCss(style: ReadingStyle, theme?: Theme, flags?: BookThemeFlags): string {
   const scrollInk = style.textColor || theme?.colors?.text || "currentColor";
+  // Only when asked for. An absent colour emits nothing, so the digits inherit exactly as before.
+  // A HIGHLIGHT PSEUDO-ELEMENT, NOT A SELECTOR ON A WRAPPER.
+  //
+  // The digits carry no element of their own: `markNumbers` registers them as live Ranges in the
+  // document's own `CSS.highlights`, so the book's DOM — and therefore every CFI recorded against it
+  // — is untouched. A highlight pseudo-element paints over the text's own colour by definition, so
+  // this needs none of the `:not(#…)` hardening the element rules use to out-rank book CSS.
+  const numberRule = style.numberColor
+    ? `::highlight(sard-num) { color: ${style.numberColor}; }`
+    : "";
+
+  // The same two answers the geometry sheet emits — kept in step with `diacriticsRule` above.
   const diacriticsRule =
-    style.diacritics === "dim"
-      ? ".sard-tashkil { opacity: 0.28; }"
-      : style.diacritics === "hide"
-        ? ".sard-tashkil { font-size: 0 !important; }"
-        : "";
+    style.diacritics === "hide" ? ".sard-tashkil { font-size: 0 !important; }" : "";
   let inkCss = "";
   let pageCss = "";
   if (theme) {
@@ -901,6 +1195,7 @@ export function buildDynamicCss(style: ReadingStyle, theme?: Theme, flags?: Book
   return `
     html, body { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, ${scrollInk} 30%, transparent) transparent; }
     ${diacriticsRule}
+    ${numberRule}
     ${inkCss}
     ${pageCss}
   `;

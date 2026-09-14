@@ -1,0 +1,1041 @@
+/* ══ THE ARCHIVE CABINET — Library → Highlights & Notes ══════════════════════════════════════════
+ *
+ * Its own namespace, deliberately. The Library's Bookmarks shelf and the READER's annotations panel
+ * both render `.inbox-*`, and both are out of scope for this surface's redesign — so not one of those
+ * rules is touched here. `.arch-*` is new from top to bottom, which is what lets this screen change
+ * shape without the other two moving at all.
+ *
+ * THE MODEL. The entry level is a card-catalogue cabinet, not a list: each book is one shallow drawer
+ * whose face carries the cover as a plate set INTO it, the tally, the ink spectrum, and the newest
+ * thing marked in that book quoted in the reading face with its real ink. Above the top edge the
+ * slips protrude — one tab per ink actually used, so the silhouette encodes volume and palette before
+ * a word is read. Pulling a drawer opens that book's wall.
+ *
+ * MOTION IS MECHANICAL. One gesture: the pull. The face lifts, its shadow deepens, the tabs slide out
+ * and the cue fades in — on one shared 240ms ease-out. Nothing glows, scales, tilts or parallaxes.
+ *
+ * Every colour is a theme token, so all sixteen papers get a cabinet without a per-theme rule, and
+ * every inline axis is logical, so RTL mirrors without a single `[dir]` override. */
+
+.arch {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  /* The desk's scrim is absolute and covers THIS surface, not the whole window: the archive is where
+   * the slip was lifted from, so it is the archive that dims behind it. */
+  position: relative;
+}
+
+/* ── the cabinet's head ─────────────────────────────────────────────────────────────────────── */
+
+.arch-head {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+}
+
+.arch-head-top {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-5);
+  padding: 22px 26px 0;
+}
+
+.arch-title {
+  margin: 0;
+  font: 700 1.5rem/1.2 var(--ui-font);
+  color: var(--text);
+}
+
+.arch-count {
+  font: 500 0.8125rem var(--ui-font);
+  color: var(--muted);
+}
+
+/* The search sits at the head's trailing end and keeps its own width: it is a fixed instrument, not
+ * a field that grows to fill whatever the window leaves over. */
+.arch-search {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  width: 206px;
+  padding: 7px 11px;
+  border-radius: var(--r-md);
+  background: var(--chrome-bg);
+  border: 1px solid var(--chrome-border);
+}
+
+.arch-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+  color: var(--text);
+  font: 400 0.8125rem var(--ui-font);
+}
+
+.arch-search-ico {
+  display: inline-flex;
+  color: var(--muted);
+}
+
+/* The control line. It holds one `.arch-tools` plate, in both archive views. */
+.arch-sub {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: 9px 26px 16px;
+}
+
+/* The cabinet's subtitle — what this view is, on its own line under the title. Same type as the
+   hint it replaces; only its place in the header changed. */
+.arch-lede {
+  margin: 0;
+  padding: 6px 26px 0;
+  font: 400 0.8125rem var(--ui-font);
+  color: var(--muted);
+}
+
+.arch-sort {
+  border: 1px solid var(--chrome-border);
+  background: transparent;
+  cursor: pointer;
+  padding: 5px 11px;
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font: 500 0.75rem var(--ui-font);
+}
+
+.arch-sort:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+
+/* ── the cabinet ────────────────────────────────────────────────────────────────────────────── */
+
+.arch-cabinet {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 26px 28px;
+}
+
+.arch-grid {
+  display: grid;
+  /* START, NOT STRETCH. Stretching every drawer to the tallest in its row is what produced the dead
+   * band of empty face under the short ones: a book with a one-line quote was given the height of a
+   * book with a long title AND a two-line quote. Each drawer is now exactly as tall as what it holds,
+   * which is also why the tabs stay hidden — the face still fills the drawer, the drawer just no
+   * longer outgrows the face. */
+  align-items: start;
+  gap: 30px 20px;
+  /* A DRAWER HAS A SIZE; A CABINET HOLDS AS MANY AS IT FITS. Two `1fr` columns made every drawer as
+   * wide as half the window, so on a wide screen each one stretched into a long panel and the cabinet
+   * lost its density. The reference's drawer is ~455px — its panel is 1180 wide, less a 196 rail and
+   * 52 of padding, halved with a 20 gutter — so that is the drawer's size here too, and a wider
+   * window is answered with MORE drawers rather than longer ones. */
+  grid-template-columns: repeat(auto-fill, minmax(320px, 456px));
+  justify-content: start;
+}
+
+/* One column below the design's breakpoint — the drawer face has a fixed plate and a two-line quote,
+ * and squeezing two of them into a narrow window would clip the very line the face exists to show. */
+@media (max-width: 640px) {
+  .arch-grid { grid-template-columns: 1fr; }
+}
+
+/* ── one drawer ─────────────────────────────────────────────────────────────────────────────── */
+
+.arch-drawer {
+  position: relative;
+  cursor: pointer;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: start;
+  font: inherit;
+  color: inherit;
+  /* FLEX, NOT BLOCK, and the face stretches inside it. A button centres its content vertically, so a
+   * face shorter than its stretched grid cell floated in the middle and left the tabs — anchored to
+   * the drawer's own top — standing proud of it at rest. Measured: up to 16px of tab showing before a
+   * pointer went anywhere near. The tabs may only appear when the drawer is pulled. */
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  transition: transform 0.24s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* THE PULL. Three things move together and one fades — see `.arch-tab`, `.arch-face`, `.arch-cue`. */
+.arch-drawer:hover,
+.arch-drawer:focus-visible { transform: translateY(-3px); }
+
+.arch-drawer:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--r-xs); }
+
+/* The slips protruding above the drawer's top edge: one per ink actually used inside. They sit
+ * BEHIND the face and slide out from under it, which is why the face carries its own stacking. */
+.arch-tab {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  width: 44px;
+  border-radius: var(--r-xs) var(--r-xs) 0 0;
+  opacity: 0.72;
+  transition: top 0.24s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.arch-drawer:hover .arch-tab,
+.arch-drawer:focus-visible .arch-tab { top: -13px; }
+
+.arch-face {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  display: flex;
+  gap: 14px;
+  /* The reference's own asymmetry: 13 all round, with one extra pixel on the TRAILING side where the
+   * handle sits. Written logically so the extra pixel follows the handle when the cabinet mirrors. */
+  padding: 13px;
+  padding-inline-end: 14px;
+  border-radius: var(--r-xs);
+  background: var(--chrome-bg);
+  border: 1px solid var(--chrome-border);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 0.28), inset 0 1px 0 color-mix(in srgb, var(--text) 6%, transparent);
+  transition: background 0.2s, box-shadow 0.24s;
+}
+
+/* Lightens ONE step and the shadow deepens — the drawer coming out of the cabinet, not a highlight. */
+.arch-drawer:hover .arch-face,
+.arch-drawer:focus-visible .arch-face {
+  background: color-mix(in srgb, var(--text) 5%, var(--chrome-bg));
+  box-shadow: 0 14px 30px rgb(0 0 0 / 0.5), inset 0 1px 0 color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+/* ── the plate ──────────────────────────────────────────────────────────────────────────────── */
+
+/* SET INTO the face, not displayed as a poster: a plate with its own inset ring and a cast shadow.
+ * The explicit height matters — a coverless book renders the Library's own generated cover here, and
+ * that component collapses to nothing without a sized box around it. */
+.arch-plate {
+  flex: none;
+  width: 66px;
+  height: 94px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--app-bg);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.45), inset 0 0 0 1px color-mix(in srgb, var(--text) 7%, transparent);
+  transition: box-shadow 0.24s;
+}
+
+.arch-plate > * { width: 100%; height: 100%; }
+
+/* A book with no cover gets a LETTER, not a shrunken poster. The Library's generated cover composes a
+ * title and an author for a full tile; at 66x94 that reads as clutter, and the design asks for a
+ * single glyph in the reading face over the same generated ground. */
+.arch-plate-letter {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font: 400 1.75rem var(--book);
+  user-select: none;
+}
+
+.arch-plate-letter.ar { font-family: var(--ar); }
+
+.arch-plate img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* ── the written label ──────────────────────────────────────────────────────────────────────── */
+
+.arch-label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.arch-book {
+  font: 700 0.9375rem/1.4 var(--ui-font);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.arch-author {
+  font: 500 0.6875rem/1.4 var(--ui-font);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.arch-tally-row {
+  margin-top: 5px;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.arch-tally {
+  font: 600 0.6875rem var(--ui-font);
+  color: var(--accent);
+}
+
+/* The full spectrum, uncapped: the protruding tabs are trimmed to what the face can carry, but the
+ * dots report every ink the book actually holds. */
+.arch-spectrum { display: flex; gap: 3px; }
+
+.arch-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 1px;
+}
+
+/* THE PART THAT MAKES IT A MEMORY INSTEAD OF A LISTING: the newest mark, quoted in the reading face
+ * and wearing its real ink. Two lines, then it stops. */
+.arch-quote {
+  margin-top: 6px;
+  font: 400 0.8125rem/1.5 var(--book);
+  color: color-mix(in srgb, var(--text) 55%, var(--muted));
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+/* The ink itself, composited by Sard's own rule — the component supplies fill/blend/opacity, so a
+ * slip on the shelf looks exactly like the page it came from. */
+.arch-quote.ar { font-family: var(--ar); font-size: 0.875rem; line-height: 1.65; }
+
+/* THE MARK. A plain background of ONE flat colour, cloned across line breaks so a wrapped passage is
+ * marked line by line the way a pen would leave it — which is the shape the reference draws, and the
+ * only shape that leaves the glyphs at full contrast. The colour is composited in `mark.ts`; nothing
+ * here may reintroduce `mix-blend-mode` or an element `opacity`, because both would take the text
+ * down with the ink. */
+.arch-ink {
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.arch-foot {
+  margin-top: auto;
+  padding-top: 5px;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+.arch-opened {
+  font: 500 0.625rem var(--ui-font);
+  color: color-mix(in srgb, var(--muted) 78%, transparent);
+}
+
+/* The cue is the drawer telling you it opens. It is invisible until the pull, so a still cabinet
+ * reads as furniture rather than as a wall of calls to action. */
+.arch-cue {
+  margin-inline-start: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 600 0.625rem var(--ui-font);
+  color: var(--accent);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.arch-drawer:hover .arch-cue,
+.arch-drawer:focus-visible .arch-cue { opacity: 1; }
+
+/* The handle on the drawer's trailing edge. Logical placement: it is the last child, so RTL puts it
+ * on the left without a rule of its own. */
+.arch-handle {
+  flex: none;
+  align-self: center;
+  width: 3px;
+  height: 28px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+/* ── level two · inside the drawer ──────────────────────────────────────────────────────────── */
+
+/* Once open, the book IS the room: the cluster header is gone and its identity moves up into a band
+ * with its own plate. */
+/* NOT A SLAB. This was a full-width opaque bar plus a second one under it, which buried a large
+ * block of the reader's own background picture for the sake of four controls. The band is now just
+ * layout: every control inside it carries its own contained surface, so the chrome covers the chrome
+ * and nothing more. */
+.arch-band {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: 14px 26px 10px;
+}
+
+/* THE BACK CONTROL IS ALWAYS LEGIBLE. Transparent over a photographic background, it depended on
+ * whatever happened to be behind it — and behind a selected ink swatch it effectively vanished. It
+ * carries its own opaque surface now, so no filter state can take it away. */
+.arch-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--chrome-border);
+  background: var(--chrome-bg);
+  cursor: pointer;
+  padding: 7px 12px;
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font: 500 0.8125rem var(--ui-font);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.18);
+}
+
+.arch-back:hover { background: color-mix(in srgb, var(--text) 8%, var(--chrome-bg)); }
+
+.arch-band-plate {
+  flex: none;
+  width: 38px;
+  height: 54px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--app-bg);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.45), inset 0 0 0 1px color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+.arch-band-plate > * { width: 100%; height: 100%; }
+.arch-band-plate img { display: block; width: 100%; height: 100%; object-fit: cover; }
+
+.arch-band-id {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 5px 12px 6px;
+  border-radius: var(--r-sm);
+  background: var(--chrome-bg);
+  border: 1px solid var(--chrome-border);
+}
+
+.arch-band-title {
+  font: 700 1rem/1.35 var(--ui-font);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.arch-band-meta { font: 500 0.75rem var(--ui-font); color: var(--muted); }
+
+/* The drawer-scoped search: same instrument as the cabinet's, scoped to the book you are standing in. */
+.arch-band .arch-search { margin-inline-start: auto; }
+
+/* THE FILTER ROW IS CHROME, SO IT SITS ON THE CHROME. Inside a drawer these controls were rendering
+ * straight onto the reader's own background picture, and over a dark photograph the unselected
+ * segments of the type switch were very nearly invisible. The band above them is a surface; this row
+ * is the rest of that same surface, and the wall of slips begins below it. */
+.arch-sub.on-band { padding: 0 26px 12px; }
+
+/* THE SEARCH, ONCE IT STANDS WITH THE OTHER CONTROLS.
+   `margin-inline-start: auto` is what pushed it to the far edge of whatever row held it — right for a
+   lone field on a heading row, wrong for one control among several. Inside the plate it also drops its
+   own border and takes a recessed ground instead, so it reads as a well IN the plate rather than a box
+   sitting on top of one. */
+.arch-search.in-tools { margin-inline-start: 0; }
+.arch-search.in-tools {
+  width: 186px;
+  padding: 4px 9px;
+  background: var(--paper-bg);
+  border-color: transparent;
+}
+.arch-search.in-tools:focus-within { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+
+/* One contained plate holding the wall's filters. `fit-content` is the point: it hugs the controls
+ * instead of ruling a bar across the window, and it gives every one of them — swatches, tag menu and
+ * type switch alike — the same opaque ground, so contrast no longer depends on which ink is selected
+ * or on what the background picture happens to be doing underneath. */
+.arch-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  width: fit-content;
+  max-width: 100%;
+  flex-wrap: wrap;
+  padding: 6px 10px;
+  border-radius: var(--r-md);
+  background: var(--chrome-bg);
+  border: 1px solid var(--chrome-border);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.16);
+}
+
+/* ── the wall of slips ──────────────────────────────────────────────────────────────────────── */
+
+/* A packed column layout, each slip sized by its own content. Masonry keeps a three-word note from
+ * being given the same box as a three-hundred-word one. */
+/* A FIXED COUNT, NOT A FIXED WIDTH. `column-width` let the engine choose how many columns to make AND
+ * balance the slips between them, so the same wall re-arranged itself with the window and slips landed
+ * at heights nothing explained. The reference names a COUNT — three at its default density — and the
+ * slips then fill those three columns in order, top to bottom. Deterministic, and readable as an
+ * order rather than as a scatter. */
+.arch-wall {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 24px 26px;
+}
+
+/* THE WALL FILLS THE ROOM. A fixed three tracks under a fixed 980px cap was my own doing, and on a
+ * wide window it pinned the whole archive into a third of the pane and left the rest blank. The
+ * cabinet's drawers are a fixed SIZE because a drawer is an object; a wall is a surface, and a
+ * surface takes the wall it is given. `auto-fill` holds each slip at the reference's own column
+ * width — ~300px, from its 930px wall over three columns — and answers a wider pane with MORE
+ * columns, so the composition stays the reference's while the area is actually used.
+ *
+ * A grid, not columns: multi-column is column-major by specification and fills downwards before it
+ * fills across, which is not the order this wall reads in. */
+/* ONE VARIABLE SIZES THE WHOLE WALL. `--arch-scale` is 1 at the smallest card and rises from there;
+ * every metric below — the track, the frame, the allowances, the type, the padding and the tab — is
+ * written as a multiple of it, so a card cannot grow out of proportion with itself and no two cards
+ * can ever end up different sizes. The grid reflows on its own: a wider track simply means fewer
+ * columns fit, and `auto-fill` recounts them. Nothing outside this wall reads the variable, so the
+ * application's own scale and the reader's background are untouched by it.
+ *
+ * TWO FACTORS, NOT ONE — and this is what makes the control a reading-space control rather than a
+ * zoom. Scaling the frame and the type by the SAME number leaves lines-visible unchanged, because
+ * lines are the allowance divided by the line height and both grew equally: the reader got a bigger
+ * card carrying exactly as much text. So the type is DAMPENED — it still grows, by about a quarter
+ * across the range, enough to stay comfortable — while the frame grows in full. The gap between the
+ * two is the extra room, and it goes to the passage. */
+.arch-wall-cols {
+  --arch-scale: 1;
+  /* THREE FACTORS, BECAUSE THE THREE THINGS GROW AT DIFFERENT RATES — and getting that wrong is what
+   * made a larger card feel like an emptier one. Measured on the previous model: the frame gained
+   * 126px between the ends of the range, but 34 of it went to chrome and every line became 30% dearer
+   * as the type grew with it, so all that space bought 1.7 extra lines. The reader paid in screen and
+   * was given almost nothing back.
+   *
+   *   --arch-frame  the card's HEIGHT, and it grows hardest, because height is the only source of
+   *                 reading space. Nothing else on the card consumes it.
+   *   --arch-type   the type, dampened to a fifth of that: it stays comfortable without making each
+   *                 line more expensive than the extra height can pay for.
+   *   --arch-scale  the width and the tab — the card's footprint on the wall.
+   *
+   * The chrome — padding, gaps — does not scale at all. It is the same furniture whatever size the
+   * slip is, and every pixel it does not take is a pixel of the passage. */
+  --arch-frame: calc(1 + (var(--arch-scale) - 1) * 2.2);
+  --arch-type: calc(1 + (var(--arch-scale) - 1) * 0.3);
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(236px * var(--arch-scale)), 1fr));
+  align-items: start;
+  gap: 14px;
+}
+
+
+/* A COLUMN, NOT A BLOCK — and this is what made notes unreadable. A `<button>` may only contain
+ * phrasing content, so every part of a slip is a `<span>`. A span is INLINE, and on an inline box
+ * `max-height`, `overflow` and block padding do not apply: the cap did nothing, the padding leaked
+ * into the neighbouring lines, and the mask cut the inline fragments wherever they happened to break
+ * — which is why a note could arrive as a sliver of ink with its words gone. Making the slip a flex
+ * column blockifies its children, and their layout means what it says. */
+/* ONE CARD, ONE SIZE — the wall is a collection of identical slips, not a masonry of whatever each
+ * annotation happened to need. A short annotation does not shrink its card and a long one does not
+ * grow it: the content fits the frame, and where it cannot, it fades inside it.
+ *
+ * 210px is derived the same way 300 was, from the worst case a slip has to hold whole — a passage
+ * AND a note — only with every part of it tightened: 20 of padding, a 60px passage allowance, a note
+ * block of a label and TWO lines rather than three (about 74), the meta row, the affordance and the
+ * gaps. That comes to just over 200. The reduction is in the frame and the type together, never in
+ * the content: a slip still says everything it said, in less room.
+ *
+ * What must not change is that this is ONE size. A slip holding a highlight, a highlight with a note
+ * and a standalone note are all exactly this tall, so the wall reads as a wall of slips rather than a
+ * masonry of whatever each annotation happened to need. */
+.arch-slip {
+  position: relative;
+  height: calc(210px * var(--arch-frame));
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  /* NO `overflow: hidden` HERE, deliberately. The tab is the slip's own child and sits ABOVE its top
+   * edge; clipping the frame clipped the tab down to a sliver. Every part that can overrun clips
+   * itself instead — the passage by its allowance, the note body by its line clamp — so the frame has
+   * nothing left to contain. */
+  width: 100%;
+  text-align: start;
+  cursor: pointer;
+  padding: 11px 12px 10px;
+  border-radius: 2px;
+  background: var(--paper-bg);
+  border: 1px solid var(--chrome-border);
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.22);
+  color: inherit;
+  font: inherit;
+  transition: transform 0.18s cubic-bezier(0.22, 0.61, 0.36, 1), box-shadow 0.18s;
+}
+
+.arch-slip:hover,
+.arch-slip:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px rgb(0 0 0 / 0.32);
+}
+
+.arch-slip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The passage carries the real word-shaped mark; a note slip has no mark at all — bare paper and the
+ * interface face, so the two are told apart from across the room. */
+/* The reference's own slip type: the book's face, at its reading leading. */
+/* THE SLIP'S OWN TAB — a small piece of coloured paper caught on its top edge, in the annotation's
+ * real ink. It is the same object the drawers wear one scale down: a 3px-cornered stub at .72, no
+ * glow and no shadow of its own. Absolutely placed, so it adds no height, opens no gap and changes
+ * nothing about the text, the fade or the click target — it is inside the slip's own button, which is
+ * what makes it read as part of the paper rather than as a badge stuck on top of it. */
+/* Bigger, now the slips are smaller: a tab has to be legible from across the wall, and a 7px sliver
+ * on a 210px card is not. It stays a piece of paper caught behind the slip — square-footed, seated
+ * under the card's own top edge so it reads as tucked behind rather than stuck on. */
+.arch-slip-tab {
+  position: absolute;
+  top: calc(-11px * var(--arch-scale));
+  inset-inline-start: calc(12px * var(--arch-scale));
+  width: calc(52px * var(--arch-scale));
+  height: calc(13px * var(--arch-scale));
+  border-radius: var(--r-xs) var(--r-xs) 0 0;
+  opacity: 0.72;
+  pointer-events: none;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+.arch-slip-tags { display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+
+.arch-tag {
+  font: 500 0.6875rem var(--ui-font);
+  color: var(--muted);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-sm);
+  padding: 2px 7px;
+}
+
+/* ── the closed slip, as the reference draws it ────────────────────────────────────────────────
+ *
+ * Two halves, always in this order: the BOOK's word above, the READER's below. A highlight keeps its
+ * passage wearing the mark it wears on the page; a note keeps its body in a block of its own, with an
+ * accent rail down the leading edge and a pen and a name above it. That block is what makes a note
+ * legible AS a note from across the wall, before anything is clicked — without it a note read as a
+ * clipped fragment of something with no sign of whose words they were. */
+
+.arch-slip-exc {
+  display: block;
+  font-family: var(--book);
+  font-weight: 400;
+  font-size: calc(0.8125rem * var(--arch-type));
+  line-height: 1.7;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  /* Room for the mark's own box, which the shared em padding grows past the line box. */
+  padding-block: 0.22em;
+}
+
+.arch-slip-exc.ar { font-family: var(--ar); font-size: calc(0.875rem * var(--arch-type)); line-height: 1.85; }
+
+/* THE CAP IS ALWAYS ON; THE FADE IS ONLY FOR A PASSAGE THAT RUNS PAST IT.
+ *
+ * The height itself is supplied per slip — 132px, or two thirds of that when a note shares the room —
+ * because it is what keeps the wall even: a grid row is as tall as its tallest card, so one unbounded
+ * passage opens a hole under every short card beside it. Capping is therefore a composition rule, not
+ * a truncation.
+ *
+ * The fade is the reference's own gradient, and it is applied ONLY when the text genuinely overruns.
+ * On a passage that fits it would dim words that had room to be read — which is what made marked
+ * passages trail off into the dark. */
+/* THE PASSAGE HAS ITS OWN ROOM, and the note cannot take it. Letting it merely shrink to fit meant
+ * the note's three lines pushed it down to a sliver; it now gets the reference's own allowance —
+ * 132px alone, 87 when a note shares the slip — and stops there whether or not the frame has space
+ * left. Neither half of a slip may erase the other. */
+.arch-slip-exc {
+  /* THE PASSAGE IS THE PART THAT GROWS. It takes whatever the frame has left once the note, the meta
+   * row and the affordance have taken their own — those are intrinsic and barely move, so nearly all
+   * of a larger card's extra room lands here, which is where the reader wanted it. `flex: 1` makes it
+   * claim that room; `min-height: 0` lets it yield rather than push the furniture out of the frame.
+   *
+   * The ceiling still exists and still binds AT THE SMALLEST SIZE, which is what keeps the minimum
+   * exactly the card that was approved: 96px alone, 60 beside a note. It then rises faster than the
+   * frame does, so above the minimum the frame — not the ceiling — is what decides, and the passage
+   * fills the space instead of stopping short in the middle of a bigger card. */
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: calc(96px * (1 + (var(--arch-scale) - 1) * 8));
+  overflow: hidden;
+}
+
+.arch-slip.has-note .arch-slip-exc {
+  max-height: calc(60px * (1 + (var(--arch-scale) - 1) * 8));
+}
+
+.arch-slip-exc.long {
+  -webkit-mask-image: linear-gradient(to bottom, #000 56%, rgba(0, 0, 0, 0.3) 86%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 56%, rgba(0, 0, 0, 0.3) 86%, transparent 100%);
+}
+
+/* The note keeps its full three lines whatever the passage above it does — it is the reader's own
+ * words, and it is never the part that gets squeezed. */
+.arch-slip-noteblock {
+  flex: none;
+  display: block;
+  padding: 7px 9px 8px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-inline-start: 2px solid var(--accent);
+}
+
+.arch-slip-notelabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 4px;
+  font-family: var(--ui-font);
+  font-weight: 600;
+  font-size: calc(0.59375rem * var(--arch-type));
+  color: var(--accent);
+}
+
+.arch-slip-notebody {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  /* The clamp is supplied by the component, because a line COUNT cannot be computed in CSS. Two lines
+   * at the smallest card, rising with it — the note benefits from a larger card as well, without
+   * being allowed to take the room the passage needs. */
+  -webkit-line-clamp: var(--arch-note-lines, 2);
+  line-clamp: var(--arch-note-lines, 2);
+  overflow: hidden;
+  font-family: var(--ui-font);
+  font-weight: 400;
+  font-size: calc(0.78125rem * var(--arch-type));
+  line-height: 1.65;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+
+
+/* THE META ROW. The colour identity sits here beside the chapter, exactly where the reference puts
+ * it — the tab above the slip is that same colour, seen from across the wall. The date holds the
+ * trailing edge. */
+/* The meta row and the affordance are pinned to the foot of the frame, so every card's furniture
+ * lines up across a row however much text sits above it. */
+.arch-slip-meta { flex: none; margin-top: auto; display: flex; align-items: center; gap: 7px; }
+
+.arch-slip-chip { width: calc(7px * var(--arch-scale)); height: calc(7px * var(--arch-scale)); border-radius: 2px; flex: none; }
+
+.arch-slip-chapter {
+  font-family: var(--ui-font);
+  font-weight: 500;
+  font-size: calc(0.59375rem * var(--arch-type));
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.arch-slip-when {
+  margin-inline-start: auto;
+  font-family: var(--ui-font);
+  font-weight: 500;
+  font-size: calc(0.59375rem * var(--arch-type));
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* A slip that could not show everything says so, rather than simply stopping mid-thought. */
+.arch-slip-more {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--ui-font);
+  font-weight: 600;
+  font-size: calc(0.59375rem * var(--arch-type));
+  color: var(--accent);
+}
+
+/* ── absence ────────────────────────────────────────────────────────────────────────────────── */
+
+.arch-empty {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-5);
+  padding: 40px;
+  text-align: center;
+}
+
+.arch-empty-mark { color: var(--accent); opacity: 0.55; }
+
+.arch-empty-title { font: 700 1.25rem var(--ui-font); color: var(--text); }
+
+.arch-empty-sub {
+  max-width: 34ch;
+  font: 400 0.875rem/1.8 var(--ui-font);
+  color: var(--muted);
+}
+
+/* ══ THE SLIP, LIFTED ONTO THE DESK ══════════════════════════════════════════════════════════════
+ *
+ * Clicking a slip does not leave the archive. The reference lifts it onto a scrimmed desk at full
+ * reading measure, and the four things a reader might want are offered from there — going back to the
+ * book being one of them rather than the only meaning a click can carry. Every figure below is the
+ * reference's: a 620px sheet, 2px corners, 30/34/26 of padding, and a rule above the actions. */
+
+.arch-scrim {
+  position: absolute;
+  z-index: 8;
+  inset: 0;
+  background: color-mix(in srgb, var(--app-bg) 72%, transparent);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 44px;
+}
+
+.arch-sheet {
+  width: 100%;
+  max-width: 620px;
+  max-height: 100%;
+  overflow-y: auto;
+  background: var(--chrome-bg);
+  border: 1px solid var(--chrome-border);
+  border-radius: 2px;
+  box-shadow: 0 16px 42px rgb(0 0 0 / 0.5);
+  padding: 30px 34px 26px;
+}
+
+.arch-sheet:focus { outline: none; }
+
+.arch-sheet-head { display: flex; align-items: flex-start; gap: var(--sp-5); margin-bottom: 20px; }
+.arch-sheet-id { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.arch-sheet-chipline { display: flex; align-items: center; gap: var(--sp-4); }
+.arch-sheet-chip { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+.arch-sheet-kind { font: 600 0.6875rem var(--ui-font); color: var(--accent); }
+.arch-sheet-when { font: 500 0.6875rem var(--ui-font); color: var(--muted); }
+.arch-sheet-book { font: 700 1rem/1.5 var(--ui-font); color: var(--text); }
+.arch-sheet-chapter { font: 500 0.78125rem/1.5 var(--ui-font); color: var(--muted); }
+
+.arch-sheet-close {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--r-circle);
+  border: 1px solid var(--chrome-border);
+  background: transparent;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.arch-sheet-close:hover { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
+
+/* FULL MEASURE, FULL LEADING, NO CAP. The wall shows a slip; this shows the passage. */
+.arch-sheet-passage {
+  font: 400 1.0625rem/2 var(--book);
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.arch-sheet-passage.ar { font-family: var(--ar); font-size: 1.1875rem; line-height: 2.1; }
+
+/* A note's passage is the book's word QUOTED, not marked: the ink belongs to a highlight. */
+.arch-sheet-passage.quoted {
+  padding-inline-start: 16px;
+  border-inline-start: 2px solid color-mix(in srgb, var(--muted) 40%, transparent);
+  color: color-mix(in srgb, var(--text) 70%, var(--muted));
+}
+
+.arch-sheet-note {
+  margin-top: 24px;
+  padding: 15px 17px;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 20%, transparent);
+}
+
+.arch-sheet-note-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: var(--sp-4);
+  font: 600 0.6875rem var(--ui-font);
+  color: var(--accent);
+}
+
+.arch-sheet-note-body { font: 400 0.9375rem/1.95 var(--ui-font); color: var(--text); }
+
+.arch-sheet-editor {
+  width: 100%;
+  min-height: 7rem;
+  resize: vertical;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-sm);
+  background: var(--paper-bg);
+  color: var(--text);
+  font: 400 0.9375rem/1.8 var(--ui-font);
+  padding: 10px 12px;
+  text-align: start;
+}
+
+.arch-sheet-editor:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.arch-sheet-editrow { display: flex; gap: var(--sp-4); margin-top: var(--sp-5); }
+.arch-sheet-tags { margin-top: var(--sp-5); display: flex; flex-wrap: wrap; gap: var(--sp-3); }
+
+/* TWO PARTS, NOT FOUR. What you can do with the slip, and the one thing that destroys it — at
+   opposite ends of one row, which is the separation this surface has always had.
+   THE ROW ITSELF DOES NOT BREAK. It used to, and when it did the destructive control was carried
+   to a second line and thrown to the far corner of it by an automatic margin: measured at 777px,
+   the three ordinary actions sat at one height and the delete control alone at another, at the
+   opposite edge. Keeping the row whole keeps that control in the one place it has ever been. What
+   gives way instead is the group of ordinary actions, which wraps within itself — there is no
+   position in it that means anything, so a second line there costs nothing.
+   `space-between` holds the two apart without an automatic margin, whose whole effect on a wrapped
+   line was to push a lone control as far from its group as the row is wide. */
+.arch-sheet-actions {
+  margin-top: 26px;
+  padding-top: 16px;
+  border-top: 1px solid var(--chrome-border);
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  align-items: center;
+}
+
+/* THE ACTIONS GIVE WAY WITHIN THEMSELVES, not by leaving the row. Letting this group WRAP put one
+   action on a second line and left the destructive control floating beside the gap between them —
+   the row was whole, and still looked broken. So the group stays on one line too, and what yields
+   when there is not enough width is each label, inside its own button. The row therefore reads the
+   same at every width and at every text size: three actions at one end, the destructive one at the
+   other, on one line. */
+.arch-sheet-actions-main {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--sp-4);
+  align-items: stretch;
+  /* A flex item will not shrink below its content unless it is told it may. */
+  min-width: 0;
+}
+
+.arch-sheet-actions-main .arch-btn {
+  min-width: 0;
+  /* Two short lines inside the button, rather than one long line that pushes the row apart. */
+  white-space: normal;
+  text-wrap: balance;
+}
+
+.arch-btn {
+  border: 1px solid var(--chrome-border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  padding: 9px 16px;
+  border-radius: var(--r-sm);
+  font: 500 0.8125rem var(--ui-font);
+}
+
+.arch-btn:hover { background: color-mix(in srgb, var(--text) 7%, transparent); }
+.arch-btn:disabled { opacity: 0.5; cursor: default; }
+
+.arch-btn.primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--app-bg);
+  font-weight: 600;
+}
+
+.arch-btn.primary:hover { background: color-mix(in srgb, var(--text) 12%, var(--accent)); }
+
+/* Destructive, and it says so before it acts: the trailing edge, its own colour, and a second click.
+   The trailing edge now comes from the row's `space-between` rather than from an automatic margin —
+   same place while the row fits, and a predictable one when it does not. */
+.arch-btn.danger {
+  /* Never squeezed, never wrapped: its size is its longest label and its place is the far end. */
+  flex: none;
+  white-space: nowrap;
+  align-self: center;
+  border-color: transparent;
+  background: color-mix(in srgb, #b24a4a 16%, transparent);
+  color: #e08b8b;
+  font-weight: 600;
+}
+
+.arch-btn.danger.armed { background: #b24a4a; color: #fff; }
+
+/* THE TWO LABELS SHARE ONE CELL, so the control is as wide as its longest word in either state and
+   arming it cannot re-measure the row it sits in. The hidden one still occupies the cell — that is
+   the whole point — so `visibility` rather than `display`. */
+.arch-btn-swap {
+  display: grid;
+  align-items: center;
+  justify-items: center;
+}
+
+.arch-btn-swap > span {
+  grid-area: 1 / 1;
+  visibility: hidden;
+  white-space: nowrap;
+}
+
+.arch-btn-swap > span.on { visibility: visible; }
+
+/* ── the slip-size control ────────────────────────────────────────────────────────────────────
+ *
+ * The Library's own cover-size instrument, on the archive's tool plate: a short track between two
+ * marks that name the ends of the range. No number and no label — the marks say which way is larger,
+ * and the slips themselves are the readout. It borrows `.libd-size` for the track so the two sliders
+ * in this application are one control, not two that happen to look alike. */
+.arch-size {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-inline: var(--sp-3);
+}
+
+.arch-size-mark {
+  display: block;
+  width: 4px;
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--muted) 55%, transparent);
+  flex: none;
+}
+
+.arch-size-mark.sm { height: 9px; }
+.arch-size-mark.lg { height: 14px; }
+
+/* WHOSE MARK IT IS. Quiet by design: it sits with the chapter and the date, in the same muted ink, so
+   an arriving slip is distinguishable without being decorated. No colour of its own — the archive's
+   own tokens, like everything beside it. */
+.arch-slip-from,
+.arch-sheet-from {
+  font: 500 0.75rem var(--ui);
+  color: var(--muted);
+}
+.arch-sheet-from { margin-top: 2px; }

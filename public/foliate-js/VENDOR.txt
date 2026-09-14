@@ -17,11 +17,47 @@ What the vendored code calls, and where:
         epub.js:178, :200, :206, :258 — the OPF metadata parser, run for EVERY book.
         Missing  =>  NO book of any kind opens.
 
-  PDF   Uint8Array.prototype.toHex      pdf.worker.mjs:59575  (every getDocument — unconditional)
-        Uint8Array.prototype.toBase64   pdf.mjs:7434          (embedded font @font-face rules)
-        Uint8Array.fromBase64           pdf.mjs:24263, :24267 (signature handling)
-        Missing  =>  EVERY PDF fails. This produced the reported defect:
-                     "UnknownErrorException: hashOriginal.toHex is not a function".
+  PDF   REQUIRED, on the unconditional open/render path:
+        Promise.try                       pdf.worker.mjs:60114 +3, pdf.mjs:8404 +3 — the message
+                                          handler. `sendWithPromise` (pdf.mjs:8445) ALWAYS sets a
+                                          callbackId and the worker takes that branch whenever one is
+                                          present, so this runs on the first request of every PDF.
+                                          Missing => it throws inside a `message` handler, where
+                                          nothing can reject: getDocument() NEVER SETTLES. A silent
+                                          hang, not an error.
+        Promise.withResolvers             pdf.mjs x26, pdf.worker.mjs x14, including sendWithPromise.
+        Uint8Array.prototype.toHex        pdf.worker.mjs:59575 — the document fingerprint, awaited
+                                          unconditionally at :62425 on every GetDoc.
+                                          Missing => "UnknownErrorException: hashOriginal.toHex is
+                                          not a function" — the originally reported defect.
+        Map.prototype.getOrInsertComputed pdf.mjs x9, pdf.worker.mjs x6 — `_intentStates` and
+                                          `#methodPromises` when a page renders.
+                                          Missing => throws at render.
+
+        PERFORMANCE ONLY, not correctness:
+        URL.parse                         pdf.mjs x8, pdf.worker.mjs x3. `PDFWorker._isSameOrigin`
+                                          (pdf.mjs:15229) calls it inside the try that wraps
+                                          `new Worker(...)` (:15301). Missing => that throws, the
+                                          catch runs #setupFakeWorker(), and pdf.js parses on the
+                                          MAIN THREAD for the rest of the session. Everything still
+                                          renders; page turns block the interface.
+
+        NOT REQUIRED, and deliberately neither gated nor supplied:
+        Uint8Array.prototype.toBase64     pdf.mjs:7434 is inside createFontFaceRule(), the FALLBACK
+                                          branch — the preferred path is createNativeFontFace(),
+                                          taken wherever the FontFace API exists (pdf.mjs:7276).
+                                          Also :24263, signature compression, which Sard never calls.
+        Uint8Array.fromBase64             pdf.mjs:24267 (signatures) and :46916 (XFA). Sard does not
+                                          pass `enableXfa`, so pdf.js leaves XFA off.
+                                          MEASURED: with each deleted from the page realm, a real
+                                          two-page PDF still opened, paginated, extracted text and
+                                          rendered. They were in the old capability gate, and
+                                          requiring them refused engines that work.
+
+        The four REQUIRED ones are supplied where an engine lacks them by Sard's own
+        `sard-pdf-compat.mjs` (see LOCAL MODIFICATIONS 13), so the gate in src/lib/runtime.ts probes
+        them AFTER that layer has loaded: it answers "can Sard render a PDF here", not "did this
+        engine ship the built-in natively".
 
 These are enforced at runtime by FEATURE DETECTION in src/lib/runtime.ts — never by a version
 number. A version check would be a second copy of the same fact and would desync the moment this
@@ -32,11 +68,33 @@ directory is re-pinned. If you re-vendor:
   2. Update CAPABILITY_FEATURES / RuntimeEnv in src/lib/runtime.ts to match.
   3. Update tests/… so a missing feature still produces the runtime message rather than a raw throw.
 
-(For reference only, never for a decision: as of the 5.5.207 pin the PDF set corresponds to
-Chromium >= 140 and the EPUB set to Chromium >= 117.)
+(For reference only, never for a decision: as of the 5.5.207 pin the NATIVE PDF set corresponds to
+Chromium >= 140 and the EPUB set to Chromium >= 117. The compatibility layer supplies the four
+required PDF built-ins where they are absent, so an engine below that no longer fails for these
+reasons — but no claim is made here about any other floor pdf.js may have, and nothing in Sard reads
+a version number.)
 
 
 === LOCAL MODIFICATIONS — RE-APPLY ON ANY RE-VENDOR ================================================
+
+ 13. sard-pdf-compat.mjs — SARD'S OWN FILES, not vendored code, listed here because a re-vendor must
+     sard-pdf-worker.mjs    not orphan them:
+     pdf.js:5
+                            * `sard-pdf-compat.mjs` supplies the four required built-ins above, and
+                              `URL.parse`, each behind a `typeof ... !== "function"` guard so a
+                              current engine gets its own implementation untouched.
+                            * `sard-pdf-worker.mjs` is the worker entry: it imports the layer and then
+                              `vendor/pdfjs/pdf.worker.mjs`. A worker is its own realm, and the copy
+                              index.html loads into the page does not reach it. Static imports are
+                              used because pdf.js builds a MODULE worker (pdf.mjs:15301), so the
+                              vendored file keeps its own `import.meta.url` and still resolves its
+                              cmaps and standard fonts from its own directory.
+                            * `pdf.js:5` points GlobalWorkerOptions.workerSrc at that entry.
+
+                            The vendored directory stays byte-identical to upstream: a re-vendor
+                            overwrites it and these three keep working. What a re-vendor DOES need is
+                            step 1 of the checklist above — re-derive which built-ins the new engine
+                            calls, and update both the layer and src/lib/runtime.ts.
 
   1. paginator.js:252  — iframe sandbox hardened to `allow-same-origin` only (no allow-scripts).
                          RAWY-64. Book content must never execute script.
@@ -93,6 +151,30 @@ Chromium >= 140 and the EPUB set to Chromium >= 117.)
                          cover occupies linear spine position 1. Regression test:
                          `node tests/harness/toc-regression.mjs` — 25/25 books must match what their
                          own file declares.
+
+  8. paginator.js:764  — SCROLLED FLOW HONOURS THE BOOK'S DIRECTION.
+                         `this.setAttribute('dir', vertical ? 'rtl' : 'ltr')` became
+                         `this.setAttribute('dir', vertical || rtl ? 'rtl' : 'ltr')`.
+                         Upstream's scrolled branch derives `dir` from `vertical` alone and drops
+                         `rtl`; the PAGED branch a few lines below already writes
+                         `dir = rtl ? 'rtl' : 'ltr'`. So a right-to-left book read in scrolled flow
+                         got dir="ltr", and `#container` (overflow:auto, inside the paginator's CLOSED
+                         shadow root) put its vertical scrollbar on the RIGHT — the side an RTL line
+                         STARTS on. The iframe is width:100% of the container's CLIENT box, so the
+                         text column ends exactly where the scrollbar begins, with no gutter between
+                         them.
+                         MEASURED, Arabic book, 1400x900: a press at x=1228 gave a caret and moved
+                         nothing; at x=1230 and x=1238 it produced NO selection and scrolled
+                         `#container` 0 -> 984 -> 1771 — a scrollbar TRACK click, which pages by one
+                         viewport. No navigation API was called and no `relocate` fired, because the
+                         browser was scrolling a container, not foliate navigating. The same matrix in
+                         an LTR book moved nothing at any of 15 points, since there the line starts on
+                         the left, away from the scrollbar.
+                         The fix moves the scrollbar to the leading side for RTL books, which is the
+                         platform convention for RTL content. LTR books resolve to 'ltr' exactly as
+                         before, `vertical` keeps its 'rtl', and the paged branch is untouched.
+                         Revert by deleting `|| rtl` and the comment block above the line.
+
 
   8. epub.js:~940,1083 — INVALID-XHTML FALLBACK ON THE DOCUMENT PATH (RESILIENCE-1 / WP-8).
                          One module-level helper (`sardInvalidXHTML`) plus its use in TWO places:
@@ -240,9 +322,97 @@ Chromium >= 140 and the EPUB set to Chromium >= 117.)
                         diagnosis5 must report `violations: 0`. Run it with `--cycles=N` to widen the
                         window; it fails if ANY sample deviates from the baseline.
 
+ 12. paginator.js:1053  — END-OF-BOOK NAVIGATION LOCK (P7). Two independent one-liners that must be
+     paginator.js:1122    kept together: 12a stops the throw, 12b stops a throw from being fatal.
+
+                         12a  `#goTo` — `if (!this.#canGoToIndex(index)) return`, the FIRST statement.
+                              `#adjacentIndex(dir)` returns UNDEFINED at either end of the book (its
+                              for-loop simply falls out), and two callers pass that value straight
+                              through: `#turnPage`, and prevSection/nextSection. `#goTo` then
+                              evaluates `this.sections[undefined].load()`. That `.load()` sits OUTSIDE
+                              the `.catch()` on the promise chain below it, so the TypeError is thrown
+                              SYNCHRONOUSLY and escapes `#goTo` entirely instead of being logged as
+                              upstream's "Failed to load section N".
+                              The predicate is upstream's own and unchanged. It already rejects
+                              `undefined` (`undefined >= 0` is false) and an empty `sections` array
+                              (`length - 1 === -1`), which is the still-loading case.
+
+                         12b  `#turnPage` — the locked body moved into `try { … } finally { this.#locked
+                              = false }`. Upstream clears the lock on the statement AFTER the awaits, so
+                              one rejection anywhere above leaves `#locked` set for the lifetime of the
+                              view and every later turn takes the early return at the top of the
+                              function. The happy path is byte-equivalent; only the rejection path
+                              differs.
+
+                         WHY BOTH: 12a alone would fix the end-of-book case and leave the lock just as
+                         fragile for any OTHER rejection inside `#scrollNext` / `#goTo` (a section that
+                         fails to load mid-book, say). 12b alone would leave the console error and the
+                         wasted turn. 12b is the one that matters more; 12a is the one that is provably
+                         reachable today.
+
+                         MEASURED, real app, isolated sandbox
+                         (a private test-harness probe, which proves navigation is live in the
+                         same session BEFORE it draws any conclusion, because "at the end" and "locked"
+                         both look like a fraction that stopped moving):
+
+                             step                    fraction   uncaught
+                             opened                  0.8514     0
+                             backward x3             0.5181     0      <- navigation demonstrably live
+                             forward x3              0.8514     0
+                             forward x3 (at the end) 0.8514     1      <- the throw
+                             backward x3             0.8514     1      <- DOES NOT MOVE
+                             forward x2              0.8514     1      <- never recovers
+
+                         WHAT A READER EXPERIENCED: they finish a book, press forward once more out of
+                         habit, and arrows, chevrons and taps all stop working with nothing shown.
+                         Leaving the book and reopening it restores everything, which is why it reads
+                         as intermittent.
+
+                         IF THIS PATCH IS LOST ON A RE-VENDOR: nothing looks wrong until a reader
+                         reaches the last page of a book, and then navigation dies silently for the
+                         rest of that session. There is exactly one uncaught console error to find it
+                         by, and it names `paginator.js` rather than anything in Sard.
+                         Regression test:
+                           the end-of-book navigation probe in the private harness
+                         Must report NOT locked, and `total uncaught: 0`.
+
   NOTE ON NUMBERING: entries 1-8 above predate this one and their numbers do not all match the
   `SARD LOCAL PATCH n` markers in the sources (the stylesheet-sanitiser hook is marked 5 in epub.js
   but listed as 6 here, and the turn-coalescing entry is listed as 5 out of order at the end). That
   mismatch is INHERITED, not introduced here, and is left alone deliberately: renumbering during
   active development would churn the sources for no product benefit. Patch 9's markers and its entry
   here do agree. Fix the older numbering during the cleanup milestone, not before.
+
+  PATCH 10 — epubcfi.js   TWO COORDINATE HOOKS, SO A REPLACEMENT CANNOT MOVE A STORED CFI.
+             fromRange,   Sard's replacements feature substitutes a word in a rendered section by writing
+             toRange      `textNode.data` in place. That adds, removes and splits no node, so the child
+                          steps a CFI is built from are untouched (measured: the stored CFI resolves to
+                          the SAME text node in 16/16 Latin and 24/24 Arabic annotations). What DOES move
+                          is the character offset inside the changed node.
+
+                          Sard's rule is that a stored CFI is always in the AUTHOR's coordinates, so the
+                          page's coordinates are converted at the only two points where an offset crosses
+                          that boundary — the mint (`fromRange`) and the resolve (`toRange`). Placing the
+                          conversion here rather than at Sard's own call sites is deliberate: foliate
+                          resolves CFIs INTERNALLY for `addAnnotation`, `goTo`, bookmarks and search
+                          navigation, so a hook in Sard's code would have covered none of those.
+
+                          The hooks are `globalThis.__sardRepToAuthor` and `__sardRepToPage`. When they
+                          are absent — which is every library that has never made a replacement, and
+                          every book with no rule in force — both functions run exactly the original
+                          code, so this is inert rather than merely equivalent.
+
+                          In `toRange` the conversion happens BEFORE setStart/setEnd, which also stops a
+                          shrinking replacement from pushing a stored offset past the node's new length;
+                          the DOM throws IndexSizeError on that, and it was observed doing so.
+
+                          IF THIS PATCH IS LOST ON A RE-VENDOR: nothing looks wrong until a reader turns
+                          on a replacement in a book that already has highlights or notes. Then those
+                          marks silently move onto the wrong words — measured at 10 of 15 wrong — and
+                          nothing is logged, because resolving still succeeds. Toggling the replacement
+                          off puts them back, which is what makes it read as a drawing bug rather than a
+                          coordinate one.
+                          Regression test:
+                            the replacement CFI probe in the private harness
+                          Must report the same text node for every annotation, every annotation exact
+                          with the rule active, and the baseline restored when it is switched off.

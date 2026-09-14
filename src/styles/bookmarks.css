@@ -1,0 +1,496 @@
+/* ══ THE BOOKMARKS SHELF ═══════════════════════════════════════════════════════════════════════
+   Books first, each wearing its saved places as ribbons over the head of its cover; open one and
+   the same ribbons lead the rows of its record.
+
+   Everything positional here is LOGICAL — `inset-inline-start`, `margin-inline`, `padding-inline` —
+   so the shelf, the ribbons and the rows all mirror with the interface language without a single
+   direction-specific rule. The only physical value in the file is the ribbon's own silhouette,
+   which is symmetric and therefore the same either way.
+
+   Colour comes from tokens, except the ribbons: a ribbon's dye is the colour the reader chose for
+   that place, so it arrives as an inline value from the data. That is the one thing on this surface
+   a theme must not repaint — it is the reader's own mark. ══════════════════════════════════════ */
+
+.bm {
+  /* A control on this view sits over the reader's own background image, where the quiet surface
+     border (7% white on the dark themes) simply disappears. Controls therefore take a firmer edge
+     and carry their own frosted ground, exactly as the References & Replacements surface does;
+     surfaces keep the quiet border. Scoped here because each surface scopes its own. */
+  --bm-control: color-mix(in srgb, var(--chrome-bg)
+    calc(var(--ui-floor, 0%) + (90% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
+  --bm-edge: color-mix(in srgb, var(--text) 14%, transparent);
+  --bm-frost: blur(calc(var(--bg-lib-blur, 0px) + var(--ui-frost, 0px)))
+    saturate(var(--ui-sat, 1)) brightness(var(--ui-bright, 1));
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+/* ── the head of either view ─────────────────────────────────────────────────────────────────── */
+.bm-head { flex: none; padding: 22px 26px 0; }
+.bm-head-shelf {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-5);
+  padding-bottom: 4px;
+}
+.bm-title { margin: 0; font: 700 var(--fs-h2) var(--ui-font); color: var(--text); }
+.bm-note { font: 500 var(--fs-tiny) var(--ui-font); color: var(--muted); }
+
+/* ── the shelf ───────────────────────────────────────────────────────────────────────────────── */
+.bm-shelf {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 34px 30px;
+  padding: 26px 26px 32px;
+}
+
+/* One book. 172px is the width the design sets the shelf's rhythm by; the row wraps at it and
+   scrolls, and never paginates. */
+.bm-book {
+  width: 172px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  text-align: start;
+  color: inherit;
+}
+.bm-book:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+
+/* THE BOOK LIFTS AS ONE OBJECT. A transform only — a scaled cover would resample the artwork and a
+   size change would reflow the row under the pointer. The shadow travels with it. */
+.bm-board {
+  position: relative;
+  height: 266px;
+  transition: transform 0.34s cubic-bezier(0.22, 0.7, 0.3, 1);
+  will-change: transform;
+}
+.bm-book:hover .bm-board,
+.bm-book:focus-visible .bm-board { transform: translateY(-7px); }
+
+/* The cover starts 5px down, and that gap is the whole trick: it is the space the ribbons stand up
+   into, so they read as coming from between the pages rather than being laid on top. */
+.bm-cover {
+  position: absolute;
+  inset-inline: 0;
+  top: 5px;
+  bottom: 0;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--state-sunken);
+  box-shadow: 0 10px 22px rgb(0 0 0 / 0.34);
+  transition: box-shadow 0.34s cubic-bezier(0.22, 0.7, 0.3, 1);
+}
+.bm-book:hover .bm-cover,
+.bm-book:focus-visible .bm-cover { box-shadow: 0 20px 38px rgb(0 0 0 / 0.46); }
+.bm-cover img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.bm-cover-bare {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(160deg, var(--state-sunken), var(--state-soft));
+}
+/* The shadow down the fore-edge that makes a flat rectangle read as a book. */
+.bm-edge {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: 7px;
+  background: linear-gradient(to var(--bm-edge-dir, left), rgb(0 0 0 / 0.42), transparent);
+}
+[dir="rtl"] .bm-edge { --bm-edge-dir: right; }
+
+/* ── the ribbons ─────────────────────────────────────────────────────────────────────────────── */
+/* One flat strip, matte: a single dye, no sheen, no gradient, no lit edge — nothing that would read
+   as a fold, a flap or a metal tab. The cast shadow is the only light, and it is what seats the
+   ribbon on the artwork. The swallow tail is cut, not drawn, so the dye stays flat. */
+.bm-silk {
+  position: absolute;
+  width: 18px;
+  border-radius: 1px 1px 0 0;
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 84%, 0 100%);
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.45));
+  transition: transform 0.34s cubic-bezier(0.22, 0.7, 0.3, 1);
+  pointer-events: none;
+}
+/* Loose cloth lags the object it is caught in: the silks ride a little further than the board and
+   settle in sequence, which is the cue that they belong to the book rather than sit beside it. */
+.bm-book:hover .bm-silk,
+.bm-book:focus-visible .bm-silk { transform: translateY(-2px); }
+
+.bm-name {
+  font: 600 var(--fs-sm) var(--ui-font);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The tally reads in words. Copper when the book holds places, quiet when it holds none — a bare
+   book is not an error, so it is not marked as one. */
+.bm-tally { font: 500 var(--fs-tiny) var(--ui-font); color: var(--muted); margin-top: -8px; }
+.bm-tally.has { color: var(--accent); }
+
+/* HONOUR A READER WHO ASKED FOR STILLNESS. The shadow still deepens, so the shelf still answers the
+   hand; only the movement goes. */
+@media (prefers-reduced-motion: reduce) {
+  .bm-board, .bm-silk { transition: none; }
+  .bm-book:hover .bm-board,
+  .bm-book:focus-visible .bm-board,
+  .bm-book:hover .bm-silk,
+  .bm-book:focus-visible .bm-silk { transform: none; }
+}
+
+/* ── one book's record ───────────────────────────────────────────────────────────────────────── */
+.bm-back {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-4);
+  /* 44px is the height the house gives a return control, and it is what makes this read as the
+     companion of the identity beside it rather than as a utility stranded in the corner. */
+  height: 44px;
+  padding-inline: var(--sp-5) var(--sp-6);
+  border: 1px solid var(--bm-edge);
+  border-radius: var(--r-md);
+  background: var(--bm-control);
+  backdrop-filter: var(--bm-frost);
+  -webkit-backdrop-filter: var(--bm-frost);
+  cursor: pointer;
+  transition: color 0.15s linear, border-color 0.15s linear;
+  font: 500 var(--fs-small) var(--ui-font);
+  white-space: nowrap;
+  /* THE WAY OUT OF A PAGE IS NOT SECONDARY TEXT.
+     `--muted` is derived to a 3:1 floor, which is the right target for a caption beside something
+     louder and the wrong one for the control a reader reaches for to leave. Measured on its own
+     opaque plate: 3.03:1 at rest, 11.5:1 on hover — so it was already drawn correctly, once you
+     had found it and pointed at it. The resting state now matches the hover it was going to reach. */
+  color: var(--text);
+}
+.bm-back:hover { color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.bm-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bm-back svg { transform: scaleX(var(--bm-flip, 1)); }
+[dir="rtl"] .bm-back { --bm-flip: -1; }
+
+
+/* ── the book, and then its places: TWO SURFACES, NOT ONE ────────────────────────────────────── */
+/* One card used to hold the identity and the list together, and the identity read as the lid of the
+   list rather than as the book the list belongs to. They are separate surfaces now, with real space
+   between them, and each saved place is its own card below — so the eye reads: this book, then these
+   places, rather than one block containing everything. */
+.bm-idrow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-5) var(--sp-6);
+  padding: 22px 26px 0;
+}
+
+/* THE IDENTITY IS A CHIP, AND IT HUGS WHAT IT HOLDS.
+   It was a full-width band with an 84×135 cover, which made identifying the book the largest event
+   on the screen. This is the part References & Replacements already uses for the same sentence —
+   "this is the book you are looking at" — at the size that sentence deserves: a thumbnail with its
+   ribbons still on it, the name, and the tally. `fit-content` is what keeps it from growing back. */
+.bm-cur {
+  flex: 0 1 auto;
+  min-width: 0;
+  width: fit-content;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  padding: var(--sp-4) var(--sp-6) var(--sp-4) var(--sp-4);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-lg);
+  background: var(--chrome-bg);
+}
+/* Small enough to be a chip, big enough that the silks still read as silks. */
+.bm-cur-book { position: relative; flex: none; width: 44px; height: 66px; }
+.bm-cur-cover {
+  position: absolute;
+  inset-inline: 0;
+  top: 3px;
+  bottom: 0;
+  border-radius: var(--r-xs);
+  overflow: hidden;
+  background: var(--state-sunken);
+  box-shadow: var(--sh1);
+}
+.bm-cur-cover img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.bm-silk-head { width: 8px; border-radius: 1px 1px 0 0; }
+
+.bm-cur-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.bm-eyebrow {
+  font: 600 var(--fs-nano) var(--ui-font);
+  letter-spacing: 0.1em;
+  color: var(--accent);
+}
+.bm-cur-title {
+  margin: 0;
+  /* The title is wrapped in `<bdi>`: it renders in its own direction, while this block stays on the
+     panel's edge with the eyebrow and the tally. */
+  text-align: start;
+  font: 700 var(--fs-h3) var(--ui-font);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* A LONG TITLE MUST NOT REBUILD THE BAND. It truncates at a readable length instead of stretching
+     the chip back across the view, which is what the old header did with no cap at all. */
+  max-width: 42ch;
+}
+.bm-cur-note { font: 500 var(--fs-tiny) var(--ui-font); color: var(--muted); }
+
+.bm-find {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: 0 var(--sp-5);
+  /* The same height as the way back: two controls in one band, so they agree. */
+  height: 44px;
+  border: 1px solid var(--bm-edge);
+  border-radius: var(--r-md);
+  background: var(--bm-control);
+  backdrop-filter: var(--bm-frost);
+  -webkit-backdrop-filter: var(--bm-frost);
+  color: var(--muted);
+}
+.bm-find:focus-within { border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.bm-find input {
+  width: 168px;
+  border: 0;
+  background: transparent;
+  outline: none;
+  font: 400 var(--fs-small) var(--ui-font);
+  color: var(--text);
+}
+
+/* THE PLACES, EACH ITS OWN CARD — AND A WIDER WINDOW HOLDS MORE OF THEM, NOT LONGER ONES.
+   This was a 760px column, the measure References & Replacements caps its RULES to. A rule is a
+   full-width statement and belongs in one file; a saved place is a card. Pinned by that fixed width
+   to the inline start of a much wider window, the places queued up in single file down one edge
+   while the artwork carried the rest of the view, and every new place made the queue longer rather
+   than the composition fuller.
+
+   The cabinet had already answered this exact question, and its answer is the house rule: a card has
+   a size, and a wider window is answered with MORE cards beside each other. So this is that grid.
+
+   The design reference is preserved rather than replaced. Its record is a single column only because
+   its own panel is 994px wide — at that width this grid still resolves to exactly one column, so the
+   composition the reference specifies is what a reader sees at the reference's size, and a larger
+   window is simply used instead of left empty.
+
+   The floor (460px) is set by the words, not by taste: §05 says a place is recognised by its opening
+   line clamped to two lines, so a card may not shrink past the width that keeps a typical opening
+   line inside those two. It is the floor that must drive the column count, which is why the maximum
+   is `1fr` and not a length: grid computes `auto-fill` repetitions from the track's MAXIMUM whenever
+   that maximum is definite, so a fixed ceiling silently becomes the column width — a 640px ceiling
+   measured out ONE column at 1440px and 1600px, using barely half the room, which is the very fault
+   this grid exists to remove. A flexible maximum hands the count back to the floor and lets the
+   columns share what is actually there.
+
+   A lone column is therefore bounded by arithmetic rather than by a cap: two columns appear as soon
+   as there is room for two floors and a gutter, so a single column can never exceed about 940px —
+   which is the reference's own row width. Below that threshold this draws exactly the reference's
+   composition; above it, the window is answered with another column. */
+.bm-record {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(460px, 100%), 1fr));
+  align-content: start;
+  gap: var(--sp-6) 20px;
+  padding: 14px 26px 26px;
+}
+
+/* A PLACE IS ITS OWN CARD, not a row in a shared box.
+   They were rows separated by hairlines inside one container, which read as a table stitched to the
+   header above it. Each now carries its own border and ground with real space between — the same way
+   References & Replacements states that two rules are two things. The hairline is gone with the
+   container: separation is what the gap is for. */
+.bm-row {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  column-gap: 18px;
+  align-items: start;
+  padding: 18px 20px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--chrome-border);
+  background: var(--chrome-bg);
+  cursor: pointer;
+  text-align: start;
+}
+.bm-row:hover { border-color: color-mix(in srgb, var(--text) 18%, transparent); }
+.bm-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* Where reading actually stopped. One per book — copper on its edge and its ground, distinct from
+   the saved places without being lifted out of their order. */
+.bm-row.last {
+  background: color-mix(in srgb, var(--accent) 8%, var(--chrome-bg));
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+}
+
+.bm-row-mark { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+.bm-silk-row {
+  position: static;
+  width: 18px;
+  height: 30px;
+  flex: none;
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 82%, 0 100%);
+  filter: none;
+}
+.bm-folio {
+  font: 600 var(--fs-nano) var(--ui-font);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.bm-row-body { min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+/* THE WORDS, AT READING SIZE. A reader recognises a place by what was written there; a percentage
+   has to be decoded first. Two lines is all a row owes — the rest is in the book. */
+.bm-words {
+  /* The WORDS keep their own direction — an Arabic passage must read right to left inside an
+     English library — but the BLOCK takes the panel's. `<bdi>` around the text is what makes both
+     true at once: it isolates the bidi run without making `start` resolve against it, which is what
+     `dir="auto"` on this element did, pinning the excerpt to the far side of its own row. */
+  text-align: start;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font: 400 1.0625rem/1.9 var(--book);
+  color: var(--text);
+}
+.bm-words.ar { font-family: var(--ar); font-size: 1.1875rem; line-height: 2; }
+/* A place from before Sard captured any words. Its chapter, said plainly — not dressed up as an
+   excerpt it never had. */
+.bm-words-bare { font-style: italic; color: var(--muted); }
+.bm-gone { font: 400 var(--fs-base) var(--ui-font); color: var(--muted); text-align: start; }
+
+.bm-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  font: 500 var(--fs-tiny) var(--ui-font);
+  color: var(--muted);
+}
+.bm-last { color: var(--accent); font-weight: 600; }
+.bm-tick { width: 1px; height: 10px; background: var(--chrome-border); }
+
+/* The actions rest quiet and come to full strength on the row. They never hold space and never
+   appear on a delay, so the row does not change shape under the cursor. */
+.bm-row-acts { display: flex; align-items: center; gap: 12px; padding-top: 3px; opacity: 0.78; transition: opacity 0.12s; }
+.bm-row:hover .bm-row-acts { opacity: 1; }
+.bm-act {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  font: 500 var(--fs-tiny) var(--ui-font);
+  color: var(--muted);
+}
+.bm-act.strong { font-weight: 600; color: var(--text); }
+.bm-act:hover { color: var(--accent); }
+.bm-undo {
+  border: 1px solid var(--chrome-border);
+  background: transparent;
+  cursor: pointer;
+  padding: 6px 13px;
+  border-radius: 6px;
+  font: 600 var(--fs-tiny) var(--ui-font);
+  color: var(--text);
+}
+.bm-undo:hover { background: var(--state-hover); }
+/* A lifted place keeps its row and its place in the order, so the list never jumps out from under
+   the cursor and the undo is where the eye already is. */
+/* A LIFTED PLACE KEEPS ITS CARD. `transparent` was right while the rows lived inside an opaque
+   plate — it let the plate show through and read as a hollow. Now each place IS the surface, so a
+   transparent one puts its own sentence and its undo straight onto the library's photograph. It
+   quietens instead: the same ground, a dimmer edge. */
+.bm-row.gone {
+  cursor: default;
+  background: color-mix(in srgb, var(--chrome-bg) 92%, transparent);
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--text) 12%, transparent);
+}
+.bm-row.gone:hover { border-color: color-mix(in srgb, var(--text) 12%, transparent); }
+.bm-row.gone .bm-silk-row { background: color-mix(in srgb, var(--text) 16%, transparent); }
+
+/* ── empty states, written as sentences ──────────────────────────────────────────────────────── */
+/* THE EMPTY STATE STANDS WHERE A PLACE WOULD, so it takes the surface a place takes. Without one it
+   sat straight on the library's photograph and the sentence could not be read over the artwork —
+   which is the same fault the rows had before each became its own card. */
+.bm-empty {
+  grid-column: 1 / -1;   /* a statement about the whole record, not one card's worth of it */
+  padding: 52px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 16px;
+  width: 100%;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  background: var(--chrome-bg);
+}
+/* On the SHELF there is no list to stand in — it is the whole view, so it keeps the plain ground the
+   heading above it stands on. */
+.bm-shelf .bm-empty { border: 0; background: transparent; }
+.bm-empty-silk {
+  width: 26px;
+  height: 64px;
+  background: linear-gradient(to bottom, color-mix(in srgb, var(--text) 12%, transparent), color-mix(in srgb, var(--text) 5%, transparent));
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 74%, 0 100%);
+}
+.bm-empty-title { font: 400 var(--fs-h3) var(--ui-font); color: var(--text); }
+.bm-empty-body { font: 400 var(--fs-tiny)/1.9 var(--ui-font); color: var(--muted); max-width: 34ch; text-wrap: pretty; }
+
+/* ================================================================================================
+   THE FUNCTIONAL SURFACES OF THIS SHELF, stated last so the shorthand above cannot flatten them.
+   ================================================================================================
+   `--bm-control` is the same glass ladder References & Replacements used, applied to the same two
+   kinds of control: the way OUT of the page, and the field the reader types in. Neither may depend
+   on the photograph behind it — a back button that is hard to find is not a style problem.
+
+   The shelf's own cards and rows already stand on `--chrome-bg` and `--paper-bg` and are left
+   alone; this is the audit finding its two exceptions, not a sweep. See `.ui-solid` in
+   `global.css` for why an opaque floor under the tint is the only version that is a guarantee.
+   ================================================================================================ */
+.bm-back,
+.bm-find {
+  background-color: var(--solid-base);
+  background-image: linear-gradient(var(--solid-tint), var(--solid-tint));
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  isolation: isolate;
+}
+
+/* ── A SHELF CARD IS A CARD, ONCE THERE IS A PICTURE BEHIND IT ─────────────────────────────────
+   The cover is opaque and the LABEL under it is not, so over a photograph the book's name and its
+   tally stand on whatever the photograph is doing. The saved-cards gallery had exactly this and
+   takes exactly this treatment: ONE ground from the cover to the last line, so the words belong to
+   the card rather than to the page.
+
+   Conditional, like the framed page title and for the same reason — with no picture the label
+   stands on paper and a plate around it would be noise. */
+:root[data-bg-library="on"] .bm-book {
+  background-color: var(--solid-base);
+  background-image: linear-gradient(var(--solid-tint), var(--solid-tint));
+  border: 1px solid var(--chrome-border);
+  border-radius: 10px;
+  padding: 8px 8px 10px;
+  isolation: isolate;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}

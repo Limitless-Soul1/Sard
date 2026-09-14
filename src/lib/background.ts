@@ -42,13 +42,98 @@ import { contrastRatio } from "./contrast";
 export type BgSurface = "library" | "reading";
 
 // ---- measured / ruled constants (see the module note; do not tune without re-measuring) ----
-export const LIB_SCRIM_MIN = 0.77;
+/**
+ * THE LIBRARY'S SCRIM FLOOR IS NOW ZERO — an owner's ruling, recorded rather than assumed.
+ *
+ * 0.77 was the measured least scrim at which `--text` still clears WCAG AA over ANY image content,
+ * Slate binding at 0.767. It was a real guarantee and it is being given up deliberately, because
+ * of what it cost: the library's presence control spanned 1.00 to 0.77 and nothing else, so a
+ * reader who wanted to SEE the photograph they had chosen could not, in four of the five formats.
+ * Vista escaped it only by overriding the layer for itself, which is what made the background
+ * appear to depend on the format.
+ *
+ * Keeping the constant at 0.77 and letting presence travel past 100 — the trick the reading
+ * surface uses — was the other way. It was not taken: it leaves every stored value meaning what
+ * it meant, which is precisely the problem, because every existing library is stored at a presence
+ * that resolves to the floor. Reaching clear would have needed a migration, and this is a visual
+ * preference, not a schema change.
+ *
+ * So the SLOPE changes instead. Presence still runs 0..100, still divides by 100, and now spans
+ * the whole range: 0 is full theme colour and 100 is the photograph untouched. Every stored value
+ * keeps its position on the slider; what changes is how much of the picture the far end shows.
+ *
+ * WHAT STILL PROTECTS READABILITY. A reader who has asked the OS for high contrast, forced colours
+ * or reduced transparency has stated a requirement rather than a preference: `library-design.css`
+ * puts the 0.77 scrim back in full for them, whatever the slider says. And the chrome that carries
+ * text — the sidebar, the toolbar's control plates, the dialogs — keeps its own opaque ground and
+ * is unaffected by this constant.
+ */
+export const LIB_SCRIM_MIN = 0;
+/** The floor restored for a reader whose OS asks for it. See the media query in library-design.css. */
+export const LIB_SCRIM_A11Y = 0.77;
 export const READ_SCRIM_MIN = 0.62;
 const SIDEBAR_ALPHA = 0.85;
 const FAINT_FLOOR = 3.0;
 const FAINT_STEP = 0.05;
 
 export const scrimMinFor = (s: BgSurface): number => (s === "library" ? LIB_SCRIM_MIN : READ_SCRIM_MIN);
+
+// ---- the reading overlay: three states, one definition -------------------------------------------
+//
+// THE LAYER THIS NAMES. Behind an open book there are two pseudo-elements on `.reader-desk`: the
+// PICTURE (`::before`) and, over it, a flat SCRIM plus grain (`::after`). The scrim is painted in the
+// desk's own colour so a photograph reads as lit by the theme rather than pasted behind it — which is
+// a real design decision and stays the default.
+//
+// WHY A THIRD STATE HAD TO EXIST. That colour resolves to `var(--reader-bg, var(--app-bg))`, and
+// `--app-bg` is the theme's `surfaceBg`, which `deriveColors` derives FROM `paperBg`. So choosing a
+// paper implicitly tinted the reader's background picture, and the only escape was to choose a
+// DIFFERENT colour — never none. A reader who wants their photograph exactly as they configured it
+// had no way to say so.
+//
+// `null` still means what it has always meant, so nothing stored moves. `"none"` is the new state and
+// it removes the layer rather than making it transparent: the pseudo-element is dropped, grain and
+// all. That distinction is the point — a 0% colour is still a compositing step and still something
+// for a later change to reintroduce a value into.
+//
+// THE LIBRARY IS NOT PART OF THIS. Its scrim, its floor and its presence are untouched; the library
+// picture stays entirely under its own controls.
+
+/** The stored sentinel for "no layer at all". Not a colour, and deliberately not a valid hex. */
+export const BG_NO_OVERLAY = "none";
+
+export type BgOverlay =
+  | { kind: "theme" }
+  | { kind: "none" }
+  | { kind: "colour"; hex: string };
+
+/**
+ * Read the stored `backgroundColor` as one of the three states.
+ *
+ * Total by construction, like every parser in this codebase: anything unrecognised reads as `theme`,
+ * which is the behaviour every profile written before this already has.
+ */
+export function bgOverlayOf(stored: string | null | undefined): BgOverlay {
+  if (stored === BG_NO_OVERLAY) return { kind: "none" };
+  if (typeof stored === "string" && /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(stored.trim())) {
+    return { kind: "colour", hex: stored.trim() };
+  }
+  return { kind: "theme" };
+}
+
+/**
+ * What a state means to whoever is painting it — the ONE answer both surfaces read.
+ *
+ * `tint` is the colour to paint the scrim in, or `null` when there is to be no scrim at all. The
+ * Reader turns that into a data attribute the stylesheet honours; the editor's preview turns it into
+ * the same absence. Neither computes its own answer, which is what stops the two from drifting.
+ */
+export function overlayTint(o: BgOverlay): { paint: boolean; tint: string | null } {
+  if (o.kind === "none") return { paint: false, tint: null };
+  if (o.kind === "colour") return { paint: true, tint: o.hex };
+  return { paint: true, tint: null }; // null tint = fall through to the theme's own desk colour
+}
+
 
 /**
  * RAWY-279 — the READING surface's Presence may travel PAST 100; the LIBRARY's may not.
@@ -136,6 +221,36 @@ export interface BgParams {
   immersiveBlur: boolean;
 }
 
+/**
+ * WHAT TO CALL AN IMAGE THE READER CHOSE.
+ *
+ * `source_name` is the file's own name, and a file's name is not a label. Measured on the reader's
+ * own library background: 180 characters of somebody's sentence — «0339 "Are you feeling lonely and
+ * uncomfortable on your own_ …" As he spoke, Klein's voice slowly faded into silence (1).jpg» —
+ * drawn `nowrap` in a 468px box, so 513px of it was simply cut off, with no title to recover it and
+ * `direction: ltr` forced on a row of Arabic.
+ *
+ * So: drop the extension, which is a fact about storage rather than about the picture; collapse the
+ * runs of whitespace and underscores a download leaves behind; and hand back BOTH a short label for
+ * the row and the full name for the row's `title`, because the answer to "it is cut off" is a way to
+ * read the rest, not a smaller font.
+ *
+ * The middle is what is elided, not the end: the tail of a filename is where the copy number and the
+ * distinguishing words live, and two pictures called «… (1)» and «… (2)» must not read alike.
+ */
+export function imageLabel(sourceName: string | null | undefined, max = 44):
+  { label: string; full: string } {
+  const raw = (sourceName ?? "").trim();
+  if (!raw) return { label: "", full: "" };
+  const dot = raw.lastIndexOf(".");
+  const stem = dot > 0 && raw.length - dot <= 6 ? raw.slice(0, dot) : raw;
+  const tidy = stem.replace(/[_\s]+/g, " ").trim();
+  if (tidy.length <= max) return { label: tidy, full: raw };
+  const head = Math.ceil((max - 1) / 2);
+  const tail = Math.floor((max - 1) / 2);
+  return { label: tidy.slice(0, head) + "…" + tidy.slice(tidy.length - tail), full: raw };
+}
+
 export const BG_DEFAULT_PARAMS: BgParams = {
   presence: 60,
   blur: BLUR_DEFAULT,
@@ -200,7 +315,13 @@ export function initialPresence(meanLuma: number | null, groundHex: string, surf
  * LIBRARY ONLY — measured, the reading desk has no equivalent failure (nothing on it is under floor).
  * Identical in shape to RAWY-256's `resolveReadMarker` and RAWY-260's `resolveMarkOnGround`.
  */
-export function regroundFaint(faint: string, paperBg: string, text: string, alpha: number): string {
+export function regroundFaint(
+  faint: string,
+  paperBg: string,
+  text: string,
+  alpha: number,
+  chromeBg?: string,
+): string {
   const f = parseHex(faint);
   const p = parseHex(paperBg);
   const t = parseHex(text);
@@ -209,6 +330,16 @@ export function regroundFaint(faint: string, paperBg: string, text: string, alph
     [0, 0, 0],
     [255, 255, 255],
   ].map((img) => p.map((v, i) => v * alpha + img[i] * (1 - alpha)) as [number, number, number]);
+  // THE CHROME IS A GROUND TOO, and leaving it out only ever looked right because the scrim used
+  // to be there. `--lib-faint` labels the sidebar, the dialogs and the toolbar's plates as well as
+  // the stage, and those surfaces stand on `--chrome-bg` rather than on the photograph.
+  //
+  // Measured when the scrim was allowed to reach zero: the composited extremes become pure black
+  // and pure white, a mid grey clears 3.22:1 against black, the walk stops before it starts — and
+  // the same grey came out at 2.44:1 on the dialog's own chrome. The floor was being held against
+  // the one ground that no longer needed it and dropped on the ones that did.
+  const c = chromeBg ? parseHex(chromeBg) : null;
+  if (c) grounds.push(c);
   const worst = grounds.reduce((a, b) => (contrastRatio(faint, toHex(a)) <= contrastRatio(faint, toHex(b)) ? a : b));
   const worstHex = toHex(worst);
   if (contrastRatio(faint, worstHex) >= FAINT_FLOOR) return faint;
@@ -261,6 +392,30 @@ const parseParams = (raw: string | null): BgParams => {
 };
 
 /**
+ * HOW MANY TIMES THE READER PAINTS THE PAPER WHERE THE TEXT SITS.
+ *
+ * Three, and it is not incidental — this file's own reading rules name all three: the `.page-sheet`
+ * margin band, the book iframe's `html`/`body` (written by `injectedCss`), and foliate's
+ * `<div id="background" part="filter">` inside a closed shadow root. Each paints the SAME paper
+ * colour at the SAME alpha, so they compose.
+ *
+ * The consequence is the whole of what a reader sees: at a stored 0.84 the text area composites to
+ * 1 − 0.16³ ≈ 0.996 — effectively solid — while the desk OUTSIDE the sheet keeps the picture at full
+ * strength. That is why a real page looks like a clean sheet lying on a photograph rather than a
+ * window onto one.
+ *
+ * The editor's preview painted the paper ONCE, at the stored 0.84, so its sample text sat on 16% of
+ * a photograph and looked dirty while the reader it claimed to depict looked clean. Measured, not
+ * reasoned: the reader's text column renders flat, the preview's showed the picture's structure.
+ */
+export const PAGE_PAINTS = 3;
+
+/** What a paper painted `PAGE_PAINTS` times at `a` actually composites to. */
+export function pageComposite(a: number): number {
+  return 1 - Math.pow(1 - Math.max(0, Math.min(1, a)), PAGE_PAINTS);
+}
+
+/**
  * The EFFECTIVE page opacity — the ONE gate for the whole Phase 3 path.
  *
  * Returns exactly 1 unless a reading background is genuinely showing AND the reader has moved the
@@ -273,6 +428,26 @@ export function effectivePageOpacity(s: Pick<BgState, "enabled" | "reading" | "r
   const v = s.readingParams.pageOpacity;
   if (typeof v !== "number" || !(v < 1)) return 1;
   return Math.max(PAGE_OPACITY_MIN, Math.min(1, v));
+}
+
+/**
+ * The HARDEST scrim any textured surface currently sits over.
+ *
+ * `currentDeskScrim` answers for the reading desk alone, and the interface texture's floor was being
+ * measured against it — but the surface a reader judges texture on is the LIBRARY sidebar, and the
+ * two surfaces carry independent presence sliders. Measured in the release: reading at 62% scrim,
+ * library at 0%, so the floor came out at 50% and the sidebar was cleared to sit at 55% alpha over a
+ * completely unscrimmed photograph. That is the one case the floor exists to prevent.
+ *
+ * The minimum is the safe answer because a lower scrim means more picture showing means a higher
+ * alpha required; a surface over a gentler desk is covered by a floor computed for a harsher one.
+ */
+export function worstDeskScrim(s: BgState = useBackground.getState()): number {
+  if (!s.enabled) return 1;
+  const each: number[] = [];
+  if (s.library) each.push(scrimAlpha(s.libraryParams.presence, "library"));
+  if (s.reading) each.push(scrimAlpha(s.readingParams.presence, "reading"));
+  return each.length ? Math.min(...each) : 1;
 }
 
 /** The desk scrim alpha currently in force — the guards need it to model the real ground. */
@@ -374,7 +549,7 @@ export const useBackground = create<BgState>((set, get) => ({
   },
 }));
 
-const LIB_VARS = ["--bg-lib-image", "--bg-lib-blur", "--bg-lib-flip", "--bg-lib-pos", "--bg-lib-scrim", "--bg-lib-sidebar", "--bg-lib-faint"];
+const LIB_VARS = ["--bg-lib-image", "--bg-lib-blur", "--bg-lib-flip", "--bg-lib-pos", "--bg-lib-scrim", "--bg-lib-falloff", "--bg-lib-sidebar", "--bg-lib-faint"];
 const READ_VARS = ["--bg-rd-image", "--bg-rd-blur", "--bg-rd-flip", "--bg-rd-pos", "--bg-rd-scrim-base", "--bg-page-opacity", "--bg-rd-immstep", "--bg-rd-immscrim"];
 
 // ---- RAWY-269: the ENTRANCE gate ------------------------------------------------------------
@@ -409,7 +584,7 @@ function markEntrance(r: HTMLElement): void {
  * same. With no background there is no gate attribute, so not one RAWY-265 CSS rule can match, no
  * compositing layer is created, and no image is decoded.
  */
-export function applyBackgrounds(theme: { paperBg: string; text: string; muted: string }): void {
+export function applyBackgrounds(theme: { paperBg: string; text: string; muted: string; chromeBg?: string }): void {
   const r = document.documentElement;
   const s = useBackground.getState();
 
@@ -436,7 +611,12 @@ export function applyBackgrounds(theme: { paperBg: string; text: string; muted: 
     // Emitted as PERCENTAGES because that is what `color-mix()` consumes directly.
     r.style.setProperty("--bg-lib-scrim", `${(alpha * 100).toFixed(2)}%`);
     r.style.setProperty("--bg-lib-sidebar", `${(SIDEBAR_ALPHA * 100).toFixed(0)}%`);
-    r.style.setProperty("--bg-lib-faint", regroundFaint(faint, theme.paperBg, theme.text, alpha));
+    // THE FALLOFF IS PART OF THE VEIL, and so it follows the same control. It was a fixed 14% of
+    // theme colour across the top — small, but a tint the reader could not turn off, which is
+    // exactly the kind of layer that makes a "clear" setting not look clear. Scaled by the scrim's
+    // own alpha it disappears with it and returns with it.
+    r.style.setProperty("--bg-lib-falloff", `${(alpha * 14).toFixed(1)}%`);
+    r.style.setProperty("--bg-lib-faint", regroundFaint(faint, theme.paperBg, theme.text, alpha, theme.chromeBg));
     r.dataset.bgLibrary = "on";
   }
 

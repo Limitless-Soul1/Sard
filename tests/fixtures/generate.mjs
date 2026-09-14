@@ -202,10 +202,32 @@ function buildChapter(spec, cssHref, declaredEncoding = "utf-8", sheet = {}) {
   // `inlineOnly`: the body carries NO block-level element — paragraphs are inline <span>s separated
   // by <br>, with one bare text node, exactly as .txt→EPUB converters emit. Every walk that assumes
   // "text lives inside a block container" sees an empty document here.
-  const body = spec.inlineOnly
+  // `sectionOnly`: prose held DIRECTLY by <section> — no <p> anywhere, but unlike `inlineOnly` these
+  // ARE real block boxes with siblings. Valid EPUB 3, and affected by the same defect as `inlineOnly`
+  // (no selector names <section>), yet it is the shape where paragraph SPACING has somewhere to go, so
+  // the two fixtures separate "the container is unnamed" from "there is no container at all".
+  // `brRuns`: the same inline-only shape, but with the two edge cases a converter really produces --
+  // a DOUBLE break between two runs (one boundary plus an author's blank line) and a TRAILING break
+  // with nothing after it. Both must apply the reader's paragraph spacing once, or not at all.
+  const body = spec.brRuns
+    ? `
+  ${spec.body}
+  <br/>
+  <span class="s1">${spec.body}</span>
+  <br/><br/>
+` +
+      `  <span class="s2">${spec.body}</span>
+  <br/><br/><br/>
+` +
+      `  <span class="s3">${spec.body}</span>
+  <br/>
+`
+    : spec.inlineOnly
     ? `\n  ${spec.body}\n  <br/>\n` +
       [1, 2, 3].map((n) => `  <span class="s${n}">${spec.body}</span>\n  <br/>\n`).join("")
-    : `<h1 class="chap">${spec.id}</h1><p class="para"${styleAttr}>${spec.body}</p>`;
+    : spec.sectionOnly
+      ? [1, 2, 3].map((n) => `<section class="s${n}">${spec.body}</section>`).join("")
+      : `<h1 class="chap">${spec.id}</h1><p class="para"${styleAttr}>${spec.body}</p>`;
   return (
     `<?xml version="1.0" encoding="${declaredEncoding}"?>` +
     `<html xmlns="http://www.w3.org/1999/xhtml"><head><title>${spec.id}</title>${link}${styleBlock}</head>` +
@@ -472,6 +494,44 @@ export const FIXTURES = {
         `@font-face { font-family: "AttackFont"; src: local("Comic Sans MS"); }\n` +
         // Inherited colour too, so both paths are present in one fixture.
         `body { color: #0000ff; background-color: #ffff00; }\n`,
+    },
+  },
+
+  "br-runs": {
+    proves:
+      "ISSUE-6 · consecutive <br> and a TRAILING <br> -- a run of N is ONE paragraph boundary plus " +
+      "N-1 author blank lines, and a break with no content after it is no boundary at all",
+    spec: {
+      chapters: [
+        { id: "c1", href: "c1.xhtml", body: EN.repeat(3), brRuns: true },
+        { id: "c2", href: "c2.xhtml", body: EN.repeat(3), brRuns: true },
+      ],
+    },
+  },
+
+  "no-block-containers-rtl": {
+    proves:
+      "ISSUE-6 · the no-block shape in ARABIC — the typography controls must reach RTL prose that lives in " +
+      "no block container, and the alignment control must resolve `start` to the RIGHT edge there",
+    spec: {
+      language: "ar",
+      title: "بلا حاويات",
+      chapters: [
+        { id: "c1", href: "c1.xhtml", body: AR.repeat(6), inlineOnly: true },
+        { id: "c2", href: "c2.xhtml", body: AR.repeat(6), inlineOnly: true },
+      ],
+    },
+  },
+
+  "section-containers": {
+    proves:
+      "ISSUE-6 · prose held DIRECTLY by <section> — valid EPUB 3 that no typography selector names, and " +
+      "the one affected shape that HAS real block boxes, so paragraph spacing must work there too",
+    spec: {
+      chapters: [
+        { id: "c1", href: "c1.xhtml", body: EN.repeat(4), sectionOnly: true },
+        { id: "c2", href: "c2.xhtml", body: EN.repeat(4), sectionOnly: true },
+      ],
     },
   },
 

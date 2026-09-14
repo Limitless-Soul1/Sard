@@ -122,6 +122,27 @@ export interface RefLite {
   phrase_fold: string;
 }
 
+/**
+ * The folded characters to APPEND for one source character, given whether the haystack already ends
+ * in a space.
+ *
+ * WHY THE CALLER'S TAIL MATTERS. `foldPhrase` COLLAPSES whitespace runs — a stored phrase is always
+ * "tarot club", one space. A section folded strictly per character emits one space per whitespace
+ * character, so the same words separated by a newline and indentation (how XHTML is normally written)
+ * folded to "tarot" + seven spaces + "club" and `indexOf` found nothing: the reference existed, was
+ * stored correctly, and was simply never marked. Single-word phrases were unaffected, which made the
+ * failure look arbitrary rather than systematic.
+ *
+ * The collapsing therefore belongs HERE, beside the phrase fold it has to agree with, rather than in
+ * the renderer — this module exists precisely so the create path and the render path cannot drift.
+ * Returning "" for a skipped space keeps the caller's index→node mapping exact: only characters that
+ * are actually emitted advance it.
+ */
+export function foldCharInto(ch: string, hayEndsWithSpace: boolean): string {
+  const fc = foldChar(ch);
+  return fc === " " && hayEndsWithSpace ? "" : fc;
+}
+
 // A section is folded ONE CHARACTER AT A TIME so each folded char can be mapped back to its source node,
 // which means `foldPhrase` would otherwise run hundreds of thousands of times per chapter. A book uses only
 // a few hundred DISTINCT characters, so memoise per char — the same trick the search fold uses (RAWY-178).

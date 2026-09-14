@@ -285,11 +285,25 @@ const nodeToParts = (node, offset, filter) => {
         .filter(x => x.index !== -1)
 }
 
+// SARD: THE TWO COORDINATE HOOKS.
+//
+// A replacement rewrites a text node's data in place, so what the page shows and what the author wrote
+// no longer share a character offset. Sard's rule is that a STORED CFI IS ALWAYS IN THE AUTHOR'S
+// COORDINATES, which keeps every existing bookmark, highlight, note and resume position valid and makes
+// switching a replacement off a no-op for them.
+//
+// These are the only two places an offset crosses that boundary, which is why the hooks live here rather
+// than at each of the dozens of call sites: `fromRange` MINTS a CFI from a live range on the page, and
+// `toRange` RESOLVES a stored one against it. Both are plain identity when nothing is installed, so a
+// library with no replacements runs exactly the code it ran before.
 export const fromRange = (range, filter) => {
     const { startContainer, startOffset, endContainer, endOffset } = range
-    const start = nodeToParts(startContainer, startOffset, filter)
+    const toAuthor = globalThis.__sardRepToAuthor
+    const start = nodeToParts(startContainer,
+        toAuthor ? toAuthor(startContainer, startOffset, false) : startOffset, filter)
     if (range.collapsed) return toString([start])
-    const end = nodeToParts(endContainer, endOffset, filter)
+    const end = nodeToParts(endContainer,
+        toAuthor ? toAuthor(endContainer, endOffset, true) : endOffset, filter)
     return buildRange([start], [end])
 }
 
@@ -303,13 +317,18 @@ export const toRange = (doc, parts, filter) => {
 
     const range = doc.createRange()
 
+    // SARD: author -> page. The node is already resolved here, and the child-step path that found it is
+    // unaffected by a replacement (measured: the same text node in 16/16 Latin and 24/24 Arabic cases),
+    // so only the terminal offset needs moving. Doing it before setStart/setEnd also keeps a shrinking
+    // replacement from pushing a stored offset past the node's new length, which would throw.
+    const toPage = globalThis.__sardRepToPage
     if (start.before) range.setStartBefore(start.node)
     else if (start.after) range.setStartAfter(start.node)
-    else range.setStart(start.node, start.offset)
+    else range.setStart(start.node, toPage ? toPage(start.node, start.offset, false) : start.offset)
 
     if (end.before) range.setEndBefore(end.node)
     else if (end.after) range.setEndAfter(end.node)
-    else range.setEnd(end.node, end.offset)
+    else range.setEnd(end.node, toPage ? toPage(end.node, end.offset, true) : end.offset)
     return range
 }
 

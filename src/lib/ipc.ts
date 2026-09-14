@@ -62,6 +62,47 @@ export interface CustomFont {
 export const fontImport = (path: string): Promise<CustomFont> =>
   invoke<CustomFont>("font_import", { path });
 
+/** What a font file says about itself — the drop gate's answer. Rejection is a `font.err.*` key. */
+export interface FontFacts {
+  family: string;
+  style: string | null;
+  /** ttf · otf · ttc · woff · woff2 */
+  format: string;
+  /** True when the family came from the font's own `name` table rather than from the filename. */
+  named_by_font: boolean;
+  /**
+   * Does the font carry Arabic letters? Read from its `cmap`, never from its name.
+   *
+   * `null` is a real third state, not a "no": a `.woff`/`.woff2` keeps every table deflated, so the
+   * scripts cannot be read without a decompressor the core deliberately does not carry. The preview
+   * says "could not be determined" for those rather than claiming either answer.
+   */
+  arabic: boolean | null;
+  /** The same question for Latin, from the same source, with the same third state. */
+  latin: boolean | null;
+}
+
+/** What a dropped font did. */
+export interface FontDrop {
+  outcome: "imported" | "duplicate";
+  family: string;
+  style: string | null;
+  format: string;
+}
+
+/**
+ * Read a font file and change NOTHING — the routing gate for a dropped file.
+ *
+ * Rejects with a `font.err.*` key, which is what lets the drop fall through to the next candidate
+ * exactly as a file that is not a deposit does.
+ */
+export const fontInspect = (path: string): Promise<FontFacts> =>
+  invoke<FontFacts>("font_inspect", { path });
+
+/** Import a dropped font under the family the FILE names; says whether it was already here. */
+export const fontImportDropped = (path: string): Promise<FontDrop> =>
+  invoke<FontDrop>("font_import_dropped", { path });
+
 /** List imported fonts (newest first). */
 export const fontsList = (): Promise<CustomFont[]> => invoke<CustomFont[]>("fonts_list");
 
@@ -91,6 +132,77 @@ export interface BackgroundRow {
 export const backgroundChoose = (surface: "library" | "reading", path: string): Promise<BackgroundRow> =>
   invoke<BackgroundRow>("background_choose", { surface, path });
 
+/** Import an image WITHOUT binding a surface — the profile editor's path. Binding is what
+ *  `applyProfile` does; a draft must not repaint the running app or write a global binding.
+ *  The row is unreferenced until the profile is saved, which is correct: an abandoned draft's
+ *  image IS an orphan. See `background_import` for why that direction is the safe one. */
+/** PROFILES (stage 6) — write a package to a path the reader chose. Settings only. */
+/**
+ * A packageable asset, resolved by Rust from the profile's own references.
+ *
+ * The frontend never builds these: it renders them, lets the reader switch them off, and hands the
+ * survivors back to `profileExport`. That is what keeps the share sheet and the archive the same
+ * list rather than two lists that can drift.
+ */
+export interface PlannedAsset {
+  kind: "background" | "icon" | "font";
+  id: string;
+  member: string;
+  source: string;
+  name: string;
+  bytes: number;
+  family: string | null;
+  /** Which of `library` / `reading` / `icon` this one file serves. */
+  surfaces: string[];
+}
+
+/** What CAN travel with this profile, with real byte sizes. Resolves nothing the profile does not name. */
+export const profileAssetPlan = (
+  libraryRef: string | null,
+  readingRef: string | null,
+  iconRef: string | null,
+  families: string[],
+): Promise<PlannedAsset[]> =>
+  invoke<PlannedAsset[]>("profile_asset_plan", { libraryRef, readingRef, iconRef, families });
+
+export const profileExport = (
+  path: string,
+  manifestJson: string,
+  assets: { member: string; source: string }[] = [],
+): Promise<void> => invoke<void>("profile_export", { path, manifestJson, assets });
+
+/**
+ * One asset's BYTES from a package, for the import preview to draw.
+ *
+ * Reads only — nothing is unpacked, so the preview can show the picture and the icon that are
+ * arriving without anything entering the reader's installation before they say yes.
+ */
+export const profilePackageAsset = (path: string, member: string): Promise<number[]> =>
+  invoke<number[]>("profile_package_asset", { path, member });
+
+/** Read a package's manifest, changing nothing. Rejects with a `pkg.err.*` code. */
+export const profileImportInspect = (path: string): Promise<string> =>
+  invoke<string>("profile_import_inspect", { path });
+
+/** Commit an inspected package under a fresh id. Re-checks the manifest rather than trusting it. */
+export const profileImportCommit = (
+  manifestJson: string,
+  newId: string,
+  /** The archive the manifest came from — present = register its assets too. */
+  path?: string | null,
+): Promise<ProfileRow> =>
+  invoke<ProfileRow>("profile_import_commit", { manifestJson, newId, path: path ?? null });
+
+export const backgroundImport = (path: string): Promise<BackgroundRow> =>
+  invoke<BackgroundRow>("background_import", { path });
+
+/** Import an image for a card that is still being composed, binding it in the same transaction.
+ *  Use this rather than `backgroundImport` from the composer: a bare import leaves the row
+ *  unreferenced, and the collector runs whenever anyone changes their wallpaper — so an imported
+ *  sticker could be deleted before the card was ever saved. */
+export const photocardStageImage = (cardId: string, path: string): Promise<BackgroundRow> =>
+  invoke<BackgroundRow>("photocard_stage_image", { cardId, path });
+
 export const backgroundsList = (): Promise<BackgroundRow[]> =>
   invoke<BackgroundRow[]>("backgrounds_list");
 
@@ -106,7 +218,10 @@ export interface BookmarkRow {
   cfi: string;
   chapter_label: string | null;
   fraction: number | null;
+  /** The opening words of the block this place sits in, captured when it was marked. */
   label: string | null;
+  /** The dye it was marked in. `null` for a place saved before the reader could choose one. */
+  color: string | null;
   created_at: number | null;
 }
 export interface BookmarkItem extends BookmarkRow {
@@ -121,10 +236,12 @@ export const bookmarkCreate = (args: {
   chapterLabel?: string | null;
   fraction?: number | null;
   label?: string | null;
+  color?: string | null;
 }): Promise<BookmarkRow | null> =>
   invoke<BookmarkRow | null>("bookmark_create", {
     bookId: args.bookId,
     cfi: args.cfi,
+    color: args.color ?? null,
     chapterLabel: args.chapterLabel ?? null,
     fraction: args.fraction ?? null,
     label: args.label ?? null,
@@ -292,6 +409,123 @@ export interface ShelfItem {
   position: number;
   category_id: string | null;
 }
+
+/**
+ * WHERE ONE BOOK IS, AND WHERE IT SITS AMONG ITS NEIGHBOURS.
+ *
+ * `container` is a shelf id or `UNFILED`. `rank` is an opaque ordering key: compare two with `<`,
+ * never parse one, never invent one. A book has exactly one of these — the table's primary key is
+ * the book — so there is no question of which of its homes counts.
+ */
+export interface Placement {
+  book_id: string;
+  container: string;
+  rank: string;
+  category_id: string | null;
+}
+
+/**
+ * The container holding every book that is on no shelf. A real place, with an order of its own.
+ *
+ * `LOOSE_SHELF_ID` in the library model is this same value, imported rather than repeated — the two
+ * were written out separately once, disagreed, and gave one container two identities.
+ */
+export const UNFILED = "__unshelved";
+
+/**
+ * The whole arrangement in one read: every placement, and the shelves they hang on.
+ *
+ * One call rather than one per shelf. Asking shelf by shelf let two answers come from either side
+ * of a write, which is how the screen could show a book in two places or in none.
+ */
+/**
+ * What a lens currently matches.
+ *
+ * A rule shelf owns nothing — its contents are a query — so these ids are a VIEW of the library
+ * rather than part of it. They are carried so the reader can still see «قيد القراءة» while none of
+ * those books acquires a second home from being listed there.
+ */
+export interface Lens {
+  shelf_id: string;
+  book_ids: string[];
+}
+
+export interface Arrangement {
+  tree: LibraryTree;
+  placements: Placement[];
+  lenses: Lens[];
+  /** The baseline for a run that has never been arranged. */
+  view_order_epoch: number;
+}
+
+export const libraryArrangement = (): Promise<Arrangement> => invoke<Arrangement>("library_arrangement");
+
+/** What a placement attempt did. `changed` is false when the book was already exactly there. */
+export interface Placed {
+  changed: boolean;
+  container: string;
+  rank: string;
+}
+
+export interface PlaceResult {
+  placed: Placed;
+  arrangement: Arrangement;
+}
+
+/**
+ * MOVE A BOOK IN FRONT OF ANOTHER — the one arrangement write.
+ *
+ * `before` is the book the release landed in front of, or `null` for the end of the container. A
+ * neighbour, not an index: an index has to be corrected for the book's own removal and has to agree
+ * with a list drawn some milliseconds ago, and both were sources of silent error.
+ *
+ * The reply carries the arrangement as it now stands, so the screen is redrawn from what was
+ * actually persisted rather than from a guess or a second read that could race the first.
+ */
+/**
+ * Put a book in a container, and leave `from`.
+ *
+ * `from` names the ONE shelf the move leaves. Omitting it means «here and nowhere else», which
+ * deletes every other membership the book has — right while a book could only be in one place, and
+ * data loss now that it can be in several. Anything that is a move from somewhere should say where.
+ */
+export const libraryPlaceBook = (
+  bookId: string,
+  container: string,
+  before: string | null,
+  categoryId: string | null = null,
+  from: string | null = null,
+): Promise<PlaceResult> =>
+  invoke<PlaceResult>("library_place_book", { bookId, container, before, categoryId, from });
+
+/**
+ * ADD a book to a shelf, keeping every shelf it is already on.
+ *
+ * The additive counterpart to `libraryPlaceBook`, which means "here and nowhere else". Separate
+ * functions rather than a flag, so a reader of the call site can see which one it is. Idempotent:
+ * `placed.changed` is false when the book was already on that shelf, and nothing was written.
+ */
+export const libraryAddBookToShelf = (
+  bookId: string,
+  container: string,
+  categoryId: string | null = null,
+): Promise<PlaceResult> =>
+  invoke<PlaceResult>("library_add_book_to_shelf", { bookId, container, categoryId });
+
+/**
+ * SHOW A FILE WHERE IT IS, in the system's own file manager, with the file selected.
+ *
+ * The answer to "where did my package go" is the folder it is in, opened — not a path for the
+ * reader to copy and paste somewhere else. `showed` says what actually happened: "file" when the
+ * package itself was picked out, "folder" when it had gone and its folder was opened instead. A
+ * rejection carries a `reveal.err.*` code the interface translates.
+ */
+export interface Revealed {
+  showed: "file" | "folder";
+}
+
+export const revealPath = (path: string): Promise<Revealed> =>
+  invoke<Revealed>("reveal_path", { path });
 
 export const libraryTree = (): Promise<LibraryTree> => invoke<LibraryTree>("library_tree");
 export const libraryShelfItems = (collectionId: string): Promise<ShelfItem[]> =>
@@ -472,6 +706,17 @@ export interface HighlightRow {
   // RAWY-259: this highlight's OWN ink density (the editor's «كثافة الحبر»). `null` = follow the theme's
   // default, which is what every highlight created before the feature does — so old marks are unchanged.
   alpha: number | null;
+  /**
+   * This highlight's tag NAMES, resolved through the note ATTACHED to it.
+   *
+   * A highlight has no tags of its own: `note_tags` anchors to `notes.id`, and RAWY-205 made an
+   * empty-body note a pure tag ANCHOR precisely so a body-less highlight could be tagged. "The tags on
+   * a highlight" therefore already means "the tags on its note" — the same resolution the cross-book
+   * Inbox has used since RAWY-203, rather than a second tag relationship.
+   *
+   * `[]` for an untagged highlight and for one with no note, which is every pre-existing mark.
+   */
+  tags: string[];
 }
 
 export interface NoteRow {
@@ -486,6 +731,14 @@ export interface NoteRow {
   updated_at: number | null;
   /** RAWY-282: optional heading, independent of `body`. `null` = no title (every pre-migration note). */
   title: string | null;
+  /**
+   * This note's tag NAMES (RAWY-203), resolved through the `note_tags` join.
+   *
+   * Names rather than ids, matching `AnnoItem.tags`, because every consumer either shows a tag or
+   * filters by one. An untagged note gets `[]` — which is what every note written before this field
+   * existed returns, so nothing had to be migrated and no caller needs a null check.
+   */
+  tags: string[];
 }
 
 export const highlightsForBook = (bookId: string): Promise<HighlightRow[]> =>
@@ -509,6 +762,13 @@ export interface AnnoItem {
   note_id: string | null; // RAWY-203: the underlying note's id (null for a note-less highlight)
   tags: string[]; // RAWY-203: the note's tag names (empty when untagged / no note)
   note_title: string | null; // RAWY-282: the attached note's title (null when untitled / no note)
+  /**
+   * Whose mark this is, when it is not the reader's own.
+   *
+   * A mark that arrived in a reading deposit keeps its sender's name; one the reader made is `null`.
+   * It is what lets the archive say «من فلان» beside a slip that came from someone else.
+   */
+  sender: string | null;
 }
 
 /**
@@ -542,6 +802,29 @@ export interface Tag {
 export const tagsList = (): Promise<Tag[]> => invoke<Tag[]>("tags_list");
 export const tagCreate = (name: string): Promise<Tag | null> => invoke<Tag | null>("tag_create", { name });
 export const tagDelete = (id: string): Promise<boolean> => invoke<boolean>("tag_delete", { id });
+
+/**
+ * The outcome of renaming a tag. `status` is a stable token, not a message: the interface owns the
+ * wording so it can be translated.
+ *
+ *   ok        — renamed; `tag` is the row as it now stands
+ *   unchanged — the new name equalled the old one; nothing was written, `tag` is returned
+ *   empty     — the name was blank or whitespace only
+ *   taken     — another tag already has that name; REFUSED rather than merged, because merging would
+ *               silently move annotations between tags
+ *   missing   — no tag with that id
+ */
+export interface TagRename {
+  status: "ok" | "unchanged" | "empty" | "taken" | "missing";
+  tag: Tag | null;
+}
+
+/**
+ * Rename a tag IN PLACE — an UPDATE of the existing row, so `id` never changes and every note and
+ * highlight linked to it keeps its link and simply resolves the new name.
+ */
+export const tagRename = (id: string, name: string): Promise<TagRename> =>
+  invoke<TagRename>("tag_rename", { id, name });
 export const noteTagsFor = (noteId: string): Promise<Tag[]> => invoke<Tag[]>("note_tags_for", { noteId });
 export const noteTagsSet = (noteId: string, tagIds: string[]): Promise<boolean> =>
   invoke<boolean>("note_tags_set", { noteId, tagIds });
@@ -614,6 +897,10 @@ export interface PhotoCardRow {
   quote: string | null;
   passages: string | null; // JSON array of { text, chapterLabel } for a multi-passage card (RAWY-60)
   quote_font: string | null; // RAWY-81 — the quote's own font key; null = follow the book font
+  /** The card's composition document. NULL for a card saved before the document existed — the UI
+   *  reconstructs that card's composition from the columns above, so it opens exactly as it always
+   *  did. See `features/photo/composition.ts`. */
+  doc: string | null;
   created_at: number;
   image_path: string; // absolute path to the stored PNG (load via convertFileSrc)
 }
@@ -630,6 +917,11 @@ export const photocardSave = async (args: {
   quote?: string | null;
   passages?: string | null;
   quoteFont?: string | null;
+  /** The serialised composition. */
+  doc?: string | null;
+  /** The managed background ids the composition uses, sent so the collector can read them from a
+   *  table rather than by parsing `doc`. See `photocards::referenced_backgrounds` (Rust). */
+  images?: string[];
   createdAt: number;
   png: ArrayBuffer; // RAWY-177 (AUD-4): the card PNG, staged as a raw ipc body (not a JSON array)
 }): Promise<PhotoCardRow> => {
@@ -646,10 +938,60 @@ export const photocardSave = async (args: {
     quote: args.quote ?? null,
     passages: args.passages ?? null,
     quoteFont: args.quoteFont ?? null,
+    doc: args.doc ?? null,
+    images: args.images ?? [],
     createdAt: args.createdAt,
     pngPath,
   });
 };
+
+// ---- View order (sequence, never membership) ------------------------------------------------
+//
+// `libraryPlaceBook` above moves a book between shelves and touches no order. These move a book
+// within a run and touch no shelf. A `ViewOrderRow` has no container field, so a reorder has
+// nowhere to put one — see `src-tauri/src/library/view_order.rs`.
+
+export interface ViewOrderRow {
+  section: string;
+  book_id: string;
+  rank: string;
+  /** When this run was last arranged by hand; the baseline promotions are measured against. */
+  arranged_at: number;
+}
+
+export interface Reordered {
+  /** False when the release would have left the run exactly as it stands. Decided in the write. */
+  changed: boolean;
+  /** The run afterwards, in order, so the screen draws what the write produced. */
+  order: string[];
+}
+
+/** Every saved order for one place in the library — all its sections, in one statement. */
+export const viewOrdersForScope = (format: string, scope: string): Promise<ViewOrderRow[]> =>
+  invoke<ViewOrderRow[]>("view_orders_for_scope", { format, scope });
+
+/**
+ * Move a book within one run. `before` is the book to land in front of, or null for the end.
+ *
+ * `present` is the run as the view would draw it with no saved order: used to materialise the run
+ * the first time it is arranged, and to take in books that have arrived since.
+ */
+export const viewOrderReorder = (args: {
+  format: string;
+  scope: string;
+  section: string;
+  bookId: string;
+  before: string | null;
+  present: string[];
+}): Promise<Reordered> =>
+  invoke<Reordered>("view_order_reorder", {
+    format: args.format,
+    scope: args.scope,
+    section: args.section,
+    bookId: args.bookId,
+    before: args.before,
+    present: args.present,
+  });
 
 export const photocardsList = (): Promise<PhotoCardRow[]> => invoke<PhotoCardRow[]>("photocards_list");
 export const photocardDelete = (id: string): Promise<boolean> => invoke<boolean>("photocard_delete", { id });
@@ -667,6 +1009,8 @@ export interface RefRow {
   /** Token count, so section matching can skip the multi-token scan for single-word references. */
   word_count: number;
   note: string;
+  /** Where the reader stood when they made it — `null` when it was not made from a selection. */
+  cfi: string | null;
   created_at: number | null;
   updated_at: number | null;
 }
@@ -681,7 +1025,282 @@ export const refSave = (
   phraseFold: string,
   wordCount: number,
   note: string,
+  /** The selection's cfi, when the rule is being made from one. Omitted, an existing place is kept. */
+  cfi?: string | null,
 ): Promise<RefRow | null> =>
-  invoke<RefRow | null>("ref_save", { bookId, phrase, phraseFold, wordCount, note });
+  invoke<RefRow | null>("ref_save", { bookId, phrase, phraseFold, wordCount, note, cfi: cfi ?? null });
 
 export const refDelete = (id: string): Promise<boolean> => invoke<boolean>("ref_delete", { id });
+
+/** One replacement rule: read `phrase` as `replacement`, in this book only, while `enabled`. */
+export interface RepRow {
+  id: string;
+  book_id: string;
+  /** The author's wording, exactly as the reader gave it — shown verbatim in the editor. */
+  phrase: string;
+  /** The folded MATCHING key (see foldPhrase) — never displayed. */
+  phrase_fold: string;
+  /** What the reader wants to read instead. Stored verbatim, never folded. */
+  replacement: string;
+  word_count: number;
+  /** A switch, not a delete: off restores the author's wording and keeps the rule. */
+  enabled: boolean;
+  /** Where the reader stood when they made it — `null` when it was not made from a selection. */
+  cfi: string | null;
+  created_at: number | null;
+  updated_at: number | null;
+}
+
+export const repsForBook = (bookId: string): Promise<RepRow[]> =>
+  invoke<RepRow[]>("reps_for_book", { bookId });
+
+/** Create OR update in one call — replacing the same phrase twice edits the rule instead of duplicating. */
+export const repSave = (
+  bookId: string,
+  phrase: string,
+  phraseFold: string,
+  replacement: string,
+  wordCount: number,
+  /** The selection's cfi, when the rule is being made from one. Omitted, an existing place is kept. */
+  cfi?: string | null,
+): Promise<RepRow | null> =>
+  invoke<RepRow | null>("rep_save", { bookId, phrase, phraseFold, replacement, wordCount, cfi: cfi ?? null });
+
+export const repSetEnabled = (id: string, enabled: boolean): Promise<RepRow | null> =>
+  invoke<RepRow | null>("rep_set_enabled", { id, enabled });
+
+export const repDelete = (id: string): Promise<boolean> => invoke<boolean>("rep_delete", { id });
+
+/** The shelf level: every book holding a reference or a replacement, with both counts. */
+export interface RefsRepsBook {
+  id: string;
+  title: string;
+  author: string | null;
+  refs_count: number;
+  reps_count: number;
+  touched: number | null;
+}
+
+/**
+ * THE WHOLE SHELF, IN TWO CALLS RATHER THAN TWO PER BOOK.
+ *
+ * The shelf previews what the reader made in each book, so it needs the contents and not a count.
+ * Asking per book is ~2N round trips: measured on 2,000 books carrying rules, that was ~3,400 calls
+ * and 1,121ms of the main thread inside `fetch` on one press.
+ *
+ * Rows come back ordered by book, then exactly as the per-book query orders them, so grouping by
+ * `book_id` reproduces what the per-book calls returned. The per-book calls remain, and remain
+ * right, for reloading ONE book after an edit.
+ */
+export const refsAll = (): Promise<RefRow[]> => invoke<RefRow[]>("refs_all");
+export const repsAll = (): Promise<RepRow[]> => invoke<RepRow[]>("reps_all");
+export const refsRepsBooks = (): Promise<RefsRepsBook[]> =>
+  invoke<RefsRepsBook[]>("refs_reps_books", {});
+
+// ---- Profiles (stage 1): the visual-identity registry. Storage only — no UI reaches these yet. ----
+//
+// A profile carries how Sard LOOKS: paper and colours, the interface and book faces, both
+// backgrounds and their treatment, the bookmark and read-marker, and the interface texture. It does
+// NOT carry how the reader READS — line spacing, measure, margins, paragraph spacing, tracking,
+// alignment, diacritics and zoom stay in `reading_style` / `book_style:<id>`, are never written from
+// a profile, and never travel in a shared package.
+//
+// Mirrors `profiles::Profile`. `data` is the profile itself as JSON and is OPAQUE to Rust, which is
+// what keeps adding a visual field a code change rather than a migration — the same rule the
+// background params blob follows. The three asset columns are lifted OUT of that JSON so the
+// background collector can see live references without parsing frontend-owned data.
+export interface ProfileRow {
+  id: string;
+  name: string | null;
+  description: string | null;
+  author: string | null;
+  icon_kind: string | null;
+  icon_ref: string | null;
+  data: string;
+  derived_from: string | null;
+  created_at: number;
+  updated_at: number;
+  bg_library: string | null;
+  bg_reading: string | null;
+  /** When the profile was last WORN. Read-only here: `profile_save` ignores it, and `profileTouch`
+   *  is the only thing that writes it — which is why it is optional and why nothing that builds a
+   *  row has to carry it forward. */
+  last_used_at?: number | null;
+}
+
+/** Every profile, MOST RECENTLY WORN first; one never worn keeps its most-recently-edited place. */
+// ---------------------------------------------------------------------------
+// READING DEPOSITS (phase 1 — the sender)
+//
+// The PLAN is made in Rust because every answer needs a managed path or a parsed spine: the sheet
+// then renders exactly what the writer will write. `deposit_export` copies the book file-to-file, so
+// a book's bytes never cross this boundary.
+// ---------------------------------------------------------------------------
+
+/** Where one mark falls in the book, as far as its stored cfi can say. */
+export interface MarkSection {
+  // All four kinds now, because all four can have a place: a reference and a replacement
+  // record where the reader stood when they made it. One without a place yields no section
+  // at all rather than a guessed one.
+  kind: "highlight" | "note" | "reference" | "replacement";
+  id: string;
+  section: string | null;
+  /** Null when the cfi names a document but no position inside it — carried, never guessed. */
+  section_index: number | null;
+}
+
+export interface DepositPlan {
+  book: {
+    hash: string;
+    format: string | null;
+    title: string | null;
+    author: string | null;
+    language: string | null;
+    dir: string | null;
+    size_bytes: number;
+  };
+  /** Sections in the spine. Null when the file could not be parsed — the sheet then offers no map. */
+  spine_count: number | null;
+  book_bytes: number;
+  cover_bytes: number;
+  book_source: string | null;
+  cover_source: string | null;
+  book_member: string | null;
+  cover_member: string | null;
+  sections: MarkSection[];
+  counts: { highlights: number; notes: number; references: number; replacements: number };
+}
+
+export const depositPlan = (bookId: string): Promise<DepositPlan> =>
+  invoke<DepositPlan>("deposit_plan", { bookId });
+
+export const depositExport = (
+  path: string,
+  manifestJson: string,
+  book: { member: string; source: string } | null,
+  cover: { member: string; source: string } | null,
+): Promise<void> =>
+  invoke<void>("deposit_export", {
+    path,
+    manifestJson,
+    bookMember: book?.member ?? null,
+    bookSource: book?.source ?? null,
+    coverMember: cover?.member ?? null,
+    coverSource: cover?.source ?? null,
+  });
+
+/** What the receiver kept — indices into the manifest's own arrays, never ids. */
+export interface DepositAcceptance {
+  highlights: number[];
+  notes: number[];
+  references: { index: number; take_theirs: boolean }[];
+  replacements: { index: number; take_theirs: boolean }[];
+}
+
+export interface DepositCounts {
+  highlights: number;
+  notes: number;
+  references: number;
+  replacements: number;
+}
+
+export interface DepositOutcome {
+  deposit_id: string;
+  book_id: string | null;
+  book_imported: boolean;
+  same_book: boolean;
+  applied: DepositCounts;
+  skipped_existing: DepositCounts;
+  unplaced: DepositCounts;
+  kept_mine: DepositCounts;
+  already_received: boolean;
+}
+
+/** Read the manifest and change NOTHING. */
+export const depositInspect = (path: string): Promise<string> =>
+  invoke<string>("deposit_inspect", { path });
+
+/** One member's bytes, so a preview can draw an arriving cover rather than name it. Reads only. */
+export const depositMember = (path: string, member: string): Promise<number[]> =>
+  invoke<number[]>("deposit_member", { path, member });
+
+/** The trust boundary: re-validates, resolves the book, applies what was kept — in one transaction. */
+export const depositCommit = (
+  path: string,
+  manifestJson: string,
+  accept: DepositAcceptance,
+  /** The reader's own answer to "which of my books is this?", when the hash cannot answer it. */
+  bindTo: string | null = null,
+): Promise<DepositOutcome> =>
+  invoke<DepositOutcome>("deposit_commit", { path, manifestJson, accept, bindTo });
+
+/** A mark a deposit brought that has not yet found its place in this reader's copy. */
+export interface PendingMark {
+  kind: "highlight" | "note";
+  id: string;
+  cfi: string | null;
+  /** The needle. A note is never given one — its body is the reader's words, not the book's. */
+  excerpt: string | null;
+  chapter_label: string | null;
+  state: string | null;
+  target_section: number | null;
+  of_highlight: string | null;
+}
+
+export interface PlacementVerdict {
+  kind: "highlight" | "note";
+  id: string;
+  state: string;
+  target_section: number | null;
+  /** Only for `placed`: the cfi minted in the rendered section. */
+  cfi: string | null;
+}
+
+export const depositPendingMarks = (bookId: string): Promise<PendingMark[]> =>
+  invoke<PendingMark[]>("deposit_pending_marks", { bookId });
+
+export const depositPlaceMarks = (verdicts: PlacementVerdict[]): Promise<number> =>
+  invoke<number>("deposit_place_marks", { verdicts });
+
+/**
+ * Files the operating system handed to Sard — a deposit double-clicked in a file manager, or one named
+ * on the command line — drained so each is returned exactly once.
+ *
+ * The queue is the whole contract: the `sard://opened` event carries nothing and only means "ask again",
+ * so a second launch can never deliver a path twice nor lose one because nobody was listening yet.
+ */
+export const openedFilesTake = (): Promise<string[]> => invoke<string[]>("opened_files_take");
+
+export const profilesList = (): Promise<ProfileRow[]> => invoke<ProfileRow[]>("profiles_list");
+
+/** One profile by id, or null when it does not exist. */
+export const profileGet = (id: string): Promise<ProfileRow | null> =>
+  invoke<ProfileRow | null>("profile_get", { id });
+
+/** Insert or update. `created_at` is preserved on update; `updated_at` is stamped by the core. */
+export const profileSave = (profile: ProfileRow): Promise<boolean> =>
+  invoke<boolean>("profile_save", { profile });
+
+/**
+ * Stamp a profile as worn, so the list can order by use rather than by edit.
+ *
+ * It writes that one column and nothing else — not `updated_at` — because wearing a profile is
+ * not editing it. Touching one that does not exist is not an error.
+ */
+export const profileTouch = (id: string): Promise<boolean> =>
+  invoke<boolean>("profile_touch", { id });
+
+/** Remove a profile. Deleting one that does not exist is not an error. */
+export const profileDelete = (id: string): Promise<boolean> =>
+  invoke<boolean>("profile_delete", { id });
+
+/**
+ * The settings key naming the active profile.
+ *
+ * ABSENT MEANS "no profile is active", and that is the state every existing installation is in
+ * after this stage: the resolver reads today's individual settings keys exactly as it always has,
+ * so nothing changes until the reader creates or edits a profile. Read and written through
+ * `settingsGet` / `settingsSet` — it is one value for the installation, which is precisely what the
+ * settings table is for, and keeping it there means switching profiles needs no schema change.
+ */
+export const PROFILE_ACTIVE_KEY = "profile_active";

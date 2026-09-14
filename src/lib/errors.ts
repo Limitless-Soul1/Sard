@@ -91,9 +91,9 @@ const RAW_CAP = 4000; // a runaway string must not bloat the settings row
  * share, a POSIX home, and the percent-encoded path that a failed asset fetch carries inside its
  * URL. Anchored on how a path BEGINS, so it cannot be mistaken for ordinary prose.
  *
- * `(?!\/)` after the drive is what keeps a URL scheme out of it: without it, `http://…` matched at
- * `p:/` and the redaction swallowed the host — and `asset.localhost` is the useful half of that
- * message, since it says which route was being used.
+ * `(?!\/)` after the drive is what keeps a URL scheme out of it: without it, `http://…` matched
+ * where the scheme's own colon and slash sit, and the redaction swallowed the host — and
+ * `asset.localhost` is the useful half of that message, since it says which route was being used.
  *
  * THE TAIL RUNS TO THE END OF THE LINE, SPACES INCLUDED, and that is deliberate. A path stopped at
  * the first space leaves the rest of the filename standing, which is exactly the part worth hiding:

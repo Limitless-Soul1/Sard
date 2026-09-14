@@ -267,8 +267,15 @@ function verifyLegal(kind, buf) {
   notes.push(`  ---- legal: ${revision} ----`);
 
   // 1 · intact
+  //
+  // The terminator accepts either line ending. It read `;\n` alone, and this file is checked out
+  // with CRLF wherever `core.autocrlf` is on — so the lazy match found no end, both documents came
+  // back null, and the gate rejected an artifact whose legal text was perfectly intact. The failure
+  // looked exactly like a tampered snapshot, which is the one thing this check exists to tell apart.
+  // Measured: with LF the documents parse and hash to the declared fingerprint; with CRLF, byte-for
+  // -byte the same content, nothing parses at all. `split(/\r?\n/)` above is the same idea.
   const docOf = (name) => {
-    const m = src.match(new RegExp(`export const ${name}: LegalDocument = ([\\s\\S]*?);\\n`));
+    const m = src.match(new RegExp(`export const ${name}: LegalDocument = ([\\s\\S]*?);\\r?\\n`));
     return m ? JSON.parse(m[1]) : null;
   };
   const terms = docOf("LEGAL_TERMS");

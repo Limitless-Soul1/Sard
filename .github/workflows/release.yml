@@ -63,6 +63,62 @@ jobs:
             exit 1
           fi
 
+      # ---- THE VERSION THE TAG PROMISES IS THE VERSION THE APP WILL REPORT ---------------------------
+      #
+      # `tauri-action` takes the release's version from `tauri.conf.json`, not from the tag. So a tag
+      # that disagrees with it produces a release whose NAME says one thing and whose artifact,
+      # version resource and `latest.json` all say another — and `latest.json` is what decides whether
+      # an installed copy is offered the update at all. Tag `v1.3.0` on a tree still declaring 1.2.2
+      # and every gate below passes: the build succeeds, the artifact verifies, the release publishes,
+      # and not one existing user is ever offered it, because the manifest advertises the version they
+      # already have. Nothing fails. Nothing arrives.
+      #
+      # The three manifests are compared to each other as well, because they drift independently: the
+      # npm version is what `npm version` writes, the Tauri version is what the installer and the
+      # updater read, and the Cargo version is what the binary is compiled as.
+      #
+      # Pure shell and placed early, like the checks either side of it, so a mistake costs seconds
+      # rather than a full Windows build.
+      - name: Refuse to release when the tag and the app version disagree
+        shell: bash
+        run: |
+          field() { grep -m1 "\"version\"" "$1" | sed 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/'; }
+          TAURI="$(field src-tauri/tauri.conf.json)"
+          NPM="$(field package.json)"
+          CARGO="$(grep -m1 '^version[[:space:]]*=' src-tauri/Cargo.toml | sed 's/.*"\([^"]*\)".*/\1/')"
+
+          echo "tauri.conf.json: $TAURI"
+          echo "package.json   : $NPM"
+          echo "Cargo.toml     : $CARGO"
+
+          if [ -z "$TAURI" ] || [ -z "$NPM" ] || [ -z "$CARGO" ]; then
+            echo "::error::could not read a version from one of the manifests."
+            exit 1
+          fi
+          if [ "$TAURI" != "$NPM" ] || [ "$TAURI" != "$CARGO" ]; then
+            echo "::error::the manifests disagree about the version."
+            echo "::error::  tauri.conf.json=$TAURI  package.json=$NPM  Cargo.toml=$CARGO"
+            echo "::error::Bump all three together; the artifact is built from the Tauri one."
+            exit 1
+          fi
+
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAG="${{ github.ref_name }}"
+            case "$TAG" in
+              v*) WANT="${TAG#v}" ;;
+              *)  echo "::error::release tags must look like vX.Y.Z; got '$TAG'."; exit 1 ;;
+            esac
+            if [ "$WANT" != "$TAURI" ]; then
+              echo "::error::tag $TAG promises version $WANT, but this tree declares $TAURI."
+              echo "::error::latest.json would advertise $TAURI, so nobody running $TAURI would be"
+              echo "::error::offered the update. Bump the version, or tag the version that is here."
+              exit 1
+            fi
+            echo "tag $TAG matches the declared version $TAURI"
+          else
+            echo "manual run: no tag to match; the three manifests agree on $TAURI"
+          fi
+
       - name: Refuse to release with the diag feature on by default
         shell: bash
         run: |

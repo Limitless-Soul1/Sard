@@ -27,8 +27,10 @@ import { FontSpecimen } from "./features/fonts/FontSpecimen";
 import { DroppedDeposit } from "./features/deposit/DroppedDeposit";
 import { useIncomingDeposit } from "./features/deposit/store";
 import { useBookDetailsRequest } from "./features/library/bookDetailsRequest";
+import { useOpenFileRequest } from "./features/library/openFileRequest";
 import { routeDroppedPaths } from "./features/profiles/dropRoute";
 import { initPresence } from "./lib/presence"; // DISC/RPC: load the Discord on/off switch
+import { LegalGate } from "./features/legal/LegalGate";
 import { LanguagePicker } from "./features/onboarding/LanguagePicker";
 import { Library, type OpenTarget } from "./features/library/Library";
 import { Reader } from "./features/reader/Reader";
@@ -60,9 +62,10 @@ function Root() {
   // A FILE THE OPERATING SYSTEM HANDED US — one opened with "Open with Sard", dragged onto the
   // executable, or named on the command line.
   //
-  // Sard claims NO extension of its own: a deposit is an ordinary .zip, and seizing .zip would take the
-  // reader's archives away from the tools he already uses to open them. So there is no double-click
-  // door by design, and this one stays because a file handed to Sard deliberately should still arrive.
+  // Sard claims no extension it does not read: a deposit is an ordinary .zip, and seizing .zip would
+  // take the reader's archives away from the tools he already uses to open them. BOOKS are different —
+  // an .epub is a book and nothing else, and a reader who double-clicks one means to read it — so
+  // those two extensions are registered at install time and arrive through this same door.
   //
   // It ends at the SAME door a dropped file takes. `routeDroppedPaths` classifies by content rather
   // than by extension, so a deposit reaches the deposit sheet and a profile reaches the profile
@@ -83,9 +86,12 @@ function Root() {
       // first mount took the path and the second found an empty queue, and nothing ever opened.
       // Routing is a write to a store that outlives the component, so it is safe after unmount.
       //
-      // The fallback is deliberately empty: what is handed in is classified by CONTENT, and anything
-      // that is not a deposit or a profile was never this door's to act on.
-      if (paths.length) await routeDroppedPaths(paths, () => {});
+      // WHAT IS LEFT AFTER THE CONTENT GATES IS A BOOK, and a book is the library's business, not
+      // this root's: importing one means refusing formats this runtime cannot render, reporting what
+      // was refused, and refreshing the shelves, none of which live here. The paths are left where
+      // the library will find them, so a double-clicked book is imported by exactly the code a
+      // dropped book is.
+      if (paths.length) await routeDroppedPaths(paths, (rest) => useOpenFileRequest.getState().hand(rest));
     };
     void drain();
     (async () => {
@@ -109,9 +115,14 @@ function Root() {
   // request once it has honoured it.
   const wantsArchive = useIncomingDeposit((s) => s.showArchive);
   const wantsBook = useBookDetailsRequest((s) => s.wanted);
+  // A BOOK HANDED IN WHILE ANOTHER ONE IS OPEN. The library is unmounted whenever the reader is on
+  // screen, so the only way the waiting file can be imported at all is to come back to it first —
+  // and the library opens the new book itself once it has it, which is what makes a double-click
+  // during reading land on the book that was double-clicked.
+  const wantsFile = useOpenFileRequest((s) => s.pending.length > 0);
   useEffect(() => {
-    if (wantsArchive || wantsBook) setOpen(null);
-  }, [wantsArchive, wantsBook]);
+    if (wantsArchive || wantsBook || wantsFile) setOpen(null);
+  }, [wantsArchive, wantsBook, wantsFile]);
 
   if (!i18nReady || !themeReady) return null; // brief: settings loading (avoids theme flash)
   // RESILIENCE-1 / WP-1: the runtime gate. foliate's OPF parser needs browser features an older
@@ -145,6 +156,10 @@ function Root() {
           to appear either way. It renders nothing until one arrives. */}
       <FontSpecimen />
       <DroppedDeposit />
+      {/* THE LEGAL GATE, LAST AND ON TOP. Mounted at the application root because it is about
+          the installation rather than about any screen, and it renders nothing at all once the
+          revision this build carries has been accepted. */}
+      <LegalGate />
     </>
   );
 }
@@ -198,10 +213,12 @@ function App() {
     applyBackgrounds(resolveTheme(bgThemeId).colors);
   }, [bgThemeId, bgReady, bgEnabled, bgLibrary, bgLibParams, bgReading, bgReadParams]);
 
-  // RAWY-118: WebView2 re-themes the native title-bar caption during its own startup, AFTER our first
-  // applyTheme, so the initial caption reverts to the system (black) even though we set it. Re-apply it
-  // a moment after boot and whenever the window regains focus, so the caption tracks the app theme.
+  // WebView2 re-themes the native title-bar caption during its own startup, AFTER our first paint,
+  // so one call at boot does not stick. Paint it black at once (a window whose caption is briefly the
+  // system's light one is the flicker this replaces), again once WebView2 has finished, and on every
+  // focus — the caption is theme-independent, so these are the only three moments that matter.
   useEffect(() => {
+    reapplyTitlebarTheme();
     const t = window.setTimeout(reapplyTitlebarTheme, 1200);
     let unlisten: (() => void) | undefined;
     getCurrentWindow()

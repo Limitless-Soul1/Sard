@@ -479,22 +479,72 @@ pub struct PlaceResult {
     pub arrangement: Arrangement,
 }
 
+/// `from` names the ONE shelf this move leaves. Without it, the book simply arrives and leaves
+/// nothing — because every caller that omits it means exactly that.
+///
+/// IT USED TO SWEEP WHEN `from` WAS ABSENT, and that was reachable. The select tray asks which shelf
+/// a multi-shelf selection is leaving and offers «الاحتفاظ بمكانها» — keep them where they are —
+/// as the last choice; the code calling it says in as many words that this is «an honest add».
+/// It passed `None`. Measured through the command, a book on «s8-a» and «s8-c» moved to «s8-d» came
+/// back on «s8-d» ALONE: the option labelled keep-them-where-they-are deleted every shelf they were
+/// on. The drag path could reach the same write whenever the section a tile was carried from was
+/// not a shelf that actually held it.
+///
+/// So absence of a source now means absence of a removal, which is what both callers intend and
+/// what the label promises. `placement::place_book` still exists and still means «here and nowhere
+/// else» — it is simply not what any interface gesture means, so no command spends it.
 #[tauri::command]
 pub fn library_place_book(
     book_id: String,
     container: String,
     before: Option<String>,
     category_id: Option<String>,
+    from: Option<String>,
     state: State<AppState>,
 ) -> Result<PlaceResult, String> {
     let conn = state.conn();
-    let placed = library::placement::place_book(
-        &conn,
-        &book_id,
-        &container,
-        before.as_deref(),
-        category_id.as_deref(),
-    )?;
+    let placed = match from.as_deref() {
+        Some(source) => library::placement::move_between(
+            &conn,
+            &book_id,
+            source,
+            &container,
+            before.as_deref(),
+            category_id.as_deref(),
+        )?,
+        None => library::placement::add_to(
+            &conn,
+            &book_id,
+            &container,
+            before.as_deref(),
+            category_id.as_deref(),
+        )?,
+    };
+    Ok(PlaceResult { placed, arrangement: read_arrangement(&conn)? })
+}
+
+/// ADD A BOOK TO A SHELF, KEEPING EVERY SHELF IT IS ALREADY ON.
+///
+/// The additive half of the pair, and a separate command from `library_place_book` on purpose. That
+/// one means "here and nowhere else" and sweeps the other memberships; this one means "here as
+/// well". Two verbs, two entry points — a flag would have made the difference invisible at the call
+/// site, which is exactly how a move and a copy came to be confused before.
+///
+/// Idempotent: adding a book to a shelf it is already on writes nothing and reports
+/// `changed: false`, so the interface may offer the action without first knowing the answer. The
+/// database enforces the same from underneath — the primary key is (book, container).
+///
+/// The book itself is untouched. One `books` row, one file, one set of notes and one reading
+/// position, however many shelves come to hold it.
+#[tauri::command]
+pub fn library_add_book_to_shelf(
+    book_id: String,
+    container: String,
+    category_id: Option<String>,
+    state: State<AppState>,
+) -> Result<PlaceResult, String> {
+    let conn = state.conn();
+    let placed = library::placement::ensure_on(&conn, &book_id, &container, category_id.as_deref())?;
     Ok(PlaceResult { placed, arrangement: read_arrangement(&conn)? })
 }
 
@@ -1375,6 +1425,95 @@ pub fn profile_export(
     assets: Option<Vec<profiles::package::AssetIn>>,
 ) -> Result<(), String> {
     profiles::package::export(&path, &manifest_json, &assets.unwrap_or_default())
+}
+
+/// SHOW A FILE WHERE IT ACTUALLY IS — the system's own file manager, with the file selected.
+///
+/// The share sheet used to offer the reader the PATH: a string to copy, and the raw path printed on
+/// screen beside it. That asks a reader to be a filesystem, and it is the wrong answer to the
+/// question they are actually asking, which is "where did my file go". This answers it the way
+/// every other application does: their file manager opens, at the right folder, with the file
+/// already picked out.
+///
+/// WHAT HAPPENS WHEN IT IS NOT THERE. A package can be moved, renamed or deleted between being
+/// written and being asked about, so the file existing is checked rather than assumed. If it has
+/// gone, the FOLDER is opened instead — which is still the honest answer to "where did it go" — and
+/// only a folder that has also gone is an error. The caller is told which of the three happened, so
+/// the interface can say something true rather than claiming success.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Revealed {
+    /// "file" — the file was selected; "folder" — the file was gone, its folder was opened.
+    pub showed: String,
+}
+
+#[tauri::command]
+pub fn reveal_path(path: String) -> Result<Revealed, String> {
+    let p = std::path::Path::new(&path);
+    if p.as_os_str().is_empty() {
+        return Err("reveal.err.nothing".into());
+    }
+    let file = p.is_file();
+    let dir = if file { p.parent().map(|d| d.to_path_buf()) } else { None }
+        .or_else(|| if p.is_dir() { Some(p.to_path_buf()) } else { p.parent().map(|d| d.to_path_buf()) });
+    let dir = match dir {
+        Some(d) if d.is_dir() => d,
+        // Neither the package nor the folder it lived in is there any more.
+        _ => return Err("reveal.err.gone".into()),
+    };
+
+    #[cfg(target_os = "windows")]
+    {
+        // `/select,` takes ONE argument in which the comma and the path are a single token, and the
+        // path must be in the operating system's own form — a forward slash here opens the user's
+        // Documents folder instead, which looks like a bug in Sard and is a quoting mistake.
+        if file {
+            let mut arg = std::ffi::OsString::from("/select,");
+            arg.push(p.as_os_str());
+            std::process::Command::new("explorer.exe")
+                .arg(arg)
+                .spawn()
+                .map_err(|e| format!("reveal.err.failed: {e}"))?;
+        } else {
+            std::process::Command::new("explorer.exe")
+                .arg(dir.as_os_str())
+                .spawn()
+                .map_err(|e| format!("reveal.err.failed: {e}"))?;
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut cmd = std::process::Command::new("open");
+        if file { cmd.arg("-R").arg(p.as_os_str()); } else { cmd.arg(dir.as_os_str()); }
+        cmd.spawn().map_err(|e| format!("reveal.err.failed: {e}"))?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        // The freedesktop file managers answer this over D-Bus; the ones that do not still open a
+        // folder, which is the same fallback a missing file gets.
+        let selected = file
+            && std::process::Command::new("dbus-send")
+                .args([
+                    "--session",
+                    "--dest=org.freedesktop.FileManager1",
+                    "--type=method_call",
+                    "/org/freedesktop/FileManager1",
+                    "org.freedesktop.FileManager1.ShowItems",
+                    &format!("array:string:file://{}", p.display()),
+                    "string:",
+                ])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+        if !selected {
+            std::process::Command::new("xdg-open")
+                .arg(dir.as_os_str())
+                .spawn()
+                .map_err(|e| format!("reveal.err.failed: {e}"))?;
+        }
+    }
+
+    Ok(Revealed { showed: if file { "file".into() } else { "folder".into() } })
 }
 
 /// What CAN travel with this profile, with real sizes.

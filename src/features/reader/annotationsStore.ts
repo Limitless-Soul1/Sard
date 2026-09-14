@@ -126,7 +126,10 @@ export const useAnnotations = create<AnnoState>((set, get) => ({
     // chapter label the row needs. If the DB write then fails or returns nothing, revert the overlay
     // so no highlight is left drawn with no row backing it (which would vanish on reopen).
     const label = await ctrl?.addHighlight(cfi, color);
-    const fallback = label ?? useReader.getState().chapterLabel;
+    // `undefined` means there was no engine to ask; `null` means the engine answered "this section has
+    // no name", which is an ANSWER and must not be overwritten by the reading position's label — that
+    // is how a mark made inside a note would end up filed under the chapter behind the note.
+    const fallback = label === undefined ? useReader.getState().chapterLabel : label;
     try {
       const row = await highlightCreate(bookId, cfi, color, text, fallback);
       if (row) {

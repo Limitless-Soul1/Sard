@@ -240,6 +240,11 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "where_made",
         include_str!("migrations_sql/20260906090000_where_made.sql"),
     ),
+    (
+        20_260_910_190_000,
+        "placement_memberships",
+        include_str!("migrations_sql/20260910190000_placement_memberships.sql"),
+    ),
 ];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.

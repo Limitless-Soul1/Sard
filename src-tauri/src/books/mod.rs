@@ -24,6 +24,8 @@ pub mod compat;
 #[cfg(all(test, feature = "corpus-tests"))]
 mod corpus_tests;
 #[cfg(test)]
+mod placement_tests;
+#[cfg(test)]
 mod wp2_tests;
 use std::io::{Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
@@ -141,7 +143,9 @@ fn import_pdf(conn: &Connection, app_data_dir: &Path, name: &str, bytes: &[u8]) 
         return ImportResult::of("error", &id, &title, Some(format!("Couldn't store the file: {e}")));
     }
     let size = bytes.len() as i64;
-    let res = conn.execute(
+    let res = insert_placed(
+        conn,
+        &id,
         // RAWY-178 (AUD-12): title_fold via afold() so the library search folds Arabic consistently.
         "INSERT INTO books(id, file_path, file_hash, format, title, author, language, dir, \
                            cover_path, size_bytes, added_at, last_opened_at, title_fold, author_fold) \
@@ -285,7 +289,9 @@ fn import_one(conn: &Connection, app_data_dir: &Path, src: &str) -> ImportResult
     let cover_path = extract_cover(&mut zip, &meta, &covers_dir, &id);
 
     let size = bytes.len() as i64;
-    let res = conn.execute(
+    let res = insert_placed(
+        conn,
+        &id,
         // RAWY-178 (AUD-12): title_fold/author_fold via afold() so the library search folds Arabic
         // consistently with the in-book search (كتاب ⇒ كِتاب, أحمد ⇔ احمد).
         // RESILIENCE-1 / WP-2: five additive columns (migration 15). Every pre-existing column is
@@ -316,6 +322,44 @@ fn import_one(conn: &Connection, app_data_dir: &Path, src: &str) -> ImportResult
         Ok(_) => ImportResult::of("imported", &id, &title, None),
         Err(e) => ImportResult::of("error", &id, &title, Some(format!("Database error: {e}"))),
     }
+}
+
+/// REGISTER A BOOK, AND THEN TRY TO FILE IT — in that order, and never the other way round.
+///
+/// TWO DIFFERENT KINDS OF FACT, and the difference decides what may fail.
+///
+///  · THE BOOK is the thing the reader added. It is on disk, it has metadata, it can carry
+///    annotations, a reading position and notes, and de-duplication answers for it by its id.
+///  · ITS PLACE is organisational: which shelf holds it, in what order. Useful, changeable, and
+///    entirely reconstructible - «no shelf holds it» is a complete and valid answer.
+///
+/// So the book row is committed on its own. If writing its place then fails, the book is still
+/// imported and still the reader's: it simply has no shelf yet, which is a state the library already
+/// draws as «خارج الأرفف». What must never happen is the reverse — an import refused, or silently
+/// rolled back, because an organisational write did not land. That would take a book the reader
+/// successfully added and make it unaddable: de-duplication would recognise the id forever after
+/// while nothing in the library could show it.
+///
+/// An earlier attempt did put both writes in ONE transaction. It closed the visible-symptom but at
+/// the wrong price: it made the reader's ability to OWN a book conditional on a filing clerk, and a
+/// failure there would have cost the import itself. The filing is best-effort now, and the library no
+/// longer depends on it having succeeded — `buildArrangement` reads «no shelf holds this book» as
+/// «this book is unfiled», which is the same rule the database states, asked of the books.
+///
+/// `settle_unfiled` is still called, because when it succeeds the book gets an ordering key and takes
+/// its place in the run like any other. It is simply no longer load-bearing.
+fn insert_placed(
+    conn: &Connection,
+    id: &str,
+    sql: &str,
+    params: &[&dyn rusqlite::ToSql],
+) -> rusqlite::Result<()> {
+    // The import itself. A failure here IS an import failure, reported as one, and it leaves nothing
+    // behind for de-duplication to recognise - so the reader can simply try again.
+    conn.execute(sql, params)?;
+    // The filing. Best-effort by design: a book without it is unfiled, not lost.
+    let _ = crate::library::placement::settle_unfiled(conn, id);
+    Ok(())
 }
 
 fn book_title(conn: &Connection, id: &str) -> rusqlite::Result<Option<String>> {

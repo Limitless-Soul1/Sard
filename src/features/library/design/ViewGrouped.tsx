@@ -171,6 +171,10 @@ export function ViewGrouped(props: GroupedProps) {
           before,
           key,
           label: isVirtualShelf(shelf.id) ? t("lib.takeOffShelf") : t("lib.placeHere"),
+          // THE SAME BOX A COVER TAKES: the grid track's width at the cover's own 2:3, which is
+          // exactly how `BookTile` sizes a cover (`aspectRatio: "2/3"` at the tile's width). A
+          // spine's place is the width of the book in hand at this density's spine height, as the
+          // spines themselves are. Nothing here is a second number for the same thing.
           style: {
             display: "block",
             width: spines ? props.carryWidth : "100%",
@@ -178,6 +182,8 @@ export function ViewGrouped(props: GroupedProps) {
             border: "2px dashed var(--acc)",
             borderRadius: "var(--r-xs)",
             background: "var(--act)",
+            // A landing place is also a click target (lift, then click where it goes).
+            cursor: "pointer",
             animation: "sard-open .14s ease-out",
           },
         })

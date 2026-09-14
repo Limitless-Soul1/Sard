@@ -151,13 +151,22 @@ describe("the unfiled group's heading and its children", () => {
   });
 
   it("uses the CASE's own connector, so the group reads like the rest of the tree", () => {
-    // Not a new device: a case ties its shelves to its title with exactly these two declarations,
-    // and they must remain the same two or the two groupings stop matching.
+    // Not a new device: a case ties its shelves to its title with the same indent and the same
+    // connector, and the two groupings must keep using ONE of them or they stop matching.
+    //
+    // The connector is now drawn by `.libd-shelfgroup` rather than by an inline border — it fades
+    // at its foot and takes the cabinet's ink at its head, neither of which a single `border`
+    // declaration can express. What this pins is unchanged: both groups reach for the same indent
+    // and the same class, so neither can drift from the other.
     expect(GROUP).toContain("marginInlineStart: 22");
-    expect(GROUP).toContain('borderInlineStart: "1px solid var(--brd)"');
+    expect(GROUP).toContain("libd-shelfgroup");
     const caseBlock = CHROME.slice(0, CHROME.indexOf("Shelves in no case"));
     expect(caseBlock).toContain("marginInlineStart: 22");
-    expect(caseBlock).toContain('borderInlineStart: "1px solid var(--brd)"');
+    expect(caseBlock).toContain("libd-shelfgroup");
+    // …and the class really is what draws it, so "they share a connector" is not vacuous.
+    const css = readFileSync(
+      join(import.meta.dirname, "..", "..", "src/styles/library-design.css"), "utf8");
+    expect(css).toMatch(/\.libd-shelfgroup::before\s*\{[^}]*inset-inline-start: 0/);
   });
 
   it("stays a group and not a cabinet", () => {

@@ -29,6 +29,7 @@ const composer = read("src/features/photo/PhotoComposer.tsx");
 const inspector = read("src/features/photo/Inspector.tsx");
 const layers = read("src/features/photo/CardLayers.tsx");
 const overlay = read("src/features/photo/CardOverlay.tsx");
+const toolbar = read("src/features/photo/CardToolbar.tsx");
 const ar = read("src/i18n/locales/ar.ts");
 const en = read("src/i18n/locales/en.ts");
 
@@ -55,13 +56,33 @@ const overlaps = (a: Rect, b: Rect): boolean =>
 
 describe("«ملء البطاقة» is gone", () => {
   it("no control offers it, in either language", () => {
-    // The KEY, not the prefix: `photo.fit.autoNow` is a different string and legitimately stays —
-    // it is the note a card saved under the old option still shows in place of a size.
-    expect(inspector).not.toMatch(/photo\.fit\.auto(?!Now)/);
-    expect(composer).not.toMatch(/photo\.fit\.auto(?!Now)/);
-    expect(ar).not.toContain('"photo.fit.auto"');
-    expect(en).not.toContain('"photo.fit.auto"');
+    // TWO OF THESE USED TO CHECK NOTHING AT ALL. The pattern was written `\b(?!Now)` — a word
+    // boundary, to say "the prefix on its own, not `autoNow`" — and the `\b` reached the file as a
+    // literal backspace, so both lines asked whether the source contains "photo.fit.auto" followed
+    // by control character 0x08. It never does, so they passed however the code was written.
+    //
+    // The exclusion they were built around is gone with the string it protected: `autoNow` was the
+    // note the inspector showed INSTEAD of the size track while a text was fitting itself, which was
+    // the same mistake as «ملء البطاقة» in a smaller costume. So the prefix is simply not there now,
+    // in any form, and the pattern says that plainly.
+    expect(inspector).not.toMatch(/photo\.fit\.auto/);
+    expect(composer).not.toMatch(/photo\.fit\.auto/);
+    expect(toolbar).not.toMatch(/photo\.tb\.auto/);
+    expect(ar).not.toContain('"photo.fit.auto');
+    expect(en).not.toContain('"photo.fit.auto');
+    expect(ar).not.toContain('"photo.tb.auto');
     expect(ar).not.toContain("ملء البطاقة");
+  });
+
+  it("…and the size control never stands down for a label", () => {
+    // THE FAULT THIS PINS. Both the inspector and the toolbar branched on `size == null` and put a
+    // word where the size control had been, so a reader who wanted a slightly larger quote found no
+    // slider at all — on the strip they reach first AND in the panel behind it. Auto-fit changes the
+    // VALUE: the track shows what the fit arrived at, read through `autoFrac`. Never the control.
+    expect(inspector).not.toMatch(/selected\.style\.size\s*!=\s*null\s*\?/);
+    expect(toolbar).not.toMatch(/selected\.style\.size\s*==\s*null\s*\?/);
+    expect(inspector).toContain("selected.style.size ?? autoFrac");
+    expect(toolbar).toContain("selected.style.size ?? autoFrac");
   });
 
   it("…and a card that was saved using it still opens exactly as it was", () => {

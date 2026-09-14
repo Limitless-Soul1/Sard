@@ -21,6 +21,8 @@ export const COMPOSITIONS = [
   { id: "manuscript" as const, label: "photo.comp.manuscript" as const },
   { id: "gilded" as const, label: "photo.comp.gilded" as const },
   { id: "night" as const, label: "photo.comp.night" as const },
+  // The one that pre-designs nothing — see `FLAVOUR.blank` in autoLayout and the `blank` skin.
+  { id: "blank" as const, label: "photo.comp.blank" as const },
 ];
 
 /** What a card can be made of, in reading order. */

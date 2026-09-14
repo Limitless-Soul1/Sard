@@ -1,6 +1,6 @@
 // TRACK-1 — "Edge TTS speaks, but nothing is ever highlighted."
 //
-// Reported against "داو الخالد العجيب" and reproduced: 112 speakable units, 0 DOM ranges.
+// Reported against a `.txt`→EPUB conversion and reproduced: 112 speakable units, 0 DOM ranges.
 //
 // WHAT THIS FILE CAN AND CANNOT PROVE. The defect lives in a DOM walk, and this suite runs on Node
 // with no DOM — so the end-to-end proof is a separate check that measures the REAL

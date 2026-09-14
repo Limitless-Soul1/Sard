@@ -67,7 +67,17 @@ describe("interface texture · every chrome surface is enrolled or excused", () 
   // glance, and it already sits on a ground that is itself textured. These are those.
   const EXCUSED: Record<string, string> = {
     ".rs-ink-panel": "an ink popover ON a settings row — it sits on the drawer, not over the desk",
+    ".rs-sel-list": "the font chooser's list, hung from the settings drawer — the same surface as the ink popover",
     ".import-report": "a transient report card, shown once and dismissed",
+    // The message family. They paint the chrome ground on purpose — that is the fix that gave
+    // them one surface instead of five inverted pills — and they are transient overlays, which
+    // is the line this list already draws. Recorded here rather than left to pass by accident:
+    // their `position` lives in a per-site rule, so the check above cannot currently see them.
+    ".lib-toast": "a transient message, shown for a few seconds and gone",
+    ".pg-toast": "a transient message, shown for a few seconds and gone",
+    ".pf-toast": "a transient message with an Undo, shown for a few seconds and gone",
+    ".rr-toast": "a transient message, shown for a few seconds and gone",
+    ".pc-toast": "a transient message inside the composer, on the composer's own palette",
     ".lib-theme-menu": "a dropdown menu",
     ".lib-menu": "a dropdown menu",
     ".upd-dialog": "a modal dialog, over its own scrim",

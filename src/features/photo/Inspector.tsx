@@ -133,13 +133,15 @@ export interface DocControls {
 }
 
 export function Inspector({
-  comp, selected, canvas, doc, onStyle, onText, onImage, onRect, onRotate, onRemove,
+  comp, selected, canvas, autoFrac, doc, onStyle, onText, onImage, onRect, onRotate, onRemove,
   onOrder, onReplaceImage, onClearImage,
 }: {
   comp: Composition;
   selected: CardElement | null;
   canvas: { w: number; h: number };
-  /** What an auto-fitted quote is drawn at, as a fraction — where taking it by hand starts. */
+  /** What an auto-fitted text is drawn at, as a fraction — what the size control shows, and where
+   *  taking it by hand starts. */
+  autoFrac: number;
   doc: DocControls;
   onStyle: (patch: Partial<TextStyle>) => void;
   onText: (text: string) => void;
@@ -306,36 +308,37 @@ export function Inspector({
           {/* Size, alignment and colour are NOT here — they are on the toolbar, one click from the
               thing they change. This section is the rest of the typography. */}
           <Section title={t("photo.sec.type")}>
-            {/* TEXT HAS A SIZE. That is the whole model — a number, on a track, from the moment the
-                element exists. There is no choice to make between "fill the card" and "a fixed
-                size", because that was never two ways of sizing text; it was one way plus a
-                convenience wearing the costume of a mode.
+            {/* TEXT HAS A SIZE, AND THIS IS ALWAYS THE CONTROL FOR IT.
+                A note reading «محسوب بالملاءمة» used to stand here whenever the text was fitting
+                itself, and that was the same mistake the «ملء البطاقة» switch had been: it turned a
+                size into a mode, and then had to take the control away to explain the mode. A
+                reader who wanted a slightly larger quote found no slider at all.
+
+                AUTO-FIT CHANGES THE VALUE; IT DOES NOT CHANGE THE CONTROL. When the text is fitting
+                itself the track shows what the fit actually arrived at — read off the drawing node,
+                so it is the number on screen and not a guess — and it re-reads whenever the box is
+                moved or resized. Touching the track writes that number down and the text is sized
+                by hand from there. One control, one meaning, whichever way the size was arrived at.
 
                 The track covers 12–120px because that is where card type lives; the field beside it
                 reaches the whole range, so an outsized display line is one keystroke away. */}
-            {selected.style.size != null ? (
-              <SliderField
-                label={t("photo.el.size")}
-                value={px(selected.style.size)}
-                onChange={(v) => onStyle({ size: frac(v) })}
-                min={6} max={Math.round(canvas.w * 0.4)} softMin={12} softMax={120}
-                step={0.5} unit="px" precision={1} width={48}
-              />
-            ) : (
-              <div className="pcx-sf">
-                <span className="pcx-sf-label">{t("photo.el.size")}</span>
-                <span className="pcx-autonote">{t("photo.fit.autoNow")}</span>
-              </div>
-            )}
+            <SliderField
+              label={t("photo.el.size")}
+              value={px(selected.style.size ?? autoFrac)}
+              onChange={(v) => onStyle({ size: frac(v) })}
+              min={6} max={Math.round(canvas.w * 0.4)} softMin={12} softMax={120}
+              step={0.5} unit="px" precision={1} width={48}
+            />
             {/* «ملء البطاقة» STOOD HERE, and it is gone on purpose.
                 It offered a second way to size text — "let it fill the card" against "give it a
                 size" — and the two were never peers: one is a size, the other is a mode that takes
                 the size away and then has to explain itself. Text has a size; that is the whole
                 model, and the track above is it.
 
-                The `size: null` it wrote still READS: a card saved while the switch existed opens
-                with its auto-fitted text exactly as it was, and the note above says so rather than
-                showing an empty track. Nothing new is written that way. */}
+                The `size: null` it wrote still READS, and still means "fit this to its box": a card
+                saved while the switch existed opens exactly as it was, and the track above now
+                shows the size that fitting produced rather than standing down for a label. Nothing
+                new is written that way. */}
             <Picker
               value={String(selected.style.weight ?? 400)}
               options={[

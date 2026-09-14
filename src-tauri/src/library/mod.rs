@@ -121,7 +121,7 @@ const OV_AUTHOR: &str = "COALESCE((SELECT value FROM metadata_overrides WHERE bo
 // the query term, so the LIKE compares folded-to-folded. NOTE: this omits `normalizeForSearch`'s
 // leading NFKC pass (Rust has no NFKC without a new crate) — for normal (NFC) titles that's a no-op;
 // the tashkīl/tatweel strip + alef/ya/teh folding + lowercase + whitespace-drop below cover the
-// Arabic-first cases the audit names. Both sides use THIS function, so the library is self-consistent.
+// Arabic cases the audit names. Both sides use THIS function, so the library is self-consistent.
 pub fn fold_search(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
@@ -810,6 +810,18 @@ pub struct CollectionRow {
     pub count: i64,
 }
 
+/// The shelves, for the surfaces that want a flat list of them.
+///
+/// ⚠ `count` IS ALWAYS ZERO, and has been since the arrangement moved to `placements`. It counts
+/// `book_collections`, which that migration deliberately left in place as a record of what the
+/// arrangement used to be; the table has held no rows since. The field is not a multi-membership
+/// bug — it was already zero when a book had one placement.
+///
+/// It is left exactly as it is because NOTHING READS IT. `Library.tsx` is the only caller, and it
+/// uses these rows for a shelf's `name` — on rename, on delete, and for a toast — never for the
+/// count, which is not passed on to `LibraryDesign`. Correcting a field no surface displays would be
+/// a change without a reader; removing it touches a public shape for no gain. Recorded here so the
+/// next person to reach for `CollectionRow.count` knows what they are picking up.
 pub fn collections_list(conn: &Connection) -> rusqlite::Result<Vec<CollectionRow>> {
     let mut stmt = conn.prepare(
         "SELECT c.id, c.name, COUNT(bc.book_id) \
@@ -857,58 +869,74 @@ pub fn collection_rename(conn: &Connection, id: &str, name: &str) -> rusqlite::R
 /// Delete a shelf. `book_collections` rows cascade away (FK ON DELETE CASCADE); the
 /// BOOKS remain in the library.
 pub fn collection_delete(conn: &Connection, id: &str) -> rusqlite::Result<Vec<CollectionRow>> {
-    // THE BOOKS COME HOME FIRST. A placement names its container, so deleting the shelf without
-    // moving them would leave every book on it pointing at something that no longer exists — the
-    // "no place" state this model exists to abolish. They join the books on no shelf, at the end,
-    // in the order they were in.
+    // THE MEMBERSHIPS GO FIRST. `container` is not a foreign key — it holds a shelf id or the
+    // unfiled sentinel — so nothing cascades, and a row left behind would point at a shelf that no
+    // longer exists: the "no place" state this model abolishes.
+    //
+    // Only THIS shelf's memberships go. A book that also sits on another shelf keeps it and simply
+    // stops appearing here; a book that had nowhere else joins «خارج الأرفف», at the end. Which of
+    // the two happens is not decided here at all — `remove_from` ends in `settle_unfiled`, which is
+    // the one place that knows what "on no shelf" means.
     let leaving = placement::container_books(conn, id)?;
     for (book_id, _) in leaving {
-        let rank = placement::append_rank(conn, placement::UNFILED)?;
-        placement::set(conn, &book_id, placement::UNFILED, &rank, None)
-            .map_err(rusqlite::Error::InvalidParameterName)?;
+        placement::remove_from(conn, &book_id, id)?;
     }
     conn.execute("DELETE FROM collections WHERE id = ?1", [id])?;
     collections_list(conn)
 }
 
-/// Put a book on a shelf — which MOVES it, because a book is in exactly one place.
+/// PUT A BOOK ON A SHELF, KEEPING THE SHELVES IT IS ALREADY ON.
 ///
-/// This used to insert a membership row and leave any others alone, so a book could accumulate
-/// homes and every reader had to decide which one counted. It arrives at the end of the shelf,
-/// since choosing it from a list says which shelf and nothing about where among its neighbours.
+/// It swept. Measured against a book on three shelves, through the registered command: «s7-a, s7-b,
+/// s7-c» went in and «s7-b» came out — arriving somewhere deleted everywhere else, under a name that
+/// says «add». That was correct while a book had one place, and was left alone through the stages
+/// that widened the table because switching a verb underneath live callers is how a move silently
+/// becomes a copy, or the reverse.
+///
+/// IT HAS NO CALLERS. The command is registered and reachable over IPC, and nothing in this
+/// application invokes it: the interface's own additive path is `library_add_book_to_shelf`, and the
+/// only shelf picker left — Book Details — reads its memberships from the arrangement. So there is
+/// no caller whose meaning could change, and what remains is a command whose name and behaviour
+/// disagree, waiting for whoever wires it up next.
+///
+/// It now means what it is called, in the vocabulary the rest of the model uses:
+/// [`placement::ensure_on`] — be on this shelf, say nothing about where on it, and leave every other
+/// membership standing. Idempotent, like the command beside it. A caller that genuinely wants «here
+/// and nowhere else» has [`placement::place_book`], which still sweeps and is still tested.
 pub fn collection_add_book(conn: &Connection, collection_id: &str, book_id: &str) -> rusqlite::Result<Vec<CollectionRow>> {
-    let rank = placement::append_rank(conn, collection_id)?;
-    placement::set(conn, book_id, collection_id, &rank, None)
+    placement::ensure_on(conn, book_id, collection_id, None)
         .map_err(rusqlite::Error::InvalidParameterName)?;
     collections_list(conn)
 }
 
-/// Take a book off a shelf. It does not vanish — it goes back among the books on no shelf, which
-/// is a real container with an order of its own, at the end of it.
+/// Take a book off ONE shelf. It does not vanish, and it does not leave its other shelves.
+///
+/// This asked "is the book's container this shelf?" before acting — a question with one answer only
+/// while a book had one placement. It now removes the named membership and nothing else, which is
+/// both the correct multi-membership behaviour and, for a book that is on a single shelf, exactly
+/// what it did before: that book had nowhere else, so it joins the books on no shelf, at the end.
+///
+/// What it never touches: the `books` row, the file, the reading progress, the highlights, the notes
+/// and the references. Every one of those is keyed on the book, not on where the book is filed.
 pub fn collection_remove_book(conn: &Connection, collection_id: &str, book_id: &str) -> rusqlite::Result<Vec<CollectionRow>> {
-    let here: Option<String> = conn
-        .query_row("SELECT container FROM placements WHERE book_id = ?1", [book_id], |r| r.get(0))
-        .optional()?;
-    if here.as_deref() == Some(collection_id) {
-        let rank = placement::append_rank(conn, placement::UNFILED)?;
-        placement::set(conn, book_id, placement::UNFILED, &rank, None)
-            .map_err(rusqlite::Error::InvalidParameterName)?;
-    }
+    placement::remove_from(conn, book_id, collection_id)?;
     collections_list(conn)
 }
 
-/// The shelf a book is on, as a list of one — or none, when it is on no shelf.
+/// EVERY SHELF A BOOK IS ON. Empty when it is on none.
 ///
-/// The edit dialog draws chips from this. It is a list because it always was; it can no longer
-/// hold more than a single entry, and that is the point.
+/// It is a list because it always was, and it holds what it says again. In between it was written
+/// as a `query_row` — «the» container, wrapped in a one-element vector — on the reasoning that a
+/// book could no longer be in more than one place. Against a book on three shelves that returns
+/// whichever row SQLite yields first and drops the other two silently, which is worse than a wrong
+/// answer: the caller cannot tell it was given one of several.
+///
+/// The unfiled container is not a shelf and is not listed, exactly as before.
 pub fn collections_for_book(conn: &Connection, book_id: &str) -> rusqlite::Result<Vec<String>> {
-    let container: Option<String> = conn
-        .query_row("SELECT container FROM placements WHERE book_id = ?1", [book_id], |r| r.get(0))
-        .optional()?;
-    Ok(match container {
-        Some(c) if c != placement::UNFILED => vec![c],
-        _ => Vec::new(),
-    })
+    Ok(placement::containers_of(conn, book_id)?
+        .into_iter()
+        .filter(|c| c != placement::UNFILED)
+        .collect())
 }
 
 fn now_unix() -> i64 {

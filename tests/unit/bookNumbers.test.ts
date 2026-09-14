@@ -9,7 +9,7 @@
 // corpus book's real NCX:
 //
 //     numbers itself : LotM 1430/1433 · halaqat 1166/1167 · red-rising 44/53 · Alice 12/17
-//     does not       : metamorphosis 2/5 · أوفرلورد 25/264 · ad-daa 3/113 · shawqiyyat 1/136
+//     does not       : metamorphosis 2/5 · reported-book 25/264 · ad-daa 3/113 · shawqiyyat 1/136
 //
 // Nothing lies between 40 % and 71 %, so a half majority separates the two groups with room either
 // side. These tests pin BOTH edges of that gap so the threshold cannot drift into either group.
@@ -34,7 +34,7 @@ describe("books that DO number their own chapters keep doing so", () => {
 
 describe("books whose matches are NOISE fall back to position", () => {
   it.each([
-    ["أوفرلورد — the reported book", 25, 264],
+    ["reported-book — the case this rule was written for", 25, 264],
     ["ad-daa-wad-dawaa — 110 rows were mislabelled", 3, 113],
     ["metamorphosis", 2, 5],
     ["shawqiyyat", 1, 136],

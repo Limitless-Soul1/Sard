@@ -202,10 +202,21 @@ pub fn tree(conn: &Connection) -> rusqlite::Result<LibraryTree> {
     let mut cases = Vec::with_capacity(heads.len());
     for (id, name, ink) in heads {
         let shelves = shelves_where(conn, Some(&id))?;
-        // No DISTINCT any more: a book has one placement, so it can be on at most one shelf of
-        // this case. The old query existed to stop it being counted twice.
+        // A CABINET COUNTS BOOKS, AND ITS SHELVES COUNT MEMBERSHIPS. The two are not the same
+        // arithmetic, and this is the one place where the difference shows.
+        //
+        // `DISTINCT` was here once and was removed on the reasoning that "a book has one placement,
+        // so it can be on at most one shelf of this case". That was true while the primary key was
+        // the book. It is not true now: a reader may keep one book on «روايات عربية» AND on
+        // «المفضلة», and if both are in the same cabinet the join returns it twice. Measured on the
+        // test library — a cabinet holding four books reported five.
+        //
+        // A shelf's own count stays `COUNT(*)`, and correctly: one row per (book, shelf) means the
+        // rows in a single container ARE its distinct books, so nothing there can double. The
+        // category counts are the same shape for the same reason — a category belongs to one shelf,
+        // so a book has at most one row carrying it.
         let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM placements p \
+            "SELECT COUNT(DISTINCT p.book_id) FROM placements p \
              JOIN collections c ON c.id = p.container WHERE c.case_id = ?1",
             [&id],
             |r| r.get(0),
@@ -446,7 +457,23 @@ pub fn shelf_set_collapsed(conn: &Connection, id: &str, collapsed: bool) -> rusq
 /// `index` is the position the book should end at once it has been taken out of the reckoning,
 /// which is what this function has always meant. It is translated straight into «in front of which
 /// book», because that is the form the transaction speaks and the form that cannot be off by one.
-/// New callers should prefer `placement::place_book` and name the neighbour directly.
+/// ── IT ADDS. IT DOES NOT SWEEP. ─────────────────────────────────────────────────────────────
+///
+/// This called `place_book`, which means «here and nowhere else» and deletes every other membership
+/// the book has. That was invisible while a book had one place and is destructive now, because both
+/// of its callers ALREADY do their own removing afterwards and each knows exactly which shelf it
+/// means to leave:
+///
+///   · Book Details' move joins the destination, then removes the one shelf the panel showed. For a
+///     book on several the panel shows none as current, so the sweep was the only thing that ran —
+///     clicking a fourth shelf took the book off the three it was on.
+///   · Arrange's drag asks `placementPlan` whether this is a move or an add, and only removes the
+///     source for a move. A book dragged OUT OF A RULE SHELF is explicitly an add — there is no
+///     membership to leave — and the sweep deleted every real shelf it had anyway.
+///
+/// So positioning is positioning. What a caller wants left behind is the caller's to say, and both
+/// of them already say it. `placement::place_book` is still there for anyone who genuinely means
+/// «and nowhere else».
 pub fn shelf_place_book(
     conn: &Connection,
     collection_id: &str,
@@ -458,7 +485,7 @@ pub fn shelf_place_book(
     let without: Vec<&(String, String)> = books.iter().filter(|(id, _)| id != book_id).collect();
     let at = (index.max(0) as usize).min(without.len());
     let before = without.get(at).map(|(id, _)| id.clone());
-    crate::library::placement::place_book(conn, book_id, collection_id, before.as_deref(), category_id)
+    crate::library::placement::add_to(conn, book_id, collection_id, before.as_deref(), category_id)
         .map_err(rusqlite::Error::InvalidParameterName)?;
     tree(conn)
 }
@@ -678,13 +705,15 @@ mod tests {
         let to = t.loose.iter().find(|s| s.name == "To").unwrap().id.clone();
 
         shelf_place_book(&conn, &from, "b1", None, 0).unwrap();
-        // A BOOK IS IN ONE PLACE. Joining another shelf therefore LEAVES the first — the reader
-        // asked for a move, and a model that answered by adding a second home is what let the same
-        // book be drawn twice and let each view pick a different one of its homes as "the" home.
-        shelf_place_book(&conn, &to, "b1", None, 0).unwrap();
+        // A MOVE IS TWO THINGS, AND THE CALLER SAYS BOTH. Arriving somewhere no longer implies
+        // leaving everywhere: a book may be on «روايات عربية» and «المفضلة» at once, so a placement
+        // that swept the others would destroy shelves the reader filed deliberately. `move_book` is
+        // exactly what the library surface does — join the destination, then leave the one shelf it
+        // named — and it is the arrival alone that is no longer a departure.
+        move_book(&conn, &from, &to, None, 0, "b1");
         assert_eq!(shelf_items(&conn, &from).unwrap().len(), 0, "it left the shelf it came from");
         assert_eq!(shelf_items(&conn, &to).unwrap().len(), 1, "and arrived at the one it went to");
-        assert_eq!(memberships(&conn, "b1"), 1, "one placement, never two");
+        assert_eq!(memberships(&conn, "b1"), 1, "and is on that one shelf only");
 
         // Taking it off that shelf does not lose it: it goes back among the books on no shelf,
         // which is a container with an order of its own rather than an absence.
@@ -1202,8 +1231,9 @@ mod tests {
         let keep = t.loose.iter().find(|s| s.name == "Keep").unwrap().id.clone();
         shelf_place_book(&conn, &a, "b1", None, 0).unwrap();
         shelf_place_book(&conn, &a, "b2", None, 1).unwrap();
-        // Placing b2 on Keep MOVES it there; it is no longer on A.
-        shelf_place_book(&conn, &keep, "b2", None, 0).unwrap();
+        // b2 MOVES to Keep — arrival and departure, both said out loud, because placing alone
+        // now only adds.
+        move_book(&conn, &a, &keep, None, 0, "b2");
         assert_eq!(on_shelf(&conn, &a), vec!["b1"]);
         assert_eq!(on_shelf(&conn, &keep), vec!["b2"]);
 
@@ -1213,9 +1243,13 @@ mod tests {
         // The helper drops each book at index 0 in turn, so the destination reads back in the
         // reverse of the order it was given — an artefact of the helper, stated rather than glossed.
         assert_eq!(on_shelf(&conn, &b), vec!["b2", "b1"], "both arrive at the destination");
-        assert!(on_shelf(&conn, &keep).is_empty(), "and b2 left Keep, because a book is in one place");
-        assert_eq!(memberships(&conn, "b2"), 1);
-        assert_eq!(memberships(&conn, "b1"), 1);
+        // AND KEEP KEEPS IT — which is what this test is named for. The tray was told to leave A;
+        // b2 was not on A, and «Keep» is a shelf nobody mentioned. It ends up on both, because a
+        // move removes the membership it was asked about and no others. The body used to assert the
+        // opposite of its own title, because placing swept every other shelf regardless.
+        assert_eq!(on_shelf(&conn, &keep), vec!["b2"], "the shelf nobody mentioned is untouched");
+        assert_eq!(memberships(&conn, "b2"), 2, "on Keep, and now on the destination too");
+        assert_eq!(memberships(&conn, "b1"), 1, "b1 really was on A, so it really left");
     }
 
     #[test]
@@ -1276,9 +1310,13 @@ mod tests {
         bulk_move(&conn, Some(&scoped), &b, None, &["b1"]);
 
         assert_eq!(on_shelf(&conn, &b), vec!["b1"], "it arrived at the destination");
-        assert!(on_shelf(&conn, &elsewhere).is_empty(), "and left the shelf it was actually on");
+        // AND «Elsewhere» KEEPS IT. The tray was told to leave `scoped`, which never held the book,
+        // so there was nothing to leave — and a membership nobody named is nobody's business. This
+        // used to assert the opposite, because placing swept every other shelf regardless of what
+        // the caller had asked to remove; that is precisely the loss this stage removes.
+        assert_eq!(on_shelf(&conn, &elsewhere), vec!["b1"], "the shelf it was really on keeps it");
         assert!(on_shelf(&conn, &scoped).is_empty(), "the stated source never held it and holds nothing now");
-        assert_eq!(memberships(&conn, "b1"), 1, "one placement, wherever the move was said to start");
+        assert_eq!(memberships(&conn, "b1"), 2, "it is now on both, having been asked to leave neither");
     }
 
     #[test]
@@ -1710,17 +1748,29 @@ mod tests {
             let t = shelf_create(&conn, n, None, None).unwrap();
             ids.push(t.loose.iter().find(|s| s.name == n).unwrap().id.clone());
         }
-        for id in &ids {
+        // PLACING IT ON SHELF AFTER SHELF NOW GATHERS SHELVES, which is the whole point: the
+        // reader may keep one book in several places at once and see it in all of them.
+        for (n, id) in ids.iter().enumerate() {
             shelf_place_book(&conn, id, "b1", None, 0).unwrap();
-            assert_eq!(memberships(&conn, "b1"), 1, "never more than one, at any point");
+            assert_eq!(memberships(&conn, "b1"), n as i64 + 1, "one more shelf each time");
+        }
+        for id in &ids {
+            assert!(
+                shelf_items(&conn, id).unwrap().iter().any(|i| i.book_id == "b1"),
+                "and every one of them holds it"
+            );
         }
 
-        // It is on the last shelf it was placed on, and on none of the others.
+        // THE SWEEPING VERB IS STILL THERE and still means «here and nowhere else». It is what a
+        // caller reaches for when it really does want every other membership gone, and nothing in
+        // the library surface calls it for a drag any more.
+        crate::library::placement::place_book(&conn, "b1", &ids[3], None, None).unwrap();
+        assert_eq!(memberships(&conn, "b1"), 1, "and nowhere else");
         assert!(shelf_items(&conn, &ids[3]).unwrap().iter().any(|i| i.book_id == "b1"));
         for id in &ids[..3] {
             assert!(
                 shelf_items(&conn, id).unwrap().iter().all(|i| i.book_id != "b1"),
-                "a shelf it was moved off holds nothing"
+                "a shelf it was swept off holds nothing"
             );
         }
 
@@ -1784,4 +1834,191 @@ mod tests {
             .unwrap();
         assert_eq!(still_there, awkward.len() as i64, "and the table survived");
     }
+
+    // -----------------------------------------------------------------------
+    // WHAT A CABINET'S NUMBER MEANS.
+    //
+    // A shelf says how many books are on it; a cabinet says how many books are in it. Once one book
+    // can be on two of a cabinet's shelves those stop being the same sum, and the cabinet's is the
+    // one that has to change.
+    // -----------------------------------------------------------------------
+
+    /// The cabinet counts as the tree reports them, by name.
+    fn case_counts(conn: &Connection) -> Vec<(String, i64)> {
+        tree(conn).unwrap().cases.into_iter().map(|c| (c.name, c.count)).collect()
+    }
+
+    /// The shelf counts of one cabinet, by name.
+    fn shelf_counts(conn: &Connection, case_name: &str) -> Vec<(String, i64)> {
+        tree(conn)
+            .unwrap()
+            .cases
+            .into_iter()
+            .find(|c| c.name == case_name)
+            .expect("cabinet")
+            .shelves
+            .into_iter()
+            .map(|s| (s.name, s.count))
+            .collect()
+    }
+
+    fn shelf_in(conn: &Connection, case_id: &str, name: &str) -> String {
+        let t = shelf_create(conn, name, Some(case_id), None).unwrap();
+        t.cases
+            .iter()
+            .flat_map(|c| c.shelves.iter())
+            .find(|s| s.name == name)
+            .expect("the shelf just made")
+            .id
+            .clone()
+    }
+
+    #[test]
+    fn a_book_on_two_shelves_of_one_cabinet_counts_once_for_that_cabinet() {
+        let conn = db();
+        add_book(&conn, "x");
+        let t = case_create(&conn, "Novels", None).unwrap();
+        let novels = t.cases[0].id.clone();
+        let arabic = shelf_in(&conn, &novels, "Arabic");
+        let loved = shelf_in(&conn, &novels, "Loved");
+
+        crate::library::placement::add_to(&conn, "x", &arabic, None, None).unwrap();
+        crate::library::placement::add_to(&conn, "x", &loved, None, None).unwrap();
+
+        // Two memberships, one book — and the cabinet says one.
+        assert_eq!(case_counts(&conn), vec![("Novels".into(), 1)]);
+        // …while each shelf still says it holds it, which is the membership count and is right.
+        assert_eq!(
+            shelf_counts(&conn, "Novels"),
+            vec![("Arabic".into(), 1), ("Loved".into(), 1)]
+        );
+    }
+
+    #[test]
+    fn a_book_in_two_cabinets_counts_once_in_each() {
+        let conn = db();
+        add_book(&conn, "x");
+        let a = case_create(&conn, "Novels", None).unwrap().cases[0].id.clone();
+        let t = case_create(&conn, "Reading", None).unwrap();
+        let b = t.cases.iter().find(|c| c.name == "Reading").unwrap().id.clone();
+        let arabic = shelf_in(&conn, &a, "Arabic");
+        let weekly = shelf_in(&conn, &b, "This week");
+
+        crate::library::placement::add_to(&conn, "x", &arabic, None, None).unwrap();
+        crate::library::placement::add_to(&conn, "x", &weekly, None, None).unwrap();
+
+        let counts = case_counts(&conn);
+        assert!(counts.contains(&("Novels".into(), 1)), "{counts:?}");
+        assert!(counts.contains(&("Reading".into(), 1)), "{counts:?}");
+    }
+
+    #[test]
+    fn overlapping_memberships_still_count_distinct_books() {
+        let conn = db();
+        for b in ["x", "y", "z"] {
+            add_book(&conn, b);
+        }
+        let novels = case_create(&conn, "Novels", None).unwrap().cases[0].id.clone();
+        let arabic = shelf_in(&conn, &novels, "Arabic");
+        let loved = shelf_in(&conn, &novels, "Loved");
+
+        // x on both shelves, y on one, z on the other: five memberships, three books.
+        for (book, shelf) in [("x", &arabic), ("x", &loved), ("y", &arabic), ("z", &loved)] {
+            crate::library::placement::add_to(&conn, book, shelf, None, None).unwrap();
+        }
+        let rows: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM placements p JOIN collections c ON c.id = p.container \
+                 WHERE c.case_id = ?1",
+                [&novels],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 4, "four membership rows");
+        assert_eq!(case_counts(&conn), vec![("Novels".into(), 3)], "three distinct books");
+        assert_eq!(
+            shelf_counts(&conn, "Novels"),
+            vec![("Arabic".into(), 2), ("Loved".into(), 2)],
+            "and each shelf counts its own memberships"
+        );
+    }
+
+    #[test]
+    fn a_shelf_count_is_still_its_memberships() {
+        // The other half of the distinction, pinned so a later DISTINCT sweep cannot take it too.
+        // One row per (book, shelf) means a shelf's rows ARE its distinct books; there is nothing
+        // here for DISTINCT to remove, and adding it would only hide a duplicate that the primary
+        // key already makes unrepresentable.
+        let conn = db();
+        for b in ["x", "y"] {
+            add_book(&conn, b);
+        }
+        let novels = case_create(&conn, "Novels", None).unwrap().cases[0].id.clone();
+        let arabic = shelf_in(&conn, &novels, "Arabic");
+        crate::library::placement::add_to(&conn, "x", &arabic, None, None).unwrap();
+        crate::library::placement::add_to(&conn, "y", &arabic, None, None).unwrap();
+        assert_eq!(shelf_counts(&conn, "Novels"), vec![("Arabic".into(), 2)]);
+    }
+
+
+    // -----------------------------------------------------------------------
+    // POSITIONING A BOOK ON ONE SHELF IS NOT A STATEMENT ABOUT ITS OTHERS.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn placing_at_an_index_keeps_the_books_other_shelves() {
+        // The failure this pins: `shelf_place_book` routed to the sweeping verb, so putting a book
+        // at a position on one shelf deleted every other membership it had. Both callers — Book
+        // Details' move and Arrange's drag — do their own removing afterwards and each names the
+        // shelf it means to leave, so the sweep could only ever destroy something nobody asked for.
+        let conn = db();
+        add_book(&conn, "x");
+        add_book(&conn, "y");
+        let t = shelf_create(&conn, "A", None, None).unwrap();
+        let a = t.loose[0].id.clone();
+        let t = shelf_create(&conn, "B", None, None).unwrap();
+        let b = t.loose.iter().find(|s| s.name == "B").unwrap().id.clone();
+        let t = shelf_create(&conn, "C", None, None).unwrap();
+        let c = t.loose.iter().find(|s| s.name == "C").unwrap().id.clone();
+
+        crate::library::placement::add_to(&conn, "x", &a, None, None).unwrap();
+        crate::library::placement::add_to(&conn, "x", &b, None, None).unwrap();
+        // Another book on C, so the index below has something to be in front of.
+        crate::library::placement::add_to(&conn, "y", &c, None, None).unwrap();
+
+        shelf_place_book(&conn, &c, "x", None, 0).unwrap();
+
+        let on = crate::library::placement::containers_of(&conn, "x").unwrap();
+        let mut want = vec![a.clone(), b.clone(), c.clone()];
+        want.sort();
+        assert_eq!(on, want, "A and B must survive arriving at C");
+        assert_eq!(on_shelf(&conn, &c), vec!["x", "y"], "and the index was honoured");
+    }
+
+    #[test]
+    fn a_move_still_leaves_exactly_the_shelf_its_caller_names() {
+        // The other half: positioning adds, and the CALLER removes. Together they are a move, and
+        // the memberships nobody mentioned are untouched.
+        let conn = db();
+        add_book(&conn, "x");
+        let t = shelf_create(&conn, "A", None, None).unwrap();
+        let a = t.loose[0].id.clone();
+        let t = shelf_create(&conn, "B", None, None).unwrap();
+        let b = t.loose.iter().find(|s| s.name == "B").unwrap().id.clone();
+        let t = shelf_create(&conn, "C", None, None).unwrap();
+        let c = t.loose.iter().find(|s| s.name == "C").unwrap().id.clone();
+        for sh in [&a, &b] {
+            crate::library::placement::add_to(&conn, "x", sh, None, None).unwrap();
+        }
+
+        // Exactly what Book Details and Arrange do: arrive, then leave the one shelf they name.
+        shelf_place_book(&conn, &c, "x", None, 0).unwrap();
+        crate::library::collection_remove_book(&conn, &a, "x").unwrap();
+
+        let on = crate::library::placement::containers_of(&conn, "x").unwrap();
+        let mut want = vec![b, c];
+        want.sort();
+        assert_eq!(on, want);
+    }
+
 }

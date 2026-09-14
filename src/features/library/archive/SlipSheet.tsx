@@ -61,10 +61,21 @@ export function SlipSheet({ item, hl, dark, paper, when, onClose, onRead, onCard
 
   // ESCAPE CLOSES, AND THE SHEET TAKES FOCUS. Without the second the reader's next keystroke goes to
   // whatever was focused behind the scrim, which on this surface is a filter button.
+  //
+  // WHILE THE DELETE CONTROL IS ASKING, ESCAPE ANSWERS IT. Escape means "take back the last step",
+  // and the last step here was arming a destructive action — closing the whole sheet instead leaves
+  // the reader to find the slip again and re-open it to learn whether anything happened. One owner
+  // for the key, because this listener captures: a handler on the control itself would never run.
+  // The capturing handler is registered once; a ref is how it reads a state that changes under it.
+  const armedRef = useRef(false);
+  armedRef.current = confirming;
   useEffect(() => {
     sheetRef.current?.focus();
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") { e.stopPropagation(); onClose(); }
+      if (e.key !== "Escape") return;
+      e.stopPropagation();
+      if (armedRef.current) { setConfirming(false); return; }
+      onClose();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -197,22 +208,44 @@ export function SlipSheet({ item, hl, dark, paper, when, onClose, onRead, onCard
         )}
 
         <div className="arch-sheet-actions">
-          <button className="arch-btn primary" onClick={() => onRead(item)}>{t("arch.readInBook")}</button>
-          {!editing && (
-            <button className="arch-btn" onClick={() => setEditing(true)}>{t("arch.editNote")}</button>
-          )}
-          <button className="arch-btn" onClick={() => onCard(item)}>{t("arch.imageCard")}</button>
+          {/* THE THINGS YOU DO WITH THE SLIP, kept together as one group. They were loose children of
+              the row, and the destructive control was pushed away from them by an automatic margin —
+              which is the right look while everything fits on one line, and becomes a control thrown
+              to the opposite corner of a SECOND line as soon as it does not. Grouped, the row has
+              two parts rather than four, and a wrap moves a whole part. */}
+          <div className="arch-sheet-actions-main">
+            <button className="arch-btn primary" onClick={() => onRead(item)}>{t("arch.readInBook")}</button>
+            {!editing && (
+              <button className="arch-btn" onClick={() => setEditing(true)}>{t("arch.editNote")}</button>
+            )}
+            <button className="arch-btn" onClick={() => onCard(item)}>{t("arch.imageCard")}</button>
+          </div>
 
           {/* DELETION ASKS FIRST, in place. A second click on the same control is the confirmation —
               the same shape the Library uses elsewhere, and it keeps the destructive action from
-              being one stray click away. */}
+              being one stray click away.
+
+              IT DOES NOT CHANGE SIZE WHEN IT ASKS. «حذف» and «أمتأكّد من الحذف؟» are very different
+              widths, and swapping one for the other re-measured the row: at a narrow-but-ordinary
+              window that was the difference between a row that fitted and a row that wrapped, so
+              arming the control moved it to another line and another edge. Both labels are laid in
+              the SAME grid cell, so the control is always as wide as its longest word and arming it
+              cannot move anything. The reader is told which one is live by `aria-label`, because
+              only one of them is ever painted.
+
+              Escape disarms rather than closing the sheet, but only while it is armed — see the
+              key handler above, which is where this surface's Escape lives. */}
           <button
             className={`arch-btn danger${confirming ? " armed" : ""}`}
+            aria-label={confirming ? t("arch.deleteConfirm") : t("ne.delete")}
             onClick={() => (confirming ? remove() : setConfirming(true))}
             onBlur={() => setConfirming(false)}
             disabled={busy}
           >
-            {confirming ? t("arch.deleteConfirm") : t("ne.delete")}
+            <span className="arch-btn-swap" aria-hidden>
+              <span className={confirming ? "on" : ""}>{t("arch.deleteConfirm")}</span>
+              <span className={confirming ? "" : "on"}>{t("ne.delete")}</span>
+            </span>
           </button>
         </div>
       </div>

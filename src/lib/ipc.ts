@@ -482,13 +482,50 @@ export interface PlaceResult {
  * The reply carries the arrangement as it now stands, so the screen is redrawn from what was
  * actually persisted rather than from a guess or a second read that could race the first.
  */
+/**
+ * Put a book in a container, and leave `from`.
+ *
+ * `from` names the ONE shelf the move leaves. Omitting it means «here and nowhere else», which
+ * deletes every other membership the book has — right while a book could only be in one place, and
+ * data loss now that it can be in several. Anything that is a move from somewhere should say where.
+ */
 export const libraryPlaceBook = (
   bookId: string,
   container: string,
   before: string | null,
   categoryId: string | null = null,
+  from: string | null = null,
 ): Promise<PlaceResult> =>
-  invoke<PlaceResult>("library_place_book", { bookId, container, before, categoryId });
+  invoke<PlaceResult>("library_place_book", { bookId, container, before, categoryId, from });
+
+/**
+ * ADD a book to a shelf, keeping every shelf it is already on.
+ *
+ * The additive counterpart to `libraryPlaceBook`, which means "here and nowhere else". Separate
+ * functions rather than a flag, so a reader of the call site can see which one it is. Idempotent:
+ * `placed.changed` is false when the book was already on that shelf, and nothing was written.
+ */
+export const libraryAddBookToShelf = (
+  bookId: string,
+  container: string,
+  categoryId: string | null = null,
+): Promise<PlaceResult> =>
+  invoke<PlaceResult>("library_add_book_to_shelf", { bookId, container, categoryId });
+
+/**
+ * SHOW A FILE WHERE IT IS, in the system's own file manager, with the file selected.
+ *
+ * The answer to "where did my package go" is the folder it is in, opened — not a path for the
+ * reader to copy and paste somewhere else. `showed` says what actually happened: "file" when the
+ * package itself was picked out, "folder" when it had gone and its folder was opened instead. A
+ * rejection carries a `reveal.err.*` code the interface translates.
+ */
+export interface Revealed {
+  showed: "file" | "folder";
+}
+
+export const revealPath = (path: string): Promise<Revealed> =>
+  invoke<Revealed>("reveal_path", { path });
 
 export const libraryTree = (): Promise<LibraryTree> => invoke<LibraryTree>("library_tree");
 export const libraryShelfItems = (collectionId: string): Promise<ShelfItem[]> =>

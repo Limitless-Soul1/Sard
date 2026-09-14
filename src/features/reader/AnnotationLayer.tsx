@@ -209,6 +209,35 @@ export const POP_EDGE = 8;
 /** Distance from the selection to the popup, in px -- the design's own offset. */
 export const POP_GAP = 10;
 
+/**
+ * Where the popup is placed when it is RAISED — the anchor it aims for, and the on-screen position the
+ * viewport allows. The clamps exist so a freshly raised toolbar is never cut off by the window; they
+ * are an initial-placement concern only (see `attachment`).
+ */
+export function anchorPlacement(
+  rect: AnchorRect,
+  below: boolean,
+  box: { w: number; h: number } | null,
+  vw: number = window.innerWidth,
+  vh: number = window.innerHeight,
+): { left: number; top: number; wantX: number; wantY: number; clamped: boolean } {
+  // Before the first measurement, fall back to the design's own half-width so the very first paint
+  // is no worse than it used to be; the measured pass lands on the next frame.
+  const halfW = box ? box.w / 2 : 140;
+  const h = box ? box.h : 0;
+  const loX = halfW + POP_EDGE;
+  const hiX = Math.max(loX, vw - halfW - POP_EDGE);
+  const wantX = rect.left + rect.width / 2;
+  const left = Math.min(Math.max(wantX, loX), hiX);
+  // `below` puts the popup's TOP at `top`; above puts its BOTTOM there (translateY(-100%)).
+  const loY = below ? POP_EDGE : h + POP_EDGE;
+  const hiY = below ? Math.max(loY, vh - h - POP_EDGE) : Math.max(loY, vh - POP_EDGE);
+  const wantY = below ? rect.bottom + POP_GAP : rect.top - POP_GAP;
+  const top = Math.min(Math.max(wantY, loY), hiY);
+  return { left, top, wantX, wantY, clamped: top !== wantY || left !== wantX };
+}
+
+/** The placement as a style. Unchanged for every caller that only wants to position something. */
 export function anchorStyle(
   rect: AnchorRect,
   below: boolean,
@@ -216,17 +245,7 @@ export function anchorStyle(
   vw: number = window.innerWidth,
   vh: number = window.innerHeight,
 ): CSSProperties {
-  // Before the first measurement, fall back to the design's own half-width so the very first paint
-  // is no worse than it used to be; the measured pass lands on the next frame.
-  const halfW = box ? box.w / 2 : 140;
-  const h = box ? box.h : 0;
-  const loX = halfW + POP_EDGE;
-  const hiX = Math.max(loX, vw - halfW - POP_EDGE);
-  const left = Math.min(Math.max(rect.left + rect.width / 2, loX), hiX);
-  // `below` puts the popup's TOP at `top`; above puts its BOTTOM there (translateY(-100%)).
-  const loY = below ? POP_EDGE : h + POP_EDGE;
-  const hiY = below ? Math.max(loY, vh - h - POP_EDGE) : Math.max(loY, vh - POP_EDGE);
-  const top = Math.min(Math.max(below ? rect.bottom + POP_GAP : rect.top - POP_GAP, loY), hiY);
+  const { left, top } = anchorPlacement(rect, below, box, vw, vh);
   return { left, top };
 }
 
@@ -242,6 +261,55 @@ export function fitsBelow(rect: AnchorRect, h: number, vh: number = window.inner
   if (h <= roomAbove) return false;
   if (roomBelow >= h) return true;
   return roomBelow > roomAbove;
+}
+
+/**
+ * RAWY-FM3 — THE TOOLBAR IS UI ATTACHED TO THE SELECTION, not to the viewport.
+ *
+ * WHAT WENT WRONG, TWICE, and why both were the same mistake. Following the selection to the edge, and
+ * then either clamping at the edge or holding "the last honoured position", both ended with the toolbar
+ * sitting at the top of the window while the selected words were long gone. Both defined its position
+ * in VIEWPORT space — a clamp between `POP_EDGE` and `vh − POP_EDGE`, then a held `{left, top}` in those
+ * same coordinates — and a viewport coordinate is, by construction, independent of where the text is.
+ * The reader's mental model is the plain one: the toolbar belongs to the words. Scroll the words off
+ * the screen and it goes with them; scroll them back and it comes back.
+ *
+ * SO, AFTER THE INITIAL PLACEMENT, THE POSITION IS AN OFFSET FROM THE SELECTION AND NOTHING ELSE. When
+ * the toolbar is raised, `anchorPlacement` chooses its side and keeps it on screen, exactly as it
+ * always has — that is the moment the reader is looking at it, and a toolbar cut off by the window
+ * would be useless. The difference between that placement and the bare anchor (`wantX`/`wantY`) is
+ * captured ONCE as `dx`/`dy`, and from then on every render is `anchor + offset`. No clamp is applied
+ * again, so no coordinate of the viewport ever enters into it: with room around the selection the
+ * offset is zero and the toolbar rides the text one-for-one; raised near a window edge, it keeps the
+ * small shift it was given and rides the text with that shift, as a sticky note would.
+ *
+ * The side is part of the attachment for the same reason — a note stuck above a paragraph does not
+ * move underneath it because the page scrolled.
+ *
+ * Off the screen it is simply off the screen: `position: fixed` with a `top` beyond the window paints
+ * nothing, and there is nothing to stand down or dismiss. A DOCUMENT CHANGE is the one thing that
+ * retires the selection, and that is the engine's (`refreshSelectionRect`), not this file's.
+ */
+export interface Attachment {
+  below: boolean;
+  /** Placement minus anchor, captured when the toolbar was raised. Zero unless the window forced a shift. */
+  dx: number;
+  dy: number;
+}
+
+/** The attachment a freshly raised toolbar has to its selection. */
+export function attachment(
+  placed: { left: number; top: number; wantX: number; wantY: number },
+  below: boolean,
+): Attachment {
+  return { below, dx: placed.left - placed.wantX, dy: placed.top - placed.wantY };
+}
+
+/** Where an attached toolbar is now: the selection's anchor point plus the attachment. Never clamped. */
+export function attachedPosition(rect: AnchorRect, a: Attachment): { left: number; top: number } {
+  const wantX = rect.left + rect.width / 2;
+  const wantY = a.below ? rect.bottom + POP_GAP : rect.top - POP_GAP;
+  return { left: wantX + a.dx, top: wantY + a.dy };
 }
 
 /**
@@ -340,14 +408,35 @@ function SelectionToolbar({
   // MEASURED, not guessed. `sel.rect.top < 90` asked whether the selection was near the top, which
   // is not the same question as whether the popup fits above it -- and it could not be, because the
   // popup's height changes when the colour picker opens inside it.
-  const below = popBox ? fitsBelow(sel.rect, popBox.h) : sel.rect.top < 90;
+  const wantBelow = popBox ? fitsBelow(sel.rect, popBox.h) : sel.rect.top < 90;
   // RAWY-123: the "+" opens the hybrid custom-colour picker IN PLACE of the two tiers (back returns).
   const [picking, setPicking] = useState(false);
+  const attached = useRef<{ key: string; a: Attachment } | null>(null);
+  // RAWY-FM3: the toolbar is attached to its selection. On the first MEASURED render it is placed the
+  // way it always was (side chosen, kept on screen) and the attachment is captured; every render after
+  // that is anchor + attachment, with no clamp — see `attachment`. A ref because it must survive the
+  // renders that scrolling causes, and keyed on the selection so a new selection is placed afresh.
+  const key = sel.cfi + "\u0000" + sel.text;
+  if (attached.current && attached.current.key !== key) attached.current = null;
+  let below: boolean;
+  let place: { left: number; top: number };
+  if (attached.current) {
+    below = attached.current.a.below;
+    place = attachedPosition(sel.rect, attached.current.a);
+  } else {
+    below = wantBelow;
+    const raised = anchorPlacement(sel.rect, below, popBox);
+    place = raised;
+    // Only a measured placement is worth attaching to: before `useMeasured` has answered, `wantBelow`
+    // is the pre-measurement guess, and attaching to a guess would keep the wrong side for the life of
+    // the selection.
+    if (popBox) attached.current = { key, a: attachment(raised, below) };
+  }
   return (
     <div
       ref={popRef}
       className={`hl-pop${below ? " below" : ""}`}
-      style={anchorStyle(sel.rect, below, popBox)}
+      style={{ left: place.left, top: place.top }}
       onPointerDown={(e) => e.stopPropagation()}
     >
       {picking ? (

@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { coverSrc } from "../coverSrc";
 import type { CardOrder, CardSelect } from "../Library";
-import type { BookRow, CaseNode, LibraryTree, Placement, ShelfItem, ShelfNode } from "../../../lib/ipc";
+import type { BookRow, CaseNode, LibraryTree, Placed, Placement, ShelfItem, ShelfNode } from "../../../lib/ipc";
 import { buildArrangement } from "./arrangement";
 import {
   applyRunOrder,
@@ -37,7 +37,6 @@ import {
   settingsGet,
   settingsSet,
   shelfCreate,
-  shelfPlaceBook,
   shelfSetCollapsed,
   shelfSetOrder,
   shelfSetInk,
@@ -65,7 +64,11 @@ import { BookDetails } from "./BookDetails";
 import { CaseEditor } from "./CaseEditor";
 import {
   baseWidth,
+  DEFAULT_SORT,
   DESIGN_VIEWS,
+  presentAfterFiling,
+  restoredSort,
+  slotClassFor,
   groupShelf,
   isGroupedView,
   asShelfOrder,
@@ -224,7 +227,11 @@ export function LibraryDesign(props: LibraryDesignProps) {
   // view, the density, the sort and the scope are. Off is the current behaviour, so a reader who
   // never opens the control sees no change at all.
   const [hideTitles, setHideTitles] = useState(false);
-  const [sort, setSort] = useState<DesignSort>("recent");
+  // THE DEFAULT IS THE SHELF'S OWN ORDER, and the rule for it is `DEFAULT_SORT` / `restoredSort`,
+  // stated once in `model` beside the sorts themselves. `libd_sort` is written only by the sort
+  // control (see the effect below, which runs after the preferences have loaded), so a library with
+  // no key is a library whose reader has never chosen. Nothing writes the default back.
+  const [sort, setSort] = useState<DesignSort>(DEFAULT_SORT);
   const [scope, setScope] = useState<Scope>(ROOT_SCOPE);
   const [openCases, setOpenCases] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<"browse" | "select" | "arrange">("browse");
@@ -326,7 +333,9 @@ export function LibraryDesign(props: LibraryDesignProps) {
       if (v && (DESIGN_VIEWS as string[]).includes(v)) setView(v as DesignView);
       const dn = Number(d);
       if (Number.isFinite(dn) && dn >= 0 && dn <= 3) setDensity(dn);
-      if (s) setSort(s as DesignSort);
+      // An explicit choice, and only a real one. `restoredSort` also leaves an unrecognised value
+      // exactly where it is: it decides what to SHOW, never what to write.
+      setSort(restoredSort(s));
       setHideTitles(h === "1");
       prefsLoaded.current = true;
       // WHERE THE READER WAS STANDING. Restored before the tree arrives and reconciled against it
@@ -572,9 +581,14 @@ export function LibraryDesign(props: LibraryDesignProps) {
     return out;
   }, [tree]);
 
+  // The books the library is currently listing are handed in alongside the rows, so that a book no
+  // row places is still somewhere: `buildArrangement` reads «no shelf holds it» as «it is unfiled»,
+  // which is the rule the database itself enforces. Without this a book whose placement row is
+  // missing belongs to no container and is drawn by no grouped format, while `props.books` — and
+  // therefore the count, the search and de-duplication — all still hold it.
   const arrangement = useMemo(
-    () => buildArrangement(placements, writableContainers),
-    [placements, writableContainers],
+    () => buildArrangement(placements, writableContainers, props.books.map((b) => b.id)),
+    [placements, writableContainers, props.books],
   );
 
   /**
@@ -641,20 +655,28 @@ export function LibraryDesign(props: LibraryDesignProps) {
   }, [scope.caseId, scope.shelfId]);
 
   /**
-   * The full placement of a book — case, shelf and category — for Book Details' assignment path.
+   * EVERY SHELF A BOOK IS ON — case, shelf and that shelf's category — for Book Details.
    *
-   * There is nothing to choose between any more. This used to weigh a book's several memberships
-   * against each other, preferring the shelf the reader had opened it from because tree order meant
-   * nothing to them; a book has one placement now, so the question it answered no longer exists.
+   * Plural, and in the arrangement's own order. This returned ONE placement, because a book had
+   * one; asked for a book on three shelves it would have had to choose, and whichever it chose
+   * would have been shown to the reader as though it were the answer. A panel that then offered
+   * «move» against that choice would destroy a membership nobody named.
+   *
+   * The unfiled run is not a membership and is not listed: a book on no shelf has an empty list,
+   * which is what «خارج الأرفف» already means everywhere else.
    */
-  const placementOf = useCallback(
-    (bookId: string) => {
-      const container = arrangement.containerOf(bookId);
-      if (!container || container === LOOSE_SHELF_ID) return null;
-      const entry = shelfById.get(container);
-      if (!entry) return null;
-      return { caseNode: entry.caseNode, shelf: entry.shelf, categoryId: arrangement.categoryOf(bookId) };
-    },
+  const placementsOf = useCallback(
+    (bookId: string) =>
+      arrangement
+        .membershipsOf(bookId)
+        .filter((m) => m.container !== LOOSE_SHELF_ID)
+        .map((m) => {
+          const entry = shelfById.get(m.container);
+          return entry
+            ? { caseNode: entry.caseNode, shelf: entry.shelf, categoryId: m.categoryId }
+            : null;
+        })
+        .filter((x): x is NonNullable<typeof x> => !!x),
     [arrangement, shelfById],
   );
 
@@ -674,15 +696,20 @@ export function LibraryDesign(props: LibraryDesignProps) {
   );
 
   /**
-   * THE CONTAINER A BOOK IS IN. One lookup, no candidates, no preference order.
+   * THE CONTAINER A BOOK IS IN, WHEN THAT IS A QUESTION WITH ONE ANSWER.
    *
-   * This used to weigh a book's several memberships against one another — preferring the shelf the
-   * reader had opened it from, skipping any rule shelf — because a book could have more than one
-   * home and something had to choose. It has one, so there is nothing to choose. Every book has an
-   * answer, including a book on no shelf: that is the unfiled container, not an absence.
+   * Used where a caller has no scope of its own to ask with — a tile in a flat format, and the
+   * fallback for a drag that began inside a lens. Both once had a guaranteed answer, because a book
+   * had one placement; a book on three shelves has no single container and this says so with a null
+   * rather than handing back whichever membership sorted first.
+   *
+   * A null reaches two places, and neither can misread it: `sourceFor` falls back to the section
+   * the tile was actually drawn under, which is a real scope, and `bookOrder` falls back to the
+   * unfiled run exactly as it does for a book on no shelf. What a null must never do is become a
+   * silent pick — that is the arbitrary home this whole model exists to abolish.
    */
   const orderSourceOf = useCallback(
-    (bookId: string): string | null => arrangement.containerOf(bookId),
+    (bookId: string): string | null => arrangement.soleContainerOf(bookId),
     [arrangement],
   );
 
@@ -867,19 +894,34 @@ export function LibraryDesign(props: LibraryDesignProps) {
     [runOf],
   );
 
-  /** Where a book lives, for the Details second line and the book sheet. */
+  /**
+   * WHERE A BOOK IS FILED, for the Details second line and the book sheet — all of it.
+   *
+   * This walked `shelfRows` and returned the FIRST shelf it found holding the book. That was an
+   * arbitrary home dressed as a fact: the sequence came from `Object.entries`, so the line a reader
+   * saw depended on key order and nothing else. With one membership per book it could only ever
+   * find one, which is why it never showed.
+   *
+   * It now reads the arrangement — the one model that knows what a membership is — and names every
+   * shelf the book is on. `Intl.ListFormat` joins them in the reader's own language rather than a
+   * hardcoded comma, so no new string is invented for Arabic to get wrong.
+   */
   const placeOf = useCallback(
     (bookId: string): string => {
-      for (const [sid, list] of Object.entries(shelfRows)) {
-        if (sid !== LOOSE_SHELF_ID && list.some((i) => i.book_id === bookId)) {
-          const entry = shelfById.get(sid);
-          if (!entry) continue;
-          return entry.caseNode ? `${entry.caseNode.name} · ${entry.shelf.name}` : entry.shelf.name;
-        }
-      }
-      return t("lib.unfiled");
+      const names = arrangement
+        .membershipsOf(bookId)
+        .filter((m) => m.container !== LOOSE_SHELF_ID)
+        .map((m) => shelfById.get(m.container))
+        .filter((e): e is NonNullable<typeof e> => !!e)
+        .map((e) => (e.caseNode ? `${e.caseNode.name} · ${e.shelf.name}` : e.shelf.name));
+      if (names.length === 0) return t("lib.unfiled");
+      if (names.length === 1) return names[0];
+      return new Intl.ListFormat(lang === "ar" ? "ar" : "en", {
+        style: "short",
+        type: "unit",
+      }).format(names);
     },
-    [shelfRows, shelfById, t],
+    [arrangement, shelfById, t, lang],
   );
 
   // ---- what the current scope and query select -------------------------------
@@ -981,9 +1023,16 @@ export function LibraryDesign(props: LibraryDesignProps) {
           .map((b, i) => ({ ...byBook.get(b.id)!, position: i }));
       }
       const seen = lenses[shelf.id] ?? [];
+      // A LENS DOES NOT REDRAW A BOOK THAT IS ALREADY ON SCREEN IN A PLACE IT BELONGS.
+      //
+      // This asked for the book's one container and hid it if that container was drawn. A book on
+      // several shelves needs the same rule asked of ALL of them: if ANY container holding it is on
+      // screen, the reader can already see it where it is filed, and the lens showing it again
+      // would read as a second copy. The memberships the lens does not cover are not consulted —
+      // this is about what is visible, not about choosing a home.
       const visible = seen.filter((id) => {
-        const home = arrangement.containerOf(id);
-        return !home || !drawnContainers.has(home);
+        const mine = arrangement.membershipsOf(id);
+        return !mine.some((m) => drawnContainers.has(m.container));
       });
       // A LENS'S ROWS ARE ORDERED BY THE SAME DECISION AS EVERY OTHER SECTION'S.
       //
@@ -1241,7 +1290,13 @@ export function LibraryDesign(props: LibraryDesignProps) {
       if (!categoryId) return sectionBooks(node).map((b) => b.id);
       // A category run is its own section, so it is ordered as its own section — same function,
       // same rule, with the run's own key.
-      const run = sectionBooks(node).filter((b) => arrangement.categoryOf(b.id) === categoryId);
+      //
+      // THE CATEGORY IS READ FROM THIS SHELF'S MEMBERSHIP. It used to be read from the book, which
+      // treated a shelf-local grouping as though it were canonical metadata: a book on two shelves
+      // would have carried one shelf's category into the other's bands.
+      const run = sectionBooks(node).filter(
+        (b) => arrangement.membershipIn(shelfId, b.id)?.categoryId === categoryId,
+      );
       return runOf(run, section).map((b) => b.id);
     },
     [flatBooks, looseRun, runOf, shelfById, sectionBooks, arrangement],
@@ -1529,12 +1584,29 @@ export function LibraryDesign(props: LibraryDesignProps) {
    * shelf the reader had never chosen. Both were truthful about the write and wrong about the act.
    */
   const reorderInto = useCallback(
-    async (section: string, before: string | null) => {
+    async (
+      section: string,
+      before: string | null,
+      /**
+       * THE RUN THIS RELEASE IS JUDGED AGAINST, when the caller knows it better than this one does.
+       *
+       * `sectionOrder` is read from React state, and state does not change inside the async call
+       * that asked for the change. A caller that has just written a MEMBERSHIP therefore knows
+       * something this function cannot: that the book is now in a run whose drawn sequence still
+       * says it is not. `view_order_reorder` rewrites the run whole from what it is handed and
+       * refuses a book that run does not contain — so handing it a run captured a moment too early
+       * is the difference between "placed where I aimed" and "not in this run".
+       *
+       * `filedOn` is the shelf a membership write has JUST put the book on, and is used for one
+       * thing: so a failure here cannot claim that nothing changed when something already has.
+       */
+      opts?: { present?: string[]; filedOn?: string | null },
+    ) => {
       if (!carry) return;
       const book = carry.book;
       setCarry(null);
 
-      const run = sectionOrder(section);
+      const run = opts?.present ?? sectionOrder(section);
       // NOTHING TO DO, AND SO NOTHING TO CLAIM. Released in front of itself, in front of whatever
       // already follows it, or at the end when it is already last. The write asks again, against
       // the run as it really is, because the reader may be looking at a list drawn a moment ago.
@@ -1571,7 +1643,11 @@ export function LibraryDesign(props: LibraryDesignProps) {
         flash(t("lib.reordered"));
       } catch (e) {
         console.error(e);
-        flash(t("lib.writeFailed"));
+        // WHAT ACTUALLY HAPPENED, and never less than that. «لم يتغيّر شيء» is true of a reorder
+        // that failed on its own, and false of one that followed a membership write which
+        // succeeded: the book IS on the new shelf, at the end of it, and saying otherwise sends
+        // the reader looking for a book that has already moved.
+        flash(opts?.filedOn ? t("lib.filedNotPositioned", { where: opts.filedOn }) : t("lib.writeFailed"));
       }
     },
     [carry, sectionOrder, view, runScope, flash, t],
@@ -1584,25 +1660,47 @@ export function LibraryDesign(props: LibraryDesignProps) {
    * A drag inside a run cannot arrive here, which is what makes «I reordered» and «I refiled» two
    * different acts rather than the same write under two descriptions.
    */
+  /**
+   * What a membership write did, for the one caller that has to act on the answer.
+   *
+   * `nothing` covers both "there was no book in hand" and "it is already on that shelf": either
+   * way no membership was written and the run is exactly as it is drawn.
+   */
+  type MoveOutcome =
+    | { kind: "nothing" }
+    | { kind: "filed"; placed: Placed }
+    | { kind: "failed" };
+
   const moveToShelf = useCallback(
-    async (container: string, categoryId: string | null = null) => {
-      if (!carry) return;
+    async (container: string, categoryId: string | null = null): Promise<MoveOutcome> => {
+      if (!carry) return { kind: "nothing" };
       const book = carry.book;
       setCarry(null);
-      if (arrangement.containerOf(book.id) === container && !categoryId) return;
+      // ALREADY ON THIS SHELF — asked of the shelf, not of the book. The old form compared the
+      // book's one container against the destination; the question it wants is whether THIS shelf
+      // holds it, which has an answer whatever else the book is on.
+      if (arrangement.holds(container, book.id) && !categoryId) return { kind: "nothing" };
 
       try {
-        const res = await libraryPlaceBook(book.id, container, null, categoryId);
+        // THE MOVE LEAVES THE SHELF IT WAS CARRIED OUT OF, and only that one. Without a source this
+        // call sweeps every membership the book has — which was the same thing while a book had
+        // one, and is the loss of shelves the reader deliberately filed it on now that it can have
+        // several. `carry.fromShelf` is the section the tile was picked up from, resolved by
+        // `sourceFor`, which already refuses to name a rule shelf or the unfiled run.
+        const leaving = carry.fromShelf && carry.fromShelf !== container ? carry.fromShelf : null;
+        const res = await libraryPlaceBook(book.id, container, null, categoryId, leaving);
         applyTree(res.arrangement.tree);
         setPlacements(res.arrangement.placements);
         setLenses(Object.fromEntries(res.arrangement.lenses.map((l) => [l.shelf_id, l.book_ids])));
-        if (!res.placed.changed) return;
+        if (!res.placed.changed) return { kind: "filed", placed: res.placed };
         const where = shelfById.get(container)?.shelf.name ?? t("lib.unshelved");
         flash(`${t("lib.movedTo")} ${where}`);
+        return { kind: "filed", placed: res.placed };
       } catch (e) {
         console.error(e);
         flash(t("lib.writeFailed"));
         await refreshArrangement();
+        return { kind: "failed" };
       }
     },
     [carry, arrangement, applyTree, shelfById, flash, t, refreshArrangement],
@@ -1662,21 +1760,19 @@ export function LibraryDesign(props: LibraryDesignProps) {
       let failedPlace = 0;
       let failedRemove = 0;
       for (const id of ids) {
+        // ARRIVE AND LEAVE IN ONE WRITE, naming the shelf to leave.
+        //
+        // This was two calls — join the destination, then remove the resolved source — and the
+        // note on the Rust side spells out why: «a book that also sits on a third shelf keeps it;
+        // the naive repair would destroy placements someone made deliberately». The first of those
+        // two calls had since become the naive repair, because it swept every other membership
+        // before the second could run. One call, with the source named, cannot half-happen either.
         try {
-          await shelfPlaceBook(shelfId, id, categoryId, 0);
+          await libraryPlaceBook(id, shelfId, null, categoryId, removeFrom ?? null);
         } catch (e) {
           console.error(e);
           failedPlace++;
           continue; // it never arrived, so it must not be taken away from where it is
-        }
-        if (removeFrom && removeFrom !== shelfId) {
-          try {
-            await collectionRemoveBook(removeFrom, id);
-          } catch (e) {
-            console.error(e);
-            failedRemove++;
-            continue; // arrived but did not leave: this book is now on both
-          }
         }
         placed++;
       }
@@ -1882,21 +1978,62 @@ export function LibraryDesign(props: LibraryDesignProps) {
    * The flat formats have no such slot. There is no shelf on screen to have aimed at, so a release
    * there is only ever a reorder — which is the whole point of the split.
    */
+  /**
+   * FILE A BOOK ON A SHELF AND PUT IT WHERE THE READER AIMED — two writes, in that order, against
+   * two different tables. Membership is `placements`; position is `view_orders`, which has no
+   * container column and so cannot file anything.
+   *
+   * THE RUN THE SECOND WRITE IS JUDGED AGAINST HAS TO INCLUDE THE FIRST WRITE. `sectionOrder` reads
+   * React state, and state does not change inside this function — so the run it returns after the
+   * membership write is the run from before it, naming every book except the one just filed.
+   * `view_order_reorder` rewrites a run whole from what it is handed and refuses a book that run
+   * does not contain, so that stale run produced exactly three wrong things at once, measured:
+   * the book was filed and then left at the END of its new shelf instead of where it was aimed;
+   * the reader was told «تعذّر حفظ هذا التغيير. لم يتغيّر شيء» although the filing had happened;
+   * and «book … is not in this run» was thrown behind it.
+   *
+   * The run handed over is therefore built here: the destination AS DRAWN — which is the sequence
+   * the reader was looking at, and the sequence `gap.before` was read out of — with the book put
+   * where the membership write actually put it. `libraryPlaceBook` is called with `before: null`,
+   * which means the end, so the book joins that run at its end and the neighbour aimed at is still
+   * in it. Nothing is guessed: `placed.changed` says whether a rank was written at all.
+   */
   const placeOnShelf = useCallback(
     async (gap: { container: string; before: string | null }, categoryId: string | null) => {
       if (!carry) return;
       const book = carry.book;
-      const alreadyThere = arrangement.containerOf(book.id) === gap.container;
+      const alreadyThere = arrangement.holds(gap.container, book.id);
+      // Read BEFORE the membership write. The other books of that run are not touched by it.
+      const drawn = sectionOrder(gap.container);
+      let present: string[] | undefined;
+      let filedOn: string | null = null;
       if (!alreadyThere || categoryId) {
-        await moveToShelf(gap.container, categoryId);
+        const moved = await moveToShelf(gap.container, categoryId);
+        // THE FILING FAILED AND HAS SAID SO. A reorder now would fail too, against a shelf the book
+        // is not on, and overwrite that message with a second and less accurate one.
+        if (moved.kind === "failed") return;
+        if (moved.kind === "filed") {
+          filedOn = shelfById.get(gap.container)?.shelf.name ?? t("lib.unshelved");
+          present = presentAfterFiling({
+            drawn,
+            bookId: book.id,
+            before: gap.before,
+            rankWritten: moved.placed.changed,
+          });
+        }
       } else {
         setCarry(null);
       }
+      // A RUN THIS SIDE CANNOT DESCRIBE IS NOT A RUN TO WRITE INTO. The filing has already happened
+      // and has already said so; issuing an ordering write against a sequence that does not contain
+      // the book would be refused, and that refusal would overwrite an accurate message with
+      // «لم يتغيّر شيء» about a change that did. The book keeps the place the filing gave it.
+      if (filedOn && present === undefined) return;
       if (gap.before !== null || alreadyThere) {
-        await reorderInto(gap.container, gap.before);
+        await reorderInto(gap.container, gap.before, { present, filedOn });
       }
     },
-    [carry, arrangement, moveToShelf, reorderInto],
+    [carry, arrangement, sectionOrder, shelfById, moveToShelf, reorderInto, t],
   );
 
   /**
@@ -1929,10 +2066,13 @@ export function LibraryDesign(props: LibraryDesignProps) {
       label?: string;
     }) => {
       if (!carry) return null;
+      // WHICH SHAPE, IF THE VIEW DID NOT SAY — `slotClassFor`, stated once in `model`. A view that
+      // draws its own place (Covers, Spines, Vista) gets no class here at all.
+      const fallback = slotClassFor(view);
       return (
         <div
           key={o.key}
-          className={o.className ?? (view === "grid" ? "libd-cardslot" : "libd-rowslot")}
+          className={o.className ?? fallback}
           style={o.style}
           data-drop-section={o.section}
           data-drop-before={o.before ?? ""}
@@ -2472,7 +2612,7 @@ export function LibraryDesign(props: LibraryDesignProps) {
           book={detailsFor.book}
           cases={tree.cases}
           loose={tree.loose}
-          placement={placementOf(detailsFor.book.id)}
+          placements={placementsOf(detailsFor.book.id)}
           notify={flash}
           libraryCoverMode={props.coverMode}
           onClose={() => setDetailsFor(null)}
@@ -2972,7 +3112,6 @@ export function LibraryDesign(props: LibraryDesignProps) {
 
         <SelectTray
           selected={[...selected]}
-          byId={byId}
           cases={tree.cases}
           loose={tree.loose}
           source={moveSource}

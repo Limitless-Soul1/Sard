@@ -73,14 +73,20 @@ function resolveReadMarker(source: string, ground: string, text: string): string
   return resolveFloor(source, [ground], text, READ_MARKER_FLOOR, READ_MARKER_STEP);
 }
 
-// RAWY-118: the dark/light of the last applied theme, remembered so the native title-bar caption can
-// be RE-applied (App.tsx does this a moment after startup + on window focus) — WebView2 re-themes the
-// caption during its own startup, after our first applyTheme, so a single call at boot doesn't stick.
-let lastDark = false;
-
-/** Re-apply the native title-bar caption for the last applied theme (see `applyTheme` for why). */
+/**
+ * Paint the native title bar black.
+ *
+ * It takes no theme, and that is the point: the OS frame is the OS's furniture, and it used to be
+ * handed this theme's dark/light so that choosing Ivory gave a light caption and choosing Charcoal a
+ * dark one — the one part of the window that changed colour while the reader was only changing paper.
+ * The frame is now black on all sixteen themes; every surface BELOW it still comes from the tokens
+ * set in `applyTheme`.
+ *
+ * Called from App.tsx a moment after startup and on window focus: WebView2 re-themes the caption
+ * during its own startup, after our first paint, so one call at boot does not stick.
+ */
 export function reapplyTitlebarTheme(): void {
-  invoke("set_titlebar_theme", { dark: lastDark }).catch(() => {});
+  invoke("set_titlebar_theme").catch(() => {});
 }
 
 export function applyTheme(theme: Theme): void {
@@ -111,18 +117,10 @@ export function applyTheme(theme: Theme): void {
   applyVistaTokens(set, theme);
   r.dataset.theme = theme.id;
   r.dataset.dark = String(theme.dark);
-  // RAWY-118 (fixes ISSUE C — the black band above the top bar): the window uses the native OS
-  // decorations, whose title bar follows Windows' own dark-mode caption — a fixed near-black bar that
-  // ignores Sard's theme, so it read as an out-of-place black band above the reader's top bar. Match
-  // the native caption to the app theme (dark caption for dark themes, light for light) via the Rust
-  // `set_titlebar_theme` command (the Tauri JS `setTheme()` does NOT repaint the Win10 caption). This
-  // is dark/light, not the exact Ivory/Charcoal (a custom title bar would be needed for that —
-  // deferred). No-op outside a Tauri/Windows context. See `reapplyTitlebarTheme` for the startup re-apply.
-  // Only fire on an actual light<->dark change: applyTheme also runs on in-reader style tweaks (same
-  // dark-ness), and the caption command nudges the window 1px to force a repaint — no need to do that
-  // when the caption colour wouldn't change. A light theme at startup (no change vs the default) is
-  // caught by `reapplyTitlebarTheme` from App.tsx instead.
-  const darkChanged = theme.dark !== lastDark;
-  lastDark = theme.dark;
-  if (darkChanged) invoke("set_titlebar_theme", { dark: theme.dark }).catch(() => {});
+  // THE NATIVE FRAME IS NOT THEMED FROM HERE ANY MORE. This used to send the theme's dark/light to
+  // `set_titlebar_theme` on every light<->dark change, which is what made the Windows caption follow
+  // the paper. It is black permanently now (see `reapplyTitlebarTheme`), so a theme change has
+  // nothing to tell it — and applyTheme no longer nudges the window 1px as a side effect of a
+  // reading-style tweak. `data-dark` above is untouched: thirty CSS rules read it, and it says what
+  // the APP's polarity is, which is a separate question from the frame's colour.
 }

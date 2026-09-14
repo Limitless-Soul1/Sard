@@ -313,6 +313,7 @@ export function BookTile(props: BookTileProps) {
             <img
               src={spineSrc}
               alt=""
+              draggable={false}
               style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
             />
           ) : spinePlain ? null : (
@@ -334,9 +335,16 @@ export function BookTile(props: BookTileProps) {
         ) : drawn ? (
           <AutoCover title={title} author={meta.author} dir={book.dir} />
         ) : (
+          // NOT A DRAG SOURCE. An <img> is one by default, and this was the whole of the
+          // «Drop the book» fault: pressing a cover and drifting a few pixels while holding it
+          // started a native image drag — measured, `dragstart` on this IMG followed by a
+          // `pointercancel` — which killed the press-and-hold before it could lift the book, and
+          // went round through the OS to come back as a file drag with no files. Vista's cover
+          // already said this; the other formats draw through here.
           <img
             src={src ?? undefined}
             alt=""
+            draggable={false}
             onError={() => setImgFailed(true)}
             style={{ width: "100%", height: "100%", objectFit: pres.objectFit, display: "block" }}
           />

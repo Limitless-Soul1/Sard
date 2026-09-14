@@ -250,7 +250,10 @@ describe("the selection popup stays inside the window", () => {
   it("the caller measures instead of guessing from the anchor", () => {
     const SRC = read("src/features/reader/AnnotationLayer.tsx");
     expect(SRC).toContain("const [popRef, popBox] = useMeasured();");
-    expect(SRC).toContain("anchorStyle(sel.rect, below, popBox)");
+    // RAWY-FM3 renamed the call: the placement now comes back with a `clamped` flag so the toolbar
+    // can hold its last honoured position. Still MEASURED — `popBox` is the measured box, which is
+    // what this guard is for.
+    expect(SRC).toContain("anchorPlacement(sel.rect, below, popBox)");
     expect(SRC).toContain("ResizeObserver");
     // the old constant-driven clamp is gone
     expect(SRC).not.toContain("Math.min(Math.max(rect.left + rect.width / 2, 140), window.innerWidth - 140);\n  return below");

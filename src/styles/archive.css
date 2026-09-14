@@ -908,14 +908,47 @@
 .arch-sheet-editrow { display: flex; gap: var(--sp-4); margin-top: var(--sp-5); }
 .arch-sheet-tags { margin-top: var(--sp-5); display: flex; flex-wrap: wrap; gap: var(--sp-3); }
 
+/* TWO PARTS, NOT FOUR. What you can do with the slip, and the one thing that destroys it — at
+   opposite ends of one row, which is the separation this surface has always had.
+   THE ROW ITSELF DOES NOT BREAK. It used to, and when it did the destructive control was carried
+   to a second line and thrown to the far corner of it by an automatic margin: measured at 777px,
+   the three ordinary actions sat at one height and the delete control alone at another, at the
+   opposite edge. Keeping the row whole keeps that control in the one place it has ever been. What
+   gives way instead is the group of ordinary actions, which wraps within itself — there is no
+   position in it that means anything, so a second line there costs nothing.
+   `space-between` holds the two apart without an automatic margin, whose whole effect on a wrapped
+   line was to push a lone control as far from its group as the row is wide. */
 .arch-sheet-actions {
   margin-top: 26px;
   padding-top: 16px;
   border-top: 1px solid var(--chrome-border);
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  justify-content: space-between;
   gap: var(--sp-4);
   align-items: center;
+}
+
+/* THE ACTIONS GIVE WAY WITHIN THEMSELVES, not by leaving the row. Letting this group WRAP put one
+   action on a second line and left the destructive control floating beside the gap between them —
+   the row was whole, and still looked broken. So the group stays on one line too, and what yields
+   when there is not enough width is each label, inside its own button. The row therefore reads the
+   same at every width and at every text size: three actions at one end, the destructive one at the
+   other, on one line. */
+.arch-sheet-actions-main {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: var(--sp-4);
+  align-items: stretch;
+  /* A flex item will not shrink below its content unless it is told it may. */
+  min-width: 0;
+}
+
+.arch-sheet-actions-main .arch-btn {
+  min-width: 0;
+  /* Two short lines inside the button, rather than one long line that pushes the row apart. */
+  white-space: normal;
+  text-wrap: balance;
 }
 
 .arch-btn {
@@ -940,9 +973,14 @@
 
 .arch-btn.primary:hover { background: color-mix(in srgb, var(--text) 12%, var(--accent)); }
 
-/* Destructive, and it says so before it acts: the trailing edge, its own colour, and a second click. */
+/* Destructive, and it says so before it acts: the trailing edge, its own colour, and a second click.
+   The trailing edge now comes from the row's `space-between` rather than from an automatic margin —
+   same place while the row fits, and a predictable one when it does not. */
 .arch-btn.danger {
-  margin-inline-start: auto;
+  /* Never squeezed, never wrapped: its size is its longest label and its place is the far end. */
+  flex: none;
+  white-space: nowrap;
+  align-self: center;
   border-color: transparent;
   background: color-mix(in srgb, #b24a4a 16%, transparent);
   color: #e08b8b;
@@ -950,6 +988,23 @@
 }
 
 .arch-btn.danger.armed { background: #b24a4a; color: #fff; }
+
+/* THE TWO LABELS SHARE ONE CELL, so the control is as wide as its longest word in either state and
+   arming it cannot re-measure the row it sits in. The hidden one still occupies the cell — that is
+   the whole point — so `visibility` rather than `display`. */
+.arch-btn-swap {
+  display: grid;
+  align-items: center;
+  justify-items: center;
+}
+
+.arch-btn-swap > span {
+  grid-area: 1 / 1;
+  visibility: hidden;
+  white-space: nowrap;
+}
+
+.arch-btn-swap > span.on { visibility: visible; }
 
 /* ── the slip-size control ────────────────────────────────────────────────────────────────────
  *

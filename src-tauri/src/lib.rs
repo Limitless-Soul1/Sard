@@ -111,6 +111,7 @@ macro_rules! sard_invoke_handler {
             // PROFILES (stage 6): the shareable package. Inspection is separate from commit on
             // purpose — the reader sees what a file contains before any of it enters.
             commands::profile_export,
+            commands::reveal_path,
             commands::profile_asset_plan,
             commands::profile_package_asset,
             commands::profile_import_inspect,
@@ -140,6 +141,7 @@ macro_rules! sard_invoke_handler {
             commands::library_shelf_items,
             commands::library_arrangement,
             commands::library_place_book,
+            commands::library_add_book_to_shelf,
             // View order: sequence, never membership. See library/view_order.rs.
             commands::view_orders_for_scope,
             commands::view_order_reorder,
@@ -253,23 +255,44 @@ impl OpenedFiles {
     }
 }
 
-/// Which arguments are FILES the user meant to open.
+/// Which arguments are FILES the user meant to open, resolved against the directory they were
+/// given in.
 ///
 /// Deliberately strict rather than clever: skip the program itself, ignore anything that looks like a
 /// switch, and keep only what exists on disk RIGHT NOW. A development run carries its own arguments and
 /// a shipped one may be handed anything at all; neither should be able to make Sard act on a path that
 /// is not a real file.
-pub fn file_args<I: IntoIterator<Item = String>>(argv: I) -> Vec<String> {
+///
+/// WHOSE DIRECTORY A RELATIVE PATH BELONGS TO. A second launch is forwarded to the running Sard and
+/// then dies, so by the time these arguments are read the process that was given them is gone - and
+/// its working directory with it. Resolving `book.epub` against the RUNNING instance's directory
+/// would look for it somewhere the reader never was: usually nowhere, occasionally at a different
+/// file of the same name. The launching directory is therefore passed in, and the answer is always an
+/// absolute path, so nothing downstream has to know which instance a path came from.
+///
+/// Explorer always hands over absolute paths, so this changes nothing for a double-click; it is the
+/// command line, and anything that forwards one, that this makes correct.
+pub fn file_args_in<I: IntoIterator<Item = String>>(cwd: &std::path::Path, argv: I) -> Vec<String> {
     argv.into_iter()
         .skip(1)
         .filter(|a| !a.starts_with('-'))
-        .filter(|a| std::path::Path::new(a).is_file())
+        .filter_map(|a| {
+            let given = std::path::PathBuf::from(&a);
+            let full = if given.is_absolute() { given } else { cwd.join(given) };
+            full.is_file().then(|| full.to_string_lossy().into_owned())
+        })
         .collect()
+}
+
+/// The same question for THIS process, whose own working directory is the right one to ask against.
+pub fn file_args<I: IntoIterator<Item = String>>(argv: I) -> Vec<String> {
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    file_args_in(&cwd, argv)
 }
 
 #[cfg(test)]
 mod opened_files_tests {
-    use super::{file_args, OpenedFiles};
+    use super::{file_args, file_args_in, OpenedFiles};
 
     fn arg(s: &str) -> String {
         s.to_string()
@@ -320,6 +343,127 @@ mod opened_files_tests {
         q.push_all(vec![arg("second")]);
         assert_eq!(q.take(), vec![arg("first"), arg("second")]);
     }
+
+    // ---- WHAT A DOUBLE-CLICK ACTUALLY SENDS ---------------------------------
+    //
+    // Windows launches a registered handler as `Sard.exe "C:\path\The Book.epub"`. The quotes are
+    // the command line's, not the argument's: by the time this sees it, argv holds one element and
+    // the path inside it is bare, spaces and all. These fix that shape so a later "tidy-up" of the
+    // filter cannot quietly stop books arriving from Explorer.
+
+    /// A path with SPACES is one argument, not three. Nothing here splits on whitespace, and this is
+    /// what proves it stays that way.
+    #[test]
+    fn a_book_whose_name_has_spaces_arrives_whole() {
+        let dir = std::env::temp_dir().join("sard_argv_spaces");
+        let _ = std::fs::create_dir_all(&dir);
+        let book = dir.join("The Quiet Book.epub");
+        std::fs::write(&book, b"x").unwrap();
+        let p = book.to_string_lossy().to_string();
+
+        assert_eq!(file_args(vec![arg("Sard.exe"), p.clone()]), vec![p]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Selecting several books and pressing Enter opens ONE Sard with several arguments. All of them
+    /// are books, and all of them must arrive — the library decides what to do with more than one.
+    #[test]
+    fn several_books_at_once_all_arrive() {
+        let dir = std::env::temp_dir().join("sard_argv_several");
+        let _ = std::fs::create_dir_all(&dir);
+        let a = dir.join("one.epub");
+        let b = dir.join("two.pdf");
+        std::fs::write(&a, b"x").unwrap();
+        std::fs::write(&b, b"x").unwrap();
+        let (a, b) = (a.to_string_lossy().to_string(), b.to_string_lossy().to_string());
+
+        assert_eq!(file_args(vec![arg("Sard.exe"), a.clone(), b.clone()]), vec![a, b]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A BOOK THAT IS NO LONGER THERE. Explorer can hand over a path that has just been moved or
+    /// deleted, and a handler that acts on it would open an error over a file the reader has already
+    /// dealt with. It is filtered out here, before anything is told about it.
+    #[test]
+    fn a_book_that_has_since_been_deleted_is_refused() {
+        let dir = std::env::temp_dir().join("sard_argv_gone");
+        let _ = std::fs::create_dir_all(&dir);
+        let book = dir.join("gone.epub");
+        std::fs::write(&book, b"x").unwrap();
+        let p = book.to_string_lossy().to_string();
+        std::fs::remove_file(&book).unwrap();
+
+        assert!(file_args(vec![arg("Sard.exe"), p]).is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- THE FORWARDED LAUNCH ----------------------------------------------
+    //
+    // A second launch hands its arguments to the running Sard and exits. Its working directory goes
+    // with it, so a relative path has to be resolved against the directory it was GIVEN in, before
+    // that directory stops being knowable.
+
+    /// A relative path means what it meant where it was typed — not where the running copy happens
+    /// to be. Answering with an absolute path means nothing downstream has to know the difference.
+    #[test]
+    fn a_relative_path_is_resolved_where_it_was_given() {
+        let dir = std::env::temp_dir().join("sard_argv_relative");
+        let _ = std::fs::create_dir_all(&dir);
+        let book = dir.join("relative.epub");
+        std::fs::write(&book, b"x").unwrap();
+
+        let out = file_args_in(&dir, vec![arg("Sard.exe"), arg("relative.epub")]);
+        assert_eq!(out.len(), 1, "the book was found where it was named");
+        assert_eq!(std::path::PathBuf::from(&out[0]).canonicalize().unwrap(), book.canonicalize().unwrap());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// And the same argument given from somewhere else is NOT a book — which is the failure the
+    /// running instance would otherwise have made silently.
+    #[test]
+    fn the_same_relative_path_elsewhere_is_not_a_book() {
+        let dir = std::env::temp_dir().join("sard_argv_relative2");
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(dir.join("relative2.epub"), b"x").unwrap();
+        let elsewhere = std::env::temp_dir().join("sard_argv_elsewhere");
+        let _ = std::fs::create_dir_all(&elsewhere);
+
+        assert!(file_args_in(&elsewhere, vec![arg("Sard.exe"), arg("relative2.epub")]).is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&elsewhere);
+    }
+
+    /// An absolute path ignores the directory entirely, which is every double-click.
+    #[test]
+    fn an_absolute_path_does_not_care_where_it_was_given() {
+        let dir = std::env::temp_dir().join("sard_argv_absolute");
+        let _ = std::fs::create_dir_all(&dir);
+        let book = dir.join("absolute.epub");
+        std::fs::write(&book, b"x").unwrap();
+        let p = book.to_string_lossy().to_string();
+
+        let from_nowhere = std::path::Path::new("C:/definitely/not/here");
+        assert_eq!(file_args_in(from_nowhere, vec![arg("Sard.exe"), p.clone()]), vec![p]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A file arriving while the reader is mid-book is the same queue, not a different one — which is
+    /// what lets one door serve a cold start and a running window alike.
+    #[test]
+    fn a_file_can_arrive_while_earlier_ones_are_still_waiting() {
+        let q = OpenedFiles::default();
+        q.push_all(vec![arg("cold-start.epub")]);
+        q.push_all(vec![arg("double-clicked.epub")]);
+        let taken = q.take();
+        assert_eq!(taken, vec![arg("cold-start.epub"), arg("double-clicked.epub")]);
+        assert!(q.take().is_empty(), "and nothing is delivered a second time");
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -368,11 +512,14 @@ pub fn run() {
     let builder = if dev_data_dir_override().is_some() {
         builder
     } else {
-        builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+        builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
             // A FILE ARG IS NOW ROUTED, which is what the note above anticipated. The second launch
             // hands its paths to the running instance and dies; the running window is raised and told
             // to look at its queue.
-            let files = file_args(argv);
+            //
+            // Resolved against the directory the SECOND launch was made from, not this one's: that
+            // process is about to exit, and a relative path means what it meant where it was typed.
+            let files = file_args_in(std::path::Path::new(&cwd), argv);
             if !files.is_empty() {
                 app.state::<OpenedFiles>().push_all(files);
                 let _ = app.emit("sard://opened", ());

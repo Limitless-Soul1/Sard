@@ -110,7 +110,7 @@ fn edge_label(short_name: &str, v: &Voice) -> String {
     }
 }
 
-// RAWY-179: Sard is Arabic-first, but Microsoft's read-aloud voice-list endpoint (a fixed global URL)
+// RAWY-179: Sard must be able to read Arabic aloud, but Microsoft's voice-list endpoint (a fixed global URL)
 // is served region-varied by their CDN — some users get a set that OMITS ar-* voices (the tester saw
 // English but NO Arabic; the owner, in an Arabic region, sees all 32). The list being region-filtered
 // does NOT stop the SYNTHESIS endpoint from speaking a valid Arabic voice by name, so we ALWAYS include

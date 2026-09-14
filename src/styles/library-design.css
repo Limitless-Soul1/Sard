@@ -35,6 +35,41 @@
   --mut: var(--muted);
   --acc: var(--accent);
   --faint: var(--lib-faint);
+
+  /* ── THE TREE'S METADATA, AS A LADDER ─────────────────────────────────────────────────────────
+     Down the outer edge of the tree runs a column of small things — counts, ⋯, the fixing each
+     shelf sits on — and the shelf work left them arriving at their final colour by four different
+     routes: a token, an inline colour, a class `opacity`, or two of those multiplied. Measured
+     against the sidebar's OWN ground (its translucent surface over the library image, not the
+     theme's paper), with every ancestor opacity folded in:
+
+         cabinet name 8.42 · shelf name 4.57 · count 2.89 · empty count 1.62 · ⋯ 1.54 · fixing 1.55
+
+     Two separate faults. `opacity` is not a colour — it multiplies whatever the element paints — so
+     the ⋯ and the nought landed less than half as legible as their stylesheet suggested. And the
+     count did not change at all: the shelf NAME rose from `--mut` to 76% ink, and a value that had
+     been one step behind its label was suddenly a hole beside it. Contrast is a relationship, so
+     raising one side of it lowers the other.
+
+     The answer is a ladder rather than a brightness pass. Both rungs are walked from `--faint`
+     toward `--txt`, which is what keeps them tracking every theme the way the rest of the chrome
+     does: an alpha of `--txt` was tried first and swung from 3.6 on paper to 6.6 on a dark ground,
+     because a dark theme's ink is nearly white. `--tree-meta` carries a value a reader might want
+     to read; `--tree-quiet` carries the controls and structure that support it. Measured:
+
+         sepia    8.42 → 4.57 → 3.73 → 3.26        nocturne  12.9 → 7.89 → 4.92 → 4.02
+
+     — cabinet name, shelf name, count, then connectors and controls, every rung distinct and none
+     of them under 3:1.
+
+     THE COUNT RUNG IS SHARED BY BOTH ROW KINDS. A cabinet's count sits directly above its shelves'
+     in one column, so leaving it on `--faint` while the shelves' rose put the parent's number
+     BELOW its children's — visibly so on a dark ground. Both now take `--tree-meta`, and the
+     cabinet keeps its precedence where it actually reads: its name, at .8125rem/600 in full ink
+     against a shelf's .75rem/500 at 76%. The cabinet's ⋯ and its grip stay on `--faint`, which is
+     the rung the tree's controls have always been drawn at. */
+  --tree-meta: color-mix(in srgb, var(--txt) 25%, var(--faint));
+  --tree-quiet: color-mix(in srgb, var(--txt) 12%, var(--faint));
   --hov: var(--lib-hover);
   --act: var(--lib-active);
   --soft: var(--lib-soft);
@@ -124,6 +159,7 @@
    library has the same problem the moment it draws a button. */
 .libd-chrome button:not(.lib-settings-btn),
 .libd-stage button,
+.libd-seltray button,
 .libd-overlay-host button,
 .libd-dialog button {
   /* THE PLATFORM'S OWN CHROME, OFF AT THE SOURCE. Clearing the ground and the edge hides it on
@@ -156,6 +192,22 @@
   background-clip: content-box;
 }
 
+/* THE SAME QUIET SCROLLBAR THE STAGE USES, for the small panels inside dialogs. A default
+   Windows scrollbar in a 268px popover is a grey channel down its edge — it was the loudest thing
+   in the destination list. This is the stage's treatment with a narrower track. */
+.libd-quietscroll::-webkit-scrollbar { width: 8px; }
+.libd-quietscroll::-webkit-scrollbar-track { background: transparent; }
+.libd-quietscroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--txt) 18%, transparent);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.libd-quietscroll:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--txt) 26%, transparent);
+  background-clip: content-box;
+}
+
 /* Hover states are authored as a `style-hover` attribute in the design's own template
    dialect. Here they are one data attribute, so a hovered element can carry declarations
    that the base style does not — without a rule per component. */
@@ -175,23 +227,215 @@
 
    The mark inside is drawn in `currentColor`, so these rules move the icon and
    its label together and neither can be styled adrift of the other. */
+/* WHY EVERY SELECTOR BELOW NAMES ITS CONTAINER.
+   These rules existed and painted nothing. The chrome/stage/overlay/dialog reset a few hundred
+   lines above sets `background: none` and `border: 0` on every button at (0,2,1) —
+   `.libd-chrome button:not(.lib-settings-btn)` — so `.libd-menu-item:hover` at (0,2,0) lost the
+   cascade, every time, and the ground it asked for was never drawn. It is the same trap the
+   comment on `.libd-shelfdots` records, and this is the same way out: name the container, so the
+   state rules OUTRANK the reset rather than tying with it.
+
+   That was only half of it. Every row also carried an INLINE `background: transparent`, which
+   outranks any selector whatsoever. Measured in the running library before this, on all eight rows
+   of the shelf menu and all eight of the cabinet's: rest, hover and held were one identical
+   colour, and `:active` and `:focus-visible` were equally inert. The rows now carry layout only;
+   every ground, ink and edge comes from here. */
+.libd-chrome button.libd-menu-item,
+.libd-stage button.libd-menu-item,
+.libd-seltray button.libd-menu-item,
+.libd-overlay-host button.libd-menu-item,
+.libd-dialog button.libd-menu-item,
 .libd-menu-item {
   background: transparent;
+  color: var(--mut);
   border: 1px solid transparent;
+  cursor: pointer;
+  /* A ROW A FINGER CAN FIND. The rows measured 33px, which is under every published minimum for a
+     touch target; the menu stays compact because the width and the type are untouched — only the
+     row's floor moved. */
+  min-height: 36px;
   transition: background-color .12s ease-out, border-color .12s ease-out, color .12s ease-out;
 }
+.libd-menu-static { min-height: 36px; }
+.libd-chrome .libd-menu-item:hover,
+.libd-stage .libd-menu-item:hover,
+.libd-seltray .libd-menu-item:hover,
+.libd-overlay-host .libd-menu-item:hover,
+.libd-dialog .libd-menu-item:hover,
 .libd-menu-item:hover { background: var(--hov); color: var(--txt); }
-.libd-menu-item:active { background: var(--act); border-color: var(--brd); }
-/* Focus must be visible without a pointer: this menu is reachable by keyboard. */
-.libd-menu-item:focus-visible { outline: 2px solid var(--acc); outline-offset: -2px; color: var(--txt); }
+/* PRESSED, WHILE THE FINGER IS STILL DOWN. `:active` answers pointerdown, so the row confirms the
+   press before the action has run — which is the whole of "did that register?" on a touch screen. */
+.libd-chrome .libd-menu-item:active,
+.libd-stage .libd-menu-item:active,
+.libd-seltray .libd-menu-item:active,
+.libd-overlay-host .libd-menu-item:active,
+.libd-dialog .libd-menu-item:active,
+.libd-menu-item:active { background: var(--act); border-color: var(--brd); color: var(--txt); }
+/* Focus must be visible without a pointer: these menus are reachable by keyboard. */
+.libd-chrome .libd-menu-item:focus-visible,
+.libd-stage .libd-menu-item:focus-visible,
+.libd-seltray .libd-menu-item:focus-visible,
+.libd-overlay-host .libd-menu-item:focus-visible,
+.libd-dialog .libd-menu-item:focus-visible,
+.libd-menu-item:focus-visible {
+  outline: 2px solid var(--acc); outline-offset: -2px;
+  background: var(--hov); color: var(--txt);
+}
+/* THE VALUE THIS SETTING IS CURRENTLY AT, on a page of choices. Not a hover — a statement — so it
+   keeps its ground when the pointer is elsewhere, and still answers the pointer when it is here. */
+.libd-chrome .libd-menu-item.is-on,
+.libd-stage .libd-menu-item.is-on,
+.libd-seltray .libd-menu-item.is-on,
+.libd-overlay-host .libd-menu-item.is-on,
+.libd-dialog .libd-menu-item.is-on,
+.libd-menu-item.is-on { background: var(--act); color: var(--txt); }
 .libd-menu-item[disabled] { color: var(--faint); cursor: default; }
 .libd-menu-item[disabled]:hover { background: transparent; }
 /* THE ONE ROW THAT CANNOT BE UNDONE. Same red the profile editor's destructive button uses, so a
    reader meets one colour for "this removes something", not two. */
+.libd-chrome .libd-menu-item.danger,
+.libd-stage .libd-menu-item.danger,
+.libd-seltray .libd-menu-item.danger,
+.libd-overlay-host .libd-menu-item.danger,
+.libd-dialog .libd-menu-item.danger,
 .libd-menu-item.danger { color: #9c3b3b; }
+.libd-chrome .libd-menu-item.danger:hover,
+.libd-stage .libd-menu-item.danger:hover,
+.libd-seltray .libd-menu-item.danger:hover,
+.libd-overlay-host .libd-menu-item.danger:hover,
+.libd-dialog .libd-menu-item.danger:hover,
 .libd-menu-item.danger:hover { background: color-mix(in srgb, #9c3b3b 10%, transparent); color: #9c3b3b; }
 /* The mark keeps the row's colour and the row's alignment, in either script. */
 .libd-menu-item svg { flex: none; color: currentColor; }
+
+/* ---- THE THREE KINDS OF THING A LIBRARY MENU HOLDS ----------------------------------------
+   They were one kind, visually: a column of text at one weight, one ink and one rhythm, so a
+   heading, a setting and an action were told apart only by reading them. Each now says what it is
+   before it is read — and they stay one family, because the menu is small and calm is the point.
+
+   A SECTION LABEL is quiet and secondary, and it is NOT set in tracked capitals any more. Arabic
+   has no capitals, and letter-spacing severs its cursive joins — the same reason `.libd-place-cat`
+   further down marks a category with a rule instead. «التنظيم» was being rendered as loose
+   disconnected letters in the one language this library is built for. */
+.libd-menu-legend {
+  font: 600 .6875rem var(--ui);
+  color: var(--faint);
+  padding: 9px 10px 4px;
+}
+/* A VALUE SELECTOR reads as label-then-value: the value and its caret sit together on their own
+   quiet ground, so the pair is visibly one control that opens rather than two words that happen to
+   share a line. The ground lifts with the row, so the whole row is still the target. */
+.libd-menu-val {
+  display: inline-flex; align-items: center; gap: var(--sp-2);
+  min-width: 0; max-width: 62%;
+  padding: 2px 7px;
+  border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--txt) 5%, transparent);
+  color: var(--mut);
+  font: 500 .75rem var(--ui);
+  transition: background-color .12s ease-out, color .12s ease-out;
+}
+.libd-menu-val > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.libd-menu-item:hover .libd-menu-val,
+.libd-menu-item:focus-visible .libd-menu-val { background: color-mix(in srgb, var(--txt) 9%, transparent); color: var(--txt); }
+.libd-menu-val svg { color: var(--faint); }
+.libd-menu-item:hover .libd-menu-val svg { color: var(--mut); }
+/* A STATIC ROW states something and does nothing — the shelf's place among its siblings, which is
+   changed by the two steppers beside it, not by pressing the words. It must therefore NOT answer
+   the pointer: a hover ground on a row that cannot be pressed is a promise the row does not keep. */
+.libd-menu-static {
+  color: var(--mut);
+  cursor: default;
+}
+/* THE STEPPERS. 22px was below any reasonable finger; these are 28 and sit in their own group, so
+   the pair reads as one control for one axis rather than two loose glyphs. */
+.libd-chrome button.libd-menu-step,
+.libd-stage button.libd-menu-step,
+.libd-overlay-host button.libd-menu-step,
+.libd-dialog button.libd-menu-step,
+.libd-menu-step {
+  width: 28px; height: 28px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--mut);
+  cursor: pointer;
+  transition: background-color .12s ease-out, border-color .12s ease-out, color .12s ease-out;
+}
+.libd-chrome .libd-menu-step:hover,
+.libd-stage .libd-menu-step:hover,
+.libd-overlay-host .libd-menu-step:hover,
+.libd-dialog .libd-menu-step:hover,
+.libd-menu-step:hover { background: var(--hov); color: var(--txt); }
+.libd-chrome .libd-menu-step:active,
+.libd-stage .libd-menu-step:active,
+.libd-overlay-host .libd-menu-step:active,
+.libd-dialog .libd-menu-step:active,
+.libd-menu-step:active { background: var(--act); border-color: var(--brd); color: var(--txt); }
+.libd-chrome .libd-menu-step:focus-visible,
+.libd-stage .libd-menu-step:focus-visible,
+.libd-overlay-host .libd-menu-step:focus-visible,
+.libd-dialog .libd-menu-step:focus-visible,
+.libd-menu-step:focus-visible { outline: 2px solid var(--acc); outline-offset: -2px; color: var(--txt); }
+.libd-menu-step svg { flex: none; color: currentColor; }
+/* A RULE BETWEEN GROUPS, stated once so the menus cannot drift apart. Used where a group genuinely
+   ends — not between every row. */
+.libd-menu-rule { height: 1px; background: var(--brd); margin: 6px 4px; }
+
+/* THE TYPED COLOUR. A field at this menu's scale rather than a panel: `InkCustom`, which is the
+   Reader's answer to the same question, opens at least 15rem against a menu 220px wide. The dot
+   previews what the text currently parses to, so a reader sees the colour before committing it;
+   `is-bad` says the text is not a colour yet, and nothing is stored while it says so. */
+.libd-ink-hex {
+  display: flex; align-items: center; gap: 7px;
+  padding: 0 10px 9px;
+}
+.libd-ink-hex-dot {
+  flex: none; width: 18px; height: 18px; border-radius: 4px;
+  box-shadow: 0 0 0 1px var(--brd);
+  transition: background-color .12s ease-out;
+}
+.libd-chrome input.libd-ink-hex-field,
+.libd-stage input.libd-ink-hex-field,
+.libd-overlay-host input.libd-ink-hex-field,
+.libd-dialog input.libd-ink-hex-field,
+.libd-ink-hex-field {
+  flex: 1 1 auto; min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--brd);
+  border-radius: var(--r-sm);
+  background: var(--pap, transparent);
+  color: var(--txt);
+  font: 500 .75rem var(--ui);
+  letter-spacing: .04em;
+  transition: border-color .12s ease-out, background-color .12s ease-out;
+}
+.libd-ink-hex-field::placeholder { color: var(--faint); letter-spacing: .04em; }
+.libd-ink-hex-field:hover { border-color: color-mix(in srgb, var(--txt) 26%, transparent); }
+.libd-ink-hex-field:focus-visible { outline: 2px solid var(--acc); outline-offset: -1px; }
+/* Not an error shout: the field simply has not got a colour yet, and saying so quietly is enough. */
+.libd-ink-hex-field.is-bad { border-color: color-mix(in srgb, #9c3b3b 55%, transparent); }
+
+/* A COLOUR SWATCH. It is already a colour, so it lifts rather than taking a ground — the same
+   answer `.libd-hov-bright` gives every other coloured control in the library. The ring is the
+   library's, because the browser's was what a reader tabbing into the cabinet menu actually got. */
+.libd-ink-swatch { transition: filter .12s ease-out, transform .12s ease-out; }
+.libd-chrome .libd-ink-swatch:hover,
+.libd-stage .libd-ink-swatch:hover,
+.libd-overlay-host .libd-ink-swatch:hover,
+.libd-dialog .libd-ink-swatch:hover,
+.libd-ink-swatch:hover { filter: brightness(1.12); transform: scale(1.08); }
+.libd-chrome .libd-ink-swatch:active,
+.libd-stage .libd-ink-swatch:active,
+.libd-overlay-host .libd-ink-swatch:active,
+.libd-dialog .libd-ink-swatch:active,
+.libd-ink-swatch:active { transform: scale(0.94); }
+.libd-chrome .libd-ink-swatch:focus-visible,
+.libd-stage .libd-ink-swatch:focus-visible,
+.libd-overlay-host .libd-ink-swatch:focus-visible,
+.libd-dialog .libd-ink-swatch:focus-visible,
+.libd-ink-swatch:focus-visible { outline: 2px solid var(--acc); outline-offset: 3px; }
 .libd-hov-txt:hover { color: var(--txt); }
 .libd-hov-bright:hover { filter: brightness(1.08); }
 /* It styled hover and nothing else. On the empty library this is the single action the whole screen
@@ -932,16 +1176,186 @@
   pointer-events: none;
 }
 
-/* ---- THE ⋯ ON A SHELF ROW ----------------------------------------------------
+/* ---- THE ⋯ ON A SHELF ROW, AND ON A CABINET'S ---------------------------------
    `.libd-hov` and `.libd-hov-txt` cannot reach it: they are (0,2,0) against the
    shell reset's (0,2,1), which sets both `background` and `color`. Measured on a
    sidebar row — pointer confirmed over the element, `:hover` true — the ground
    stayed rgba(0,0,0,0) and the ink never moved. So this control states its own
    rest and hover at a weight that wins, rather than wearing classes that do
-   nothing here. */
-.libd-chrome button.libd-shelfdots { color: var(--faint); transition: background-color .12s ease-out, color .12s ease-out; }
-.libd-chrome button.libd-shelfdots:hover { color: var(--txt); background: var(--hov); }
-.libd-chrome button.libd-shelfdots:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+   nothing here.
+
+   THE CABINET'S ⋯ WAS STILL WEARING THOSE CLASSES. It carried exactly the
+   `.libd-hov libd-hov-txt` pair this comment was written about, plus an inline
+   `color` that outranks even a rule that wins — so it had no ground on hover, no
+   ink change, and no pressed state at all, while the shelf's ⋯ a few rows below
+   had all three. Same control, same column, same gesture: one class list.
+
+   `:active` is new to both. A ⋯ that answers only after its menu has opened tells
+   a finger nothing at the moment it presses, which is the moment it is asking. */
+.libd-chrome button.libd-shelfdots,
+.libd-chrome button.libd-casedots { color: var(--tree-quiet); transition: background-color .12s ease-out, color .12s ease-out; }
+.libd-chrome button.libd-shelfdots:hover,
+.libd-chrome button.libd-casedots:hover { color: var(--txt); background: var(--hov); }
+.libd-chrome button.libd-shelfdots:active,
+.libd-chrome button.libd-casedots:active { color: var(--txt); background: var(--act); }
+/* AND IT STAYS LIT WHILE ITS MENU IS OPEN, so the row the menu belongs to is never in doubt. */
+.libd-chrome button.libd-shelfdots[aria-expanded="true"],
+.libd-chrome button.libd-casedots[aria-expanded="true"] { color: var(--txt); background: var(--act); }
+.libd-chrome button.libd-shelfdots:focus-visible,
+.libd-chrome button.libd-casedots:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+
+/* ── A SHELF IS A BOARD ON A BRACKET ────────────────────────────────────────────────────────────
+   WHAT WAS WRONG. A cabinet row says what it is with two devices of its own: a 3px bar of its own
+   ink down its inline-start, and a disc that fills with that ink when it opens. A shelf row had
+   NEITHER, and nothing in their place — so it was a cabinet with its features removed, set a size
+   smaller and a shade greyer. Measured on the rendered rail: the only differences between the two
+   were `.75rem/500/--mut` against `.8125rem/600/--txt`.
+
+   Worse, what a shelf DID have repeated. Four columns ran down the group — a 7px mark, a count, a
+   ⋯, and the name — and three of them were near-identical from row to row. A column of grey specks
+   is what "visually repetitive" looks like when you measure it.
+
+   THE IDEA. A cabinet is a container and stands upright; a shelf is a board and lies flat. So the
+   mark stops being a speck floating inside the row and becomes the BRACKET the board sits on: a
+   short horizontal tick springing from the group's own rail, in the shelf's own ink. The rail was
+   already there — this makes it structural rather than decorative, and it says "this shelf is
+   fixed to that cabinet" with no new element and no new colour.
+
+   WHAT IS DELIBERATELY NOT BORROWED from the cabinet: its upright bar, its disc, its weight. A
+   shelf that copied them would be the same mistake in the other direction. */
+
+/* ── THE RAIL: ONE LINE, ONE COLOUR, THE WHOLE WAY DOWN ─────────────────────────────────────────
+   It used to be three things pretending to be one, and every one of them could break it.
+
+   FIRST, it changed colour in mid-run. The parent cabinet's ink was spent on the top 18px and then
+   handed over to a neutral at a hard stop — two different colours meeting with no transition, which
+   is what a broken line looks like. Photographed at 8x on a group headed by a lilac cabinet: lilac
+   above, grey-brown below, the join plainly visible.
+
+   SECOND, on a group with no cabinet behind it («خارج الخزائن») that ink resolved to `transparent`,
+   so the rail simply DID NOT EXIST for its first 18px. Measured: the group's box began at y=689 and
+   its first shelf's fixing sat at y=702.5 — inside the invisible stretch. The fixing floated in
+   space and the rail appeared to start underneath it. Nobody designed that; it fell out of a
+   fallback.
+
+   THIRD, the stops crossed over on a short group. The neutral began at 18px and the foot's fade
+   began at calc(100% - 20px), so any group under 38px tall had its neutral segment collapse to
+   nothing: a one-row group was cabinet ink and a fade, a different object from the five-row group
+   above it.
+
+   So the ink is gone from the rail. The group already says which cabinet it belongs to by sitting
+   indented directly beneath it, and the cabinet says who it is with its own 3px bar and its disc —
+   neither of which is touched here. What is left is a connector that is the same colour from top to
+   bottom, in every theme, at every length, with or without a cabinet behind it.
+
+   The foot still fades rather than stopping dead under the last row. Two stops instead of three, so
+   they CANNOT cross: the line is solid from 0 and only the last 14px lift, whatever the height. */
+.libd-shelfgroup { position: relative; }
+.libd-shelfgroup::before {
+  content: ""; position: absolute; inset-block: 0; inset-inline-start: 0; inline-size: 1px;
+  /* 40% measured at 2.03 against the sidebar's ground — the quietest thing in the group, and still
+     clearly the thing every fixing is attached to. */
+  background: linear-gradient(to bottom,
+    color-mix(in srgb, var(--txt) 40%, transparent) 0,
+    color-mix(in srgb, var(--txt) 40%, transparent) calc(100% - 14px),
+    transparent 100%);
+  /* ABOVE THE ROWS, AND THIS IS THE FOURTH WAY IT USED TO BREAK. A row is `position: relative` and
+     comes after this pseudo-element in the DOM, so both paint in the positioned layer and the row
+     wins on order — the SELECTED row's opaque ground was punching a hole straight through the rail
+     for its full height. A structural connector cannot be interrupted by which row you happen to
+     be standing on. The shelf menu sits at 200, so this reaches nothing else. */
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* THE ROW. Hover belongs to the whole row, not to the name alone: the count and the ⋯ are part of
+   the same object and used to stay dark while the name lit up. */
+.libd-chrome .libd-shelf { transition: background-color .12s ease-out; }
+.libd-chrome .libd-shelf:hover { background: var(--hov); }
+
+/* THE BRACKET. A board seen edge-on, flush against the rail — 3px of ink, and the shelf's own
+   colour when it has one. `--shelf-ink` is set per row; without one it is the same hairline the
+   rail is made of, which keeps an uncoloured shelf quiet rather than grey-speckled. */
+.libd-shelfmark {
+  /* LONG ENOUGH TO BE A FIXING RATHER THAN A DASH. At 11px it read as a hyphen that happened to be
+     there. It stays 3px tall — the one thing that must not happen is a bar heavy enough to compete
+     with the name beside it — so the length does the work.
+
+     SQUARE WHERE IT MEETS THE RAIL, ROUNDED AT THE FREE END. A 1.5px radius on a 3px bar makes both
+     ends half-circles, and a half-circle butting a 1px hairline reads as a dash that happens to
+     stop near a line rather than a board bolted to it. The corners that touch the rail are cut
+     square so the join is a join; the far end keeps its radius, which is what makes the mark read
+     as having a direction — it comes OUT of the structure. */
+  position: relative;
+  flex: none; inline-size: 14px; block-size: 3px;
+  border-start-start-radius: 0; border-end-start-radius: 0;
+  border-start-end-radius: 1.5px; border-end-end-radius: 1.5px;
+  /* An uncoloured shelf still needs a fixing that can be SEEN: measured at 1.55 as a 26% alpha of
+     the ink, which put the tick UNDER the count beside it. It takes the ladder's structural rung. */
+  background: var(--shelf-ink, var(--tree-quiet));
+  transition: inline-size .14s ease-out;
+}
+/* ── A RULE SHELF FILLS ITSELF, and the fixing says so with a PARTED END, not a snapped bar ──────
+   The distinction is kept. How it was drawn is not.
+
+   It was one gradient: 5px, a 4px hole, 5px. Two failures. A 4px hole is nearly a third of a 14px
+   bar, so at 8x it photographed as two separate stubs of almost equal length with a chasm between
+   them — a damaged line, not a designed one. And the stops were absolute pixels inside a box whose
+   width CHANGES: selecting the row grew it to 19px, the gradient's last colour ran on to fill the
+   extra, and the segment against the rail went from 5px to 10px. The pattern a reader was meant to
+   learn was different in the state they were looking at it in.
+
+   Now it is a long run bolted to the rail, a 2px parting, and a short terminal tick. Each piece is
+   anchored to its OWN end with logical insets — the run starts at the rail, the tick ends at the
+   free end — so the parting stays 2px and the shape stays recognisable at 14px, at 19px selected,
+   and in either writing direction, with no gradient stops to drift and no `to right` to get
+   backwards in Arabic. The cut edges either side of the parting are square: a clean break reads as
+   deliberate where a rounded one reads as wear. */
+.libd-shelfmark.is-rule { background: none; }
+.libd-shelfmark.is-rule::before,
+.libd-shelfmark.is-rule::after {
+  content: ""; position: absolute; inset-block: 0;
+  background: var(--shelf-ink, var(--tree-quiet));
+}
+/* The run: from the rail to 6px short of the free end — 4px of tick plus the 2px parting. */
+.libd-shelfmark.is-rule::before { inset-inline: 0 6px; border-radius: 0; }
+/* The tick: the last 4px, keeping the rounded outer end the solid fixing has. */
+.libd-shelfmark.is-rule::after {
+  inset-inline-end: 0; inline-size: 4px;
+  border-start-start-radius: 0; border-end-start-radius: 0;
+  border-start-end-radius: 1.5px; border-end-end-radius: 1.5px;
+}
+/* Selected, the board comes out of the wall a little. The only motion in the tree, and it belongs
+   to the one row that has changed state.
+
+   Hover used to take the fixing to `opacity: .92`. At the ink it is drawn in now, dimming the one
+   structural element on the row the reader is pointing at is backwards — and the row already
+   answers a pointer with its own ground. */
+.libd-chrome .libd-shelf.is-on .libd-shelfmark { inline-size: 19px; }
+
+/* THE COUNT, in a column of its own. `tabular-nums` is what makes 0, 2, 20 and 26 line up instead
+   of drifting with the width of their digits, and the reserved inline size is what stops the
+   column moving when a row has no ⋯ to draw. */
+.libd-shelfcount {
+  flex: none; min-inline-size: 22px; text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+/* AN EMPTY SHELF SAYS NOUGHT, AND THE NOUGHT IS READ LIKE ANY OTHER COUNT. This dimmed the digit
+   to `opacity: .5` — 1.62 against the ground, the faintest thing in the sidebar — on the reasoning
+   that a count of nothing need not ask to be read. But «0» is the answer to the same question «3»
+   answers, and a reader scanning for an empty shelf to file into is looking for exactly this row.
+   The digit is already its own distinction; it does not need a second one made out of absence.
+   The class stays as the hook the row has always carried. */
+
+/* THE ⋯ RECEDES UNTIL IT IS WANTED — BY CHOOSING AN INK, NOT BY DILUTING ONE. The first answer
+   here was `opacity: .45`, and it measured 1.54 against the ground: the rule above had already set
+   a quiet colour, and the opacity then took 45% of that, which is not "quieter" but "gone". The
+   rest state is the ladder's quiet rung, one step under the count it sits beside and a little over
+   the 3:1 a control of this size wants; pointing at the row, tabbing to it, or choosing it brings
+   it to full ink. */
+.libd-chrome .libd-shelf:hover button.libd-shelfdots,
+.libd-chrome button.libd-shelfdots:focus-visible,
+.libd-chrome .libd-shelf.is-on button.libd-shelfdots { color: var(--txt); }
 
 .libd-newshelf { transition: background-color .12s ease-out, border-color .12s ease-out, color .12s ease-out, transform .1s ease-out; }
 .libd-newshelf:hover { --newshelf-bg: color-mix(in srgb, var(--acc) 12%, transparent); --newshelf-edge: var(--acc); --newshelf-ink: var(--txt); }
@@ -1215,3 +1629,288 @@
   align-self: center;
 }
 .vd-rail .vd-col:focus-visible { outline: 2px solid var(--acc); outline-offset: 3px; border-radius: 3px; }
+
+/* ============================================================================
+   WHAT MAY BE DONE WITH THE BOOKS THAT HAVE BEEN CHOSEN.
+   ============================================================================
+   The surface that appears once a reader has ticked some books. It is not the
+   selection: ticking, unticking, the tiles' own marks and the mode itself are
+   all elsewhere and unchanged. This is only the tray of actions.
+
+   WHY IT MOVED OUT OF INLINE STYLE. Measured in the running library, in Arabic,
+   with three books chosen: «حذف الكتاب» and «تمّ» were drawn on
+   rgb(240,240,240) and «نقل إلى…» carried a 2px rgb(0,0,0) border. None of
+   those are Sard values — they are Windows' ButtonFace and its outset edge. The
+   tray hangs beside `.libd-stage` rather than inside it, so the `appearance:
+   none` reset a few hundred lines above never reached it, and every button the
+   tray drew was half-painted by the platform. That is the whole reason it read
+   as foreign: on a dark theme those two controls were near-white slabs. The
+   tray is now named in that reset, and each control states its own ground, edge
+   and ink here.
+
+   THE COMPOSITION. Three groups in reading order, separated by hairlines rather
+   than by boxes: what is chosen · what may be done to it · how to leave. The
+   count leads because it is the fact the reader produced; the move is the one
+   accent-filled action on the surface; the deletion sits beside it in the danger
+   tint, which says "destructive" without shouting; and «تمّ» is a quiet — no
+   ground, no edge — because leaving a mode is an escape, not a third operation
+   competing with the other two.
+
+   Every rule is written in logical properties, so Arabic and English get the
+   same composition mirrored, with nothing here knowing which way it is facing.
+   ---------------------------------------------------------------------------- */
+
+/* THE LANE. Centres the plate over the stage and passes every press it does not
+   want straight through to the books underneath. */
+.libd-seltray {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 20px;
+  z-index: 80;
+  display: flex;
+  justify-content: center;
+  padding-inline: var(--sp-6);
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+/* THE PLATE. Two ground layers, and the lower one cannot be seen through: the
+   library can carry a photograph behind everything, and `--chrome-bg` is one
+   theme away from being a mix with transparency. An opaque paper underlay with
+   the chrome tint painted over it keeps the picture out of the surface that
+   deletes things — the same construction `.sel-bar` uses, for the same reason,
+   including its edge: `--chrome-border` is a ten-per-cent hairline and vanishes
+   on a plate whose fill is close to the page under it (measured on trueblack,
+   where a 12 %% mix left the plate readable only by its shadow), so the edge is
+   mixed with the INK at twenty per cent and holds on all sixteen themes.
+   `flex-wrap` is an overflow guard, not a layout: at every size tested the plate
+   sits on one line, and if a translation ever outgrew the window it stacks
+   instead of running off the edge. */
+.libd-seltray .libd-seltray-plate {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--sp-2) var(--sp-5);
+  max-inline-size: 100%;
+  box-sizing: border-box;
+  /* Named, because the menu above is anchored to the CONTROL and has to clear the
+     plate's own edge — see `.libd-seltray-menu`. */
+  --seltray-pad: 7px;
+  padding: var(--seltray-pad) var(--sp-4);
+  border-radius: var(--r-lg);
+  border: 1px solid color-mix(in srgb, var(--txt) 20%, var(--brd));
+  background-color: var(--pap);
+  background-image: linear-gradient(var(--chr), var(--chr));
+  box-shadow: var(--sh3);
+  isolation: isolate;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  animation: sard-rise .16s ease-out;
+}
+
+/* THE QUANTITY, AND ITS CAPTION. The number is the readable half and carries the
+   weight; the word after it stays muted, because it labels the number rather
+   than adding anything to it. Tabular figures so the plate does not twitch as
+   the count runs 9 to 10. */
+.libd-seltray .libd-seltray-count {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  padding-inline-start: var(--sp-4);
+  white-space: nowrap;
+}
+.libd-seltray .libd-seltray-n {
+  font: 600 0.9375rem var(--ui);
+  color: var(--txt);
+  font-variant-numeric: tabular-nums;
+}
+.libd-seltray .libd-seltray-lbl { font: 500 var(--fs-tiny, 0.75rem) var(--ui); color: var(--mut); }
+
+/* A RULE WHERE A GROUP ENDS — not between every control. `--chrome-border` is a
+   ten-per-cent hairline and disappears on a plate this close to the page's own
+   colour, so the divider is mixed with the ink instead. */
+.libd-seltray .libd-seltray-rule {
+  inline-size: 1px;
+  block-size: 18px;
+  background: color-mix(in srgb, var(--txt) 14%, transparent);
+  flex: 0 0 auto;
+}
+
+.libd-seltray .libd-seltray-ops { display: inline-flex; align-items: center; gap: var(--sp-3); }
+.libd-seltray .libd-seltray-anchor { position: relative; display: inline-flex; }
+
+/* ONE SHAPE FOR ALL THREE, so the only difference between them is the thing that
+   should differ: how much each one claims. */
+.libd-seltray .libd-seltray-move,
+.libd-seltray .libd-seltray-del,
+.libd-seltray .libd-seltray-done {
+  appearance: none;
+  -webkit-appearance: none;
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+  block-size: var(--ctl-md);
+  padding-inline: 14px;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  background: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color .15s ease, color .15s ease, border-color .15s ease;
+}
+.libd-seltray .libd-seltray-move:focus-visible,
+.libd-seltray .libd-seltray-del:focus-visible,
+.libd-seltray .libd-seltray-done:focus-visible { outline: 2px solid var(--acc); outline-offset: 3px; }
+
+/* A PRESS THAT CAN BE FELT. The tray answered a press with nothing whatsoever —
+   no hover ground on the primary, no pressed state on any of the three, and no
+   focus ring on any of them, because inline style carried the whole appearance
+   and inline style has no states. One scale step down, shared: it reads as the
+   control taking the weight, and it is the same figure the menu rows use. */
+.libd-seltray .libd-seltray-move:active,
+.libd-seltray .libd-seltray-del:active,
+.libd-seltray .libd-seltray-done:active { transform: scale(0.97); }
+@media (prefers-reduced-motion: reduce) {
+  .libd-seltray .libd-seltray-move:active,
+  .libd-seltray .libd-seltray-del:active,
+  .libd-seltray .libd-seltray-done:active { transform: none; }
+  .libd-seltray .libd-seltray-plate,
+  .libd-seltray .libd-seltray-menu { animation: none; }
+  .libd-seltray .libd-seltray-menu { transform: translateX(-50%); }
+}
+
+/* THE ONE ACTION THIS TRAY EXISTS FOR. Accent ground, paper label, no icon — the
+   shape every other primary in Sard already has. */
+.libd-seltray .libd-seltray-move {
+  background: var(--acc);
+  color: var(--pap);
+  font: 600 var(--fs-tiny, 0.75rem) var(--ui);
+}
+.libd-seltray .libd-seltray-move:hover { background: color-mix(in srgb, var(--acc) 86%, #000); }
+.libd-seltray .libd-seltray-move:active { background: color-mix(in srgb, var(--acc) 78%, #000); }
+
+/* DESTRUCTIVE, AND QUIET ABOUT IT — the danger red Sard uses everywhere else
+   (`.edit-del`, `.pg-lb-del`, `.nec-del`), carried as INK rather than as a fill.
+   The kit's destructive chip is tinted at rest because it lives in a dialog
+   footer where nothing else is coloured; here it stands beside the accent
+   primary, and two filled blocks of equal weight is exactly the flat hierarchy
+   this surface had before. So the colour does the telling at rest and the tint
+   arrives under the pointer, which also keeps the solid fill free to mean what
+   it means everywhere in Sard: the press that actually deletes — and that press
+   belongs to the library's own confirmation, not to this button. */
+.libd-seltray .libd-seltray-del {
+  background: none;
+  color: #B24A4A;
+  font: 600 var(--fs-tiny, 0.75rem) var(--ui);
+}
+.libd-seltray .libd-seltray-del:hover { background: color-mix(in srgb, #B24A4A 14%, transparent); }
+.libd-seltray .libd-seltray-del:active { background: color-mix(in srgb, #B24A4A 22%, transparent); }
+:root[data-dark="true"] .libd-seltray .libd-seltray-del { color: #E88C8C; }
+:root[data-dark="true"] .libd-seltray .libd-seltray-del:hover { background: color-mix(in srgb, #E88C8C 18%, transparent); }
+:root[data-dark="true"] .libd-seltray .libd-seltray-del:active { background: color-mix(in srgb, #E88C8C 26%, transparent); }
+
+/* THE WAY OUT. A quiet: no ground and no edge, so the eye passes over it until it
+   is wanted. Leaving the mode is not a third thing to weigh against moving and
+   deleting. */
+.libd-seltray .libd-seltray-done {
+  padding-inline: var(--sp-5);
+  color: var(--mut);
+  font: 500 0.8125rem var(--ui);
+}
+.libd-seltray .libd-seltray-done:hover { color: var(--txt); background: var(--hov); }
+.libd-seltray .libd-seltray-done:active { color: var(--txt); background: var(--act); }
+
+/* WHERE THE BOOKS ARE GOING. A list menu in the library's own menu shape, opened
+   upward from the control that asked for it, with the same opaque underlay as
+   the plate — it can be over the same photograph.
+
+   IT SIZES TO ITS OWN CONTENT. It used to be a flat 268px whatever it held, and
+   a shelf called «روايات · أدبية» then sat in a row with a long empty run
+   beside it — six of those reading as a large hollow box rather than as a list.
+   Sard's list menus are `min-width` + content everywhere else (sort, language,
+   the notes source filter), so this one is too, capped so a long case·shelf
+   name ellipsizes instead of pushing the menu off the window. Radius 9 for the
+   same reason: a list menu is not a card. */
+.libd-seltray .libd-seltray-menu {
+  position: absolute;
+  /* TETHERED TO THE CONTROL THAT OPENED IT, and centred on it. Hung from its own
+     trailing edge the menu stood off to one side of the tray and read as an
+     unrelated box floating near it; growing straight up out of «نقل إلى…» is
+     what makes the two one object. `left` + `translateX` on purpose, and this is
+     the one place in this sheet where a physical property is the correct answer:
+     centring is not a directional idea, and `inset-inline-start: 50%` would
+     resolve to the RIGHT edge in Arabic and shift the menu off the button. The
+     pair below is symmetric, so both directions get the same centre. */
+  /* MEASURED, not guessed: `100%` here is the CONTROL's height, and the control sits
+     one padding step inside the plate — so a plain `100% + 6px` put the menu's
+     bottom edge 2px BELOW the plate's top and the two borders crossed. Clearing
+     the padding as well leaves a real 6px of daylight between the surfaces. */
+  inset-block-end: calc(100% + var(--seltray-pad) + var(--sp-3));
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  inline-size: max-content;
+  min-inline-size: 176px;
+  max-inline-size: min(272px, calc(100vw - 2 * var(--sp-6)));
+  /* TALL ENOUGH NOT TO NEED SCROLLING AT THIS SCALE, and never taller than the room
+     above the plate. The kit's 320px is for a bare list; this one also carries the
+     «you are leaving X» line and a heading per case, and at six shelves that came to
+     340px — so the last row was clipped at the cap and a Windows scrollbar appeared
+     inside a surface that has none of that anywhere else. The viewport term is what
+     keeps it honest on a short window: the plate sits 20px up and is 46px tall with
+     a 6px gap, so `100vh - 96px` still leaves daylight above the menu at 640px.
+     A library with many more shelves does scroll, on the same bar every other
+     scroller in Sard shows — `::-webkit-scrollbar` cannot restyle it, measured: with
+     `scrollbar-width: thin` set globally (global.css) this engine ignores those
+     pseudo-elements entirely and drew a 12px bar against a rule asking for 8px. */
+  max-block-size: min(360px, calc(100vh - 96px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+  padding: var(--sp-3);
+  border-radius: var(--r-md);
+  border: 1px solid color-mix(in srgb, var(--txt) 20%, var(--brd));
+  background-color: var(--pap);
+  background-image: linear-gradient(var(--chr), var(--chr));
+  box-shadow: var(--sh3);
+  isolation: isolate;
+  animation: libd-seltray-rise .12s ease-out;
+}
+/* `sard-rise` animates `transform` from scratch and would drop the centring for
+   the length of the animation — the menu would slide in from beside the button
+   and settle under it. Same lift, centre kept. */
+@keyframes libd-seltray-rise {
+  from { opacity: 0; transform: translateX(-50%) translateY(6px); }
+  to { opacity: 1; transform: translateX(-50%); }
+}
+/* A legend that is a SENTENCE rather than a label: it wraps, so it needs the
+   leading a single word does not. */
+.libd-seltray .libd-seltray-note { line-height: 1.45; padding-block-end: var(--sp-3); }
+/* THE CASE A GROUP OF SHELVES BELONGS TO, named once above them. A rule where a
+   group ends — the one device that tells the three levels apart at a glance
+   without giving any of them a box: a heading is a case, a square is a shelf, a
+   small round mark is a category inside one. */
+.libd-seltray .libd-seltray-group:not(:first-child) {
+  margin-block-start: var(--sp-3);
+  padding-block-start: var(--sp-4);
+  border-block-start: 1px solid color-mix(in srgb, var(--txt) 10%, transparent);
+}
+/* The shelf's own colour, ahead of its name in reading order. A category takes
+   the smaller round mark, exactly as the place badges draw it. */
+.libd-seltray .libd-seltray-ink {
+  inline-size: 8px;
+  block-size: 8px;
+  border-radius: var(--r-xs);
+  flex: none;
+}
+.libd-seltray .libd-seltray-ink.is-sub { inline-size: 5px; block-size: 5px; border-radius: var(--r-circle); }
+.libd-seltray .libd-seltray-target {
+  flex: 1;
+  min-inline-size: 0;
+  text-align: start;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

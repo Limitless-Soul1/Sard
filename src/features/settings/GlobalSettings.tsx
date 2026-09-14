@@ -25,6 +25,7 @@ import { BOOKMARK_COLORS, BOOKMARK_SHAPES, BOOKMARK_SIZE_MAX, BOOKMARK_SIZE_MIN,
 import { BookmarkShape } from "../reader/BookmarkShape";
 import { READ_MARKERS, useReadMarkerStyle } from "../../lib/readMarkerStyle"; // RAWY-256
 import { usePresence } from "../../lib/presence"; // DISC/RPC: the Discord on/off switch
+import { LegalDocuments } from "../legal/LegalDocuments";
 import {
   ARABIC_FONTS,
   LATIN_DEFAULTS,
@@ -876,8 +877,78 @@ function AboutSection() {
             failure all open the shared dialog, so this row never renders a second copy of them. */}
         {updState.k === "uptodate" && <div className="gs-update-msg">{t("upd.uptodate")}</div>}
       </div>
+      {/* WHO MADE IT. Placed between the product's identity and its legal record because that is
+          the order the question arrives in: what this is, who is behind it, what you agreed to. */}
+      <SecHead>{t("gs.contact")}</SecHead>
+      <ContactRow />
+      {/* THE DOCUMENTS STAY REACHABLE. Accepting them at the gate should not be the last time a
+          reader can see them, and the record of what this installation agreed to belongs where the
+          build's own identity already is. Reading only — nothing here decides anything. */}
+      <SecHead>{t("legal.section")}</SecHead>
+      <LegalDocuments />
       <TwoLevelCard />
     </>
+  );
+}
+
+/**
+ * THE TWO PLACES SARD'S AUTHOR CAN BE REACHED.
+ *
+ * MARKS RATHER THAN ADDRESSES. A URL printed in a settings panel is a string a reader has to parse;
+ * the two marks are recognised without reading, and the address is still there for anyone who wants
+ * it — in the tooltip, and in the browser the moment it opens. Drawn inline, as the update button a
+ * few lines above already draws its own, rather than joining Sard's icon set: these are somebody
+ * else's trademarks and do not belong in the vocabulary the interface speaks in.
+ *
+ * `openUrl` is how Sard already leaves for a browser — the WebView2 recovery path uses exactly this
+ * — and it is wrapped the same way, because a contact link that throws is worse than one that does
+ * nothing.
+ */
+const CONTACTS = [
+  {
+    key: "x",
+    label: "X",
+    href: "https://x.com/Lll9we",
+    // The X wordmark, as a path rather than a font, so it needs nothing installed.
+    path: "M18.9 2.2h3.4l-7.4 8.4 8.7 11.5h-6.8l-5.3-7-6.1 7H1.9l7.9-9L1.5 2.2h7l4.8 6.4ZM17.7 20h1.9L7.4 4.2H5.3Z",
+  },
+  {
+    key: "github",
+    label: "GitHub",
+    href: "https://github.com/Limitless-Soul1",
+    path: "M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48l-.01-1.7c-2.78.6-3.37-1.34-3.37-1.34-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.03 1.53 1.03.89 1.53 2.34 1.09 2.91.83.09-.65.35-1.09.63-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.25-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02a9.5 9.5 0 0 1 5 0c1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.4.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.94.36.31.68.92.68 1.85l-.01 2.75c0 .27.18.58.69.48A10 10 0 0 0 12 2Z",
+  },
+] as const;
+
+function ContactRow() {
+  const { t } = useI18n();
+  const open = (href: string) => {
+    void (async () => {
+      try {
+        const { openUrl } = await import("@tauri-apps/plugin-opener");
+        await openUrl(href);
+      } catch {
+        /* a contact link that cannot open must not become an error */
+      }
+    })();
+  };
+  return (
+    <div className="gs-contact">
+      {CONTACTS.map((c) => (
+        <button
+          key={c.key}
+          className="gs-contact-link"
+          title={c.href}
+          aria-label={`${t("gs.contact")} — ${c.label}`}
+          onClick={() => open(c.href)}
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+            <path d={c.path} />
+          </svg>
+          <span>{c.label}</span>
+        </button>
+      ))}
+    </div>
   );
 }
 

@@ -169,8 +169,8 @@ function ChaptersPanelInner({
   // Collisions are impossible by construction: within one book the two sources are never mixed.
   //
   // RESILIENCE-1 — the "two designators" bar was far too low, and it was MEASURED, not reasoned:
-  // `extractChapterNumber` matched 25 of 264 entries in "أوفرلورد" (9.5 %), which was enough to
-  // select OWN and leave the other 239 rows unnumbered — every one of them rendering "Section N".
+  // `extractChapterNumber` matched 25 of 264 entries in one reported book (9.5 %), which was enough
+  // to select OWN and leave the other 239 rows unnumbered — every one of them rendering "Section N".
   // Worse, the 25 matches were WRONG: labels read "المجلد 12 الفصل 214 : …", so the extractor took
   // the VOLUME (12), not the chapter (214), and rows 215/216 both resolved to 12 — the very
   // collision RAWY-287 exists to prevent, reintroduced through the back door.
@@ -180,7 +180,7 @@ function ChaptersPanelInner({
   // threshold taken from the corpus rather than invented — measured match rates:
   //
   //     numbers itself : LotM 100 % · halaqat 100 % · red-rising 83 % · Alice 71 %
-  //     does not       : metamorphosis 40 % · أوفرلورد 9.5 % · ad-daa 3 % · shawqiyyat 1 %
+  //     does not       : metamorphosis 40 % · reported-book 9.5 % · ad-daa 3 % · shawqiyyat 1 %
   //
   // Nothing lies between 40 % and 71 %, so a half majority separates them with room on both sides.
   // The original "two, not one" guard is KEPT as well, so a one-entry TOC cannot reach OWN at 100 %.

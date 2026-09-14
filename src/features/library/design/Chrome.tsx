@@ -331,17 +331,26 @@ export function Sidebar(props: SidebarProps) {
         // two particular books is what the shelf itself is for. This carried an INDEX until the
         // destinations became neighbours; an empty string is how a place says «at the end».
         data-drop-before={s.auto_rule ? undefined : ""}
+        className={`libd-shelf${active ? " is-on" : ""}`}
         style={{
           position: "relative",
           display: "flex",
           alignItems: "center",
           borderRadius: "var(--r-sm)",
-          paddingInlineEnd: real ? 2 : 0,
-          background: active ? "var(--act)" : "transparent",
+          // The ⋯ slot is held on every row, including the runs that have no menu, so the counts
+          // beside it stay in one column instead of shifting by the width of a button.
+          paddingInlineEnd: 2,
+          // UNSET, NOT TRANSPARENT, when the row is not the chosen one. An inline `background` beats
+          // every class, so declaring it here left `.libd-shelf:hover` painting nothing — measured
+          // with the pointer genuinely over the row: the ⋯ and the fixing responded and the ground
+          // stayed rgba(0,0,0,0). The same trap the ⋯ button's own note in the stylesheet records.
+          background: active ? "var(--act)" : undefined,
+          // The shelf's own colour, handed to the bracket in CSS. Absent means the hairline the
+          // group's rail is drawn in, which is what keeps an uncoloured shelf quiet.
+          ...(ink ? ({ "--shelf-ink": ink } as React.CSSProperties) : {}),
         }}
       >
         <button
-          className="libd-hov"
           onClick={() => props.onScope({ caseId: s.case_id ?? UNFILED_CASE_ID, shelfId: active ? null : s.id, categoryId: null })}
           style={{
             flex: 1,
@@ -349,10 +358,21 @@ export function Sidebar(props: SidebarProps) {
             display: "flex",
             alignItems: "center",
             gap: "var(--sp-4)",
-            padding: "6px 8px 6px 10px",
+            // LOGICAL, so the bracket sits flush against the rail in both directions. The physical
+            // shorthand this replaces put its 10px on the left, which in an Arabic sidebar is the
+            // far side — the mark floated a third of the way into the row instead of springing
+            // from the connector, and that is half of why it read as a speck rather than a fixing.
+            paddingBlock: 5,
+            paddingInlineStart: 0,
+            paddingInlineEnd: 8,
             borderRadius: "var(--r-sm)",
             font: "500 .75rem var(--ui)",
-            color: active ? "var(--txt)" : "var(--mut)",
+            // A SHELF IS A DESTINATION, and was set at the ink Sard uses for captions. Against a
+            // cabinet at `--txt`/600 the row read as washed out rather than as subordinate — the
+            // whole group looked like a list of labels for the row above it. The size and the
+            // weight are untouched, which is where the hierarchy actually lives; only the ink
+            // comes up, and it still sits clearly below the cabinet.
+            color: active ? "var(--txt)" : "color-mix(in srgb, var(--txt) 76%, transparent)",
           }}
         >
           {/* A rule shelf is an OUTLINED circle; a hand shelf is a filled square. The SHAPE says
@@ -369,34 +389,17 @@ export function Sidebar(props: SidebarProps) {
               move-a-book menu and in the case picker; both fill a small square with
               `ink ?? var(--faint)`. It is the shelf's identity without a coloured row: the ground
               still belongs to hover and to selection, which is what keeps both readable. */}
-          <span
-            style={{
-              flex: "none",
-              width: 7,
-              height: 7,
-              // THE INK IS PAINTED AS CHOSEN, and given an edge instead of being corrected.
-              //
-              // The first attempt ran it through `resolveMarkOnGround`, which walks a colour
-              // toward `--text` until it clears 3:1. That is right for a highlight lying over a
-              // page and wrong for a 7px mark: measured on Parchment and Sepia, whose text is a
-              // warm brown, #BFA8D6 came out at 42-46% walked with its saturation down from 46 to
-              // 18 and its hue dragged from 270° to 307°. It cleared the floor and stopped being
-              // the colour the reader picked, which is the only thing it was for.
-              //
-              // A case's ink is drawn RAW — measured, `3px rgb(191,168,214)`, unwalked — and the
-              // swatches in `InkPicker` carry `0 0 0 1px var(--brd)` so each sits on its own edge
-              // whatever is behind it. Both of those already exist, and together they are the
-              // answer: the true colour, with a hairline that gives the mark a shape on any
-              // ground. A shelf with no ink keeps `--faint` and no ring, exactly as before.
-              ...(s.auto_rule
-                ? { borderRadius: "50%", border: `1.5px solid ${ink ?? "var(--faint)"}` }
-                : {
-                    borderRadius: 2,
-                    background: ink ?? "var(--faint)",
-                    boxShadow: ink ? "0 0 0 1px var(--brd)" : undefined,
-                  }),
-            }}
-          />
+          {/* THE BRACKET — see `.libd-shelfmark`. It carries the shelf's ink as chosen, raw and
+              unwalked, for the reason the old note here gave: a 7px mark run through a contrast
+              correction stopped being the colour the reader picked, which was the only thing it
+              was for. What has changed is its JOB. It used to be a speck floating inside the row;
+              it is now the fixing the board sits on, springing from the group's own rail — so the
+              colour reads as this shelf's identity rather than as one more dot in a column, and a
+              shelf without one simply shows the same hairline the rail is made of.
+
+              A RULE SHELF IS DRAWN BROKEN, which is the same distinction the outlined circle made
+              and the first one that survives being 3px tall. */}
+          <span className={`libd-shelfmark${s.auto_rule ? " is-rule" : ""}`} />
           <span
             style={{
               flex: 1,
@@ -409,10 +412,23 @@ export function Sidebar(props: SidebarProps) {
           >
             {s.name}
           </span>
-          <span style={{ font: "500 .6875rem var(--ui)", color: "var(--faint)" }}>{num(s.count)}</span>
+          <span
+            className={`libd-shelfcount${s.count === 0 ? " is-empty" : ""}`}
+            // NOT `--faint`, which this never left — and that is the point. The colour did not
+            // change; the name beside it did, from `--mut` to 76% ink, and a count that had been
+            // one step behind its label became a hole next to it. See the ladder in the stylesheet.
+            style={{ font: "500 .6875rem var(--ui)", color: "var(--tree-meta)" }}
+          >
+            {num(s.count)}
+          </span>
         </button>
-        {real && (
-          <span style={{ position: "relative", flex: "none" }}>
+        {/* THE SLOT IS ALWAYS HERE, and is empty rather than absent on a run that has no menu to
+            open. Removing it moved every count on that row, which is why the numbers never formed
+            a column. `aria-hidden` keeps the placeholder out of the reading order. */}
+        <span style={{ position: "relative", flex: "none" }} aria-hidden={!real || undefined}>
+          {!real && <span style={{ display: "block", width: "var(--ctl-xs)", height: "var(--ctl-xs)" }} />}
+          {real && (
+            <>
             <button
               // Not `.libd-hov`: that class is (0,2,0) and the shell reset above it is (0,2,1),
               // so inside the chrome it paints nothing. Rest, hover and keyboard all come from
@@ -420,6 +436,7 @@ export function Sidebar(props: SidebarProps) {
               className="libd-shelfdots"
               title={t("lib.manageShelf")}
               aria-label={t("lib.manageShelf")}
+              aria-expanded={shelfMenuFor === s.id}
               onClick={(e) => {
                 e.stopPropagation();
                 setShelfMenuFor((m) => (m === s.id ? null : s.id));
@@ -447,8 +464,9 @@ export function Sidebar(props: SidebarProps) {
                 onClose={() => setShelfMenuFor(null)}
               />
             )}
-          </span>
-        )}
+            </>
+          )}
+        </span>
       </div>
     );
   };
@@ -659,7 +677,15 @@ export function Sidebar(props: SidebarProps) {
                   >
                     {c.name}
                   </span>
-                  <span style={{ font: "500 .6875rem var(--ui)", color: "var(--faint)" }}>
+                  {/* THE COUNT JOINS THE COLUMN ITS SHELVES ARE IN. Nothing else on this row
+                      moves: the bar, the name, the ⋯, the grip, the spacing and the open-state
+                      treatment are all as they were. What changed is underneath it. The shelf
+                      counts were given a weight that can be read, and a cabinet's own count left
+                      on `--faint` then measured WEAKER than the numbers it presides over — 2.89
+                      against 3.71 in sepia, 3.29 against 4.90 in nocturne — in a single column the
+                      eye scans straight down. A cabinet outranks its shelves on its NAME, at
+                      .8125rem/600 in full ink; it has never needed to outrank them twice. */}
+                  <span style={{ font: "500 .6875rem var(--ui)", color: "var(--tree-meta)" }}>
                     {num(c.count)}
                   </span>
                 </button>
@@ -711,15 +737,20 @@ export function Sidebar(props: SidebarProps) {
                 </button>
                 <span style={{ position: "relative", flex: "none" }}>
                   <button
-                    className="libd-hov libd-hov-txt"
+                    // THE SAME CONTROL THE SHELF ROW HAS, so it answers the same way. It wore
+                    // `.libd-hov libd-hov-txt` — the pair `.libd-shelfdots` exists because they
+                    // lose to the shell's button reset — and set its rest ink INLINE on top, which
+                    // outranks every rule there is. Hover, press and open-state all had nothing to
+                    // paint with. Rest ink now comes from the class, like the shelf's.
+                    className="libd-casedots"
                     title={t("lib.manage")}
                     aria-label={t("lib.manage")}
+                    aria-expanded={managing === c.id}
                     onClick={() => setManaging((m) => (m === c.id ? null : c.id))}
                     style={{
                       width: "var(--ctl-xs)",
                       height: "var(--ctl-xs)",
                       borderRadius: "var(--r-sm)",
-                      color: "var(--faint)",
                       fontSize: 13,
                       lineHeight: 1,
                     }}
@@ -745,13 +776,19 @@ export function Sidebar(props: SidebarProps) {
 
               {open && (
                 <div
+                  className="libd-shelfgroup"
                   style={{
                     display: "flex",
                     flexDirection: "column",
-                    gap: 1,
-                    padding: "1px 0 6px 0",
+                    gap: 2,
+                    padding: "2px 0 8px 0",
                     marginInlineStart: 22,
-                    borderInlineStart: "1px solid var(--brd)",
+                    // NO INK IS HANDED TO THE RAIL ANY MORE. It used to take the cabinet's colour
+                    // for its first 18px, which made the connector change colour in mid-run and,
+                    // on the group with no cabinet behind it, disappear entirely for that stretch.
+                    // See `.libd-shelfgroup::before`. The group already says whose it is by being
+                    // indented directly under the cabinet, and the cabinet still says who it is
+                    // with the bar and the disc on its own row — both untouched.
                   }}
                 >
                   {c.shelves.map(shelfRow)}
@@ -894,13 +931,13 @@ export function Sidebar(props: SidebarProps) {
               say "this is a cabinet", and this group is precisely the things that are not in one. */}
           {looseOpen && (
             <div
+              className="libd-shelfgroup"
               style={{
                 display: "flex",
                 flexDirection: "column",
-                gap: 1,
-                padding: "1px 0 6px 0",
+                gap: 2,
+                padding: "2px 0 8px 0",
                 marginInlineStart: 22,
-                borderInlineStart: "1px solid var(--brd)",
               }}
             >
               {props.loose.map(shelfRow)}

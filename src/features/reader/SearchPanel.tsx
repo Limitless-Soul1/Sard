@@ -257,7 +257,7 @@ export function SearchPanel({
               </div>
             )}
 
-            {/* Arabic-first: a quiet reminder that matching ignores tashkīl (design's Arabic panel note) */}
+            {/* A quiet reminder that matching ignores tashkīl (design's Arabic panel note) */}
             {!searching && allShown && bookDir === "rtl" && <div className="sp-tashkil-note">{t("search.tashkilNote")}</div>}
           </>
         )}

@@ -120,6 +120,7 @@ const COMP_STYLE: Record<CompositionId, CardStyle> = {
   manuscript: "manuscript",
   gilded: "gilded",
   night: "moonlit",
+  blank: "blank",
 };
 
 /** Add a delta and keep it inside ±limit. */
@@ -383,6 +384,50 @@ function PhotoCard({
     // Measured: choosing «Arabic» set `"var(--ar-font)"` and changed nothing on the card.
     chosen ? `${chosen}, ${fallback}` : fallback;
 
+  /**
+   * THE STAMPS ON A CARD THAT HAS NO PRESET TO PUT THEM IN.
+   *
+   * A preset card carries the date and the time in a footer row inside its own layout, and that
+   * layout is `inner` — which a custom card deliberately does not draw, because the preset's
+   * furniture is a book quote's furniture and a blank card has no book behind it.
+   *
+   * The stamps are not furniture. They say when the card was made, which is true of a card made
+   * from nothing exactly as it is true of one lifted from a passage — and switching «التاريخ» on
+   * did read the switch, did build the string, and did show the reader the very characters it
+   * would print, in a card that then printed none of them. Measured on a new card with both
+   * switches on: the canvas drew «” · كلماتك هنا. · Sard سَرْد» and nothing else.
+   *
+   * So this draws THE SAME STRING through THE SAME `datetimeEl`, placed the way the wordmark is
+   * placed — absolutely, in a corner — because a blank canvas has no flow for a footer to sit in.
+   * It takes the bottom corner the wordmark does not, so the two can never sit on top of each
+   * other. Nothing about a preset card changes: `inner` still draws its own footer row.
+   */
+  const stampCorner = () => {
+    if (!composition.custom || !datetime) return null;
+    const p = composition.preset;
+    // Where the mark is, if it is drawn at all; the stamp takes the other side.
+    const brandSide = meta.brand ? (p.brandAlign ?? (arabic ? "right" : "left")) : null;
+    const side =
+      brandSide === "left" ? "right" : brandSide === "right" ? "left" : arabic ? "left" : "right";
+    const inset = s(0.075);
+    return (
+      <div
+        className="pc-stampcorner"
+        style={{
+          position: "absolute",
+          bottom: s(0.045),
+          left: side === "left" ? inset : undefined,
+          right: side === "right" ? inset : undefined,
+          zIndex: 3,
+          pointerEvents: "none",
+          userSelect: "none",
+        }}
+      >
+        {datetimeEl(side === "right" ? "right" : "left")}
+      </div>
+    );
+  };
+
   const brandMark = (color: string) => {
     if (!meta.brand) return null;
     const p = composition.preset;
@@ -592,6 +637,28 @@ function PhotoCard({
         )}
       </>
     );
+  } else if (style === "blank") {
+    // THE WORDS AND NOTHING AROUND THEM. This block only draws for a card whose parts are not yet
+    // elements — one saved before the element model existed and reopened — because a lifted part
+    // is hidden here and drawn by the composition instead. So on a new card this renders nothing
+    // visible at all, and on an old one it renders the quote and its credit with no quotation
+    // mark, no rule and no footer ornament: the minimum that is still the reader's card.
+    inner = (
+      <>
+        {renderQuote("start")}
+        {hasCredit && (
+          <div className="pc-credit" style={{ textAlign: arabic ? "right" : "left", marginTop: s(0.03) }}>
+            {titleEl(c.text, arabic ? "right" : "left")}
+            {subtitleEl(arabic ? "right" : "left")}
+          </div>
+        )}
+        {hasFooter && (
+          <div className="pc-footrow" style={{ marginTop: s(0.038) }}>
+            {datetimeEl(undefined) ?? <span />}
+          </div>
+        )}
+      </>
+    );
   } else if (style === "moonlit") {
     inner = (
       <>
@@ -760,6 +827,7 @@ function PhotoCard({
       {calmMark}
       {!composition.custom && inner}
       <ElementsLayer comp={composition} cardW={W} ink={c.text} paper={paperBg} assetUrl={assetUrl} hideId={editingId} onNeedsRoom={onNeedsRoom} />
+      {stampCorner()}
       {brandMark(c.muted)}
     </div>
   );
@@ -1147,7 +1215,19 @@ export function PhotoComposer({
       applyComposition: (id: CompositionId) => {
         setCompId(id);
         setCardStyle(COMP_STYLE[id]);
-        setElements(applyComposition(compRef.current, id, layoutCanvas).elements);
+        // BLANK TAKES THE MARK OFF TOO. The Sard mark is the one piece of preset decoration that is
+        // a stamp rather than a skin, so a skin that draws nothing would still leave it at the foot.
+        // Switching it off here is part of applying the template — the control that puts it back
+        // is untouched and works as before — and the layout is worked out WITHOUT its band, or the
+        // words would sit above a space reserved for a mark that is no longer there. Like every
+        // other composition this is an act, not a mode: choosing a designed one afterwards does not
+        // switch the mark back on by itself.
+        const plain = id === "blank";
+        if (plain) setMeta((m) => ({ ...m, brand: false }));
+        const from = plain
+          ? { ...compRef.current, preset: { ...compRef.current.preset, meta: { ...compRef.current.preset.meta, brand: false } } }
+          : compRef.current;
+        setElements(applyComposition(from, id, layoutCanvas).elements);
       },
     }),
     [format, composition.canvas.w, composition.canvas.h, papers, themeId, ground, cardDir, meta, compId, data.date, lang],
@@ -1232,21 +1312,33 @@ export function PhotoComposer({
   }, partsDeps);
 
   /**
-   * WHAT AN AUTO-FITTED QUOTE IS ACTUALLY DRAWN AT.
+   * WHAT AN AUTO-FITTED TEXT IS ACTUALLY DRAWN AT.
    *
-   * Auto-fit stores no size — that is the point of it — so taking the size by hand has to start from
-   * the value the fit arrived at, read from the node that is drawing. Anything else would hand the
-   * user a different size from the one they were looking at, which is what the old XS–XL row did.
+   * Auto-fit stores no size — that is the point of it — so the size control has to read the value
+   * the fit arrived at from the node that is drawing. Anything else would show the user a different
+   * number from the one they are looking at, which is what the old XS–XL row did.
+   *
+   * IT FOLLOWS THE SELECTION, not only the preset's quote. The size control is about whatever is
+   * selected, and the quote happens to be the only thing born auto-fitting today — but a control
+   * that reads one element's size while pointing at another is a bug waiting for the second one.
+   * With nothing selected it falls back to the quote, which is what the in-place editor wants.
+   *
+   * `elements` is a dependency because that is what changes when a box is moved or resized: the fit
+   * re-runs against the new bounds, and this reads the number it landed on, so the control follows.
    */
+  const fitTarget =
+    selected && selected.kind !== "unknown" && selected.kind !== "image" && selected.style.size == null
+      ? selected
+      : (autoFit ? quoteEl : null);
   const [fittedFrac, setFittedFrac] = useState<number | null>(null);
   useLayoutEffect(() => {
     const card = cardRef.current;
-    if (!card || !quoteEl || !autoFit) { setFittedFrac(null); return; }
-    const node = card.querySelector(`[data-el="${quoteEl.id}"] > *`) as HTMLElement | null;
+    if (!card || !fitTarget) { setFittedFrac(null); return; }
+    const node = card.querySelector(`[data-el="${fitTarget.id}"] > *`) as HTMLElement | null;
     if (!node) return;
     const px = parseFloat(getComputedStyle(node).fontSize);
     if (px > 0) setFittedFrac(px / natW);
-  }, [quoteEl, autoFit, natW, elements]);
+  }, [fitTarget, natW, elements]);
   const autoFrac = fittedFrac ?? parts.find((p) => p.part === "quote")?.style.size ?? 0.062;
 
   /**
@@ -2325,6 +2417,7 @@ export function PhotoComposer({
                 comp={composition}
                 selected={selected}
                 canvas={{ w: composition.canvas.w, h: composition.canvas.h }}
+                autoFrac={autoFrac}
                 doc={docControls}
                 onStyle={(patch) => selected && edit((c) => updateStyle(c, selected.id, patch))}
                 onText={(text) => selected && edit((c) => updateText(c, selected.id, text))}

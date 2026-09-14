@@ -209,6 +209,80 @@ export const DESIGN_SORTS: DesignSort[] = ["recent", "added", "title", "author",
 export const asShelfOrder = (s: DesignSort): ShelfOrder => (s === "shelf" ? "hand" : s);
 
 /**
+ * THE ORDER A LIBRARY OPENS IN WHEN NOBODY HAS CHOSEN ONE.
+ *
+ * It was «الأحدث قراءةً», which meant a library nobody had sorted was re-shuffled by the clock every
+ * time a book was opened, and an order the reader had arranged by hand was invisible to them until
+ * they found the sort menu. The shelf's own order is what the shelf is FOR, so that is what an
+ * unchosen library shows.
+ */
+export const DEFAULT_SORT: DesignSort = "shelf";
+
+/**
+ * The sort to start in, given whatever was found in `libd_sort`.
+ *
+ * WHAT TELLS A DEFAULT FROM A CHOICE is the presence of the stored value, and nothing else. The key
+ * is written only by the sort control, so a library without it is a library whose reader has never
+ * chosen — and it gets the default. A stored value, whatever it is, is theirs and wins; it is never
+ * rewritten, and the default is never written back over it.
+ *
+ * A value this build does not recognise — an older name, a newer one, a damaged row — falls back to
+ * the default rather than to a criterion that sorts nothing, and is still left on disk untouched.
+ */
+export const restoredSort = (stored: string | null | undefined): DesignSort =>
+  stored && ([...DESIGN_SORTS, "shelf"] as string[]).includes(stored)
+    ? (stored as DesignSort)
+    : DEFAULT_SORT;
+
+/**
+ * WHAT SHAPE A LANDING PLACE TAKES, where the view did not say.
+ *
+ * Grid's cards and Details' rows have a stylesheet class each. Everything else — Covers, Spines,
+ * Vista — sizes its own place inline, from the very numbers its books are sized from: the grid
+ * track's width at the cover's own 2:3, or the carried book's width at this density's spine height.
+ *
+ * The fallback used to know only «grid or not», so every other view was stamped with the ROW class
+ * as well. That class carries an explicit `height: 56px`, and an explicit height beats an
+ * `aspect-ratio`: measured in Covers, every landing place came out 108×56 beside 108×162 covers — a
+ * short wide bar in a track shaped for a book. A view that draws its own place gets no class here.
+ */
+/**
+ * THE RUN AN ORDERING WRITE SHOULD BE JUDGED AGAINST, once a book has just been filed somewhere.
+ *
+ * `view_order_reorder` rewrites a run whole from the sequence it is handed, and refuses a book that
+ * sequence does not contain. The sequence the interface can see is the one it DREW, which was drawn
+ * before the membership write — so it names every book of the destination except the one being
+ * filed. Handing that over is the difference between "placed where I aimed" and a refused write, a
+ * book left at the end of its new shelf, and a reader told that nothing changed.
+ *
+ * `rankWritten` is `placed.changed`: whether the filing actually wrote a position. It appends (the
+ * call names no neighbour), so a book whose rank was written joins the drawn run at its END; a book
+ * whose rank was not written was already in that run, at its own place, and the drawn run says
+ * where.
+ *
+ * `undefined` means «I cannot describe this run» — which is a real answer, and not the same as an
+ * empty run. The caller must not send a sequence that is missing either the book or the neighbour
+ * the reader aimed at: a partial run is worse than none, because the write would be judged against
+ * it rather than against the rows already stored.
+ */
+export function presentAfterFiling(args: {
+  drawn: string[];
+  bookId: string;
+  before: string | null;
+  rankWritten: boolean;
+}): string[] | undefined {
+  const { drawn, bookId, before, rankWritten } = args;
+  const run = rankWritten ? [...drawn.filter((id) => id !== bookId), bookId] : drawn;
+  if (!run.includes(bookId)) return undefined;
+  if (before !== null && !run.includes(before)) return undefined;
+  return run;
+}
+
+export const slotClassFor = (v: DesignView): string | undefined =>
+  v === "grid" ? "libd-cardslot" : v === "details" ? "libd-rowslot" : undefined;
+
+
+/**
  * WHICH ORDER ACTUALLY GOVERNS A PLACE'S BOOKS — the one decision, made once.
  *
  * Two settings can both speak about the same books: «ترتيب حسب» in the toolbar, which is the

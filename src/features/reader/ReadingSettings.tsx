@@ -4,7 +4,9 @@
 // chrome → inherits the UI direction and uses theme tokens. Replaces the old cramped
 // TypographyBar wall-of-buttons; the dev page-turn / book-switcher / status controls are gone.
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useState,
+  type CSSProperties, type ReactNode, useRef, useId } from "react";
+import { createPortal } from "react-dom";
 
 import { useI18n } from "../../i18n";
 import { InkCustom } from "../../components/InkCustom";
@@ -519,6 +521,68 @@ function TtsOutcomesRow() {
   );
 }
 
+/**
+ * THE NEAREST BOX THAT CAN HOLD A POPOVER WITHOUT CUTTING IT.
+ *
+ * An absolutely positioned box is clipped by — and counts toward the scrollable height of — any
+ * ancestor that both scrolls and is in its containing-block chain. The font list was anchored to its
+ * own row, and that row sits inside `.sp-body`, the settings drawer's `overflow-y: auto` scroller.
+ * So the drawer cut the list off AND grew its own scroll range by exactly the amount the list hung
+ * past the edge — one overflow, seen twice. Walking past every clipping ancestor to the first one
+ * that positions but does not clip is what takes the list out of that chain: the drawer is then not
+ * in its containing-block chain at all, so it can neither clip it nor count it.
+ *
+ * Returning null means nothing between here and the body qualified, and the caller falls back to
+ * the viewport — correct in this app, where the page itself never scrolls.
+ */
+function popoverHost(from: HTMLElement | null): HTMLElement | null {
+  let n = from?.parentElement ?? null;
+  // PAST THE CLIPPER, NOT UP TO IT. The control's own wrapper is positioned and clips nothing, so a
+  // walk that takes the first such ancestor stops one step from the trigger and escapes nothing —
+  // measured: the list was hung from an 18px-tall box, so it had no room to size itself against and
+  // came out at its floor every time, pointing down off the window. Only an ancestor OUTSIDE every
+  // clipping box between here and there is out of the chain, so the walk has to pass one first.
+  let escaped = false;
+  while (n && n !== document.body && n !== document.documentElement) {
+    const cs = getComputedStyle(n);
+    if (/(auto|scroll|hidden|clip)/.test(cs.overflowX + cs.overflowY)) escaped = true;
+    else if (escaped && cs.position !== "static") return n;
+    n = n.parentElement;
+  }
+  return null;
+}
+
+/** The scroller the control is riding in, so an open list can follow it or step aside. */
+function nearestScroller(from: HTMLElement | null): HTMLElement | null {
+  let n = from?.parentElement ?? null;
+  while (n && n !== document.documentElement) {
+    if (/(auto|scroll)/.test(getComputedStyle(n).overflowY)) return n;
+    n = n.parentElement;
+  }
+  return null;
+}
+
+/**
+ * A CHOICE, ON SARD'S OWN SURFACE.
+ *
+ * This was a native `<select>`, and both faults the reader reported came from that one fact.
+ *
+ * THE OPEN LIST WAS WINDOWS'. `appearance: none` restyles the closed control and nothing else — the
+ * popup is drawn by WebView2 in an OS layer no stylesheet reaches. The stylesheet admitted as much:
+ * `.rs-select option { color: #1a1a1a }` existed only to keep that white popup legible, which is
+ * the single lever CSS has over it. So a reader opening the font list left Sard and stood in a
+ * Windows menu, on every theme, over the glass.
+ *
+ * THE CLOSED CONTROL OVERFLOWED because a `<select>` sizes itself to its LONGEST OPTION rather than
+ * to the value it is showing, and as a flex item it defaults to `min-width: auto` — it refuses to
+ * shrink below that content. «IBM Plex Sans Arabic» therefore pushed straight through the field's
+ * rounded edge. That is why the fix is not a smaller type size: the box was never asked to fit.
+ *
+ * What replaces it is a button and a list, which is all a select is. The list is `--pap` on a
+ * hairline with the panel's own radius and the quiet scrollbar the rest of the chrome uses, so it
+ * belongs to the surface that opened it. The value truncates because it is now ordinary text in a
+ * box that is allowed to be smaller than it.
+ */
 function SelectRow<T extends string>({
   label,
   value,
@@ -527,23 +591,269 @@ function SelectRow<T extends string>({
 }: {
   label: string;
   value: T;
-  options: { key: T; label: string }[];
+  options: { key: T; label: string; note?: string }[];
   onChange: (k: T) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  /** Where the list fits, measured when it opens rather than assumed. */
+  const [place, setPlace] = useState<{ up: boolean; style: CSSProperties }>({ up: false, style: {} });
+  /** The box it hangs from — resolved from the tree rather than named. */
+  const [host, setHost] = useState<HTMLElement | null>(null);
+  const [active, setActive] = useState(0);
+  const trigger = useRef<HTMLButtonElement | null>(null);
+  const list = useRef<HTMLUListElement | null>(null);
+  const id = useId();
+
+  const at = Math.max(0, options.findIndex((o) => o.key === value));
+  const current = options[at]?.label ?? String(value);
+
+  /**
+   * WHERE IT FITS, MEASURED AGAINST THE BOX IT IS ACTUALLY IN.
+   *
+   * It used to ask the WINDOW how much room it had, while living inside a 436px scroll box — which
+   * is why it sized itself to 268px wherever it stood, and why the drawer then cut it off. Measured
+   * at every window size tried: the list hung 48px below `.sp-body` and was sliced there by a hard
+   * edge, and that same scroller's `scrollHeight` grew by the same 48px.
+   *
+   * So it hangs from `popoverHost` — the first ancestor that positions without clipping — and every
+   * figure below is read off THAT box. It leaves the scroller's containing-block chain, so it stops
+   * being clipped by it and stops enlarging it, and it is sized to the room the drawer really has.
+   *
+   * `position: fixed` is not the escape it looks like: the drawer carries a `backdrop-filter` AND a
+   * `transform`, and either one alone makes it the containing block for its fixed descendants —
+   * measured on the running app rather than assumed. A fixed list would resolve against the drawer
+   * regardless, while reading as though it resolved against the window. Saying `absolute` against a
+   * host we actually looked up says the same thing, truthfully.
+   */
+  const measure = useCallback(() => {
+    const t = trigger.current;
+    if (!t) return;
+    const h = popoverHost(t);
+    const view = new DOMRect(0, 0, window.innerWidth, window.innerHeight);
+    // TWO BOXES, TWO QUESTIONS, and they are deliberately not the same box.
+    //
+    // `origin` is the CONTAINING BLOCK — what the offsets below are counted from. It is the drawer,
+    // because that is the first thing outside the scroller that can hold the list whole.
+    //
+    // `room` is where the list is ALLOWED TO BE, and that is the band the rows themselves occupy:
+    // escaping the scroller's clipping is the fix, but a list free to cover the drawer's title and
+    // tabs would read as having escaped the panel too. Bounded by the rows and clipped by nobody is
+    // both of the things this needs to be. Intersected with the window so a drawer that hangs off
+    // the screen can never size the list to room it does not have.
+    const origin = h ? h.getBoundingClientRect() : view;
+    const bounds = nearestScroller(t)?.getBoundingClientRect() ?? origin;
+    const top = Math.max(bounds.top, view.top), bottom = Math.min(bounds.bottom, view.bottom);
+    const left = Math.max(bounds.left, view.left), right = Math.min(bounds.right, view.right);
+    const r = t.getBoundingClientRect();
+    const EDGE = 14;   // breathing room off the edge of that room
+    const GAP = 7;     // the list's own offset from the trigger
+    const WANT = 268;  // the height it would like, if the room is there
+    const below = bottom - r.bottom - GAP - EDGE;
+    const above = r.top - top - GAP - EDGE;
+    const up = below < Math.min(WANT, 200) && above > below;
+    // THE LIST IS THE CONTROL'S OWN RECTANGLE, CONTINUED. `r` is the whole selector — the label,
+    // the value and the caret — so taking its width and its leading edge makes the two boxes line up
+    // exactly, above or below, and makes the popover read as the same control opened rather than a
+    // menu that happened to appear near it. Both edges are physical and both come from the same
+    // rectangle, so there is no direction to get wrong.
+    const style: CSSProperties = {
+      position: h ? "absolute" : "fixed",
+      maxHeight: Math.max(120, Math.round(Math.min(WANT, up ? above : below))),
+      left: Math.round(r.left - origin.left),
+      width: Math.round(Math.min(r.width, right - left)),
+    };
+    if (up) style.bottom = Math.round(origin.bottom - r.top + GAP);
+    else style.top = Math.round(r.bottom - origin.top + GAP);
+    setHost(h);
+    setPlace({ up, style });
+  }, []);
+
+  useLayoutEffect(() => { if (open) measure(); }, [open, at, measure]);
+
+  // IT NO LONGER MOVES WITH THE PANEL, because it is no longer inside it — so it is told when the
+  // panel moves. And if the row it belongs to scrolls out of the drawer's window there is nothing
+  // left to hang from, so the list goes too rather than floating over the panel unattached.
+  useEffect(() => {
+    if (!open) return;
+    const scroller = nearestScroller(trigger.current);
+    const again = () => {
+      const t = trigger.current;
+      if (t && scroller) {
+        const r = t.getBoundingClientRect(), b = scroller.getBoundingClientRect();
+        if (r.bottom < b.top + 2 || r.top > b.bottom - 2) { setOpen(false); return; }
+      }
+      measure();
+    };
+    window.addEventListener("resize", again);
+    document.addEventListener("scroll", again, true);
+    return () => {
+      window.removeEventListener("resize", again);
+      document.removeEventListener("scroll", again, true);
+    };
+  }, [open, measure]);
+
+  // OPENING STARTS AT THE CURRENT CHOICE, which is what a select does and what makes Arrow keys
+  // feel like a continuation rather than a reset.
+  const show = () => {
+    setActive(at);
+    // IN THE SAME BATCH AS THE OPEN. Resolving the host in the layout effect instead would paint one
+    // frame against the fallback and then move it, which is a flinch on every open.
+    setHost(popoverHost(trigger.current));
+    setOpen(true);
+    // AND TAKE FOCUS. The keys are read on the trigger, so a list opened by a press the button did
+    // not receive focus from is a list the keyboard cannot reach — measured: Arrow and Enter went
+    // to the document and the selection never moved. Focusing here makes the two ways of opening
+    // it arrive in the same state.
+    trigger.current?.focus();
+  };
+  const hide = (refocus = true) => {
+    setOpen(false);
+    // AFTER THE LIST HAS GONE. Focusing in the same turn as the state change races the unmount —
+    // measured on the Escape path, which closed correctly and left focus on the body, so the next
+    // key went to the drawer instead of the control the reader was standing in.
+    if (refocus) requestAnimationFrame(() => trigger.current?.focus());
+  };
+  const choose = (k: T) => { onChange(k); hide(); };
+
+  // A press anywhere else closes it. Armed on the next frame so the press that OPENED it — still
+  // travelling toward the document — is not read as a press outside.
+  useEffect(() => {
+    if (!open) return;
+    let armed = false;
+    const f = requestAnimationFrame(() => { armed = true; });
+    const away = (e: PointerEvent) => {
+      if (!armed) return;
+      const n = e.target as Node;
+      // THE LIST IS NOT INSIDE THE CONTROL ANY MORE — it hangs from the drawer — so containment has
+      // to be asked of both, or choosing a font reads as a press outside and closes before it lands.
+      if (trigger.current?.contains(n) || list.current?.contains(n)) return;
+      setOpen(false);
+    };
+    document.addEventListener("pointerdown", away, true);
+    return () => { cancelAnimationFrame(f); document.removeEventListener("pointerdown", away, true); };
+  }, [open]);
+
+  /**
+   * Keep the highlighted row in view when the keys walk past the edge of a long list.
+   *
+   * BY MOVING THE LIST, NOT WHAT IS BEHIND IT. `scrollIntoView` walks every scrollable ancestor, so
+   * revealing the current font also scrolled the settings drawer — measured at 1440x900: opening the
+   * chooser took the drawer from scrollTop 0 to 179 in the same frame, which is the lurch the reader
+   * saw. The list is the only thing that should move here, so it is the only thing moved.
+   */
+  useEffect(() => {
+    if (!open) return;
+    const l = list.current;
+    const el = l?.querySelector<HTMLElement>(`[data-at="${active}"]`);
+    if (!l || !el) return;
+    const top = el.offsetTop - l.clientTop;
+    const bottom = top + el.offsetHeight;
+    if (top < l.scrollTop) l.scrollTop = top;
+    else if (bottom > l.scrollTop + l.clientHeight) l.scrollTop = bottom - l.clientHeight;
+  }, [open, active]);
+
+  /**
+   * THE SEMANTICS A NATIVE SELECT GAVE FOR FREE, written out.
+   *
+   * Focus stays on the button and `aria-activedescendant` names the row being walked, rather than
+   * moving focus into the list — a listbox that takes focus has to give it back on every exit, and
+   * every path that forgets is a trap. There is nothing here to escape from.
+   */
+  const onKey = (e: React.KeyboardEvent) => {
+    if (!open) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        show();
+      }
+      return;
+    }
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); hide(); return; }
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      const pick = options[active];
+      if (pick) choose(pick.key);
+      return;
+    }
+    if (e.key === "Tab") { setOpen(false); return; }
+    const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0;
+    if (step) {
+      e.preventDefault();
+      setActive((i) => (i + step + options.length) % options.length);
+      return;
+    }
+    if (e.key === "Home") { e.preventDefault(); setActive(0); }
+    if (e.key === "End") { e.preventDefault(); setActive(options.length - 1); }
+  };
+
+  /**
+   * ONE SURFACE, NOT A BUTTON SITTING IN A BOX THAT LOOKS LIKE ONE.
+   *
+   * The rounded rectangle a reader sees IS this row, but only the value inside it used to take the
+   * press — so the label, the gap and the caret all looked pressable and did nothing, and the
+   * hotspot was visibly smaller than the control. The row carries nothing but this selector's own
+   * label and value, so the row is the control: it takes the press, the focus and the keys, and it
+   * is the rectangle the list is measured and aligned against.
+   */
   return (
-    <label className="rs-select-row">
-      <span className="rs-select-label">{label}</span>
-      <span className="rs-select-wrap">
-        <select className="rs-select" value={value} onChange={(e) => onChange(e.target.value as T)}>
-          {options.map((o) => (
-            <option key={o.key} value={o.key}>
-              {o.label}
-            </option>
+    <>
+      <button
+        type="button"
+        ref={trigger}
+        className="rs-select-row"
+        role="combobox"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-controls={`${id}-list`}
+        aria-labelledby={`${id}-label`}
+        aria-activedescendant={open ? `${id}-opt-${active}` : undefined}
+        onClick={() => (open ? hide(false) : show())}
+        onKeyDown={onKey}
+      >
+        <span className="rs-select-label" id={`${id}-label`}>{label}</span>
+        <span className="rs-sel">
+          <span className="rs-sel-value">{current}</span>
+          {options[at]?.note && <span className="rs-sel-note">{options[at].note}</span>}
+          <span className="rs-sel-caret" aria-hidden>▾</span>
+        </span>
+      </button>
+      {/* RENDERED INTO THE HOST, NOT HERE. In the tree it stays the trigger's sibling — React
+          keeps events, focus order and `aria-controls` intact across a portal — but in layout it
+          becomes a child of the drawer, which is the whole point: out of the scroller's
+          containing-block chain, so the scroller can neither cut it nor grow around it. */}
+      {open && createPortal(
+        <ul
+          className={`rs-sel-list${place.up ? " is-up" : ""}`}
+          id={`${id}-list`}
+          role="listbox"
+          ref={list}
+          aria-labelledby={`${id}-label`}
+          style={place.style}
+        >
+          {options.map((o, i) => (
+            <li
+              key={o.key}
+              id={`${id}-opt-${i}`}
+              data-at={i}
+              role="option"
+              aria-selected={o.key === value}
+              className={`rs-sel-opt${o.key === value ? " is-on" : ""}${i === active ? " is-at" : ""}`}
+              onPointerEnter={() => setActive(i)}
+              onClick={() => choose(o.key)}
+            >
+              <span className="rs-sel-name">{o.label}</span>
+              {/* «مستورد» ON EVERY ROW WAS THE LOUDEST THING IN THE LIST. It was part of the
+                  label string, so it sat in the same ink and the same size as the name it
+                  qualified and repeated down the whole column — and it rode into the closed
+                  control too, where it ate the width the name needed. It says something worth
+                  keeping (this face came from the reader's own files, not Sard's), so it stays —
+                  as a mark beside the name rather than more of the name. */}
+              {o.note && <span className="rs-sel-note">{o.note}</span>}
+            </li>
           ))}
-        </select>
-        <span className="rs-select-caret" aria-hidden>▾</span>
-      </span>
-    </label>
+        </ul>,
+        host ?? document.body,
+      )}
+    </>
   );
 }
 
@@ -664,7 +974,7 @@ export function ReadingSettings({
         onChange={(k) => update({ latinFont: k })}
         options={[
           ...(Object.keys(LATIN_FONTS) as LatinFont[]).map((k) => ({ key: k, label: LATIN_FONTS[k].label })),
-          ...familiesOnce(customFonts).map((c) => ({ key: c.family_name, label: `${c.family_name} · ${t("gs.imported")}` })),
+          ...familiesOnce(customFonts).map((c) => ({ key: c.family_name, label: c.family_name, note: t("gs.imported") })),
         ]}
       />
       <SelectRow<string>
@@ -673,7 +983,7 @@ export function ReadingSettings({
         onChange={(k) => update({ arabicFont: k })}
         options={[
           ...(Object.keys(ARABIC_FONTS) as ArabicFont[]).map((k) => ({ key: k, label: ARABIC_FONTS[k].label })),
-          ...familiesOnce(customFonts).map((c) => ({ key: c.family_name, label: `${c.family_name} · ${t("gs.imported")}` })),
+          ...familiesOnce(customFonts).map((c) => ({ key: c.family_name, label: c.family_name, note: t("gs.imported") })),
         ]}
       />
       {/* RAWY-271: discoverability only. Imported fonts already appear in both lists above (RAWY-44),

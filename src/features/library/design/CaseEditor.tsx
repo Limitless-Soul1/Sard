@@ -22,6 +22,7 @@ import {
   categoryReorder,
   collectionDelete,
   collectionRemoveBook,
+  libraryAddBookToShelf,
   collectionRename,
   libraryTree,
   shelfCreate,
@@ -310,8 +311,15 @@ export function CaseEditor(props: CaseEditorProps) {
     let ok = true;
     try {
       if (moveTo) {
+        // JOIN THE DESTINATION — the deletion below takes care of leaving.
+        //
+        // This was `shelfPlaceBook`, which means «here and nowhere else» and would have stripped
+        // every OTHER shelf these books were on as a side effect of emptying this one. Deleting
+        // «تست» must not quietly take its books off «المفضلة» too. `collectionDelete` already
+        // removes this shelf's own memberships one at a time and unfiles only what is left with
+        // none, so an add is the whole of the move.
         for (const g of shelfBooks(s)) {
-          for (const b of g.books) await shelfPlaceBook(moveTo, b.id, null, 0);
+          for (const b of g.books) await libraryAddBookToShelf(b.id, moveTo, null);
         }
       }
       await collectionDelete(s.id);
@@ -333,7 +341,14 @@ export function CaseEditor(props: CaseEditorProps) {
     try {
       const run2 = shelfBooks(s).find((g) => g.categoryId === catId);
       if (run2) {
-        for (const b of run2.books) await shelfPlaceBook(s.id, b.id, moveTo, 0);
+        // RE-GROUP WITHIN THIS SHELF, and touch nothing else.
+        //
+        // Two faults in the old call, both from `shelfPlaceBook` meaning «here and nowhere else».
+        // Setting a book's category deleted every other shelf it was on — so tidying the groups
+        // inside «روايات» unfiled the same book from «المفضلة». And it re-ranked to index 0, so a
+        // category change also threw the books to the top of the shelf. `libraryAddBookToShelf`
+        // against a shelf the book is already on writes the category alone and leaves the rank.
+        for (const b of run2.books) await libraryAddBookToShelf(b.id, s.id, moveTo);
       }
       tree = await categoryDelete(catId);
     } catch (e) {

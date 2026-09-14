@@ -76,37 +76,35 @@ export function CardToolbar({
             onPick={(v) => onStyle({ family: v || null })}
           />
 
-          {/* A quote that fits itself has no size to show, and showing one anyway would be a made-up
-              number that the field then pretended to edit. It says what it is doing instead, and
-              pressing it takes the size by hand at whatever it had just fitted to. */}
-          {selected.style.size == null ? (
-            <button className="pcx-tb-auto" onClick={() => onStyle({ size: autoFrac })} title={t("photo.tb.autoHint")}>
-              {t("photo.tb.auto")}
-            </button>
-          ) : (
-            <div className="pcx-tb-group">
-              <button
-                className="pcx-tb-step"
-                onClick={() => onStyle({ size: frac(Math.max(6, px(selected.style.size ?? 0) - 1)) })}
-                title={t("photo.tb.smaller")}
-              >−</button>
-              <ScrubField
-                value={px(selected.style.size)}
-                onChange={(v) => onStyle({ size: frac(v) })}
-                min={6}
-                max={Math.round(canvasW * 0.4)}
-                step={1}
-                unit="px"
-                width={44}
-                title={t("photo.tb.sizeHint")}
-              />
-              <button
-                className="pcx-tb-step"
-                onClick={() => onStyle({ size: frac(px(selected.style.size ?? 0) + 1) })}
-                title={t("photo.tb.bigger")}
-              >+</button>
-            </div>
-          )}
+          {/* THE SIZE IS ALWAYS A NUMBER ON THIS STRIP, however the text arrived at it.
+              A quote that fits itself used to show an «تلقائي» button here instead of its size —
+              the same control standing down for a label that the inspector was doing, a second time
+              and in the place a reader reaches first. It is not a made-up number: `autoFrac` is read
+              off the node that is drawing, so the strip shows what is on the card, and it re-reads
+              when the box is moved or resized. Stepping or scrubbing it writes that size down and
+              the text is sized by hand from there. */}
+          <div className="pcx-tb-group">
+            <button
+              className="pcx-tb-step"
+              onClick={() => onStyle({ size: frac(Math.max(6, px(selected.style.size ?? autoFrac) - 1)) })}
+              title={t("photo.tb.smaller")}
+            >−</button>
+            <ScrubField
+              value={px(selected.style.size ?? autoFrac)}
+              onChange={(v) => onStyle({ size: frac(v) })}
+              min={6}
+              max={Math.round(canvasW * 0.4)}
+              step={1}
+              unit="px"
+              width={44}
+              title={t("photo.tb.sizeHint")}
+            />
+            <button
+              className="pcx-tb-step"
+              onClick={() => onStyle({ size: frac(px(selected.style.size ?? autoFrac) + 1) })}
+              title={t("photo.tb.bigger")}
+            >+</button>
+          </div>
 
           <div className="pcx-tb-segs">
             {ALIGNS.map((a) => (

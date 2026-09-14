@@ -54,7 +54,7 @@ export type RoleText = Partial<Record<PresetPart, string>>;
 export type Archetype = "display" | "spacious" | "balanced" | "editorial" | "dense";
 
 /** How the four shipped compositions colour the result. A flavour tilts; it does not dictate. */
-export type Flavour = "calm" | "manuscript" | "gilded" | "night";
+export type Flavour = "calm" | "manuscript" | "gilded" | "night" | "blank";
 
 export interface AutoLayout {
   elements: TextElement[];
@@ -164,6 +164,12 @@ const FLAVOUR: Record<Flavour, { align: TextStyle["align"]; margin: number; air:
   gilded: { align: "center", margin: 1.16, air: 0.96 },
   // Large and quiet: the quote gets the room, the credit stays small and low.
   night: { align: "start", margin: 0.92, air: 1.12 },
+  // NOTHING PRE-DESIGNED. The baseline figures exactly — no wider margins, no extra air — and the
+  // words flush to the edge the card reads from, which is where a page would put them. Its skin
+  // (`blank` in PhotoComposer) draws no ornament, no quotation mark and no mark, so choosing it is
+  // choosing the canvas and nothing else. The four above are ways of reading a passage; this is
+  // the option for a reader who would rather decide all of that themselves.
+  blank: { align: "start", margin: 1, air: 1 },
 };
 
 /** Where a size lands tells you what kind of card this is. */

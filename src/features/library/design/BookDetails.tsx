@@ -21,7 +21,8 @@ import {
   bookStageSpine,
   bookUpdate,
   collectionRemoveBook,
-  shelfPlaceBook,
+  libraryAddBookToShelf,
+  libraryPlaceBook,
   progressSave,
 } from "../../../lib/ipc";
 import { useI18n } from "../../../i18n";
@@ -47,6 +48,7 @@ import {
   type BookDraft,
 } from "./bookEdits";
 import { useScrimDismiss, useDialog } from "../../../components/useDialog";
+import { Icon } from "../../../components/Icon";
 
 
 /** The dialog's palette, exactly as authored. */
@@ -94,7 +96,15 @@ export interface BookDetailsProps {
   cases: CaseNode[];
   loose: ShelfNode[];
   /** Which shelf currently holds this book, and the case above it. */
-  placement: { caseNode: CaseNode | null; shelf: ShelfNode; categoryId: string | null } | null;
+  /**
+   * EVERY SHELF THIS BOOK IS ON, in the arrangement's order. Empty for a book on no shelf.
+   *
+   * Plural because a book may sit on «روايات عربية» and «المفضلة» at once and must be shown on
+   * both. It was a single placement, which forced whoever computed it to choose one of several and
+   * present it as the answer — and a panel that then offered «move» against that choice would
+   * destroy a membership the reader never named.
+   */
+  placements: { caseNode: CaseNode | null; shelf: ShelfNode; categoryId: string | null }[];
   /** The Library toast — a failed organisation write says so rather than doing nothing visible. */
   notify: (msg: string) => void;
   onClose: () => void;
@@ -104,9 +114,179 @@ export interface BookDetailsProps {
   libraryCoverMode: CoverMode;
 }
 
+
+/**
+ * THE DESTINATIONS, AS PART OF THE SECTION RATHER THAN A CARD OVER IT.
+ *
+ * It was a floating panel: absolutely positioned, on the menu surface, with a shadow and a flip for
+ * when it ran off the window. Inside an already-floating dialog that reads as a second, unrelated
+ * rectangle — it overlapped the controls beneath it, it had to guess which way to open, and its
+ * relationship to the button that summoned it was something the reader had to infer from proximity.
+ *
+ * Opening IN THE FLOW removes all of that. There is no anchoring, no collision, no stacking order
+ * and no way for it to escape the dialog, because it is inside the dialog's own column and the
+ * dialog scrolls it like everything else. What is left to design is the only thing that mattered:
+ * the hierarchy.
+ *
+ * CABINET → SHELF, IN SARD'S OWN IDIOM. The sidebar already draws this relationship — a cabinet
+ * with its ink, and its shelves indented off a rail beneath it — so the chooser draws it the same
+ * way rather than inventing a second grammar for the same fact. A flat list of shelf names with a
+ * heading above them, which is what this was, reads as one column of equals: «روايات» sat in the
+ * same place and nearly the same weight as «test1» underneath it.
+ *
+ * The ink dot is what finally separates two shelves called «المفضّلة»: they hang off different
+ * rails, under different colours.
+ */
+function Chooser(props: {
+  groups: { id: string; name: string; ink: string | null; items: { id: string; name: string }[] }[];
+  current: string;
+  onPick: (id: string) => void;
+  onClose: () => void;
+  /** Show the search field once the list is at least this long. */
+  searchFrom: number;
+}) {
+  const { t } = useI18n();
+  const [q, setQ] = useState("");
+  const box = useRef<HTMLDivElement | null>(null);
+
+  // BRING IT INTO VIEW. It opens in the dialog's own column, below a button that may itself be near
+  // the foot of the scroll — so without this the panel appears somewhere the reader cannot see and
+  // the press looks as though it did nothing.
+  useEffect(() => {
+    box.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, []);
+
+  // Escape closes it. Nothing else is needed: it is in the flow, so a press elsewhere is a press on
+  // whatever it lands on, and the button that opened it is a toggle.
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { e.stopPropagation(); props.onClose(); }
+    };
+    document.addEventListener("keydown", esc, true);
+    return () => document.removeEventListener("keydown", esc, true);
+  }, [props.onClose]);
+
+  const total = props.groups.reduce((n, g) => n + g.items.length, 0);
+  const needle = q.trim().toLowerCase();
+  const shown = props.groups
+    .map((g) => ({
+      ...g,
+      items: needle
+        ? g.items.filter((it) => it.name.toLowerCase().includes(needle) || g.name.toLowerCase().includes(needle))
+        : g.items,
+    }))
+    .filter((g) => g.items.length);
+
+  return (
+    <div
+      ref={box}
+      data-chooser="1"
+      style={{
+        marginTop: 8,
+        border: "1px solid var(--brd)",
+        borderRadius: "var(--r-md)",
+        background: "var(--pap)",
+        overflow: "hidden",
+        animation: "sard-rise .12s ease-out",
+      }}
+    >
+      {total >= props.searchFrom && (
+        <div style={{ padding: "8px 8px 4px" }}>
+          <input
+            autoFocus
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={t("lib.searchShelves")}
+            style={{
+              width: "100%",
+              height: 30,
+              padding: "0 10px",
+              borderRadius: 8,
+              border: "1px solid var(--brd)",
+              background: "var(--chr)",
+              color: "var(--txt)",
+              font: "500 .75rem var(--ui)",
+            }}
+          />
+        </div>
+      )}
+      <div className="libd-quietscroll" style={{ maxHeight: 236, overflowY: "auto", padding: "4px 0 8px" }}>
+        {shown.length === 0 && (
+          <div style={{ padding: "10px 13px", font: "400 .75rem var(--ui)", color: "var(--faint)" }}>
+            {t("lib.noMatchingShelf")}
+          </div>
+        )}
+        {shown.map((g) => (
+          <div key={g.id}>
+            <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "9px 13px 4px" }}>
+              {/* THE CABINET'S OWN INK, the same 7px square the tree and the case chips carry. */}
+              <span
+                aria-hidden
+                style={{
+                  flex: "none",
+                  width: 7,
+                  height: 7,
+                  borderRadius: 2,
+                  background: g.ink ?? "var(--faint)",
+                }}
+              />
+              <span
+                style={{
+                  font: "600 .6875rem var(--ui)",
+                  color: "var(--mut)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {g.name}
+              </span>
+            </div>
+            {/* THE SHELVES HANG OFF A RAIL, indented under their cabinet — the sidebar's own
+                arrangement, so the relationship needs no explaining. */}
+            <div
+              style={{
+                marginInlineStart: 16,
+                paddingInlineStart: 6,
+                borderInlineStart: "1px solid var(--brd)",
+              }}
+            >
+              {g.items.map((it) => (
+                <button
+                  key={it.id || "none"}
+                  className="libd-hov"
+                  data-pick={it.id}
+                  onClick={() => props.onPick(it.id)}
+                  style={{
+                    width: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "flex-start",
+                    padding: "6px 10px",
+                    borderRadius: 8,
+                    border: "none",
+                    textAlign: "start",
+                    cursor: "pointer",
+                    font: "500 .8125rem var(--ui)",
+                    background: props.current === it.id ? "var(--act)" : "transparent",
+                    color: props.current === it.id ? "var(--txt)" : "var(--txt)",
+                  }}
+                >
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {it.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function BookDetails(props: BookDetailsProps) {
   const { t, lang } = useI18n();
-  const rtl = lang === "ar";
   const num = (n: number) => localeNum(n, lang);
   const [book, setBook] = useState<BookRow>(props.book);
   // Every field edit lands HERE, not in the database. Save writes the difference; Cancel throws
@@ -275,47 +455,149 @@ export function BookDetails(props: BookDetailsProps) {
   // `pickedCase` is that missing step: `undefined` follows the book, `null` means "not in a case",
   // a string names one. Choosing a case only narrows the shelf list; the write happens when a
   // SHELF is chosen, which is the level that actually corresponds to a membership row.
-  const place = props.placement;
+  const places = props.placements;
+  /**
+   * THE THREE STATES THIS PANEL HAS TO TELL APART.
+   *
+   * `place` alone cannot: it is null both for a book on NO shelf and for a book on SEVERAL, and the
+   * panel read that null as «not filed» everywhere. A book on two shelves was therefore shown its
+   * own memberships and told, underneath them, that it was not on any shelf yet — and «خارج
+   * الخزائن» was lit in the cabinet row because no single cabinet could be named.
+   *
+   * The count is the honest source. Nothing below asks `place` a question it cannot answer.
+   */
+  const multi = places.length > 1;
+  const unfiled = places.length === 0;
+  /**
+   * THE MEMBERSHIP THE PANEL'S SINGLE-DESTINATION CONTROLS ACT ON — and null unless there is
+   * exactly one.
+   *
+   * The case/shelf/category picker below edits ONE destination: it can say «put it there» and has
+   * no way to say «and also there». That is still the right shape for a book on one shelf, and for
+   * such a book everything here behaves exactly as it did. For a book on several there is no single
+   * destination to edit, so this is null and those controls fall quiet — the memberships are shown
+   * and removed individually above, and «add to another shelf» below is the additive verb.
+   */
+  const place = places.length === 1 ? places[0] : null;
   const [pickedCase, setPickedCase] = useState<string | null | undefined>(undefined);
   useEffect(() => setPickedCase(undefined), [book.id]);
 
-  const effectiveCaseId = pickedCase !== undefined ? pickedCase : (place?.caseNode?.id ?? null);
+  // `undefined` is «the reader has chosen nothing», and for a book across several cabinets that is
+  // the only true answer. It matches no chip, so none is lit — where `null` would have lit «خارج
+  // الخزائن» and told the reader the book is outside every cabinet while listing it inside two.
+  const effectiveCaseId: string | null | undefined =
+    pickedCase !== undefined ? pickedCase : multi ? undefined : (place?.caseNode?.id ?? null);
   const effectiveCase = effectiveCaseId ? (props.cases.find((c) => c.id === effectiveCaseId) ?? null) : null;
   // A rule shelf fills itself, so it can never be a destination — at any level.
   const shelvesOf = (c: CaseNode | null) =>
     (c ? c.shelves : props.loose).filter((s) => !s.auto_rule);
 
-  const moveTo = async (shelfId: string, categoryId: string | null) => {
+  /**
+   * EVERY SHELF IN THE LIBRARY THAT CAN HOLD A BOOK, with the cabinet that contains it.
+   *
+   * The additive row used to offer `shelvesOf(effectiveCase)` — the shelves of the chosen cabinet —
+   * and a multi-shelf book has no chosen cabinet, so it was offered the LOOSE shelves and nothing
+   * else. Measured: a book on two shelves of «خزانة الروايات» was offered «بسيب» and «أرشيف».
+   * Adding is not a hierarchy: it names one shelf, so it lists them all and carries each one's
+   * cabinet, which is also what tells two shelves of the same name apart.
+   */
+  const everyShelf: { shelf: ShelfNode; caseNode: CaseNode | null }[] = [
+    ...props.cases.flatMap((c) => c.shelves.map((sh) => ({ shelf: sh, caseNode: c }))),
+    ...props.loose.map((sh) => ({ shelf: sh, caseNode: null })),
+  ].filter((e) => !e.shelf.auto_rule);
+  const addable = everyShelf.filter((e) => !places.some((pl) => pl.shelf.id === e.shelf.id));
+
+  /** Which popover is open: the destination list, or one membership's categories. */
+  const [choosing, setChoosing] = useState<null | { mode: "add" } | { mode: "move"; from: string }>(null);
+  const [catFor, setCatFor] = useState<string | null>(null);
+  useEffect(() => { setChoosing(null); setCatFor(null); }, [book.id]);
+
+  /**
+   * The destinations, grouped by the cabinet that holds them.
+   *
+   * `exclude` is the shelf a MOVE is leaving: it is not a destination for itself, and the shelves
+   * the book is already on are not destinations at all — adding to one is a no-op and moving to one
+   * would read as a move that did nothing.
+   */
+  const destinationGroups = (exclude: string | null) => {
+    const free = everyShelf.filter(
+      (e) => e.shelf.id !== exclude && !places.some((pl) => pl.shelf.id === e.shelf.id),
+    );
+    const out: { id: string; name: string; ink: string | null; items: { id: string; name: string }[] }[] = [];
+    for (const c of props.cases) {
+      const items = free.filter((e) => e.caseNode?.id === c.id).map((e) => ({ id: e.shelf.id, name: e.shelf.name }));
+      if (items.length) out.push({ id: c.id, name: c.name, ink: c.ink ?? null, items });
+    }
+    const loose = free.filter((e) => !e.caseNode).map((e) => ({ id: e.shelf.id, name: e.shelf.name }));
+    if (loose.length) out.push({ id: "__loose", name: t("lib.unfiled"), ink: null, items: loose });
+    return out;
+  };
+
+  /** MOVE ONE MEMBERSHIP: arrive at the chosen shelf, leave the row's own — and no other. */
+  const moveMembership = async (from: string, to: ShelfNode) => {
     setBusy(true);
-    // Join the target FIRST: if that fails the book is still where it was, rather than nowhere.
     try {
-      await shelfPlaceBook(shelfId, book.id, categoryId, 0);
+      await libraryPlaceBook(book.id, to.id, null, null, from);
     } catch (e) {
       console.error(e);
-      setBusy(false);
       props.notify(t("lib.writeFailed"));
-      props.onChanged();
-      return;
-    }
-    // Leave ONLY the shelf this book was shown as sitting on. Any other shelf it belongs to is a
-    // placement someone made deliberately and is none of this move's business.
-    if (place && place.shelf.id !== shelfId) {
-      try {
-        await collectionRemoveBook(place.shelf.id, book.id);
-      } catch (e) {
-        console.error(e);
-        props.notify(t("lib.movedButNotRemoved"));
-      }
     }
     setBusy(false);
     props.onChanged();
   };
 
-  const unfile = async () => {
-    if (!place) return;
+  /** The category of ONE membership. `libraryAddBookToShelf` against a shelf the book is already
+      on writes the category alone and leaves the rank, which is what re-grouping means. */
+  const setCategory = async (shelfId: string, categoryId: string | null) => {
     setBusy(true);
     try {
-      await collectionRemoveBook(place.shelf.id, book.id);
+      await libraryAddBookToShelf(book.id, shelfId, categoryId);
+    } catch (e) {
+      console.error(e);
+      props.notify(t("lib.writeFailed"));
+    }
+    setBusy(false);
+    props.onChanged();
+  };
+
+
+  /**
+   * TAKE THE BOOK OFF ONE SHELF — that shelf, and no other.
+   *
+   * Named rather than implied. It used to remove «the» shelf the book was on, which only had a
+   * meaning while a book had one. The book itself is untouched: one row, one file, one reading
+   * position, and every other shelf it is on keeps it.
+   */
+  const removeFrom = async (shelfId: string) => {
+    setBusy(true);
+    try {
+      await collectionRemoveBook(shelfId, book.id);
+    } catch (e) {
+      console.error(e);
+      props.notify(t("lib.writeFailed"));
+    }
+    setBusy(false);
+    props.onChanged();
+  };
+
+  /**
+   * ADD THE BOOK TO ANOTHER SHELF, KEEPING EVERY SHELF IT IS ALREADY ON.
+   *
+   * The additive verb, and a separate call from the move above rather than the same one with a
+   * flag — `libraryAddBookToShelf` against `shelfPlaceBook`. Nothing is removed, nothing is
+   * duplicated: the same canonical book gains one more membership, which is what makes it appear
+   * on that shelf as well as where it already was.
+   *
+   * Idempotent from underneath, so the action can be offered without first knowing the answer: the
+   * primary key is (book, shelf), and the reply says whether anything was actually written.
+   */
+  const addToShelf = async (shelf: ShelfNode) => {
+    setBusy(true);
+    try {
+      const res = await libraryAddBookToShelf(book.id, shelf.id, null);
+      props.notify(
+        t(res.placed.changed ? "lib.addedToShelf" : "lib.alreadyOnShelf").replace("{shelf}", shelf.name),
+      );
     } catch (e) {
       console.error(e);
       props.notify(t("lib.writeFailed"));
@@ -378,7 +660,12 @@ export function BookDetails(props: BookDetailsProps) {
   // `awaitingShelf` is that state, named: the reader has aimed at a case the book is not in and has
   // not yet chosen a shelf inside it.
   const currentCaseId = place?.caseNode?.id ?? null;
-  const awaitingShelf = awaitsShelfChoice(currentCaseId, effectiveCaseId, shelvesOf(effectiveCase).length);
+  // Nothing chosen is not a pending choice: a book across several cabinets starts with no chip
+  // lit, and that is a resting state rather than a half-finished one.
+  const awaitingShelf =
+    effectiveCaseId === undefined
+      ? false
+      : awaitsShelfChoice(currentCaseId, effectiveCaseId, shelvesOf(effectiveCase).length);
   const chooseShelfHere = effectiveCase
     ? t("lib.chooseShelfInCase", { name: effectiveCase.name })
     : t("lib.chooseLooseShelf");
@@ -386,78 +673,6 @@ export function BookDetails(props: BookDetailsProps) {
   awaitingShelfRef.current = awaitingShelf ? chooseShelfHere : null;
   if (refused && !awaitingShelf) setRefused(false);
 
-  const levels: {
-    label: string;
-    options: React.ReactNode;
-    empty: string | null;
-    note?: string;
-    required?: boolean;
-  }[] = [
-    {
-      label: t("lib.caseWord"),
-      // Choosing a case does NOT write. It narrows the level below it, which is what makes
-      // Case → Shelf → Category a hierarchy rather than three independent guesses.
-      empty: props.cases.length ? null : t("lib.noCasesYet"),
-      note: t("lib.caseNarrowsOnly"),
-      options: (
-        <>
-          <button style={chip(effectiveCaseId === null)} onClick={() => setPickedCase(null)}>
-            {t("lib.unfiled")}
-          </button>
-          {props.cases.map((c) => (
-            <button key={c.id} style={chip(effectiveCaseId === c.id)} onClick={() => setPickedCase(c.id)}>
-              {c.ink && <span style={{ width: 7, height: 7, borderRadius: 2, background: c.ink }} />}
-              {c.name}
-            </button>
-          ))}
-        </>
-      ),
-    },
-    {
-      label: t("lib.shelfWord"),
-      // The shelves OF THE CHOSEN CASE — so "Case A + a shelf of Case B" cannot be expressed.
-      // A case with nothing in it says so, instead of leaving a level that looks broken.
-      empty: shelvesOf(effectiveCase).length
-        ? null
-        : effectiveCase
-          ? t("lib.caseHasNoShelves")
-          : t("lib.noShelves"),
-      note: awaitingShelf ? chooseShelfHere : undefined,
-      required: awaitingShelf,
-      options: (
-        <>
-          {shelvesOf(effectiveCase).map((s) => {
-            const on = place?.shelf.id === s.id;
-            return (
-              <button key={s.id} style={chip(on)} onClick={() => (on ? unfile() : moveTo(s.id, null))}>
-                {on ? `${s.name}  ✕` : s.name}
-              </button>
-            );
-          })}
-        </>
-      ),
-    },
-    {
-      label: t("lib.categoryWord"),
-      empty: place && place.shelf.categories.length ? null : t("lib.shelfHasNoCategories"),
-      options: place && place.shelf.categories.length ? (
-        <>
-          <button style={chip(!place.categoryId)} onClick={() => moveTo(place.shelf.id, null)}>
-            {t("lib.uncategorised")}
-          </button>
-          {place.shelf.categories.map((k) => (
-            <button
-              key={k.id}
-              style={chip(place.categoryId === k.id)}
-              onClick={() => moveTo(place.shelf.id, k.id)}
-            >
-              {k.name}
-            </button>
-          ))}
-        </>
-      ) : null,
-    },
-  ];
 
   return (
     <div
@@ -588,6 +803,7 @@ export function BookDetails(props: BookDetailsProps) {
 
         <div style={{ padding: "18px 24px 22px", display: "flex", flexDirection: "column", gap: 18 }}>
           {/* ---- cover and spine ---- */}
+
           <div style={{ display: "flex", gap: 26, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 250 }}>
               <div style={legend}>{t("lib.cover")}</div>
@@ -769,93 +985,216 @@ export function BookDetails(props: BookDetailsProps) {
           </div>
 
           {/* ---- where it lives ---- */}
+
+          {/* ---- WHERE THE BOOK IS FILED ----------------------------------------------------
+              Two questions, asked in order and answered in two different shapes.
+
+              «أين يوجد الكتاب؟» is a fact, so it is a list: one row per shelf, the shelf named
+              plainly with its cabinet quietly beneath it. «أين يمكن أن يوضع؟» is an action, so it
+              is one button that opens a list of destinations — not a wall of them laid out on the
+              panel. Those were four rows of chips competing for the same glance: the cabinet row,
+              the shelf row, the category row and an add row that grew one chip per shelf in the
+              library. A reader had to decode which row meant «where it is» and which meant «where
+              it could go», and the two were drawn identically.
+
+              Nothing a row shows is a destination, and nothing the button offers is already held.
+              That is the whole distinction, and it is now carried by shape rather than by wording. */}
           <div>
             <div style={legend}>{t("lib.assignment")}</div>
+
             <div
               style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 9,
-                flexWrap: "wrap",
-                marginBottom: 14,
-                padding: "9px 12px",
+                border: "1px solid var(--brd)",
                 borderRadius: "var(--r-md)",
                 background: "var(--pap)",
-                border: "1px solid var(--brd)",
+                overflow: "hidden",
               }}
             >
-              <span style={{ font: "600 .8125rem var(--ui)", color: place ? "var(--txt)" : "var(--faint)" }}>
-                {place?.caseNode?.name ?? t("lib.unfiled")}
-              </span>
-              <span style={{ color: "var(--faint)", fontSize: 10 }}>{rtl ? "‹" : "›"}</span>
-              <span style={{ font: "500 .8125rem var(--ui)", color: place ? "var(--txt)" : "var(--faint)" }}>
-                {place?.shelf.name ?? "—"}
-              </span>
-              <span style={{ color: "var(--faint)", fontSize: 10 }}>{rtl ? "‹" : "›"}</span>
-              <span style={{ font: "400 .8125rem var(--ui)", color: "var(--mut)" }}>
-                {place
-                  ? place.shelf.categories.length
-                    ? place.shelf.categories.find((k) => k.id === place.categoryId)?.name ?? t("lib.uncategorised")
-                    : "—"
-                  : "—"}
-              </span>
-            </div>
-
-            {levels.map((lv) => (
-              <div
-                key={lv.label}
-                style={{
-                  display: "flex",
-                  alignItems: "flex-start",
-                  gap: "var(--sp-5)",
-                  padding: "8px 0",
-                  borderTop: "1px solid var(--brd)",
-                }}
-              >
-                <span
-                  style={{
-                    flex: "none",
-                    width: 74,
-                    paddingTop: 7,
-                    font: "600 .625rem var(--ui)",
-                    letterSpacing: ".12em",
-                    textTransform: "uppercase",
-                    // A level that still needs an answer says so in its own label, so the
-                    // requirement is visible before the reader reaches for Save.
-                    color: lv.required ? "var(--acc)" : "var(--faint)",
-                  }}
-                >
-                  {lv.label}
-                </span>
-                <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap", flex: 1, minWidth: 0 }}>
-                  {lv.empty ? (
-                    <span style={{ font: "400 .75rem var(--ui)", color: "var(--faint)", paddingTop: 8 }}>
-                      {lv.empty}
-                    </span>
-                  ) : (
-                    lv.options
-                  )}
-                  {lv.note && (
-                    <span
+              {places.length === 0 ? (
+                <div style={{ padding: "11px 13px", font: "500 .8125rem var(--ui)", color: "var(--faint)" }}>
+                  {t("lib.unfiled")}
+                </div>
+              ) : (
+                places.map((pl, i) => {
+                  const cat = pl.shelf.categories.find((k) => k.id === pl.categoryId) ?? null;
+                  return (
+                    <div
+                      key={pl.shelf.id}
                       style={{
-                        flexBasis: "100%",
-                        font: "400 .75rem/1.5 var(--ui)",
-                        color: lv.required ? "var(--acc)" : "var(--faint)",
-                        paddingTop: 2,
-                        textWrap: "pretty",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        padding: "9px 13px",
+                        borderTop: i ? "1px solid var(--brd)" : undefined,
                       }}
                     >
-                      {lv.note}
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div
+                          style={{
+                            font: "600 .8125rem/1.35 var(--ui)",
+                            color: "var(--txt)",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {pl.shelf.name}
+                        </div>
+                        {/* THE HIERARCHY UNDER THE NAME, NOT BESIDE IT. Three names separated by
+                            chevrons read as a path to be parsed, and wrapped badly when any of them
+                            was long. A shelf with its cabinet beneath it reads as one fact, and the
+                            long-name case becomes an ellipsis rather than a second line. */}
+                        <div
+                          style={{
+                            font: "400 .6875rem/1.4 var(--ui)",
+                            color: "var(--faint)",
+                            marginTop: 1,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {pl.caseNode?.name ?? t("lib.unfiled")}
+                          {pl.shelf.categories.length > 0 && (
+                            <>
+                              {" · "}
+                              <button
+                                className="libd-hov-txt"
+                                onClick={() => setCatFor(catFor === pl.shelf.id ? null : pl.shelf.id)}
+                                style={{
+                                  border: "none",
+                                  background: "transparent",
+                                  padding: 0,
+                                  font: "inherit",
+                                  color: "var(--mut)",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                {cat ? cat.name : t("lib.uncategorised")}
+                              </button>
+                            </>
+                          )}
+                        </div>
+                        {catFor === pl.shelf.id && (
+                          <Chooser
+                            groups={[{ id: pl.shelf.id, name: pl.shelf.name, ink: pl.caseNode?.ink ?? null,
+                              items: [{ id: "", name: t("lib.uncategorised") },
+                                      ...pl.shelf.categories.map((k) => ({ id: k.id, name: k.name }))] }]}
+                            current={pl.categoryId ?? ""}
+                            onPick={(id) => { setCatFor(null); void setCategory(pl.shelf.id, id || null); }}
+                            onClose={() => setCatFor(null)}
+                            searchFrom={999}
+                          />
+                        )}
+                      </div>
+
+                      {/* MOVE BELONGS TO A ROW, because a move leaves ONE shelf and this row is the
+                          shelf it leaves. It used to live in a Case → Shelf picker that had no way
+                          to say which membership it was acting on, so it only ever worked for a
+                          book that had exactly one. */}
+                      <button
+                        className="libd-hov libd-hov-txt"
+                        data-move-from={pl.shelf.id}
+                        onClick={() => setChoosing({ mode: "move", from: pl.shelf.id })}
+                        title={t("lib.moveTo")}
+                        style={{
+                          flex: "none",
+                          font: "500 .6875rem var(--ui)",
+                          color: "var(--mut)",
+                          background: "transparent",
+                          border: "1px solid var(--brd)",
+                          borderRadius: "var(--r-sm)",
+                          padding: "3px 9px",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {t("lib.moveTo")}
+                      </button>
+                      <button
+                        className="libd-hov libd-hov-txt"
+                        aria-label={`${t("lib.removeFromThisShelf")} — ${pl.shelf.name}`}
+                        title={t("lib.removeFromThisShelf")}
+                        data-remove-shelf={pl.shelf.id}
+                        onClick={() => removeFrom(pl.shelf.id)}
+                        style={{
+                          flex: "none",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          width: "var(--ctl-xs)",
+                          height: "var(--ctl-xs)",
+                          borderRadius: "var(--r-sm)",
+                          border: "1px solid transparent",
+                          background: "transparent",
+                          color: "var(--faint)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <Icon name="close" size="sm" />
+                      </button>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* ONE BUTTON, NOT A WALL. A library with thirty shelves used to put thirty chips on
+                this panel; the destinations now live behind this and arrive grouped by cabinet,
+                with a search once there are enough of them to need one. */}
+            <div style={{ marginTop: 10 }}>
+              <button
+                data-add-open="1"
+                onClick={() => setChoosing(choosing?.mode === "add" ? null : { mode: "add" })}
+                disabled={addable.length === 0}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 7,
+                  height: 30,
+                  padding: "0 12px",
+                  borderRadius: 9,
+                  font: "500 .75rem var(--ui)",
+                  border: "1px solid var(--brd)",
+                  background: "var(--pap)",
+                  color: addable.length ? "var(--acc)" : "var(--faint)",
+                  cursor: addable.length ? "pointer" : "default",
+                }}
+              >
+                <span aria-hidden style={{ font: "600 .875rem var(--ui)" }}>+</span>
+                {places.length ? t("lib.addToAnotherShelf") : t("lib.addToShelf")}
+              </button>
+              {addable.length === 0 && (
+                <span style={{ font: "400 .75rem var(--ui)", color: "var(--faint)", marginInlineStart: 10 }}>
+                  {t("lib.onEveryShelfAlready")}
+                </span>
+              )}
+              {choosing && (
+                <Chooser
+                  groups={destinationGroups(choosing.mode === "move" ? choosing.from : null)}
+                  current=""
+                  onPick={(id) => {
+                    const target = everyShelf.find((e) => e.shelf.id === id);
+                    const c = choosing;
+                    setChoosing(null);
+                    if (!target) return;
+                    if (c.mode === "move") void moveMembership(c.from, target.shelf);
+                    else void addToShelf(target.shelf);
+                  }}
+                  onClose={() => setChoosing(null)}
+                  searchFrom={9}
+                />
+              )}
+            </div>
 
             <div style={{ font: "400 .75rem var(--ui)", color: "var(--faint)", paddingTop: 10 }}>
-              {place ? t("lib.toggleHint") : t("lib.notFiledHint")}
+              {unfiled
+                ? t("lib.notFiledHint")
+                : multi
+                  ? t("lib.onSeveralShelvesHint").replace("{n}", String(places.length))
+                  : t("lib.onOneShelfHint")}
             </div>
           </div>
+
         </div>
 
         {/* ---- the editing footer ----

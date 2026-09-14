@@ -1097,21 +1097,117 @@ html, body, #root {
 :root[dir="rtl"] .rs-switch,
 :root[dir="rtl"] .rp-switch { direction: rtl; }
 
-/* typeface select row */
+/* THE FONT ROW PINS ITS DIRECTION FOR THE SAME REASON THE TOGGLES DO.
+   `.reader-root` is forced LTR (RAWY-89, to fix the panel overlap) and `.settings-panel` sets no
+   `dir`, so everything in this drawer resolves LTR unless it says otherwise. Measured on the new
+   chooser: `html` was `rtl` while the list computed `ltr`, which put each font's name at the left of
+   its row and the «مستورد» marker at the right — the mirror image of the order it is written in.
+   Same remedy as `.rs-switch` above: default LTR, RTL when the interface is. */
+.rs-select-row { direction: ltr; }
+:root[dir="rtl"] .rs-select-row { direction: rtl; }
+
+/* THE TYPEFACE SELECTOR IS THIS WHOLE RECTANGLE.
+   It used to be a box with a button inside it, and only the button answered: the label, the space
+   between, and the caret all looked pressable and were not, so the hotspot was visibly smaller than
+   the control that drew it. The row carries nothing but this selector's own label and value, so the
+   row is the control — it is the button now, and the `font`/`text-align`/`width` below are what a
+   button needs to stop looking like one. The hover is what says the whole rectangle is live. */
 .rs-select-row {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 10px 14px; background: var(--paper-bg); border: 1px solid var(--chrome-border); border-radius: var(--r-md);
+  width: 100%; padding: 10px 14px; text-align: start; cursor: pointer;
+  font: inherit; color: inherit;
+  background: var(--paper-bg); border: 1px solid var(--chrome-border); border-radius: var(--r-md);
+  transition: background-color 0.14s ease, border-color 0.14s ease;
 }
-.rs-select-label { font: 500 0.75rem var(--ui-font); color: var(--muted); }
-.rs-select-wrap { position: relative; display: flex; align-items: center; }
-.rs-select {
-  appearance: none; -webkit-appearance: none; border: 0; background: transparent; color: var(--text);
-  /* A CONTROL. Its options are font NAMES — the app's own vocabulary — so it takes the chrome
-     face in both scripts, and follows the app font the reader chose in Settings. */
-  font: 500 0.9375rem var(--ui); cursor: pointer; padding-inline-end: 16px; text-align: end;
+.rs-select-row:hover { background: color-mix(in srgb, var(--text) 4%, var(--paper-bg)); }
+.rs-select-row[aria-expanded="true"] { border-color: color-mix(in srgb, var(--accent) 45%, var(--chrome-border)); }
+.rs-select-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rs-select-label { font: 500 0.75rem var(--ui-font); color: var(--muted); flex: none; }
+
+/* ── A CHOICE, NOT A `<select>` ────────────────────────────────────────────────────────────────
+   The value used to be a native control, which sizes itself to its LONGEST OPTION and, as a flex
+   item with the default `min-width: auto`, refuses to shrink below it. «IBM Plex Sans Arabic» drove
+   the box straight through the row's rounded edge. `min-width: 0` is what lets the value be
+   narrower than its content; the ellipsis is what it does about it. The type size is untouched —
+   the box was never asked to fit. */
+.rs-sel { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.rs-sel-value {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 500 0.9375rem var(--ui); color: var(--text);
 }
-.rs-select-caret { position: absolute; inset-inline-end: 0; pointer-events: none; color: var(--muted); font-size: 0.6875rem; }
-.rs-select option { color: #1a1a1a; }
+/* The caret is a sibling with its own column rather than absolutely placed over the text, so a long
+   name ellipsises BEFORE it reaches the mark instead of sliding under it. */
+.rs-sel-caret { flex: none; color: var(--muted); font-size: 0.6875rem; line-height: 1; }
+
+/* THE LIST, ON SARD'S SURFACE — AND NOT INSIDE THE SCROLLER.
+   It used to be anchored to its own row, which put its containing block inside `.sp-body`, the
+   drawer's `overflow-y: auto` body. That one fact produced both faults the reader reported: the
+   drawer CUT the list at its edge, and the same overhang was added to the drawer's `scrollHeight`,
+   so opening a font list moved the settings page under it. Measured, at four window sizes: 48px
+   hanging past the edge, 48px added to the scroll range, every time.
+
+   It is now rendered into the first ancestor that positions without clipping — the drawer root —
+   so the scroller is no longer in its containing-block chain and can do neither. Every figure that
+   places it is a measurement taken against that host when it opens, so it arrives inline: which
+   side it opened, how tall it may be, how wide, and which edge it hangs from. Only how it LOOKS is
+   here. */
+.rs-sel-list {
+  position: absolute; z-index: 40;
+  margin: 0; padding: 5px; list-style: none;
+  overflow-y: auto; overscroll-behavior: contain;
+  background: var(--chrome-bg); border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md); box-shadow: var(--sh4, 0 18px 44px rgba(0,0,0,.34));
+  animation: sard-rise .12s ease-out;
+}
+/* AND IT PINS ITS OWN DIRECTION, for the reason the row above it already had to: `.reader-root` is
+   forced LTR (RAWY-89) and `.settings-panel` sets no `dir`. The row's own pin used to cover the
+   list because the list was inside it; hanging it from the drawer puts it back outside that reach,
+   so it says the same thing for itself — or the name and its «مستورد» mark swap ends in Arabic. */
+.rs-sel-list { direction: ltr; }
+:root[dir="rtl"] .rs-sel-list { direction: rtl; }
+
+/* THE SCROLLBAR'S ARROWS WERE THE LAST NATIVE THING LEFT. Nothing in Sard suppressed
+   `::-webkit-scrollbar-button`, so WebView2 drew its own stepper at each end of the track — two
+   small grey chevrons that read as a browser widget sitting inside the panel. The thumb here is the
+   stage's, narrowed; the buttons are simply not drawn. */
+.rs-sel-list::-webkit-scrollbar { width: 8px; }
+.rs-sel-list::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+.rs-sel-list::-webkit-scrollbar-track { background: transparent; }
+.rs-sel-list::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text) 16%, transparent);
+  border-radius: 6px; border: 2px solid transparent; background-clip: content-box;
+}
+.rs-sel-list:hover::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text) 24%, transparent); background-clip: content-box;
+}
+
+.rs-sel-opt {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer;
+  font: 500 0.875rem var(--ui); color: var(--muted);
+}
+.rs-sel-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* THE MARKER, KEPT AND QUIETENED. Smaller, muted, and pushed to the far end so the column of names
+   stays a column of names — it is a qualifier, not part of what the face is called. */
+.rs-sel-note {
+  flex: none; margin-inline-start: auto;
+  font: 500 0.625rem var(--ui); letter-spacing: .04em;
+  color: var(--faint, var(--muted)); opacity: .85;
+}
+/* Two different questions, so two different answers: `is-at` is where the keys are standing,
+   `is-on` is what the book is set to. Both are legible at once. */
+.rs-sel-opt.is-at { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
+.rs-sel-opt.is-on { color: var(--text); }
+/* The chosen face is marked by a rule down its inline-start — the same way the library's own
+   chosen rows are marked — rather than by a coloured pill. Calm, and unmistakable beside `is-at`. */
+/* THE CHOSEN FACE WEARS THE GROUND SARD'S MENUS USE, and nothing else. An inset rule down its
+   edge was tried and read as an artefact: against the row's 8px radius it renders as a curved
+   sliver rather than a line, and beside `is-at`'s own ground it made two marks competing on one
+   row. `--act` under a heavier name is the same answer every other chosen row in the app gives. */
+.rs-sel-opt.is-on { background: var(--lib-active, color-mix(in srgb, var(--accent) 12%, transparent)); }
+.rs-sel-opt.is-on .rs-sel-name { font-weight: 600; }
+/* Pointed at AND chosen: the hover ground wins, so the row still answers the pointer. */
+.rs-sel-opt.is-on.is-at { background: color-mix(in srgb, var(--text) 10%, transparent); }
 
 /* theme swatches */
 /* RAWY-29: a 4-column grid so all 15 themes wrap cleanly (was a 4-up flex row); the panel
@@ -3630,12 +3726,143 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 :root[dir="rtl"] .lib-drop-title { font: 700 1.375rem var(--ui-font); }
 .lib-drop-formats { font: 400 0.875rem var(--ui-font); color: var(--muted); }
 
+/* ── A MESSAGE FROM SARD ─────────────────────────────────────────────────────────────────────────
+   ONE SURFACE, FIVE PLACES. The library, the photo gallery, the composer, the profiles section and
+   the references screen each grew their own transient message, and all five agreed on exactly one
+   thing: `background: var(--text)`. That is the theme's INK used as a GROUND — measured in
+   nocturne, every one of them came out `rgb(207, 224, 224)`, a near-white pill in a near-black
+   application, carrying dark text, no border, and a shadow invented on the spot. An inverted
+   surface belongs to no theme, which is why they read as something the browser put there rather
+   than something Sard said.
+
+   They agreed on nothing else. Radius 9 / 19 / 20 / 22 / 22px; size 11.2 / 11.7 / 14.4px; weight
+   500 / 500 / 600 / 600; four different shadows, two of them hard-coded browns. Five copies of one
+   idea, drifting apart in every dimension at once.
+
+   WHAT IT IS NOW: the surface Sard already uses for something that floats over the application and
+   goes away again — the same chrome ground, hairline and elevation its menus and popovers wear, so
+   a message arrives as part of the interface instead of on top of it. Nothing here is new; it is
+   the popover's own language, said once, for the family that had never been given one.
+
+   Geometry stays with each site — where it sits, what it stacks above, whether it holds a button —
+   because those are genuinely different. Only the SURFACE is shared. */
+.lib-toast,
+.pg-toast,
+.pf-toast,
+.rr-toast,
+.pc-toast {
+  background: var(--chrome-bg);
+  color: var(--text);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--r-md);
+  box-shadow: var(--sh4, 0 18px 44px rgba(0, 0, 0, 0.34));
+  /* One size for the family. The three it replaces were a tenth of a pixel apart in two cases and
+     half again as large in the third, which is drift rather than intent. */
+  font: 500 0.8125rem/1.5 var(--ui-font);
+  /* A message is a sentence, and a long Arabic one has to be allowed to become two lines rather
+     than a pill the width of the window. */
+  text-wrap: pretty;
+}
+/* The app-font weight control reaches the chrome by naming it; this family was never on the list,
+   so a reader who set the interface to Regular or Bold got everything except their messages. */
+.lib-toast, .pg-toast, .pf-toast-msg, .rr-toast, .pc-toast { font-weight: var(--ui-weight, 500); }
+/* ATTENTION IS A MARK, NOT A RED SURFACE. The same rule-down-the-edge the library's own destructive
+   row uses, in the same red, so "this removed something" reads the same wherever it is said. */
+.lib-toast.is-danger,
+.pg-toast.is-danger,
+.pf-toast.is-danger,
+.rr-toast.is-danger,
+.pc-toast.is-danger { border-inline-start: 3px solid #9c3b3b; }
+
+/* WHO MADE SARD — two marks, at the weight of everything else in this panel.
+   The states are written out because a link that does not answer the pointer reads as a label, and
+   because the settings panel resets its own buttons: rest, hover, press and the keyboard ring all
+   have to be said here or none of them is. */
+.gs-contact { display: flex; flex-wrap: wrap; gap: var(--sp-4); }
+.gs-contact-link {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  /* A ONE-LETTER NAME AND AN EIGHT-LETTER ONE, SIDE BY SIDE. Left to their contents the two came
+     out 58px and 89px, which reads as two unrelated controls rather than one pair. A floor makes
+     them a pair without stretching either. */
+  min-width: 96px;
+  padding: 8px 13px;
+  border: 1px solid var(--chrome-border); border-radius: var(--r-md);
+  background: transparent; color: var(--muted);
+  font: 500 0.8125rem var(--ui-font); cursor: pointer;
+  transition: background-color .12s ease-out, border-color .12s ease-out, color .12s ease-out;
+}
+.gs-contact-link svg { width: 15px; height: 15px; flex: none; }
+.gs-contact-link:hover {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  border-color: color-mix(in srgb, var(--text) 24%, transparent);
+  color: var(--text);
+}
+.gs-contact-link:active { background: color-mix(in srgb, var(--text) 9%, transparent); }
+.gs-contact-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; color: var(--text); }
+
+/* THE LEGAL DOCUMENTS, READ AGAIN FROM SETTINGS.
+   The tabs wear `.libd-menu-item`, which is the library's row and states itself in the library's
+   tokens — `--act`, `--hov`, `--txt`. Those are declared on `.libd-root`, and this panel is not
+   inside one, so the chosen tab asked for a ground that did not exist and painted nothing. Same
+   control, same meaning, said in the tokens this surface actually has. */
+.gs-legal .libd-menu-item {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background-color .12s ease-out, color .12s ease-out, border-color .12s ease-out;
+}
+.gs-legal .libd-menu-item:hover { background: color-mix(in srgb, var(--text) 6%, transparent); color: var(--text); }
+.gs-legal .libd-menu-item:active { background: color-mix(in srgb, var(--text) 10%, transparent); }
+.gs-legal .libd-menu-item:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; color: var(--text); }
+.gs-legal .libd-menu-item.is-on {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--text);
+}
+
+/* ── THE ACKNOWLEDGEMENT, IN SARD'S OWN HAND ─────────────────────────────────────────────────────
+   A native checkbox is drawn by the platform: on Windows it is a square of the system's blue with
+   the system's tick, in a dialog that is otherwise entirely Sard's, and `accent-color` only changes
+   which blue. So the input stays — it is still a checkbox, still focusable, still labelled, still
+   the thing the accessibility tree reads — and it is made invisible rather than removed, because
+   `display: none` would take it out of the tab order too. What is seen is the box beside it.
+
+   Every state lives here because no state can live in a style attribute: hover, press and the
+   keyboard ring are exactly what inline styles cannot say. */
+.legal-ack {
+  display: flex; align-items: flex-start; gap: 10px; cursor: pointer;
+  font: 500 .8125rem/1.6 var(--ui-font); color: var(--text);
+}
+.legal-ack-input {
+  position: absolute; opacity: 0; width: 0; height: 0; margin: 0;
+}
+.legal-ack-box {
+  flex: none; width: 18px; height: 18px; margin-top: 2px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--chrome-border); border-radius: var(--r-xs);
+  background: var(--paper-bg);
+  /* The tick is always there and simply has no colour until it is checked, so the box never
+     changes size or shifts the line it sits on. */
+  color: transparent;
+  transition: background-color .12s ease-out, border-color .12s ease-out, color .12s ease-out,
+              transform .1s ease-out;
+}
+.legal-ack:hover .legal-ack-box { border-color: color-mix(in srgb, var(--text) 34%, transparent); }
+.legal-ack:active .legal-ack-box { transform: scale(0.94); }
+.legal-ack-input:checked + .legal-ack-box {
+  background: var(--accent); border-color: var(--accent); color: var(--chrome-bg);
+}
+.legal-ack-input:focus-visible + .legal-ack-box { outline: 2px solid var(--accent); outline-offset: 2px; }
+.legal-ack-box svg { width: 13px; height: 13px; }
+.legal-ack-text { min-width: 0; }
+
 /* ---- toast ---- */
 .lib-toast {
-  position: fixed; inset-inline: 0; bottom: 28px; margin: 0 auto; width: max-content; max-width: 80%;
-  padding: 11px 20px; z-index: 20; border-radius: var(--r-md);
-  background: var(--text); color: var(--paper-bg); font: 500 0.8125rem var(--ui-font);
-  box-shadow: 0 12px 30px rgba(40, 28, 14, 0.3);
+  position: fixed; inset-inline: 0; bottom: 28px; margin: 0 auto; width: max-content;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 11px 18px; z-index: 20;
 }
 @media (prefers-reduced-motion: reduce) { .lib-cover { transition: none; } }
 
@@ -5264,6 +5491,11 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .pcx-comp-thumb.gilded i { margin-inline: auto; inline-size: 70%; }
 .pcx-comp-thumb.night i:first-child { block-size: 13px; }
 .pcx-comp-thumb.night i:not(:first-child) { inline-size: 55%; }
+/* Blank: the canvas with nothing on it — the thumb is the sunk rectangle alone. A fifth cell in a
+   two-column grid would stand as an orphan, so the one option that is NOT a design takes the whole
+   last row, under the four that are. */
+.pcx-comp-thumb.blank i { display: none; }
+.pcx-comp:has(.pcx-comp-thumb.blank) { grid-column: 1 / -1; }
 
 /* THE STAMPS. A checkbox marked "Date" asks the user to imagine the result; these show it — the
    second line is the very characters the card will print, in the card's own manner. */
@@ -5355,10 +5587,6 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
    both directions — a slider that counts backwards in Arabic is a slider that lies. */
 [dir="rtl"] .pcx-sf-range { direction: rtl; }
 .pcx-sf .pcx-scrub { flex: none; }
-/* What the size field says while the fit is finding the number. */
-.pcx-autonote {
-  flex: 1; font: 400 0.71875rem var(--ui-font); font-style: italic; color: var(--pc-muted-2);
-}
 .pcx-stamp.compact { padding: 7px 9px; }
 
 .pcx-remove {
@@ -5382,13 +5610,6 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
    only start the same argument again. The coordinates come from the component, which measures the
    trigger and clamps to the window. */
 .pcx-pick--float { position: fixed; inline-size: 236px; }
-/* An auto-fitted quote has no size to show, so it says what it is doing instead of inventing one. */
-.pcx-tb-auto {
-  height: 26px; padding: 0 10px; border: 1px dashed var(--pc-line-2); border-radius: 7px;
-  background: transparent; color: var(--pc-muted); font: 600 0.6875rem var(--ui-font); cursor: pointer;
-}
-.pcx-tb-auto:hover { color: var(--pc-accent); border-color: var(--pc-accent); }
-
 /* ---- the composer's hands: selection, drag and resize -----------------------------------------
    Drawn OVER the card and never inside it. The card node is the node that rasterises, so anything
    in here would otherwise reach the exported PNG. Quiet by default and definite when selected — a
@@ -5534,10 +5755,12 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   pointer-events: none; user-select: none; z-index: 3;
 }
 .pc-brand-div { width: 1px; opacity: 0.5; }
+/* The composer keeps its OWN tokens — it is a modal with its own palette, and a message inside it
+   belongs to that palette rather than to the library's. Same surface, said in the composer's ink. */
 .pc-toast {
   position: absolute; bottom: 22px; left: 50%; transform: translateX(-50%);
-  background: var(--pc-text); color: var(--pc-modal-bg); font: 600 0.8125rem var(--ui-font);
-  padding: 9px 20px; border-radius: 22px; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
+  max-width: min(520px, calc(100% - 32px)); padding: 11px 18px;
+  background: var(--pc-modal-bg); color: var(--pc-text); border-color: var(--pc-line, var(--chrome-border));
 }
 
 /* ---- Passages tray (RAWY-60, Photo Mode part 2b) — a floating panel opened from the top-bar
@@ -5764,7 +5987,10 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .pg-lightbox.dark .pg-lb-del.confirm { background: #E88C8C !important; color: #12131F !important; }
 .pg-lb-confirm-text { font: 500 0.8125rem var(--ui-font); color: #3a332c; padding-inline: 12px 4px; }
 .pg-lightbox.dark .pg-lb-confirm-text { color: #E4E2F0; }
-.pg-toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 60; background: var(--text); color: var(--app-bg); font: 600 0.8125rem var(--ui-font); padding: 10px 22px; border-radius: 22px; box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28); }
+.pg-toast {
+  position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); z-index: 60;
+  max-width: min(560px, calc(100vw - 32px)); padding: 11px 18px;
+}
 
 /* ===== RAWY-91: App-font WEIGHT control ===== the control sets --ui-weight (Regular 400 / Medium 500
    / Bold 700); it drives the main chrome text weight here (last rule wins over shorthand weights).

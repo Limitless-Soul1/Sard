@@ -414,12 +414,13 @@
 .rr-empty-cta { margin-top: var(--sp-6); }
 
 /* ---- the toast: it says what the switch just did, in the reader's own words ---- */
+/* Surface in global.css, with the rest of the message family. A fixed 38px height went with the
+   pill it used to be: a message that wraps to two lines has to be allowed to be two lines tall. */
 .rr-toast {
   position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: var(--z-pill-over);
   display: flex; align-items: center; gap: var(--sp-6);
-  height: 38px; padding: 0 var(--sp-6); border-radius: 19px;
-  background: var(--text); color: var(--paper-bg);
-  font: 500 0.78rem var(--ui-font); box-shadow: var(--sh3);
+  min-height: 38px; padding: 9px var(--sp-6);
+  max-width: min(560px, calc(100vw - 32px));
 }
 
 /* THE FACE IS A ROLE, NOT A NAME. Latin book words take `--book`, Arabic always takes `--ar` — Literata

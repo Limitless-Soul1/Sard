@@ -41,9 +41,11 @@ import "../../styles/library-design.css";
 import { displayTitle, resolveBookMeta } from "../../lib/bookMeta"; // WP-3
 import { Inbox } from "./Inbox";
 import { useBookDetailsRequest } from "./bookDetailsRequest";
+import { useOpenFileRequest } from "./openFileRequest";
 import { useIncomingDeposit } from "../deposit/store";
 import { RefsReps } from "./refs/RefsReps";
 import { routeDroppedPaths } from "../profiles/dropRoute";
+import { externalDragState } from "./externalDrag";
 import { BookmarksShelf } from "./BookmarksShelf";
 import { PhotoGallery } from "../photo/PhotoGallery";
 import { Icon } from "../../components/Icon";
@@ -369,13 +371,12 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         const { getCurrentWebview } = await import("@tauri-apps/api/webview");
         unlisten = await getCurrentWebview().onDragDropEvent((e) => {
           const p = e.payload;
-          if (p.type === "enter") setDrag({ count: p.paths.length });
-          else if (p.type === "over") setDrag((d) => d ?? { count: 0 });
-          else if (p.type === "leave") setDrag(null);
-          else if (p.type === "drop") {
-            setDrag(null);
-            void routeDroppedPaths(p.paths, runImportRef.current);
-          }
+          // WHETHER THIS IS AN IMPORT AT ALL is decided in one place — `externalDragState` — from
+          // the one thing that tells an outside drag from an inside one: the files it carries.
+          // `over` used to conjure an overlay out of nothing (`d ?? { count: 0 }`), which is how
+          // a drag that started on a book already in the library came to read «Drop to add books».
+          setDrag((d) => externalDragState(d, p));
+          if (p.type === "drop") void routeDroppedPaths(p.paths, runImportRef.current);
         });
       } catch {
         /* not in a tauri webview (e.g. plain vite) — drag-drop simply inert */
@@ -505,9 +506,16 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   }, []);
 
   // Import a batch of paths through the real Rust pipeline, then refresh + summarise.
+  //
+  // `intent` says what the import is FOR, and it changes exactly one thing: a book the reader ADDED
+  // is met with its details sheet so a wrong title can be fixed on the spot, while a book the reader
+  // OPENED is met by being opened. Putting the sheet in front of a double-clicked book would answer
+  // "read this" with "rename this", so the two intents part company here and nowhere else — the
+  // refusals, the report, the diagnostics and the refresh are identical, because they are the same
+  // import.
   const runImport = useCallback(
-    async (paths: string[]) => {
-      if (!paths.length || importing) return;
+    async (paths: string[], intent: "add" | "open" = "add"): Promise<ImportResult[]> => {
+      if (!paths.length || importing) return [];
       setImporting(true);
       try {
         // RESILIENCE-1 / WP-1: refuse formats this runtime cannot render BEFORE importing them.
@@ -532,12 +540,14 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         }
         if (isCleanImport(report)) flashToast(summarize(results, t, lang));
         else setImportReport(report);
-        await surfaceEditForNew(results);
+        if (intent === "add") await surfaceEditForNew(results);
+        return results;
       } catch (e) {
         // The batch itself failed (not one file) — classify it rather than printing the throwable.
         const c = classifyBookError(e, { stage: "import-batch" });
         recordDiagnostic(toDiagnostic("import", c));
         flashToast(t(c.presentation.titleKey));
+        return [];
       } finally {
         setImporting(false);
       }
@@ -547,6 +557,54 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   useEffect(() => {
     runImportRef.current = (paths) => void runImport(paths);
   }, [runImport]);
+
+  // WP-3: the card passes what it is displaying as a hint, so a failed row read still shows the same
+  // name the reader just clicked — never as the authority (the reader re-reads the row by id).
+  const openBook = useCallback(
+    (b: BookRow) =>
+      onOpen({ id: b.id, filePath: b.file_path, dir: b.dir, format: b.format, title: b.title, author: b.author }),
+    [onOpen],
+  );
+
+  // A BOOK THE SYSTEM HANDED US — double-clicked in Explorer, "Open with Sard", or named on the
+  // command line. The application root leaves the paths in `useOpenFileRequest`; this is what takes
+  // them, and it deliberately takes them through `runImport`, the same call a dropped book and a
+  // picked book both make. A double-clicked book is therefore refused, reported and shelved exactly
+  // as any other book is, and none of that had to be written twice.
+  //
+  // WHAT IS OPENED, AND WHAT IS NOT:
+  //
+  //   one book, new to the library   → imported, then opened
+  //   one book already on the shelves → "duplicate" is the RIGHT answer and not a failure: the
+  //                                     reader asked for a book that is already here, so the copy
+  //                                     that is already here is what opens
+  //   several books                   → all imported, none opened: which one the reader meant is not
+  //                                     knowable, and guessing would open a book nobody asked for
+  //   a file that is no kind of book  → the ordinary import report says so; nothing opens
+  //
+  // The queue is emptied BEFORE the import, not after: taking is destructive precisely so a path can
+  // never be acted on twice, and an import that fails must not leave the file waiting to be retried
+  // silently on the next render.
+  const pendingFiles = useOpenFileRequest((s) => s.pending);
+  useEffect(() => {
+    // An import already in flight is left to finish: `runImport` refuses a second batch while one is
+    // running, and taking the paths now would throw them away against that refusal. The effect runs
+    // again when `importing` clears.
+    if (!pendingFiles.length || importing) return;
+    const paths = useOpenFileRequest.getState().take();
+    if (!paths.length) return;
+    void (async () => {
+      const results = await runImport(paths, "open");
+      const usable = results.filter((r) => r.status === "imported" || r.status === "duplicate");
+      if (usable.length !== 1) return;
+      // The ROW is looked up rather than assembled from the import result: the reader needs a book's
+      // stored path, direction and format to open it, and the import answers with what HAPPENED.
+      // Fetched unfiltered so an active shelf or search filter cannot hide the book just requested.
+      const rows = await libraryListBooks({ sort: "date_added", order: "desc" }).catch(() => [] as BookRow[]);
+      const row = rows.find((b) => b.id === usable[0].id);
+      if (row) openBook(row);
+    })();
+  }, [pendingFiles, importing, runImport, openBook]);
 
   // "Browse files…" → native file picker (EPUB + PDF — RAWY-176/AUD-5; was EPUB-only, so a PDF could
   // only be added by drag-drop), then import the chosen files.
@@ -639,10 +697,9 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
   const isEmpty = forceEmpty || (booksLoaded && books.length === 0 && !search && !format && !shelf);
 
   const pickShelf = (id: string | null) => setShelf(id);
-  // WP-3: the card passes what it is displaying as a hint, so a failed row read still shows the same
-  // name the reader just clicked — never as the authority (the reader re-reads the row by id).
-  const open = (b: BookRow) =>
-    onOpen({ id: b.id, filePath: b.file_path, dir: b.dir, format: b.format, title: b.title, author: b.author });
+  // The name the views call it by. One function, so a book opened from a card and a book opened
+  // because the system handed it to Sard travel the same path.
+  const open = openBook;
 
   // Shelf writes (RAWY-31): still the only Rust↔JS path for renaming and deleting a shelf. The
   // design's sidebar drives them now instead of the old shelf row, but the calls — and the rule
@@ -935,7 +992,10 @@ function BookCard({
         {showImg ? (
           // RAWY-269 (5): `decoding="sync"` asks the frame that first shows the card to show its
           // cover too, instead of presenting the plate and landing the image 2-3 frames later.
-          <img className="real" src={coverSrc(book)!} alt="" decoding="sync" onError={() => setFailed(true)} />
+          // `draggable={false}` for the same reason `BookTile` says it: a cover that is a native
+          // drag source turns a press-and-hold with a few pixels of drift into an OS drag, which
+          // cancels the hold and comes back through the webview as an outside drop.
+          <img className="real" src={coverSrc(book)!} alt="" decoding="sync" draggable={false} onError={() => setFailed(true)} />
         ) : (
           <AutoCover title={title} author={book.author} dir={book.dir} />
         )}

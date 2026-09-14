@@ -26,7 +26,7 @@ import { createPortal } from "react-dom";
 
 import { useI18n } from "../../i18n";
 import { localeDigits } from "../../lib/format";
-import { profileAssetPlan, profileExport, type PlannedAsset } from "../../lib/ipc";
+import { profileAssetPlan, profileExport, revealPath, type PlannedAsset } from "../../lib/ipc";
 import { manifestText, serialiseProfile, type PackageAsset } from "./model/package";
 import { profileRefs } from "./model/profile";
 import type { Profile } from "./model/profile";
@@ -63,7 +63,8 @@ export function ShareSheet({ profile, onClose }: { profile: Profile; onClose: ()
     return () => { alive = false; };
   }, [profile]);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  /** What the reader was told after asking to be shown the package: a note, or a reason it failed. */
+  const [shown, setShown] = useState<string | null>(null);
 
   // The exact bytes that will be written, computed now so the size shown is measured rather than
   // estimated — the design's promise is that the number at the bottom is not a surprise.
@@ -139,16 +140,32 @@ export function ShareSheet({ profile, onClose }: { profile: Profile; onClose: ()
           <div className="pf-dialog-title">
             {t("profiles.share.packed", { name: profile.name ?? "" })}
           </div>
-          <div className="pf-share-file" dir="ltr">{done}</div>
+          {/* THE FILE'S NAME, NOT THE PATH TO IT. A reader recognises «هيئتي.zip» in a folder; a
+              path is a technical fact about this machine, and printing one here asked them to
+              navigate by hand. Where it is, is answered by the control below, which takes them
+              there. `dir="ltr"` because a filename is a filename whichever way the interface runs. */}
+          <div className="pf-share-file" dir="ltr">{done.split(/[\/]/).pop()}</div>
           <p className="pf-dialog-body">{t("profiles.share.sendIt")}</p>
+          {shown && <p className="pf-dialog-body">{shown}</p>}
           <div className="pf-dialog-actions">
+            {/* SHOW IT, rather than describe where it is. The file manager opens at the folder with
+                the package already selected — the same thing every other application does with a
+                file it has just written. A package that has been moved or deleted since is not a
+                failure to report as one: its folder is opened instead, and the reader is told
+                that is what happened. */}
             <button
               className="pf-btn"
               onClick={() => {
-                void navigator.clipboard.writeText(done).then(() => setCopied(true));
+                setShown(null);
+                void revealPath(done)
+                  .then((r) => { if (r.showed === "folder") setShown(t("profiles.share.showedFolder")); })
+                  .catch((e) => {
+                    const code = String(e).split(":")[0].trim();
+                    setShown(code.startsWith("reveal.err.") ? t(code as never) : t("reveal.err.failed"));
+                  });
               }}
             >
-              {copied ? t("profiles.share.copied") : t("profiles.share.copyPath")}
+              {t("profiles.share.showFile")}
             </button>
             <button className="pf-btn primary" onClick={onClose}>
               {t("profiles.share.close")}

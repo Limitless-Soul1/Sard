@@ -965,6 +965,50 @@ export interface TocSectionEntry {
 export type AnchorPosition = "passed" | "visible" | "ahead" | "missing";
 
 /**
+ * A section's OWN heading — the one rule, shared by the synthesised contents (`getSynthesisedToc`)
+ * and by the front-matter name below, so the two can never come to disagree about what a section is
+ * called. Only the heading is read; the section's text is deliberately never touched, because a label
+ * derived from a book's opening sentence would look like a title the author wrote, and none exists.
+ */
+export function sectionHeading(doc: Document | null | undefined): string {
+  const h = doc?.body?.querySelector("h1,h2,h3,h4,h5,h6");
+  return (h?.textContent ?? "").replace(/\s+/g, " ").trim();
+}
+
+/**
+ * RESILIENCE-1 (NAV-3, corrected) — how a position BEFORE the book's first contents entry is named.
+ *
+ * A cover, a title page, a copyright page, a dedication and a readable table of contents are all
+ * ordinary linear reading content that a book's own contents list routinely omits. None of them is
+ * Chapter 1, and the fact that Chapter 1 is the next entry does not make any of them it — which is
+ * precisely what the first version of this rule concluded, by returning the first entry AFTER the
+ * section.
+ *
+ * So such a position is named after ITSELF and belongs to no contents row: the caller publishes the
+ * name with a null href, which keeps RAWY-287's `tocIndex` at `-1` and leaves the Contents panel
+ * correctly highlighting nothing.
+ *
+ * `heading` is a THUNK so the document is only read when the answer actually depends on it — this
+ * runs on relocate, and for a book whose contents point nowhere the answer is null without looking.
+ *
+ * Returns null when:
+ *   · the contents point nowhere (`firstContentsSection` is null) — such a book belongs entirely to
+ *     `getSynthesisedToc`, and inventing a second naming path here would give it two;
+ *   · the position is at or after the first entry — foliate's own answer stands, untouched;
+ *   · the section has no heading — it simply has no name, and the chrome says so neutrally. Nothing
+ *     is invented to fill the gap.
+ */
+export function frontMatterName(
+  index: number,
+  firstContentsSection: number | null,
+  heading: () => string,
+): string | null {
+  if (firstContentsSection === null) return null;
+  if (index >= firstContentsSection) return null;
+  return heading() || null;
+}
+
+/**
  * RESILIENCE-1 (NAV-2) — the active-entry rule, as a pure function.
  *
  * `locate(fragment)` says where that anchor is relative to the visible range foliate reports on
@@ -2077,6 +2121,7 @@ export class FoliateController {
     // RESILIENCE-1 (NAV-2): the per-section TOC grouping belongs to THIS book — clear it on open,
     // or a cross-book follow would refine the new book against the old book's table of contents.
     this.tocBySection = null;
+    this.firstListedSection = undefined; // likewise: where THIS book's contents begin
     this.requestedTocHref = null; // a navigation intent belongs to the book it was made in
     this.forcedDir = opts.dir ?? undefined;
     if (this.forcedDir && view.book) view.book.dir = this.forcedDir;
@@ -2108,6 +2153,11 @@ export class FoliateController {
       if (!taken) this.pendingNote = null;
     });
 
+    // RAWY-FM2: the engine's IMMEDIATE movement signal. The paginator re-dispatches its container's
+    // scroll on itself, undebounced (paginator.js:597), which is the only thing that fires in the frame
+    // the text actually moves — `relocate` behind it is debounced by 250 ms. See `refreshSelectionRect`.
+    view.renderer?.addEventListener("scroll", () => this.refreshSelectionRect());
+
     view.addEventListener("relocate", (e: any) => {
       let fraction = typeof e.detail?.fraction === "number" ? e.detail.fraction : 0;
       // foliate-view puts the section (= PDF page) index at detail.section.current, NOT detail.index.
@@ -2137,15 +2187,16 @@ export class FoliateController {
       // than one. See `refineTocEntry` — foliate's own answer is kept verbatim for every other book.
       const sectionIndex = e.detail?.section?.current;
       const refined = fxl ? null : this.refineTocEntry(sectionIndex, e.detail?.range);
-      // RESILIENCE-1 (NAV-3): a section no TOC entry points at — a cover or a full-page
-      // illustration. foliate reports nothing for it, which left the page belonging to no entry at
-      // all. Only consulted when foliate itself has no answer, so no book that HAS an entry for its
-      // section is affected.
-      const orphan =
+      // RESILIENCE-1 (NAV-3, corrected): a position before the book's first contents entry — a cover,
+      // a title page, a readable table of contents. foliate reports nothing for it, which left the page
+      // belonging to no entry at all; it is now named after its own document rather than after the
+      // chapter that follows it, and it still belongs to no contents row. Only consulted when foliate
+      // itself has no answer, so no book that HAS an entry for its section is affected.
+      const frontMatter =
         !fxl && !refined && !e.detail?.tocItem && typeof sectionIndex === "number"
-          ? this.firstTocEntryAfterSection(sectionIndex)
+          ? this.frontMatterLabel(sectionIndex, e.detail?.range)
           : null;
-      const chosen = refined ?? orphan;
+      const chosen = refined;
       // WP-4F: carry foliate's own position through instead of dropping it. `location.current` can
       // be 0-based or absent depending on the book, so it is only published when it is a real number
       // and the total is positive — a readout that says "0 of 0" is worse than no readout.
@@ -2157,12 +2208,18 @@ export class FoliateController {
       this.relocateCb?.({
         cfi,
         fraction,
-        chapterLabel: chosen?.label ?? e.detail?.tocItem?.label ?? null,
+        // A NAME WITHOUT A ROW, deliberately. `frontMatter` can only be set where foliate has no
+        // entry, and leaving the href null is what keeps RAWY-287's `tocIndex` at -1, so no contents
+        // row is marked active for a page that is inside none of them.
+        chapterLabel: chosen?.label ?? e.detail?.tocItem?.label ?? frontMatter,
         chapterHref: chosen?.href ?? e.detail?.tocItem?.href ?? null,
         location: usable(loc) ? { current: loc.current, total: loc.total } : null,
         section: usable(sec) ? { current: sec.current, total: sec.total } : null,
         pageLabel: e.detail?.pageItem?.label != null ? String(e.detail.pageItem.label) : null,
       });
+      // RAWY-FM2: the reading position moved, so the selection toolbar's anchor is stale. See
+      // `refreshSelectionRect` — this is the only signal foliate surfaces when the text moves.
+      this.refreshSelectionRect();
     });
     view.addEventListener("load", (e: any) => {
       const doc: Document | undefined = e.detail?.doc;
@@ -2308,7 +2365,7 @@ export class FoliateController {
           ev.preventDefault();
           ev.stopPropagation();
           this.clearSelection();
-          this.selectionCb?.(null);
+          this.emitSelection(null);
           this.showCb?.(hit);
         } catch {
           /* a throw here must not break reading — the gesture is simply not claimed */
@@ -2327,7 +2384,7 @@ export class FoliateController {
         // real text selection so it can't re-fire (the reading frame has focus, so its own Esc is here).
         else if (ev.key === "Escape") {
           this.clearSelection();
-          this.selectionCb?.(null);
+          this.emitSelection(null);
         }
         // RAWY-136: F11 must toggle fullscreen from ANYWHERE, including with focus inside the book.
         // The content iframe is a separate frame, so its keydown does NOT bubble to the parent `window`
@@ -2387,7 +2444,7 @@ export class FoliateController {
       );
       // Selection → in-context toolbar (RAWY-20). Also a tap → wake the chrome (RAWY-72).
       doc.addEventListener("pointerdown", (ev: PointerEvent) => {
-        this.selectionCb?.(null);
+        this.emitSelection(null);
         // RAWY-132: remember the selection as the gesture starts, so pointerup can tell a fresh
         // drag-select from a plain click inside a lingering selection (see below + downSelText).
         this.downSelText = doc.getSelection()?.toString() ?? "";
@@ -2409,7 +2466,7 @@ export class FoliateController {
         // or double-click-a-word → different text) reaches the raise; an unchanged one clears for real.
         if (sel.toString() === this.downSelText) {
           this.clearSelection();
-          this.selectionCb?.(null);
+          this.emitSelection(null);
           return;
         }
         const range = sel.getRangeAt(0);
@@ -2419,7 +2476,7 @@ export class FoliateController {
         } catch {
           return;
         }
-        this.selectionCb?.({ cfi, text, rect: this.rectInParent(range.getBoundingClientRect(), doc), range: range.cloneRange() });
+        this.emitSelection({ cfi, text, rect: this.rectInParent(range.getBoundingClientRect(), doc), range: range.cloneRange() });
       });
     });
 
@@ -2472,7 +2529,7 @@ export class FoliateController {
       const sel = this.contentDoc?.getSelection?.();
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
         this.clearSelection();
-        this.selectionCb?.(null);
+        this.emitSelection(null);
       }
     });
     view.addEventListener("create-overlay", (e: any) => {
@@ -2724,6 +2781,83 @@ export class FoliateController {
   onSelection(cb: (sel: SelectionInfo | null) => void): void {
     this.selectionCb = cb;
   }
+
+  /**
+   * THE SELECTION TOOLBAR FOLLOWS THE SELECTION (RAWY-FM2).
+   *
+   * THE DEFECT, MEASURED. `SelectionInfo.rect` was computed once, at `pointerup`, and never again. The
+   * toolbar is `position: fixed` and that rect is in parent-VIEWPORT coordinates, so the two agree
+   * exactly at the moment of selection and diverge from the first scroll onward. Measured on a long
+   * section, wheeling down and back: the selected text's top moved 222 → 22 → −178 → −578 → 222 with
+   * the scroll, while the toolbar's bottom stayed at 212 throughout. The gap that should have been a
+   * constant −10 px reached +790 px, and returned to −10 only when the scroll returned to 0.
+   *
+   * WHICH SIGNAL, AND WHY NOT `relocate` ALONE. The first version of this fix listened only to
+   * `relocate`, on the strength of a measurement that found no scroll event anywhere. That measurement
+   * was WRONG: it attached listeners to the content document, its window, the parent window and every
+   * DESCENDANT of the renderer — and missed the renderer element itself, which is exactly where the
+   * paginator re-dispatches it (paginator.js:597). `relocate` meanwhile comes from `#afterScroll`,
+   * which the same constructor wraps in `debounce(…, 250)` (paginator.js:598-603), so it arrives a
+   * quarter-second after scrolling STOPS and never during the gesture.
+   *
+   * MEASURED with a per-frame sampler through one ordinary five-step wheel gesture: the selection's own
+   * top moved 347 → 287 → 227 → 167 → 107 → 47, each change landing in the same frame as a `scroll`
+   * event on the renderer (t = 24, 93, 172, 252, 331 ms) — while the toolbar sat at 230 the whole time
+   * and `relocate` did not fire ONCE in the following 1.4 s. That is the reported "lag, then chase":
+   * not a late correction but no correction at all until some later event happened to arrive.
+   *
+   * So the anchor now follows the renderer's own `scroll`, which is undebounced and fires in the frame
+   * the text moves, and `relocate` is KEPT as well — a paged-flow page turn translates the columns
+   * without scrolling the container, and chapter navigation replaces the document altogether.
+   *
+   * The geometry is already correct at that instant: the same sampler shows the range's rect carrying
+   * its new value in the very frame the scroll event fires, so nothing has to be deferred or retried.
+   *
+   * WHY THE RANGE IS ENOUGH. The payload already carries a cloned `Range`, and a clone still references
+   * the live nodes — so its rect is the text's CURRENT position, with no re-selection and no bookkeeping
+   * about what moved. Nothing about the selection itself is touched: the same cfi, the same text, the
+   * same range, so every toolbar action still targets what was selected.
+   *
+   * Re-emits only when the geometry actually changed, so an unmoved reader costs one rect comparison.
+   */
+  private liveSelection: SelectionInfo | null = null;
+
+  private emitSelection(sel: SelectionInfo | null): void {
+    this.liveSelection = sel;
+    this.selectionCb?.(sel);
+  }
+
+  /** Recompute the live selection's anchor. Called whenever the reading position moves. */
+  private refreshSelectionRect(): void {
+    const sel = this.liveSelection;
+    const range = sel?.range;
+    if (!sel || !range) return;
+    try {
+      const doc = range.startContainer?.ownerDocument;
+      if (!doc) return;
+      // RAWY-FM3 — A DOCUMENT CHANGE RETIRES THE SELECTION, where scrolling away does not.
+      //
+      // The toolbar now HOLDS its position when the reader scrolls past the selected words, because
+      // those words are still there and every action still applies to them. Navigating to another
+      // chapter is the different case: the document is replaced, the range is left pointing into
+      // something no longer rendered, and a toolbar offering to highlight it would be offering
+      // nothing. Asked of the renderer rather than inferred from a section number, so it is true for
+      // whatever the engine currently has on screen — and guarded on a non-empty answer, so a
+      // transient gap during a page turn cannot dismiss anything.
+      const contents = this.view?.renderer?.getContents?.() as { doc?: Document }[] | undefined;
+      if (contents?.length && !contents.some((c) => c?.doc === doc)) {
+        this.emitSelection(null);
+        return;
+      }
+      const rect = this.rectInParent(range.getBoundingClientRect(), doc);
+      const was = sel.rect;
+      if (Math.abs(rect.top - was.top) < 0.5 && Math.abs(rect.left - was.left) < 0.5
+        && Math.abs(rect.bottom - was.bottom) < 0.5 && Math.abs(rect.width - was.width) < 0.5) return;
+      this.emitSelection({ ...sel, rect });
+    } catch {
+      // A torn-down frame or a detached range: leave the toolbar where it is rather than break relocate.
+    }
+  }
   /** RAWY-230 (§4): return keyboard focus to the reading frame — so SPACE/arrows reach the reading shortcuts
    *  (onSpace/onArrow) instead of a chrome button that kept focus. Focuses the content iframe element (where a
    *  page click puts focus), falling back to the foliate-view host. */
@@ -2738,11 +2872,34 @@ export class FoliateController {
     }
   }
 
-  /** RAWY-122: drop any live text selection (content frame + parent). Dismissing the selection popover
-   *  used to only HIDE it — the browser selection lingered, so a later pointerup re-fired the toolbar
-   *  and the text stayed visibly selected. Callers clear it on Esc / click-away so a select-to-read is
-   *  effortless to cancel. */
+  /**
+   * RAWY-122: drop any live text selection (content frame + parent). Dismissing the selection popover
+   * used to only HIDE it — the browser selection lingered, so a later pointerup re-fired the toolbar
+   * and the text stayed visibly selected. Callers clear it on Esc / click-away so a select-to-read is
+   * effortless to cancel.
+   *
+   * THE SELECTION IS RETIRED HERE, NOT MERELY UN-DRAWN.
+   *
+   * Dropping the browser's ranges is only half of it. `liveSelection` is the one authoritative
+   * record of the selection the toolbar belongs to, and `refreshSelectionRect` — which runs on every
+   * renderer scroll and every relocate — re-emits from exactly that field. Leaving it set meant a
+   * dismissed selection could be brought back by work that had nothing to do with the reader's
+   * intent: measured, the toolbar returned at the old words after a dismissal and a wait, after a
+   * dismissal and a scroll, and while read-aloud moved the text underneath it.
+   *
+   * Emitting `null` is what makes all of that stale work harmless, rather than racing it: every
+   * delayed callback reads this same field, and an empty field has nothing to resurrect. No timer
+   * and no suppression window is involved, so nothing depends on how long "later" turns out to be.
+   *
+   * A LIVE SELECTION IS UNTOUCHED BY THIS. It is only called to dismiss, and a selection that is
+   * still alive still has its rect refreshed on scroll — which is what keeps the toolbar travelling
+   * with the words it belongs to, and leaving the viewport with them.
+   *
+   * One call site already paired the two by hand (`pointerup`, where an unchanged selection is a
+   * dismiss); pairing them here is what stops the next caller having to remember.
+   */
   clearSelection(): void {
+    this.emitSelection(null);
     try {
       this.contentDoc?.getSelection?.()?.removeAllRanges?.();
     } catch {
@@ -2767,7 +2924,7 @@ export class FoliateController {
    * which is the one thing this must not become.
    */
   publishAnnotationHit(hit: AnnotationHit): void {
-    this.selectionCb?.(null);
+    this.emitSelection(null);
     this.showCb?.(hit);
   }
   /** RAWY-72: receive pointer activity from inside the content frame (parent-viewport coords + a
@@ -2888,7 +3045,51 @@ export class FoliateController {
     // the section's label, which is what files the row in the right place.
     const res = await this.view?.addAnnotation({ value: cfi, color });
     this.noteDrawHighlight(cfi, color, alpha ?? this.hlAlpha.get(cfi) ?? null);
-    return res?.label ?? null;
+    if (!res) return null;
+    return await this.annotationLabel(res.index, res.label);
+  }
+
+  /**
+   * THE SECTION LABEL AN ANNOTATION IS FILED UNDER — one rule, the reader's own.
+   *
+   * WHAT WAS WRONG. A bookmark took the reader's live `chapterLabel`; a highlight took foliate's
+   * `addAnnotation` label, which is `TOCProgress.getProgress(index)?.label ?? ''` (view.js:396). For a
+   * section no contents entry describes, `getProgress` is null and foliate answers `''` — and Sard's
+   * `label ?? state` kept the empty string, because `??` falls back only from null. MEASURED: at one
+   * front-matter position a bookmark recorded "The Title of the Book" while a highlight and a note on
+   * the same page recorded "". Two annotation types, one position, two answers.
+   *
+   * WHY NOT SIMPLY `||`. Because foliate's label is not merely a worse version of the reader's — it is
+   * the answer for the section the ANNOTATION is in, which is not always the section the reader is in.
+   * A selection made inside an open note belongs to the note's document, and `addHighlight` is what
+   * files it in the right place (see the note in that method). Falling back to the reading position
+   * would have mis-filed exactly those marks — the opposite defect, and a quieter one.
+   *
+   * SO THE RULE IS APPLIED TO THE ANNOTATION'S OWN SECTION, and it is the SAME rule, in the same
+   * order, that `relocate` publishes for the reading position:
+   *   · foliate's label — the section's own entry, or the nearest PRECEDING one it inherits;
+   *   · otherwise the section precedes every entry, so `frontMatterName` gives its own heading;
+   *   · otherwise it has no name, and `null` says so — which is what a bookmark already stored.
+   * No second labelling system: `frontMatterName` and `sectionHeading` are the same functions the
+   * reader uses, and nothing here can look forward to a later chapter.
+   */
+  private async annotationLabel(index: unknown, label: unknown): Promise<string | null> {
+    const fromEngine = typeof label === "string" ? label.trim() : "";
+    if (fromEngine) return fromEngine;
+    if (typeof index !== "number") return null;
+    try {
+      return frontMatterName(index, this.firstContentsSection(), () =>
+        sectionHeading(this.sectionDocument(index)));
+    } catch {
+      return null; // a label is never worth breaking the write that carries it
+    }
+  }
+
+  /** The rendered document for a section, when that section is the one on screen. */
+  private sectionDocument(index: number): Document | null {
+    const cs = this.view?.renderer?.getContents?.() as { index?: number; doc?: Document }[] | undefined;
+    const hit = cs?.find((c) => c?.index === index);
+    return hit?.doc ?? null;
   }
 
   /**
@@ -3043,26 +3244,66 @@ export class FoliateController {
   }
 
   /**
-   * RESILIENCE-1 (NAV-3) — a section that NO TOC entry points at.
+   * RESILIENCE-1 (NAV-3), CORRECTED — a position BEFORE the book's first contents entry.
    *
-   * A cover or a full-page illustration is usually absent from the table of contents: Alice's spine
-   * begins with `wrap0000.xhtml`, and its TOC's first entry points at the NEXT document. MEASURED on
-   * that page: foliate's `TOCProgress` returns `null` (its `map` has no group for the section and
-   * inherits nothing, progress.js:29-33), so no entry was current, the Contents panel highlighted
-   * nothing, and the page read as if it sat outside the book entirely.
+   * THE ORIGINAL DEFECT, WHICH STANDS. A cover or a full-page illustration is usually absent from the
+   * table of contents: one measured book's spine begins with a wrapper document its contents do not
+   * list. foliate's `TOCProgress` returns `null` there — its `map` inherits from the PRECEDING section
+   * (progress.js:29-33) and section 0 has no predecessor — so no entry was current, the Contents panel
+   * highlighted nothing, and the page read as if it sat outside the book entirely.
    *
-   * It does not. The reader is BEFORE the first entry that follows it, so that entry is the one they
-   * are heading toward — the same reasoning `pickActiveTocEntry` uses within a section, applied
-   * between sections. Front matter now belongs to the book's opening entry instead of to nothing.
+   * WHAT THE FIRST ANSWER GOT WRONG. It returned the first entry AFTER the section, reasoning that the
+   * reader is heading toward it. That is the opposite of every other rule in the reader: foliate
+   * inherits from the section BEFORE, and RAWY-287 resolves to "the last entry at or before your
+   * position, otherwise none". Three rules for one question — and the one that looked forward silently
+   * overrode RAWY-287 for exactly the sections RAWY-287 was written to answer honestly, because it
+   * publishes `chapterHref` and RAWY-287 matches that first.
+   *
+   * MEASURED on a book whose spine begins with its own readable table of contents (the contents
+   * document at spine 0, unlisted by itself, which is ordinary EPUB 3): sitting on that page — 199 list
+   * items, no prose — the chrome said "Chapter 1" and the Contents panel highlighted Chapter 1. Jumping
+   * to the real Chapter 1 moved the spine section from 0 to 1 and changed neither. A cover, a table of
+   * contents and Chapter 1 are three different things, and two of them were being called the third.
+   *
+   * THE RULE NOW: front matter is named after ITSELF — the section's own heading, by the same rule
+   * `getSynthesisedToc` uses. Nothing is invented: a section with no heading has no name, and the chrome
+   * renders its neutral caption. No contents row is marked active, because the reader is inside none of
+   * them, which is what RAWY-287's `-1` already means.
+   *
+   * Null unless the book HAS contents and none of them begins at or before this section — so a book
+   * whose contents are empty or unusable is left entirely to `getSynthesisedToc`.
    */
-  private firstTocEntryAfterSection(index: number): { href: string; label: string } | null {
-    const bySection = this.tocHrefSectionMap();
-    for (const entry of flattenToc(this.view?.book?.toc)) {
+  private frontMatterLabel(index: number, range: unknown): string | null {
+    try {
+      return frontMatterName(index, this.firstContentsSection(), () => {
+        // The document the POSITION is in, taken from the relocate range rather than from whichever
+        // section happened to load last — through a run of fast page turns those are not always the
+        // same. `contentDoc` is the fallback for a relocate that carries no range.
+        const root = (range as Range | undefined)?.startContainer?.getRootNode?.();
+        const doc = root && (root as Document).body ? (root as Document) : this.contentDoc;
+        return sectionHeading(doc);
+      });
+    } catch {
+      return null; // a torn-down frame or a detached range must never break relocate
+    }
+  }
+
+  /** Where THIS book's contents begin, cached for the life of the view (see `open` for the reset). */
+  private firstListedSection: number | null | undefined;
+
+  /** The first spine section the displayed contents point into; null when they point nowhere. */
+  private firstContentsSection(): number | null {
+    if (this.firstListedSection !== undefined) return this.firstListedSection;
+    const entries = this.getToc();
+    const bySection = this.tocHrefSectionMap(entries);
+    let first: number | null = null;
+    for (const entry of entries) {
       if (!entry.href) continue;
       const sec = bySection.get(entry.href) ?? bySection.get(entry.href.split("#")[0]);
-      if (typeof sec === "number" && sec > index) return { href: entry.href, label: entry.label };
+      if (typeof sec === "number" && (first === null || sec < first)) first = sec;
     }
-    return null;
+    this.firstListedSection = first;
+    return first;
   }
 
   /**
@@ -3471,8 +3712,7 @@ export class FoliateController {
       }
       // ONLY the heading is read. The section's text is deliberately never touched: a label derived
       // from a book's opening sentence would look like a title the author wrote, and none exists.
-      const h = doc?.body?.querySelector("h1,h2,h3,h4,h5,h6");
-      material.push({ heading: (h?.textContent ?? "").replace(/\s+/g, " ").trim() });
+      material.push({ heading: sectionHeading(doc) });
       spineIndex.push(i);
       if (material.length % UNITS_CHUNK === 0) await breathe();
     }
@@ -3738,10 +3978,10 @@ export class FoliateController {
       if ((i + 1) % UNITS_CHUNK === 0 && i + 1 < all.length) await breathe();
     }
     if (!anyLeaf) {
-      // No visible leaf held text: the chapter has NO block-level container at all. Measured on the
-      // reported book "داو الخالد العجيب" (a .txt→EPUB conversion): every chapter is `<span>`s
-      // separated by `<br>` directly inside `<body>`, so `CONTAINER` — which lists only block
-      // elements — matched 0 nodes in all 88 chapter documents.
+      // No visible leaf held text: the chapter has NO block-level container at all. Measured on a
+      // reported `.txt`→EPUB conversion whose chapters are `<span>`s separated by `<br>` directly
+      // inside `<body>`, so `CONTAINER` — which lists only block elements — matched 0 nodes in
+      // every one of that book's 88 chapter documents.
       //
       // This used to read `body.textContent` and emit units with `range: null` — "honest
       // no-highlight". But that is the one failure the reader cannot understand: `text` still feeds
@@ -5752,7 +5992,7 @@ export class FoliateController {
     if (!sel) {
       this.noteSelRange = null;
       this.noteSelText = "";
-      this.selectionCb?.(null);
+      this.emitSelection(null);
       return;
     }
     // KEPT HERE, NOT PUBLISHED. Read-aloud needs the live range to know which sentence of the note the
@@ -5783,7 +6023,7 @@ export class FoliateController {
     // CFI alone; this is what lets it draw the mark exactly where they made it instead of looking for
     // the words again. Bounded by the note's own lifetime — the map is cleared with the surface.
     if (sel.range && !sel.range.collapsed) this.noteHlRanges.set(cfi, sel.range);
-    this.selectionCb?.({ cfi, text: sel.text, rect: sel.rect, fromNote: true });
+    this.emitSelection({ cfi, text: sel.text, rect: sel.rect, fromNote: true });
   }
 
   /**

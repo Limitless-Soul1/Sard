@@ -17,6 +17,7 @@ import { useEffect, useRef } from "react";
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
 import { useUpdater } from "../../lib/updater";
+import { whatsNewFor } from "./whatsNew";
 
 /** Bytes -> a short human string. `localeDigits`, not `localeNum`: this is a composed string with a
  *  decimal point, and localeNum rounds to an integer. Unit text comes from the locale. */
@@ -26,7 +27,7 @@ function mb(bytes: number, unit: string): string {
 }
 
 export function UpdateDialog() {
-  const { t, lang } = useI18n();
+  const { t, lang, dir } = useI18n();
   const state = useUpdater((s) => s.state);
   const install = useUpdater((s) => s.install);
   const cancel = useUpdater((s) => s.cancel);
@@ -57,6 +58,10 @@ export function UpdateDialog() {
 
   if (!open) return null;
 
+  // Which notes this dialog has to show. Resolved once, here, so the markup below states the
+  // preference rather than working it out twice.
+  const localNotes = state.k === "available" ? whatsNewFor(state.version) : null;
+
   const scrimClick = () => {
     if (state.k === "installing" || state.k === "downloading") return; // never lose a running job to a stray click
     dismiss();
@@ -83,10 +88,27 @@ export function UpdateDialog() {
               </div>
             </div>
 
-            {state.notes && (
+            {/* WHAT'S NEW, IN THE READER'S OWN LANGUAGE WHERE SARD HAS IT.
+                The manifest's `body` is one string in one language, so an Arabic reader was shown
+                whatever was written that day. Where this build carries notes for the offered
+                version they are read through `t()` and laid out in the interface's direction;
+                otherwise the body is rendered exactly as it always was, `dir="auto"` and all, so an
+                update from a version this file does not describe still explains itself. */}
+            {(localNotes || state.notes) && (
               <div className="upd-notes">
                 <div className="upd-notes-label">{t("upd.notes")}</div>
-                <div className="upd-notes-body" dir="auto">{state.notes}</div>
+                {localNotes ? (
+                  <div className="upd-notes-body upd-notes-local" dir={dir}>
+                    {localNotes.map((s) => (
+                      <section className="upd-note" key={s.h}>
+                        <h3 className="upd-note-h">{t(s.h)}</h3>
+                        <p className="upd-note-b">{t(s.b)}</p>
+                      </section>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="upd-notes-body" dir="auto">{state.notes}</div>
+                )}
               </div>
             )}
 

@@ -3606,6 +3606,21 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   max-height: 168px; overflow-y: auto; white-space: pre-wrap; overflow-wrap: anywhere;
   padding: 12px 14px; border-radius: 9px; background: var(--paper-bg); border: 1px solid var(--chrome-border);
 }
+/* WHAT'S NEW, when Sard carries the notes itself. The remote body is one pre-wrapped run of text;
+   these are headed sections, so the whitespace rule that serves the former would double every gap.
+   Everything else — the frame, the scroll, the colours — is the block above, unchanged. */
+.upd-notes-local {
+  white-space: normal;
+  /* ROOM FOR EIGHT HIGHLIGHTS. The 168px above was sized for the manifest's body, which is a short
+     run of text; with headed sections it showed the first one and hid the rest behind a scroll, so
+     the notes nobody scrolls were the notes nobody read. The cap is relative first so a short window
+     still fits the dialog whole, and absolute second so a tall one does not turn it into a page. */
+  max-height: min(42vh, 340px);
+}
+.upd-note + .upd-note { margin-top: 12px; }
+.upd-note-h { margin: 0 0 2px; font: 600 0.8125rem/1.45 var(--ui-font); color: var(--text); }
+.upd-note-b { margin: 0; font: 400 0.84375rem/1.65 var(--ui-font); color: inherit; }
+
 .upd-ask { margin: 0 0 20px; font: 400 0.875rem/1.65 var(--ui-font); color: var(--muted); }
 
 .upd-dlg-actions { display: flex; justify-content: flex-end; gap: var(--sp-5); }

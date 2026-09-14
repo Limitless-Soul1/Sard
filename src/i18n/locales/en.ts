@@ -1411,6 +1411,41 @@ export const en = {
   // And where it has NOT been established, saying so is the answer. A failure is attributed to
   // Sard, to the book or to the machine only where the classifier actually determined it — see
   // `internal` below, which determines none of the three.
+  // ── WHAT'S NEW ────────────────────────────────────────────────────────────────────────────────
+  // The release notes Sard carries itself, read through t() like every other string, so they follow
+  // the reader's chosen language and its direction. `features/updater/whatsNew.ts` decides which
+  // offered version they are shown for, and keeps the manifest's own body as the fallback.
+  "wn.profiles.h": "Profiles",
+  "wn.profiles.b":
+    "Save the whole look of Sard exactly as you like it: library and reading colours, the library "
+    + "background and the book's own, fonts and text settings, the shape of your marks, and the "
+    + "reading voice. You are no longer limited to the sixteen ready-made looks — press any colour "
+    + "and change it. A profile packs into a single file you can share and receive like any other.",
+  "wn.replacements.h": "Replacements",
+  "wn.replacements.b":
+    "Replace any word or phrase in a book with whatever you would rather read, and turn a "
+    + "replacement off or back on whenever you like.",
+  "wn.views.h": "Five ways to see your library",
+  "wn.views.b": "Grid, Covers, Spines, Details and Vista.",
+  "wn.deposit.h": "Share a book with what you have read into it",
+  "wn.deposit.b":
+    "Send a book together with whichever of your highlights, notes, references and replacements you "
+    + "choose — not just the file.",
+  "wn.presence.h": "Discord Activity",
+  "wn.presence.b":
+    "Show what you are reading on your Discord profile, and choose what appears: the book's name, "
+    + "the chapter and how far you have read, or simply that you are browsing your library.",
+  "wn.marks.h": "Highlights and Notes",
+  "wn.marks.b":
+    "Your own highlight colours, margin notes pinned to the exact place, and tags to sort your notes "
+    + "and move between them — in this book or across every book.",
+  "wn.cards.h": "Image cards",
+  "wn.cards.b":
+    "Backgrounds, images and far more control over the design — and a brand-new card you can start "
+    + "from nothing and fill with whatever you want, with no quote from a book.",
+  "wn.more.h": "And more",
+  "wn.more.b": "Refinements and polish throughout the app.",
+
   "err.runtime.title": "Your Windows WebView2 needs updating",
   // Nobody is declared innocent here. What was established is that capabilities the rendering
   // needs are absent from this engine AND are not ones Sard supplies for it, so the update is

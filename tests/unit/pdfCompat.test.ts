@@ -23,6 +23,38 @@ const INDEX_HTML = readFileSync(resolve(ROOT, "index.html"), "utf8");
 const PDF_ADAPTER = readFileSync(resolve(ROOT, "public/foliate-js/pdf.js"), "utf8");
 
 /**
+ * The realm's intrinsics, declared with the built-ins under test.
+ *
+ * TypeScript's ES2022 library does not know these — which is the whole reason the layer exists —
+ * so the realm is described here rather than asserted away with casts at every use. The shapes are
+ * the specified ones, so a test that called them wrongly would still fail to compile.
+ */
+interface Resolvers<T> {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+}
+type RealmPromise = PromiseConstructor & {
+  try<T, A extends unknown[]>(fn: (...args: A) => T | PromiseLike<T>, ...args: A): Promise<T>;
+  withResolvers<T>(): Resolvers<T>;
+};
+interface HexBytes extends Uint8Array {
+  toHex(): string;
+}
+type RealmUint8Array = {
+  new (input?: number[] | ArrayBufferLike): HexBytes;
+  from(input: ArrayLike<number>): HexBytes;
+  prototype: HexBytes;
+};
+interface ComputedMap<K, V> extends Map<K, V> {
+  getOrInsertComputed(key: K, callbackfn: (key: K) => V): V;
+}
+type RealmMap = {
+  new <K, V>(entries?: readonly (readonly [K, V])[]): ComputedMap<K, V>;
+  prototype: ComputedMap<unknown, unknown>;
+};
+
+/**
  * Run the layer in a throwaway realm.
  *
  * `strip` names built-ins to remove BEFORE the layer runs, which is how an older engine is
@@ -62,9 +94,9 @@ function realm(strip: string[] = []) {
   vm.runInContext(`${removals}\n${SOURCE}`, ctx);
 
   const g = vm.runInContext(`({ Promise, Uint8Array, Map, URL, Object })`, ctx) as {
-    Promise: PromiseConstructor;
-    Uint8Array: Uint8ArrayConstructor;
-    Map: MapConstructor;
+    Promise: RealmPromise;
+    Uint8Array: RealmUint8Array;
+    Map: RealmMap;
     URL: typeof URL;
     Object: ObjectConstructor;
   };

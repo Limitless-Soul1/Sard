@@ -30,6 +30,7 @@ import {
   type RevealLabels,
 } from "./injectedCss";
 import { navIntent } from "./navIntent";
+import { wheelBoundary, type WheelAction } from "./wheelBoundary";
 // RAWY-229: pure, and therefore shared. The hosted transport applies the same rule in the
 // application, because `bookmarkVisible` is read from a React render body that cannot await.
 import { sameSection } from "./cfiSection";
@@ -1649,8 +1650,7 @@ async function ensureFoliateDefined(): Promise<void> {
 // boundary feels too heavy/light. 140 ms (RAWY-26, down from 220): still well above the gap
 // between wheel events inside one continuous scroll (~16–80 ms), so same-gesture chaining is
 // still blocked, but a deliberate second flick advances more readily (lighter).
-const BOUNDARY_PAUSE_MS = 140;
-const BOUNDARY_EDGE_PX = 4;
+// Both live in `wheelBoundary.ts` now, beside the one decision that reads them.
 // RAWY-250: how close to a section's top still counts as "entered at the beginning" (scrolled flow). A
 // natural advance / TOC click / resume-at-top lands at exactly 0; a mid-chapter jump lands hundreds of px in.
 // Deliberately small — this gate exists to keep a mid-chapter jump from marking a chapter read.
@@ -3455,39 +3455,22 @@ export class FoliateController {
   // wheel = one gesture state, and the two paths are mutually exclusive per event (the frame
   // boundary), so sharing wheelTs/gestureEdge/gestureActed is exactly right. Returns what the
   // caller should do: advance a section, hold at the edge, or scroll normally.
-  private wheelBoundaryAction(deltaY: number): "next" | "prev" | "hold" | "scroll" {
+  private wheelBoundaryAction(deltaY: number): WheelAction {
     const r = this.view?.renderer;
     if (!r) return "scroll";
-    const viewSize = r.viewSize as number;
-    const size = r.size as number;
-    const start = r.start as number;
-    // Renderer not laid out yet (getters 0/NaN) → never trap the wheel, or we'd freeze the page.
-    if (!(viewSize > 0) || !(size > 0)) return "scroll";
-    const now = performance.now();
-    const fresh = now - this.wheelTs > BOUNDARY_PAUSE_MS;
-    this.wheelTs = now;
-    const scrollable = viewSize - size > BOUNDARY_EDGE_PX;
-    const atBottom = scrollable ? viewSize - (start + size) <= BOUNDARY_EDGE_PX : true;
-    const atTop = start <= BOUNDARY_EDGE_PX;
-    if (fresh) {
-      this.gestureEdge = atBottom ? "bottom" : atTop ? "top" : null;
-      this.gestureActed = false;
-    }
-    const down = deltaY > 0;
-    if (down && atBottom) {
-      if (this.gestureEdge === "bottom" && !this.gestureActed) {
-        this.gestureActed = true;
-        return "next";
-      }
-      return "hold";
-    } else if (!down && atTop) {
-      if (this.gestureEdge === "top" && !this.gestureActed) {
-        this.gestureActed = true;
-        return "prev";
-      }
-      return "hold";
-    }
-    return "scroll";
+    // THE DECISION IS PURE AND LIVES IN `wheelBoundary.ts`; the gesture STATE lives here, because the
+    // two wheel paths — the content frame's own event and the one forwarded from the reading margins
+    // — are one physical gesture and must share one set of it.
+    const { action, state } = wheelBoundary(
+      deltaY,
+      { viewSize: r.viewSize as number, size: r.size as number, start: r.start as number },
+      { wheelTs: this.wheelTs, edge: this.gestureEdge, acted: this.gestureActed },
+      performance.now(),
+    );
+    this.wheelTs = state.wheelTs;
+    this.gestureEdge = state.edge;
+    this.gestureActed = state.acted;
+    return action;
   }
 
   private onBoundaryWheel(e: WheelEvent): void {

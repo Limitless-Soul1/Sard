@@ -19,7 +19,8 @@ import { en } from "../../src/i18n/locales/en";
 import { ar } from "../../src/i18n/locales/ar";
 
 const FULL: RuntimeEnv = {
-  objectGroupBy: true, mapGroupBy: true, uint8ToHex: true, uint8ToBase64: true, uint8FromBase64: true,
+  objectGroupBy: true, mapGroupBy: true,
+  promiseTry: true, promiseWithResolvers: true, uint8ToHex: true, mapGetOrInsertComputed: true,
 };
 const capable = () => __setRuntimeForTests(FULL);
 afterEach(() => __setRuntimeForTests(null));

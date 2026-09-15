@@ -1,0 +1,2607 @@
+/* MOBILE LAYOUT. Sard's tokens, a phone's geometry.
+ *
+ * NOT A MEDIA-QUERY LAYER OVER global.css. There is no `@media (max-width…)` here and there will not
+ * be one: this file never sees a desktop rule, so a desktop rule can never leak onto a phone and no
+ * desktop selector has to grow a mobile exception. The two stylesheets share the token file and
+ * nothing else.
+ *
+ * Every colour below is `var(--…)` from tokens.css, so all 16 themes work here with no mobile theme
+ * code at all — `applyTheme` writes the same custom properties to `:root` whatever the chrome.
+ */
+
+/* The desktop's base tokens already load app-wide from App.tsx; this adds only what a phone needs.
+   Importing `tokens.css` here would pull the shell's older copy over the desktop's current one. */
+@import "./mobile-tokens.css";
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  background: var(--app-bg);
+  color: var(--text);
+  /* The design's UI face, not the desktop's: Inter for Latin, falling through to SardUIArabic —
+     whose @font-face carries a unicode-range, so it only ever claims Arabic. Both already ship in
+     public/fonts. Desktop keeps `--ui-font` and is untouched. */
+  font-family: var(--m-ui-font);
+  font-weight: var(--ui-weight, 400);
+  /* A phone has no window to scale against, so the desktop's viewport ramp does not apply. The reader
+     still scales the BOOK independently — that is the reading zoom, not chrome size. */
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: var(--selection);
+}
+
+/* ---- icons ------------------------------------------------------------------------------------
+ * One grid, one stroke, drawn in the current text colour — so an icon takes the colour of whatever
+ * row, button or state it sits in and never needs its own palette. */
+
+.m-icon {
+  inline-size: var(--m-icon);
+  block-size: var(--m-icon);
+  flex: 0 0 auto; /* an icon beside a long Arabic label must not be squeezed by it */
+}
+
+/* Glyphs that POINT mirror with the reading direction; glyphs with a physical meaning (play, pause,
+   skip, the bookmark ribbon) never carry this class. Band B lists which is which. */
+[dir="rtl"] .m-icon--dir {
+  transform: scaleX(-1);
+}
+
+/* ---- shell ---------------------------------------------------------------------------------- */
+
+.mobile-root {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /* THE APP SHELL IS NOT A DOCUMENT. Long-pressing a book title in the library made Android select it
+     and raise its own Copy / Share / Select all / Read aloud bar over Sard — MEASURED on the device.
+     The only text a reader may select is the BOOK's, and that lives inside the content iframe, which
+     this rule cannot reach. Fields are exempted below, since typing into one requires selecting in it.
+     Touch only: the desktop shell is a different stylesheet and keeps normal selection. */
+  user-select: none;
+  -webkit-user-select: none;
+  /* The long-press callout (the magnifier/menu WebKit raises before selection even begins). */
+  -webkit-touch-callout: none;
+  /* The bar sits above the gesture area, and content above the bar. `env()` resolves to 0 where there
+     is no inset, so this is correct on a device without one rather than merely harmless. */
+  padding-block-end: env(safe-area-inset-bottom, 0px);
+}
+
+.mobile-main {
+  flex: 1;
+  min-height: 0; /* lets the scroller inside actually scroll rather than growing the shell */
+  padding-block-start: env(safe-area-inset-top, 0px);
+}
+
+/* Reading is full-bleed: the page reaches every edge, and the reader's own bars carry the safe-area
+   insets so they clear the system bars without the page being pushed off them. */
+.mobile-root--bleed {
+  padding-block-end: 0;
+}
+
+/* ---- shared controls (design Band B: four emphasis levels, one geometry family) ---------------- */
+
+/* A bare icon button. 44px is Band B's minimum for anything tappable; the glyph stays 20px and the
+   box changes, which is the rule the design states for every icon control. */
+.ml-iconbtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--m-touch-min);
+  block-size: var(--m-touch-min);
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--m-radius-control-sm);
+  background: none;
+  color: var(--text);
+  cursor: pointer;
+}
+
+/* The framed variant used beside the sort chip: 36px in a 44px row, on paper with a hairline. */
+.ml-iconbtn--framed {
+  inline-size: var(--m-touch-chip);
+  block-size: var(--m-touch-chip);
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--m-radius-control-lg);
+  background: var(--paper-bg);
+  color: var(--muted);
+}
+
+.ml-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  block-size: var(--m-touch-chip);
+  padding: 0 13px;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--m-radius-control-lg);
+  background: var(--paper-bg);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--m-text-caption);
+  font-weight: var(--m-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* Band B: "Fill and label both drop to ~40% — never a greyscale swap, so themes stay coherent." */
+.ml-iconbtn:disabled,
+.ml-chip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ml-iconbtn:active:not(:disabled) {
+  background: var(--app-bg);
+}
+
+/* ---- library ---------------------------------------------------------------------------------- */
+
+.ml-root {
+  block-size: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.ml-scroll {
+  flex: 1;
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ---- header ---- */
+
+.ml-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  padding: 4px var(--m-gutter) 0;
+}
+
+.ml-wordmark {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ml-wordmark-latin {
+  font-family: var(--m-display-font);
+  font-size: var(--m-text-ui);
+  font-weight: var(--m-weight-bold);
+}
+
+.ml-wordmark-rule {
+  inline-size: 1px;
+  block-size: 14px;
+  background: var(--text);
+  opacity: 0.28;
+}
+
+.ml-wordmark-ar {
+  font-family: var(--m-book-arabic);
+  font-size: var(--m-text-title);
+  font-weight: 700;
+}
+
+/* ---- bands ---- */
+
+.ml-band {
+  padding: var(--m-gap-lg) var(--m-gutter) 0;
+}
+
+/* The Recent strip scrolls edge to edge, so its band cannot carry the gutter — the strip does. */
+.ml-band--flush {
+  padding: 22px 0 0;
+}
+
+.ml-eyebrow {
+  margin: 0 0 var(--m-gap);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: var(--m-text-tiny);
+  font-weight: var(--m-weight-regular);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.ml-eyebrow--inset {
+  padding: 0 var(--m-gutter);
+}
+
+/* ---- Continue ---- */
+
+.ml-continue {
+  display: flex;
+  align-items: center;
+  gap: var(--m-gap-lg);
+  inline-size: 100%;
+  padding: var(--m-gap-lg);
+  border: 0;
+  border-radius: var(--m-radius-card);
+  background: var(--paper-bg);
+  box-shadow: var(--m-shadow-card);
+  color: inherit;
+  font: inherit;
+  text-align: start; /* start, not left — this is the same card in Arabic */
+  cursor: pointer;
+}
+
+.ml-continue-cover {
+  inline-size: 64px;
+  block-size: 96px;
+}
+
+.ml-continue-body {
+  flex: 1;
+  min-inline-size: 0;
+}
+
+.ml-continue-title {
+  display: block;
+  margin-block-end: 3px;
+  font-family: var(--m-display-font);
+  font-size: var(--m-read-latin-size);
+  font-weight: var(--m-weight-bold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ml-continue-sub {
+  display: block;
+  margin-block-end: var(--m-gap-md);
+  color: var(--muted);
+  font-size: var(--m-text-caption);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ml-continue-foot {
+  display: block;
+  margin-block-start: 8px;
+  color: var(--muted);
+  font-size: var(--m-text-tiny);
+  font-weight: var(--m-weight-medium);
+}
+
+/* ---- progress bar ---- */
+
+.ml-bar {
+  position: relative;
+  display: block;
+  block-size: 3px;
+  border-radius: 3px;
+  /* A track tinted from the ink rather than a flat grey, so it belongs to whichever paper is live. */
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.ml-bar--short {
+  inline-size: 64px;
+  flex: 0 0 auto;
+}
+
+.ml-bar-fill {
+  position: absolute;
+  /* LOGICAL, so progress fills from the right in an Arabic interface without a second rule. */
+  inset-inline-start: 0;
+  inset-block-start: 0;
+  block-size: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+/* ---- Recent strip ---- */
+
+.ml-recent {
+  display: flex;
+  gap: var(--m-gap-lg);
+  margin: 0;
+  padding: 0 var(--m-gutter);
+  list-style: none;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ml-recent::-webkit-scrollbar {
+  display: none;
+}
+
+.ml-recent-item {
+  inline-size: 96px;
+  flex: 0 0 auto;
+}
+
+.ml-recent-btn {
+  display: block;
+  inline-size: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.ml-recent-cover {
+  inline-size: 96px;
+  block-size: 144px;
+  box-shadow: var(--m-shadow-cover-lg);
+}
+
+.ml-recent-title {
+  display: block;
+  margin-block-start: 8px;
+  font-size: var(--m-text-caption);
+  font-weight: var(--m-weight-medium);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ml-recent-pct {
+  display: block;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-weight: var(--m-weight-medium);
+}
+
+/* ---- All books ---- */
+
+.ml-allhead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 24px var(--m-gutter) 8px;
+}
+
+.ml-allhead-title {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.ml-alltitle {
+  margin: 0;
+  font-family: var(--m-display-font);
+  font-size: 20px;
+  font-weight: var(--m-weight-bold);
+}
+
+.ml-allcount {
+  color: var(--muted);
+  font-size: var(--m-text-caption);
+  font-weight: var(--m-weight-medium);
+}
+
+.ml-allhead-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ---- the list ----
+ * ROW GEOMETRY IS LOAD-BEARING. 13 + 66 + 13 + 1 = 93px, and `ROW_PITCH` in useVirtualRows.ts holds
+ * the same number. A row that is allowed to grow — a title that wraps, an author that wraps — puts
+ * the windowing arithmetic back where it was on the grid, which is why both lines are clamped to one
+ * and the cover is a fixed box rather than an aspect ratio. */
+
+.ml-list {
+  margin: 0;
+  padding: 0 var(--m-gutter);
+  list-style: none;
+}
+
+.ml-spacer {
+  display: block;
+}
+
+.ml-row {
+  border-block-end: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.ml-row:last-of-type {
+  border-block-end: 0;
+}
+
+.ml-row-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--m-gap-lg);
+  inline-size: 100%;
+  /* 13px + a 66px cover + 13px = 92px, plus the 1px rule on the row = the 93px pitch.
+     DECLARED, not inferred. Left to grow with its content the row was 93px for a Latin book and 98px
+     for an Arabic one — measured on the device — because Arabic line boxes are deeper at the same
+     font-size. That 5px is small, but it is the same class of drift that made the grid unusable, and
+     in an Arabic-first product the script must not decide the geometry. The three text lines below
+     carry explicit line-heights for the same reason. */
+  block-size: 92px;
+  padding: 13px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.ml-row-btn:active {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.ml-row-cover {
+  inline-size: 44px;
+  block-size: 66px;
+  border-radius: 2px;
+  box-shadow: var(--m-shadow-cover);
+}
+
+.ml-row-body {
+  flex: 1;
+  min-inline-size: 0; /* without this a long title makes the row wider than its share */
+  overflow: hidden; /* the row's height is declared; nothing inside may argue with it */
+}
+
+.ml-row-title {
+  display: block;
+  font-family: var(--m-display-font);
+  font-size: var(--m-text-ui);
+  font-weight: var(--m-weight-medium);
+  line-height: 1.3; /* explicit, so Arabic and Latin rows are the same height */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ml-row-author {
+  display: block;
+  margin-block-start: 2px;
+  color: var(--muted);
+  font-size: var(--m-text-caption);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ml-row-status {
+  display: block;
+  margin-block-start: 6px;
+  color: var(--m-status-quiet);
+  font-size: var(--m-text-tiny);
+  font-weight: var(--m-weight-medium);
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ml-row-status--done {
+  color: var(--m-status-done);
+}
+
+.ml-row-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* The same 6 + 1.3×11 box the status line occupies, so a reading row and an unread row are the
+     same height and the pitch holds whichever state a book is in. */
+  margin-block-start: 6px;
+  block-size: calc(1.3 * var(--m-text-tiny));
+}
+
+.ml-row-pct {
+  color: var(--muted);
+  font-size: var(--m-text-tiny);
+  font-weight: var(--m-weight-medium);
+  line-height: 1.3;
+}
+
+/* ---- covers ---- */
+
+.ml-continue-cover,
+.ml-recent-cover,
+.ml-row-cover {
+  position: relative;
+  display: block;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: var(--m-radius-inner);
+  background: var(--app-bg);
+}
+
+.ml-continue-cover {
+  box-shadow: 0 4px 10px rgba(40, 28, 14, 0.22);
+}
+
+.ml-continue-cover img,
+.ml-recent-cover img,
+.ml-row-cover img {
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* The design draws a coloured plate with the title set on it where a book has no cover, rather than a
+   grey box or a single letter — a shelf of initials tells a reader nothing. */
+.ml-cover--blank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  background: color-mix(in srgb, var(--accent) 22%, var(--app-bg));
+}
+
+.ml-cover-title {
+  font-family: var(--m-book-arabic), var(--m-display-font);
+  font-size: 11px;
+  line-height: 1.35;
+  text-align: center;
+  color: var(--text);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+}
+
+/* ---- loading ---- */
+
+.ml-row--skeleton {
+  display: flex;
+  align-items: center;
+  gap: var(--m-gap-lg);
+  padding: 13px 0;
+}
+
+/* Band B's state table: "Shape-matched skeletons at 10/8/6% ink. No spinners above the fold." */
+.ml-skel {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  border-radius: var(--m-radius-inner);
+}
+
+.ml-skel-line {
+  display: block;
+  block-size: 11px;
+  border-radius: 3px;
+}
+
+.ml-skel-line--short {
+  margin-block-start: 8px;
+  inline-size: 44%;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+/* ---- empty ---- */
+
+.ml-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 32px 24px;
+}
+
+.ml-empty-title {
+  margin: 0 0 8px;
+  font-family: var(--m-display-font);
+  font-size: 1.375rem;
+}
+
+.ml-quiet {
+  color: var(--muted);
+  margin: 0;
+}
+
+/* ---- highlights & notes (design G2) ------------------------------------------------------------
+ *
+ * The library's own vocabulary, not a second one: the same head, the same chips, the same hairline
+ * between rows. A mark is a QUOTATION with its provenance above it, so the passage carries the book's
+ * face and the metadata line stays quiet — the reader is scanning for the words they kept, not for the
+ * chapter they were in. */
+
+.mk-root {
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+  min-block-size: 0;
+}
+
+.mk-chips {
+  display: flex;
+  flex: none;
+  gap: var(--m-gap-sm);
+  padding: 0 var(--m-gutter) var(--m-gap);
+}
+
+/* The count belongs to the chip that shows everything, exactly as the design draws it. */
+.mk-chip-n {
+  margin-inline-start: 6px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
+.ml-chip.on {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--chrome-border));
+  color: var(--text);
+}
+
+.mk-list {
+  flex: 1;
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-block-end: env(safe-area-inset-bottom, 0px);
+}
+
+.mk-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--m-gap);
+  inline-size: 100%;
+  padding: 14px var(--m-gutter);
+  border: 0;
+  border-block-end: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.mk-row:last-of-type {
+  border-block-end: 0;
+}
+
+.mk-row:active {
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+/* A stripe rather than a dot: it reads as the mark itself, and it survives a long passage without
+   floating away from the text it belongs to. */
+.mk-ink {
+  inline-size: 3px;
+  flex: 0 0 auto;
+  align-self: stretch;
+  min-block-size: 34px;
+  border-radius: 2px;
+}
+
+.mk-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-inline-size: 0;
+  flex: 1;
+}
+
+.mk-meta {
+  color: var(--muted);
+  font-family: var(--ui-font);
+  font-size: var(--m-text-caption);
+}
+
+.mk-text {
+  color: var(--text);
+  font-family: var(--m-display-font);
+  font-size: var(--m-text-body);
+  line-height: 1.45;
+  /* Three lines is enough to recognise a passage; the book is where it is read in full. */
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.mk-note {
+  color: var(--muted);
+  font-family: var(--m-display-font);
+  font-size: var(--m-text-caption);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.mk-note--title {
+  color: var(--text);
+  font-weight: var(--m-weight-medium);
+}
+
+/* A bookmark has no ink of its own — it is a position, not a colour — so its stripe takes the accent
+   and its one line of content (the %-read) stays quiet, because that IS the whole card. */
+.mk-ink--bm {
+  background: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.mk-text--quiet {
+  color: var(--muted);
+  font-family: var(--ui-font);
+  font-size: var(--m-text-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+
+
+/* NEW SHELF — the design's last row of the shelf list, and L3's inline create. A field with its verb
+   beside it rather than a dialog stacked on a drawer: the drawer is already a layer, and a second one
+   over it would put two scrims between the reader and the shelf they are naming. */
+.md-shelf--new {
+  font-weight: var(--m-weight-bold);
+}
+
+.md-newshelf {
+  display: flex;
+  align-items: center;
+  gap: var(--m-gap-sm);
+  padding: 4px 0;
+}
+
+.md-newshelf-input {
+  flex: 1;
+  min-inline-size: 0;
+  block-size: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--m-radius-control-sm);
+  background: var(--app-bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--m-text-caption);
+}
+
+.md-newshelf-input:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--chrome-border));
+  outline: none;
+}
+
+.md-newshelf-go {
+  flex: none;
+  block-size: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--m-radius-control-sm);
+  background: var(--accent);
+  color: var(--paper-bg);
+  font-family: inherit;
+  font-size: var(--m-text-caption);
+  font-weight: var(--m-weight-bold);
+  cursor: pointer;
+}
+
+.md-newshelf-go:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+
+
+
+/* ---- book sheet (design C5) + add to shelf (L3) --------------------------------------------------
+ * The book above, the way back into it, then everything the book owns as rows that lead somewhere. */
+
+.mb-sheet {
+  z-index: 51; /* scrim and sheet are siblings — see .mn-sheet and .mf-sheet */
+  block-size: auto;
+  max-block-size: 88%;
+  padding-inline: var(--m-gutter);
+}
+
+.mb-top {
+  display: flex;
+  flex: none;
+  gap: 18px;
+  padding-block-end: var(--m-gap-lg);
+}
+
+.mb-cover {
+  inline-size: 108px;
+  block-size: 162px;
+  flex: none;
+  border-radius: 4px;
+  object-fit: cover;
+  box-shadow: var(--m-shadow-card);
+}
+
+.mb-cover--plain {
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.mb-facts {
+  flex: 1;
+  min-inline-size: 0;
+  padding-block-start: 4px;
+}
+
+.mb-title {
+  color: var(--text);
+  font-family: var(--m-display-font);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.mb-author {
+  color: var(--muted);
+  font-size: var(--m-text-ui);
+  margin-block-start: 2px;
+}
+
+.mb-meta {
+  color: color-mix(in srgb, var(--muted) 80%, transparent);
+  font-family: var(--ui-font);
+  font-size: var(--m-text-caption);
+  margin-block-start: 10px;
+}
+
+.mb-bar {
+  block-size: 3px;
+  margin-block-start: 14px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+  overflow: hidden;
+}
+
+.mb-bar-fill {
+  display: block;
+  block-size: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.mb-progress {
+  color: var(--muted);
+  font-family: var(--ui-font);
+  font-size: var(--m-text-caption);
+  margin-block-start: 7px;
+}
+
+/* The design's filled primary, in the accent rather than the text colour: this one RESUMES, it does
+   not merely confirm. */
+.mb-continue {
+  flex: none;
+  inline-size: 100%;
+  block-size: 52px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--accent);
+  color: var(--paper-bg);
+  font-family: inherit;
+  font-size: var(--m-text-ui);
+  font-weight: var(--m-weight-bold);
+  cursor: pointer;
+}
+
+.mb-rows {
+  flex: 0 1 auto;
+  min-block-size: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-block-start: 18px;
+}
+
+.mb-row,
+.mb-shelf {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  inline-size: 100%;
+  block-size: 52px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--m-radius-control-sm);
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--m-text-ui);
+  font-weight: var(--m-weight-medium);
+  text-align: start;
+  cursor: pointer;
+}
+
+.mb-row:active,
+.mb-shelf:active {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.mb-row-label,
+.mb-shelf-name {
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mb-row-val,
+.mb-shelf-count {
+  color: var(--muted);
+  font-size: var(--m-text-caption);
+  font-weight: var(--m-weight-regular);
+}
+
+/* Destructive, and it looks it — but quietly, because it sits under a sheet the reader opened to read
+   a book rather than to delete one. */
+.mb-remove {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  inline-size: 100%;
+  block-size: 52px;
+  margin-block: 10px;
+  border: 0;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--danger, #b3261e) 12%, transparent);
+  color: var(--danger, #b3261e);
+  font-family: inherit;
+  font-size: var(--m-text-ui);
+  font-weight: var(--m-weight-medium);
+  cursor: pointer;
+}
+
+.mb-confirm {
+  flex: none;
+  padding-block: var(--m-gap);
+}
+
+.mb-confirm-text {
+  margin: 0 0 var(--m-gap);
+  color: var(--text);
+  font-size: var(--m-text-caption);
+  line-height: 1.5;
+}
+
+.mb-confirm-acts {
+  display: flex;
+  gap: var(--m-gap-sm);
+}
+
+.mb-confirm-acts .mn-btn {
+  flex: 1;
+}
+
+.mb-head {
+  flex: none;
+  padding-block-end: var(--m-gap);
+}
+
+.mb-head-title {
+  display: block;
+  color: var(--text);
+  font-family: var(--ui-font);
+  font-size: var(--m-text-title);
+  font-weight: 600;
+}
+
+.mb-head-sub {
+  display: block;
+  color: var(--muted);
+  font-size: var(--m-text-caption);
+  margin-block-start: 2px;
+}
+
+.mb-shelves {
+  flex: 0 1 auto;
+  min-block-size: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-block-end: var(--m-gap);
+}
+
+/* A fixed slot, so the names line up whether or not a row is ticked. */
+.mb-shelf-tick {
+  inline-size: 20px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  color: var(--accent);
+}
+
+.mb-shelf.on {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* ---- search (design C3) -------------------------------------------------------------------------
+ * One field, and results separated by WHAT THEY ARE. The groups carry the same eyebrow the library and
+ * the sheets use, so a result list reads as part of the same product rather than a search engine
+ * bolted to it. A mark's card is tinted from its own ink — see MobileSearch.tsx. */
+
+.msr-root {
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+  min-block-size: 0;
+}
+
+.msr-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--m-gap);
+  padding: 6px var(--m-gutter) 14px;
+}
+
+.msr-field {
+  display: flex;
+  flex: 1;
+  min-inline-size: 0;
+  align-items: center;
+  gap: var(--m-gap-sm);
+  block-size: 46px;
+  padding: 0 12px;
+  border: 1px solid var(--chrome-border);
+  border-radius: 14px;
+  background: var(--paper-bg);
+  color: var(--muted);
+}
+
+.msr-field:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--chrome-border));
+}
+
+.msr-input {
+  flex: 1;
+  min-inline-size: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--m-text-ui);
+}
+
+.msr-input:focus-visible {
+  outline: none;
+}
+
+/* The platform draws its own clear affordance on `type=search`; the design draws one, so the native
+   one is removed rather than allowed to sit beside it. */
+.msr-input::-webkit-search-cancel-button {
+  display: none;
+}
+
+.msr-clear {
+  display: flex;
+  flex: none;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.msr-cancel {
+  flex: none;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: var(--m-text-ui);
+  cursor: pointer;
+}
+
+.msr-scroll {
+  flex: 1;
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 var(--m-gutter) calc(16px + env(safe-area-inset-bottom, 0px));
+}
+
+.msr-group {
+  padding: var(--m-gap) 0 var(--m-gap-sm);
+  color: var(--muted);
+  font-family: var(--ui-font);
+  font-size: var(--m-text-micro);
+  font-weight: var(--m-weight-bold);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.msr-book {
+  display: flex;
+  align-items: center;
+  gap: var(--m-gap);
+  inline-size: 100%;
+  padding: 10px 0;
+  border: 0;
+  border-block-end: 1px solid color-mix(in srgb, var(--text) 7%, transparent);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.msr-book-cover {
+  inline-size: 40px;
+  block-size: 60px;
+  flex: none;
+  border-radius: 2px;
+  object-fit: cover;
+}
+
+.msr-book-cover--plain {
+  background: color-mix(in srgb, var(--text) 12%, transparent);
+}
+
+.msr-book-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+.msr-book-title {
+  color: var(--text);
+  font-family: var(--m-display-font);
+  font-size: var(--m-text-ui);
+  font-weight: var(--m-weight-medium);
+}
+
+.msr-book-sub {
+  color: var(--muted);
+  font-size: var(--m-text-caption);
+}
+
+/* A mark keeps its ink, so a result looks like the thing it points at. */
+.msr-mark {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  inline-size: 100%;
+  margin-block-end: var(--m-gap-sm);
+  padding: 12px 14px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.msr-mark-text {
+  color: var(--text);
+  font-family: var(--m-display-font);
+  font-size: var(--m-text-body);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.msr-mark-where {
+  color: color-mix(in srgb, var(--text) 62%, transparent);
+  font-family: var(--ui-font);
+  font-size: var(--m-text-caption);
+  font-weight: var(--m-weight-medium);
+}
+
+.msr-shelf {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  inline-size: 100%;
+  block-size: 44px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--m-text-ui);
+  font-weight: var(--m-weight-medium);
+  text-align: start;
+  cursor: pointer;
+}
+
+.msr-shelf-count {
+  color: var(--muted);
+  font-size: var(--m-text-caption);
+  font-weight: var(--m-weight-regular);
+}
+
+/* ---- sort & filter (design C4) ------------------------------------------------------------------
+ * One sheet for three questions, and the answer to "how many books will that leave" on the button that
+ * applies it. Same sheet shell as every other bottom surface — grabber, radius, entrance — with the
+ * library's own chip as the control, so the sheet introduces no new vocabulary. */
+
+.mf-sheet {
+  /* ABOVE THE SCRIM, for the same reason `.mn-sheet` says so: scrim and sheet are siblings here, and
+     `.mh-sheet` alone sits BELOW the scrim's z-index — MEASURED on the device, every tap on a chip was
+     landing on the scrim instead, which dismissed the sheet on the first choice. */
+  z-index: 51;
+  block-size: auto;
+  max-block-size: 86%;
+  padding-inline: var(--m-gutter);
+}
+
+.mf-head {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-block-end: var(--m-gap-sm);
+}
+
+.mf-title {
+  color: var(--text);
+  font-family: var(--ui-font);
+  font-size: var(--m-text-title);
+  font-weight: 600;
+}
+
+.mf-reset {
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font-family: inherit;
+  font-size: var(--m-text-caption);
+  font-weight: var(--m-weight-medium);
+  cursor: pointer;
+}
+
+.mf-reset:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* HUGS ITS CONTENT. The design's sheet is as tall as the questions it asks — it does not stretch to a
+   fixed height and leave a gap above the button. It only becomes a scroller when the groups genuinely
+   exceed the room the sheet is allowed. */
+.mf-body {
+  flex: 0 1 auto;
+  min-block-size: 0;
+  overflow-y: auto;
+  padding-block-start: var(--m-gap);
+}
+
+.mf-group {
+  padding-block-end: var(--m-gap-lg);
+}
+
+.mf-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--m-gap-sm);
+}
+
+.mf-foot {
+  flex: none;
+  padding-block: var(--m-gap);
+}
+
+/* The design's filled apply row: the darkest surface on the sheet, because it is the one thing that
+   ends the interaction. */
+.mf-apply {
+  inline-size: 100%;
+  block-size: 52px;
+  border: 0;
+  border-radius: var(--m-radius-sheet-btn, 14px);
+  background: var(--text);
+  color: var(--paper-bg);
+  font-family: inherit;
+  font-size: var(--m-text-ui);
+  font-weight: var(--m-weight-bold);
+  cursor: pointer;
+}
+
+/* ---- settings (design G1: app-wide, grouped, no tabs) ------------------------------------------
+ *
+ * The desk's sections become groups in ONE column, because a phone has no room for a nav rail beside
+ * a content pane. Every control is the same shape — a label over a wrapping row of chips — so the
+ * screen teaches itself once and nothing needs a disclosure the reader has to find. The chip is the
+ * library's own `.ml-chip`; no second control vocabulary is introduced for this screen. */
+
+.mg-root {
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+  min-block-size: 0;
+}
+
+.mg-scroll {
+  flex: 1;
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding: 0 var(--m-gutter) calc(24px + env(safe-area-inset-bottom, 0px));
+}
+
+/* The scope line. It is the first thing read, because a setting here is not the setting the hub
+   changes, and the reader has no other way to know that. */
+.mg-note {
+  margin-block-end: var(--m-gap-lg);
+  color: var(--muted);
+  font-size: var(--m-text-caption);
+  line-height: 1.5;
+}
+
+.mg-group {
+  padding-block-end: var(--m-gap-lg);
+}
+
+.mg-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--m-gap-sm);
+}
+
+.mg-hint {
+  padding-block-start: var(--m-gap-sm);
+  color: var(--muted);
+  font-size: var(--m-text-caption);
+  line-height: 1.45;
+}
+
+.mg-about {
+  padding-block-start: var(--m-gap);
+  border-block-start: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--muted);
+  font-size: var(--m-text-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- reader (design D1 immersive, D2 chrome) ---------------------------------------------------
+ * The page owns the screen. The bars FLOAT over it — never inset it — so revealing them cannot
+ * reflow the text under the reader's eye, which is the whole point of the design's "no control is
+ * ever permanently on the page". */
+
+.mr-root {
+  position: relative;
+  block-size: 100%;
+  overflow: hidden;
+  background: var(--paper-bg);
+}
+
+.mr-surface {
+  position: absolute;
+  inset: 0;
+  background: var(--paper-bg);
+}
+
+/* THE ENGINE'S MOUNT POINT. `--sard-columns` and `--sard-measure` are read by FOLIATE off this
+   element — omitting them lets it choose a two-column spread. The side inset is the design's 26px
+   page margin, which the reading-settings margin control overrides through --page-margin. */
+.mr-page {
+  position: absolute;
+  /* Full-bleed does NOT mean under the system bars. Measured on the device: with `inset-block: 0`
+     the first line of an Arabic page ran beneath the status bar and the clock sat on the text. The
+     design reserves 106px above the page for exactly this; here it is the real inset plus a little
+     air, so the reserve is the device's own rather than a number copied from a 390x844 mock.
+     ⚠ `env(safe-area-inset-top)` IS NOT THE STATUS BAR ON ANDROID. It reports the DISPLAY CUTOUT, so
+     on a phone without a notch it is 0 while the status bar is still very much there — MEASURED here
+     as 0, which left this inset at 20px against a 24px bar and put the clock back on the text. The
+     floor is Android's own status-bar height (24dp, and a CSS px IS a dp here); a device that reports
+     a real inset is larger and wins. */
+  inset-block-start: calc(max(env(safe-area-inset-top, 0px), 24px) + 8px);
+  inset-block-end: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  inset-inline: var(--page-margin, 26px);
+  --sard-columns: 1;
+  --sard-measure: 3000px;
+}
+
+.mr-page foliate-view {
+  inline-size: 100%;
+  block-size: 100%;
+  display: block;
+}
+
+/* ---- chrome ----
+ * Both bars are translucent over the paper with a blur, exactly as the design draws them, and both
+ * animate on opacity + an 8px translate at the chrome duration — Band G's "fast enough to feel like
+ * a light switch, not an animation". Hidden bars are inert, not merely invisible. */
+
+.mr-top,
+.mr-bottom {
+  position: absolute;
+  inset-inline: 0;
+  z-index: 2;
+  background: color-mix(in srgb, var(--chrome-bg) 94%, transparent);
+  backdrop-filter: blur(10px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--m-dur-chrome) var(--m-ease), transform var(--m-dur-chrome) var(--m-ease);
+}
+
+.mr-top {
+  inset-block-start: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  padding: calc(env(safe-area-inset-top, 0px) + 8px) 12px 10px;
+  border-block-end: 1px solid var(--chrome-border);
+  transform: translateY(-8px);
+}
+
+.mr-bottom {
+  inset-block-end: 0;
+  padding: var(--m-gap-lg) var(--m-gutter) calc(14px + env(safe-area-inset-bottom, 0px));
+  border-block-start: 1px solid var(--chrome-border);
+  transform: translateY(8px);
+}
+
+.mr-root.chrome-on .mr-top,
+.mr-root.chrome-on .mr-bottom {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.mr-where {
+  flex: 1;
+  min-inline-size: 0;
+  text-align: center;
+  line-height: 1.3;
+}
+
+.mr-title {
+  font-size: 14px;
+  font-weight: var(--m-weight-bold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mr-chapter {
+  color: var(--muted);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mr-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--m-gap-md);
+  margin-block-end: var(--m-gap-md);
+}
+
+.mr-pct {
+  inline-size: 34px;
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: var(--m-weight-bold);
+  font-variant-numeric: tabular-nums;
+}
+
+.mr-track {
+  position: relative;
+  flex: 1;
+  block-size: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+}
+
+.mr-track-fill {
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block-start: 0;
+  block-size: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+/* The scrub handle. Drawn but not yet draggable — scrubbing is its own piece of work, and a handle
+   that moves under the finger without moving the book would be a lie. */
+.mr-track-knob {
+  position: absolute;
+  inset-block-start: 50%;
+  inline-size: 18px;
+  block-size: 18px;
+  border-radius: 9px;
+  background: var(--paper-bg);
+  border: 1px solid var(--chrome-border);
+  box-shadow: 0 1px 4px rgba(40, 28, 14, 0.2);
+  transform: translate(-50%, -50%);
+}
+
+[dir="rtl"] .mr-track-knob {
+  transform: translate(50%, -50%);
+}
+
+.mr-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--m-gap-md);
+}
+
+.mr-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--m-touch-primary);
+  block-size: var(--m-touch-primary);
+  flex: 0 0 auto;
+  padding: 0;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--m-radius-control);
+  background: var(--app-bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+/* The design gives the hub button the INK fill — one emphasised control per bar. */
+.mr-action--ink {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--paper-bg);
+}
+
+.mr-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.mr-position {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: var(--m-weight-medium);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- reader hub (design D3–D6) -----------------------------------------------------------------
+ * One sheet, four tabs, opening in the bottom half of the screen "where a thumb already is". The
+ * geometry is the design's: 560px tall, a 24px top radius, a grabber, and a tab row that marks the
+ * current tab with a 2px inset rule rather than a filled pill. */
+
+.mh-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(24, 18, 10, 0.3);
+  animation: md-fade var(--m-dur-sheet) var(--m-ease);
+}
+
+.mh-sheet {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  block-size: min(560px, 78%);
+  display: flex;
+  flex-direction: column;
+  padding-block-end: calc(12px + env(safe-area-inset-bottom, 0px));
+  border-start-start-radius: var(--m-radius-sheet);
+  border-start-end-radius: var(--m-radius-sheet);
+  background: var(--chrome-bg);
+  box-shadow: var(--m-shadow-sheet);
+  /* Band G: 260ms spring, slight overshoot on entry, none on exit. */
+  animation: mh-in var(--m-dur-sheet) var(--m-ease-sheet);
+}
+
+@keyframes mh-in {
+  from { transform: translateY(100%); }
+}
+
+.mh-grab {
+  inline-size: 38px;
+  block-size: 4px;
+  flex: none;
+  margin: 10px auto 12px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--text) 20%, transparent);
+}
+
+.mh-tabs {
+  display: flex;
+  flex: none;
+  padding: 0 12px;
+  border-block-end: 1px solid var(--chrome-border);
+}
+
+.mh-tab {
+  flex: 1;
+  padding: 12px 0 11px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 13.5px;
+  font-weight: var(--m-weight-medium);
+  text-align: center;
+  cursor: pointer;
+}
+
+.mh-tab.on {
+  color: var(--accent);
+  font-weight: var(--m-weight-bold);
+  /* An inset rule, so switching tabs moves nothing but the underline. */
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.mh-body {
+  flex: 1;
+  min-block-size: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* ---- D3 contents ---- */
+
+.mh-chips {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px var(--m-gutter) 12px;
+}
+
+.mh-chip {
+  display: flex;
+  align-items: center;
+  block-size: var(--m-touch-chip);
+  padding: 0 15px;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--m-radius-control-lg);
+  background: var(--app-bg);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--m-text-caption);
+  font-weight: var(--m-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* The selected filter takes the INK fill — the design's one emphasised control per row. */
+.mh-chip.on {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--paper-bg);
+  font-weight: var(--m-weight-bold);
+}
+
+.mh-count {
+  margin-inline-start: auto;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: var(--m-weight-medium);
+  white-space: nowrap;
+}
+
+.mh-list {
+  margin: 0;
+  padding: 0 12px;
+  list-style: none;
+}
+
+.mh-row {
+  display: flex;
+  align-items: center;
+  gap: var(--m-gap-md);
+  inline-size: 100%;
+  block-size: 56px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--m-radius-control-sm);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+/* The current chapter: raised fill plus a leading rule that mirrors with the reading direction. */
+.mh-row.on {
+  background: var(--app-bg);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+[dir="rtl"] .mh-row.on {
+  box-shadow: inset -2px 0 0 var(--accent);
+}
+
+.mh-row:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mh-num {
+  inline-size: 20px;
+  flex: 0 0 auto;
+  color: var(--m-status-quiet);
+  font-size: var(--m-text-caption);
+  font-weight: var(--m-weight-bold);
+  font-variant-numeric: tabular-nums;
+}
+
+.mh-row.on .mh-num {
+  color: var(--accent);
+}
+
+.mh-label {
+  flex: 1;
+  min-inline-size: 0;
+  font-family: var(--m-display-font);
+  font-size: 15.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mh-row.on .mh-label {
+  font-weight: var(--m-weight-bold);
+}
+
+.mh-now {
+  color: var(--accent);
+  font-size: var(--m-text-tiny);
+  font-weight: var(--m-weight-medium);
+}
+
+/* A read chapter gets the design's small ink dot rather than a duration Sard cannot compute. */
+.mh-dot {
+  inline-size: 8px;
+  block-size: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.45;
+}
+
+.mh-empty {
+  margin: 0;
+  padding: 24px var(--m-gutter);
+  color: var(--muted);
+  font-size: var(--m-text-body);
+  text-align: center;
+}
+
+/* ---- D4 text / D5 theme panes ---- */
+
+.mh-pane {
+  padding: 16px var(--m-gutter) 24px;
+}
+
+.mh-ctrl {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-block-end: 8px;
+}
+
+.mh-ctrl-name {
+  font-size: var(--m-text-ui);
+  font-weight: var(--m-weight-medium);
+}
+
+.mh-ctrl-val {
+  color: var(--muted);
+  font-size: var(--m-text-caption);
+  font-variant-numeric: tabular-nums;
+}
+
+.mh-stepper {
+  display: flex;
+  align-items: center;
+  gap: var(--m-gap-md);
+  margin-block-end: 22px;
+}
+
+.mh-stepper button {
+  inline-size: var(--m-touch-min);
+  block-size: var(--m-touch-min);
+  flex: 0 0 auto;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--m-radius-control);
+  background: var(--app-bg);
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.mh-stepper-bar {
+  position: relative;
+  flex: 1;
+  block-size: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+}
+
+.mh-stepper-bar span {
+  position: absolute;
+  inset-inline-start: 0;
+  inset-block-start: 0;
+  block-size: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.mh-seg-wrap {
+  margin-block-end: 22px;
+}
+
+.mh-seg {
+  display: flex;
+  gap: 8px;
+  margin-block-start: 8px;
+}
+
+/* Band B: "Exclusive choice inside a sheet. Equal widths, 8px gaps, selected takes the ink fill." */
+.mh-seg-btn {
+  flex: 1;
+  min-block-size: var(--m-touch-min);
+  padding: 0 8px;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--m-radius-control);
+  background: var(--app-bg);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--m-text-caption);
+  font-weight: var(--m-weight-medium);
+  cursor: pointer;
+}
+
+.mh-seg-btn.on {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--paper-bg);
+  font-weight: var(--m-weight-bold);
+}
+
+.mh-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--m-gap-md);
+  min-block-size: var(--m-touch-min);
+  cursor: pointer;
+}
+
+.mh-switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mh-switch-track {
+  position: relative;
+  inline-size: 46px;
+  block-size: 28px;
+  flex: 0 0 auto;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--text) 16%, transparent);
+  transition: background var(--m-dur-chrome) var(--m-ease);
+}
+
+.mh-switch-knob {
+  position: absolute;
+  inset-block-start: 3px;
+  inset-inline-start: 3px;
+  inline-size: 22px;
+  block-size: 22px;
+  border-radius: 11px;
+  background: var(--paper-bg);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform var(--m-dur-chrome) var(--m-ease);
+}
+
+.mh-switch input:checked + .mh-switch-track {
+  background: var(--accent);
+}
+
+.mh-switch input:checked + .mh-switch-track .mh-switch-knob {
+  transform: translateX(18px);
+}
+
+[dir="rtl"] .mh-switch input:checked + .mh-switch-track .mh-switch-knob {
+  transform: translateX(-18px);
+}
+
+/* ---- D5 theme swatches ---- */
+
+.mh-group {
+  margin-block: 6px 10px;
+  color: var(--m-status-quiet);
+  font-size: var(--m-text-micro);
+  font-weight: var(--m-weight-bold);
+  letter-spacing: var(--m-track-label);
+  text-transform: uppercase;
+}
+
+.mh-swatches {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: var(--m-gap);
+  margin-block-end: 18px;
+}
+
+.mh-swatch {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: center;
+}
+
+/* Real paper, real ink: the swatch IS the theme rather than a coloured dot standing for it. */
+.mh-swatch-aa {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  block-size: 52px;
+  border-radius: var(--m-radius-control-sm);
+  border: 1px solid var(--chrome-border);
+  font-family: var(--m-display-font);
+  font-size: 17px;
+}
+
+.mh-swatch.on .mh-swatch-aa {
+  box-shadow: 0 0 0 2px var(--accent);
+  border-color: transparent;
+}
+
+.mh-swatch-name {
+  display: block;
+  margin-block-start: 6px;
+  color: var(--muted);
+  font-size: var(--m-text-tiny);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mh-swatch.on .mh-swatch-name {
+  color: var(--text);
+  font-weight: var(--m-weight-medium);
+}
+
+/* ---- D6 notes ---- */
+
+.mh-mark {
+  display: block;
+  inline-size: 100%;
+  padding: 12px 14px;
+  border: 0;
+  border-block-end: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.mh-mark-where {
+  display: block;
+  margin-block-end: 4px;
+  color: var(--m-status-quiet);
+  font-size: var(--m-text-micro);
+  font-weight: var(--m-weight-bold);
+  letter-spacing: var(--m-track-label);
+  text-transform: uppercase;
+}
+
+/* The design's quote rule: the passage carries a leading accent rule, the note sits under it. */
+.mh-mark-quote {
+  display: block;
+  padding-inline-start: 10px;
+  border-inline-start: 2px solid var(--accent);
+  font-family: var(--m-display-font);
+  font-size: var(--m-text-body);
+  line-height: 1.5;
+}
+
+.mh-mark-note {
+  display: block;
+  margin-block-start: 6px;
+  color: var(--muted);
+  font-size: var(--m-text-caption);
+  line-height: 1.5;
+}
+
+/* ---- selection sheet (design D7 / J1) -----------------------------------------------------------
+ * NO SCRIM, deliberately. Dimming the page would hide the very passage the reader is acting on, and
+ * Android's own selection handles must stay visible and draggable behind this sheet. The design's
+ * rule is that Sard "contributes one thing — a sheet that rises from the bottom … positioned so it
+ * never covers the selection or the handles". */
+
+.ms-root {
+  position: absolute;
+  inset-inline: 0;
+  inset-block-end: 0;
+  z-index: 45;
+  padding: var(--m-gap-lg) var(--m-gutter) calc(14px + env(safe-area-inset-bottom, 0px));
+  border-start-start-radius: var(--m-radius-sheet);
+  border-start-end-radius: var(--m-radius-sheet);
+  background: var(--chrome-bg);
+  box-shadow: var(--m-shadow-sheet);
+  animation: mh-in var(--m-dur-sheet) var(--m-ease-sheet);
+}
+
+.ms-quote {
+  margin-block-end: var(--m-gap-md);
+  padding-inline-start: 10px;
+  border-inline-start: 2px solid var(--accent);
+  color: var(--muted);
+  font-family: var(--m-display-font);
+  font-size: var(--m-text-body);
+  line-height: 1.45;
+  /* Two lines: enough to recognise the passage, never enough to become the page again. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* THE INK ROW COMES FIRST — "highlighting is the common act; it should cost one tap, not a menu then
+   a colour." Eight slots, the same eight the whole product uses. */
+.ms-inks {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--m-gap-sm);
+  margin-block-end: var(--m-gap-lg);
+}
+
+.ms-ink {
+  inline-size: var(--m-touch-chip);
+  block-size: var(--m-touch-chip);
+  flex: 1 1 0;
+  max-inline-size: 44px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.ms-ink--amber { background: #e8c36a; }
+.ms-ink--marigold { background: #e7a867; }
+.ms-ink--coral { background: #e2978d; }
+.ms-ink--rose { background: #d285a4; }
+.ms-ink--purple { background: #bfa8d6; }
+.ms-ink--sky { background: #9dc0d6; }
+.ms-ink--teal { background: #8dc3ba; }
+.ms-ink--green { background: #aec798; }
+
+.ms-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--m-gap-sm);
+}
+
+.ms-action {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  min-block-size: 56px;
+  padding: 8px 2px;
+  border: 0;
+  border-radius: var(--m-radius-control-sm);
+  background: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--m-text-tiny);
+  font-weight: var(--m-weight-medium);
+  cursor: pointer;
+}
+
+.ms-action:active:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.ms-action:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.ms-dismiss {
+  inline-size: 100%;
+  min-block-size: var(--m-touch-min);
+  margin-block-start: var(--m-gap-sm);
+  padding: 0;
+  border: 0;
+  border-radius: var(--m-radius-control);
+  background: none;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--m-text-caption);
+  font-weight: var(--m-weight-medium);
+  cursor: pointer;
+}
+
+/* ---- places drawer (design C2) ----------------------------------------------------------------- */
+
+.md-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: var(--m-scrim);
+  animation: md-fade var(--m-dur-sheet) var(--m-ease);
+}
+
+.md-panel {
+  position: absolute;
+  inset-block: 0;
+  /* LOGICAL: the drawer enters from the right in an Arabic interface, as the design requires. */
+  inset-inline-start: 0;
+  inline-size: 312px;
+  max-inline-size: 86%;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper-bg);
+  box-shadow: var(--m-shadow-drawer);
+  animation: md-in var(--m-dur-sheet) var(--m-ease-sheet);
+}
+
+/* The shadow is physical, so it has to be flipped by hand where the panel changes edge. */
+[dir="rtl"] .md-panel {
+  box-shadow: -14px 0 40px rgba(40, 28, 14, 0.22);
+}
+
+@keyframes md-fade {
+  from { opacity: 0; }
+}
+
+@keyframes md-in {
+  from { transform: translateX(-100%); }
+}
+
+[dir="rtl"] .md-panel {
+  animation-name: md-in-rtl;
+}
+
+@keyframes md-in-rtl {
+  from { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .md-panel,
+  .md-scrim {
+    animation: md-fade var(--m-dur-sheet) linear;
+  }
+}
+
+/* The status bar's height, so the wordmark clears it exactly as the design draws. */
+.md-top {
+  block-size: env(safe-area-inset-top, 0px);
+  flex: none;
+}
+
+.md-wordmark {
+  display: flex;
+  align-items: center;
+  gap: var(--m-gap);
+  padding: 10px 24px 22px;
+}
+
+.md-wordmark-latin {
+  font-family: var(--m-display-font);
+  font-size: 19px;
+  font-weight: var(--m-weight-bold);
+}
+
+.md-wordmark-rule {
+  inline-size: 1px;
+  block-size: 17px;
+  background: var(--text);
+  opacity: 0.28;
+}
+
+.md-wordmark-ar {
+  font-family: var(--m-book-arabic);
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.md-places {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 var(--m-gap-lg);
+}
+
+.md-place {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  block-size: 50px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: var(--m-radius-control-sm);
+  background: none;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--m-text-ui);
+  font-weight: var(--m-weight-medium);
+  text-align: start;
+  cursor: pointer;
+}
+
+/* The current place takes the raised chrome fill and the full ink — the design's "selected" rule. */
+.md-place.on {
+  background: var(--app-bg);
+  color: var(--text);
+  font-weight: var(--m-weight-bold);
+}
+
+.md-place:active:not(:disabled) {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.md-place:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.md-place-label {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Counts sit at the far end of the row whichever way the row runs. */
+.md-count {
+  margin-inline-start: auto;
+  color: var(--m-status-quiet);
+  font-size: var(--m-text-caption);
+  font-weight: var(--m-weight-medium);
+}
+
+.md-section {
+  padding: 26px 28px 10px;
+  color: var(--m-status-quiet);
+  font-size: var(--m-text-micro);
+  font-weight: var(--m-weight-bold);
+  letter-spacing: var(--m-track-label);
+  text-transform: uppercase;
+}
+
+.md-shelves {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 0 var(--m-gap-lg);
+  overflow-y: auto;
+}
+
+.md-shelf {
+  display: flex;
+  align-items: center;
+  block-size: 46px;
+  padding: 0 var(--m-gap-lg);
+  border: 0;
+  border-radius: var(--m-radius-inner);
+  background: none;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 14.5px;
+  font-weight: var(--m-weight-medium);
+  text-align: start;
+  cursor: pointer;
+}
+
+.md-shelf:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.md-shelf-name {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.md-empty {
+  margin: 0;
+  padding: 0 var(--m-gap-lg);
+  color: var(--m-status-quiet);
+  font-size: var(--m-text-caption);
+}
+
+.md-foot {
+  margin-block-start: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 28px calc(34px + env(safe-area-inset-bottom, 0px));
+  border-block-start: 1px solid var(--chrome-border);
+}
+
+.md-lang {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-block-size: var(--m-touch-min);
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: var(--m-weight-medium);
+  cursor: pointer;
+}
+
+.md-lang-on {
+  color: var(--text);
+}
+
+.md-lang-off {
+  color: var(--muted);
+}
+
+.md-lang-dot {
+  color: var(--muted);
+  opacity: 0.6;
+}
+
+/* ---- sheets --------------------------------------------------------------------------------- */
+
+.ms-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal, 40);
+  background: rgb(0 0 0 / 38%);
+  display: flex;
+  align-items: flex-end;
+}
+
+.ms-sheet {
+  inline-size: 100%;
+  max-block-size: 88%;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper-bg);
+  border-start-start-radius: 14px;
+  border-start-end-radius: 14px;
+  padding-block-end: env(safe-area-inset-bottom, 0px);
+}
+
+.ms-sheet--full {
+  block-size: 96%;
+  max-block-size: 96%;
+}
+
+.ms-grabber {
+  inline-size: 36px;
+  block-size: 4px;
+  margin: 8px auto 4px;
+  border-radius: 2px;
+  background: var(--chrome-border);
+}
+
+.ms-sheet-head {
+  padding: 4px 18px 10px;
+}
+
+.ms-sheet-title {
+  margin: 0;
+  font-size: 1.0625rem;
+}
+
+.ms-sheet-body {
+  overflow-y: auto;
+  padding: 0 18px 18px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ms-sheet {
+    transition: none;
+  }
+}
+
+/* ---- note editor (D8) + reference sheet (R1) -----------------------------------------------------
+ * ONE set of rules for two sheets. They ask for the same shape — a labelled read-only passage, one or
+ * two text fields, a footer whose primary action is the wider — and the design draws that shape once
+ * (in R1; D8 has no screen at all, see NoteEditor.tsx). Giving them one stylesheet is what keeps the
+ * unspecified surface from drifting away from the specified one.
+ *
+ * These sit on `.mh-sheet`, so the grabber, the entry spring, the radius and the safe-area padding are
+ * the hub's and not a second copy. Unlike the selection sheet these DO take a scrim: nothing is being
+ * pointed at behind them — the passage the reader is annotating is quoted inside the sheet itself. */
+
+.mn-sheet {
+  z-index: 51; /* above .mh-scrim, and above the selection sheet that opened it */
+  block-size: min(600px, 86%);
+  padding-inline: var(--m-gutter);
+}
+
+.mn-head {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--m-gap-sm);
+  padding-block-end: var(--m-gap-md);
+}
+
+.mn-title {
+  color: var(--text);
+  font-family: var(--ui-font);
+  font-size: var(--m-text-title);
+  font-weight: 600;
+}
+
+/* The scope line. Quiet on purpose: it explains, it does not warn. */
+.mn-scope {
+  color: var(--muted);
+  font-size: var(--m-text-caption);
+}
+
+.mn-field {
+  flex: none;
+  padding-block-end: var(--m-gap-md);
+}
+
+/* The note body is the only thing that should grow when the keyboard shrinks the sheet. */
+.mn-field--grow {
+  display: flex;
+  min-block-size: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+.mn-label {
+  margin-block-end: 7px;
+  color: var(--muted);
+  font-family: var(--ui-font);
+  font-size: var(--m-text-eyebrow, 10px);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* READ-ONLY, and it must look it: the book's words, in the book's face — QUOTED, not boxed.
+ *
+ * It used to be a bordered, filled card at every length, and the weight of that card had nothing to do
+ * with what was in it: MEASURED, a ONE-CHARACTER passage still drew a 46px container with a border, a
+ * ground and its own eyebrow label — an empty box asking for attention on behalf of a comma. At full
+ * length the same box competed with the sheet it sits inside.
+ *
+ * A quotation rule carries the same meaning at a fraction of the weight and reads as editorial rather
+ * than administrative: this is the book speaking, not a field. It is correct at one word and at a
+ * thousand, so the common case stops paying for the rare one. */
+.mn-passage {
+  max-block-size: 96px;
+  overflow-y: auto;
+  padding-inline-start: 12px;
+  border-inline-start: 2px solid color-mix(in srgb, var(--accent) 32%, transparent);
+  color: color-mix(in srgb, var(--text) 80%, transparent);
+  font-family: var(--m-display-font);
+  font-size: var(--m-text-body);
+  line-height: 1.5;
+}
+
+/* Only a passage that genuinely has more than it can show earns a ground, because THAT is what the
+ * recess is for — telling the reader the words continue past the fold and the area can be scrolled.
+ * Applied from a measurement of the rendered text, never from a guess at how many characters is "long". */
+.mn-passage--bounded {
+  padding: 10px 12px;
+  border-start-end-radius: var(--m-radius-card);
+  border-end-end-radius: var(--m-radius-card);
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+}
+
+.mn-input,
+.mn-textarea {
+  inline-size: 100%;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--text) 14%, transparent);
+  border-radius: var(--m-radius-card);
+  background: var(--paper, var(--chrome-bg));
+  color: var(--text);
+  font-family: var(--m-display-font);
+  font-size: var(--m-text-body);
+  line-height: 1.5;
+}
+
+.mn-input {
+  min-block-size: var(--m-touch-min);
+  font-family: var(--ui-font);
+}
+
+.mn-textarea {
+  min-block-size: 0;
+  flex: 1 1 auto;
+  resize: none;
+}
+
+/* FOCUS SHOULD BE LEGIBLE, NOT LOUD. A full-strength accent border made a merely-focused field the most
+ * aggressive thing on a screen whose subject is a book — the ring shouted while the reading behind it
+ * whispered. Half-strength on the border plus a soft halo says "the caret is here" at the emphasis the
+ * state actually warrants. The ink picker's `.ms-ink.on` keeps the full accent, because THAT ring is a
+ * choice the reader made rather than a side effect of tapping into a field. */
+.mn-input:focus-visible,
+.mn-textarea:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 50%, var(--chrome-border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent);
+  outline: none;
+}
+
+.mn-inks {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--m-gap-sm);
+  padding-block-end: var(--m-gap-md);
+}
+
+/* The chosen slot, shown by a ring rather than a tick: the colour must stay fully visible. */
+.ms-ink.on {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.mn-foot {
+  display: flex;
+  flex: none;
+  gap: var(--m-gap-sm);
+  padding-block-start: 2px;
+}
+
+.mn-btn {
+  block-size: var(--m-touch-lg, 52px);
+  flex: 1 1 0;
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  border-radius: var(--m-radius-btn, 14px);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text);
+  font-family: var(--ui-font);
+  font-size: var(--m-text-action);
+  font-weight: 600;
+}
+
+/* Wider than Cancel, per the design's own proportion. */
+.mn-btn--primary {
+  flex: 1.4 1 0;
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--chrome-bg);
+}
+
+.mn-btn--primary:disabled {
+  opacity: 0.45;
+}
+
+/* Delete sits alone on the opposite side and only exists for a reference that already exists. */
+.mn-btn--danger {
+  flex: 0 0 auto;
+  padding-inline: 16px;
+  background: none;
+  color: var(--danger, #b4553f);
+}
+
+/* A field is the one place in the shell where selecting IS the interaction — the note body, the
+   reference note, the library search. Exempted explicitly rather than by loosening the rule above. */
+.mobile-root input,
+.mobile-root textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}

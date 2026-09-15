@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 // Design tokens first, so every sheet after this can read them. Defining them changes nothing on
 // its own — no rule consumes them yet; the surfaces move across in their own stages.
+import { isMobile } from "./lib/platform";
+import { MobileApp } from "./features-mobile/app/MobileApp";
 import "./styles/tokens.css";
 import "./styles/global.css";
 // PROFILES: its own sheet. Nothing in it overrides an existing rule, so a reader who never opens
@@ -132,6 +134,14 @@ function Root() {
   // A missing PDF capability is NOT checked here — EPUB reading is unaffected by it (see RuntimeGate).
   if (!canRender("epub")) return <RuntimeGate />;
   if (!hasLang) return <LanguagePicker />;
+  // THE ONE PLACE THE TWO FRONT ENDS PART. Everything above is shared — settings, the runtime gate,
+  // the language picker — because none of it is a layout question. Below this line the desktop chrome
+  // and the mobile chrome are separate trees that share no markup and no CSS rule: a port has to be
+  // difficult, not merely discouraged.
+  //
+  // On every desktop build `isMobile()` is false, so this costs the existing product one branch that
+  // is never taken and changes nothing it renders.
+  if (isMobile()) return <MobileApp />;
   // RAWY-206: `onOpenBook` is the SAME `setOpen` the Library hands a book to — the reader's Notes panel
   // uses it to open another book at a note's locator, so there is one open path, not two.
   return (

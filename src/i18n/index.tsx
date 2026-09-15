@@ -82,3 +82,8 @@ export function useI18n(): I18nValue {
   if (!ctx) throw new Error("useI18n must be used within I18nProvider");
   return ctx;
 }
+
+// Re-exported so a chrome can type its own string tables against the same key set. The mobile shell
+// holds a label per destination, and a `Record<Tab, string>` there would silently accept a key that
+// does not exist — the point of TKey is that it cannot.
+export type { TKey };

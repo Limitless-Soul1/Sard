@@ -1,0 +1,75 @@
+/* MOBILE-ONLY DESIGN TOKENS.
+ *
+ * Sard's base tokens — colour, theme, typography — already load app-wide from `tokens.css` and
+ * `global.css`, and mobile inherits them unchanged. That is the whole point of one token system and
+ * sixteen themes with no mobile theme code. What lives HERE is only what a phone adds: touch
+ * geometry, sheet motion, and the spacing scale a thumb needs.
+ *
+ * WHY THIS FILE EXISTS RATHER THAN AN EDIT TO `tokens.css`. The mobile shell was written against an
+ * earlier tokens.css and carries its own larger copy of it. Taking that copy would have replaced the
+ * desktop's current one and changed desktop styling — which mobile work must not do. So the mobile
+ * additions are separated out here, and the shared file is left exactly as the desktop ships it.
+ *
+ * Values are the designer's, lifted unchanged from the mobile shell's token set.
+ */
+:root {
+  --m-book-arabic: var(--ar); /* ARABIC IS ALWAYS --ar (src/lib/typography.ts) */
+  --m-display-font: var(--book); /* Latin at DISPLAY scale is --book */
+  --m-dur-chrome: 160ms;
+  --m-dur-sheet: 260ms;
+  --m-ease: cubic-bezier(0.2, 0, 0.2, 1);
+  --m-ease-sheet: cubic-bezier(0.32, 0.72, 0.24, 1.02);
+  --m-gap: 10px;
+  --m-gap-lg: 14px;
+  --m-gap-md: 12px;
+  --m-gap-sm: 6px;
+  --m-gutter: 20px;
+  --m-icon: 20px;
+  --m-radius-card: 12px;
+  --m-radius-control: 14px;
+  --m-radius-control-lg: 18px;
+  --m-radius-control-sm: 12px;
+  --m-radius-inner: 3px;
+  --m-radius-sheet: 24px;
+  --m-read-latin-size: 17px;
+  --m-scrim: rgba(24, 18, 10, 0.34);
+  --m-shadow-card: 0 6px 18px rgba(40, 28, 14, 0.1);
+  --m-shadow-cover: 0 3px 7px rgba(40, 28, 14, 0.2);
+  --m-shadow-cover-lg: 0 5px 12px rgba(40, 28, 14, 0.2);
+  --m-shadow-drawer: 14px 0 40px rgba(40, 28, 14, 0.22);
+  --m-shadow-sheet: 0 -12px 40px rgba(40, 28, 14, 0.24);
+  --m-status-done: #6f8a5e;
+  --m-status-quiet: #b3a487;
+  --m-text-body: 13.5px;
+  --m-text-caption: 12.5px;
+  --m-text-micro: 10px;
+  --m-text-tiny: 11px;
+  --m-text-title: 16px;
+  --m-text-ui: 15px;
+  --m-touch-chip: 36px;
+  --m-touch-min: 44px;
+  --m-touch-primary: 48px;
+  --m-track-label: 0.16em;
+  --m-ui-font: var(--ui); /* the app's own words are --ui in both scripts */
+  --m-weight-bold: 600;
+  --m-weight-medium: 500;
+  --m-weight-regular: 400;
+
+  /* USED BUT NEVER DEFINED — five `var(--m-…)` references in the mobile stylesheet resolve to nothing,
+   * on the mobile shell branch as much as here; this is not something the integration introduced.
+   * Four of them carry the author's own fallback in the one place each is used, so those values are
+   * promoted to real definitions rather than invented. `--m-text-action` has no fallback anywhere and
+   * is therefore left undefined DELIBERATELY: guessing a type size is a design decision, not a
+   * reconciliation, and it is recorded for the owner instead. */
+  --m-radius-btn: 14px;
+  --m-radius-sheet-btn: 14px;
+  --m-text-eyebrow: 10px;
+  --m-touch-lg: 52px;
+
+  /* NAME DRIFT, bridged rather than renamed. The shell predates the current token vocabulary; these
+   * are the same values under the names the desktop uses today. Aliasing here keeps the mobile
+   * stylesheet untouched and leaves the desktop's names authoritative. */
+  --danger: #c0392b;
+  --page-margin: 56px;
+  --paper: var(--paper-bg);
+}

@@ -32,7 +32,20 @@ pub mod photocards; // saved photo cards: PNG store + DB rows (RAWY-52, Photo Mo
 // only where a WebView actually needs it — see the registration in `run()` for why Windows does not.
 #[cfg(not(target_os = "windows"))]
 pub mod bookhost;
-pub mod presence; // DISC/RPC: Discord Rich Presence worker thread + the on/off gate
+// DISC/RPC: Discord Rich Presence worker thread + the on/off gate.
+//
+// DESKTOP ONLY, and gated here to match its crate. `discord-rich-presence` is declared under
+// `[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]`, so on a mobile
+// target the crate is simply absent and this module cannot resolve it — a build that cannot start,
+// exactly like the single-instance plugin below.
+//
+// The concept does not transfer either: Discord's IPC is a named pipe / unix socket to a desktop
+// client running beside the app. A phone has no such neighbour.
+//
+// `cfg(desktop)` for the same reasons given at the single-instance registration: it is what this
+// means, tauri-build declares the alias, and this file already uses its counterpart.
+#[cfg(desktop)]
+pub mod presence;
 pub mod profiles; // PROFILES: the visual-identity registry (storage only)
 pub mod settings; // key/value settings persistence
 pub mod sync; // FUTURE seam: backend trait only (placeholder)
@@ -42,7 +55,12 @@ pub mod window_chrome; // RAWY-118: theme the native title bar to match the app 
 
 use std::path::Path;
 
-use tauri::{Emitter, Manager};
+use tauri::Manager;
+// `Emitter` is reached from exactly one place — the single-instance callback, which is already
+// `cfg(desktop)`. Importing it unconditionally is an unused import on a mobile target, and this crate
+// treats warnings as something to fix rather than to scroll past.
+#[cfg(desktop)]
+use tauri::Emitter;
 
 /// One-time, idempotent migration of legacy app-data from the old identity
 /// (`com.erawy.app` / `erawy.db`) to the new one (`com.sard.app` / `sard.db`).
@@ -223,8 +241,13 @@ macro_rules! sard_invoke_handler {
             tts::tts_synthesize,
             tts::tts_edge_voices,
             tts::tts_stop,
-            presence::presence_update, // DISC/RPC: push the reading activity to Discord
-            presence::presence_clear, // DISC/RPC: clear it (leaving the book, or toggled off)
+            // DISC/RPC: desktop only — see the gate on `pub mod presence`. `generate_handler!`
+            // accepts a cfg attribute per entry, so the pair drops out of the mobile build without
+            // the list having to be written twice.
+            #[cfg(desktop)]
+            presence::presence_update, // push the reading activity to Discord
+            #[cfg(desktop)]
+            presence::presence_clear, // clear it (leaving the book, or toggled off)
             window_chrome::set_titlebar_theme,
             $($diag_cmd),*
         ])
@@ -667,7 +690,8 @@ fn dev_data_dir_override() -> Option<std::path::PathBuf> {
                 db_path,
             });
             app.manage(tts::TtsEngine::default()); // holds the warm Edge socket + cached voice list
-            app.manage(presence::PresenceManager::start()); // DISC/RPC: the worker thread (idle until used)
+            #[cfg(desktop)] // DISC/RPC: the worker thread (idle until used) — desktop only
+            app.manage(presence::PresenceManager::start());
 
             // A COLD START THAT WAS HANDED A FILE. Queued, not acted on: the window does not exist yet
             // and the frontend is not listening, so it waits until something asks for it.
@@ -703,6 +727,7 @@ fn dev_data_dir_override() -> Option<std::path::PathBuf> {
                 // DISC/RPC: clear the activity before the pipe dies, so no exit leaves a stale
                 // "reading" card on the user's Discord profile. Fire-and-forget: the worker also
                 // ends when the channel drops, and the process exit is not delayed for it.
+                #[cfg(desktop)]
                 if let Some(presence) = app_handle.try_state::<presence::PresenceManager>() {
                     presence::shutdown(&presence);
                 }

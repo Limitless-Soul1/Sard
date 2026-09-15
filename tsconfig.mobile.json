@@ -1,0 +1,14 @@
+{
+  /* THE FULL TYPECHECK, mobile tree included — development-only, and excluded from the published tree.
+     It exists so mobile code is still checked properly while being unable to fail a DESKTOP release.
+     `tsconfig.json` is what `verify-main-buildable.mjs` runs as the production-build gate, and it now
+     excludes the mobile tree; this config is what covers that tree. Same arrangement, and the same
+     reason, as `tsconfig.test.json`.
+     Run it with:  npx tsc --noEmit -p tsconfig.mobile.json
+     It inherits every compiler option from the desktop config and clears its exclusion, so mobile code
+     is held to exactly the same strictness. The split decides which release a failure can block, not
+     how rigorous the check is. */
+  "extends": "./tsconfig.json",
+  "include": ["src"],
+  "exclude": []
+}

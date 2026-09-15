@@ -72,7 +72,7 @@ export const DEVELOPMENT_ONLY = [
   // since 1.3.0, and Tauri reads the capabilities directory at build time. Removing it would change
   // the Windows build to fix a cosmetic concern, which is the opposite of what this rule is for.
   { re: /^src\/features-mobile\//, why: "the mobile front end — a separate product surface, not part of the desktop application" },
-  { re: /^src\/styles\/mobile\.css$/, why: "the mobile stylesheet — styles for a surface the desktop build does not have" },
+  { re: /^src\/styles\/mobile(?:-[\w-]+)?\.css$/, why: "a mobile stylesheet — styles for a surface the desktop build does not have" },
   { re: /^src\/mobile\//, why: "mobile-only frontend code — not part of the desktop application" },
   { re: /^src-tauri\/src\/mobile\//, why: "mobile-only Rust — compiled for Android and iOS, never for the desktop target" },
   { re: /^src-tauri\/tauri\.(android|ios)\.conf\.json$/, why: "a mobile platform's build identity — the desktop build never reads it" },

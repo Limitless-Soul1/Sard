@@ -3,7 +3,9 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 // Design tokens first, so every sheet after this can read them. Defining them changes nothing on
 // its own — no rule consumes them yet; the surfaces move across in their own stages.
 import { isMobile } from "./lib/platform";
-import { MobileApp } from "./features-mobile/app/MobileApp";
+// A BARE specifier, never a relative path — `paths` is only applied to bare specifiers, which is
+// what made the v1.2.0 production build fail. See src/lib/mobileOff.tsx.
+import { MobileApp } from "@mobileApp";
 import "./styles/tokens.css";
 import "./styles/global.css";
 // PROFILES: its own sheet. Nothing in it overrides an existing rule, so a reader who never opens

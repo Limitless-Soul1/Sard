@@ -1,6 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
+import { existsSync } from "node:fs";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -46,6 +47,24 @@ const DIAG_ALIASES: Record<string, string> = {
 // `diagOffPlugin` below is deliberately omitted from diagnostic builds. Putting this resolution inside
 // it therefore left a diagnostic build unable to resolve `@diag` at all. The alias must be answered by
 // a plugin that is never omitted; only the SUBSTITUTION stays conditional.
+// THE MOBILE CHROME'S ALIAS, answered the same way and always registered.
+//
+// Unlike the diagnostic substitution this is not driven by build kind: it depends on whether the
+// mobile tree is PRESENT. On `develop` it is, and `@mobileApp` resolves to it; in the production tree
+// the rules exclude it, so the stub answers instead and the desktop bundle carries no mobile code at
+// all. Asking the filesystem rather than a flag is what keeps the alias and the tree in step.
+const MOBILE_APP = resolve(import.meta.dirname, "src/features-mobile/app/MobileApp.tsx");
+const MOBILE_OFF = resolve(import.meta.dirname, "src/lib/mobileOff.tsx");
+const mobileAliasPlugin = {
+  name: "sard-mobile-alias",
+  enforce: "pre" as const,
+  resolveId(source: string) {
+    if (source !== "@mobileApp") return null;
+    return existsSync(MOBILE_APP) ? MOBILE_APP : MOBILE_OFF;
+  },
+};
+
+
 const diagAliasPlugin = {
   name: "sard-diagnostics-alias",
   enforce: "pre" as const,
@@ -114,7 +133,7 @@ const READER_HOST_BUILD = {
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: IS_DIAG ? [diagAliasPlugin, react()] : [diagAliasPlugin, diagOffPlugin, react()],
+  plugins: IS_DIAG ? [mobileAliasPlugin, diagAliasPlugin, react()] : [mobileAliasPlugin, diagAliasPlugin, diagOffPlugin, react()],
 
   define: { __SARD_BUILD_ID__: JSON.stringify(BUILD_ID) },
 

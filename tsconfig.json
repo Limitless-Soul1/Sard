@@ -32,7 +32,10 @@
     "paths": {
       "@diag": ["./src/lib/diag.ts", "./src/lib/diagOff.ts"],
       "@pdfDiag": ["./src/lib/pdfDiag.ts", "./src/lib/diagOff.ts"],
-      "@renderDiag": ["./src/lib/renderDiag.ts", "./src/lib/diagOff.ts"]
+      "@renderDiag": ["./src/lib/renderDiag.ts", "./src/lib/diagOff.ts"],
+      /* The mobile chrome, by the same mechanism and for the same reason: the production tree
+         excludes `features-mobile`, so on `main` this falls back to a stub that renders nothing. */
+      "@mobileApp": ["./src/features-mobile/app/MobileApp.tsx", "./src/lib/mobileOff.tsx"]
     }
   },
   "include": ["src"],

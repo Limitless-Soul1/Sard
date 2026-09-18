@@ -18,6 +18,7 @@ import { applyBackgrounds, initBackground, useBackground } from "./lib/backgroun
 import { createCloseHandler, runCloseFlush } from "./lib/closeFlush"; // the window close is owned by the page, not the Reader
 import { diagStart } from "@diag"; // DIAGNOSTIC BUILD ONLY - observes, never intervenes
 import { registerOutcomeRecorder } from "./lib/listeningOutcomes"; // RAWY-263: the local outcome baseline
+import { registerTtsTelemetry } from "./lib/ttsTelemetry"; // the resilience system's own measurements
 import { initTheme, reapplyTitlebarTheme, resolveTheme, useTheme } from "./theme";
 import { initProfiles } from "./features/profiles/store"; // PROFILES: register authored themes first
 import { UnsavedChange } from "./features/profiles/UnsavedChange";
@@ -185,6 +186,7 @@ function App() {
     // Applying it later would paint the themed ground first and then swap — the RAWY-118 class of flash.
     initBackground();
     registerOutcomeRecorder(); // RAWY-263: observe listening outcomes locally. Read-only; never writes while audio plays.
+    registerTtsTelemetry(); // the failure-isolation system's own record. Same guarantees: observes, never steers.
     initPresence(); // DISC/RPC: load the persisted Discord on/off switch
   }, []);
 

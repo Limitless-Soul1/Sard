@@ -223,6 +223,8 @@ macro_rules! sard_invoke_handler {
             tts::tts_synthesize,
             tts::tts_edge_voices,
             tts::tts_stop,
+            tts::tts_cancel_synth,
+            tts::tts_synth_streaming,
             presence::presence_update, // DISC/RPC: push the reading activity to Discord
             presence::presence_clear, // DISC/RPC: clear it (leaving the book, or toggled off)
             window_chrome::set_titlebar_theme,

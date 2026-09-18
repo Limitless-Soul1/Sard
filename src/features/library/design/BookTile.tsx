@@ -313,6 +313,7 @@ export function BookTile(props: BookTileProps) {
             <img
               src={spineSrc}
               alt=""
+              loading="lazy"
               draggable={false}
               style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
             />
@@ -344,6 +345,10 @@ export function BookTile(props: BookTileProps) {
           <img
             src={src ?? undefined}
             alt=""
+            // Fetched when the tile can be seen. The preload pane is `visibility:hidden` and still
+            // laid out at `inset:0`, so its tiles intersect the viewport and load exactly as the
+            // visible pane's do — which is what keeps the RAWY-269 section swap honest.
+            loading="lazy"
             draggable={false}
             onError={() => setImgFailed(true)}
             style={{ width: "100%", height: "100%", objectFit: pres.objectFit, display: "block" }}

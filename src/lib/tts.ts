@@ -20,8 +20,9 @@ import { type BookScript, voiceCompatibility, isImplausiblyShortAudio } from "./
 // `globalThis.__sardDiag*` inline, which the bundler cannot recognise as diagnostic — that is how
 // instrumentation kept reaching release bundles that were meant to have none.
 import { diagNote, diagPublishAudio } from "@diag";
-import { settingsGet, settingsSet, ttsEdgeVoices, ttsStop } from "./ipc";
-import { LatencySeries, newSeries, recordSeries, resetSeries, seriesSummary, SynthScheduler } from "./ttsScheduler";
+import { settingsGet, settingsSet, ttsCancelSynth, ttsEdgeVoices, ttsStop, ttsSynthStreaming } from "./ipc";
+import { noteDispatch } from "./ttsTelemetry";
+import { DispatchContext, LatencySeries, newSeries, recordSeries, resetSeries, seriesSummary, SynthScheduler, RECOVERY_CANCELLED, RECOVERY_FAILED } from "./ttsScheduler";
 import { speakableText, withoutDecorativeSymbols, withoutEmptyMarkup } from "./ttsText";
 
 /**
@@ -74,7 +75,8 @@ export const TTS_EMPTY = "empty-chapter";
 // RAWY-193: sentinel meaning "Edge synthesis failed and the ONE bounded retry also failed." The player then
 // enters the explicit "Edge unavailable" PAUSE state, whose only action is Retry — it NEVER silently swaps
 // the voice (the deleted D37 anti-pattern). A synth stall (`tts.synthTimeout`) is treated the same.
-export const TTS_EDGE_DOWN = "edge-unavailable";
+// The scheduler rejects a failed recovery round with the same marker (it cannot import this module).
+export const TTS_EDGE_DOWN: string = RECOVERY_FAILED;
 
 // A voice is identified by its ENGINE + id (RAWY-110). "edge" = the online neural voices.
 export type TtsEngineKind = "edge";
@@ -353,6 +355,7 @@ let mediaEl: HTMLAudioElement | null = null; // the element currently sounding
 let blobsCreated = 0;
 let blobsRevoked = 0;
 let playRejections = 0;
+let watchdogNudges = 0; // times the watchdog nudged a stuck element (a second freeze surfaces the error)
 
 // AUDIO↔TEXT DRIFT (RAWY-264): the karaoke pill's DERIVED clock minus the media pipeline's OWN position.
 // `el.currentTime` is ground truth — Edge's word offsets are expressed in exactly that timeline — so this is
@@ -465,12 +468,10 @@ const clearSkipSettle = () => {
 
 // RAWY-159 (crash-proof chain): the advance to the next sentence must never depend on a single
 // segment behaving. A watchdog (polled on the AudioContext clock, so it FREEZES while paused) force-
-// advances if a source's `onended` never fires; `failStreak` counts CONSECUTIVE unspeakable/failed
-// segments so an isolated bad one is skipped silently while a genuine run of failures (e.g. offline +
-// offline) still surfaces the retryable error.
+// advances only when a source really reached its end (see `playFrom`'s watchdog). The dead-end counter
+// that used to turn "skip the bad segment" into an error is gone with the skip: a sentence that cannot be
+// produced is surfaced on that sentence, never advanced past.
 let watchdog: ReturnType<typeof setInterval> | null = null;
-let failStreak = 0;
-const FAIL_LIMIT = 3; // consecutive failures that turn "skip the bad segment" into "surface a dead end"
 // RAWY-172 (AUD-2): a synth that never resolves (a stalled Edge socket — Wi-Fi dropped without an RST, a
 // captive portal, a sleeping router) must not freeze read-aloud. Every synth is raced against this ceiling;
 // on timeout playback surfaces the explicit "Edge unavailable" pause (invariant D — fail loudly, never a
@@ -484,19 +485,12 @@ const FAIL_LIMIT = 3; // consecutive failures that turn "skip the bad segment" i
 // The old basis for 9 s ("a 236-char sentence synthesised in 632 ms") was a single cached-response sample.
 // RAWY-265 re-measured it properly on unique text: the same length takes 6.9-11.8 s, and a repeat of
 // identical text returns in ~490 ms because the service caches — which is exactly how 632 ms was obtained.
-const SYNTH_TIMEOUT_MS = 13000;
-// RAWY-266 (stage 3): the ladder's TOTAL wall-clock ceiling, so a listener is never left in silence
-// indefinitely. Sized from the measured recovery curve to afford exactly TWO full attempts
-// (13 000 + 500 backoff + 13 000 = 26 500):
-//   * attempt 1 at 12 s already covers 98.9% of requests;
-//   * the residual is service-side variance, not length (the same 235-char sentence ranged 8.8-13.4 s), so a
-//     second attempt on a FRESH socket clears ~86% of what is left (cold >=12 s was 14%);
-//   * expected residual after two ~0.15% of dispatches, i.e. ~0.2 per 133-unit chapter instead of ~1.5;
-//   * a third attempt would move 0.15% -> 0.02% for another 13 s. The curve has flattened; stop at two.
-// This bound only ever applies to the ~1.1% tail, it is VISIBLE (D68 `retryAttempt`), and it replaces a
-// measured 49-103 s of dead time in which the listener had to notice the stall and press Retry themselves.
-const MAX_DISPATCH_MS = 27000;
-const STALL_RETRY_LIMIT = 1; // a stall that RECURS on a fresh socket is what counts as genuine
+// The JS ceilings are SAFETY NETS over the engine's own bounds (`edge_synthesize`): a recovery attempt is
+// bounded by the listener's remaining budget plus this margin, so the engine's specific reason always wins
+// the race; background work is bounded on progress by the engine (first audio, activity, a length-scaled
+// total capped at 120 s), so its net sits above that cap.
+const SYNTH_TIMEOUT_MARGIN_MS = 1000;
+const BACKGROUND_SYNTH_CEILING_MS = 125000;
 // RAWY-172 (AUD-1): how many already-played sentences to keep decoded (besides the current +
 // prefetched-next), so a one-sentence skip-back stays instant while memory stays bounded.
 const CACHE_KEEP_BEHIND = 1;
@@ -520,9 +514,19 @@ const CACHE_KEEP_BEHIND = 1;
 //
 // D60-A IS UNTOUCHED: `playFrom` still refuses to BEGIN until the current sentence and its one-ahead lead
 // are both decoded. S4 (fast start) was closed as NOT REQUIRED and is not implemented in any form.
-const PREFETCH_MAX_AHEAD = 12;
-// D71: TARGET 15 s of decoded audio ahead of the cursor.
-const LEAD_TARGET_SECONDS = 15;
+const PREFETCH_MAX_AHEAD = 20; // raised with the lead: 18 s × 2.0x ÷ 1.75 s per unit ≈ 20
+// D71 said 15 s of DECODED audio ahead of the cursor. That is 15 s of audio at 1.0x and only 11.5 s of real
+// listening at the owner's 1.3x — less than the recovery path itself (a 12 s stall + backoff + a fresh
+// attempt ≈ 14.5 s), so every recovered stall above ~1.05x was audible by construction. The target is now
+// REAL LISTENING SECONDS and the scheduler multiplies it by the playback speed: 18 s covers that path with
+// margin at every speed. In audio seconds that is 18 at 1.0x, 23.4 at 1.3x, 36 at 2.0x — the cap below
+// keeps the window O(1) on short sentences.
+const LEAD_TARGET_SECONDS = 18;
+// D60-A's start gate waits for the one-ahead lead before a chapter start or seek landing begins. It used
+// to wait a full synthesis timeout (13 s); measured on the prototype that made a ready first sentence wait
+// 12 s while its lead stalled. 3 s keeps the gate's purpose (no immediate underrun after a landing on a
+// healthy service, where a lead takes ~0.5–2.5 s) without turning a slow lead into a silent start.
+const LEAD_GATE_MS = 3000;
 // D71: LOW WATER 5 s. Carried as a REPORTED threshold only — see `wantedAhead()` in ttsScheduler.ts for why a
 // hysteresis refill trigger would reduce cover under a sliding window on a single-flight engine.
 const LEAD_LOW_WATER_SECONDS = 5;
@@ -556,8 +560,42 @@ type FaultMode = "off" | "fail-fast" | "stall" | "empty" | "truncated" | "perman
 // can be proven on the real strings instead of on a paraphrase. Same justification 2B recorded when it added
 // the `permanent` mode: a gate needs a failure class no existing mode can produce. Unset → the message is
 // byte-identical to before, so no armed behaviour changes.
-let fault: { mode: FaultMode; ms: number; times: number; msg?: string } = { mode: "off", ms: 0, times: 0 };
+// Failure-isolation work: a fault can be aimed at ONE sentence (`unit`), so "N+4 fails while N+5..N+7
+// succeed" is reproducible on demand, and `times` then counts that sentence's attempts only. `text` aims it
+// at every sentence containing that substring instead.
+let fault: { mode: FaultMode; ms: number; times: number; msg?: string; unit?: number; text?: string } = { mode: "off", ms: 0, times: 0 };
+/**
+ * The injected stall answers a cancel the way the engine does. The real engine drops a stalled socket
+ * within a slice of `tts_cancel_synth`; a stall that was a plain timer could not be yielded, so a round
+ * that adopted it waited out its whole 12 s in the dev app — a difference between the seam and the engine
+ * that had a runtime check failing for the seam's reasons, not the product's. Dev-only, like the seam.
+ */
+let faultCancel: (() => void) | null = null;
 const faultArmed = (): boolean => import.meta.env.DEV && fault.mode !== "off" && fault.times > 0;
+// The media element's own failure classes, DEV ONLY, so the two paths that surface a retryable error on
+// the sentence itself can be exercised in the app: `reject` makes the next `play()` call(s) reject the way
+// an autoplay policy or a lost output device does; `stuck` freezes the element's position right after it
+// starts (the way a stalled decoder does) — once, so the watchdog's single nudge frees it; `stuck-forever`
+// freezes it again after the nudge, so the watchdog has to surface the error.
+type MediaFaultMode = "off" | "reject" | "stuck" | "stuck-forever";
+let mediaFault: { mode: MediaFaultMode; times: number } = { mode: "off", times: 0 };
+const mediaFaultArmed = (m: MediaFaultMode): boolean => import.meta.env.DEV && mediaFault.mode === m && mediaFault.times > 0;
+/** ONE `play()` call on the element, with the dev seam in front of it. Unarmed → the bare call. */
+function mediaPlay(el: HTMLAudioElement): Promise<void> {
+  if (mediaFaultArmed("reject")) {
+    mediaFault.times--;
+    return Promise.reject(new DOMException("play() rejected (injected)", "NotAllowedError"));
+  }
+  return el.play();
+}
+/** After a successful `play()`: freeze the element shortly after it starts when the stuck seam is armed. */
+function mediaAfterPlay(el: HTMLAudioElement, isCurrent: () => boolean): void {
+  if (!mediaFaultArmed("stuck") && !mediaFaultArmed("stuck-forever")) return;
+  if (mediaFault.mode === "stuck") mediaFault.times--; // `stuck-forever` keeps its charge for the nudge
+  setTimeout(() => { if (isCurrent()) el.pause(); }, 300);
+}
+const faultAims = (i: number): boolean =>
+  (fault.unit === undefined || fault.unit === i) && (fault.text === undefined || (sentences[i] ?? "").includes(fault.text));
 
 /** Build a framed `[u32 BE json_len][json][audio]` body (the RAWY-127 wire shape) with a chosen audio body,
  *  so an injected fault is indistinguishable downstream from a real Edge response of that shape. */
@@ -571,8 +609,8 @@ function framedFault(audio: Uint8Array): ArrayBuffer {
 }
 
 /** ONE `tts_synthesize` call, with the dev fault seam in front of it. Unarmed → a bare `invoke`. */
-async function rawSynth(engine: TtsEngineKind, id: string, text: string): Promise<ArrayBuffer> {
-  if (faultArmed()) {
+async function rawSynth(engine: TtsEngineKind, id: string, text: string, unit: number, budgetMs?: number, firstAudioMs?: number): Promise<ArrayBuffer> {
+  if (faultArmed() && faultAims(unit)) {
     fault.times--;
     const mode = fault.mode;
     if (mode === "permanent") {
@@ -589,7 +627,18 @@ async function rawSynth(engine: TtsEngineKind, id: string, text: string): Promis
     if (mode === "stall") {
       // ms <= 0 → never resolves (a hung socket). ms > 0 → SLOW BUT SUCCESSFUL: delay, then do the real call.
       // The graded form is what G-2A needs to show a timeout fires only above the ceiling.
-      if (fault.ms <= 0) return await new Promise<ArrayBuffer>(() => {});
+      // A hung socket the way the engine reports it: nothing arrives, and the call returns "stalled" at its
+      // bound (the listener's budget for a recovery attempt, the first-audio window otherwise).
+      if (fault.ms <= 0) {
+        // ...at the FIRST-AUDIO bound when the attempt carries one (RULE 2a), the budget otherwise — or
+        // the moment it is asked to yield, exactly as a real stalled socket is dropped.
+        const cancelled = await new Promise<boolean>((r) => {
+          const t = setTimeout(() => { faultCancel = null; r(false); }, firstAudioMs ?? budgetMs ?? 12000);
+          faultCancel = () => { clearTimeout(t); faultCancel = null; r(true); };
+        });
+        if (cancelled) throw new Error("edge synth cancelled");
+        throw new Error("edge synth stalled: no audio (injected)");
+      }
       await new Promise((r) => setTimeout(r, fault.ms));
     } else if (mode === "empty") {
       // An EMPTY audio payload (a framed response carrying zero audio bytes).
@@ -612,7 +661,7 @@ async function rawSynth(engine: TtsEngineKind, id: string, text: string): Promis
   }
   // RAWY-264: synthesis is ALWAYS at the voice's natural rate. Speed is applied at playback, so the same
   // bytes serve every speed and a speed change never invalidates them.
-  return await invoke<ArrayBuffer>("tts_synthesize", { engine, id, text });
+  return await invoke<ArrayBuffer>("tts_synthesize", { engine, id, text, budgetMs: budgetMs ?? null, firstAudioMs: firstAudioMs ?? null });
 }
 
 // RAWY-257 package 2B (C3): ONE attempt. The retry that used to live here is gone — it fired in the SAME
@@ -636,7 +685,7 @@ async function rawSynth(engine: TtsEngineKind, id: string, text: string): Promis
  */
 export const VOICE_MISMATCH_MARKER = "voice-language-mismatch";
 
-async function synthInvoke(i: number): Promise<ArrayBuffer> {
+async function synthInvoke(i: number, budgetMs?: number, firstAudioMs?: number): Promise<ArrayBuffer> {
   const text = sentences[i];
   // `speakableText` is the ONLY place the spoken string may differ from the displayed one. It exists
   // because Edge silently drops standalone Extended Arabic-Indic digit runs — measured: two different
@@ -661,7 +710,7 @@ async function synthInvoke(i: number): Promise<ArrayBuffer> {
   // whichever way the setting is set.
   const markupSafe = withoutEmptyMarkup(speakableText(text));
   const buf = await rawSynth(
-    curEngine, curVoice, speakSymbols ? markupSafe : withoutDecorativeSymbols(markupSafe),
+    curEngine, curVoice, speakSymbols ? markupSafe : withoutDecorativeSymbols(markupSafe), i, budgetMs, firstAudioMs,
   );
   if (isImplausiblyShortAudio(text, buf?.byteLength ?? 0)) {
     throw new Error(`${VOICE_MISMATCH_MARKER}: ${curVoice} returned ${buf?.byteLength ?? 0} bytes for ${text.length} chars`);
@@ -669,13 +718,14 @@ async function synthInvoke(i: number): Promise<ArrayBuffer> {
   return buf;
 }
 
-// RAWY-257 2B (C3/D68): the approved backoff ladder — one initial attempt, then a retry after each delay.
-// THREE delays means FOUR dispatches at most; "3 attempts at 500/1500/4500" reads as three RETRY attempts,
-// and it is the only reading under which all three delays are observable (a G-2B criterion measures them).
-const RETRY_BACKOFF_MS = [500, 1500, 4500] as const;
-/** How many RETRY attempts follow the initial one — the pill reads this so the indicator and the ladder can
- *  never disagree (the RAWY-206 "a dimension written twice desyncs" trap). */
-export const TTS_MAX_RETRIES = RETRY_BACKOFF_MS.length;
+// RULE 2 (failure isolation): the sentence playback is waiting on gets ONE recovery round of a total
+// user-facing budget (12 s) holding up to this many fresh attempts. The pill reads this so the indicator and
+// the policy can never disagree (the RAWY-206 "a dimension written twice desyncs" trap). The backoff ladder
+// that used to live inside one dispatch (RAWY-257 2B) is gone: retries are the scheduler's, in two phases —
+// unbounded-by-count backoff while a sentence is still ahead, and this bounded round once it is current.
+export const TTS_MAX_RETRIES = 3;
+/** RULE 2's total budget, in ms — the hard maximum a listener waits on a sentence before the failure shows. */
+export const TTS_RECOVERY_BUDGET_MS = 12000;
 
 // RAWY-257 2B (C3): a PERMANENT failure must never enter the ladder — retrying it only delays the dialog the
 // user has to act on anyway. Deliberately NARROW: only failures that cannot succeed on a later attempt.
@@ -705,36 +755,22 @@ const isPermanentFailure = (e: unknown): boolean => {
 // The premise does not hold for a budget timeout, so the suppression it justified is narrowed to the single
 // case that can still mean a dead socket: a stall that RECURS on a fresh connection.
 
-/** Budget ran out BEFORE this phase could do its work — no socket was even established for it, so there is
- *  nothing gone-quiet to burn a window on. Exactly the class RAWY-257 C1 identified as wrongly suppressed:
- *  C1 fixed the JS predicate, but Rust still emitted the SYNTH phrase when the budget expired during
- *  connect, so the hole stayed open until stage 1 separated the phases. Always retryable. */
-const isTransientTimeout = (e: unknown): boolean => {
-  const s = String(e);
-  return s.includes("edge voices timed out") || s.includes("edge connect timed out") || s.includes("edge synth timed out");
-};
-
-/** Synthesis RAN and did not finish inside its slice — the shape of every failure the owner actually hit.
- *  Measured slow-but-alive, so it is retried ONCE, and that retry necessarily runs on a FRESH socket because
- *  a stall leaves Rust's warm-client slot empty. A second stall on the fresh socket is the operational
- *  definition of a genuine stall, and is surfaced. The JS ceiling sentinel is included: at 13 s over Rust's
- *  12 s it should never fire, and if it does the IPC itself is stuck, which a retry may still clear. */
-const isSynthStall = (e: unknown): boolean => {
-  const s = String(e);
-  return s.includes("edge synth stalled") || s.includes("synthTimeout");
-};
-
-
-// RAWY-247: when `decodeAudioData` fails, this holds what we FAILED to decode (Defect C / §1.5), read by
-// `noteFailure`. There is no per-message content-type on the Edge WebSocket, so the first bytes are the
-// sniff: `3c` ("<") = HTML/XML error page, `7b` ("{") = JSON, `00 00` = empty/garbage, `49 44 33`/`ff fb` = MP3.
+/** The engine yielded because it was asked to (`tts_cancel_synth`): a scheduling event, not a failure. */
+const isCancelledSynth = (e: unknown): boolean => String(e).includes("edge synth cancelled");
+/** A warm socket the service closed while idle: 10054 within milliseconds, before any audio. Measured on
+ *  every run after an idle stretch; worth one immediate reconnect that is not counted as a failure. */
+const isFastReset = (e: unknown, ms: number): boolean => ms < 150 && /10054|ConnectionReset/.test(String(e));
 let pendingDecodeInfo: { bytes: number; head: string } | null = null;
 
 // RAWY-231: the scheduler's dispatch — invoke (bounded so a stalled socket frees the single-flight slot) →
 // parse the framed word timings → decode to an AudioBuffer. Engine-agnostic (WebAudio decodes
 // Edge MP3 alike). This is the ONLY thing the scheduler runs; ordering/priority/eviction are the scheduler's.
-async function attemptSynth(i: number): Promise<Synthesized> {
-  const raw = await withTimeout(synthInvoke(i), SYNTH_TIMEOUT_MS);
+async function attemptSynth(i: number, ctx: DispatchContext): Promise<Synthesized> {
+  // The engine bounds the call itself (on the listener's budget for a recovery attempt, on progress
+  // otherwise — see `edge_synthesize`); this ceiling is the safety net a stuck IPC would need, sized so
+  // the engine's own, specific reason always arrives first.
+  const ceiling = ctx.budgetMs !== undefined ? ctx.budgetMs + SYNTH_TIMEOUT_MARGIN_MS : BACKGROUND_SYNTH_CEILING_MS;
+  const raw = await withTimeout(synthInvoke(i, ctx.budgetMs, ctx.firstAudioMs), ceiling);
   const { words, audio } = parseFramed(raw);
   // RAWY-257 (Phase 1 — CONFIRMED DEFECT, found by the fault harness on its first real use):
   // `decodeAudioData` DETACHES the ArrayBuffer it is given. The RAWY-247 capture below used to read `audio`
@@ -790,89 +826,74 @@ async function attemptSynth(i: number): Promise<Synthesized> {
 // this package does not touch the scheduler at all (that is package 2C's exclusive territory).
 //
 // A1: this ladder IS the Edge tolerance band the path never had. A RECOVERED fault never reaches a dialog;
-// only EXHAUSTION does. `failStreak` is left to `playFrom` exactly as it was.
-/** RAWY-266 (stage 3): is index `i` still inside the window the scheduler would keep it in? This MIRRORS
- *  the scheduler's own [priority − behind, priority + ahead] bound instead of reaching into it, so the ladder
- *  still reads and mutates no scheduler state — the property that keeps retry policy out of the scheduler's
- *  territory. A `function` (not a `const`) so it hoists above `synthDispatch`, which the scheduler below is
- *  constructed with. */
-function stillWanted(i: number): boolean {
-  const p = scheduler.priority;
-  return i >= p - CACHE_KEEP_BEHIND && i <= p + PREFETCH_MAX_AHEAD;
-}
+// only EXHAUSTION does.
 
-async function synthDispatch(i: number): Promise<Synthesized> {
+// ONE attempt per dispatch. The scheduler owns every retry decision (RULE 1 backoff ahead of playback,
+// RULE 2's bounded round once current) and hands the context down: a recovery attempt carries what is left
+// of the listener's budget, which the engine treats as its deadline.
+async function synthDispatch(i: number, ctx: DispatchContext): Promise<Synthesized> {
   pendingDecodeInfo = null; // don't let a recovered attempt's sniff be attributed to a later, different failure
-  const t0 = performance.now();
-  const startGen = gen; // RAWY-266: the chapter/voice this ladder belongs to
-  let stallRetries = 0;
-  let lastErr: unknown = new Error("no attempt made");
-  for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt++) {
-    if (attempt > 0) {
-      // D68: the wait is VISIBLE. Playback is already showing `buffering` while it awaits this sentence;
-      // the attempt number turns "the player is dead" into "the player is working". Without this the ladder
-      // would just be a longer silence, which is the reason RAWY-231 shortened the timeout in the first place.
-      useTts.setState({ retryAttempt: attempt });
-      await new Promise((r) => setTimeout(r, RETRY_BACKOFF_MS[attempt - 1]));
-    }
-    try {
-      const out = await attemptSynth(i);
-      if (attempt > 0) useTts.setState({ retryAttempt: 0 });
-      return out;
-    } catch (e) {
-      lastErr = e;
-      if (isPermanentFailure(e)) break;     // C3: a permanent failure must NOT enter the ladder
-      // RAWY-266 (stage 3): the policy, stated at the point of decision.
-      //   stall     — synthesis ran and did not finish. Retried ONCE, necessarily on a fresh socket (the
-      //               stall empties Rust's warm slot). A recurrence there is the genuine stall RAWY-193 was
-      //               written for, and is surfaced.
-      //   transient — the budget expired before voices/connect/synth could even begin. No socket existed to
-      //               have gone quiet, so it takes the full backoff ladder. This is the behaviour C1
-      //               intended and could not reach until stage 1 stopped Rust labelling it as a synth stall.
-      //   other     — decode faults and the like: unchanged, they keep the ladder they already had.
-      const retryClass = isSynthStall(e) ? "stall" : isTransientTimeout(e) ? "transient" : "other";
-      if (retryClass === "stall") {
-        if (stallRetries >= STALL_RETRY_LIMIT) break;
-        stallRetries++;
-      }
-      if (ttsDebugOn) logStall(`retry:${retryClass}:${classifyFailure(e)}`, i);
-
-      // ---- RAWY-266 (stage 3): three guards, all BEFORE committing to another attempt ----
-      // 1. SUPERSEDED. A chapter change, voice change or stop bumps `gen`. Without this the ladder would go
-      //    on occupying the single-flight engine for work whose result is already guaranteed to be discarded.
-      if (gen !== startGen) break;
-      // 2. ABANDONED. The listener skipped away, so this index is outside the window the scheduler is still
-      //    willing to keep. Checked against the scheduler's own cursor rather than by reaching into it, so
-      //    the ladder still touches no scheduler state (the property that keeps this out of 2C's territory).
-      if (!stillWanted(i)) break;
-      // 3. TOTAL CEILING. Only start another attempt if a WHOLE one can finish inside the ladder's budget;
-      //    testing elapsed alone would let a final attempt overrun to ~40 s. With 27 000 / 13 000 this
-      //    permits exactly two attempts, which is where the measured recovery curve flattens.
-      if (performance.now() - t0 + SYNTH_TIMEOUT_MS > MAX_DISPATCH_MS) break;
-    }
+  if (ttsDebugOn && ctx.role !== "current" && ctx.role !== "lead" && ctx.role !== "look-ahead") {
+    logStall(`dispatch:${ctx.role}#${ctx.attempt}${ctx.budgetMs !== undefined ? `:${ctx.budgetMs}ms` : ""}`, i);
   }
-  useTts.setState({ retryAttempt: 0 });
-  // RAWY-193 unchanged: a sustained EDGE failure rejects with the sentinel so `playFrom` raises the explicit
-  // "Edge unavailable" pause. The voice is NEVER changed here (D37) — recovery remains
-  // the user pressing it.
-  if (curEngine === "edge") throw new Error(`${TTS_EDGE_DOWN}: ${lastErr}`);
-  throw lastErr;
+  // D68: the indicator shows only the recovery round the listener is waiting through (attempts 2 and 3);
+  // background attempts on sentences still ahead are silent, as nothing audible depends on them.
+  if (ctx.role === "recovery" && ctx.attempt > 1) useTts.setState({ retryAttempt: ctx.attempt });
+  // RESILIENCE TELEMETRY (observation only). The attempt is timed and recorded AFTER it has settled, on
+  // both paths, so the value and the error travel exactly as they did before: nothing here is awaited by
+  // the scheduler, nothing here can change a retry, a budget or a lead. `noteDispatch` allocates one
+  // object and returns; it is wrapped in its own try/catch so a fault in measurement cannot reach
+  // playback. See src/lib/ttsTelemetry.ts.
+  const tDispatch = performance.now();
+  try {
+    const out = await attemptSynth(i, ctx);
+    noteDispatch({
+      unit: i, len: sentences[i]?.length ?? -1, role: ctx.role, attempt: ctx.attempt,
+      budgetMs: ctx.budgetMs ?? null, ms: Math.round(performance.now() - tDispatch), ok: true,
+      audioSec: out.durationSec, kind: null, detail: null,
+    });
+    return out;
+  } catch (e) {
+    if (ttsDebugOn) logStall(`fail:${ctx.role}:${classifyFailure(e)}`, i);
+    noteDispatch({
+      unit: i, len: sentences[i]?.length ?? -1, role: ctx.role, attempt: ctx.attempt,
+      budgetMs: ctx.budgetMs ?? null, ms: Math.round(performance.now() - tDispatch), ok: false,
+      audioSec: null, kind: classifyFailure(e), detail: String(e).slice(0, 120),
+    });
+    throw e;
+  }
 }
 
 // The one serialized, priority-ordered, drop-on-move synth scheduler (invariants B + C live here).
 const scheduler = new SynthScheduler<Synthesized>(synthDispatch, {
   behind: CACHE_KEEP_BEHIND,
   ahead: PREFETCH_MAX_AHEAD,
-  // RAWY-257 4B (A2): seconds govern the window; `ahead` above is only the O(1) safety cap.
+  // RAWY-257 4B (A2): seconds govern the window; `ahead` above is only the O(1) safety cap. The target is
+  // REAL listening seconds — the scheduler multiplies by the playback speed (see LEAD_TARGET_SECONDS).
   targetSeconds: LEAD_TARGET_SECONDS,
   lowWaterSeconds: LEAD_LOW_WATER_SECONDS,
+  // A sentence not yet synthesized is estimated from its text (measured: ~0.076 s of audio per character on
+  // Arabic prose), so the lead and the retry timing can reason about it before it exists.
+  estimateOf: (i) => Math.max(1, (sentences[i]?.length ?? 0) * 0.0757),
+  isPermanent: isPermanentFailure,
+  isCancelled: isCancelledSynth,
+  isFastReset,
+  // Cooperative cancellation: the engine returns the call in flight as cancelled and drops the connection
+  // at its next message. Asked only when a session ends or the sentence the listener waits on needs the
+  // engine another sentence is holding.
+  onCancel: (why, inflight) => { if (ttsDebugOn) logStall(`cancel:${why}`, inflight); if (import.meta.env.DEV) faultCancel?.(); void ttsCancelSynth().catch(() => {}); },
+  // RULE 2a: an injected stall is silent by definition; otherwise the engine answers.
+  isStreaming: () => (import.meta.env.DEV && faultCancel !== null ? false : ttsSynthStreaming().catch(() => false)),
   // The scheduler must stay PURE, so it is told HOW to read a duration rather than learning what an
   // AudioBuffer is. A punctuation-only unit legitimately decodes to 0 s — that contributes nothing to
   // the lead, which is correct: it is no cover.
   durationOf: (s) => s.durationSec, // RAWY-264: the duration decoding measured, kept without the PCM
   // RAWY-257 4B (A2): a synth landed, so the decoded lead changed and ONE more index may now be justified.
   // The scheduler cannot request it itself — only this module knows how long the chapter is.
-  onSettled: () => { if (useTts.getState().active) prefetchFrom(scheduler.priority); },
+  onSettled: () => {
+    if (import.meta.env.DEV) { const v = scheduler.checkInvariants(); if (v.length) console.error("[sard/tts] scheduler invariant violated:", v.join("; ")); }
+    if (useTts.getState().active) prefetchFrom();
+  },
   onAbandon: () => useTts.setState({ abandoned: scheduler.abandoned }),
 });
 
@@ -961,6 +982,9 @@ export function ttsStats() {
     cached: scheduler.size,
     // RAWY-267: indices retained after a rejected dispatch instead of being deleted and re-dispatched.
     failedRetained: scheduler.failedCount,
+    health: scheduler.currentHealth,
+    inRecovery: scheduler.inRecovery,
+    isolation: { ...scheduler.stats },
     priority: scheduler.priority,
     // RAWY-257 4B (A2): the quantity the fixed-unit window could not express — CONTIGUOUS decoded seconds
     // ahead of the cursor. This is what G-4B measures on both content profiles; `lowWater` is the reported
@@ -994,6 +1018,10 @@ export function ttsStats() {
     // only way to observe the live element — a `querySelectorAll('audio')` probe silently matches nothing.
     blobs: { created: blobsCreated, revoked: blobsRevoked, live: mediaUrls.filter(Boolean).length },
     playRejections,
+    watchdogNudges,
+    // Pause SUSPENDS the context (every element feeds a MediaElementSource), so a paused session is proved
+    // by this being "suspended" — the element's own `paused` flag stays false by design.
+    audioState: ctx ? ctx.state : null,
     media: mediaEl
       ? {
           rate: mediaEl.playbackRate,
@@ -1013,17 +1041,27 @@ if (typeof window !== "undefined") {
   // WP-5: a dev/debug surface, same convention as __sardTtsStats — lets the M1 harness verify the
   // SHIPPING compatibility rule rather than a copy of it. No UI, no behaviour.
   (window as unknown as { __sardVoiceCompat?: unknown }).__sardVoiceCompat = { voiceCompatibility, isImplausiblyShortAudio };
+
   // RAWY-257 (Phase 1, item 4): arm the fault seam — DEV ONLY, and only ever from a console.
   //   __sardTtsFault("fail-fast")            → next synth attempt fails instantly (the C3 case)
-  //   __sardTtsFault("fail-fast", { times: 6 }) → six attempts fail (3 ladder rounds × first+retry)
+  //   __sardTtsFault("fail-fast", { times: 6 }) → six attempts fail
+  //   __sardTtsFault("fail-fast", { unit: 34, times: 4 }) → sentence 34's next four attempts fail, every
+  //                                            other sentence is untouched (the failure-isolation cases)
   //   __sardTtsFault("stall", { ms: 6000 })  → slow BUT SUCCESSFUL: 6 s, then the real call (G-2A grading)
   //   __sardTtsFault("stall")                → never resolves (a hung socket)
   //   __sardTtsFault("empty") / ("truncated") → the C9 / decode-non-audio payloads
   //   __sardTtsFault("off")                  → disarm
   if (import.meta.env.DEV) {
-    (window as unknown as { __sardTtsFault?: (m: FaultMode, o?: { ms?: number; times?: number; msg?: string }) => unknown }).__sardTtsFault = (m, o) => {
-      fault = { mode: m, ms: o?.ms ?? 0, times: m === "off" ? 0 : (o?.times ?? 1), msg: o?.msg };
+    (window as unknown as { __sardTtsFault?: (m: FaultMode, o?: { ms?: number; times?: number; msg?: string; unit?: number; text?: string }) => unknown }).__sardTtsFault = (m, o) => {
+      fault = { mode: m, ms: o?.ms ?? 0, times: m === "off" ? 0 : (o?.times ?? 1), msg: o?.msg, unit: o?.unit, text: o?.text };
       return { ...fault };
+    };
+    //   __sardMediaFault("reject", { times: 2 }) → the next two play() calls reject (one sentence's two tries)
+    //   __sardMediaFault("stuck")               → the next sentence freezes once; the watchdog's nudge frees it
+    //   __sardMediaFault("stuck-forever")       → it freezes again after the nudge; the watchdog surfaces the error
+    (window as unknown as { __sardMediaFault?: (m: MediaFaultMode, o?: { times?: number }) => unknown }).__sardMediaFault = (m, o) => {
+      mediaFault = { mode: m, times: m === "off" ? 0 : (o?.times ?? 1) };
+      return { ...mediaFault };
     };
   }
 }
@@ -1144,7 +1182,7 @@ export function skipSentenceForArrow(key: string): boolean {
   // claimed anyway, so the reader stays on the page the final sentence is on instead of paging away
   // from the state being offered.
   if (!st.active || (st.status !== "playing" && st.status !== "paused" &&
-      st.status !== "buffering" && st.status !== "chapter-end")) return false;
+      st.status !== "buffering" && st.status !== "chapter-end" && st.status !== "edge-error")) return false;
   const isRight = key === "ArrowRight";
   const isLeft = key === "ArrowLeft";
   if (!isRight && !isLeft) return false;
@@ -1349,12 +1387,8 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 // RAWY-257 4B (A2): the depth is no longer a constant — the scheduler reports how many indices ahead the
 // DECODED lead justifies, and it grows by exactly ONE per landed synth (D71's "one request at a time").
 // Re-requesting the indices already held is free: `request()` returns the existing entry.
-function prefetchFrom(idx: number): void {
-  const want = scheduler.wantedAhead();
-  for (let k = 1; k <= want; k++) {
-    const j = idx + k;
-    if (j >= 0 && j < sentences.length) void synth(j).catch(() => {});
-  }
+function prefetchFrom(): void {
+  for (const j of scheduler.workSet()) void synth(j).catch(() => {});
 }
 
 // RAWY-231: `establishLead` = this is an ENTRY into playback (a chapter start, a seek/skip LANDING, a
@@ -1386,7 +1420,8 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
   scheduler.reprioritize(idx);
   const current = synth(idx);                                       // top priority
   const lead = idx + 1 < sentences.length ? synth(idx + 1) : null;  // the one-ahead lead (invariant A)
-  prefetchFrom(idx);                                                // optional deeper look-ahead (yields)
+  void current.catch(() => {});
+  prefetchFrom();                                                   // the work set: lead + past a waiting sentence
 
   // RAWY-231 (invariant A/E): if the current sentence isn't decoded yet, playback must WAIT. On a NORMAL
   // advance that is an UNDERRUN (the lead failed to keep up) — count it + log it. On an ENTRY it's the
@@ -1408,16 +1443,16 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
   // empty list (leaving `wordRanges` empty) and `showReadingWord(-1)` removes the pill and draws nothing —
   // the correct state while nothing is being spoken. `startKaraoke` republishes the real values when the
   // audio actually starts, so timing and audio-clock anchoring are untouched.
-  set({ index: idx, status: ready ? "playing" : "buffering", words: [], wordIndex: -1 });
+  // `retryAttempt: 0` — a sentence begins with no retry indicator; a skip away from a sentence mid-recovery
+  // would otherwise show the old round's count on the new sentence until the superseded wait settles.
+  set({ index: idx, status: ready ? "playing" : "buffering", words: [], wordIndex: -1, retryAttempt: 0 });
   if (!ready && !establishLead) { ttsUnderruns++; logStall("underrun", idx); }
 
-  // RAWY-159: skip the current sentence and continue — one bad segment must NEVER halt the queue. A
-  // genuine dead end (a RUN of FAIL_LIMIT consecutive failures, e.g. offline) still surfaces
-  // the retryable error instead of silently racing to the end.
-  const skipSegment = (deadEndError: string): void => {
+  // A sentence is never advanced past automatically. `play()` rejecting (autoplay policy, a device change)
+  // is retried once; a second rejection is surfaced as the retryable error, on THIS sentence.
+  const playRejected = (): void => {
     if (myGen !== gen) return;
-    if (++failStreak >= FAIL_LIMIT) { set({ status: "error", error: deadEndError }); return; }
-    void playFrom(idx + 1, myGen);
+    set({ status: "error", error: "tts.playRejected" });
   };
 
   let synthd: Synthesized;
@@ -1427,6 +1462,9 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
   // measurement that decides C2. Phase 1 only MEASURES; it changes nothing about the timeout.
   const tAwait = performance.now();
   try {
+    // RULE 2: if the sentence is not ready, this is its recovery round — a total budget of
+    // TTS_RECOVERY_BUDGET_MS holding up to TTS_MAX_RETRIES fresh attempts. It resolves only with THIS
+    // sentence: nothing here can advance to idx + 1. A ready idx + 1 is reused the moment this resolves.
     // RAWY-172 (AUD-2): bound the synth so a stalled socket can't freeze the queue. RAWY-193: on Edge a
     // failure/stall is NOT skipped — the catch routes it to the explicit "Edge unavailable" pause (isEdgeDown);
     // an unspeakable sentence still skips per RAWY-159.
@@ -1446,11 +1484,14 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
     // mode is lost; only the false ones are. If the entry is dropped from the scheduler's window while we
     // await it, this promise simply never settles — correct, because a NEWER `playFrom` owns playback by then
     // (and the unreferenced pending promise is collectible). Removing the orphan case entirely is A3 / 4A.
-    synthd = await current;
+    synthd = ready ? await current : await scheduler.recover(idx, TTS_RECOVERY_BUDGET_MS);
     recordSeries(awaitLatency, performance.now() - tAwait);
+    if (useTts.getState().retryAttempt) set({ retryAttempt: 0 });
   } catch (e) {
     recordSeries(awaitLatency, performance.now() - tAwait); // a failed wait is still a wait — measure it
+    if (useTts.getState().retryAttempt) set({ retryAttempt: 0 });
     if (myGen !== gen) return; // superseded — the scheduler already dropped the rejected index
+    if (String(e).includes(RECOVERY_CANCELLED)) return; // playback moved on (skip/seek) — that path plays
     // RAWY-193: an Edge-SERVICE failure (the bounded retry failed) or an Edge stall must NOT silently skip
     // or swap the voice — PAUSE and surface the explicit "Edge unavailable" state (Retry),
     // visible in EVERY pill state (the player force-expands out of the kashida on this status). A non-Edge
@@ -1470,8 +1511,12 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
       set({ status: "edge-error" });
       return;
     }
-    noteFailure(idx, e); // RAWY-247: also capture a decode/non-audio failure (Defect C / §1.5) before skipping
-    skipSegment(String(e));
+    // Any other rejection here is a scheduling event (a drop under a cursor move already covered by the
+    // `gen` check above) or a permanent failure the scheduler reported as RECOVERY_FAILED; a sentence is
+    // NEVER skipped for a synthesis failure. Surface it as the explicit pause.
+    noteFailure(idx, e);
+    stopSource();
+    set({ status: "edge-error" });
     return;
   }
   if (myGen !== gen) return; // superseded by stop/skip
@@ -1481,19 +1526,22 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
   // RAWY-264: the same condition, now read off the duration decoding measured (and the byte length) rather
   // than a retained AudioBuffer — zero-length audio is still detected exactly where it always was.
   if (!synthd.bytes || synthd.bytes.byteLength === 0 || synthd.durationSec === 0) {
-    if (curEngine === "edge") { noteFailure(idx, new Error("empty-audio (0-length buffer)")); stopSource(); logStall("empty-edge", idx); set({ status: "edge-error" }); return; }
-    skipSegment(TTS_EMPTY);
-    return;
+    noteFailure(idx, new Error("empty-audio (0-length buffer)")); stopSource(); logStall("empty-edge", idx); set({ status: "edge-error" }); return;
   }
-  failStreak = 0; // a real, speakable sentence played → reset the dead-end counter
 
   // RAWY-231 (invariant A, ENTRY): don't BEGIN until the one-ahead lead is also ready, so the very next
   // sentence can't underrun. Best-effort + bounded — a slow/failed lead must not hang the start (it surfaces
   // on its own turn); only entries wait (a normal advance already had the lead maintained).
+  // D60-A's start gate (current AND its one-ahead lead ready before a chapter start / seek landing begins),
+  // now bounded to LEAD_GATE_MS and skipped when the lead is WAITING on a backoff or dead — a landing must
+  // not wait on a sentence that is not being produced; it recovers while the landing plays.
   if (establishLead && lead && !scheduler.isReady(idx + 1)) {
-    if (myGen === gen) set({ status: "buffering" });
-    try { await withTimeout(lead, SYNTH_TIMEOUT_MS); } catch { /* surfaces when playback reaches it */ }
-    if (myGen !== gen) return;
+    const st = scheduler.stateOf(idx + 1);
+    if (st !== "waiting" && st !== "dead") {
+      if (myGen === gen) set({ status: "buffering" });
+      try { await withTimeout(lead, LEAD_GATE_MS); } catch { /* surfaces when playback reaches it */ }
+      if (myGen !== gen) return;
+    }
   }
   // RAWY-257 3B (C6 — blocker 2): the user may have PAUSED while this sentence was buffering. Two things
   // must then NOT happen here: the status must not be forced back to "playing", and the context must not be
@@ -1542,27 +1590,46 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
   el.onended = advance;
   mediaEl = el;
   const startedAt = c.currentTime;
-  try {
-    await el.play();
-  } catch {
-    // A rejected play() would strand playback in silence with no visible cause, so it is treated as a failed
-    // sentence and takes the SAME route a synth failure takes (RAWY-159 skip, dead-end counting).
-    playRejections++;
-    if (myGen !== gen) return;
-    skipSegment("tts.playRejected");
-    return;
+  let played = false;
+  for (let attempt = 0; attempt < 2 && !played; attempt++) {
+    try {
+      await mediaPlay(el);
+      played = true;
+    } catch {
+      playRejections++;
+      if (myGen !== gen) return;
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 250));
+      if (myGen !== gen) return;
+    }
   }
+  if (!played) { playRejected(); return; }
   // `play()` is awaited, so a stop/skip may have landed while it resolved — that generation check is the
   // difference between a stopped sentence going silent and it speaking over its replacement.
   if (myGen !== gen) { try { el.pause(); } catch { /* raced with stopSource */ } return; }
+  mediaAfterPlay(el, () => myGen === gen);
   // The watchdog is the safety net for a sentence whose `ended` never arrives (an edge-case stuck element)
   // — it advances only after the audio COULD have finished even at the slowest speed, and it polls the
   // AudioContext clock (which freezes while paused), so a long pause never trips it.
+  // The watchdog covers an `ended` event that never fires. It advances ONLY when the element really
+  // reached its end; an element whose time stops moving mid-sentence is nudged once, then surfaced as the
+  // retryable error — never advanced past (that would be a silent skip of unread text).
   const maxCtxSeconds = synthd.durationSec / TTS_MIN_SPEED + 2; // slowest-case play time + margin
+  let lastPos = -1, stuckTicks = 0, nudged = false;
   clearWatchdog();
   watchdog = setInterval(() => {
     if (myGen !== gen) { clearWatchdog(); return; }
-    if (c.currentTime - startedAt > maxCtxSeconds) advance();
+    // "really reached its end": the `ended` flag, or a position within 20 ms of the duration (an element that
+    // reports the last frame without raising `ended` — never the fault of the text). The tolerance is media
+    // time, so it is the same 20 ms at every playback rate: inaudible, and far below any spoken syllable.
+    if (el.ended || (Number.isFinite(el.duration) && el.duration > 0 && el.currentTime >= el.duration - 0.02)) { advance(); return; }
+    if (c.currentTime - startedAt <= maxCtxSeconds) return;
+    if (useTts.getState().status === "paused") return;
+    if (el.currentTime !== lastPos) { lastPos = el.currentTime; stuckTicks = 0; return; }
+    if (++stuckTicks < 10) return; // 5 s without progress
+    if (!nudged) { nudged = true; stuckTicks = 0; watchdogNudges++; void el.play().catch(() => {}); mediaAfterPlay(el, () => myGen === gen); return; }
+    clearWatchdog();
+    stopSource();
+    set({ status: "error", error: "tts.playStuck" });
   }, 500);
   // RAWY-127: schedule the karaoke pill against the AudioContext clock (empty words → sentence-level only).
   // RAWY-264: anchored on the element's OWN position, because `play()` resolved after audio had already
@@ -1635,8 +1702,8 @@ export const useTts = create<TtsState>((set, get) => ({
     skipLastTarget = -1;
     skipLeadGen = -1;
     lastSkipAt = 0; // RAWY-186: the first skip of a new session must lead (not read as a continuation)
-    scheduler.clearCache(); // RAWY-231: fresh chapter — drop cached audio (keeps the session's E counters)
-    failStreak = 0; // RAWY-159: a fresh Listen starts the dead-end counter clean
+    scheduler.hold(); // RAWY-231: fresh chapter — drop cached audio (keeps the session's E counters); nothing
+                      // is dispatched until the new queue, start index and voice are handed over below
     // RAWY-257 package 3A (C5): capture the units in a LOCAL. `sentences` is module state that `stop()`
     // empties, so reading it back after the awaits below is reading whatever the LAST caller left there —
     // which is how closing the player mid-preparation produced a false "empty chapter".
@@ -1694,6 +1761,12 @@ export const useTts = create<TtsState>((set, get) => ({
         return;
       }
     }
+    // The scheduler learns the queue, the START INDEX and the speed only now — after the voice is resolved
+    // and before anything may be dispatched. Earlier, a dispatch made before `curVoice` was set went out
+    // with an empty voice id (measured in the app: an immediate "unknown edge voice" on sentence 0), and
+    // one made for the previous position would hold the engine while the first sentence waits.
+    scheduler.begin(units.length, Math.min(startIndex, units.length - 1));
+    scheduler.setSpeed(speed);
     void ensureAndPlay(id, Math.min(startIndex, units.length - 1), myGen);
   },
 
@@ -1707,9 +1780,11 @@ export const useTts = create<TtsState>((set, get) => ({
     // suspended context and cannot make a sound until the user resumes.
     if (st.status === "playing" || st.status === "buffering") {
       void audioCtx().suspend();
+      scheduler.setPaused(true);
       set({ status: "paused" });
     } else if (st.status === "paused") {
       void audioCtx().resume();
+      scheduler.setPaused(false);
       set({ status: "playing" });
       resumeKaraoke(); // RAWY-FINAL: the loop parked itself on pause — hand the frame back
     }
@@ -1733,7 +1808,10 @@ export const useTts = create<TtsState>((set, get) => ({
     // paths go through `skipSentenceForArrow`, which admits only playing/paused/buffering. Those three are
     // the complete set of callers. This closes the hole at the STORE, where the invariant belongs, so a
     // future control cannot reopen it — it is not fixing a live symptom.
-    if (!st.active || st.status === "preparing" || st.status === "error" || st.status === "edge-error") return;
+    // Failure isolation: a skip from `edge-error` IS allowed — it is the listener's explicit choice of a
+    // different sentence, not a transport move resurrecting an unresolved error (the 3A concern above),
+    // and it re-enters playback through the same `playFrom` under a new generation. `error` stays closed.
+    if (!st.active || st.status === "preparing" || st.status === "error") return;
     // FORWARD FROM THE LAST SENTENCE IS THE END OF THE CHAPTER, not the last sentence again. The clamp
     // that serves every other move resolved this one back onto the sentence already playing, so the
     // press replayed it. Routed into the existing end-of-chapter path — the one reaching the end by
@@ -1755,11 +1833,11 @@ export const useTts = create<TtsState>((set, get) => ({
     const myGen = ++gen;
     stopSource();
     stopKaraoke(); // RAWY-127: drop the old sentence's pill; playFrom restarts karaoke for the new one
-    failStreak = 0; // RAWY-159: a user skip is a fresh attempt — don't count it toward a dead end
     // RAWY-231: re-point the scheduler at the landing IMMEDIATELY (invariants B + C). This drops stale
     // look-ahead for the old position and makes the landing the engine's next work, so a fast skip never
     // wastes synths on flown-past sentences and the landing waits behind at most the one in-flight synth.
     scheduler.reprioritize(target);
+    scheduler.userAction(); // AFTER the move: it lifts the background limit for the window the landing owns
     // Move the index + sentence spotlight INSTANTLY (the RAWY-126/127 reader effects follow `index`), so
     // rapid skipping tracks on screen even though the landing sentence's audio is deferred below.
     set({ wordIndex: -1, index: target, status: "playing" });
@@ -1786,7 +1864,7 @@ export const useTts = create<TtsState>((set, get) => ({
       if (!get().active) return; // stopped during the window (stop() also clears this timer)
       if (settleNeedsReplay(skipLastTarget, skipLeadTarget, skipLeadGen, gen)) {
         void playFrom(skipLastTarget, ++gen, true); // establishLead
-      } else prefetchFrom(skipLeadTarget);
+      } else prefetchFrom();
     }, SKIP_SETTLE_MS);
   },
 
@@ -1805,6 +1883,8 @@ export const useTts = create<TtsState>((set, get) => ({
     if (mediaEl) mediaEl.playbackRate = sp;
     reanchorKaraoke(sp); // RAWY-127: keep the karaoke audio-time continuous across the rate change
     set({ speed: sp });
+    scheduler.setSpeed(sp); // the lead is measured in real seconds — more audio is wanted at a higher speed
+    if (get().active) prefetchFrom();
     void settingsSet("tts_speed", String(sp)).catch(() => {});
   },
 
@@ -1829,7 +1909,6 @@ export const useTts = create<TtsState>((set, get) => ({
     curEngine = engine;
     curVoice = id;
     scheduler.clearCache(); // RAWY-231: new voice → invalidate cached audio (keeps the session's E counters)
-    failStreak = 0; // RAWY-159: a new engine/voice is a fresh attempt at the current sentence
     const myGen = ++gen;
     stopSource();
     stopKaraoke(); // RAWY-127: changing the voice drops any pill; playFrom re-decides
@@ -1841,7 +1920,13 @@ export const useTts = create<TtsState>((set, get) => ({
   // Re-run the last Listen after a download/synth failure (RAWY-106: a visible way to recover from a
   // flaky first-use download without leaving the reader).
   retry: () => {
-    if (lastStart) void get().start(lastStart);
+    if (!lastStart) return;
+    // The retryable error is surfaced ON the sentence that failed (a rejected `play()`, a stuck element),
+    // so Retry resumes from that sentence — not from where the session was started, which would send a
+    // listener forty sentences in back to the chapter's first line.
+    const st = get();
+    const startIndex = st.active && st.index >= 0 && st.index < st.total ? st.index : lastStart.startIndex;
+    void get().start({ ...lastStart, startIndex });
   },
 
   // RAWY-193: the "Edge unavailable" state's Retry — re-attempt the CURRENT sentence on the SAME engine
@@ -1850,8 +1935,10 @@ export const useTts = create<TtsState>((set, get) => ({
   resumeEdge: () => {
     const st = get();
     if (!st.active) return;
-    scheduler.clearCache(); // RAWY-231: drop the outage's stale rejected synths so Retry re-attempts cleanly
-    failStreak = 0;
+    // Failure isolation: NOT `clearCache()` — the sentences prepared past the failed one are kept, so once
+    // it is produced they play from cache. `userAction` makes every waiting sentence eligible now; if the
+    // background already recovered the failed one, `playFrom` finds it ready and resumes at once.
+    scheduler.userAction();
     const myGen = ++gen;
     stopSource();
     stopKaraoke();
@@ -1892,4 +1979,10 @@ export const useTts = create<TtsState>((set, get) => ({
 // behaviour, and nothing in the product reads it back.
 if (typeof window !== "undefined") {
   (window as unknown as { __sardTtsStore?: unknown }).__sardTtsStore = useTts;
+}
+
+// Development only: the live store itself, so an in-app harness observes the instance the reader runs (a
+// dynamic import through the dev server yields a second, unrelated instance). No UI, no behaviour.
+if (import.meta.env.DEV && typeof window !== "undefined") {
+  (window as unknown as { __sardTts?: unknown }).__sardTts = useTts;
 }

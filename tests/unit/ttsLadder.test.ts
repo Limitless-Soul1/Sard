@@ -1,19 +1,53 @@
-// RESILIENCE-1 / WP-5D — THE RETRY LADDER MUST BE UNTOUCHED.
+// RESILIENCE-1 / WP-5D — THE RETRY POLICY'S SHAPE IS PINNED.
 //
-// WP-5's whole change is "one gate in front, one class beside". The ladder, its backoff constants and
-// every pre-existing classifier were calibrated against measured recovery curves (RAWY-257/266) and
-// this package produced no evidence to move any of them. These tests exist so that stays true by
-// check rather than by intention — a later edit that quietly widens the ladder fails here.
+// WP-5's change was "one gate in front, one class beside" and left the RAWY-257/266 ladder untouched.
+// Failure isolation later REPLACED that ladder on purpose (see ttsScheduler.ts): retries are the
+// scheduler's, in two phases — backoff without a count limit while a sentence is still ahead of playback,
+// and ONE bounded recovery round once it is current. These tests pin the round's shape so a later edit that
+// quietly widens the user-facing wait fails here rather than in a listener's ears.
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { TTS_MAX_RETRIES, VOICE_MISMATCH_MARKER } from "../../src/lib/tts";
+import { TTS_MAX_RETRIES, TTS_RECOVERY_BUDGET_MS, VOICE_MISMATCH_MARKER } from "../../src/lib/tts";
+import { DEFAULT_POLICY } from "../../src/lib/ttsScheduler";
 import { isImplausiblyShortAudio } from "../../src/lib/voiceCompat";
 
-describe("WP-5D — the ladder's shape is unchanged", () => {
-  it("still runs exactly three retry attempts after the initial one", () => {
-    // RAWY-257 2B / D68: three delays (500 / 1500 / 4500) ⇒ four dispatches at most. Changing this
-    // changes how long a reader waits through a real outage, which is not WP-5's business.
+describe("the current-sentence recovery round is bounded", () => {
+  it("holds at most three attempts, and the indicator reads the same number", () => {
     expect(TTS_MAX_RETRIES).toBe(3);
+    expect(DEFAULT_POLICY.maxRecoveryAttempts).toBe(TTS_MAX_RETRIES);
+  });
+
+  it("is a 12 s TOTAL budget — the hard maximum a listener waits before the failure shows", () => {
+    expect(TTS_RECOVERY_BUDGET_MS).toBe(12000);
+    expect(DEFAULT_POLICY.budgetMs).toBe(TTS_RECOVERY_BUDGET_MS);
+    // no attempt may start with less than a cold connection's worth of budget left
+    expect(DEFAULT_POLICY.minAttemptMs).toBeGreaterThanOrEqual(1500);
+  });
+});
+
+describe("one synthesis at a time — the Rust side's single-call assumption", () => {
+  // `tts.rs` keeps ONE cancel flag ("the current call") and serialises calls on one engine mutex; both
+  // assume the frontend never has two `tts_synthesize` calls in flight. That holds because every call
+  // reaches the IPC through one function, called from one place, reached only through the single-flight
+  // scheduler. Pin the shape: a second entry point would silently break the cancel semantics.
+  const src = readFileSync(resolve(__dirname, "../../src/lib/tts.ts"), "utf8");
+  const calls = (re: RegExp) => (src.match(re) ?? []).length;
+
+  it("has exactly one IPC call site, inside rawSynth", () => {
+    expect(calls(/invoke<ArrayBuffer>\("tts_synthesize"/g)).toBe(1);
+    expect(calls(/\bttsSynthesize\b/g)).toBe(0); // the ipc.ts wrapper is not used here
+  });
+
+  it("rawSynth is called from attemptSynth only, attemptSynth from synthDispatch only", () => {
+    expect(calls(/\brawSynth\(/g)).toBe(2); // the definition + the one call
+    expect(calls(/\battemptSynth\(/g)).toBe(2);
+  });
+
+  it("synthDispatch is handed to the scheduler and called nowhere else", () => {
+    expect(calls(/\bsynthDispatch\b/g)).toBe(4); // two comments, the definition, the scheduler's constructor
+    expect(src).toContain("new SynthScheduler<Synthesized>(synthDispatch,");
   });
 });
 

@@ -15,6 +15,7 @@ import type { BookRow, CaseNode, ShelfNode } from "../../../lib/ipc";
 import {
   bookClearSpine,
   bookCommitCover,
+  bookDiscardCover,
   bookCommitSpine,
   bookRevertCover,
   bookStageCover,
@@ -389,15 +390,26 @@ export function BookDetails(props: BookDetailsProps) {
     const sel = await openDialog({ multiple: false, filters: [{ name: "Image", extensions: IMAGE_EXTENSIONS }] });
     if (typeof sel !== "string") return;
     setBusy(true);
+    // STAGE, THEN ADOPT. `stage` writes the image into `library/covers/` under a content-addressed name
+    // and `commit` is what makes it the book’s cover. If the commit fails after the file is already
+    // written, the staged file belongs to nobody: the book keeps the cover it had, and that file would sit
+    // in `covers/` until this book’s NEXT commit or revert swept it (or the book was deleted). Discarding
+    // it here is what the two-stage design always intended — `book_discard_cover` exists for exactly this
+    // moment and had no caller. It removes the staged file and nothing else: no override is touched, so a
+    // failed replacement leaves the book exactly as it was.
+    let staged: { rel: string } | null = null;
     try {
-      const staged = await bookStageCover(book.id, sel);
+      staged = await bookStageCover(book.id, sel);
       const next = await bookCommitCover(book.id, staged.rel);
+      staged = null; // adopted — it is the book’s cover now, never a leftover
       if (next) setBook(next);
       // Choosing an image means showing it.
       await bookUpdate(book.id, { coverMode: "file" }).catch(() => {});
       props.onChanged();
     } catch {
       /* the staging path reports its own failure; the dialog simply stays open */
+    } finally {
+      if (staged) await bookDiscardCover(staged.rel).catch(() => {});
     }
     setBusy(false);
   };
@@ -406,13 +418,18 @@ export function BookDetails(props: BookDetailsProps) {
     const sel = await openDialog({ multiple: false, filters: [{ name: "Image", extensions: IMAGE_EXTENSIONS }] });
     if (typeof sel !== "string") return;
     setBusy(true);
+    // The same custody as a cover: a staged spine image that is never adopted is discarded here.
+    let staged: { rel: string } | null = null;
     try {
-      const staged = await bookStageSpine(book.id, sel);
+      staged = await bookStageSpine(book.id, sel);
       const next = await bookCommitSpine(book.id, staged.rel);
+      staged = null;
       if (next) setBook(next);
       props.onChanged();
     } catch {
       /* staging reports its own failure; the dialog stays open on the current spine */
+    } finally {
+      if (staged) await bookDiscardCover(staged.rel).catch(() => {});
     }
     setBusy(false);
   };

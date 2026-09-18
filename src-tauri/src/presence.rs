@@ -28,7 +28,7 @@
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread::JoinHandle;
 
-use discord_rich_presence::activity::{Activity, Assets, Timestamps};
+use discord_rich_presence::activity::{Activity, ActivityType, Assets, Timestamps};
 use discord_rich_presence::{DiscordIpc, DiscordIpcClient};
 use serde::Deserialize;
 use tauri::State;
@@ -141,8 +141,17 @@ fn worker(rx: Receiver<Msg>) {
                     }
                 }
                 let c = client.as_mut().expect("client was just connected");
-                let mut act =
-                    Activity::new().assets(Assets::new().large_image(LARGE_IMAGE_KEY).large_text(LARGE_IMAGE_TEXT));
+                // THE VERB. Discord prefixes every activity with a verb chosen by its type, and the default
+                // (type 0) is "Playing" — a game's verb, which read "Playing Sard" on a reading app.
+                // Discord's RPC accepts exactly four types for SET_ACTIVITY — Playing (0), Listening (2),
+                // Watching (3), Competing (5) — and Watching is the one chosen for a reader: the card
+                // reads "Watching Sard" (verified on the live client: header, hoopoe, the "Reading …"
+                // line, the chapter · percent line and the elapsed clock all render as before, and the
+                // compact card gains the position line that the Playing layout dropped). The type only
+                // selects the verb; details, state, assets, timestamps and the privacy gates are untouched.
+                let mut act = Activity::new()
+                    .activity_type(ActivityType::Watching)
+                    .assets(Assets::new().large_image(LARGE_IMAGE_KEY).large_text(LARGE_IMAGE_TEXT));
                 if !activity.details.is_empty() {
                     act = act.details(&activity.details);
                 }

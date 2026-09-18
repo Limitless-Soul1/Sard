@@ -49,6 +49,10 @@ export interface EdgeVoiceInfo {
 export const ttsEdgeVoices = (): Promise<EdgeVoiceInfo[]> => invoke<EdgeVoiceInfo[]>("tts_edge_voices");
 /** Stop + drop the warm Edge connection. */
 export const ttsStop = (): Promise<void> => invoke<void>("tts_stop");
+/** Ask the engine to abandon the synthesis in flight (it returns as cancelled). */
+export const ttsCancelSynth = (): Promise<boolean> => invoke<boolean>("tts_cancel_synth");
+/** Whether the synthesis in flight has produced audio yet — see RULE 2a in `ttsScheduler.ts`. */
+export const ttsSynthStreaming = (): Promise<boolean> => invoke<boolean>("tts_synth_streaming");
 
 // ---- Fonts (RAWY-39): import + list user fonts (stored under app-data/fonts, served via asset). ----
 export interface CustomFont {

@@ -2658,6 +2658,8 @@ export function Reader({
         // RAWY-294: `pdf-view` marks EVERY PDF (it carries the scroll containment); the theme itself
         // is applied inside the page document, not by a class on this ancestor.
         className={`reader-desk${isPdf ? " pdf-view" : ""}${overlayPaint.tint ? " custom-bg" : ""}`}
+        // Which PDF renderer is on the desk, for the few presentation rules that differ between them.
+        data-pdf-mode={isPdf ? pdfMode : undefined}
         // `off` drops the scrim pseudo-element, so the picture is composited under nothing at all.
         // Absent in the other two states, which keeps every existing book byte-identical.
         data-overlay={overlayPaint.paint ? undefined : "off"}

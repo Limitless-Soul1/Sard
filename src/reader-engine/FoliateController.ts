@@ -4613,9 +4613,6 @@ export class FoliateController {
     }
   }
 
-  // RAWY-86: PDF (fixed-layout) paging by wheel — one page per gesture, throttled. Uses LOGICAL
-  // forward/back (view.next/prev), so scroll-down advances in reading order regardless of dir.
-  private lastPageWheel = 0;
   /**
    * RAWY-293: TWO NAVIGATION LAYERS for a fixed-layout page.
    *
@@ -4667,30 +4664,24 @@ export class FoliateController {
         const next = Math.max(0, Math.min(maxY, before + deltaY));
         if (Math.abs(next - before) > 0.5) { r.scrollTop = next; return; }
       }
-      // A horizontal wheel (or a wide page at high zoom) moves across before it turns a page.
+      // A horizontal wheel on a page wider than the viewport moves across it.
       if (deltaX && maxX > 1) {
         const before = r.scrollLeft;
         const next = Math.max(0, Math.min(maxX, before + deltaX));
         if (Math.abs(next - before) > 0.5) { r.scrollLeft = next; return; }
       }
-      // Reaching here means the page is at its edge in the requested direction: fall through to a turn.
-      if (!deltaY) return; // a purely horizontal gesture must never turn the page
     }
-    const now = performance.now();
-    if (now - this.lastPageWheel < 280) return; // ~one page per wheel notch/gesture
-    this.lastPageWheel = now;
-    const forward = deltaY > 0;
-    if (forward) this.view?.next?.();
-    else this.view?.prev?.();
-    // Land where reading continues: the top of the next page, the BOTTOM of the previous one, so
-    // paging backwards through a zoomed document does not skip the part just left behind.
-    const host = r;
-    if (host) {
-      window.setTimeout(() => {
-        const max = host.scrollHeight - host.clientHeight;
-        if (max > 1) host.scrollTop = forward ? 0 : max;
-      }, 120);
-    }
+    // AND THAT IS ALL THE WHEEL DOES IN PAGES MODE. It used to fall through to a page turn once the
+    // page reached its edge — and because at the default fit a page has no scrollable extent at all,
+    // "at the edge" was every wheel notch. MEASURED on a 567-page PDF: fit-page 0 px of travel, so the
+    // first notch of an ordinary gesture turned the page; fit-width 314 px, so four notches crossed it
+    // and the fifth turned it. A reader moving down a page could not stop at its bottom without
+    // silently arriving on the next one.
+    //
+    // Pages mode is now what its name says: the page changes when the reader ASKS — the page-turn
+    // controls, the arrow keys, the contents, a search result. The wheel moves within the page and
+    // stops at its top and bottom. A reader who wants the wheel to flow from page to page has Scroll
+    // mode, which is built for exactly that and is the default.
   }
 
   /**

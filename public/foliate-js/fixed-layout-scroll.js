@@ -266,8 +266,15 @@ export class FixedLayoutScroll extends HTMLElement {
         let widest = 0
         for (const slot of this.#slots) {
             const s = this.#sizeOf(slot.index)
-            slot.width = Math.round(s.width * this.#scale)
-            slot.height = Math.round(s.height * this.#scale)
+            // THE BOX IS THE SIZE OF WHAT pdf.js WILL ACTUALLY PAINT, to the device pixel.
+            //
+            // pdf.js sizes its canvas to `floor(intrinsic * scale * dpr)` DEVICE pixels and shows it at
+            // `1/dpr`. Rounding the slot independently left it up to a pixel wider than the painted
+            // page, and that pixel is the desk showing through — the hairline strips at the page edge.
+            // Measured: a 1px empty strip at zoom 1 on a scanned page. Sizing the box from the same
+            // arithmetic the painter uses leaves nothing between them.
+            slot.width = this.#painted(s.width)
+            slot.height = this.#painted(s.height)
             slot.top = top
             top += slot.height + PAGE_GAP
             if (slot.width > widest) widest = slot.width
@@ -279,6 +286,12 @@ export class FixedLayoutScroll extends HTMLElement {
         this.#syncMounted()
     }
 
+    /** The CSS size pdf.js paints a page dimension at — `floor(d * scale * dpr) / dpr`. */
+    #painted(d) {
+        const dpr = globalThis.devicePixelRatio || 1
+        return Math.floor(d * this.#scale * dpr) / dpr
+    }
+
     #placeSlot(slot) {
         Object.assign(slot.el.style, {
             top: `${slot.top}px`,
@@ -288,13 +301,23 @@ export class FixedLayoutScroll extends HTMLElement {
         const f = slot.frame
         if (f) {
             const s = this.#sizeOf(slot.index)
-            // The page document is laid out at its INTRINSIC size and scaled, which is what keeps the
-            // text layer's coordinates in step with the raster at every zoom.
-            Object.assign(f.style, {
-                width: `${s.width}px`,
-                height: `${s.height}px`,
-                transform: `scale(${this.#scale})`,
-            })
+            // ONE SCALE, APPLIED ONCE.
+            //
+            // A page with `onZoom` (every PDF page) RE-RENDERS itself at the target scale: pdf.js paints
+            // the canvas at that scale and sizes the page document to match. Its frame must therefore be
+            // the SCALED size with NO transform. The first version of this file also CSS-scaled the frame,
+            // so the page was drawn at scale × scale. MEASURED on three real PDFs: at fit-page a page
+            // meant to fill a 423×684 slot was painted 612×990 and lost 189px on the right and 306px at
+            // the bottom; at 0.75 it shrank to 0.56 and left an 88px empty strip. Only at exactly zoom 1
+            // did the two cancel. This is the rule `fixed-layout.js` has always followed
+            // (`iframeScale = onZoom ? scale : 1`), restated here rather than rediscovered.
+            //
+            // A page WITHOUT `onZoom` (a pre-paginated EPUB image page) cannot re-render, so it is laid
+            // out at its intrinsic size and magnified — the same branch the paged renderer takes.
+            const renders = !!slot.onZoom
+            Object.assign(f.style, renders
+                ? { width: `${slot.width}px`, height: `${slot.height}px`, transform: 'none' }
+                : { width: `${s.width}px`, height: `${s.height}px`, transform: `scale(${this.#scale})` })
             // A PDF page re-renders at the new scale rather than magnifying its bitmap — the same
             // call `fixed-layout.js` makes, so resolution behaves identically in both modes.
             //

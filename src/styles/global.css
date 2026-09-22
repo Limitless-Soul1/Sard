@@ -211,7 +211,14 @@ html, body, #root {
    it auto-hides; for TTS the follow keeps the spoken sentence mid-view. (RAWY-129's per-spot
    `.reader-desk::after` bottom fade is retired — the True-Black desk is theme-matched at the root.) */
 .reader-root.tts-playing .page-host,
-.reader-root.flow-scrolled .page-host { inset-block-start: 0; }
+.reader-root.flow-scrolled .page-host,
+/* A PDF, in EITHER mode, for the same reason and one more. RAWY-142 excluded PDFs because they were
+   only ever paged then; a continuous Scroll mode is exactly the case it was written for. And in Pages
+   mode a moving host is worse than a reflow: "fit page" re-derives its scale from the host's height, so
+   every reveal of the bar re-rendered the page raster at a new size. MEASURED before this: the PDF host
+   went 102px/618px tall with the bar shown and 32px/688px with it hidden — the whole document moved
+   70px each time the pointer reached the top of the window. */
+.reader-desk.pdf-view .page-host { inset-block-start: 0; }
 
 /* the paper page sheet — measure + page-edge shadow (the book renders inside .page-host) */
 .page-sheet {
@@ -843,12 +850,29 @@ html, body, #root {
    `:host { overflow: auto }` can never engage. Measured before this: scrollHeight === clientHeight at
    2x, 4x and 6x (945/945, 1890/1890, 2835/2835) — the host grew to fit the page, so a zoomed page had
    no scrollable extent and the wheel could only ever turn the page. */
-.reader-desk.pdf-view .page-host { block-size: 100%; min-block-size: 0; overflow: hidden; }
+/* BOUNDED BY ITS INSETS, NOT BY `block-size: 100%`.
+   The containment above was first written as `block-size: 100%`. On a box that is absolutely positioned
+   with `inset-block: <top> 0`, an explicit height OVER-CONSTRAINS it: the height wins and the bottom
+   inset is ignored, so the host was always the full sheet height STARTING below its top inset — and ran
+   off the bottom of the window by exactly that inset. MEASURED: host 720px tall from y=32 to y=752 in a
+   720px window while reading (the title bar's 32px lost), and 102px lost with the toolbar shown. So the
+   bottom of every PDF page was unreachable, and "fit page" fitted a box taller than the screen — the
+   page looked cropped at every fit until zoomed well below it.
+   The insets alone already give a DEFINITE height (sheet − top − bottom), which is all the containment
+   ever needed: the renderer's own `overflow: auto` still engages, because the host still cannot grow to
+   fit the page. PDF only — the EPUB host never carried the explicit height. */
+.reader-desk.pdf-view .page-host { min-block-size: 0; overflow: hidden; }
 /* Bound the height ONLY. `display: block` here overrode the renderer's own
    `:host { display: flex; justify-content: center; align-items: center }`, which is what sizes and
    centres the page box — losing it let the page geometry be driven by the viewport instead of by the
    PDF's real dimensions. The host keeps its flex layout; only its extent is constrained. */
 .reader-desk.pdf-view .page-host foliate-view { block-size: 100%; min-block-size: 0; }
+/* ONE PAGE GUTTER IN BOTH MODES. Scroll mode keeps an 18px desk gap around every page inside its own
+   renderer. The paged renderer fits the page to its whole box, so at "fit page" the page ran flush to
+   the top and bottom of the window — MEASURED 32→720 in a 720px window, no margin at all — and the two
+   modes looked like two different readers. The same 18px, applied as padding so the renderer's fit
+   arithmetic (which reads its own box) sees the smaller area and scales the page into it. */
+.reader-desk.pdf-view[data-pdf-mode="pages"] .page-host foliate-view { box-sizing: border-box; padding: 18px; }
 /* RAWY-294: the surround is NOT tinted. A PDF theme is a property of the PAGE; the reading surface
    stays whatever the app theme says, so switching PDF themes never restyles the reader around it. */
 /* Light themes: the tint does the work, the filter only trims glare. */
@@ -7511,6 +7535,7 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 :root[data-chrome="sard"] .page-host { inset-block-start: calc(70px + var(--sard-titlebar)); }
 :root[data-chrome="sard"] .reader-root.tts-playing .page-host,
 :root[data-chrome="sard"] .reader-root.flow-scrolled .page-host,
+:root[data-chrome="sard"] .reader-desk.pdf-view .page-host,
 :root[data-chrome="sard"] .reader-root.chrome-hidden .page-host { inset-block-start: var(--sard-titlebar); }
 :root[data-chrome="sard"] .page-chevron { top: calc(50% + var(--sard-titlebar) / 2); }
 

@@ -81,7 +81,11 @@ export class FixedLayoutScroll extends HTMLElement {
     #scale = 1
     #book = null
     #raf = 0
-    #observer = new ResizeObserver(() => this.#relayout())
+    // A RESIZE KEEPS THE READER'S PLACE. The window, a side panel or the fullscreen toggle changes the
+    // reading area, and a fit mode then re-scales every page — so every slot moves while `scrollTop`
+    // does not. Re-laying out without holding the position left the reader on a different page:
+    // MEASURED on a 567-page PDF, resizing the window to 900x640 left the page being read at y=-25675.
+    #observer = new ResizeObserver(() => this.#relayout({ keepCurrentPage: true }))
     #pendingAnchor = null   // a goTo that arrived before layout was ready
     #suppressReport = false
     #destroyed = false
@@ -341,18 +345,27 @@ export class FixedLayoutScroll extends HTMLElement {
     }
 
     /** Where the reader is, expressed so it survives a re-layout: a page, and a fraction into it. */
+    // THE ANCHOR IS THE PAGE UNDER THE MIDDLE OF THE VIEWPORT, READ LIVE — and the point of it that
+    // sits there. It used to be `#index`, which is only updated in a frame callback after scrolling;
+    // during a fast scroll it lagged the real position, and a relayout (a page measured as it came
+    // into the window) then restored the reader relative to a page they had already left. MEASURED:
+    // a 20-notch burst at 16 ms spacing reached +5701 px and snapped BACK 610 px. Reading the anchor
+    // from `scrollTop` at the moment of the relayout cannot be stale, and holding the MIDDLE rather
+    // than the top keeps the same line under the eye when a resize changes the viewport's height.
     #pagePosition() {
-        const slot = this.#slots[this.#index]
+        const idx = this.#pageAtViewportMiddle()
+        const slot = this.#slots[idx]
         if (!slot || !slot.height) return null
-        const y = this.#scroller.scrollTop
-        return { index: slot.index, into: (y - slot.top) / slot.height }
+        const mid = this.#scroller.scrollTop + this.#scroller.clientHeight / 2
+        return { index: idx, into: (mid - slot.top) / slot.height }
     }
 
     #restorePagePosition(pos) {
         const slot = this.#slots[pos.index]
         if (!slot) return
         this.#suppressReport = true
-        this.#scroller.scrollTop = Math.max(0, slot.top + pos.into * slot.height)
+        this.#scroller.scrollTop = Math.max(0, slot.top + pos.into * slot.height - this.#scroller.clientHeight / 2)
+        this.#index = pos.index
         this.#suppressReport = false
     }
 
@@ -369,8 +382,13 @@ export class FixedLayoutScroll extends HTMLElement {
         // Measure the window's pages so the table converges on the truth where it matters first.
         for (let i = lo; i <= hi; i++) {
             if (this.#sizes[i]) continue
+            const assumed = this.#sizeOf(i)
             void this.#measure(i).then(s => {
                 if (!s || this.#destroyed) return
+                // NOTHING TO CORRECT, NOTHING TO DO. Most pages measure exactly as assumed, and re-laying
+                // out the whole document for each of them — which is what happened — did work on every
+                // page that entered the window, in the middle of the reader's scroll.
+                if (s.width === assumed.width && s.height === assumed.height) return
                 // A correction must not move the document under the reader.
                 this.#relayout({ keepCurrentPage: true })
             })

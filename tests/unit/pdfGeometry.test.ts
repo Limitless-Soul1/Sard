@@ -100,3 +100,42 @@ describe("Pages mode: the wheel never changes the page", () => {
     expect(controller).not.toContain("private lastPageWheel");
   });
 });
+
+describe("the reader keeps their place when the view changes", () => {
+  it("a resize re-lays out WITH the reader's position held", () => {
+    // MEASURED before: resizing the window to 900x640 left the page being read at y=-25675.
+    expect(scroll).toContain("#observer = new ResizeObserver(() => this.#relayout({ keepCurrentPage: true }))");
+  });
+
+  it("the position anchor is read live from scrollTop, never from the lagging page index", () => {
+    // `#index` updates a frame after scrolling; anchoring on it during a fast scroll restored the
+    // reader to a page they had left — MEASURED: a burst reached +5701px and snapped back 610px.
+    const pos = scroll.slice(scroll.indexOf("    #pagePosition() {"), scroll.indexOf("    #restorePagePosition("));
+    expect(pos).toContain("const idx = this.#pageAtViewportMiddle()");
+    expect(pos).not.toContain("this.#slots[this.#index]");
+  });
+
+  it("a page that measures exactly as assumed triggers no relayout", () => {
+    expect(scroll).toContain("if (s.width === assumed.width && s.height === assumed.height) return");
+  });
+});
+
+describe("every PDF wheel has exactly one owner", () => {
+  it("React's desk handler steps aside for PDFs — its listener is passive and cannot cancel", () => {
+    const fn = reader.slice(reader.indexOf("const onDeskWheel = (e: React.WheelEvent) => {"));
+    expect(fn.slice(0, 200)).toContain("if (isPdf) return;");
+  });
+
+  it("the main document's PDF wheels go to ONE native, non-passive listener that cancels and forwards", () => {
+    const eff = reader.slice(reader.indexOf("const deskRef = useRef<HTMLDivElement | null>(null);"), reader.indexOf("const onDeskWheel"));
+    expect(eff).toContain('el.addEventListener("wheel", pdfDeskWheel, { passive: false })');
+    expect(eff).toContain("e.preventDefault();");
+    expect(eff).toContain("ctrlRef.current?.scrollPdfBy(e.deltaY, e.deltaX)");
+    expect(eff).toContain("ctrlRef.current?.pageByWheel(e.deltaY, e.deltaX)");
+    expect(eff).toContain('return () => el.removeEventListener("wheel", pdfDeskWheel)');
+  });
+
+  it("inside a page, Scroll mode leaves the wheel to the platform and Pages mode to the page document", () => {
+    expect(controller).toContain('if (this.fxlMode === "scroll") return;');
+  });
+});

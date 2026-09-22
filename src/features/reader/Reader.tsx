@@ -2382,23 +2382,44 @@ export function Reader({
   // outside foliate's content iframe) to the book's scroller, so the wheel scrolls anywhere in the
   // reading area — not only over the text. A wheel over the text fires INSIDE the iframe (never
   // bubbles here across the frame boundary), so this can't double-scroll. Paged mode ignores it.
+  /**
+   * ONE OWNER FOR EVERY PDF WHEEL IN THE MAIN DOCUMENT.
+   *
+   * A wheel over a PAGE fires inside that page's own document and never reaches here: in Scroll mode the
+   * platform scrolls it, in Pages mode the page document's listener does. Everything else — the desk, the
+   * gutter between pages, a page-turn rail, the margin outside the reading area — arrives HERE, and here
+   * it is handled exactly once.
+   *
+   * WHY NATIVE AND NON-PASSIVE. React registers wheel listeners as passive, so a `preventDefault` from
+   * `onWheel` is ignored and the platform scrolls as well — MEASURED: a 20-notch burst over a rail moved
+   * the document 9600px for 4800px of wheel. And whether the platform scrolls from a given spot at all
+   * was measured to be inconsistent: over a rail, one wheel moved nothing while a burst moved the full
+   * amount; over the Pages-mode gutter, nothing. Cancelling the default here takes the platform out of
+   * these regions entirely, so the forward below is the ONLY thing that moves the document from them —
+   * the platform's own delta, unscaled: no threshold, no accumulation, and in Pages mode never a turn.
+   */
+  const deskRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = deskRef.current;
+    if (!isPdf || !el) return;
+    const pdfDeskWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) { zoomIntentRef.current(e.deltaY); return; }
+      if (pdfModeRef.current === "scroll") ctrlRef.current?.scrollPdfBy(e.deltaY, e.deltaX);
+      else ctrlRef.current?.pageByWheel(e.deltaY, e.deltaX);
+    };
+    el.addEventListener("wheel", pdfDeskWheel, { passive: false });
+    return () => el.removeEventListener("wheel", pdfDeskWheel);
+  }, [isPdf]);
+
   const onDeskWheel = (e: React.WheelEvent) => {
+    // A PDF's wheel is owned by the native, NON-passive listener below — see `pdfDeskWheel`.
+    if (isPdf) return;
     // Zoom is answered before the PDF and paged branches, so Ctrl+Wheel behaves the same everywhere
     // in the reading area. (A PDF is fixed-layout and has no ReadingStyle, so it keeps paging.)
     // RAWY-291: Ctrl+Wheel now zooms a PDF as well. It previously fell through to the paging branch
     // below, so the gesture every reader expects to magnify a scan turned the page instead.
     if (e.ctrlKey || e.metaKey) { e.preventDefault(); (isPdf ? pdfZoomByWheel : zoomByWheel)(e.deltaY); return; }
-    // SCROLL MODE: the reading area is a real scroller, so a wheel over the DESK must reach it
-    // rather than be converted into a page turn. Forwarded to the scroller by delta, because a
-    // wheel on the margin fires out here and the scroller is inside the engine's shadow root where
-    // it cannot bubble to. That is a FORWARD of the platform's own delta — not an interpretation of
-    // it: no threshold, no accumulation, no page turn.
-    if (isPdf && pdfModeRef.current === "scroll") {
-      if (ctrlRef.current?.scrollPdfBy(e.deltaY, e.deltaX)) e.preventDefault();
-      return;
-    }
-    // RAWY-86 / RAWY-293: scrolls the zoomed page first, turns the page only at its edge.
-    if (isPdf) { e.preventDefault(); ctrlRef.current?.pageByWheel(e.deltaY, e.deltaX); return; }
     if (isPaged) return;
     ctrlRef.current?.scrollByWheel(e.deltaY);
   };
@@ -2687,6 +2708,7 @@ export function Reader({
       className={`reader-root${chromeShown ? "" : " chrome-hidden"}${ttsActive ? " tts-playing" : ""}${!isPaged && !isPdf ? " flow-scrolled" : ""}${immersive ? " immersive" : ""}${scrolledAway && !chromeShown ? " scrolled-away" : ""}${style?.immHidePill ? " im-hide-pill" : ""}${style?.immHideScrollbar ? " im-hide-scrollbar" : ""}${ttsStatus === "chapter-end" ? " tts-chapter-end" : ""}${ttsStatus === "edge-error" ? " tts-edge-error" : ""}`} style={rootVars} onClickCapture={releaseButtonFocusAfterPointerClick}>
       {/* desk + centered page sheet (the book) + page-turn affordances */}
       <div
+        ref={deskRef}
         // RAWY-294: `pdf-view` marks EVERY PDF (it carries the scroll containment); the theme itself
         // is applied inside the page document, not by a class on this ancestor.
         className={`reader-desk${isPdf ? " pdf-view" : ""}${overlayPaint.tint ? " custom-bg" : ""}`}

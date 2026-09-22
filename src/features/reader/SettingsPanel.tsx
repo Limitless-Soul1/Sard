@@ -1,9 +1,10 @@
 import { useI18n } from "../../i18n";
-import { ReadingSettings } from "./ReadingSettings";
+import { ReadingSettings, Section, Segmented, Slider } from "./ReadingSettings";
+import { Icon } from "../../components/Icon";
 import type { SettingsSection } from "./ReaderChrome";
 import type { ReadingStyle } from "../../reader-engine/injectedCss";
 import type { ThemeId } from "../../theme";
-import { PDF_THEMES, type PdfZoom, type PdfThemeId, type PdfViewMode } from "../../reader-engine/pdfView";
+import { PDF_THEMES, PDF_ZOOM_SLIDER_MAX, PDF_ZOOM_SLIDER_MIN, sliderToZoom, zoomToSlider, type PdfZoom, type PdfThemeId, type PdfViewMode } from "../../reader-engine/pdfView";
 import { PDF_TTS_ENABLED } from "../../lib/pdfText";
 
 interface Props {
@@ -27,10 +28,13 @@ interface Props {
   pdfThemeId?: PdfThemeId;
   onPdfTheme?: (id: PdfThemeId) => void;
   pdfZoom?: PdfZoom;
-  onPdfZoomStep?: (dir: 1 | -1) => void;
   onPdfZoomMode?: (mode: "fit-width" | "fit-page") => void;
   /** How a PDF is read: one continuous flow, or one page at a time. */
   pdfMode?: PdfViewMode;
+  /** The scale actually on screen — a fit mode resolves to a number only in the renderer. */
+  pdfScale?: number;
+  /** Set an exact zoom — the slider's path. */
+  onPdfZoomTo?: (zoom: number) => void;
   onPdfMode?: (mode: PdfViewMode) => void;
   onPdfCopy?: () => void;
   /**
@@ -65,15 +69,16 @@ export function SettingsPanel({
   pdfThemeId,
   onPdfTheme,
   pdfZoom,
-  onPdfZoomStep,
   onPdfZoomMode,
   pdfMode,
+  pdfScale,
+  onPdfZoomTo,
   onPdfMode,
   speakSymbolsOverride,
   speakSymbolsAppearance,
   onSpeakSymbols,
 }: Props) {
-  const { t } = useI18n();
+  const { t, dir: uiDir } = useI18n();
   // RAWY-216: five CONCEPT tabs (was Text/Page/Theme, which mixed typography with colour and read-aloud).
   // The bar wraps to a second row when five labels don't fit the 384px drawer — same pill styling.
   const tabs: { key: SettingsSection; label: string }[] = [
@@ -89,70 +94,69 @@ export function SettingsPanel({
   // an even rhythm so the menu reads as a tidy, PDF-appropriate panel (RAWY-141).
   if (isPdf) {
     return (
-      <aside className={`settings-panel${open ? " show" : ""}`} aria-hidden={!open} inert={!open}>
+      // THE PANEL TAKES THE INTERFACE'S DIRECTION. `.settings-panel` sets no `dir`, and it sits inside
+      // `.reader-root`, which is pinned LTR (RAWY-89) — so in Arabic every label, hint and choice in this
+      // panel resolved LTR: labels on the left, choices in the wrong order, and each hint's full stop
+      // printed at its START («.تتتابع الصفحات…»). MEASURED: html `rtl`, this panel `ltr`; the reader's
+      // own screenshot of the previous panel shows the same. Stated here, for the PDF panel only: the
+      // EPUB drawer shares the cause but its sliders are documented to depend on the LTR resolution
+      // (RAWY-65), so changing it belongs to its own piece of work.
+      <aside className={`settings-panel${open ? " show" : ""}`} dir={uiDir} aria-hidden={!open} inert={!open}>
         <div className="sp-head">
           <span className="sp-title">{t("pdf.options")}</span>
           <button className="rc-icon ui-close" onClick={onClose} title={t("panel.close")} aria-label={t("panel.close")}>✕</button>
         </div>
         <div className="sp-body sp-pdf">
-          <div className="sp-pdf-note">
-            <div className="sp-pdf-title">{t("pdf.readonly.title")}</div>
-            <div className="sp-pdf-body">{t("pdf.readonly.body")}</div>
-          </div>
+          {/* THE ORDER IS THE HIERARCHY: how the document moves, then how big it is, then how it looks.
+              Each is a SECTION with its label, built from the same `Section` and `Segmented` the rest of
+              the reading settings use — so a PDF's controls look, press and focus exactly like an
+              EPUB's, and the reader meets one control language. The "view only" note used to open the
+              panel as a boxed callout; it is a limitation, not a control, so it now closes it. */}
 
-          {/* HOW THE DOCUMENT MOVES — the first question, because it changes what every other control
-              here feels like. «تمرير» lays the pages out in one continuous flow and lets the wheel
-              scroll it; «صفحات» keeps one page on screen at a time. Two states, so they are drawn as
-              the same pair of pressed chips the zoom fits below use — one control language, not a
-              second one invented for this. */}
-          <div className="rs-sec">
-            <div className="rs-sec-head">
-              <span className="rs-label">{t("pdf.mode")}</span>
-              <span className="rs-value">{t((pdfMode ?? "scroll") === "scroll" ? "pdf.mode.scroll" : "pdf.mode.pages")}</span>
-            </div>
-            <div className="pdf-zoom-row pdf-mode-row" role="group" aria-label={t("pdf.mode")}>
-              <button
-                className={`pdf-zoom-fit${(pdfMode ?? "scroll") === "scroll" ? " on" : ""}`}
-                aria-pressed={(pdfMode ?? "scroll") === "scroll"}
-                onClick={() => onPdfMode?.("scroll")}
-              >
-                {t("pdf.mode.scroll")}
-              </button>
-              <button
-                className={`pdf-zoom-fit${(pdfMode ?? "scroll") === "pages" ? " on" : ""}`}
-                aria-pressed={(pdfMode ?? "scroll") === "pages"}
-                onClick={() => onPdfMode?.("pages")}
-              >
-                {t("pdf.mode.pages")}
-              </button>
-            </div>
-            <div className="rs-sec-hint">{t("pdf.mode.hint")}</div>
-          </div>
+          {/* 1 · HOW THE DOCUMENT MOVES. Same label and same two words as the EPUB's own flow choice.
+              The hint describes ONLY the active mode, and says the one thing a reader could not guess:
+              in Pages mode the wheel stays on the page and the page is turned deliberately. */}
+          <Section label={t("pdf.mode")}>
+            <Segmented<PdfViewMode>
+              label={t("pdf.mode")}
+              value={pdfMode ?? "scroll"}
+              onPick={(m) => onPdfMode?.(m)}
+              options={[
+                { key: "scroll", label: t("pdf.mode.scroll") },
+                { key: "pages", label: t("pdf.mode.pages") },
+              ]}
+            />
+            <div className="rs-sec-hint">{t((pdfMode ?? "scroll") === "pages" ? "pdf.mode.pagesHint" : "pdf.mode.scrollHint")}</div>
+          </Section>
 
-          {/* RAWY-291 · ZOOM. Placed first: it is the control a reader of a scanned book reaches for.
-              The percentage reads the mode when a fit is active, because "fit width" is the truth then
-              and a stale number beside it would not be. */}
-          <div className="rs-sec">
-            <div className="rs-sec-head">
-              <span className="rs-label">{t("pdf.zoom")}</span>
-              <span className="rs-value">
-                {pdfZoom === "fit-width" ? t("pdf.zoom.fitWidth")
-                  : pdfZoom === "fit-page" ? t("pdf.zoom.fitPage")
-                  : `${Math.round((pdfZoom ?? 1) * 100)}%`}
-              </span>
-            </div>
-            <div className="pdf-zoom-row">
-              <button className="pdf-zoom-btn" onClick={() => onPdfZoomStep?.(-1)} title={t("pdf.zoom.out")} aria-label={t("pdf.zoom.out")}>−</button>
-              <button className="pdf-zoom-btn" onClick={() => onPdfZoomStep?.(1)} title={t("pdf.zoom.in")} aria-label={t("pdf.zoom.in")}>+</button>
-              <button className={`pdf-zoom-fit${pdfZoom === "fit-width" ? " on" : ""}`} onClick={() => onPdfZoomMode?.("fit-width")}>
-                {t("pdf.zoom.fitWidth")}
-              </button>
-              <button className={`pdf-zoom-fit${pdfZoom === "fit-page" ? " on" : ""}`} onClick={() => onPdfZoomMode?.("fit-page")}>
-                {t("pdf.zoom.fitPage")}
-              </button>
-            </div>
+          {/* 2 · ZOOM. The two fits, then a SLIDER — Sard's own reading-settings slider — for everything
+              between. The section's value is the scale ACTUALLY on screen, so choosing «الصفحة كاملة»
+              visibly answers "and what size is that?", and the thumb sits where that scale is. Neither
+              fit is marked once the slider has moved, because neither is true then.
+              The track is logarithmic (see `zoomToSlider`): equal travel is an equal proportional change,
+              so the 100–200% range most reading happens in is not crowded into one end.
+              `pdf-zoom-fit` stays as a HOOK for the behavioural harness, which finds the fits by it. */}
+          <Section label={t("pdf.zoom")} value={`${Math.round((pdfScale ?? 1) * 100)}%`}>
+            <Segmented<PdfZoom>
+              label={t("pdf.zoom")}
+              value={pdfZoom ?? "fit-page"}
+              onPick={(m) => onPdfZoomMode?.(m as "fit-width" | "fit-page")}
+              options={[
+                { key: "fit-width", label: t("pdf.zoom.fitWidth"), className: "pdf-zoom-fit" },
+                { key: "fit-page", label: t("pdf.zoom.fitPage"), className: "pdf-zoom-fit" },
+              ]}
+            />
+            <Slider
+              value={zoomToSlider(pdfScale ?? 1)}
+              min={PDF_ZOOM_SLIDER_MIN}
+              max={PDF_ZOOM_SLIDER_MAX}
+              step={1}
+              onInput={(v) => onPdfZoomTo?.(sliderToZoom(v))}
+              lead={<Icon name="minus" size="sm" />}
+              trail={<Icon name="plus" size="sm" />}
+            />
             <div className="rs-sec-hint">{t("pdf.zoom.hint")}</div>
-          </div>
+          </Section>
 
           {/* Appearance. A PDF page is a rendered image, so these are colour transforms over the page
               rather than EPUB-style themes — see reader-engine/pdfView.ts. */}
@@ -203,6 +207,10 @@ export function SettingsPanel({
               <div className="sp-pdf-body">{t("pdf.tts.body")}</div>
             </div>
           )}
+
+          {/* A LIMITATION, STATED ONCE AND QUIETLY, at the end — where it informs without standing
+              between the reader and the controls they opened the panel for. */}
+          <p className="sp-pdf-foot">{t("pdf.readonly.body")}</p>
         </div>
       </aside>
     );

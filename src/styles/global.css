@@ -438,55 +438,60 @@ html, body, #root {
 .page-bookmark:active { cursor: grabbing; }
 .bm-shape { display: inline-block; }
 
-/* PAGE-TURN AFFORDANCE — the two quiet marks on the desk edges (RAWY-33, design C-VI).
+/* PAGE-TURN CONTROLS — two tall rails at the edges of the reading area.
  *
- * WHAT CHANGED, AND WHY IT IS THE SAME CONTROL. It was a 42px disc carrying the TEXT characters
- * `‹` and `›` at `font: 300 1.375rem var(--ui-font)`. Three things followed from that and none of
- * them were wanted: the mark's weight and size were whatever the interface face — or whatever the
- * system substituted for it — happened to draw, so the two chevrons were a different stroke from
- * every other mark in Sard; a text glyph sits on a BASELINE, so the optical centre drifted with the
- * face and the disc's centre was never the glyph's; and a character cannot take `--icon-stroke`, so
- * the one token that keeps Sard's marks consistent could not reach it. The mark is now the drawn
- * caret from the icon set, at the set's own weight, centred geometrically.
+ * WHAT WAS WRONG WITH THE DISC, from the reader's own screenshots and from measuring it. A 38px circle
+ * resting at opacity 0.38 is a smudge on a photographic desk: it was barely findable, its 16px caret
+ * read as a browser widget, and its hit area was the smallest control on the reading surface. Making
+ * the same disc bigger would only make a bigger smudge, so the shape changed rather than the size.
  *
- * THE SHAPE IS CALMER AND SMALLER. 38px rather than 42, resting at 0.38 rather than 0.55: the page
- * is the thing being read, and the affordance only has to be findable, not present. It sits on the
- * desk OUTSIDE the sheet (see the inset rule below), so at no width does it come over the text.
+ * THE RAIL. A vertical pill the height of a hand's reach (96px), narrow (40px) so it sits in the desk
+ * gutter beside the page rather than over it. Its PLATE is what makes it findable: a frosted chrome
+ * surface with a hairline edge carries its own ground, so it reads the same on paper, on black and on a
+ * photograph, where a bare glyph or a translucent disc could not. Idle it is present but quiet; under the
+ * pointer it comes forward; pressed, it gives.
  *
- * TACTILE, THE SAME WAY THE WINDOW CONTROLS ARE. Hover raises the plate; the press is answered
- * within the frame — the plate settles, and the mark moves ONE PIXEL IN THE DIRECTION THE PAGE IS
- * ABOUT TO GO, which is the only honest motion for this control. `transition: none` on the pressed
- * state so the answer is immediate and only the RELEASE eases back.
+ * TACTILE, THE SAME WAY THE WINDOW CONTROLS ARE. The press is answered within the frame — the plate
+ * settles and darkens, and the caret moves two pixels in the direction the page will go — with
+ * `transition: none` on the pressed state so only the RELEASE eases back.
+ *
+ * DIRECTION IS NOT MIRRORED, deliberately and as before (RAWY-33): the leading rail is «previous» and
+ * the trailing rail «next» in every book, in both languages, and the caret points the way the button
+ * physically moves.
  */
 .page-chevron {
   position: absolute;
   top: 50%;
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
+  width: 40px;
+  height: 96px;
+  padding: 0;
+  border-radius: 20px;
   border: 1px solid var(--chrome-border);
+  /* ENROLLED IN THE INTERFACE TEXTURE, like every chrome surface: the plate's own opacity is 92% — at
+     or above the anchor the texture mapping is built on — and the reader's texture preference decides
+     how much of the desk shows through, as it does for the bars. The rail's quietness at rest comes
+     from its element opacity below, not from a hard-coded translucent plate the preference could not
+     reach. The reduced-transparency override further down makes the plate opaque. */
   background: color-mix(in srgb, var(--chrome-bg) calc(var(--ui-floor, 0%) + (92% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
-  backdrop-filter: blur(6px);
-  box-shadow: 0 2px 6px rgba(40, 28, 14, 0.1);
+  backdrop-filter: blur(10px) saturate(1.1);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
   color: var(--text);
   cursor: pointer;
-  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.38;
-  /* The centring translate is part of the button's own transform, so the press below has to restate
-     it — a second `transform` would otherwise throw the button off its vertical centre. */
+  opacity: 0.74;
+  /* The centring translate is part of the button's own transform, so the press restates it. */
   transform: translateY(-50%);
   /* WP-4A: above a panel, per the invariant — a control must stay reachable. This is the BACKSTOP;
      the real fix is the inset below, which moves the button out from under the panel entirely. */
   z-index: var(--z-nav);
-  transition: opacity 0.18s ease, background 0.18s ease, box-shadow 0.18s ease,
+  transition: opacity 0.18s ease, background 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease,
     transform 0.16s cubic-bezier(0.22, 1, 0.36, 1),
     left 0.22s cubic-bezier(0.22, 0.61, 0.36, 1), right 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
-/* The mark carries its own short ease so the pressed nudge can be instant while the release is not. */
-.page-chevron > svg { transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1); }
+/* The caret carries its own ease so the pressed nudge can be instant while the release is not. */
+.page-chevron > svg { opacity: 0.82; transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.18s ease; }
 @media (prefers-reduced-motion: reduce) {
   .page-chevron { transition: opacity 0.18s ease, background 0.18s ease; }
   .page-chevron > svg { transition: none; }
@@ -494,36 +499,39 @@ html, body, #root {
 .page-chevron:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--accent) 12%, var(--chrome-bg));
-  box-shadow: 0 4px 12px rgba(40, 28, 14, 0.16);
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--chrome-border));
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
 }
-/* THE PRESS IS FELT. The plate settles back onto the desk and the mark leads the way the page goes;
-   the two together read as a control that has been pushed rather than merely recoloured. */
+.page-chevron:hover > svg { opacity: 1; }
+/* THE PRESS IS FELT. The plate settles back onto the desk and the caret leads the way the page goes. */
 .page-chevron:active:not(:disabled) {
-  transform: translateY(-50%) scale(0.955);
-  box-shadow: 0 1px 3px rgba(40, 28, 14, 0.18);
-  background: color-mix(in srgb, var(--accent) 20%, var(--chrome-bg));
+  transform: translateY(-50%) scale(0.96);
+  background: color-mix(in srgb, var(--accent) 22%, var(--chrome-bg));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
   transition: none;
 }
 .page-chevron:active:not(:disabled) > svg { transition: none; }
-.page-chevron-left:active:not(:disabled) > svg { transform: translateX(-1px); }
-.page-chevron-right:active:not(:disabled) > svg { transform: translateX(1px); }
-/* The keyboard gets the same ring the rest of Sard's controls use, inside the disc so it cannot be
-   clipped by the desk edge. `:focus-visible`, so a pointer press never draws it. */
+.page-chevron-left:active:not(:disabled) > svg { transform: translateX(-2px); }
+.page-chevron-right:active:not(:disabled) > svg { transform: translateX(2px); }
+/* The keyboard gets the same ring the rest of Sard's controls use, outside the plate so the plate's
+   own edge and the ring never merge. `:focus-visible`, so a pointer press never draws it. */
 .page-chevron:focus-visible {
   opacity: 1;
-  outline: 1.5px solid var(--accent);
-  outline-offset: -3px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
-/* SPENT, AND SAYING SO. The first page has nothing before it; the affordance stays in place — a
-   control that disappears at the edge makes the layout jump — and stops inviting a press. */
+/* SPENT, AND SAYING SO. The first page has nothing before it; the rail stays in place — a control that
+   disappears at the edge makes the layout jump — drops its plate, and stops inviting a press. */
 .page-chevron:disabled {
-  opacity: 0.14;
+  opacity: 0.2;
   cursor: default;
   box-shadow: none;
+  background: transparent;
+  backdrop-filter: none;
 }
-.page-chevron:disabled:hover { opacity: 0.14; background: color-mix(in srgb, var(--chrome-bg) calc(var(--ui-floor, 0%) + (92% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent); }
-:root[data-dark="true"] .page-chevron { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.38); }
-:root[data-dark="true"] .page-chevron:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.46); }
+.page-chevron:disabled:hover { opacity: 0.2; background: transparent; border-color: var(--chrome-border); box-shadow: none; }
+:root[data-dark="true"] .page-chevron { box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); }
+:root[data-dark="true"] .page-chevron:hover { box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5); }
 
 /* RESILIENCE-1 / WP-4B — THE CHEVRONS FOLLOW THE READING AREA.
    MEASURED, all four {en,ar}×{ltr,rtl} combinations: with Contents open the left chevron sat at
@@ -539,8 +547,11 @@ html, body, #root {
    the window. Physical left/right, matching the physical padding: the reading area is pinned LTR
    (`.reader-root { direction: ltr }`, RAWY-89) and the drawers dock physically, so a logical
    property here would mirror against a box that does not. */
-.page-chevron-left { left: calc(var(--panel-lead, 0px) + 22px); }
-.page-chevron-right { right: calc(var(--panel-trail, 0px) + 22px); }
+.page-chevron-left { left: calc(var(--panel-lead, 0px) + 20px); }
+.page-chevron-right { right: calc(var(--panel-trail, 0px) + 20px); }
+/* In Scroll mode the reading area carries a scrollbar at its trailing edge; the rail stands clear of it
+   so a press on the scrollbar can never land on «next». */
+.reader-desk.pdf-view[data-pdf-mode="scroll"] .page-chevron-right { right: calc(var(--panel-trail, 0px) + 30px); }
 
 /* ---- reading chrome (RAWY-33, design C-VI/C-VII): clear LABELLED controls, hidden until
    intent. A raised button face (--rc-surface) lifts the buttons off the translucent bar so
@@ -886,31 +897,49 @@ html, body, #root {
 /* High contrast: no tint, hard grey-scale punch for faint scans. */
 .reader-desk.pdf-theme-ink   { --pdf-tint: transparent; --pdf-filter: grayscale(1) contrast(1.75) brightness(0.94); }
 
-/* The PDF panel's zoom row and appearance chips. */
-.pdf-zoom-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.pdf-zoom-btn {
-  inline-size: 40px; block-size: 34px; border-radius: 9px; font-size: 18px; line-height: 1;
-  border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); cursor: pointer;
+/* THE PDF PANEL'S ZOOM CONTROLS — built on `.rs-seg`, the reading settings' own segmented control.
+   WHY THE OLD ONES LOOKED LIKE PLAIN TEXT: they were styled with `--surface-2`, `--surface-3`, `--line`
+   and `--ink`, and not one of those four tokens is defined anywhere in Sard — so every zoom button
+   rendered with no border, no background and an inherited colour. MEASURED in the running app, and
+   visible in the reader's own screenshot as a row of loose words. `.rs-seg` carries real tokens and
+   the design system's selected, hover and focus states, so these now match every other choice in the
+   reading settings. The fit pair takes the free width; the stepper sits beside it at its own size,
+   and wraps under it only if a narrow panel cannot hold both. */
+.pdf-zoom { display: flex; gap: var(--sp-4); align-items: stretch; flex-wrap: wrap; }
+.pdf-zoom-fits { flex: 1 1 11rem; }
+.pdf-zoom-step { flex: 0 0 auto; align-items: center; }
+.pdf-zoom-step .rs-seg-item { flex: 0 0 auto; inline-size: var(--ctl-lg); padding: 0; color: var(--text); }
+.pdf-zoom-step .rs-seg-item:hover { background: color-mix(in srgb, var(--text) 8%, transparent); }
+.pdf-zoom-step .rs-seg-item:active { background: color-mix(in srgb, var(--text) 14%, transparent); }
+/* The readout between the two steps: the scale actually on screen. Tabular figures so the control
+   does not change width as the number does. */
+.pdf-zoom-pct {
+  min-inline-size: 3.6rem; text-align: center; font: 600 0.75rem var(--ui-font);
+  font-variant-numeric: tabular-nums; color: var(--text); padding-inline: 2px;
 }
-.pdf-zoom-btn:hover { background: var(--surface-3); }
-.pdf-zoom-fit {
-  block-size: 34px; padding-inline: 12px; border-radius: 9px; font-size: 13px;
-  border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); cursor: pointer;
+/* The "view only" limitation, closing the panel instead of opening it: a footnote, not a callout. */
+.sp-pdf-foot {
+  margin: 0; padding-block-start: 14px; border-block-start: 1px solid var(--chrome-border);
+  font: 400 var(--fs-small)/1.6 var(--ui-font); color: var(--muted);
 }
-.pdf-zoom-fit:hover { background: var(--surface-3); }
-.pdf-zoom-fit.on { background: var(--accent); color: var(--accent-ink, #fff); border-color: transparent; }
 /* RAWY-292 · THEME PREVIEWS AS MINIATURE PAGES.
    The previous swatch was a flat near-white rectangle, so eight filters designed to tint PAPER read as
    eight identical white boxes. A filter is only visible on the ink-and-paper it transforms, so each
    preview is now a small page — paper, a heading bar, text lines — inside a frame carrying that
    theme's desk colour. Two columns keep the previews large enough to tell apart in a 384px drawer. */
 .pdf-theme-list { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+/* The card's own ground and edge come from tokens Sard DEFINES. They were `--line`, `--surface-2` and
+   `--surface-3`, which exist nowhere — so a card had no edge and no ground, and a preview whose frame
+   colour matched the panel (Normal, on a dark UI) simply vanished: MEASURED in the reader's screenshots,
+   the first card read as a page floating in empty space. The same wash `.rs-seg` uses, one step up. */
 .pdf-theme-card {
   display: flex; flex-direction: column; align-items: stretch; gap: 7px; padding: 8px;
-  border-radius: 12px; border: 1px solid var(--line); background: var(--surface-2); cursor: pointer;
-  transition: border-color .12s ease, box-shadow .12s ease;
+  border-radius: 12px; border: 1px solid var(--chrome-border);
+  background: color-mix(in srgb, var(--text) 5%, transparent); cursor: pointer;
+  transition: border-color .12s ease, box-shadow .12s ease, background .12s ease;
 }
-.pdf-theme-card:hover { background: var(--surface-3); }
+.pdf-theme-card:hover { background: color-mix(in srgb, var(--text) 10%, transparent); }
+.pdf-theme-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .pdf-theme-card.on { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent) inset; }
 /* The frame is the reading surround; the page inside it takes the theme's filter — exactly the
    arrangement used for real reading (`.reader-desk` colour behind, filter on `.page-host`). */
@@ -926,7 +955,7 @@ html, body, #root {
 .ptp-head { block-size: 5px; border-radius: 1px; background: #24201b; }
 .ptp-line { block-size: 3px; border-radius: 1px; background: #3f3a33; }
 .ptp-line.short { inline-size: 62%; }
-.pdf-chip-name { font-size: 11.5px; color: var(--ink); text-align: center; line-height: 1.2; }
+.pdf-chip-name { font-size: 11.5px; color: var(--text); text-align: center; line-height: 1.2; }
 .pdf-chip-normal { --ptp-filter: none; --ptp-tint: transparent; --ptp-desk: #0e0e0e; }
 .pdf-chip-sepia  { --ptp-filter: contrast(0.96) brightness(1.04); --ptp-tint: #d9b982; --ptp-desk: #e4d3b0; }
 .pdf-chip-warm   { --ptp-filter: contrast(0.97) brightness(1.05); --ptp-tint: #e6cda3; --ptp-desk: #edddc0; }

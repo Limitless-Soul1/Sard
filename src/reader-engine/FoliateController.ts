@@ -4953,13 +4953,24 @@ export class FoliateController {
   pdfRenderedScale(): number {
     try {
       const doc = this.pdfPageDoc;
-      const img = doc?.querySelector("img") as HTMLImageElement | null;
-      const host = this.view?.renderer as HTMLElement | undefined;
-      if (!img || !host) return 1;
-      // The <img> is sized in CSS pixels by pdf.js at `zoom * devicePixelRatio`, then the document is
-      // scaled back down by 1/dpr — so the on-screen scale is the CSS width over the intrinsic width.
-      const shown = img.getBoundingClientRect().width;
-      const intrinsic = img.naturalWidth / (globalThis.devicePixelRatio || 1);
+      const frame = doc?.defaultView?.frameElement as HTMLElement | null | undefined;
+      if (!doc || !frame) return 1;
+      // WHAT IS ON SCREEN, OVER WHAT THE PAGE IS.
+      //
+      // This used to divide the <img>'s CSS width by its natural width. That held while the page was a
+      // bitmap magnified by a transform; it stopped holding once pdf.js re-rendered the page AT the zoom
+      // scale, because then the image's natural and CSS sizes grow together and the ratio is always 1.
+      // MEASURED on a real PDF: true scale 1.38 at "whole page", 2.23 at "fit width", 2.00 at 200% —
+      // and this returned 1.000 for all three. So stepping out of a fit mode always restarted from
+      // 100%: pressing "+" at fit width (2.23) went to 125% and the page SHRANK.
+      //
+      // The page document states its own intrinsic size — pdf.js writes the scale-1 viewport into its
+      // `<meta name="viewport">` — and the frame's on-screen box is what the reader actually sees,
+      // including any transform. Their ratio is the scale, in either renderer, for a page that
+      // re-renders and for one that is magnified.
+      const content = doc.querySelector('meta[name="viewport"]')?.getAttribute("content") ?? "";
+      const intrinsic = Number(content.match(/width=([0-9.]+)/)?.[1]);
+      const shown = frame.getBoundingClientRect().width;
       if (!shown || !intrinsic) return 1;
       return Math.max(0.05, Math.min(12, shown / intrinsic));
     } catch {

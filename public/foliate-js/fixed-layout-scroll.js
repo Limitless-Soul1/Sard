@@ -106,6 +106,11 @@ export class FixedLayoutScroll extends HTMLElement {
             direction: ltr;
             /* The platform's own smoothing only; nothing here animates a scroll. */
             overscroll-behavior: contain;
+            /* A THIN bar with no arrow buttons: a document reader's position hint, not a window's
+               scrollbar. The screenshots showed the full platform bar, arrows and all, down the
+               trailing edge of the page. Neutral grey, so it reads on paper, black and photographs. */
+            scrollbar-width: thin;
+            scrollbar-color: rgba(128, 128, 128, 0.5) transparent;
         }
         .column {
             position: relative;

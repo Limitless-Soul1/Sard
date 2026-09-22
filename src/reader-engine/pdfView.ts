@@ -98,6 +98,20 @@ export function zoomForWheel(current: number, deltaY: number): number {
 
 export const isFitMode = (z: PdfZoom): z is "fit-width" | "fit-page" => typeof z === "string";
 
+// ---- THE ZOOM SLIDER'S SCALE ------------------------------------------------------------------
+//
+// LOGARITHMIC, for the reason the ladder above is multiplicative: zoom is a PROPORTION. On a linear
+// 50%–600% track, 100%–200% — where nearly all reading happens — would be the first sixth of the
+// travel, and a pixel of drag near the top would be worth ten near the bottom. Here every equal stretch
+// of the track is an equal proportional change: one position unit is 1/100 of a doubling.
+export const PDF_ZOOM_SLIDER_MIN = Math.round(100 * Math.log2(PDF_ZOOM_MIN));
+export const PDF_ZOOM_SLIDER_MAX = Math.round(100 * Math.log2(PDF_ZOOM_MAX));
+/** Scale → slider position. */
+export const zoomToSlider = (z: number): number =>
+  Math.min(PDF_ZOOM_SLIDER_MAX, Math.max(PDF_ZOOM_SLIDER_MIN, Math.round(100 * Math.log2(Math.max(z, 1e-3)))));
+/** Slider position → scale, on the same clamp every other zoom path uses. */
+export const sliderToZoom = (v: number): number => clampPdfZoom(2 ** (v / 100));
+
 /** The value handed to the renderer's `zoom` attribute. */
 export const pdfZoomAttr = (z: PdfZoom): string => (isFitMode(z) ? z : String(z));
 

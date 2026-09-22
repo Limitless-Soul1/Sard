@@ -72,7 +72,7 @@ export const en = {
   // RAWY-85: PDF Phase 0 — read-only "view as-is". Honest in-app limits.
   "pdf.options": "PDF",
   "pdf.readonly.title": "PDF — view only",
-  "pdf.readonly.body": "PDFs open for reading as-is. Zoom and page appearance are below; fonts, highlights, notes, bookmarks and Photo Mode aren’t available for PDFs yet.",
+  "pdf.readonly.body": "PDFs open as they are: fonts, highlights, notes, bookmarks and Photo Mode aren’t available for them yet.",
   // RAWY-86 gave PDFs an appearance INVERT + copy-selection. RAWY-141 removed the reading-direction
   // toggle (cosmetic/confusing on a fixed-layout PDF) and the in-PDF find (unreliable for Arabic text
   // layers + a cramped misfit), leaving a tidy menu: the read-only note + Appearance + Copy.
@@ -93,13 +93,14 @@ export const en = {
   "pdf.mode": "Reading mode",
   "pdf.mode.scroll": "Scroll",
   "pdf.mode.pages": "Pages",
-  "pdf.mode.hint": "Scroll lays the pages out in one continuous flow; Pages shows one page at a time. Switching reopens the book and keeps your place.",
+  "pdf.mode.scrollHint": "Pages run in one continuous column — scroll to move between them.",
+  "pdf.mode.pagesHint": "One page at a time. Scrolling stays on the page; turn it with the buttons or the arrow keys.",
   "pdf.zoom": "Zoom",
   "pdf.zoom.in": "Zoom in",
   "pdf.zoom.out": "Zoom out",
   "pdf.zoom.fitWidth": "Fit width",
-  "pdf.zoom.fitPage": "Fit page",
-  "pdf.zoom.hint": "Ctrl + wheel, or pinch on a trackpad. Pages are re-rendered at the new size, so zooming stays sharp.",
+  "pdf.zoom.fitPage": "Whole page",
+  "pdf.zoom.hint": "Ctrl + wheel, or pinch on a trackpad.",
   "pdf.copy": "Copy selection",
   "pdf.copied": "Copied",
   "pdf.copyEmpty": "Select text on the page first",

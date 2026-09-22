@@ -29,7 +29,7 @@ const buttons = [...reader.matchAll(/<button\s+className="page-chevron page-chev
   }));
 
 /** The `.page-chevron` rules, start of the block to the end of the dark-theme lines. */
-const block = css.slice(css.indexOf("/* PAGE-TURN AFFORDANCE"), css.indexOf(".page-chevron-left {"));
+const block = css.slice(css.indexOf("/* PAGE-TURN CONTROLS"), css.indexOf(".page-chevron-left {"));
 /** The same block with its prose removed — the rules say what the control IS; the prose may quote
  *  what it used to be, and a check that cannot tell the two apart is worse than no check. */
 const rules = block.replace(/\/\*[\s\S]*?\*\//g, "");
@@ -52,7 +52,7 @@ describe("the mark comes from Sard's own set", () => {
   });
 
   it("the control no longer sets a font, because there is no text in it", () => {
-    expect(rules).not.toMatch(/font:/);
+    expect(rules).not.toMatch(/font:/);
   });
 
   it("the mark is NOT mirrored in Arabic — the button means previous/next, not left/right", () => {
@@ -77,15 +77,32 @@ describe("the actions are unchanged", () => {
 });
 
 describe("four states, and a press that is felt", () => {
-  it("rests quietly and comes up under the pointer", () => {
-    expect(rules).toMatch(/\.page-chevron\s*\{[\s\S]*opacity:\s*0\.38/);
-    expect(rules).toMatch(/\.page-chevron:hover\s*\{[\s\S]*opacity:\s*1/);
+  // The control was redesigned from a 38px disc into a tall edge rail (the disc, resting at 0.38, was
+  // barely findable on a photographic desk). What is pinned is the RULE of each state, not the old
+  // disc's numbers: a redesign may move the values, it may not lose a state.
+  const base = rules.slice(rules.indexOf(".page-chevron {"));
+  const baseBody = base.slice(0, base.indexOf("}"));
+
+  it("rests present but quiet, and comes fully forward under the pointer", () => {
+    const rest = Number(baseBody.match(/opacity:\s*([0-9.]+)/)?.[1]);
+    expect(rest).toBeGreaterThan(0.5);   // findable on any desk — the old 0.38 was not
+    expect(rest).toBeLessThan(1);        // but quiet while reading
+    expect(rules).toMatch(/\.page-chevron:hover\s*\{[\s\S]*?opacity:\s*1/);
+  });
+
+  it("is a tall target, not a dot", () => {
+    // Anchored on the start of a declaration so `min-width` / `line-height` can never be read instead.
+    const w = Number(baseBody.match(/(?:^|[\s;{])width:\s*(\d+)px/)?.[1]);
+    const h = Number(baseBody.match(/(?:^|[\s;{])height:\s*(\d+)px/)?.[1]);
+    expect(h).toBeGreaterThanOrEqual(80);
+    expect(h).toBeGreaterThan(w);
+    expect(w).toBeGreaterThanOrEqual(36); // comfortably clickable across
   });
 
   it("answers the press within the frame, and moves the way the page will", () => {
-    expect(rules).toMatch(/\.page-chevron:active:not\(:disabled\)\s*\{[\s\S]*transition:\s*none/);
-    expect(rules).toContain(".page-chevron-left:active:not(:disabled) > svg { transform: translateX(-1px); }");
-    expect(rules).toContain(".page-chevron-right:active:not(:disabled) > svg { transform: translateX(1px); }");
+    expect(rules).toMatch(/\.page-chevron:active:not\(:disabled\)\s*\{[\s\S]*?transition:\s*none/);
+    expect(rules).toMatch(/\.page-chevron-left:active:not\(:disabled\) > svg \{ transform: translateX\(-\d+px\); \}/);
+    expect(rules).toMatch(/\.page-chevron-right:active:not\(:disabled\) > svg \{ transform: translateX\(\d+px\); \}/);
   });
 
   it("keeps its vertical centring through the press", () => {
@@ -96,13 +113,17 @@ describe("four states, and a press that is felt", () => {
   });
 
   it("shows the keyboard where it is, and only the keyboard", () => {
-    expect(rules).toMatch(/\.page-chevron:focus-visible\s*\{[\s\S]*outline:\s*1\.5px solid var\(--accent\)/);
+    expect(rules).toMatch(/\.page-chevron:focus-visible\s*\{[\s\S]*?outline:\s*[\d.]+px solid var\(--accent\)/);
   });
 
   it("says when it is spent instead of disappearing", () => {
-    expect(rules).toMatch(/\.page-chevron:disabled\s*\{[\s\S]*cursor:\s*default/);
+    expect(rules).toMatch(/\.page-chevron:disabled\s*\{[\s\S]*?cursor:\s*default/);
     // Still in the layout — a control that vanishes at the last page makes the desk jump.
     expect(rules).not.toMatch(/\.page-chevron:disabled\s*\{[^}]*display:\s*none/);
+  });
+
+  it("stands clear of the Scroll renderer's scrollbar", () => {
+    expect(css).toContain('.reader-desk.pdf-view[data-pdf-mode="scroll"] .page-chevron-right');
   });
 });
 

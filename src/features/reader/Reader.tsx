@@ -19,7 +19,7 @@ import { loadBookCssMode } from "../../reader-engine/bookCssSetting"; // WP-7 st
 import {
   isPdfThemeId, PDF_THEME_KEY, pdfTheme, pdfZoomKey, pdfZoomAttr, parseStoredZoom,
   PDF_VIEW_MODE_KEY, parsePdfViewMode, type PdfViewMode,
-  stepPdfZoom, zoomForWheel, isFitMode, type PdfZoom, type PdfThemeId,
+  zoomForWheel, isFitMode, type PdfZoom, type PdfThemeId,
 } from "../../reader-engine/pdfView";
 import {
   speakSymbolsKey, speakSymbolsAttr, parseSpeakSymbols, effectiveSpeakSymbols,
@@ -1652,6 +1652,15 @@ export function Reader({
    * both read it from closures registered once.
    */
   const [pdfMode, setPdfMode] = useState<PdfViewMode>("scroll");
+  /**
+   * THE SCALE ON SCREEN, for the zoom readout — refreshed only while the settings panel is OPEN.
+   *
+   * A fit mode resolves to a number only inside the renderer, and it changes with the window, the side
+   * panels and the page, none of which tell React. Rather than wire every one of them, the readout is
+   * re-read while the one surface that shows it is open: a single `getBoundingClientRect` a few times a
+   * second, and nothing at all while the panel is closed.
+   */
+  const [pdfScaleShown, setPdfScaleShown] = useState(1);
   const pdfModeRef = useRef<PdfViewMode>("scroll");
   pdfModeRef.current = pdfMode;
   /**
@@ -1714,11 +1723,34 @@ export function Reader({
     () => (isFitMode(pdfZoomRef.current) ? (ctrlRef.current?.pdfRenderedScale() ?? 1) : (pdfZoomRef.current as number)),
     [],
   );
-  const pdfZoomStep = useCallback((dir: 1 | -1) => applyPdfZoom(stepPdfZoom(currentPdfScale(), dir)), [applyPdfZoom, currentPdfScale]);
+  useEffect(() => {
+    if (!isPdf || !settingsOpen) return;
+    const read = () => setPdfScaleShown((prev) => {
+      const next = Math.round(currentPdfScale() * 100) / 100;
+      return next === prev ? prev : next;
+    });
+    read();
+    const id = window.setInterval(read, 300);
+    return () => window.clearInterval(id);
+  }, [isPdf, settingsOpen, currentPdfScale]);
   // Wheel/pinch: coalesce to one render per frame. A trackpad pinch arrives as ctrl+wheel too, which
   // is why no separate gesture handler is needed on this platform.
   const pdfZoomPending = useRef<number | null>(null);
   const pdfZoomRaf = useRef<number | undefined>(undefined);
+  // The slider: an exact scale per input event, coalesced to one re-render per frame exactly as the
+  // wheel is below — a drag fires dozens of inputs a second and each would otherwise re-paint the page.
+  // The readout follows the drag at once, rather than waiting for the renderer to catch up.
+  const pdfZoomTo = useCallback((z: number) => {
+    pdfZoomPending.current = z;
+    setPdfScaleShown(Math.round(z * 100) / 100);
+    if (pdfZoomRaf.current !== undefined) return;
+    pdfZoomRaf.current = requestAnimationFrame(() => {
+      pdfZoomRaf.current = undefined;
+      const v = pdfZoomPending.current;
+      pdfZoomPending.current = null;
+      if (v != null) applyPdfZoom(v);
+    });
+  }, [applyPdfZoom]);
   const pdfZoomByWheel = useCallback((deltaY: number) => {
     const from = pdfZoomPending.current ?? currentPdfScale();
     pdfZoomPending.current = zoomForWheel(from, deltaY);
@@ -2688,7 +2720,7 @@ export function Reader({
                 It is NOT mirrored in Arabic, and must not be: this button is «previous» in every
                 book (see the note above), and the reading area is pinned LTR, so the drawing points
                 the way the button physically moves. */}
-            <Icon name="caretLeft" size="md" />
+            <Icon name="caretLeft" size="lg" />
           </button>
         )}
         <div className={`page-sheet${fitWindow ? " fitw" : ""}`}>
@@ -2707,7 +2739,7 @@ export function Reader({
             onClick={() => ctrlRef.current?.forward()}
             title={t("reader.next")}
           >
-            <Icon name="caretRight" size="md" />
+            <Icon name="caretRight" size="lg" />
           </button>
         )}
       </div>
@@ -2809,9 +2841,10 @@ export function Reader({
         pdfThemeId={pdfThemeId}
         onPdfTheme={choosePdfTheme}
         pdfZoom={pdfZoom}
-        onPdfZoomStep={pdfZoomStep}
         onPdfZoomMode={(m) => applyPdfZoom(m)}
         pdfMode={pdfMode}
+        pdfScale={pdfScaleShown}
+        onPdfZoomTo={pdfZoomTo}
         onPdfMode={choosePdfMode}
         speakSymbolsOverride={speakSymbolsOverride}
         speakSymbolsAppearance={style?.ttsSpeakSymbols ?? ARABIC_DEFAULTS.ttsSpeakSymbols}

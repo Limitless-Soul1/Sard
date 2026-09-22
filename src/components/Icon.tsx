@@ -74,6 +74,8 @@ export type IconName =
   | "image"        // "no image chosen" placeholder                (was U+25A3)
   | "caretLeft"    // disclosure, inline-start                     (was U+2190)
   | "caretUp"      // disclosure, collapse                         (was U+2191)
+  | "minus"        // step down — PDF zoom out                     (was a text "−")
+  | "plus"         // step up — PDF zoom in                        (was a text "+")
   // ---- Direction 02 v3 — the library destinations and the annotation kinds ----------------------
   // Five of these replace the 13x13 CSS box in `Chrome.tsx`, where Library, Bookmarks and Photo
   // cards were three IDENTICAL squares. Each destination now owns a silhouette from a different
@@ -366,6 +368,11 @@ const PATHS: Record<IconName, ReactElement> = {
   ),
   caretLeft: <path d="m14.5 6-6 6 6 6" />,
   caretUp: <path d="m6 14.5 6-6 6 6" />,
+  // A stepper's two marks. Drawn rather than typed for the reason the page-turn carets are: a "−" and
+  // "+" set in the interface face changed weight and optical centre with the face and its fallbacks,
+  // and could not take the icon stroke token. Same 12-unit arm as the carets, centred on the grid.
+  minus: <path d="M6.5 12h11" />,
+  plus: <path d="M6.5 12h11M12 6.5v11" />,
 
   // ---- Direction 02 v3 · the five library destinations ------------------------------------------
   // REQ-01. Volumes standing on a plank, one leaning. FURNITURE, so no view mode can be mistaken for

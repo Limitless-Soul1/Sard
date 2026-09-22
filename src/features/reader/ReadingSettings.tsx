@@ -340,7 +340,9 @@ function ReadingBackgroundSection() {
  */
 const SectionLabel = createContext<string | undefined>(undefined);
 
-function Section({ label, value, children }: { label: string; value?: ReactNode; children: ReactNode }) {
+// Exported so the PDF panel is built from the SAME section and segmented control as the rest of the
+// reading settings — one control language, rather than a second set of chips drawn for PDFs alone.
+export function Section({ label, value, children }: { label: string; value?: ReactNode; children: ReactNode }) {
   return (
     <div className="rs-sec">
       <div className="rs-sec-head">
@@ -352,7 +354,9 @@ function Section({ label, value, children }: { label: string; value?: ReactNode;
   );
 }
 
-function Slider({
+// Exported for the PDF zoom — the same slider the reading settings use, so zoom is dragged the way
+// every other continuous value in Sard is.
+export function Slider({
   value,
   min,
   max,
@@ -405,19 +409,32 @@ function Slider({
   );
 }
 
-function Segmented<T extends string | number>({
+export function Segmented<T extends string | number>({
   options,
   value,
   onPick,
+  label,
+  className,
 }: {
-  options: { key: T; label: ReactNode }[];
+  options: { key: T; label: ReactNode; className?: string }[];
   value: T;
   onPick: (k: T) => void;
+  /** Names the group for assistive technology; the visible section label usually says the same. */
+  label?: string;
+  className?: string;
 }) {
+  // `aria-pressed` states which option is chosen to assistive technology, which the `.on` class alone
+  // does not. Attribute only: nothing about how the control looks or behaves changes.
   return (
-    <div className="rs-seg" role="group">
+    <div className={`rs-seg${className ? ` ${className}` : ""}`} role="group" aria-label={label}>
       {options.map((o) => (
-        <button key={String(o.key)} className={`rs-seg-item${value === o.key ? " on" : ""}`} onClick={() => onPick(o.key)}>
+        <button
+          key={String(o.key)}
+          type="button"
+          className={`rs-seg-item${value === o.key ? " on" : ""}${o.className ? ` ${o.className}` : ""}`}
+          aria-pressed={value === o.key}
+          onClick={() => onPick(o.key)}
+        >
           {o.label}
         </button>
       ))}

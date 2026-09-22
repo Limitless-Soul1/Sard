@@ -23,6 +23,7 @@ import { diagNote, diagPublishAudio } from "@diag";
 import { settingsGet, settingsSet, ttsCancelSynth, ttsEdgeVoices, ttsStop, ttsSynthStreaming } from "./ipc";
 import { noteDispatch } from "./ttsTelemetry";
 import { DispatchContext, LatencySeries, newSeries, recordSeries, resetSeries, seriesSummary, SynthScheduler, RECOVERY_CANCELLED, RECOVERY_FAILED } from "./ttsScheduler";
+import { EngineTurnstile } from "./engineTurnstile";
 import { speakableText, withoutDecorativeSymbols, withoutEmptyMarkup } from "./ttsText";
 
 /**
@@ -228,7 +229,16 @@ interface StartOpts { sentences: string[]; lang: TtsLang; startIndex?: number; c
    *
    * Absent = do not suppress, which is what every existing caller means by not passing it.
    */
-  speakSymbols?: boolean }
+  speakSymbols?: boolean;
+  /**
+   * The opening sentences of the chapter AFTER this one, for preparation while this chapter plays out.
+   *
+   * A FUNCTION, called at most once and only when the engine is already idle at the tail of the chapter,
+   * so a queue that is never listened to that far costs nothing. The reader answers from the next
+   * section's own document; null means there is no next chapter (the last one prepares nothing). What
+   * comes back is a CONTENT KEY, never audio the player will address by index — see `prepared`.
+   */
+  nextUnits?: () => Promise<string[] | null> }
 
 /** A read-aloud queue is either the chapter on screen or an open footnote. Default: the chapter. */
 export type TtsSource = "chapter" | "note";
@@ -305,6 +315,60 @@ export interface TtsWord { text: string; offset: number; duration: number }
 // AudioBuffer is released immediately afterwards. That turns ~1.67 MB per sentence into ~53 KB, a ~32x
 // reduction in the cache RAWY-172 (AUD-1) was written to bound.
 interface Synthesized { bytes: ArrayBuffer; durationSec: number; words: TtsWord[] }
+
+// ---- THE NEXT CHAPTER'S OPENING, PREPARED WHILE THIS ONE PLAYS OUT ----------------------------------
+//
+// THE DEFECT THIS EXISTS FOR. A chapter starts COLD. `start()` hands over a new queue, the scheduler's
+// cache is per chapter and is dropped, and the first sentence plus its one-ahead lead are synthesized in
+// series while the listener waits. MEASURED over 11 real chapter continuations: time to first audio
+// 1.3–7.4 s, median 4.7 s — the first sentence about 2.0 s of it and the lead gate about 2.6 s. Meanwhile
+// the engine had been IDLE for 10–27 s at the tail of the chapter that just finished, because everything
+// left to play was already decoded. That idle window is what this uses.
+//
+// WHAT IT IS. One shot per session, at most two units, OUTSIDE the scheduler — the scheduler's cache
+// belongs to one chapter and `start()` clears it, so nothing here can be reached by index. An entry is
+// keyed by CONTENT: the engine, the voice, and the exact string that would be sent for that sentence. A
+// key that does not match is a MISS and the sentence is synthesized normally; there is no path by which
+// audio prepared for one sentence can be played for another.
+//
+// WHAT IS IN THE KEY, AND WHY THAT IS THE WHOLE LIST. The bytes are decided by exactly three things: the
+// engine, the voice, and the string handed to `tts_synthesize` (`engineTextFor`, which already folds in
+// the speak-symbols answer and every text transform). Speed is NOT in the key and must not be: synthesis
+// is always at the voice's natural rate and speed is applied at playback (RAWY-264), so the same bytes
+// serve every speed — verified by changing speed with an entry prepared and hearing it play correctly at
+// the new rate. `tests/unit/ttsPrepareKey.test.ts` pins that list against the call itself, so a fourth
+// input to synthesis cannot be added without the key being updated with it.
+//
+// MEASURED, same book, same eight transitions, through the real Listen → play out → Next flow:
+// TTFA median 4,245 ms → 74 ms, p90 5,037 → 205 ms, press-to-audio 4,364 → 118 ms, 16/16 entries reused,
+// no duplicate synthesis, no underruns, max concurrency 1.
+const PREPARE_UNITS = 2;
+/**
+ * The unit id a preparation records itself under. It belongs to the NEXT chapter, so it is not a position
+ * in the queue being measured; a negative id keeps it out of the per-sentence record while its latency
+ * and its failures still appear on the timeline (`ttsTelemetry.ts`).
+ */
+const PREPARE_UNIT = -1;
+const prepared = new Map<string, Synthesized>();
+let nextUnitsProvider: (() => Promise<string[] | null>) | null = null;
+let preparing: Promise<void> | null = null;
+/** The session generation whose tail asked for preparation — one attempt per session, never a loop. */
+let prepareGen = -1;
+/**
+ * WHETHER THE DISPATCH THAT JUST SETTLED WAS ANSWERED FROM `prepared`.
+ *
+ * Written by `attemptSynth` immediately before it returns and read by `synthDispatch` in the continuation
+ * of that same await, with nothing able to run in between — so it describes that dispatch and no other.
+ * It exists for the record only (`detail: "prepared"`), and no decision reads it.
+ */
+let lastWasPrepared = false;
+const prepareStats = { started: 0, completed: 0, units: 0, hits: 0, misses: 0, cancelled: 0, failed: 0, skipped: 0, lastError: null as string | null };
+/**
+ * THE SINGLE-CALL GATE. Both callers of `rawSynth` — the scheduler's dispatch and the preparation — take
+ * their turn here, so the native side still sees one synthesis at a time (see `engineTurnstile.ts`). A
+ * listener-facing dispatch passes `preempt`, which asks a preparation holding the engine to abandon.
+ */
+const engine = new EngineTurnstile();
 
 // ---- imperative playback engine (WebAudio), kept outside the reactive store ----
 let ctx: AudioContext | null = null;
@@ -456,6 +520,33 @@ const SKIP_CONTINUE_MS = 600;
 let skipSettleTimer: ReturnType<typeof setTimeout> | null = null;
 let skipLeadTarget = -1; // the index the leading (immediate) skip of the current session synthesized
 let skipLastTarget = -1; // the most recent skip's target — moved ONLY by skip(), never by auto-advance
+
+/**
+ * HOW MANY TIMES THE READER HAS MOVED THE CURSOR THEMSELVES.
+ *
+ * THE DEFECT THIS CLOSES, and it is a MEASUREMENT defect, not a playback one. The index moves for two
+ * completely different reasons — a sentence finished and playback went on to the next one, or the
+ * reader pressed skip — and the instruments could not tell them apart. Both recorders classified the
+ * move by its SIZE: `delta === 1` meant "advance", anything else meant "skip". A skip of exactly one
+ * sentence is a delta of one, so every single-step skip was recorded as a sentence the reader had
+ * listened to.
+ *
+ * MEASURED, and this is what makes it worth a counter rather than a heuristic: an arrow key held down
+ * repeats at the platform's auto-repeat rate (~30/s on Windows). Six repeats move the cursor six
+ * sentences in ~165 ms, and the record showed six `advance` events 33 ms apart, no `skip` event at
+ * all, `unitsAdvanced` counting all six, and ~22.6 s of decoded audio apparently "consumed". A whole
+ * investigation went into looking for a playback cascade that never existed: the reader had held the
+ * key, and the engine had done exactly as it was told.
+ *
+ * A COUNTER, NOT A TIMESTAMP OR A RATE. The question is not "was this move recent" or "was it fast" —
+ * it is "did the reader ask for it", and only this module knows. It is incremented in the same
+ * synchronous block as the `set()` that moves the index, so the subscriber that follows sees the new
+ * value alongside the new index and cannot mis-pair them. Nothing in the product reads it; it changes
+ * no behaviour, and it is not part of the store, so it cannot cause a render.
+ */
+let userCursorEpoch = 0;
+/** Read by the two measurement instruments; see `userCursorEpoch`. */
+export function cursorEpoch(): number { return userCursorEpoch; }
 // The generation the leading play was started under. Every skip bumps `gen` and calls `stopSource()`,
 // so a LATER skip silently kills the leading play — even one that resolves to the very same sentence.
 // Without this stamp the settle could not tell "the leading play is still running" from "it was killed
@@ -685,6 +776,19 @@ async function rawSynth(engine: TtsEngineKind, id: string, text: string, unit: n
  */
 export const VOICE_MISMATCH_MARKER = "voice-language-mismatch";
 
+/**
+ * THE EXACT STRING THAT REACHES THE ENGINE for a displayed sentence.
+ *
+ * Lifted out of `synthInvoke` unchanged so that the request and the prepared-audio key are built from one
+ * expression: if the two could drift, a prepared entry could answer a sentence it was not made from.
+ */
+function engineTextFor(text: string): string {
+  const markupSafe = withoutEmptyMarkup(speakableText(text));
+  return speakSymbols ? markupSafe : withoutDecorativeSymbols(markupSafe);
+}
+/** Everything the produced bytes depend on: the engine, the voice, and the string sent for this sentence. */
+const prepKey = (text: string): string => `${curEngine}|${curVoice}|${engineTextFor(text)}`;
+
 async function synthInvoke(i: number, budgetMs?: number, firstAudioMs?: number): Promise<ArrayBuffer> {
   const text = sentences[i];
   // `speakableText` is the ONLY place the spoken string may differ from the displayed one. It exists
@@ -708,10 +812,7 @@ async function synthInvoke(i: number, budgetMs?: number, firstAudioMs?: number):
   // `FoliateController`'s `Intl.Segmenter`, and nothing here is fed back into it — so unit count,
   // sentence boundaries, chunk indices and the ranges the highlight is drawn from cannot move,
   // whichever way the setting is set.
-  const markupSafe = withoutEmptyMarkup(speakableText(text));
-  const buf = await rawSynth(
-    curEngine, curVoice, speakSymbols ? markupSafe : withoutDecorativeSymbols(markupSafe), i, budgetMs, firstAudioMs,
-  );
+  const buf = await rawSynth(curEngine, curVoice, engineTextFor(text), i, budgetMs, firstAudioMs);
   if (isImplausiblyShortAudio(text, buf?.byteLength ?? 0)) {
     throw new Error(`${VOICE_MISMATCH_MARKER}: ${curVoice} returned ${buf?.byteLength ?? 0} bytes for ${text.length} chars`);
   }
@@ -770,7 +871,21 @@ async function attemptSynth(i: number, ctx: DispatchContext): Promise<Synthesize
   // otherwise — see `edge_synthesize`); this ceiling is the safety net a stuck IPC would need, sized so
   // the engine's own, specific reason always arrives first.
   const ceiling = ctx.budgetMs !== undefined ? ctx.budgetMs + SYNTH_TIMEOUT_MARGIN_MS : BACKGROUND_SYNTH_CEILING_MS;
-  const raw = await withTimeout(synthInvoke(i, ctx.budgetMs, ctx.firstAudioMs), ceiling);
+  // A sentence whose audio was prepared before this chapter began answers without reaching the engine.
+  // The lookup is by CONTENT (`prepKey`), so this can only ever return the audio of this exact sentence,
+  // under this exact voice; anything else is a miss and falls through to the ordinary call below. The
+  // entry is consumed on use — prepared audio is never served twice, and never outlives its sentence.
+  lastWasPrepared = false;
+  const key = prepKey(sentences[i]);
+  const ready = prepared.get(key);
+  if (ready) {
+    prepared.delete(key);
+    prepareStats.hits++;
+    lastWasPrepared = true;
+    return ready;
+  }
+  // THE LISTENER'S OWN SYNTHESIS TAKES THE TURN, pre-empting a preparation that holds the engine.
+  const raw = await withTimeout(engine.run(() => synthInvoke(i, ctx.budgetMs, ctx.firstAudioMs), { preempt: true }), ceiling);
   const { words, audio } = parseFramed(raw);
   // RAWY-257 (Phase 1 — CONFIRMED DEFECT, found by the fault harness on its first real use):
   // `decodeAudioData` DETACHES the ArrayBuffer it is given. The RAWY-247 capture below used to read `audio`
@@ -850,7 +965,7 @@ async function synthDispatch(i: number, ctx: DispatchContext): Promise<Synthesiz
     noteDispatch({
       unit: i, len: sentences[i]?.length ?? -1, role: ctx.role, attempt: ctx.attempt,
       budgetMs: ctx.budgetMs ?? null, ms: Math.round(performance.now() - tDispatch), ok: true,
-      audioSec: out.durationSec, kind: null, detail: null,
+      audioSec: out.durationSec, kind: null, detail: lastWasPrepared ? "prepared" : null,
     });
     return out;
   } catch (e) {
@@ -892,7 +1007,7 @@ const scheduler = new SynthScheduler<Synthesized>(synthDispatch, {
   // The scheduler cannot request it itself — only this module knows how long the chapter is.
   onSettled: () => {
     if (import.meta.env.DEV) { const v = scheduler.checkInvariants(); if (v.length) console.error("[sard/tts] scheduler invariant violated:", v.join("; ")); }
-    if (useTts.getState().active) prefetchFrom();
+    if (useTts.getState().active) { prefetchFrom(); maybePrepareNext(); }
   },
   onAbandon: () => useTts.setState({ abandoned: scheduler.abandoned }),
 });
@@ -990,6 +1105,17 @@ export function ttsStats() {
     // ahead of the cursor. This is what G-4B measures on both content profiles; `lowWater` is the reported
     // threshold it is measured against, NOT a refill gate.
     bufferedSeconds: Math.round(scheduler.bufferedSecondsAhead() * 100) / 100,
+    // The next chapter's opening: what was prepared, what it was worth, and the single-call gate's own
+    // readout — `maxConcurrent` here is the invariant, measured rather than asserted.
+    prepare: {
+      ...prepareStats,
+      cached: prepared.size,
+      cachedBytes: [...prepared.values()].reduce((a, v) => a + v.bytes.byteLength, 0),
+      inFlight: preparing !== null,
+    },
+    engineInFlight: engine.inFlight,
+    engineMaxConcurrent: engine.maxConcurrent,
+    enginePreempted: engine.preempted,
     wantedAhead: scheduler.wantedAhead(),
     leadTarget: LEAD_TARGET_SECONDS,
     leadLowWater: LEAD_LOW_WATER_SECONDS,
@@ -1173,7 +1299,29 @@ export function resolveSkip(index: number, delta: number, count: number, atEnd =
   return { kind: "sentence", index: Math.max(0, Math.min(count - 1, index + delta)) };
 }
 
-export function skipSentenceForArrow(key: string): boolean {
+/**
+ * The shortest gap between two skips that AUTO-REPEAT is allowed to produce.
+ *
+ * A deliberate press is a person's finger: the fastest sustained human repeat is around 8/s, so 150 ms
+ * never throttles real pressing. Auto-repeat is 33 ms, which is what produced six sentences — about
+ * 23 seconds of the book — from one brief hold, with nothing on screen a reader could react to. This
+ * does not disable holding the key: it caps the scan to a rate the reader can see and stop.
+ */
+const ARROW_REPEAT_MIN_MS = 150;
+let lastArrowRepeatAt = 0;
+
+/**
+ * The arrows, while read-aloud owns them.
+ *
+ * `repeat` is the platform's own answer to "is this the key repeating, or did they press it again",
+ * so it is used rather than inferred from timing — a rate alone cannot tell the two apart, and
+ * guessing is what the measurement defect above was made of.
+ *
+ * A throttled repeat still returns TRUE. Returning false would hand the key back to `handleNavKey`,
+ * which would then TURN THE PAGE — so the reader would be skipping sentences and paging the book at
+ * the same time. Claimed-and-ignored is the only safe answer.
+ */
+export function skipSentenceForArrow(key: string, repeat = false): boolean {
   const st = useTts.getState();
   // RAWY-231: "buffering" is an active-playback state (a transient synth wait) — arrows must still skip out
   // of it, so it joins playing/paused here (skip() itself already permits it; only "preparing" blocks).
@@ -1186,6 +1334,13 @@ export function skipSentenceForArrow(key: string): boolean {
   const isRight = key === "ArrowRight";
   const isLeft = key === "ArrowLeft";
   if (!isRight && !isLeft) return false;
+  const now = performance.now();
+  if (repeat) {
+    if (now - lastArrowRepeatAt < ARROW_REPEAT_MIN_MS) return true; // claimed, deliberately nothing
+    lastArrowRepeatAt = now;
+  } else {
+    lastArrowRepeatAt = now; // a fresh press also re-arms the gate, so a hold after it is paced too
+  }
   st.skip(isRight ? 1 : -1); // Right = next (+1), Left = previous (-1) — media convention, NOT mirrored in RTL
   return true;
 }
@@ -1391,6 +1546,128 @@ function prefetchFrom(): void {
   for (const j of scheduler.workSet()) void synth(j).catch(() => {});
 }
 
+/**
+ * MAY THE NEXT CHAPTER'S OPENING BE PREPARED NOW?
+ *
+ * Only in the window this was written for: the chapter on screen has nothing left to synthesize (every
+ * sentence to its end is decoded, the scheduler's whole window is ready, nothing is in flight) and the
+ * engine is healthy and not in a recovery round. That is the tail measured at 10–27 s before a chapter
+ * ends. ONE attempt per session (`prepareGen`), and never while something is already prepared, so this
+ * cannot become a background loop.
+ *
+ * Both call sites are needed and both are cheap: `onSettled` catches the case where the last dispatch is
+ * what completes the chapter, and the cursor advance in `playFrom` catches the ordinary one — MEASURED,
+ * a chapter's final dispatch settles well before its last sentences play, so `onSettled` alone never
+ * fires again while the chapter runs out.
+ */
+function maybePrepareNext(): void {
+  const st = useTts.getState();
+  if (!st.active || st.source !== "chapter" || !nextUnitsProvider) return;
+  if (preparing || prepareGen === gen || prepared.size) return;
+  if (sentences.length === 0 || !scheduler.isReady(sentences.length - 1)) return;
+  // `workSet()` is the window the scheduler MAY synthesize, not what is outstanding — it lists ready
+  // entries too — so the question is whether any of it still needs the engine.
+  if (!scheduler.workSet().every((j) => scheduler.isReady(j)) || scheduler.inFlight >= 0 || scheduler.liveDispatches > 0) return;
+  if (scheduler.currentHealth !== "healthy" || scheduler.inRecovery) return;
+  prepareGen = gen;
+  preparing = runPrepare(gen).finally(() => { preparing = null; });
+}
+
+/**
+ * PREPARE, IN THE BACKGROUND, WITHOUT BEING ABLE TO DISTURB ANYTHING.
+ *
+ * It takes the same turn every synthesis takes, one sentence at a time, and it is the only caller that
+ * installs a yielder — so the listener's own dispatch can ask it to abandon and never queues behind it.
+ * It writes nothing to the store, starts no timer, retries nothing and surfaces no failure: a reset, a
+ * stall, a refusal or a cancellation each end the attempt, are counted, and leave the next chapter to
+ * start exactly as it does today (MEASURED for all three failure classes — playback continued to the
+ * chapter's end with no error shown, health stayed `healthy`, and the next chapter synthesized normally).
+ *
+ * A generation check guards every step. `stop()`, a voice change, a skip and a new chapter all bump
+ * `gen`, so audio produced under an older generation is discarded rather than kept.
+ */
+async function runPrepare(myGen: number): Promise<void> {
+  const provider = nextUnitsProvider;
+  if (!provider) return;
+  let units: string[] | null = null;
+  try {
+    units = await provider();
+  } catch (e) {
+    prepareStats.failed++;
+    prepareStats.lastError = String(e).slice(0, 120);
+    return;
+  }
+  if (myGen !== gen) { prepareStats.cancelled++; return; }
+  if (!units || units.length === 0) { prepareStats.skipped++; return; } // no next chapter: nothing is asked of the engine
+  prepareStats.started++;
+  for (const text of units.slice(0, PREPARE_UNITS)) {
+    if (myGen !== gen) { prepareStats.cancelled++; return; }
+    const key = prepKey(text);
+    if (prepared.has(key)) continue;
+    const tStart = performance.now();
+    try {
+      const out = await engine.run(async () => {
+        if (myGen !== gen) throw new Error("edge synth cancelled");
+        // How this call is abandoned when the listener needs the engine — the same two steps the
+        // scheduler's own `onCancel` takes. Installed for this call's own duration and cleared in the
+        // `finally`, so a stale yielder can never abandon somebody else's call.
+        engine.setYielder(() => {
+          if (import.meta.env.DEV) faultCancel?.();
+          void ttsCancelSynth().catch(() => {});
+        });
+        try {
+          const raw = await withTimeout(rawSynth(curEngine, curVoice, engineTextFor(text), PREPARE_UNIT), BACKGROUND_SYNTH_CEILING_MS);
+          const { words, audio } = parseFramed(raw);
+          const bytes = audio.slice(0);
+          const buffer = await audioCtx().decodeAudioData(audio);
+          if (!buffer || buffer.length === 0 || buffer.duration === 0) throw new Error("empty-audio (0-length buffer)");
+          if (isImplausiblyShortAudio(text, bytes.byteLength)) throw new Error(`${VOICE_MISMATCH_MARKER}: prepared unit`);
+          return { bytes, durationSec: buffer.duration, words } as Synthesized;
+        } finally {
+          engine.setYielder(null);
+        }
+      });
+      noteDispatch({ unit: PREPARE_UNIT, len: text.length, role: "prepare", attempt: 1, budgetMs: null, ms: Math.round(performance.now() - tStart), ok: true, audioSec: out.durationSec, kind: null, detail: null });
+      if (myGen !== gen) { prepareStats.cancelled++; return; } // stopped or re-voiced while it ran: never keep it
+      prepared.set(key, out);
+      prepareStats.units++;
+    } catch (e) {
+      noteDispatch({ unit: PREPARE_UNIT, len: text.length, role: "prepare", attempt: 1, budgetMs: null, ms: Math.round(performance.now() - tStart), ok: false, audioSec: null, kind: classifyFailure(e), detail: String(e).slice(0, 120) });
+      if (isCancelledSynth(e) || myGen !== gen) prepareStats.cancelled++;
+      else { prepareStats.failed++; prepareStats.lastError = String(e).slice(0, 120); }
+      return; // one failure ends the attempt; nothing is retried in the background
+    }
+  }
+  prepareStats.completed++;
+}
+
+/**
+ * DROP EVERY PREPARED ENTRY THE QUEUE ABOUT TO START CANNOT USE.
+ *
+ * Called by `start()` once the voice is resolved, so the keys are built the way this queue would build
+ * them. An entry survives only if it is one of the first sentences this queue will actually ask for — a
+ * reader who skipped past the prepared chapter, or landed in the middle of one, keeps nothing. This is
+ * not the correctness gate (the lookup is by content, so a stale entry could never be played anyway): it
+ * is what stops audio nobody will hear from sitting in memory for the rest of the session.
+ */
+function sweepPrepared(units: string[]): void {
+  if (!prepared.size) return;
+  const wanted = new Set(units.slice(0, PREPARE_UNITS + 1).map(prepKey));
+  for (const k of [...prepared.keys()]) if (!wanted.has(k)) { prepared.delete(k); prepareStats.misses++; }
+}
+
+/**
+ * EVERYTHING PREPARED IS DROPPED, and a preparation still holding the engine is asked to abandon.
+ *
+ * The yielder belongs to the call that installed it, so asking through the turnstile is the only way to
+ * reach it without keeping a second reference that could go stale. Taking an empty turn also means the
+ * request is ordered behind whatever is running — it can never interleave with it.
+ */
+function discardPrepared(): void {
+  prepared.clear();
+  if (engine.hasYielder) void engine.run(async () => undefined, { preempt: true }).catch(() => {});
+}
+
 // RAWY-231: `establishLead` = this is an ENTRY into playback (a chapter start, a seek/skip LANDING, a
 // voice/engine switch, an Edge retry) — do NOT begin until the current sentence AND its one-ahead lead are
 // both ready (invariant A), so the second sentence never underruns. A NORMAL advance (onended → next) passes
@@ -1422,6 +1699,7 @@ async function playFrom(i: number, myGen: number, establishLead = false) {
   const lead = idx + 1 < sentences.length ? synth(idx + 1) : null;  // the one-ahead lead (invariant A)
   void current.catch(() => {});
   prefetchFrom();                                                   // the work set: lead + past a waiting sentence
+  maybePrepareNext();                                               // and, at the tail, the next chapter's opening
 
   // RAWY-231 (invariant A/E): if the current sentence isn't decoded yet, playback must WAIT. On a NORMAL
   // advance that is an UNDERRUN (the lead failed to keep up) — count it + log it. On an ENTRY it's the
@@ -1690,6 +1968,7 @@ export const useTts = create<TtsState>((set, get) => ({
     // Fixed for the life of this queue, beside `sentences` and for the same reason. A caller that does
     // not pass it means "say them", which is what every call meant before the setting existed.
     speakSymbols = opts.speakSymbols ?? true;
+    nextUnitsProvider = opts.nextUnits ?? null; // who can name the next chapter's opening, for preparation
     // Recorded BEFORE anything can end: `playFrom` reads it to decide whether running out of sentences
     // means "this chapter is finished" or "this footnote is finished", and those are different events.
     set({ source });
@@ -1765,6 +2044,7 @@ export const useTts = create<TtsState>((set, get) => ({
     // and before anything may be dispatched. Earlier, a dispatch made before `curVoice` was set went out
     // with an empty voice id (measured in the app: an immediate "unknown edge voice" on sentence 0), and
     // one made for the previous position would hold the engine while the first sentence waits.
+    sweepPrepared(units.slice(Math.min(startIndex, units.length - 1))); // what this queue cannot use is dropped
     scheduler.begin(units.length, Math.min(startIndex, units.length - 1));
     scheduler.setSpeed(speed);
     void ensureAndPlay(id, Math.min(startIndex, units.length - 1), myGen);
@@ -1821,6 +2101,9 @@ export const useTts = create<TtsState>((set, get) => ({
     // Claimed, and deliberately nothing: the chapter is over and the offer is already on screen. The
     // press must not fall through to a page turn, and it must not disturb the state being offered.
     if (landing.kind === "stay") return;
+    // FROM HERE THE CURSOR MOVES BECAUSE THE READER ASKED. Stamped before every `set()` below, so the
+    // telemetry subscriber that fires on those writes sees the new epoch with the new index.
+    userCursorEpoch++;
     if (landing.kind === "chapter-end") {
       const endGen = ++gen;
       stopSource();
@@ -1909,6 +2192,7 @@ export const useTts = create<TtsState>((set, get) => ({
     curEngine = engine;
     curVoice = id;
     scheduler.clearCache(); // RAWY-231: new voice → invalidate cached audio (keeps the session's E counters)
+    discardPrepared(); // a prepared entry is keyed by the voice that made it; a change makes it unusable
     const myGen = ++gen;
     stopSource();
     stopKaraoke(); // RAWY-127: changing the voice drops any pill; playFrom re-decides
@@ -1956,6 +2240,8 @@ export const useTts = create<TtsState>((set, get) => ({
     skipLeadGen = -1;
     lastSkipAt = 0; // RAWY-186
     scheduler.reset(); // RAWY-231: session over — drop the cache AND zero the recurrence counters (E)
+    discardPrepared();          // nothing prepared survives a stop, and a running preparation is abandoned
+    nextUnitsProvider = null;   // the next queue brings its own
     resetSeries(awaitLatency); // RAWY-257: the latency series are per-SESSION, like the counters beside them
     ttsUnderruns = 0;
     lastFail = null; // RAWY-247: clear the last-failure diagnostic for the new session

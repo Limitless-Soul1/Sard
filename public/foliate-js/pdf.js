@@ -267,6 +267,25 @@ export const makePDF = async file => {
         const tc = await page.getTextContent()
         return tc.items.map(it => it.str ?? '').join(' ')
     }
+    // SARD LOCAL PATCH 12 — a page's INTRINSIC SIZE, without rendering it.
+    //
+    // The continuous-scroll renderer has to lay out every page of the document before it mounts any of
+    // them: a 567-page PDF needs a scroll extent on the first frame, and a reader dragging the bar to
+    // the middle must land on the middle. Rendering to find out how tall a page is would make that
+    // O(pages) rasters, which is exactly what virtualisation exists to avoid.
+    //
+    // `getViewport({ scale: 1 })` answers it from the page's own dictionary — no canvas, no text layer,
+    // no decode. Cached, because a scroller asks for the same page repeatedly as it re-measures on
+    // zoom, and `getPage` is itself a parse.
+    const pageSizes = new Map()
+    book.pageSize = async i => {
+        const hit = pageSizes.get(i)
+        if (hit) return hit
+        const v = (await pdf.getPage(i + 1)).getViewport({ scale: 1 })
+        const out = { width: v.width, height: v.height }
+        pageSizes.set(i, out)
+        return out
+    }
     book.destroy = () => pdf.destroy()
     return book
 }

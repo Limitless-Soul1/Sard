@@ -29,6 +29,7 @@ const EMPTY_MIRROR: Mirror = {
   pdfRenderedScale: 1,
   pdfHasSpeakableText: false,
   isFixedLayout: false,
+  fxlMode: "scroll",
   isScrolled: true,
   readingScrollTop: 0,
   pdfPageCount: 0,
@@ -62,6 +63,7 @@ const MIRRORED_DIRECT = {
 /** The engine's public getters, read as properties and therefore always served from the mirror. */
 const GETTERS = [
   "isFixedLayout",
+  "fxlMode",
   "isScrolled",
   "readingScrollTop",
   "pdfPageCount",
@@ -172,12 +174,23 @@ export class HostedReader {
    * `isFixedLayout` is mirrored. The arrow callback belongs to the application, which registered it.
    * Only the page turn crosses, and nothing waits for it.
    */
-  handleNavKey(key: string): boolean {
+  /**
+   * The wheel forward, over the port. Decided locally for the reason `surface.ts` gives: the answer
+   * drives `preventDefault()` and cannot wait for a round trip. `fxlMode` is mirrored, so the
+   * application already knows whether this book is being read in Scroll mode.
+   */
+  scrollPdfBy(deltaY: number, deltaX = 0): boolean {
+    if (this.mirror.fxlMode !== "scroll" || !this.mirror.isFixedLayout) return false;
+    this.tell("scrollPdfBy", [deltaY, deltaX]);
+    return true;
+  }
+
+  handleNavKey(key: string, repeat = false): boolean {
     const intent = navIntent(key);
     if (!intent) return false;
     if (!this.mirror.isFixedLayout && (key === "ArrowLeft" || key === "ArrowRight")) {
-      const arrow = this.handlers.get("onArrow") as ((k: string) => boolean) | undefined;
-      if (arrow?.(key)) return true;
+      const arrow = this.handlers.get("onArrow") as ((k: string, repeat: boolean) => boolean) | undefined;
+      if (arrow?.(key, repeat)) return true;
     }
     this.tell(intent === "forward" ? "forward" : "backward");
     return true;

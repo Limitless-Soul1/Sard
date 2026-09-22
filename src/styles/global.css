@@ -431,34 +431,92 @@ html, body, #root {
 .page-bookmark:active { cursor: grabbing; }
 .bm-shape { display: inline-block; }
 
-/* page-turn affordance — circular floating buttons on the desk edges (RAWY-33, design C-VI) */
+/* PAGE-TURN AFFORDANCE — the two quiet marks on the desk edges (RAWY-33, design C-VI).
+ *
+ * WHAT CHANGED, AND WHY IT IS THE SAME CONTROL. It was a 42px disc carrying the TEXT characters
+ * `‹` and `›` at `font: 300 1.375rem var(--ui-font)`. Three things followed from that and none of
+ * them were wanted: the mark's weight and size were whatever the interface face — or whatever the
+ * system substituted for it — happened to draw, so the two chevrons were a different stroke from
+ * every other mark in Sard; a text glyph sits on a BASELINE, so the optical centre drifted with the
+ * face and the disc's centre was never the glyph's; and a character cannot take `--icon-stroke`, so
+ * the one token that keeps Sard's marks consistent could not reach it. The mark is now the drawn
+ * caret from the icon set, at the set's own weight, centred geometrically.
+ *
+ * THE SHAPE IS CALMER AND SMALLER. 38px rather than 42, resting at 0.38 rather than 0.55: the page
+ * is the thing being read, and the affordance only has to be findable, not present. It sits on the
+ * desk OUTSIDE the sheet (see the inset rule below), so at no width does it come over the text.
+ *
+ * TACTILE, THE SAME WAY THE WINDOW CONTROLS ARE. Hover raises the plate; the press is answered
+ * within the frame — the plate settles, and the mark moves ONE PIXEL IN THE DIRECTION THE PAGE IS
+ * ABOUT TO GO, which is the only honest motion for this control. `transition: none` on the pressed
+ * state so the answer is immediate and only the RELEASE eases back.
+ */
 .page-chevron {
   position: absolute;
   top: 50%;
-  transform: translateY(-50%);
-  width: 42px;
-  height: 42px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   border: 1px solid var(--chrome-border);
   background: color-mix(in srgb, var(--chrome-bg) calc(var(--ui-floor, 0%) + (92% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent);
   backdrop-filter: blur(6px);
-  box-shadow: 0 3px 10px rgba(40, 28, 14, 0.12);
+  box-shadow: 0 2px 6px rgba(40, 28, 14, 0.1);
   color: var(--text);
-  font: 300 1.375rem var(--ui-font);
   cursor: pointer;
+  padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.55;
+  opacity: 0.38;
+  /* The centring translate is part of the button's own transform, so the press below has to restate
+     it — a second `transform` would otherwise throw the button off its vertical centre. */
+  transform: translateY(-50%);
   /* WP-4A: above a panel, per the invariant — a control must stay reachable. This is the BACKSTOP;
      the real fix is the inset below, which moves the button out from under the panel entirely. */
   z-index: var(--z-nav);
-  transition: opacity 0.18s ease, background 0.18s ease, left 0.22s cubic-bezier(0.22, 0.61, 0.36, 1),
-    right 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition: opacity 0.18s ease, background 0.18s ease, box-shadow 0.18s ease,
+    transform 0.16s cubic-bezier(0.22, 1, 0.36, 1),
+    left 0.22s cubic-bezier(0.22, 0.61, 0.36, 1), right 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
-@media (prefers-reduced-motion: reduce) { .page-chevron { transition: opacity 0.18s ease, background 0.18s ease; } }
-.page-chevron:hover { opacity: 1; background: color-mix(in srgb, var(--accent) 14%, var(--chrome-bg)); }
-:root[data-dark="true"] .page-chevron { box-shadow: 0 3px 10px rgba(0, 0, 0, 0.4); }
+/* The mark carries its own short ease so the pressed nudge can be instant while the release is not. */
+.page-chevron > svg { transition: transform 0.16s cubic-bezier(0.22, 1, 0.36, 1); }
+@media (prefers-reduced-motion: reduce) {
+  .page-chevron { transition: opacity 0.18s ease, background 0.18s ease; }
+  .page-chevron > svg { transition: none; }
+}
+.page-chevron:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--accent) 12%, var(--chrome-bg));
+  box-shadow: 0 4px 12px rgba(40, 28, 14, 0.16);
+}
+/* THE PRESS IS FELT. The plate settles back onto the desk and the mark leads the way the page goes;
+   the two together read as a control that has been pushed rather than merely recoloured. */
+.page-chevron:active:not(:disabled) {
+  transform: translateY(-50%) scale(0.955);
+  box-shadow: 0 1px 3px rgba(40, 28, 14, 0.18);
+  background: color-mix(in srgb, var(--accent) 20%, var(--chrome-bg));
+  transition: none;
+}
+.page-chevron:active:not(:disabled) > svg { transition: none; }
+.page-chevron-left:active:not(:disabled) > svg { transform: translateX(-1px); }
+.page-chevron-right:active:not(:disabled) > svg { transform: translateX(1px); }
+/* The keyboard gets the same ring the rest of Sard's controls use, inside the disc so it cannot be
+   clipped by the desk edge. `:focus-visible`, so a pointer press never draws it. */
+.page-chevron:focus-visible {
+  opacity: 1;
+  outline: 1.5px solid var(--accent);
+  outline-offset: -3px;
+}
+/* SPENT, AND SAYING SO. The first page has nothing before it; the affordance stays in place — a
+   control that disappears at the edge makes the layout jump — and stops inviting a press. */
+.page-chevron:disabled {
+  opacity: 0.14;
+  cursor: default;
+  box-shadow: none;
+}
+.page-chevron:disabled:hover { opacity: 0.14; background: color-mix(in srgb, var(--chrome-bg) calc(var(--ui-floor, 0%) + (92% - var(--ui-floor, 0%)) * var(--ui-k, 1)), transparent); }
+:root[data-dark="true"] .page-chevron { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.38); }
+:root[data-dark="true"] .page-chevron:hover { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.46); }
 
 /* RESILIENCE-1 / WP-4B — THE CHEVRONS FOLLOW THE READING AREA.
    MEASURED, all four {en,ar}×{ltr,rtl} combinations: with Contents open the left chevron sat at
@@ -7338,3 +7396,121 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .pcx-insp-toggle:hover { background: var(--pc-surface); }
 .pcx-insp-toggle.on { color: var(--pc-accent); border-color: color-mix(in srgb, var(--pc-accent) 45%, transparent); }
 .pcx-insp-toggle svg { flex: none; }
+
+/* =====================================================================================================
+   THE WINDOW'S OWN FRAME — `components/WindowChrome.tsx`.
+
+   NOT A BAR. The first version was a 32px strip of flat `--chrome-bg` with a rule under it, and it
+   read as a lid on the application: the Library's picture, scrim, grain and frost all stopped at its
+   edge, so above them sat a second, different material. What makes the sidebar belong to the room is
+   that it is the same picture seen through the sidebar's tint and frost — so the frame is now that.
+   The Library runs to the top of the window (it starts under the frame by padding, not by position),
+   and the frame is its top 32px seen through EXACTLY the sidebar's formula: the same floor-anchored
+   `--chrome-bg` travel, the same frost, so frame and sidebar are one continuous mat around the desk,
+   with no line where they meet and no line under the frame. Without a picture the formula reduces
+   to the sidebar's own flat ground, and the two are the same colour. The reader and the gates keep
+   the frame above them; there it is the chrome material the reader's own bars use, so a revealed top
+   bar and the frame read as one slab.
+
+   NOTHING ELSE IS IN IT. No mark — the sidebar's brand row sits directly under the frame and carries
+   the identity — and no rule. The three controls are marks from the icon set in the muted ink, with
+   the hover the sidebar's rows use; Close answers with the accent in its mark, not with a red plate.
+   On the right in both directions, in the desktop's order.
+
+   `--sard-titlebar` is set only while the frame is on screen (`data-chrome="sard"` on the root). */
+:root[data-chrome="sard"] { --sard-titlebar: 32px; }
+.wc {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  height: var(--sard-titlebar, 32px); box-sizing: border-box;
+  display: flex; align-items: center; justify-content: flex-end;
+  padding: 0 6px 0 0;
+  direction: ltr;
+  color: var(--muted);
+  /* ONE SOLID SURFACE, OUTSIDE THE TEXTURE SYSTEM ON PURPOSE. The frame took the sidebar's picture
+     formula for a while, and in the reader it painted nothing at all so the desk ran under it; with
+     a wallpaper both read as a strip of glass with the artwork moving behind it — a floating layer,
+     not a frame. So the frame is the chrome ground, opaque, with no frost and no alpha, whatever the
+     texture step and whatever surface is beneath: nothing behind the window's frame is ever visible
+     through it. `--chrome-bg` is the theme's own chrome surface, so it still follows every paper. */
+  background: var(--chrome-bg);
+  user-select: none; -webkit-user-select: none;
+}
+.wc[data-focused="false"] .wc-controls { opacity: 0.55; }
+/* ADJACENT, LIKE EVERY DESKTOP'S WINDOW CONTROLS. The three pads touch: a gap between them reads as
+   three separate icon buttons that happen to sit together, and it leaves dead strips where a press
+   lands on the frame and starts a drag instead. */
+.wc-controls { display: flex; align-items: center; gap: 0; }
+/* THE PAD IS A FULL RECTANGLE; ITS SURFACE IS THE ROUNDED THING INSIDE IT. A radius on the control
+   itself is a radius on its HIT AREA too — corners stop belonging to the button, and with the pads
+   adjacent those notches fall on the frame, so a press one pixel inside the cluster starts a drag
+   instead (MEASURED: 6 of 408 sampled points, all within a pixel of a corner). So the button keeps
+   square edges and the plate is painted by `::before`, which is drawn, never hit-tested. */
+.wc-btn {
+  position: relative;
+  width: 34px; height: 24px; padding: 0; margin: 0; border: 0; border-radius: 0;
+  display: grid; place-items: center;
+  background: transparent; color: inherit; cursor: default;
+  transition: color 0.1s ease-out;
+}
+.wc-btn::before {
+  content: ""; position: absolute; inset: 0; border-radius: 5px;
+  background: transparent;
+  transition: background 0.1s ease-out;
+}
+/* THE FOUR STATES, EACH A STEP FROM THE LAST — a window control's language, in Sard's colours.
+   Rest is the muted mark on the bare frame, with no plate at all. Hover raises the control's own
+   surface and gives the mark full ink, so it is unmistakably a button. A press deepens that surface
+   and sinks the mark one pixel; it happens on the SAME FRAME as the press (no transition on the way
+   in) and settles back over the same 100 ms on release, which is what makes it feel pushed rather
+   than merely re-coloured. The glyph moves by `transform`, so nothing around it is laid out again.
+   MEASURED before this existed: hover and press were 7% and 12% of one ink, nine levels apart, with
+   no other cue — a press that could not be felt.
+   A pad is 34×24 and its surface never grows beyond it; the three pads are adjacent, so the row reads
+   as one control cluster. Keyboard activation shows the same pressed state as the pointer, and focus
+   stays its own signal: a hairline of the accent OUTSIDE the pad, distinct from both. */
+.wc-btn > svg { position: relative; transition: transform 0.1s ease-out; }
+.wc-btn:hover::before { background: color-mix(in srgb, var(--text) 10%, transparent); }
+.wc-btn:hover { color: var(--text); }
+.wc-btn:active::before { background: color-mix(in srgb, var(--text) 18%, transparent); transition: none; }
+.wc-btn:active { color: var(--text); transition: none; }
+.wc-btn:active > svg { transform: translateY(1px); transition: none; }
+/* The ring is drawn INSIDE the pad: the pads are adjacent, so a ring outside one would sit on top of
+   its neighbour. It keeps the pad's own square edges — a radius here would take the corners out of the
+   hit area again, for exactly as long as the control is focused. */
+.wc-btn:focus-visible { outline: 1.5px solid var(--accent); outline-offset: -2px; }
+/* CLOSE ANSWERS IN RED, because closing is the one destructive thing on this bar and every desktop
+   says so the same way. The reds are Sard's own destructive pair (`#b24a4a` armed, `#9c3b3b` deeper),
+   the ones the archive and the profile editor already use — so this is the product's language, not a
+   borrowed system button. At REST there is no red at all: the plate exists only under the pointer,
+   or while the focused control is being activated from the keyboard. */
+.wc-close:hover::before { background: #b24a4a; }
+.wc-close:hover { color: #fff; }
+.wc-close:active::before { background: #9c3b3b; transition: none; }
+.wc-close:active { color: #fff; transition: none; }
+/* THE SURFACES BELOW THE FRAME. The Library and the Reader run under it — the frame is the top of
+   their own ground — and the gates start beneath it. */
+:root[data-chrome="sard"] .lib-root { padding-top: var(--sard-titlebar); box-sizing: border-box; }
+:root[data-chrome="sard"] .welcome,
+:root[data-chrome="sard"] .runtime-gate,
+:root[data-chrome="sard"] .pf-editor { top: var(--sard-titlebar); }
+
+/* THE READER: THE FRAME IS THE DESK. The reader's own bar is its control surface — frosted chrome
+   with a rule and a shadow, revealed on a reach for the top edge — and a second slab of chrome
+   material directly above it read as one 102px head with the controls pressed against its top.
+   Measured: the bar's buttons began 4px under the frame, identical in tone; nothing overlapped, it
+   only looked so. So in the reader the desk — its ground, its wallpaper, its scrim — runs to the top
+   of the window under the frame, and the reader's bar is the only bar. Every reading coordinate is
+   where it was: the bar, the page host, the
+   panels and the chevrons each start `--sard-titlebar` lower inside a desk that is that much taller,
+   so the text's first line, the bar's height and the auto-hide reclaim are byte-identical. */
+:root[data-chrome="sard"] .reader-root { top: 0; }
+:root[data-chrome="sard"] .reader-chrome { top: var(--sard-titlebar); }
+:root[data-chrome="sard"] .reader-panel,
+:root[data-chrome="sard"] .settings-panel { top: calc(70px + var(--sard-titlebar)); }
+:root[data-chrome="sard"] .reader-root.chrome-hidden .reader-panel { top: var(--sard-titlebar); }
+:root[data-chrome="sard"] .page-host { inset-block-start: calc(70px + var(--sard-titlebar)); }
+:root[data-chrome="sard"] .reader-root.tts-playing .page-host,
+:root[data-chrome="sard"] .reader-root.flow-scrolled .page-host,
+:root[data-chrome="sard"] .reader-root.chrome-hidden .page-host { inset-block-start: var(--sard-titlebar); }
+:root[data-chrome="sard"] .page-chevron { top: calc(50% + var(--sard-titlebar) / 2); }
+

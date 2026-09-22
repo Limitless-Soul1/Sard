@@ -252,8 +252,19 @@ export class View extends HTMLElement {
 
         this.isFixedLayout = this.book.rendition?.layout === 'pre-paginated'
         if (this.isFixedLayout) {
-            await import('./fixed-layout.js')
-            this.renderer = document.createElement('foliate-fxl')
+            // SARD: a fixed-layout book has TWO renderers now, and the application chooses before it
+            // opens. `foliate-fxl` is the original, one spread at a time — Sard's "Pages" mode.
+            // `foliate-fxl-scroll` lays the same pages out in one continuous scroller — Sard's
+            // "Scroll" mode, and the default for PDFs. Both consume the same `book.sections` and
+            // dispatch the same `load` / `relocate` / `create-overlayer` events, so everything
+            // downstream of the renderer is identical under either.
+            if (this.fxlMode === 'scroll') {
+                await import('./fixed-layout-scroll.js')
+                this.renderer = document.createElement('foliate-fxl-scroll')
+            } else {
+                await import('./fixed-layout.js')
+                this.renderer = document.createElement('foliate-fxl')
+            }
         } else {
             await import('./paginator.js')
             this.renderer = document.createElement('foliate-paginator')

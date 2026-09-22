@@ -15,6 +15,7 @@ import { coverSrc } from "../coverSrc";
 import { fieldScript, fieldStyle } from "./bidi";
 import { useBookPickup } from "./bookPickup";
 import { BookActions, type BookActionsProps } from "./BookActions";
+import { useBookContextMenu } from "./bookContextMenu";
 import type { CardOrder } from "../Library";
 import { daysAgo, isFinished, pctText, progressPct, type DesignSort } from "./model";
 import { labelFace } from "../../../lib/typography";
@@ -115,8 +116,12 @@ function DetailsRow(props: {
   // shelf to be lifted from, and a hold SPENDS the press: it swallows the click that follows, so a
   // slightly slow press on an ordinary row would quietly stop opening the book.
   const wantsPress = orderable || props.arrangeOn;
+  // Right-click the row, get the row's own ⋯ menu at the pointer — the same gesture the four
+  // cover formats carry, so Details does not become the one place a book answers differently.
+  const ctx = useBookContextMenu({ onOpen: pickup.cancelHold, enabled: !props.selectOn });
   return (
     <div
+      onContextMenu={ctx.onContextMenu}
       // The row names the book it draws, exactly as a tile does, so a reorder and a check can both
       // address it by identity. Details rows carried no identity at all before this.
       // The row names the book it draws, and where that book is filed — the shelf and index are
@@ -144,6 +149,7 @@ function DetailsRow(props: {
       {!props.selectOn && (
         <BookActions
           {...props.actions}
+          ref={ctx.ref}
           // `.libd-dots` is hidden until `.libd-tile:hover`, and a row is not a tile — so without
           // this the control exists, occupies space and can never be clicked. Rows are sparse
           // enough to carry it openly.

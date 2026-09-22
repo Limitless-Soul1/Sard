@@ -228,6 +228,10 @@ macro_rules! sard_invoke_handler {
             presence::presence_update, // DISC/RPC: push the reading activity to Discord
             presence::presence_clear, // DISC/RPC: clear it (leaving the book, or toggled off)
             window_chrome::set_titlebar_theme,
+            window_chrome::show_window_menu,
+            window_chrome::window_fullscreen,
+            window_chrome::window_fullscreen_exit,
+            window_chrome::set_window_ground,
             $($diag_cmd),*
         ])
     };

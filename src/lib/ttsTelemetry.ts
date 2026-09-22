@@ -27,7 +27,7 @@
 // what a synthesis cost has to be read against. Error strings come from the engine ("edge synth
 // stalled: no audio", a socket code) and never from the book. The voice id and the playback speed are
 // recorded because a latency number means nothing without them.
-import { useTts } from "./tts";
+import { useTts, cursorEpoch } from "./tts";
 import { settingsGet, settingsSet } from "./ipc";
 
 /** The key this instrument owns. New name, new shape — never mixed with v3's outcome records. */
@@ -43,11 +43,12 @@ const KEEP_EVENTS = 400;
 export interface DispatchRecord {
   /** ms since session start */
   at: number;
-  /** sentence index within the chapter — a position, never text */
+  /** sentence index within the chapter — a position, never text. Negative for a `prepare` attempt,
+   *  which belongs to the NEXT chapter and so has no position in this one. */
   unit: number;
   /** characters in that sentence: the only honest denominator for a synthesis latency */
   len: number;
-  /** why the scheduler asked for it: current | lead | look-ahead | retry | probe | recovery */
+  /** why the scheduler asked for it: current | lead | look-ahead | retry | probe | recovery | prepare */
   role: string;
   /** attempt number within its round (recovery rounds count 1..3; background retries count failures) */
   attempt: number;
@@ -132,6 +133,15 @@ export interface ResilienceSession {
   recoveryRounds: { at: number; unit: number; ms: number; attempts: number; outcome: "recovered" | "edge-error" | "abandoned"; budgetRespected: boolean }[];
   /** the highest `maxConcurrent` the scheduler reported — the single-flight invariant, observed */
   maxConcurrentEdge: number;
+  /**
+   * The same invariant seen from the OTHER side: the highest number of synthesis calls the engine
+   * turnstile ever had running at once, for the life of this process. The scheduler's own figure above
+   * cannot see the one caller that is not the scheduler (cross-chapter preparation), so a record with
+   * both is the only one that can prove "one synthesis at a time" for everything that reaches the
+   * engine. A process-wide maximum, not a per-session one: it is an invariant, and one breach anywhere
+   * is what matters. Null on a build that predates the turnstile.
+   */
+  maxConcurrentEngine: number | null;
   /** health as the breaker reported it, in order of appearance */
   healthSeen: string[];
   playRejections: number;
@@ -198,6 +208,7 @@ interface Stats {
   bufferedSeconds?: number;
   playRejections?: number;
   watchdogNudges?: number;
+  engineMaxConcurrent?: number;
   underruns?: number;
 }
 function stats(): Stats {
@@ -249,15 +260,20 @@ export function noteDispatch(rec: Omit<DispatchRecord, "at">): void {
   try {
     if (!cur) return;
     const at = Math.round(now() - sessionT0);
-    const u = unitOf(rec.unit);
-    u.attempts++;
-    if (rec.ok) {
-      // A sentence that had failed and now has audio is repaired. Whether that happened in time is
-      // decided when playback arrives (`reachedAt`), not here.
-      if (u.firstFailAt !== null && u.recoveredAt === null) u.recoveredAt = at;
-    } else {
-      u.failures++;
-      if (u.firstFailAt === null) u.firstFailAt = at;
+    // A `prepare` attempt carries no position in THIS chapter (its unit id is negative), so it is
+    // recorded on the timeline and in the latency summary but never as a sentence of this session —
+    // inventing a per-sentence outcome for it would put a unit in the record that was never played.
+    const u = rec.unit >= 0 ? unitOf(rec.unit) : null;
+    if (u) u.attempts++;
+    if (u) {
+      if (rec.ok) {
+        // A sentence that had failed and now has audio is repaired. Whether that happened in time is
+        // decided when playback arrives (`reachedAt`), not here.
+        if (u.firstFailAt !== null && u.recoveredAt === null) u.recoveredAt = at;
+      } else {
+        u.failures++;
+        if (u.firstFailAt === null) u.firstFailAt = at;
+      }
     }
     if (round && rec.role === "recovery" && rec.unit === round.unit) round.attempts = Math.max(round.attempts, rec.attempt);
     if (cur.dispatches.length >= KEEP_DISPATCHES) { cur.dispatchesDropped++; return; }
@@ -288,7 +304,7 @@ function open(s: Snap): void {
     gaps: [], longestGapMs: 0, underruns: 0,
     dispatches: [], dispatchesDropped: 0, events: [], eventsDropped: 0, unitOutcomes: [],
     isolation: { futureRetries: 0, recoveries: 0, recoverySuccesses: 0, cancelled: 0, probes: 0, resetRetries: 0, breakerTrips: 0 },
-    recoveryRounds: [], maxConcurrentEdge: 0, healthSeen: [],
+    recoveryRounds: [], maxConcurrentEdge: 0, maxConcurrentEngine: null, healthSeen: [],
     playRejections: 0, watchdogNudges: 0, edgeErrors: 0, errors: 0, userRetries: 0,
     synth: null, bufferedAheadSec: null,
     meta: { events: 0, faults: 0, lastFault: null, version: 1 },
@@ -321,6 +337,7 @@ function finish(reason: ResilienceSession["endReason"], s: Snap): void {
     }
   }
   cur.maxConcurrentEdge = Math.max(cur.maxConcurrentEdge, st.maxConcurrent ?? 0);
+  cur.maxConcurrentEngine = st.engineMaxConcurrent ?? null;
   cur.playRejections = st.playRejections ?? 0;
   cur.watchdogNudges = st.watchdogNudges ?? 0;
   // per-sentence verdicts
@@ -377,6 +394,12 @@ interface Snap {
   active: boolean; status: string; index: number; total: number;
   engine: string; voice: string; speed: number;
   retryAttempt: number; underruns: number; error: string | null;
+  /**
+   * The reader's own cursor-move counter (`cursorEpoch()` in `lib/tts`). It is NOT store state — it is
+   * read at the same instant the snapshot is taken, which is inside the subscriber, synchronously
+   * after the write that moved the index. See the note on `userCursorEpoch` for the defect it closes.
+   */
+  userEpoch: number;
 }
 
 function onChange(s: Snap, p: Snap): void {
@@ -442,10 +465,21 @@ function onChange(s: Snap, p: Snap): void {
     u.reachedAt = Math.round(t - sessionT0);
     // "ready" means the engine did not have to wait: its own underrun counter did not move.
     u.reachedReady = s.underruns === p.underruns;
-    if (delta === 1) { cur.unitsAdvanced++; pushEvent("advance", s.index); }
+    // WHY THE MOVE HAPPENED, NOT HOW BIG IT WAS.
+    //
+    // This used to read `delta === 1 ? advance : skip`, which is a guess dressed as a rule: a skip of
+    // ONE sentence has a delta of one, so every single-step skip was recorded as a sentence listened
+    // through. MEASURED — six auto-repeat skips arrived as six `advance` events 33 ms apart with no
+    // `skip` event and `unitsAdvanced` counting all six, and ~22.6 s of audio the reader deliberately
+    // skipped looked like audio the engine had silently discarded. The store now says who moved the
+    // cursor, so this no longer has to infer it.
+    const byReader = s.userEpoch !== p.userEpoch;
+    if (!byReader && delta === 1) { cur.unitsAdvanced++; pushEvent("advance", s.index); }
     else {
       lastUserActionAt = t;
-      pushEvent(delta > 1 ? "skip" : delta === -1 ? "back" : "seek", s.index, delta);
+      // A reader's move is named by its DIRECTION; only a jump nobody asked for is a "seek".
+      pushEvent(byReader ? (delta > 0 ? "skip" : "back") : delta > 1 ? "skip" : delta === -1 ? "back" : "seek",
+        s.index, delta);
     }
     if (typeof st.bufferedSeconds === "number") bufferedSamples.push(st.bufferedSeconds);
     lastIndex = s.index;
@@ -555,6 +589,7 @@ export function registerTtsTelemetry(): void {
       active: s.active, status: s.status, index: s.index, total: s.total,
       engine: s.engine, voice: s.voice, speed: s.speed,
       retryAttempt: s.retryAttempt, underruns: s.underruns, error: s.error ?? null,
+      userEpoch: cursorEpoch(),
     });
     let prev = pick(useTts.getState());
     useTts.subscribe((state) => {

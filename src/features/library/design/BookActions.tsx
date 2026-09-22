@@ -13,7 +13,7 @@
 // What this does not own is the editor. It raises `onEditDetails`, and the owner decides what that
 // opens, so there is exactly one answer to that question too.
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "../../../i18n";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -67,11 +67,77 @@ export interface BookActionsProps {
 /** The reference's width for this menu; the placement needs it before the menu has been drawn. */
 const MENU_WIDTH = 206;
 
-export function BookActions(props: BookActionsProps) {
+/** What the menu hangs from: the ⋯'s own rectangle, or the point a right-click happened at. */
+export interface MenuAnchor {
+  left: number;
+  right: number;
+  bottom: number;
+}
+
+/**
+ * WHERE THE MENU GOES — one arithmetic, whichever way it was opened.
+ *
+ * Pulled out of the component so the thing that actually has to hold can be held: a menu opened at
+ * the far edge of the window, in either direction, must still be entirely on screen. A point is a
+ * zero-width anchor (`left === right`), so the RTL branch opens it back from the click and the LTR
+ * branch forward from it, with no second case to keep in step with the first.
+ */
+export function placeMenu(
+  anchor: MenuAnchor,
+  size: { w: number; h: number },
+  viewport: { w: number; h: number },
+  opts: { rtl: boolean; gap: number },
+): { left: number; top: number } {
+  const wanted = opts.rtl ? anchor.right - size.w : anchor.left;
+  return {
+    left: Math.max(8, Math.min(wanted, viewport.w - size.w - 8)),
+    top: Math.max(8, Math.min(anchor.bottom + opts.gap, viewport.h - size.h - 8)),
+  };
+}
+
+/**
+ * OPENING THE SAME MENU FROM SOMEWHERE THAT IS NOT THE CONTROL.
+ *
+ * A right-click on a book asks the same question the ⋯ does — "what can I do with this book" — so it
+ * must be answered by the same menu, not by a second one built beside it. The surfaces that draw a
+ * book already render this component; they hold a ref to it and open it AT THE POINTER, and
+ * everything that follows — the items and their order, the labels, the destructive styling, the
+ * roving focus, Escape, the press-outside, the portal and the clamping — is the code below, unchanged.
+ */
+export interface BookActionsHandle {
+  /**
+   * Open the menu at a point in window coordinates. `returnFocusTo` is where focus goes when the
+   * menu closes: the ⋯ is `visibility: hidden` until its tile is hovered in three of the five
+   * formats, and a hidden element cannot take focus, so the element that was right-clicked is the
+   * honest place to hand it back to.
+   */
+  openAt: (x: number, y: number, returnFocusTo?: HTMLElement | null) => void;
+}
+
+export const BookActions = forwardRef<BookActionsHandle, BookActionsProps>(function BookActions(props, ref) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const btnRef = useRef<HTMLButtonElement | null>(null);
+  /**
+   * WHERE THE MENU WAS ASKED FOR — the pointer, or the control.
+   *
+   * `null` is the ⋯ and is what every existing caller gets: the placement below then reads the
+   * button's own rectangle exactly as it always has. A point makes the menu hang from the click
+   * instead, through the SAME arithmetic and the same clamping, so a menu opened either way cannot
+   * end up off screen or mirrored differently.
+   */
+  const [pt, setPt] = useState<{ x: number; y: number } | null>(null);
+  /** Where focus goes when a pointer-opened menu closes; the ⋯ otherwise. */
+  const returnRef = useRef<HTMLElement | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    openAt: (x, y, returnFocusTo) => {
+      returnRef.current = returnFocusTo ?? null;
+      setPt({ x, y });
+      setOpen(true);
+    },
+  }), []);
 
   /**
    * WHERE THE MENU GOES — decided here, in window coordinates, and drawn outside the book.
@@ -95,18 +161,21 @@ export function BookActions(props: BookActionsProps) {
       return;
     }
     const place = () => {
-      const b = btnRef.current?.getBoundingClientRect();
+      // A point is a zero-width reference: `right === left`, so the RTL branch below opens the menu
+      // back from the click and the LTR branch forward from it — the same rule the control follows,
+      // with no second case to keep in step.
+      const b = pt
+        ? { left: pt.x, right: pt.x, bottom: pt.y }
+        : btnRef.current?.getBoundingClientRect();
       if (!b) return;
       const m = menuRef.current?.getBoundingClientRect();
       const w = m?.width || MENU_WIDTH;
       const h = m?.height || 200;
       const rtl = getComputedStyle(document.documentElement).direction === "rtl";
-      // Hanging from the control, opening back along the reading direction.
-      const wanted = rtl ? b.right - w : b.left;
-      const next = {
-        left: Math.max(8, Math.min(wanted, window.innerWidth - w - 8)),
-        top: Math.max(8, Math.min(b.bottom + 6, window.innerHeight - h - 8)),
-      };
+      // Hanging from the control, opening back along the reading direction. 6px of air below the ⋯;
+      // a menu summoned by the pointer sits AT the pointer, which is where a context menu belongs
+      // and what stops it covering the thing just clicked.
+      const next = placeMenu(b, { w, h }, { w: window.innerWidth, h: window.innerHeight }, { rtl, gap: pt ? 2 : 6 });
       setAt((prev) => (prev && prev.left === next.left && prev.top === next.top ? prev : next));
     };
     place();
@@ -119,7 +188,7 @@ export function BookActions(props: BookActionsProps) {
       window.removeEventListener("resize", place);
       window.removeEventListener("scroll", place, true);
     };
-  }, [open]);
+  }, [open, pt]);
 
   // One owner for every transient surface: opening this closes whatever was open, a press outside
   // closes it, and Escape is spent here before it reaches the view behind.
@@ -154,10 +223,17 @@ export function BookActions(props: BookActionsProps) {
     return () => cancelAnimationFrame(id);
   }, [open]);
 
-  /** Closing by any route puts focus back on the control that opened the menu. */
+  /**
+   * Closing by any route puts focus back on whatever opened the menu — the ⋯, or the book that was
+   * right-clicked. Escape, a press outside, Tab and running an item all come through here, so the
+   * two ways of opening it are dismissed identically.
+   */
   const close = () => {
     setOpen(false);
-    btnRef.current?.focus({ preventScroll: true });
+    const back = returnRef.current;
+    returnRef.current = null;
+    setPt(null);
+    (back ?? btnRef.current)?.focus({ preventScroll: true });
   };
 
   // EACH ACTION CARRIES ITS OWN MARK, and the mark says what the action does rather than decorating
@@ -196,6 +272,9 @@ export function BookActions(props: BookActionsProps) {
         aria-label={t("lib.bookActions")}
         onClick={(e) => {
           e.stopPropagation();
+          // The control opens from the CONTROL, whatever opened it last.
+          returnRef.current = null;
+          setPt(null);
           setOpen((v) => !v);
         }}
         // The press is what the dismissal stack listens for, and it must not be read as a press
@@ -406,4 +485,4 @@ export function BookActions(props: BookActionsProps) {
       )}
     </>
   );
-}
+});

@@ -97,7 +97,10 @@ describe("normal paging is not weakened to hide the exception", () => {
   });
 
   it("handleNavKey still routes to forward/backward — the key path is unchanged", () => {
-    const body = methodBody(SRC, "handleNavKey(key: string): boolean {");
+    // The signature gained an optional `repeat`, which the read-aloud arrow path uses to pace the
+    // platform's auto-repeat. Matched on the NAME plus its first parameter rather than the whole
+    // literal, so adding an optional argument cannot fail a test about where the key ROUTES.
+    const body = methodBody(SRC, "handleNavKey(key: string");
     expect(body).toContain("this.forward()");
     expect(body).toContain("this.backward()");
   });

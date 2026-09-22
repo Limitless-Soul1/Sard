@@ -3,6 +3,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { contrastRatio } from "../lib/contrast";
+import { setWindowGround } from "../lib/ipc";
 import type { Theme } from "./tokens";
 import { applyVistaTokens } from "./vistaTokens";
 
@@ -94,6 +95,9 @@ export function applyTheme(theme: Theme): void {
   const c = theme.colors;
   const set = (k: string, v: string) => r.style.setProperty(k, v);
   set("--app-bg", c.surfaceBg);
+  // The platform paints this where the page has not yet (a window that just grew) — the same ground
+  // `body` paints, so a resize never shows white or black for a frame (window_chrome.rs).
+  setWindowGround(c.surfaceBg).catch(() => {});
   set("--paper-bg", c.paperBg);
   set("--chrome-bg", c.chromeBg);
   set("--chrome-border", c.chromeBorder);

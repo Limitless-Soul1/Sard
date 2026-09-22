@@ -18,6 +18,7 @@ import { loadBookCssMode } from "../../reader-engine/bookCssSetting"; // WP-7 st
 // RAWY-291: PDF reading appearances + the zoom lattice.
 import {
   isPdfThemeId, PDF_THEME_KEY, pdfTheme, pdfZoomKey, pdfZoomAttr, parseStoredZoom,
+  PDF_VIEW_MODE_KEY, parsePdfViewMode, type PdfViewMode,
   stepPdfZoom, zoomForWheel, isFitMode, type PdfZoom, type PdfThemeId,
 } from "../../reader-engine/pdfView";
 import {
@@ -33,6 +34,7 @@ import {
   ZOOM_MIN,
   ZOOM_STEP,
 } from "../../reader-engine/injectedCss";
+import { Icon } from "../../components/Icon";
 import { bookGet, bookRegister, bookSetCoverPng, bookSetExtracted, progressGet, progressSave, settingsGet, settingsSet } from "../../lib/ipc";
 // RESILIENCE-1 / WP-3: the ONE place a book's displayed name is decided (see lib/bookMeta.ts).
 import { hintMeta, resolveBookMeta } from "../../lib/bookMeta";
@@ -171,6 +173,14 @@ export function Reader({
   // re-implementation of it that could drift.
   (window as unknown as { __sardTrackStats?: (lang?: string) => unknown }).__sardTrackStats = (lang) =>
     ctrlRef.current?.trackStats(lang);
+  // DEV ONLY, and compiled out of a release build. Cross-chapter preparation keys prepared audio on the
+  // opening of a section read from its RAW document; these two let that be measured against the units the
+  // rendered chapter actually produces, through the real pipeline rather than a copy of it.
+  if (import.meta.env.DEV) {
+    (window as unknown as { __sardRawUnits?: (i: number, lang?: string, n?: number) => unknown }).__sardRawUnits = (i, lang, n) =>
+      ctrlRef.current?.rawSectionFirstUnits(i, lang, n ?? 2);
+    (window as unknown as { __sardCtrl?: () => unknown }).__sardCtrl = () => ctrlRef.current;
+  }
   // RAWY-292: the same convention for PDF read-aloud — units as the pipeline builds them, plus the
   // text-layer verdict, so extraction QUALITY is measured through the real code.
   (window as unknown as { __sardPdfTts?: (lang?: string) => unknown }).__sardPdfTts = async (lang) => {
@@ -615,7 +625,7 @@ export function Reader({
       // and the same call site, exercised once loading had finished, correctly merged (`[1]` → `[1,6]`).
       // Nothing here depends on the view, so the reads simply belong before it. No flag, no guard, no
       // deferral of the handler: the data is just present before anything can read it.
-      const [readRaw, seenRaw, spoilerRaw, invertRaw, pdfThemeRaw, pdfZoomRaw, furthestRaw, speakSymRaw] = await Promise.all([
+      const [readRaw, seenRaw, spoilerRaw, invertRaw, pdfThemeRaw, pdfZoomRaw, pdfModeRaw, furthestRaw, speakSymRaw] = await Promise.all([
         settingsGet(`chapters_read:${target.id}`).catch(() => null),
         settingsGet(`seen_start:${target.id}`).catch(() => null),
         settingsGet(`spoiler_safe:${target.id}`).catch(() => null),
@@ -625,6 +635,10 @@ export function Reader({
         // because the right magnification depends on that file's page size and scan quality.
         settingsGet(PDF_THEME_KEY).catch(() => null),
         settingsGet(pdfZoomKey(target.id)).catch(() => null),
+        // HOW a PDF is read — one continuous flow, or one page at a time. Loaded here with the rest,
+        // because it decides which renderer `ctrl.open()` builds and cannot be changed afterwards
+        // without reopening the book.
+        settingsGet(PDF_VIEW_MODE_KEY).catch(() => null),
         // The furthest point reached. Same additive settings-row pattern as the two sets above —
         // no schema change, no migration, and an absent key simply means this book has no mark yet.
         settingsGet(`furthest_read:${target.id}`).catch(() => null),
@@ -673,6 +687,13 @@ export function Reader({
       // silently discarded, and nobody who never used invert gets a dark theme they did not ask for.
       setPdfThemeId(isPdfThemeId(pdfThemeRaw) ? pdfThemeRaw : invertRaw === "1" ? "night" : "normal");
       setPdfZoom(parseStoredZoom(pdfZoomRaw) ?? "fit-page");
+      // Set BOTH before `ctrl.open()` below reads the ref: the mode chooses the renderer, and the
+      // renderer is built inside that call.
+      {
+        const mode = parsePdfViewMode(pdfModeRaw);
+        pdfModeRef.current = mode;
+        setPdfMode(mode);
+      }
       // RESILIENCE-1 / WP-6B — a FRAGMENTED spine defaults to SCROLLED flow.
       //
       // MEASURED across the corpus: exactly one book qualifies — `word-generated--unknown-title`,
@@ -851,6 +872,7 @@ export function Reader({
         flags: { overrideBookColor: ts.overrideBookColor, hideChapterTitles: ts.hideChapterTitles, hideFirstLine: ts.hideFirstLine, pageOpacity: effectivePageOpacity(), deskScrim: currentDeskScrim() },
         dir: target.dir ?? undefined, // RAWY-85: a PDF's manual RTL override lives in books.dir too
         flow: initialStyle.flowMode, // scrolled (default) or paged — RAWY-25
+        fxlMode: pdfModeRef.current, // PDF only: "scroll" (default) or "pages"
         revealLabels: makeRevealLabels(), // RAWY-70
       });
       // Superseded during the (async) open → don't publish ready/toc or bind the shared stores; the
@@ -1260,7 +1282,7 @@ export function Reader({
     // RAWY-184 (Part C) / PART D: Right/Left arrow with focus inside the reading frame skips the next/prev
     // SENTENCE while read-aloud is active — NOT mirrored in RTL (the transport is a media/time control, not
     // reading direction); otherwise the arrows keep their normal page-turn (which DOES mirror in RTL).
-    ctrl?.onArrow((key) => skipSentenceForArrow(key));
+    ctrl?.onArrow((key, repeat) => skipSentenceForArrow(key, repeat));
     // RAWY-73/130: scroll-down hides the bars, scroll-up shows them — the SAME during TTS now (RAWY-129
     // gated this off to dodge a reflow hitch; RAWY-130 removes the gate and instead pins the reading area
     // full-height during TTS via `.reader-root.tts-playing .page-host` (global.css), so the bars hide/show
@@ -1621,6 +1643,42 @@ export function Reader({
   // for why a PDF "theme" can only be a colour transform), and the renderer's zoom is finally exposed.
   const [pdfThemeId, setPdfThemeId] = useState<PdfThemeId>("normal");
   const [pdfZoom, setPdfZoom] = useState<PdfZoom>("fit-page");
+  /**
+   * HOW A PDF IS READ — one continuous flow (the default) or one page at a time.
+   *
+   * It decides which renderer the engine builds, so it is fixed for the life of an open book: the
+   * setter below persists it and REOPENS, which is the honest way to change something that is
+   * decided at construction. A ref beside the state because `openBook` and the desk's wheel handler
+   * both read it from closures registered once.
+   */
+  const [pdfMode, setPdfMode] = useState<PdfViewMode>("scroll");
+  const pdfModeRef = useRef<PdfViewMode>("scroll");
+  pdfModeRef.current = pdfMode;
+  /**
+   * SWITCHING THE MODE REOPENS THE BOOK, and does so on purpose.
+   *
+   * The mode chooses which renderer the engine constructs, so it cannot be changed on a live view
+   * without tearing one renderer down and standing another up in its place — which is a reopen with
+   * extra steps, and a reopen that hides what it is doing. Instead the position is FLUSHED first and
+   * the book is opened again: `openBook` resumes a PDF from the saved fraction, which is the same
+   * `(pageIndex + 0.5) / n` both renderers report, so the reader lands on the page they were on
+   * whichever direction the switch goes.
+   */
+  const choosePdfMode = useCallback((m: PdfViewMode) => {
+    if (m === pdfModeRef.current) return;
+    void (async () => {
+      await settingsSet(PDF_VIEW_MODE_KEY, m).catch(() => {});
+      // Persist WHERE WE ARE before the view goes away; the reopen reads exactly this row.
+      try {
+        const st = useReader.getState();
+        if (bookRef.current) await progressSave(bookRef.current, st.cfi ?? "", st.fraction);
+      } catch { /* an unsaved position falls back to the last one written, never to the start */ }
+      pdfModeRef.current = m;
+      setPdfMode(m);
+      openBook(initial);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial]);
   // RAWY-292: the PDF toast is gone with copy-selection, its only caller. A PDF that cannot be read
   // aloud now degrades through the EXISTING read-aloud path: unusable pages yield zero units, which is
   // the same empty-chapter state an empty EPUB chapter produces — one behaviour, not a parallel one.
@@ -1901,7 +1959,7 @@ export function Reader({
       if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
       if (t && t.closest?.('[role="slider"], input[type="range"]')) return;
       if (!(e.key === "ArrowLeft" || e.key === "ArrowRight")) return;
-      if (ctrlRef.current?.handleNavKey(e.key)) e.preventDefault();
+      if (ctrlRef.current?.handleNavKey(e.key, e.repeat)) e.preventDefault();
     };
     window.addEventListener("keydown", onNavKey);
     return () => window.removeEventListener("keydown", onNavKey);
@@ -2168,7 +2226,10 @@ export function Reader({
       else startIndex = Math.min(Math.max(0, at), sentences.length - 1);
     }
     // WP-5A: the SNIFFED script rides along so the pre-flight can refuse before any synthesis.
-    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: captionRef.current(), bookScript: useReader.getState().bookScript, speakSymbols: speakSymbolsNow() });
+    useTts.getState().start({ sentences, lang: bookLang, startIndex, chapterLabel: captionRef.current(), bookScript: useReader.getState().bookScript, speakSymbols: speakSymbolsNow(),
+      // The next chapter's opening, for preparation while this one plays out (see `prepared` in tts.ts).
+      // A function, so a chapter nobody listens to the end of costs nothing.
+      nextUnits: () => ctrlRef.current?.nextSectionFirstUnits(bookLang, 2) ?? Promise.resolve(null) });
   };
   // RAWY-186 (Part A): the Play/Pause gesture (pill button AND Space). Read-aloud audio is decoupled from
   // the view (RAWY-129: you can browse while listening), so pressing Play after navigating to a DIFFERENT
@@ -2275,6 +2336,16 @@ export function Reader({
   // RAWY-86: a PDF is fixed-layout — ALWAYS paged (chevrons + wheel-to-page), never scrolled. This
   // is the stuck-nav fix (RAWY-85 left a PDF with no chevrons + a scroll no-op).
   const showChevrons = isPaged || isPdf;
+  // WHERE A PDF STANDS IN ITS OWN PAGES — derived EXACTLY as the toolbar's page readout derives it
+  // (RAWY-86 persists `(pageIndex + 0.5) / count`), so the control and the number can never disagree:
+  // if the bar says page 1, the «previous» affordance is spent, and it says so instead of offering a
+  // press that does nothing. EPUB is left alone — a spine has no cheap, exact "is there a page after
+  // this one", and a chevron that guesses is worse than one that always answers.
+  const pdfPage1 = isPdf && pdfPageCount
+    ? Math.min(pdfPageCount, Math.max(1, Math.round(fraction * pdfPageCount - 0.5) + 1))
+    : 0;
+  const atFirstPage = pdfPage1 === 1;
+  const atLastPage = pdfPage1 > 0 && pdfPage1 === pdfPageCount;
   // RAWY-74: forward wheel events happening over the reading MARGINS (the desk / sheet padding,
   // outside foliate's content iframe) to the book's scroller, so the wheel scrolls anywhere in the
   // reading area — not only over the text. A wheel over the text fires INSIDE the iframe (never
@@ -2285,6 +2356,15 @@ export function Reader({
     // RAWY-291: Ctrl+Wheel now zooms a PDF as well. It previously fell through to the paging branch
     // below, so the gesture every reader expects to magnify a scan turned the page instead.
     if (e.ctrlKey || e.metaKey) { e.preventDefault(); (isPdf ? pdfZoomByWheel : zoomByWheel)(e.deltaY); return; }
+    // SCROLL MODE: the reading area is a real scroller, so a wheel over the DESK must reach it
+    // rather than be converted into a page turn. Forwarded to the scroller by delta, because a
+    // wheel on the margin fires out here and the scroller is inside the engine's shadow root where
+    // it cannot bubble to. That is a FORWARD of the platform's own delta — not an interpretation of
+    // it: no threshold, no accumulation, no page turn.
+    if (isPdf && pdfModeRef.current === "scroll") {
+      if (ctrlRef.current?.scrollPdfBy(e.deltaY, e.deltaX)) e.preventDefault();
+      return;
+    }
     // RAWY-86 / RAWY-293: scrolls the zoomed page first, turns the page only at its edge.
     if (isPdf) { e.preventDefault(); ctrlRef.current?.pageByWheel(e.deltaY, e.deltaX); return; }
     if (isPaged) return;
@@ -2587,6 +2667,9 @@ export function Reader({
         {showChevrons && (
           <button
             className="page-chevron page-chevron-left"
+            type="button"
+            disabled={atFirstPage}
+            aria-label={t("reader.prev")}
             // ‹ is ALWAYS the previous page and › ALWAYS the next one, in every book. These used to
             // move the page PHYSICALLY (left chevron = goLeft), so in an Arabic book ‹ advanced and
             // › went back — the same inversion the keyboard arrows had, and the same complaint. The
@@ -2595,7 +2678,15 @@ export function Reader({
             onClick={() => ctrlRef.current?.backward()}
             title={t("reader.prev")}
           >
-            ‹
+            {/* THE MARK COMES FROM SARD'S OWN SET, not from a glyph in whatever face happens to be
+                loaded. `‹` and `›` were text: they inherited `--ui-font`, so their weight, size and
+                optical centre changed with the interface face and with every fallback the system
+                substituted — and they could not take the icon system's stroke token at all. The
+                drawn caret is one stroke at one weight on all sixteen papers.
+                It is NOT mirrored in Arabic, and must not be: this button is «previous» in every
+                book (see the note above), and the reading area is pinned LTR, so the drawing points
+                the way the button physically moves. */}
+            <Icon name="caretLeft" size="md" />
           </button>
         )}
         <div className={`page-sheet${fitWindow ? " fitw" : ""}`}>
@@ -2608,10 +2699,13 @@ export function Reader({
         {showChevrons && (
           <button
             className="page-chevron page-chevron-right"
+            type="button"
+            disabled={atLastPage}
+            aria-label={t("reader.next")}
             onClick={() => ctrlRef.current?.forward()}
             title={t("reader.next")}
           >
-            ›
+            <Icon name="caretRight" size="md" />
           </button>
         )}
       </div>
@@ -2715,6 +2809,8 @@ export function Reader({
         pdfZoom={pdfZoom}
         onPdfZoomStep={pdfZoomStep}
         onPdfZoomMode={(m) => applyPdfZoom(m)}
+        pdfMode={pdfMode}
+        onPdfMode={choosePdfMode}
         speakSymbolsOverride={speakSymbolsOverride}
         speakSymbolsAppearance={style?.ttsSpeakSymbols ?? ARABIC_DEFAULTS.ttsSpeakSymbols}
         onSpeakSymbols={setBookSpeakSymbols}

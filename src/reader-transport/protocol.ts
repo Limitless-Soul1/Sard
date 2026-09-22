@@ -78,6 +78,8 @@ export interface Mirror {
    * JSON.stringify turned into undefined. Every one of them is mirrored.
    */
   isFixedLayout: boolean;
+  /** Which fixed-layout renderer this view was opened with — "scroll" or "pages" (PDF only). */
+  fxlMode: string;
   isScrolled: boolean;
   readingScrollTop: number;
   pdfPageCount: number;

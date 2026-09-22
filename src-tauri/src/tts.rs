@@ -52,6 +52,45 @@ struct EdgeRunning {
     config: SpeechConfig,
     tx: Sender<TcpStream>,
     rx: Receiver<TcpStream>,
+    /// When this client last finished a synthesis — the input to the idle rule below.
+    last_used: Instant,
+}
+
+/// HOW LONG A WARM CLIENT MAY SIT IDLE BEFORE IT IS REPLACED RATHER THAN USED.
+///
+/// THE DEFECT THIS EXISTS FOR. The service closes a read-aloud socket it considers idle, and the close
+/// is only discovered when the next request is WRITTEN: the call fails immediately with a connection
+/// reset (10054) and the scheduler pays a wasted attempt before reconnecting. MEASURED against the live
+/// service, one request per idle interval: every request up to 32.4 s idle succeeded, and every request
+/// from 33.0 s onwards failed in 3 ms and succeeded on the immediate retry (35 s, 45 s, 60 s — both
+/// trials). In a real day of listening this was 17 of 22 resets, and it is why a chapter start after a
+/// pause so often began with a failure: the tail of a chapter leaves the engine idle for 10–27 s and the
+/// listener's own reaction adds the rest.
+///
+/// THE RULE. Past this ceiling the client is dropped and a fresh one opened BEFORE the request is
+/// written, so the first request after a pause connects instead of failing. 20 s is the validated value
+/// and leaves 13 s of margin under the measured cliff; the reconnect it costs was measured at 1.0–2.7 s,
+/// which is what the failure path was already paying for its retry — with the policy on, 22 of 22
+/// requests succeeded across 0–120 s of idle, with no reset at any interval.
+///
+/// ACTIVE PLAYBACK IS UNAFFECTED: a chapter in flight dispatches far inside this window (the longest gap
+/// between two successful requests in the real record was 29.3 s, and only 5 of 1,669 fell in the 20–33 s
+/// band at all). The ceiling is tunable through `SARD_EDGE_IDLE_MAX_MS`, and 0 disables the rule, so the
+/// threshold can be re-measured on another network without a rebuild.
+const EDGE_IDLE_MAX_MS: u64 = 20_000;
+
+fn edge_idle_max() -> Option<Duration> {
+    let ms = std::env::var("SARD_EDGE_IDLE_MAX_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(EDGE_IDLE_MAX_MS);
+    (ms > 0).then(|| Duration::from_millis(ms))
+}
+
+/// Is a warm client too old to be trusted with the next request? Separated from the socket so the rule
+/// itself is testable without one.
+fn edge_client_is_stale(idle: Duration, max: Option<Duration>) -> bool {
+    max.is_some_and(|m| idle > m)
 }
 /// A UI-facing Edge voice — the picker groups these by language and labels them by engine.
 #[derive(serde::Serialize)]
@@ -699,8 +738,16 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String, budget_ms: Opt
     if cancel.load(Ordering::SeqCst) {
         return Err("edge synth cancelled".into());
     }
-    let need_new = guard.as_ref().map(|r| r.voice_id != id).unwrap_or(true);
+    // A client the service has probably closed already (see `EDGE_IDLE_MAX_MS`) is replaced here, before
+    // the request is written, rather than discovered as a failure by the caller.
+    let idle = guard.as_ref().map(|r| r.last_used.elapsed()).unwrap_or_default();
+    let stale = guard.is_some() && edge_client_is_stale(idle, edge_idle_max());
+    let need_new = guard.as_ref().map(|r| r.voice_id != id).unwrap_or(true) || stale;
     if need_new {
+        if stale {
+            // Dropped on this thread, while the engine lock is held, so no other call can take it up.
+            *guard = None;
+        }
         // build the voice's config from the (cached) voice list, then open a warm connection
         let voices = cached_voices(engines, remaining(deadline, "voices")?, &cancel)?;
         let voice = voices
@@ -710,7 +757,7 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String, budget_ms: Opt
         let mut config = SpeechConfig::from(voice);
         config.audio_format = "audio-24khz-48kbitrate-mono-mp3".to_string(); // force MP3 for WebAudio
         let (tx, rx) = connect_bounded(remaining(deadline, "connect")?, &cancel)?;
-        *guard = Some(EdgeRunning { voice_id: id.clone(), config, tx, rx });
+        *guard = Some(EdgeRunning { voice_id: id.clone(), config, tx, rx, last_used: Instant::now() });
     }
     // RAWY-FINAL: `let Some(..) else` rather than `.unwrap()`. The `need_new` branch above makes this
     // provably `Some` today, but this line runs while `engines.edge` is HELD — the one place a panic
@@ -728,7 +775,9 @@ fn edge_synthesize(engines: &TtsEngine, id: String, text: String, budget_ms: Opt
     let outcome = edge_synth_once(running, &text, bounds, cancel.clone(), &engines.streaming);
     engines.streaming.store(false, Ordering::SeqCst);
     let streamed = match outcome {
-        EdgeSynth::Ok(audio, running) => {
+        EdgeSynth::Ok(audio, mut running) => {
+            // The idle clock starts when the client is handed back, not when the request began.
+            running.last_used = Instant::now();
             *guard = Some(running);
             audio
         }
@@ -1129,6 +1178,30 @@ mod live_edge {
     fn warm(e: &TtsEngine) {
         synth_ok(e, &nonce("warm up"), None, "warm-up");
     }
+    #[test]
+    fn the_idle_rule_replaces_only_a_client_past_the_ceiling() {
+        let max = Some(Duration::from_millis(20_000));
+        assert!(!edge_client_is_stale(Duration::from_millis(0), max), "a client just used is kept");
+        assert!(!edge_client_is_stale(Duration::from_millis(19_999), max), "just inside the ceiling is kept");
+        assert!(!edge_client_is_stale(Duration::from_millis(20_000), max), "exactly at the ceiling is kept");
+        assert!(edge_client_is_stale(Duration::from_millis(20_001), max), "past the ceiling is replaced");
+        assert!(edge_client_is_stale(Duration::from_secs(120), max), "long past it, certainly");
+        // The measured band: every request up to 32.4 s idle succeeded, every one from 33.0 s failed. The
+        // ceiling must sit below that cliff, or the rule would let the failing case through.
+        assert!(EDGE_IDLE_MAX_MS < 33_000, "the ceiling must stay under the measured reset cliff");
+    }
+
+    #[test]
+    fn the_idle_rule_can_be_switched_off_and_retuned() {
+        assert!(!edge_client_is_stale(Duration::from_secs(600), None), "no ceiling: a client is never replaced for age");
+        // The default, and what an override would have to look like, without touching the process env in a
+        // test that runs beside others.
+        assert_eq!(EDGE_IDLE_MAX_MS, 20_000);
+        let ceiling = |ms: u64| (ms > 0).then(|| Duration::from_millis(ms));
+        assert_eq!(Some(Duration::from_millis(25_000)), ceiling(25_000), "an override retunes the rule");
+        assert_eq!(None, ceiling(0), "zero switches it off");
+    }
+
     fn synth(e: &TtsEngine, text: &str, budget: Option<u64>) -> Result<usize, String> {
         use tauri::ipc::IpcResponse;
         // the app installs the provider at startup (lib.rs); the test binary has to do the same

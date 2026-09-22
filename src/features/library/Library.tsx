@@ -37,6 +37,7 @@ import { coverSrc } from "./coverSrc";
 import { GlobalSettings } from "../settings/GlobalSettings";
 import { useBookPickup } from "./design/bookPickup";
 import { BookActions, type BookActionsProps } from "./design/BookActions";
+import { useBookContextMenu } from "./design/bookContextMenu";
 import { UpdateRosette } from "../updater/UpdateRosette";
 import { UpdateDialog } from "../updater/UpdateDialog";
 import { LibraryDesign } from "./design/LibraryDesign";
@@ -1023,11 +1024,16 @@ function BookCard({
   // on an ordinary card would quietly stop opening the book. Left off, such a card behaves exactly
   // as it did before it was given a descriptor at all.
   const wantsPress = !!order && (order.orderable || order.arrangeOn);
+  // A right-click anywhere on the card opens the book's own ⋯ menu, at the pointer. The hold armed
+  // by a press is disarmed first: a right-click fires `pointerdown` too, and a slow one would
+  // otherwise lift the book behind the menu it just opened.
+  const ctx = useBookContextMenu({ onOpen: pickup.cancelHold });
   return (
     <div
       className="lib-card"
       role="button"
       tabIndex={0}
+      onContextMenu={ctx.onContextMenu}
       // The card names the book it draws, and where that book is filed. The identity lets a check
       // address it; the shelf and index are what let a RELEASE OVER THIS CARD resolve to a real
       // position, which is how a book is dropped where the reader wants it.
@@ -1081,7 +1087,7 @@ function BookCard({
         {p.state === "reading" && <span className="lib-card-bar" style={{ width: `${p.pct}%` }} />}
         {actions ? (
           // Grid keeps its own placement — `.lib-card-edit` — and nothing else of its own.
-          <BookActions {...actions} className="lib-card-edit" />
+          <BookActions {...actions} ref={ctx.ref} className="lib-card-edit" />
         ) : (
           <button
             className="lib-card-edit"

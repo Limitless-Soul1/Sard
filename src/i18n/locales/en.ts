@@ -3,6 +3,11 @@
 export const en = {
   "app.name": "Sard",
 
+  "window.minimize": "Minimize",
+  "window.maximize": "Maximize",
+  "window.restore": "Restore",
+  "window.close": "Close",
+
   "picker.prompt": "Choose your language",
   "picker.sub": "You can change this later in settings.",
   "lang.english": "English",
@@ -85,6 +90,10 @@ export const en = {
   "pdf.theme.ink": "High contrast",
   "pdf.tts.title": "Read aloud",
   "pdf.tts.body": "PDF text extraction varies between documents. Some PDFs — especially scanned or poorly encoded files — may not be read accurately, or cannot be read aloud at all.",
+  "pdf.mode": "Reading mode",
+  "pdf.mode.scroll": "Scroll",
+  "pdf.mode.pages": "Pages",
+  "pdf.mode.hint": "Scroll lays the pages out in one continuous flow; Pages shows one page at a time. Switching reopens the book and keeps your place.",
   "pdf.zoom": "Zoom",
   "pdf.zoom.in": "Zoom in",
   "pdf.zoom.out": "Zoom out",
@@ -1049,6 +1058,8 @@ export const en = {
   "rep.add": "Add",
   "rep.save": "Save",
   "rep.cancel": "Cancel",
+  "rep.edit": "Edit",
+  "rep.conflict": "Another replacement already governs these words: “{from}” → “{to}”. Nothing was saved — change the original, or edit that rule instead.",
   "rep.delete": "Delete",
   "rep.deleteConfirm": "Delete for good",
   "rep.deleteCancel": "Undo",

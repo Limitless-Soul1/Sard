@@ -25,6 +25,7 @@ import {
   LTR_ALIGN_CLASS, // RAWY-253 (addendum): align a kept-LTR paragraph to the book's margin
   TEXT_HOST_CLASS, // the block container that DIRECTLY holds prose, when the book uses none of p/li/div
   PARA_BREAK_CLASS, // the box that gives a <br>-separated run a paragraph gap to be spaced by
+  hiddenBlockSelectors, // the blocks a hide toggle makes invisible — and so removes from the spoken queue
   type BookThemeFlags,
   type ReadingStyle,
   type RevealLabels,
@@ -698,6 +699,15 @@ interface OpenOptions {
   dir?: string | null;
   /** Reading flow (RAWY-25): "scrolled" (default) or "paged". */
   flow?: "scrolled" | "paged";
+  /**
+   * HOW A FIXED-LAYOUT BOOK (a PDF) IS READ — "scroll" (the default) or "pages".
+   *
+   * It must be decided BEFORE the view opens, because it chooses which renderer the engine builds:
+   * `foliate-fxl-scroll` lays every page out in one continuous scroller, `foliate-fxl` shows one at
+   * a time. Both consume the same sections and emit the same events, so nothing downstream of the
+   * renderer differs. Ignored for a reflowable book, which has neither renderer.
+   */
+  fxlMode?: "scroll" | "pages";
   /** Localized text for the hide-first-line placeholder + reveal (RAWY-70). */
   revealLabels?: RevealLabels;
 }
@@ -1901,7 +1911,7 @@ export class FoliateController {
   // skips the previous/next SENTENCE (the cb returns true → swallow the key); otherwise arrows keep their
   // normal reader behaviour (page turn). Same reasoning as `spaceCb`: the content frame's keydown never
   // reaches the parent window, so this callback runs the parent's sentence-skip from reading-area focus.
-  private arrowCb: ((key: string) => boolean) | null = null;
+  private arrowCb: ((key: string, repeat: boolean) => boolean) | null = null;
   // RAWY-73: scroll intent (scrolled mode) — accumulate wheel delta and fire a debounced direction
   // so a small jitter doesn't toggle the bar. down = scroll down (hide), up = scroll up (show).
   private scrollIntentCb: ((down: boolean) => void) | null = null;
@@ -1999,6 +2009,10 @@ export class FoliateController {
     await ensureFoliateDefined();
 
     const view = document.createElement("foliate-view") as any;
+    // Read by `view.open()` when it picks the fixed-layout renderer; see the note on `fxlMode`. Set
+    // before `open()` is called, because by then the renderer has already been built.
+    view.fxlMode = opts.fxlMode === "pages" ? "pages" : "scroll";
+    this.fxlMode = view.fxlMode;
     this.view = view; // claim ownership before awaits; a later open() will replace this
     this.navReady = false; // ownership is not readiness — nothing may navigate until this open finishes
     container.replaceChildren(view);
@@ -2266,7 +2280,7 @@ export class FoliateController {
           // RAWY-180 (Part B): Space toggles read-aloud when active; else it pages the PDF (as before).
           if (ev.key === " ") { if (this.spaceCb?.()) ev.preventDefault(); else this.view?.next?.(); }
           // WP-4C: the same single owner the EPUB path uses (see handleNavKey).
-          else if (this.handleNavKey(ev.key)) ev.preventDefault();
+          else if (this.handleNavKey(ev.key, ev.repeat)) ev.preventDefault();
         });
         // RAWY-87 (#2): a wheel over the PDF PAGE fires INSIDE this iframe, so it never reaches the
         // reader-desk's onWheel (the frame boundary) — that's why wheeling the page did nothing while
@@ -2279,6 +2293,12 @@ export class FoliateController {
         // the browser's own page-zoom does not also fire; plain paging stays passive as before.
         doc.addEventListener("wheel", (ev: WheelEvent) => {
           if (ev.ctrlKey || ev.metaKey) { ev.preventDefault(); this.zoomIntentCb?.(ev.deltaY); return; }
+          // SCROLL MODE: LET IT GO. The page iframe sits inside a real scroller, so an unprevented
+          // wheel bubbles out of the frame and scrolls the document the way the platform intends —
+          // at its own rate, across page boundaries, with the trackpad and momentum it already
+          // knows about. Calling preventDefault here would swallow the gesture and hand it to the
+          // very code whose whole job has been removed.
+          if (this.fxlMode === "scroll") return;
           // RAWY-293: a wheel over the page must scroll the ZOOMED page first (layer 1), so the
           // in-frame path and the desk path share one behaviour. deltaX rides along for wide pages.
           ev.preventDefault();
@@ -2376,7 +2396,7 @@ export class FoliateController {
         // returns true → swallow); otherwise they keep the normal page-turn (next/prev).
         // WP-4C: routed through the ONE owner (handleNavKey) so a key behaves identically whether
         // focus is inside the book or up in the chrome.
-        if (ev.key === "ArrowLeft" || ev.key === "ArrowRight") { if (this.handleNavKey(ev.key)) ev.preventDefault(); }
+        if (ev.key === "ArrowLeft" || ev.key === "ArrowRight") { if (this.handleNavKey(ev.key, ev.repeat)) ev.preventDefault(); }
         // RAWY-180 (Part B): Space toggles read-aloud when a session is active; otherwise it keeps its
         // normal behaviour (scrolling the content). Only swallow the key when the toggle actually fired.
         else if (ev.key === " ") { if (this.spaceCb?.()) ev.preventDefault(); }
@@ -2968,7 +2988,7 @@ export class FoliateController {
    *
    * Returns true when the key was consumed, so the caller knows whether to preventDefault.
    */
-  handleNavKey(key: string): boolean {
+  handleNavKey(key: string, repeat = false): boolean {
     // The intent table lives in `navIntent.ts` — ONE copy, shared with its tests, and taking no
     // direction argument so a script direction cannot re-enter the decision.
     const intent = navIntent(key);
@@ -2977,14 +2997,18 @@ export class FoliateController {
     // RAWY-184: while read-aloud runs, the arrows skip the previous/next SENTENCE instead of turning
     // a page — the callback reports whether it claimed the key. EPUB only; a PDF has no sentences.
     if (!this.isFixedLayout && (key === "ArrowLeft" || key === "ArrowRight")) {
-      if (this.arrowCb?.(key)) return true;
+      // `repeat` is the PLATFORM's own answer to "is this the key repeating, or a fresh press" —
+      // forwarded rather than inferred from timing, because read-aloud paces auto-repeat and a rate
+      // heuristic cannot tell a held key from fast deliberate pressing. Defaults to false, so a caller
+      // that does not know (or does not have the event) behaves exactly as before.
+      if (this.arrowCb?.(key, repeat)) return true;
     }
     if (intent === "forward") this.forward();
     else this.backward();
     return true;
   }
 
-  onArrow(cb: (key: string) => boolean): void {
+  onArrow(cb: (key: string, repeat: boolean) => boolean): void {
     this.arrowCb = cb;
   }
   /** RAWY-74/75: scroll the book by a wheel delta coming from OUTSIDE the content iframe — i.e. the
@@ -4516,6 +4540,56 @@ export class FoliateController {
   private ttsAnchorSection(): number {
     return this.ttsUnitsIndex >= 0 ? this.ttsUnitsIndex : this.currentSectionIndex();
   }
+  /**
+   * THE FIRST `n` READ-ALOUD UNITS OF THE SECTION AFTER THE TTS
+   * chapter, segmented from its RAW document (`createDocument()`, never rendered) by the same walk the
+   * rendered chapter uses.
+   *
+   * WHAT A CALLER MAY DO WITH THEM. Treat them as a CONTENT KEY, never as the queue itself: a rendered
+   * chapter can differ, because exclusions that depend on rendering cannot apply to a document that was
+   * never laid out. MEASURED over 12 books (289 sections) and a fixture built out of the awkward cases
+   * — hidden and invisible blocks, empty and whitespace-only ones, nested inline markup, heading-only
+   * and title-plus-subtitle openings, lists: the first two units matched the rendered ones exactly in
+   * every case, and with the reader's "hide the first line" setting on as well. With "hide chapter
+   * titles" on they differ by design (the heading is replaced in the rendered document), which is why
+   * this is a key and not a queue — the caller misses and synthesizes normally.
+   *
+   * Null when there is no next section, or the section cannot be read.
+   */
+  async nextSectionFirstUnits(lang: string | undefined, n: number): Promise<string[] | null> {
+    const count = this.view?.book?.sections?.length ?? 0;
+    const next = this.ttsAnchorSection() + 1;
+    if (next <= 0 || next >= count) return null;
+    return this.rawSectionFirstUnits(next, lang, n);
+  }
+  async rawSectionFirstUnits(index: number, lang: string | undefined, n: number): Promise<string[] | null> {
+    const sections: { createDocument?: () => Promise<Document> }[] | undefined = this.view?.book?.sections;
+    const sec = sections?.[index];
+    if (!sec?.createDocument) return null;
+    let doc: Document;
+    try { doc = await sec.createDocument(); } catch { return null; }
+    if (!doc?.body) return null;
+    // THE SAME TWO STEPS THE RENDERED SECTION GOES THROUGH, so the sequence this returns is the one
+    // the reader will actually speak.
+    //
+    //   1. The heading detector, with the same input it gets when the section renders (the section's
+    //      own TOC label). It is what tags `.sard-chapter-heading`; without it that class never
+    //      exists here and the hide below could not see anything.
+    //   2. The hide toggles. In the rendered section these blocks are made invisible by the reading
+    //      CSS, and segmentation skips them because they compute as invisible. THIS document was
+    //      parsed, never rendered — `defaultView` is null, so no style computes and that test cannot
+    //      fire. The blocks are therefore dropped outright, from the same selector list the CSS rule
+    //      is built from (`hiddenBlockSelectors`), which is what keeps the two from drifting. The
+    //      document is a throwaway parsed for this purpose and is never shown to anyone.
+    try {
+      markInBodyHeading(doc, sectionTocLabel(this.view, index));
+      for (const sel of hiddenBlockSelectors(this.flags)) {
+        for (const el of Array.from(doc.querySelectorAll(sel))) el.remove();
+      }
+    } catch { /* a section we cannot mark is simply segmented as it is — a miss, never wrong audio */ }
+    const units = await this.unitsForRoot(doc.body, doc, lang);
+    return units.map((u) => u.text.trim()).filter(Boolean).slice(0, n);
+  }
   /** RAWY-184 (Part B): is there a chapter AFTER the one that just finished? (for the end-of-chapter "next"
    *  control). RAWY-227: anchored on the TTS chapter, not the displayed section. */
   hasNextSection(): boolean {
@@ -4553,7 +4627,34 @@ export class FoliateController {
    * At fit-page there is nothing to scroll, so layer 1 never fires and paging behaves exactly as it
    * always did — the normal-zoom behaviour is preserved by construction, not by a separate branch.
    */
+  /** Which fixed-layout renderer this view was opened with. Meaningless for a reflowable book. */
+  fxlMode: "scroll" | "pages" = "scroll";
+
+  /**
+   * SCROLL MODE ONLY: hand the scroller a wheel delta that fired outside it.
+   *
+   * A wheel over the READING MARGINS does not reach the scroller on its own — the scroller lives in
+   * the engine's shadow root, and the margin is outside it. This forwards the platform's own delta
+   * unchanged, which is the same thing the browser would have done had the pointer been two
+   * centimetres to the right. It interprets nothing: no threshold, no accumulation, no page turn.
+   *
+   * Returns true when it consumed the gesture, so the caller knows whether to preventDefault.
+   */
+  scrollPdfBy(deltaY: number, deltaX = 0): boolean {
+    if (this.fxlMode !== "scroll" || !this.isFixedLayout) return false;
+    const r = this.view?.renderer as { scrollTop?: number; scrollLeft?: number } | undefined;
+    if (!r || typeof r.scrollTop !== "number") return false;
+    if (deltaY) r.scrollTop = r.scrollTop + deltaY;
+    if (deltaX && typeof r.scrollLeft === "number") r.scrollLeft = r.scrollLeft + deltaX;
+    return true;
+  }
+
   pageByWheel(deltaY: number, deltaX = 0): void {
+    // IN SCROLL MODE THERE IS NOTHING FOR THIS TO DO, and doing it would be the defect coming back.
+    // The scroll renderer's container is a real scroller in the ordinary flow, so the wheel is the
+    // browser's: it scrolls, at the platform's own rate, across page boundaries, without any delta
+    // arithmetic here. A handler that also moved it would double every gesture.
+    if (this.fxlMode === "scroll") return;
     if (!this.isFixedLayout || (!deltaY && !deltaX)) return;
     const r = this.view?.renderer as HTMLElement | undefined;
     if (r) {

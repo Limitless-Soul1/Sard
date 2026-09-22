@@ -3,7 +3,7 @@ import { ReadingSettings } from "./ReadingSettings";
 import type { SettingsSection } from "./ReaderChrome";
 import type { ReadingStyle } from "../../reader-engine/injectedCss";
 import type { ThemeId } from "../../theme";
-import { PDF_THEMES, type PdfZoom, type PdfThemeId } from "../../reader-engine/pdfView";
+import { PDF_THEMES, type PdfZoom, type PdfThemeId, type PdfViewMode } from "../../reader-engine/pdfView";
 import { PDF_TTS_ENABLED } from "../../lib/pdfText";
 
 interface Props {
@@ -29,6 +29,9 @@ interface Props {
   pdfZoom?: PdfZoom;
   onPdfZoomStep?: (dir: 1 | -1) => void;
   onPdfZoomMode?: (mode: "fit-width" | "fit-page") => void;
+  /** How a PDF is read: one continuous flow, or one page at a time. */
+  pdfMode?: PdfViewMode;
+  onPdfMode?: (mode: PdfViewMode) => void;
   onPdfCopy?: () => void;
   /**
    * THIS BOOK's answer about pronouncing decorative marks, the هيئة's, and the setter.
@@ -64,6 +67,8 @@ export function SettingsPanel({
   pdfZoom,
   onPdfZoomStep,
   onPdfZoomMode,
+  pdfMode,
+  onPdfMode,
   speakSymbolsOverride,
   speakSymbolsAppearance,
   onSpeakSymbols,
@@ -93,6 +98,35 @@ export function SettingsPanel({
           <div className="sp-pdf-note">
             <div className="sp-pdf-title">{t("pdf.readonly.title")}</div>
             <div className="sp-pdf-body">{t("pdf.readonly.body")}</div>
+          </div>
+
+          {/* HOW THE DOCUMENT MOVES — the first question, because it changes what every other control
+              here feels like. «تمرير» lays the pages out in one continuous flow and lets the wheel
+              scroll it; «صفحات» keeps one page on screen at a time. Two states, so they are drawn as
+              the same pair of pressed chips the zoom fits below use — one control language, not a
+              second one invented for this. */}
+          <div className="rs-sec">
+            <div className="rs-sec-head">
+              <span className="rs-label">{t("pdf.mode")}</span>
+              <span className="rs-value">{t((pdfMode ?? "scroll") === "scroll" ? "pdf.mode.scroll" : "pdf.mode.pages")}</span>
+            </div>
+            <div className="pdf-zoom-row pdf-mode-row" role="group" aria-label={t("pdf.mode")}>
+              <button
+                className={`pdf-zoom-fit${(pdfMode ?? "scroll") === "scroll" ? " on" : ""}`}
+                aria-pressed={(pdfMode ?? "scroll") === "scroll"}
+                onClick={() => onPdfMode?.("scroll")}
+              >
+                {t("pdf.mode.scroll")}
+              </button>
+              <button
+                className={`pdf-zoom-fit${(pdfMode ?? "scroll") === "pages" ? " on" : ""}`}
+                aria-pressed={(pdfMode ?? "scroll") === "pages"}
+                onClick={() => onPdfMode?.("pages")}
+              >
+                {t("pdf.mode.pages")}
+              </button>
+            </div>
+            <div className="rs-sec-hint">{t("pdf.mode.hint")}</div>
           </div>
 
           {/* RAWY-291 · ZOOM. Placed first: it is the control a reader of a scanned book reaches for.

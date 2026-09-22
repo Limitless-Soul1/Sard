@@ -36,6 +36,7 @@ import { BookmarkShape } from "./BookmarkShape";
 import { useBookmarkStyle } from "../../lib/bookmarkStyle";
 import { ColorRow } from "./AnnotationLayer";
 import { TagPicker } from "./TagPicker";
+import { ReplacementDialog } from "./ReplacementDialog";
 import { colorValue } from "./highlightColors";
 import { localeNum } from "../../lib/format";
 import {
@@ -504,7 +505,24 @@ function ReplacementsTab() {
   const reps = useReplacements((s) => s.reps);
   const setEnabled = useReplacements((s) => s.setEnabled);
   const remove = useReplacements((s) => s.remove);
+  const edit = useReplacements((s) => s.edit);
   const sel = useListSelection(reps.map((r) => r.id));
+  /**
+   * EDITING A RULE FROM ITS CARD — in the editor the rule was made in.
+   *
+   * `ReplacementDialog` is the one editor for a replacement (the reader meets it from a selection in
+   * the page); opening the SAME component here, with `existing` set, is what keeps one answer to
+   * "what does editing a replacement look like". Nothing about the card's other controls changes:
+   * the switch and the delete are the ones that were already there.
+   *
+   * The row is held by ID rather than copied into local state, so the card and the open editor read
+   * the same store — a rule switched off or deleted elsewhere does not leave a stale dialog behind.
+   */
+  const [editId, setEditId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const editing = editId ? reps.find((r) => r.id === editId) ?? null : null;
+  useEffect(() => { if (editId && !editing) setEditId(null); }, [editId, editing]);
+  const closeEditor = () => { setEditId(null); setNotice(null); };
 
   if (reps.length === 0) return <div className="rp-empty">{t("panel.noReplacements")}</div>;
   return (
@@ -533,7 +551,12 @@ function ReplacementsTab() {
                 the same rule the library's list follows. */}
             <span className="rp-chapter">{r.enabled ? "" : t("rep.off")}</span>
             {!sel.on && (
-              <button className="rp-mini danger" onClick={() => void remove(r.id)}>{t("rep.delete")}</button>
+              <>
+                {/* The quiet control comes first and the destructive one last, which is the order
+                    every other list in Sard puts them in. */}
+                <button className="rp-mini" onClick={() => { setNotice(null); setEditId(r.id); }}>{t("rep.edit")}</button>
+                <button className="rp-mini danger" onClick={() => void remove(r.id)}>{t("rep.delete")}</button>
+              </>
             )}
           </div>
           {/* THE RULE, NAMED RATHER THAN ARROWED. An arrow has to point somewhere, and this row can
@@ -561,6 +584,27 @@ function ReplacementsTab() {
           )}
         </div>
       ))}
+      {editing && (
+        <ReplacementDialog
+          phrase={editing.phrase}
+          existing={editing}
+          bookTitle={useReader.getState().bookTitle ?? ""}
+          notice={notice}
+          onSave={async (from, to) => {
+            const res = await edit(editing.id, from, to);
+            // A conflict leaves the rule, the other rule and the dialog exactly as they were, and
+            // says which rule stands in the way — so the reader can change the wording again rather
+            // than losing what they typed.
+            if (res && res.ok === false) {
+              setNotice(t("rep.conflict", { from: res.conflict.phrase, to: res.conflict.replacement }));
+              return;
+            }
+            closeEditor();
+          }}
+          onDelete={async () => { await remove(editing.id); closeEditor(); }}
+          onClose={closeEditor}
+        />
+      )}
     </>
   );
 }

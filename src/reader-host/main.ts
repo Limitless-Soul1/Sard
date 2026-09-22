@@ -91,6 +91,7 @@ function buildMirror(): Mirror {
     pdfRenderedScale: safe(() => controller.pdfRenderedScale(), 1),
     pdfHasSpeakableText: safe(() => controller.pdfHasSpeakableText(), false),
     isFixedLayout: safe(() => controller.isFixedLayout, false),
+    fxlMode: safe(() => controller.fxlMode, "scroll"),
     isScrolled: safe(() => controller.isScrolled, true),
     readingScrollTop: safe(() => controller.readingScrollTop, 0),
     pdfPageCount: safe(() => controller.pdfPageCount, 0),

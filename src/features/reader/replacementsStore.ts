@@ -33,6 +33,32 @@ interface RepState {
   byId: (id: string) => RepRow | undefined;
   /** Create OR edit — one path, matching the single editor in the design. */
   save: (phrase: string, replacement: string, cfi?: string | null) => Promise<RepRow | null>;
+  /**
+   * EDIT THE RULE THAT IS ALREADY THERE, from its card — by identity, not by phrase.
+   *
+   * `save` above keys on the folded phrase, which is right when the reader is composing a rule from a
+   * selection: replacing the same words twice edits the rule instead of leaving two fighting over the
+   * same text. It is NOT enough for an edit started from an existing card, because the reader may
+   * change the ORIGINAL side — and the folded phrase is the row's unique key, so that is a different
+   * key and the write would land on a different row, leaving the old one behind as a duplicate.
+   *
+   * So this takes the row's id and answers the three cases honestly:
+   *   · the key is unchanged  → a plain in-place UPDATE; same id, same place, same on/off state. This
+   *     is the ordinary case (correcting the replacement, or the original's spacing or diacritics).
+   *   · the key changed and nothing else holds it → the write necessarily creates the new key, so the
+   *     rule's on/off state and its place are carried across and the old row is removed. The DATA
+   *     MODEL forces this, not a preference: `reps` is unique on (book_id, phrase_fold) and the key
+   *     is derived from the phrase, so "the same rule, about other words" cannot be expressed as an
+   *     UPDATE without a schema change.
+   *   · the key changed and ANOTHER rule already holds it → nothing is written at all, and the
+   *     conflicting rule is returned. Merging would silently overwrite a rule the reader did not
+   *     open, which is the one outcome an edit must never produce.
+   */
+  edit: (
+    id: string,
+    phrase: string,
+    replacement: string,
+  ) => Promise<{ ok: true; row: RepRow } | { ok: false; conflict: RepRow } | null>;
   setEnabled: (id: string, enabled: boolean) => Promise<void>;
   remove: (id: string) => Promise<void>;
 }
@@ -93,6 +119,45 @@ export const useReplacements = create<RepState>((set, get) => ({
       set({ reps: next });
       syncCtrl(ctrl, next);
       return row;
+    } catch (e) {
+      console.error(e);
+      return null;
+    }
+  },
+
+  edit: async (id, phrase, replacement) => {
+    const { bookId, ctrl } = get();
+    const old = get().reps.find((r) => r.id === id);
+    if (!bookId || !old) return null;
+    const fold = foldPhrase(phrase);
+    if (!fold) return null; // nothing to match on (punctuation or whitespace only)
+    const rekeyed = fold !== old.phrase_fold;
+    if (rekeyed) {
+      const clash = get().reps.find((r) => r.id !== id && r.phrase_fold === fold);
+      if (clash) return { ok: false as const, conflict: clash };
+    }
+    try {
+      // The row's OWN place travels with it. `rep_save` COALESCEs the cfi, so passing it is a no-op
+      // on the in-place update and is what keeps a re-keyed rule on the map instead of losing the
+      // place the reader made it from.
+      const row = await repSave(bookId, phrase.trim(), fold, replacement.trim(), phraseWordCount(phrase), old.cfi);
+      if (!row) return null;
+      let saved = row;
+      let reps = get().reps;
+      if (row.id !== old.id) {
+        // A NEW ROW WAS NECESSARILY CREATED (the key changed). It is born enabled, so a rule the
+        // reader had switched OFF must be switched off again before anything is shown — otherwise
+        // an edit would quietly put the substitution back on the page.
+        if (!old.enabled) saved = (await repSetEnabled(row.id, false)) ?? { ...row, enabled: false };
+        await repDelete(old.id);
+        reps = reps.filter((r) => r.id !== old.id);
+      }
+      const next = reps.some((r) => r.id === saved.id)
+        ? reps.map((r) => (r.id === saved.id ? saved : r))
+        : [...reps, saved];
+      set({ reps: next });
+      syncCtrl(ctrl, next);
+      return { ok: true as const, row: saved };
     } catch (e) {
       console.error(e);
       return null;

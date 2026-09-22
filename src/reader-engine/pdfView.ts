@@ -105,6 +105,44 @@ export const pdfZoomAttr = (z: PdfZoom): string => (isFitMode(z) ? z : String(z)
 export const pdfZoomKey = (bookId: string): string => `pdf.zoom.${bookId}`;
 export const PDF_THEME_KEY = "pdf.theme";
 
+// ---- HOW A PDF IS READ: one continuous flow, or one page at a time ---------------------------
+//
+// THE MEASUREMENT THIS SETTING EXISTS FOR. In the paged renderer the amount a wheel gesture means is
+// a function of the zoom, because the only thing there is to scroll is the ONE page on screen. On a
+// 567-page PDF at a 705px viewport, measured in the running application:
+//
+//     fit-page (the default)   0 px of travel    -> the FIRST wheel notch turns the page
+//     fit-width              314 px of travel    -> four notches cross it, the fifth turns it
+//     zoom 2                 635 px              -> seven
+//     zoom 3                1305 px              -> twelve
+//
+// The wheel handling itself was measured correct at every delta. The defect is that a page boundary
+// was doing the job of a scroll boundary, so an ordinary gesture jumped a whole page. Scroll mode
+// removes the question by giving the reader a document to scroll; Pages mode keeps the paginated
+// reading some documents (and some readers) want.
+export type PdfViewMode = "scroll" | "pages";
+
+/** Scroll is the default: a PDF is a document, and a document scrolls. */
+export const PDF_VIEW_MODE_DEFAULT: PdfViewMode = "scroll";
+
+/**
+ * ONE GLOBAL KEY, matching the convention the rest of the reading settings follow.
+ *
+ * Sard deliberately has ONE level of reading preference (see `features/reader/perBookSettings.ts`:
+ * the per-book override was removed because two owners of the same field is what made a هيئة unable
+ * to change a book that had once been tuned). A per-book mode would reintroduce exactly that, so
+ * this is an installation preference like every other reading setting — and it needs no migration,
+ * because an absent key simply reads as the default.
+ */
+export const PDF_VIEW_MODE_KEY = "pdf_view_mode";
+
+export const isPdfViewMode = (v: string | null | undefined): v is PdfViewMode =>
+  v === "scroll" || v === "pages";
+
+/** What a stored value means. Anything unrecognised — including an absent key — is the default. */
+export const parsePdfViewMode = (v: string | null | undefined): PdfViewMode =>
+  isPdfViewMode(v) ? v : PDF_VIEW_MODE_DEFAULT;
+
 export function parseStoredZoom(raw: string | null | undefined): PdfZoom | null {
   if (!raw) return null;
   if (raw === "fit-width" || raw === "fit-page") return raw;

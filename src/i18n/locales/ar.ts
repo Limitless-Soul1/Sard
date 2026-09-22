@@ -4,6 +4,11 @@ import type { TKey } from "./en";
 export const ar: Record<TKey, string> = {
   "app.name": "سَرْد",
 
+  "window.minimize": "تصغير",
+  "window.maximize": "تكبير",
+  "window.restore": "استعادة",
+  "window.close": "إغلاق",
+
   "picker.prompt": "اختر لغة الواجهة",
   "picker.sub": "يمكنك تغييرها لاحقًا من الإعدادات.",
   "lang.english": "English",
@@ -87,6 +92,10 @@ export const ar: Record<TKey, string> = {
   "pdf.theme.ink": "تباين عالٍ",
   "pdf.tts.title": "القراءة الصوتية",
   "pdf.tts.body": "يختلف استخراج النصّ من ملفّ PDF إلى آخر. بعض الملفّات — وخاصّة المصوّرة ضوئيًّا أو رديئة الترميز — قد لا تُقرأ بدقّة، أو قد يتعذّر قراءتها صوتيًّا أصلًا.",
+  "pdf.mode": "طريقة القراءة",
+  "pdf.mode.scroll": "تمرير",
+  "pdf.mode.pages": "صفحات",
+  "pdf.mode.hint": "التمرير يعرض الصفحات في تدفّق واحد متّصل؛ «صفحات» يعرض صفحة واحدة في كلّ مرّة. يُعاد فتح الكتاب عند التبديل، ويبقى موضع القراءة كما هو.",
   "pdf.zoom": "التكبير",
   "pdf.zoom.in": "تكبير",
   "pdf.zoom.out": "تصغير",
@@ -1047,6 +1056,8 @@ export const ar: Record<TKey, string> = {
   "rep.add": "أضف",
   "rep.save": "حفظ",
   "rep.cancel": "إلغاء",
+  "rep.edit": "تعديل",
+  "rep.conflict": "هذه الكلمات يسري عليها استبدال آخر: «{from}» ← «{to}». لم يُحفظ شيء — غيِّر الأصل أو عدِّل ذلك الاستبدال.",
   "rep.delete": "حذف",
   "rep.deleteConfirm": "حذف نهائي",
   "rep.deleteCancel": "تراجع",

@@ -21,6 +21,7 @@ import { coverPresentation, type CoverMode } from "./coverPresentation";
 import { Icon } from "../../../components/Icon";
 import { useBookPickup } from "./bookPickup";
 import { BookActions, type BookActionsProps } from "./BookActions";
+import { useBookContextMenu } from "./bookContextMenu";
 import { labelFace, scriptOf } from "../../../lib/typography";
 
 
@@ -171,6 +172,9 @@ export function BookTile(props: BookTileProps) {
     onOpen: props.onOpen,
     onToggleSelect: props.onToggleSelect,
   });
+  // The same gesture the Grid card carries: right-click the tile, get the tile's own ⋯ menu at the
+  // pointer. Off while the ⋯ is not drawn, so selection mode keeps the press it owns.
+  const ctx = useBookContextMenu({ onOpen: pickup.cancelHold, enabled: showDots });
 
   const cardStyle: React.CSSProperties = spines
     ? {
@@ -286,10 +290,12 @@ export function BookTile(props: BookTileProps) {
        * `aria-label` is named just as well and keeps everything inside it reachable. */
       tabIndex={0}
       onKeyDown={pickup.onKeyDown}
+      onContextMenu={ctx.onContextMenu}
     >
       {showDots && (
         <BookActions
             {...props.actions}
+            ref={ctx.ref}
             onOpenChange={setMenuOpen}
           // Spines hang their control clear of a very narrow tile; that is a matter of layout, and
           // the only thing a format is allowed to decide for itself here.

@@ -104,15 +104,35 @@ describe("Pages mode: the wheel never changes the page", () => {
 describe("the reader keeps their place when the view changes", () => {
   it("a resize re-lays out WITH the reader's position held", () => {
     // MEASURED before: resizing the window to 900x640 left the page being read at y=-25675.
-    expect(scroll).toContain("#observer = new ResizeObserver(() => this.#relayout({ keepCurrentPage: true }))");
+    expect(scroll).toContain("#observer = new ResizeObserver(() => this.#relayout({ keepCurrentPage: true, viewH: this.#viewH }))");
   });
 
   it("the position anchor is read live from scrollTop, never from the lagging page index", () => {
     // `#index` updates a frame after scrolling; anchoring on it during a fast scroll restored the
     // reader to a page they had left — MEASURED: a burst reached +5701px and snapped back 610px.
-    const pos = scroll.slice(scroll.indexOf("    #pagePosition() {"), scroll.indexOf("    #restorePagePosition("));
-    expect(pos).toContain("const idx = this.#pageAtViewportMiddle()");
+    const pos = scroll.slice(scroll.indexOf("    #pagePosition(viewH"), scroll.indexOf("    #restorePagePosition("));
+    expect(pos).toContain("const mid = this.#scroller.scrollTop + viewH / 2");
+    expect(pos).toContain("const idx = this.#pageAtViewportMiddle(mid)");
     expect(pos).not.toContain("this.#slots[this.#index]");
+  });
+
+  it("a resize is anchored in the view the reader SAW, not the one the browser has just made", () => {
+    // The observer runs after the new size is applied, while scrollTop still belongs to the old view.
+    // Reading both together measured the point under the NEW middle — MEASURED: exactly half the height
+    // change (+100 px for 200 px taller, 129 px on maximize, up to 177 px at a fit zoom).
+    expect(scroll).toContain("#viewH = 0");
+    expect(scroll).toContain("const before = keepCurrentPage ? this.#pagePosition(viewH || this.#scroller.clientHeight) : null");
+    // Recorded AFTER the restore, so a horizontal scrollbar the new layout added or removed is included.
+    const rl = scroll.slice(scroll.indexOf("    #relayout({"), scroll.indexOf("    /** The CSS size pdf.js paints"));
+    expect(rl.indexOf("this.#viewH = this.#scroller.clientHeight")).toBeGreaterThan(rl.indexOf("if (before) this.#restorePagePosition(before)"));
+    // No offset arithmetic: the anchor is measured in the right geometry, not corrected afterwards.
+    expect(rl).not.toMatch(/viewH\s*\/\s*2\s*-|delta|Δ/);
+  });
+
+  it("a point in the gap between pages is held in pixels, because the gap does not scale with the zoom", () => {
+    const pos = scroll.slice(scroll.indexOf("    #pagePosition(viewH"), scroll.indexOf("    #restorePagePosition("));
+    expect(pos).toContain("if (into > 1) return { index: idx, into: 1, past: mid - (slot.top + slot.height) }");
+    expect(scroll).toContain("slot.top + pos.into * slot.height + (pos.past ?? 0) - this.#scroller.clientHeight / 2");
   });
 
   it("a page that measures exactly as assumed triggers no relayout", () => {
@@ -130,8 +150,9 @@ describe("every PDF wheel has exactly one owner", () => {
     const eff = reader.slice(reader.indexOf("const deskRef = useRef<HTMLDivElement | null>(null);"), reader.indexOf("const onDeskWheel"));
     expect(eff).toContain('el.addEventListener("wheel", pdfDeskWheel, { passive: false })');
     expect(eff).toContain("e.preventDefault();");
-    expect(eff).toContain("ctrlRef.current?.scrollPdfBy(e.deltaY, e.deltaX)");
-    expect(eff).toContain("ctrlRef.current?.pageByWheel(e.deltaY, e.deltaX)");
+    // Shift rides along, so Shift+wheel moves across a wide page (see `wheelAxes`).
+    expect(eff).toContain("ctrlRef.current?.scrollPdfBy(e.deltaY, e.deltaX, e.shiftKey)");
+    expect(eff).toContain("ctrlRef.current?.pageByWheel(e.deltaY, e.deltaX, e.shiftKey)");
     expect(eff).toContain('return () => el.removeEventListener("wheel", pdfDeskWheel)');
   });
 

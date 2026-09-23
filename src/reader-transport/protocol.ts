@@ -71,6 +71,8 @@ export interface Mirror {
   openingUnderTopBar: boolean;
   pdfTextQuality: unknown;
   pdfRenderedScale: number;
+  /** The renderer's zoom range for the PDF page on screen (public/foliate-js/sard-zoom.js). */
+  pdfZoomBounds: import("../reader-engine/FoliateController").PdfZoomBounds | null;
   pdfHasSpeakableText: boolean;
   /**
    * The engine's public GETTERS. They are read as properties, not called, so the proxy cannot answer

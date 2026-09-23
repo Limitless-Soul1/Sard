@@ -549,9 +549,6 @@ html, body, #root {
    property here would mirror against a box that does not. */
 .page-chevron-left { left: calc(var(--panel-lead, 0px) + 20px); }
 .page-chevron-right { right: calc(var(--panel-trail, 0px) + 20px); }
-/* In Scroll mode the reading area carries a scrollbar at its trailing edge; the rail stands clear of it
-   so a press on the scrollbar can never land on «next». */
-.reader-desk.pdf-view[data-pdf-mode="scroll"] .page-chevron-right { right: calc(var(--panel-trail, 0px) + 30px); }
 
 /* ---- reading chrome (RAWY-33, design C-VI/C-VII): clear LABELLED controls, hidden until
    intent. A raised button face (--rc-surface) lifts the buttons off the translucent bar so
@@ -884,6 +881,71 @@ html, body, #root {
    modes looked like two different readers. The same 18px, applied as padding so the renderer's fit
    arithmetic (which reads its own box) sees the smaller area and scales the page into it. */
 .reader-desk.pdf-view[data-pdf-mode="pages"] .page-host foliate-view { box-sizing: border-box; padding: 18px; }
+/* HOW MUCH OF THE SHEET SHOWS AROUND A PDF PAGE (`data-pdf-surround`, absent = Normal = unchanged).
+   The area around a PDF page is `.page-sheet` — the EPUB paper: its colour, its edge shadow and the grain
+   laid over it. The 18px page gap is NOT part of it: it is transparent spacing that the fit arithmetic
+   and the separation between pages depend on, and it only ever shows whatever this sheet paints.
+   So only the sheet's PAINT changes here — never its box, the host, the renderer or the gap — and no
+   size, zoom, scroll extent or position can follow from it.
+   `:root .reader-root` lifts the rules above the wallpaper variants of the sheet's shadow
+   (`:root[data-bg-reading="on"] .reader-root[data-book-dark="true"] .page-sheet`, 0,5,0), which sit
+   later in this file; with no wallpaper they win anyway. */
+/* Reduced: the paper at 40% of whatever strength it has now (so a translucent sheet over a wallpaper
+   stays proportionally lighter), and no edge shadow — the page, not the sheet, carries the edge. */
+:root .reader-root .reader-desk.pdf-view[data-pdf-surround="reduced"] .page-sheet {
+  background: color-mix(in srgb, var(--reader-page, var(--paper-bg)) calc(var(--bg-page-opacity, 100%) * 0.4), transparent);
+  box-shadow: none;
+}
+/* None: no sheet at all — the page sits directly on the reading background. The grain goes too: it is
+   the sheet's texture, and without the sheet it would be a film over the page and the desk. */
+:root .reader-root .reader-desk.pdf-view[data-pdf-surround="none"] .page-sheet { background: transparent; box-shadow: none; }
+:root .reader-root .reader-desk.pdf-view[data-pdf-surround="none"] .page-grain { display: none; }
+/* THE FRAME AROUND THE PAGE (`data-pdf-frame`: set once the reader has moved the size slider under
+   "Around the page"; absent, the sheet paints its whole column exactly as before).
+   The same paper, painted as a band that follows the page: `--pdf-band-w` is the page's on-screen width
+   plus the chosen frame on each side (never wider than the reading area), and `--pdf-band-x` its centre
+   within the sheet. The Reader measures both from the renderer's report and the page-host's box, and
+   re-measures on scroll, page turn, zoom and resize (Reader.tsx, `layoutPdfBand`).
+   PAINT ONLY: the sheet keeps its box and the page-host keeps its place; the band is a pseudo-element
+   behind them (`isolation` keeps `z-index: -1` inside the sheet), and `overflow: visible` lets a wide
+   frame reach past the sheet into the rest of the reading area. The grain goes with the column it
+   textured. The paper colour, translucency and edge shadows repeat the sheet's own rules, variant for
+   variant, so a frame looks like the column it replaces. */
+:root .reader-root .reader-desk.pdf-view[data-pdf-frame] .page-sheet { background: transparent; box-shadow: none; overflow: visible; isolation: isolate; }
+:root .reader-root .reader-desk.pdf-view[data-pdf-frame] .page-grain { display: none; }
+.reader-desk.pdf-view[data-pdf-frame] .page-sheet::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--pdf-band-x, 50%);
+  width: var(--pdf-band-w, 100%);
+  transform: translateX(-50%);
+  z-index: -1;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--reader-page, var(--paper-bg)) var(--bg-page-opacity, 100%), transparent);
+  box-shadow: 0 0 30px rgba(60, 40, 16, 0.1), -1px 0 0 rgba(43, 37, 33, 0.05), 1px 0 0 rgba(43, 37, 33, 0.05);
+}
+.reader-root[data-book-dark="true"] .reader-desk.pdf-view[data-pdf-frame] .page-sheet::before {
+  box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.05), inset -1px 0 0 rgba(255, 255, 255, 0.05);
+}
+:root[data-bg-reading="on"] .reader-desk.pdf-view[data-pdf-frame] .page-sheet::before {
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.44), 0 2px 10px rgba(0, 0, 0, 0.26);
+}
+:root[data-bg-reading="on"] .reader-root[data-book-dark="true"] .reader-desk.pdf-view[data-pdf-frame] .page-sheet::before {
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55), 0 2px 10px rgba(0, 0, 0, 0.34),
+    inset 1px 0 0 rgba(255, 255, 255, 0.05), inset -1px 0 0 rgba(255, 255, 255, 0.05);
+}
+/* Reduced: the same 40% paper the column had, and no edge shadow. Last, and `:root:root` so it also
+   outranks the wallpaper + dark-book shadow above (0,8,1) — MEASURED: without it that shadow survived. */
+:root:root .reader-root .reader-desk.pdf-view[data-pdf-surround="reduced"][data-pdf-frame] .page-sheet::before {
+  background: color-mix(in srgb, var(--reader-page, var(--paper-bg)) calc(var(--bg-page-opacity, 100%) * 0.4), transparent);
+  box-shadow: none;
+}
+/* A reader who asked the OS for solid surfaces gets the solid paper, as the column does. */
+@media (prefers-reduced-transparency: reduce), (forced-colors: active), (prefers-contrast: more) {
+  .reader-desk.pdf-view[data-pdf-frame]:not([data-pdf-surround="reduced"]) .page-sheet::before { background: var(--reader-page, var(--paper-bg)); }
+}
 /* RAWY-294: the surround is NOT tinted. A PDF theme is a property of the PAGE; the reading surface
    stays whatever the app theme says, so switching PDF themes never restyles the reader around it. */
 /* Light themes: the tint does the work, the filter only trims glare. */
@@ -1450,6 +1512,10 @@ html, body, #root {
    transparent value here hides the bar without reaching into the shadow DOM, and reverts the instant
    `.scrolled-away` (or the gate class) drops. */
 .reader-root.immersive.scrolled-away.im-hide-scrollbar { scrollbar-color: transparent transparent; }
+/* …and the PDF Scroll renderer, whose scroller sets its own bar colour and so does not inherit the rule
+   above. It reads this custom property instead (custom properties cross the shadow boundary too), so
+   immersive hides a PDF's scrollbar exactly when it hides an EPUB's. */
+.reader-root.immersive.scrolled-away.im-hide-scrollbar { --sard-pdf-scrollbar: transparent transparent; }
 /* FIXED physical sides (RAWY-32 — supersedes the RAWY-30/D20 follow-direction model): chapters
    is PINNED to the physical LEFT, annotations to the physical RIGHT, and they DO NOT move when
    the UI language flips. Physical `left`/`right` (not logical) ignore the panel's `dir` attr, so
@@ -2663,6 +2729,9 @@ html, body, #root {
 }
 .sp-search-clear:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 /* spoiler-safe toggle (app furniture — reuses .rp-switch) */
+/* The compact variant of the same switch row: one line of explanation instead of a position, so it sits
+   a little tighter. Nothing else differs — the two search switches are deliberately one shape. */
+.sp-spoiler.sp-opt { padding: 8px 12px; margin-bottom: 6px; }
 .sp-spoiler {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; width: calc(100% - 24px);
   margin: 0 12px 8px; padding: 10px 12px; border-radius: var(--r-md); cursor: pointer; text-align: start;

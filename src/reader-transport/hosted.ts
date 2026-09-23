@@ -27,6 +27,7 @@ const EMPTY_MIRROR: Mirror = {
   openingUnderTopBar: false,
   pdfTextQuality: null,
   pdfRenderedScale: 1,
+  pdfZoomBounds: null,
   pdfHasSpeakableText: false,
   isFixedLayout: false,
   fxlMode: "scroll",
@@ -57,6 +58,7 @@ const MIRRORED_DIRECT = {
   openingUnderTopBar: "openingUnderTopBar",
   pdfTextQuality: "pdfTextQuality",
   pdfRenderedScale: "pdfRenderedScale",
+  pdfZoomBounds: "pdfZoomBounds",
   pdfHasSpeakableText: "pdfHasSpeakableText",
 } as const satisfies Record<string, keyof Mirror>;
 
@@ -179,9 +181,9 @@ export class HostedReader {
    * drives `preventDefault()` and cannot wait for a round trip. `fxlMode` is mirrored, so the
    * application already knows whether this book is being read in Scroll mode.
    */
-  scrollPdfBy(deltaY: number, deltaX = 0): boolean {
+  scrollPdfBy(deltaY: number, deltaX = 0, shift = false): boolean {
     if (this.mirror.fxlMode !== "scroll" || !this.mirror.isFixedLayout) return false;
-    this.tell("scrollPdfBy", [deltaY, deltaX]);
+    this.tell("scrollPdfBy", [deltaY, deltaX, shift]);
     return true;
   }
 
@@ -240,12 +242,16 @@ export class HostedReader {
    */
   searchBook(
     query: string,
-    opts: { signal?: AbortSignal; onProgress?: (f: number) => void; onBatch?: (h: unknown[]) => void } = {},
+    opts: {
+      signal?: AbortSignal; onProgress?: (f: number) => void; onBatch?: (h: unknown[]) => void;
+      /** Whole-word mode. A plain boolean, so unlike the callbacks it crosses beside the query. */
+      wholeWord?: boolean;
+    } = {},
   ): Promise<unknown[]> {
     if (opts.onProgress) this.handlers.set("search-progress", opts.onProgress as (...a: unknown[]) => unknown);
     if (opts.onBatch) this.handlers.set("search-batch", opts.onBatch as (...a: unknown[]) => unknown);
     opts.signal?.addEventListener("abort", () => this.tell("__searchAbort"), { once: true });
-    return this.send({ kind: "call", method: "searchBook", args: [query] }).then((v) => {
+    return this.send({ kind: "call", method: "searchBook", args: [query, !!opts.wholeWord] }).then((v) => {
       this.handlers.delete("search-progress");
       this.handlers.delete("search-batch");
       return (v ?? []) as unknown[];

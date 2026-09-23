@@ -40,6 +40,9 @@ interface Props {
   hits: SearchHit[];
   spoilerSafe: boolean;
   onToggleSpoiler: () => void;
+  /** Whole-word matching: the query must stand as a word, not sit inside a longer one. OFF by default. */
+  wholeWord: boolean;
+  onToggleWholeWord: () => void;
   revealAhead: boolean; // "show them anyway" — reveal ahead matches this once (spoiler stays on)
   onRevealAhead: (v: boolean) => void;
   activeCfi: string | null;
@@ -78,7 +81,7 @@ const ResultRow = memo(function ResultRow({
 export function SearchPanel({
   open, onClose, bookTitle, positionLabel, boundaryIsFurthest = false, onGoFurthest, bookDir,
   query, onQuery, searching, searchProgress, hits,
-  spoilerSafe, onToggleSpoiler, revealAhead, onRevealAhead,
+  spoilerSafe, onToggleSpoiler, wholeWord, onToggleWholeWord, revealAhead, onRevealAhead,
   activeCfi, onJump,
 }: Props) {
   const { t, lang, dir } = useI18n();
@@ -147,6 +150,19 @@ export function SearchPanel({
         />
         {query && <button className="sp-search-clear" onClick={() => onQuery("")} aria-label="✕">✕</button>}
       </div>
+
+      {/* WHOLE WORD — a matching option, so it sits directly under the field it changes and above the
+          spoiler switch, which is about what is SHOWN rather than what is found. The same row the
+          spoiler toggle uses, so the panel keeps one shape for its two switches; `sp-opt` only tightens
+          it, because this one says its whole piece in a single short line. App furniture: it follows the
+          interface language and direction, never the book's. */}
+      <button className="sp-spoiler sp-opt" onClick={onToggleWholeWord} aria-pressed={wholeWord}>
+        <span className="sp-spoiler-text">
+          <span className="sp-spoiler-label">{t("search.wholeWord")}</span>
+          <span className="sp-spoiler-sub">{t("search.wholeWordSub")}</span>
+        </span>
+        <span className={`rp-switch${wholeWord ? " on" : ""}`} aria-hidden><span className="rp-knob" /></span>
+      </button>
 
       {/* spoiler-safe toggle — app furniture, pinned side + app language */}
       <button className="sp-spoiler" onClick={onToggleSpoiler} aria-pressed={spoilerSafe}>

@@ -4,7 +4,7 @@ import { Icon } from "../../components/Icon";
 import type { SettingsSection } from "./ReaderChrome";
 import type { ReadingStyle } from "../../reader-engine/injectedCss";
 import type { ThemeId } from "../../theme";
-import { PDF_THEMES, PDF_ZOOM_SLIDER_MAX, PDF_ZOOM_SLIDER_MIN, sliderToZoom, zoomToSlider, type PdfZoom, type PdfThemeId, type PdfViewMode } from "../../reader-engine/pdfView";
+import { PDF_THEMES, sliderBounds, sliderToZoom, zoomToSlider, type PdfZoom, type PdfZoomRange, type PdfThemeId, type PdfViewMode, type PdfSurround } from "../../reader-engine/pdfView";
 import { PDF_TTS_ENABLED } from "../../lib/pdfText";
 
 interface Props {
@@ -35,7 +35,17 @@ interface Props {
   pdfScale?: number;
   /** Set an exact zoom — the slider's path. */
   onPdfZoomTo?: (zoom: number) => void;
+  /** The renderer's zoom range for the page on screen; the slider's two ends. */
+  pdfZoomRange?: PdfZoomRange | null;
   onPdfMode?: (mode: PdfViewMode) => void;
+  /** How much of the reading sheet shows around a PDF page — presentation only. */
+  pdfSurround?: PdfSurround;
+  onPdfSurround?: (v: PdfSurround) => void;
+  /** px of surround on each side of the page; null = the whole reading column (never touched). */
+  pdfFrame?: number | null;
+  /** The frame slider's far end for the page on screen, and where the untouched surround sits on it. */
+  pdfFrameInfo?: { max: number; current: number } | null;
+  onPdfFrame?: (v: number) => void;
   onPdfCopy?: () => void;
   /**
    * THIS BOOK's answer about pronouncing decorative marks, the هيئة's, and the setter.
@@ -73,7 +83,13 @@ export function SettingsPanel({
   pdfMode,
   pdfScale,
   onPdfZoomTo,
+  pdfZoomRange,
   onPdfMode,
+  pdfSurround,
+  onPdfSurround,
+  pdfFrame,
+  pdfFrameInfo,
+  onPdfFrame,
   speakSymbolsOverride,
   speakSymbolsAppearance,
   onSpeakSymbols,
@@ -93,6 +109,9 @@ export function SettingsPanel({
   // themes) and copy-selection. One consistent inset (the `sp-body` padding); the sections stack with
   // an even rhythm so the menu reads as a tidy, PDF-appropriate panel (RAWY-141).
   if (isPdf) {
+    // The track's ends are the renderer's range for this page in this window (see sard-zoom.js). Until
+    // the renderer has reported one, a neutral 50%–400% keeps the control usable.
+    const zoomTrack = sliderBounds(pdfZoomRange ?? { min: 0.5, max: 4 });
     return (
       // THE PANEL TAKES THE INTERFACE'S DIRECTION. `.settings-panel` sets no `dir`, and it sits inside
       // `.reader-root`, which is pinned LTR (RAWY-89) — so in Arabic every label, hint and choice in this
@@ -147,11 +166,11 @@ export function SettingsPanel({
               ]}
             />
             <Slider
-              value={zoomToSlider(pdfScale ?? 1)}
-              min={PDF_ZOOM_SLIDER_MIN}
-              max={PDF_ZOOM_SLIDER_MAX}
+              value={Math.min(zoomTrack.max, Math.max(zoomTrack.min, zoomToSlider(pdfScale ?? 1)))}
+              min={zoomTrack.min}
+              max={zoomTrack.max}
               step={1}
-              onInput={(v) => onPdfZoomTo?.(sliderToZoom(v))}
+              onInput={(v) => onPdfZoomTo?.(sliderToZoom(v, pdfZoomRange))}
               lead={<Icon name="minus" size="sm" />}
               trail={<Icon name="plus" size="sm" />}
             />
@@ -191,6 +210,37 @@ export function SettingsPanel({
             </div>
             <div className="rs-sec-hint">{t("pdf.appearance.hint")}</div>
           </div>
+
+          {/* The area around the page, not the page: how much of the reading sheet is painted behind a
+              PDF. Three discrete strengths, so the same segmented control as the mode above. */}
+          <Section label={t("pdf.surround")}>
+            <Segmented<PdfSurround>
+              label={t("pdf.surround")}
+              value={pdfSurround ?? "normal"}
+              onPick={(v) => onPdfSurround?.(v)}
+              options={[
+                { key: "normal", label: t("pdf.surround.normal") },
+                { key: "reduced", label: t("pdf.surround.reduced") },
+                { key: "none", label: t("pdf.surround.none") },
+              ]}
+            />
+            {/* HOW FAR IT REACHES: a frame that follows the page at every zoom, from snug to the whole
+                reading area. Only where there IS a surround — with None there is nothing to size. An
+                untouched slider sits where today's surround is, so nothing moves until the reader does. */}
+            {(pdfSurround ?? "normal") !== "none" && pdfFrameInfo && pdfFrameInfo.max > 0 && (
+              <Slider
+                value={Math.min(pdfFrameInfo.max, pdfFrame ?? pdfFrameInfo.current)}
+                min={0}
+                max={pdfFrameInfo.max}
+                step={1}
+                onInput={(v) => onPdfFrame?.(v)}
+                ariaLabel={t("pdf.surround.size")}
+                lead={<span className="rs-tiny">{t("type.narrow")}</span>}
+                trail={<span className="rs-tiny">{t("type.wide")}</span>}
+              />
+            )}
+            <div className="rs-sec-hint">{t("pdf.surround.hint")}</div>
+          </Section>
 
           {/* RAWY-292: read-aloud for PDFs is possible but document-dependent, so the panel says so
               rather than letting a reader discover it. The wording is deliberately about the FILE,

@@ -53,6 +53,9 @@ export const CROSSING: Readonly<Record<string, Crossing>> = Object.freeze({
   getTtsCursor: "mirrored",
   pdfTextQuality: "mirrored",
   pdfRenderedScale: "mirrored",
+  // The renderer's zoom range: two getters' worth of arithmetic on the page and the viewport, returned
+  // as a plain object — a snapshot answers it, like the scale beside it.
+  pdfZoomBounds: "mirrored",
   pdfHasSpeakableText: "mirrored",
   // Reads the resolved style and theme and returns a plain object. No DOM, so a snapshot answers it.
   notePresentation: "mirrored",

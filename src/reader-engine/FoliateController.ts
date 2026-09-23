@@ -1838,6 +1838,24 @@ if (typeof globalThis !== "undefined") {
     (css: string) => sanitiseBookCss(css, bookCssMode);
 }
 
+/**
+ * SHIFT + WHEEL IS SIDEWAYS, as it is everywhere else on this platform. Chromium does that itself for
+ * a wheel it scrolls natively (Scroll mode, over the page), but a wheel Sard forwards arrives with the
+ * delta still on the vertical axis and only `shiftKey` set — MEASURED: at 300% in Pages mode, three
+ * Shift+wheel notches moved the page 0px sideways. A wheel that already carries a horizontal delta
+ * (a trackpad) is left as it is.
+ */
+/** A PDF renderer's zoom range and fits, and where the page on screen sits across the renderer's box. */
+export type PdfZoomBounds = {
+  min: number; max: number; fitPage: number; fitWidth: number; scale: number;
+  /** The page's on-screen width, its centre from the renderer box's left edge, and that box's width. */
+  pageWidth: number; pageCenterX: number; boxWidth: number;
+};
+
+export function wheelAxes(deltaY: number, deltaX: number, shift: boolean): [number, number] {
+  return shift && !deltaX ? [0, deltaY] : [deltaY, deltaX];
+}
+
 export class FoliateController {
   private view: any | null = null;
   /**
@@ -2268,7 +2286,7 @@ export class FoliateController {
       // Capture the page doc (for copy) + keep arrow-key paging + chrome-wake activity; skip the rest.
       if (fxl) {
         this.pdfPageDoc = doc;
-        if (this.pdfTheme) this.setPdfTheme(this.pdfTheme.filter, this.pdfTheme.tint); // RAWY-294
+        if (this.pdfTheme) this.applyPdfThemeTo(doc, this.pdfTheme.filter, this.pdfTheme.tint); // RAWY-294
         // RAWY-295: a page turn is a NEW document, so the previous page's highlight cannot leak here —
         // there is nothing to clear. What is needed is the reverse: the units belong to the page on
         // screen, so the highlight is re-derived for THIS page, and the layer is watched for the
@@ -2298,11 +2316,14 @@ export class FoliateController {
           // at its own rate, across page boundaries, with the trackpad and momentum it already
           // knows about. Calling preventDefault here would swallow the gesture and hand it to the
           // very code whose whole job has been removed.
-          if (this.fxlMode === "scroll") return;
+          if (this.fxlMode === "scroll") {
+            if (!ev.shiftKey) this.noteScrollDirection(ev.deltaY);
+            return;
+          }
           // RAWY-293: a wheel over the page must scroll the ZOOMED page first (layer 1), so the
           // in-frame path and the desk path share one behaviour. deltaX rides along for wide pages.
           ev.preventDefault();
-          this.pageByWheel(ev.deltaY, ev.deltaX);
+          this.pageByWheel(ev.deltaY, ev.deltaX, ev.shiftKey);
         }, { passive: false });
         doc.addEventListener("pointerdown", (ev: PointerEvent) => {
           if (this.activityCb) {
@@ -2310,6 +2331,7 @@ export class FoliateController {
             this.activityCb(ev.clientX + off.x, ev.clientY + off.y, true);
           }
         });
+        this.attachPdfPan(doc);
         return;
       }
       this.contentDoc = doc; // RAWY-122: kept so clearSelection() can drop a lingering text selection
@@ -3045,6 +3067,21 @@ export class FoliateController {
     // RAWY-128: the single funnel for a MANUAL wheel (both the content-frame and margin paths) — stamp
     // it so the TTS scroll-follow can yield briefly and not fight the user's scroll (see followReadingSentence).
     if (deltaY) this.lastUserScrollTs = performance.now();
+    this.noteScrollDirection(deltaY);
+  }
+  /**
+   * The direction half of the funnel above, on its own: hide the reading chrome on a scroll down,
+   * bring it back on a deliberate scroll up. A PDF's wheel paths call THIS, and only this.
+   *
+   * WHY PDFs NEEDED IT. Scroll direction reached the chrome from exactly two places, both EPUB-only
+   * (the text frame's wheel and the margin wheel of a scrolled book). No PDF wheel path fed it, in
+   * either mode — MEASURED: in a PDF, scrolling down never hid the bars and scrolling up never brought
+   * them back, so the only ways out of the hidden state were the top-edge reach and a click on the
+   * desk, and "immersive" never engaged at all (it keys off a deliberate scroll-down). The same
+   * accumulator and thresholds are used, so a PDF behaves exactly like a scrolled EPUB.
+   * The TTS follow stamp is deliberately NOT taken here: PDF read-aloud keeps its current behaviour.
+   */
+  private noteScrollDirection(deltaY: number): void {
     if (!this.scrollIntentCb || !deltaY) return;
     const now = performance.now();
     if (now - this.scrollIntentTs > SCROLL_GESTURE_GAP_MS) this.scrollAccum = 0;
@@ -4637,8 +4674,10 @@ export class FoliateController {
    *
    * Returns true when it consumed the gesture, so the caller knows whether to preventDefault.
    */
-  scrollPdfBy(deltaY: number, deltaX = 0): boolean {
+  scrollPdfBy(deltaY: number, deltaX = 0, shift = false): boolean {
     if (this.fxlMode !== "scroll" || !this.isFixedLayout) return false;
+    [deltaY, deltaX] = wheelAxes(deltaY, deltaX, shift);
+    this.noteScrollDirection(deltaY);
     const r = this.view?.renderer as { scrollTop?: number; scrollLeft?: number } | undefined;
     if (!r || typeof r.scrollTop !== "number") return false;
     if (deltaY) r.scrollTop = r.scrollTop + deltaY;
@@ -4646,13 +4685,16 @@ export class FoliateController {
     return true;
   }
 
-  pageByWheel(deltaY: number, deltaX = 0): void {
+  pageByWheel(deltaY: number, deltaX = 0, shift = false): void {
     // IN SCROLL MODE THERE IS NOTHING FOR THIS TO DO, and doing it would be the defect coming back.
     // The scroll renderer's container is a real scroller in the ordinary flow, so the wheel is the
     // browser's: it scrolls, at the platform's own rate, across page boundaries, without any delta
     // arithmetic here. A handler that also moved it would double every gesture.
     if (this.fxlMode === "scroll") return;
+    [deltaY, deltaX] = wheelAxes(deltaY, deltaX, shift);
     if (!this.isFixedLayout || (!deltaY && !deltaX)) return;
+    // Down hides the reading chrome, up brings it back — the same rule as every scrolled view.
+    this.noteScrollDirection(deltaY);
     const r = this.view?.renderer as HTMLElement | undefined;
     if (r) {
       // Layer 1. `foliate-fxl`'s host is the scroll container (`:host { overflow: auto }`), so when the
@@ -4876,14 +4918,31 @@ export class FoliateController {
    */
   setPdfTheme(filter: string, tint: string): void {
     this.pdfTheme = { filter, tint };
-    const doc = this.pdfPageDoc;
-    if (!doc) return;
+    // EVERY PAGE ON THE DESK, not the last one loaded. Pages mode shows one page document, so styling
+    // `pdfPageDoc` covered it; Scroll mode keeps up to three mounted at once, and `pdfPageDoc` is simply
+    // whichever loaded LAST — usually the page below or above the one being read. MEASURED: choosing
+    // "night" in Scroll mode filtered page 4 (off-screen) and left the page on screen, and the one
+    // above it, untouched. A page mounted later still gets the theme from the load handler.
+    const r = this.view?.renderer as { getContents?: () => { doc?: Document }[] } | undefined;
+    const docs = new Set<Document>();
+    for (const x of r?.getContents?.() ?? []) if (x.doc) docs.add(x.doc);
+    if (this.pdfPageDoc) docs.add(this.pdfPageDoc);
+    for (const doc of docs) this.applyPdfThemeTo(doc, filter, tint);
+  }
+
+  /** Write the appearance into ONE page document. The page raster itself is never touched. */
+  private applyPdfThemeTo(doc: Document, filter: string, tint: string): void {
     const ID = 'sard-pdf-theme';
     let el = doc.getElementById(ID) as HTMLStyleElement | null;
     if (!el) {
+      // A mounted frame whose page has not loaded yet has no document element. MEASURED: styling every
+      // mounted page met one on opening, and the throw stopped the pages after it. It is styled by the
+      // load handler when its page arrives.
+      const host = doc.head ?? doc.documentElement;
+      if (!host) return;
       el = doc.createElement('style');
       el.id = ID;
-      doc.head?.appendChild(el) ?? doc.documentElement.appendChild(el);
+      host.appendChild(el);
     }
     const hasTint = !!tint && tint !== "transparent";
     const f = filter && filter !== "none" ? filter : "none";
@@ -4939,7 +4998,108 @@ export class FoliateController {
   setPdfZoom(zoom: number | "fit-width" | "fit-page"): void {
     if (!this.isFixedLayout) return;
     const r = this.view?.renderer as HTMLElement | undefined;
-    r?.setAttribute("zoom", String(zoom));
+    if (!r) return;
+    // A ZOOM KEEPS WHAT IS IN THE MIDDLE OF THE VIEW IN THE MIDDLE. Both renderers re-lay out
+    // synchronously on the attribute, but neither moved horizontally, so a zoom always opened the
+    // page at its LEFT edge — for an Arabic page, the END of every line. The fraction of the scroll
+    // extent under the centre is carried across instead: direction-neutral, and exactly what a
+    // reader expects to still be looking at. Scroll mode already holds its vertical place itself
+    // (`keepCurrentPage`), so only Pages mode carries the vertical centre here.
+    const sc = this.pdfScroller();
+    const fx = sc && sc.scrollWidth ? (sc.scrollLeft + sc.clientWidth / 2) / sc.scrollWidth : null;
+    const fy = sc && sc.scrollHeight ? (sc.scrollTop + sc.clientHeight / 2) / sc.scrollHeight : null;
+    r.setAttribute("zoom", String(zoom));
+    if (!sc) return;
+    if (fx != null) sc.scrollLeft = fx * sc.scrollWidth - sc.clientWidth / 2;
+    if (fy != null && this.fxlMode === "pages") sc.scrollTop = fy * sc.scrollHeight - sc.clientHeight / 2;
+  }
+
+  /** The element that scrolls a PDF: the Scroll renderer's own scroller, or the paged renderer's host. */
+  private pdfScroller(): HTMLElement | null {
+    const r = this.view?.renderer as (HTMLElement & { scrollElement?: HTMLElement }) | undefined;
+    return r ? (r.scrollElement ?? r) : null;
+  }
+
+  /**
+   * The zoom range for the PDF page being read, and what the two fits resolve to — the renderer's
+   * own numbers (see public/foliate-js/sard-zoom.js), so the controls never disagree with the page.
+   */
+  pdfZoomBounds(): PdfZoomBounds | null {
+    if (!this.isFixedLayout) return null;
+    const r = this.view?.renderer as { zoomBounds?: PdfZoomBounds | null } | undefined;
+    return r?.zoomBounds ?? null;
+  }
+
+  /**
+   * DRAG TO PAN a PDF page that is larger than the reading area.
+   *
+   * WHAT ALREADY WORKED, AND WAS KEPT. The page sits in a real scroller, so the wheel, a trackpad and
+   * a touch screen all move a large page (Shift+wheel sideways too — see `wheelAxes`), and nothing here
+   * touches them. What a
+   * MOUSE could not do is grab the page: a drag started a text selection instead, so at 300% the only
+   * way across a page was the scrollbar. MEASURED before this: a press-and-drag moved nothing.
+   *
+   * WHEN IT APPLIES. Only when the page is actually bigger than the area it is read in — in Scroll
+   * mode, WIDER (a page taller than the screen is just the document, and the wheel already moves
+   * it); in Pages mode, larger in either direction. At the fits nothing changes: no grab cursor, no
+   * captured press, ordinary reading.
+   *
+   * WHAT IT NEVER TAKES. A press on a word or a link is left alone, so selecting text and following a
+   * link work exactly as before at every zoom; only a press on the page's blank ground pans. A touch
+   * is left to the platform, which already pans (and flings) natively. The movement is the pointer's
+   * own, 1:1, in screen coordinates — the frame moves under the pointer while it pans, so its own
+   * coordinates would feed back on themselves. Horizontal is physical in both scripts: the reading
+   * area is pinned LTR, so dragging right always reveals what is to the left.
+   */
+  private attachPdfPan(doc: Document): void {
+    const root = doc.documentElement;
+    const style = doc.createElement("style");
+    style.textContent =
+      "html.sard-pan .textLayer, html.sard-pan #canvas { cursor: grab; }" +
+      " html.sard-panning, html.sard-panning * { cursor: grabbing !important; user-select: none !important; }";
+    (doc.head ?? root).append(style);
+    const pannable = (sc: HTMLElement): boolean => {
+      const wide = sc.scrollWidth - sc.clientWidth > 1;
+      if (this.fxlMode === "scroll") return wide;
+      return wide || sc.scrollHeight - sc.clientHeight > 1;
+    };
+    const onContent = (t: EventTarget | null): boolean =>
+      !!(t as Element | null)?.closest?.(".textLayer span, .textLayer br, .annotationLayer a, .annotationLayer section, a, button, input, textarea, select");
+    let drag: { id: number; x: number; y: number; left: number; top: number; moved: boolean; sc: HTMLElement } | null = null;
+    const end = (): void => {
+      if (!drag) return;
+      if (!drag.moved) doc.getSelection()?.removeAllRanges(); // a plain click still clears a selection
+      try { root.releasePointerCapture(drag.id); } catch { /* already released */ }
+      root.classList.remove("sard-panning");
+      drag = null;
+    };
+    doc.addEventListener("pointerdown", (ev: PointerEvent) => {
+      if (ev.button !== 0 || ev.pointerType === "touch") return;
+      const sc = this.pdfScroller();
+      if (!sc || !pannable(sc) || onContent(ev.target)) return;
+      ev.preventDefault(); // no selection, no image drag — this press is a grab
+      drag = { id: ev.pointerId, x: ev.screenX, y: ev.screenY, left: sc.scrollLeft, top: sc.scrollTop, moved: false, sc };
+      try { root.setPointerCapture(ev.pointerId); } catch { /* the drag still works inside the frame */ }
+    });
+    doc.addEventListener("pointermove", (ev: PointerEvent) => {
+      if (!drag) {
+        // The grab cursor says "this can be moved" exactly when a press would move it.
+        const sc = ev.pointerType === "touch" ? null : this.pdfScroller();
+        root.classList.toggle("sard-pan", !!sc && pannable(sc));
+        return;
+      }
+      if (ev.pointerId !== drag.id) return;
+      const dx = ev.screenX - drag.x;
+      const dy = ev.screenY - drag.y;
+      if (!drag.moved && Math.hypot(dx, dy) < 3) return;
+      drag.moved = true;
+      root.classList.add("sard-panning");
+      drag.sc.scrollLeft = drag.left - dx;
+      drag.sc.scrollTop = drag.top - dy;
+    });
+    doc.addEventListener("pointerup", end);
+    doc.addEventListener("pointercancel", end);
+    doc.addEventListener("lostpointercapture", end);
   }
 
   /**
@@ -5070,7 +5230,19 @@ export class FoliateController {
    *  long book — instead of a static "Searching…". */
   async searchBook(
     query: string,
-    opts: { signal?: AbortSignal; onProgress?: (frac: number) => void; onBatch?: (hits: SearchHit[]) => void } = {},
+    opts: {
+      signal?: AbortSignal; onProgress?: (frac: number) => void; onBatch?: (hits: SearchHit[]) => void;
+      /**
+       * WHOLE WORD. Off (the default, and what every caller that omits it gets) the search is the
+       * substring search it has always been: «أودر» finds «أودري». On, a hit counts only where the
+       * query stands as a word of its own. It is passed straight through to the engine, which applies
+       * it INSIDE the matcher (public/foliate-js/sard-wordmatch.js, VENDOR.txt patch 15) — so the hits
+       * that stream out of here are already the only ones there are, and the count, the snippets, the
+       * highlight and the jump all describe the same list. Nothing else about the search changes:
+       * same matcher, same collator, same folding, so tashkīl and case are ignored in both modes.
+       */
+      wholeWord?: boolean;
+    } = {},
   ): Promise<SearchHit[]> {
     const view = this.view;
     const q = query.trim();
@@ -5149,7 +5321,7 @@ export class FoliateController {
       // With no rule in force `expandQuery` returns the single original term and this loop runs once,
       // which is exactly the code path that existed before.
       for (const term of expandQuery(q, this.reps, foldPhrase)) {
-        for await (const r of view.search({ query: term, draw: drawNothing })) {
+        for await (const r of view.search({ query: term, draw: drawNothing, sardWholeWords: !!opts.wholeWord })) {
           if (opts.signal?.aborted) break;
           if (r === "done") break;
           const now = performance.now();

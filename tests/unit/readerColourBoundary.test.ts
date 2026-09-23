@@ -103,7 +103,11 @@ describe("the page-side stylesheet asks the book, not the app", () => {
   it("the page surface reads the reader-scoped colour", () => {
     const sheet = RULES.filter((r) => /(^|[\s,>])\.page-sheet\b/.test(r.sel) && /background/.test(r.body));
     expect(sheet.length).toBeGreaterThan(0);
-    for (const r of sheet) expect(r.body).toContain("var(--reader-page");
+    // A rule that paints NO colour reads neither palette, so it cannot cross the boundary — the PDF
+    // "Around the page: None" state is the one such rule. Anything that paints a colour must still ask
+    // the book.
+    const paintsNothing = (body: string) => /background:\s*transparent\s*;/.test(body) && !/var\(--/.test(body);
+    for (const r of sheet) if (!paintsNothing(r.body)) expect(r.body).toContain("var(--reader-page");
   });
 
   it("no rule painting the page keys on the app's own light-or-dark", () => {

@@ -65,6 +65,8 @@
 // threshold. Every one of those would be this file having an opinion about a gesture the platform has
 // already interpreted correctly.
 
+import { zoomBounds, clampZoom } from './sard-zoom.js'
+
 const MOUNT_RADIUS = 1      // pages kept mounted either side of the current one (so at most 3)
 const PAGE_GAP = 18         // the gutter between pages, in CSS px — a desk gap, not a page margin
 
@@ -85,7 +87,17 @@ export class FixedLayoutScroll extends HTMLElement {
     // reading area, and a fit mode then re-scales every page — so every slot moves while `scrollTop`
     // does not. Re-laying out without holding the position left the reader on a different page:
     // MEASURED on a 567-page PDF, resizing the window to 900x640 left the page being read at y=-25675.
-    #observer = new ResizeObserver(() => this.#relayout({ keepCurrentPage: true }))
+    // A RESIZE IS ANCHORED IN THE VIEW THE READER SAW, not the one the browser has just made. The
+    // observer runs AFTER the new size is applied: `clientHeight` is already the new height, while
+    // `scrollTop` still belongs to the old view (the browser holds the top edge still). Reading the
+    // anchor from the two together measured the point under the NEW middle — a different point from
+    // the one the reader had under the middle, by exactly half the height change. MEASURED: +100 px
+    // for a 200 px taller window, -100 px for 200 px shorter, +129 px on maximize, and up to 177 px at
+    // a fit zoom (where the page also rescales). `#viewH` is the height the last layout was made for,
+    // so the anchor is taken in the geometry the reader actually had.
+    #observer = new ResizeObserver(() => this.#relayout({ keepCurrentPage: true, viewH: this.#viewH }))
+    /** The viewport height the current layout was made for — what the reader has been looking at. */
+    #viewH = 0
     #pendingAnchor = null   // a goTo that arrived before layout was ready
     #suppressReport = false
     #destroyed = false
@@ -114,7 +126,8 @@ export class FixedLayoutScroll extends HTMLElement {
                scrollbar. The screenshots showed the full platform bar, arrows and all, down the
                trailing edge of the page. Neutral grey, so it reads on paper, black and photographs. */
             scrollbar-width: thin;
-            scrollbar-color: rgba(128, 128, 128, 0.5) transparent;
+            /* Immersive reading hides it through the reader's --sard-pdf-scrollbar (global.css). */
+            scrollbar-color: var(--sard-pdf-scrollbar, rgba(128, 128, 128, 0.5) transparent);
         }
         .column {
             position: relative;
@@ -251,12 +264,49 @@ export class FixedLayoutScroll extends HTMLElement {
      * document whose pages differ does not fit the whole book to page one.
      */
     #scaleFor() {
+        const f = this.#fits()
+        // A NUMBER IS HELD TO THE RANGE HERE, where the page and the viewport are known — so every
+        // path that sets a zoom (wheel, slider, a zoom remembered from a bigger window) lands inside
+        // it without each having to know the rule. The fit modes are never clamped. See sard-zoom.js.
+        if (typeof this.#zoom === 'number' && !isNaN(this.#zoom)) return clampZoom(this.#zoom, zoomBounds(f))
+        if (this.#zoom === 'fit-width') return f.fitWidth
+        return f.fitPage
+    }
+
+    /**
+     * What the two fit modes resolve to for the current page in the current viewport.
+     *
+     * THE HEIGHT IS THE READING AREA'S, NOT WHAT IS LEFT OF IT UNDER A SCROLLBAR. The horizontal bar
+     * comes and goes with the page width, and `clientHeight` loses its height while it is shown. No
+     * fit ever shows that bar (a fitted page is never wider than the view), so measuring through it
+     * was always wrong: MEASURED, going from a zoom wider than the view back to "whole page" gave
+     * 0.7625 instead of 0.7744 — the page 1.5% short of the fit it claimed — and the zoom range, which
+     * is stated in terms of "whole page", moved whenever the bar did. `offsetHeight` is the area
+     * itself (the scroller has no border), with or without the bar. The width keeps `clientWidth`:
+     * the vertical bar is always there (`overflow-y: scroll`), so it is always taken out.
+     */
+    #fits() {
         const { width, height } = this.#sizeOf(this.#index)
         const vw = Math.max(1, this.#scroller.clientWidth - 2 * PAGE_GAP)
-        const vh = Math.max(1, this.#scroller.clientHeight - 2 * PAGE_GAP)
-        if (typeof this.#zoom === 'number' && !isNaN(this.#zoom)) return this.#zoom
-        if (this.#zoom === 'fit-width') return vw / width
-        return Math.min(vw / width, vh / height)   // fit-page
+        const vh = Math.max(1, this.#scroller.offsetHeight - 2 * PAGE_GAP)
+        return { width, height, fitWidth: vw / width, fitPage: Math.min(vw / width, vh / height), dpr: globalThis.devicePixelRatio || 1 }
+    }
+
+    /**
+     * The zoom range for the page being read, and the two fits, for the controls that show them —
+     * plus where that page sits across this box (`pageWidth`, `pageCenterX` from the box's left edge,
+     * `boxWidth`), so a surround drawn OUTSIDE the renderer can frame it. Read-only arithmetic on the
+     * layout; nothing here moves anything.
+     */
+    get zoomBounds() {
+        if (!this.#fallback) return null
+        const f = this.#fits()
+        const pageWidth = this.#slots[this.#index]?.width || this.#painted(f.width)
+        const colW = parseFloat(this.#column.style.width) || pageWidth
+        const cw = this.#scroller.clientWidth
+        const pageCenterX = Math.max(0, (cw - colW) / 2) + colW / 2 - this.#scroller.scrollLeft
+        return { ...zoomBounds(f), fitPage: f.fitPage, fitWidth: f.fitWidth, scale: this.#scale,
+            pageWidth, pageCenterX, boxWidth: this.#scroller.offsetWidth }
     }
 
     /**
@@ -267,9 +317,9 @@ export class FixedLayoutScroll extends HTMLElement {
      * the same page stays under the eye. Without it, every correction on a non-uniform document would
      * shift the document under the reader.
      */
-    #relayout({ keepCurrentPage = false } = {}) {
+    #relayout({ keepCurrentPage = false, viewH = 0 } = {}) {
         if (!this.#fallback || this.#destroyed) return
-        const before = keepCurrentPage ? this.#pagePosition() : null
+        const before = keepCurrentPage ? this.#pagePosition(viewH || this.#scroller.clientHeight) : null
         this.#scale = this.#scaleFor()
         let top = PAGE_GAP
         let widest = 0
@@ -292,6 +342,9 @@ export class FixedLayoutScroll extends HTMLElement {
         this.#column.style.height = `${top}px`
         this.#column.style.width = `${widest}px`
         if (before) this.#restorePagePosition(before)
+        // Read after the restore: the column's new width may have added or removed the horizontal
+        // scrollbar, and that height is part of the view the reader now has.
+        this.#viewH = this.#scroller.clientHeight
         this.#syncMounted()
     }
 
@@ -352,19 +405,25 @@ export class FixedLayoutScroll extends HTMLElement {
     // a 20-notch burst at 16 ms spacing reached +5701 px and snapped BACK 610 px. Reading the anchor
     // from `scrollTop` at the moment of the relayout cannot be stale, and holding the MIDDLE rather
     // than the top keeps the same line under the eye when a resize changes the viewport's height.
-    #pagePosition() {
-        const idx = this.#pageAtViewportMiddle()
+    #pagePosition(viewH = this.#scroller.clientHeight) {
+        const mid = this.#scroller.scrollTop + viewH / 2
+        const idx = this.#pageAtViewportMiddle(mid)
         const slot = this.#slots[idx]
         if (!slot || !slot.height) return null
-        const mid = this.#scroller.scrollTop + this.#scroller.clientHeight / 2
-        return { index: idx, into: (mid - slot.top) / slot.height }
+        const into = (mid - slot.top) / slot.height
+        // A POINT IN THE GAP BELOW A PAGE IS HELD IN PIXELS PAST THAT PAGE'S EDGE. The page scales with
+        // the zoom; the gutter does not (PAGE_GAP is fixed), so a fraction of the page above maps a gap
+        // point somewhere else once a fit zoom rescales the page — MEASURED 5 px into the next page on a
+        // maximize at fit width. The gap offset is exact at any scale.
+        if (into > 1) return { index: idx, into: 1, past: mid - (slot.top + slot.height) }
+        return { index: idx, into }
     }
 
     #restorePagePosition(pos) {
         const slot = this.#slots[pos.index]
         if (!slot) return
         this.#suppressReport = true
-        this.#scroller.scrollTop = Math.max(0, slot.top + pos.into * slot.height - this.#scroller.clientHeight / 2)
+        this.#scroller.scrollTop = Math.max(0, slot.top + pos.into * slot.height + (pos.past ?? 0) - this.#scroller.clientHeight / 2)
         this.#index = pos.index
         this.#suppressReport = false
     }
@@ -472,8 +531,7 @@ export class FixedLayoutScroll extends HTMLElement {
      * two-pixel sliver while the reader is plainly reading the other. The middle is what a reader
      * would point at.
      */
-    #pageAtViewportMiddle() {
-        const mid = this.#scroller.scrollTop + this.#scroller.clientHeight / 2
+    #pageAtViewportMiddle(mid = this.#scroller.scrollTop + this.#scroller.clientHeight / 2) {
         // The slots are sorted by `top`, so this is a binary search, not a scan — it runs on scroll.
         let lo = 0, hi = this.#slots.length - 1, best = 0
         while (lo <= hi) {

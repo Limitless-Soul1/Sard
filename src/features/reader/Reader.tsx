@@ -19,7 +19,9 @@ import { loadBookCssMode } from "../../reader-engine/bookCssSetting"; // WP-7 st
 import {
   isPdfThemeId, PDF_THEME_KEY, pdfTheme, pdfZoomKey, pdfZoomAttr, parseStoredZoom,
   PDF_VIEW_MODE_KEY, parsePdfViewMode, type PdfViewMode,
-  zoomForWheel, isFitMode, type PdfZoom, type PdfThemeId,
+  PDF_SURROUND_KEY, parsePdfSurround, type PdfSurround,
+  PDF_FRAME_KEY, parsePdfFrame, pdfBand,
+  zoomForWheel, isFitMode, clampPdfZoom, type PdfZoom, type PdfZoomRange, type PdfThemeId,
 } from "../../reader-engine/pdfView";
 import {
   speakSymbolsKey, speakSymbolsAttr, parseSpeakSymbols, effectiveSpeakSymbols,
@@ -142,6 +144,28 @@ const parseSecs = (raw: string | null): number[] => {
   }
 };
 
+/**
+ * THE BOOK FLAGS, BUILT IN ONE PLACE. Every `ctrl.open()` hands the engine the same five values, read
+ * from their stores at the moment of the open.
+ *
+ * The reading-mode switch used to build its own copy with only the first three. Without
+ * `pageOpacity` the book document paints the page colour OPAQUE, so after Scroll -> Pages a translucent
+ * page over a wallpaper turned into a solid dark block — MEASURED: the frame's body went from
+ * `transparent` to `rgb(17, 26, 27)`, and the controller's flags lost `pageOpacity: 0.84` and
+ * `deskScrim`. Moving a background slider "fixed" it only because those two values feed the theme
+ * effect, which re-applied the full set.
+ */
+function currentBookFlags() {
+  const ts = useTheme.getState();
+  return {
+    overrideBookColor: ts.overrideBookColor,
+    hideChapterTitles: ts.hideChapterTitles,
+    hideFirstLine: ts.hideFirstLine,
+    pageOpacity: effectivePageOpacity(),
+    deskScrim: currentDeskScrim(),
+  };
+}
+
 export function Reader({
   book: initial,
   onExit,
@@ -247,6 +271,8 @@ export function Reader({
   // close-requested handler registers ONCE ([] deps) but must describe the book on screen NOW, not the one
   // this Reader happened to mount with — the Reader is REUSED across books (RAWY-206 cross-book follow).
   const isPdfRef = useRef(false);
+  // The PDF frame's layout, read by the once-registered onRelocate closure (see `layoutPdfBand`).
+  const pdfBandRef = useRef<() => void>(() => {});
   // RAWY-249 (PART 2): latest hideChrome, so the once-registered onRelocate closure (openBook, [] deps) always
   // calls the current hook callback — same stale-capture guard as playRef.
   const hideChromeRef = useRef<() => void>(() => {});
@@ -625,10 +651,13 @@ export function Reader({
       // and the same call site, exercised once loading had finished, correctly merged (`[1]` → `[1,6]`).
       // Nothing here depends on the view, so the reads simply belong before it. No flag, no guard, no
       // deferral of the handler: the data is just present before anything can read it.
-      const [readRaw, seenRaw, spoilerRaw, invertRaw, pdfThemeRaw, pdfZoomRaw, pdfModeRaw, furthestRaw, speakSymRaw] = await Promise.all([
+      const [readRaw, seenRaw, spoilerRaw, wholeWordRaw, invertRaw, pdfThemeRaw, pdfZoomRaw, pdfModeRaw, furthestRaw, speakSymRaw, pdfSurroundRaw, pdfFrameRaw] = await Promise.all([
         settingsGet(`chapters_read:${target.id}`).catch(() => null),
         settingsGet(`seen_start:${target.id}`).catch(() => null),
         settingsGet(`spoiler_safe:${target.id}`).catch(() => null),
+        // Whole-word search, this book's answer. Per book and default OFF, exactly like the
+        // spoiler-safe row beside it — the two switches in the search panel keep one convention.
+        settingsGet(`search_whole_word:${target.id}`).catch(() => null),
         settingsGet(`pdf_invert:${target.id}`).catch(() => null),
         // The PDF appearance is a READING preference, so it is global like the book theme — a reader
         // who wants sepia wants it for every PDF. Zoom is the opposite: it belongs to the document,
@@ -645,6 +674,10 @@ export function Reader({
         // This book's own answer to "say the decorative marks?", or nothing at all — the third state,
         // which is what lets a book go back to following the worn هيئة. Same additive row pattern.
         settingsGet(speakSymbolsKey(target.id)).catch(() => null),
+        // How much of the reading sheet shows around a PDF page. Global, like the PDF appearance.
+        settingsGet(PDF_SURROUND_KEY).catch(() => null),
+        // ...and how far it extends beyond the page (absent = the whole reading column, as before).
+        settingsGet(PDF_FRAME_KEY).catch(() => null),
       ]);
       if (stale()) return;
       // Held in a ref as well as state: the three read-aloud entry points resolve it at the moment
@@ -682,11 +715,14 @@ export function Reader({
       // OFF via the Library route — same book, same stored value). Loading them on the same path as every
       // other per-book value removes the second lifecycle rather than adding a second reset.
       setSpoilerSafe(spoilerRaw !== "0"); // default ON (design §5)
+      setSearchWholeWord(wholeWordRaw === "1"); // default OFF — today's substring search is unchanged
       // A reader who had chosen "inverted" before themes existed keeps a dark page: the old boolean is
       // honoured once, as "night", and only when no theme has been chosen since. Nobody's setting is
       // silently discarded, and nobody who never used invert gets a dark theme they did not ask for.
       setPdfThemeId(isPdfThemeId(pdfThemeRaw) ? pdfThemeRaw : invertRaw === "1" ? "night" : "normal");
       setPdfZoom(parseStoredZoom(pdfZoomRaw) ?? "fit-page");
+      setPdfSurround(parsePdfSurround(pdfSurroundRaw));
+      setPdfFrame(parsePdfFrame(pdfFrameRaw));
       // Set BOTH before `ctrl.open()` below reads the ref: the mode chooses the renderer, and the
       // renderer is built inside that call.
       {
@@ -729,6 +765,8 @@ export function Reader({
       ctrl.onRelocate(({ cfi, fraction, chapterLabel, chapterHref, location, pageLabel }) => {
         // WP-4F: `location`/`pageLabel` are foliate's own position data, which used to be dropped here.
         set({ cfi, fraction, chapterLabel, chapterHref, location, pageLabel });
+        // A PDF page that scrolled, turned or changed size takes its frame with it (no-op for an EPUB).
+        pdfBandRef.current();
         // DISC/RPC: the activity's position line follows the real reading position — the chapter
         // label when the engine has one, else the whole-book percent. Throttled inside.
         updateReadingSession(chapterLabel, fraction);
@@ -869,7 +907,7 @@ export function Reader({
         resumeFraction, // RAWY-85: PDFs resume by page fraction
         style: initialStyle,
         theme: resolveTheme(effTheme),
-        flags: { overrideBookColor: ts.overrideBookColor, hideChapterTitles: ts.hideChapterTitles, hideFirstLine: ts.hideFirstLine, pageOpacity: effectivePageOpacity(), deskScrim: currentDeskScrim() },
+        flags: currentBookFlags(),
         dir: target.dir ?? undefined, // RAWY-85: a PDF's manual RTL override lives in books.dir too
         flow: initialStyle.flowMode, // scrolled (default) or paged — RAWY-25
         fxlMode: pdfModeRef.current, // PDF only: "scroll" (default) or "pages"
@@ -1561,11 +1599,7 @@ export function Reader({
         resumeCfi: cfi,
         style: next,
         theme: resolveTheme(bookThemeId),
-        flags: {
-          overrideBookColor: useTheme.getState().overrideBookColor,
-          hideChapterTitles: useTheme.getState().hideChapterTitles,
-          hideFirstLine: useTheme.getState().hideFirstLine,
-        },
+        flags: currentBookFlags(),
         dir: initial.dir ?? undefined,
         flow: next.flowMode,
         revealLabels: makeRevealLabels(), // RAWY-70
@@ -1652,6 +1686,59 @@ export function Reader({
    * both read it from closures registered once.
    */
   const [pdfMode, setPdfMode] = useState<PdfViewMode>("scroll");
+  /** How much of the reading sheet shows around a PDF page. Paint only, so it applies live. */
+  const [pdfSurround, setPdfSurround] = useState<PdfSurround>("normal");
+  const choosePdfSurround = (v: PdfSurround) => {
+    setPdfSurround(v);
+    settingsSet(PDF_SURROUND_KEY, v).catch(() => {});
+  };
+  /**
+   * THE FRAME AROUND THE PAGE: how many px of surround on each side of the page. `null` is the untouched
+   * surround (the sheet across the whole reading column, exactly as before). Paint only: the frame is
+   * drawn by `.page-sheet::before` from two CSS variables; no box that holds the page moves.
+   */
+  const [pdfFrame, setPdfFrame] = useState<number | null>(null);
+  const choosePdfFrame = (v: number) => {
+    setPdfFrame(v);
+    settingsSet(PDF_FRAME_KEY, String(Math.round(v))).catch(() => {});
+  };
+  /** The frame slider's far end for the page on screen, and where the untouched surround sits on it. */
+  const [pdfFrameInfo, setPdfFrameInfo] = useState<{ max: number; current: number } | null>(null);
+  const pdfFrameRef = useRef<number | null>(null);
+  pdfFrameRef.current = pdfFrame;
+  /** Measure the frame for the page on screen (null when there is no PDF page to frame). */
+  const measurePdfBand = () => {
+    const desk = deskRef.current;
+    const sheet = desk?.querySelector<HTMLElement>(".page-sheet");
+    const host = desk?.querySelector<HTMLElement>(".page-host");
+    const b = ctrlRef.current?.pdfZoomBounds();
+    if (!desk || !sheet || !host || !b || !b.pageWidth) return null;
+    const dr = desk.getBoundingClientRect(), sr = sheet.getBoundingClientRect(), hr = host.getBoundingClientRect();
+    const ds = getComputedStyle(desk);
+    return { sheet, band: pdfBand({
+      areaLeft: dr.left + parseFloat(ds.paddingLeft || "0"), areaRight: dr.right - parseFloat(ds.paddingRight || "0"),
+      sheetLeft: sr.left, sheetWidth: sr.width, hostLeft: hr.left, hostWidth: hr.width,
+      boxWidth: b.boxWidth, pageWidth: b.pageWidth, pageCenterX: b.pageCenterX, frame: pdfFrameRef.current,
+    }) };
+  };
+  // Coalesced to one layout per frame: a scroll relocates many times a second. Nothing is measured while
+  // no frame is drawn, and nothing is written when the band has not moved: the page-host and the renderer
+  // sit INSIDE the sheet, so every custom-property write restyles them too.
+  const pdfBandRaf = useRef(0);
+  const layoutPdfBand = useCallback(() => {
+    if (pdfBandRaf.current) return;
+    pdfBandRaf.current = requestAnimationFrame(() => {
+      pdfBandRaf.current = 0;
+      if (!deskRef.current?.hasAttribute("data-pdf-frame")) return;
+      const m = measurePdfBand();
+      if (!m) return;
+      const w = `${m.band.width}px`, x = `${m.band.x}px`;
+      if (m.sheet.style.getPropertyValue("--pdf-band-w") !== w) m.sheet.style.setProperty("--pdf-band-w", w);
+      if (m.sheet.style.getPropertyValue("--pdf-band-x") !== x) m.sheet.style.setProperty("--pdf-band-x", x);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  pdfBandRef.current = isPdf ? layoutPdfBand : () => {};
   /**
    * THE SCALE ON SCREEN, for the zoom readout — refreshed only while the settings panel is OPEN.
    *
@@ -1661,6 +1748,8 @@ export function Reader({
    * second, and nothing at all while the panel is closed.
    */
   const [pdfScaleShown, setPdfScaleShown] = useState(1);
+  /** The renderer's zoom range for the page on screen — the slider's ends. Read with the scale. */
+  const [pdfZoomRange, setPdfZoomRange] = useState<PdfZoomRange | null>(null);
   const pdfModeRef = useRef<PdfViewMode>("scroll");
   pdfModeRef.current = pdfMode;
   /**
@@ -1712,23 +1801,38 @@ export function Reader({
   const applyPdfZoom = useCallback((z: PdfZoom) => {
     setPdfZoom(z);
     ctrlRef.current?.setPdfZoom(z);
+    pdfBandRef.current(); // the page changed size: its frame follows
     // Persist lazily: a wheel gesture must not write a settings row per frame.
     if (pdfZoomWrite.current) clearTimeout(pdfZoomWrite.current);
     pdfZoomWrite.current = window.setTimeout(() => {
       settingsSet(pdfZoomKey(initial.id), pdfZoomAttr(z)).catch(() => {});
     }, 400);
   }, [initial.id]);
-  /** The scale currently on screen — resolved by the renderer when a fit mode is active. */
-  const currentPdfScale = useCallback(
-    () => (isFitMode(pdfZoomRef.current) ? (ctrlRef.current?.pdfRenderedScale() ?? 1) : (pdfZoomRef.current as number)),
-    [],
-  );
+  /**
+   * The scale currently on screen. The renderer knows it exactly — a fit mode resolves there, and a
+   * number is held to the zoom range there — so it is read back rather than assumed: a zoom remembered
+   * from a larger window may be shown smaller than the number that was stored.
+   */
+  const currentPdfScale = useCallback(() => {
+    const b = ctrlRef.current?.pdfZoomBounds();
+    if (b) return b.scale;
+    return isFitMode(pdfZoomRef.current) ? (ctrlRef.current?.pdfRenderedScale() ?? 1) : (pdfZoomRef.current as number);
+  }, []);
   useEffect(() => {
     if (!isPdf || !settingsOpen) return;
-    const read = () => setPdfScaleShown((prev) => {
-      const next = Math.round(currentPdfScale() * 100) / 100;
-      return next === prev ? prev : next;
-    });
+    const read = () => {
+      setPdfScaleShown((prev) => {
+        const next = Math.round(currentPdfScale() * 100) / 100;
+        return next === prev ? prev : next;
+      });
+      const fm = measurePdfBand();
+      if (fm) setPdfFrameInfo((prev) => (prev && prev.max === fm.band.max && prev.current === fm.band.current ? prev : { max: fm.band.max, current: fm.band.current }));
+      const b = ctrlRef.current?.pdfZoomBounds();
+      setPdfZoomRange((prev) => {
+        if (!b) return prev;
+        return prev && Math.abs(prev.min - b.min) < 1e-3 && Math.abs(prev.max - b.max) < 1e-3 ? prev : { min: b.min, max: b.max };
+      });
+    };
     read();
     const id = window.setInterval(read, 300);
     return () => window.clearInterval(id);
@@ -1740,7 +1844,8 @@ export function Reader({
   // The slider: an exact scale per input event, coalesced to one re-render per frame exactly as the
   // wheel is below — a drag fires dozens of inputs a second and each would otherwise re-paint the page.
   // The readout follows the drag at once, rather than waiting for the renderer to catch up.
-  const pdfZoomTo = useCallback((z: number) => {
+  const pdfZoomTo = useCallback((raw: number) => {
+    const z = clampPdfZoom(raw, ctrlRef.current?.pdfZoomBounds());
     pdfZoomPending.current = z;
     setPdfScaleShown(Math.round(z * 100) / 100);
     if (pdfZoomRaf.current !== undefined) return;
@@ -1753,7 +1858,9 @@ export function Reader({
   }, [applyPdfZoom]);
   const pdfZoomByWheel = useCallback((deltaY: number) => {
     const from = pdfZoomPending.current ?? currentPdfScale();
-    pdfZoomPending.current = zoomForWheel(from, deltaY);
+    // Held to the renderer's range HERE as well, so a long gesture past either end does not pile up
+    // travel that must be wound back before the page moves again.
+    pdfZoomPending.current = zoomForWheel(from, deltaY, ctrlRef.current?.pdfZoomBounds());
     if (pdfZoomRaf.current !== undefined) return;
     pdfZoomRaf.current = requestAnimationFrame(() => {
       pdfZoomRaf.current = undefined;
@@ -1837,6 +1944,14 @@ export function Reader({
   const [searching, setSearching] = useState(false);
   const [searchProgress, setSearchProgress] = useState(0); // RAWY-89: scan fraction (0..1) for the live indicator
   const [spoilerSafe, setSpoilerSafe] = useState(true); // ON by default (the whole point), per book
+  /**
+   * WHOLE-WORD SEARCH — OFF by default, so a reader who never touches it searches exactly as before.
+   * Per book and persisted, the same convention as spoiler-safe above (and loaded on the same path, in
+   * `openBook`). It is a MATCHING option, so it belongs to the query rather than to the results: flipping
+   * it re-runs the search, and the hits it returns are the only hits there are — count, snippets,
+   * highlight and jump all read that one list.
+   */
+  const [searchWholeWord, setSearchWholeWord] = useState(false);
   const [revealAhead, setRevealAhead] = useState(false); // "show them anyway" — this once
   const [activeHitCfi, setActiveHitCfi] = useState<string | null>(null);
   const searchEpoch = useRef(0);
@@ -1866,6 +1981,7 @@ export function Reader({
       searchAbort.current = ac;
       // RAWY-89: stream partial results + scan progress as foliate scans, so the panel feels alive.
       ctrl.searchBook(q, {
+        wholeWord: searchWholeWord,
         signal: ac.signal,
         onProgress: (f) => { if (searchEpoch.current === myEpoch) setSearchProgress(f); },
         onBatch: (hits) => { if (searchEpoch.current === myEpoch) setSearchHits(hits); },
@@ -1877,13 +1993,22 @@ export function Reader({
       }).catch(() => { if (searchEpoch.current === myEpoch) setSearching(false); });
     }, 320);
     return () => { if (searchDebounce.current) clearTimeout(searchDebounce.current); };
-  }, [searchQuery]);
+    // The matching mode is part of the query: changing it supersedes the in-flight scan and searches again.
+  }, [searchQuery, searchWholeWord]);
 
   const toggleSearch = useCallback(() => {
     setLeftPanel((p) => (p === "search" ? null : "search")); // opening Search closes Contents
   }, []);
   // RAWY-175 (AUD-3): STABLE (useCallback) so the memoized SearchPanel/ResultRow can skip re-rendering
   // when only unrelated Reader state changed — the reference doesn't churn every render.
+  /** RAWY-175: STABLE, and it reads `bookRef` rather than a captured id — see `onToggleSpoiler` below. */
+  const onToggleWholeWord = useCallback(() => {
+    setSearchWholeWord((v) => {
+      const next = !v;
+      settingsSet(`search_whole_word:${bookRef.current}`, next ? "1" : "0").catch(() => {});
+      return next;
+    });
+  }, []);
   const onToggleSpoiler = useCallback(() => {
     setRevealAhead(false);
     setSpoilerSafe((v) => {
@@ -2365,9 +2490,13 @@ export function Reader({
   // RAWY-74: the page-turn chevrons belong to PAGED mode only — in scrolled mode there are no pages
   // to turn, so they're hidden (they were showing in scrolled mode where next()/prev() jump sections).
   const isPaged = (style?.flowMode ?? "scrolled") === "paged";
-  // RAWY-86: a PDF is fixed-layout — ALWAYS paged (chevrons + wheel-to-page), never scrolled. This
-  // is the stuck-nav fix (RAWY-85 left a PDF with no chevrons + a scroll no-op).
-  const showChevrons = isPaged || isPdf;
+  // RAWY-86: a PDF in PAGES mode is paged, so it carries the page-turn controls (the stuck-nav fix:
+  // RAWY-85 left a PDF with no chevrons + a scroll no-op). A PDF in SCROLL mode is one continuous
+  // document, exactly like a scrolled EPUB above: there is no page to "turn", the scroll IS the
+  // navigation, so the controls are not rendered at all — no hidden buttons, no hit areas, nothing
+  // over the reading surface. The keyboard (Page Down, ↓, Home, End), the contents and the progress bar
+  // still move through it.
+  const showChevrons = isPaged || (isPdf && pdfMode === "pages");
   // WHERE A PDF STANDS IN ITS OWN PAGES — derived EXACTLY as the toolbar's page readout derives it
   // (RAWY-86 persists `(pageIndex + 0.5) / count`), so the control and the number can never disagree:
   // if the bar says page 1, the «previous» affordance is spent, and it says so instead of offering a
@@ -2399,14 +2528,27 @@ export function Reader({
    * the platform's own delta, unscaled: no threshold, no accumulation, and in Pages mode never a turn.
    */
   const deskRef = useRef<HTMLDivElement | null>(null);
+  // The frame follows the page: laid out again on open, mode switch, frame/surround change, and any resize
+  // of the reading area (a side panel, the window). Scroll, page turns and zoom call it directly.
+  useEffect(() => {
+    if (!isPdf) return;
+    layoutPdfBand();
+    const settle = window.setTimeout(layoutPdfBand, 700); // the renderer's first layout after an open
+    const ro = new ResizeObserver(() => layoutPdfBand());
+    const desk = deskRef.current;
+    const host = desk?.querySelector(".page-host");
+    if (desk) ro.observe(desk);
+    if (host) ro.observe(host);
+    return () => { window.clearTimeout(settle); ro.disconnect(); };
+  }, [isPdf, pdfFrame, pdfSurround, pdfMode, layoutPdfBand]);
   useEffect(() => {
     const el = deskRef.current;
     if (!isPdf || !el) return;
     const pdfDeskWheel = (e: WheelEvent) => {
       e.preventDefault();
       if (e.ctrlKey || e.metaKey) { zoomIntentRef.current(e.deltaY); return; }
-      if (pdfModeRef.current === "scroll") ctrlRef.current?.scrollPdfBy(e.deltaY, e.deltaX);
-      else ctrlRef.current?.pageByWheel(e.deltaY, e.deltaX);
+      if (pdfModeRef.current === "scroll") ctrlRef.current?.scrollPdfBy(e.deltaY, e.deltaX, e.shiftKey);
+      else ctrlRef.current?.pageByWheel(e.deltaY, e.deltaX, e.shiftKey);
     };
     el.addEventListener("wheel", pdfDeskWheel, { passive: false });
     return () => el.removeEventListener("wheel", pdfDeskWheel);
@@ -2714,6 +2856,10 @@ export function Reader({
         className={`reader-desk${isPdf ? " pdf-view" : ""}${overlayPaint.tint ? " custom-bg" : ""}`}
         // Which PDF renderer is on the desk, for the few presentation rules that differ between them.
         data-pdf-mode={isPdf ? pdfMode : undefined}
+        // How much of the sheet shows around the page. Absent for Normal, so the default is unchanged.
+        data-pdf-surround={isPdf && pdfSurround !== "normal" ? pdfSurround : undefined}
+        // ...and, once the reader has set one, a frame of that width instead of the whole column.
+        data-pdf-frame={isPdf && pdfSurround !== "none" && pdfFrame != null ? "" : undefined}
         // `off` drops the scrim pseudo-element, so the picture is composited under nothing at all.
         // Absent in the other two states, which keeps every existing book byte-identical.
         data-overlay={overlayPaint.paint ? undefined : "off"}
@@ -2804,6 +2950,8 @@ export function Reader({
           hits={searchHits}
           spoilerSafe={spoilerSafe}
           onToggleSpoiler={onToggleSpoiler}
+          wholeWord={searchWholeWord}
+          onToggleWholeWord={onToggleWholeWord}
           revealAhead={revealAhead}
           onRevealAhead={setRevealAhead}
           activeCfi={activeHitCfi}
@@ -2867,7 +3015,13 @@ export function Reader({
         pdfMode={pdfMode}
         pdfScale={pdfScaleShown}
         onPdfZoomTo={pdfZoomTo}
+        pdfZoomRange={pdfZoomRange}
         onPdfMode={choosePdfMode}
+        pdfSurround={pdfSurround}
+        onPdfSurround={choosePdfSurround}
+        pdfFrame={pdfFrame}
+        pdfFrameInfo={pdfFrameInfo}
+        onPdfFrame={choosePdfFrame}
         speakSymbolsOverride={speakSymbolsOverride}
         speakSymbolsAppearance={style?.ttsSpeakSymbols ?? ARABIC_DEFAULTS.ttsSpeakSymbols}
         onSpeakSymbols={setBookSpeakSymbols}

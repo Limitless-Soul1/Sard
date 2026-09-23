@@ -97,7 +97,8 @@ describe("the hierarchy", () => {
 
   it("the readout is the scale actually on screen, and the thumb sits where that scale is", () => {
     expect(pdfBranch).toContain("value={`${Math.round((pdfScale ?? 1) * 100)}%`}");
-    expect(pdfBranch).toContain("value={zoomToSlider(pdfScale ?? 1)}");
+    // Held inside the track, whose ends are the renderer's range for this page (see sard-zoom.js).
+    expect(pdfBranch).toContain("value={Math.min(zoomTrack.max, Math.max(zoomTrack.min, zoomToSlider(pdfScale ?? 1)))}");
   });
 });
 
@@ -118,22 +119,25 @@ describe("the zoom readout is the scale on screen", () => {
 });
 
 describe("the zoom slider's scale", async () => {
-  const { zoomToSlider, sliderToZoom, PDF_ZOOM_MIN, PDF_ZOOM_MAX } = await import("../../src/reader-engine/pdfView");
+  const { zoomToSlider, sliderToZoom, sliderBounds } = await import("../../src/reader-engine/pdfView");
+  // A range as a renderer reports it — for an A4 page in an 1100x720 window, measured.
+  const range = { min: 0.3872, max: 5.7874 };
 
   it("is logarithmic: equal travel is an equal proportional change", () => {
     // 100→200% and 200→400% are the same distance along the track — one doubling each.
     expect(zoomToSlider(2) - zoomToSlider(1)).toBe(zoomToSlider(4) - zoomToSlider(2));
   });
 
-  it("covers exactly the zoom range, and round-trips", () => {
-    expect(sliderToZoom(zoomToSlider(PDF_ZOOM_MIN))).toBeCloseTo(PDF_ZOOM_MIN, 2);
-    expect(sliderToZoom(zoomToSlider(PDF_ZOOM_MAX))).toBeCloseTo(PDF_ZOOM_MAX, 1);
-    for (const z of [0.67, 1, 1.38, 2.23, 3]) expect(sliderToZoom(zoomToSlider(z))).toBeCloseTo(z, 1);
+  it("its two ends reach the renderer's range exactly, and it round-trips inside it", () => {
+    const ends = sliderBounds(range);
+    expect(sliderToZoom(ends.min, range)).toBeCloseTo(range.min, 3);
+    expect(sliderToZoom(ends.max, range)).toBeCloseTo(range.max, 3);
+    for (const z of [0.67, 1, 1.38, 2.23, 3]) expect(sliderToZoom(zoomToSlider(z), range)).toBeCloseTo(z, 1);
   });
 
   it("never produces a scale outside the range, whatever the input", () => {
-    expect(sliderToZoom(-9999)).toBe(PDF_ZOOM_MIN);
-    expect(sliderToZoom(9999)).toBe(PDF_ZOOM_MAX);
+    expect(sliderToZoom(-9999, range)).toBeCloseTo(range.min, 3);
+    expect(sliderToZoom(9999, range)).toBeCloseTo(range.max, 3);
   });
 
   it("the drag is coalesced to one re-render per frame, like the wheel", () => {

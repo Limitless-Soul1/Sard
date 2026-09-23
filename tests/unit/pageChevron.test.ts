@@ -122,8 +122,11 @@ describe("four states, and a press that is felt", () => {
     expect(rules).not.toMatch(/\.page-chevron:disabled\s*\{[^}]*display:\s*none/);
   });
 
-  it("stands clear of the Scroll renderer's scrollbar", () => {
-    expect(css).toContain('.reader-desk.pdf-view[data-pdf-mode="scroll"] .page-chevron-right');
+  it("is not rendered at all in PDF Scroll mode — a continuous document has no page to turn", () => {
+    // Not hidden, not transparent: absent, so it can neither cover the page nor take a click.
+    expect(reader).toContain('const showChevrons = isPaged || (isPdf && pdfMode === "pages");');
+    // …which also retires the rule that kept the rail clear of the Scroll renderer's scrollbar.
+    expect(css).not.toContain('.reader-desk.pdf-view[data-pdf-mode="scroll"] .page-chevron-right');
   });
 });
 

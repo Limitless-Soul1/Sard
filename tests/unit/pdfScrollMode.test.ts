@@ -117,7 +117,8 @@ describe("only a window of pages is ever mounted", () => {
 
   it("a height correction keeps the reader where they were", () => {
     expect(scroll).toContain("keepCurrentPage: true");
-    expect(scroll).toContain("#pagePosition()");
+    // The anchor takes the view height as a parameter now (a resize measures in the OLD view).
+    expect(scroll).toContain("#pagePosition(viewH");
     expect(scroll).toContain("#restorePagePosition(");
   });
 });

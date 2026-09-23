@@ -161,3 +161,93 @@ describe("production content — the attribution rule, and its single exemption"
     expect(rules("AGENTS.md", `${doc}\ncp cert.p12 /tmp`)).toContain("signing-material");
   });
 });
+
+// THE PRODUCTION BOUNDARY AGAINST HAND-WRITTEN MOBILE CODE.
+//
+// The rule beside this one stops GENERATED mobile projects. It stopped nothing a person writes, and
+// the gap was measured rather than argued: a source tree carrying `features-mobile/`, a mobile
+// stylesheet, a mobile Rust module, a mobile Tauri config and native plugin sources produced a
+// 627-file production tree that BOTH gates passed — Gradle and Swift files declared "fit to publish".
+//
+// Two properties are pinned here, and the second matters as much as the first:
+//   1. mobile paths are excluded, so mobile work cannot reach the Windows product; and
+//   2. the DESKTOP tree is untouched by that exclusion — the boundary protects the product without
+//      changing what it ships.
+describe("production tree — hand-written mobile code never reaches the desktop product", () => {
+  const MOBILE = [
+    "src/features-mobile/app/Shell.tsx",
+    "src/features-mobile/reader/Chrome.tsx",
+    "src/features-mobile/library/List.tsx",
+    "src/styles/mobile.css",
+    "src/mobile/gestures.ts",
+    "src-tauri/src/mobile/mod.rs",
+    "src-tauri/src/mobile/audio.rs",
+    "src-tauri/tauri.android.conf.json",
+    "src-tauri/tauri.ios.conf.json",
+    "plugins/sard-audio/android/build.gradle.kts",
+    "plugins/sard-audio/ios/Sources/Plugin.swift",
+    "tsconfig.mobile.json",
+  ];
+
+  it("excludes every mobile path, with a stated reason", () => {
+    for (const path of MOBILE) {
+      const why = excluded(path);
+      expect(why, `${path} must not reach the production tree`).toBeTruthy();
+      expect(why?.why, `${path} must say WHY it is excluded`).toBeTruthy();
+    }
+  });
+
+  it("still excludes the generated platform projects", () => {
+    // The older rule, re-pinned: the new patterns must not have displaced it.
+    expect(excluded("src-tauri/gen/android/build.gradle")).toBeTruthy();
+    expect(excluded("src-tauri/gen/apple/sard.xcodeproj/project.pbxproj")).toBeTruthy();
+  });
+
+  it("does NOT disturb the desktop product", () => {
+    // The exclusion must be surgical. These are the neighbours of every pattern above, and each one
+    // ships today — if a mobile pattern is ever loosened, this is what notices.
+    for (const path of [
+      "src/features/reader/Reader.tsx",
+      "src/features/library/Library.tsx",
+      "src/styles/global.css",
+      "src/lib/fonts.ts",
+      "src/reader-engine/FoliateController.ts",
+      "src/reader-transport/hosted.ts",
+      "src-tauri/src/lib.rs",
+      "src-tauri/src/books/mod.rs",
+      "src-tauri/tauri.conf.json",
+      "tsconfig.json",
+      "package.json",
+    ]) {
+      expect(excluded(path), `${path} must still ship to main`).toBeNull();
+    }
+  });
+
+  it("keeps the mobile capability file, which already ships", () => {
+    // Deliberately NOT excluded. It has shipped since 1.3.0 and Tauri reads the capabilities
+    // directory at build time, so removing it would change the Windows build to tidy something
+    // cosmetic. The boundary exists to protect the desktop line, not to rearrange it.
+    expect(excluded("src-tauri/capabilities/mobile.json")).toBeNull();
+  });
+
+  it("matches by location, so the exclusion holds as the mobile tree grows", () => {
+    for (const path of [
+      "src/features-mobile/some/deeply/nested/thing.tsx",
+      "src-tauri/src/mobile/deeply/nested.rs",
+      "plugins/another-plugin/android/src/main/Whatever.kt",
+    ]) {
+      expect(excluded(path), `${path} must be excluded by location`).toBeTruthy();
+    }
+  });
+
+  it("does not catch a desktop path that merely resembles a mobile one", () => {
+    // Anchored patterns: a desktop file whose name contains "mobile" is not mobile code.
+    for (const path of [
+      "src/features/settings/MobileHandoff.tsx",
+      "src/lib/mobileDetect.ts",
+      "src-tauri/src/mobile_probe.rs",
+    ]) {
+      expect(excluded(path), `${path} is desktop source and must still ship`).toBeNull();
+    }
+  });
+});

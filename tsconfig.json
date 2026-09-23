@@ -36,5 +36,13 @@
     }
   },
   "include": ["src"],
+  /* THE MOBILE FRONT END IS NOT PART OF THE DESKTOP PROGRAM, and must not be able to fail its
+     release. `verify-main-buildable.mjs` runs this exact config as the production-build gate, and
+     `include: ["src"]` swept in everything under it — so a type error in mobile code blocked a
+     desktop release. Measured, not assumed: one broken file under `src/features-mobile/` turned a
+     clean `tsc` into a failing one.
+     The mobile tree is typechecked by `tsconfig.mobile.json`, which is development-only and excluded
+     from the published tree — the same arrangement `tsconfig.test.json` already has. */
+  "exclude": ["src/features-mobile", "src/mobile"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

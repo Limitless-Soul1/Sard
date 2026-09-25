@@ -41,7 +41,9 @@ import { diagAttachDocument, diagNote, diagPublishUnits } from "@diag"; // DIAGN
 import { renderStageOk as rStageOk, renderStageFail as rStageFail, renderDiagAdoptDoc, renderDiagNotEpub, renderDiagReset, renderDiagSurface, renderDiagTheme } from "@renderDiag"; // DIAGNOSTIC BUILD ONLY
 import { sanitiseBookCss, type BookCssMode } from "./cssSanitiser"; // WP-7 stage 3
 import { synthesiseToc, type SectionHeading, type SynthToc } from "./tocSynth"; // WP-6A // → is always the next page; see that file for why
-import { resolveSpotlight, resolvePill, TRACK_SHAPE } from "./ttsTrack"; // RAWY-200: pure per-theme track resolution
+import { resolveSpotlight, resolvePill, TRACK_SHAPE, inkBand } from "./ttsTrack"; // RAWY-200: pure per-theme track resolution
+import type { TrackGround, TrackMetrics } from "./ttsTrack";
+import { isDarkSurface } from "../lib/contrast";
 import type { Theme } from "../theme/tokens";
 import { extractChapterNumber, toWesternDigits } from "../lib/format";
 import { speakableText } from "../lib/ttsText"; // the ONE rewrite that separates spoken text from shown text
@@ -517,10 +519,15 @@ function drawReadingSpotlight(rects: Iterable<DOMRect>, options: { dark?: boolea
 // glyphs stay legible (black text × terracotta ≈ dark on terracotta). A SECOND reserved key
 // (WORD_KEY), added AFTER the band so it paints on top; transient, never the annotations map/DB.
 const WORD_KEY = "sard-reading-word";
-function drawReadingPill(rects: Iterable<DOMRect>, options: { dark?: boolean; style?: ReadingStyle } = {}): SVGGElement {
+function drawReadingPill(
+  rects: Iterable<DOMRect>,
+  options: { dark?: boolean; style?: ReadingStyle; ground?: TrackGround } = {},
+): SVGGElement {
   const NS = "http://www.w3.org/2000/svg";
   const g = document.createElementNS(NS, "g");
-  const p = resolvePill(options.style, options.dark ?? false);
+  // `ground` carries the paper and the ink the mark will sit on, so the blend mode is decided against
+  // the surface actually being painted rather than against a per-polarity constant. See `pillBlendFor`.
+  const p = resolvePill(options.style, options.dark ?? false, options.ground);
   g.setAttribute("fill", p.fill);
   g.style.opacity = String(p.op);
   g.style.mixBlendMode = p.blend;
@@ -615,6 +622,104 @@ function emPxForRange(range: Range): number | null {
   } catch {
     return null; // a torn-down document — the caller falls back to the rect-height estimate
   }
+}
+
+/**
+ * ONE MEASURING CANVAS PER BOOK DOCUMENT.
+ *
+ * Created inside the BOOK's document deliberately: the reading faces are declared there by the injected
+ * sheet, so a canvas taken from the application's document measures a FALLBACK face and reports metrics
+ * for a font the page is not set in. Cached per document because the marks are re-measured on every
+ * word, and a fresh canvas per word would be the one avoidable cost in this path.
+ */
+const trackCanvases = new WeakMap<Document, CanvasRenderingContext2D>();
+function trackCanvas(doc: Document): CanvasRenderingContext2D | null {
+  const hit = trackCanvases.get(doc);
+  if (hit) return hit;
+  const cx = doc.createElement("canvas").getContext("2d");
+  if (cx) trackCanvases.set(doc, cx);
+  return cx ?? null;
+}
+
+/**
+ * THE FONT'S METRICS AND THE INK'S, for the text a reading mark is about to be painted over.
+ *
+ * See `inkBand` in `ttsTrack.ts` for what these are for and what was measured. Only the RATIO of these
+ * four numbers is used, so they are read in the element's own pre-zoom space and never converted; the
+ * LINE BOX is the one value that has to reach the overlayer's post-zoom space, and it is converted the
+ * way `emPxForRange` above documents — by walking and multiplying the whole `zoom` chain, because
+ * `getComputedStyle().zoom` reports only an element's own.
+ *
+ * Read off the range's START element. A mark spans a sentence or a word of running text, so a mid-range
+ * font change would be pathological, and returning `null` there is safe: the caller keeps the old box.
+ */
+function trackMetricsFor(range: Range): TrackMetrics | null {
+  try {
+    const node = range.startContainer;
+    const el = (node.nodeType === 1 ? node : node.parentElement) as Element | null;
+    const doc = el?.ownerDocument;
+    const win = doc?.defaultView;
+    if (!el || !doc || !win) return null;
+    const text = range.toString();
+    if (!text.trim()) return null; // whitespace has no ink to measure
+    const cx = trackCanvas(doc);
+    if (!cx) return null;
+    const cs = win.getComputedStyle(el);
+    cx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    const m = cx.measureText(text);
+    const nums = [m.fontBoundingBoxAscent, m.fontBoundingBoxDescent,
+                  m.actualBoundingBoxAscent, m.actualBoundingBoxDescent];
+    if (!nums.every((v) => typeof v === "number" && Number.isFinite(v))) return null;
+    let z = 1;
+    for (let a: Element | null = el; a; a = a.parentElement) {
+      const v = parseFloat(win.getComputedStyle(a).zoom || "1");
+      if (v > 0 && v !== 1) z *= v;
+    }
+    const lh = parseFloat(cs.lineHeight); // NaN for `normal` — then the box is corrected but unclamped
+    return {
+      fontAscent: m.fontBoundingBoxAscent,
+      fontDescent: m.fontBoundingBoxDescent,
+      inkAscent: m.actualBoundingBoxAscent,
+      inkDescent: m.actualBoundingBoxDescent,
+      lineBoxPx: Number.isFinite(lh) && lh > 0 ? lh * z : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * THE RANGE-LIKE PROXY BOTH READING MARKS ARE DRAWN FROM — one calculation, two marks.
+ *
+ * The overlayer stores whatever `getClientRects()` returns and re-runs it on every redraw, so a proxy
+ * (rather than a snapshot) is what keeps a mark correct across reflow, font load, resize and zoom. The
+ * device is already used twice in this file, for the ink swatch and the reference rule.
+ *
+ * `metricsFrom` is why the word pill does not jump. The correction depends on the INK of the text being
+ * measured, and a word's own ink changes from word to word — a word with no ascender would give a
+ * shorter box than its neighbour, so the pill would visibly grow and shrink as the voice advanced.
+ * Handing it the SENTENCE's range instead means every word of one sentence is painted to one box: the
+ * pill slides along the line at constant height, which is what a reading cursor has to do. It also
+ * means the box can never clip a mark within the sentence, because the sentence's ink bounds every
+ * word's.
+ *
+ * Horizontal geometry is untouched. `left` and `width` come straight from the fragment, so word
+ * boundaries, wrapping, RTL placement and the pill's own padding are exactly what they were.
+ */
+function trackRange(paint: Range, metricsFrom?: Range): { getClientRects: () => DOMRect[]; toString: () => string } {
+  return {
+    getClientRects: () => {
+      const m = trackMetricsFor(metricsFrom ?? paint);
+      const out: DOMRect[] = [];
+      for (const r of Array.from(paint.getClientRects())) {
+        if (!(r.width > 0) || !(r.height > 0)) continue; // zero-size fragments (hyphen columns etc.)
+        const b = inkBand(r.top, r.height, m);
+        out.push(new DOMRect(r.left, b.top, r.width, b.height));
+      }
+      return out;
+    },
+    toString: () => paint.toString(),
+  };
 }
 
 /**
@@ -3220,6 +3325,38 @@ export class FoliateController {
     return this.style?.pageColor || this.theme?.colors?.paperBg || "#000000";
   }
 
+  /**
+   * THE SURFACE A READING MARK IS PAINTED ONTO — the paper in force and the ink on it.
+   *
+   * The same `inkPaper` the highlight swatch already mixes into, so the two marks agree about what is
+   * underneath them, plus the text colour: a blend that must leave the words readable has to know what
+   * the words are painted in.
+   */
+  private get trackGround(): TrackGround {
+    return { paper: this.inkPaper, text: this.theme?.colors?.text || "#000000" };
+  }
+
+  /**
+   * THE POLARITY A PAINTER MUST USE, and why it is not `this.theme.dark`.
+   *
+   * The stored flag describes the هيئة; it is not maintained against the palette's paper, and measured
+   * on a copy of a real library three هيئات carried a near-black page with `dark: false`. The reading
+   * marks then took the light-paper treatment on a black page — a `multiply` that cannot lift anything
+   * off the page, and a default fill chosen for cream paper. This asks the paper instead.
+   *
+   * NOTHING IS WRITTEN BACK. The هيئة's own flag is left exactly as the reader saved it; this is a
+   * render-time reading of the surface, so no appearance record is rewritten because a mark was drawn.
+   */
+  private get trackDark(): boolean {
+    return isDarkSurface(this.inkPaper);
+  }
+
+  /** The sentence currently being spoken, whose ink sets the box every one of its words is painted to.
+   *  Undefined before a sentence is marked, and `trackRange` then falls back to the word itself. */
+  private get trackSentenceRange(): Range | undefined {
+    return this.ttsReadingIndex >= 0 ? this.ttsUnits[this.ttsReadingIndex]?.range ?? undefined : undefined;
+  }
+
   /** Is the reader currently in scrolled mode? */
   get isScrolled(): boolean {
     return this.scrolledMode;
@@ -4217,8 +4354,8 @@ export class FoliateController {
       const range = this.ttsUnits[i]?.range;
       if (!range || range.collapsed) return;
       try {
-        ov.add(NOTE_READ_KEY, range, drawReadingSpotlight as never,
-          { dark: this.theme?.dark ?? false, style: this.style });
+        ov.add(NOTE_READ_KEY, trackRange(range) as unknown as Range, drawReadingSpotlight as never,
+          { dark: this.trackDark, style: this.style });
       } catch { /* a range whose note has closed — nothing to draw */ }
       return;
     }
@@ -4255,7 +4392,8 @@ export class FoliateController {
     const range = this.ttsUnits[i]?.range;
     if (!range) return; // out of range / whole-body fallback → no highlight (honest)
     try {
-      overlayer.add(READING_KEY, range, drawReadingSpotlight, { dark: this.theme?.dark ?? false, style: this.style });
+      overlayer.add(READING_KEY, trackRange(range) as unknown as Range, drawReadingSpotlight,
+        { dark: this.trackDark, style: this.style });
     } catch {
       /* stale/detached range (chapter navigated mid-play) — skip silently */
     }
@@ -4356,7 +4494,11 @@ export class FoliateController {
       const r = w >= 0 ? this.wordRanges[w] : null;
       if (!r || r.collapsed) return;
       try {
-        ov.add(NOTE_WORD_KEY, r, drawReadingPill as never, { dark: this.theme?.dark ?? false, style: this.style });
+        // The SENTENCE's metrics, not the word's — see `trackRange`: a per-word ink box would make the
+        // pill grow and shrink from word to word.
+        ov.add(NOTE_WORD_KEY, trackRange(r, this.trackSentenceRange) as unknown as Range,
+          drawReadingPill as never,
+          { dark: this.trackDark, style: this.style, ground: this.trackGround });
       } catch { /* a stale range — the note has closed */ }
       return;
     }
@@ -4378,7 +4520,8 @@ export class FoliateController {
     const range = w >= 0 ? this.wordRanges[w] : null;
     if (!range) return; // no word / unmapped → no pill (the sentence band still shows)
     try {
-      overlayer.add(WORD_KEY, range, drawReadingPill, { dark: this.theme?.dark ?? false, style: this.style });
+      overlayer.add(WORD_KEY, trackRange(range, this.trackSentenceRange) as unknown as Range, drawReadingPill,
+        { dark: this.trackDark, style: this.style, ground: this.trackGround });
     } catch {
       /* stale/detached range — skip */
     }

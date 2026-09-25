@@ -102,3 +102,34 @@ export const MIN_READABLE_CONTRAST = 3;
 export function contrastIsReadable(ink: string, paper: string): boolean {
   return contrastRatio(ink, paper) >= MIN_READABLE_CONTRAST;
 }
+
+/**
+ * THE POLARITY OF A SURFACE, MEASURED RATHER THAN DECLARED.
+ *
+ * A هيئة stores a `dark` flag beside its palette, and the two can disagree: measured on a copy of a
+ * real library, three of twenty-three هيئات carried a paper of #101419, #2B1016 and #182018 with
+ * `dark: false`. Nothing in the codebase derives the flag from the paper, and neither palette editor
+ * recomputes it, so a renderer that trusts it can paint a light-paper treatment onto a black page —
+ * which is how the read-aloud word mark came to be invisible on one of them.
+ *
+ * This answers the question the renderer actually has ("what is under my mark?") from the colour that
+ * is actually being shown. It is NOT a replacement for the stored flag, which still describes the
+ * هيئة; it is what a PAINTER must use, and it never writes anything back.
+ *
+ * The threshold is the midpoint of the WCAG relative-luminance scale rather than a pixel value, so it
+ * is independent of hue: #808080 sits at 0.216 and reads as light, a mid slate at 0.15 as dark.
+ */
+export const DARK_SURFACE_LUMINANCE = 0.18;
+
+export function isDarkSurface(colour: string): boolean {
+  const c = parseColor(colour);
+  if (!c) return false; // unparseable → the caller's existing default, never a guess
+  return relLuminance(c) < DARK_SURFACE_LUMINANCE;
+}
+
+/** The relative luminance of a colour, or `null` when it cannot be parsed. Exposed because the track
+ *  resolvers need to know which SIDE of the paper a mark's colour falls on, not merely its ratio. */
+export function luminanceOf(colour: string): number | null {
+  const c = parseColor(colour);
+  return c ? relLuminance(c) : null;
+}

@@ -95,10 +95,12 @@ describe("the boundary — what a profile may write", () => {
   /** The three the patch always carries, plus the seven read-aloud marks and the three reference-mark
    *  fields it now always carries too. Derived from the key lists, so a field added to either reaches
    *  this expectation in one edit and a field that stops being written fails here. */
-  const ALWAYS = ["arabicFont", "backgroundColor", "latinFont", "numberColor", "pageColor",
+  // `pageColor` LEFT THIS LIST when the shared override it existed to defeat was removed — a هيئة's
+  // answer to the page colour is its own palette, which is not part of the reading-style patch.
+  const ALWAYS = ["arabicFont", "backgroundColor", "latinFont", "numberColor",
     ...VOICE_KEYS, ...REF_KEYS].sort();
 
-  it("a profile with no typography opinion patches the faces, the number ink, the overlay and the page", () => {
+  it("a profile with no typography opinion patches the faces, the number ink and the overlay", () => {
     // `backgroundColor` joins for the same reason `numberColor` did: it is a LOOK the profile owns,
     // and omitting it on clear would leave the previous choice standing in `reading_style` with
     // nothing able to drop it. Both are written even when null, which is what "follow the theme"
@@ -109,15 +111,18 @@ describe("the boundary — what a profile may write", () => {
     expect(readingPatch(profile()).set.backgroundColor).toBeNull();
   });
 
-  it("the page colour is always cleared, because a profile's answer to it is its reading paper", () => {
-    // The third always-written field, and the one with the sharpest consequence for omitting it.
-    // `.page-sheet` resolves the stored page colour BEFORE the reading palette, so a colour set once
-    // in the reading drawer outranked every profile's paper for ever with nothing able to drop it —
-    // measured on a real configuration as a page that survived A -> B -> A without moving. A profile
-    // carries no page colour of its own and must not: its answer is the palette, so it writes null.
+  it("the page colour is not written at all — the palette IS the profile's answer to it", () => {
+    // IT USED TO WRITE `null`, to defeat a shared `reading_style.pageColor` that resolved BEFORE the
+    // reading palette: one colour set once in the drawer outranked every profile's paper for ever,
+    // measured on a real configuration as a page that survived A -> B -> A without moving.
+    //
+    // That override is gone. The page resolves from `theme.reading.colors.paperBg` alone and the
+    // drawer's control edits THAT, so there is nothing left to defeat — and writing a null would put
+    // the obsolete key back into the shared row on every switch, after the migration cleared it.
     const p = profile();
     p.data.theme.reading.colors = { ...p.data.theme.reading.colors, paperBg: "#123456" };
-    expect(readingPatch(p).set.pageColor).toBeNull();
+    expect(readingPatch(p).set).not.toHaveProperty("pageColor");
+    expect(readingPatch(p).set).not.toHaveProperty("textColor");
     // and it is emphatically NOT the paper — writing that here would put the palette's colour into a
     // per-reader override row, where a later palette change could never reach it again.
     expect(readingPatch(p).set.pageColor).not.toBe("#123456");

@@ -940,6 +940,17 @@ export const en = {
   "type.paper": "Paper",
   "theme.day": "Day",
   "theme.night": "Night",
+  // THIS BOOK'S هيئة, under the swatches that set every following book's paper. It names an APPEARANCE,
+  // not a colour, so the hint says what that carries — and warns, in the plainest words available, that
+  // changing a reading setting afterwards edits the appearance itself and so reaches every book wearing
+  // it. On the pattern "track.speakSymbolsBookHint": name what is in force, never imply more than it is.
+  // WHOSE PAPER THE GRID EDITS. Same quiet register as "color.within": a qualifier beside the
+  // heading, never a sentence. Absent when no appearance owns the paper.
+  "appearance.paperOwner": "within {name}",
+  "appearance.book": "This book’s appearance",
+  "appearance.book.follow": "Default",
+  "appearance.book.paperOnly": "paper only",
+  "appearance.bookHint": "“Default” follows your current appearance and changes with it. Choosing one here gives this book that whole appearance — its colours, fonts and layout. Changing a reading setting afterwards edits that appearance, so every book using it follows.",
   "mode.label": "Reading mode",
   "mode.scrolled": "Scrolled",
   "mode.paged": "Paged",
@@ -1899,6 +1910,14 @@ export const en = {
   "profiles.unsaved.what.numbers": "the digits' ink",
   "profiles.unsaved.what.voice": "the read-aloud marks",
   "profiles.unsaved.what.refs": "the reference mark",
+  // A هيئة carries a reading picture and an interface of its own, and both can be changed from
+  // inside a book — so both have to be nameable when the reader is asked what to do with them.
+  "profiles.unsaved.what.picture": "the reading picture",
+  // SESSION-owned, not هيئة-owned — but changed in the same sitting, so the one question has to
+  // name them or it is not telling the reader what leaving would lose.
+  "profiles.unsaved.what.pageColor": "the page colour",
+  "profiles.unsaved.what.textColor": "the text colour",
+  "profiles.unsaved.what.interface": "the interface",
   // The separator between the named values, when more than one changed at once. It is a
   // TRANSLATED string because the comma itself differs by script: Arabic sets «،» (U+060C),
   // English «,». Hardcoding either one puts the wrong script's punctuation in the other's sentence.

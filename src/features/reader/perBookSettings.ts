@@ -154,3 +154,40 @@ export function saveGlobalStyle(style: ReadingStyle): void {
   cached = { row: style, dir: cached?.dir };
   settingsSet(GLOBAL_KEY, JSON.stringify(style)).catch(console.error);
 }
+
+/**
+ * THE ROW AS THE READER AUTHORED IT — the fields they actually set, and no others.
+ *
+ * `peekGlobalStyle` answers "what is Sard reading in", which is the row RESOLVED over a per-script
+ * baseline. That is the right answer for rendering and for comparing against a هيئة, and it is the
+ * wrong thing to write back: a field the reader never set has no value of its own, and giving it one
+ * decides the question for every book in the other script.
+ */
+export function peekGlobalRow(): Partial<ReadingStyle> | null {
+  return cached ? { ...cached.row } : null;
+}
+
+/**
+ * PERSIST THE AUTHORED ROW, and only it.
+ *
+ * THE DEFECT THIS CLOSES, measured rather than reasoned about. The Reader held the RESOLVED style —
+ * `{ ...defaultsForDir(bookDir), ...row }` — and wrote that whole object back whenever any field
+ * changed. So choosing a page colour inside an ARABIC book persisted `align: "start"`,
+ * `diacritics: "show"`, `fontWeight: 400`, `paragraphSpacing` and `firstLineIndent` as though the
+ * reader had chosen them; `align` is the one of the five that differs by script, and every LATIN book
+ * that followed the global was then set `start` instead of `justify` — permanently, because nothing
+ * clears an explicit value again.
+ *
+ * MEASURED, before the fix: a Latin book read `justify`; one page-colour pick inside an Arabic book;
+ * the same Latin book read `start`.
+ *
+ * A row written through here carries exactly what it carried before plus what was edited. `undefined`
+ * REMOVES a field rather than storing it, so a value returned to "no opinion" stops being persisted
+ * instead of freezing at whatever it last resolved to.
+ */
+export function saveGlobalRow(row: Partial<ReadingStyle>): void {
+  const clean: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) if (v !== undefined) clean[k] = v;
+  cached = { row: clean as Partial<ReadingStyle>, dir: cached?.dir };
+  settingsSet(GLOBAL_KEY, JSON.stringify(clean)).catch(console.error);
+}

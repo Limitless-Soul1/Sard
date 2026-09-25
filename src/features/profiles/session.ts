@@ -28,6 +28,7 @@
 import { create } from "zustand";
 
 import { useReader } from "../../reader-engine/store";
+import { bookAppearanceInForce } from "../reader/bookAppearance";
 import {
   REF_RULE_DEFAULTS,
   REF_RULE_KEYS,
@@ -173,7 +174,17 @@ function readingBase(): ReadingStyle {
  */
 export function liveValues(): Record<SessionKey, string> {
   const t = useTheme.getState();
-  const s = useReader.getState().style ?? peekGlobalStyle();
+  // A BOOK WEARING ITS OWN هيئة IS NOT THE SESSION, and reading it as though it were is the whole of
+  // the hazard this line closes. `useReader.style` is what the PAGE is set in; with a book wearing
+  // هيئة C while the reader wears B, every field the two disagree about would read as a change the
+  // reader had made to B — and the save path folds these same values into B, so accepting that prompt
+  // would write C's measure into B. A هيئة silently rewritten by which book happened to be open.
+  //
+  // The persisted row is the session's own answer and is unaffected by a book that departs from it,
+  // so it is what the comparison asks whenever one has.
+  const s = bookAppearanceInForce()
+    ? peekGlobalStyle()
+    : useReader.getState().style ?? peekGlobalStyle();
   return {
     theme_id: String(t.themeId),
     book_theme_id: String(t.bookThemeId),
@@ -236,6 +247,34 @@ export function driftOf(p: Profile): SessionKey[] {
 }
 
 /**
+ * WHICH هيئة-OWNED VALUES TWO هيئات DISAGREE ABOUT — the draft's answer to "what have I changed?".
+ *
+ * `driftOf` compares a هيئة against the LIVE SESSION, which is the right question for a value that
+ * has been written to a shared settings row. A reader's draft is not that: it is one هيئة object
+ * against another, nothing has been written anywhere, and the session rows are untouched. Same
+ * vocabulary, same labels, different pair — so the dialog names the change in the words it already
+ * uses rather than gaining a second way to say the same thing.
+ *
+ * THE THREE THAT `profileValues` DOES NOT CARRY are added here because a book can change all three:
+ * the two palettes (it maps only their IDS, which are the هيئة's own and therefore always equal), the
+ * reading picture, and the interface. Without them the commonest edit of all — choosing a paper —
+ * would be reported as an unnamed "something".
+ */
+export function changesBetween(a: Profile, b: Profile): SessionKey[] {
+  const x = profileValues(a);
+  const y = profileValues(b);
+  const out: SessionKey[] = SESSION_KEYS.filter((k) => x[k] !== y[k]);
+  const palette = (p: Profile, scope: "library" | "reading") =>
+    JSON.stringify([p.data.theme[scope].base, p.data.theme[scope].dark, p.data.theme[scope].colors,
+                    p.data.theme[scope].highlightAlpha, p.data.theme[scope].relief]);
+  if (palette(a, "library") !== palette(b, "library") && !out.includes("theme_id")) out.push("theme_id");
+  if (palette(a, "reading") !== palette(b, "reading") && !out.includes("book_theme_id")) out.push("book_theme_id");
+  if (JSON.stringify(a.data.bg.reading) !== JSON.stringify(b.data.bg.reading)) out.push("bg_reading" as SessionKey);
+  if (a.data.type.ui !== b.data.type.ui || a.data.texture !== b.data.texture) out.push("ui" as SessionKey);
+  return out;
+}
+
+/**
  * THE GATE, not a watcher.
  *
  * `pending` is an ACTION waiting on a decision — never a change waiting to be classified. It is set
@@ -293,6 +332,8 @@ export function guardUnsaved(
     onSave?: Pending["onSave"];
     onDiscard?: Pending["onDiscard"];
     subject?: Profile;
+    /** What the subject's draft changed, when the boundary can name it. See `changesBetween`. */
+    keys?: SessionKey[];
   },
 ): void {
   // A BOUNDARY THAT NAMES ITS SUBJECT IS ASKING ABOUT THAT SUBJECT, AND ABOUT NOTHING ELSE.
@@ -304,9 +345,11 @@ export function guardUnsaved(
   if (opts?.subject) {
     if (!opts.alsoDirty) { action(); return; }
     useSession.getState().open({
-      // No drift keys: the change is a draft, so the dialog uses its draft wording rather than
-      // listing values the reader has not touched.
-      keys: [], proceed: action, onSave: opts.onSave, onDiscard: opts.onDiscard, subject: opts.subject,
+      // A boundary that KNOWS what its draft changed says so; one that does not passes none and the
+      // dialog uses its draft wording. The editor is the second kind — its draft is arbitrary — and
+      // the reader's appearance draft is the first, because it is one هيئة against another.
+      keys: opts.keys ?? [],
+      proceed: action, onSave: opts.onSave, onDiscard: opts.onDiscard, subject: opts.subject,
     });
     return;
   }

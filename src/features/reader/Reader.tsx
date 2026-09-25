@@ -12,6 +12,7 @@ import { PhotoComposer } from "../photo/PhotoComposer";
 import type { CardData } from "../photo/photo";
 import { useReader } from "../../reader-engine/store";
 import { useProfiles } from "../profiles/store";
+import { changesBetween, guardUnsaved } from "../profiles/session";
 import { parseSectionHref, sectionHref } from "../../reader-engine/sectionHref"; // WP-6A: generated-row hrefs
 import { positionReadout } from "../../reader-engine/position";
 import { loadBookCssMode } from "../../reader-engine/bookCssSetting"; // WP-7 stage 3 // WP-4F: one place decides the readout
@@ -27,7 +28,18 @@ import {
   speakSymbolsKey, speakSymbolsAttr, parseSpeakSymbols, effectiveSpeakSymbols,
 } from "./speakSymbols";
 import {
+  bookAppearanceKey, parseBookAppearance, resolveAppearanceStyle, readingBackgroundOf,
+  splitReadingEdit, withReadingEdit, withBackgroundEdit, withPaperEdit, withPaletteEdit,
+  noteBookAppearance, BOOK_APPEARANCE_NONE,
+} from "./bookAppearance";
+import { profileReadingTheme, readingThemeId, type Profile } from "../profiles/model/profile";
+import {
+  appearanceDraftDirty, clearAppearanceDraft, commitAppearanceDraft, draftDirty, editAppearance,
+  heldDraft, resolveAppearance, useAppearanceDraft,
+} from "./appearanceDraft";
+import {
   ARABIC_DEFAULTS,
+  defaultsForDir,
   PAGE_WIDTH_DEFAULT,
   pageWidthPx,
   type ReadingStyle,
@@ -48,9 +60,9 @@ import { openWebView2Help } from "../../lib/webview2";
 import { ErrorCard } from "../../app/ErrorCard";
 import { useI18n } from "../../i18n";
 import { extractChapterNumber, localeNum } from "../../lib/format";
-import { resolveTheme, useTheme, type ThemeId } from "../../theme";
+import { isBuiltinThemeId, resolveTheme, themeVars, useTheme, type ThemeId } from "../../theme";
 import type { FootnoteHit } from "../../reader-engine/FoliateController";
-import { loadGlobalStyle, saveGlobalStyle } from "./perBookSettings";
+import { loadGlobalStyle, peekGlobalRow, saveGlobalRow } from "./perBookSettings";
 // RAWY-265 (Phase 3): the page-opacity gate + the desk scrim, both resolved in one place.
 import {
   bgOverlayOf,
@@ -58,7 +70,10 @@ import {
   effectivePageOpacity,
   overlayTint,
   useBackground,
+  setReadingBackgroundOwner,
 } from "../../lib/background";
+import { textureVars } from "../../lib/texture";
+import { chromeStack } from "../../lib/fonts";
 import { AnnotationLayer } from "./AnnotationLayer";
 import { AnnotationsPanel } from "./AnnotationsPanel";
 import { PhotoBasketTray } from "./PhotoBasketTray";
@@ -422,6 +437,148 @@ export function Reader({
   // STALE value: it was captured when the book opened, so switching profiles mid-book and then going
   // back handed the Library its previous profile's colours.
   const [bookThemeId, setBookThemeId] = useState<ThemeId>(useTheme.getState().bookThemeId);
+  // THIS BOOK'S OWN هيئة, or `null` for "follows the worn one" — an IDENTIFIER, never a copy of what
+  // it names (see `bookAppearance.ts`). `bookThemeId` above holds the EFFECTIVE palette, which is what
+  // every existing consumer already reads; this is held separately because two questions are asked of
+  // it: what to render (effective) and what the control should show (this book's own answer alone).
+  //
+  // Held in a ref as well as state because the effect that carries a هيئة change into an open book
+  // runs off the THEME store and must not be re-created when this changes — a ref cannot be a render
+  // behind the row that was just loaded, which is the same reason `speakSymbolsRef` exists.
+  const [bookAppearanceId, setBookAppearanceId] = useState<string | null>(null);
+  const bookAppearanceRef = useRef<string | null>(null);
+  /**
+   * THE ROW AS THE READER AUTHORED IT, beside the resolved style `globalStyleRef` holds.
+   *
+   * These are two different things and conflating them was a real defect: the resolved style carries
+   * a value for EVERY field, filled in from the per-script baseline, and writing it back turned
+   * "the reader has no opinion about the alignment" into "the reader chose the Arabic one" — which
+   * then decided every Latin book. `globalStyleRef` stays resolved, because that is what renders;
+   * this is what gets written.
+   */
+  const globalRowRef = useRef<Partial<ReadingStyle>>({});
+  /**
+   * THE BOOK IS ON ITS WAY OUT, so nothing should be painted into it.
+   *
+   * Set only by an answered unsaved-changes dialog that ends in leaving — see `leaveWithDraft`, which
+   * records why. It exists because a save re-renders this component one last time before the unmount,
+   * and that render would otherwise queue frame work against a view that is already gone.
+   */
+  const leavingRef = useRef(false);
+  // Appearance-owned changes waiting to be folded into the هيئة, accumulated across the save debounce
+  // so a slider drag becomes one write to one هيئة rather than one per tick.
+  const pendingAppearanceEdit = useRef<Partial<ReadingStyle>>({});
+  /**
+   * WHICH هيئة A STORED ID NAMES, resolved against the registry as it is right now.
+   *
+   * Three answers, and they are not the same thing: a هيئة of the book's own (`own`), one of the
+   * sixteen shipped papers (`builtin` — a paper carries no measure, so there is nothing more of it to
+   * resolve), or neither, which is how a هيئة the reader has since DELETED reads. The last falls all
+   * the way through to the worn هيئة rather than to an error or to Ivory: the reader never chose Ivory,
+   * they chose something that no longer exists, and following is the honest reading of that. The stale
+   * row is left on disk, so re-importing that هيئة restores the book.
+   *
+   * Reads the store imperatively rather than subscribing: every caller already re-runs for its own
+   * reason, and a subscription here would re-resolve on every unrelated profile touch.
+   */
+  /**
+   * PUT A هيئة'S READING PICTURE ON THE DESK — or hand the desk back to the session.
+   *
+   * THE LIBRARY'S PICTURE IS NOT TOUCHED, and that is the whole of the surface split: a هيئة carries
+   * two images, and only the reading one belongs to a book. `wearReadingBackground` writes the
+   * EFFECTIVE reading slots and never the persisted rows, so the reader's own library environment and
+   * the worn هيئة's stored binding are both exactly where they were.
+   *
+   * The OWNER is installed alongside: while this book wears a هيئة, the drawer's picture controls edit
+   * THAT هيئة rather than the shared rows — the same rule the measure follows, and the reason moving
+   * the presence slider here does not silently move every other book's desk.
+   */
+  const wearAppearanceBackground = useCallback((p: Profile | null) => {
+    const bg = useBackground.getState();
+    if (!p) {
+      bg.wearReadingBackground(null, null);
+      setReadingBackgroundOwner(null);
+      return;
+    }
+    const { ref, params } = readingBackgroundOf(p);
+    bg.wearReadingBackground(ref, params);
+    setReadingBackgroundOwner({
+      setParams: (next) => {
+        const live = appearanceInForce();
+        if (live) editAppearance(withBackgroundEdit(live, { params: next }));
+      },
+      setImage: (nextRef, next) => {
+        const live = appearanceInForce();
+        if (live) editAppearance(withBackgroundEdit(live, { ref: nextRef, params: next }));
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * THE هيئة THIS BOOK IS READ IN — its unsaved draft while one is open, its saved row otherwise.
+   *
+   * ONE substitution, and it is what makes the whole draft model work without a second copy of
+   * anything: every surface that resolves an appearance already comes through here, so the style,
+   * the paper, the picture and the interface all read the draft from the moment it exists and the
+   * saved row again the moment it does not.
+   */
+  const appearanceFor = useCallback((id: string | null) => {
+    const list = useProfiles.getState().profiles ?? [];
+    const own = resolveAppearance(id, list);
+    const builtin = !own && id && isBuiltinThemeId(id) ? id : null;
+    return { own, builtin };
+  }, []);
+
+  /**
+   * THE هيئة THIS BOOK IS ACTUALLY WEARING — the one and only owner of every appearance-owned edit.
+   *
+   *   · the book names its own هيئة  → that هيئة
+   *   · the book follows «افتراضي»   → the هيئة worn in the Library, whatever it is today
+   *
+   * «افتراضي» IS A REFERENCE, NOT A COPY. A following book resolves the CURRENT global default on
+   * every open, so changing the Library's هيئة moves every following book with it and no per-book row
+   * is written. That is why this reads the active id rather than storing one.
+   *
+   * WHY THE SECOND BRANCH IS NEW. A following book's edits used to go to the shared reading row, and
+   * the Library's drift dialog offered — later, elsewhere — to fold them into the worn هيئة. So the
+   * reader edited "the appearance this book is in" and the change landed somewhere else until they
+   * answered a question they had not asked for. Now both kinds of book edit the هيئة they are wearing,
+   * through the same draft and the same three answers.
+   *
+   * `null` only when NOTHING is worn — possible after deleting the active هيئة — and the old shared
+   * path is what answers then, because there is genuinely no owner to edit.
+   */
+  /**
+   * WHAT AN APPEARANCE-OWNED EDIT APPLIES TO — the draft in progress, else the effective owner.
+   *
+   * TWO DIFFERENT QUESTIONS, and conflating them lost a reader's work. `ownerFor` answers "what would
+   * this book wear if nothing were in progress"; it is re-derived, so it MOVES when the Library's
+   * هيئة changes. A draft answers "what is the reader in the middle of changing", and that must not
+   * move at all until they Save or Discard.
+   *
+   * MEASURED DEFECT: a following book drafted «TNocturne»; the reader changed the Library's هيئة to
+   * «TRing», chose Stay, and made one more edit. That edit resolved its target through `ownerFor`,
+   * which now said TRing — so the draft was rebuilt from TRing, the pending TNocturne change was
+   * silently dropped, and Save wrote TRing, an appearance the reader had never set out to edit.
+   *
+   * A CLEAN draft is not a draft: if the reader has put every value back, there is nothing in
+   * progress and the next edit belongs to whatever the book wears now.
+   */
+  const appearanceInForce = useCallback((): Profile | null => {
+    const held = heldDraft();
+    if (held && appearanceDraftDirty()) return held.draft;
+    return ownerFor();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const ownerFor = useCallback((): Profile | null => {
+    const list = useProfiles.getState().profiles ?? [];
+    const own = resolveAppearance(bookAppearanceRef.current, list);
+    if (own) return own;
+    if (bookAppearanceRef.current) return null; // a builtin paper, not a هيئة — no owner to edit
+    return resolveAppearance(useProfiles.getState().activeId ?? null, list);
+  }, []);
   const [photoCard, setPhotoCard] = useState<CardData | null>(null); // RAWY-49 Photo Mode composer
   const [devCardFont, setDevCardFont] = useState<string | null>(null); // RAWY-81 DEV capture only
   const [basketOpen, setBasketOpen] = useState(false); // RAWY-60 passages tray
@@ -561,12 +718,48 @@ export function Reader({
       // for the same fields. Any `book_style:<id>` a reader stored is left on disk untouched and is
       // simply never read — the same "ignore, never delete" rule unified scope always followed.
       const ts = useTheme.getState();
+      // THE BOOK'S OWN PAPER IS READ HERE, BESIDE THE STYLE, and not with the dozen per-book rows
+      // further down — because the paper has to be known before the FIRST paint. `setBookThemeId`
+      // three lines below is what `--reader-page` and `--reader-bg` are resolved from, and the note
+      // on those vars records what a late correction costs: 182 ms of the wrong colour on every cold
+      // open, measured.
+      //
+      // STARTED HERE AND AWAITED AFTER THE STYLE rather than batched with it, so the two reads still
+      // overlap while the style's own line stays exactly what it was. That line is asserted verbatim
+      // by `readerColourBoundary` — the suite standing guard over the removed two-level reading style
+      // — and rewriting a guard to fit a new feature is how the thing it guards comes back.
+      const bookAppearanceRow = settingsGet(bookAppearanceKey(target.id)).catch(() => null);
       const global = await loadGlobalStyle(target.dir ?? undefined);
+      const appearanceRaw = await bookAppearanceRow;
       if (stale()) return;
       globalStyleRef.current = global;
-      // The book's theme comes from the shared BOOK theme (D29), NOT the Library theme.
-      const effTheme = ts.bookThemeId;
-      let initialStyle = global;
+      // The authored row behind that resolution, for the write path — see `globalRowRef`.
+      globalRowRef.current = peekGlobalRow() ?? {};
+      // THE هيئة THIS BOOK IS READ IN — its own when it names one that still exists, the worn one
+      // otherwise. `own` is the whole object, so the palette AND the measure below come from ONE
+      // definition rather than from two rows that could disagree.
+      //
+      // FOLLOWING IS THE UNTOUCHED PATH, deliberately: with no هيئة of its own the book reads the
+      // global row, which already IS the worn هيئة's patch plus whatever the reader has changed since.
+      // Re-resolving it from the worn هيئة here would quietly discard those changes.
+      const { own, builtin } = appearanceFor(parseBookAppearance(appearanceRaw));
+      const inForce = own ? own.id : builtin;
+      bookAppearanceRef.current = inForce;
+      setBookAppearanceId(inForce);
+      // A sitting starts clean: whatever draft the last book left has already been answered for at
+      // its own boundary, and a هيئة draft must never follow a reader into a different book.
+      clearAppearanceDraft();
+      // Only a هيئة moves the reading STYLE, so only a هيئة is announced to the drift detector.
+      noteBookAppearance(own ? own.id : null);
+      // THE PICTURE BELONGS TO THE EFFECTIVE OWNER, which for a FOLLOWING book is the هيئة the Library
+      // wears — not `own`, which is null there. Passing `own` left a following book with no picture
+      // owner at all, so the drawer's picture controls fell through to the shared `bg_reading_params`
+      // row: measured as Presence 9 -> 7 written straight to that row, with no draft, nothing asked on
+      // the way out and no way to discard it. Every other appearance-owned writer already resolves
+      // through `ownerFor`; these three were the ones left behind.
+      wearAppearanceBackground(ownerFor());
+      const effTheme = own ? readingThemeId(own.id) : ((builtin as ThemeId | null) ?? ts.bookThemeId);
+      let initialStyle = own ? resolveAppearanceStyle(own, target.dir ?? undefined, global) : global;
       set({ style: initialStyle });
       setBookThemeId(effTheme);
 
@@ -1244,13 +1437,146 @@ export function Reader({
     void (async () => {
       const global = await loadGlobalStyle(dir ?? undefined);
       if (!alive) return;
+      // THE ROW STILL HAS TO BE RE-READ, because it is the session's and the switch rewrote it — a
+      // book that follows takes it, and a book that does not still needs it for the fields a هيئة does
+      // not own (the flow, the ink, the immersive pair, the page colour).
       globalStyleRef.current = global;
-      useReader.getState().set({ style: global });
-      ctrlRef.current?.applyStyle(global);
+      const own = appearanceFor(bookAppearanceRef.current).own;
+      // BOTH BRANCHES INSTALL THE PICTURE'S OWNER, and it is the effective one. A following book takes
+      // the early return below, so passing `own` here left it ownerless after every هيئة switch.
+      wearAppearanceBackground(ownerFor());
+      if (!own) {
+        useReader.getState().set({ style: global });
+        ctrlRef.current?.applyStyle(global);
+        return;
+      }
+      // A BOOK WEARING ITS OWN هيئة DECLINES THE SWITCH — and has to be re-asserted rather than merely
+      // left alone, because `applyProfile` has just re-run `initBackground`, which re-hydrates the
+      // reading surface from the newly worn هيئة's stored binding. Without this the palette and the
+      // measure would hold while the DESK quietly changed to the other هيئة's picture.
+      const next = resolveAppearanceStyle(own, dir ?? undefined, global);
+      useReader.getState().set({ style: next });
+      ctrlRef.current?.applyStyle(next);
     })();
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applyTick]);
+
+  /**
+   * LEAVING THE BOOK WITH A هيئة THE READER HAS CHANGED BUT NOT SAVED.
+   *
+   * An appearance-owned edit made in here is a DRAFT: the book shows it at once, the هيئة does not
+   * receive it. That is only honest if the draft is not then thrown away in silence — so every route
+   * out of the book passes through here, and the reader is asked once, at the moment the answer
+   * actually matters.
+   *
+   * IT IS THE EXISTING QUESTION, NOT A NEW ONE. `guardUnsaved` already carries `subject`, `onSave`
+   * and `onDiscard` for a draft that `driftOf` cannot see — that is how the profile editor's own
+   * draft is handled. This is the same shape from a different boundary, so the dialog, its wording,
+   * its three answers and its keyboard behaviour are the ones Sard already has.
+   *
+   *   Save      the draft becomes the هيئة, so every book wearing it follows. The global appearance
+   *             and the Library are not touched: a هيئة owns itself and nothing else.
+   *   Discard   the draft goes and the book returns to the saved هيئة. No هيئة data changes.
+   *   Stay      nothing happens and the draft is still there, which is what "not yet" means.
+   *
+   * A CLEAN DRAFT ASKS NOTHING. `appearanceDraftDirty` compares the two objects rather than latching
+   * a flag, so a reader who tries Sepia and puts the original back walks out without a question —
+   * there is genuinely nothing unsaved.
+   */
+  const leaveWithDraft = useCallback((go: () => void, opts?: { keepsBook?: boolean }) => {
+    // THE DRAFT ITSELF IS THE SUBJECT, and it is read from the store rather than looked up by the
+    // owner. A draft is bound to the هيئة it departed from; changing the Library's هيئة, the book's
+    // assignment or anything else afterwards must not retarget it. Re-deriving the owner here named
+    // the WRONG هيئة once the global default moved under a dirty draft — see `heldDraft`.
+    const held = heldDraft();
+    if (!held || !draftDirty()) {
+      clearAppearanceDraft();
+      go();
+      return;
+    }
+    // THE BOOK IS ABOUT TO GO, SO DO NOT REPAINT IT ON THE WAY OUT.
+    //
+    // MEASURED, not guessed: `setStyles` in the vendored paginator queues
+    // `requestAnimationFrame(() => … getBackground(this.#view.document))` with no guard on `#view`
+    // (paginator.js:1204, and its own note says the frame is required in Chromium). Answering the
+    // dialog and leaving in the same tick tears the view down before that frame runs, and the
+    // callback then dereferences null — one uncaught TypeError per exit, on both Save and Discard,
+    // where a plain exit and a reload produce none.
+    //
+    // The repaint is only ever FOR the case where the reader stays in the book, which is the هيئة
+    // switch below; through the two doors there is nothing left to paint. So the fix is to not ask
+    // for it rather than to patch vendored code for a call that should not have been made.
+    const leaving = !opts?.keepsBook;
+    guardUnsaved(
+      () => { clearAppearanceDraft(); go(); },
+      {
+        // THE هيئة THE DRAFT BELONGS TO — named, and its own changes listed. Both come from the same
+        // object the Save and the Discard act on, so the question and the answer cannot disagree.
+        subject: held.draft,
+        alsoDirty: true,
+        keys: changesBetween(held.saved, held.draft),
+        onSave: async () => {
+          leavingRef.current = leaving;
+          await commitAppearanceDraft();
+        },
+        // PUT THE BOOK BACK, when there is still a book to put back. Clearing the draft is enough for
+        // the palette and the interface — they re-resolve from the saved row on the next render — but
+        // the reading STYLE and the desk are imperative, so they are re-asserted the same way a هيئة
+        // switch under an open book re-asserts them.
+        onDiscard: () => {
+          leavingRef.current = leaving;
+          clearAppearanceDraft();
+          if (leaving) return;
+          const dir = useReader.getState().dir ?? undefined;
+          const session = { ...defaultsForDir(dir), ...globalRowRef.current } as ReadingStyle;
+          globalStyleRef.current = session;
+          const saved = ownerFor();
+          const back = saved ? resolveAppearanceStyle(saved, dir, session) : session;
+          useReader.getState().set({ style: back });
+          ctrlRef.current?.applyStyle(back);
+          if (saved) wearAppearanceBackground(saved);
+        },
+      },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * EVERY WAY OUT OF THE BOOK, and there are exactly two doors.
+   *
+   * `onExit` unmounts the Reader — the ✕/back arrow, and the three menu items that end in the Library
+   * (back, re-import, remove). `onOpenBook` keeps it mounted and swaps the book under it, which is
+   * how a note or a cross-book reference opens somewhere else. Both are props, so wrapping them HERE
+   * covers every caller inside the Reader without each one having to remember the question.
+   *
+   * WHAT IS DELIBERATELY NOT INTERCEPTED: closing the window. That is quitting, not leaving the book,
+   * and the close path carries its own history (RAWY-174) that a new dependency has no business
+   * joining. A draft dies with the session, which is what an unsaved draft has always done.
+   */
+  const exitBook = useCallback(() => leaveWithDraft(onExit), [leaveWithDraft, onExit]);
+  const openOtherBook = useCallback(
+    (t: OpenTarget) => leaveWithDraft(() => onOpenBook?.(t)),
+    [leaveWithDraft, onOpenBook],
+  );
+
+  /**
+   * LEAVING THE BOOK HANDS THE DESK BACK.
+   *
+   * The reading surface is the SESSION's again the moment no book is being read in a هيئة of its own,
+   * and the owner has to go with it: a picture control reached from anywhere else must write the
+   * reader's own rows, not whichever هيئة the last book happened to wear.
+   */
+  useEffect(() => () => {
+    noteBookAppearance(null);
+    useBackground.getState().wearReadingBackground(null, null);
+    setReadingBackgroundOwner(null);
+    // AND A DRAFT NEVER OUTLIVES THE READER THAT HOLDS IT. Every door out already asks and then
+    // clears, so by the time this runs there is nothing left — except on a route that never reached a
+    // door at all, such as an unmount from an error boundary. A draft surviving into the Library would
+    // be an unsaved هيئة nobody can see, answer or put back.
+    clearAppearanceDraft();
+  }, []);
 
   /**
    * AND SO DOES THE PALETTE THAT SWITCH BROUGHT WITH IT.
@@ -1265,15 +1591,23 @@ export function Reader({
    *
    * Kept separate from the style effect above on purpose: this one is synchronous and depends on the
    * THEME store, not on the profile row, so it is also correct for any other route that changes the
-   * default reading theme under an open book. A per-book theme still wins — the same three lines the
-   * scope effect uses, for the same reason.
+   * default reading theme under an open book.
+   *
+   * AND A PER-BOOK PAPER WINS HERE, which is the half of the feature that cannot be done at open
+   * time. This effect is exactly what makes a هيئة change reach a book already on screen, so it is
+   * also exactly where a book that has departed from the هيئة must decline to follow it. Read through
+   * the REF, not the state: this effect depends on the theme store alone, and adding the override to
+   * its dependency list would re-run it on every per-book choice — repainting for a value the writer
+   * below has already applied.
    */
   const defaultBookTheme = useTheme((st) => st.bookThemeId);
   useEffect(() => {
     if (status !== "ready") return;
-    const effTheme = defaultBookTheme;
-    setBookThemeId(effTheme);
-    ctrlRef.current?.applyTheme(resolveTheme(effTheme), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
+    // A book wearing its own هيئة declines the switch entirely — palette AND measure. Its style was
+    // resolved from that هيئة and nothing about the worn one reaches it, which is the whole promise.
+    if (bookAppearanceRef.current) return;
+    setBookThemeId(defaultBookTheme);
+    ctrlRef.current?.applyTheme(resolveTheme(defaultBookTheme), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultBookTheme]);
 
@@ -1582,13 +1916,35 @@ export function Reader({
     const next = { ...current, ...patch };
     useReader.getState().set({ style: next });
 
-    // ONE BASELINE, ONE ROW. Every reading change is the global one now, so there is no second
-    // place a value could go and nothing that could outrank the active هيئة.
+    // WHERE THE CHANGE BELONGS, and there are exactly two answers because there are exactly two
+    // owners — never a per-book copy, which is the deleted model.
     //
-    // THE READ-ALOUD SPECIAL CASE IS GONE WITH IT. It existed to keep those seven out of a book's
-    // override while everything else still went there; with no override to keep them out of, the
-    // rule is simply the rule for every field.
-    globalStyleRef.current = next;
+    //   · The book FOLLOWS the worn هيئة → the global row, exactly as before. Untouched path.
+    //   · The book wears a هيئة OF ITS OWN → the fields that هيئة owns are an edit TO THAT هيئة, and
+    //     the handful it does not own (flow, ink, the immersive pair, the page colour) stay the
+    //     reader's own row. Both halves are written on the debounce below.
+    //
+    // A reader changing the leading while book A wears Runes is changing RUNES. Every book wearing
+    // Runes then shows it, because there is one Runes — which is the product decision this
+    // implements, and the reason no per-book measure row exists anywhere in this file.
+    const ownAppearance = appearanceInForce();
+    if (!ownAppearance) {
+      // A FOLLOWING BOOK: the untouched path, except that what is written is the AUTHORED row plus
+      // this edit — never the resolved style, which would freeze the per-script baseline as though
+      // the reader had chosen it.
+      globalStyleRef.current = next;
+      globalRowRef.current = { ...globalRowRef.current, ...patch };
+    } else {
+      const split = splitReadingEdit(patch);
+      const row = globalStyleRef.current;
+      // READING MODE IS NOT APPEARANCE. The flow, the page fit and the immersive pair stay the
+      // reader's own and are written as they are made — they are not part of a هيئة and must never be
+      // inside its Save/Discard boundary. Written to the AUTHORED row, so a field nobody set does not
+      // acquire a value (see `saveGlobalRow`).
+      if (row) globalStyleRef.current = { ...row, ...split.session };
+      globalRowRef.current = { ...globalRowRef.current, ...split.session };
+      Object.assign(pendingAppearanceEdit.current, split.appearance);
+    }
 
     // flowMode is a renderer attribute set at open() — switching it re-opens at the current CFI
     // (preserves position); every other field is the live injected-CSS funnel.
@@ -1623,7 +1979,24 @@ export function Reader({
     }
     if (styleTimer.current) clearTimeout(styleTimer.current);
     styleTimer.current = window.setTimeout(() => {
-      saveGlobalStyle(useReader.getState().style!);
+      const wearing = appearanceInForce();
+      if (!wearing) {
+        saveGlobalRow(globalRowRef.current);
+        return;
+      }
+      // The reader's own half — reading MODE only, now that the colours belong to the هيئة. Written
+      // as the AUTHORED row rather than the resolved style, so a page-fit change cannot materialise
+      // a per-script alignment into a row both scripts read.
+      saveGlobalRow(globalRowRef.current);
+      // ...and the هيئة's half, folded into the هيئة ITSELF. Accumulated across the debounce so a
+      // slider drag is one save rather than forty, and cleared before the write so a change arriving
+      // during it is not lost with it.
+      const edit = pendingAppearanceEdit.current;
+      pendingAppearanceEdit.current = {};
+      if (Object.keys(edit).length) {
+        const nextProfile = withReadingEdit(wearing, edit);
+        if (nextProfile !== wearing) editAppearance(nextProfile);
+      }
     }, SAVE_DEBOUNCE_MS);
   };
   updateRef.current = update;
@@ -1633,12 +2006,109 @@ export function Reader({
   // (`book_theme_id`) so every book follows it — the Library theme (`theme_id`) is left untouched,
   // so returning to the Library still shows its own theme.
   //
-  // THE PER-BOOK BRANCH IS GONE, and with it the «↻ إعادة الضبط» that existed only to undo it: a
-  // book no longer keeps a paper of its own, because the هيئة is what decides how Sard looks.
+  /**
+   * THE PAPER CONTROL, AND IT EDITS WHICHEVER هيئة OWNS THE PAPER.
+   *
+   * A هيئة is the complete appearance, and a paper is part of it. So the rule here is the rule the
+   * measure, the marks, the reference rule and the reading picture already follow: an appearance-owned
+   * property changed while a هيئة is worn is an edit to THAT هيئة.
+   *
+   *   · The book FOLLOWS the worn هيئة → the shared BOOK theme, exactly as before. The reader's own
+   *     consent path is untouched: the change lands in `book_theme_id`, `driftOf` reports it, and the
+   *     existing dialog offers to fold it into the هيئة. Nothing about that model moves.
+   *   · The book wears a هيئة OF ITS OWN → that هيئة's reading palette is rewritten and saved, so every
+   *     book wearing it follows. The global and the Library are not touched at all.
+   *
+   * WHAT THIS REPLACES was a control that wrote the shared row and then declined to repaint, because
+   * repainting would have overruled the book's own choice. The reader saw a paper grid above a book it
+   * could not change — actionable in appearance, inert in fact, and silently moving a different book's
+   * look instead. Editing the owner is the only answer that keeps one owner per property.
+   */
+  /**
+   * THE PAGE COLOUR AND THE INK — the هيئة's own, and nothing else's.
+   *
+   * These two used to write `reading_style`, a row every book reads, so a colour chosen while reading
+   * one book repainted every other and no Discard could reach it. They edit the owner's palette now,
+   * which is where a هيئة has always carried its paper and its ink — one owner, one value, and the
+   * change travels with the هيئة to exactly the books that share it.
+   *
+   * WITH NOTHING WORN THERE IS NO OWNER, and the control does nothing rather than writing a value
+   * nowhere. That state is reachable only by deleting the active هيئة, and the old shared row is no
+   * longer an answer: the page resolves from the palette alone, so a row written there would be
+   * stored and never shown. The paper GRID still works in that state — it names a whole theme — which
+   * is the coherent way to choose a colour when there is no هيئة to keep one in.
+   */
+  const setReadingColour = (slot: "paperBg" | "text", hex: string | null) => {
+    const own = appearanceInForce();
+    if (!own) return;
+    editAppearance(withPaletteEdit(own, slot === "paperBg" ? { paperBg: hex } : { text: hex }));
+  };
+
   const setBookTheme = (id: ThemeId) => {
+    const own = appearanceInForce();
+    if (own) {
+      // No optimistic paint and no second copy of the palette: the draft IS the هيئة as far as this
+      // Reader is concerned, `readingTheme` resolves its palette below, and the effect there repaints
+      // the book's own document from that one value.
+      editAppearance(withPaperEdit(own, id, resolveTheme(id)));
+      return;
+    }
     setBookThemeId(id);
     ctrlRef.current?.applyTheme(resolveTheme(id), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
     useTheme.getState().setBookTheme(id); // shared BOOK theme — persists book_theme_id, not the Library
+  };
+
+  /**
+   * AND THIS IS THE "THIS BOOK'S هيئة" CONTROL — the whole هيئة this one book is read in.
+   *
+   * `null` REMOVES the choice rather than storing the worn هيئة's id, which is the difference between
+   * "follows the هيئة" and "happens to match it today": a book that stored the copy would freeze on it
+   * the next time the reader wore another. The row is written EMPTY rather than deleted, the same way
+   * `tts.speakSymbols.<id>` spells its third state.
+   *
+   * WHAT IT DOES NOT DO is copy anything out of the هيئة. It writes an id; the palette and the measure
+   * are resolved from the object that id names, here and at every later open, so there is never a
+   * second copy of a هيئة to fall out of step with the هيئة itself.
+   *
+   * `bookRef.current`, not `initial.id` — RAWY-285: this closure outlives the book that created it when
+   * the Reader is reused, and a captured id writes one book's choice onto another's row.
+   */
+  const setThisBookAppearance = (id: string | null) => {
+    // CHANGING WHICH هيئة THIS BOOK WEARS WOULD STRAND A DRAFT of the one it is leaving — the same
+    // loss as walking out of the book, reached by a different control. It is not "leaving the book",
+    // so it is not in the two doors above; it IS a route that would discard the draft, so it asks the
+    // same question, and the switch is what proceeds once it is answered.
+    const held = heldDraft();
+    if (held && held.id !== id && appearanceDraftDirty()) {
+      leaveWithDraft(() => setThisBookAppearance(id), { keepsBook: true });
+      return;
+    }
+    // The answer was given and the book is staying, so painting is welcome again.
+    leavingRef.current = false;
+    const book = bookRef.current;
+    const { own, builtin } = appearanceFor(id);
+    const inForce = own ? own.id : builtin;
+    bookAppearanceRef.current = inForce;
+    setBookAppearanceId(inForce);
+    noteBookAppearance(own ? own.id : null);
+    // ...and the effective owner again: choosing «افتراضي» here hands the picture to the worn هيئة
+    // rather than to nobody.
+    wearAppearanceBackground(ownerFor());
+
+    // THE PALETTE...
+    const effTheme = own ? readingThemeId(own.id) : ((builtin as ThemeId | null) ?? useTheme.getState().bookThemeId);
+    setBookThemeId(effTheme);
+    ctrlRef.current?.applyTheme(resolveTheme(effTheme), { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
+
+    // ...AND THE MEASURE, from the same object. Returning to «افتراضي» hands the book back to the
+    // global row, which is what every following book already reads — not to a remembered copy.
+    const globalRow = globalStyleRef.current;
+    if (globalRow) {
+      const next = own ? resolveAppearanceStyle(own, initial.dir ?? undefined, globalRow) : globalRow;
+      useReader.getState().set({ style: next });
+      ctrlRef.current?.applyStyle(next);
+    }
+    if (book) settingsSet(bookAppearanceKey(book), id ?? BOOK_APPEARANCE_NONE).catch(() => {});
   };
 
   // RAWY-41: toggle a bookmark at the CURRENT reading location (CFI + fraction + chapter). If the
@@ -2812,10 +3282,102 @@ export function Reader({
    * paint because there is nothing to fall through to, and `:root` is left to the Library. A
    * per-book `pageColor` still wins — it is the same slot, written last.
    */
-  const readingTheme = resolveTheme(bookThemeId);
+  /**
+   * THE DRAFT'S OWN PALETTE, when there is one.
+   *
+   * `resolveTheme` reads the registry, and the registry holds SAVED هيئات — which is right, because
+   * everything outside this book resolves from it. A draft is deliberately not registered: putting it
+   * there would repaint every other surface that names the same id, which is the opposite of what an
+   * unsaved change means. So the Reader builds the draft's palette directly, from the same function
+   * that registers the saved one, and nothing else in the application sees it.
+   */
+  const liveActiveId = useProfiles((st) => st.activeId);
+  const liveDraft = useAppearanceDraft((st) => st.current);
+  // THE OWNER'S ID — the book's own هيئة, else the one the Library wears. A FOLLOWING book has no id
+  // of its own, and keying the draft on that alone meant its draft never painted: the reader changed
+  // a colour, the هيئة was correctly drafted, and the page went on showing the saved palette.
+  const ownerId = bookAppearanceId ?? liveActiveId;
+  // A DRAFT IN PROGRESS IS WHAT THE BOOK SHOWS, and it is not conditioned on the id the book would
+  // otherwise resolve to. Gating on `liveDraft.id === ownerId` meant that changing the Library's
+  // هيئة under a dirty draft made the page repaint to the NEW هيئة while the draft — and every
+  // further edit — still belonged to the old one: one appearance on screen, another being edited.
+  // A draft only ever exists for the book in front of the reader (`clearAppearanceDraft` runs on
+  // open and on every door out), so there is no other book it could speak for.
+  const readingTheme = liveDraft ? profileReadingTheme(liveDraft.draft) : resolveTheme(bookThemeId);
+  /**
+   * THE PALETTE BEHIND AN UNCHANGED ID CAN MOVE, and that is new.
+   *
+   * Every repaint until now was triggered by the book's theme ID changing. Editing the paper of a
+   * هيئة a book is wearing changes no id at all — `u:…~r` is still `u:…~r` — while the colours it
+   * resolves to are completely different. Without this the reader-scoped vars would update on the
+   * re-render and the BOOK'S OWN DOCUMENT would keep the old paper, because only `ctrl.applyTheme`
+   * reaches inside the frame.
+   *
+   * Keyed on the palette's own values rather than on the object, which is rebuilt every render.
+   */
+  const paletteKey = `${readingTheme.id}|${readingTheme.dark}|${readingTheme.colors.paperBg}`
+    + `|${readingTheme.colors.text}|${readingTheme.colors.accent}|${readingTheme.colors.surfaceBg}`;
+  useEffect(() => {
+    if (status !== "ready") return;
+    // SAVING A DRAFT ON THE WAY OUT MOVES THIS PALETTE — the draft is cleared and the saved هيئة
+    // arrives in the registry, both of which change `paletteKey` — during the last render before the
+    // Reader unmounts. Painting then queues a frame the vendored paginator cannot survive (see
+    // `leaveWithDraft`), and there is nothing left to see the result anyway.
+    if (leavingRef.current) return;
+    ctrlRef.current?.applyTheme(readingTheme, { overrideBookColor, hideChapterTitles, hideFirstLine, pageOpacity, deskScrim });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paletteKey]);
+  /**
+   * WHOSE INTERFACE THIS IS — the book's own هيئة when it wears one, the worn هيئة otherwise.
+   *
+   * Only two things need the هيئة OBJECT rather than its palette: the interface face and the texture
+   * step, neither of which is a colour. Subscribed rather than read imperatively because both change
+   * when a هيئة is saved or switched, and the Reader must repaint when they do.
+   */
+  const allProfiles = useProfiles((st) => st.profiles);
+  // THE DRAFT HERE TOO, or the interface face and the texture would keep the saved هيئة's while the
+  // page in front of them wore the draft's — one appearance, rendered from two objects. Resolved from
+  // the OWNER, so a following book is covered exactly as a book with its own هيئة is.
+  const uiProfile = liveDraft?.draft ?? resolveAppearance(ownerId, allProfiles) ?? null;
+  /**
+   * THE READER WEARS THE هيئة THE BOOK IS READ IN — chrome included.
+   *
+   * `:root` carries the LIBRARY's theme and keeps carrying it: the Library is the application's own
+   * environment and does not belong to any book. But the Reader is not the Library, and its toolbar,
+   * drawers, panels, pills and controls were reading `:root` — so a book wearing هيئة B was drawn on
+   * B's paper inside A's interface.
+   *
+   * Custom properties INHERIT, so naming the same ten tokens on `.reader-root` re-points every rule
+   * below it without touching one of them: measured on the stylesheet, 575 reader rules read these,
+   * `--accent` in 99 of them, `--text` in 91, `--muted` in 67, `--chrome-border` in 44. The Library's
+   * own 409 rules resolve against `:root` exactly as before.
+   *
+   * THIS IS WHY THE OLD «BLEED» DOES NOT RETURN. RAWY-48/D29 removed a version of this that wrote the
+   * reading palette to `:root`, where the Library's chrome read it too and the book's paper became the
+   * colour of the highlight button. Scoped to `.reader-root` the two palettes never meet: the reading
+   * chrome contrasts against the reading paper, which is the pair the هيئة's author actually chose.
+   *
+   * `themeVars` is the SAME derivation `applyTheme` uses — the muted floor and both marker registers —
+   * so the two surfaces cannot drift apart.
+   */
   const rootVars = {
+    ...themeVars(readingTheme),
+    // ...AND ITS INTERFACE FACE AND ITS TEXTURE, which are the هيئة's too. The face is only named when
+    // the هيئة names one; absent, the token simply inherits from `:root` as it always did. The
+    // texture's floor is measured against THIS book's desk scrim, which a book with a reading picture
+    // of its own does not share with the Library.
+    // THE INTERFACE FACE, through the SAME stack builder the document root uses. A bare family name
+    // would have dropped the fallbacks — and `chromeStack` also knows to keep the Latin face in front
+    // of an Arabic-only pick, which is coverage logic this file has no business repeating.
+    // Only `--ui-font` is scoped: `--ar-font` and `--book-font` have two consumers between them and
+    // neither is on the reading surface.
+    ...(uiProfile?.data.type.ui ? { "--ui-font": chromeStack(uiProfile.data.type.ui) } : {}),
+    ...(uiProfile ? textureVars(uiProfile.data.texture, readingTheme.colors, deskScrim) : {}),
     "--reading-shift": `${(leftPad - rightPad) / 2}px`,
-    "--reader-page": style?.pageColor ?? readingTheme.colors.paperBg,
+    // THE هيئة'S PAPER, FULL STOP. `style.pageColor` was a shared override read ahead of it, so a
+    // colour chosen in one book painted every other and no Discard could reach it. One owner now —
+    // the legacy row values are cleared by migration 20260924210000.
+    "--reader-page": readingTheme.colors.paperBg,
     // THE DESK IS THE PAGE'S ENVIRONMENT, NOT THE APP'S. `.reader-root` and `.reader-desk` paint
     // `var(--reader-bg, var(--app-bg))`, and that fallback used to land on the reading palette only
     // because the reading palette was being written to `:root`. It no longer is, so the desk is named
@@ -2963,7 +3525,7 @@ export function Reader({
         open={annoOpen}
         onClose={() => setAnnoOpen(false)}
         onJump={jumpCfi}
-        onOpenBook={onOpenBook}
+        onOpenBook={openOtherBook}
         initialTab={annoTab}
       />
 
@@ -2973,7 +3535,7 @@ export function Reader({
         bookTitle={bookTitle}
         chapter={chapter}
         fraction={fraction}
-        onBack={onExit}
+        onBack={exitBook}
         onContents={toggleChapters}
         onSearch={toggleSearch}
         searchOpen={searchOpen}
@@ -3006,7 +3568,11 @@ export function Reader({
         section={settingsSection}
         onSection={setSettingsSection}
         bookThemeId={bookThemeId}
+        appearanceThemeId={defaultBookTheme}
         onPickTheme={setBookTheme}
+        onPickReadingColour={setReadingColour}
+        bookAppearanceId={bookAppearanceId}
+        onPickBookAppearance={setThisBookAppearance}
         isPdf={isPdf}
         pdfThemeId={pdfThemeId}
         onPdfTheme={choosePdfTheme}
@@ -3135,9 +3701,9 @@ export function Reader({
             classified={error}
             handlers={{
               retry: () => openBook(initial),
-              back: onExit,
-              reimport: onExit, // re-importing happens in the Library — take them there
-              "remove-book": onExit, // deletion lives in the Library's own two-step confirm (D31)
+              back: exitBook,
+              reimport: exitBook, // re-importing happens in the Library — take them there
+              "remove-book": exitBook, // deletion lives in the Library's own two-step confirm (D31)
               "update-runtime": () => void openWebView2Help(),
             }}
             diagnosticsText={diagText}

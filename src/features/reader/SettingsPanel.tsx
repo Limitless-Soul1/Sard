@@ -15,9 +15,17 @@ interface Props {
   isRtlBook: boolean;
   section: SettingsSection;
   onSection: (s: SettingsSection) => void;
-  // Per-book scope (RAWY-40): the book's own theme + a reset of all its overrides.
+  // The paper on screen (this book's own, else the هيئة's) and what the هيئة itself says — two
+  // questions, because the swatches write the second while the page shows the first.
   bookThemeId: ThemeId;
+  appearanceThemeId: ThemeId;
   onPickTheme: (id: ThemeId) => void;
+  /** The page colour and the ink — they edit the هيئة this book wears, not a shared row. */
+  onPickReadingColour?: (slot: "paperBg" | "text", hex: string | null) => void;
+  // THIS BOOK'S OWN هيئة, `null` = follows the worn one. An identifier, never a copy of what it
+  // names. Passed straight through to the Colour tab.
+  bookAppearanceId?: string | null;
+  onPickBookAppearance?: (id: string | null) => void;
   // RAWY-85/86: for a PDF the drawer becomes a "read-only" panel. RAWY-141 pared it to what actually
   // works on a fixed-layout PDF — the honest limits, an INVERT appearance (approximate night mode, NOT
   // real themes), and copy-selection. The reading-direction toggle (cosmetic on a fixed-layout PDF) and
@@ -74,7 +82,11 @@ export function SettingsPanel({
   section,
   onSection,
   bookThemeId,
+  appearanceThemeId,
   onPickTheme,
+  onPickReadingColour,
+  bookAppearanceId,
+  onPickBookAppearance,
   isPdf,
   pdfThemeId,
   onPdfTheme,
@@ -291,7 +303,11 @@ export function SettingsPanel({
           isRtlBook={isRtlBook}
           section={section}
           bookThemeId={bookThemeId}
+          appearanceThemeId={appearanceThemeId}
           onPickTheme={onPickTheme}
+          onPickReadingColour={onPickReadingColour}
+          bookAppearanceId={bookAppearanceId}
+          onPickBookAppearance={onPickBookAppearance}
           speakSymbolsOverride={speakSymbolsOverride}
           speakSymbolsAppearance={speakSymbolsAppearance}
           onSpeakSymbols={onSpeakSymbols}

@@ -916,25 +916,13 @@ export function readingPatch(p: Profile): ReadingPatch {
   // previous choice standing in `reading_style` with nothing able to drop it. `null` is a real value
   // here — it means the theme's own colour — so writing it is what "follow the theme" persists as.
   out.backgroundColor = p.data.bg.reading.overlay;
-  // THE PAGE COLOUR, ALWAYS WRITTEN, AND ALWAYS NULL — the third field here that must be, for the
-  // same reason as the two above and with a sharper consequence.
-  //
-  // A profile has no `pageColor` field, and it should not: its opinion about what colour the page is
-  // IS its reading paper, which travels as a palette. So the profile's position on this row is "no
-  // page-colour override", and `null` is how that is spelled.
-  //
-  // Omitting it was not neutral. `reading_style.pageColor` is written only by the Reader's own
-  // page-colour control, `.page-sheet` resolves `style.pageColor ?? readingTheme.colors.paperBg`, and
-  // the profile's paper sits on the LOSING side of that. So one page colour, set once, outranked
-  // every profile's reading paper for ever and no profile switch could reach it. Measured on the
-  // owner's own configuration: a stored `#2C37BC` survived A -> B -> A with the book open and the
-  // page never moved off it — the reading palette was simply unreachable.
-  //
-  // Writing null restores the documented order, with the active هيئة's reading paper below it. (The
-  // per-book override that used to sit above both is gone with the book-style scope; there is one
-  // reading style now.) A page colour chosen in the reading drawer still holds, and lasts until the
-  // next هيئة switch — the same contract as the number ink and the overlay.
-  out.pageColor = null;
+  // THE PAGE COLOUR IS NOT WRITTEN HERE ANY MORE, and the line that used to be was a workaround for
+  // a defect that is now fixed at its source. `reading_style.pageColor` was a SHARED override read
+  // ahead of every هيئة's own paper, so one colour outranked every هيئة for ever; activation wrote
+  // `null` over it to force the palette back through. The override is gone — the page resolves from
+  // `theme.reading.colors.paperBg` alone and the drawer's control edits that — so there is nothing
+  // left to defeat, and writing a null would only put the obsolete key back into the row on every
+  // switch. The same is true of the ink.
   // THE MEASURE: every field, every time — the هيئة's own where it has one, and CLEARED where it has
   // not, so Sard's own default resolves instead of the last هيئة's value. A هيئة is the complete
   // reading appearance; it cannot be worn in another's margins.

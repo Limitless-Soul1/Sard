@@ -937,6 +937,16 @@ export const ar: Record<TKey, string> = {
   "type.paper": "الورق",
   "theme.day": "نهار",
   "theme.night": "ليل",
+  // هيئة هذا الكتاب وحده، أسفل الألوان التي تضبط ورق الكتب التابعة. الاختيار هنا هيئة كاملة لا لون،
+  // فيقول التلميح ما الذي تحمله — ويُنبّه بأصرح لفظ أن تغيير إعداد قراءة بعدها تعديلٌ للهيئة نفسها،
+  // فيبلغ كل كتاب يلبسها. على منوال "track.speakSymbolsBookHint": تسمية ما هو نافذ، بلا إيحاء بأكثر منه.
+  // صاحب الورق الذي تعدّله الألوان أعلاه، بنبرة "color.within" نفسها: وصفٌ بجانب العنوان لا جملة.
+  // ويغيب حين لا تملك هيئةٌ الورق.
+  "appearance.paperOwner": "ضمن {name}",
+  "appearance.book": "هيئة هذا الكتاب",
+  "appearance.book.follow": "افتراضي",
+  "appearance.book.paperOnly": "ورق فقط",
+  "appearance.bookHint": "«افتراضي» يتبع هيئتك العامة، ويتغيّر معها. واختيار هيئة هنا يمنح هذا الكتاب تلك الهيئة كاملةً — ألوانها وخطوطها وتنسيقها. وتغييرُ إعداد قراءة بعدها تعديلٌ لتلك الهيئة، فيتبعه كل كتاب يلبسها.",
   "mode.label": "وضع القراءة",
   "mode.scrolled": "تمرير",
   "mode.paged": "صفحات",
@@ -1843,6 +1853,10 @@ export const ar: Record<TKey, string> = {
   "profiles.unsaved.what.numbers": "لون الأرقام",
   "profiles.unsaved.what.voice": "علامات القراءة الصوتيّة",
   "profiles.unsaved.what.refs": "علامة المرجع",
+  "profiles.unsaved.what.picture": "صورة القراءة",
+  "profiles.unsaved.what.pageColor": "لون الصفحة",
+  "profiles.unsaved.what.textColor": "لون النصّ",
+  "profiles.unsaved.what.interface": "الواجهة",
   "profiles.unsaved.listSep": "، ",
   "profiles.saved.applied": "حُفِظت «{name}» وطُبِّقت",
   "profiles.saved.only": "حُفِظت «{name}»",

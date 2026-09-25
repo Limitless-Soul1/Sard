@@ -359,8 +359,27 @@ interface BgState {
   enabled: boolean;
   library: BackgroundRow | null;
   libraryParams: BgParams;
+  /**
+   * THE READING SURFACE AS IT IS ACTUALLY PAINTED — a book's own هيئة when it wears one, the worn
+   * هيئة otherwise. Everything downstream (`applyBackgrounds`, the page-opacity and desk-scrim
+   * selectors, the drawer's own controls) reads THESE, so a book that departs is correct everywhere
+   * without a single consumer knowing the feature exists.
+   */
   reading: BackgroundRow | null;
   readingParams: BgParams;
+  /**
+   * ...AND WHAT THE SESSION ITSELF SAYS — the persisted rows, untouched by any book.
+   *
+   * Kept beside the effective pair rather than re-read from disk because returning to «افتراضي» has
+   * to be instant and must land on the CURRENT session value, not on whatever was true when the book
+   * opened. It is also what the reading surface is restored to when the Reader closes.
+   */
+  readingSession: BackgroundRow | null;
+  readingSessionParams: BgParams;
+  /** Every stored image, so a هيئة's picture can be resolved by id without an await. */
+  rows: BackgroundRow[];
+  /** Paint the reading surface from a هيئة (`ref`+`params`), or hand it back to the session (`null`). */
+  wearReadingBackground: (ref: string | null, params: BgParams | null) => void;
   setEnabled: (v: boolean) => void;
   setParams: (surface: BgSurface, p: Partial<BgParams>) => void;
   /** Import + bind in one gesture, arriving at a computed presence. */
@@ -463,6 +482,27 @@ type ParamKey = "libraryParams" | "readingParams";
 const rowKey = (s: BgSurface): RowKey => (s === "library" ? "library" : "reading");
 const paramKey = (s: BgSurface): ParamKey => (s === "library" ? "libraryParams" : "readingParams");
 
+/**
+ * WHO OWNS THE READING SURFACE RIGHT NOW — injected, never imported.
+ *
+ * While a book is read in a هيئة of its OWN, that هيئة owns the reading picture and its adjustments:
+ * the drawer's controls must edit the هيئة, not the reader's shared rows, or the slider would move a
+ * value the page is not painted from and the picture would simply not respond.
+ *
+ * The Reader installs an owner and takes it away again. It is injected rather than imported so this
+ * module keeps knowing nothing about هيئات — the dependency runs one way, as it did before.
+ */
+export interface ReadingBackgroundOwner {
+  setParams: (p: BgParams) => void;
+  setImage: (ref: string | null, params: BgParams) => void;
+}
+let readingOwner: ReadingBackgroundOwner | null = null;
+export function setReadingBackgroundOwner(o: ReadingBackgroundOwner | null): void {
+  readingOwner = o;
+}
+/** True while a هيئة owns the reading surface — the mutators below defer to it. */
+const ownedReading = (surface: BgSurface): boolean => surface === "reading" && readingOwner !== null;
+
 export const useBackground = create<BgState>((set, get) => ({
   ready: false,
   enabled: true,
@@ -470,6 +510,18 @@ export const useBackground = create<BgState>((set, get) => ({
   libraryParams: { ...BG_DEFAULT_PARAMS },
   reading: null,
   readingParams: { ...BG_DEFAULT_PARAMS },
+  readingSession: null,
+  readingSessionParams: { ...BG_DEFAULT_PARAMS },
+  rows: [],
+  wearReadingBackground: (ref, params) => {
+    // `null` params is the way back: the surface returns to whatever the SESSION says now, which is
+    // not necessarily what it said when the book opened.
+    if (params === null) {
+      set({ reading: get().readingSession, readingParams: { ...get().readingSessionParams } });
+      return;
+    }
+    set({ reading: ref ? (get().rows.find((r) => r.id === ref) ?? null) : null, readingParams: { ...params } });
+  },
   setEnabled: (v) => {
     set({ enabled: v });
     settingsSet(K_ENABLED, v ? "1" : "0").catch(console.error);
@@ -477,6 +529,11 @@ export const useBackground = create<BgState>((set, get) => ({
   setParams: (surface, p) => {
     const next = { ...get()[paramKey(surface)], ...p };
     set({ [paramKey(surface)]: next } as Partial<BgState>);
+    // A هيئة owns the reading picture while a book wears one: the adjustment is an edit to IT, and
+    // the reader's shared row must not move. The surface above is already painted from `next`, so the
+    // page responds at once either way.
+    if (ownedReading(surface)) { readingOwner!.setParams(next); return; }
+    if (surface === "reading") set({ readingSessionParams: next } as Partial<BgState>);
     settingsSet(K_PARAMS[surface], JSON.stringify(next)).catch(console.error);
   },
   choose: async (surface, path, groundHex) => {
@@ -529,13 +586,25 @@ export const useBackground = create<BgState>((set, get) => ({
       ...(replacing ? { pageOpacity: prev.pageOpacity, immersiveBlur: prev.immersiveBlur } : {}),
     };
     set({ [rowKey(surface)]: row, [paramKey(surface)]: params } as Partial<BgState>);
+    // Keep the id resolvable without a re-read: `wearReadingBackground` looks pictures up by id.
+    set({ rows: [row, ...get().rows.filter((r) => r.id !== row.id)] });
+    if (ownedReading(surface)) { readingOwner!.setImage(row.id, params); return row; }
+    if (surface === "reading") set({ readingSession: row, readingSessionParams: params });
     await settingsSet(K_PARAMS[surface], JSON.stringify(params)).catch(console.error);
     return row;
   },
   clear: async (surface) => {
+    // A هيئة's picture is removed from the هيئة, not unbound from the shared surface — the binding the
+    // session holds belongs to whatever هيئة the reader is WEARING and is not this book's to drop.
+    if (ownedReading(surface)) {
+      set({ reading: null, readingParams: { ...BG_DEFAULT_PARAMS } });
+      readingOwner!.setImage(null, { ...BG_DEFAULT_PARAMS });
+      return;
+    }
     // Rust clears the binding AND collects the now-unreferenced files in the same call.
     await backgroundSetSurface(surface, null);
     set({ [rowKey(surface)]: null, [paramKey(surface)]: { ...BG_DEFAULT_PARAMS } } as Partial<BgState>);
+    if (surface === "reading") set({ readingSession: null, readingSessionParams: { ...BG_DEFAULT_PARAMS } });
     await settingsSet(K_PARAMS[surface], JSON.stringify(BG_DEFAULT_PARAMS)).catch(console.error);
   },
   resetParams: (surface, groundHex) => {
@@ -545,6 +614,8 @@ export const useBackground = create<BgState>((set, get) => ({
       presence: row ? initialPresence(row.mean_luma, groundHex, surface) : BG_DEFAULT_PARAMS.presence,
     };
     set({ [paramKey(surface)]: params } as Partial<BgState>);
+    if (ownedReading(surface)) { readingOwner!.setParams(params); return; }
+    if (surface === "reading") set({ readingSessionParams: params } as Partial<BgState>);
     settingsSet(K_PARAMS[surface], JSON.stringify(params)).catch(console.error);
   },
 }));
@@ -699,12 +770,20 @@ export async function initBackground(): Promise<void> {
   ]);
   // A missing file degrades to the theme and KEEPS the setting (spec §7.5) — the row simply resolves
   // to null here, and the user's configuration is untouched on disk.
+  const rdRow = rdId ? (rows.find((r) => r.id === rdId) ?? null) : null;
+  const rdPar = parseParams(rdParams);
+  // THE SESSION AND THE SURFACE START AS ONE. A book wearing its own هيئة parts them again on open;
+  // `initBackground` is re-run whenever a هيئة is applied, so the session half always speaks for the
+  // هيئة the reader is actually wearing.
   useBackground.setState({
     ready: true,
     enabled: enabled !== "0",
+    rows,
     library: libId ? (rows.find((r) => r.id === libId) ?? null) : null,
     libraryParams: parseParams(libParams),
-    reading: rdId ? (rows.find((r) => r.id === rdId) ?? null) : null,
-    readingParams: parseParams(rdParams),
+    reading: rdRow,
+    readingParams: rdPar,
+    readingSession: rdRow,
+    readingSessionParams: rdPar,
   });
 }

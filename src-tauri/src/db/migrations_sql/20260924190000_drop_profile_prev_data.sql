@@ -1,0 +1,35 @@
+-- THE ONE-STEP-BACK COLUMN GOES AWAY AGAIN, because the feature it existed for was rejected.
+--
+-- `20260924180000_profile_prev_data` added `profiles.prev_data` to hold the state a هيئة was in
+-- before its most recent save, so an accidental write could be put back from a six-second
+-- announcement. That model is not the one Sard is keeping: an appearance-owned edit made inside a
+-- book is now a SESSION DRAFT that the هيئة does not receive until the reader says so on the way out,
+-- which answers the same worry earlier and without persisting anything. Nothing reads or writes the
+-- column any more, and a column nothing reads is not neutral — it is a claim about the shape of the
+-- data that the code no longer honours, and the next person to find it would have to work out which
+-- of the two is out of date.
+--
+-- WHY THE ADD IS NOT SIMPLY DELETED, which would have been tidier in the history. It has already run
+-- on a real database, and this runner records each migration BY PRESENCE: deleting the add would
+-- leave that database carrying a column with no migration that explains it, and its recorded row
+-- naming a migration the binary no longer contains. The rule in this module's own header — never
+-- edit an already-shipped migration, append a new one instead — is exactly the rule for this case.
+-- So the add stays as the true account of what happened, and this undoes it.
+--
+-- A DATABASE THAT NEVER SAW THE ADD still ends up right: the two run back to back in one startup and
+-- cancel, which costs a table rewrite once and leaves the schema identical to one that saw neither.
+-- They are ordered, and they must be: `DROP COLUMN` on a column that was never added is an error, and
+-- SQLite has no `IF EXISTS` for it. Both live on this one branch and no database can meet this
+-- migration without having met the other — which is the only circumstance in which this module's
+-- "every migration must stand on its own" rule permits one to depend on another having run.
+--
+-- THE NUMBER IS ITS SIBLING'S PLUS AN HOUR, not a `date -u` stamp, and that is deliberate. The order
+-- here is a correctness requirement rather than a convention, so this version has to exceed
+-- 20260924180000 — and that number was itself allocated from a local clock, which put it ahead of the
+-- true UTC time at which this one is being written. Allocating honestly would have produced a LOWER
+-- number and a database that tries to drop a column before it is added.
+--
+-- NOTHING OF THE READER'S IS LOST. The column only ever held a COPY of a هيئة's own previous `data`,
+-- written by the save path; every هيئة's current state lives in `data` and is untouched here, as are
+-- books, notes, highlights, bookmarks, positions and settings.
+ALTER TABLE profiles DROP COLUMN prev_data;

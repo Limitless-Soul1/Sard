@@ -365,8 +365,28 @@ export const REF_RULE_KEYS = [
 ] as const satisfies readonly (keyof typeof REF_RULE_DEFAULTS)[];
 
 // Per-script sensible defaults — beautiful before the user touches a control.
+//
+// ZOOM IS THE STORED READING VALUE, not a slider position. `ReadingStyle.zoom` is what
+// `buildReadingCss` writes as `body { zoom: … }`, what Ctrl+Wheel and the Settings slider both move,
+// and what Quick Customization's Text Size shows when an appearance has no opinion of its own. So
+// changing it here changes the text a reader actually gets on a fresh install, and nothing else:
+// anyone with a stored reading style keeps it, because that value is read back before these are
+// consulted, and an appearance that names its own size is unaffected either way.
+//
+// ZOOM IS NOW ONE NUMBER FOR BOTH SCRIPTS, and the per-script mechanism is untouched.
+//
+// Raising only the Arabic baseline did not reach the control it was asked for. MEASURED: Quick
+// Customization's Text Size still sat at 1.0, because the appearance editor calls `loadGlobalStyle()`
+// with no direction — it legitimately does not know which book this هيئة will dress — and a caller
+// that passes none gets the LATIN set. So an Arabic-only change is invisible exactly where the owner
+// was looking.
+//
+// The sets still differ where it matters, and AUD-6's rule is untouched: `loadGlobalStyle(dir)` still
+// resolves per direction, a profile still writes typography as ABSENT rather than as a number, and
+// line-height (1.9/1.6) and alignment (start/justify) still part by script. Zoom is simply no longer
+// one of the fields that parts — Text Size is one control, and it now answers one number.
 export const ARABIC_DEFAULTS: ReadingStyle = {
-  zoom: 1.15,
+  zoom: 1.85,
   arabicFont: "amiri",
   latinFont: "literata",
   lineHeight: 1.9,
@@ -389,7 +409,7 @@ export const ARABIC_DEFAULTS: ReadingStyle = {
   ...REF_RULE_DEFAULTS,
 };
 export const LATIN_DEFAULTS: ReadingStyle = {
-  zoom: 1.0,
+  zoom: 1.85,
   arabicFont: "amiri",
   latinFont: "literata",
   lineHeight: 1.6,

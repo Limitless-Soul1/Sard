@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 
 /** The repository root, so these read the source they are asserting about. */
 const R = join(import.meta.dirname, "..", "..");
+import { PAGE_OPACITY_MIN } from "../../src/lib/background";
 import { BOOKMARK_SIZE_MAX, BOOKMARK_SIZE_MIN } from "../../src/lib/bookmarkStyle";
 
 import {
@@ -275,8 +276,12 @@ describe("the boundary — what a profile may write", () => {
     // `loadGlobalStyle` fills an absent field from `defaultsForDir(dir)`, and those sets differ:
     // zoom 1.15/1.0, line-height 1.9/1.6, align start/justify. Writing one script's number into a row
     // both scripts read would open every Arabic book at the Latin baseline — the defect AUD-6 fixed.
-    expect(ARABIC_DEFAULTS.zoom).not.toBe(LATIN_DEFAULTS.zoom);
+    // Zoom used to be one of the fields that parted by script and is now one number for both — Text
+    // Size is a single control and answers a single value. The RULE this test guards is unaffected:
+    // the two sets still differ (line-height, alignment), so a profile that wrote one script's
+    // number into a row both scripts read would still open the other script's books wrongly.
     expect(ARABIC_DEFAULTS.lineHeight).not.toBe(LATIN_DEFAULTS.lineHeight);
+    expect(ARABIC_DEFAULTS.align).not.toBe(LATIN_DEFAULTS.align);
     const patch = readingPatch(profile());
     expect(patch.clear.sort()).toEqual([...TYPOGRAPHY_KEYS].sort());
     for (const k of TYPOGRAPHY_KEYS) expect(patch.set[k], k).toBeUndefined();
@@ -519,7 +524,12 @@ describe("stage 4 — backgrounds and texture", () => {
     expect(d.texture).toBe("opaque");
     // and the treatment falls back to the shipped defaults rather than zeroes
     expect(d.bg.library.params.presence).toBeGreaterThan(0);
-    expect(d.bg.library.params.pageOpacity).toBe(1);
+    // `pageOpacity` now starts at the measured AAA floor rather than at 1, so that a picture bound
+    // to an appearance that has never carried one arrives showing through the page. It changes
+    // nothing for THIS row: it has no picture on either surface, and page translucency is inert
+    // without one — and it is a reading-surface value in any case, which is why the library's copy
+    // of it has never been read by anything.
+    expect(d.bg.library.params.pageOpacity).toBe(PAGE_OPACITY_MIN);
   });
 
   it("a damaged or hostile blob cannot smuggle in a background id", () => {

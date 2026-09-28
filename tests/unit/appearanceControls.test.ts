@@ -15,7 +15,7 @@ import { join } from "node:path";
 
 import { BOOKMARK_SIZE_MAX, BOOKMARK_SIZE_MIN } from "../../src/lib/bookmarkStyle";
 import { parseProfileData } from "../../src/features/profiles/model/profile";
-import { presenceMaxFor, scrimAlpha } from "../../src/lib/background";
+import { PAGE_OPACITY_MIN, presenceMaxFor, scrimAlpha } from "../../src/lib/background";
 
 const R = join(import.meta.dirname, "..", "..");
 const read = (p: string) => readFileSync(join(R, p), "utf8");
@@ -134,7 +134,33 @@ describe("a stored presence survives being read back", () => {
 
   it("the two ceilings come from one function, not two literals", () => {
     const src = read("src/features/profiles/model/profile.ts");
-    expect(src).toContain("num(o.presence, 0, presenceMaxFor(surface), BG_DEFAULT_PARAMS.presence)");
+    // And the two STARTING values come from one function too, for the same reason: the surfaces
+    // differ at both ends of the scale, and a literal in here would have to be kept in step by hand.
+    expect(src).toContain("num(o.presence, 0, presenceMaxFor(surface), D.presence)");
+    expect(src).toContain("const D = bgDefaultsFor(surface);");
     expect(src).not.toContain("num(o.presence, 0, 100,");
+  });
+
+  it("a picture arrives at the clear end of whichever surface it is on", () => {
+    // The two scales mean different things: the library's runs to 100 and the desk's to 260, because
+    // the page is opaque enough to protect its own text whatever the desk does. "As clear as this
+    // surface goes" is therefore two numbers, not one.
+    const fresh = parseProfileData("{}");
+    expect(fresh.bg.library.params.presence).toBe(presenceMaxFor("library"));
+    expect(fresh.bg.reading.params.presence).toBe(presenceMaxFor("reading"));
+    expect(fresh.bg.library.params.blur).toBe(1);
+    expect(fresh.bg.reading.params.blur).toBe(1);
+    expect(fresh.bg.reading.params.pageOpacity).toBe(PAGE_OPACITY_MIN);
+  });
+
+  it("and a stored value is never replaced by one of them", () => {
+    const kept = parseProfileData(JSON.stringify({ bg: {
+      library: { params: { presence: 37, blur: 22 } },
+      reading: { params: { presence: 12, pageOpacity: 0.97 } },
+    } }));
+    expect(kept.bg.library.params.presence).toBe(37);
+    expect(kept.bg.library.params.blur).toBe(22);
+    expect(kept.bg.reading.params.presence).toBe(12);
+    expect(kept.bg.reading.params.pageOpacity).toBe(0.97);
   });
 });

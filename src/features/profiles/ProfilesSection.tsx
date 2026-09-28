@@ -24,6 +24,13 @@ import { ShareSheet } from "./ShareSheet";
 import { ImportSheet } from "./ImportSheet";
 import { guardUnsaved, profileChangePending } from "./session";
 import { ProfileEditor } from "./ProfileEditor";
+// The reader's own resolvers, used rather than restated: `resolveAppearance` knows about a held
+// draft, `resolveAppearanceStyle` is the same definition activation uses, and the two `peek*` calls
+// answer for a reader wearing no هيئة at all.
+import { resolveAppearanceStyle, withReadingMeasure } from "../reader/bookAppearance";
+import { resolveAppearance } from "../reader/appearanceDraft";
+import { peekGlobalDir, peekGlobalStyle } from "../reader/perBookSettings";
+import { defaultsForDir } from "../../reader-engine/injectedCss";
 import {
   applyProfile,
   defaultProfileData,
@@ -130,8 +137,39 @@ export function ProfilesSection() {
       // and not yet saved — so the editor showed the current appearance and there was no way to tell
       // the two apart. Seeding from the default gives the new هيئة its own identity from the first
       // frame, and makes it impossible for the active one's drift to reach into it.
-      const data = defaultProfileData();
-      const preset = null;
+      //
+      // …AND ITS MEASURE FROM WHAT THE READER IS READING AT, once, at this instant.
+      //
+      // The paragraph above is unchanged and still governs: the LOOK begins from Sard's own default,
+      // so the new هيئة cannot be mistaken for the one being worn. The MEASURE is different in kind.
+      // A reader who has settled their size, faces and page width does not want the next هيئة to
+      // forget them, and an empty typography is how it forgot: `readingPatch` clears every field the
+      // هيئة has no opinion about, so a new one always fell back to Sard's baseline.
+      //
+      // RESOLVED, NOT COPIED OUT OF THE ROW. The active هيئة's stored typography is very often all
+      // `null` — that is the default state — so copying it would copy nothing and the reader would
+      // see no effect. What is snapshotted is the value actually IN FORCE: the هيئة resolved through
+      // `readingPatch` over `defaultsForDir`, which is the same definition activation itself uses.
+      //
+      // AND IT INCLUDES AN UNSAVED DRAFT, deliberately. `resolveAppearance` returns the held draft
+      // when one is in force, so a size changed inside a book and not yet saved is what the new هيئة
+      // is born with — because that is what the reader is reading at. This is not `captureCurrent`
+      // returning: no colour, no picture, no texture and no identity comes across, which is what
+      // made that behaviour indistinguishable from editing.
+      //
+      // WITH NO هيئة WORN, the reader's own global row answers, and `defaultsForDir` behind it. No
+      // third fallback is invented here.
+      const { activeId, profiles } = useProfiles.getState();
+      const worn = resolveAppearance(activeId, profiles);
+      const dir = peekGlobalDir();
+      const session = peekGlobalStyle() ?? defaultsForDir(dir);
+      const data = withReadingMeasure(
+        defaultProfileData(),
+        worn ? resolveAppearanceStyle(worn, dir, session) : session,
+      );
+      // Provenance only — nothing reads it to decide behaviour, and the values above are plain
+      // copies, so this records where the measure came from without linking the two.
+      const preset = activeId;
       // MAKING A PROFILE IS NOT WEARING ONE. This used to apply the new profile immediately, which
       // repainted the whole application to the canvas the editor was about to open on — and for
       // the canvas was one the reader had not authored yet, so creating one silently replaced their

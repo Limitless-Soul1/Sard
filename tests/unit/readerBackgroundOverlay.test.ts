@@ -494,16 +494,26 @@ describe("presence and the overlay are two settings, not one", () => {
     expect(CSS).toContain(':root[data-bg-reading="on"] .reader-desk[data-overlay="off"]::after { content: none; }');
   });
 
-  it("and presence is then disabled, in BOTH places, from the same function", () => {
+  it("and presence is then EXPLAINED, in BOTH places, from the same function", () => {
+    // IT USED TO BE DISABLED. That was right while «بلا لون» was a rare, deliberate choice: the
+    // control was inert and greying it out said so. Then «بلا لون» became what a NEW هيئة starts
+    // with, and the exception became the common case — so a fresh هيئة opened with a presence the
+    // reader could not touch, which the owner reported as a locked control.
+    //
+    // What the original guard was protecting survives and is the point of this one: the two places
+    // must still agree, and they must still SAY why the value is doing nothing rather than leaving
+    // the reader to discover it by dragging. Neither disables it now, and the value is stored either
+    // way, so choosing a colour brings it into effect exactly where it was left.
     const ed = codeOf(EDITOR_SRC);
     expect(ed).toContain('const overlayOff = reading && bgOverlayOf(draft.data.bg.reading.overlay).kind === "none";');
-    expect(ed).toContain("disabled={overlayOff}");
     const rs = codeOf(RS);
     expect(rs).toContain('const overlayOff = useReader((st) => bgOverlayOf(st.style?.backgroundColor).kind === "none");');
-    expect(rs).toContain("disabled={overlayOff}");
+    // The one thing neither may do again.
+    expect(ed).not.toContain("disabled={overlayOff}");
+    expect(rs).not.toContain("disabled={overlayOff}");
   });
 
-  it("it is disabled rather than hidden, and says why", () => {
+  it("it is explained rather than hidden, and says why", () => {
     // A control that vanishes teaches a reader their value was thrown away.
     expect(EDITOR_SRC).toContain('{overlayOff && <div className="pf-hint">{t("gs.bg.presenceNoOverlay")}</div>}');
     expect(ar["gs.bg.presenceNoOverlay"]).toBeTruthy();

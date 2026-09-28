@@ -155,7 +155,23 @@ describe("the page-side stylesheet asks the book, not the app", () => {
 // stricter statement than the old one — which only checked that the Reader named no tokens at all.
 describe("the Reader wears the book's هيئة; the Library keeps its own", () => {
   it("the Reader scopes the palette onto ITSELF, never onto the document root", () => {
-    expect(READER).toContain("...themeVars(readingTheme)");
+    // AND IT IS THE هيئة'S INTERFACE PALETTE, NOT ITS PAGE. A هيئة carries two, and naming the
+    // READING one here made the whole interface a function of the paper: `deriveColors` steps
+    // `surfaceBg` and `chromeBg` away FROM `paperBg` and floors `muted` between paper and ink, so a
+    // هيئة with a pale page washed out the toolbar, the drawers and the contents list with it. The
+    // owner reported that as a regression against the previous release.
+    //
+    // The request this block was originally written for is untouched: the Reader still wears the
+    // هيئة the book is read in, so a book wearing هيئة B is not drawn inside هيئة A's interface.
+    // B's INTERFACE palette dresses the interface and B's READING palette dresses the page, which is
+    // what having two palettes is for.
+    expect(READER).toContain("const chromeTheme = uiProfile ? profileTheme(uiProfile) : null;");
+    expect(READER).toContain("...(chromeTheme ? themeVars(chromeTheme) : {})");
+    expect(READER).not.toContain("...themeVars(readingTheme)");
+    // The page and its desk still come from the READING palette, named right here — so the fix moved
+    // the interface off the paper without moving the paper.
+    expect(READER).toContain('"--reader-page": readingTheme.colors.paperBg');
+    expect(READER).toContain("readingTheme.colors.surfaceBg");
     // `rootVars` is applied to `.reader-root` (see the `style={rootVars}` on it), and the Reader still
     // writes nothing to `:root` — the one fact that keeps the Library out of it.
     expect(READER).toMatch(/className=\{`reader-root/);

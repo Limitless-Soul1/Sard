@@ -176,7 +176,11 @@ export const BG_PRESENCE_MAX = 100;
 const LUMA_SHIFT_TARGET = 0.06;
 const PRESENCE_ARRIVE_MIN = 30;
 const PRESENCE_ARRIVE_MAX = 85;
-const BLUR_DEFAULT = 18;
+// A PICTURE A READER HAS JUST CHOSEN SHOULD LOOK LIKE THE PICTURE THEY CHOSE.
+// 18 was a soft-focus default from when the background was a mood behind the interface. It is a
+// TASTE value, not a floor, and the taste has changed: a picture is now the thing a whole هيئة is
+// designed around, so it arrives essentially unblurred and the reader adds blur if they want it.
+const BLUR_DEFAULT = 1;
 
 const K_ENABLED = "bg_enabled";
 const K_PARAMS: Record<BgSurface, string> = {
@@ -251,15 +255,54 @@ export function imageLabel(sourceName: string | null | undefined, max = 44):
   return { label: tidy.slice(0, head) + "…" + tidy.slice(tidy.length - tail), full: raw };
 }
 
+/**
+ * PRESENCE STARTS DIFFERENTLY ON THE TWO SURFACES, because the two scales mean different things.
+ *
+ * The library's presence runs 0..100 and 100 is its clear end. The reading desk's runs 0..260 —
+ * everything above 100 buys presence the library has no room for, because the page itself is opaque
+ * enough to protect the text whatever the desk does. So "as clear as this surface goes" is 100 on one
+ * and 260 on the other, and one number could not have said it for both.
+ */
+const LIBRARY_PRESENCE_DEFAULT = 100;
+const READING_PRESENCE_DEFAULT = PRESENCE_MAX_READING;
+
+/**
+ * WHAT A PICTURE LOOKS LIKE BEFORE ANYONE TOUCHES A CONTROL.
+ *
+ * THE ONE SOURCE. `parseBgParams` falls back to these for any key a stored appearance omits, and
+ * `store.ts` starts a new profile from them, so this object — not a default in a control — is what
+ * "no saved value yet" means. A profile that HAS a saved value keeps it: every appearance Sard has
+ * ever written carries all three of these keys, and one that carries none has no picture bound, so
+ * nothing these values govern is on screen for it.
+ *
+ * ALL THREE ARE TASTE, AND ONE OF THEM SITS ON A MEASUREMENT. Presence and blur choose a pleasant
+ * starting point and are clamped into the measured ranges above. `pageOpacity` starts at
+ * PAGE_OPACITY_MIN, which is not a taste value at all: it is the least page opacity at which body
+ * text still clears WCAG AAA over ANY image, across all sixteen themes. So the page arrives as
+ * translucent as it can be while staying AAA-readable — the most of the reader's picture that can be
+ * shown without giving up the floor, rather than the least.
+ */
 export const BG_DEFAULT_PARAMS: BgParams = {
-  presence: 60,
+  presence: LIBRARY_PRESENCE_DEFAULT,
   blur: BLUR_DEFAULT,
   flip: false,
   focalX: 50,
   focalY: 50,
-  pageOpacity: 1,
+  pageOpacity: PAGE_OPACITY_MIN,
   immersiveBlur: true,
 };
+
+/**
+ * The starting params for ONE surface — the accessor every caller goes through.
+ *
+ * `BG_DEFAULT_PARAMS` above remains the shape and the shared values; this is the one place that knows
+ * a surface can differ, so adding a second per-surface starting value later cannot leave a caller
+ * behind. Returns a fresh object: these are written into drafts and stores that then mutate them.
+ */
+export const bgDefaultsFor = (surface: BgSurface): BgParams => ({
+  ...BG_DEFAULT_PARAMS,
+  presence: surface === "reading" ? READING_PRESENCE_DEFAULT : LIBRARY_PRESENCE_DEFAULT,
+});
 
 /** Presence → scrim opacity, across the only range that surface permits. Full theme colour at 0, the
  *  floor at 100 — so a presence of 100 can never be unreadable by construction. */

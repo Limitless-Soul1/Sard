@@ -32,7 +32,7 @@ import {
   splitReadingEdit, withReadingEdit, withBackgroundEdit, withPaperEdit, withPaletteEdit,
   noteBookAppearance, BOOK_APPEARANCE_NONE,
 } from "./bookAppearance";
-import { profileReadingTheme, readingThemeId, type Profile } from "../profiles/model/profile";
+import { profileReadingTheme, profileTheme, readingThemeId, type Profile } from "../profiles/model/profile";
 import {
   appearanceDraftDirty, clearAppearanceDraft, commitAppearanceDraft, draftDirty, editAppearance,
   heldDraft, resolveAppearance, useAppearanceDraft,
@@ -3360,8 +3360,34 @@ export function Reader({
    * `themeVars` is the SAME derivation `applyTheme` uses — the muted floor and both marker registers —
    * so the two surfaces cannot drift apart.
    */
+  /**
+   * THE CHROME WEARS THE هيئة'S INTERFACE PALETTE — NOT ITS PAGE.
+   *
+   * REGRESSION, and this is where it lived. The block below used to name `themeVars(readingTheme)`,
+   * which is the هيئة's READING palette: the page's own colours. Custom properties inherit and, by
+   * the note above, 575 reader rules read these tokens — so `--chrome-bg`, `--app-bg`, `--muted` and
+   * the rest of the interface became functions of the PAGE.
+   *
+   * That is worse than it sounds, because those three are not independent of the page: `deriveColors`
+   * steps `surfaceBg` and `chromeBg` away FROM `paperBg` and floors `muted` between paper and ink. So
+   * a هيئة with a pale page did not merely put a pale tint on the toolbar — it derived the whole
+   * interface from the paper, and the drawers, the contents list and the controls washed out with it.
+   * A reader could not choose a light page and keep a legible interface around it.
+   *
+   * The intent of the original change is kept in full, and it was a real one: the reader must wear the
+   * هيئة the book is read in, so that a book wearing هيئة B is not drawn inside هيئة A's interface.
+   * A هيئة carries TWO palettes, and that is the whole answer — the interface one dresses the
+   * interface, the reading one dresses the page. Naming the reading palette here was reaching for the
+   * wrong one of the two.
+   *
+   * THE PAGE AND ITS DESK ARE UNAFFECTED: `--reader-page` and `--reader-bg` below still come from the
+   * reading palette, and the book's own document is themed inside its frame by `ctrl.applyTheme`.
+   * Nothing about how the page looks changes. With no هيئة in force nothing is named at all and the
+   * reader inherits `:root`, which is what it did before the regression.
+   */
+  const chromeTheme = uiProfile ? profileTheme(uiProfile) : null;
   const rootVars = {
-    ...themeVars(readingTheme),
+    ...(chromeTheme ? themeVars(chromeTheme) : {}),
     // ...AND ITS INTERFACE FACE AND ITS TEXTURE, which are the هيئة's too. The face is only named when
     // the هيئة names one; absent, the token simply inherits from `:root` as it always did. The
     // texture's floor is measured against THIS book's desk scrim, which a book with a reading picture
@@ -3372,7 +3398,9 @@ export function Reader({
     // Only `--ui-font` is scoped: `--ar-font` and `--book-font` have two consumers between them and
     // neither is on the reading surface.
     ...(uiProfile?.data.type.ui ? { "--ui-font": chromeStack(uiProfile.data.type.ui) } : {}),
-    ...(uiProfile ? textureVars(uiProfile.data.texture, readingTheme.colors, deskScrim) : {}),
+    // MEASURED AGAINST THE CHROME IT WILL PAINT. The texture's floor is a contrast guarantee for the
+    // panel's own colours, so it follows the palette the panel now wears rather than the page's.
+    ...(uiProfile && chromeTheme ? textureVars(uiProfile.data.texture, chromeTheme.colors, deskScrim) : {}),
     "--reading-shift": `${(leftPad - rightPad) / 2}px`,
     // THE هيئة'S PAPER, FULL STOP. `style.pageColor` was a shared override read ahead of it, so a
     // colour chosen in one book painted every other and no Discard could reach it. One owner now —

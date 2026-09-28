@@ -25,7 +25,7 @@ import {
 } from "../../reader-engine/injectedCss";
 import {
   TYPOGRAPHY_KEYS, profileRefs, readingPatch,
-  type Profile, type ProfileRefs, type ProfileVoice,
+  type Profile, type ProfileData, type ProfileRefs, type ProfileVoice,
 } from "../profiles/model/profile";
 import { isBuiltinThemeId } from "../../theme/themes";
 import { resolveTheme } from "../../theme/resolve";
@@ -124,6 +124,52 @@ export function resolveAppearanceStyle(
   const out = { ...defaultsForDir(dir), ...readingPatch(p).set } as unknown as Record<string, unknown>;
   for (const k of SESSION_OWNED_FIELDS) out[k] = (session as unknown as Record<string, unknown>)[k];
   return out as unknown as ReadingStyle;
+}
+
+/**
+ * THE MEASURE A NEW هيئة IS BORN HOLDING — a snapshot, taken once, of what the reader is reading at.
+ *
+ * WHY THESE FIVE AND NOT THE OTHERS. A هيئة has always begun from `defaultProfileData` with an EMPTY
+ * typography, and that is what lets it defer to the reader: `readingPatch` CLEARS every field the
+ * هيئة has no opinion about, so `defaultsForDir` resolves instead. Deferring is right for a هيئة
+ * nobody has touched; it is wrong at the moment of creation, because a reader who has spent an
+ * evening settling their size and measure does not want the next هيئة to forget it. So the five
+ * below are written as real values, once, and the هيئة owns them from that instant.
+ *
+ * `lineHeight` IS DELIBERATELY NOT AMONG THEM, and this is the whole of the reason. The per-script
+ * baselines differ — Arabic 1.9, Latin 1.6 — while `ProfileTypography.lineHeight` is ONE number for
+ * both. Snapshotting it would bake the direction of whichever book happened to be open: create a
+ * هيئة while reading Arabic and every Latin book worn in it would be set at 1.9, silently, with no
+ * gesture of the reader's to explain it. That is AUD-6's defect arriving through a side door. Left
+ * `null`, the per-script fallback survives exactly as it is.
+ *
+ * EVERY FIELD HERE IS DIRECTION-INSENSITIVE, and that is not a coincidence — it is the test each one
+ * had to pass. `zoom`, `paragraphSpacing` and `pageWidth` are the same in both baselines, and the two
+ * faces name their own script. So the snapshot cannot carry a direction into a هيئة, whatever
+ * direction it was taken in. Anything added here later must pass the same test.
+ *
+ * A SNAPSHOT, NOT A LINK. It writes plain values into a fresh `ProfileData` and returns it. Nothing
+ * refers back: editing either هيئة afterwards cannot reach the other, for the same reason `duplicate`
+ * cannot — there is no shared object left.
+ */
+export const READING_MEASURE_SNAPSHOT = [
+  "arabicFont", "latinFont", "zoom", "paragraphSpacing", "pageWidth",
+] as const satisfies readonly (keyof ReadingStyle)[];
+
+export function withReadingMeasure(data: ProfileData, style: ReadingStyle): ProfileData {
+  const out = structuredClone(data);
+  out.type.arabic = style.arabicFont;
+  out.type.latin = style.latinFont;
+  out.type.reading = {
+    ...out.type.reading,
+    zoom: style.zoom,
+    paragraphSpacing: style.paragraphSpacing,
+    pageWidth: style.pageWidth,
+    // Stated rather than merely omitted, so the one field this function must NOT carry is visible
+    // here rather than inferred from its absence.
+    lineHeight: null,
+  };
+  return out;
 }
 
 /**

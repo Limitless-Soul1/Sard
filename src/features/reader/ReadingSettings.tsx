@@ -253,8 +253,7 @@ function ReadingBackgroundSection() {
               min={0}
               max={presenceMaxFor("reading")}
               step={1}
-              disabled={overlayOff}
-              onInput={(v) => setParams("reading", { presence: v })}
+                            onInput={(v) => setParams("reading", { presence: v })}
             />
           </Section>
           <div className="rs-sec-hint">

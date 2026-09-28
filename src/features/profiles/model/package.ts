@@ -88,7 +88,7 @@ export interface PackageAsset {
  * `book_style` is malformed however it got there, and `book_style` in particular is the removed
  * per-book scope trying to come back in through the door.
  */
-const FORBIDDEN_DATA_KEYS = [
+export const FORBIDDEN_DATA_KEYS = [
   ...(Object.keys(ARABIC_DEFAULTS) as string[])
     .filter((k) => !(PROFILE_READING_FIELDS as readonly string[]).includes(k)),
   "reading_style", "book_style",
@@ -215,7 +215,7 @@ export function inspectPackage(text: string): Inspection {
 }
 
 /** Any forbidden key, at any depth. Returns the first one found, for a message that names it. */
-function forbiddenIn(v: unknown, depth = 0): string | null {
+export function forbiddenIn(v: unknown, depth = 0): string | null {
   if (depth > 8 || !v || typeof v !== "object") return null;
   for (const [k, child] of Object.entries(v as Record<string, unknown>)) {
     if ((FORBIDDEN_DATA_KEYS as readonly string[]).includes(k)) return k;

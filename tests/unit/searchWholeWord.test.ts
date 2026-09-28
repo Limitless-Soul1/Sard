@@ -256,7 +256,12 @@ describe("the reader and the panel", () => {
   });
 
   it("changing the mode re-runs the search rather than filtering what is on screen", () => {
-    expect(reader).toContain("}, [searchQuery, searchWholeWord]);");
+    // The mode is part of the QUERY, not a filter over results already on screen. The spoiler seal
+    // joined it for the same reason — sealed, the sections ahead are never scanned, so answering
+    // "show them anyway" has to scan again rather than un-hide something already found. This asserts
+    // the rule the array encodes rather than its exact length, so a later input that also belongs to
+    // the query can be added without loosening what is being promised here.
+    expect(reader).toContain("}, [searchQuery, searchWholeWord");
     expect(reader).toContain("wholeWord: searchWholeWord,");
   });
 

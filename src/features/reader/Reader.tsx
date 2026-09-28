@@ -2452,6 +2452,12 @@ export function Reader({
       // RAWY-89: stream partial results + scan progress as foliate scans, so the panel feels alive.
       ctrl.searchBook(q, {
         wholeWord: searchWholeWord,
+        // SPOILER-SAFE IS A PROPERTY OF THE SEARCH, not only of what is shown afterwards. With it on,
+        // the sections after the reader are never opened — so there is no count of what is there to
+        // leak, by any route. «Show them anyway» turns it off for that one search, which is why it
+        // belongs in the dependency list below: answering it re-runs the scan, unbounded, and the
+        // matches ahead arrive for the first time.
+        spoilerSafe: spoilerSafe && !revealAhead,
         signal: ac.signal,
         onProgress: (f) => { if (searchEpoch.current === myEpoch) setSearchProgress(f); },
         onBatch: (hits) => { if (searchEpoch.current === myEpoch) setSearchHits(hits); },
@@ -2464,7 +2470,7 @@ export function Reader({
     }, 320);
     return () => { if (searchDebounce.current) clearTimeout(searchDebounce.current); };
     // The matching mode is part of the query: changing it supersedes the in-flight scan and searches again.
-  }, [searchQuery, searchWholeWord]);
+  }, [searchQuery, searchWholeWord, spoilerSafe, revealAhead]);
 
   const toggleSearch = useCallback(() => {
     setLeftPanel((p) => (p === "search" ? null : "search")); // opening Search closes Contents

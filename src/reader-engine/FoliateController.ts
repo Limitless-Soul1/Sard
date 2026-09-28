@@ -167,6 +167,26 @@ export interface TocEntry {
 // RAWY-88: one in-book search match. `ahead` = the match lies BEYOND the reader's furthest-read
 // position (so spoiler-safe hides its snippet); `frac` (0..1, the match's chapter start) is the
 // location readout; the excerpt is split so the panel can bold the `match` inside pre…post.
+  /**
+ * WHICH SECTION A CFI NAMES. A CFI's first step pair is the spine position, and foliate's own
+ * `resolveNavigation` answers it — but that parses the section to do it. The leading step is enough
+ * here and costs nothing: `epubcfi(/6/14!/4/2...)` is spine child 14, which is index 6. Clamped to
+ * the book, and falling back to the last section, because a boundary we cannot read must never be
+ * read as "section 0" — that would silently search one chapter instead of the book behind the
+ * reader.
+ */
+export function sectionIndexOfCfi(cfi: string, sections: number): number {
+  const last = Math.max(0, sections - 1);
+  // The FIRST step is the package's spine element; the SECOND is the child within it, and that is
+  // the one that names the section: `epubcfi(/6/14!/...)` is spine child 14, which is index 6.
+  const m = /^epubcfi\(\/\d+\/(\d+)/.exec(cfi.trim());
+  if (!m) return last;
+  const step = Number(m[1]);
+  if (!Number.isFinite(step) || step < 2) return last;
+  const idx = Math.floor(step / 2) - 1;
+  return Math.min(Math.max(idx, 0), last);
+}
+
 export interface SearchHit {
   cfi: string;
   sectionIndex: number;
@@ -5385,6 +5405,19 @@ export class FoliateController {
        * same matcher, same collator, same folding, so tashkīl and case are ignored in both modes.
        */
       wholeWord?: boolean;
+      /**
+       * SPOILER-SAFE: SEARCH BACKWARD FROM THE BOUNDARY, AND NEVER PAST IT.
+       *
+       * Off (and by default) this method is exactly what it was: foliate scans the book from the
+       * first section to the last, every match is kept, and each one is tagged `ahead` if it lies
+       * beyond the boundary so the panel can seal it. That path is untouched.
+       *
+       * On, the scan STOPS BEING A SCAN OF THE BOOK. It walks the boundary's own section first, then
+       * the section before it, and so on to the first — so the sections after the reader are never
+       * opened, never parsed and never matched. Nothing about future text is learned, which is the
+       * only way a count of it cannot leak: there is no count to leak.
+       */
+      spoilerSafe?: boolean;
     } = {},
   ): Promise<SearchHit[]> {
     const view = this.view;
@@ -5463,7 +5496,69 @@ export class FoliateController {
       // query is expanded to include the author's phrase for any rule whose replacement it matches.
       // With no rule in force `expandQuery` returns the single original term and this loop runs once,
       // which is exactly the code path that existed before.
-      for (const term of expandQuery(q, this.reps, foldPhrase)) {
+      const terms = expandQuery(q, this.reps, foldPhrase);
+      /**
+       * THE SPOILER-SAFE WALK — the boundary's section, then the one before it, then the one before.
+       *
+       * `view.search({ index })` scans ONE section (view.js `#searchSection`), which is what makes
+       * this possible without touching the engine: the sections after the reader are never handed to
+       * it. The per-section path yields no chapter label — only the whole-book path does — so the
+       * label is taken from `getProgressOf`, which is the same `TOCProgress.getProgress(index)` that
+       * whole-book scan reads it from. Same source, same answer.
+       *
+       * WITHIN the boundary's own section the walk keeps only what lies at or before the boundary
+       * itself, so a match later on the reader's own page is not exposed either.
+       */
+      if (opts.spoilerSafe && boundary && compare) {
+        const end = sectionIndexOfCfi(boundary, n);
+        for (let i = end; i >= 0; i--) {
+          if (opts.signal?.aborted) break;
+          const label = this.sectionLabel(i);
+          for (const term of terms) {
+            if (opts.signal?.aborted) break;
+            try {
+              for await (const r of view.search({ query: term, draw: drawNothing, sardWholeWords: !!opts.wholeWord, index: i })) {
+                if (opts.signal?.aborted) break;
+                if (r === "done") break;
+                const now = performance.now();
+                if (now - lastYield > 30) {
+                  await new Promise<void>((res) => setTimeout(res, 0));
+                  lastYield = performance.now();
+                }
+                const one = r as { cfi?: string; excerpt?: { pre?: string; match?: string; post?: string } };
+                if (!one?.cfi) continue;
+                // EVERY section, not only the one the walk started in. `end` is an estimate read
+                // off the boundary's own CFI, and an estimate that came out too high would otherwise
+                // let a whole section of unread text through — the one thing this walk exists to
+                // prevent. Comparing every match costs one comparison and removes that possibility,
+                // so where the walk STARTS is only ever an optimisation.
+                if (compare(one.cfi, boundary) > 0) continue;
+                if (seen.has(one.cfi)) continue; // two terms can reach the same passage
+                seen.add(one.cfi);
+                hits.push({
+                  cfi: one.cfi,
+                  sectionIndex: i,
+                  chapterLabel: label,
+                  pre: one.excerpt?.pre ?? "",
+                  match: one.excerpt?.match ?? "",
+                  post: one.excerpt?.post ?? "",
+                  frac: fractions[i] ?? 0,
+                  // Nothing found this way can be ahead: nothing ahead was ever opened.
+                  ahead: false,
+                });
+              }
+            } catch { /* one section that will not parse must not end the walk */ }
+          }
+          curIndex = i;
+          // Backwards, so "scanned" counts the sections behind us out of the sections there are.
+          scanFrac = end > 0 ? (end - i + 1) / (end + 1) : 1;
+          emit(false);
+        }
+        emit(true);
+        return hits;
+      }
+
+      for (const term of terms) {
         for await (const r of view.search({ query: term, draw: drawNothing, sardWholeWords: !!opts.wholeWord })) {
           if (opts.signal?.aborted) break;
           if (r === "done") break;
@@ -5505,6 +5600,19 @@ export class FoliateController {
       try { view.clearSearch?.(); } catch { /* ignore */ }
     }
     return hits;
+  }
+
+  /** A section's contents label — the same `TOCProgress.getProgress(index)` the whole-book scan reads
+   *  its labels from, reached through the public `getProgressOf` so both paths agree. */
+  private sectionLabel(index: number): string {
+    try {
+      const v = this.view as unknown as {
+        getProgressOf?: (i: number, r?: Range) => { tocItem?: { label?: string } } | undefined;
+      } | null;
+      return v?.getProgressOf?.(index)?.tocItem?.label?.trim() ?? "";
+    } catch {
+      return "";
+    }
   }
 
   /** RAWY-88: jump to a search hit and flash it (gold highlight for ~2s, then fade) — the panel stays

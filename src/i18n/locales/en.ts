@@ -46,6 +46,9 @@ export const en = {
   "search.wholeWordSub": "Match the word on its own, not inside a longer one",
   "search.spoilerSub": "Hide matches past your position · {pos}",
   "search.count": "{n} matches · {m} up to your position",
+  /** Spoiler-safe: the only count the reader may have. The total is deliberately absent — with it,
+   *  the number of matches ahead is a subtraction away. */
+  "search.countUpTo": "{n} matches up to your position",
   "search.countAll": "{n} matches · all shown",
   "search.youAreHere": "You are here · {pos}",
   // The search boundary once the reader has moved back to an earlier chapter: it stays at the
@@ -54,7 +57,8 @@ export const en = {
   // so a longer one eats the chapter name that is the whole point of showing it.
   "search.furthestHere": "Furthest you've read · {pos}",
   "search.nothingBefore": "Nothing before {pos}.",
-  "search.hidden": "{n} matches ahead are hidden",
+  /** No count, and none is available: sealed, the text ahead is never searched. */
+  "search.hidden": "Matches ahead are hidden",
   "search.hiddenBody": "Sard won’t show you text you haven’t reached yet.",
   "search.reveal": "Show them anyway →",
   "search.hideAgain": "Hide them again",

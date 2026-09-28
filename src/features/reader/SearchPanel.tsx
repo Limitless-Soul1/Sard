@@ -209,10 +209,21 @@ export function SearchPanel({
 
         {/* no matches (only once the scan is finished) */}
         {q && !searching && hits.length === 0 && (
-          <div className="sp-empty">
-            <div className="sp-empty-title">{t("search.none", { q })}</div>
-            <div className="sp-empty-body">{t("search.noneBody")}</div>
-          </div>
+          <>
+            <div className="sp-empty">
+              <div className="sp-empty-title">{t("search.none", { q })}</div>
+              <div className="sp-empty-body">{t("search.noneBody")}</div>
+            </div>
+            {/* NOTHING BEHIND THE READER — and, sealed, nothing was looked for ahead. Saying only «no
+                matches» would let that read as «none in the book», which is more than Sard knows. */}
+            {!reveal && (
+              <div className="sp-sealed">
+                <div className="sp-sealed-count">{t("search.hidden")}</div>
+                <div className="sp-sealed-body">{t("search.hiddenBody")}</div>
+                <button className="sp-sealed-reveal" onClick={() => onRevealAhead(true)}>{t("search.reveal")}</button>
+              </div>
+            )}
+          </>
         )}
 
         {/* results — up-to-position rows stream in AS FOUND (even while searching); the summary chrome
@@ -223,9 +234,15 @@ export function SearchPanel({
             {/* count — final only (the spinner carries the live count while scanning) */}
             {!searching && (
               <div className="sp-count">
+                {/* WITH THE SEAL ON, THE ONLY NUMBER IS THE ONE THE READER HAS EARNED.
+                    This said «14 matches · 4 up to your position», and the subtraction is the leak:
+                    the reader learns there are ten ahead. Sealed, the line now carries the count up to
+                    the position and nothing else — and since the sections ahead are no longer searched
+                    at all, there is no total to accidentally reach for. Unsealed, it is the line it
+                    has always been. */}
                 {reveal
                   ? t("search.countAll", { n: localeNum(hits.length, lang) })
-                  : t("search.count", { n: localeNum(hits.length, lang), m: localeNum(upTo.length, lang) })}
+                  : t("search.countUpTo", { n: localeNum(upTo.length, lang) })}
               </div>
             )}
 
@@ -244,7 +261,9 @@ export function SearchPanel({
             ))}
 
             {/* the "you are here" boundary — final only, once all up-to rows are on screen (RAWY-175) */}
-            {!searching && allUpToShown && ahead.length > 0 && (
+            {/* The boundary line does not depend on having COUNTED anything ahead — sealed, nothing
+                ahead is counted by design. It is drawn when there is a boundary to draw. */}
+            {!searching && allUpToShown && (ahead.length > 0 || (!reveal && upTo.length > 0)) && (
               <div className="sp-here" dir="auto">
                 <span className="sp-here-line" />
                 <span className="sp-here-label">{t(boundaryIsFurthest ? "search.furthestHere" : "search.youAreHere", { pos: positionLabel })}</span>
@@ -265,9 +284,14 @@ export function SearchPanel({
 
             {/* the sealed card — final only, spoiler-safe on with ahead matches (RAWY-175: once all the
                 up-to rows are on screen, so it sits at the true bottom — as it always did) */}
-            {!searching && allShown && !reveal && ahead.length > 0 && (
+            {/* THE SEAL. It used to appear only when matches ahead had been counted, and it named the
+                count. Neither is possible now and neither should be: the sections ahead are not
+                searched, so nothing is known about them — which is the strongest form of the promise
+                the card makes. It therefore says what Sard DID, not what it found, and appears
+                whenever the seal is on and there is something behind the reader to have searched. */}
+            {!searching && allShown && !reveal && (
               <div className="sp-sealed">
-                <div className="sp-sealed-count">{t("search.hidden", { n: localeNum(ahead.length, lang) })}</div>
+                <div className="sp-sealed-count">{t("search.hidden")}</div>
                 <div className="sp-sealed-body">{t("search.hiddenBody")}</div>
                 <button className="sp-sealed-reveal" onClick={() => onRevealAhead(true)}>{t("search.reveal")}</button>
               </div>

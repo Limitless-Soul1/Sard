@@ -49,6 +49,7 @@ export const ar: Record<TKey, string> = {
   "search.wholeWordSub": "يطابق الكلمة وحدها، لا داخل كلمة أطول",
   "search.spoilerSub": "يُخفي النتائج بعد موضعك · {pos}",
   "search.count": "{n} نتيجة · {m} حتى موضعك",
+  "search.countUpTo": "{n} نتيجة حتى موضعك",
   "search.countAll": "{n} نتيجة · الكل ظاهر",
   "search.youAreHere": "موضعك الآن · {pos}",
   // حدّ البحث حين يرجع القارئ إلى فصل سابق: يبقى عند أبعد ما بلغ، فلا يصحّ أن يُسمّى «موضعك».
@@ -58,7 +59,7 @@ export const ar: Record<TKey, string> = {
   // Arabic counts 11–99 take the SINGULAR counted noun, so "72 نتيجة" — never "72 نتائج". Every
   // sibling string here already does this; this one did not, and the two appeared three lines apart
   // in the same panel.
-  "search.hidden": "{n} نتيجة بعد موضعك — مخفيّة",
+  "search.hidden": "النتائج بعد موضعك مخفيّة",
   "search.hiddenBody": "لن يعرض سَرْد نصًّا لم تصل إليه بعد.",
   "search.reveal": "أظهرها على أي حال ←",
   "search.hideAgain": "أخفِها مجدّدًا",

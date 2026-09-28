@@ -27,14 +27,14 @@ import { useI18n } from "../../i18n";
 // Choosing several rows at once, said once for every list in Sard — see `listSelection`.
 import { SelectionBar, SelectionBox, rowSelectProps, useListSelection } from "../../components/listSelection";
 import type { TKey } from "../../i18n/locales/en";
-import { resolveTheme, useTheme } from "../../theme";
 import { useReader } from "../../reader-engine/store";
 import { filterByTag, tagFilterStillValid } from "./noteTags";
 import { useAnnotations } from "./annotationsStore";
 import { useBookmarks } from "./bookmarksStore";
 import { BookmarkShape } from "./BookmarkShape";
 import { useBookmarkStyle } from "../../lib/bookmarkStyle";
-import { ColorRow } from "./AnnotationLayer";
+import { ColorRow, ReadingPalette, useHl } from "./AnnotationLayer";
+import type { Theme } from "../../theme/tokens";
 import { TagPicker } from "./TagPicker";
 import { ReplacementDialog } from "./ReplacementDialog";
 import { colorValue } from "./highlightColors";
@@ -94,10 +94,10 @@ const NOTE_TITLE_MAX = 120;
 // "current" | "all" | a book id
 type Source = string;
 
-function useHl() {
-  const id = useTheme((s) => s.themeId);
-  return resolveTheme(id).colors.highlight;
-}
+// `useHl` IS THE ONE IN `AnnotationLayer` NOW. This file had a byte-identical copy reading
+// `useTheme.themeId` — the LIBRARY theme — so every highlight, note and reference listed here was
+// swatched in a palette the page never paints with. One definition, one palette; see the note on
+// `ReadingPalette` for the defect this closes.
 
 interface Props {
   open: boolean;
@@ -105,10 +105,12 @@ interface Props {
   onJump: (cfi: string) => void;
   /** RAWY-206: open a DIFFERENT book at a locator (App.setOpen — the Library's own path). */
   onOpenBook?: (t: OpenTarget) => void;
+  /** The palette the open book is READ in — the swatches below are its pens, not the Library's. */
+  readingTheme: Theme;
   initialTab?: AnnoTab;
 }
 
-export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, initialTab = "notes" }: Props) {
+export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, readingTheme, initialTab = "notes" }: Props) {
   const { t, dir, lang } = useI18n();
   const [tab, setTab] = useState<AnnoTab>(initialTab);
   useEffect(() => setTab(initialTab), [initialTab]);
@@ -300,6 +302,9 @@ export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, initialTab
   };
 
   return (
+    // ONE PROVIDER FOR THE PANEL, for the same reason the layer has one: every swatch below
+    // is a pen of the palette the open book is READ in, not of the one the Library wears.
+    <ReadingPalette.Provider value={readingTheme}>
     <aside
       className={`reader-panel ${panelDockClass("notes")}${open ? " show" : ""}`}
       dir={dir}
@@ -435,6 +440,7 @@ export function AnnotationsPanel({ open, onClose, onJump, onOpenBook, initialTab
         )}
       </div>
     </aside>
+    </ReadingPalette.Provider>
   );
 }
 

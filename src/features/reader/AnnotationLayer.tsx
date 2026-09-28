@@ -11,12 +11,15 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  createContext,
+  useContext,
   type RefObject,
 } from "react";
 
 import { useI18n } from "../../i18n";
 import { ColorPicker } from "../../components/ColorPicker";
 import { resolveTheme, useTheme } from "../../theme";
+import type { Theme } from "../../theme/tokens";
 import type { AnchorRect, AnnotationHit, FoliateController, SelectionInfo } from "../../reader-engine/FoliateController";
 import { useAnnotations } from "./annotationsStore";
 import { useReader } from "../../reader-engine/store"; // RAWY-259: the book title for the metadata block
@@ -42,9 +45,36 @@ import {
 } from "../../lib/highlightInk";
 import { noteTagsFor, noteTagsSet, type HighlightColor, type HighlightRow, type NoteRow, type RefRow, type RepRow } from "../../lib/ipc";
 
-function useHl() {
-  const id = useTheme((s) => s.themeId);
-  return resolveTheme(id).colors.highlight;
+/**
+ * THE PALETTE THESE MARKS ARE DRAWN IN — the BOOK's, never the Library's.
+ *
+ * ROOT CAUSE OF "the swatch is not the colour I get". This used to read `useTheme.themeId`, which is
+ * the LIBRARY (app chrome) theme by its own definition. The mark on the page is painted by
+ * `FoliateController` from `this.theme.colors.highlight`, and `this.theme` is the READING theme the
+ * Reader hands it. So the eight swatches and the eight pens came from two different palettes, and a
+ * هيئة whose two halves carry different pens — which `SARD-THEME/1` allows and a designed one often
+ * does — showed one colour and drew another. MEASURED: library `ivory`, book `ink`; the swatch
+ * rendered #E8C36A while the page painted #F4C430.
+ *
+ * THE VALUE IS NOT RESOLVED HERE, it is handed in. The Reader already computes `readingTheme` — a
+ * draft in progress included — and passes the SAME object to `ctrl.applyTheme`, so the swatch and
+ * the mark cannot disagree: they are the one palette. It travels as a context because `ColorRow` is
+ * shared with the annotations panel and neither wants a prop threaded through three components.
+ *
+ * WITHOUT A PROVIDER the shared BOOK theme answers. That is the value the Reader itself falls back
+ * to when no draft is in force, and it is a READING palette either way — this default can never be
+ * the Library's, which is the whole point of the change.
+ */
+export const ReadingPalette = createContext<Theme | null>(null);
+
+export function useReadingTheme(): Theme {
+  const given = useContext(ReadingPalette);
+  const shared = useTheme((s) => s.bookThemeId);
+  return given ?? resolveTheme(shared);
+}
+
+export function useHl() {
+  return useReadingTheme().colors.highlight;
 }
 
 // The "+" affordance (an SVG, perfectly centred — RAWY-122 ISSUE C) and the back chevron.
@@ -539,9 +569,11 @@ function NoteEditorModal({
   }, [onClose]);
 
   const hl = useHl();
-  const themeId = useTheme((s) => s.themeId);
-  const themeDark = resolveTheme(themeId).dark;
-  const themePaper = resolveTheme(themeId).colors.paperBg;
+  // THE SAME PALETTE, for the same reason: this preview is the mark itself, composited against the
+  // paper it will be drawn on. The Library's paper is not that paper.
+  const reading = useReadingTheme();
+  const themeDark = reading.dark;
+  const themePaper = reading.colors.paperBg;
   const inkHex = isHex(hi.color) ? hi.color : (hl[hi.color as keyof typeof hl] ?? hi.color);
   // The preview ink comes from the SHARED resolver the page renderer uses, with the density being dragged —
   // so this is the mark itself, not a representation of it.
@@ -769,11 +801,17 @@ function NoteEditorModal({
 
 export function AnnotationLayer({
   ctrlRef,
+  readingTheme,
   onPhotoCard,
   onAddToCard,
   onListen,
 }: {
   ctrlRef: RefObject<FoliateController | null>;
+  /**
+   * The palette this book is READ in — the very object the Reader hands `ctrl.applyTheme`, so the
+   * swatches below and the mark the controller paints are the one palette rather than two.
+   */
+  readingTheme: Theme;
   onPhotoCard?: (sel: SelectionInfo) => void;
   onAddToCard?: (sel: SelectionInfo) => void;
   onListen?: (sel: SelectionInfo) => void; // RAWY-124: listen-from-selection (start TTS from here)
@@ -930,6 +968,9 @@ export function AnnotationLayer({
   };
 
   return (
+    // ONE PROVIDER FOR THE WHOLE LAYER. The swatches, the custom picker's preview and the note
+    // editor all read the book's palette from here rather than resolving one of their own.
+    <ReadingPalette.Provider value={readingTheme}>
     <>
       {/* RAWY-260: the reference popup — display only, per the design. Any tap outside closes it; a tap
           ON it opens the dialog for editing. */}
@@ -993,5 +1034,6 @@ export function AnnotationLayer({
         />
       )}
     </>
+    </ReadingPalette.Provider>
   );
 }

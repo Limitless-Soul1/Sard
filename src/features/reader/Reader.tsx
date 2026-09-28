@@ -3551,6 +3551,9 @@ export function Reader({
 
       <AnnotationsPanel
         open={annoOpen}
+        // THE BOOK'S OWN PALETTE, the same object `ctrl.applyTheme` is given below — so a swatch in
+        // this panel and the mark on the page are the one palette rather than two.
+        readingTheme={readingTheme}
         onClose={() => setAnnoOpen(false)}
         onJump={jumpCfi}
         onOpenBook={openOtherBook}
@@ -3623,7 +3626,7 @@ export function Reader({
 
       {/* RAWY-85: no in-context selection toolbar (highlight/note/Photo Mode) for PDFs — they're
           CFI-less in Phase 0, so the whole annotation layer is disabled rather than half-working. */}
-      {!isPdf && <AnnotationLayer ctrlRef={ctrlRef} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} onListen={startListenFromSelection} />}
+      {!isPdf && <AnnotationLayer ctrlRef={ctrlRef} readingTheme={readingTheme} onPhotoCard={openPhotoCard} onAddToCard={addToBasket} onListen={startListenFromSelection} />}
       {/* RAWY-105: read-aloud player (EPUB-only) — floats above the reading area while listening. */}
       {(!isPdf || pdfCanListen) && (
         <TtsPlayer

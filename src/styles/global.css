@@ -4292,7 +4292,10 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.18);
 }
 .hl-pop-swatch:hover { transform: scale(1.08); }
-.hl-pop-vsep { width: 1px; height: 26px; background: rgba(255, 255, 255, 0.14); margin: 0 3px; flex: none; }
+/* The same correction as `.hl-pop-line`, and the same reason. It kept its slightly heavier weight
+   relative to the hairline (0.14 against 0.10 in white), because it separates the swatches from the
+   "+" across a full 26px rather than ruling off a tier. */
+.hl-pop-vsep { width: 1px; height: 26px; background: color-mix(in srgb, currentColor 20%, transparent); margin: 0 3px; flex: none; }
 .hl-pop-custom {
   position: relative; width: 26px; height: 26px; border-radius: 50%; overflow: hidden; flex: none; cursor: pointer;
   border: 0; padding: 0; display: inline-flex; align-items: center; justify-content: center;
@@ -4352,8 +4355,12 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 }
 .hl-cpick-apply:hover { filter: brightness(1.05); }
 
-/* hairline between the tiers */
-.hl-pop-line { height: 1px; background: rgba(255, 255, 255, 0.1); margin: 11px 2px; }
+/* hairline between the tiers. RELATIVE TO THE FOREGROUND, NOT TO WHITE — see the note on the popover's
+   polarity above: `.hl-pop` is dark on a light book and light on a dark one, and a white wash is only
+   visible on the first. Measured on the light branch, `rgba(255,255,255,0.1)` came out at 1.03:1
+   against the popover — no hairline at all. `currentColor` is whichever way round the popover is, and
+   16% is the figure `.hl-cpick-rule` already uses for the same hairline forty lines below. */
+.hl-pop-line { height: 1px; background: color-mix(in srgb, currentColor 16%, transparent); margin: 11px 2px; }
 /* tier 2 — actions */
 .hl-pop-actions { display: flex; align-items: center; gap: 4px; }
 .hl-pop-act {
@@ -4361,11 +4368,21 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   background: transparent; border: 0; cursor: pointer; font: 500 0.78125rem var(--ui-font); color: inherit; white-space: nowrap;
 }
 .hl-pop-act svg { flex: none; }
-.hl-pop-act:hover { background: rgba(255, 255, 255, 0.09); }
+/* Hover is FEEDBACK, so it is the one that may not quietly disappear: at `rgba(255,255,255,0.09)` on a
+   light popover it measured 1.03:1, which is no feedback at all. Same treatment, same reason. */
+.hl-pop-act:hover { background: color-mix(in srgb, currentColor 12%, transparent); }
 .hl-pop-act.primary {
   padding: 8px 13px; font-weight: 600;
   background: color-mix(in srgb, var(--accent) 18%, transparent);
-  color: color-mix(in srgb, var(--accent) 60%, #fff);
+  /* THE ONLY ACTION THAT DOES NOT INHERIT ITS COLOUR, and that is what made it the faint one. Its five
+     neighbours take `color: inherit` and so are always the right way round; this one lightened the
+     accent 40% TOWARDS WHITE, which reads on a dark popover and washes out on a light one — measured
+     1.15:1 to 1.53:1 there against 9.33:1 for every other action beside it. Mixing towards
+     `currentColor` instead keeps the same 60% of the هيئة's accent and lets the remaining 40% follow
+     the surface, so the accent the reader supplied is used as given and only Sard's own compositing
+     of it changes. (`currentColor` in the `color` property means the INHERITED colour, per CSS Color
+     4 — here, the popover's own foreground.) */
+  color: color-mix(in srgb, var(--accent) 60%, currentColor);
 }
 .hl-pop-act.primary:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
 

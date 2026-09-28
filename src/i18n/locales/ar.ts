@@ -1041,6 +1041,8 @@ export const ar: Record<TKey, string> = {
   "ne.updated": "آخر تعديل",
   "ne.cancel": "إلغاء",
   "ne.delete": "حذف",
+  "ne.deleteConfirm": "أتريد حذف هذا التظليل وما كُتب عليه؟",
+  "ne.deleteKeep": "إبقاء",
   "ne.more": "المزيد",
   "ne.less": "أقل",
   "ne.close": "إغلاق",

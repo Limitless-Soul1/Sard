@@ -1045,6 +1045,8 @@ export const en = {
   "ne.updated": "Last edited",
   "ne.cancel": "Cancel",
   "ne.delete": "Delete",
+  "ne.deleteConfirm": "Delete this highlight and its note?",
+  "ne.deleteKeep": "Keep",
   "ne.more": "More",
   "ne.less": "Less",
   "ne.close": "Close",

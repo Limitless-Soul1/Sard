@@ -1408,6 +1408,36 @@ export function PhotoComposer({
     setSelectedId(el.id);
   }, []);
 
+  /**
+   * TOUCHED LAST, ON TOP — selecting a thing ON THE CARD raises it.
+   *
+   * The stacking model was already here and already right: order in `elements` IS the order things
+   * paint in, and `bringToFront` is the operation. What was missing is that nothing but the explicit
+   * "bring to front" button ever called it, so a picture dropped on a card stayed over the words
+   * for ever and the only way to read them again was to find an order control. An image and a line
+   * of text are both just elements with a rect; which one is in front is a question the reader
+   * answers by touching one, exactly as they would with two pieces of paper.
+   *
+   * ONLY FROM THE CANVAS. The rail beside the card is a LIST of what is on the card, and a list that
+   * reorders itself under the finger that is pointing at it is not a list — so `ObjectsStrip` keeps
+   * plain selection. The card itself is where "this one, now" is said.
+   *
+   * `prev` is returned unchanged when the element is already topmost, which is the common case. That
+   * identity matters: it is what stops a click on the front-most thing from counting as an edit and
+   * asking the reader about unsaved changes on the way out.
+   */
+  const selectOnCanvas = useCallback((id: string | null) => {
+    setBgMode(false);
+    setSelectedId(id);
+    // `null` is the canvas being cleared, not a thing being touched: there is nothing to raise.
+    if (!id) return;
+    setElements((prev) => {
+      const i = prev.findIndex((e) => e.id === id);
+      if (i < 0 || i === prev.length - 1) return prev;
+      return bringToFront({ ...compRef.current, elements: prev }, id).elements;
+    });
+  }, []);
+
 
 
   /**
@@ -1740,9 +1770,25 @@ export function PhotoComposer({
          * step over the credit or the mark, which is what it did before: measured, a 13-line
          * passage at 42px took the whole card and covered all four credit lines and the mark.
          */
+        /**
+         * THE ROOM IS MADE OF WORDS. A PICTURE IS NOT FURNITURE THE PASSAGE MUST WALK AROUND.
+         *
+         * This filtered out only `unknown` and hidden, and then CAST what was left to a text rect —
+         * which quietly let an image in, because an image carries a `placement.rect` too. So a
+         * picture laid over the passage was read as space already spoken for, and the refit moved
+         * the quote out from under it. MEASURED: a picture at y 0.14–0.58 pushed the quote to
+         * y 0.592, hard against the picture's bottom edge, on every refit — so the two could never
+         * be layered, the words appeared to leap away from the picture, and dragging them back was
+         * undone the moment the text was measured again. Every other role keeps its top and has no
+         * room of its own, which is why only the quote behaved this way.
+         *
+         * What the room is FOR is the credit stack and the mark — the things the composition builds
+         * around the passage. A picture is the reader's own object, placed where they put it, and
+         * whether it sits over or under the words is a question of order, not of room.
+         */
         const others = prev
-          .filter((e) => e.id !== id && e.kind !== "unknown" && !e.hidden)
-          .map((e) => (e as TextElement).placement.rect);
+          .filter((e): e is TextElement => e.id !== id && isText(e) && !e.hidden)
+          .map((e) => e.placement.rect);
         const room = quoteRegion(format, rect, others,
           brandBand(compRef.current.preset, metaRef.current, layoutCanvas.w, layoutCanvas.h));
         const roomH = Math.max(MIN_SIZE, room.bottom - room.top);
@@ -2062,7 +2108,18 @@ export function PhotoComposer({
                       onClick={() => {
                         // Pressing the NAME reaches the element; the switch beside it is what shows
                         // and hides. A name that is off turns itself on rather than doing nothing.
-                        if (live && !live.hidden) { setBgMode(false); setSelectedId(live.id); return; }
+                        setBgMode(false);
+                        if (live && !live.hidden) { selectOnCanvas(live.id); return; }
+                        // STILL THE PRESET'S, AND COVERED. A role the preset draws is not an element:
+                        // it is painted before `ElementsLayer` and can never be in front of one, it is
+                        // not in the strip, and the only way to make it an element is to click it ON
+                        // the card. MEASURED with a picture laid over the quote: the press lands on the
+                        // picture's hit box — every box is a full rectangle in paint order — so the
+                        // words could not be reached at all, and the card showed them sliced around the
+                        // picture with no way out. This is the same act clicking them would have been,
+                        // through the one control the picture cannot cover; `liftPart` appends, so the
+                        // words arrive in front, exactly where touching them would have put them.
+                        if (part) { liftPart(role.part); return; }
                         setVisible(true);
                       }}
                     >
@@ -2207,7 +2264,16 @@ export function PhotoComposer({
             <ObjectsStrip
               comp={composition}
               selectedId={selectedId}
-              onSelect={(id) => { setBgMode(false); setSelectedId(id); }}
+              // THE STRIP RAISES TOO, and it has to — see `selectOnCanvas`. An element the picture
+              // covers completely cannot be reached on the canvas at all: every hit box is a full
+              // rectangle in paint order, so the picture's box swallows the press and the thing
+              // underneath can never be touched. MEASURED in the running editor: with the picture
+              // over the words, a press where the words are resolves to the PICTURE's box, raises
+              // the picture that is already in front, and nothing appears to happen. The strip is
+              // the only control that can name a covered element, so if selection raises anywhere
+              // it must raise here, or "the last one touched is in front" has a hole exactly where
+              // the reader needs it most.
+              onSelect={selectOnCanvas}
               zoom={zoom}
               onZoom={(z) => setZoom(z === "fit" ? 1 : z)}
               inspectorOpen={inspectorOpen}
@@ -2246,7 +2312,7 @@ export function PhotoComposer({
                 height={naturalH * viewScale}
                 rtl={(composition.canvas.dir ?? data.dir) === "rtl"}
                 selectedId={selectedId}
-                onSelect={(id) => { setBgMode(false); setSelectedId(id); }}
+                onSelect={selectOnCanvas}
                 onMove={(id, dx, dy) => edit((c) => moveBy(c, id, dx, dy))}
                 onResize={(id, grip: ResizeGrip, dx, dy) => edit((c) => resizeBy(c, id, grip, dx, dy))}
                 onCommit={() => undefined}
@@ -2258,7 +2324,7 @@ export function PhotoComposer({
                 family={resolvedQuoteFont}
                 autoFrac={autoFrac}
                 emptyLabel={emptyLabel}
-                onBeginEdit={(id) => { setSelectedId(id); setEditingId(id); }}
+                onBeginEdit={(id) => { selectOnCanvas(id); setEditingId(id); }}
                 onEditText={(text) => selected && edit((c) => updateText(c, selected.id, text))}
                 onEndEdit={() => setEditingId(null)}
               />

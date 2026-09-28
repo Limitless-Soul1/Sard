@@ -6209,17 +6209,32 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 /* Saved photo-card viewer — LIGHTBOX (RAWY-53): the card large & centered as the hero on a
    dark radial backdrop, a quiet caption, one floating action pill, a circular close. Mirrors
    in RTL; the backdrop follows the Library theme (warm on light, near-black on dark). */
+/* THE LIBRARY STAYS BEHIND IT, OUT OF FOCUS — it is not replaced by a panel.
+   This was a radial gradient painted corner to corner, which made the viewer a large dark surface
+   of its own: the card stopped being a thing lifted out of the shelf and became a slide on a black
+   screen. A veil thin enough to read through, over a blur, keeps the shelf where it was and says
+   only that it is not the thing being looked at. `backdrop-filter` blurs what is BEHIND this box,
+   so the card, the caption and the pill — its children — stay perfectly sharp. */
 .pg-lightbox {
   position: fixed; inset: 0; z-index: 45; display: flex; align-items: center; justify-content: center; padding: 40px;
-  background: radial-gradient(120% 100% at 50% 30%, #4A3A26 0%, #2C2013 80%);
+  background: rgba(38, 30, 22, 0.42);
+  backdrop-filter: blur(20px);
 }
-.pg-lightbox.dark { background: radial-gradient(120% 100% at 50% 30%, #14141F 0%, #06060A 82%); }
+.pg-lightbox.dark { background: rgba(8, 8, 13, 0.5); }
 .pg-lb-close {
-  position: absolute; top: 18px; inset-inline-end: 20px; z-index: 2; width: 34px; height: 34px; border: none;
+  position: absolute; top: 18px; inset-inline-end: 20px;
+  z-index: 2; width: 34px; height: 34px; border: none;
   border-radius: 50%; background: rgba(255, 255, 255, 0.12); backdrop-filter: blur(4px); color: #F3ECDB;
   font: 300 1.125rem var(--ui-font); cursor: pointer; display: flex; align-items: center; justify-content: center;
 }
 .pg-lb-close:hover { background: rgba(255, 255, 255, 0.2); }
+/* CLEAR OF THE FRAME. The viewer covers the whole window, Sard's own title bar included, so a close
+   18px from the top of the WINDOW sits beside the caption buttons and reads as part of the frame
+   rather than as part of this overlay. It is pushed down by the bar's own height — the same token
+   the Library pads itself by — and, like every other consumer of that token, ONLY while the frame
+   is actually on screen. A window wearing the platform's frame has nothing inside the webview to
+   clear, and reserving the height there would move the control for no reason. */
+:root[data-chrome="sard"] .pg-lb-close { top: calc(var(--sard-titlebar) + 18px); }
 .pg-lb-stage { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; max-width: 100%; }
 .pg-lb-card { display: flex; }
 .pg-lb-card img {
@@ -6364,13 +6379,52 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 .nec-meta-k { font: 400 0.6875rem/1.3 var(--ui-font); color: color-mix(in srgb, var(--muted) 76%, transparent); }
 .nec-meta-v { font: 500 0.75rem/1.35 var(--ui-font); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* actions — save · cancel · delete, on one row */
-.nec-actions { display: flex; align-items: center; gap: 6px; padding-top: 9px; border-top: 1px solid var(--chrome-border); }
-.nec-save { flex: 1; height: 2.35rem; border: 0; border-radius: 9px; background: var(--accent); color: var(--paper-bg); font: 600 0.875rem/1 var(--ui-font); cursor: pointer; }
-.nec-cancel { flex: none; height: 2.35rem; padding: 0 0.8rem; border: 1px solid var(--chrome-border); border-radius: 9px; background: transparent; color: var(--muted); font: 500 0.8125rem/1 var(--ui-font); cursor: pointer; }
-.nec-del { flex: none; width: 2.35rem; height: 2.35rem; border: 1px solid transparent; border-radius: 9px; background: transparent; color: #B23A3A; font: 500 13px/1 var(--ui-font); padding: 0; cursor: pointer; }
-.reader-root[data-book-dark="true"] .nec-del { color: #E08585; }
+/* IT MUST FIT THE RAIL, WHATEVER THE RAIL IS. `.nec-rail` is `overflow-y: auto`, and a box with one
+   axis scrollable computes the OTHER to `auto` too — so a row wider than the rail does not simply
+   spill, it grows a horizontal scrollbar and pushes Save out of reach. Three siblings that could not
+   shrink did exactly that. Now: the two safe answers are one group, the row may wrap that group to a
+   second line when the rail is genuinely too narrow for both, and every button may give up padding
+   before anything is clipped. `min-width: 0` on the row is what lets any of that happen inside a
+   flex parent. */
+.nec-actions {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+  min-width: 0; padding-top: 9px; border-top: 1px solid var(--chrome-border);
+}
+/* Cancel and Save travel together and sit at the end; the auto margin is what holds them apart from
+   the destructive one without needing a spacer element. */
+.nec-actions-end { display: flex; align-items: center; gap: 6px; min-width: 0; margin-inline-start: auto; }
+/* The question, when one is being asked. It gives up its own width first — the two answers beside it
+   must never be the thing that shrinks. */
+.nec-del-ask { flex: 1 1 8rem; min-width: 0; font: 500 0.8125rem/1.3 var(--ui-font); color: var(--text); }
+.nec-save { flex: 0 1 auto; min-width: 0; height: 2.35rem; padding: 0 1.1rem; border: 0; border-radius: 9px; background: var(--accent); color: var(--paper-bg); font: 600 0.875rem/1 var(--ui-font); white-space: nowrap; cursor: pointer; }
+.nec-cancel { flex: 0 1 auto; min-width: 0; white-space: nowrap; height: 2.35rem; padding: 0 0.8rem; border: 1px solid var(--chrome-border); border-radius: 9px; background: transparent; color: var(--muted); font: 500 0.8125rem/1 var(--ui-font); cursor: pointer; }
+/* DELETE IS A BUTTON THAT SAYS SO. It was a bare glyph in a 2.35rem square with no label and no
+   edge — the one destructive control in the editor, drawn smaller and quieter than everything
+   around it. It keeps the row's height so the three read as one row, gains the icon and the word,
+   and is pushed to the start by the auto margin below so it is not among the two safe answers.
+   The tint stays quiet: this must be findable and unmistakable, not loud. */
+.nec-del {
+  flex: none; display: inline-flex; align-items: center; gap: 7px;
+  height: 2.35rem; padding: 0 0.85rem; border-radius: 9px;
+  border: 1px solid color-mix(in srgb, #B23A3A 30%, transparent);
+  background: color-mix(in srgb, #B23A3A 8%, transparent);
+  color: #B23A3A; font: 600 0.8125rem/1 var(--ui-font); cursor: pointer;
+  flex: 0 1 auto; min-width: 0; white-space: nowrap;
+}
+/* The confirming press: the same button, now filled, so the second press is visibly the committing one. */
+.nec-del.confirm { background: #B23A3A; border-color: #B23A3A; color: var(--paper-bg); }
+.reader-root[data-book-dark="true"] .nec-del.confirm { background: #E08585; border-color: #E08585; color: #1A1613; }
+.nec-del.confirm:hover { background: #9C3131; border-color: #9C3131; }
+.reader-root[data-book-dark="true"] .nec-del.confirm:hover { background: #D07272; border-color: #D07272; }
+.reader-root[data-book-dark="true"] .nec-del {
+  color: #E08585;
+  border-color: color-mix(in srgb, #E08585 30%, transparent);
+  background: color-mix(in srgb, #E08585 12%, transparent);
+}
+.nec-del svg { flex: none; }
 .nec-cancel:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
-.nec-del:hover { border-color: #B23A3A; }
+.nec-del:hover { background: color-mix(in srgb, #B23A3A 16%, transparent); border-color: color-mix(in srgb, #B23A3A 55%, transparent); }
+.reader-root[data-book-dark="true"] .nec-del:hover { background: color-mix(in srgb, #E08585 20%, transparent); border-color: color-mix(in srgb, #E08585 55%, transparent); }
 .nec-save:focus-visible, .nec-cancel:focus-visible, .nec-del:focus-visible, .nec-x:focus-visible, .nec-quote-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* RAWY-259 (owner review): the TAG PICKER inside the Notes editor.
    TWO problems, one cause. `.tag-chip` was written for a surface where `--paper-bg` READS AS INK — its

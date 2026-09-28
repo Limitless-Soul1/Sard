@@ -361,6 +361,14 @@ const ReplaceIcon = () => (
     <path d="M4 8h13l-3.2-3.2M20 16H7l3.2 3.2" />
   </svg>
 );
+/** The note editor's delete. The same lid-and-body the saved-cards viewer uses for its own delete,
+ *  so the one destructive act in each surface is drawn by the same hand. */
+const TrashIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+    <polyline points="3 6 5 6 21 6" />
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+  </svg>
+);
 const PhotoIcon = () => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
     <rect x="3" y="4.5" width="18" height="15" rx="2.6" /><circle cx="8.4" cy="10" r="1.5" /><path d="m20 17-5.2-5.2L5 19.5" />
@@ -513,11 +521,14 @@ function NoteEditorModal({
   // The design's quote is collapsible (`qClamp` / `quoteToggleLabel`) — compact by default, expandable when
   // the reader wants the whole passage. Two lines collapsed, per the design's clamp.
   const [quoteOpen, setQuoteOpen] = useState(false);
+  /** The delete has been asked for but not yet answered. Reset whenever the editor changes mark. */
+  const [confirmDel, setConfirmDel] = useState(false);
   const barsRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     setBody(note?.body ?? "");
     setTitle(note?.title ?? ""); // RAWY-282: reset with the body, on the same note/highlight identity
     setAlpha(hi.alpha ?? DEFAULT_INK);
+    setConfirmDel(false); // a question asked about one mark must not still be open on the next
     if (note?.id) noteTagsFor(note.id).then((ts) => setTagIds(ts.map((x) => x.id))).catch(() => setTagIds([]));
     else setTagIds([]);
   }, [note?.id, hi.id, hi.alpha]);
@@ -711,10 +722,44 @@ function NoteEditorModal({
             {edited && <div><div className="nec-meta-k">{t("ne.updated")}</div><div className="nec-meta-v">{edited}</div></div>}
           </div>
 
+          {/* THE ROW READS AS IT DECIDES: what removes this, kept apart at the start, then the two
+              safe answers grouped at the end. Delete used to be a bare 🗑 glyph in a 2.35rem square
+              AFTER Cancel — the smallest and least explained control in the editor, and the only
+              destructive one.
+
+              ASKING FIRST. It is now a real button, which makes it far easier to hit than the glyph
+              was, and the act behind it is immediate and cannot be undone. So the row swaps to the
+              question instead of deleting on the press — the same swap the saved-cards viewer makes,
+              rather than a second pattern for the same decision. `onRemove` itself is untouched.
+
+              THE GROUP IS WHY IT FITS. All three used to be siblings that could not shrink, so on a
+              narrow rail their widths simply exceeded it — and `.nec-rail` is `overflow-y: auto`,
+              which makes overflow-x compute to `auto` as well, so the row grew a horizontal
+              scrollbar and Save was pushed out of sight. */}
           <div className="nec-actions">
-            <button type="button" className="nec-save" onClick={() => onSaveNote(body, tagIds, title)}>{t("hl.save")}</button>
-            <button type="button" className="nec-cancel" onClick={onClose}>{t("ne.cancel")}</button>
-            <button type="button" className="nec-del" onClick={onRemove} aria-label={t("ne.delete")} title={t("ne.delete")}>🗑</button>
+            {confirmDel ? (
+              <>
+                <span className="nec-del-ask">{t("ne.deleteConfirm")}</span>
+                <div className="nec-actions-end">
+                  <button type="button" className="nec-cancel" onClick={() => setConfirmDel(false)}>{t("ne.deleteKeep")}</button>
+                  <button type="button" className="nec-del confirm" onClick={onRemove}>
+                    <TrashIcon />
+                    <span>{t("ne.delete")}</span>
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <button type="button" className="nec-del" onClick={() => setConfirmDel(true)} title={t("ne.delete")}>
+                  <TrashIcon />
+                  <span>{t("ne.delete")}</span>
+                </button>
+                <div className="nec-actions-end">
+                  <button type="button" className="nec-cancel" onClick={onClose}>{t("ne.cancel")}</button>
+                  <button type="button" className="nec-save" onClick={() => onSaveNote(body, tagIds, title)}>{t("hl.save")}</button>
+                </div>
+              </>
+            )}
           </div>
         </aside>
       </div>

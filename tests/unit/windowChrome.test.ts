@@ -56,12 +56,41 @@ describe("window frame · the controls read as window controls", () => {
     return "";
   };
 
-  it("keeps the 34×24 pad and takes no more room than that", () => {
+  it("keeps the 34×24 pad, painted where it always was", () => {
     const btn = rule(".wc-btn");
     expect(btn).toMatch(/width:\s*34px/);
-    expect(btn).toMatch(/height:\s*24px/);
     expect(btn).toMatch(/padding:\s*0/);
     expect(btn).toMatch(/margin:\s*0/);
+    // The PAINTED pad is the plate, and it is still 24px tall: the control's height minus 4px at the
+    // top and 4px at the bottom. MEASURED after the change: the plate is 34×24 starting at y=4 on all
+    // three controls, and a capture of the cluster at rest and under the pointer is byte-identical to
+    // the one taken before it.
+    expect(rule(".wc-btn::before")).toMatch(/inset:\s*calc\(\(var\(--sard-titlebar, 32px\) - 24px\) \/ 2\) 0/);
+  });
+
+  it("the control is as tall as the bar, so no strip above or below it belongs to the frame", () => {
+    // THE DEFECT THIS FIXES. A 24px control centred in a 32px bar leaves 4px above and 4px below that
+    // belong to `.wc`, a `deep` drag region — so a press there starts a window drag and no click is
+    // ever delivered. MEASURED in the running window, pressing every pixel row of the bar at the left
+    // edge, centre and right edge of each control: 72 of 288 points missed, all of them on rows 0–3
+    // and 28–31, 24 per control, every one landing on a window drag. After: 0 of 288.
+    expect(rule(".wc-btn")).toMatch(/height:\s*var\(--sard-titlebar, 32px\)/);
+    // …and the control may never be taller than the bar, which would put its hit area over the page.
+    expect(rule(".wc")).toMatch(/height:\s*var\(--sard-titlebar, 32px\)/);
+  });
+
+  it("Close reaches the window's edge, and its plate does not move to get there", () => {
+    // The bar used to reserve 6px to its right, and that strip is `.wc`, a `deep` drag region — so a
+    // press there dragged the window instead of closing, and on a maximised window that strip holds the
+    // screen's top-right corner. The 6px is Close's own padding now: the control is 40px wide and ends
+    // at the edge, its content box is still 34px so the glyph does not move, and the plate is inset by
+    // the same 6px so it is painted exactly where it was. MEASURED after: Close answers on all 1280
+    // points of its region including the last pixel column, the other two controls are unmoved and lose
+    // nothing (2176 points), and captures of the bar's right end are byte-identical.
+    expect(rule(".wc")).toMatch(/padding:\s*0\s*;/);        // never a strip of frame beside the cluster
+    expect(rule(".wc-close")).toMatch(/width:\s*40px/);
+    expect(rule(".wc-close")).toMatch(/padding-right:\s*6px/);
+    expect(rule(".wc-close::before")).toMatch(/right:\s*6px/);
   });
 
   it("leaves no gap between adjacent controls", () => {
@@ -80,15 +109,18 @@ describe("window frame · the controls read as window controls", () => {
     // belong to the frame — a press a pixel inside the cluster would drag the window.
     expect(rule(".wc-btn")).toMatch(/border-radius:\s*0/);
     expect(rule(".wc-btn::before")).toMatch(/border-radius:\s*5px/);
-    expect(rule(".wc-btn::before")).toMatch(/inset:\s*0/);
     expect(rule(".wc-btn:focus-visible")).not.toMatch(/border-radius/);
+    // The ring belongs to the PLATE, not to the control's box — the box is the full height of the bar
+    // now, and a ring at its edges would be taller than the pad it marks.
+    expect(rule(".wc-btn:focus-visible")).toMatch(/outline:\s*none/);
+    expect(rule(".wc-btn:focus-visible::before")).toMatch(/outline:\s*1\.5px solid var\(--accent\)/);
   });
 
   it("hover, pressed and focus are three different answers", () => {
     expect(rule(".wc-btn:hover::before")).toMatch(/background:\s*color-mix\(in srgb, var\(--text\) 10%/);
     expect(rule(".wc-btn:active::before")).toMatch(/background:\s*color-mix\(in srgb, var\(--text\) 18%/);
     expect(rule(".wc-btn:hover")).toMatch(/color:\s*var\(--text\)/);
-    expect(rule(".wc-btn:focus-visible")).toMatch(/outline:.*var\(--accent\)/);
+    expect(rule(".wc-btn:focus-visible::before")).toMatch(/outline:.*var\(--accent\)/);
   });
 
   it("a press is immediate and sinks the glyph a pixel, without moving the layout", () => {

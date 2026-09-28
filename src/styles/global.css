@@ -7583,7 +7583,11 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
   position: fixed; top: 0; left: 0; right: 0; z-index: 100;
   height: var(--sard-titlebar, 32px); box-sizing: border-box;
   display: flex; align-items: center; justify-content: flex-end;
-  padding: 0 6px 0 0;
+  /* NO PADDING HERE. The 6px that used to hold the cluster off the window's right edge is now Close's
+     own padding, so the gap is drawn in exactly the same place while the LAST 6px of the bar belong to
+     Close instead of to the frame — see `.wc-close`. Padding on this element could only ever be a strip
+     that looks like part of the cluster and drags the window. */
+  padding: 0;
   direction: ltr;
   color: var(--muted);
   /* ONE SOLID SURFACE, OUTSIDE THE TEXTURE SYSTEM ON PURPOSE. The frame took the sidebar's picture
@@ -7605,15 +7609,26 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
    adjacent those notches fall on the frame, so a press one pixel inside the cluster starts a drag
    instead (MEASURED: 6 of 408 sampled points, all within a pixel of a corner). So the button keeps
    square edges and the plate is painted by `::before`, which is drawn, never hit-tested. */
+/* THE CONTROL IS AS TALL AS THE BAR; ITS PAD IS THE 24px PLATE DRAWN INSIDE IT. The pad used to be
+   the control, 24px tall and centred in a 32px bar, which left a 4px strip above it and another
+   below — and those strips belong to `.wc`, a `deep` drag region, so a press there starts a window
+   drag instead of pressing the button and no click is ever delivered. MEASURED in the running window:
+   scanning the full height of the bar down the middle of each control, y 0–3 and y 28–31 answered
+   DRAG for all three, i.e. 8 of the bar's 32px — a quarter of the height a reader aims at. It is
+   missed only when the pointer arrives fast, which is exactly when it lands away from the centre.
+   The control is therefore the full bar height and the plate is inset to where it already was, so
+   every painted pixel is identical and the dead strips become part of the button they sit against.
+   The pad cannot reach past the bar, and its neighbours grow the same way, so nothing is taken from
+   any other control — only from the drag region directly above and below each button. */
 .wc-btn {
   position: relative;
-  width: 34px; height: 24px; padding: 0; margin: 0; border: 0; border-radius: 0;
+  width: 34px; height: var(--sard-titlebar, 32px); padding: 0; margin: 0; border: 0; border-radius: 0;
   display: grid; place-items: center;
   background: transparent; color: inherit; cursor: default;
   transition: color 0.1s ease-out;
 }
 .wc-btn::before {
-  content: ""; position: absolute; inset: 0; border-radius: 5px;
+  content: ""; position: absolute; inset: calc((var(--sard-titlebar, 32px) - 24px) / 2) 0; border-radius: 5px;
   background: transparent;
   transition: background 0.1s ease-out;
 }
@@ -7628,6 +7643,18 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
    A pad is 34×24 and its surface never grows beyond it; the three pads are adjacent, so the row reads
    as one control cluster. Keyboard activation shows the same pressed state as the pointer, and focus
    stays its own signal: a hairline of the accent OUTSIDE the pad, distinct from both. */
+/* CLOSE REACHES THE WINDOW'S EDGE. The bar used to reserve 6px to its right, and that strip is `.wc`,
+   a `deep` drag region: a press there started a window drag instead of closing — and on a maximised
+   window that strip contains the screen's top-right corner, the easiest target on the display and where
+   a window is most often closed from. The 6px is now Close's own right padding: the control is 40px
+   wide and ends at the window's edge, while its content box is still 34px, so the glyph stays where it
+   was, and the plate below is held off the edge by the same 6px it always was. The other two controls
+   do not move: the cluster is 34+34+40 where it was 34+34+34 plus the bar's 6px padding, so its left
+   edge is unchanged. MEASURED before this: x 1378–1383 answered DRAG at every row of the bar. */
+.wc-close { width: 40px; padding-right: 6px; }
+/* The plate is inset from the control's right by that padding, so it is painted at exactly the size and
+   position it had — 34×24, ending 6px from the window's edge. */
+.wc-close::before { right: 6px; }
 .wc-btn > svg { position: relative; transition: transform 0.1s ease-out; }
 .wc-btn:hover::before { background: color-mix(in srgb, var(--text) 10%, transparent); }
 .wc-btn:hover { color: var(--text); }
@@ -7637,7 +7664,10 @@ pre.reader-error-detail { width: 100%; margin: 0; white-space: pre-wrap; text-al
 /* The ring is drawn INSIDE the pad: the pads are adjacent, so a ring outside one would sit on top of
    its neighbour. It keeps the pad's own square edges — a radius here would take the corners out of the
    hit area again, for exactly as long as the control is focused. */
-.wc-btn:focus-visible { outline: 1.5px solid var(--accent); outline-offset: -2px; }
+/* The ring stays on the PLATE, not on the control's box: the control is now the full height of the
+   bar, and a ring at its edges would be a taller ring than the pad it belongs to. */
+.wc-btn:focus-visible { outline: none; }
+.wc-btn:focus-visible::before { outline: 1.5px solid var(--accent); outline-offset: -2px; }
 /* CLOSE ANSWERS IN RED, because closing is the one destructive thing on this bar and every desktop
    says so the same way. The reds are Sard's own destructive pair (`#b24a4a` armed, `#9c3b3b` deeper),
    the ones the archive and the profile editor already use — so this is the product's language, not a

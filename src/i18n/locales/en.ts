@@ -21,6 +21,14 @@ export const en = {
   "reader.layout": "Layout",
   "reader.bookmark": "Bookmark",
   "reader.settings": "Settings",
+  // Copy the selected passage. The caption is the bare verb, as every caption on this bar is; the
+  // title and accessible name say what it acts on, because a reader who has selected nothing deserves
+  // to learn that from the control rather than from its silence.
+  "reader.copy": "Copy",
+  "reader.copyAria": "Copy the selected text",
+  // The confirmation, and it is also the caption for that moment — so the button says what it did
+  // rather than a badge saying it elsewhere.
+  "reader.copied": "Copied",
   // RAWY-216: the five concept tabs. `reader.typography` / `reader.layout` above are reused as tab labels.
   "settings.colour": "Colour",
   "settings.readaloud": "Read-aloud",

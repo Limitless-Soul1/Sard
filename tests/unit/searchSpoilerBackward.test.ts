@@ -258,10 +258,13 @@ describe("what must NOT have moved", () => {
     expect(code(reader)).toContain("wholeWord: searchWholeWord,");
   });
 
-  it("the reading toolbar is untouched by this work", () => {
-    // A Copy action in the reading toolbar is a separate, later task; nothing here may anticipate it.
+  it("the search work put nothing of its own in the selection toolbar", () => {
+    // This guard was written while a Copy action there was a separate, later task, and it read
+    // "the reading toolbar is untouched". That task has since landed, so the claim is narrowed to what
+    // it was always protecting: no SEARCH concern leaked into that row. Copy's own behaviour is
+    // covered by tests/unit/readerCopyButton.test.ts.
     const toolbar = read("src/features/reader/AnnotationLayer.tsx");
-    expect(toolbar).not.toMatch(/hl-pop-copy|onCopySelection|search\.copy/);
+    expect(toolbar).not.toMatch(/search\.copy|searchBackward|spoilerSafe|backwardFrom|positionCfi/);
   });
 });
 

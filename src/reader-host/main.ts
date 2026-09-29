@@ -96,7 +96,6 @@ function buildMirror(): Mirror {
     isScrolled: safe(() => controller.isScrolled, true),
     readingScrollTop: safe(() => controller.readingScrollTop, 0),
     pdfPageCount: safe(() => controller.pdfPageCount, 0),
-    furthestPosition: safe(() => controller.furthestPosition, null),
     dir: safe(() => controller.dir, undefined),
     title: safe(() => controller.title, undefined),
     author: safe(() => controller.author, undefined),

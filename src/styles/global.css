@@ -2637,17 +2637,37 @@ html, body, #root {
    pill. It sits OUTSIDE .rp-scroll, so it needs no sticky layer and no opaque ground of its own, and
    the 1400 rows below can never slide under it. Its margins hold it to the rows' own edge (the
    scroller's 10px + the row's 11px), so nothing is a hair out of line with the list it heads. */
-.rp-furthest {
-  display: flex; align-items: center; gap: var(--sp-4);
+/* The ROW owns the placement, because the control is now two actions side by side: the way back, and
+   Reset. The margins that used to live on the button live here unchanged, so a row with no Reset sits
+   exactly where the single button always did. */
+.rp-furthest-row {
+  display: flex; align-items: stretch; gap: var(--sp-2);
   /* A gap above so it is the panel's first ACTION rather than the last line of its header, and a
      larger one below so the contents list plainly starts after it. Rendered, with none of this, it
      read as a banner welded to the header. */
-  width: calc(100% - 20px); margin: 4px 10px 9px; padding: 7px 11px;
+  width: calc(100% - 20px); margin: 4px 10px 9px;
+}
+.rp-furthest {
+  display: flex; align-items: center; gap: var(--sp-4);
+  flex: 1 1 auto; min-width: 0; padding: 7px 11px;
   border: 0; cursor: pointer; border-radius: var(--r-sm); text-align: start;
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--text);
 }
 .rp-furthest:hover { background: color-mix(in srgb, var(--accent) 17%, transparent); }
+/* Sibling, not a rival: the SAME accent wash and radius as the way back, so the two read as one
+   control with two ends, and the quieter label keeps the destination the thing the eye lands on. */
+.rp-furthest-reset {
+  flex: 0 0 auto; padding: 7px 11px;
+  border: 0; cursor: pointer; border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: color-mix(in srgb, var(--text) 74%, transparent);
+  font: 600 var(--fs-tiny) var(--ui-font);
+}
+.rp-furthest-reset:hover {
+  background: color-mix(in srgb, var(--accent) 17%, transparent);
+  color: var(--text);
+}
 .rp-furthest-arrow { flex: 0 0 auto; display: inline-flex; align-items: center; color: var(--accent); }
 .rp-furthest-arrow svg {
   width: 15px; height: 15px; fill: none; stroke: currentColor;

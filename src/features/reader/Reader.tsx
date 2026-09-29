@@ -100,6 +100,7 @@ import {
   type Landing,
   markFromResume,
   parseFurthest,
+  resetFurthest,
   serialiseFurthest,
   type FurthestMark,
 } from "./furthestRead"; // the furthest point reached — the maximum of the reading position
@@ -844,13 +845,16 @@ export function Reader({
       // and the same call site, exercised once loading had finished, correctly merged (`[1]` → `[1,6]`).
       // Nothing here depends on the view, so the reads simply belong before it. No flag, no guard, no
       // deferral of the handler: the data is just present before anything can read it.
-      const [readRaw, seenRaw, spoilerRaw, wholeWordRaw, invertRaw, pdfThemeRaw, pdfZoomRaw, pdfModeRaw, furthestRaw, speakSymRaw, pdfSurroundRaw, pdfFrameRaw] = await Promise.all([
+      const [readRaw, seenRaw, spoilerRaw, wholeWordRaw, backwardRaw, invertRaw, pdfThemeRaw, pdfZoomRaw, pdfModeRaw, furthestRaw, speakSymRaw, pdfSurroundRaw, pdfFrameRaw] = await Promise.all([
         settingsGet(`chapters_read:${target.id}`).catch(() => null),
         settingsGet(`seen_start:${target.id}`).catch(() => null),
         settingsGet(`spoiler_safe:${target.id}`).catch(() => null),
         // Whole-word search, this book's answer. Per book and default OFF, exactly like the
         // spoiler-safe row beside it — the two switches in the search panel keep one convention.
         settingsGet(`search_whole_word:${target.id}`).catch(() => null),
+        // Which way search reads this book. Per book and default OFF — the scan Sard has always run
+        // — following the same convention as the two switches beside it.
+        settingsGet(`search_backward:${target.id}`).catch(() => null),
         settingsGet(`pdf_invert:${target.id}`).catch(() => null),
         // The PDF appearance is a READING preference, so it is global like the book theme — a reader
         // who wants sepia wants it for every PDF. Zoom is the opposite: it belongs to the document,
@@ -909,6 +913,7 @@ export function Reader({
       // other per-book value removes the second lifecycle rather than adding a second reset.
       setSpoilerSafe(spoilerRaw !== "0"); // default ON (design §5)
       setSearchWholeWord(wholeWordRaw === "1"); // default OFF — today's substring search is unchanged
+      setSearchBackward(backwardRaw === "1"); // default OFF — first section to last, as it always was
       // A reader who had chosen "inverted" before themes existed keeps a dark page: the old boolean is
       // honoured once, as "night", and only when no theme has been chosen since. Nobody's setting is
       // silently discarded, and nobody who never used invert gets a dark theme they did not ask for.
@@ -1084,7 +1089,8 @@ export function Reader({
               if (!grown) return;
               furthestRef.current = grown;
               setFurthestUi(grown);
-              ctrl.setFurthestBoundary(grown.cfi); // search seals from the new point on
+              // No boundary is pushed to the engine: search seals from the reader's live position, not
+              // from this mark. The mark is progress — where the way back leads.
               settingsSet(`furthest_read:${bookRef.current}`, serialiseFurthest(grown)).catch(() => {});
             })();
           }
@@ -1109,10 +1115,6 @@ export function Reader({
       // Superseded during the (async) open → don't publish ready/toc or bind the shared stores; the
       // newer open owns them now.
       if (stale()) return;
-      // THE SPOILER-SAFE BOUNDARY IS THIS MARK. The engine no longer works it out from what has been
-      // displayed; it is told, here and on every advance below, so search seals exactly what the
-      // reader has not read — and keeps sealing it after they page back to an earlier chapter.
-      ctrl.setFurthestBoundary(furthestRef.current?.cfi ?? null);
 
       // RESILIENCE-1 / WP-3 — the DATABASE names this book, not the file.
       //
@@ -2422,6 +2424,17 @@ export function Reader({
    * highlight and jump all read that one list.
    */
   const [searchWholeWord, setSearchWholeWord] = useState(false);
+  /**
+   * WHICH WAY SEARCH READS THE BOOK. Off (the default) is the scan Sard has always run: first
+   * section to last. On, it starts where the reader is STANDING and steps back to the beginning,
+   * so the chapters after them are never opened.
+   *
+   * It is a SEARCH control and nothing else. «Furthest you've read» in this same panel is a
+   * reading-progress control — it says how deep the reader has been and offers the way back — and
+   * the two are deliberately not wired together: flipping back to an earlier chapter changes where
+   * a backward search STARTS, and changes nothing about the furthest point reached.
+   */
+  const [searchBackward, setSearchBackward] = useState(false);
   const [revealAhead, setRevealAhead] = useState(false); // "show them anyway" — this once
   const [activeHitCfi, setActiveHitCfi] = useState<string | null>(null);
   const searchEpoch = useRef(0);
@@ -2452,12 +2465,13 @@ export function Reader({
       // RAWY-89: stream partial results + scan progress as foliate scans, so the panel feels alive.
       ctrl.searchBook(q, {
         wholeWord: searchWholeWord,
-        // SPOILER-SAFE IS A PROPERTY OF THE SEARCH, not only of what is shown afterwards. With it on,
-        // the sections after the reader are never opened — so there is no count of what is there to
-        // leak, by any route. «Show them anyway» turns it off for that one search, which is why it
-        // belongs in the dependency list below: answering it re-runs the scan, unbounded, and the
-        // matches ahead arrive for the first time.
-        spoilerSafe: spoilerSafe && !revealAhead,
+        // THE BOUNDARY IS WHERE THE READER IS STANDING — for the seal and for the direction alike,
+        // and never the furthest point they once reached. Having reached chapter 891 and come back to
+        // 500, they are reading 500: spoiler-safe hides what lies past 500, and backward walks 500,
+        // 499, 498 … 1 without opening 501. The furthest-read mark is reading progress and the way
+        // back to it; it decides nothing here, which is why the engine no longer holds one.
+        positionCfi: cfi,
+        backward: searchBackward,
         signal: ac.signal,
         onProgress: (f) => { if (searchEpoch.current === myEpoch) setSearchProgress(f); },
         onBatch: (hits) => { if (searchEpoch.current === myEpoch) setSearchHits(hits); },
@@ -2470,7 +2484,12 @@ export function Reader({
     }, 320);
     return () => { if (searchDebounce.current) clearTimeout(searchDebounce.current); };
     // The matching mode is part of the query: changing it supersedes the in-flight scan and searches again.
-  }, [searchQuery, searchWholeWord, spoilerSafe, revealAhead]);
+    // `cfi` is deliberately NOT a dependency. A search — sealed or backward — is anchored where the
+    // reader stood when they ASKED for it, and re-running it under them on every page turn would be a
+    // different search each time, with rows appearing and vanishing as they read. Typing again, or
+    // changing a switch, re-runs it from wherever they are then. (This is not a freshness compromise:
+    // the `ahead` flags were always baked into the hits by the scan that produced them.)
+  }, [searchQuery, searchWholeWord, searchBackward]);
 
   const toggleSearch = useCallback(() => {
     setLeftPanel((p) => (p === "search" ? null : "search")); // opening Search closes Contents
@@ -2482,6 +2501,18 @@ export function Reader({
     setSearchWholeWord((v) => {
       const next = !v;
       settingsSet(`search_whole_word:${bookRef.current}`, next ? "1" : "0").catch(() => {});
+      return next;
+    });
+  }, []);
+  const onToggleBackward = useCallback(() => {
+    // A «show them anyway» answered for a forward search does not carry over to a backward one, the
+    // same way it does not survive the spoiler switch below. Backward finds nothing ahead to reveal,
+    // so leaving it standing would only change the count line's wording to the one that speaks of a
+    // total, for a search that has no ahead half to total.
+    setRevealAhead(false);
+    setSearchBackward((v) => {
+      const next = !v;
+      settingsSet(`search_backward:${bookRef.current}`, next ? "1" : "0").catch(() => {});
       return next;
     });
   }, []);
@@ -2715,26 +2746,29 @@ export function Reader({
       : t("panel.chapter", { n: localeNum(own, lang) });
   })();
 
-  // WHAT THE SPOILER-SAFE BOUNDARY IS CALLED, and whether it is still simply "where you are".
+  // TWO PLACES ARE NAMED HERE, AND THEY ARE NOT THE SAME PLACE.
   //
-  // The three strings the search panel builds from this label all describe the BOUNDARY — what is
-  // hidden past it, what lies before it, where the list divides. They read as "your position" only
-  // because the boundary used to BE the current position. Now that it is the furthest point reached,
-  // the label names that point, and the wording says so whenever the two have parted company —
-  // telling a reader in chapter 320 that their position is chapter 592 would be a plain untruth.
+  // The spoiler-safe boundary is WHERE THE READER IS, so the panel's three boundary strings — what is
+  // hidden past it, what lies before it, where the list divides — are all named by
+  // `searchPositionLabel` and say "your position", which is now simply true. (For a while the boundary
+  // was the furthest point reached and these strings had to switch wording to avoid telling a reader in
+  // chapter 320 that their position was chapter 592. With the boundary back at the reader, there is
+  // nothing to switch.)
   //
-  // Named the way the Contents list names it, and by the same rule as the chrome caption above: the
-  // book's own title for the row, the computed name when it has none, and the neutral name alone
-  // while chapter titles are hidden. A mark whose row cannot be found — a book migrated from before
-  // the mark existed still carries no contents href — falls back to its stored label and then to a
-  // percentage, so the boundary is always nameable.
+  // The furthest-read control names the OTHER place: the deepest point reached, which is where it would
+  // take them. Named the way the Contents list names it, and by the same rule as the chrome caption
+  // above: the book's own title for the row, the computed name when it has none, and the neutral name
+  // alone while chapter titles are hidden. A mark whose row cannot be found — a book migrated from
+  // before the mark existed carries no contents href — falls back to its stored label and then to a
+  // percentage, so the destination is always nameable.
   const furthestTocIndex = useMemo(
     () => (furthestUi?.href ? toc.findIndex((c) => c.href === furthestUi.href) : -1),
     [furthestUi, toc],
   );
-  const boundaryIsFurthest = boundaryHasParted(furthestUi, furthestTocIndex, tocIndex, fraction);
-  const searchBoundaryLabel = (() => {
-    if (!boundaryIsFurthest || !furthestUi) return searchPositionLabel;
+  /** Is the reader BEHIND the deepest point they reached? Only the furthest-read control asks this. */
+  const behindFurthest = boundaryHasParted(furthestUi, furthestTocIndex, tocIndex, fraction);
+  const furthestLabel = (() => {
+    if (!furthestUi) return null;
     if (furthestTocIndex >= 0) {
       const own = tocOwnNumbers ? tocOwnNumbers[furthestTocIndex] : furthestTocIndex + 1;
       const neutral =
@@ -3092,6 +3126,38 @@ export function Reader({
     restoreReadingFocus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [restoreReadingFocus]);
+
+  // THE LIVE POSITION, MIRRORED FOR THE STABLE CALLBACK BELOW. The panels are memoised and their
+  // handlers are deliberately identity-stable (see `onToggleSpoiler`), so a callback closing over `cfi`
+  // directly would change on every relocate and re-render every row of a long result list. Same mirror
+  // pattern the chapter-marker callbacks already use. `sec` is display/diagnostics only and the
+  // chapter tracker already holds the live one.
+  const posRef = useRef<FurthestMark | null>(null);
+  posRef.current = cfi
+    ? { cfi, fraction, label: chapterLabel, href: chapterHref, sec: chapTrackRef.current?.sec ?? -1 }
+    : null;
+
+  /**
+   * RESET THE FURTHEST-READ MARK TO WHERE THE READER IS STANDING.
+   *
+   * It writes the progress mark and NOTHING else. The reader does not move, the saved reading position
+   * a resume depends on is untouched, the panel stays open, and searching cannot change — the search
+   * boundary is the live position, which this does not move. So after resetting in chapter 500 the
+   * reader is still in chapter 500, spoiler-safe still hides 501 onward, the direction switch is as it
+   * was, and no future chapter becomes searchable.
+   *
+   * Once the mark is here the reader is no longer behind it, so the way-back row retires itself:
+   * `offerReturn` has nothing to offer. That is the same rule that already hides it at the frontier,
+   * which is also why pressing this while already AT the frontier cannot be reached from the UI — and
+   * why it would be harmless if it were, since it would store the mark that is already stored.
+   */
+  const resetFurthestToHere = useCallback(() => {
+    const next = posRef.current ? resetFurthest(posRef.current) : null;
+    if (!next) return;
+    furthestRef.current = next;
+    setFurthestUi(next);
+    settingsSet(`furthest_read:${bookRef.current}`, serialiseFurthest(next)).catch(() => {});
+  }, []);
   // RAWY-250 (PART 4): record a chapter as READ (idempotent) and persist the set for this book.
   // RAWY-256 (addendum, case 6 — owner's decision): remember that this chapter's BEGINNING has been seen,
   // and PERSIST it per book. A 1432-chapter book is read across many sessions; if the fact died with the
@@ -3528,6 +3594,7 @@ export function Reader({
         furthestHref={furthestUi?.href ?? null}
         furthestOffered={furthestAhead}
         onGoFurthest={goToFurthest}
+        onResetFurthest={resetFurthestToHere}
       />
 
       {!isPdf && (
@@ -3535,9 +3602,11 @@ export function Reader({
           open={searchOpen}
           onClose={closeSearch}
           bookTitle={bookTitle}
-          positionLabel={searchBoundaryLabel}
-          boundaryIsFurthest={boundaryIsFurthest}
+          positionLabel={searchPositionLabel}
+          behindFurthest={behindFurthest}
+          furthestLabel={furthestLabel}
           onGoFurthest={goToFurthest}
+          onResetFurthest={resetFurthestToHere}
           bookDir={isRtlBook ? "rtl" : "ltr"}
           query={searchQuery}
           onQuery={setSearchQuery}
@@ -3548,6 +3617,8 @@ export function Reader({
           onToggleSpoiler={onToggleSpoiler}
           wholeWord={searchWholeWord}
           onToggleWholeWord={onToggleWholeWord}
+          backward={searchBackward}
+          onToggleBackward={onToggleBackward}
           revealAhead={revealAhead}
           onRevealAhead={setRevealAhead}
           activeCfi={activeHitCfi}

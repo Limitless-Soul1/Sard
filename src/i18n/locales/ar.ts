@@ -44,6 +44,8 @@ export const ar: Record<TKey, string> = {
   // RAWY-88: البحث داخل الكتاب مع الخيار الآمن من الحرق.
   "search.title": "بحث",
   "search.placeholder": "ابحث في هذا الكتاب…",
+  "search.backward": "بحث إلى الخلف",
+  "search.backwardSub": "من موضعك إلى البداية",
   "search.spoiler": "بحثٌ بلا حَرْق",
   "search.wholeWord": "الكلمة كاملة",
   "search.wholeWordSub": "يطابق الكلمة وحدها، لا داخل كلمة أطول",
@@ -51,10 +53,10 @@ export const ar: Record<TKey, string> = {
   "search.count": "{n} نتيجة · {m} حتى موضعك",
   "search.countUpTo": "{n} نتيجة حتى موضعك",
   "search.countAll": "{n} نتيجة · الكل ظاهر",
+  // حدّ البحث هو موضع القارئ دائمًا، فهذا السطر صحيح دائمًا ولا صيغة ثانية له. (كانت هناك صيغة،
+  // `search.furthestHere`، أيام كان الحدّ عند أبعد ما بلغ ولم يكن يصحّ أن يُسمّى «موضعك». عاد الحدّ
+  // إلى موضع القارئ، فحُذفت الصيغة بدل أن تُترك بلا استعمال.)
   "search.youAreHere": "موضعك الآن · {pos}",
-  // حدّ البحث حين يرجع القارئ إلى فصل سابق: يبقى عند أبعد ما بلغ، فلا يصحّ أن يُسمّى «موضعك».
-  // بلفظ المحتويات نفسه، وبطول السطر الأصلي نفسه — والسطر يُقصّ عند الطرف، فلو طال لابتلع اسم الفصل.
-  "search.furthestHere": "أبعد موضع بلغته · {pos}",
   "search.nothingBefore": "لا شيء قبل {pos}.",
   // Arabic counts 11–99 take the SINGULAR counted noun, so "72 نتيجة" — never "72 نتائج". Every
   // sibling string here already does this; this one did not, and the two appeared three lines apart
@@ -876,6 +878,11 @@ export const ar: Record<TKey, string> = {
   // الصدر وحده في السطر الأوّل، والوجهة تحته، كما في شارة «العودة إلى» بعد القفزة.
   "toc.furthest": "أبعد موضع بلغته",
   "toc.furthestAria": "العودة إلى أبعد موضع بلغته في هذا الكتاب",
+  // إلى جانبها لا بدلًا منها: تحتفظ العلامة باسمها لأنّه وصفها. هذا الإجراء يُنزل العلامة إلى موضع
+  // القارئ الحالي — لمن تجاوز، أو استطلع ما بعده، أو أراد أن يكون الحدّ هنا الآن. لا يُحرّك القارئ،
+  // ولا يُغيّر من البحث شيئًا. «إعادة الضبط» هي صيغة سرد نفسها لهذا الزرّ في مواضع أخرى.
+  "toc.furthestReset": "إعادة الضبط",
+  "toc.furthestResetAria": "إرجاع أبعد موضع بلغته إلى موضعك الآن، دون أن تتحرّك",
   "panel.hideTitles": "إخفاء العناوين",
   "panel.showTitles": "إظهار العناوين",
   "panel.hideFirstLine": "إخفاء السطر الأول",

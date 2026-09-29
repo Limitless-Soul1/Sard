@@ -22,16 +22,18 @@ interface Props {
   open: boolean;
   onClose: () => void;
   bookTitle: string | null;
-  /** What the spoiler-safe boundary is CALLED. It is the reader's current chapter while they stand
-   *  at their furthest point, and the furthest point itself once they have moved back behind it. */
+  /** What the spoiler-safe boundary is CALLED — always the reader's own current chapter, because that
+   *  is always what the boundary IS. Nothing about the furthest-read mark reaches these strings. */
   positionLabel: string;
-  /** Has the boundary parted company with the reader's current position? Only the WORDING depends
-   *  on this — calling the furthest chapter "your position now" while they read an earlier one
-   *  would be false, and the whole point of this panel is that it tells the truth about what it
-   *  is hiding. */
-  boundaryIsFurthest?: boolean;
+  /** Is the reader behind the deepest point they have reached? The only thing that depends on it is
+   *  whether the way back is offered — never what is searched, and never what is hidden. */
+  behindFurthest?: boolean;
+  /** What that deepest point is called, for the control that offers the way back to it. */
+  furthestLabel?: string | null;
   /** Take the reader back to the furthest point they have read. Absent for a PDF or with no mark. */
   onGoFurthest?: () => void;
+  /** Move the furthest-read mark to where the reader is standing, without moving the reader. */
+  onResetFurthest?: () => void;
   bookDir: "rtl" | "ltr"; // the BOOK's direction — snippets follow it (not the UI)
   query: string;
   onQuery: (q: string) => void;
@@ -40,6 +42,11 @@ interface Props {
   hits: SearchHit[];
   spoilerSafe: boolean;
   onToggleSpoiler: () => void;
+  /** WHICH WAY THE BOOK IS READ BY THE SEARCH. Off = first section to last, as it always was. On =
+   *  from where the reader is standing, back to the beginning. Nothing to do with the furthest-read
+   *  control below it: that one is about reading progress and offers the way back to it. */
+  backward: boolean;
+  onToggleBackward: () => void;
   /** Whole-word matching: the query must stand as a word, not sit inside a longer one. OFF by default. */
   wholeWord: boolean;
   onToggleWholeWord: () => void;
@@ -79,9 +86,10 @@ const ResultRow = memo(function ResultRow({
 });
 
 export function SearchPanel({
-  open, onClose, bookTitle, positionLabel, boundaryIsFurthest = false, onGoFurthest, bookDir,
+  open, onClose, bookTitle, positionLabel, behindFurthest = false, furthestLabel = null,
+  onGoFurthest, onResetFurthest, bookDir,
   query, onQuery, searching, searchProgress, hits,
-  spoilerSafe, onToggleSpoiler, wholeWord, onToggleWholeWord, revealAhead, onRevealAhead,
+  spoilerSafe, onToggleSpoiler, wholeWord, onToggleWholeWord, backward, onToggleBackward, revealAhead, onRevealAhead,
   activeCfi, onJump,
 }: Props) {
   const { t, lang, dir } = useI18n();
@@ -164,27 +172,51 @@ export function SearchPanel({
         <span className={`rp-switch${wholeWord ? " on" : ""}`} aria-hidden><span className="rp-knob" /></span>
       </button>
 
+      {/* WHICH WAY THE SEARCH READS. The third of the panel's switches, in the shape the other two
+          already have — a labelled row with the same `rp-switch` — rather than a new kind of control
+          for a two-way choice the panel can already express.
+
+          It is NOT the furthest-read control further down, and the two must not be read as one: that
+          one is reading progress (how deep this reader has been, and the way back to it), this one is
+          a search direction, and it begins where the reader is STANDING. Flipping back to an earlier
+          chapter changes where a backward search starts and leaves the furthest point untouched. */}
+      <button className="sp-spoiler sp-opt" onClick={onToggleBackward} aria-pressed={backward}>
+        <span className="sp-spoiler-text">
+          <span className="sp-spoiler-label">{t("search.backward")}</span>
+          <span className="sp-spoiler-sub">{t("search.backwardSub")}</span>
+        </span>
+        <span className={`rp-switch${backward ? " on" : ""}`} aria-hidden><span className="rp-knob" /></span>
+      </button>
+
       {/* spoiler-safe toggle — app furniture, pinned side + app language */}
       <button className="sp-spoiler" onClick={onToggleSpoiler} aria-pressed={spoilerSafe}>
         <span className="sp-spoiler-text">
           <span className="sp-spoiler-label">{t("search.spoiler")}</span>
+          {/* One wording, because there is one boundary: where the reader is. It used to switch to the
+              furthest point's name whenever the two had parted, which is exactly the conflation this
+              panel no longer makes. */}
           <span className="sp-spoiler-sub" dir="auto">
-            {t(boundaryIsFurthest ? "search.furthestHere" : "search.spoilerSub", { pos: positionLabel })}
+            {t("search.spoilerSub", { pos: positionLabel })}
           </span>
         </span>
         <span className={`rp-switch${spoilerSafe ? " on" : ""}`} aria-hidden><span className="rp-knob" /></span>
       </button>
 
       {/* THE WAY BACK TO THE FURTHEST POINT READ — the same control the Contents panel offers, here
-          because this is the other place a reader learns they are behind it: the line directly above
-          has just told them the boundary is somewhere they are not standing. Offered on exactly the
+          because this is the other place a reader learns they are behind it. Offered on exactly the
           same condition, so the two can never disagree, and shown whether or not anything has been
           typed — a reader may open Search for this alone.
+
+          IT NAMES ITS OWN PLACE. `furthestLabel` is the deepest point reached; `positionLabel` above is
+          where the reader stands, and the seal's boundary. Two labels because they are two places, and
+          this row is reading progress — it decides nothing about what was searched or what is hidden.
 
           It is INDEPENDENT of the return pill. That one appears after jumping to a result and offers
           the way back to where the reader was a moment ago; this one is durable and offers the furthest
           point they ever read to. Both may be on screen at once, and neither suppresses the other. */}
-      {boundaryIsFurthest && onGoFurthest && <FurthestReturn label={positionLabel} onGo={onGoFurthest} />}
+      {behindFurthest && furthestLabel && onGoFurthest && (
+        <FurthestReturn label={furthestLabel} onGo={onGoFurthest} onReset={onResetFurthest} />
+      )}
 
       <div className="rp-scroll sp-results" ref={resultsRef} onScroll={onResultsScroll}>
         {/* before typing */}
@@ -220,7 +252,12 @@ export function SearchPanel({
               <div className="sp-sealed">
                 <div className="sp-sealed-count">{t("search.hidden")}</div>
                 <div className="sp-sealed-body">{t("search.hiddenBody")}</div>
-                <button className="sp-sealed-reveal" onClick={() => onRevealAhead(true)}>{t("search.reveal")}</button>
+                {/* Reading backward, nothing ahead was searched, so there is nothing found to
+                    un-hide — the way to see it is to turn the direction round, which is a control of
+                    its own. Offering it here would promise something this press cannot do. */}
+                {!backward && (
+                  <button className="sp-sealed-reveal" onClick={() => onRevealAhead(true)}>{t("search.reveal")}</button>
+                )}
               </div>
             )}
           </>
@@ -266,7 +303,7 @@ export function SearchPanel({
             {!searching && allUpToShown && (ahead.length > 0 || (!reveal && upTo.length > 0)) && (
               <div className="sp-here" dir="auto">
                 <span className="sp-here-line" />
-                <span className="sp-here-label">{t(boundaryIsFurthest ? "search.furthestHere" : "search.youAreHere", { pos: positionLabel })}</span>
+                <span className="sp-here-label">{t("search.youAreHere", { pos: positionLabel })}</span>
                 <span className="sp-here-line" />
               </div>
             )}
@@ -293,7 +330,12 @@ export function SearchPanel({
               <div className="sp-sealed">
                 <div className="sp-sealed-count">{t("search.hidden")}</div>
                 <div className="sp-sealed-body">{t("search.hiddenBody")}</div>
-                <button className="sp-sealed-reveal" onClick={() => onRevealAhead(true)}>{t("search.reveal")}</button>
+                {/* Reading backward, nothing ahead was searched, so there is nothing found to
+                    un-hide — the way to see it is to turn the direction round, which is a control of
+                    its own. Offering it here would promise something this press cannot do. */}
+                {!backward && (
+                  <button className="sp-sealed-reveal" onClick={() => onRevealAhead(true)}>{t("search.reveal")}</button>
+                )}
               </div>
             )}
 

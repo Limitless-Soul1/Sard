@@ -69,7 +69,6 @@ export const CROSSING: Readonly<Record<string, Crossing>> = Object.freeze({
   isScrolled: "mirrored",
   readingScrollTop: "mirrored",
   pdfPageCount: "mirrored",
-  furthestPosition: "mirrored",
   dir: "mirrored",
   title: "mirrored",
   author: "mirrored",

@@ -187,6 +187,23 @@ export function sectionIndexOfCfi(cfi: string, sections: number): number {
   return Math.min(Math.max(idx, 0), last);
 }
 
+/**
+ * WHICH SECTIONS A BACKWARD SEARCH VISITS, in the order it visits them: the section the reader is
+ * standing in, then the one before it, down to the first.
+ *
+ * It is a function, not a loop inside the walk, so that "the chapters after the reader are never
+ * opened" is a property something can actually be asked about. Given a reader in chapter 500 of a
+ * thousand, the answer contains 499…0 and nothing else — chapters 501 onward are absent whatever the
+ * reader's furthest-read mark happens to be, because no mark is an input here.
+ *
+ * The caller still checks its abort signal inside the loop; this only decides the itinerary.
+ */
+export function backwardSections(fromCfi: string, sections: number): number[] {
+  const out: number[] = [];
+  for (let i = sectionIndexOfCfi(fromCfi, sections); i >= 0; i--) out.push(i);
+  return out;
+}
+
 export interface SearchHit {
   cfi: string;
   sectionIndex: number;
@@ -2067,11 +2084,15 @@ export class FoliateController {
   private gestureEdge: "top" | "bottom" | null = null;
   private gestureActed = false;
 
-  // RAWY-88: in-book search + spoiler-safe boundary. `furthestCfi` = the FURTHEST-read position (per
-  // the design: not the page currently open — flipping back to re-read never un-hides results); it
-  // only advances (via epubcfi.compare). `cfiCompareFn` is the vendored engine's CFI comparator,
-  // loaded once per open (runtime dynamic import — Vite can't statically import /public).
-  private furthestCfi: string | null = null;
+  // RAWY-88: in-book search. `cfiCompareFn` is the vendored engine's CFI comparator, loaded once per
+  // open (runtime dynamic import — Vite can't statically import /public).
+  //
+  // THE ENGINE HOLDS NO SPOILER BOUNDARY OF ITS OWN ANY MORE. It used to keep a `furthestCfi` — the
+  // deepest point the reader had reached — and seal everything past it. That is now the caller's live
+  // position, handed to `searchBook` as `positionCfi` for the one search that needs it: a reader who
+  // has flipped back from chapter 891 to chapter 500 is reading chapter 500, and 501 onward is not
+  // theirs yet. Removing the field rather than re-pointing it is the point — with nothing here to
+  // consult, the furthest-read mark cannot become the search boundary again by accident.
   private cfiCompareFn: ((a: string, b: string) => number) | null = null;
 
   /** Tear down the current view + listeners. Safe to call repeatedly. */
@@ -2263,13 +2284,8 @@ export class FoliateController {
       view.renderer.setAttribute("gap", this.scrolledMode ? "0%" : "7%");
     }
 
-    // RAWY-88: seed the spoiler-safe boundary at the resume position + load the CFI comparator (EPUB
-    // only — a PDF has no CFI/whole-book text search).
-    //
-    // THE SEED IS A FLOOR, NOT THE ANSWER. The application owns the furthest-read mark and pushes it
-    // with `setFurthestBoundary` as soon as the book is open; this only ensures that a search run
-    // before it speaks hides the same matches the old behaviour hid, rather than none.
-    this.furthestCfi = fxl ? null : (opts.resumeCfi ?? null);
+    // RAWY-88: load the CFI comparator (EPUB only — a PDF has no CFI/whole-book text search). There is
+    // no boundary to seed: each search is told where the reader is standing when it runs.
     if (!fxl) await this.ensureCfiCompare();
     if (this.view !== view) return; // superseded during the await
 
@@ -2328,17 +2344,13 @@ export class FoliateController {
         const n = this.pdfPageCount;
         if (n > 0) fraction = (pageIdx + 0.5) / n;
       }
-      // THE SPOILER-SAFE BOUNDARY IS NO LONGER DECIDED HERE.
+      // THE SPOILER-SAFE BOUNDARY IS NOT DECIDED HERE, AND IS NOT KEPT HERE.
       //
-      // It used to advance on EVERY relocate, which made it "the furthest position ever DISPLAYED".
-      // Two consequences, both wrong once the application grew a real furthest-read mark: opening a
-      // search hit or an annotation in chapter 900 moved the boundary to 900 although the reader had
-      // only looked; and the boundary was in-memory, seeded from the resume position, so closing a
-      // book at chapter 320 after reaching 592 un-hid everything between them on the next open.
-      //
-      // The application already answers this question — one mark, advanced only when the reading
-      // position is genuinely written (never behind a return-anchor freeze) and persisted per book. So
-      // it is TOLD to this engine through `setFurthestBoundary` rather than guessed at again here.
+      // It used to advance on EVERY relocate, which made it "the furthest position ever DISPLAYED", so
+      // opening a search hit in chapter 900 moved it to 900 although the reader had only looked. It then
+      // became the application's furthest-read mark, pushed in. It is now neither: the boundary is
+      // simply WHERE THE READER IS, and each search is told that when it runs (`positionCfi`). Nothing
+      // about it is remembered between searches, which is why nothing here has to maintain it.
       const cfi = e.detail?.cfi ?? null;
       // RESILIENCE-1 (NAV-2): refine WHICH TOC entry the reader is inside when a section holds more
       // than one. See `refineTocEntry` — foliate's own answer is kept verbatim for every other book.
@@ -5354,18 +5366,6 @@ export class FoliateController {
     }
     this.cfiCompareFn = typeof w.__sardCfiCompare === "function" ? w.__sardCfiCompare : null;
   }
-  /** The furthest-read CFI (spoiler-safe boundary) — null for a PDF / before any relocate. */
-  get furthestPosition(): string | null {
-    return this.furthestCfi;
-  }
-
-  /** Tell the engine how far the reader has actually read, so `searchBook` can seal what lies past it.
-   *  The application owns this — see the relocate handler for why the engine stopped deciding it. */
-  setFurthestBoundary(cfi: string | null): void {
-    if (this.isFixedLayout) return; // a PDF has no cfi and no whole-book search to seal
-    this.furthestCfi = cfi && cfi.length > 0 ? cfi : null;
-  }
-
   /** Where `a` stands relative to `b` in the book's own order: negative before, positive after, 0 the
    *  same place. Null when the engine's comparator is unavailable, so a caller can fall back rather
    *  than guess.
@@ -5406,18 +5406,33 @@ export class FoliateController {
        */
       wholeWord?: boolean;
       /**
-       * SPOILER-SAFE: SEARCH BACKWARD FROM THE BOUNDARY, AND NEVER PAST IT.
+       * WHERE THE READER IS STANDING — the one position this search measures everything from.
        *
-       * Off (and by default) this method is exactly what it was: foliate scans the book from the
-       * first section to the last, every match is kept, and each one is tagged `ahead` if it lies
-       * beyond the boundary so the panel can seal it. That path is untouched.
+       * BOTH things that care about a boundary read this, and NEITHER reads the furthest-read mark:
+       * the seal tags a match `ahead` when it lies past this point, and a backward walk begins here.
        *
-       * On, the scan STOPS BEING A SCAN OF THE BOOK. It walks the boundary's own section first, then
-       * the section before it, and so on to the first — so the sections after the reader are never
-       * opened, never parsed and never matched. Nothing about future text is learned, which is the
-       * only way a count of it cannot leak: there is no count to leak.
+       * IT IS THE CURRENT POSITION, NOT THE FRONTIER. A reader who reached chapter 891 and has flipped
+       * back to chapter 500 is reading chapter 500; 501 onward is not theirs yet, so it is sealed, and
+       * backward never opens it. The furthest-read mark stays what it always was — a reading-progress
+       * fact offering the way back to the deepest point reached — and has nothing to say about search.
+       *
+       * Null or absent means no boundary at all: nothing is tagged `ahead` and a backward walk has
+       * nowhere to start, so the scan is the plain forward scan of the whole book.
        */
-      spoilerSafe?: boolean;
+      positionCfi?: string | null;
+      /**
+       * WHICH WAY THE SCAN READS THE BOOK.
+       *
+       * Off (the default, and what every caller that omits it gets) this method is exactly what it
+       * was: foliate scans from the first section to the last and every match is kept, tagged `ahead`
+       * or not, for the panel to seal or show.
+       *
+       * On, the scan stops being a scan of the book. It walks the reader's OWN section first, then the
+       * section before it, and so on to the first — so the sections after them are never opened, never
+       * parsed and never matched. Nothing about them is learned, which is the only way a count of them
+       * cannot leak: there is no count to leak.
+       */
+      backward?: boolean;
     } = {},
   ): Promise<SearchHit[]> {
     const view = this.view;
@@ -5426,7 +5441,8 @@ export class FoliateController {
     const n = view.book?.sections?.length ?? 0;
     const fractions: number[] = view.getSectionFractions?.() ?? [];
     const compare = this.cfiCompareFn;
-    const boundary = this.furthestCfi;
+    // The reader's live position, and the only boundary this method knows about.
+    const boundary = opts.positionCfi && opts.positionCfi.length > 0 ? opts.positionCfi : null;
     const hits: SearchHit[] = [];
     // THE DE-DUPLICATION SET. Two expanded terms can reach the same passage, so a cfi already taken is
     // skipped — but the test used to be `hits.some(h => h.cfi === s.cfi)`, a linear scan of everything
@@ -5498,7 +5514,7 @@ export class FoliateController {
       // which is exactly the code path that existed before.
       const terms = expandQuery(q, this.reps, foldPhrase);
       /**
-       * THE SPOILER-SAFE WALK — the boundary's section, then the one before it, then the one before.
+       * THE BACKWARD WALK — the reader's own section, then the one before it, then the one before.
        *
        * `view.search({ index })` scans ONE section (view.js `#searchSection`), which is what makes
        * this possible without touching the engine: the sections after the reader are never handed to
@@ -5506,12 +5522,13 @@ export class FoliateController {
        * label is taken from `getProgressOf`, which is the same `TOCProgress.getProgress(index)` that
        * whole-book scan reads it from. Same source, same answer.
        *
-       * WITHIN the boundary's own section the walk keeps only what lies at or before the boundary
-       * itself, so a match later on the reader's own page is not exposed either.
+       * WITHIN the reader's own section the walk keeps only what lies at or before where they are
+       * standing, so a match further down their own page is not reached either.
        */
-      if (opts.spoilerSafe && boundary && compare) {
-        const end = sectionIndexOfCfi(boundary, n);
-        for (let i = end; i >= 0; i--) {
+      const from = opts.backward ? boundary : null;
+      if (from && compare) {
+        const end = sectionIndexOfCfi(from, n);
+        for (const i of backwardSections(from, n)) {
           if (opts.signal?.aborted) break;
           const label = this.sectionLabel(i);
           for (const term of terms) {
@@ -5532,7 +5549,7 @@ export class FoliateController {
                 // let a whole section of unread text through — the one thing this walk exists to
                 // prevent. Comparing every match costs one comparison and removes that possibility,
                 // so where the walk STARTS is only ever an optimisation.
-                if (compare(one.cfi, boundary) > 0) continue;
+                if (compare(one.cfi, from) > 0) continue;
                 if (seen.has(one.cfi)) continue; // two terms can reach the same passage
                 seen.add(one.cfi);
                 hits.push({
@@ -5543,7 +5560,9 @@ export class FoliateController {
                   match: one.excerpt?.match ?? "",
                   post: one.excerpt?.post ?? "",
                   frac: fractions[i] ?? 0,
-                  // Nothing found this way can be ahead: nothing ahead was ever opened.
+                  // Nothing found this way can be ahead of the SPOILER boundary either: the walk
+                  // stops at the reader, and the furthest-read point is never behind where they
+                  // stand — so everything it finds is text they have already passed.
                   ahead: false,
                 });
               }

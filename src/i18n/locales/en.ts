@@ -41,6 +41,8 @@ export const en = {
   // RAWY-88: in-book search + spoiler-safe (Plan Phase 7).
   "search.title": "Search",
   "search.placeholder": "Search this book…",
+  "search.backward": "Search backward",
+  "search.backwardSub": "From where you are, back to the beginning",
   "search.spoiler": "Spoiler-safe",
   "search.wholeWord": "Whole word",
   "search.wholeWordSub": "Match the word on its own, not inside a longer one",
@@ -50,12 +52,11 @@ export const en = {
    *  the number of matches ahead is a subtraction away. */
   "search.countUpTo": "{n} matches up to your position",
   "search.countAll": "{n} matches · all shown",
+  // The boundary is always where the reader is standing, so this line is always true and there is no
+  // second wording. (There was one, `search.furthestHere`, for the period when the boundary was the
+  // furthest point reached and "your position" would have been a plain untruth. The boundary is the
+  // reader's position again, so the alternative is gone rather than left to rot.)
   "search.youAreHere": "You are here · {pos}",
-  // The search boundary once the reader has moved back to an earlier chapter: it stays at the
-  // furthest point they reached, so calling it "your position" would be untrue. Worded exactly as the
-  // contents control words it, and no longer than the line it replaces — the line clips at its end,
-  // so a longer one eats the chapter name that is the whole point of showing it.
-  "search.furthestHere": "Furthest you've read · {pos}",
   "search.nothingBefore": "Nothing before {pos}.",
   /** No count, and none is available: sealed, the text ahead is never searched. */
   "search.hidden": "Matches ahead are hidden",
@@ -881,6 +882,11 @@ export const en = {
   // reading position itself settles further on than it has ever been.
   "toc.furthest": "Furthest you've read",
   "toc.furthestAria": "Return to the furthest point you have read in this book",
+  // Beside it, not instead of it: the mark keeps its name because that is what it is. This action moves
+  // the mark down to where the reader is standing, for a reader who overshot, skimmed ahead, or simply
+  // wants the frontier to be here now. It does not move them, and it changes nothing about searching.
+  "toc.furthestReset": "Reset",
+  "toc.furthestResetAria": "Move the furthest-read point back to where you are now, without moving you",
   "panel.hideTitles": "Hide titles",
   "panel.showTitles": "Show titles",
   "panel.hideFirstLine": "Hide first line",

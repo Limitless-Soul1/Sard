@@ -85,7 +85,6 @@ export interface Mirror {
   isScrolled: boolean;
   readingScrollTop: number;
   pdfPageCount: number;
-  furthestPosition: string | null;
   dir: string | undefined;
   title: string | undefined;
   author: string | undefined;

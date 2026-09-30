@@ -120,6 +120,25 @@ export function advanceFurthest(
 }
 
 /**
+ * THE MARK AFTER THE READER RESETS IT — where they are standing, whatever was held before.
+ *
+ * This is the ONE operation allowed to move the mark backward, and the ordering is deliberately not
+ * consulted. `advanceFurthest` exists to refuse exactly this, because an ordinary relocate must never
+ * drag the frontier back; a reader pressing Reset is saying something no page turn can say — that the
+ * deepest point they want remembered is here, and chapter 891 is no longer of interest.
+ *
+ * It decides the MARK and nothing else. It does not move the reader, does not touch the reading
+ * position that a resume depends on, and knows nothing about searching: the search boundary is the
+ * reader's live position, which this cannot alter.
+ *
+ * Null when the position has no cfi to stand on (a PDF, or before the first relocate), so the caller
+ * writes nothing rather than storing a mark that could never be returned to.
+ */
+export function resetFurthest(candidate: FurthestMark): FurthestMark | null {
+  return candidate.cfi ? candidate : null;
+}
+
+/**
  * Should the "go to the furthest point" action be offered at all?
  *
  * BY CHAPTER, NOT BY CFI, and that is a correction rather than a convenience. Comparing the live cfi

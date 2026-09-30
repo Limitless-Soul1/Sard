@@ -103,6 +103,9 @@ interface Props {
   /** Offer the way back to it? False whenever the reader is already at or beyond it. */
   furthestOffered?: boolean;
   onGoFurthest?: () => void;
+  /** Move the mark to where the reader is standing, without moving them. Passed here as well as from
+   *  Search so the one control behaves the same in both panels — which is why it lives in one file. */
+  onResetFurthest?: () => void;
 }
 
 // RAWY-175 (AUD-3): MEMOIZED so an unrelated Reader re-render (a search-results batch ~every 90 ms, a
@@ -125,6 +128,7 @@ function ChaptersPanelInner({
   furthestHref = null,
   furthestOffered = false,
   onGoFurthest,
+  onResetFurthest,
 }: Props) {
   const { t, lang, dir } = useI18n();
   const pct = Math.round(fraction * 100);
@@ -261,7 +265,9 @@ function ChaptersPanelInner({
           It renders ONLY when there is a point to return to and the reader is behind it — at the
           furthest point (where a resumed book normally opens) the panel looks exactly as it always
           has. */}
-      {furthest && onGoFurthest && <FurthestReturn label={furthest.name} onGo={onGoFurthest} />}
+      {furthest && onGoFurthest && (
+        <FurthestReturn label={furthest.name} onGo={onGoFurthest} onReset={onResetFurthest} />
+      )}
 
       {/* RAWY-256: the chosen variant scopes the marker CSS for the whole list (one class, not per row),
           so switching variants costs a single attribute change even on a 1432-row panel. */}

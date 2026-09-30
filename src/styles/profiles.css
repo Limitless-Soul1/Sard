@@ -2041,3 +2041,100 @@
   .fs-passage { border-inline-start: none; padding-inline-start: 0; max-width: none; }
   .fs-hero, .fs-latin-line { max-width: none; }
 }
+
+/* ---- التخصيص السريع — the Quick Customization chapter ---------------------------------------
+   Chapter furniture, not dialog furniture: it lives in the editor's own chapter column beside the
+   live stage, so it borrows the column's rhythm and adds nothing that would make it look like a
+   different tool bolted on. */
+.pf-quick-ch { display: flex; flex-direction: column; gap: 14px; }
+
+.pf-quick-note { margin: 0; font: 400 0.8125rem/1.7 var(--ui-font); color: var(--muted); }
+
+
+.pf-quick-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pf-quick-copied { font: 400 0.75rem var(--ui-font); color: var(--muted); }
+
+.pf-quick-label { display: block; font: 600 0.75rem var(--ui-font); color: var(--muted); }
+
+/* LTR AND MONOSPACE WHATEVER THE INTERFACE LANGUAGE IS. What goes in here is JSON — a document in
+   one direction whose braces mirror in an RTL box, which makes a correct design look broken. */
+.pf-quick-paste {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 6.5em;
+  padding: 8px 10px; border-radius: var(--r-md);
+  border: 1px solid var(--chrome-border); background: var(--paper-bg); color: var(--text);
+  font: 400 0.75rem/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.pf-quick-paste:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.pf-quick-report {
+  margin: 0; padding-inline-start: 1.1em;
+  font: 400 0.8125rem/1.7 var(--ui-font); color: var(--text);
+}
+.pf-quick-report li { margin: 0 0 4px; }
+
+.pf-quick-refused { color: var(--text); }
+
+.pf-quick-fine { font-size: 0.75rem; }
+
+/* THE STEPS INSIDE THE DESIGN BAND. Quieter than `.pf-quick-band`, which divides the chapter in two,
+   because these divide one half into an order: the picture, the page, then the commission. The
+   controls under each are the other chapters' own, so they bring their own spacing and this adds
+   none — only a name above them, and the rules between. */
+.pf-quick-sub {
+  font: 600 0.8125rem/1.4 var(--ui-font);
+  color: var(--text);
+  margin-bottom: -6px;
+}
+
+/* THE EXCHANGE IS THE LOUDEST THING ON THE PAGE, because it is what the chapter is for. */
+.pf-quick-copy { font-weight: 600; padding-inline: 18px; }
+
+/* THE BACKGROUND CONTROLS, COMPACT — and nothing but spacing.
+   These are the background chapter's own sections rendered here, so this must not change what any
+   of them DOES. It tightens the column they sit in and caps the crop preview, so that the picture
+   and its settings together read as one short block under the exchange rather than as a second copy
+   of that chapter. Every value, every handler and every control is the other chapter's. */
+.pf-quick-bg { display: flex; flex-direction: column; gap: 10px; }
+.pf-quick-bg .gs-slider-head { margin-top: 2px; }
+.pf-quick-bg .pf-bg-kinds { gap: 6px; }
+.pf-quick-bg .pf-bg-kind { padding-block: 8px; }
+/* The per-option line STAYS. Hiding it here would have bought a few pixels by undoing a fix made on
+   purpose: it is what tells a reader why the option they cannot press is refusing them, and it
+   replaced a `title` that nobody hovering a disabled control ever saw. */
+
+/* THE CROP PREVIEW, CAPPED — AND THE CAP IS ON THE WIDTH, WHICH IS THE WHOLE TRICK.
+   `aspect-ratio` and `--ar` both come from the picture's own measured dimensions, set inline, so the
+   box is the SHAPE of the picture rather than a fixed letterbox — which is what makes it worth
+   looking at while designing against it.
+   Capping the height instead was the obvious thing and it was wrong: a full-width box whose height
+   is clamped simply stops matching its ratio, and `cover` crops the difference. Measured on a 1600x900
+   picture in a 345px column: the box came out 345x168, a ratio of 2.05 against the picture's 1.78.
+   Capping the width and letting the height follow keeps the ratio exact at every column width, and
+   168px is still the tallest it can ever be. The stored picture is untouched — this is a preview. */
+.bg-ctl-focal.compact {
+  height: auto;
+  width: min(100%, calc(168px * var(--ar, 1.6)));
+  margin-inline: auto;
+}
+
+/* TWO BANDS, ONE RULE BETWEEN THEM. The heading is the whole of the structure: a design decides the
+   colours above it, the reader decides the type below. Both carry the same weight on purpose —
+   neither band is subordinate — and the division is meant to be understood from the shape of the
+   page before a word of it is read. No card, no panel, no badge. */
+.pf-quick-band {
+  font: 600 0.75rem/1.4 var(--ui-font);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+/* WHERE THE DESIGN WENT. Each chapter that took something from the recipe, as a link to it — the
+   hand-off that stops an import feeling inert when the stage happens to show an untouched face. */
+.pf-quick-went { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px 10px; }
+.pf-quick-link {
+  border: 0; background: none; padding: 0; cursor: pointer;
+  font: 400 0.8125rem var(--ui-font); color: var(--accent);
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.pf-quick-link:hover { border-bottom-color: var(--accent); }
+.pf-quick-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

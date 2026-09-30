@@ -224,9 +224,18 @@ export function TtsPlayer({
           <div className="tts-pill-end tts-pill-edge-error" role="alert">
             <span className="tts-end-msg">{t("tts.edgeUnavailable")}</span>
             <div className="tts-end-actions">
+              {/* Failure isolation: the transport's own ⏮/⏭, so the listener can explicitly move past (or
+                  back from) the sentence that could not be produced. Retry stays the one explicit resume;
+                  the sentence itself is never skipped automatically. Same labels, same mirroring. */}
+              <button className="tts-skip" onClick={() => skip(-1)} aria-label={t("tts.skipBack")} title={t("tts.skipBack")}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M18 6 10 12l8 6M6 5v14" /></svg>
+              </button>
               <button className="tts-end-next" onClick={() => resumeEdge()}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M20 11a8 8 0 1 1-2.3-5.6M20 4v6h-6" /></svg>
                 <span>{t("tts.retry")}</span>
+              </button>
+              <button className="tts-skip" onClick={() => skip(1)} aria-label={t("tts.skipFwd")} title={t("tts.skipFwd")}>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><path d="M6 6l8 6-8 6M18 5v14" /></svg>
               </button>
               <button className="tts-ghost tts-x" onClick={stop} aria-label={t("tts.close")} title={t("tts.close")}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round"><path d="M6 6l12 12M18 6L6 18" /></svg>

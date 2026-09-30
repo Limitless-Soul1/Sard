@@ -223,9 +223,15 @@ macro_rules! sard_invoke_handler {
             tts::tts_synthesize,
             tts::tts_edge_voices,
             tts::tts_stop,
+            tts::tts_cancel_synth,
+            tts::tts_synth_streaming,
             presence::presence_update, // DISC/RPC: push the reading activity to Discord
             presence::presence_clear, // DISC/RPC: clear it (leaving the book, or toggled off)
             window_chrome::set_titlebar_theme,
+            window_chrome::show_window_menu,
+            window_chrome::window_fullscreen,
+            window_chrome::window_fullscreen_exit,
+            window_chrome::set_window_ground,
             $($diag_cmd),*
         ])
     };
@@ -609,6 +615,26 @@ fn dev_data_dir_override() -> Option<std::path::PathBuf> {
                 None => app.path().app_data_dir()?,
             };
             std::fs::create_dir_all(&app_data_dir)?;
+
+            // A MOVED DATA DIRECTORY HAS TO BE TOLD TO THE ASSET PROTOCOL AS WELL.
+            //
+            // `assetProtocol.scope` is `$APPDATA/**`, which resolves to the OS app-data directory —
+            // so a development run that moved its data with `SARD_DATA_DIR` keeps its backgrounds
+            // OUTSIDE the scope and every one of them is refused. Measured, in that state: the
+            // import succeeded, the row was written, the file was on disk at the recorded path, the
+            // asset URL was well-formed — and fetching it returned 403, so a picture could be bound,
+            // its presence and blur could be moved, and nothing was ever drawn. The failure looked
+            // like "the design does not apply" and was nothing of the kind.
+            //
+            // Release builds cannot reach this line: `dev_data_dir_override` is a constant `None`
+            // there, the data directory IS `$APPDATA`, and the configured scope is left exactly as
+            // it was. This widens nothing that ships.
+            #[cfg(debug_assertions)]
+            if dev_data_dir_override().is_some() {
+                app.asset_protocol_scope()
+                    .allow_directory(&app_data_dir, true)?;
+            }
+
             let db_path = app_data_dir.join("sard.db");
 
             // DIAGNOSTIC BUILD ONLY. Written HERE — before the legacy migration, before the database

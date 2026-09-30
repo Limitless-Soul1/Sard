@@ -91,6 +91,15 @@ describe("capabilities — desktop is unchanged", () => {
       "core:window:allow-set-fullscreen",
       "core:window:allow-is-fullscreen",
       "core:window:allow-destroy",
+      // The window's own frame (`components/WindowChrome.tsx`): the three controls, the drag region's
+      // double-click, and the two reads that keep the Maximize/Restore glyph in step with the window.
+      "core:window:allow-minimize",
+      "core:window:allow-toggle-maximize",
+      "core:window:allow-internal-toggle-maximize",
+      "core:window:allow-is-maximized",
+      "core:window:allow-is-decorated",
+      "core:window:allow-start-dragging",
+      "core:window:allow-close",
     ]);
   });
 

@@ -237,11 +237,17 @@ pub fn list_books(
         args.push(Box::new(like.clone()));
         args.push(Box::new(like));
     }
-    let where_sql = if clauses.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", clauses.join(" AND "))
-    };
+    // THE LIBRARY LISTS BOOKS. `books` also holds bridge rows — scaffolding written so reading
+    // progress has a parent, for a file the reader never added (see `books::IS_A_BOOK`). One was
+    // returned here as though it were a book: untitled, formatless, coverless, and filed nowhere, so
+    // it was drawn in no grouped view and vanished from the count the moment a shelf was chosen —
+    // the list and the shelves disagreeing about what the reader owns.
+    //
+    // This is not a filter over books and it takes nothing from the reader: a bridge is not a book
+    // they added, and the import that adds it fills the same row in place, whereupon it appears here
+    // like anything else. Every predicate the caller asked for is applied on top, unchanged.
+    clauses.insert(0, crate::books::IS_A_BOOK.to_string());
+    let where_sql = format!("WHERE {}", clauses.join(" AND "));
 
     let sql = format!(
         "SELECT {} FROM books b LEFT JOIN reading_progress p ON p.book_id = b.id \

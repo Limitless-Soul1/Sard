@@ -97,9 +97,39 @@ function whenLabel(sec: number, lang: string): string {
   }
 }
 
-// Read the stored PNG back as a Blob (via the asset protocol) so we can re-export it.
-async function cardBlob(imagePath: string): Promise<Blob> {
-  const res = await fetch(convertFileSrc(imagePath));
+/**
+ * THE URL FOR A SAVED CARD'S PICTURE — and why it may carry a token.
+ *
+ * A card's PNG is stored under its own id, `photocards/<card-id>.png`, so re-saving a card REWRITES
+ * that file and the path does not change. The gallery's rows come back from `load()` with the same
+ * `id` and the same path, so React finds the same key and a byte-identical `src`, touches neither,
+ * and the `<img>` keeps the picture it already decoded. Nothing ever asks for the new bytes.
+ *
+ * MEASURED in the running gallery, after changing a card's paper and saving: the PNG on disk went
+ * from 96,481 to 96,072 bytes, while the thumbnail kept painting the OLD colour. Replacing the
+ * `<img>` node with a clone carrying the same `src` did NOT help — the browser answered from its
+ * own memory for that URL. Only a URL that differs fetched the new bytes.
+ *
+ * So the token is not decoration and it is not a workaround for something naming already solves.
+ * `coverSrc.ts` refuses a `?v=` FOR COVERS, and is right to: a cover's filename carries a hash of
+ * its bytes, so its URL already changes when the image does. A photo card's filename carries its
+ * IDENTITY instead, so the URL cannot change on its own and something must make it. Content-
+ * addressing these files the way covers are is the larger, more consistent answer; this is the
+ * smallest one that makes the gallery honest today.
+ *
+ * `stamp` is undefined for every card this session has not re-saved, so their URLs are exactly what
+ * they were and nothing else is re-fetched.
+ */
+function cardSrc(imagePath: string, stamp?: number): string {
+  const url = convertFileSrc(imagePath);
+  return stamp ? `${url}${url.includes("?") ? "&" : "?"}v=${stamp}` : url;
+}
+
+// Read the stored PNG back as a Blob (via the asset protocol) so we can re-export it. It takes the
+// same token as the picture on screen: exporting a card that was just re-saved must not hand back
+// the bytes the thumbnail was already caught holding.
+async function cardBlob(imagePath: string, stamp?: number): Promise<Blob> {
+  const res = await fetch(cardSrc(imagePath, stamp));
   return res.blob();
 }
 
@@ -112,6 +142,14 @@ export function PhotoGallery() {
   const [toast, setToast] = useState<string | null>(null);
   const [confirmDel, setConfirmDel] = useState(false);
   const [editing, setEditing] = useState<PhotoCardRow | null>(null); // RAWY-57: Edit → composer
+  /**
+   * WHICH CARDS THIS SESSION HAS RE-SAVED, and when — see `cardSrc`.
+   *
+   * Keyed by card id and set for ONE card at a time, as the composer closes. A card nobody has
+   * edited is absent from this map and its URL is untouched, so no other card's picture is
+   * re-fetched and no card is re-fetched on an ordinary re-render.
+   */
+  const [resaved, setResaved] = useState<Record<string, number>>({});
   const [creating, setCreating] = useState(false); // a card with no book behind it
   const sel = useListSelection(cards.map((c) => c.id));
   // The lightbox leaves by a press beside the card — but not by a press that GRAZED it, and not by
@@ -135,7 +173,7 @@ export function PhotoGallery() {
     if (busy) return;
     setBusy(true);
     try {
-      const blob = await cardBlob(card.image_path);
+      const blob = await cardBlob(card.image_path, resaved[card.id]);
       const stamp = new Date(card.created_at * 1000).toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const path = await save({ defaultPath: `sard-quote-${stamp}.png`, filters: [{ name: "PNG image", extensions: ["png"] }] });
       if (path) {
@@ -154,7 +192,7 @@ export function PhotoGallery() {
     if (busy) return;
     setBusy(true);
     try {
-      const blob = await cardBlob(card.image_path);
+      const blob = await cardBlob(card.image_path, resaved[card.id]);
       await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
       flash(t("photo.copied"));
     } catch (e) {
@@ -274,7 +312,7 @@ export function PhotoGallery() {
               }}
             >
               <span className="pg-thumb">
-                <img src={convertFileSrc(c.image_path)} alt="" loading="lazy" />
+                <img src={cardSrc(c.image_path, resaved[c.id])} alt="" loading="lazy" />
                 {sel.on && <span className="pg-pick"><SelectionTick state={sel.has(c.id)} /></span>}
               </span>
               <span className="pg-meta-title" dir="auto">{c.book_title || t("cards.untitled")}</span>
@@ -294,7 +332,7 @@ export function PhotoGallery() {
           <div className="pg-lb-stage" ref={lightbox.panelRef} onPointerDown={(e) => e.stopPropagation()}>
             {/* the saved card, large — the hero */}
             <div className="pg-lb-card">
-              <img src={convertFileSrc(open.image_path)} alt="" />
+              <img src={cardSrc(open.image_path, resaved[open.id])} alt="" />
             </div>
             {/* a quiet caption: book · chapter · date */}
             <div className="pg-lb-caption" dir="auto">
@@ -337,7 +375,15 @@ export function PhotoGallery() {
           initialQuoteFont={editing.quote_font}
           editId={editing.id}
           lang={lang}
-          onClose={() => { setEditing(null); load(); }}
+          onClose={() => {
+            // THE ONE CARD THAT MAY HAVE CHANGED. Stamped as the composer closes, before the rows
+            // come back, so the picture this gallery draws for it cannot be the one it was already
+            // holding. Every other card is left exactly as it was.
+            const id = editing.id;
+            setEditing(null);
+            setResaved((m) => ({ ...m, [id]: Date.now() }));
+            load();
+          }}
         />
       )}
 

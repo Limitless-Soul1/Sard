@@ -59,8 +59,9 @@ import { DEFAULT_LIGHT, THEMES, THEME_ORDER } from "../../theme/themes";
 import type { ThemeColors } from "../../theme/tokens";
 import { BookmarkShape } from "../reader/BookmarkShape";
 import { ACCENTS, CustomPaper, PAPERS_DARK, PAPERS_LIGHT } from "./CustomPaper";
-import { MeasureSection } from "./editor/MeasureSection";
+import { MeasureSection, TextSizeRow } from "./editor/MeasureSection";
 import { VoiceSection } from "./editor/VoiceSection";
+import { QuickSection } from "./editor/QuickSection";
 import { RefsSection } from "./editor/RefsSection";
 import { ColorPicker } from "../../components/ColorPicker";
 import { EditorShell } from "./editor/EditorShell";
@@ -85,6 +86,8 @@ import {
   PROFILE_NAME_MAX,
   cleanProfileName,
   isDefaultIconFrame,
+  bindPicture,
+  linkPictures,
   profileLabel,
   type Profile,
   type ProfileData,
@@ -151,6 +154,11 @@ function chapterSlice(p: Profile, id: ChapterId): unknown {
       return d.refs;
     case "texture":
       return d.texture;
+    // OWNS NOTHING OF ITS OWN. Quick customization writes into the other chapters' values rather
+    // than holding one, so it has no slice and can never be "edited" — whatever a design changed
+    // lights the dot on the chapter that owns it, which is where the reader will go to adjust it.
+    case "quick":
+      return null;
   }
 }
 
@@ -532,6 +540,11 @@ export function ProfileEditor({
       }
       case "texture":
         return t(`profiles.texture.${draft.data.texture}`);
+      // A CHAPTER THAT OWNS NOTHING. It writes into every other chapter's values rather than holding
+      // one of its own, so there is no answer to show beside its name and no slice to call edited —
+      // whatever a design changed is already reported by the chapter that owns it.
+      case "quick":
+        return "—";
     }
   };
 
@@ -551,9 +564,72 @@ export function ProfileEditor({
             nameNoteId={nameNoteId}
           />
         );
-      // ONE SECTION, TWO SURFACES. The chapters differ in which palette they edit and which face
-      // the stage locks to — not in what they contain — so there is one implementation and no
-      // second copy of the colour editor to keep in step.
+      case "quick":
+        return (
+          <QuickSection
+            draft={draft}
+            patch={patch}
+            rows={bgRows}
+            // THE HAND-OFF. A design writes into the chapters that already own those colours, so
+            // «ما تغيّر» moves the rail there rather than repeating a single swatch in this one.
+            onGoTo={(id) => setChapter(id)}
+            // THE NAME IS THE ROW'S, NOT THE DATA'S, so it needs its own door — the same `setDraft`
+            // the Identity chapter writes through, which is what makes the name editable there
+            // before Save and saved by the editor's own Save.
+            onName={(n) => setDraft((d) => ({ ...d, name: n }))}
+            // THE BACKGROUND CHAPTER'S OWN BODY, rendered here. Not a compact stand-in for it and
+            // not a link to it: the very `BackgroundSection`s the chapter renders, over the same
+            // draft, so a presence moved here IS the presence the chapter shows. This is what makes
+            // Quick Customization a place to finish a هيئة rather than a signpost to five others.
+            background={
+              <>
+                {/* THE HEADINGS FOLLOW THE RELATIONSHIP, because while the two are linked there is
+                    only ONE picture and calling it "the library's" makes the reader hunt for the
+                    book's. Once they part, each heading names the surface it belongs to. */}
+                <div className="pf-field-label">
+                  {t(draft.data.bg.reading.sameAsLibrary ? "profiles.bg.thePicture" : "profiles.bg.libraryPicture")}
+                </div>
+                <BackgroundSection
+                  surface="library"
+                  compact
+                  draft={draft}
+                  patch={patch}
+                  rows={bgRows}
+                  onImported={addBgRow}
+                  onTouch={() => setFace("library")}
+                />
+                <div className="pfe-ch-rule" role="separator" />
+                <div className="pf-field-label">
+                  {t(draft.data.bg.reading.sameAsLibrary ? "profiles.bg.useFor" : "profiles.bg.bookPicture")}
+                </div>
+                <BackgroundSection
+                  surface="reading"
+                  compact
+                  draft={draft}
+                  patch={patch}
+                  rows={bgRows}
+                  onImported={addBgRow}
+                  onTouch={() => setFace("book")}
+                />
+              </>
+            }
+            // THE READER'S OWN CONTROLS, not copies of them: the same Fonts section the Fonts
+            // chapter renders, and the same text-size row the measure chapter renders, against the
+            // same draft. A face chosen here is chosen there. The first-line indent is deliberately
+            // NOT here — it stays in «المقاس», where the rest of the measure lives.
+            typography={
+              <>
+                <FontsSection draft={draft} patch={patch} />
+                <div className="pfe-ch-rule" role="separator" />
+                <TextSizeRow
+                  value={draft.data.type.reading}
+                  fallback={readerStyle.zoom}
+                  onChange={(q) => patch((d) => { d.type.reading = { ...d.type.reading, ...q }; })}
+                />
+              </>
+            }
+          />
+        );
       case "paper":
       case "paperBook":
         // KEYED BY SCOPE, so switching surfaces gives the chapter a fresh start. `InlineColours`
@@ -2097,6 +2173,7 @@ function BackgroundSection({
   patch,
   rows,
   onImported,
+  compact = false,
 }: {
   surface: BgSurface;
   /** Bring this section's own face forward, so a change is made where it can be seen. */
@@ -2105,6 +2182,18 @@ function BackgroundSection({
   patch: (f: (d: ProfileData) => void) => void;
   rows: BackgroundRow[];
   onImported: (row: BackgroundRow) => void;
+  /**
+   * PRESENTATION ONLY, for Quick Customization.
+   *
+   * That chapter wants the picture and then its settings, in that order, and wants the picture to be
+   * big enough to design against without filling the page. Nothing else differs: same state, same
+   * patches, same controls, same component. The chapter that owns backgrounds passes nothing and is
+   * unchanged, which is the point — one implementation, two presentations, never two sources of truth.
+   *
+   * What it changes: the crop preview moves up to sit directly under the picture's own row, and takes
+   * the picture's aspect ratio instead of a fixed letterbox, bounded by a max height in CSS.
+   */
+  compact?: boolean;
 }) {
   const { t, lang } = useI18n();
   const [busy, setBusy] = useState(false);
@@ -2120,9 +2209,15 @@ function BackgroundSection({
    * owner's own profile, a real drag produced 669 `input` events, swept the whole 0..260 range, and
    * could not change one pixel, because `.pf-stage-scrim` was not in the document at all.
    *
-   * Disabled rather than hidden: the setting still exists and its stored value is untouched, so
-   * choosing a colour again brings it back exactly where it was. A control that vanishes teaches a
-   * reader that their value was thrown away.
+   * IT IS NO LONGER DISABLED, and the reason it was is now the reason it must not be. Disabling it
+   * was right while «بلا لون» was a deliberate, rare choice: the control was inert, and saying so by
+   * greying it out was kinder than letting a reader drag it for nothing. Then «بلا لون» became what a
+   * NEW هيئة starts with — the picture shows as it is until the reader decides otherwise — and the
+   * exception turned into the common case. A presence a reader cannot touch on a fresh هيئة is not a
+   * kindness; it is a locked control, and the owner reported it as one.
+   *
+   * So the hint stays and the lock goes. The value is stored either way and takes effect the moment a
+   * colour is chosen, which is exactly what the hint says.
    *
    * THE LIBRARY HAS NO OVERLAY, so this can only ever apply to the reading surface.
    */
@@ -2150,10 +2245,9 @@ function BackgroundSection({
       // `background_import` for why that direction is the safe one.
       const imported = await backgroundImport(picked);
       onImported(imported);
-      patch((d) => {
-        at(d).ref = imported.id;
-        if (reading) d.bg.reading.sameAsLibrary = false;
-      });
+      // ONE PICTURE DRESSES BOTH, UNLESS THE READER HAS ALREADY SAID OTHERWISE. The four cases are
+      // `bindPicture`'s, stated and asserted there rather than inline in a click handler.
+      patch((d) => { bindPicture(d.bg, surface, imported.id); });
     } catch (e) {
       const code = String(e);
       setError(code.startsWith("bg.err.") ? t(code as TKey) : code);
@@ -2161,6 +2255,50 @@ function BackgroundSection({
       setBusy(false);
     }
   };
+
+  /**
+   * THE CROP PREVIEW, and in Quick Customization the picture's only real showing.
+   *
+   * `cover` always crops; this chooses what survives the crop, at the same sizing the surface itself
+   * uses. Compact gives the box the picture's OWN aspect ratio rather than a fixed letterbox, so a
+   * reader designing against the picture sees its proportions; CSS caps the height so it can never
+   * fill the chapter. The stored picture is untouched either way — this is a preview.
+   */
+  const focal = row && (
+    <>
+      <div className="pf-field-label">{t("gs.bg.focal")}</div>
+      <div
+        className={`bg-ctl-focal${compact ? " compact" : ""}`}
+        // `--ar` IS WHAT KEEPS THE SHAPE HONEST. `aspect-ratio` alone is not enough: with a full-width
+        // box, a cap on the HEIGHT leaves the width untouched, so the box stops matching the ratio and
+        // `cover` starts cropping — measured at 2.05:1 for a 16:9 picture. Giving CSS the ratio as a
+        // number lets it cap the WIDTH instead (`min(100%, 168px * --ar)`) and let the height follow,
+        // so the preview is the picture's own shape at every column width.
+        style={{
+          backgroundImage: `url("${bgSrcUrl(row)}")`,
+          backgroundPosition: `${slot.params.focalX}% ${slot.params.focalY}%`,
+          ...(compact && row.width && row.height
+            ? ({
+                aspectRatio: `${row.width} / ${row.height}`,
+                "--ar": (row.width / row.height).toFixed(4),
+              } as CSSProperties)
+            : {}),
+        }}
+        onClick={(e) => {
+          const r = e.currentTarget.getBoundingClientRect();
+          patch((d) => {
+            at(d).params.focalX = Math.round(((e.clientX - r.left) / r.width) * 100);
+            at(d).params.focalY = Math.round(((e.clientY - r.top) / r.height) * 100);
+          });
+        }}
+      >
+        <span
+          className="bg-ctl-focal-dot"
+          style={{ left: `${slot.params.focalX}%`, top: `${slot.params.focalY}%` }}
+        />
+      </div>
+    </>
+  );
 
   return (
     <>
@@ -2181,9 +2319,18 @@ function BackgroundSection({
             role="radiogroup"
             aria-label={t("profiles.section.bookBg")}
           >
+            {/* THE SAME BOOLEAN, ASKED THE WAY EACH CHAPTER MEANS IT.
+                «الخلفية» is about the two surfaces, so it asks which picture the BOOK wears. Quick
+                Customization is about one design built around one picture, so it asks what that
+                picture is FOR — both surfaces, or the book alone with the library kept separate.
+                Same state, same patch, same two answers; only the question differs. */}
             {([
-              { own: false, label: "profiles.bg.kind.library" as const, sub: "profiles.bg.kind.librarySub" as const, ref: draft.data.bg.library.ref },
-              { own: true, label: "profiles.bg.kind.own" as const, sub: "profiles.bg.kind.ownSub" as const, ref: slot.ref },
+              { own: false, ref: draft.data.bg.library.ref,
+                label: (compact ? "profiles.bg.use.both" : "profiles.bg.kind.library") as TKey,
+                sub: (compact ? "profiles.bg.use.bothSub" : "profiles.bg.kind.librarySub") as TKey },
+              { own: true, ref: slot.ref,
+                label: (compact ? "profiles.bg.use.apart" : "profiles.bg.kind.own") as TKey,
+                sub: (compact ? "profiles.bg.use.apartSub" : "profiles.bg.kind.ownSub") as TKey },
             ]).map((k) => {
               const on = draft.data.bg.reading.sameAsLibrary === !k.own;
               // The library option cannot be chosen when there is no library picture to follow.
@@ -2197,7 +2344,7 @@ function BackgroundSection({
                   aria-checked={on}
                   disabled={off}
                   className={`pf-icon-kind pf-bg-kind${on ? " on" : ""}`}
-                  onClick={() => patch((d) => { d.bg.reading.sameAsLibrary = !k.own; })}
+                  onClick={() => patch((d) => { linkPictures(d.bg, !k.own); })}
                 >
                   <span
                     className={`pf-bg-kind-thumb${thumb ? "" : " empty"}`}
@@ -2230,32 +2377,44 @@ function BackgroundSection({
         </>
       ) : (
         <>
-          <div className="bg-ctl-row">
-            <span
-              className="bg-ctl-thumb"
-              style={{
-                backgroundImage: `url("${bgSrcUrl(row)}")`,
-                transform: `scaleX(${slot.params.flip ? -1 : 1})`,
-              }}
-              aria-hidden
-            />
-            <span className="bg-ctl-name" dir="auto" title={imageLabel(row.source_name).full}>
-              {imageLabel(row.source_name).label}
-            </span>
-            {!linked && (
-              <>
-                <button className="bg-ctl-act" disabled={busy} onClick={() => void pick()}>
-                  {busy ? t("gs.bg.preparing") : t("gs.bg.replace")}
-                </button>
-                <button
-                  className="bg-ctl-act danger"
-                  onClick={() => patch((d) => { at(d).ref = null; })}
-                >
-                  {t("gs.bg.remove")}
-                </button>
-              </>
-            )}
-          </div>
+          {/* SHOWN ONCE, NOT TWICE. While the book follows the library there is ONE picture, and the
+              compact chapter has already shown it above this section — so repeating its row and its
+              preview here would put the same photograph on screen twice and invite the reader to
+              wonder which of the two they are looking at. The full background chapter still shows
+              both, where the two surfaces are the subject rather than the design. */}
+          {!(compact && linked) && (
+            <>
+              <div className="bg-ctl-row">
+                <span
+                  className="bg-ctl-thumb"
+                  style={{
+                    backgroundImage: `url("${bgSrcUrl(row)}")`,
+                    transform: `scaleX(${slot.params.flip ? -1 : 1})`,
+                  }}
+                  aria-hidden
+                />
+                <span className="bg-ctl-name" dir="auto" title={imageLabel(row.source_name).full}>
+                  {imageLabel(row.source_name).label}
+                </span>
+                {!linked && (
+                  <>
+                    <button className="bg-ctl-act" disabled={busy} onClick={() => void pick()}>
+                      {busy ? t("gs.bg.preparing") : t("gs.bg.replace")}
+                    </button>
+                    <button
+                      className="bg-ctl-act danger"
+                      onClick={() => patch((d) => { at(d).ref = null; })}
+                    >
+                      {t("gs.bg.remove")}
+                    </button>
+                  </>
+                )}
+              </div>
+
+              {/* PICTURE, THEN ITS SETTINGS — the order Quick Customization asks for. */}
+              {compact && focal}
+            </>
+          )}
 
           <div className="gs-slider-head">
             {/* NAMED FOR ITS OWN SURFACE. This chapter draws two groups, and both sliders read
@@ -2268,7 +2427,6 @@ function BackgroundSection({
           <input
             className="gs-slider" type="range" min={0} max={presenceMaxFor(surface)} step={1}
             value={slot.params.presence}
-            disabled={overlayOff}
             onChange={(e) => touchPatch((d) => { at(d).params.presence = Number(e.target.value); })}
           />
           {overlayOff && <div className="pf-hint">{t("gs.bg.presenceNoOverlay")}</div>}
@@ -2283,27 +2441,7 @@ function BackgroundSection({
             onChange={(e) => touchPatch((d) => { at(d).params.blur = Number(e.target.value); })}
           />
 
-          {/* `cover` always crops; this chooses what survives the crop. */}
-          <div className="pf-field-label">{t("gs.bg.focal")}</div>
-          <div
-            className="bg-ctl-focal"
-            style={{
-              backgroundImage: `url("${bgSrcUrl(row)}")`,
-              backgroundPosition: `${slot.params.focalX}% ${slot.params.focalY}%`,
-            }}
-            onClick={(e) => {
-              const r = e.currentTarget.getBoundingClientRect();
-              patch((d) => {
-                at(d).params.focalX = Math.round(((e.clientX - r.left) / r.width) * 100);
-                at(d).params.focalY = Math.round(((e.clientY - r.top) / r.height) * 100);
-              });
-            }}
-          >
-            <span
-              className="bg-ctl-focal-dot"
-              style={{ left: `${slot.params.focalX}%`, top: `${slot.params.focalY}%` }}
-            />
-          </div>
+          {!compact && focal}
 
           {/* FLIP, in the same place and the same words the other two background panels use.
               `params.flip` is the one piece of state — the preview above already reads it — so this

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { WindowChrome } from "./components/WindowChrome";
 // Design tokens first, so every sheet after this can read them. Defining them changes nothing on
 // its own — no rule consumes them yet; the surfaces move across in their own stages.
 import "./styles/tokens.css";
@@ -18,6 +19,7 @@ import { applyBackgrounds, initBackground, useBackground } from "./lib/backgroun
 import { createCloseHandler, runCloseFlush } from "./lib/closeFlush"; // the window close is owned by the page, not the Reader
 import { diagStart } from "@diag"; // DIAGNOSTIC BUILD ONLY - observes, never intervenes
 import { registerOutcomeRecorder } from "./lib/listeningOutcomes"; // RAWY-263: the local outcome baseline
+import { registerTtsTelemetry } from "./lib/ttsTelemetry"; // the resilience system's own measurements
 import { initTheme, reapplyTitlebarTheme, resolveTheme, useTheme } from "./theme";
 import { initProfiles } from "./features/profiles/store"; // PROFILES: register authored themes first
 import { UnsavedChange } from "./features/profiles/UnsavedChange";
@@ -36,7 +38,7 @@ import { Library, type OpenTarget } from "./features/library/Library";
 import { Reader } from "./features/reader/Reader";
 import { RuntimeGate } from "./app/RuntimeGate"; // RESILIENCE-1 / WP-1
 import { canRender } from "./lib/runtime";
-import { libraryListBooks, openedFilesTake, settingsGet, settingsSet } from "./lib/ipc";
+import { libraryListBooks, openedFilesTake, settingsGet, settingsSet, windowFullscreenEnter, windowFullscreenExit } from "./lib/ipc";
 
 // RAWY-12 i18n + RAWY-13 themes + RAWY-15 Library home. First run shows the language
 // picker; afterwards the saved language/theme drive the UI and the Library is the home
@@ -185,6 +187,7 @@ function App() {
     // Applying it later would paint the themed ground first and then swap — the RAWY-118 class of flash.
     initBackground();
     registerOutcomeRecorder(); // RAWY-263: observe listening outcomes locally. Read-only; never writes while audio plays.
+    registerTtsTelemetry(); // the failure-isolation system's own record. Same guarantees: observes, never steers.
     initPresence(); // DISC/RPC: load the persisted Discord on/off switch
   }, []);
 
@@ -279,17 +282,22 @@ function App() {
   // app-wide via the Tauri window API. We track our OWN intent rather than reading
   // `isFullscreen()` (which can lag the actual state, so a naive `!isFullscreen()` re-entered
   // instead of exiting). Esc is a no-op when not fullscreen, so it never clobbers other Esc use.
+  // The call goes through `window_fullscreen` rather than `setFullscreen` directly: a maximized
+  // frame-less window must leave its maximized state before going fullscreen and get it back on the
+  // way out, and the two steps have to be ordered on the window's thread (window_chrome.rs).
   useEffect(() => {
     let full = false;
+    let wasMaximized = false;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "F11") {
         e.preventDefault();
         full = !full;
-        getCurrentWindow().setFullscreen(full).catch(console.error);
+        if (full) windowFullscreenEnter().then((m) => { wasMaximized = m; }).catch(console.error);
+        else windowFullscreenExit(wasMaximized).catch(console.error);
       } else if (e.key === "Escape" && full) {
         e.preventDefault();
         full = false;
-        getCurrentWindow().setFullscreen(false).catch(console.error);
+        windowFullscreenExit(wasMaximized).catch(console.error);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -297,6 +305,10 @@ function App() {
   }, []);
   return (
     <I18nProvider>
+      {/* THE WINDOW'S OWN FRAME. Mounted above every screen because it belongs to the window, not to
+          any of them: it is there while the library loads, while a book is open and while a gate is
+          asking something. It renders nothing on a window the OS decorates. */}
+      <WindowChrome />
       <Root />
     </I18nProvider>
   );

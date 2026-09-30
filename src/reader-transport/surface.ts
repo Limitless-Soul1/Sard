@@ -53,6 +53,9 @@ export const CROSSING: Readonly<Record<string, Crossing>> = Object.freeze({
   getTtsCursor: "mirrored",
   pdfTextQuality: "mirrored",
   pdfRenderedScale: "mirrored",
+  // The renderer's zoom range: two getters' worth of arithmetic on the page and the viewport, returned
+  // as a plain object — a snapshot answers it, like the scale beside it.
+  pdfZoomBounds: "mirrored",
   pdfHasSpeakableText: "mirrored",
   // Reads the resolved style and theme and returns a plain object. No DOM, so a snapshot answers it.
   notePresentation: "mirrored",
@@ -66,7 +69,6 @@ export const CROSSING: Readonly<Record<string, Crossing>> = Object.freeze({
   isScrolled: "mirrored",
   readingScrollTop: "mirrored",
   pdfPageCount: "mirrored",
-  furthestPosition: "mirrored",
   dir: "mirrored",
   title: "mirrored",
   author: "mirrored",
@@ -78,6 +80,12 @@ export const CROSSING: Readonly<Record<string, Crossing>> = Object.freeze({
   // `isFixedLayout`, which is mirrored, plus the arrow callback, which the APPLICATION registered and
   // therefore already holds. The side effect it triggers is forwarded and not waited on.
   handleNavKey: "decided-locally",
+  // `scrollPdfBy` is called from a wheel handler and its answer drives `preventDefault()`, so it
+  // cannot wait for a round trip either. It has no decision to make beyond "is this a PDF being read
+  // in Scroll mode", which is mirrored state the application already holds; the scroll itself is a
+  // side effect, forwarded and not waited on. Forwarding the delta rather than interpreting it is the
+  // whole point — see the note on the method in FoliateController.
+  scrollPdfBy: "decided-locally",
   // `resolveNoteLink(hit, href, declared)` is arithmetic on strings the application already holds:
   // the hit came to it as an event, and the answer is a `URL` resolution plus one comparison. It is
   // called from a click handler inside an open note, so it cannot wait for a round trip either.

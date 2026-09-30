@@ -1,0 +1,35 @@
+-- THE ONE STATE BEFORE THIS ONE — so a هيئة saved by mistake can be put back.
+--
+-- A هيئة is the complete appearance and it has one owner: an appearance-owned property changed while
+-- that هيئة is worn edits the هيئة itself. That is the right model, and it has one sharp edge — once
+-- the write lands there is nothing to return to. `discard` is not that mechanism and must never be
+-- offered as one: it re-applies the saved هيئة over the shared settings rows, so it undoes SESSION
+-- DRIFT and cannot touch anything already written into `data`.
+--
+-- ONE SNAPSHOT, NOT A HISTORY. Every scenario this answers is "undo the thing I just did": an
+-- accidental paper, a stray slider, a change made without noticing which هيئة was in force. None is
+-- "show me what this هيئة looked like last month". A second column answers the first question
+-- completely; a versions table would answer a question nobody asked and would bring retention,
+-- pruning and a browser with it.
+--
+-- AND NOT THE ORIGINAL. Restoring the creation state would throw away every deliberate edit made
+-- since, which for a هيئة shaped over weeks is a worse accident than the one being undone.
+-- `derived_from` cannot stand in for it either: it is provenance — an id, written once, pointing at
+-- something that has moved on too.
+ALTER TABLE profiles ADD COLUMN prev_data TEXT;
+
+-- NULLABLE, AND LEFT NULL FOR EVERY EXISTING ROW — the same shape `profile_last_used` chose, and for
+-- the same reason. A هيئة saved before this column existed has no honest previous state, and
+-- inventing one (its own current `data`, say) would offer an Undo that restores nothing while
+-- claiming to restore something. `NULL` says "there is nothing to go back to", every surface reads it
+-- as exactly that, and the first real save fills it. No backfill, and a library that never saves a
+-- هيئة again is byte-identical to before this ran.
+--
+-- WRITTEN BY THE UPSERT IN `profiles::save`, from `profiles.data` — the row's value BEFORE the write —
+-- so the snapshot and the value it precedes land in one statement or not at all. `touch` is untouched
+-- and still writes `last_used_at` alone: wearing a هيئة is not editing it and must not spend the one
+-- step back.
+--
+-- INTERNAL PERSISTENCE, NOT هيئة DATA. It is a column and not a field of the `data` blob precisely so
+-- that nothing which serialises a هيئة can pick it up: a shared package carries `data`, so a snapshot
+-- kept inside it would have travelled to the recipient as somebody else's discarded draft.

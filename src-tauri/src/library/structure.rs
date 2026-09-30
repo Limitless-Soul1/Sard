@@ -100,20 +100,36 @@ pub struct ShelfItem {
 
 /// The SQL that derives a rule shelf's membership. Static text keyed by a validated rule,
 /// so nothing here is interpolated from caller input.
-fn auto_sql(rule: &str) -> Option<&'static str> {
+/// A RULE SHELF HOLDS BOOKS, so every rule asks for books and not merely for rows.
+///
+/// `books` also holds bridge rows — scaffolding written so reading progress has a parent, for a file
+/// the reader never added (see `books::IS_A_BOOK`). Every rule here would otherwise gather them:
+/// "recently added" needs only a row to exist, and "reading"/"finished" join the very table a bridge
+/// exists to support. The shelf would then count a book it could not draw — the count and the cards
+/// disagreeing, which is the defect this distinction exists to end.
+fn auto_sql(rule: &str) -> Option<String> {
+    let book = crate::books::IS_A_BOOK;
     match rule {
         // Started but not finished. `fraction` is 0..1.
-        "reading" => Some(
+        "reading" => Some(format!(
             "SELECT b.id FROM books b JOIN reading_progress p ON p.book_id = b.id \
-             WHERE p.fraction > 0.001 AND p.fraction < 0.995 ORDER BY p.updated_at DESC",
-        ),
-        "finished" => Some(
+             WHERE {book} AND p.fraction > 0.001 AND p.fraction < 0.995 ORDER BY p.updated_at DESC"
+        )),
+        "finished" => Some(format!(
             "SELECT b.id FROM books b JOIN reading_progress p ON p.book_id = b.id \
-             WHERE p.fraction >= 0.995 ORDER BY p.updated_at DESC",
-        ),
-        "added" => Some("SELECT b.id FROM books b ORDER BY COALESCE(b.added_at, 0) DESC LIMIT 60"),
+             WHERE {book} AND p.fraction >= 0.995 ORDER BY p.updated_at DESC"
+        )),
+        "added" => Some(format!(
+            "SELECT b.id FROM books b WHERE {book} ORDER BY COALESCE(b.added_at, 0) DESC LIMIT 60"
+        )),
         _ => None,
     }
+}
+
+/// The rule-shelf count, reachable from the invariant tests that live beside the importer.
+#[cfg(test)]
+pub fn auto_count_for_tests(conn: &Connection, rule: &str) -> rusqlite::Result<i64> {
+    auto_count(conn, rule)
 }
 
 fn auto_count(conn: &Connection, rule: &str) -> rusqlite::Result<i64> {
@@ -239,7 +255,7 @@ pub fn shelf_items(conn: &Connection, collection_id: &str) -> rusqlite::Result<V
 
     if let Some(rule) = auto {
         let Some(sql) = auto_sql(&rule) else { return Ok(Vec::new()) };
-        let mut stmt = conn.prepare(sql)?;
+        let mut stmt = conn.prepare(&sql)?;
         let out: rusqlite::Result<Vec<ShelfItem>> = stmt
             .query_map([], |r| r.get::<_, String>(0))?
             .enumerate()

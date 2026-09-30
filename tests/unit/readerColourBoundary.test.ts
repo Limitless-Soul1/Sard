@@ -72,14 +72,17 @@ describe("the book's palette reaches the page through reader-scoped variables", 
   it("the page colour is always named, never inherited", () => {
     // The whole of the flash fix: with the variable always set there is nothing to fall through to,
     // so the first frame is already right.
-    expect(READER).toMatch(/"--reader-page":\s*style\?\.pageColor \?\? readingTheme\.colors\.paperBg/);
+    expect(READER).toMatch(/"--reader-page":\s*readingTheme\.colors\.paperBg/);
   });
 
-  it("a book's own page colour still wins over the theme's", () => {
-    // `??` and not `||`: an empty string is not a colour, and the theme must show through it.
+  it("it comes from the هيئة's palette, and from nothing above it", () => {
+    // MEASURED DEFECT: `style.pageColor` was a SHARED session override read ahead of the palette, so
+    // a colour chosen while reading one book painted every other, survived the Discard that claimed
+    // to undo it, and belonged to no هيئة. One owner now — the palette the هيئة already carried.
     const line = /"--reader-page":\s*([^,\n]+)/.exec(READER)?.[1] ?? "";
-    expect(line).toContain("??");
-    expect(line.indexOf("style?.pageColor")).toBeLessThan(line.indexOf("readingTheme.colors.paperBg"));
+    expect(line).toContain("readingTheme.colors.paperBg");
+    expect(line).not.toContain("style?.pageColor");
+    expect(line).not.toContain("??");
   });
 
   it("the desk is named too, with an overlay colour overriding it", () => {
@@ -103,7 +106,11 @@ describe("the page-side stylesheet asks the book, not the app", () => {
   it("the page surface reads the reader-scoped colour", () => {
     const sheet = RULES.filter((r) => /(^|[\s,>])\.page-sheet\b/.test(r.sel) && /background/.test(r.body));
     expect(sheet.length).toBeGreaterThan(0);
-    for (const r of sheet) expect(r.body).toContain("var(--reader-page");
+    // A rule that paints NO colour reads neither palette, so it cannot cross the boundary — the PDF
+    // "Around the page: None" state is the one such rule. Anything that paints a colour must still ask
+    // the book.
+    const paintsNothing = (body: string) => /background:\s*transparent\s*;/.test(body) && !/var\(--/.test(body);
+    for (const r of sheet) if (!paintsNothing(r.body)) expect(r.body).toContain("var(--reader-page");
   });
 
   it("no rule painting the page keys on the app's own light-or-dark", () => {
@@ -133,29 +140,72 @@ describe("the page-side stylesheet asks the book, not the app", () => {
   });
 });
 
-describe("the chrome keeps the app's palette, deliberately", () => {
-  it("the Reader does not scope the global tokens onto itself", () => {
-    // The tempting fix — hang the reading palette on the reader root — is the bleed with extra
-    // steps: it hands the chrome's contrast ink the book's paper. What the chrome reads stays global.
-    for (const token of ["--paper-bg", "--chrome-bg", "--text", "--accent", "--app-bg"]) {
-      expect(READER).not.toContain('"' + token + '":');
-    }
+// THIS BLOCK CHANGED WHEN THE PRODUCT DID, and the change is recorded rather than quietly made.
+//
+// It read "the chrome keeps the app's palette, deliberately", and that was right while a هيئة could
+// only reach the page. The owner tested a book wearing its own هيئة and reported the result as
+// incomplete: the paper was the book's and the interface around it was still the Library's. A هيئة is
+// the whole reading experience, so the Reader's own chrome follows it now.
+//
+// WHAT THE OLD GUARD WAS PROTECTING SURVIVES, AND IS THE POINT OF THE NEW ONE. The defect it named was
+// never "the reader chrome changes colour"; it was THE BLEED — RAWY-48/D29 wrote the reading palette
+// to `:root`, where the LIBRARY's 409 rules read it too, and the book's paper became the colour of the
+// highlight button. Scoping the same tokens to `.reader-root` cannot do that: the two palettes never
+// meet, because `:root` is never written by the Reader. That is what is asserted below, and it is a
+// stricter statement than the old one — which only checked that the Reader named no tokens at all.
+describe("the Reader wears the book's هيئة; the Library keeps its own", () => {
+  it("the Reader scopes the palette onto ITSELF, never onto the document root", () => {
+    // AND IT IS THE هيئة'S INTERFACE PALETTE, NOT ITS PAGE. A هيئة carries two, and naming the
+    // READING one here made the whole interface a function of the paper: `deriveColors` steps
+    // `surfaceBg` and `chromeBg` away FROM `paperBg` and floors `muted` between paper and ink, so a
+    // هيئة with a pale page washed out the toolbar, the drawers and the contents list with it. The
+    // owner reported that as a regression against the previous release.
+    //
+    // The request this block was originally written for is untouched: the Reader still wears the
+    // هيئة the book is read in, so a book wearing هيئة B is not drawn inside هيئة A's interface.
+    // B's INTERFACE palette dresses the interface and B's READING palette dresses the page, which is
+    // what having two palettes is for.
+    expect(READER).toContain("const chromeTheme = uiProfile ? profileTheme(uiProfile) : null;");
+    expect(READER).toContain("...(chromeTheme ? themeVars(chromeTheme) : {})");
+    expect(READER).not.toContain("...themeVars(readingTheme)");
+    // The page and its desk still come from the READING palette, named right here — so the fix moved
+    // the interface off the paper without moving the paper.
+    expect(READER).toContain('"--reader-page": readingTheme.colors.paperBg');
+    expect(READER).toContain("readingTheme.colors.surfaceBg");
+    // `rootVars` is applied to `.reader-root` (see the `style={rootVars}` on it), and the Reader still
+    // writes nothing to `:root` — the one fact that keeps the Library out of it.
+    expect(READER).toMatch(/className=\{`reader-root/);
+    expect(READER).toMatch(/style=\{rootVars\}/);
+    expect(READER).not.toContain("document.documentElement.style");
+    // The engine's `ctrl.applyTheme` styles the book's own iframe and must survive; a BARE one would
+    // be the root writer coming back. Same test the block at the top of this file makes.
+    expect([...READER.matchAll(/(^|[^\w.])applyTheme\s*\(/gm)]).toHaveLength(0);
   });
 
-  it("the global paper is still what the chrome inks against the accent", () => {
-    // If this ever falls to zero the token has been renamed or re-pointed, and the reason the page
-    // could not simply borrow it has been lost.
+  it("derives those tokens from the SAME function the document root uses", () => {
+    // One derivation: the muted floor and both marker registers are computed once, so the two surfaces
+    // cannot drift into disagreeing about what a theme means.
+    expect(APPLY).toContain("export function themeVars(theme: Theme)");
+    expect(APPLY).toMatch(/for \(const \[k, v\] of Object\.entries\(themeVars\(theme\)\)\) set\(k, v\);/);
+  });
+
+  it("the paper is still what the chrome inks against the accent — now the READING paper", () => {
+    // Unchanged CSS, re-pointed source. If this ever falls to zero the token has been renamed and the
+    // pairing the هيئة's author chose — their reading paper against their reading accent — has been lost.
     const ink = RULES.filter(
       (r) => /\.rc-|\.rs-|\.hl-|\.tts|\.ref-/.test(r.sel) && /(^|[;\s])color\s*:[^;]*var\(--paper-bg/.test(r.body),
     );
     expect(ink.length).toBeGreaterThan(5);
   });
 
-  it("and the theme writer still puts that token on the document root", () => {
+  it("and the theme writer still puts every token on the document root for the Library", () => {
     expect(APPLY).toMatch(/document\.documentElement/);
-    for (const token of ["--app-bg", "--paper-bg", "--chrome-bg"]) {
-      expect(APPLY).toContain('set("' + token + '"');
+    for (const token of ["--app-bg", "--paper-bg", "--chrome-bg", "--text", "--accent"]) {
+      expect(APPLY).toContain('"' + token + '":');
     }
+    // Vista is drawn only by the Library, so its furniture stays on the root and is NOT scoped.
+    expect(APPLY).toContain("applyVistaTokens(set, theme)");
+    expect(READER).not.toContain("applyVistaTokens");
   });
 });
 
@@ -198,17 +248,21 @@ describe("no page ever wears a colour that belongs to something else", () => {
   it("and the value it publishes is the reading style itself", () => {
     // It used to be `effectiveStyle(global, override)` — the global row with THIS book's partial
     // override on top — and the point of the assertion was that the resolution happened BEFORE the
-    // page was published, not after. There is one level now, so the resolution IS the global row;
-    // what still matters is that it is read and published before `open`, which the test above pins.
-    expect(READER).toMatch(/let initialStyle = global;/);
+    // page was published, not after. That point is unchanged and is what this pins.
+    //
+    // WHAT THE LINE SAYS NOW, and why it is not the old shape returning. A book may name a هيئة, and a
+    // هيئة is ONE OBJECT: `resolveAppearanceStyle(own, …)` reads that object, so the alternative to
+    // the global row is a COMPLETE appearance, never the global row with per-book fields laid over it.
+    // The two are distinguishable in the source and the difference is the whole of the boundary: one
+    // has a second owner for every field, the other has no second owner for any field.
+    expect(READER).toMatch(/let initialStyle = own \? resolveAppearanceStyle\(own, [^)]*\) : global;/);
+    // ...and nothing merges the two. A `{ ...global, ...something }` here would be the deleted model.
+    expect(READER).not.toMatch(/initialStyle = \{ \.\.\.global/);
   });
 
-  it("the page colour still resolves the override above the palette, and nothing below them", () => {
-    // One expression, two sources, in the documented order — and no third fallback behind them.
+  it("the page colour resolves from the هيئة alone — one source, no fallback behind it", () => {
     const line = /"--reader-page":\s*([^,\n]+)/.exec(READER)?.[1] ?? "";
-    expect(line).toContain("style?.pageColor");
-    expect(line).toContain("readingTheme.colors.paperBg");
-    expect(line.split("??")).toHaveLength(2);
+    expect(line.trim()).toBe("readingTheme.colors.paperBg");
   });
 });
 
@@ -249,14 +303,43 @@ describe("one reading style, and the book-style scope is gone", () => {
     expect(PERBOOK).toContain("export function saveGlobalStyle");
   });
 
-  it("the reader resolves its style from the global row alone", () => {
+  // THIS ASSERTION CHANGED WHEN THE PRODUCT DID, and the change is recorded rather than quietly made.
+  //
+  // It read "from the global row ALONE", and that was the right guard while a هيئة was the only thing
+  // that could answer for a book. The owner has since decided that a book may wear a هيئة of its OWN —
+  // complete, not a colour out of it — so "alone" is no longer the rule and asserting it would block a
+  // decision rather than protect one.
+  //
+  // WHAT THE GUARD IS FOR SURVIVES INTACT, AND IS NOW STRICTER. The defect it was written against was
+  // never "a book can look different"; it was TWO OWNERS FOR ONE FIELD — a partial `ReadingStyle`
+  // accumulated per book and merged over the global row, so a book that had once been tuned kept its
+  // own faces whatever هيئة was worn. The replacement stores ONE IDENTIFIER and owns no field, so the
+  // test below asserts exactly that: the row holds an appearance id, and no per-book FIELD exists
+  // anywhere. A future `book_zoom:` or `book_font:` fails here, which the old wording never checked.
+  it("the reader resolves its style from one owner — a هيئة, or the global row", () => {
     expect(READER).toContain("const global = await loadGlobalStyle(target.dir ?? undefined);");
-    expect(READER).toContain("let initialStyle = global;");
     expect(READER).not.toContain("overrideRef");
+    // The per-book row is an IDENTIFIER, and the only one.
+    expect(READER).toContain("settingsSet(bookAppearanceKey(book), id ?? BOOK_APPEARANCE_NONE)");
+    expect(READER).toContain("bookAppearanceKey(");
+    // And no per-book FIELD storage, in any spelling, anywhere in the reader or the settings module.
+    for (const dead of ["book_style:", "book_font", "book_zoom", "book_lineHeight", "book_pageWidth",
+      "book_margin", "book_align", "book_letterSpacing", "book_weight"]) {
+      expect(READER, dead).not.toContain(dead);
+      expect(PERBOOK, dead).not.toContain(dead);
+    }
   });
 
-  it("every reading change is saved to that one row", () => {
-    expect(READER).toContain("saveGlobalStyle(useReader.getState().style!);");
+  it("every reading change is saved to that one row — and as the AUTHORED row, not the resolved one", () => {
+    // The rule this protects is that there is ONE reading row and no per-book scope. That still
+    // holds; what changed is WHAT is written to it.
+    expect(READER).toContain("saveGlobalRow(globalRowRef.current);");
+    // MEASURED DEFECT: it used to write `useReader.getState().style` — the RESOLVED style, every
+    // field filled in from the per-script baseline. One page-colour pick in an Arabic book therefore
+    // persisted `align: "start"`, and every Latin book that followed the global was set `start`
+    // instead of `justify`, permanently. The resolved style must never reach the row.
+    expect(READER).not.toContain("saveGlobalStyle(useReader.getState().style!);");
+    expect(READER).not.toContain("saveGlobalStyle(globalStyleRef.current)");
   });
 
   it("EXISTING ROWS ARE PRESERVED — nothing deletes a stored override", () => {

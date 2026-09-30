@@ -71,6 +71,8 @@ export interface Mirror {
   openingUnderTopBar: boolean;
   pdfTextQuality: unknown;
   pdfRenderedScale: number;
+  /** The renderer's zoom range for the PDF page on screen (public/foliate-js/sard-zoom.js). */
+  pdfZoomBounds: import("../reader-engine/FoliateController").PdfZoomBounds | null;
   pdfHasSpeakableText: boolean;
   /**
    * The engine's public GETTERS. They are read as properties, not called, so the proxy cannot answer
@@ -78,10 +80,11 @@ export interface Mirror {
    * JSON.stringify turned into undefined. Every one of them is mirrored.
    */
   isFixedLayout: boolean;
+  /** Which fixed-layout renderer this view was opened with — "scroll" or "pages" (PDF only). */
+  fxlMode: string;
   isScrolled: boolean;
   readingScrollTop: number;
   pdfPageCount: number;
-  furthestPosition: string | null;
   dir: string | undefined;
   title: string | undefined;
   author: string | undefined;

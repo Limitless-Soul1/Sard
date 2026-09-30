@@ -31,8 +31,11 @@ import {
 } from "../../reader-engine/injectedCss";
 import { useReader } from "../../reader-engine/store";
 import type { TKey } from "../../i18n/locales/en";
-import { DEFAULT_DARK, DEFAULT_LIGHT, THEMES, THEME_ORDER, isBuiltinThemeId, resolveTheme, useTheme, type ThemeId } from "../../theme";
+import { DEFAULT_DARK, DEFAULT_LIGHT, THEMES, THEME_ORDER, isBuiltinThemeId, resolveTheme, useTheme, type ThemeColors, type ThemeId } from "../../theme";
 import { contrastIsReadable, effectivePaper } from "../../lib/contrast";
+import { BOOK_APPEARANCE_FOLLOW } from "./bookAppearance";
+import { useProfiles } from "../profiles/store";
+import { resolveAppearance, useAppearanceDraft } from "./appearanceDraft";
 import { TtsTrackingControls } from "./TtsTrackingControls"; // RAWY-200
 // RAWY-281: the reference twin rule's controls. They live in their own module now, so the هيئة editor
 // can render THE READER'S OWN group rather than a copy of it — the arrangement `TtsTrackingControls`
@@ -61,10 +64,33 @@ interface Props {
   isRtlBook: boolean;
   // Which tab to render (RAWY-34): Text · Page · Theme — the chrome's Text/Layout/Theme buttons.
   section?: SettingsSection;
-  // Per-book THEME (RAWY-40): the Theme tab + text-colour presets operate on the BOOK's theme
-  // (not the global store), so changing them affects only this book.
+  /**
+   * THE PAPER ON SCREEN — this book's own choice when it has made one, the worn هيئة's otherwise.
+   *
+   * Everything that has to agree with what the reader is LOOKING AT reads this: the polarity the ink,
+   * page and background presets are keyed to, and the contrast guard, which must measure the ink
+   * against the paper actually under it.
+   */
   bookThemeId: ThemeId;
+  /**
+   * WHAT THE هيئة SAYS, which is a different question and used in exactly two places: the swatches
+   * and the Day/Night switch, because those two write the shared BOOK theme and must show what they
+   * write rather than what this one book happens to be showing. Equal to `bookThemeId` for every book
+   * that has not departed from the هيئة, so an untouched library sees no change at all.
+   */
+  appearanceThemeId: ThemeId;
+  /** Sets the shared BOOK theme — every book that follows the هيئة. */
   onPickTheme: (id: ThemeId) => void;
+  /** The page colour and the ink. See `setReadingColour` — the owner is the هيئة, not the row. */
+  onPickReadingColour?: (slot: "paperBg" | "text", hex: string | null) => void;
+  /**
+   * THIS BOOK'S OWN هيئة, or `null` for "follows the worn one" — the third state, spelled as absence.
+   *
+   * An IDENTIFIER, never a copy: a book that stored a copy of today's هيئة would freeze on it the next
+   * time the reader wore another, and could never be handed back.
+   */
+  bookAppearanceId?: string | null;
+  onPickBookAppearance?: (id: string | null) => void;
   /**
    * THIS BOOK's answer about pronouncing decorative marks, and the هيئة's, so the row can show which
    * one is actually in force. `null` = the book has not been asked and follows the هيئة.
@@ -227,8 +253,7 @@ function ReadingBackgroundSection() {
               min={0}
               max={presenceMaxFor("reading")}
               step={1}
-              disabled={overlayOff}
-              onInput={(v) => setParams("reading", { presence: v })}
+                            onInput={(v) => setParams("reading", { presence: v })}
             />
           </Section>
           <div className="rs-sec-hint">
@@ -340,7 +365,9 @@ function ReadingBackgroundSection() {
  */
 const SectionLabel = createContext<string | undefined>(undefined);
 
-function Section({ label, value, children }: { label: string; value?: ReactNode; children: ReactNode }) {
+// Exported so the PDF panel is built from the SAME section and segmented control as the rest of the
+// reading settings — one control language, rather than a second set of chips drawn for PDFs alone.
+export function Section({ label, value, children }: { label: string; value?: ReactNode; children: ReactNode }) {
   return (
     <div className="rs-sec">
       <div className="rs-sec-head">
@@ -352,7 +379,9 @@ function Section({ label, value, children }: { label: string; value?: ReactNode;
   );
 }
 
-function Slider({
+// Exported for the PDF zoom — the same slider the reading settings use, so zoom is dragged the way
+// every other continuous value in Sard is.
+export function Slider({
   value,
   min,
   max,
@@ -405,19 +434,32 @@ function Slider({
   );
 }
 
-function Segmented<T extends string | number>({
+export function Segmented<T extends string | number>({
   options,
   value,
   onPick,
+  label,
+  className,
 }: {
-  options: { key: T; label: ReactNode }[];
+  options: { key: T; label: ReactNode; className?: string }[];
   value: T;
   onPick: (k: T) => void;
+  /** Names the group for assistive technology; the visible section label usually says the same. */
+  label?: string;
+  className?: string;
 }) {
+  // `aria-pressed` states which option is chosen to assistive technology, which the `.on` class alone
+  // does not. Attribute only: nothing about how the control looks or behaves changes.
   return (
-    <div className="rs-seg" role="group">
+    <div className={`rs-seg${className ? ` ${className}` : ""}`} role="group" aria-label={label}>
       {options.map((o) => (
-        <button key={String(o.key)} className={`rs-seg-item${value === o.key ? " on" : ""}`} onClick={() => onPick(o.key)}>
+        <button
+          key={String(o.key)}
+          type="button"
+          className={`rs-seg-item${value === o.key ? " on" : ""}${o.className ? ` ${o.className}` : ""}`}
+          aria-pressed={value === o.key}
+          onClick={() => onPick(o.key)}
+        >
           {o.label}
         </button>
       ))}
@@ -563,6 +605,32 @@ function nearestScroller(from: HTMLElement | null): HTMLElement | null {
 }
 
 /**
+ * A هيئة, AT THE SIZE OF A ROW — a page on its desk, in that هيئة's own colours.
+ *
+ * WHY A MINIATURE PAGE AND NOT A COLOUR DOT. Sard already answers "what will this look like?" this
+ * way: the PDF appearance cards are miniature pages rather than swatches, for the reason recorded
+ * there — a flat swatch of eight light papers reads as eight identical boxes, because a paper only
+ * means something with ink on it. The same holds here, where هيئات differ as much in their ink and
+ * their accent as in their paper. Four values, arranged the way the reading surface arranges them:
+ * the desk behind, the page on it, two strokes of the text colour, and the accent's own mark.
+ *
+ * EVERY VALUE COMES FROM THE هيئة'S OWN READING PALETTE — `theme.reading.colors`, the same block the
+ * page itself is painted from. Nothing is invented, tinted or generated here, so a هيئة the reader
+ * edits is a chip that changes with it, and there is no second description of what a هيئة looks like.
+ */
+function AppearanceChip({ colors }: { colors: ThemeColors }) {
+  return (
+    <span className="rs-app-chip" aria-hidden style={{ background: colors.surfaceBg, borderColor: colors.chromeBorder }}>
+      <span className="rs-app-page" style={{ background: colors.paperBg }}>
+        <span className="rs-app-line" style={{ background: colors.text }} />
+        <span className="rs-app-line short" style={{ background: colors.text }} />
+      </span>
+      <span className="rs-app-accent" style={{ background: colors.accent }} />
+    </span>
+  );
+}
+
+/**
  * A CHOICE, ON SARD'S OWN SURFACE.
  *
  * This was a native `<select>`, and both faults the reader reported came from that one fact.
@@ -591,7 +659,7 @@ function SelectRow<T extends string>({
 }: {
   label: string;
   value: T;
-  options: { key: T; label: string; note?: string }[];
+  options: { key: T; label: string; note?: string; swatch?: ReactNode }[];
   onChange: (k: T) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -811,6 +879,7 @@ function SelectRow<T extends string>({
       >
         <span className="rs-select-label" id={`${id}-label`}>{label}</span>
         <span className="rs-sel">
+          {options[at]?.swatch}
           <span className="rs-sel-value">{current}</span>
           {options[at]?.note && <span className="rs-sel-note">{options[at].note}</span>}
           <span className="rs-sel-caret" aria-hidden>▾</span>
@@ -840,6 +909,7 @@ function SelectRow<T extends string>({
               onPointerEnter={() => setActive(i)}
               onClick={() => choose(o.key)}
             >
+              {o.swatch}
               <span className="rs-sel-name">{o.label}</span>
               {/* «مستورد» ON EVERY ROW WAS THE LOUDEST THING IN THE LIST. It was part of the
                   label string, so it sat in the same ink and the same size as the name it
@@ -858,7 +928,8 @@ function SelectRow<T extends string>({
 }
 
 export function ReadingSettings({
-  style, update, isRtlBook, section = "typography", bookThemeId, onPickTheme,
+  style, update, isRtlBook, section = "typography", bookThemeId, appearanceThemeId, onPickTheme,
+  bookAppearanceId = null, onPickBookAppearance, onPickReadingColour,
   speakSymbolsOverride = null, speakSymbolsAppearance = false, onSpeakSymbols,
 }: Props) {
   const { t, lang } = useI18n();
@@ -875,13 +946,72 @@ export function ReadingSettings({
   // reader-authored theme carries text the reader typed, which is not translatable and is shown as
   // written — the same rule a Profile's own name follows.
   const themeName = isBuiltinThemeId(theme.id) ? t(`theme.${theme.id}`) : theme.name;
+  // The same rule, reusable: the sixteen are localised by id, a reader-authored هيئة is shown under
+  // the name its author typed. One function so the dropdown and the value line cannot disagree.
+  const nameOf = (id: ThemeId): string => {
+    const th = resolveTheme(id);
+    return isBuiltinThemeId(th.id) ? t(`theme.${th.id}`) : th.name;
+  };
+  // WHAT THE هيئة SAYS, for the two controls that write it. Identical to `theme` unless this book has
+  // departed from the هيئة, so nothing below changes for a book that has not.
+  const appearanceTheme = resolveTheme(appearanceThemeId);
+  // THE هيئات THE READER ACTUALLY HAS, and the one they are wearing — the selector below offers the
+  // first and names the second. A reader with no هيئة at all is not a broken case: the worn look is
+  // then one of the sixteen papers, and naming it is the truthful answer to "what does «افتراضي»
+  // follow?".
+  const profiles = useProfiles((st) => st.profiles);
+  const activeProfileId = useProfiles((st) => st.activeId);
+  const worn = profiles.find((p) => p.id === activeProfileId) ?? null;
+  const wornName = worn ? worn.name?.trim() || t("profiles.unnamed") : nameOf(appearanceThemeId);
+  const wornColors = worn ? worn.data.theme.reading.colors : appearanceTheme.colors;
+  /**
+   * WHOSE PAPER THE GRID ABOVE EDITS — the book's own هيئة when it wears one, the worn هيئة otherwise.
+   *
+   * The two questions the Paper section has to answer are "which of the sixteen is in force?" and
+   * "whose is it?", and both are answered from this one object. `base` is what a هيئة records when its
+   * palette came from one of the sixteen, so it is the honest thing to mark in the grid: a هيئة built
+   * from Nocturne marks Nocturne, and one painted by hand marks nothing — which is the truth.
+   */
+  // THE DRAFT IS WHAT THE READER IS LOOKING AT, so it is what the controls must represent. Subscribed
+  // so the grid re-marks as the draft moves; resolved through the one function the Reader uses, so the
+  // swatch that is lit and the paper on the page are the same answer rather than two.
+  useAppearanceDraft((st) => st.current);
+  const ownPaperProfile = bookAppearanceId ? resolveAppearance(bookAppearanceId, profiles) : null;
+  /**
+   * WHICH OF THE SIXTEEN IS IN FORCE — asked of whatever is ACTUALLY painting the page.
+   *
+   * A following book resolves from the shared row, and that row is not always the worn هيئة's: the
+   * reader may have picked a paper since, which is precisely the drift the existing consent dialog
+   * exists to confirm. Marking the worn هيئة's base at that moment showed one paper in the grid while
+   * the page wore another — measured, with the page on Sepia and True-Black marked.
+   */
+  const paperBase = ownPaperProfile
+    ? ownPaperProfile.data.theme.reading.base
+    : isBuiltinThemeId(appearanceThemeId) ? appearanceThemeId : worn?.data.theme.reading.base ?? null;
+  /**
+   * ...AND WHOSE IT IS. A هيئة owns the paper only while its own palette is the one in force. Once the
+   * reader has picked one of the sixteen for a following book, the paper is theirs and not yet any
+   * هيئة's — so the label goes quiet rather than naming a هيئة that does not hold that colour.
+   */
+  const paperProfile = ownPaperProfile ?? (isBuiltinThemeId(appearanceThemeId) ? null : worn);
+  const paperOwner = paperProfile ? paperProfile.name?.trim() || t("profiles.unnamed") : null;
   const dark = theme.dark;
   // RAWY-201: the EFFECTIVE page colour (custom, else the theme's) — the contrast guard checks the ink
   // against the surface the text ACTUALLY sits on, so a custom page colour is what an unreadable pair is
   // measured against (not the theme paper it may have replaced).
-  const paper = style.pageColor ?? theme.colors.paperBg;
+  // THE هيئة'S OWN PAPER, for the same reason the ink is — one owner, and it is the one on screen.
+  const paper = theme.colors.paperBg;
+  /** What «theme default» means for a slot: the preset this palette was built on, else itself. */
+  const basePalette = (slot: "paperBg" | "text"): string => {
+    const b = (ownPaperProfile ?? worn)?.data.theme.reading.base ?? null;
+    return b && isBuiltinThemeId(b) ? resolveTheme(b).colors[slot] : theme.colors[slot];
+  };
   // Effective ink for the contrast check + which preset is "active".
-  const ink = style.textColor ?? theme.colors.text;
+  // THE هيئة'S OWN INK. `style.textColor` was a shared override that shadowed it; the control edits
+  // the هيئة now, so what is shown and what is stored are the same value.
+  const ink = theme.colors.text;
+  const setColour = onPickReadingColour ?? ((slot, hex) =>
+    update(slot === "paperBg" ? { pageColor: hex } : { textColor: hex }));
   const presets = dark ? INK_PRESETS_DARK : INK_PRESETS_LIGHT;
   // RAWY-265 (Phase 3) — THE FIFTH AFFECTED GUARD, found during implementation and not in the spec's
   // §6 list of four. It has exactly the same defect as the spotlight and reference-underline guards:
@@ -1013,8 +1143,15 @@ export function ReadingSettings({
            They used to be two tabs apart (theme here, ink/page/background in the old Text tab). ---- */}
       <div className="rs-sec-head">
         <span className="rs-label">{t("type.paper")}</span>
-        {/* Day/Night = an explicit light↔dark switch for THIS book. "Day" selects the default
-            light theme, "Night" the default dark; clicking the active side is a no-op. */}
+        {/* WHOSE PAPER THIS IS. The same quiet register the text-colour row already uses for the same
+            kind of statement — a qualifier, not a heading. Absent when no هيئة owns it, because then
+            there is nothing to name: the paper is simply the one Sard is showing. */}
+        {paperOwner && <span className="rs-value rs-na rs-sec-owner">{t("appearance.paperOwner", { name: paperOwner })}</span>}
+        {/* Day/Night = an explicit light↔dark switch for the هيئة, i.e. for every book that follows
+            it. "Day" selects the default light theme, "Night" the default dark; clicking the active
+            side is a no-op. It reads `appearanceTheme`, not the paper on screen: it WRITES the shared
+            BOOK theme, so showing this book's own departure from it would make the control lie about
+            what pressing it does. The two are the same value for a book that has not departed. */}
         <Segmented
           value={dark ? "night" : "day"}
           onPick={(k) => {
@@ -1027,14 +1164,74 @@ export function ReadingSettings({
           ]}
         />
       </div>
+      {/* The marked swatch is the هيئة's, for the reason the Day/Night switch above reads it too:
+          these cells write the shared BOOK theme. A book reading on its own paper marks that paper in
+          the selector below instead, so the two controls each show their own answer. */}
       <div className="rs-swatches">
         {THEME_ORDER.map((id) => (
           <button key={id} className="rs-swatch-cell" onClick={() => onPickTheme(id)}>
-            <span className={`rs-swatch${bookThemeId === id ? " on" : ""}`} style={{ background: THEMES[id].colors.paperBg }} />
+            <span className={`rs-swatch${paperBase === id ? " on" : ""}`} style={{ background: THEMES[id].colors.paperBg }} />
             <span className="rs-swatch-name">{t(`theme.${id}`)}</span>
           </button>
         ))}
       </div>
+
+      {/* ---- THIS BOOK'S هيئة ----------------------------------------------------------------------
+          Under the swatches, because it is the exception to them: the grid above is the paper every
+          FOLLOWING book is read on, and this is where ONE book wears a whole هيئة of its own.
+
+          IT NAMES A هيئة, NOT A PAPER, and the label has to say so: choosing «Runes» here gives the
+          book Runes' measure, faces, marks and reference rule as well as its palette, because a هيئة
+          is one object and this stores its id. The sixteen shipped papers are offered after the
+          reader's own هيئات — a paper carries no measure, so choosing one moves the palette alone,
+          which is the whole of what a paper is.
+
+          A SELECTOR AND NOT A SECOND GRID. The هيئات plus sixteen papers drawn as cells would double
+          the height of the tab, and the answer here is usually «افتراضي» — which a grid can only
+          express as "nothing is marked". A list states it as a value, and carries the worn هيئة's
+          name beside it, so the closed control reads «افتراضي · Sekiro» when the book follows and
+          «Runes» alone when it wears its own. */}
+      {onPickBookAppearance && (
+        <div className="rs-sec">
+          <SelectRow<string>
+            label={t("appearance.book")}
+            value={bookAppearanceId ?? BOOK_APPEARANCE_FOLLOW}
+            options={[
+              // «افتراضي» wears the WORN هيئة's own chip, because that is what it follows — the row
+              // shows the reader what Default currently means rather than only naming it.
+              {
+                key: BOOK_APPEARANCE_FOLLOW,
+                label: t("appearance.book.follow"),
+                note: wornName,
+                swatch: <AppearanceChip colors={wornColors} />,
+              },
+              // THE READER'S OWN هيئات, AND ONLY THOSE. The sixteen papers Sard ships are not هيئات —
+              // they carry no measure, no faces and no marks — and they already have their own grid a
+              // few rows above this one. Offering them here put two different KINDS of thing in one
+              // list and said the wrong thing about what this control is for.
+              ...profiles.map((p) => ({
+                key: p.id as string,
+                label: p.name?.trim() || t("profiles.unnamed"),
+                swatch: <AppearanceChip colors={p.data.theme.reading.colors} />,
+              })),
+              // ...with ONE exception, and it is not a paper list creeping back: a book that already
+              // holds one of the sixteen (chosen before this control named هيئات) keeps that row, or
+              // the selector would show «افتراضي» over a book that is not following anything. It is
+              // the book's own state, shown so it can be seen and changed — never an offer.
+              ...(bookAppearanceId && isBuiltinThemeId(bookAppearanceId)
+                ? [{
+                    key: bookAppearanceId as string,
+                    label: t(`theme.${bookAppearanceId}` as TKey),
+                    note: t("appearance.book.paperOnly"),
+                    swatch: <AppearanceChip colors={resolveTheme(bookAppearanceId).colors} />,
+                  }]
+                : []),
+            ]}
+            onChange={(k) => onPickBookAppearance(k === BOOK_APPEARANCE_FOLLOW ? null : k)}
+          />
+          <div className="rs-sec-hint">{t("appearance.bookHint")}</div>
+        </div>
+      )}
 
       <div className="rs-divider" />
 
@@ -1046,27 +1243,27 @@ export function ReadingSettings({
       <div className="rs-inks">
         {/* Default = follow the theme ink (textColor null) */}
         <button
-          className={`rs-ink${style.textColor == null ? " on" : ""}`}
-          style={{ background: theme.colors.text }}
-          onClick={() => update({ textColor: null })}
+          className={`rs-ink${paperBase != null && ink.toLowerCase() === basePalette("text").toLowerCase() ? " on" : ""}`}
+          style={{ background: basePalette("text") }}
+          onClick={() => setColour("text", null)}
           title={t("color.default")}
           aria-label={t("color.default")}
         />
         {presets.map((hex) => (
           <button
             key={hex}
-            className={`rs-ink${style.textColor?.toLowerCase() === hex.toLowerCase() ? " on" : ""}`}
+            className={`rs-ink${ink.toLowerCase() === hex.toLowerCase() ? " on" : ""}`}
             style={{ background: hex }}
-            onClick={() => update({ textColor: hex })}
+            onClick={() => setColour("text", hex)}
             title={hex}
             aria-label={hex}
           />
         ))}
         {/* Custom colour via the native picker */}
         <InkCustom
-            value={style.textColor}
-            fallback={theme.colors.text}
-            onPick={(hex) => update({ textColor: hex })}
+            value={ink}
+            fallback={basePalette("text")}
+            onPick={(hex) => setColour("text", hex)}
             presets={presets}
             contrastAgainst={paper}
             title={t("color.custom")}
@@ -1077,13 +1274,15 @@ export function ReadingSettings({
         <span>{readable ? t("color.contrastOk") : t("color.contrastWarn", { theme: themeName })}</span>
       </div>
 
-      {/* ---- PAGE COLOUR (RAWY-201) — the reading surface, per-book; null = the theme's own paper ---- */}
+      {/* ---- PAGE COLOUR — the هيئة's own paper. It used to be a shared override that shadowed the
+           palette; one owner now, so what this shows is what is stored. `null` = the preset the
+           palette was built on. ---- */}
       <ColorRow
         label={t("color.page")}
-        value={style.pageColor}
-        themeValue={theme.colors.paperBg}
+        value={paper}
+        themeValue={basePalette("paperBg")}
         presets={dark ? PAGE_PRESETS_DARK : PAGE_PRESETS_LIGHT}
-        onPick={(v) => update({ pageColor: v })}
+        onPick={(v) => setColour("paperBg", v)}
         t={t}
       />
 

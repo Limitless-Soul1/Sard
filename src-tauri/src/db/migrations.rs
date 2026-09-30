@@ -245,6 +245,21 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "placement_memberships",
         include_str!("migrations_sql/20260910190000_placement_memberships.sql"),
     ),
+    (
+        20_260_924_180_000,
+        "profile_prev_data",
+        include_str!("migrations_sql/20260924180000_profile_prev_data.sql"),
+    ),
+    (
+        20_260_924_190_000,
+        "drop_profile_prev_data",
+        include_str!("migrations_sql/20260924190000_drop_profile_prev_data.sql"),
+    ),
+    (
+        20_260_924_210_000,
+        "reading_style_drop_legacy_colours",
+        include_str!("migrations_sql/20260924210000_reading_style_drop_legacy_colours.sql"),
+    ),
 ];
 
 /// Apply any not-yet-applied migrations. Safe to call on every startup.

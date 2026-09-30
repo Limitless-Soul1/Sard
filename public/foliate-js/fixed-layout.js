@@ -1,3 +1,5 @@
+import { zoomBounds, clampZoom } from './sard-zoom.js'   // SARD LOCAL PATCH 14a
+
 const parseViewport = str => str
     ?.split(/[,;\s]/) // NOTE: technically, only the comma is valid
     ?.filter(x => x)
@@ -43,17 +45,33 @@ export class FixedLayout extends HTMLElement {
     #center
     #side
     #zoom
+    #fits = null   // SARD LOCAL PATCH 14a
+    #scale = 1     // SARD LOCAL PATCH 14a
+    /** SARD LOCAL PATCH 14a — the zoom range for the page on screen, the two fits, and where the
+     *  page sits across this box (for a surround drawn outside the renderer). Read-only. */
+    get zoomBounds() {
+        if (!this.#fits) return null
+        const pageWidth = (this.#fits.width || 0) * this.#scale
+        const cw = this.clientWidth
+        const pageCenterX = pageWidth <= cw ? cw / 2 : pageWidth / 2 - this.scrollLeft
+        return { ...zoomBounds(this.#fits), fitPage: this.#fits.fitPage, fitWidth: this.#fits.fitWidth, scale: this.#scale,
+            pageWidth, pageCenterX, boxWidth: this.offsetWidth }
+    }
     constructor() {
         super()
 
         const sheet = new CSSStyleSheet()
         this.#root.adoptedStyleSheets = [sheet]
+        // SARD LOCAL PATCH 14b — `safe center`. Plain `center` centres a page that is LARGER than the
+        // viewport too, so it overflows both sides and the part left of the scroll origin can never be
+        // scrolled to: MEASURED at 300%, the left 384px of an A4 page were unreachable. `safe` centres
+        // a page that fits and starts one that does not at the origin, so all of it can be reached.
         sheet.replaceSync(`:host {
             width: 100%;
             height: 100%;
             display: flex;
-            justify-content: center;
-            align-items: center;
+            justify-content: safe center;
+            align-items: safe center;
             overflow: auto;
         }`)
 
@@ -119,22 +137,28 @@ export class FixedLayout extends HTMLElement {
         const blankWidth = left.width ?? right.width ?? 0
         const blankHeight = left.height ?? right.height ?? 0
 
-        const scale = typeof this.#zoom === 'number' && !isNaN(this.#zoom)
-            ? this.#zoom
-            : (this.#zoom === 'fit-width'
-                ? (portrait || this.#center
-                    ? width / (target.width ?? blankWidth)
-                    : width / ((left.width ?? blankWidth) + (right.width ?? blankWidth)))
-                : (portrait || this.#center
-                    ? Math.min(
-                        width / (target.width ?? blankWidth),
-                        height / (target.height ?? blankHeight))
-                    : Math.min(
-                        width / ((left.width ?? blankWidth) + (right.width ?? blankWidth)),
-                        height / Math.max(
-                            left.height ?? blankHeight,
-                            right.height ?? blankHeight)))
+        // SARD LOCAL PATCH 14a — the two fits are named, and a NUMERIC zoom is held to Sard's zoom
+        // range (sard-zoom.js) for this page in this viewport. Upstream's arithmetic is unchanged; it
+        // is only computed once instead of inline, so the range can be derived from the same values.
+        const fitWidth = portrait || this.#center
+            ? width / (target.width ?? blankWidth)
+            : width / ((left.width ?? blankWidth) + (right.width ?? blankWidth))
+        const fitPage = portrait || this.#center
+            ? Math.min(
+                width / (target.width ?? blankWidth),
+                height / (target.height ?? blankHeight))
+            : Math.min(
+                width / ((left.width ?? blankWidth) + (right.width ?? blankWidth)),
+                height / Math.max(
+                    left.height ?? blankHeight,
+                    right.height ?? blankHeight))
+        this.#fits = { fitWidth, fitPage, width: target.width ?? blankWidth, height: target.height ?? blankHeight,
+            dpr: globalThis.devicePixelRatio || 1 }
+        const scale = (typeof this.#zoom === 'number' && !isNaN(this.#zoom)
+            ? clampZoom(this.#zoom, zoomBounds(this.#fits))
+            : (this.#zoom === 'fit-width' ? fitWidth : fitPage)
             ) || 1
+        this.#scale = scale
 
         const transform = frame => {
             let { element, iframe, width, height, blank, onZoom } = frame

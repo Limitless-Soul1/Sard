@@ -1,10 +1,11 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 
 import { useI18n } from "../../i18n";
 import { localeDigits, localeNum } from "../../lib/format";
 import {
   bookDelete,
+  collectionAddBook,
   collectionDelete,
   collectionRename,
   collectionsList,
@@ -21,6 +22,8 @@ import {
 } from "../../lib/ipc";
 // RESILIENCE-1 / WP-1
 import { buildImportReport, isCleanImport, splitByCapability, type ImportReport } from "./importReport";
+import { WindowedGrid } from "./design/rowWindow";
+import { parseScope } from "./design/model";
 import { classifyBookError } from "../../lib/bookErrors";
 import { recordDiagnostic, toDiagnostic } from "../../lib/errors";
 import { canRender } from "../../lib/runtime";
@@ -34,6 +37,7 @@ import { coverSrc } from "./coverSrc";
 import { GlobalSettings } from "../settings/GlobalSettings";
 import { useBookPickup } from "./design/bookPickup";
 import { BookActions, type BookActionsProps } from "./design/BookActions";
+import { useBookContextMenu } from "./design/bookContextMenu";
 import { UpdateRosette } from "../updater/UpdateRosette";
 import { UpdateDialog } from "../updater/UpdateDialog";
 import { LibraryDesign } from "./design/LibraryDesign";
@@ -113,6 +117,15 @@ const SECTION_SWAP_MAX_MS = 700;
 // RAWY-269 (5) — the longest `warmCovers` may hold a book list back.
 const COVER_WARM_MAX_MS = 220;
 
+// …and the most covers it may warm. The warm exists to stop the FIRST SCREEN arriving as empty
+// cells; a cover the reader cannot see needs no decode before the swap. Warming the whole list was
+// the single largest cost of a large library — MEASURED on a 3,000-book library whose view shows 48
+// tiles: 3,030 cover files fetched and decoded at every list load, 2.2 s to first paint and 985 MB
+// resident, against 0.72 s and 393 MB for the same library with no covers at all. 64 is above every
+// first screen Sard can draw (the densest Grid at the widest window shows ~50, Details ~40), so the
+// guarantee the warm was written for is unchanged and the work is now O(1) in the library's size.
+const COVER_WARM_MAX_ROWS = 64;
+
 // RAWY-269 (1) — how many LIBRARY-pane data loads are in flight, counted across the flat views
 // (`loadBooks`) and the rows view (`ShelfRows`), which is why it is module-level rather than a ref.
 //
@@ -137,7 +150,9 @@ const libLoads = { inFlight: 0 };
  * to hold the library back — that would trade a flash for a freeze.
  */
 function warmCovers(rows: readonly BookRow[]): Promise<void> {
-  const urls = [...new Set(rows.map((r) => r.cover_path).filter((p): p is string => !!p))];
+  const urls = [
+    ...new Set(rows.slice(0, COVER_WARM_MAX_ROWS).map((r) => r.cover_path).filter((p): p is string => !!p)),
+  ];
   if (!urls.length) return Promise.resolve();
   const all = Promise.all(
     urls.map((p) => {
@@ -147,6 +162,25 @@ function warmCovers(rows: readonly BookRow[]): Promise<void> {
     }),
   ).then(() => undefined);
   return Promise.race([all, new Promise<void>((res) => window.setTimeout(res, COVER_WARM_MAX_MS))]);
+}
+
+/**
+ * THE OPEN SHELF, READ FROM WHERE THE DESIGN SURFACE KEEPS IT.
+ *
+ * The surface reports its scope through `onOpenShelf` as soon as it has one, and that is the answer
+ * used for every import a reader can actually perform — they must be looking at the shelf to add to
+ * it. This is the fallback for the one ordering the report cannot win: an import that begins in the
+ * same instants as the mount, before the persisted scope has been read back. It reads that same
+ * setting, so both routes agree by construction.
+ *
+ * A RULE SHELF cannot be filed into: the core refuses that write («a rule shelf holds a query, not
+ * books»), the error is caught like any other and the import is unaffected. The reported path never
+ * offers one in the first place — `scopedHandShelf` is hand shelves only.
+ */
+async function persistedOpenShelf(): Promise<string | null> {
+  const raw = await settingsGet("libd_scope").catch(() => null);
+  // The surface’s own parser, so two readings of one setting can never disagree.
+  return raw ? parseScope(raw).shelfId : null;
 }
 
 /** The quiet one-line summary — used ONLY when every file was handled without a problem. */
@@ -360,6 +394,12 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
 
   // The drop listener is subscribed once; reach the latest import handler through a ref.
   const runImportRef = useRef<(paths: string[]) => void>(() => {});
+  /**
+   * The WRITABLE shelf the reader is currently inside, as the design surface reports it — `null` in
+   * the general Library. A ref, not state: it is read at the moment an import finishes and must not
+   * re-create the import callback (nor re-render the library) every time the reader changes shelf.
+   */
+  const openShelfRef = useRef<string | null>(null);
 
   // Real drag-and-drop import (band E · E5): the hover overlay shows on enter/over and a
   // drop runs the real importer. Dev-only keyboard aids force the drop / empty states for
@@ -484,6 +524,25 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     return () => { alive = false; cancelAnimationFrame(raf); };
   }, [wanted]);
 
+  /**
+   * BOOKS ADDED WHILE A SHELF IS OPEN BELONG ON THAT SHELF.
+   *
+   * Only the books that were actually imported are filed: a duplicate names a book that is already
+   * in the library and was not added by this operation, and a refusal names no book at all. The
+   * write is `collection_add_book`, the same command the ⋯ menu uses — idempotent (the membership's
+   * primary key is the pair), appending at the end of the shelf, and leaving every other shelf the
+   * book is on untouched. A failure to file is never allowed to fail the import: the books are in
+   * the library either way, which is the part that cannot be undone by hand.
+   */
+  const fileIntoOpenShelf = useCallback(async (results: ImportResult[]) => {
+    const shelfId = openShelfRef.current ?? (await persistedOpenShelf());
+    if (!shelfId) return; // the general Library — unchanged behaviour
+    for (const r of results) {
+      if (r.status !== "imported") continue;
+      await collectionAddBook(shelfId, r.id).catch(console.error);
+    }
+  }, [shelves]);
+
   const flashToast = useCallback((msg: string) => {
     setToast(msg);
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -523,6 +582,8 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         // worse than an honest refusal that names the fix.
         const { accepted, blocked } = splitByCapability(paths, canRender("pdf"));
         const results = accepted.length ? await importBooks(accepted) : [];
+        // Before the refresh, so the list the reader is shown already has them on the shelf.
+        await fileIntoOpenShelf(results);
         loadBooks();
         loadShelves();
         const report = buildImportReport(results, blocked);
@@ -552,7 +613,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         setImporting(false);
       }
     },
-    [importing, loadBooks, loadShelves, flashToast, t, lang, surfaceEditForNew],
+    [importing, loadBooks, loadShelves, flashToast, t, lang, surfaceEditForNew, fileIntoOpenShelf],
   );
   useEffect(() => {
     runImportRef.current = (paths) => void runImport(paths);
@@ -639,6 +700,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         // out before the call — it is reported afterwards instead, through the same panel. Same
         // outcome, same explanation, one code path for the user.
         const results = await importFolder(dir);
+        await fileIntoOpenShelf(results);
         loadBooks();
         loadShelves();
         const report = buildImportReport(results);
@@ -663,7 +725,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
       recordDiagnostic(toDiagnostic("import", c));
       flashToast(t(c.presentation.titleKey));
     }
-  }, [importing, loadBooks, loadShelves, flashToast, t, lang, surfaceEditForNew]);
+  }, [importing, loadBooks, loadShelves, flashToast, t, lang, surfaceEditForNew, fileIntoOpenShelf]);
 
   // DEV: import a `;`-separated path list from the `dev_import` setting once (for capture/
   // verification, since PrintWindow can't drive a live OS drag), then clear it. RAWY-80 adds
@@ -682,6 +744,9 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
       if (df) {
         await settingsSet("dev_import_folder", "");
         const results = await importFolder(df.trim());
+        // The same filing the button path does, so a harness driving this hook exercises the real
+        // behaviour rather than a shape that only looks like it.
+        await fileIntoOpenShelf(results);
         loadBooks();
         loadShelves();
         flashToast(summarize(results, t, lang));
@@ -689,6 +754,8 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     })().catch(console.error);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+
 
   if (!hydrated) return null; // brief: settings loading (avoids a grid→list flash)
 
@@ -715,6 +782,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
     if (s) flashToast(t("lib.shelf.deleted", { name: s.name }));
   };
   const navSection: Section = wanted ?? section;
+
 
   // The library design owns the chrome and the view switcher. Everything below it — the
   // import path, the edit dialog, the toast, the settings and update surfaces, and the GRID
@@ -762,19 +830,27 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
             // written, and the toolbar hid its size control because there was nothing for it to
             // move. Covers has always done precisely this with a real width; Grid now does too,
             // through a variable so the rule keeps its own default when no size is supplied.
-            <div
+            // THE RUN IS UNCHANGED; ONLY THE SLICE THAT IS MOUNTED CHANGES. `rows` is still the whole run
+            // in its own order, and `renderRow` still receives the same book — a card therefore carries the
+            // same identity, the same shelf and the same index it always did, which is what drops,
+            // selection and ordering are computed from.
+            <WindowedGrid
+              rows={rows}
+              keyOf={(b) => b.id}
               className="lib-grid"
+              itemSelector=".lib-card"
               style={g?.coverMin ? ({ "--lib-cover-min": `${g.coverMin}px` } as React.CSSProperties) : undefined}
-            >
-              {rows.map((b) => (
-                <Fragment key={b.id}>
+              deps={[coverMode, g?.coverMin, g?.hideTitles]}
+              whole={g?.carrying}
+              renderRow={(b) => (
+                <>
                   {g?.gap?.(b)}
                   <BookCard
                     book={b}
                     coverMode={coverMode}
                     onOpen={() => open(b)}
                     // THE SAME MENU AND THE SAME EDITOR AS EVERY OTHER FORMAT. Grid used to pass
-                    // its own `onEdit` straight to Sard's older dialog; the design surface now
+                    // its own `onEdit` straight to Sard’s older dialog; the design surface now
                     // hands it the identical actions the grouped views get, so the reader meets one
                     // set of choices whichever format they are looking at.
                     actions={g?.actions?.(b)}
@@ -784,9 +860,9 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
                     hideTitle={g?.hideTitles}
                   />
                   {g?.gapAfter?.(b)}
-                </Fragment>
-              ))}
-            </div>
+                </>
+              )}
+            />
           );
         }}
         coverMode={coverMode}
@@ -795,6 +871,7 @@ export function Library({ onOpen }: { onOpen: (b: OpenTarget) => void }) {
         onFormat={setFormat}
         onOpenBook={open}
         onAddBooks={addBooks}
+        onOpenShelf={(id) => { openShelfRef.current = id; }}
         importing={importing}
         onSettings={() => setSettingsOpen(true)}
         onReloadBooks={loadBooks}
@@ -947,11 +1024,16 @@ function BookCard({
   // on an ordinary card would quietly stop opening the book. Left off, such a card behaves exactly
   // as it did before it was given a descriptor at all.
   const wantsPress = !!order && (order.orderable || order.arrangeOn);
+  // A right-click anywhere on the card opens the book's own ⋯ menu, at the pointer. The hold armed
+  // by a press is disarmed first: a right-click fires `pointerdown` too, and a slow one would
+  // otherwise lift the book behind the menu it just opened.
+  const ctx = useBookContextMenu({ onOpen: pickup.cancelHold });
   return (
     <div
       className="lib-card"
       role="button"
       tabIndex={0}
+      onContextMenu={ctx.onContextMenu}
       // The card names the book it draws, and where that book is filed. The identity lets a check
       // address it; the shelf and index are what let a RELEASE OVER THIS CARD resolve to a real
       // position, which is how a book is dropped where the reader wants it.
@@ -995,14 +1077,17 @@ function BookCard({
           // `draggable={false}` for the same reason `BookTile` says it: a cover that is a native
           // drag source turns a press-and-hold with a few pixels of drift into an OS drag, which
           // cancels the hold and comes back through the webview as an outside drop.
-          <img className="real" src={coverSrc(book)!} alt="" decoding="sync" draggable={false} onError={() => setFailed(true)} />
+          // `loading="lazy"`: a cover below the fold is fetched when the reader scrolls to it, not
+          // when the list mounts. `decoding="sync"` still governs the ones that DO load, so a cover
+          // on screen is still painted with its cell rather than two frames later.
+          <img className="real" src={coverSrc(book)!} alt="" loading="lazy" decoding="sync" draggable={false} onError={() => setFailed(true)} />
         ) : (
           <AutoCover title={title} author={book.author} dir={book.dir} />
         )}
         {p.state === "reading" && <span className="lib-card-bar" style={{ width: `${p.pct}%` }} />}
         {actions ? (
           // Grid keeps its own placement — `.lib-card-edit` — and nothing else of its own.
-          <BookActions {...actions} className="lib-card-edit" />
+          <BookActions {...actions} ref={ctx.ref} className="lib-card-edit" />
         ) : (
           <button
             className="lib-card-edit"

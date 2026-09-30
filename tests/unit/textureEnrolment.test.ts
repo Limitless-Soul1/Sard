@@ -84,6 +84,10 @@ describe("interface texture · every chrome surface is enrolled or excused", () 
     ".edit-dialog": "a modal dialog, over its own scrim",
     ".pc-basket-tray": "a transient tray",
     ".ref-popup": "a reference popover over the page — the page is outside texture's reach by design",
+    // The window's own frame (components/WindowChrome.tsx) is persistent chrome, and it is excused on
+    // purpose: nothing behind the window's frame may ever show through it — a wallpaper seen through
+    // the frame read as a floating strip of glass, not as the window's edge.
+    ".wc": "the window's own frame — opaque by requirement, whatever the texture step",
   };
 
   it("no positioned surface paints the flat chrome ground without a stated reason", () => {

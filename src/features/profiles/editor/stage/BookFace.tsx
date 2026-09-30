@@ -267,7 +267,11 @@ export function BookFace({
    */
   const voiceStyle: ReadingStyle = { ...readerStyle, ...(profile.data.voice ?? {}) };
   const spot = resolveSpotlight(voiceStyle, dark);
-  const pill = resolvePill(voiceStyle, dark);
+  // THE SAME GROUND THE READER WILL PAINT ON, so the preview cannot drift from the page: the pill's
+  // blend is now decided against the paper and ink in force rather than by polarity alone, and this
+  // specimen's paper and ink are the هيئة's own. The stored `dark` flag still selects the built-in
+  // default colour, exactly as it does for the specimen's other marks.
+  const pill = resolvePill(voiceStyle, dark, { paper: c.paperBg, text: c.text });
   /** `fill-opacity` on a rect, as a colour a CSS background can carry. */
   const wash = (fill: string, alpha: number) =>
     `color-mix(in srgb, ${fill} ${(alpha * 100).toFixed(1)}%, transparent)`;

@@ -365,8 +365,28 @@ export const REF_RULE_KEYS = [
 ] as const satisfies readonly (keyof typeof REF_RULE_DEFAULTS)[];
 
 // Per-script sensible defaults — beautiful before the user touches a control.
+//
+// ZOOM IS THE STORED READING VALUE, not a slider position. `ReadingStyle.zoom` is what
+// `buildReadingCss` writes as `body { zoom: … }`, what Ctrl+Wheel and the Settings slider both move,
+// and what Quick Customization's Text Size shows when an appearance has no opinion of its own. So
+// changing it here changes the text a reader actually gets on a fresh install, and nothing else:
+// anyone with a stored reading style keeps it, because that value is read back before these are
+// consulted, and an appearance that names its own size is unaffected either way.
+//
+// ZOOM IS NOW ONE NUMBER FOR BOTH SCRIPTS, and the per-script mechanism is untouched.
+//
+// Raising only the Arabic baseline did not reach the control it was asked for. MEASURED: Quick
+// Customization's Text Size still sat at 1.0, because the appearance editor calls `loadGlobalStyle()`
+// with no direction — it legitimately does not know which book this هيئة will dress — and a caller
+// that passes none gets the LATIN set. So an Arabic-only change is invisible exactly where the owner
+// was looking.
+//
+// The sets still differ where it matters, and AUD-6's rule is untouched: `loadGlobalStyle(dir)` still
+// resolves per direction, a profile still writes typography as ABSENT rather than as a number, and
+// line-height (1.9/1.6) and alignment (start/justify) still part by script. Zoom is simply no longer
+// one of the fields that parts — Text Size is one control, and it now answers one number.
 export const ARABIC_DEFAULTS: ReadingStyle = {
-  zoom: 1.15,
+  zoom: 1.85,
   arabicFont: "amiri",
   latinFont: "literata",
   lineHeight: 1.9,
@@ -389,7 +409,7 @@ export const ARABIC_DEFAULTS: ReadingStyle = {
   ...REF_RULE_DEFAULTS,
 };
 export const LATIN_DEFAULTS: ReadingStyle = {
-  zoom: 1.0,
+  zoom: 1.85,
   arabicFont: "amiri",
   latinFont: "literata",
   lineHeight: 1.6,
@@ -631,6 +651,30 @@ const SPACED_BLOCKS = ["p", LEAF_DIV, `${TEXT_HOST}:not(body)`];
 // `margin: 0` on a hidden first line and re-open a phantom gap where the title used to be — and the
 // hardened line-height would beat its `line-height: 0`. It also, as a bonus, now beats a book's own
 // `h1.chapter{margin:2em!important}` (0,1,1), which the old element-level rule (0,0,1) lost to.
+/**
+ * THE BLOCKS A HIDE TOGGLE MAKES INVISIBLE — named once, used twice.
+ *
+ * These selectors do two jobs that must never disagree. Here they build the rule that hides the block
+ * in the reading frame; in `FoliateController` they decide which blocks are NOT part of the spoken
+ * queue, because read-aloud segmentation skips anything the page renders invisible. Cross-chapter
+ * preparation reads a section's RAW document — one that was never rendered, so no stylesheet applies
+ * to it — and has to reach the same answer from the same list. A second, hand-kept copy of these
+ * selectors is exactly how the two would drift, which is the defect this was written to close: with
+ * `hideFirstLine` on, preparation keyed on a line the reader never hears, and every prepared unit was
+ * one behind the queue (MEASURED: 6 of 8 sections in a fixture, 6 of 6 chapter boundaries in a real
+ * day's listening).
+ */
+export const HIDDEN_BY_CHAPTER_TITLES = ["h1", "h2", "h3", "h4", "h5", "h6"];
+export const HIDDEN_BY_FIRST_LINE = [".sard-chapter-heading:not(.sard-revealed)"];
+
+/** Every block selector the reading CSS renders invisible under these flags, in rule order. */
+export function hiddenBlockSelectors(flags: Pick<BookThemeFlags, "hideChapterTitles" | "hideFirstLine"> | undefined): string[] {
+  return [
+    ...(flags?.hideChapterTitles ? HIDDEN_BY_CHAPTER_TITLES : []),
+    ...(flags?.hideFirstLine ? HIDDEN_BY_FIRST_LINE : []),
+  ];
+}
+
 const HIDE_BOX_RULE = (selectors: string[]): string => `
   ${selectors.map((s) => `:root:root ${s}${NEVER}${NEVER2}`).join(",\n  ")} {
     visibility: hidden !important;
@@ -717,7 +761,7 @@ function themeBlock(
              is deliberately NOT included here (RAWY-69 split it into its own independent toggle
              below) — a heading-tag element never gets that class in the first place (see
              `markInBodyHeading`), so the two rules can never fight over the same element. */
-          HIDE_BOX_RULE(["h1", "h2", "h3", "h4", "h5", "h6"])
+          HIDE_BOX_RULE(HIDDEN_BY_CHAPTER_TITLES)
         : ""
     }
     ${
@@ -735,7 +779,7 @@ function themeBlock(
              accidental tap can never instantly spoil. A revealed instance carries
              `.sard-revealed`, so it is excluded from the hide here (per-instance; a fresh section
              loads a fresh idle placeholder). */
-          `${HIDE_BOX_RULE([".sard-chapter-heading:not(.sard-revealed)"])}
+          `${HIDE_BOX_RULE(HIDDEN_BY_FIRST_LINE)}
            /* the placeholder takes the hidden line's place — quiet, in the book's theme */
            .sard-title-ph {
              display: inline-flex; align-items: baseline; gap: .4em; flex-wrap: wrap;

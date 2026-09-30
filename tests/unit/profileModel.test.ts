@@ -13,6 +13,7 @@ import { describe, expect, it } from "vitest";
 
 /** The repository root, so these read the source they are asserting about. */
 const R = join(import.meta.dirname, "..", "..");
+import { PAGE_OPACITY_MIN } from "../../src/lib/background";
 import { BOOKMARK_SIZE_MAX, BOOKMARK_SIZE_MIN } from "../../src/lib/bookmarkStyle";
 
 import {
@@ -95,10 +96,12 @@ describe("the boundary — what a profile may write", () => {
   /** The three the patch always carries, plus the seven read-aloud marks and the three reference-mark
    *  fields it now always carries too. Derived from the key lists, so a field added to either reaches
    *  this expectation in one edit and a field that stops being written fails here. */
-  const ALWAYS = ["arabicFont", "backgroundColor", "latinFont", "numberColor", "pageColor",
+  // `pageColor` LEFT THIS LIST when the shared override it existed to defeat was removed — a هيئة's
+  // answer to the page colour is its own palette, which is not part of the reading-style patch.
+  const ALWAYS = ["arabicFont", "backgroundColor", "latinFont", "numberColor",
     ...VOICE_KEYS, ...REF_KEYS].sort();
 
-  it("a profile with no typography opinion patches the faces, the number ink, the overlay and the page", () => {
+  it("a profile with no typography opinion patches the faces, the number ink and the overlay", () => {
     // `backgroundColor` joins for the same reason `numberColor` did: it is a LOOK the profile owns,
     // and omitting it on clear would leave the previous choice standing in `reading_style` with
     // nothing able to drop it. Both are written even when null, which is what "follow the theme"
@@ -109,15 +112,18 @@ describe("the boundary — what a profile may write", () => {
     expect(readingPatch(profile()).set.backgroundColor).toBeNull();
   });
 
-  it("the page colour is always cleared, because a profile's answer to it is its reading paper", () => {
-    // The third always-written field, and the one with the sharpest consequence for omitting it.
-    // `.page-sheet` resolves the stored page colour BEFORE the reading palette, so a colour set once
-    // in the reading drawer outranked every profile's paper for ever with nothing able to drop it —
-    // measured on a real configuration as a page that survived A -> B -> A without moving. A profile
-    // carries no page colour of its own and must not: its answer is the palette, so it writes null.
+  it("the page colour is not written at all — the palette IS the profile's answer to it", () => {
+    // IT USED TO WRITE `null`, to defeat a shared `reading_style.pageColor` that resolved BEFORE the
+    // reading palette: one colour set once in the drawer outranked every profile's paper for ever,
+    // measured on a real configuration as a page that survived A -> B -> A without moving.
+    //
+    // That override is gone. The page resolves from `theme.reading.colors.paperBg` alone and the
+    // drawer's control edits THAT, so there is nothing left to defeat — and writing a null would put
+    // the obsolete key back into the shared row on every switch, after the migration cleared it.
     const p = profile();
     p.data.theme.reading.colors = { ...p.data.theme.reading.colors, paperBg: "#123456" };
-    expect(readingPatch(p).set.pageColor).toBeNull();
+    expect(readingPatch(p).set).not.toHaveProperty("pageColor");
+    expect(readingPatch(p).set).not.toHaveProperty("textColor");
     // and it is emphatically NOT the paper — writing that here would put the palette's colour into a
     // per-reader override row, where a later palette change could never reach it again.
     expect(readingPatch(p).set.pageColor).not.toBe("#123456");
@@ -270,8 +276,12 @@ describe("the boundary — what a profile may write", () => {
     // `loadGlobalStyle` fills an absent field from `defaultsForDir(dir)`, and those sets differ:
     // zoom 1.15/1.0, line-height 1.9/1.6, align start/justify. Writing one script's number into a row
     // both scripts read would open every Arabic book at the Latin baseline — the defect AUD-6 fixed.
-    expect(ARABIC_DEFAULTS.zoom).not.toBe(LATIN_DEFAULTS.zoom);
+    // Zoom used to be one of the fields that parted by script and is now one number for both — Text
+    // Size is a single control and answers a single value. The RULE this test guards is unaffected:
+    // the two sets still differ (line-height, alignment), so a profile that wrote one script's
+    // number into a row both scripts read would still open the other script's books wrongly.
     expect(ARABIC_DEFAULTS.lineHeight).not.toBe(LATIN_DEFAULTS.lineHeight);
+    expect(ARABIC_DEFAULTS.align).not.toBe(LATIN_DEFAULTS.align);
     const patch = readingPatch(profile());
     expect(patch.clear.sort()).toEqual([...TYPOGRAPHY_KEYS].sort());
     for (const k of TYPOGRAPHY_KEYS) expect(patch.set[k], k).toBeUndefined();
@@ -514,7 +524,12 @@ describe("stage 4 — backgrounds and texture", () => {
     expect(d.texture).toBe("opaque");
     // and the treatment falls back to the shipped defaults rather than zeroes
     expect(d.bg.library.params.presence).toBeGreaterThan(0);
-    expect(d.bg.library.params.pageOpacity).toBe(1);
+    // `pageOpacity` now starts at the measured AAA floor rather than at 1, so that a picture bound
+    // to an appearance that has never carried one arrives showing through the page. It changes
+    // nothing for THIS row: it has no picture on either surface, and page translucency is inert
+    // without one — and it is a reading-surface value in any case, which is why the library's copy
+    // of it has never been read by anything.
+    expect(d.bg.library.params.pageOpacity).toBe(PAGE_OPACITY_MIN);
   });
 
   it("a damaged or hostile blob cannot smuggle in a background id", () => {

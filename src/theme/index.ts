@@ -7,5 +7,5 @@ export * from "./themes";
 // RAWY-PROFILES (stage 1): an id is no longer proof that `THEMES` holds it. `resolveTheme` is the
 // one place that is handled — prefer it over `THEMES[id]` everywhere.
 export { resolveTheme, themeExists, setCustomThemes, customThemeIds } from "./resolve";
-export { applyTheme, reapplyTitlebarTheme } from "./applyTheme";
+export { applyTheme, themeVars, reapplyTitlebarTheme } from "./applyTheme";
 export { useTheme, initTheme, currentMode, type ThemeMode } from "./store";

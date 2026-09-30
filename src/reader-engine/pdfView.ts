@@ -66,22 +66,24 @@ export const pdfTheme = (id: string | null | undefined): PdfTheme =>
 
 export type PdfZoom = number | "fit-width" | "fit-page";
 
-export const PDF_ZOOM_MIN = 0.5;
-export const PDF_ZOOM_MAX = 6;
+// THE RANGE IS THE RENDERER'S, NOT THESE NUMBERS. How small a page may get and how large it may be
+// painted depend on the page and the window (see public/foliate-js/sard-zoom.js), so each renderer
+// holds a numeric zoom to that range itself and reports it (`zoomBounds`). The interface reads the
+// same numbers back. The two constants below only SANITISE a stored or computed value on its way in
+// (a corrupt row, a runaway delta); they are deliberately wider than any real range and never decide
+// what a reader sees. The fixed 0.5x–6x range and its step ladder that used to live here are gone:
+// 0.5x was a third of the window on a large screen and two thirds on a small one.
+export const PDF_ZOOM_MIN = 0.05;
+export const PDF_ZOOM_MAX = 32;
 
-/** Multiplicative ladder: equal *perceptual* steps, unlike a fixed +0.1 which crawls when zoomed in. */
-export const PDF_ZOOM_STEPS = [0.5, 0.67, 0.8, 1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5, 6];
+/** A zoom range as the renderer reports it. */
+export type PdfZoomRange = { min: number; max: number };
 
-export const clampPdfZoom = (z: number): number =>
-  Math.min(PDF_ZOOM_MAX, Math.max(PDF_ZOOM_MIN, Math.round(z * 1000) / 1000));
-
-/** Next rung up/down the ladder from an arbitrary current scale (which may be a fit-mode's result). */
-export function stepPdfZoom(current: number, dir: 1 | -1): number {
-  const eps = 1e-4;
-  if (dir > 0) return clampPdfZoom(PDF_ZOOM_STEPS.find((s) => s > current + eps) ?? PDF_ZOOM_MAX);
-  const below = PDF_ZOOM_STEPS.filter((s) => s < current - eps);
-  return clampPdfZoom(below.length ? below[below.length - 1] : PDF_ZOOM_MIN);
-}
+export const clampPdfZoom = (z: number, range?: PdfZoomRange | null): number => {
+  const lo = range ? Math.max(PDF_ZOOM_MIN, range.min) : PDF_ZOOM_MIN;
+  const hi = range ? Math.min(PDF_ZOOM_MAX, range.max) : PDF_ZOOM_MAX;
+  return Math.min(hi, Math.max(lo, Math.round(z * 1000) / 1000));
+};
 
 /**
  * Continuous zoom for a wheel/pinch delta. Exponential so the gesture feels linear to the hand: the
@@ -91,12 +93,32 @@ export function stepPdfZoom(current: number, dir: 1 | -1): number {
  * Ctrl held arrives with large ones. Dividing by a constant makes the mouse crawl or the pinch bolt,
  * so the delta is capped before it is applied.
  */
-export function zoomForWheel(current: number, deltaY: number): number {
+export function zoomForWheel(current: number, deltaY: number, range?: PdfZoomRange | null): number {
   const d = Math.max(-60, Math.min(60, deltaY));
-  return clampPdfZoom(current * Math.exp(-d / 320));
+  return clampPdfZoom(current * Math.exp(-d / 320), range);
 }
 
 export const isFitMode = (z: PdfZoom): z is "fit-width" | "fit-page" => typeof z === "string";
+
+// ---- THE ZOOM SLIDER'S SCALE ------------------------------------------------------------------
+//
+// LOGARITHMIC, for the reason the wheel zoom above is exponential: zoom is a PROPORTION. On a linear
+// 50%–600% track, 100%–200% — where nearly all reading happens — would be the first sixth of the
+// travel, and a pixel of drag near the top would be worth ten near the bottom. Here every equal stretch
+// of the track is an equal proportional change: one position unit is 1/100 of a doubling.
+//
+// Its ENDS are the renderer's range for the page on screen, so the far left is the smallest page that
+// range allows and the far right the largest — never a position that does nothing.
+/** Scale → slider position. */
+export const zoomToSlider = (z: number): number => Math.round(100 * Math.log2(Math.max(z, 1e-3)));
+/** The slider's two ends for a range. */
+// Rounded OUTWARD, so the two ends reach the range's ends exactly; anything beyond them is clamped.
+export const sliderBounds = (range: PdfZoomRange): { min: number; max: number } => ({
+  min: Math.floor(100 * Math.log2(range.min)),
+  max: Math.ceil(100 * Math.log2(range.max)),
+});
+/** Slider position → scale, held to the same range every other zoom path uses. */
+export const sliderToZoom = (v: number, range?: PdfZoomRange | null): number => clampPdfZoom(2 ** (v / 100), range);
 
 /** The value handed to the renderer's `zoom` attribute. */
 export const pdfZoomAttr = (z: PdfZoom): string => (isFitMode(z) ? z : String(z));
@@ -104,6 +126,102 @@ export const pdfZoomAttr = (z: PdfZoom): string => (isFitMode(z) ? z : String(z)
 /** Per-document memory. Zoom is a property of the document being read, not a global preference. */
 export const pdfZoomKey = (bookId: string): string => `pdf.zoom.${bookId}`;
 export const PDF_THEME_KEY = "pdf.theme";
+
+// ---- HOW A PDF IS READ: one continuous flow, or one page at a time ---------------------------
+//
+// THE MEASUREMENT THIS SETTING EXISTS FOR. In the paged renderer the amount a wheel gesture means is
+// a function of the zoom, because the only thing there is to scroll is the ONE page on screen. On a
+// 567-page PDF at a 705px viewport, measured in the running application:
+//
+//     fit-page (the default)   0 px of travel    -> the FIRST wheel notch turns the page
+//     fit-width              314 px of travel    -> four notches cross it, the fifth turns it
+//     zoom 2                 635 px              -> seven
+//     zoom 3                1305 px              -> twelve
+//
+// The wheel handling itself was measured correct at every delta. The defect is that a page boundary
+// was doing the job of a scroll boundary, so an ordinary gesture jumped a whole page. Scroll mode
+// removes the question by giving the reader a document to scroll; Pages mode keeps the paginated
+// reading some documents (and some readers) want.
+export type PdfViewMode = "scroll" | "pages";
+
+/** Scroll is the default: a PDF is a document, and a document scrolls. */
+export const PDF_VIEW_MODE_DEFAULT: PdfViewMode = "scroll";
+
+/**
+ * ONE GLOBAL KEY, matching the convention the rest of the reading settings follow.
+ *
+ * Sard deliberately has ONE level of reading preference (see `features/reader/perBookSettings.ts`:
+ * the per-book override was removed because two owners of the same field is what made a هيئة unable
+ * to change a book that had once been tuned). A per-book mode would reintroduce exactly that, so
+ * this is an installation preference like every other reading setting — and it needs no migration,
+ * because an absent key simply reads as the default.
+ */
+export const PDF_VIEW_MODE_KEY = "pdf_view_mode";
+
+export const isPdfViewMode = (v: string | null | undefined): v is PdfViewMode =>
+  v === "scroll" || v === "pages";
+
+/** What a stored value means. Anything unrecognised — including an absent key — is the default. */
+export const parsePdfViewMode = (v: string | null | undefined): PdfViewMode =>
+  isPdfViewMode(v) ? v : PDF_VIEW_MODE_DEFAULT;
+
+// ---- HOW MUCH OF THE READING SHEET SHOWS AROUND A PDF PAGE -----------------------------------
+//
+// The area around a PDF page is `.page-sheet`: the EPUB paper (its colour, edge shadow and grain),
+// which a PDF inherits but does not need, because a PDF page is its own paper. This setting changes
+// how much of that one layer is painted. It is presentation only — no size, zoom, gap or position
+// depends on it, so it applies live without reopening the book.
+export type PdfSurround = "normal" | "reduced" | "none";
+
+/** Normal is today's presentation, so an absent key changes nothing for anyone. */
+export const PDF_SURROUND_DEFAULT: PdfSurround = "normal";
+
+/** Global, like the PDF appearance: how a reader likes pages framed is not a property of one file. */
+export const PDF_SURROUND_KEY = "pdf_surround";
+
+export const isPdfSurround = (v: string | null | undefined): v is PdfSurround =>
+  v === "normal" || v === "reduced" || v === "none";
+
+export const parsePdfSurround = (v: string | null | undefined): PdfSurround =>
+  isPdfSurround(v) ? v : PDF_SURROUND_DEFAULT;
+
+// ---- HOW FAR THE SURROUND EXTENDS BEYOND THE PAGE ------------------------------------------------
+//
+// The width, in CSS px, of the surround on EACH side of the page — a frame that follows the page at every
+// zoom. ABSENT means "as it has always been": the sheet spans the whole reading column, exactly as before
+// this setting existed, so nobody's reader changes until they move the slider. Global, like the rest.
+export const PDF_FRAME_KEY = "pdf_surround_frame";
+
+/**
+ * WHERE THE FRAME GOES. Pure geometry, in viewport px, from boxes the Reader can measure:
+ * the reading area (the desk beside any open panel), the sheet, the page-host, and the renderer's own
+ * report of where the page sits across its box. The frame is `frame` px of surround on each side of the
+ * page, never wider than the reading area, and never pushed off it.
+ *
+ * `max` is the frame that reaches the whole reading area for this page at this zoom: the slider's far
+ * end. `current` is where the untouched surround (the whole sheet) sits on that scale, so an untouched
+ * slider shows the look the reader already has.
+ */
+export function pdfBand(o: {
+  areaLeft: number; areaRight: number; sheetLeft: number; sheetWidth: number; hostLeft: number; hostWidth: number;
+  boxWidth: number; pageWidth: number; pageCenterX: number; frame: number | null;
+}): { width: number; x: number; max: number; current: number } {
+  const areaW = Math.max(0, o.areaRight - o.areaLeft);
+  const max = Math.max(0, Math.floor((areaW - o.pageWidth) / 2));
+  const current = Math.min(max, Math.max(0, Math.floor((o.sheetWidth - o.pageWidth) / 2)));
+  const f = Math.min(max, Math.max(0, o.frame ?? current));
+  const width = Math.min(areaW, o.pageWidth + 2 * f);
+  const pageCenter = o.hostLeft + (o.hostWidth - o.boxWidth) / 2 + o.pageCenterX;
+  const center = Math.min(o.areaRight - width / 2, Math.max(o.areaLeft + width / 2, pageCenter));
+  return { width, x: center - o.sheetLeft, max, current };
+}
+
+/** A stored frame width, or null for the untouched (whole-column) surround. */
+export const parsePdfFrame = (v: string | null | undefined): number | null => {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+};
 
 export function parseStoredZoom(raw: string | null | undefined): PdfZoom | null {
   if (!raw) return null;

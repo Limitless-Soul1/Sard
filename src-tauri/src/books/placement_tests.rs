@@ -766,3 +766,94 @@ fn a_real_book_is_still_a_duplicate() {
 
     let _ = std::fs::remove_dir_all(&base);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// THE CENTRAL QUESTION THIS WHOLE DESIGN ANSWERS: can a book the reader owns be persisted and yet
+// discoverable by nothing? These two close the last states of the matrix.
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+
+/// B/M — A LEGITIMATE BOOK WITH NO PLACEMENT IS STILL DISCOVERABLE.
+///
+/// Filing is best-effort, so this state is reachable: the row is committed and `settle_unfiled` then
+/// fails. It must not be the invisible state, and it is not — the unscoped library asks only what a
+/// book IS, never where it sits, so the book is listed and counted while unfiled. A shelf-scoped view
+/// cannot show it, which is correct (it is on no shelf), and two deterministic paths put that right:
+/// the launch sweep, and the reader's own retry.
+#[test]
+fn a_legitimate_book_is_never_hidden_from_every_discovery_path() {
+    let (conn, base, id) = import_one("discover", "Discoverable");
+
+    conn.execute("DELETE FROM placements WHERE book_id = ?1", [&id]).unwrap();
+    assert!(containers(&conn, &id).is_empty(), "the fixture must be placeless");
+
+    // The unscoped library — what the reader sees with no shelf chosen, and what the count is made of.
+    let listed = crate::library::list_books(&conn, "title", "asc", None, None, None).unwrap();
+    assert!(
+        listed.iter().any(|b| b.id == id),
+        "a placeless book vanished from the unscoped library — this is the invisible state"
+    );
+    assert_eq!(listed.len(), 1, "and it is counted");
+
+    // A shelf-scoped view legitimately cannot: it is on no shelf.
+    let on_shelf =
+        crate::library::list_books(&conn, "title", "asc", None, Some("__unshelved"), None).unwrap();
+    assert!(on_shelf.is_empty(), "nothing holds it yet");
+
+    // And the launch sweep restores the placement deterministically.
+    let filed = crate::library::placement::ensure(&conn).unwrap();
+    assert_eq!(filed, 1, "the sweep files exactly this book");
+    assert_eq!(containers(&conn, &id), vec![UNFILED.to_string()], "and it is filed afterwards");
+    let after =
+        crate::library::list_books(&conn, "title", "asc", None, Some("__unshelved"), None).unwrap();
+    assert!(after.iter().any(|b| b.id == id), "now the shelf view shows it too");
+
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+/// E — A BRIDGE ROW CARRYING CHILD STATE IS STILL NOT A BOOK.
+///
+/// A reader can open a file that was never imported, so the bridge can accumulate the things an open
+/// book accumulates. None of that makes it something the library must show, and none of it may block
+/// the import that would make it real.
+#[test]
+fn a_bridge_row_with_child_state_is_still_not_a_book() {
+    let (base, src, id) = fixture("childbridge", "Bridged");
+    let conn = fresh_db();
+
+    super::ensure(&conn, &id, &src.to_string_lossy()).unwrap();
+    crate::library::progress_save(&conn, &id, "epubcfi(/6/4!/2/1:2)", 0.2).unwrap();
+    conn.execute(
+        "INSERT INTO highlights(id, book_id, start_cfi, end_cfi, color, text_excerpt, created_at) \
+         VALUES('hb',?1,'s','e','amber','marked',1)",
+        [&id],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO bookmarks(id, book_id, locator_cfi, created_at) VALUES('bb',?1,'cfi',1)",
+        [&id],
+    )
+    .unwrap();
+
+    assert!(
+        crate::library::list_books(&conn, "title", "asc", None, None, None).unwrap().is_empty(),
+        "marks do not turn scaffolding into a book"
+    );
+    assert!(containers(&conn, &id).is_empty(), "nor file it");
+    assert_eq!(crate::library::placement::ensure(&conn).unwrap(), 0, "nor does the sweep");
+
+    // And it still does not block the import that makes it real — with every mark kept.
+    let res = import_books(&conn, &base, &[src.to_string_lossy().into_owned()]);
+    assert_eq!(res[0].status, "imported", "{:?}", res[0].message);
+    let keep = |t: &str| -> i64 {
+        conn.query_row(&format!("SELECT COUNT(*) FROM {t} WHERE book_id = ?1"), [&id], |r| r.get(0))
+            .unwrap()
+    };
+    assert_eq!(keep("reading_progress"), 1, "the position survives");
+    assert_eq!(keep("highlights"), 1, "the highlight survives");
+    assert_eq!(keep("bookmarks"), 1, "the bookmark survives");
+    assert_eq!(containers(&conn, &id), vec![UNFILED.to_string()], "and it is filed now");
+    let rows: i64 = conn.query_row("SELECT COUNT(*) FROM books WHERE id=?1", [&id], |r| r.get(0)).unwrap();
+    assert_eq!(rows, 1, "one row, filled in place");
+
+    let _ = std::fs::remove_dir_all(&base);
+}

@@ -35,7 +35,28 @@ use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
+/// THE TWO KINDS OF ROW `books` HOLDS, stated once so nothing has to guess.
+///
+/// A BOOK is what the reader added: it always carries a format (a SQL literal in both importers) and
+/// always carries a title (the EPUB path falls back to the filename stem, the PDF path uses it
+/// outright), along with its hash, size and metadata.
+///
+/// A BRIDGE is what `ensure` writes so reading progress has a parent to point at: an id, a path and
+/// a timestamp, and nothing else at all. It is not a book, it was never added to the library, and it
+/// must not be counted, drawn, filed, or recognised by de-duplication as one.
+///
+/// The disjunction rather than `format IS NOT NULL` alone is deliberate insurance for databases that
+/// predate this file: either column proves a row was written by an importer, so a legacy row missing
+/// one of them is still read as the book it is. A bridge has neither, and only a bridge has neither.
+pub const IS_A_BOOK: &str = "(b.format IS NOT NULL OR b.title IS NOT NULL)";
+
 /// Insert a minimal `books` row if one doesn't already exist (FK bridge for progress).
+///
+/// DELIBERATELY UNFILED AND DELIBERATELY UNSEEN. A bridge is scaffolding, not a book: filing it would
+/// put an untitled, coverless, authorless card on the reader's shelves for a book they never added,
+/// and `IS_A_BOOK` keeps it out of the library's queries for the same reason. The invariant this
+/// design needs is not "every row is filed" — it is "every row the reader can SEE is filed", and the
+/// way to satisfy that for a bridge is to leave it out of sight rather than to dress it as a book.
 pub fn ensure(conn: &Connection, id: &str, file_path: &str) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT OR IGNORE INTO books(id, file_path, added_at) VALUES(?1, ?2, ?3)",
@@ -131,7 +152,7 @@ fn collect_books(dir: &Path, depth: u32, out: &mut Vec<String>) {
 fn import_pdf(conn: &Connection, app_data_dir: &Path, name: &str, bytes: &[u8]) -> ImportResult {
     let id = hex_sha256(bytes);
     if let Ok(Some(existing)) = book_title(conn, &id) {
-        return ImportResult::of("duplicate", &id, &existing, Some("Already in your library".into()));
+        return duplicate_of(conn, &id, &existing);
     }
     let title = name.to_string();
     let library_dir = app_data_dir.join("library");
@@ -147,9 +168,20 @@ fn import_pdf(conn: &Connection, app_data_dir: &Path, name: &str, bytes: &[u8]) 
         conn,
         &id,
         // RAWY-178 (AUD-12): title_fold via afold() so the library search folds Arabic consistently.
+        // THE IMPORT FILLS A BRIDGE ROW RATHER THAN COLLIDING WITH IT. A row may already exist for
+        // this content id without being a book — see `book_title`. A plain INSERT would fail on the
+        // primary key, and DELETE-then-INSERT would take the reader's reading position with it
+        // (`reading_progress` cascades), so the import writes over the bridge in place. Everything
+        // the import knows wins; `last_opened_at` is deliberately absent from the SET list, because
+        // a reader who has already been reading this file has a genuine one and the import has none.
         "INSERT INTO books(id, file_path, file_hash, format, title, author, language, dir, \
                            cover_path, size_bytes, added_at, last_opened_at, title_fold, author_fold) \
-         VALUES(?1,?2,?3,'pdf',?4,NULL,NULL,NULL,NULL,?5,?6,NULL, afold(?4), NULL)",
+         VALUES(?1,?2,?3,'pdf',?4,NULL,NULL,NULL,NULL,?5,?6,NULL, afold(?4), NULL) \
+         ON CONFLICT(id) DO UPDATE SET \
+           file_path=excluded.file_path, file_hash=excluded.file_hash, format=excluded.format, \
+           title=excluded.title, author=excluded.author, language=excluded.language, \
+           dir=excluded.dir, cover_path=excluded.cover_path, size_bytes=excluded.size_bytes, \
+           added_at=excluded.added_at, title_fold=excluded.title_fold, author_fold=excluded.author_fold",
         rusqlite::params![id, managed.to_string_lossy(), id, title, size, now_unix()],
     );
     match res {
@@ -197,7 +229,7 @@ fn import_one(conn: &Connection, app_data_dir: &Path, src: &str) -> ImportResult
     // Stable content-hash id → free de-duplication.
     let id = hex_sha256(&bytes);
     if let Ok(Some(existing)) = book_title(conn, &id) {
-        return ImportResult::of("duplicate", &id, &existing, Some("Already in your library".into()));
+        return duplicate_of(conn, &id, &existing);
     }
 
     // Parse the OPF for title/author/language/direction/cover (all best-effort).
@@ -296,10 +328,20 @@ fn import_one(conn: &Connection, app_data_dir: &Path, src: &str) -> ImportResult
         // consistently with the in-book search (كتاب ⇒ كِتاب, أحمد ⇔ احمد).
         // RESILIENCE-1 / WP-2: five additive columns (migration 15). Every pre-existing column is
         // written exactly as before, so a well-formed book's row is byte-identical to v1.1.0.
+        // Fills a bridge row in place rather than colliding with it — see `import_pdf` for why the
+        // upsert exists at all, and why `last_opened_at` is not among the updated columns.
         "INSERT INTO books(id, file_path, file_hash, format, title, author, language, dir, \
                            cover_path, size_bytes, added_at, last_opened_at, title_fold, author_fold, \
                            producer, script_detected, toc_degenerate, spine_fragmented, meta_provenance) \
-         VALUES(?1,?2,?3,'epub',?4,?5,?6,?7,?8,?9,?10,NULL, afold(?4), afold(?5), ?11,?12,?13,?14,?15)",
+         VALUES(?1,?2,?3,'epub',?4,?5,?6,?7,?8,?9,?10,NULL, afold(?4), afold(?5), ?11,?12,?13,?14,?15) \
+         ON CONFLICT(id) DO UPDATE SET \
+           file_path=excluded.file_path, file_hash=excluded.file_hash, format=excluded.format, \
+           title=excluded.title, author=excluded.author, language=excluded.language, \
+           dir=excluded.dir, cover_path=excluded.cover_path, size_bytes=excluded.size_bytes, \
+           added_at=excluded.added_at, title_fold=excluded.title_fold, author_fold=excluded.author_fold, \
+           producer=excluded.producer, script_detected=excluded.script_detected, \
+           toc_degenerate=excluded.toc_degenerate, spine_fragmented=excluded.spine_fragmented, \
+           meta_provenance=excluded.meta_provenance",
         rusqlite::params![
             id,
             managed.to_string_lossy(),
@@ -362,9 +404,40 @@ fn insert_placed(
     Ok(())
 }
 
+/// The title of the BOOK with this id, or `None` when the reader has no such book.
+///
+/// IT ASKS WHETHER THE READER HAS THE BOOK, NOT WHETHER A ROW EXISTS, and the difference is the whole
+/// defect this guards. It used to ask only the second question, and `COALESCE(title, id)` then made a
+/// bridge row answer with its own id — a non-NULL string, indistinguishable here from a real title.
+/// An import of a book that had a bridge row was therefore refused as "Already in your library",
+/// while the library could not show it and did not count it. The row satisfied de-duplication and
+/// nothing else, and no later attempt could ever succeed: the book was unreachable for good.
+///
+/// `IS_A_BOOK` is the one definition of the difference; see it for why it is a disjunction.
 fn book_title(conn: &Connection, id: &str) -> rusqlite::Result<Option<String>> {
-    conn.query_row("SELECT COALESCE(title, id) FROM books WHERE id = ?1", [id], |r| r.get(0))
-        .optional()
+    conn.query_row(
+        &format!("SELECT COALESCE(b.title, b.id) FROM books b WHERE b.id = ?1 AND {IS_A_BOOK}"),
+        [id],
+        |r| r.get(0),
+    )
+    .optional()
+}
+
+/// The reader has this book already — so say so, and make sure it is somewhere they can find it.
+///
+/// THE RETRY IS THE REPAIR. Filing is best-effort by design: a book whose placement could not be
+/// written is unfiled, not lost, because a filing clerk must never get a veto over whether the reader
+/// owns their book. But "unfiled" and "invisible under a shelf filter" are the same thing to someone
+/// looking at their library, and the reader's own response to a book they cannot see is to add it
+/// again. That attempt arrives here, which makes this the one place that knows both that the book
+/// exists and that the reader is asking for it — so it reconciles the placement before answering.
+///
+/// Idempotent and cheap: `settle_unfiled` adds the unfiled placement only when nothing holds the
+/// book, and never moves a book that is already on a shelf. A book that was filed correctly is
+/// touched in no way at all, which is what keeps this safe to run on every duplicate.
+fn duplicate_of(conn: &Connection, id: &str, title: &str) -> ImportResult {
+    let _ = crate::library::placement::settle_unfiled(conn, id);
+    ImportResult::of("duplicate", id, title, Some("Already in your library".into()))
 }
 
 // ---- EPUB parsing (container.xml → OPF) -----------------------------------

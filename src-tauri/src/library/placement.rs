@@ -626,12 +626,20 @@ pub fn move_between(
 /// the unfiled container at the end, in title order so an import of many arrives in a sensible run
 /// rather than an arbitrary one. Cheap enough to run at every launch: one query that finds nothing.
 pub fn ensure(conn: &Connection) -> rusqlite::Result<usize> {
-    let mut stmt = conn.prepare(
+    // BOOKS ONLY. `books` also holds bridge rows — scaffolding written so reading progress has a
+    // parent, for a file the reader never added (see `books::IS_A_BOOK`). Sweeping those into the
+    // unfiled run is how a bridge became a visible, untitled, coverless card on the next launch:
+    // the sweep was the only thing that ever filed one, and filing it is what made it look like a
+    // book. They are left alone here, and the library's own queries leave them out for the same
+    // reason. Nothing is lost by that: the moment the reader imports the file, the import fills the
+    // bridge in place and files it like any other book.
+    let mut stmt = conn.prepare(&format!(
         "SELECT b.id FROM books b LEFT JOIN placements p ON p.book_id = b.id \
-         WHERE p.book_id IS NULL \
+         WHERE p.book_id IS NULL AND {} \
          ORDER BY LOWER(COALESCE((SELECT value FROM metadata_overrides \
                                    WHERE book_id = b.id AND field = 'title'), b.title, '')), b.id",
-    )?;
+        crate::books::IS_A_BOOK
+    ))?;
     let missing: Vec<String> = stmt.query_map([], |r| r.get::<_, String>(0))?.collect::<Result<_, _>>()?;
     if missing.is_empty() {
         return Ok(0);

@@ -22,6 +22,8 @@
   <a href="#overview">Overview</a> ·
   <a href="#key-features">Features</a> ·
   <a href="#screenshots">Screenshots</a> ·
+  <a href="#discord-activity">Discord Activity</a> ·
+  <a href="#profiles">Profiles</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#text-to-speech">Read-aloud</a> ·
   <a href="#build">Build</a> ·
@@ -71,27 +73,48 @@ whether hiding a toolbar shifts the text under it. The priority order is
 - Diacritics: show, dim or hide
 - Immersive scrolling — the toolbar, the read-aloud transport and the scrollbar recede as you
   read into the page, and return when you scroll back
+- Furthest-read tracking — an unobtrusive return pill lets you jump back to where you left off
+- Text replacements — substitute words or phrases throughout a book cleanly, toggleable anytime
 
 **Library**
+- Five viewing modes: Grid, Covers, Spines, Details, and Vista
 - Import single files or a whole folder; SHA-based deduplication
-- Grid, list and shelf-row views; user-defined shelves; sort and filter
+- User-defined shelves; sort and filter
 - Covers extracted from the book, or generated from its title when there is none
 - Your own image behind the library and around the reading desk, with presence, blur and focal point
 
-**Annotation**
-- Highlights in eight inks tuned per theme, notes with titles and tags, bookmarks
-- **References** — a note bound to a word or phrase, marked wherever that phrase occurs
-- A cross-book inbox for every highlight and note you have ever made
-- Photo cards: turn a passage into a shareable image in five papers and four formats
+**Profiles**
+- Complete visual presets: library and reading colors, custom paper tints, backgrounds, fonts,
+  bookmark shapes, reference styles, and reading voices
+- Portable — export and import reading profiles via single-file drag-and-drop
+
+**Annotation & Deposits**
+- Highlights in eight inks tuned per theme (or custom colors), notes with titles and tags,
+  bookmarks with customizable shapes
+- **References** — a note bound to a word or phrase, marked wherever that phrase occurs with
+  custom twin rules
+- **Reading Deposits** — share a book together with chosen highlights, notes, references, and
+  replacements as a clean, portable bundle without leaking private reading positions
+- A cross-book inbox and archive for every highlight and note you have ever made
+- Image cards: turn passages or standalone thoughts into shareable cards with custom backgrounds,
+  papers, and typography
 
 **Read-aloud**
 - Microsoft Edge's online neural voices
 - Sentence spotlight and word-level highlighting that follow the audio
 - A transport that shrinks from a full pill to a single calligraphic stroke in the margin
+- Punctuation and symbol pronunciation control; chapter continuation
+
+**Discord Activity**
+- Real-time Rich Presence on your Discord profile showing your current book, chapter, and
+  reading percentage, or library browsing
+- Privacy-first: local IPC connection with Discord desktop app, zero network telemetry, and four
+  granular privacy switches
 
 **Everywhere**
-- 16 themes, including Moonlit Sky with its own decorative layer
+- 16 built-in themes (including Moonlit Sky), plus full custom palette and paper creation
 - Full English and Arabic interface, mirrored end to end
+- Custom font importing (.otf, .ttf, .woff, .woff2) with interactive specimen preview
 - Keyboard-reachable controls with visible focus
 
 ## Screenshots
@@ -205,6 +228,21 @@ in the app to re-share later.
   <img src="docs/screenshots/quote.png" alt="The photo card composer: a portrait card with a quotation, beside controls for card style, paper, format and text size" width="880">
 </p>
 
+### Discord Activity
+
+Show what you are reading on your Discord profile with real-time progress, or share that you are exploring your library. Sard communicates with your local Discord desktop client through a private, local IPC pipe — no telemetry, no accounts, and four independent switches so you share only what you want.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/discord-activity-settings.png" alt="Discord Rich Presence showing current book title, chapter and reading percentage"></td>
+<td width="50%"><img src="docs/screenshots/discord-activity-reading.png" alt="Discord Rich Presence showing the user browsing the library in Sard"></td>
+</tr>
+<tr>
+<td><b>In-book reading</b> — displays the book title, current chapter, reading percentage, and elapsed session time.</td>
+<td><b>Library browsing</b> — displays that you are browsing your library when no book is open.</td>
+</tr>
+</table>
+
 <p align="center">
   <img src="src-tauri/icons/Sard-.png" alt="" width="140">
 </p>
@@ -221,24 +259,28 @@ in the app to re-share later.
 | EPUB | [foliate-js](https://github.com/johnfactotum/foliate-js), vendored and pinned |
 | PDF | [PDF.js](https://github.com/mozilla/pdf.js) |
 | Speech | Microsoft Edge online neural voices |
-| Type | Amiri · Noto Naskh Arabic · Aref Ruqaa · IBM Plex Sans (+ Arabic) · Literata · Source Serif 4 · Inter |
+| Presence | Discord Rich Presence via local IPC ([discord-rich-presence](https://crates.io/crates/discord-rich-presence)) |
+| Type | Amiri · Noto Naskh Arabic · Aref Ruqaa · IBM Plex Sans (+ Arabic) · Literata · Source Serif 4 · Inter, plus custom user fonts |
 
 ## Architecture
 
 ```
 ┌── React + TypeScript ──────────────────────────────┐
 │  features/   library · reader · settings · photo   │
+│              profiles · deposit · fonts            │
 │  reader-engine/  the seam onto foliate-js          │
 │  theme/      one token set → chrome AND book       │
 │  i18n/       en + ar                               │
 └───────────────────────┬────────────────────────────┘
-                        │  52 IPC commands
+                        │  IPC commands
 ┌───────────────────────┴────────────────────────────┐
 │  Rust core (src-tauri/src)                         │
 │  commands/   the single frontend↔core boundary     │
 │  library/ books/ metadata/   import + catalogue    │
 │  db/        SQLite, one shared connection          │
 │  tts.rs     Edge read-aloud orchestration          │
+│  presence.rs Discord Rich Presence local worker    │
+│  deposit/   reading trace packaging & manifest     │
 │  backgrounds/  decode, resample, encode            │
 └────────────────────────────────────────────────────┘
 ```
@@ -342,13 +384,54 @@ of blotting it. Themes apply app-wide, or per-book if you prefer each book to ke
 the library can hold a different theme from the reader. A contrast guard flags any custom text
 colour too faint to read on the paper you have chosen.
 
+## Discord Activity
+
+Sard connects to Discord to reflect your reading journey in real time:
+
+- **What appears**: Sard’s hoopoe mark, the book title, your current chapter, whole-book progress percentage, and elapsed reading time. When browsing your collection without an active book, it shows that you are exploring the library.
+- **Granular privacy controls**: Under **Settings → Discord Activity**, four independent toggles govern what leaves your machine:
+  1. *Show reading activity on Discord* — master on/off switch; turning it off clears your Discord activity immediately.
+  2. *Show book title* — toggle whether the title of the book is shared.
+  3. *Show chapter and progress* — toggle whether your chapter title and percentage completion are displayed.
+  4. *Show browsing activity* — toggle the "Browsing the library" status when no book is open.
+- **Strictly local IPC**: Sard never contacts Discord's remote servers and bundles no GameSDK or binary DLLs. It speaks directly to the Discord desktop application running on your own machine via a local named pipe / IPC socket. The worker runs on an isolated background thread so connection probes never stall the interface, and the privacy gate is validated in the Rust core before any bytes reach the pipe.
+
+## Profiles
+
+Beyond the sixteen ready-made themes, Sard lets you craft complete **reading profiles** that encapsulate the entire visual and reading experience:
+
+- **Dual palettes**: Independent color sets for the library and the reading surface.
+- **Custom papers**: Pick any background color, with contrast checked automatically against readable thresholds.
+- **Atmosphere**: Pair your palette with a personal background image, tuning presence, blur, and focal point.
+- **Typography & geometry**: Set per-script fonts, measure, margins, line leading, and page width.
+- **Mark styles**: Choose the shape of your bookmarks and the exact twin-rule styling of your references.
+- **Voice selection**: Tie your preferred reading voice and playback speed directly to the profile.
+
+Profiles are portable: export your look to a single `.sard` profile package or import one by dragging and dropping it into the window.
+
+## Reading deposits & replacements
+
+Books are often read together. A **Reading Deposit** (*وديعة القراءة*) lets you share your engagement with a book — highlights, notes, references, and word replacements — as a portable `.sard` package.
+
+- **Selective unbinding**: The deposit sheet maps your reading marks across the book. Everything is included by default, and you unbind whatever you prefer to keep private.
+- **Deliberate boundary**: What travels is the reading itself. Reading position, progress percentages, bookmarks, database row IDs, and global tags are strictly excluded.
+- **Replacements** (*بدائل القراءة*): Correct an OCR error, adjust terminology, or swap names throughout a book cleanly. Replacements can be toggled on or off at any moment without modifying the underlying book file.
+
+## Custom fonts
+
+Bring your own typefaces to the reading desk:
+
+- **Drag-and-drop import**: Drop any `.otf`, `.ttf`, `.woff`, or `.woff2` font file directly onto Sard to add it to your library.
+- **Font specimen preview**: Inspect the font with an interactive specimen sheet featuring sample texts in Arabic and Latin across sizes and weights before reading.
+- **Independent scripts**: Assign distinct custom fonts to Arabic and Latin text independently to maintain typographic harmony across multilingual books.
+
 ## Installation
 
 Download the latest installer from the [**Releases**](https://github.com/Limitless-Soul1/Sard/releases)
 page:
 
-- **`Sard_1.0.0_x64-setup.exe`** — NSIS installer, the usual choice
-- **`Sard_1.0.0_x64_en-US.msi`** — MSI, for deployment tooling
+- **`Sard_1.3.0_x64-setup.exe`** — NSIS installer, the usual choice
+- **`Sard_1.3.0_x64_en-US.msi`** — MSI, for deployment tooling
 
 Requirements: **Windows 10 or 11 (x64)**. The WebView2 runtime is preinstalled on current Windows;
 on older builds the installer will prompt for it.
@@ -431,7 +514,6 @@ Conventions worth knowing before a first patch:
 - macOS and Linux builds
 - A wider EPUB conformance pass — footnotes, media overlays, complex fixed-layout
 - Deeper PDF support: annotation on the page, text reflow where the document allows it
-- Import and export of annotations in an open format
 - Dictionary and translation lookup on selection
 - Accessibility: full screen-reader labelling and a keyboard path to every action
 

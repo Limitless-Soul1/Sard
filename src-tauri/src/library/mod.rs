@@ -3,6 +3,12 @@
 //! RAWY-15 adds the Library home reads (`list_books`, `collections_list`) + a dev seed.
 
 #[cfg(test)]
+mod annotation_tests; // the four marks, who owns them, and what a delete takes
+#[cfg(test)]
+mod archive_tests; // the archive speaks of books, and a bridge row is not one
+#[cfg(test)]
+mod archive_breakage_tests; // rows the API cannot write, which the archive must still survive
+#[cfg(test)]
 mod wp3_tests; // RESILIENCE-1 / WP-3 — the database is the single source of a book's name
 
 pub mod placement;
@@ -1199,7 +1205,9 @@ pub fn bookmarks_all(conn: &Connection) -> rusqlite::Result<Vec<BookmarkItem>> {
             COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='dir'), b.dir), \
             k.chapter_label, k.fraction, k.label, k.color, k.locator_cfi, k.created_at \
          FROM bookmarks k JOIN books b ON b.id = k.book_id \
-         ORDER BY k.created_at DESC"
+         WHERE {book} \
+         ORDER BY k.created_at DESC",
+        book = crate::books::IS_A_BOOK
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], |r| {
@@ -1555,13 +1563,15 @@ pub fn annotations_all(conn: &Connection) -> rusqlite::Result<Vec<AnnoItem>> {
             h.chapter_label, h.color, h.text_excerpt, n.body, h.start_cfi, h.created_at, n.id, {tags_sub}, n.title, \n            {hl_sender}  \
          FROM highlights h JOIN books b ON b.id = h.book_id \
          LEFT JOIN notes n ON n.highlight_id = h.id \
+         WHERE {book} \
          UNION ALL \
          SELECT n.id, 'note', n.book_id, {OV_TITLE}, b.file_path, \
             COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='dir'), b.dir), \
             n.chapter_label, n.color, n.body, NULL, n.locator_cfi, n.created_at, n.id, {tags_sub}, n.title, \n            {note_sender}  \
          FROM notes n JOIN books b ON b.id = n.book_id \
-         WHERE n.highlight_id IS NULL \
-         ORDER BY created_at DESC"
+         WHERE n.highlight_id IS NULL AND {book} \
+         ORDER BY created_at DESC",
+        book = crate::books::IS_A_BOOK
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], anno_item)?;
@@ -2330,17 +2340,39 @@ pub fn rep_delete(conn: &Connection, id: &str) -> rusqlite::Result<()> {
 /// shelf level of the References & Replacements surface, which lists exactly the books the reader has
 /// made something in. Done in SQL so the frontend never loads every rule of every book just to count.
 pub fn refs_reps_books(conn: &Connection) -> rusqlite::Result<Vec<RefsRepsBook>> {
-    let mut stmt = conn.prepare(
-        "SELECT b.id, b.title, b.author, \
+    // THE CANONICAL NAME, RESOLVED IN THE QUERY AS ITS SIBLINGS RESOLVE IT. This was the one archive
+    // query that read `b.title` and `b.author` raw; `bookmarks_all` and `annotations_all` both go
+    // through `OV_TITLE`/`OV_AUTHOR`, the override laid over the stored value. So a renamed book came
+    // back from THIS query under its old name while the same book came back from the other two under
+    // the new one — a query-level inconsistency, measured on the query results and not on the screen.
+    // The shelf itself never drew the stale name: it renders the title from `list_books`, which has
+    // always resolved the override, and nothing in the frontend reads `RefsRepsBook.title` at all. The
+    // author had the same fault on the same line, and is resolved the same way.
+    //
+    // THE PRODUCTION-VISIBLE FAULT WAS THE MAPPING, NOT THE NAME. `RefsRepsBook.title` is a
+    // non-optional String read with `r.get()?`, so a NULL here is not a blank plate — it is an
+    // `InvalidColumnType` that propagates out of `rows.collect()` and empties this surface for EVERY
+    // book (the caller catches it into `[]`, so the reader sees nothing and is told nothing). No
+    // released importer has ever written a NULL title — both have always fallen back to the filename —
+    // so no book Sard wrote can reach that state; a BRIDGE row, which has no title by definition,
+    // could, and the preceding commit put those rows out of range. The `COALESCE` closes the same door
+    // at this end, so one unnameable row can never take the surface down with it.
+    //
+    // The empty string invents nothing and migrates nothing: the wire contract stays `string` as the
+    // frontend declares it, and a title-less book is not given a name it does not have.
+    let mut stmt = conn.prepare(&format!(
+        "SELECT b.id, COALESCE({OV_TITLE}, ''), {OV_AUTHOR}, \
                 (SELECT COUNT(*) FROM refs r WHERE r.book_id = b.id) AS n_refs, \
                 (SELECT COUNT(*) FROM reps p WHERE p.book_id = b.id) AS n_reps, \
                 MAX(COALESCE((SELECT MAX(updated_at) FROM refs r WHERE r.book_id = b.id), 0), \
                     COALESCE((SELECT MAX(updated_at) FROM reps p WHERE p.book_id = b.id), 0)) AS touched \
          FROM books b \
-         WHERE EXISTS(SELECT 1 FROM refs r WHERE r.book_id = b.id) \
-            OR EXISTS(SELECT 1 FROM reps p WHERE p.book_id = b.id) \
+         WHERE {book} \
+           AND (EXISTS(SELECT 1 FROM refs r WHERE r.book_id = b.id) \
+             OR EXISTS(SELECT 1 FROM reps p WHERE p.book_id = b.id)) \
          ORDER BY touched DESC",
-    )?;
+        book = crate::books::IS_A_BOOK
+    ))?;
     let rows = stmt.query_map([], |r| {
         Ok(RefsRepsBook {
             id: r.get(0)?,

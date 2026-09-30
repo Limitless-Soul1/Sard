@@ -7,6 +7,8 @@ mod annotation_tests; // the four marks, who owns them, and what a delete takes
 #[cfg(test)]
 mod archive_tests; // the archive speaks of books, and a bridge row is not one
 #[cfg(test)]
+mod archive_breakage_tests; // rows the API cannot write, which the archive must still survive
+#[cfg(test)]
 mod wp3_tests; // RESILIENCE-1 / WP-3 — the database is the single source of a book's name
 
 pub mod placement;

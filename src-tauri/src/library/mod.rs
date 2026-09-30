@@ -3,6 +3,8 @@
 //! RAWY-15 adds the Library home reads (`list_books`, `collections_list`) + a dev seed.
 
 #[cfg(test)]
+mod archive_tests; // the archive speaks of books, and a bridge row is not one
+#[cfg(test)]
 mod wp3_tests; // RESILIENCE-1 / WP-3 — the database is the single source of a book's name
 
 pub mod placement;
@@ -1199,7 +1201,9 @@ pub fn bookmarks_all(conn: &Connection) -> rusqlite::Result<Vec<BookmarkItem>> {
             COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='dir'), b.dir), \
             k.chapter_label, k.fraction, k.label, k.color, k.locator_cfi, k.created_at \
          FROM bookmarks k JOIN books b ON b.id = k.book_id \
-         ORDER BY k.created_at DESC"
+         WHERE {book} \
+         ORDER BY k.created_at DESC",
+        book = crate::books::IS_A_BOOK
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], |r| {
@@ -1555,13 +1559,15 @@ pub fn annotations_all(conn: &Connection) -> rusqlite::Result<Vec<AnnoItem>> {
             h.chapter_label, h.color, h.text_excerpt, n.body, h.start_cfi, h.created_at, n.id, {tags_sub}, n.title, \n            {hl_sender}  \
          FROM highlights h JOIN books b ON b.id = h.book_id \
          LEFT JOIN notes n ON n.highlight_id = h.id \
+         WHERE {book} \
          UNION ALL \
          SELECT n.id, 'note', n.book_id, {OV_TITLE}, b.file_path, \
             COALESCE((SELECT value FROM metadata_overrides WHERE book_id=b.id AND field='dir'), b.dir), \
             n.chapter_label, n.color, n.body, NULL, n.locator_cfi, n.created_at, n.id, {tags_sub}, n.title, \n            {note_sender}  \
          FROM notes n JOIN books b ON b.id = n.book_id \
-         WHERE n.highlight_id IS NULL \
-         ORDER BY created_at DESC"
+         WHERE n.highlight_id IS NULL AND {book} \
+         ORDER BY created_at DESC",
+        book = crate::books::IS_A_BOOK
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], anno_item)?;
@@ -2330,17 +2336,19 @@ pub fn rep_delete(conn: &Connection, id: &str) -> rusqlite::Result<()> {
 /// shelf level of the References & Replacements surface, which lists exactly the books the reader has
 /// made something in. Done in SQL so the frontend never loads every rule of every book just to count.
 pub fn refs_reps_books(conn: &Connection) -> rusqlite::Result<Vec<RefsRepsBook>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT b.id, b.title, b.author, \
                 (SELECT COUNT(*) FROM refs r WHERE r.book_id = b.id) AS n_refs, \
                 (SELECT COUNT(*) FROM reps p WHERE p.book_id = b.id) AS n_reps, \
                 MAX(COALESCE((SELECT MAX(updated_at) FROM refs r WHERE r.book_id = b.id), 0), \
                     COALESCE((SELECT MAX(updated_at) FROM reps p WHERE p.book_id = b.id), 0)) AS touched \
          FROM books b \
-         WHERE EXISTS(SELECT 1 FROM refs r WHERE r.book_id = b.id) \
-            OR EXISTS(SELECT 1 FROM reps p WHERE p.book_id = b.id) \
+         WHERE {book} \
+           AND (EXISTS(SELECT 1 FROM refs r WHERE r.book_id = b.id) \
+             OR EXISTS(SELECT 1 FROM reps p WHERE p.book_id = b.id)) \
          ORDER BY touched DESC",
-    )?;
+        book = crate::books::IS_A_BOOK
+    ))?;
     let rows = stmt.query_map([], |r| {
         Ok(RefsRepsBook {
             id: r.get(0)?,

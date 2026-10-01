@@ -2058,6 +2058,14 @@ export class FoliateController {
   // RAWY-122 "re-fires on the next tap" bug). If the selection is unchanged across the gesture, it's a
   // dismiss, not a new selection: we clear it instead of re-firing. (Empty when nothing was selected.)
   private downSelText = "";
+  /**
+   * Has THIS gesture already raised a selection? Reset at `pointerdown`.
+   *
+   * One gesture can end in more than one of the events that raise: a touch long-press delivers
+   * `pointercancel` where a mouse delivers `pointerup`, and `selectionchange` fires repeatedly while a
+   * touch selection settles. Without this, one press would raise the toolbar several times.
+   */
+  private gestureRaised = false;
   // RAWY-72: forward pointer activity happening INSIDE the content iframe (which never reaches a
   // parent-window listener) so the chrome-on-intent hook can wake the auto-hiding bar. Coords are
   // translated to parent-viewport space so the hook's jitter dedup shares one coordinate system.
@@ -2624,15 +2632,41 @@ export class FoliateController {
       // Selection → in-context toolbar (RAWY-20). Also a tap → wake the chrome (RAWY-72).
       doc.addEventListener("pointerdown", (ev: PointerEvent) => {
         this.emitSelection(null);
-        // RAWY-132: remember the selection as the gesture starts, so pointerup can tell a fresh
+        // RAWY-132: remember the selection as the gesture starts, so the raise can tell a fresh
         // drag-select from a plain click inside a lingering selection (see below + downSelText).
         this.downSelText = doc.getSelection()?.toString() ?? "";
+        // A NEW GESTURE, so it is owed one raise again.
+        this.gestureRaised = false;
         if (this.activityCb) {
           const off = frameOffset(doc);
           this.activityCb(ev.clientX + off.x, ev.clientY + off.y, true);
         }
       });
-      doc.addEventListener("pointerup", () => {
+      // ---- ONE RAISE, FROM WHICHEVER EVENT THE PLATFORM ACTUALLY DELIVERS ----------------------
+      //
+      // The body below is the former `pointerup` handler, MOVED UNCHANGED. `pointerup` still calls it
+      // exactly as before, so the desktop path is preserved by construction rather than by re-testing
+      // alone.
+      //
+      // WHY IT IS NO LONGER ONLY `pointerup`. MEASURED on Chromium (133, and again on 151) with a real
+      // touch long-press driven through the input stack rather than a synthetic event:
+      //
+      //     pointerdown:touch  touchstart  contextmenu:touch  selectionchange  pointercancel:touch  touchcancel
+      //
+      // There is no `pointerup` anywhere in it. The engine's touch-selection controller takes the
+      // long-press over and cancels the pointer stream, so a raise registered only on `pointerup` can
+      // never fire from a touch: the selection exists, and the toolbar cannot appear however the UI
+      // above it is wired.
+      //
+      // Preventing `contextmenu` was tried live against the same gesture and the sequence came back
+      // byte-identical — still `pointercancel`, still no `pointerup`. Suppressing the native menu is
+      // therefore NOT what fixes this, which is why no such switch is added here.
+      //
+      // `gestureRaised` keeps this to ONE raise per gesture: a gesture can deliver both a
+      // `pointercancel` and a `pointerup`, and `selectionchange` fires more than once while a touch
+      // selection settles.
+      const raiseSelection = () => {
+        if (this.gestureRaised) return;
         const sel = doc.getSelection();
         if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
         const text = sel.toString().trim();
@@ -2655,8 +2689,16 @@ export class FoliateController {
         } catch {
           return;
         }
+        this.gestureRaised = true;
         this.emitSelection({ cfi, text, rect: this.rectInParent(range.getBoundingClientRect(), doc), range: range.cloneRange() });
-      });
+      };
+
+      doc.addEventListener("pointerup", raiseSelection);
+      // The two a touch delivers instead. `selectionchange` is where the word actually appears during
+      // a long-press; `pointercancel` is where that gesture ends. A desktop mouse drag reaches neither
+      // and still raises at `pointerup`, exactly as it always has.
+      doc.addEventListener("pointercancel", raiseSelection);
+      doc.addEventListener("selectionchange", raiseSelection);
     });
 
     // Highlights: draw on (re)render, re-apply per section, surface clicks (RAWY-20).

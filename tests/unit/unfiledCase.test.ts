@@ -143,7 +143,10 @@ describe("the unfiled group's heading and its children", () => {
     // Whatever else changes, these two must stay in the same container: that container is what
     // makes the heading their parent rather than a caption above them.
     const rail = GROUP.indexOf("{looseOpen && (");
-    const loose = GROUP.indexOf("{props.loose.map(shelfRow)}");
+    // Matched on the call rather than on the whole expression: the loose shelves now hand their
+    // own sibling ids to `shelfRow` so a drag knows which list it is reordering within, and the
+    // container this test is about is unaffected by that.
+    const loose = GROUP.indexOf("props.loose.map(");
     const run = GROUP.indexOf("{props.unshelved && shelfRow(props.unshelved)}");
     expect(rail).toBeGreaterThan(-1);
     expect(loose).toBeGreaterThan(rail);
